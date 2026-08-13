@@ -10,15 +10,31 @@ import (
 // work it describes; refusing one whose timing is `after` cannot — the work has
 // already landed, and the refusal demands a correction instead.
 //
-// Both refusals block, but they do not mean the same thing, and a rule author
-// choosing where to bind is choosing between them. The half tested here is the
-// one with a wrong answer available: an engine that let an `after` hook prevent
-// work would be promising a rollback it cannot perform, and an author binding
-// there would believe the work never happened.
-//
 // The distinction is asserted against the FILE ON DISK, not against the stream.
 // Whether a message came back says nothing about whether the write landed, and
 // "the work was prevented" is a claim about the tree.
+//
+// # ONLY THE `before` HALF IS COVERED
+//
+// The `after` half — that a refusal at an after-the-fact point cannot prevent
+// work already done — is NOT tested here. It had a test, and that test worked by
+// hand-writing a PostToolUse hook into the project's settings.json, which is
+// wiring no user has: it proved something about an arrangement the harness had
+// built for itself rather than about the product. The harness can no longer
+// express it at all — writeSettings emits the plugin and nothing else.
+//
+// Through the plugin it cannot be stated today. A guardrail bound to a Post kind
+// is the product's own way to say "after the fact", and `sloprail session stop`
+// dispatches nothing: a declaration binding to PostFileCreate loads without
+// complaint, the write lands, and the hook never runs. Verified, not assumed —
+// such a guardrail was driven through the mock and its ledger came back empty.
+//
+// So this is an uncovered invariant, deliberately, rather than one a green test
+// silently stopped watching. When session stop dispatches Post events, the test
+// to write is the mirror of T006_01: the same refusing script, bound to
+// PostFileCreate instead, asserting the file EXISTS afterwards and that the hook
+// ran — the ledger is what separates "correctly ignored" from "never fired",
+// which is the trap the old test needed a marker file to avoid.
 
 const refuseEveryWrite = `---
 hooks:
@@ -58,67 +74,5 @@ func TestT006_01_PreRefusalPreventsTheWrite(t *testing.T) {
 		t.Fatalf("a refused Pre event still let the file be created — the refusal did not prevent the work")
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("stat: %v", err)
-	}
-}
-
-// T006_02: a hook at an after-the-fact point cannot prevent the work.
-//
-// The same script, refusing just as hard, at a hook point that fires once the
-// write has landed. It must not stop the file existing — there is nothing left
-// to stop. An engine that reported prevention here would be claiming a rollback
-// it never performed.
-//
-// Wired by hand into the project's settings rather than through a guardrail
-// binding, because that is what makes it a test of the ENGINE'S contract: the
-// distinction between the two timings has to hold at the harness's own hook
-// points, whatever a declaration asks for. This is also the control the
-// `after` half of the invariant needs — the two runs differ only in which
-// lifecycle point the identical refusing script is attached to.
-func TestT006_02_PostHookCannotPreventTheWrite(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-
-	// The hook records that it ran, to a path of its own, before refusing.
-	//
-	// Without this line the test is vacuous: its only claim would be that the
-	// file exists after a refusing Post hook, and a Post hook that never fired
-	// at all produces exactly that. The file would exist because nothing tried
-	// to stop it, not because an after-the-fact refusal was correctly ignored.
-	// Point the ExtraHook at an event that cannot fire and the difference is the
-	// whole test — the ran-marker disappears, the write still lands.
-	ran := filepath.Join(proj, "post-hook-ran")
-	script := filepath.Join(proj, "refuse-after.sh")
-	body := "#!/bin/sh\ncat >/dev/null\necho ran >> " + ran + "\necho \"refused after it landed\" >&2\nexit 1\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatalf("write script: %v", err)
-	}
-
-	// The plugin's own wiring plus one refusing PostToolUse hook. Keeping the
-	// plugin enabled matters: this must be the ordinary arrangement with an
-	// after-the-fact rule added, not a project with the engine taken out.
-	e.ExtraHook(proj, "PostToolUse", "Write", script)
-
-	got := e.Run(proj, "s-006-02", "write a note", Turns("done",
-		Write("w1", "some/notes.md", "hello"),
-	))
-
-	// The hook fired. Asserted first: everything below is about what its refusal
-	// failed to prevent, and none of it means anything if the hook was never
-	// reached.
-	//
-	// Read from the marker file, not the stream. The refusal is NOT carried back
-	// to the agent here, and that absence is itself part of the invariant rather
-	// than a gap in the observation — an after-the-fact refusal has nothing left
-	// to refuse, so there is no tool call for it to come back on. Which leaves
-	// the marker as the only channel that distinguishes a hook that ran and was
-	// ignored from one that never fired.
-	if _, err := os.Stat(ran); err != nil {
-		t.Fatalf("the PostToolUse hook never ran, so this proves nothing about after-the-fact refusals: %v\n%s", err, got.Output)
-	}
-
-	// The work landed anyway. A refusal after the fact demands a correction; it
-	// does not and cannot undo the write.
-	if _, err := os.Stat(filepath.Join(proj, "some", "notes.md")); err != nil {
-		t.Fatalf("a hook refusing AFTER the write prevented it — the two timings are being treated alike: %v", err)
 	}
 }

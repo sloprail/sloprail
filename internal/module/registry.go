@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"testing"
-
-	"github.com/sloprail/sloprail/internal/module/internal/registryauth"
 )
 
 // Registry holds the modules this build knows about, and which kinds each owns.
@@ -27,19 +25,19 @@ type Registry struct {
 
 // NewRegistry returns a registry holding the given modules.
 //
-// The token is the fence, not a parameter with a value. It is a type only
-// packages under internal/module/ can name, AND one no other package can
-// construct without naming it — its unexported field is what makes the second
-// half true, and the fence is worth nothing without it. Together they make
-// internal/module/modules the only place in the repo that can assemble a module
-// list — see internal/module/internal/registryauth for why. Everything else
-// takes the registry modules.Registry hands it.
+// A build has exactly one module list, and it is modules.All. Call
+// modules.Registry rather than this: a hook point that assembles its own list
+// enforces against a vocabulary `guardrail help` never printed, which is a
+// divergence no test can see — the help command's registry is the only one
+// observable from outside the binary. That has reached main twice.
 //
-// So a hook point cannot quietly enforce against a vocabulary of its own. That
-// is not a style preference: `guardrail help` is the only registry observable
-// from outside the binary, so a second list anywhere else would be enforced and
-// undocumented and unseen by every test at once.
-func NewRegistry(_ registryauth.Token, mods ...Module) (*Registry, error) {
+// This is exported because internal/module/modules cannot reach an unexported
+// one and the module list cannot move into this package — the modules import it,
+// so a list here is an import cycle. Nothing structural stops a caller under
+// services/ from calling this; what stops it is
+// modules.TestOnlyModulesPackageBuildsARegistry, which walks the repo and fails
+// on any caller outside internal/module/modules.
+func NewRegistry(mods ...Module) (*Registry, error) {
 	return newRegistry(mods)
 }
 
@@ -49,13 +47,12 @@ func NewRegistry(_ registryauth.Token, mods ...Module) (*Registry, error) {
 // The loader, the validator and the matcher are checked against modules
 // declared in the test rather than against filemod, deliberately: the engine is
 // supposed to work from declarations rather than from anything compiled into
-// it, and a test borrowing a real module's kinds would stop proving that. Those
-// tests need a door through the fence.
+// it, and a test borrowing a real module's kinds would stop proving that.
 //
-// It is a door with its name on it. It panics outside a test binary, so a hook
-// point reaching for it does not get a second module list — it gets a crash on
-// the first invocation, which is the loudest failure available and the opposite
-// of the silent divergence the fence exists to stop.
+// Separate from NewRegistry so the one-list check above can tell the two apart:
+// a test needing its own vocabulary is legitimate, a hook point building a
+// second real list is the defect. It panics outside a test binary, so reaching
+// for it in shipped code crashes on first use rather than diverging silently.
 func NewRegistryForTest(mods ...Module) (*Registry, error) {
 	if !testing.Testing() {
 		panic("module: NewRegistryForTest called outside a test — the shipped build has exactly one module list, and it is modules.Registry()")

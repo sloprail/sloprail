@@ -18,11 +18,11 @@
 // until it is there. That test finds your type by type-checking the repo for
 // implementations of Module, so it will find it wherever you put it.
 //
-// There is exactly one module list in a build. NewRegistry takes a token only
-// packages under internal/module/ can name, and which no other package can
-// construct without naming it, so modules.Registry is the only registry a hook
-// point can be handed — assembling a different one elsewhere does not compile.
-// See internal/module/internal/registryauth.
+// There is exactly one module list in a build, and modules.Registry is the only
+// registry a hook point should be handed. A hook point that assembles its own
+// enforces against a vocabulary `guardrail help` never printed — see
+// NewRegistry, and modules.TestOnlyModulesPackageBuildsARegistry, which is what
+// holds that property.
 package module
 
 import "github.com/sloprail/sloprail/internal/event"

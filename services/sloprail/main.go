@@ -26,15 +26,17 @@ A project declares guardrails under ` + DotDirName + `/guardrails/; the harness 
 session hook points, and the engine runs whichever guardrails bind to what is
 about to happen.
 
-  sloprail init              create the directory a project keeps guardrails in
-  sloprail guardrail help    how to write one — read this before authoring
+  sloprail guardrail help    the event kinds this build can produce
+
+There is no setup command. The guardrails directory is created by whatever
+writes the first declaration, and a project with none is an ordinary project —
+the engine loads cleanly and no session sees a difference.
 
 The session subcommands are invoked by a harness with a payload on stdin, not
 typed by a person.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newInitCmd())
 	root.AddCommand(newGuardrailCmd())
 	root.AddCommand(newSessionCmd())
 	return root

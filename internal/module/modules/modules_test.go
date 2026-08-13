@@ -7,7 +7,6 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -48,10 +47,9 @@ func TestRegistry_RegistersCleanly(t *testing.T) {
 // TestAll_HoldsEveryModuleInTheRepo is the check that a module was written and
 // the list was not updated.
 //
-// The other half of the problem is structural and no longer needs a test:
-// module.NewRegistry takes a token only packages under internal/module/ can
-// name, so the binary CANNOT be running a list other than this one. What that
-// does not catch is a module that exists and was never added — it compiles,
+// The other half of the problem — the binary running a list other than this
+// one — is TestOnlyModulesPackageBuildsARegistry's. What neither of them would
+// catch without this is a module that exists and was never added: it compiles,
 // declares its kinds, and is simply absent, so the binary and every test agree
 // perfectly on a vocabulary missing an entry. Agreement is not correctness when
 // both sides read the same incomplete list.
@@ -203,143 +201,91 @@ func typeKey(m module.Module) string {
 	return T.PkgPath() + "." + T.Name()
 }
 
-// TestNewRegistry_RejectsAForgedToken pins the one property the fence rests on
-// and the compiler is the only witness to.
+// TestOnlyModulesPackageBuildsARegistry is the one-module-list property.
 //
-// The fence is two rules that have to hold at once. Go's `internal` rule stops
-// a package outside internal/module/ from NAMING registryauth.Token — that half
-// was always true. The other half is that nobody can produce a value of that
-// type without naming it, and for a while that half was false: Token was a bare
-// `struct{}`, assignability is structural for unnamed types, and so
+// A hook point that calls module.NewRegistry with a list of its own enforces
+// against a vocabulary `guardrail help` never printed, and no other test can
+// see it: the help command's registry is the only one observable from outside
+// the binary, so a divergent one anywhere else is silent with the suite green.
+// That reached main twice.
 //
-//	module.NewRegistry(struct{}{}, modules.All()[:1]...)
+// It was a compile-time fence before this: NewRegistry took a token from a
+// package under internal/module/internal/, which Go lets only packages rooted
+// at internal/module/ import. That worked, and it cost a package, an exported
+// type, a constructor, and two tests defending the token itself — for a
+// function with exactly ONE caller in the tree, the one three lines above in
+// modules.go. The fence was guarding a door nobody else was trying to open.
 //
-// built clean and vetted clean from services/. A hook point could enforce
-// against a module list of its own with no new type anywhere — nothing for
-// TestAll_HoldsEveryModuleInTheRepo above to find, nothing `guardrail help`
-// prints, nothing any test reads. The unexported field in Token is what closed
-// it. This test is what keeps it closed.
+// So the mechanism is a test instead, and the test asserts the thing the fence
+// was proxying for: this package is the only caller. A source scan rather than
+// a grep — an import may be aliased and a call may be spread over lines, and
+// both defeat matching on text.
 //
-// It has to be a type-check rather than an ordinary assertion because the
-// property IS "does not compile", and a test that compiles cannot contain the
-// code it is about. So the snippet is type-checked as data and the assertion is
-// that the checker refuses it. A test that merely called
-// NewRegistry(registryauth.Grant(), ...) would prove nothing: this package is
-// inside the fence, where everything is allowed.
+// NewRegistryForTest is deliberately not covered: a test building its own
+// vocabulary is legitimate, which is why it is a separate function, and it
+// panics outside a test binary if shipped code reaches for it.
 //
-// This covers the assignability half only, and that is on purpose rather than
-// an omission. The `internal` rule is enforced by the go command, not by
-// go/types — a snippet importing registryauth from a services/ path type-checks
-// here perfectly happily, while `go build` on the same file reports "use of
-// internal package ... not allowed". An earlier draft of this test asserted the
-// naming half too and failed for exactly that reason. So the two halves have
-// two different witnesses: the go command already refuses the naming half on
-// every build, and TestFence_InternalRuleBlocksNamingTheToken below pins it by
-// asking the go command rather than the type-checker. Here, assignability.
-//
-// Failing means an outside caller can forge a token, and every argument written
-// in registryauth, modules.go and module.go about there being exactly one
-// module list in a build is false.
-func TestNewRegistry_RejectsAForgedToken(t *testing.T) {
-	const outside = "github.com/sloprail/sloprail/services/notreal"
+// Failing means some package outside internal/module/modules assembles a module
+// list, and every claim about there being exactly one is false.
+func TestOnlyModulesPackageBuildsARegistry(t *testing.T) {
+	const thisPkg = "github.com/sloprail/sloprail/internal/module/modules"
 
-	for _, tc := range []struct {
-		name    string
-		call    string
-		wantErr string
-	}{
-		{
-			// The bypass itself: a composite literal of the same shape,
-			// assignable to Token if and only if Token has no unexported field.
-			name:    "forged token, structurally identical",
-			call:    "module.NewRegistry(struct{}{}, modules.All()...)",
-			wantErr: "cannot use struct{}{}",
-		},
-		{
-			// The sharper form, and the one no other test can catch: a
-			// divergent list built from modules that all already exist, so
-			// discovery has no unlisted type to find.
-			name:    "forged token, divergent list of existing modules",
-			call:    "module.NewRegistry(struct{}{}, modules.All()[:1]...)",
-			wantErr: "cannot use struct{}{}",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			// No registryauth import: the whole point of the bypass is that it
-			// never names the token type. A snippet that imported it would be
-			// testing the other half, and would not compile from here anyway.
-			src := "package notreal\n\n" +
-				"import (\n" +
-				"\t\"github.com/sloprail/sloprail/internal/module\"\n" +
-				"\t\"github.com/sloprail/sloprail/internal/module/modules\"\n" +
-				")\n\n" +
-				"var _ = func() { _, _ = " + tc.call + " }\n"
-
-			err := typeCheckSnippet(t, outside, src)
-			require.Error(t, err, "this snippet type-checks, so a hook point can build a module list of its own:\n%s", src)
-			assert.Contains(t, err.Error(), tc.wantErr,
-				"refused, but not for the reason the fence claims — a snippet rejected over a typo would pass this test while the fence was wide open")
-		})
-	}
-
-	// The control. Same harness, same imports, a call that SHOULD compile from
-	// inside the fence — without it every case above would pass just as well if
-	// typeCheckSnippet were broken and rejected everything handed to it.
-	t.Run("the harness admits a legitimate call", func(t *testing.T) {
-		src := "package modulesctl\n\n" +
-			"import (\n" +
-			"\t\"github.com/sloprail/sloprail/internal/module\"\n" +
-			"\t\"github.com/sloprail/sloprail/internal/module/modules\"\n" +
-			"\t\"github.com/sloprail/sloprail/internal/module/internal/registryauth\"\n" +
-			")\n\n" +
-			"var _ = func() { _, _ = module.NewRegistry(registryauth.Grant(), modules.All()...) }\n"
-
-		err := typeCheckSnippet(t, "github.com/sloprail/sloprail/internal/module/modulesctl", src)
-		assert.NoError(t, err, "the legitimate call does not type-check either, so the refusals above prove nothing — the harness rejects whatever it is handed")
-	})
-}
-
-// TestFence_InternalRuleBlocksNamingTheToken pins the other half of the fence,
-// with the only tool that can see it.
-//
-// go/types does not implement the `internal` rule — it is the go command's,
-// applied when resolving an import path, so the test above cannot express this
-// and reported a false green when it tried. The go command can, so this asks
-// the go command: write a package under services/ that names the token, build
-// it, and require the refusal.
-//
-// Why pin something the language guarantees: the guarantee is conditional on
-// registryauth's PATH, and a path is an ordinary thing to change. Moved out
-// from under internal/module/internal/ — during a refactor, to break an import
-// cycle, because a second package wanted a token — it keeps compiling, keeps
-// passing every other test, and silently becomes importable from anywhere. The
-// unexported field would still stop `struct{}{}`, but any package could then
-// call Grant. This fails the moment that move happens.
-func TestFence_InternalRuleBlocksNamingTheToken(t *testing.T) {
+	fset, _ := sourceImporter(t)
 	root := repoRoot(t)
 
-	// Under services/, which is where the hook points live and where the hole
-	// this fence closed was found. Removed whatever the outcome.
-	dir := filepath.Join(root, "services", "fenceprobe")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	var callers []string
+	for _, pkgPath := range repoPackages(t) {
+		if pkgPath == thisPkg || pkgPath == modulePkgPath {
+			continue // the declaring package and the one legitimate caller
+		}
 
-	src := "package fenceprobe\n\n" +
-		"import (\n" +
-		"\t\"github.com/sloprail/sloprail/internal/module\"\n" +
-		"\t\"github.com/sloprail/sloprail/internal/module/modules\"\n" +
-		"\t\"github.com/sloprail/sloprail/internal/module/internal/registryauth\"\n" +
-		")\n\n" +
-		"var _ = func() { _, _ = module.NewRegistry(registryauth.Grant(), modules.All()...) }\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "probe.go"), []byte(src), 0o644))
+		dir := filepath.Join(root, strings.TrimPrefix(pkgPath, "github.com/sloprail/sloprail/"))
+		pkgs, err := parser.ParseDir(fset, dir, nil, 0)
+		require.NoErrorf(t, err, "parse %s", pkgPath)
 
-	build := exec.Command("go", "build", "./services/fenceprobe/")
-	build.Dir = root
-	out, err := build.CombinedOutput()
+		for _, pkg := range pkgs {
+			for _, f := range pkg.Files {
+				// The local name of the internal/module import in THIS file.
+				// Resolved per file rather than assumed to be "module": an
+				// aliased import is the case a textual search misses, and it
+				// is the case a caller hiding a second list would produce.
+				local := ""
+				for _, spec := range f.Imports {
+					path := strings.Trim(spec.Path.Value, `"`)
+					if path != modulePkgPath {
+						continue
+					}
+					local = "module"
+					if spec.Name != nil {
+						local = spec.Name.Name
+					}
+				}
+				if local == "" || local == "_" {
+					continue
+				}
 
-	require.Errorf(t, err, "a package under services/ imported registryauth and built:\n%s\n\nthe fence depends on registryauth sitting under internal/module/internal/, and it no longer does", src)
-	assert.Contains(t, string(out), "use of internal package",
-		"the build failed for some other reason, so this test is not watching the fence:\n%s", out)
+				ast.Inspect(f, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					sel, ok := call.Fun.(*ast.SelectorExpr)
+					if !ok || sel.Sel.Name != "NewRegistry" {
+						return true
+					}
+					ident, ok := sel.X.(*ast.Ident)
+					if !ok || ident.Name != local {
+						return true
+					}
+					callers = append(callers, pkgPath+" ("+fset.Position(call.Pos()).String()+")")
+					return true
+				})
+			}
+		}
+	}
+
+	assert.Emptyf(t, callers, "module.NewRegistry is called outside %s, so the binary can hold more than one module list — a hook point enforcing against a vocabulary `guardrail help` never prints is invisible to every other test:\n%s",
+		thisPkg, strings.Join(callers, "\n"))
 }
 
 // repoRoot is the module root, asked of the toolchain rather than derived from

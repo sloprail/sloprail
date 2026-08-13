@@ -30,47 +30,6 @@ func (s *Store) declarationPath(name string) string {
 	return filepath.Join(s.guardrailsDir(), name, "GUARDRAIL.md")
 }
 
-// Init creates the directory a project keeps its guardrails in, and reports
-// whether it had to.
-//
-// What it leaves behind is a place for declarations to go and nothing else. No
-// example rule: a scaffolded guardrail is a rule nobody chose, sitting in a
-// project as though someone had, and the first thing an author would have to do
-// is work out whether it was theirs. Rules are written by an agent that has read
-// how they work — `sloprail guardrail help` is what that agent reads.
-//
-// No config file either. Every question one could answer is already answered by
-// the declarations themselves, and a file holding nothing but defaults is a file
-// that has to be kept valid for no return.
-//
-// Running this twice is running it once. It creates what is missing and reads
-// what is there, so a project that already has guardrails keeps them: an init
-// that clobbered would be a rule-deleting command wearing a setup command's
-// name.
-func (s *Store) Init() (created bool, err error) {
-	dir := s.guardrailsDir()
-	switch info, statErr := os.Stat(dir); {
-	case statErr == nil && info.IsDir():
-		return false, nil
-	case statErr == nil:
-		// Something is there and it is not a directory, so Load's ReadDir will
-		// fail and no guardrail can ever be declared. Reporting success here
-		// would leave a project that setup called finished and that cannot work.
-		return false, fmt.Errorf("guardrail: %s exists but is not a directory", dir)
-	case !os.IsNotExist(statErr):
-		return false, fmt.Errorf("guardrail: stat %s: %w", dir, statErr)
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false, fmt.Errorf("guardrail: create %s: %w", dir, err)
-	}
-	return true, nil
-}
-
-// GuardrailsDir is where declarations live. Exported so a command that has to
-// name the path to a person prints the one the store will actually read, rather
-// than rebuilding it and being able to disagree.
-func (s *Store) GuardrailsDir() string { return s.guardrailsDir() }
-
 // Invalid is a declaration that could not be read or could not do what it says,
 // and why.
 //
