@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
 )
 
@@ -107,8 +108,11 @@ func TestExtract_NoFilePathProducesNoEvents(t *testing.T) {
 }
 
 func TestExtract_ToolNameIsNotConsulted(t *testing.T) {
-	// Tool() exists to know how to read the arguments; nothing branches on it
-	// today, so any tool naming a file_path produces a file event.
+	// Tool() exists to know how to read the arguments; nothing branches on it,
+	// so any tool naming a file_path produces a file event. This is ACCEPTED
+	// behaviour, not a pending defect — extractPending's doc comment argues it.
+	// The property being locked down is drift-immunity: a tool renamed upstream
+	// must go on producing events, which is what a name allowlist would break.
 	for _, tool := range []string{"Write", "Edit", "NotebookEdit", "", "SomethingElse"} {
 		events, err := New().Extract(module.Input{
 			module.InputPhase: module.PhasePre,
@@ -120,6 +124,100 @@ func TestExtract_ToolNameIsNotConsulted(t *testing.T) {
 		require.NoError(t, err, "tool %q", tool)
 		require.Len(t, events, 1, "tool %q", tool)
 	}
+}
+
+// TestExtractPending_ReadOnlyToolStillProducesAnEvent is the accepted cost of
+// the choice above, measured rather than asserted. `Read` carries a file_path
+// and no content, so it yields a PreFileCreate for a file it only reads.
+//
+// Named for what is true. If a future change makes this stop happening — by
+// asking whether the arguments carry a `content` key, per extractPending's
+// closing note — this test is the one to rewrite, deliberately.
+func TestExtractPending_ReadOnlyToolStillProducesAnEvent(t *testing.T) {
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePre,
+		module.InputPayload: fakePending{
+			tool: "Read",
+			args: json.RawMessage(`{"file_path":"does-not-exist.md","offset":10,"limit":50}`),
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1, "Read carries file_path, so it reaches an event")
+	assert.Equal(t, KindPreCreate, events[0].Kind)
+}
+
+// TestExtractPending_ShapeAlreadyFiltersToolsWithoutAFilePath is the other half
+// of the defect-3 argument, and the half the report got wrong: Grep, Glob and
+// WebFetch were said to produce bogus file events. They do not. None carries a
+// `file_path`, so argument-shape dispatch drops them before any name is
+// consulted — which is the evidence that shape does most of the filtering an
+// allowlist was proposed to do.
+func TestExtractPending_ShapeAlreadyFiltersToolsWithoutAFilePath(t *testing.T) {
+	for tool, args := range map[string]string{
+		"Grep":         `{"pattern":"foo","path":"/a"}`,
+		"Glob":         `{"pattern":"**/*.go"}`,
+		"WebFetch":     `{"url":"https://example.com","prompt":"p"}`,
+		"NotebookEdit": `{"notebook_path":"/a/n.ipynb","new_source":"x"}`,
+	} {
+		events, err := New().Extract(module.Input{
+			module.InputPhase:   module.PhasePre,
+			module.InputPayload: fakePending{tool: tool, args: json.RawMessage(args)},
+		})
+		require.NoError(t, err, "tool %q", tool)
+		assert.Emptyf(t, events, "tool %q names no file_path and must produce no event", tool)
+	}
+}
+
+// TestExtract_DirectoryIsNotAnExistingFile is defect 2. os.Stat succeeding says
+// something is at the path, not that a file is — so a write aimed at a
+// directory reported PreFileUpdate, an event claiming a file is about to be
+// modified when there is no file there and the write cannot land.
+func TestExtract_DirectoryIsNotAnExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "adir")
+	require.NoError(t, os.Mkdir(sub, 0o755))
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase:   module.PhasePre,
+		module.InputPayload: writePending(sub, "x"),
+	})
+	require.NoError(t, err, "a directory in the way is not an extraction failure")
+	assert.Empty(t, events,
+		"a write onto a directory is not a file modification and must produce no event")
+}
+
+// TestExtract_RegularFileIsStillAnUpdate guards the tri-state from collapsing
+// the other way — the directory fix must not turn ordinary updates into
+// silence.
+func TestExtract_RegularFileIsStillAnUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "real.md")
+	require.NoError(t, os.WriteFile(path, []byte("old"), 0o600))
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase:   module.PhasePre,
+		module.InputPayload: writePending(path, "new"),
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, KindPreUpdate, events[0].Kind)
+}
+
+// TestExtract_EmptyFileCreateCarriesContent is defect 1 through the real
+// extraction path rather than through FileEvent alone: a Write of empty content
+// to a path that does not exist must still carry `content`.
+func TestExtract_EmptyFileCreateCarriesContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.txt")
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase:   module.PhasePre,
+		module.InputPayload: writePending(path, ""),
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, KindPreCreate, events[0].Kind)
+	require.Contains(t, events[0].Fields, FieldContent,
+		"an empty file is still a file, and its kind declares content")
+	assert.Equal(t, "", events[0].Fields[FieldContent])
 }
 
 // --- the create/update fork, which needs a real file ------------------------
@@ -159,9 +257,10 @@ func TestExtract_ExistingPathIsAnUpdateWithoutContent(t *testing.T) {
 		"the file is on disk, so a hook can read it there rather than have it copied through")
 }
 
-func TestExtract_ExistingDirectoryCountsAsExisting(t *testing.T) {
-	// exists() stats rather than checking for a regular file, so a path that
-	// is a directory is treated as an update.
+func TestExtract_ExistingDirectoryIsNotAFileAndProducesNoEvent(t *testing.T) {
+	// lookAt distinguishes a regular file from anything else at the path, so a
+	// directory is neither a create nor an update: no file write can land on
+	// it. This test previously asserted PreFileUpdate, pinning that defect.
 	dir := t.TempDir()
 
 	events, err := New().Extract(module.Input{
@@ -169,14 +268,13 @@ func TestExtract_ExistingDirectoryCountsAsExisting(t *testing.T) {
 		module.InputPayload: writePending(dir, "x"),
 	})
 	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, KindPreUpdate, events[0].Kind)
+	assert.Empty(t, events)
 }
 
-func TestExtract_CreateWithEmptyContent(t *testing.T) {
-	// Creating an empty file: the content field is omitted entirely, because
-	// FileEvent.Event only sets it when non-empty. So PreFileCreate does not
-	// always carry content, despite being the kind that declares it.
+func TestExtract_CreateWithEmptyContentCarriesTheDeclaredContentField(t *testing.T) {
+	// PreFileCreate declares content, so it carries content — including the
+	// empty string. This test previously asserted the field was absent,
+	// pinning the defect that made `content == ""` error rather than fire.
 	path := filepath.Join(t.TempDir(), "empty.md")
 
 	events, err := New().Extract(module.Input{
@@ -186,7 +284,8 @@ func TestExtract_CreateWithEmptyContent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, KindPreCreate, events[0].Kind)
-	assert.NotContains(t, events[0].Fields, FieldContent)
+	require.Contains(t, events[0].Fields, FieldContent)
+	assert.Equal(t, "", events[0].Fields[FieldContent])
 }
 
 func TestExtract_DefaultsToPendingWhenPhaseIsUnset(t *testing.T) {
@@ -301,10 +400,11 @@ func TestExtract_CreateWithNoMarkersCarriesAnEmptyList(t *testing.T) {
 	assert.Empty(t, markers)
 }
 
-func TestExtract_CreateWithEmptyContentStillCarriesMarkers(t *testing.T) {
-	// Content is omitted when empty (see TestExtract_CreateWithEmptyContent),
-	// but markers is not — the two are carried by different rules, and markers
-	// keys off the declaration rather than off emptiness.
+func TestExtract_CreateWithEmptyContentCarriesBothDeclaredFields(t *testing.T) {
+	// Content and markers are now carried by the SAME rule — the declaration —
+	// so an empty create carries both, each holding its empty value. This test
+	// used to assert content was absent while markers were present, pinning
+	// the divergence between the two paths that has since been removed.
 	path := filepath.Join(t.TempDir(), "empty.go")
 
 	events, err := New().Extract(module.Input{
@@ -313,7 +413,8 @@ func TestExtract_CreateWithEmptyContentStillCarriesMarkers(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, events, 1)
-	assert.NotContains(t, events[0].Fields, FieldContent)
+	require.Contains(t, events[0].Fields, FieldContent)
+	assert.Equal(t, "", events[0].Fields[FieldContent])
 	require.Contains(t, events[0].Fields, FieldMarkers)
 	assert.Empty(t, events[0].Fields[FieldMarkers])
 }
@@ -343,22 +444,33 @@ func TestExtract_UpdateMarkersDescribeTheBytesBeingREPLACED(t *testing.T) {
 		"the bytes the write would REPLACE — a known limitation until PreFileUpdate carries its pending content")
 }
 
-func TestExtract_UpdateOfAnUnreadablePathStillProducesTheEvent(t *testing.T) {
-	// A directory exists, so this is an update, and reading it as a file
-	// fails. The event must still fire with the path: dropping it would be a
-	// file event that silently never happens.
-	dir := t.TempDir()
+func TestExtract_UpdateOfAnUnreadableFileStillProducesTheEvent(t *testing.T) {
+	// The intent this test has always carried: a file whose CONTENT cannot be
+	// read must still produce its event, because a file event that silently
+	// never happens is the failure this engine exists to prevent. Only the
+	// fixture changed — it used to use a directory, which since the lookAt
+	// tri-state is not a file at all and is covered by
+	// TestExtract_ExistingDirectoryIsNotAFileAndProducesNoEvent. A real
+	// unreadable regular file is the honest way to make markersOnDisk fail.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads regardless of mode")
+	}
+	path := filepath.Join(t.TempDir(), "locked.go")
+	require.NoError(t, os.WriteFile(path, []byte("// sr:blueprint pkg.Inv\n"), 0o644))
+	require.NoError(t, os.Chmod(path, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
 
 	events, err := New().Extract(module.Input{
 		module.InputPhase:   module.PhasePre,
-		module.InputPayload: writePending(dir, "x"),
+		module.InputPayload: writePending(path, "x"),
 	})
 	require.NoError(t, err)
-	require.Len(t, events, 1)
+	require.Len(t, events, 1, "an unreadable file is still a file being updated")
 	assert.Equal(t, KindPreUpdate, events[0].Kind)
-	assert.Equal(t, dir, events[0].Fields[FieldPath])
+	assert.Equal(t, path, events[0].Fields[FieldPath])
 	require.Contains(t, events[0].Fields, FieldMarkers)
-	assert.Empty(t, events[0].Fields[FieldMarkers])
+	assert.Empty(t, events[0].Fields[FieldMarkers],
+		"unreadable text yields no markers rather than failing the extraction")
 }
 
 func TestExtract_UpdateKeepsBothOccurrencesOfOneFQN(t *testing.T) {
@@ -396,4 +508,41 @@ func TestFileEvent_RoundTripsMarkers(t *testing.T) {
 	back, err := FromEvent(f.Event(KindPreUpdate))
 	require.NoError(t, err)
 	assert.Equal(t, f.Markers, back.Markers)
+}
+
+// TestExtract_EmptyFileMatcherActuallyFires is defect 1 at the level the user
+// meets it, and the reason the defect was worse than it read.
+//
+// `content == ""` is the rule an author writes to catch an empty file. Against
+// the old emitter the field was absent, so evaluation hit a nil where a string
+// was declared and returned `interface conversion: nil, not string`. That is
+// not a rule quietly failing to fire: since session_pre_tool refuses on a
+// matcher error, every write of an empty file became a refusal blaming a
+// guardrail that was correct.
+//
+// This is the assertion that fails loudly if the emitter ever again decides a
+// field's presence from its value, and it does so through the real compiler
+// against the real declaration rather than through a hand-built map.
+func TestExtract_EmptyFileMatcherActuallyFires(t *testing.T) {
+	var decl module.KindDecl
+	for _, k := range (&Module{}).Kinds() {
+		if k.Name == KindPreCreate {
+			decl = k
+		}
+	}
+	require.Equal(t, KindPreCreate, decl.Name, "PreFileCreate must be declared")
+
+	m, err := guardrail.CompileMatcherFor(`content == ""`, decl)
+	require.NoError(t, err)
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase:   module.PhasePre,
+		module.InputPayload: writePending(filepath.Join(t.TempDir(), "empty.txt"), ""),
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
+	admitted, err := m.Match(events[0])
+	require.NoError(t, err, "a declared field must never evaluate to a nil the cast rejects")
+	assert.True(t, admitted, `content == "" must fire for a genuinely empty file`)
 }

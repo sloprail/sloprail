@@ -119,9 +119,41 @@ func (*Module) Kinds() []module.KindDecl {
 	}
 }
 
-// exists reports whether a path is already on disk, which is what separates a
-// creation from a change to something that was already there.
-func (*Module) exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+// presence is what the tree says about a path: whether a write there would
+// create a file, change an existing one, or is not a file write at all.
+type presence int
+
+const (
+	// presenceAbsent — nothing at the path. A write creates.
+	presenceAbsent presence = iota
+	// presenceFile — a regular file is there. A write updates.
+	presenceFile
+	// presenceNotAFile — something is there that a file write cannot land on:
+	// a directory, a device, a socket. Distinct from presenceFile because the
+	// two demand different answers, and collapsing them is what made writing
+	// to a directory report PreFileUpdate — an event claiming a file is about
+	// to be modified when no file exists at that path and the write will fail.
+	// A rule bound to PreFileUpdate would then run, and pass or refuse, over a
+	// file that is not there.
+	presenceNotAFile
+)
+
+// lookAt reports what is at a path.
+//
+// A stat that fails for any reason other than absence is reported as absent
+// rather than guessed at. That is deliberate and it is the lesser wrong: the
+// alternative is claiming a file exists on the strength of an error that did
+// not say so. An unreadable parent directory yields PreFileCreate, whose
+// `content` carries what the write would put there — a rule still sees the
+// path and the pending text, which is what it needs. Reporting PreFileUpdate
+// instead would promise markers read off a file this process cannot open.
+func (*Module) lookAt(path string) presence {
+	info, err := os.Stat(path)
+	if err != nil {
+		return presenceAbsent
+	}
+	if info.Mode().IsRegular() {
+		return presenceFile
+	}
+	return presenceNotAFile
 }

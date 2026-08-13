@@ -35,19 +35,22 @@ func TestFileEvent_Event_WithContent(t *testing.T) {
 	}, e.Fields)
 }
 
-// TestFileEvent_Event_EmptyContentIsOmitted pins CURRENT behaviour: the field
-// is set only when non-empty, so a file whose content genuinely is the empty
-// string produces an event with no content field at all. A matcher written as
-// `content == ""` therefore does not fire for a truly empty file — it reads a
-// nil, which is not equal to "".
-func TestFileEvent_Event_EmptyContentIsOmitted(t *testing.T) {
+// TestFileEvent_Event_EmptyContentIsCarried states what is now true: content is
+// carried whenever the kind declares it, empty or not, so a file whose content
+// genuinely is the empty string produces an event with `content: ""` — and
+// `content == ""`, the rule an author writes to catch an empty file, fires.
+//
+// This test previously asserted the opposite and pinned the defect. Content and
+// markers are now carried by the same rule: the declaration decides presence,
+// the value decides only what is held. `len(markers) == 0` and `content == ""`
+// are both real questions an author asks, and neither may error.
+func TestFileEvent_Event_EmptyContentIsCarried(t *testing.T) {
 	e := FileEvent{Path: "empty.md", Content: ""}.Event(KindPreCreate)
 
-	assert.NotContains(t, e.Fields, FieldContent)
-	// path and markers. Markers is NOT omitted when empty — unlike content, it
-	// is carried whenever the kind declares it, because `len(markers) == 0` is
-	// the rule an author writes for unmarked code and it must not error.
-	assert.Len(t, e.Fields, 2)
+	require.Contains(t, e.Fields, FieldContent)
+	assert.Equal(t, "", e.Fields[FieldContent])
+	// path, content and markers — every field PreFileCreate declares.
+	assert.Len(t, e.Fields, 3)
 	assert.Contains(t, e.Fields, FieldMarkers)
 }
 
@@ -56,6 +59,34 @@ func TestFileEvent_Event_KindIsPassedThroughUnchecked(t *testing.T) {
 	// what decides whether a kind is one this module owns.
 	e := FileEvent{Path: "a.md"}.Event("NotAFileKind")
 	assert.Equal(t, "NotAFileKind", e.Kind)
+}
+
+// TestFileEvent_PathSurvivesAnUnknownKind guards the seam the declaration-driven
+// emitter opened. kindDeclares answers false for every field of a kind it does
+// not know, so keying path off the declaration made an unknown kind produce an
+// event with no fields at all — one reporting a file without naming it, which
+// is the silent nothing this engine exists to prevent. Path is unconditional
+// for exactly this reason.
+func TestFileEvent_PathSurvivesAnUnknownKind(t *testing.T) {
+	e := FileEvent{Path: "a.md", Content: "x"}.Event("NotAFileKind")
+	require.Contains(t, e.Fields, FieldPath, "an event must always name its file")
+	assert.Equal(t, "a.md", e.Fields[FieldPath])
+	assert.NotContains(t, e.Fields, FieldContent, "an unknown kind declares nothing else")
+}
+
+// TestModule_EveryDeclaredKindCarriesPath is the premise the unconditional path
+// rests on: if a kind were ever declared WITHOUT path, the line above would be
+// carrying a field that kind does not declare — the very defect being fixed.
+func TestModule_EveryDeclaredKindCarriesPath(t *testing.T) {
+	for _, k := range (&Module{}).Kinds() {
+		var has bool
+		for _, f := range k.Fields {
+			if f.Name == FieldPath {
+				has = true
+			}
+		}
+		assert.Truef(t, has, "kind %q must declare %q", k.Name, FieldPath)
+	}
 }
 
 func TestFileEvent_Event_FieldsAreFresh(t *testing.T) {
@@ -305,27 +336,53 @@ func TestFileEvent_MarkersAreCarriedExactlyWhereDeclared(t *testing.T) {
 	}
 }
 
-// TestFileEvent_ContentLeaksOntoKindsThatDoNotDeclareIt records a PRE-EXISTING
-// defect, untouched by the markers work and deliberately not fixed here.
+// TestFileEvent_ContentIsOmittedFromKindsThatDoNotDeclareIt is the fixed form
+// of a test that used to pin the opposite.
 //
-// Event sets content whenever FileEvent.Content is non-empty, without asking
-// whether the kind declares it — so a FileEvent carrying content produces a
-// PreFileDelete or a PostFileCreate with a content field no matcher can ever be
-// checked against. Extract never builds such a FileEvent today, which is why it
-// has not bitten; nothing prevents one.
-//
-// Markers deliberately do NOT work this way: kindCarriesMarkers reads the
-// declaration. This test pins the difference so the two are not assumed to
-// behave alike, and fails loudly if the content path is ever fixed — at which
-// point it should be deleted rather than adjusted.
-func TestFileEvent_ContentLeaksOntoKindsThatDoNotDeclareIt(t *testing.T) {
+// Event once set content whenever FileEvent.Content was non-empty without
+// asking whether the kind declared it, so a FileEvent carrying content produced
+// a PreFileDelete with a content field no matcher could be checked against —
+// CompileMatcherFor validates names against the declaration and refuses one
+// that is not there. Every field now goes through kindDeclares, so presence is
+// the declaration's answer and never the value's.
+func TestFileEvent_ContentIsOmittedFromKindsThatDoNotDeclareIt(t *testing.T) {
 	f := FileEvent{Path: "a.go", Content: "x"}
 	for _, kind := range []string{
 		KindPreDelete, KindPostCreate, KindPostUpdate, KindPostDelete,
 	} {
-		assert.Containsf(t, f.Event(kind).Fields, FieldContent,
-			"kind %q does not declare content, yet carries it — pre-existing, see the doc comment", kind)
+		assert.NotContainsf(t, f.Event(kind).Fields, FieldContent,
+			"kind %q does not declare content and must not carry it", kind)
 	}
+}
+
+// TestFileEvent_DeclaredFieldsAreAlwaysPresent is the general statement of the
+// rule, checked against the declaration itself rather than a hand-listed set of
+// kinds — so a kind added later is covered without this test being touched.
+//
+// The zero-valued FileEvent is the point. A field is carried because the kind
+// declares it, never because the value happened to be interesting, and the
+// empty value is exactly the case the old emitter dropped.
+func TestFileEvent_DeclaredFieldsAreAlwaysPresent(t *testing.T) {
+	for _, k := range (&Module{}).Kinds() {
+		fields := FileEvent{}.Event(k.Name).Fields
+		assert.Lenf(t, fields, len(k.Fields),
+			"kind %q carries %d fields but declares %d", k.Name, len(fields), len(k.Fields))
+		for _, fd := range k.Fields {
+			assert.Containsf(t, fields, fd.Name,
+				"kind %q declares %q but a zero-valued FileEvent omits it", k.Name, fd.Name)
+		}
+	}
+}
+
+// TestFileEvent_EmptyContentIsCarriedOnPreFileCreate is defect 1 exactly: the
+// empty file. `content` is required on PreFileCreate (spec events/main.tsp),
+// and a matcher written `content == ""` — the rule an author writes to catch an
+// empty file — is the one that met a nil and errored.
+func TestFileEvent_EmptyContentIsCarriedOnPreFileCreate(t *testing.T) {
+	fields := FileEvent{Path: "empty.txt", Content: ""}.Event(KindPreCreate).Fields
+	require.Contains(t, fields, FieldContent,
+		"a genuinely empty file must still carry the content its kind declares")
+	assert.Equal(t, "", fields[FieldContent])
 }
 
 func TestFileEvent_EveryKindsMarkersAreFreshPerCall(t *testing.T) {
