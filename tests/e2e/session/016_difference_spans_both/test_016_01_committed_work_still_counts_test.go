@@ -83,7 +83,7 @@ func sawPath(got []observed, path string) bool {
 // is empty. Only a comparison against the session's own starting point finds
 // this file — and it must, because committing is not a way to escape review.
 func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: `sloprail session stop` returns before diffing the tree (session_stop.go: `return nil // TODO: diff the tree, dispatch the Post events`), so no PostFile* event is ever dispatched and no binding can observe one")
+	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -130,7 +130,7 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 // arrive. Neither assertion is redundant: they fail for opposite
 // implementations.
 func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: `sloprail session stop` returns before diffing the tree (session_stop.go: `return nil // TODO: diff the tree, dispatch the Post events`), so no PostFile* event is ever dispatched and no binding can observe one")
+	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)

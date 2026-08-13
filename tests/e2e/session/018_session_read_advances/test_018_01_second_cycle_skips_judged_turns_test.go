@@ -122,7 +122,7 @@ func promptsIn(answer string, markers ...string) []string {
 // An engine reading the whole record every time fails on the second clause,
 // which is exactly the behaviour this worktree ships today.
 func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl (no PostFile* dispatch, so this hook never runs) and impl/hook-env (a guardrail hook gets no transcript path and no SR_WORKSPACE, so `session query` cannot find the record) and impl/baseline-mark (nothing records a read position, so there is no narrowing to observe)")
+	t.Skip("blocked on impl/stop-diff-impl (dispatchPostEvents in session_stop.go is still the stub returning false, so this Post-bound hook never runs) and impl/hook-env (hookEnv in services/sloprail/provenance.go sets only SLOPRAIL_LAUNCHED_BY, so a guardrail hook gets no SR_SESSION_ID and no SR_WORKSPACE and `session query` cannot find the record). NOT blocked on impl/baseline-mark any more: sessionstate.MetaTranscriptRead and MetaTranscriptOffered have landed, so the read position now has somewhere to live")
 	e := New(t)
 	proj := e.Project()
 	e.Guardrail(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
@@ -184,7 +184,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 // This is what separates "remember where the reading ended" from "remember where
 // the session got to". The second loses turns nothing ever judged.
 func TestT018_02_TurnsNothingJudgedAreStillGivenToTheNextCycle(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl (no PostFile* dispatch, so this hook never runs) and impl/hook-env (a guardrail hook gets no transcript path and no SR_WORKSPACE, so `session query` cannot find the record) and impl/baseline-mark (nothing records a read position, so there is no narrowing to observe)")
+	t.Skip("blocked on impl/stop-diff-impl (dispatchPostEvents in session_stop.go is still the stub returning false, so this Post-bound hook never runs) and impl/hook-env (hookEnv in services/sloprail/provenance.go sets only SLOPRAIL_LAUNCHED_BY, so a guardrail hook gets no SR_SESSION_ID and no SR_WORKSPACE and `session query` cannot find the record). NOT blocked on impl/baseline-mark any more: sessionstate.MetaTranscriptRead and MetaTranscriptOffered have landed, so the read position now has somewhere to live")
 	e := New(t)
 	proj := e.Project()
 

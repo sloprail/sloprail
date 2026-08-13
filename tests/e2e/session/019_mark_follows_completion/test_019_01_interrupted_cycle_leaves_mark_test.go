@@ -100,7 +100,7 @@ func promptsIn(answer string, markers ...string) []string {
 // second cycle completes and its answer can be read without a refusal in the
 // way. Both write to the same ledger file, so the answers accumulate in order.
 func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl (no PostFile* dispatch, so this hook never runs) and impl/hook-env (a guardrail hook gets no transcript path and no SR_WORKSPACE, so `session query` cannot find the record) and impl/baseline-mark (nothing records a read position, so there is no narrowing to observe)")
+	t.Skip("blocked on impl/stop-diff-impl (dispatchPostEvents in session_stop.go is still the stub returning false, so this Post-bound hook never runs) and impl/hook-env (hookEnv in services/sloprail/provenance.go sets only SLOPRAIL_LAUNCHED_BY, so a guardrail hook gets no SR_SESSION_ID and no SR_WORKSPACE and `session query` cannot find the record). NOT blocked on impl/baseline-mark any more: sessionstate.MetaTranscriptRead and MetaTranscriptOffered have landed, so the read position now has somewhere to live")
 	e := New(t)
 	proj := e.Project()
 
@@ -162,7 +162,7 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 // pins down in THIS directory is that completion is what licenses the advance.
 // If T019_01 passes and this fails, the mark is simply never moving.
 func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl (no PostFile* dispatch, so this hook never runs) and impl/hook-env (a guardrail hook gets no transcript path and no SR_WORKSPACE, so `session query` cannot find the record) and impl/baseline-mark (nothing records a read position, so there is no narrowing to observe)")
+	t.Skip("blocked on impl/stop-diff-impl (dispatchPostEvents in session_stop.go is still the stub returning false, so this Post-bound hook never runs) and impl/hook-env (hookEnv in services/sloprail/provenance.go sets only SLOPRAIL_LAUNCHED_BY, so a guardrail hook gets no SR_SESSION_ID and no SR_WORKSPACE and `session query` cannot find the record). NOT blocked on impl/baseline-mark any more: sessionstate.MetaTranscriptRead and MetaTranscriptOffered have landed, so the read position now has somewhere to live")
 	e := New(t)
 	proj := e.Project()
 	e.Guardrail(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})

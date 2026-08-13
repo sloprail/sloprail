@@ -101,7 +101,7 @@ func seedUntouched(e *Env, proj string) {
 // session touches one of them. If this fails, the ledger in this directory
 // cannot register anything at all, and every absence asserted below is vacuous.
 func TestT017_01_ATouchedFileIsReported(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: `sloprail session stop` returns before diffing the tree (session_stop.go: `return nil // TODO: diff the tree, dispatch the Post events`), so no PostFile* event is ever dispatched and no binding can observe one")
+	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -133,7 +133,7 @@ func TestT017_01_ATouchedFileIsReported(t *testing.T) {
 // assertion below runs against a ledger that has just been shown to contain the
 // other file.
 func TestT017_02_AnUntouchedFileProducesNothing(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: `sloprail session stop` returns before diffing the tree (session_stop.go: `return nil // TODO: diff the tree, dispatch the Post events`), so no PostFile* event is ever dispatched and no binding can observe one")
+	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -171,7 +171,7 @@ func TestT017_02_AnUntouchedFileProducesNothing(t *testing.T) {
 // that accumulates every path it noticed being written during the cycle. Both
 // pass T017_02; only the comparing one passes this.
 func TestT017_03_AFileRestoredToItsOriginalIsNotReported(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: `sloprail session stop` returns before diffing the tree (session_stop.go: `return nil // TODO: diff the tree, dispatch the Post events`), so no PostFile* event is ever dispatched and no binding can observe one")
+	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)

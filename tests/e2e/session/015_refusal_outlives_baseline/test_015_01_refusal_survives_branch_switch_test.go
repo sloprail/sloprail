@@ -107,7 +107,7 @@ func countPath(got []observed, path string) int {
 // id, which is what makes the second one a later cycle of the same session
 // rather than a fresh one with a fresh baseline.
 func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: `sloprail session stop` returns before diffing the tree (session_stop.go: `return nil // TODO: diff the tree, dispatch the Post events`), so no PostFile* event is ever dispatched and no binding can observe one")
+	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -152,7 +152,7 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 // it, so it is present in the tree at the end of the second cycle without being
 // part of the second cycle's diff against the re-taken point.
 func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: `sloprail session stop` returns before diffing the tree (session_stop.go: `return nil // TODO: diff the tree, dispatch the Post events`), so no PostFile* event is ever dispatched and no binding can observe one")
+	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -229,7 +229,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 // The fix is a rename of the content, not of the path — the same path now holds
 // content the rule accepts.
 func TestT015_03_AFixedFileStopsBeingReported(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: `sloprail session stop` returns before diffing the tree (session_stop.go: `return nil // TODO: diff the tree, dispatch the Post events`), so no PostFile* event is ever dispatched and no binding can observe one")
+	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
