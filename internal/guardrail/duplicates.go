@@ -56,6 +56,7 @@ func walkDuplicates(n *yaml.Node, path string, found *[]Problem) {
 			if first, dup := seen[k.Value]; dup {
 				*found = append(*found, Problem{
 					Kind:    ErrDuplicateKey,
+					Fault:   FaultDeclaration,
 					Binding: -1,
 					Hook:    -1,
 					Detail: fmt.Sprintf("%s defined twice (lines %d, %d) — only one of them can take effect",

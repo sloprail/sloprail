@@ -133,9 +133,15 @@ func (s *Store) Load() ([]Declaration, []Invalid, error) {
 }
 
 // LoadWith reads every declaration and validates each against the kinds this
-// build can produce. A declaration that cannot do what it says is returned as
-// Invalid rather than as a Declaration, so nothing downstream has to wonder
-// whether what it is holding is enforceable.
+// build can produce.
+//
+// A declaration that cannot do what it says is returned as Invalid rather than
+// as a Declaration, so nothing downstream has to wonder whether what it is
+// holding is enforceable. But only a fault in the DECLARATION disqualifies it.
+// A hook that is merely not executable right now leaves the rule loaded, with
+// the complaint on Declaration.Warnings, because the runtime already refuses an
+// action whose hook cannot run — and a rule dropped here would instead let that
+// action through. See Fault.
 func (s *Store) LoadWith(reg *module.Registry) ([]Declaration, []Invalid, error) {
 	entries, err := os.ReadDir(s.guardrailsDir())
 	if os.IsNotExist(err) {
@@ -157,10 +163,18 @@ func (s *Store) LoadWith(reg *module.Registry) ([]Declaration, []Invalid, error)
 		if len(problems) == 0 && reg != nil {
 			problems = Validate(d, reg)
 		}
-		if len(problems) > 0 {
+
+		disabling, warnings := Partition(problems)
+		if len(disabling) > 0 {
+			// Everything found is reported, warnings included: an author fixing
+			// the declaration should see the chmod they also owe.
 			invalid = append(invalid, newInvalid(e.Name(), problems...))
 			continue
 		}
+
+		// Environment faults alone. The rule loads and carries its complaint,
+		// so it can still refuse while the machine is wrong.
+		d.Warnings = warnings
 		decls = append(decls, d)
 	}
 
@@ -210,6 +224,7 @@ func (s *Store) loadOne(name string) (Declaration, []Problem) {
 func malformed(format string, args ...any) Problem {
 	return Problem{
 		Kind:    ErrMalformed,
+		Fault:   FaultDeclaration,
 		Binding: -1,
 		Hook:    -1,
 		Detail:  fmt.Sprintf(format, args...),

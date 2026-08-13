@@ -32,7 +32,7 @@ func newSessionStartCmd() *cobra.Command {
 			// ones that need to know which events exist and what they carry.
 			// Session start is where a person is still watching, so it is where
 			// a rule that could never fire should say so.
-			_, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
+			decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
 			if err != nil {
 				// Reported, not fatal — see above.
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
@@ -45,6 +45,18 @@ func newSessionStartCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q not loaded:\n", iv.Name)
 				for _, reason := range iv.Reasons {
 					fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", reason)
+				}
+			}
+
+			// Rules that loaded despite something being wrong with the machine.
+			// Said differently from "not loaded", because the consequence is
+			// different: this rule is in force and will refuse the work it
+			// guards until the hook can run.
+			for _, d := range decls {
+				for _, w := range d.Warnings {
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"sloprail: guardrail %q will refuse until this is fixed: %s\n",
+						d.Name, w.Message())
 				}
 			}
 			return nil

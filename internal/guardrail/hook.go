@@ -21,11 +21,17 @@ func validateHook(d Declaration, h Hook, kind string, binding, j int) []Problem 
 	}
 
 	if strings.TrimSpace(h.Command) == "" {
-		return append(problems, at(ErrBadHookCommand, kind, binding, j, "no command"))
+		// Nothing on disk can make an empty command runnable, so this is the
+		// declaration being wrong rather than the machine.
+		return append(problems, at(ErrNoHookCommand, kind, binding, j, "no command"))
 	}
 
 	if detail := checkExecutable(d.Dir, h.Command); detail != "" {
-		problems = append(problems, at(ErrBadHookCommand, kind, binding, j, "%s", detail))
+		// An environment fault: the declaration names a command and means it.
+		// Warned about, not disabling — the rule loads so that the runtime
+		// refuses when the hook cannot run, rather than the write sailing
+		// through because the rule was never there.
+		problems = append(problems, atEnv(ErrHookNotRunnable, kind, binding, j, "%s", detail))
 	}
 	return problems
 }
@@ -70,7 +76,34 @@ func checkExecutable(dir, command string) string {
 	if info.Mode().Perm()&0o111 == 0 {
 		return "command " + quote(ref) + ": not executable (mode " + info.Mode().Perm().String() + ")"
 	}
+	// A script has to be READ to be run, not just executed: the kernel hands a
+	// `#!` file to its interpreter, which then opens it. `chmod +x` on a
+	// mode-000 file leaves --x--x--x, which passes the test above and still
+	// fails with "Permission denied" — caught here rather than left to
+	// contradict the load report at the moment the hook is needed.
+	//
+	// Only for scripts. A compiled binary is executed directly and needs no
+	// read permission, so demanding one would refuse a hook that works.
+	if isScript(path) && info.Mode().Perm()&0o444 == 0 {
+		return "command " + quote(ref) + ": not readable (mode " + info.Mode().Perm().String() +
+			"), and a #! script must be read to run"
+	}
 	return ""
+}
+
+// isScript reports whether a file starts with `#!`, which is what makes reading
+// it a precondition of running it. An unreadable file cannot be inspected, and
+// is treated as a script: that is the case this check exists for.
+func isScript(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return true
+	}
+	defer f.Close()
+
+	var head [2]byte
+	n, _ := f.Read(head[:])
+	return n == 2 && head[0] == '#' && head[1] == '!'
 }
 
 // isPathRef reports whether a command line's first word names a file rather

@@ -177,37 +177,43 @@ func TestValidate_HookTypeMissing(t *testing.T) {
 	assert.Contains(t, p.Message(), "no type")
 }
 
+// A hook with no command at all is the declaration being wrong: nothing on
+// disk can make an empty command runnable, so the rule cannot load.
 func TestValidate_HookCommandMissing(t *testing.T) {
 	dir := scriptDir(t)
 	d := declWith(dir, "PreFileCreate", "", Hook{Type: HookCommand})
 
-	p := onlyProblem(t, Validate(d, testRegistry(t)), ErrBadHookCommand)
+	p := onlyProblem(t, Validate(d, testRegistry(t)), ErrNoHookCommand)
 	assert.Contains(t, p.Message(), "no command")
+	assert.Equal(t, FaultDeclaration, p.Fault)
 }
 
 func TestValidate_HookCommandDoesNotExist(t *testing.T) {
 	dir := scriptDir(t)
 	d := declWith(dir, "PreFileCreate", "", Hook{Type: HookCommand, Command: "./missing.sh"})
 
-	p := onlyProblem(t, Validate(d, testRegistry(t)), ErrBadHookCommand)
+	p := onlyProblem(t, Validate(d, testRegistry(t)), ErrHookNotRunnable)
 	assert.Contains(t, p.Message(), "missing.sh")
 	assert.Contains(t, p.Message(), "no such file")
+	assert.Equal(t, FaultEnvironment, p.Fault, "a missing script is fixable without touching the declaration")
 }
 
 func TestValidate_HookCommandNotExecutable(t *testing.T) {
 	dir := scriptDir(t)
 	d := declWith(dir, "PreFileCreate", "", Hook{Type: HookCommand, Command: "./plain.sh"})
 
-	p := onlyProblem(t, Validate(d, testRegistry(t)), ErrBadHookCommand)
+	p := onlyProblem(t, Validate(d, testRegistry(t)), ErrHookNotRunnable)
 	assert.Contains(t, p.Message(), "not executable")
+	assert.Equal(t, FaultEnvironment, p.Fault, "chmod +x fixes this without touching the declaration")
 }
 
 func TestValidate_HookCommandIsADirectory(t *testing.T) {
 	dir := scriptDir(t)
 	d := declWith(dir, "PreFileCreate", "", Hook{Type: HookCommand, Command: "./adir"})
 
-	p := onlyProblem(t, Validate(d, testRegistry(t)), ErrBadHookCommand)
+	p := onlyProblem(t, Validate(d, testRegistry(t)), ErrHookNotRunnable)
 	assert.Contains(t, p.Message(), "is a directory")
+	assert.Equal(t, FaultEnvironment, p.Fault)
 }
 
 // A command line with arguments is still resolved by its first word.
@@ -264,7 +270,7 @@ func TestValidate_ReportsEveryProblem(t *testing.T) {
 	assert.Len(t, problems, 4)
 
 	// One of each kind, named rather than matched on wording.
-	for _, kind := range []error{ErrBadMatcher, ErrBadHookType, ErrUnknownEventKind, ErrBadHookCommand} {
+	for _, kind := range []error{ErrBadMatcher, ErrBadHookType, ErrUnknownEventKind, ErrHookNotRunnable} {
 		assert.Truef(t, hasKind(problems, kind), "expected a %v among the problems", kind)
 	}
 }
@@ -358,4 +364,111 @@ func TestMessages_RendersOneLinePerProblem(t *testing.T) {
 	require.Len(t, lines, 1)
 	assert.Equal(t, problems[0].Message(), lines[0])
 	assert.NotContains(t, strings.Join(lines, ""), "\n")
+}
+
+// ---------------------------------------------------------------------------
+// Which faults disarm a rule, and which only warn about it.
+//
+// The distinction is the difference between a typo and a chmod, and getting it
+// wrong in the second direction recreates the fail-open bug: a rule dropped for
+// an unrunnable hook lets through the very action it exists to refuse.
+// ---------------------------------------------------------------------------
+
+// Every fault in the declaration itself disables the rule. There is no runtime
+// that rescues a matcher naming a field the event does not carry.
+func TestFault_DeclarationFaultsDisable(t *testing.T) {
+	dir := scriptDir(t)
+	cases := map[string]Declaration{
+		"unknown kind":  declWith(dir, "NoSuchKind", "", okHook()),
+		"bad matcher":   declWith(dir, "PreFileCreate", `pth == "x"`, okHook()),
+		"bad hook type": declWith(dir, "PreFileCreate", "", Hook{Type: "script", Command: "./ok.sh"}),
+		"no command":    declWith(dir, "PreFileCreate", "", Hook{Type: HookCommand}),
+		"no hooks":      declWith(dir, "PreFileCreate", `path == "x"`),
+	}
+
+	for name, d := range cases {
+		problems := Validate(d, testRegistry(t))
+		require.NotEmptyf(t, problems, "%s should be a problem", name)
+		assert.Truef(t, Disabling(problems), "%s should disable the rule", name)
+	}
+}
+
+// A hook that cannot run is the machine being wrong, not the file. The rule
+// stays loaded so that it can still refuse — the runtime treats a hook that
+// cannot run as a refusal, and a rule dropped here would permit instead.
+func TestFault_UnrunnableHookDoesNotDisable(t *testing.T) {
+	dir := scriptDir(t)
+	cases := map[string]string{
+		"not executable": "./plain.sh",
+		"absent":         "./missing.sh",
+		"a directory":    "./adir",
+	}
+
+	for name, command := range cases {
+		d := declWith(dir, "PreFileCreate", "", Hook{Type: HookCommand, Command: command})
+		problems := Validate(d, testRegistry(t))
+
+		require.NotEmptyf(t, problems, "%s should still be reported", name)
+		assert.Falsef(t, Disabling(problems), "%s must not disarm the rule", name)
+	}
+}
+
+// A declaration fault alongside an environment one still disables: the rule is
+// broken as written, and no chmod changes that.
+func TestFault_DeclarationFaultWinsOverEnvironment(t *testing.T) {
+	dir := scriptDir(t)
+	d := declWith(dir, "PreFileCreate", `pth == "x"`, Hook{Type: HookCommand, Command: "./plain.sh"})
+
+	problems := Validate(d, testRegistry(t))
+	require.Len(t, problems, 2)
+	assert.True(t, Disabling(problems))
+}
+
+func TestPartition_SplitsByFault(t *testing.T) {
+	dir := scriptDir(t)
+	d := declWith(dir, "PreFileCreate", `pth == "x"`, Hook{Type: HookCommand, Command: "./plain.sh"})
+
+	disabling, warnings := Partition(Validate(d, testRegistry(t)))
+	require.Len(t, disabling, 1)
+	require.Len(t, warnings, 1)
+	assert.ErrorIs(t, disabling[0], ErrBadMatcher)
+	assert.ErrorIs(t, warnings[0], ErrHookNotRunnable)
+}
+
+// Nothing wrong means nothing to warn about, so a sound rule carries no
+// warnings and Disabling says so.
+func TestFault_SoundDeclarationHasNeither(t *testing.T) {
+	d := declWith(scriptDir(t), "PreFileCreate", `path startsWith "a/"`, okHook())
+
+	problems := Validate(d, testRegistry(t))
+	assert.Empty(t, problems)
+	assert.False(t, Disabling(problems))
+}
+
+// A script that is executable but not readable still cannot run: the kernel
+// hands a #! file to its interpreter, which has to open it. `chmod +x` on a
+// mode-000 file leaves exactly this state, so the load report must not go quiet
+// while the runtime still refuses.
+func TestValidate_ExecutableButUnreadableScript(t *testing.T) {
+	dir := scriptDir(t)
+	path := filepath.Join(dir, "ok.sh")
+	require.NoError(t, os.Chmod(path, 0o111))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o755) })
+
+	d := declWith(dir, "PreFileCreate", "", okHook())
+	p := onlyProblem(t, Validate(d, testRegistry(t)), ErrHookNotRunnable)
+	assert.Contains(t, p.Message(), "not readable")
+	assert.Equal(t, FaultEnvironment, p.Fault)
+}
+
+// A binary needs no read permission — it is executed directly rather than read
+// by an interpreter — so demanding one would refuse a hook that works.
+func TestValidate_ExecutableOnlyBinaryIsAccepted(t *testing.T) {
+	dir := scriptDir(t)
+	bin := filepath.Join(dir, "prog")
+	// No #! line: an ELF-ish blob stands in for a compiled program.
+	require.NoError(t, os.WriteFile(bin, []byte{0x7f, 'E', 'L', 'F', 0, 0, 0, 0}, 0o755))
+
+	d := declWith(dir, "PreFileCreate", "", Hook{Type: HookCommand, Command: "./prog"})
+	assert.Empty(t, Validate(d, testRegistry(t)), "a binary is run without being read")
 }

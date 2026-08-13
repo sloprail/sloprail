@@ -614,3 +614,78 @@ func TestLoadWith_MissingFrontmatterIsReported(t *testing.T) {
 	require.Len(t, invalid, 1)
 	assert.Contains(t, invalid[0].Reason, "frontmatter")
 }
+
+// ---------------------------------------------------------------------------
+// A rule whose hook cannot run stays loaded.
+//
+// This is the load-time half of the fail-open guarantee. The runtime refuses an
+// action whose hook exits non-zero, including the 126 of a file that is not
+// executable — but only for a rule it was given. Dropping the rule here would
+// mean nothing dispatches and the action proceeds, which is the bug by a
+// different route.
+// ---------------------------------------------------------------------------
+
+const unrunnableHook = `---
+hooks:
+  PreFileCreate:
+    - hooks:
+        - type: command
+          command: ./ok.sh
+---
+
+# Its hook exists but is not executable
+`
+
+func TestLoadWith_UnrunnableHookStillLoads(t *testing.T) {
+	root := t.TempDir()
+	writeGuardrailWithHook(t, root, "unrunnable", unrunnableHook)
+	// Take away what makes it runnable, leaving the declaration untouched.
+	require.NoError(t, os.Chmod(filepath.Join(root, "guardrails", "unrunnable", "ok.sh"), 0o644))
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+
+	assert.Empty(t, invalid, "a chmod away from working is not a broken declaration")
+	require.Len(t, decls, 1, "the rule must load, or nothing refuses the write it guards")
+
+	require.Len(t, decls[0].Warnings, 1, "and it must say what is wrong")
+	assert.ErrorIs(t, decls[0].Warnings[0], ErrHookNotRunnable)
+	assert.Contains(t, decls[0].Warnings[0].Message(), "not executable")
+}
+
+// The same declaration with its hook executable loads clean, so the warning
+// above is the check working rather than a warning nobody can clear.
+func TestLoadWith_RunnableHookLoadsWithoutWarnings(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "fine", unrunnableHook)
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, invalid)
+	require.Len(t, decls, 1)
+	assert.Empty(t, decls[0].Warnings)
+}
+
+// A declaration fault still disqualifies, and takes the environment complaint
+// with it into the report so the author sees both at once.
+func TestLoadWith_DeclarationFaultStillDisqualifies(t *testing.T) {
+	const bothFaults = `---
+hooks:
+  PreFileCreate:
+    - matcher: pth startsWith "a/"
+      hooks:
+        - type: command
+          command: ./ok.sh
+---
+`
+	root := t.TempDir()
+	writeGuardrailWithHook(t, root, "both", bothFaults)
+	require.NoError(t, os.Chmod(filepath.Join(root, "guardrails", "both", "ok.sh"), 0o644))
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, decls)
+	require.Len(t, invalid, 1)
+
+	assert.True(t, invalid[0].Has(ErrBadMatcher))
+	assert.True(t, invalid[0].Has(ErrHookNotRunnable), "the chmod is reported too, not swallowed")
+}
