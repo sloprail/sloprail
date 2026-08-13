@@ -1,0 +1,19 @@
+# Built binaries. Each service compiles to one at the repo root, so a plain
+# `go build ./services/...` leaves them in the working tree.
+/sloprail
+/sr
+/sr-mark
+/sr-session
+/sr-file
+/sr-command
+
+# Where the e2e harness builds the binary it drives. Under the git directory
+# rather than the system temp dir, because macOS reaps /var/folders mid-run —
+# see tests/e2e/harness/harness.go. Listed here for the case where someone
+# points it at the tree instead.
+/.e2e-bin/
+
+# The session state store, and the sidecars SQLite keeps beside an open one.
+*.db
+*.db-wal
+*.db-shm
