@@ -531,6 +531,77 @@ func TestLoadWith_MatcherFaultMakesItInvalid(t *testing.T) {
 	assert.Contains(t, invalid[0].Reason, "pth")
 }
 
+// ---------------------------------------------------------------------------
+// What a broken declaration was GUARDING.
+//
+// An enforcement point has to say what the loss of a rule costs, and it can only
+// do that if it knows which events stopped being watched. Without this a hook
+// point has two choices, and both are wrong: refuse everything, so a typo in one
+// rule halts a project; or refuse nothing, which is the fail-open this exists to
+// prevent.
+// ---------------------------------------------------------------------------
+
+func TestInvalid_AffectedKindsNamesWhatItGuarded(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "typo", misspelledField)
+
+	_, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, invalid, 1)
+
+	assert.Equal(t, []string{"PreFileCreate"}, invalid[0].AffectedKinds(),
+		"the kind whose events are no longer guarded")
+}
+
+// A declaration too malformed to parse names no kinds, so it scopes to nothing.
+//
+// Deliberate, and the one case where leniency is right: there are no bindings to
+// read off a file that did not parse, so there is no evidence of what it was
+// guarding. Guessing would mean blocking every action in the project on the
+// strength of an unreadable file.
+func TestInvalid_AffectedKindsIsEmptyForAnUnparseableDeclaration(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "prose-only", "# Just prose\n")
+
+	_, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, invalid, 1)
+
+	assert.Empty(t, invalid[0].AffectedKinds(),
+		"nothing can be said about what an unreadable declaration was guarding")
+}
+
+// Every kind a broken declaration bound to, deduplicated and in a stable order —
+// one fault per binding must not report the same kind twice, and two runs must
+// agree so a diff of two reports is not noise.
+func TestInvalid_AffectedKindsAreUniqueAndSorted(t *testing.T) {
+	const brokenAcrossKinds = `---
+hooks:
+  PreFileDelete:
+    - matcher: pth == "a"
+      hooks:
+        - type: command
+          command: ./ok.sh
+  PreFileCreate:
+    - matcher: pth == "a"
+      hooks:
+        - type: command
+          command: ./ok.sh
+    - matcher: pth == "b"
+      hooks:
+        - type: command
+          command: ./ok.sh
+---
+
+# Broken in three bindings across two kinds
+`
+	root := writeGuardrailWithHook(t, t.TempDir(), "broken", brokenAcrossKinds)
+
+	_, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, invalid, 1)
+
+	assert.Equal(t, []string{"PreFileCreate", "PreFileDelete"}, invalid[0].AffectedKinds())
+}
+
 // The isolation property, and the reason validation reports rather than
 // refuses: a single typo must not silently disarm a whole project.
 func TestLoadWith_OneBadDeclarationDisablesOnlyItself(t *testing.T) {

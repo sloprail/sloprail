@@ -120,6 +120,36 @@ func (iv Invalid) Has(kind error) bool {
 	return false
 }
 
+// AffectedKinds names the event kinds this broken declaration was bound to, in a
+// stable order.
+//
+// What it is FOR: an enforcement point has to say what the loss of this rule
+// costs, and the honest answer is "the events it was watching are no longer
+// watched". Naming them lets a refusal be scoped to the work this rule was
+// about, rather than to every action in the project — a typo in a rule about
+// commands must not block a write no rule was ever written about.
+//
+// Read off the problems rather than off the declaration, because a declaration
+// that failed to PARSE has no bindings to read: `loadOne` returns a zero
+// Declaration and one malformed problem carrying no event. Such a declaration
+// yields no kinds here, and a caller that scopes by kind will not scope to it —
+// which is correct and deliberate. Nothing can be said about what an unreadable
+// file was guarding, and inventing a scope would mean either blocking everything
+// on a guess or blocking nothing while claiming to have checked.
+func (iv Invalid) AffectedKinds() []string {
+	seen := make(map[string]bool)
+	var kinds []string
+	for _, p := range iv.Problems {
+		if p.Event == "" || seen[p.Event] {
+			continue
+		}
+		seen[p.Event] = true
+		kinds = append(kinds, p.Event)
+	}
+	sort.Strings(kinds)
+	return kinds
+}
+
 // Load reads every declaration, returning those that parsed and those that did
 // not. A project with no dot-directory has no guardrails, which is not an
 // error — it is the ordinary state of a project that has not adopted any.

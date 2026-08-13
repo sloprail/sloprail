@@ -212,6 +212,225 @@ func TestMatch_ZeroValueMatchesTheDeclaredType(t *testing.T) {
 	}
 }
 
+// TestMatch_ZeroValueOfAListIsEmptyNotNil pins the distinction len() cannot see.
+//
+// `len(l) == 0` holds for both `[]any{}` and `[]any(nil)`, so the table above
+// stays green if the fill-in is changed to hand out nils — which would put a nil
+// where the expression was type-checked against a list, exactly the shape this
+// whole mechanism exists to prevent. `l == nil` is the only expression that
+// tells them apart.
+func TestMatch_ZeroValueOfAListIsEmptyNotNil(t *testing.T) {
+	kind := module.KindDecl{Name: "K", Fields: []module.FieldDecl{
+		{Name: "l", Type: module.TypeList},
+		{Name: "mp", Type: module.TypeMap},
+	}}
+	bare := event.Event{Kind: "K", Fields: map[string]any{}}
+
+	for _, tc := range []struct {
+		src      string
+		admitted bool
+		why      string
+	}{
+		{`l == nil`, false, "an omitted list reads as empty, not as absent"},
+		{`l != nil`, true, "the same claim from the other side"},
+		{`mp == nil`, false, "an omitted map reads as empty, not as absent"},
+		{`mp != nil`, true, "the same claim from the other side"},
+	} {
+		t.Run(tc.src, func(t *testing.T) {
+			m, err := CompileMatcherFor(tc.src, kind)
+			require.NoError(t, err)
+
+			admitted, err := m.Match(bare)
+			require.NoError(t, err)
+			assert.Equal(t, tc.admitted, admitted, tc.why)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The fill-in reaches as far as the type check does.
+//
+// matcherEnv/fieldType recurse: a map's enumerated keys and a list element's
+// declared fields are type-checked to the bottom. zeroOf did not, and it only
+// acted when a key was ABSENT. Both gaps land in the same place — a nil where
+// the expression was checked against a string — and the engine's response to a
+// matcher error is to skip the binding and let the action through.
+//
+// Each case below is a rule that would fail open on exactly the occurrence it
+// was written to catch.
+// ---------------------------------------------------------------------------
+
+// enumeratedKind declares a map with named keys and a list whose element shape
+// is known — the two places fieldType descends into and zeroOf did not.
+var enumeratedKind = module.KindDecl{
+	Name: "PreThing",
+	Fields: []module.FieldDecl{
+		{Name: "path", Type: module.TypeString},
+		{
+			Name: "meta",
+			Type: module.TypeMap,
+			Fields: []module.FieldDecl{
+				{Name: "user", Type: module.TypeString},
+				{Name: "admin", Type: module.TypeBool},
+			},
+		},
+		{
+			Name: "invocations",
+			Type: module.TypeList,
+			Elem: &module.FieldDecl{
+				Type: module.TypeMap,
+				Fields: []module.FieldDecl{
+					{Name: "bin", Type: module.TypeString},
+					{Name: "flags", Type: module.TypeList, Elem: &module.FieldDecl{Type: module.TypeString}},
+				},
+			},
+		},
+	},
+}
+
+// An explicit JSON null is the likeliest real trigger: it is the ordinary
+// unmarshal shape of a producer that sent the key with no value. The key is
+// PRESENT, so the absence check skipped it and the expression met a nil.
+func TestMatch_ExplicitNullIsTheZeroValueNotAnError(t *testing.T) {
+	nulled := event.Event{Kind: "PreFileCreate", Fields: map[string]any{
+		"path": "a.txt", "content": nil,
+	}}
+
+	m, err := CompileMatcherFor(`content == ""`, preFileCreate())
+	require.NoError(t, err)
+
+	admitted, err := m.Match(nulled)
+	require.NoError(t, err,
+		"a declared field carried as null must not error the matcher")
+	assert.True(t, admitted,
+		`content == "" is the rule for an empty file and must fire on one sent as null`)
+}
+
+// An enumerated map the producer omitted entirely. zeroOf returned a flat
+// map[string]any{}, so `meta.user` was a nil where matcherEnv had built a closed
+// type over `user` and promised a string.
+func TestMatch_OmittedEnumeratedMapFillsItsDeclaredKeys(t *testing.T) {
+	bare := event.Event{Kind: "PreThing", Fields: map[string]any{"path": "a"}}
+
+	m, err := CompileMatcherFor(`meta.user == ""`, enumeratedKind)
+	require.NoError(t, err)
+
+	admitted, err := m.Match(bare)
+	require.NoError(t, err, "an omitted map's declared keys must carry their own zero values")
+	assert.True(t, admitted)
+
+	// The bool key too, so this is the type descending rather than one string
+	// being special-cased.
+	mb, err := CompileMatcherFor(`meta.admin == false`, enumeratedKind)
+	require.NoError(t, err)
+	admitted, err = mb.Match(bare)
+	require.NoError(t, err)
+	assert.True(t, admitted)
+}
+
+// The map is present and the declared key is not. The fill-in has to reach
+// inside a value the producer DID send, which the top-level-only version could
+// not do at all.
+func TestMatch_PresentMapMissingADeclaredKey(t *testing.T) {
+	partial := event.Event{Kind: "PreThing", Fields: map[string]any{
+		"path": "a", "meta": map[string]any{},
+	}}
+
+	m, err := CompileMatcherFor(`meta.user == ""`, enumeratedKind)
+	require.NoError(t, err)
+
+	admitted, err := m.Match(partial)
+	require.NoError(t, err, "a declared key missing from a carried map is its zero value")
+	assert.True(t, admitted)
+}
+
+// A list element missing a field its Elem declares. This is the `commandmod`
+// rule shape the spec documents, so it is the one most likely to be written.
+func TestMatch_ListElementMissingADeclaredField(t *testing.T) {
+	partial := event.Event{Kind: "PreThing", Fields: map[string]any{
+		"path":        "a",
+		"invocations": []any{map[string]any{"flags": []any{}}},
+	}}
+
+	m, err := CompileMatcherFor(`any(invocations, .bin == "npm")`, enumeratedKind)
+	require.NoError(t, err)
+
+	admitted, err := m.Match(partial)
+	require.NoError(t, err, "an element missing a declared field must not error the matcher")
+	assert.False(t, admitted, `.bin is "" there, which is not "npm"`)
+
+	// And the rule that SHOULD fire on it still does, so the fill-in has not
+	// flattened everything into a non-match.
+	empty, err := CompileMatcherFor(`any(invocations, .bin == "")`, enumeratedKind)
+	require.NoError(t, err)
+	admitted, err = empty.Match(partial)
+	require.NoError(t, err)
+	assert.True(t, admitted)
+}
+
+// A carried value inside a nested structure still wins, at every depth. The
+// fill-in supplies what is missing and never overwrites what arrived.
+func TestMatch_NestedCarriedValuesBeatTheZeroValue(t *testing.T) {
+	full := event.Event{Kind: "PreThing", Fields: map[string]any{
+		"path": "a",
+		"meta": map[string]any{"user": "nikita", "admin": true},
+		"invocations": []any{
+			map[string]any{"bin": "npm", "flags": []any{"--access"}},
+		},
+	}}
+
+	for _, src := range []string{
+		`meta.user == "nikita"`,
+		`meta.admin`,
+		`any(invocations, .bin == "npm" && "--access" in .flags)`,
+	} {
+		m, err := CompileMatcherFor(src, enumeratedKind)
+		require.NoError(t, err, "src %q", src)
+
+		admitted, err := m.Match(full)
+		require.NoError(t, err, "src %q", src)
+		assert.True(t, admitted, "src %q: a carried value is what the expression reads", src)
+	}
+}
+
+// A matcher CAN still error at run time, and the engine has to have an answer
+// for it. The recursion above closes the gaps the declaration knows about; it
+// cannot close the ones it does not.
+//
+// This is the case that remains: a list whose element shape the module did not
+// declare leaves its predicate body unchecked, so an expression reaching inside
+// an element compiles against nothing and meets whatever actually arrives. The
+// command module declares `invocations` exactly this way, and
+// `len(.flags.access) > 0` — "was --access given a value" — is an ordinary rule
+// to write against it.
+//
+// Recorded here so the engine's response to it is a decision rather than an
+// oversight: see refuseForBroken's sibling in services/sloprail, which refuses
+// rather than skipping the binding.
+func TestMatch_UndeclaredElementShapeCanStillErrorAtRuntime(t *testing.T) {
+	m, err := CompileMatcherFor(`any(items, len(.flags.access) > 0)`, looseKind)
+	require.NoError(t, err, "the module did not say what items holds, so nothing checks this")
+
+	admitted, err := m.Match(event.Event{Kind: "PreLoose", Fields: map[string]any{
+		"items": []any{map[string]any{"bin": "npm", "flags": map[string]any{}}},
+	}})
+	require.Error(t, err, "an unchecked predicate body still meets a nil at run time")
+	assert.False(t, admitted, "an erroring matcher admits nothing")
+}
+
+// An unenumerated map keeps its open type, so the fill-in must not invent keys
+// for it. matcherEnv leaves such a field as types.Any precisely because the
+// module never claimed to know its keys, and manufacturing some here would
+// contradict that.
+func TestMatch_UnenumeratedMapIsNotGivenInventedKeys(t *testing.T) {
+	m, err := CompileMatcherFor(`meta.whatever == nil`, commandKind)
+	require.NoError(t, err)
+
+	admitted, err := m.Match(event.Event{Kind: "PreCommand", Fields: map[string]any{}})
+	require.NoError(t, err)
+	assert.True(t, admitted, "an unenumerated map is empty, and any key of it is nil")
+}
+
 func TestMatch_CarriedValueBeatsTheZeroValue(t *testing.T) {
 	// The fill-in must never shadow what the producer actually sent — including
 	// a field explicitly carried as its zero value.

@@ -39,8 +39,18 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	// LoadWith, so a declaration that cannot do what it says never reaches
 	// enforcement. Without it a matcher naming a field its kind does not carry
 	// would be compiled here and quietly admit nothing.
-	decls, _, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
-	if err != nil || len(decls) == 0 {
+	decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+	}
+
+	// Written to stderr for a person tailing logs. Note this alone does NOT reach
+	// the agent: at this hook point a harness forwards stderr only when the hook
+	// exits non-zero, so a diagnostic printed beside a permitted action is
+	// swallowed. That is why it is not the whole answer — see refuseForBroken.
+	reportInvalid(cmd, invalid)
+
+	if len(decls) == 0 && len(invalid) == 0 {
 		// Nothing declared, or nothing readable. Either way there is no rule to
 		// enforce, and an engine that refused here would be refusing on its own
 		// behalf rather than on any project's.
@@ -49,11 +59,20 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 
 	// Only the modules something actually binds to. Producing an event nobody
 	// asked for is work done to be discarded.
+	//
+	// The broken declarations are included. Their bindings are exactly what has
+	// stopped being enforced, and the events they named are the ones whose
+	// occurrence has to be noticed in order to say so — leaving them out would
+	// mean the one case that must be reported is the one case no event is
+	// produced for.
 	var bound []string
 	for _, d := range decls {
 		if d.IsEnabled() {
 			bound = append(bound, d.BoundKinds()...)
 		}
+	}
+	for _, iv := range invalid {
+		bound = append(bound, iv.AffectedKinds()...)
 	}
 
 	in := module.Input{
@@ -86,6 +105,13 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 
+		// Before any rule is consulted: if a declaration that WOULD have guarded
+		// this event could not be loaded, this action is one the project believes
+		// is guarded and is not. Say so by refusing it.
+		if reason, broken := refuseForBroken(invalid, e.Kind); broken {
+			return deny(cmd, reason)
+		}
+
 		for _, d := range decls {
 			if !d.IsEnabled() {
 				continue
@@ -94,18 +120,48 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 			for _, b := range d.Hooks[e.Kind] {
 				m, err := guardrail.CompileMatcherFor(b.Matcher, kindDecl)
 				if err != nil {
-					// A matcher that will not compile disables its binding and
-					// says so. Treating it as "matches everything" would turn a
-					// typo into a rule that refuses all work; treating it as
-					// "matches nothing" would turn one into a rule that quietly
-					// went away.
+					// Not reachable for a declaration in `decls`: the identical
+					// compile runs at load, and a matcher that fails it makes the
+					// whole declaration Invalid, which refuseForBroken above has
+					// already turned into a refusal. Kept because this is the
+					// place the compile actually happens, and a second opinion
+					// that disagreed with the load check would otherwise decide
+					// enforcement silently.
+					//
+					// Refuses rather than skipping, so that if the two ever do
+					// disagree the answer is a stopped action and a diagnostic,
+					// not a rule that quietly went away — which is exactly the
+					// defect this whole file was corrected for.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
-					continue
+					return deny(cmd, fmt.Sprintf(
+						"guardrail %q has a matcher that will not compile against %s: %v. "+
+							"The action was refused because a rule that cannot be checked must not be read as approval.",
+						d.Name, e.Kind, err))
 				}
 				admitted, err := m.Match(e)
 				if err != nil {
+					// A matcher that cannot be evaluated is the engine unable to
+					// ANSWER whether this rule applies — not the rule being
+					// satisfied. Skipping the binding here made the two
+					// indistinguishable, and did it on a channel nobody reads: at
+					// this hook point stderr beside a permitted action reaches
+					// neither the agent nor the transcript.
+					//
+					// The same rule the hook side already follows. A hook that
+					// cannot run refuses; a matcher that cannot be evaluated is
+					// the identical failure one step earlier in the same
+					// mechanism, and a guardrail must not have a path where the
+					// machinery breaking reads as consent.
+					//
+					// Scoped to this binding's event, like every other refusal
+					// here — an unanswerable expression about commands must not
+					// halt a write no rule was written about.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
-					continue
+					return deny(cmd, fmt.Sprintf(
+						"guardrail %q could not decide whether it applies to this %s: %v. "+
+							"The action was refused because a matcher that cannot be evaluated is not the same as a rule that was satisfied. "+
+							"Fix the matcher, or disable the guardrail with `enabled: false` if it is not ready.",
+						d.Name, e.Kind, err))
 				}
 				if !admitted {
 					continue
@@ -113,8 +169,30 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 
 				v, err := runHooks(d, b, e)
 				if err != nil {
+					// The third member of the same family, and the one whose own
+					// comment already said so: runHooks returns an error when the
+					// hook could not be STARTED, noting that is "not something to
+					// proceed through either" — and then the caller proceeded
+					// through it. A hook that exits 126 refuses (see 004); a hook
+					// the OS would not launch at all is a strictly earlier failure
+					// of the same mechanism and cannot mean less.
+					//
+					// Also covers a hook type this engine does not understand,
+					// which reaches here for the same reason and with the same
+					// consequence: nothing was asked, so nothing approved.
+					//
+					// DO NOT DELETE THIS BRANCH ON THE STRENGTH OF ITS COVERAGE.
+					// No e2e reaches it, and that is a fact about the load check
+					// rather than about this code: an unknown hook type is refused
+					// at load, and `sh -c` starts even when the command inside it
+					// does not — a missing or non-executable script comes back as
+					// 127 or 126, which is an ExitError and a refusal, not this.
+					// It is what stands here if either of those stops holding.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
-					continue
+					return deny(cmd, fmt.Sprintf(
+						"guardrail %q could not run its hook for this %s: %v. "+
+							"The action was refused because a guardrail that cannot run must not be read as approval.",
+						d.Name, e.Kind, err))
 				}
 				if v.Refused {
 					return deny(cmd, fmt.Sprintf("%s (%s)", v.Reason, d.Name))
@@ -123,6 +201,79 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	return nil
+}
+
+// reportInvalid says which declarations were not loaded and why, one line per
+// fault.
+//
+// Shared by every hook point that loads, so the wording an author sees at a
+// write is the wording they saw at session start. Two copies of this reported
+// the same fault differently once, which is how a person comes to believe they
+// are two faults.
+//
+// One line per fault rather than all of them joined: validation reports
+// everything at once so an author can fix a declaration in one pass, and running
+// them together undoes that.
+func reportInvalid(cmd *cobra.Command, invalid []guardrail.Invalid) {
+	for _, iv := range invalid {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q not loaded:\n", iv.Name)
+		for _, reason := range iv.Reasons {
+			fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", reason)
+		}
+	}
+}
+
+// refuseForBroken decides whether a declaration that failed to load should stop
+// this particular event, and what to say about it.
+//
+// # Why this refuses rather than merely warning
+//
+// A declaration fault means the rule could never fire for anyone, so there is no
+// hook to dispatch and nothing to ask. The tempting reading is that this leaves
+// nothing to refuse ON BEHALF OF, and that a diagnostic is therefore enough. It
+// is not, for a reason that is a property of the hook point rather than of the
+// rule: at PreToolUse a harness forwards a hook's stderr to the agent only when
+// the hook exits non-zero. A diagnostic printed alongside a permitted action
+// reaches a log nobody is reading and reaches the agent not at all. "Warn and
+// proceed" is therefore not a gentler enforcement — it is the silence, with a
+// line of code that looks like it addressed the problem.
+//
+// So the project's own governing rule applies one level up. A HOOK that cannot
+// run is a refusal, because the mechanism failing must not read as approval. A
+// RULE that cannot load is the same failure earlier in the same mechanism, and
+// an author who wrote `paht` believes their writes are guarded. Letting the
+// write through tells them they were right.
+//
+// # Why it is scoped to the affected kinds
+//
+// Refusing everything would be the mistake guardrail.Fault warns about, one door
+// along: a typo in a rule about commands would block a write no rule was ever
+// written about, and the only way out would be deleting the rule. So a broken
+// declaration stops exactly the events it bound to and nothing else. A project
+// whose only broken rule is about commands writes files freely.
+//
+// A declaration too malformed to parse names no kinds, and so stops nothing.
+// That is deliberate: see Invalid.AffectedKinds. It is also the one case where
+// this is genuinely a warning, and it is the right one to be lenient about —
+// there is no evidence of what it was guarding, and guessing would mean blocking
+// every action in the project on the strength of an unreadable file.
+func refuseForBroken(invalid []guardrail.Invalid, kind string) (string, bool) {
+	for _, iv := range invalid {
+		for _, k := range iv.AffectedKinds() {
+			if k != kind {
+				continue
+			}
+			// Every fault, not the first — the same reason Validate reports them
+			// together. An author fixing this should need one pass, not one
+			// refused write per mistake.
+			return fmt.Sprintf(
+				"guardrail %q is bound to %s but could not be loaded, so it is not guarding this action: %s. "+
+					"The action was refused because a guardrail that cannot load must not be read as approval — "+
+					"fix the declaration in %s, or disable it with `enabled: false` if it is not ready.",
+				iv.Name, kind, iv.Reason, iv.Name), true
+		}
+	}
+	return "", false
 }
 
 // verdict is what one binding's hooks concluded.

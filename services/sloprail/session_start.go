@@ -39,15 +39,10 @@ func newSessionStartCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 				return nil
 			}
-			for _, iv := range invalid {
-				// One line per fault, rather than all of them joined. An author
-				// reading a terminal is the reason validation reports
-				// everything at once, and running them together undoes that.
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q not loaded:\n", iv.Name)
-				for _, reason := range iv.Reasons {
-					fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", reason)
-				}
-			}
+			// The same reporting the pre-tool path does, from the same function.
+			// A fault an author reads here and then meets again at a write should
+			// be recognisably the one fault, in the one wording.
+			reportInvalid(cmd, invalid)
 
 			// Rules that loaded despite something being wrong with the machine.
 			// Said differently from "not loaded", because the consequence is
