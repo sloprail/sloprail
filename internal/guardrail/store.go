@@ -250,6 +250,19 @@ func isFence(line []byte) bool {
 	return bytes.Equal(bytes.TrimSpace(line), fence)
 }
 
+// SplitFrontmatter is splitFrontmatter, exported for callers outside this
+// package — `sr-file validate` splits a .md the same way, and a second splitter
+// written beside this one is a second answer to "where does the frontmatter
+// end", free to disagree with the first about `---yaml` or `----`. There is one
+// implementation so there is one answer.
+//
+// The leading YAML is returned with its lines joined as they appeared, so a
+// caller that reports positions inside it counts from the fence, not from the
+// top of the file — line N of `front` is line N+1 of the file.
+func SplitFrontmatter(data []byte) (front, body []byte, err error) {
+	return splitFrontmatter(data)
+}
+
 // splitFrontmatter separates the leading YAML document from the prose beneath
 // it. The prose is returned untouched: it is documentation and rubric at once,
 // and normalising it would change what a judge is judging against.
