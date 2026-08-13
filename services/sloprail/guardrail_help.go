@@ -8,6 +8,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/modules"
 )
 
 // newGuardrailCmd groups what is about the declarations themselves rather than
@@ -48,7 +49,7 @@ The event kinds are printed from the modules that declare them, so this is the
 vocabulary this build actually has rather than a list written alongside it.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			reg, err := registry()
+			reg, err := modules.Registry()
 			if err != nil {
 				return err
 			}
