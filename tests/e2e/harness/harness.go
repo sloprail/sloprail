@@ -1,22 +1,26 @@
-// Package harness drives end-to-end tests the production-faithful way.
+// Package harness drives end-to-end tests the way a session actually runs.
 //
-// The agent is a10n-claude-mock, a drop-in `claude` that emits real Claude Code
-// JSONL and fires the lifecycle hooks it finds in settings. The hooks that fire
-// are THIS repo's plugin, loaded from THIS repo's marketplace — not a
-// hand-written hooks block. So a test exercises the same wiring a user gets:
-// the plugin maps the harness's lifecycle onto our subcommands, and the real
-// binary decides.
+// The agent is a10n-claude-mock, a drop-in `claude` that streams Claude Code
+// JSONL and fires the lifecycle hooks it finds in the project's settings. The
+// hooks it fires are THIS repo's plugin, loaded from THIS repo's marketplace.
 //
-// What a test controls is what the agent tries to do. What happens afterwards
-// is the product.
+// A test therefore controls only what the agent tries to do. Everything after
+// that — the hook firing, the plugin reaching our subcommand, the engine
+// deciding, the refusal travelling back — runs as a user would get it. A test
+// that invoked our binary directly would prove the engine decides correctly
+// while proving nothing about whether anything ever asks it.
+//
+// The isolation and transcript-seeding here are ported from a10n's harness,
+// which learned them the hard way: a "sandboxed" run must never read or write
+// the host's own claude data.
 package harness
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -30,10 +34,13 @@ const (
 
 // Env is one isolated end-to-end environment.
 type Env struct {
-	t        *testing.T
-	BinDir   string // holds the built sloprail binary, prepended to PATH
-	Home     string // an isolated HOME, so a test never reads the real one
-	repoRoot string
+	t         *testing.T
+	binDir    string // the built sloprail binary, prepended to PATH so the plugin finds it
+	home      string
+	configDir string // an isolated stand-in for ~/.claude
+	pluginDir string
+	repoRoot  string
+	mock      string
 }
 
 var (
@@ -42,7 +49,6 @@ var (
 	buildErr  error
 )
 
-// repoRoot returns the directory holding go.mod.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
@@ -76,46 +82,68 @@ func build(t *testing.T) string {
 	return builtDir
 }
 
-// New stands up an isolated environment with the binary built and on PATH.
+// New stands up an isolated environment.
 func New(t *testing.T) *Env {
 	t.Helper()
-	if _, err := exec.LookPath("a10n-claude-mock"); err != nil {
-		t.Skip("harness: a10n-claude-mock not on PATH")
+	mock, err := exec.LookPath("a10n-claude-mock")
+	if err != nil {
+		t.Skip("harness: a10n-claude-mock not on PATH — driving it is the whole point")
 	}
-	return &Env{
-		t:        t,
-		BinDir:   build(t),
-		Home:     t.TempDir(),
-		repoRoot: repoRoot(t),
+	// A short root, not t.TempDir(): the encoded project-dir path below is a
+	// 1:1 non-alphanumeric substitution with no shortening, and a long test
+	// name pushes a single component past the filename limit.
+	root, err := os.MkdirTemp("", "slop-e2e-")
+	if err != nil {
+		t.Fatalf("harness: temp root: %v", err)
 	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+
+	e := &Env{
+		t:         t,
+		binDir:    build(t),
+		home:      filepath.Join(root, "home"),
+		configDir: filepath.Join(root, "claude-cfg"),
+		pluginDir: filepath.Join(root, "plugins"),
+		repoRoot:  repoRoot(t),
+		mock:      mock,
+	}
+	for _, d := range []string{e.home, e.configDir, e.pluginDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("harness: mkdir %s: %v", d, err)
+		}
+	}
+	return e
 }
 
-// Project creates a project directory with this repo's plugin enabled, exactly
-// as a user would have it: a marketplace source and an enabled plugin, not a
-// hand-written hooks block.
+// Project creates a project with this repo's plugin enabled, exactly as a user
+// would have it: a marketplace source and an enabled plugin, not a hand-written
+// hooks block. What fires during a test is the same wiring anyone installing
+// this would get.
 func (e *Env) Project() string {
 	e.t.Helper()
-	dir := e.t.TempDir()
+	dir, err := os.MkdirTemp("", "slop-proj-")
+	if err != nil {
+		e.t.Fatalf("harness: temp project: %v", err)
+	}
+	e.t.Cleanup(func() { os.RemoveAll(dir) })
 
 	claudeDir := filepath.Join(dir, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir .claude: %v", err)
 	}
-
 	settings := fmt.Sprintf(`{
   "enabledPlugins": { %q: true },
   "extraKnownMarketplaces": {
     %q: { "source": { "source": "directory", "path": %q } }
   }
 }`, pluginKey, marketplaceName, e.repoRoot)
-
-	if err := os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(settings), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(settings), 0o644); err != nil {
 		e.t.Fatalf("harness: write settings: %v", err)
 	}
 	return dir
 }
 
-// Guardrail writes a declaration and its hook script into a project.
+// Guardrail writes a declaration and its hook scripts into a project.
 func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]string) {
 	e.t.Helper()
 	dir := filepath.Join(projDir, ".sloprail", "guardrails", name)
@@ -125,50 +153,97 @@ func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]st
 	if err := os.WriteFile(filepath.Join(dir, "GUARDRAIL.md"), []byte(declaration), 0o644); err != nil {
 		e.t.Fatalf("harness: write declaration: %v", err)
 	}
-	for name, body := range scripts {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
-			e.t.Fatalf("harness: write script %s: %v", name, err)
+	for file, body := range scripts {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write script %s: %v", file, err)
 		}
 	}
 }
 
-// Hook invokes one of our hook points directly, the way the plugin does: the
-// payload on stdin, nothing on the command line.
-//
-// This exercises the same code the plugin reaches, without waiting for a whole
-// mocked conversation — used where a test is about what a hook decides rather
-// than about the wiring that reaches it.
-func (e *Env) Hook(projDir string, args []string, payload any) (stdout string, exitCode int) {
+var nonAlnumRe = regexp.MustCompile(`[^a-zA-Z0-9]`)
+
+// encodeProjectDir mirrors how a harness encodes a working directory into a
+// transcript path. Ported from a10n, which ported it from claude's own.
+func encodeProjectDir(dir string) string { return nonAlnumRe.ReplaceAllString(dir, "-") }
+
+// resolveWorkDir resolves symlinks so the encoded path matches what the mock
+// itself will compute — macOS resolves /var to /private/var, and a mismatch
+// puts the seeded transcript somewhere nothing looks.
+func resolveWorkDir(dir string) string {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return dir
+}
+
+// seedTranscript writes a minimal valid transcript for (cwd, sessionID): a root
+// record with a uuid and a null parentUuid, which is the shape anything looking
+// for a conversation's origin scans for.
+func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
+	e.t.Helper()
+	dir := filepath.Join(e.configDir, "projects", encodeProjectDir(resolveWorkDir(cwd)))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: seed transcript: %v", err)
+	}
+	line := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
+		"e2e-root-"+sessionID, cwd, prompt)
+	path := filepath.Join(dir, sessionID+".jsonl")
+	if _, err := os.Stat(path); err == nil {
+		return // already seeded, or the mock has started writing — never overwrite
+	}
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		e.t.Fatalf("harness: seed transcript: %v", err)
+	}
+}
+
+// Result is what a run produced.
+type Result struct {
+	Output string
+	Code   int
+}
+
+// Saw reports whether text appears anywhere in the stream — the tool results a
+// refusal travels back in, or the agent's own output.
+func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) }
+
+// Run drives a scenario through the mock as a real session.
+func (e *Env) Run(projDir, sessionID, prompt string, s Scenario) Result {
 	e.t.Helper()
 
-	b, err := json.Marshal(payload)
-	if err != nil {
-		e.t.Fatalf("harness: marshal payload: %v", err)
+	e.seedTranscript(projDir, sessionID, prompt)
+
+	scriptPath := filepath.Join(projDir, ".scenario.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
+		e.t.Fatalf("harness: write scenario: %v", err)
 	}
 
-	cmd := exec.Command(filepath.Join(e.BinDir, "sloprail"), args...)
+	cmd := exec.Command(e.mock,
+		"-p", "--output-format", "stream-json",
+		"--script", scriptPath,
+		"--project-dir", projDir,
+		"--config-dir", e.configDir,
+		"--plugin-cache-dir", e.pluginDir,
+		"--session-id", sessionID,
+		prompt,
+	)
 	cmd.Dir = projDir
-	cmd.Stdin = strings.NewReader(string(b))
 	cmd.Env = append(os.Environ(),
-		"HOME="+e.Home,
-		"PATH="+e.BinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME="+e.home,
+		"CLAUDE_CONFIG_DIR="+e.configDir,
+		"CLAUDE_CODE_SESSION_ID="+sessionID,
+		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
+		// The plugin invokes `sloprail`; this is how the hook subprocess finds
+		// the build under test rather than whatever happens to be installed.
+		"PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-
-	out, err := cmd.Output()
-	// The engine reports its own trouble on stderr and permits the work; a test
-	// that swallowed it would show a silent pass where the engine had actually
-	// failed to run a rule at all.
-	if s := stderr.String(); s != "" {
-		e.t.Logf("sloprail stderr: %s", s)
-	}
+	out, err := cmd.CombinedOutput()
+	code := 0
 	if exitErr, ok := err.(*exec.ExitError); ok {
-		return string(out), exitErr.ExitCode()
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		e.t.Fatalf("harness: run mock: %v\n%s", err, out)
 	}
-	if err != nil {
-		e.t.Fatalf("harness: run %v: %v", args, err)
-	}
-	return string(out), 0
+	e.t.Logf("mock:\n%s", out)
+	return Result{Output: string(out), Code: code}
 }
