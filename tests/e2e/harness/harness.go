@@ -59,6 +59,17 @@ func repoRoot(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
+// gitDir is the repository's git directory — a real directory even when the
+// worktree's own .git is a file pointing at it.
+func gitDir(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("git", "rev-parse", "--absolute-git-dir").Output()
+	if err != nil {
+		t.Fatalf("harness: locate git dir: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // Cleanup removes what build left behind. Call it from TestMain after m.Run,
 // which is the only place that can: the binary is shared by every test in the
 // process, so it must outlive each of them, and t.Cleanup would delete it out
@@ -79,7 +90,29 @@ func build(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
 		root := repoRoot(t)
-		dir, err := os.MkdirTemp("", "sloprail-e2e-bin-")
+		// Not the system temp dir. macOS reaps /var/folders/.../T/ on its own
+		// schedule, and it does so mid-run: a suite that builds once and then
+		// executes that binary across several minutes of tests finds it gone
+		// partway through. That surfaces as `fork/exec ...: no such file or
+		// directory` in whichever test was unlucky — an error that names the
+		// binary and says nothing about the reaper, which cost one agent eight
+		// failures in twenty-two runs before the cause was found.
+		//
+		// Under the git directory because it is inside the repo (so nothing
+		// reaps it) but outside the working tree (so it cannot be mistaken for
+		// a project file, and a test that walks the tree does not find a binary
+		// in it).
+		//
+		// Asked of git rather than joined onto the root as ".git": in a linked
+		// worktree that path is a FILE, and every agent on this project works
+		// in one, so building the path by hand fails for all of them and
+		// succeeds only in the main checkout.
+		parent := filepath.Join(gitDir(t), "sloprail-e2e")
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			buildErr = err
+			return
+		}
+		dir, err := os.MkdirTemp(parent, "bin-")
 		if err != nil {
 			buildErr = err
 			return
