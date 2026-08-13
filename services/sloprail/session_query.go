@@ -25,13 +25,21 @@ func newSessionQueryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "query",
 		Short: "What the agent did — the session's own record, filtered",
-		Args:  cobra.NoArgs,
-		RunE:  runSessionQuery,
+		Long: `What the agent did — the session's own record, filtered.
+
+Reads the whole session. Narrowing to just the part not yet judged needs the
+position the last cycle stopped at, which is not yet recorded, so nothing here
+takes it as given.
+
+Entries belonging to sub-agents are left out unless asked for: a rule asking
+what the agent did usually means the main line of work.
+
+The answer is entries as JSON, for whatever the hook already uses to read JSON.`,
+		Args: cobra.NoArgs,
+		RunE: runSessionQuery,
 	}
 	cmd.Flags().String("where", "",
 		"Narrow which entries come back, over the same expression language a guardrail's matcher uses")
-	cmd.Flags().Bool("whole-session", false,
-		"Widen the answer to the whole session rather than the part of it not yet judged")
 	cmd.Flags().Bool("include-sidechains", false,
 		"Include entries belonging to sub-agents")
 	return cmd
@@ -39,7 +47,6 @@ func newSessionQueryCmd() *cobra.Command {
 
 func runSessionQuery(cmd *cobra.Command, _ []string) error {
 	where, _ := cmd.Flags().GetString("where")
-	wholeSession, _ := cmd.Flags().GetBool("whole-session")
 	includeSidechains, _ := cmd.Flags().GetBool("include-sidechains")
 
 	p := readPayload(cmd)
@@ -52,20 +59,25 @@ func runSessionQuery(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Off by default, because a rule asking what the agent did means this
-	// cycle's work: re-reading what has already been judged both wastes the
-	// reading and lets a judge reach a different verdict on work the agent can
-	// no longer reach.
+	// There is deliberately no --whole-session flag yet.
 	//
-	// Where the last cycle stopped is a remembered position rather than
-	// anything the record says, and what remembers it is the engine's own
-	// per-session state — a separate piece of work. Until that exists there is
-	// no mark to resume from, so the answer is the whole record either way.
-	// That is the safe direction of the two: re-reading a turn costs a second
-	// look, skipping one loses a violation for good.
-	if !wholeSession {
-		entries = transcript.Since(entries, readMark())
-	}
+	// A rule asking what the agent did means this cycle's work, and the answer
+	// should be the part of the session not already judged: re-reading settled
+	// work wastes the reading and lets a judge reach a different verdict on a
+	// turn the agent can no longer reach to fix. So narrowing is right, and a
+	// flag to widen back out is right beside it.
+	//
+	// But where the last cycle stopped is a REMEMBERED position, not anything
+	// the record says — the store now has sessionstate.MetaTranscriptRead
+	// waiting to hold it, and reading and advancing it is the read-mark task,
+	// not this one. Until that is wired, both settings of such a flag would
+	// return the identical whole record, and a flag whose two positions do the
+	// same thing is a promise in --help that the code does not keep. One honest
+	// behaviour beats a flag that appears to do something.
+	//
+	// The whole record is also the safe direction to be wrong in while waiting:
+	// re-reading a turn costs a second look, skipping one loses a violation for
+	// good.
 
 	entries, err = transcript.Filter(entries, transcript.Query{
 		Where:             where,
@@ -79,12 +91,3 @@ func runSessionQuery(cmd *cobra.Command, _ []string) error {
 	enc.SetEscapeHTML(false)
 	return enc.Encode(entries)
 }
-
-// readMark is where the previous cycle stopped reading.
-//
-// Empty until the engine's per-session state exists to hold it — see
-// session-state, which owns the baseline commit and this position together
-// because both are facts about what sloprail did rather than about what the
-// agent did. Returning empty means the whole record, which is what a first
-// cycle gets and is the erring-toward-re-reading side of the choice.
-func readMark() string { return "" }

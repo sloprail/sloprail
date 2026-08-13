@@ -1,9 +1,13 @@
 package transcript
 
 import (
+	"errors"
+	"io/fs"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestStableSessionIDResolvesOrigin is the base case: a transcript whose root
@@ -17,12 +21,8 @@ func TestStableSessionIDResolvesOrigin(t *testing.T) {
 	)
 
 	got, err := StableSessionID(p.dir, path)
-	if err != nil {
-		t.Fatalf("StableSessionID: %v", err)
-	}
-	if got != "origin-uuid" {
-		t.Fatalf("StableSessionID = %q, want the conversation's origin %q", got, "origin-uuid")
-	}
+	require.NoError(t, err, "StableSessionID")
+	assert.Equal(t, "origin-uuid", got, "the identity must be the conversation's origin record")
 }
 
 // TestStableSessionIDForkPairConverges is the bug this exists to close. Claude
@@ -48,20 +48,13 @@ func TestStableSessionIDForkPairConverges(t *testing.T) {
 	)
 
 	first, err := StableSessionID(p.dir, original)
-	if err != nil {
-		t.Fatalf("StableSessionID(original): %v", err)
-	}
+	require.NoError(t, err, "StableSessionID(original)")
 	second, err := StableSessionID(p.dir, forked)
-	if err != nil {
-		t.Fatalf("StableSessionID(forked): %v", err)
-	}
+	require.NoError(t, err, "StableSessionID(forked)")
 
-	if first != second {
-		t.Fatalf("a fork changed the conversation's identity: %q then %q — everything stored under the first is now unreachable", first, second)
-	}
-	if first != "shared-origin" {
-		t.Fatalf("StableSessionID = %q, want %q", first, "shared-origin")
-	}
+	assert.Equal(t, second, first,
+		"a fork changed the conversation's identity — everything stored under the first is now unreachable")
+	assert.Equal(t, "shared-origin", first)
 }
 
 // TestStableSessionIDCrossesRestart is the second walk. A restart opens a file
@@ -82,12 +75,9 @@ func TestStableSessionIDCrossesRestart(t *testing.T) {
 	)
 
 	got, err := StableSessionID(p.dir, restarted)
-	if err != nil {
-		t.Fatalf("StableSessionID: %v", err)
-	}
-	if got != "true-origin" {
-		t.Fatalf("StableSessionID = %q, want the conversation's true origin %q — the walk stopped at the restart's own root", got, "true-origin")
-	}
+	require.NoError(t, err, "StableSessionID")
+	assert.Equal(t, "true-origin", got,
+		"the walk stopped at the restart's own root instead of crossing into the older transcript")
 }
 
 // TestStableSessionIDCrossesSeveralRestarts walks a chain rather than a single
@@ -107,12 +97,8 @@ func TestStableSessionIDCrossesSeveralRestarts(t *testing.T) {
 	)
 
 	got, err := StableSessionID(p.dir, third)
-	if err != nil {
-		t.Fatalf("StableSessionID: %v", err)
-	}
-	if got != "true-origin" {
-		t.Fatalf("StableSessionID across two restarts = %q, want %q", got, "true-origin")
-	}
+	require.NoError(t, err, "StableSessionID")
+	assert.Equal(t, "true-origin", got, "the walk did not chain through both restarts")
 }
 
 // TestStableSessionIDIgnoresSelfMatch is the first trap, and it is an observed
@@ -121,10 +107,10 @@ func TestStableSessionIDCrossesSeveralRestarts(t *testing.T) {
 // points at is very often ALSO present in the file doing the pointing. Matching
 // it there sends the walk back to the root it just read.
 //
-// The fixture is that exact shape — verified against a real transcript on
-// disk, where a compact_boundary's logicalParentUuid named its own preserved
-// segment's tail and that uuid appeared again 2500 lines further down the same
-// file.
+// The fixture is that exact shape, and the shape is the common case rather
+// than an edge: of the 8,084 real transcripts in one ~/.claude, 34 open with a
+// parentless record carrying a logicalParentUuid, and in 33 of them the record
+// it names is also in that same file — up to 756 lines further down.
 func TestStableSessionIDIgnoresSelfMatch(t *testing.T) {
 	p := newProject(t)
 	p.write("the-older-one",
@@ -140,13 +126,9 @@ func TestStableSessionIDIgnoresSelfMatch(t *testing.T) {
 	)
 
 	got, err := StableSessionID(p.dir, restarted)
-	if err != nil {
-		t.Fatalf("StableSessionID: %v", err)
-	}
-	if got != "true-origin" {
-		t.Fatalf("StableSessionID = %q, want %q — the walk matched the preserved copy in the file it was leaving and came back to where it started",
-			got, "true-origin")
-	}
+	require.NoError(t, err, "StableSessionID")
+	assert.Equal(t, "true-origin", got,
+		"the walk matched the preserved copy in the file it was leaving and came back to where it started")
 }
 
 // TestStableSessionIDSelfMatchWhenItIsTheOnlyMatch pins the exclusion even when
@@ -161,9 +143,8 @@ func TestStableSessionIDSelfMatchWhenItIsTheOnlyMatch(t *testing.T) {
 	)
 
 	_, err := StableSessionID(p.dir, only)
-	if err == nil {
-		t.Fatal("a logical parent found only in the file being left must be an error, not a match on the copy")
-	}
+	require.Error(t, err, "a logical parent found only in the file being left must be an error, not a match on the copy")
+	require.ErrorIs(t, err, ErrContinuationMissing)
 }
 
 // TestStableSessionIDBoundsRunaway is the second trap. A chain of files each
@@ -191,12 +172,8 @@ func TestStableSessionIDBoundsRunaway(t *testing.T) {
 	}
 
 	_, err := StableSessionID(p.dir, start)
-	if err == nil {
-		t.Fatal("a chain that never reaches an origin must return an error, not walk forever")
-	}
-	if !strings.Contains(err.Error(), "revisits") && !strings.Contains(err.Error(), "restarts") {
-		t.Fatalf("the error should name the runaway, got: %v", err)
-	}
+	require.Error(t, err, "a chain that never reaches an origin must return an error, not walk forever")
+	require.ErrorIs(t, err, ErrChainRunaway)
 }
 
 // TestStableSessionIDFailsWhenTranscriptMissing pins failing loudly. A hook
@@ -206,9 +183,8 @@ func TestStableSessionIDBoundsRunaway(t *testing.T) {
 func TestStableSessionIDFailsWhenTranscriptMissing(t *testing.T) {
 	p := newProject(t)
 	_, err := StableSessionID(p.dir, filepath.Join(p.dir, "never-written.jsonl"))
-	if err == nil {
-		t.Fatal("a missing transcript must be an error, never a quiet fallback to the reported id")
-	}
+	require.Error(t, err, "a missing transcript must be an error, never a quiet fallback to the reported id")
+	assert.True(t, errors.Is(err, fs.ErrNotExist), "the error should say the file is not there, got: %v", err)
 }
 
 // TestStableSessionIDFailsWhenNoOriginRecord pins the other loud failure: a
@@ -222,12 +198,8 @@ func TestStableSessionIDFailsWhenNoOriginRecord(t *testing.T) {
 	)
 
 	_, err := StableSessionID(p.dir, path)
-	if err == nil {
-		t.Fatal("a transcript with no origin record must be an error")
-	}
-	if !strings.Contains(err.Error(), "no origin record") {
-		t.Fatalf("the error should name the actual problem, got: %v", err)
-	}
+	require.Error(t, err, "a transcript with no origin record must be an error")
+	require.ErrorIs(t, err, ErrNoOriginRecord)
 }
 
 // TestStableSessionIDFailsWhenLogicalParentIsNowhere pins the same for a
@@ -240,9 +212,8 @@ func TestStableSessionIDFailsWhenLogicalParentIsNowhere(t *testing.T) {
 	)
 
 	_, err := StableSessionID(p.dir, path)
-	if err == nil {
-		t.Fatal("an unresolvable logical parent must be an error")
-	}
+	require.Error(t, err, "an unresolvable logical parent must be an error")
+	require.ErrorIs(t, err, ErrContinuationMissing)
 }
 
 // TestStableSessionIDKeepsIndependentConversationsApart proves the other
@@ -255,16 +226,10 @@ func TestStableSessionIDKeepsIndependentConversationsApart(t *testing.T) {
 	two := p.write("conversation-two", root("origin-two"), record("c2", "origin-two"))
 
 	first, err := StableSessionID(p.dir, one)
-	if err != nil {
-		t.Fatalf("StableSessionID(one): %v", err)
-	}
+	require.NoError(t, err, "StableSessionID(one)")
 	second, err := StableSessionID(p.dir, two)
-	if err != nil {
-		t.Fatalf("StableSessionID(two): %v", err)
-	}
-	if first == second {
-		t.Fatalf("two independent conversations resolved to the same identity %q", first)
-	}
+	require.NoError(t, err, "StableSessionID(two)")
+	assert.NotEqual(t, first, second, "two independent conversations resolved to the same identity")
 }
 
 // TestStableSessionIDSkipsUnreadableSibling: another session's half-written
@@ -277,12 +242,8 @@ func TestStableSessionIDSkipsUnreadableSibling(t *testing.T) {
 	restarted := p.write("the-newer-one", boundary("restart-root", "continuation"))
 
 	got, err := StableSessionID(p.dir, restarted)
-	if err != nil {
-		t.Fatalf("StableSessionID: %v", err)
-	}
-	if got != "true-origin" {
-		t.Fatalf("StableSessionID = %q, want %q", got, "true-origin")
-	}
+	require.NoError(t, err, "StableSessionID")
+	assert.Equal(t, "true-origin", got)
 }
 
 // TestStableSessionIDNeedsAProjectDirOnlyToCrossARestart: a conversation that
@@ -292,20 +253,20 @@ func TestStableSessionIDSkipsUnreadableSibling(t *testing.T) {
 func TestStableSessionIDNeedsAProjectDirOnlyToCrossARestart(t *testing.T) {
 	p := newProject(t)
 	plain := p.write("plain", root("origin"), record("c", "origin"))
-	if got, err := StableSessionID("", plain); err != nil || got != "origin" {
-		t.Fatalf("StableSessionID with no project dir = %q, %v; want %q and no error", got, err, "origin")
-	}
+	got, err := StableSessionID("", plain)
+	require.NoError(t, err, "a conversation that never restarted needs no project directory")
+	assert.Equal(t, "origin", got)
 
 	restarted := p.write("restarted", boundary("restart-root", "somewhere-older"))
-	if _, err := StableSessionID("", restarted); err == nil {
-		t.Fatal("crossing a restart with no project directory must be an error")
-	}
+	_, err = StableSessionID("", restarted)
+	require.Error(t, err, "crossing a restart with no project directory must be an error")
+	require.ErrorIs(t, err, ErrNoProjectDir)
 }
 
 // TestStableSessionIDNoPath is the guard clause — an error, not an empty
 // string, so a caller cannot mistake a guard failure for a resolved identity.
 func TestStableSessionIDNoPath(t *testing.T) {
-	if _, err := StableSessionID("/somewhere", ""); err == nil {
-		t.Fatal("an empty transcript path must be an error")
-	}
+	_, err := StableSessionID("/somewhere", "")
+	require.Error(t, err, "an empty transcript path must be an error")
+	require.ErrorIs(t, err, ErrNoTranscriptPath)
 }

@@ -2,7 +2,11 @@ package transcript
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestEncodeProjectDir pins the rule exactly — every non-alphanumeric becomes a
@@ -12,9 +16,7 @@ import (
 func TestEncodeProjectDir(t *testing.T) {
 	got := EncodeProjectDir("/Users/nsviridenko/ws/horizon-37/a10n/.claude/worktrees/ecstatic-hermann-959022")
 	want := "-Users-nsviridenko-ws-horizon-37-a10n--claude-worktrees-ecstatic-hermann-959022"
-	if got != want {
-		t.Fatalf("EncodeProjectDir = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got)
 }
 
 // TestResolveWorkDirResolvesSymlinks is why the encoding is taken from a
@@ -23,14 +25,10 @@ func TestEncodeProjectDir(t *testing.T) {
 func TestResolveWorkDirResolvesSymlinks(t *testing.T) {
 	real := t.TempDir()
 	resolved := ResolveWorkDir(real)
-	if resolved == "" {
-		t.Fatal("ResolveWorkDir returned nothing for a directory that exists")
-	}
+	require.NotEmpty(t, resolved, "ResolveWorkDir returned nothing for a directory that exists")
 	// Resolving twice must not move it again — the resolved form is a fixed
 	// point, which is what makes the encoding agree with the harness's.
-	if again := ResolveWorkDir(resolved); again != resolved {
-		t.Fatalf("ResolveWorkDir is not idempotent: %q then %q", resolved, again)
-	}
+	assert.Equal(t, resolved, ResolveWorkDir(resolved), "the resolved form must be a fixed point")
 }
 
 // TestResolveWorkDirHandlesAPathNotYetOnDisk: the longest existing ancestor is
@@ -41,21 +39,14 @@ func TestResolveWorkDirHandlesAPathNotYetOnDisk(t *testing.T) {
 	missing := filepath.Join(base, "not", "there", "yet")
 
 	got := ResolveWorkDir(missing)
-	if got == "" {
-		t.Fatal("ResolveWorkDir returned nothing")
-	}
-	if filepath.Base(got) != "yet" {
-		t.Fatalf("ResolveWorkDir = %q, want the missing tail rejoined", got)
-	}
-	if prefix := ResolveWorkDir(base); !filepath.IsAbs(got) || got[:len(prefix)] != prefix {
-		t.Fatalf("ResolveWorkDir = %q, want it under the resolved ancestor %q", got, prefix)
-	}
+	require.NotEmpty(t, got)
+	assert.Equal(t, "yet", filepath.Base(got), "the missing tail must be rejoined")
+	assert.True(t, filepath.IsAbs(got))
+	assert.True(t, strings.HasPrefix(got, ResolveWorkDir(base)), "it must sit under the resolved ancestor")
 }
 
 func TestResolveWorkDirEmpty(t *testing.T) {
-	if got := ResolveWorkDir(""); got != "" {
-		t.Fatalf("ResolveWorkDir(\"\") = %q, want empty", got)
-	}
+	assert.Empty(t, ResolveWorkDir(""))
 }
 
 // TestProjectDirIsDerivedNotSearched: the directory is computed from the
@@ -64,25 +55,19 @@ func TestResolveWorkDirEmpty(t *testing.T) {
 func TestProjectDirIsDerivedNotSearched(t *testing.T) {
 	got := ProjectDir("/cfg", "/w/p")
 	want := filepath.Join("/cfg", "projects", EncodeProjectDir(ResolveWorkDir("/w/p")))
-	if got != want {
-		t.Fatalf("ProjectDir = %q, want %q", got, want)
-	}
+	assert.Equal(t, want, got)
 }
 
 // TestProjectDirWithoutAConfigDir returns nothing rather than a path rooted at
 // nowhere, so the caller reports it instead of quietly searching the wrong
 // place and calling the conversation new.
 func TestProjectDirWithoutAConfigDir(t *testing.T) {
-	if got := ProjectDir("", "/w/p"); got != "" {
-		t.Fatalf("ProjectDir with no config dir = %q, want empty", got)
-	}
+	assert.Empty(t, ProjectDir("", "/w/p"), "no config dir must yield nothing, not a path rooted at nowhere")
 }
 
 // TestConfigDirPrefersTheEnvironment: the harness's own variable wins, which is
 // what keeps a sandboxed run off the host's real data.
 func TestConfigDirPrefersTheEnvironment(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/somewhere/isolated")
-	if got := ConfigDir(); got != "/somewhere/isolated" {
-		t.Fatalf("ConfigDir = %q, want the environment's", got)
-	}
+	assert.Equal(t, "/somewhere/isolated", ConfigDir(), "the harness's own variable wins")
 }

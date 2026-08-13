@@ -3,15 +3,16 @@ package transcript
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func entriesFor(t *testing.T, lines ...string) []Entry {
 	t.Helper()
 	p := newProject(t)
 	entries, err := Read(p.write("a-session", lines...))
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
+	require.NoError(t, err, "Read")
 	return entries
 }
 
@@ -26,25 +27,15 @@ func TestFilterExcludesSidechainsByDefault(t *testing.T) {
 	)
 
 	got, err := Filter(entries, Query{})
-	if err != nil {
-		t.Fatalf("Filter: %v", err)
-	}
+	require.NoError(t, err, "Filter")
 	for _, e := range got {
-		if e.IsSidechain {
-			t.Fatalf("a sub-agent's entry %q answered for the main line", e.UUID)
-		}
+		assert.False(t, e.IsSidechain, "a sub-agent's entry %q answered for the main line", e.UUID)
 	}
-	if len(got) != 2 {
-		t.Fatalf("Filter returned %d entries, want the 2 on the main line", len(got))
-	}
+	assert.Len(t, got, 2, "want the entries on the main line")
 
 	withSubs, err := Filter(entries, Query{IncludeSidechains: true})
-	if err != nil {
-		t.Fatalf("Filter: %v", err)
-	}
-	if len(withSubs) != 3 {
-		t.Fatalf("Filter with sidechains returned %d, want 3 — a rule asking whether work was delegated means precisely those", len(withSubs))
-	}
+	require.NoError(t, err, "Filter")
+	assert.Len(t, withSubs, 3, "a rule asking whether work was delegated means precisely those")
 }
 
 // TestFilterWhereReadsTheEntry: the expression sees the canonical names, so a
@@ -53,20 +44,13 @@ func TestFilterWhereReadsTheEntry(t *testing.T) {
 	entries := entriesFor(t, root("u1"), record("u2", "u1"), record("u3", "u2"))
 
 	got, err := Filter(entries, Query{Where: `type == "assistant"`})
-	if err != nil {
-		t.Fatalf("Filter: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("Filter returned %d entries, want the 2 assistant ones", len(got))
-	}
+	require.NoError(t, err, "Filter")
+	assert.Len(t, got, 2, "want the assistant entries")
 
 	byUUID, err := Filter(entries, Query{Where: `uuid == "u1"`})
-	if err != nil {
-		t.Fatalf("Filter: %v", err)
-	}
-	if len(byUUID) != 1 || byUUID[0].UUID != "u1" {
-		t.Fatalf("Filter by uuid returned %+v", byUUID)
-	}
+	require.NoError(t, err, "Filter")
+	require.Len(t, byUUID, 1)
+	assert.Equal(t, "u1", byUUID[0].UUID)
 }
 
 // TestFilterWhereReachesIntoAMessage: an expression asking what a tool returned
@@ -82,20 +66,14 @@ func TestFilterWhereReachesIntoAMessage(t *testing.T) {
 	)
 
 	got, err := Filter(entries, Query{Where: `message?.content[0]?.name == "Bash"`})
-	if err != nil {
-		t.Fatalf("Filter: %v", err)
-	}
-	if len(got) != 1 || got[0].UUID != "u2" {
-		t.Fatalf("Filter over a message's contents returned %+v, want just the tool call", got)
-	}
+	require.NoError(t, err, "Filter")
+	require.Len(t, got, 1, "want just the tool call")
+	assert.Equal(t, "u2", got[0].UUID)
 
 	result, err := Filter(entries, Query{Where: `toolUseResult?.stdout contains "deleted"`})
-	if err != nil {
-		t.Fatalf("Filter: %v", err)
-	}
-	if len(result) != 1 || result[0].UUID != "u3" {
-		t.Fatalf("Filter over a tool result returned %+v, want just the result entry", result)
-	}
+	require.NoError(t, err, "Filter")
+	require.Len(t, result, 1, "want just the result entry")
+	assert.Equal(t, "u3", result[0].UUID)
 }
 
 // TestFilterEntriesOfAnotherShapeAreNotMatches pins a decision the fixtures
@@ -119,12 +97,65 @@ func TestFilterEntriesOfAnotherShapeAreNotMatches(t *testing.T) {
 	)
 
 	got, err := Filter(entries, Query{Where: `message?.content[0]?.name == "Bash"`})
-	if err != nil {
-		t.Fatalf("Filter: %v — an entry of another shape must not fail the whole answer", err)
-	}
-	if len(got) != 1 || got[0].UUID != "u2" {
-		t.Fatalf("Filter returned %+v, want just the tool call", got)
-	}
+	require.NoError(t, err, "an entry of another shape must not fail the whole answer")
+	require.Len(t, got, 1, "want just the tool call")
+	assert.Equal(t, "u2", got[0].UUID)
+}
+
+// TestFilterErrorsWhenTheExpressionNeverRan is the counterweight to the
+// shape-mismatch leniency above, and closes the hole it opened. Letting every
+// evaluation failure be a non-match meant a rule broken for ALL entries
+// reported no violations and exited successfully — the silently vacuous rule
+// this product exists to prevent, produced by the product itself.
+//
+// One entry of another shape is ordinary. Not one entry evaluating is a rule
+// that never looked, and it must say so.
+func TestFilterErrorsWhenTheExpressionNeverRan(t *testing.T) {
+	entries := entriesFor(t, root("u1"), record("u2", "u1"))
+
+	_, err := Filter(entries, Query{Where: `int("notanumber") == 1`})
+	require.Error(t, err, "a rule that fails on every entry must not report no violations")
+	require.ErrorIs(t, err, ErrExpressionNeverRan)
+	assert.Contains(t, err.Error(), "without having looked")
+}
+
+// TestFilterStillAnswersWhenSomeEntriesEvaluate: the check is "did anything
+// evaluate", not "did everything". A rule that legitimately looks at one shape
+// of entry is the ordinary case and must keep working.
+func TestFilterStillAnswersWhenSomeEntriesEvaluate(t *testing.T) {
+	entries := entriesFor(t,
+		`{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"timestamp":"t",`+
+			`"message":{"role":"user","content":"words"}}`,
+		`{"type":"assistant","uuid":"u2","parentUuid":"u1","isSidechain":false,"timestamp":"t",`+
+			`"message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash"}]}}`,
+	)
+
+	got, err := Filter(entries, Query{Where: `message?.content[0]?.name == "Bash"`})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "u2", got[0].UUID)
+}
+
+// TestFilterAnExpressionThatRanAndSaidNo is the case that must NOT be mistaken
+// for a rule that never ran. `1/0` is not an error in this expression
+// language — division is float, so it is +Inf, and `+Inf == 1` is a real,
+// successful "no". Erring on it would refuse a working rule.
+func TestFilterAnExpressionThatRanAndSaidNo(t *testing.T) {
+	entries := entriesFor(t, root("u1"), record("u2", "u1"))
+
+	got, err := Filter(entries, Query{Where: `1/0 == 1`})
+	require.NoError(t, err, "an expression that evaluated successfully to false is a working rule, not a broken one")
+	assert.Empty(t, got)
+}
+
+// TestFilterAnEmptySessionIsNotAVacuousRule: with no entries to offer, there is
+// nothing for an expression to fail on, and the answer is simply empty. The
+// check is about a rule that could not look, not about a session with nothing
+// in it.
+func TestFilterAnEmptySessionIsNotAVacuousRule(t *testing.T) {
+	got, err := Filter(nil, Query{Where: `int("notanumber") == 1`})
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 // TestFilterAbsenceIsAnAnswer: asking about something that never happened is an
@@ -134,21 +165,13 @@ func TestFilterAbsenceIsAnAnswer(t *testing.T) {
 	entries := entriesFor(t, root("u1"), record("u2", "u1"))
 
 	got, err := Filter(entries, Query{Where: `type == "nothing-like-this"`})
-	if err != nil {
-		t.Fatalf("Filter: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("Filter returned %d entries, want none", len(got))
-	}
+	require.NoError(t, err, "Filter")
+	assert.Empty(t, got)
 	// Empty rather than null, so a hook piping this into a JSON tool gets a
 	// list to iterate over instead of something it has to special-case.
 	blob, err := json.Marshal(got)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(blob) != "[]" {
-		t.Fatalf("an empty answer serialises to %s, want []", blob)
-	}
+	require.NoError(t, err, "marshal")
+	assert.JSONEq(t, "[]", string(blob), "an empty answer must be a list to iterate, not null")
 }
 
 // TestFilterRefusesAnExpressionThatWillNotCompile: a rule that silently never
@@ -156,17 +179,15 @@ func TestFilterAbsenceIsAnAnswer(t *testing.T) {
 // rule being satisfied.
 func TestFilterRefusesAnExpressionThatWillNotCompile(t *testing.T) {
 	entries := entriesFor(t, root("u1"))
-	if _, err := Filter(entries, Query{Where: `type ==`}); err == nil {
-		t.Fatal("an expression that will not compile must be an error, not a filter admitting nothing")
-	}
-	if _, err := Filter(entries, Query{Where: `uuid`}); err == nil {
-		t.Fatal("an expression that is not a boolean must be an error")
-	}
+	_, err := Filter(entries, Query{Where: `type ==`})
+	require.Error(t, err, "an expression that will not compile must be an error, not a filter admitting nothing")
+
+	_, err = Filter(entries, Query{Where: `uuid`})
+	require.Error(t, err, "an expression that is not a boolean must be an error")
 	// A name no entry has is caught here rather than silently matching nothing
 	// later — the same reason a guardrail's matcher is refused at load.
-	if _, err := Filter(entries, Query{Where: `toolName == "Bash"`}); err == nil {
-		t.Fatal("an expression naming a field that does not exist must be an error")
-	}
+	_, err = Filter(entries, Query{Where: `toolName == "Bash"`})
+	require.Error(t, err, "an expression naming a field that does not exist must be an error")
 }
 
 // TestFilterAsksAboutTypeByName pins that `type` is readable at all. It is also
@@ -176,12 +197,9 @@ func TestFilterRefusesAnExpressionThatWillNotCompile(t *testing.T) {
 func TestFilterAsksAboutTypeByName(t *testing.T) {
 	entries := entriesFor(t, root("u1"), record("u2", "u1"))
 	got, err := Filter(entries, Query{Where: `type == "user"`})
-	if err != nil {
-		t.Fatalf("Filter on type: %v", err)
-	}
-	if len(got) != 1 || got[0].UUID != "u1" {
-		t.Fatalf("Filter on type returned %+v, want the user entry", got)
-	}
+	require.NoError(t, err, "Filter on type")
+	require.Len(t, got, 1, "want the user entry")
+	assert.Equal(t, "u1", got[0].UUID)
 }
 
 // TestSinceStartsAfterTheMark: entries up to and including the mark have been
@@ -190,18 +208,15 @@ func TestSinceStartsAfterTheMark(t *testing.T) {
 	entries := entriesFor(t, root("u1"), record("u2", "u1"), record("u3", "u2"))
 
 	got := Since(entries, "u2")
-	if len(got) != 1 || got[0].UUID != "u3" {
-		t.Fatalf("Since = %+v, want only what came after the mark", got)
-	}
+	require.Len(t, got, 1, "want only what came after the mark")
+	assert.Equal(t, "u3", got[0].UUID)
 }
 
 // TestSinceWithNoMarkGivesEverything: a first cycle has read nothing, so the
 // whole session is its work — correct rather than a special case.
 func TestSinceWithNoMarkGivesEverything(t *testing.T) {
 	entries := entriesFor(t, root("u1"), record("u2", "u1"))
-	if got := Since(entries, ""); len(got) != 2 {
-		t.Fatalf("Since with no mark returned %d entries, want all of them", len(got))
-	}
+	assert.Len(t, Since(entries, ""), 2, "a first cycle reads the whole session")
 }
 
 // TestSinceWithAMarkThatIsNotHereGivesEverything: the record it pointed into is
@@ -210,28 +225,20 @@ func TestSinceWithNoMarkGivesEverything(t *testing.T) {
 // one loses a violation for good.
 func TestSinceWithAMarkThatIsNotHereGivesEverything(t *testing.T) {
 	entries := entriesFor(t, root("u1"), record("u2", "u1"))
-	if got := Since(entries, "from-another-conversation"); len(got) != 2 {
-		t.Fatalf("Since with an unknown mark returned %d entries, want all of them", len(got))
-	}
+	assert.Len(t, Since(entries, "from-another-conversation"), 2, "a lost position means looking again, not skipping")
 }
 
 // TestSinceTheLastEntryGivesNothing: a cycle in which nothing new happened is
 // an empty answer, not the session over again.
 func TestSinceTheLastEntryGivesNothing(t *testing.T) {
 	entries := entriesFor(t, root("u1"), record("u2", "u1"))
-	if got := Since(entries, "u2"); len(got) != 0 {
-		t.Fatalf("Since the last entry returned %+v, want nothing", got)
-	}
+	assert.Empty(t, Since(entries, "u2"), "a cycle in which nothing new happened is an empty answer")
 }
 
 // TestMarkIsWhereReadingStopped, and is empty when there was nothing to read —
 // which leaves the previous mark standing rather than resetting it.
 func TestMarkIsWhereReadingStopped(t *testing.T) {
 	entries := entriesFor(t, root("u1"), record("u2", "u1"))
-	if got := Mark(entries); got != "u2" {
-		t.Fatalf("Mark = %q, want the last entry read", got)
-	}
-	if got := Mark(nil); got != "" {
-		t.Fatalf("Mark of nothing = %q, want empty", got)
-	}
+	assert.Equal(t, "u2", Mark(entries), "the mark is the last entry read")
+	assert.Empty(t, Mark(nil), "nothing read leaves the previous mark standing")
 }

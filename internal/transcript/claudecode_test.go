@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestReadNormalisesTheFieldsKept checks the translation itself: what Claude
@@ -22,31 +25,22 @@ func TestReadNormalisesTheFieldsKept(t *testing.T) {
 	)
 
 	entries, err := Read(path)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("Read returned %d entries, want 2", len(entries))
-	}
+	require.NoError(t, err, "Read")
+	require.Len(t, entries, 2)
 
 	first := entries[0]
-	if first.Type != EntryUser || first.UUID != "u1" || first.ParentUUID != "" {
-		t.Fatalf("first entry = %+v, want a user entry u1 with no parent", first)
-	}
-	if first.Timestamp != "2026-08-13T09:00:00.000Z" || first.IsSidechain {
-		t.Fatalf("first entry = %+v, want its timestamp kept and IsSidechain false", first)
-	}
-	if !strings.Contains(string(first.Message), `"content":"go"`) {
-		t.Fatalf("first entry's message = %s, want the message carried through", first.Message)
-	}
+	assert.Equal(t, EntryUser, first.Type)
+	assert.Equal(t, "u1", first.UUID)
+	assert.Empty(t, first.ParentUUID, "the origin record has no parent")
+	assert.Equal(t, "2026-08-13T09:00:00.000Z", first.Timestamp)
+	assert.False(t, first.IsSidechain)
+	assert.Contains(t, string(first.Message), `"content":"go"`, "the message must be carried through")
 
 	second := entries[1]
-	if second.Type != EntryAssistant || second.ParentUUID != "u1" || !second.IsSidechain {
-		t.Fatalf("second entry = %+v, want an assistant entry parented on u1 and marked a sidechain", second)
-	}
-	if !strings.Contains(string(second.ToolUseResult), `"stdout":"ok"`) {
-		t.Fatalf("second entry's tool result = %s, want what the tool returned", second.ToolUseResult)
-	}
+	assert.Equal(t, EntryAssistant, second.Type)
+	assert.Equal(t, "u1", second.ParentUUID)
+	assert.True(t, second.IsSidechain)
+	assert.Contains(t, string(second.ToolUseResult), `"stdout":"ok"`, "what the tool returned must be carried through")
 }
 
 // TestEntryCarriesNothingBeyondTheShape is the field-discipline check: every
@@ -57,27 +51,20 @@ func TestEntryCarriesNothingBeyondTheShape(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session", root("u1"))
 	entries, err := Read(path)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
+	require.NoError(t, err, "Read")
 
 	blob, err := json.Marshal(entries[0])
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
+	require.NoError(t, err, "marshal")
 	var got map[string]any
-	if err := json.Unmarshal(blob, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	require.NoError(t, json.Unmarshal(blob, &got))
 
 	allowed := map[string]bool{
 		"type": true, "uuid": true, "parentUuid": true, "logicalParentUuid": true,
 		"timestamp": true, "isSidechain": true, "message": true, "toolUseResult": true,
 	}
 	for k := range got {
-		if !allowed[k] {
-			t.Fatalf("an entry carries %q, which no rule asks about — every field kept is one each new harness must be normalised into", k)
-		}
+		assert.True(t, allowed[k],
+			"an entry carries %q, which no rule asks about — every field kept is one each new harness must be normalised into", k)
 	}
 }
 
@@ -96,12 +83,9 @@ func TestReadSkipsRecordsWithoutAUUID(t *testing.T) {
 	)
 
 	entries, err := Read(path)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if len(entries) != 1 || entries[0].UUID != "u1" {
-		t.Fatalf("Read returned %d entries (%+v), want only the one carrying a uuid", len(entries), entries)
-	}
+	require.NoError(t, err, "Read")
+	require.Len(t, entries, 1, "only the record carrying a uuid is an entry")
+	assert.Equal(t, "u1", entries[0].UUID)
 }
 
 // TestReadKeepsAKindItDoesNotKnow: a harness writes kinds beyond the three a
@@ -114,12 +98,8 @@ func TestReadKeepsAKindItDoesNotKnow(t *testing.T) {
 	)
 
 	entries, err := Read(path)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if entries[0].Type != EntryType("attachment") {
-		t.Fatalf("entry type = %q, want the harness's own name for it", entries[0].Type)
-	}
+	require.NoError(t, err, "Read")
+	assert.Equal(t, EntryType("attachment"), entries[0].Type, "an unrecognised kind keeps the harness's own name")
 }
 
 // TestReadSkipsALineItCannotParse: the format is read by observation and
@@ -134,12 +114,8 @@ func TestReadSkipsALineItCannotParse(t *testing.T) {
 	)
 
 	entries, err := Read(path)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("Read returned %d entries, want the two readable ones", len(entries))
-	}
+	require.NoError(t, err, "Read")
+	assert.Len(t, entries, 2, "the readable lines either side of a broken one must still be read")
 }
 
 // TestReadHandlesARecordPastTheDefaultScanBuffer: one record carries a whole
@@ -156,19 +132,14 @@ func TestReadHandlesARecordPastTheDefaultScanBuffer(t *testing.T) {
 	)
 
 	entries, err := Read(path)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("Read returned %d entries, want 2 — a long tool result truncated the read", len(entries))
-	}
+	require.NoError(t, err, "Read")
+	assert.Len(t, entries, 2, "a long tool result truncated the read")
 }
 
 // TestReadFailsWhenTheFileIsMissing: an absent record is a broken environment,
 // not a session that did nothing.
 func TestReadFailsWhenTheFileIsMissing(t *testing.T) {
 	p := newProject(t)
-	if _, err := Read(filepath.Join(p.dir, "never-written.jsonl")); err == nil {
-		t.Fatal("reading a missing transcript must be an error")
-	}
+	_, err := Read(filepath.Join(p.dir, "never-written.jsonl"))
+	require.Error(t, err, "reading a missing transcript must be an error")
 }

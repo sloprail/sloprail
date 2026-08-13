@@ -1,11 +1,6 @@
 package transcript
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-)
+import "fmt"
 
 // The identity a conversation keeps.
 //
@@ -44,7 +39,7 @@ const maxRestartHops = 64
 // caller would carry on, quietly, against the wrong session.
 func StableSessionID(projectDir, path string) (string, error) {
 	if path == "" {
-		return "", fmt.Errorf("transcript: stable session id: no transcript path")
+		return "", fmt.Errorf("transcript: stable session id: %w", ErrNoTranscriptPath)
 	}
 
 	visited := map[string]bool{path: true}
@@ -66,21 +61,22 @@ func StableSessionID(projectDir, path string) (string, error) {
 		// one, so the conversation began further back — in whichever older
 		// transcript holds the record it resumes.
 		if projectDir == "" {
-			return "", fmt.Errorf("transcript: stable session id: %s continues %s but the harness's project directory is unknown, so the older transcript cannot be found",
-				cur, root.LogicalParentUUID)
+			return "", fmt.Errorf("transcript: stable session id: %s continues %s: %w",
+				cur, root.LogicalParentUUID, ErrNoProjectDir)
 		}
 		next, err := findTranscriptContaining(projectDir, root.LogicalParentUUID, cur)
 		if err != nil {
 			return "", fmt.Errorf("transcript: stable session id: resolving what %s continues: %w", cur, err)
 		}
 		if visited[next] {
-			return "", fmt.Errorf("transcript: stable session id: the chain from %s revisits %s", path, next)
+			return "", fmt.Errorf("transcript: stable session id: the chain from %s revisits %s: %w",
+				path, next, ErrChainRunaway)
 		}
 		visited[next] = true
 		cur = next
 	}
-	return "", fmt.Errorf("transcript: stable session id: the chain from %s ran past %d restarts, which a real conversation does not — it is malformed or it loops",
-		path, maxRestartHops)
+	return "", fmt.Errorf("transcript: stable session id: the chain from %s ran past %d restarts: %w",
+		path, maxRestartHops, ErrChainRunaway)
 }
 
 // rootRecord returns the first record in path that has no parent — the
@@ -110,70 +106,7 @@ func rootRecord(path string) (Entry, error) {
 		return Entry{}, err
 	}
 	if !found {
-		return Entry{}, fmt.Errorf("%s has no origin record: every entry in it has a parent", path)
+		return Entry{}, fmt.Errorf("%s: %w: every entry in it has a parent", path, ErrNoOriginRecord)
 	}
 	return root, nil
-}
-
-// findTranscriptContaining returns the transcript in projectDir holding a record
-// whose own uuid is target, skipping leaving.
-//
-// leaving is always the file whose logical parent is being resolved, and
-// skipping it is not tidiness — it is the difference between crossing a restart
-// and going round in a circle. Compaction copies earlier records verbatim into
-// the new file, uuids included, so the record a boundary points at is very
-// often also present in the file doing the pointing. This is observed rather
-// than theorised: in a real transcript on this machine, a compact_boundary's
-// logicalParentUuid names its own preserved segment's tail, and that uuid
-// appears 2500 lines further down the very same file. Matching it there sends
-// the walk straight back to the root it just read.
-//
-// An unreadable sibling is skipped rather than fatal — another session's
-// half-written file is not this conversation's problem. Finding nothing at all
-// IS fatal: a logical parent naming a record in no transcript means the
-// environment lost a file, and answering anyway would answer wrongly.
-func findTranscriptContaining(projectDir, target, leaving string) (string, error) {
-	entries, err := os.ReadDir(projectDir)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", projectDir, err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		path := filepath.Join(projectDir, e.Name())
-		if sameFile(path, leaving) {
-			continue
-		}
-		if containsUUID(path, target) {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("no transcript in %s other than %s holds the record %s", projectDir, leaving, target)
-}
-
-// sameFile reports whether two paths name the same transcript. Compared after
-// cleaning, so a path assembled differently from the one we were handed still
-// counts as the file being left — the exclusion above is load-bearing, and a
-// spelling difference must not defeat it.
-func sameFile(a, b string) bool {
-	return filepath.Clean(a) == filepath.Clean(b)
-}
-
-// containsUUID reports whether any record in path has target as its own uuid —
-// any record, not just the root: a logical parent points wherever the earlier
-// conversation had got to, which is somewhere in the middle of it.
-//
-// An unreadable file answers false rather than erroring; see
-// findTranscriptContaining on why a sibling is not fatal.
-func containsUUID(path, target string) bool {
-	found := false
-	_ = scanFile(path, func(rec claudeRecord) bool {
-		if rec.UUID == target {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
 }

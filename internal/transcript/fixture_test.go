@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Fixtures are real transcript files in a real directory, not fakes. What is
@@ -36,9 +38,7 @@ func (p *project) write(name string, lines ...string) string {
 		body += l + "\n"
 	}
 	path := filepath.Join(p.dir, name+".jsonl")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		p.t.Fatalf("fixture: write %s: %v", path, err)
-	}
+	require.NoError(p.t, os.WriteFile(path, []byte(body), 0o644), "fixture: write %s", path)
 	return path
 }
 

@@ -31,6 +31,18 @@ type Query struct {
 // Asking about something that never happened returns nothing rather than an
 // error. Absence is a legitimate finding, and often the one a rule is looking
 // for.
+//
+// An expression that no entry could be evaluated against at all IS an error,
+// and the distinction is the point. One entry of another shape is ordinary and
+// silently not a match (see runWhere). But an expression that failed on EVERY
+// entry it was offered has told us nothing about the session — and returning
+// "nothing matched" for it would report no violations, and exit successfully,
+// for a rule that never ran. That is the silently-vacuous rule this product
+// exists to prevent, and it would be this product producing it.
+//
+// Judged on whether any entry evaluated, not on what any of them decided: a
+// working rule that legitimately matches nothing is the ordinary case, and must
+// stay distinguishable from a broken one that could not look.
 func Filter(entries []Entry, q Query) ([]Entry, error) {
 	program, err := compileWhere(q.Where)
 	if err != nil {
@@ -38,17 +50,28 @@ func Filter(entries []Entry, q Query) ([]Entry, error) {
 	}
 
 	out := make([]Entry, 0, len(entries))
+	offered, evaluated := 0, 0
 	for _, e := range entries {
 		if e.IsSidechain && !q.IncludeSidechains {
 			continue
 		}
-		admitted, err := runWhere(program, q.Where, e)
+		offered++
+		admitted, ok, err := runWhere(program, e)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("transcript: where %q: %w", q.Where, err)
 		}
+		if !ok {
+			continue // this entry is not the shape the expression asks about
+		}
+		evaluated++
 		if admitted {
 			out = append(out, e)
 		}
+	}
+
+	if offered > 0 && evaluated == 0 && program != nil {
+		return nil, fmt.Errorf("transcript: where %q: %w: not one of the %d entries could be evaluated against it, so the answer would report no violations without having looked",
+			q.Where, ErrExpressionNeverRan, offered)
 	}
 	return out, nil
 }
@@ -70,39 +93,40 @@ func compileWhere(src string) (*vm.Program, error) {
 	return program, nil
 }
 
-// runWhere evaluates one entry against the expression, reporting whether it is
-// admitted.
+// runWhere evaluates one entry against the expression. It reports whether the
+// entry is admitted, and separately whether it could be evaluated at all.
 //
-// An entry the expression cannot be evaluated against is simply not a match.
-// This is not leniency about broken rules — an expression that will not compile
-// is still refused outright, before any entry is seen. It is that entries are
-// genuinely not all the same shape, and asking one question of all of them is
-// the point of the command.
+// The two are reported apart because "not a match" and "could not look" are
+// different facts that look identical in an answer, and only the caller —
+// seeing every entry — can tell an ordinary shape mismatch from an expression
+// that never ran. Collapsing them here is what let a rule failing on every
+// entry report no violations.
 //
-// The case is ordinary rather than exotic. A user's turn carries its content as
-// a string; an assistant's carries a list of blocks. So
+// An entry the expression cannot be evaluated against is not a match, and that
+// is ordinary rather than exotic. A user's turn carries its content as a
+// string; an assistant's carries a list of blocks. So
 // `message.content[0].name == "Bash"` — a fair question, and close to the most
 // common one a rule will ask — indexes a string on every user turn and reaches
-// for a field of a byte. If that were an error the command would fail on every
-// real session, and the rule author's only recourse would be to write the
+// for a field of a byte. If that alone were fatal the command would fail on
+// every real session, and the rule author's only recourse would be to write the
 // shape-guarding themselves in every expression: precisely the per-rule
 // reimplementation of the traversal this command exists to absorb.
 //
 // A non-boolean result IS an error, because that is the expression being wrong
 // about itself rather than the entry being a different shape.
-func runWhere(program *vm.Program, src string, e Entry) (bool, error) {
+func runWhere(program *vm.Program, e Entry) (admitted, evaluated bool, err error) {
 	if program == nil {
-		return true, nil
+		return true, true, nil
 	}
-	out, err := expr.Run(program, env(e))
-	if err != nil {
-		return false, nil // this entry cannot answer the question — see above
+	out, runErr := expr.Run(program, env(e))
+	if runErr != nil {
+		return false, false, nil // see above — the caller decides if this is everything
 	}
-	admitted, ok := out.(bool)
+	b, ok := out.(bool)
 	if !ok {
-		return false, fmt.Errorf("transcript: where %q: produced %T, not a boolean", src, out)
+		return false, false, fmt.Errorf("%w: produced %T, not a boolean", ErrExpressionNotBoolean, out)
 	}
-	return admitted, nil
+	return b, true, nil
 }
 
 // env is what an expression may read: the entry's own fields, under the names
