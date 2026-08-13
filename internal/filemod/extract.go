@@ -16,6 +16,24 @@ import (
 // names its path outright. After a cycle it does not predict — it compares the
 // tree against where the session started and reports what is actually
 // different, which is what catches everything the prediction missed.
+//
+// This returns events ALONGSIDE a non-nil error, which module.Module's own
+// documentation requires a caller not to discard, and which the caller at
+// services/sloprail/session_pre_tool.go does discard: it prints the error and
+// `continue`s past the events. That is precisely the silence the module is
+// built to prevent — a producer degrading with ninety-nine good classifications
+// dropped for one bad path — and it is unpinned in BOTH directions, since
+// mutating the caller to HONOR the contract also leaves the suite green.
+//
+// Fixing it is another agent's, but what would pin it is worth stating, because
+// an unpinned contract is how this arrives back here a fourth time. A test in
+// the caller's own package, over a stub module returning one event and one
+// error together, asserting that the event reaches the matching stage. It has
+// to assert the EVENT's arrival and not the error's printing: the error is
+// already visible on stderr, so a test watching only that passes under both
+// behaviours, which is exactly why the mutation survives now. The module side
+// cannot host that test — from in here the return value is correct either way,
+// and what happens to it afterwards is not observable.
 func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 	if in[module.InputPhase] == module.PhasePost {
 		return m.extractObserved(in)
@@ -241,13 +259,32 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		// update or a create depending on nothing but iteration order. Two
 		// spellings of one file cannot be allowed to carry two baselines when the
 		// rest of the contract says spelling is not part of it.
-		//
+		before := observed.ExistedAtBaseline(clean)
+		if path != clean && !before && observed.ExistedAtBaseline(path) {
+			// The one spelling rule this module states and could not otherwise
+			// enforce. A producer keying its baseline on its own raw paths
+			// answers about "./dir/./a.md" and is asked about "dir/a.md" — false
+			// for a file that WAS there, so the update ships as a create and
+			// every delete disappears, with nothing on the tree contradicting
+			// any of it.
+			//
+			// The test is deliberately one-directional. A CONFORMING producer's
+			// map is keyed clean, so the raw spelling misses it and answers
+			// false while the canonical one answers true — disagreement, and
+			// entirely correct. Only the reverse is diagnostic: the raw spelling
+			// found something the canonical one did not, which no map keyed the
+			// way the contract asks can produce. That is a map keyed raw, said
+			// by the producer itself rather than inferred.
+			problems = append(problems, fmt.Errorf("%w: %q and %q", ErrBaselineKeyedOnRawSpelling, path, clean))
+			continue
+		}
+
 		// Reached only for absent or presentFile: every other state left an error
 		// above. So the boolean this narrows to is the whole remaining question,
 		// and it is narrowed HERE rather than inside classify, which is about the
 		// baseline/tree pair and has no business knowing what a stat can fail to
 		// say.
-		kind, reportable := classify(observed.ExistedAtBaseline(clean), p == presentFile)
+		kind, reportable := classify(before, p == presentFile)
 		if !reportable {
 			// The no/no row. Legitimately a file created and removed inside one
 			// cycle, which leaves nothing to be about — and also the one place

@@ -55,6 +55,14 @@ type Observed interface {
 	// producer that keys a map on its own paths must clean them first, and one
 	// whose paths are already clean, which is what git reports, need do nothing.
 	//
+	// That requirement is checked rather than trusted. Where a path's raw and
+	// canonical spellings differ, both are asked, and a producer answering two
+	// ways about one file is reported as ErrBaselineKeyedOnRawSpelling instead
+	// of having one of its two answers picked for it. Unchecked it was the one
+	// contract term whose breach produced no error anywhere: the baseline comes
+	// back false for a file that was there, the update ships as a create, and
+	// the tree agrees with every event.
+	//
 	// Asked with the raw spelling instead, this method would be the one place
 	// spelling mattered, and the rest of the contract says it does not: "a.md"
 	// and "./a.md" are one file and yield one event. Two spellings of one file

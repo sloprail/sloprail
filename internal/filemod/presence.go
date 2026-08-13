@@ -63,6 +63,33 @@ var ErrPathIsNotAFile = errors.New("filemod: path is not a regular file")
 // the only check the first one will meet.
 var ErrNotADifference = errors.New("filemod: path differs from neither the baseline nor the tree")
 
+// ErrBaselineKeyedOnRawSpelling is returned when a producer's baseline answers
+// differently for a path's raw spelling than for its canonical one.
+//
+// Observed.ExistedAtBaseline is asked with the canonical spelling and says a
+// producer keying a map on its own paths "must clean them first". Left at that,
+// the contract was honor-system in the one place a violation is invisible: a
+// producer whose map holds "./dir/./a.md" is asked about "dir/a.md", answers
+// false for a file that WAS at the baseline, and the update goes out as a
+// create. Every delete vanishes the same way. ErrNotADifference does not catch
+// it — these paths are on disk, so the no/no row is never reached — which left
+// the module's one guard against silent baseline degradation not covering the
+// failure mode the canonical-spelling rule itself introduced.
+//
+// So where a path's raw spelling differs from its canonical one, the baseline is
+// asked BOTH ways. Agreement is the ordinary answer and costs one extra call on
+// non-canonical spellings only. Disagreement is not a judgement call about the
+// producer's internals: it is the producer answering two ways about one file,
+// which its own contract says cannot happen. The path is reported rather than
+// classified, because which of the two answers is the true one is exactly what
+// is now in doubt.
+//
+// It cannot catch a producer that cleans its keys and gets the baseline wrong
+// anyway — nothing can, short of the git history the producer alone holds. What
+// it catches is the mechanical version, which is the one a first producer will
+// actually ship.
+var ErrBaselineKeyedOnRawSpelling = errors.New("filemod: baseline answers differently for the raw and canonical spellings of one path")
+
 // presence is what a stat can tell us about a path.
 //
 // Four states rather than three, because two independent questions were each
@@ -185,6 +212,26 @@ func isRegular(info os.FileInfo) bool {
 // their face and they need no syscall to be right. What they cannot see is a
 // parent directory that is a symlink out of the repository, which is why
 // contained follows them rather than replacing them.
+//
+// One consequence of cleaning first is worth naming, because it is the same
+// Clean-versus-symlink mismatch the containment check exists for. Clean folds
+// ".." lexically, before any filesystem sees the path: "sub/escape/../id_rsa",
+// where "escape" is a link elsewhere, becomes "sub/id_rsa", while a kernel
+// open() follows "escape" and then steps up from wherever it LANDED. The two
+// name different files. What this module emits is the folded one, and every
+// check it then runs — containment included — is about that path rather than
+// about the one an open() would reach.
+//
+// It is not a disclosure: the folded path is what the event carries and what a
+// hook joins, so consumers all read the same file this module classified, and
+// that file is inside the repository or the path was refused. The cost is
+// narrower and real — a cycle that touched the file the kernel would reach gets
+// an event naming a different one, so a rule about the touched file does not
+// fire. Fixing it means resolving the path element by element instead of
+// cleaning it, which is the TOCTOU-bound walk contained already is; the honest
+// statement is that paths are classified as CLEANED, and a producer emitting
+// ".." through a symlinked directory is naming something it did not mean to.
+// git does not produce such paths, and the contract already asks for clean ones.
 func resolve(root, path string) (clean, full string, err error) {
 	if strings.TrimSpace(root) == "" {
 		return "", "", fmt.Errorf("%w: %q", ErrNoRoot, path)
@@ -224,47 +271,114 @@ func resolve(root, path string) (clean, full string, err error) {
 // DIRECTORY sits is a different question: if that is outside, the repository
 // does not contain the named file at all, under any reading.
 //
-// The walk goes up from the parent to the first ancestor that exists, because
+// The walk goes up from the parent to the first ancestor that RESOLVES, because
 // the path may legitimately not be on disk — a delete names a file that is gone,
 // and a whole removed directory takes its parents with it. Resolving only what
-// exists is what lets those keep working; the ancestors that do not exist cannot
-// be symlinks, so there is nothing about them left to check.
+// is there is what lets those keep working.
+//
+// Skipping an ancestor requires proving there is nothing to follow, and the
+// proof is an Lstat, not the ENOENT that EvalSymlinks returned. The two are not
+// the same fact: EvalSymlinks reports ENOENT for a DANGLING symlink as readily
+// as for a name with nothing at it, and a dangling symlink is an ancestor that
+// does not exist and is a symlink. Read as "not on disk, keep going up", it is
+// skipped and the containment answer is taken from an ancestor ABOVE it — the
+// check walking straight past the one object it exists to look at, and settling
+// containment from the root it never left. Its target is absent only until the agent that
+// made the link makes the directory, which is usually moments later, and the
+// path this emits joins cleanly onto the root and reads whatever lands there.
+// So each skipped ancestor is Lstat'd, and anything that answers is refused:
+// where an unresolvable link will point is not knowable now, and containment
+// that cannot be established is not containment.
 //
 // The root is resolved too. A repository reached through a symlinked ancestor is
 // ordinary — /tmp is a link to /private/tmp on darwin, which every test here
 // runs under — and comparing a resolved child against an unresolved root would
 // call every path in such a repository an escape.
+//
+// What this does NOT establish, and no check of this shape can: that the tree
+// still looks this way when a consumer reads the path. Every answer here is
+// about the tree at the instant of the walk, and a link swung between this call
+// and the hook that acts on the event resolves somewhere else. What is
+// guaranteed is narrower and still worth having — no path is emitted whose
+// parents resolved outside the root, or whose containment could not be
+// established at all, at classification time.
+//
+// Hard links are contained on purpose. repo/hardlink pointing at an outside
+// inode resolves under the root because it IS an entry under the root — a name
+// the repository holds and git tracks, with no link to follow. Refusing it would
+// mean refusing an ordinary file for a property no path check can see, and the
+// silence that produces is the worse failure. The boundary this function draws
+// is over PATHS, not over inodes.
+//
+// The ancestors the walk skips are NOT carried along and re-joined onto the one
+// that resolved, though an earlier version did that. It could not affect any
+// answer: full arrives already cleaned, so every skipped element is an ordinary
+// name and the rejoined path only ever DESCENDS from the resolved ancestor.
+// Descending cannot leave a directory that is contained, nor re-enter one that
+// is not, so the verdict is settled by the resolved ancestor alone and the
+// remainder was decoration on it. Carrying it looked like extra rigour while
+// giving the check nothing, and left two ways to get it subtly wrong — dropped,
+// or assembled in reverse — that no test could distinguish because no behaviour
+// depended on either. What the walk owes is that it resolved everything it
+// passed, which is now the Lstat's job and not the remainder's.
 func contained(root, full string) error {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		// The root itself cannot be resolved. Not something a path can be
 		// blamed for, and not something to pass silently either: no containment
-		// claim can be made at all, so none is.
-		return fmt.Errorf("cannot resolve the repository root %s: %w", root, err)
+		// claim can be made at all, so none is. Refusing here is the same rule
+		// the ancestors get — an unestablished containment is refused, and the
+		// root is not exempt from it for being the root.
+		return fmt.Errorf("cannot resolve the repository root: %w", err)
 	}
 
-	// Walk up to the first ancestor that is on disk. dir is always a prefix of
+	// Walk up to the first ancestor that resolves. dir is always a prefix of
 	// full's parent, so this terminates at realRoot's own ancestors at worst.
 	dir := filepath.Dir(full)
-	unresolved := ""
 	for {
 		real, err := filepath.EvalSymlinks(dir)
 		if err == nil {
-			return under(realRoot, filepath.Join(real, unresolved))
+			return under(realRoot, real)
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			// Permission denied on a parent, say. Presence is lookAt's to
 			// report as ErrUnreadableTree; containment simply cannot be
 			// established, and letting the path through on a failed check is
 			// the one outcome this function exists to prevent.
-			return fmt.Errorf("cannot resolve %s: %w", dir, err)
+			return fmt.Errorf("cannot resolve an ancestor: %w", err)
 		}
+		// EvalSymlinks said ENOENT. That is not yet permission to skip dir:
+		// ask the filesystem about dir ITSELF, without following anything.
+		switch info, lerr := os.Lstat(dir); {
+		case lerr == nil && info.Mode()&os.ModeSymlink != 0:
+			// A dangling symlink. It is right here, it is a link, and where it
+			// leads is unknowable until its target exists — which says nothing
+			// about where it will lead then.
+			//
+			// EvalSymlinks's error is deliberately NOT wrapped here, alone among
+			// these branches. Its *PathError names the path that did not
+			// resolve, which for a dangling link is the link's TARGET — the one
+			// string in this whole function that is both outside the repository
+			// and chosen by whoever made the link. Wrapping it would put the
+			// escape's destination in the log as the reward for refusing it. The
+			// ancestor's own name is what a producer needs and it is inside the
+			// repository, so that is what is said.
+			return fmt.Errorf("an ancestor is a symlink that does not resolve: %s", filepath.Base(dir))
+		case lerr == nil:
+			// dir exists and is not a link, yet EvalSymlinks could not resolve
+			// it: something further along its own path did not answer.
+			// Unestablished, so refused.
+			return fmt.Errorf("cannot resolve an ancestor: %w", err)
+		case !errors.Is(lerr, os.ErrNotExist):
+			return fmt.Errorf("cannot resolve an ancestor: %w", lerr)
+		}
+		// Only now is dir known to hold nothing at all, so there is nothing
+		// about it to follow and the walk may go up.
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			// Reached the filesystem root without finding anything that exists.
-			return fmt.Errorf("no part of %s is on disk", full)
+			return errors.New("no part of the path is on disk")
 		}
-		unresolved = filepath.Join(filepath.Base(dir), unresolved)
 		dir = parent
 	}
 }
@@ -272,13 +386,40 @@ func contained(root, full string) error {
 // under reports whether path is realRoot or sits beneath it, comparing whole
 // path elements. A prefix test on the raw string would accept "/repo-backup"
 // for a root of "/repo".
+//
+// The ".." test is anchored to the separator for the same reason the lexical one
+// in resolve is, and it is a separate copy of the anchor that needs its own
+// proof: a real directory named "..hidden" makes Rel return "..hidden/a.md", and
+// a bare HasPrefix(rel, "..") calls that an escape. A file genuinely changing in
+// the tree would then produce no event at all — the silence, reached from the
+// direction that looks like caution.
+//
+// Comparison is case-sensitive, which on a case-insensitive filesystem (darwin's
+// default) is a known false negative rather than an oversight: a root spelled
+// /parent/REPO and a resolved path under /parent/repo name one directory the
+// kernel cannot tell apart, and this calls the second an escape. It errs toward
+// refusing, so nothing outside the repository is let through by it; what it
+// costs is an event for a real change, which is the worse direction, and folding
+// case would cost the opposite on a case-SENSITIVE filesystem where "repo" and
+// "REPO" are two directories. Neither is free, and the one that never emits a
+// path it should not is the one taken.
+//
+// The Rel error is refused rather than reported as an escape, and it is worth
+// saying that no input reaching here through contained can produce it: Rel fails
+// only on a mixed absolute/relative pair, and both arguments come out of
+// EvalSymlinks, which preserves the absoluteness of what it was given — so the
+// two agree whatever the caller's root was. A mutation replacing this branch
+// with anything at all therefore survives every test, and no test can honestly
+// kill it. It is kept because "unreachable" is a claim about today's callers
+// rather than about the function, and the alternative to refusing is treating an
+// unanswerable comparison as containment.
 func under(realRoot, path string) error {
 	rel, err := filepath.Rel(realRoot, path)
 	if err != nil {
-		return fmt.Errorf("%s is not reachable from %s", path, realRoot)
+		return errors.New("the path is not reachable from the repository root")
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("%s resolves outside the repository", path)
+		return errors.New("the path resolves outside the repository")
 	}
 	return nil
 }
