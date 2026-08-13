@@ -1,0 +1,97 @@
+diff --git a/services/sloprail/readmark_test.go b/services/sloprail/readmark_test.go
+index 231758c..f55d398 100644
+--- a/services/sloprail/readmark_test.go
++++ b/services/sloprail/readmark_test.go
+@@ -163,16 +163,37 @@ func (s *session) offered() string {
+ 
+ // dispatched ends a cycle with the judging step standing in as having run.
+ //
+-// The mark is held until the Post events are dispatched, and that step is not
+-// implemented yet. A test about the mark's POSITION must not be a test about
+-// that step being missing, so it is stood in for here — which also means these
+-// tests keep working, and keep meaning the same thing, once it lands for real.
++// The mark is held until the Post events are dispatched. That step is real now,
++// and it is still stood in for here: a test about the mark's POSITION must not
++// depend on what the dispatcher does with a particular tree, or it becomes a
++// test of the diff rather than of the mark. Standing it in keeps these tests
++// meaning exactly what they meant while it was a stub.
+ func (s *session) dispatched(stopHookActive bool) (stdout, stderr string) {
++	s.t.Helper()
++	return s.withDispatch(true, func() (string, string) { return s.stop(stopHookActive) })
++}
++
++// notDispatched ends a cycle with the judging step standing in as NOT having
++// run — a cycle that reached the end without dispatching anything.
++//
++// Explicit, because it used to be what `stop` did on its own: while the
++// dispatcher was a stub returning false, every cycle was a cycle that dispatched
++// nothing, and a test asserting the mark is held read as though it had arranged
++// that. It had not. Now that the step really dispatches, the arrangement has to
++// be made rather than inherited — otherwise the test quietly becomes an
++// assertion about a real diff finding nothing to do.
++func (s *session) notDispatched(stopHookActive bool) (stdout, stderr string) {
++	s.t.Helper()
++	return s.withDispatch(false, func() (string, string) { return s.stop(stopHookActive) })
++}
++
++// withDispatch runs fn with the judging step reporting the given outcome.
++func (s *session) withDispatch(ran bool, fn func() (string, string)) (stdout, stderr string) {
+ 	s.t.Helper()
+ 	restore := dispatchPostEvents
+-	dispatchPostEvents = func(*cobra.Command, sessionstate.Store, HookPayload) bool { return true }
++	dispatchPostEvents = func(*cobra.Command, sessionstate.Store, HookPayload) bool { return ran }
+ 	defer func() { dispatchPostEvents = restore }()
+-	return s.stop(stopHookActive)
++	return fn()
+ }
+ 
+ // cycle is a whole cycle: a rule reads the record, then the cycle ends.
+@@ -321,7 +342,7 @@ func TestReadMark_HeldCycleDoesNotHandItsPositionOnEither(t *testing.T) {
+ 	a := s.turn()
+ 	require.NotEmpty(t, uuidsOf(s.query()))
+ 
+-	s.stop(false) // dispatch does not run, so the mark is held
++	s.notDispatched(false) // dispatch does not run, so the mark is held
+ 	require.Empty(t, s.mark())
+ 	assert.Empty(t, s.offered(), "a held cycle's reading is not the next cycle's to claim")
+ 
+@@ -496,7 +517,7 @@ func TestReadMark_HeldUntilTheCycleActuallyDispatches(t *testing.T) {
+ 	require.Equal(t, a, s.offered(), "the read position is recorded either way")
+ 
+ 	// Dispatch does not happen, so the mark does not move.
+-	s.stop(false)
++	s.notDispatched(false)
+ 	assert.Empty(t, s.mark(),
+ 		"the mark must not claim a position judged before any judging is dispatched")
+ 
+diff --git a/services/sloprail/session_stop.go b/services/sloprail/session_stop.go
+index 1c652ef..7a64cdf 100644
+--- a/services/sloprail/session_stop.go
++++ b/services/sloprail/session_stop.go
+@@ -161,22 +161,15 @@ func discardOffered(cmd *cobra.Command, p HookPayload) {
+ // dispatchPostEvents runs the guardrails bound to what this cycle changed, and
+ // reports whether it ran at all.
+ //
+-// Not implemented. Owned by the work that diffs the tree and dispatches the
+-// events; this exists so the read mark has something real to wait on rather
+-// than a comment promising an order the code does not keep.
+-//
+ // Returning false is what holds the mark. A cycle that dispatched nothing has
+ // judged nothing, so it has no position to claim as judged — and the position
+ // it read is remembered elsewhere and lost by no one.
+ //
+ // A variable so a test about the mark's POSITION can stand this step in and
+-// still be testing the position rather than this step's absence. The tests that
+-// do keep meaning the same thing once this is implemented for real.
+-var dispatchPostEvents = func(_ *cobra.Command, _ sessionstate.Store, _ HookPayload) bool {
+-	// TODO: diff the tree against the baseline, dispatch the Post events, and
+-	// return true once a cycle's judging actually happens here.
+-	return false
+-}
++// still be testing the position rather than this step's behaviour. Those tests
++// mean the same thing now that it is implemented as they did while it was a
++// stub.
++var dispatchPostEvents = runPostDispatch
+ 
+ // advanceReadMark carries forward the position this cycle actually read.
+ //

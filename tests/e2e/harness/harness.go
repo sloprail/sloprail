@@ -263,6 +263,40 @@ func (e *Env) CLI(dir string, args ...string) Result {
 	return Result{Output: string(out), Code: code}
 }
 
+// WriteFile puts a file into a project, creating the directories above it.
+//
+// For the state a project is in BEFORE a session runs — the files an agent will
+// go on to edit or delete. What the agent itself does belongs in a scenario, so
+// that it travels through the tool calls a harness reports rather than being
+// arranged behind the engine's back.
+func (e *Env) WriteFile(projDir, rel, body string) {
+	e.t.Helper()
+	full := filepath.Join(projDir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		e.t.Fatalf("harness: write %s: %v", rel, err)
+	}
+}
+
+// Exists reports whether a path is present in a project.
+//
+// How a test asks what actually happened to the tree, as opposed to what came
+// back on the stream. Whether a message travelled says nothing about whether a
+// write landed, and "the work was prevented" is a claim about the tree.
+func (e *Env) Exists(projDir, rel string) bool {
+	e.t.Helper()
+	_, err := os.Stat(filepath.Join(projDir, rel))
+	if err == nil {
+		return true
+	}
+	if !os.IsNotExist(err) {
+		e.t.Fatalf("harness: stat %s: %v", rel, err)
+	}
+	return false
+}
+
 // Guardrail writes a declaration and its hook scripts into a project.
 func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]string) {
 	e.t.Helper()
