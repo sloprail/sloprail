@@ -12,9 +12,8 @@ import "github.com/sloprail/sloprail/internal/event"
 
 // Module is a domain and the events it produces.
 type Module interface {
-	// Name prefixes every kind this module produces: "file" owns "file.*".
-	// Two modules can then be written by people who never met without having
-	// to agree on which of them owns "created".
+	// Name identifies the module — how the engine reports what produced an
+	// event, and how a module is referred to when one is switched off.
 	Name() string
 
 	// Kinds are the events this module can produce, with the fields each
@@ -34,9 +33,9 @@ type Module interface {
 
 // KindDecl is one event kind and what it carries.
 type KindDecl struct {
-	// Name is unqualified — "pre_create", not "file.pre_create". The registry
-	// applies the prefix, so a module cannot claim a name outside its own
-	// namespace even by accident.
+	// Name is what happened, and when — "PreFileCreate". It does not say which
+	// module produced it: the registry knows that because the module declared
+	// it, and it rejects a second module claiming the same name.
 	Name string
 
 	// Fields a matcher may read on this kind.
