@@ -326,3 +326,98 @@ func TestPayloadTranscript_AcceptsAGuessFromTheSameTree(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "OWN-ORIGIN", id)
 }
+
+func TestRecord_AnIsolatedSubagentIsNeverAskedAboutItsTree(t *testing.T) {
+	// The interaction between projectDirOf and BelongsToTree, which nothing
+	// tested and which is not obvious.
+	//
+	// A sub-agent dispatched into its own worktree reports THAT worktree as its
+	// cwd, while the harness still nests its record under the DISPATCHING
+	// session's project directory. So the record's own cwd and the tree the
+	// payload names are legitimately different places: of 337 real sub-agent
+	// transcripts carrying a cwd, 18 record a sibling worktree that is not under
+	// the parent's tree at all.
+	//
+	// Asking BelongsToTree about those would refuse a sub-agent its own record —
+	// the exact orphaning this file exists to prevent. It is never asked, because
+	// the tree check guards only the GUESSED branch and a sub-agent's path is
+	// always reported. This pins that, with a recorded cwd deliberately in a
+	// different tree from the payload's.
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+
+	base := t.TempDir()
+	parentTree := filepath.Join(base, "proj")
+	agentWorktree := filepath.Join(base, "proj-worktrees", "agent-1")
+	require.NoError(t, os.MkdirAll(parentTree, 0o755))
+	require.NoError(t, os.MkdirAll(agentWorktree, 0o755))
+
+	// The parent's record lives under the parent's project directory; the
+	// sub-agent's is nested beside it under subagents/.
+	projDir := transcript.ProjectDir(cfg, parentTree)
+	parentPath := filepath.Join(projDir, "sess-1.jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(parentPath), 0o755))
+	require.NoError(t, os.WriteFile(parentPath,
+		[]byte(`{"type":"user","uuid":"PARENT-ORIGIN","parentUuid":null,"sessionId":"sess-1","cwd":"`+
+			parentTree+`"}`+"\n"), 0o644))
+
+	agentPath, err := transcript.SubagentTranscriptPath(parentPath, "a1")
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(agentPath), 0o755))
+	// Its records carry the WORKTREE as cwd — a different tree from the payload's.
+	require.NoError(t, os.WriteFile(agentPath,
+		[]byte(`{"type":"user","uuid":"AGENT-ORIGIN","parentUuid":null,"sessionId":"sess-1","cwd":"`+
+			agentWorktree+`","isSidechain":true}`+"\n"), 0o644))
+
+	// The payload's cwd is the PARENT's tree while the record's own cwd is the
+	// worktree — the disagreement the 18 real files have. A tree check applied
+	// here would refuse on exactly that disagreement.
+	//
+	// Reported directly: returned verbatim, no tree check.
+	got, err := HookPayload{AgentTranscriptPath: agentPath, Cwd: parentTree}.record()
+	require.NoError(t, err, "a sub-agent's own reported record must never be refused over its tree")
+	assert.Equal(t, agentPath, got)
+
+	// Reconstructed from the agent id against the parent's reported path: also
+	// no tree check.
+	got, err = HookPayload{TranscriptPath: parentPath, AgentID: "a1", Cwd: parentTree}.record()
+	require.NoError(t, err, "a reconstructed sub-agent path must never be refused over its tree")
+	assert.Equal(t, agentPath, got)
+
+	// And the sub-agent resolves to its OWN identity, not the parent's — which
+	// is what projectDirOf's climb out of subagents/ is for. Deriving the project
+	// directory from the worktree cwd instead would name somewhere holding no
+	// transcripts.
+	id, err := stableID(HookPayload{AgentTranscriptPath: agentPath, Cwd: parentTree})
+	require.NoError(t, err)
+	assert.Equal(t, "AGENT-ORIGIN", id)
+
+	parentID, err := stableID(HookPayload{TranscriptPath: parentPath, Cwd: parentTree})
+	require.NoError(t, err)
+	assert.Equal(t, "PARENT-ORIGIN", parentID)
+	assert.NotEqual(t, parentID, id, "a sub-agent must not inherit the parent's identity")
+}
+
+func TestRecord_TheTreeCheckStillGuardsAGuessedRootPath(t *testing.T) {
+	// The other half: the tree check must not have been weakened by sitting only
+	// on the guessed branch. A ROOT session's guess still gets it.
+	cfg := t.TempDir()
+	base := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+
+	sub := filepath.Join(base, "proj", "pkg")
+	sibling := filepath.Join(base, "proj-pkg")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	require.NoError(t, os.MkdirAll(sibling, 0o755))
+	require.Equal(t, transcript.ProjectDir(cfg, sub), transcript.ProjectDir(cfg, sibling),
+		"the collision must actually collide")
+
+	dir := transcript.ProjectDir(cfg, sibling)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "s-1.jsonl"),
+		[]byte(`{"type":"user","uuid":"SIBLING-ORIGIN","parentUuid":null,"sessionId":"s-1","cwd":"`+
+			sibling+`"}`+"\n"), 0o644))
+
+	_, err := HookPayload{SessionID: "s-1", Cwd: sub}.record()
+	assert.ErrorIs(t, err, transcript.ErrWrongTree)
+}
