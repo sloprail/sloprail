@@ -40,14 +40,30 @@ var ErrUnreadableTree = errors.New("filemod: cannot determine whether the path i
 var ErrPathNotRelativeToRoot = errors.New("filemod: path is not relative to the repository root")
 
 // ErrNoRoot is returned when an Observed names paths without naming what they
-// are relative to. Joining against "" resolves them against the process's
-// working directory, which is the dependence on the invocation site that
-// Root() exists to remove.
-var ErrNoRoot = errors.New("filemod: paths given with no repository root")
+// are relative to, or names them against a root that is not absolute.
+//
+// Joining against "" resolves them against the process's working directory,
+// which is the dependence on the invocation site that Root() exists to remove.
+// Every other relative spelling does the same thing and the guard was written
+// for "" alone: Root() == "." is the natural way to say "here", it survived the
+// emptiness check, and filepath.Join(".", "secrets/id_rsa") is a RELATIVE path
+// the kernel resolves against whatever directory the process happens to be in.
+// Containment did not catch it either — EvalSymlinks(".") resolves to that same
+// directory, so the cwd IS the root by the time under() compares them, and a
+// file outside the repository is contained under it correctly and uselessly.
+//
+// So the requirement is absoluteness, not non-emptiness. It is the property
+// that actually makes a root independent of the invocation site, and "" is
+// merely one spelling that lacks it.
+var ErrNoRoot = errors.New("filemod: paths given with no absolute repository root")
 
 // ErrPathIsNotAFile is returned for a path where a directory now sits. The
 // kinds this module declares are about files; a create or update naming a
 // directory hands every file rule something it was not written against.
+//
+// A symlink TO a directory is not one of these, on purpose — see isDirectory.
+// git tracks the link as a file, and deciding its kind by what it points at
+// would make a tracked file's event depend on an object outside the repository.
 var ErrPathIsNotAFile = errors.New("filemod: path is not a regular file")
 
 // ErrNotADifference is returned for a path that was not at the baseline and is
@@ -89,6 +105,12 @@ var ErrNotADifference = errors.New("filemod: path differs from neither the basel
 // it catches is the mechanical version, which is the one a first producer will
 // actually ship.
 var ErrBaselineKeyedOnRawSpelling = errors.New("filemod: baseline answers differently for the raw and canonical spellings of one path")
+
+// maxSymlinkHops bounds how far a chain of dangling symlinks is followed before
+// it is called unsettleable and refused. The kernel's own limit is this order of
+// magnitude; what matters here is only that the walk terminates on a cycle,
+// which no Lstat can detect, and refuses rather than allows when it gives up.
+const maxSymlinkHops = 40
 
 // presence is what a stat can tell us about a path.
 //
@@ -233,8 +255,20 @@ func isRegular(info os.FileInfo) bool {
 // ".." through a symlinked directory is naming something it did not mean to.
 // git does not produce such paths, and the contract already asks for clean ones.
 func resolve(root, path string) (clean, full string, err error) {
-	if strings.TrimSpace(root) == "" {
-		return "", "", fmt.Errorf("%w: %q", ErrNoRoot, path)
+	// One check rather than two. An emptiness test used to stand here as well,
+	// and absoluteness subsumes it exactly — "" and "   " are not absolute — so
+	// keeping both left a branch no input could reach past the other and no test
+	// could tell was gone. What the emptiness test was reaching for is this: a
+	// root that does not start at the filesystem root is joined into a RELATIVE
+	// full path, which the kernel resolves against the process's working
+	// directory. That is the dependence on the invocation site Root() exists to
+	// remove, and "" was only ever one spelling of it.
+	// Judged as given, not trimmed. Trimming here would accept "  /repo" and then
+	// JOIN the untrimmed spelling, so the string that was checked and the string
+	// that gets stat'd would differ — and a root carrying stray whitespace is a
+	// producer bug either way, which this says instead of quietly papering over.
+	if !filepath.IsAbs(root) {
+		return "", "", fmt.Errorf("%w: %q is not an absolute path", ErrNoRoot, root)
 	}
 	if path == "" || strings.TrimSpace(path) == "" {
 		// Names no file. Joined against the root it would stat the root, which
@@ -286,9 +320,19 @@ func resolve(root, path string) (clean, full string, err error) {
 // containment from the root it never left. Its target is absent only until the agent that
 // made the link makes the directory, which is usually moments later, and the
 // path this emits joins cleanly onto the root and reads whatever lands there.
-// So each skipped ancestor is Lstat'd, and anything that answers is refused:
-// where an unresolvable link will point is not knowable now, and containment
-// that cannot be established is not containment.
+// So each skipped ancestor is Lstat'd, and only a name with nothing at it is
+// skipped.
+//
+// A dangling link that answers there is then judged rather than refused
+// outright. Blanket refusal was the wider mistake in the safe-looking
+// direction: repo/pending -> repo/generated, a link made before the directory
+// it names, is the ordinary generated-output case with both ends inside the
+// repository, and refusing it produced no event at all — the silence, reached
+// from the direction that looks like caution. "Where an unresolvable link will
+// point is not knowable now" was simply false: os.Readlink says where it points
+// whether or not the target exists. So the target is read and judged, and only
+// one that cannot be placed inside the root is refused. See
+// danglingLinkStaysInside.
 //
 // The root is resolved too. A repository reached through a symlinked ancestor is
 // ordinary — /tmp is a link to /private/tmp on darwin, which every test here
@@ -312,15 +356,24 @@ func resolve(root, path string) (clean, full string, err error) {
 //
 // The ancestors the walk skips are NOT carried along and re-joined onto the one
 // that resolved, though an earlier version did that. It could not affect any
-// answer: full arrives already cleaned, so every skipped element is an ordinary
-// name and the rejoined path only ever DESCENDS from the resolved ancestor.
-// Descending cannot leave a directory that is contained, nor re-enter one that
-// is not, so the verdict is settled by the resolved ancestor alone and the
-// remainder was decoration on it. Carrying it looked like extra rigour while
-// giving the check nothing, and left two ways to get it subtly wrong — dropped,
-// or assembled in reverse — that no test could distinguish because no behaviour
-// depended on either. What the walk owes is that it resolved everything it
-// passed, which is now the Lstat's job and not the remainder's.
+// answer, and the reason is the Lstat above rather than anything about the
+// path's spelling: an ancestor is skipped only when EvalSymlinks AND Lstat both
+// say ENOENT, and an Lstat returning ENOENT means there is NOTHING at that name
+// — no link, no directory, no file. A name with nothing at it cannot redirect
+// anything, so no skipped element can move the verdict off the ancestor that
+// resolved, and the remainder was decoration on it.
+//
+// That the path arrives Cleaned, so the rejoin only ever descends, is true and
+// beside the point. It is a property of today's callers; the Lstat is a property
+// of this loop, and it is what would still hold if a caller someday passed
+// something less tidy. Stating the weaker reason would leave this paragraph
+// quietly false the moment the Lstat guard changed.
+//
+// Carrying the remainder looked like extra rigour while giving the check
+// nothing, and left two ways to get it subtly wrong — dropped, or assembled in
+// reverse — that no test could distinguish because no behaviour depended on
+// either. What the walk owes is that it resolved everything it passed, which is
+// the Lstat's job and not the remainder's.
 func contained(root, full string) error {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -329,7 +382,12 @@ func contained(root, full string) error {
 		// claim can be made at all, so none is. Refusing here is the same rule
 		// the ancestors get — an unestablished containment is refused, and the
 		// root is not exempt from it for being the root.
-		return fmt.Errorf("cannot resolve the repository root: %w", err)
+		//
+		// The *PathError is not wrapped, for the reason every message here says
+		// only what it must: it names the root's absolute path, and the module's
+		// own sentences are repository-relative throughout. There is nothing
+		// relative to say about the root, so nothing is said about it.
+		return errors.New("cannot resolve the repository root")
 	}
 
 	// Walk up to the first ancestor that resolves. dir is always a prefix of
@@ -345,32 +403,50 @@ func contained(root, full string) error {
 			// report as ErrUnreadableTree; containment simply cannot be
 			// established, and letting the path through on a failed check is
 			// the one outcome this function exists to prevent.
-			return fmt.Errorf("cannot resolve an ancestor: %w", err)
+			return fmt.Errorf("cannot resolve an ancestor: %s", relativeTo(realRoot, dir))
 		}
 		// EvalSymlinks said ENOENT. That is not yet permission to skip dir:
 		// ask the filesystem about dir ITSELF, without following anything.
 		switch info, lerr := os.Lstat(dir); {
 		case lerr == nil && info.Mode()&os.ModeSymlink != 0:
-			// A dangling symlink. It is right here, it is a link, and where it
-			// leads is unknowable until its target exists — which says nothing
-			// about where it will lead then.
+			// A dangling symlink. It is right here, it is a link, and
+			// EvalSymlinks cannot say where it leads because its target is not
+			// on disk yet.
 			//
-			// EvalSymlinks's error is deliberately NOT wrapped here, alone among
-			// these branches. Its *PathError names the path that did not
-			// resolve, which for a dangling link is the link's TARGET — the one
-			// string in this whole function that is both outside the repository
-			// and chosen by whoever made the link. Wrapping it would put the
-			// escape's destination in the log as the reward for refusing it. The
-			// ancestor's own name is what a producer needs and it is inside the
-			// repository, so that is what is said.
-			return fmt.Errorf("an ancestor is a symlink that does not resolve: %s", filepath.Base(dir))
+			// Refusing every one of these was wider than the threat. os.Readlink
+			// answers exactly the question the refusal called unanswerable: the
+			// target is written in the link, target or no target. A link whose
+			// target is inside the repository is the ordinary generated-output
+			// case — repo/pending -> repo/generated, made before the directory it
+			// names, both ends inside — and a blanket refusal turns that into no
+			// event at all, which is the silence this module exists to prevent.
+			//
+			// So the target is read and judged, and only what cannot be placed
+			// inside the root is refused. A relative target is resolved against
+			// the link's own directory, the way the kernel would. The judgement
+			// is lexical on purpose: the target does not exist, so there is
+			// nothing to resolve it against, and a lexical answer that can only
+			// be wrong by refusing is the safe half of the trade. What it costs
+			// is a link pointing at an inside path that is ITSELF reached through
+			// a symlink out — refused for want of proof, which is the direction
+			// this function refuses in everywhere else.
+			return danglingLinkStaysInside(realRoot, dir)
 		case lerr == nil:
 			// dir exists and is not a link, yet EvalSymlinks could not resolve
 			// it: something further along its own path did not answer.
 			// Unestablished, so refused.
-			return fmt.Errorf("cannot resolve an ancestor: %w", err)
+			//
+			// Unreachable from any static tree, for the same structural reason as
+			// the branch below — see ancestorUnresolvable. EvalSymlinks returns
+			// ENOENT only when its own Lstat of dir or a prefix of dir said so,
+			// and in either case an Lstat of dir here says ENOENT too and the
+			// skip is taken. Only a race separates them. Kept because the
+			// direction has to be right whichever way the tree moves under it,
+			// and pinned by TestContained_ANonSymlinkAncestorThatWillNotResolveIsRefused
+			// calling the decision rather than staging a tree that cannot exist.
+			return ancestorUnresolvable(realRoot, dir, err)
 		case !errors.Is(lerr, os.ErrNotExist):
-			return fmt.Errorf("cannot resolve an ancestor: %w", lerr)
+			return ancestorUnresolvable(realRoot, dir, lerr)
 		}
 		// Only now is dir known to hold nothing at all, so there is nothing
 		// about it to follow and the walk may go up.
@@ -379,6 +455,167 @@ func contained(root, full string) error {
 			// Reached the filesystem root without finding anything that exists.
 			return errors.New("no part of the path is on disk")
 		}
+		dir = parent
+	}
+}
+
+// ancestorUnresolvable is the decision taken when a lookup about an ancestor
+// fails for a reason of its own: containment is refused, never skipped past.
+//
+// A named function rather than an inline return because the branch that calls
+// it — the Lstat failing non-ENOENT — is not reachable from any static tree, so
+// nothing else can pin its direction. filepath.walkSymlinks returns os.Lstat's
+// error verbatim, so an ENOENT out of EvalSymlinks(dir) is an Lstat ENOENT on
+// dir or a prefix of it; by the time the walk asks about dir itself, Lstat
+// agrees and the skip is taken. Only a race between the two calls separates
+// them. The direction still has to be right, and here it can be stated and
+// tested on its own.
+//
+// The failing error is deliberately not wrapped — see relativeTo. Its text is
+// the absolute path being removed from these messages.
+func ancestorUnresolvable(realRoot, dir string, _ error) error {
+	return fmt.Errorf("cannot resolve an ancestor: %s", relativeTo(realRoot, dir))
+}
+
+// unreadableLinkRefusal is the decision taken when an ancestor answers as a
+// symlink and then will not say where it points: where the chain ends is
+// unknown, and unknown is not contained.
+//
+// Named for the same reason as ancestorUnresolvable — the branch needs Lstat and
+// Readlink to disagree about one name, which only a race produces, so nothing
+// reachable from a static tree can pin its direction.
+func unreadableLinkRefusal(realRoot, dir string) error {
+	return fmt.Errorf("an ancestor is a symlink that cannot be read: %s", relativeTo(realRoot, dir))
+}
+
+// relativeTo names an ancestor the way every other diagnostic in this module
+// names a path: relative to the repository root, never absolutely.
+//
+// The absolute spelling is what the wrapped *PathErrors used to put in these
+// messages, and it is both the spelling no hook can use and a disclosure of the
+// filesystem layout around the repository. The underlying syscall error is
+// dropped rather than wrapped, because for these branches its text is exactly
+// the absolute path being removed — there is no part of it left to keep.
+//
+// A path that is not under the root has no relative name worth printing, and
+// falling back to the absolute one would leak on precisely the inputs this
+// exists to sanitise. Such an ancestor is described rather than named.
+func relativeTo(realRoot, dir string) string {
+	rel, err := filepath.Rel(realRoot, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "an ancestor above the repository root"
+	}
+	return rel
+}
+
+// danglingLinkStaysInside judges a dangling symlink ancestor by what it points
+// at, since EvalSymlinks cannot and os.Readlink can.
+//
+// The link's target is resolved the way the kernel would — a relative target
+// against the link's own directory — then cleaned and compared against the
+// root. Cleaning is what makes the comparison meaningful for a path that does
+// not exist: there is no tree to walk, so "repo/generated/../../outside" has to
+// fold before under() sees it, and folding is exactly what the kernel would NOT
+// do. That mismatch is the same one resolve documents, and it points the safe
+// way here: the folded target is the shortest reading of where the link goes,
+// so a target that escapes after folding escapes under any reading.
+//
+// The link's own name is what a producer needs and it is inside the repository,
+// so it is the only thing named. The TARGET is never printed on refusal: it is
+// the one string here that is both outside the repository and chosen by whoever
+// made the link, and printing it would make the log the reward for the escape.
+func danglingLinkStaysInside(realRoot, dir string) error {
+	// A dangling link may point at ANOTHER dangling link, so the chain is
+	// followed to its end rather than judged one hop deep. Stopping at the first
+	// target reads "hop -> repo/escape" as inside — which it lexically is — while
+	// "escape" itself points out of the repository, so the escape is reached by
+	// one extra indirection and the check waves it through. Each hop is resolved
+	// the way the kernel would, and the judgement is made on where the chain
+	// actually ENDS.
+	target := dir
+	for hops := 0; ; hops++ {
+		if hops > maxSymlinkHops {
+			// A loop, or a chain long enough to be indistinguishable from one.
+			// Where it ends is not knowable, so it is refused.
+			return fmt.Errorf("an ancestor is a symlink that does not settle: %s", relativeTo(realRoot, dir))
+		}
+		info, lerr := os.Lstat(target)
+		if lerr != nil {
+			// The chain has run off the end of the tree: nothing is at this name,
+			// which is the ordinary case — a link to a target not created yet.
+			// Where that name SITS is what containment is about, so the loop stops
+			// and the judgement is made on it.
+			//
+			// An Lstat failing for any other reason has established nothing, and
+			// unestablished containment is refused, as everywhere else here.
+			//
+			// Removing this branch changes no verdict, and the reason is worth
+			// recording so it is not mistaken for an untested guard: a name that
+			// Lstat cannot read is a name resolveAsFarAsItGoes cannot resolve
+			// either, so the comparison below places it above the root and
+			// refuses it anyway. The branch is kept for the message and the
+			// intent — refusing HERE says the chain could not be followed, while
+			// falling through says the chain ended outside, and only the first is
+			// true. A test cannot tell them apart through resolve; see
+			// TestResolve_AChainEndingSomewhereUnreadableIsRefused, which pins the
+			// outcome both routes share.
+			if !errors.Is(lerr, os.ErrNotExist) {
+				return ancestorUnresolvable(realRoot, dir, lerr)
+			}
+			break
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			// A real object, and the end of the chain.
+			break
+		}
+		next, err := os.Readlink(target)
+		if err != nil {
+			// It answered as a link and will not say where it points. Refused.
+			return unreadableLinkRefusal(realRoot, dir)
+		}
+		if !filepath.IsAbs(next) {
+			next = filepath.Join(filepath.Dir(target), next)
+		}
+		target = filepath.Clean(next)
+	}
+	// The target is compared in the same terms as the root, which means resolving
+	// it. Comparing a raw target against the resolved root is the very false
+	// positive the root is resolved to avoid — on darwin /var is a link to
+	// /private/var, so an entirely ordinary link into the repository would be
+	// called an escape and the change would go silent.
+	//
+	// The target itself does not exist, so what is resolved is as much of it as
+	// does; the remainder only ever DESCENDS from that, by the same argument the
+	// walk above rests on, so it cannot re-enter the repository nor leave it.
+	if err := under(realRoot, resolveAsFarAsItGoes(filepath.Clean(target))); err != nil {
+		return fmt.Errorf("an ancestor is a symlink pointing outside the repository: %s", relativeTo(realRoot, dir))
+	}
+	return nil
+}
+
+// resolveAsFarAsItGoes resolves the longest prefix of path that is on disk and
+// re-joins the rest onto it.
+//
+// Used for a link's target, which by definition may not exist yet: EvalSymlinks
+// answers about nothing in that case, and a raw path cannot be compared against
+// a resolved root. Rejoining the missing remainder is sound for the containment
+// question because the remainder is cleaned and therefore only descends — it
+// cannot leave a directory that is contained, nor re-enter one that is not.
+//
+// If nothing on the path resolves, the cleaned path is returned as it stands:
+// there is nothing to learn from the filesystem, and the lexical comparison is
+// then the whole answer.
+func resolveAsFarAsItGoes(path string) string {
+	remainder := ""
+	for dir := path; ; {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(real, remainder)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return path
+		}
+		remainder = filepath.Join(filepath.Base(dir), remainder)
 		dir = parent
 	}
 }
@@ -394,15 +631,36 @@ func contained(root, full string) error {
 // the tree would then produce no event at all — the silence, reached from the
 // direction that looks like caution.
 //
-// Comparison is case-sensitive, which on a case-insensitive filesystem (darwin's
-// default) is a known false negative rather than an oversight: a root spelled
-// /parent/REPO and a resolved path under /parent/repo name one directory the
-// kernel cannot tell apart, and this calls the second an escape. It errs toward
-// refusing, so nothing outside the repository is let through by it; what it
-// costs is an event for a real change, which is the worse direction, and folding
-// case would cost the opposite on a case-SENSITIVE filesystem where "repo" and
-// "REPO" are two directories. Neither is free, and the one that never emits a
-// path it should not is the one taken.
+// Comparison is case-sensitive. Folding case would be wrong on a
+// case-SENSITIVE filesystem, where "repo" and "REPO" are two directories and
+// folding would let one pass for the other — so case-sensitive is the direction
+// taken, and on a case-sensitive filesystem it is simply correct.
+//
+// On a case-INSENSITIVE one (darwin's default) it is not the safe conservative
+// choice an earlier version of this comment claimed. "It errs toward refusing,
+// so nothing outside the repository is let through by it" describes a
+// disagreement between the root's spelling and a resolved path's, and that
+// disagreement does not arise: EvalSymlinks does not normalise case, it echoes
+// the spelling it was given, so both sides of the comparison carry the caller's
+// own casing and under() agrees with itself.
+//
+// What actually happens is the opposite failure, and it is not under()'s to
+// fix. One on-disk file repo/Dir/a.md answers to "dir/a.md", "DIR/a.md" and
+// "dIr/A.MD", each of which resolves, stats present, and is contained — so one
+// file yields four distinct event paths. That defeats the canonical-spelling
+// guarantee the dedupe and ErrBaselineKeyedOnRawSpelling both rest on: the
+// dedupe keys on a spelling the filesystem considers equal to three others, and
+// a baseline keyed on any one of them disagrees with the rest.
+//
+// It is left alone deliberately. Canonicalising case means asking the
+// filesystem for each element's true name, which is a per-element walk of
+// exactly the TOCTOU-bound shape contained already is, on every path — and it
+// would be wrong on a case-sensitive filesystem, where the four spellings are
+// four different files and collapsing them would hide three real changes. The
+// cost is bounded and does not point outward: every one of those spellings
+// names the same file INSIDE the repository, so what a duplicate produces is a
+// repeated event, never an escape. A producer that hands over git's own output
+// hands over one spelling and never meets this.
 //
 // The Rel error is refused rather than reported as an escape, and it is worth
 // saying that no input reaching here through contained can produce it: Rel fails

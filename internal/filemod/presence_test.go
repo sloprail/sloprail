@@ -1,11 +1,14 @@
 package filemod
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -704,51 +707,12 @@ func TestContained_AnUnresolvableRootIsRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot resolve the repository root")
 }
 
-func TestResolve_ContainmentDiagnosticsNameNoAbsolutePath(t *testing.T) {
-	// F4's rule, which the containment errors were exempt from: every
-	// diagnostic this module raises names the repository-relative path the
-	// producer gave. These named the resolved absolute path instead — the
-	// spelling no hook can use, in the module whose premise is that paths are
-	// relative to a root, and it discloses the filesystem layout OUTSIDE the
-	// repository to whoever reads the log.
-	if runtime.GOOS == "windows" {
-		t.Skip("symlinks need a privilege this test will not assume on windows")
-	}
-	root := escapeTree(t)
-	outside := filepath.Join(filepath.Dir(root), "outside")
-
-	// A dangling link, an unreadable ancestor and a nonexistent root alongside
-	// the resolved escape, so every branch that formats a message is covered.
-	require.NoError(t, os.Symlink(filepath.Join(filepath.Dir(root), "not-yet"), filepath.Join(root, "dangling")))
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "locked", "inner"), 0o755))
-	unreadable(t, filepath.Join(root, "locked"))
-
-	for name, tc := range map[string]struct{ root, path string }{
-		"resolves outside":       {root: root, path: "escape/id_rsa"},
-		"dangling link ancestor": {root: root, path: "dangling/id_rsa"},
-		"unresolvable ancestor":  {root: root, path: "locked/inner/a.md"},
-		"unresolvable root":      {root: filepath.Join(root, "no-such-root"), path: "a.md"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, _, err := resolve(tc.root, tc.path)
-
-			require.ErrorIs(t, err, ErrPathNotRelativeToRoot)
-			assert.Contains(t, err.Error(), tc.path, "the diagnostic names the path the producer gave")
-
-			// This module's own sentences are what it controls, and they are what
-			// this pins — the same split TestObserved_DiagnosticsNameTheRepositoryRelativePath
-			// draws around lookAt's wrapped *PathError. A syscall error that
-			// this code wraps rather than writes still carries the absolute path
-			// it failed on, and dropping it would leave someone debugging a
-			// producer with an error naming nothing they could act on.
-			line, _, _ := strings.Cut(err.Error(), ": lstat")
-			assert.NotContains(t, line, outside,
-				"this module's own sentence must not disclose the layout outside the repository")
-			assert.NotContains(t, line, root,
-				"the relative path is the spelling every other diagnostic here uses")
-		})
-	}
-}
+// The former TestResolve_ContainmentDiagnosticsNameNoAbsolutePath lived here.
+// It cut the leak out before asserting — `strings.Cut(err.Error(), ": lstat")`
+// discarded exactly the segment holding the absolute path — so four of the six
+// branches leaked past it. Replaced by
+// TestResolve_ContainmentDiagnosticsNameNoAbsolutePathAnywhereInThem, which
+// asserts on the whole message.
 
 func TestResolve_TheOutsideTargetIsNeverNamedAtAll(t *testing.T) {
 	// The disclosure that matters most, and the one no wrapped syscall error
@@ -1059,4 +1023,536 @@ func TestObserved_NothingToReportIsNil(t *testing.T) {
 	events, err = observeErr(fakeObserved{root: tree(t), paths: []string{"../out.md", ""}})
 	require.Error(t, err)
 	assert.Nil(t, events, "an allocated-but-empty slice must not leak out")
+}
+
+// --- a root that is not absolute is no root at all (F-1) ---------------------
+
+func TestObserved_ARelativeRootIsRefused(t *testing.T) {
+	// The guard was written for "" and every other relative spelling walked past
+	// it. Root() == "." is the natural way to say "here": it survives the
+	// emptiness check, Join(".", path) is RELATIVE, and the kernel resolves it
+	// against whatever directory the process happens to be in.
+	//
+	// Containment does not catch it either — EvalSymlinks(".") is that same
+	// directory, so the cwd IS the root and a file outside the repository is
+	// contained under it, correctly and uselessly. What comes out is a
+	// PostFileCreate for a private key the repository does not contain.
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(parent, "secrets"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(parent, "secrets", "id_rsa"), []byte("PRIVATE KEY\n"), 0o600))
+
+	// The process's working directory is the repository's PARENT, which is what
+	// makes the relative root reach outside.
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(wd)) })
+	require.NoError(t, os.Chdir(parent))
+
+	for name, relRoot := range map[string]string{
+		"a bare dot":       ".",
+		"dot slash":        "./",
+		"a plain name":     "repo",
+		"a dotted name":    "./repo",
+		"stepping upward":  "..",
+		"a nested spellng": "repo/..",
+	} {
+		t.Run(name, func(t *testing.T) {
+			events, err := observeErr(fakeObserved{
+				root:   relRoot,
+				paths:  []string{"secrets/id_rsa"},
+				before: map[string]bool{filepath.FromSlash("secrets/id_rsa"): true},
+			})
+
+			assert.Empty(t, events, "a relative root resolves against the cwd, not the repository")
+			assert.ErrorIs(t, err, ErrNoRoot)
+		})
+	}
+}
+
+func TestResolve_AnAbsoluteRootIsWhatMakesThePathIndependent(t *testing.T) {
+	// The property the check is actually about: the same path, the same root,
+	// classified the same wherever the process happens to be standing.
+	root := tree(t, "a.md")
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(wd)) })
+
+	_, firstFull, err := resolve(root, "a.md")
+	require.NoError(t, err)
+
+	require.NoError(t, os.Chdir(t.TempDir()))
+	_, secondFull, err := resolve(root, "a.md")
+	require.NoError(t, err)
+
+	assert.Equal(t, firstFull, secondFull, "an absolute root does not move when the process does")
+	assert.True(t, filepath.IsAbs(secondFull), "and what gets stat'd is absolute")
+}
+
+// --- a dangling link pointing inside is not an escape (F-3) ------------------
+
+func TestObserved_ADanglingSymlinkPointingInsideIsNotRefused(t *testing.T) {
+	// The ordinary generated-output case: a link created before the directory it
+	// names, both ends inside the repository. Refusing every dangling ancestor
+	// caught this too, and the change is real, contained under any reading, and
+	// produced no event at all — the silence, reached from the direction that
+	// looks like caution.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root := tree(t)
+	require.NoError(t, os.Symlink(filepath.Join(root, "generated"), filepath.Join(root, "pending")))
+	// The target directory arrives with the generated file in it, which is the
+	// ordinary sequence: the link is committed, the output is produced into it.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "generated"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "generated", "out.md"), []byte("x\n"), 0o644))
+
+	events := observe(t, fakeObserved{
+		root:   root,
+		paths:  []string{"pending/out.md"},
+		before: nil,
+	})
+
+	require.Len(t, events, 1, "a link whose target is inside the repository is not an escape")
+	assert.Equal(t, KindPostCreate, events[0].Kind)
+	assert.Equal(t, filepath.FromSlash("pending/out.md"), events[0].Fields[FieldPath])
+}
+
+func TestObserved_ADanglingLinkPointingInsideStillClassifies(t *testing.T) {
+	// The same link with the target still ABSENT, which is the state that used to
+	// be refused outright: EvalSymlinks answers ENOENT for the ancestor, Lstat
+	// says a symlink is sitting there, and the old code stopped at "unresolvable
+	// link" without asking where it pointed.
+	//
+	// Nothing is on disk under it, so what this must produce is an ordinary
+	// classification — a delete for a path that was at the baseline — rather than
+	// ErrPathNotRelativeToRoot. Containment is the question here, and it is
+	// answered: the link points inside.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root := tree(t)
+	require.NoError(t, os.Symlink(filepath.Join(root, "generated"), filepath.Join(root, "pending")))
+
+	events := observe(t, fakeObserved{
+		root:   root,
+		paths:  []string{"pending/out.md"},
+		before: map[string]bool{filepath.FromSlash("pending/out.md"): true},
+	})
+
+	require.Len(t, events, 1, "the containment question is answered, so the path is classified")
+	assert.Equal(t, KindPostDelete, events[0].Kind)
+	assert.Equal(t, filepath.FromSlash("pending/out.md"), events[0].Fields[FieldPath])
+}
+
+func TestResolve_ADanglingLinkIsJudgedByWhereItPoints(t *testing.T) {
+	// os.Readlink answers what EvalSymlinks cannot, so the refusal is narrowed to
+	// the links that actually leave. Relative targets are resolved against the
+	// link's own directory, the way the kernel would.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "sub"), 0o755))
+
+	// Inside, by four spellings; outside, by three.
+	require.NoError(t, os.Symlink(filepath.Join(root, "generated"), filepath.Join(root, "abs-inside")))
+	require.NoError(t, os.Symlink("generated", filepath.Join(root, "rel-inside")))
+	require.NoError(t, os.Symlink("../generated", filepath.Join(root, "sub", "up-inside")))
+	require.NoError(t, os.Symlink(root, filepath.Join(root, "the-root-itself")))
+
+	require.NoError(t, os.Symlink(filepath.Join(parent, "outside"), filepath.Join(root, "abs-outside")))
+	require.NoError(t, os.Symlink("../outside", filepath.Join(root, "rel-outside")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "sub", "..", "..", "outside"), filepath.Join(root, "folds-outside")))
+
+	for name, tc := range map[string]struct {
+		path    string
+		refused bool
+	}{
+		"absolute target inside":   {path: "abs-inside/a.md"},
+		"relative target inside":   {path: "rel-inside/a.md"},
+		"climbing back inside":     {path: "sub/up-inside/a.md"},
+		"pointing at the root":     {path: "the-root-itself/a.md"},
+		"absolute target outside":  {path: "abs-outside/id_rsa", refused: true},
+		"relative target outside":  {path: "rel-outside/id_rsa", refused: true},
+		"folding out through dots": {path: "folds-outside/id_rsa", refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := resolve(root, tc.path)
+
+			if !tc.refused {
+				assert.NoError(t, err, "the target is inside the repository, target created or not")
+				return
+			}
+			require.ErrorIs(t, err, ErrPathNotRelativeToRoot)
+			assert.NotContains(t, err.Error(), parent,
+				"where it points is never printed; that is the escape's own destination")
+			assert.NotContains(t, err.Error(), root, "nor the repository's absolute path")
+		})
+	}
+}
+
+func TestResolve_ADanglingLinkOutIsStillRefusedWhenItsTargetArrives(t *testing.T) {
+	// The narrowing must not reopen the escape it replaced. The link is refused
+	// while its target is absent, and the emitted nothing stays nothing once the
+	// agent creates the target moments later.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	outside := filepath.Join(parent, "outside")
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "escape")))
+
+	events, err := observeErr(fakeObserved{
+		root:   root,
+		paths:  []string{"escape/id_rsa"},
+		before: map[string]bool{filepath.FromSlash("escape/id_rsa"): true},
+	})
+
+	assert.Empty(t, events)
+	require.ErrorIs(t, err, ErrPathNotRelativeToRoot)
+
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "id_rsa"), []byte("PRIVATE KEY\n"), 0o600))
+
+	for _, e := range events {
+		p, ok := e.Fields[FieldPath].(string)
+		require.True(t, ok)
+		b, readErr := os.ReadFile(filepath.Join(root, p))
+		require.Error(t, readErr, "no emitted path may read %q", string(b))
+	}
+}
+
+// --- the refusal branches, pinned one at a time (F-5) ------------------------
+
+func TestContained_ANonSymlinkAncestorThatWillNotResolveIsRefused(t *testing.T) {
+	// f1d, alone. dir Lstats fine and is not a link, yet EvalSymlinks could not
+	// resolve it — something further along its own path did not answer. Flipped
+	// to "allow", a path whose containment was never established becomes an
+	// event.
+	//
+	// Unreachable from any static tree, and said so rather than dressed up in one
+	// that looks like it reaches it. The shape the branch needs is EvalSymlinks
+	// answering ENOENT while Lstat says a non-symlink is sitting right there —
+	// and filepath.walkSymlinks only produces ENOENT by way of its own Lstat of
+	// dir or a prefix of dir, so an Lstat here answers ENOENT too and the walk
+	// skips instead. The EACCES tree that looks like it reaches this in fact
+	// fails EvalSymlinks non-ENOENT, which is f1g's branch above.
+	//
+	// So the decision is called directly. What is pinned is its DIRECTION, which
+	// is the branch's whole content: an ancestor the check could not resolve has
+	// established nothing, and unestablished containment is refused rather than
+	// walked past. Allowing it takes the answer from an ancestor ABOVE a
+	// component that was never resolved.
+	root := tree(t)
+
+	err := ancestorUnresolvable(root, filepath.Join(root, "inner"), os.ErrPermission)
+
+	require.Error(t, err, "unestablished containment is refused, not assumed")
+	assert.Contains(t, err.Error(), "cannot resolve an ancestor")
+	assert.NotContains(t, err.Error(), root, "and it names the relative path, as they all do")
+}
+
+func TestContained_AnLstatFailingForItsOwnReasonIsRefused(t *testing.T) {
+	// f1e, and the honest statement about it: no static tree reaches this branch,
+	// so it is pinned by construction rather than by a filesystem shape that
+	// pretends to.
+	//
+	// Why it cannot be reached. filepath.walkSymlinks returns os.Lstat's error
+	// verbatim for each component it walks, so an ENOENT out of EvalSymlinks(dir)
+	// IS an Lstat ENOENT on dir or on a prefix of it — and when the walk has
+	// arrived at dir itself, Lstat(dir) answers ENOENT too and the switch takes
+	// the skip. Every shape tried collapses that way: EACCES and ENOTDIR fail
+	// BOTH calls non-ENOENT (the f1g branch above), and an over-long name fails
+	// EvalSymlinks with ENAMETOOLONG rather than ENOENT. What is left is a race —
+	// the ancestor's permissions changing between the two calls — which a test
+	// cannot stage deterministically.
+	//
+	// EACCES failing both calls is exactly why f1e and f1g masked each other:
+	// deleting either alone left the other to refuse the path, and the
+	// EACCES-grandparent test stayed green. f1g is isolated by a symlink loop
+	// below; this one is isolated here, by calling the decision directly.
+	//
+	// So what is pinned is the DIRECTION, which is the whole content of the
+	// branch: an Lstat that fails for a reason of its own has established
+	// nothing, and unestablished containment is refused rather than skipped past.
+	// The alternative — treating it as "nothing is there, walk up" — takes the
+	// containment answer from an ancestor ABOVE a component the check never
+	// managed to look at.
+	root := tree(t)
+
+	for name, lerr := range map[string]error{
+		"permission denied": os.ErrPermission,
+		"an I/O error":      errors.New("input/output error"),
+		"a name too long":   syscall.ENAMETOOLONG,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.False(t, errors.Is(lerr, os.ErrNotExist),
+				"the branch is the one where Lstat did NOT say the name is free")
+			assert.Error(t, ancestorUnresolvable(root, filepath.Join(root, "x"), lerr),
+				"an Lstat that cannot answer is not permission to skip the ancestor")
+		})
+	}
+}
+
+func TestContained_AnEvalSymlinksFailingForItsOwnReasonIsRefused(t *testing.T) {
+	// f1g, in isolation — the branch that refuses BEFORE the Lstat is reached.
+	//
+	// Proving it alone means an ancestor where EvalSymlinks fails with something
+	// other than ENOENT while Lstat SUCCEEDS, so no branch below could refuse in
+	// its place. EACCES cannot do it — permission denied fails BOTH calls, which
+	// is exactly why f1e and f1g masked each other and why the EACCES-grandparent
+	// test died to neither in isolation.
+	//
+	// A symlink LOOP separates them. a -> b -> a: Lstat sees a symlink and
+	// answers perfectly well, while EvalSymlinks gives up with ELOOP, which is
+	// neither ENOENT nor a permission problem.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root := tree(t)
+	require.NoError(t, os.Symlink(filepath.Join(root, "b"), filepath.Join(root, "a")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "a"), filepath.Join(root, "b")))
+	looped := filepath.Join(root, "a")
+
+	// The shape this test needs: EvalSymlinks fails non-ENOENT...
+	_, evalErr := filepath.EvalSymlinks(looped)
+	require.Error(t, evalErr)
+	require.False(t, errors.Is(evalErr, os.ErrNotExist),
+		"the f1g branch is the non-ENOENT one")
+	// ...while Lstat answers, so neither the dangling-link branch nor the
+	// Lstat-failed branch can be the one doing the refusing.
+	info, lstatErr := os.Lstat(looped)
+	require.NoError(t, lstatErr, "Lstat succeeds, so only the EvalSymlinks branch can refuse")
+	require.True(t, info.Mode()&os.ModeSymlink != 0)
+
+	err := contained(root, filepath.Join(looped, "a.md"))
+
+	require.Error(t, err, "an EvalSymlinks that fails for its own reason has established nothing")
+	assert.Contains(t, err.Error(), "cannot resolve an ancestor")
+}
+
+// --- the diagnostics, asserted on the WHOLE message (F-2) --------------------
+
+func TestResolve_ContainmentDiagnosticsNameNoAbsolutePathAnywhereInThem(t *testing.T) {
+	// The test that was written to prevent the leak and cut it out before
+	// asserting. Every leaking branch wraps a *PathError whose text begins
+	// ": lstat ", so `strings.Cut(err.Error(), ": lstat")` discarded precisely
+	// the segment containing the absolute path and asserted on the remainder —
+	// the pattern inside the check written to catch the pattern.
+	//
+	// Asserted here on the entire message. Four of the six branches leaked:
+	// unresolvable root, EACCES ancestor, over-long name, and the non-symlink
+	// ENOENT case.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root := escapeTree(t)
+	outside := filepath.Join(filepath.Dir(root), "outside")
+
+	require.NoError(t, os.Symlink(filepath.Join(filepath.Dir(root), "not-yet"), filepath.Join(root, "dangling")))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "locked", "inner"), 0o755))
+	unreadable(t, filepath.Join(root, "locked"))
+
+	for name, tc := range map[string]struct{ root, path string }{
+		"resolves outside":       {root: root, path: "escape/id_rsa"},
+		"dangling link ancestor": {root: root, path: "dangling/id_rsa"},
+		"unresolvable ancestor":  {root: root, path: "locked/inner/a.md"},
+		"unresolvable root":      {root: filepath.Join(root, "no-such-root"), path: "a.md"},
+		"an over-long name":      {root: root, path: strings.Repeat("a", 512) + "/a.md"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := resolve(tc.root, tc.path)
+
+			require.ErrorIs(t, err, ErrPathNotRelativeToRoot)
+			assert.Contains(t, err.Error(), tc.path, "the diagnostic names the path the producer gave")
+
+			// The WHOLE message. No cut, nothing excused for being a wrapped
+			// syscall error — a containment diagnostic is this module's own
+			// sentence and it speaks the repository-relative spelling only.
+			assert.NotContains(t, err.Error(), root,
+				"the absolute path of the repository is not this module's spelling")
+			assert.NotContains(t, err.Error(), outside,
+				"and the layout outside the repository is not disclosed at all")
+		})
+	}
+}
+
+// --- a symlink to a directory is the file git tracks (F-7) -------------------
+
+func TestObserved_ASymlinkToADirectoryIsStillAFileEvent(t *testing.T) {
+	// The decision, pinned rather than left to the Lstat's silence.
+	//
+	// info.IsDir() is false for a link, so ErrPathIsNotAFile does not fire and a
+	// PostFileCreate goes out naming it. Resolving the target with os.Stat would
+	// make it fire — and would decide whether a TRACKED file gets an event by
+	// looking at an object the repository need not contain, flipping the answer
+	// as that object is created, removed or retargeted. git records a symlink as
+	// a blob holding its target's path: the link is a file in the repository
+	// whatever sits at the other end, and that is what the event says.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root := tree(t, "real/inner.md")
+	require.NoError(t, os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "linkdir")))
+
+	events := observe(t, fakeObserved{
+		root:   root,
+		paths:  []string{"linkdir"},
+		before: nil,
+	})
+
+	require.Len(t, events, 1, "the link is an entry the repository holds and git tracks")
+	assert.Equal(t, KindPostCreate, events[0].Kind)
+	assert.Equal(t, "linkdir", events[0].Fields[FieldPath])
+
+	// The guard still fires for a directory the repository actually holds, which
+	// is the set a path check can honestly speak about.
+	_, err := observeErr(fakeObserved{root: root, paths: []string{"real"}, before: map[string]bool{"real": true}})
+	assert.ErrorIs(t, err, ErrPathIsNotAFile, "a real directory is still not a file")
+
+	// And the answer does not move when the target does — the property following
+	// the link would have cost.
+	require.NoError(t, os.RemoveAll(filepath.Join(root, "real")))
+	events = observe(t, fakeObserved{root: root, paths: []string{"linkdir"}, before: nil})
+	require.Len(t, events, 1, "the tracked link did not stop being a file because its target left")
+	assert.Equal(t, KindPostCreate, events[0].Kind)
+}
+
+func TestResolve_AChainOfDanglingLinksIsJudgedAtItsEnd(t *testing.T) {
+	// The escape reached by one extra indirection, which a one-hop check waves
+	// through: "hop -> repo/escape" is lexically INSIDE the repository, and
+	// "escape" is the link that actually leaves. Judging where the first target
+	// sits rather than where the chain ENDS calls this contained.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(parent, "outside"), filepath.Join(root, "escape")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "escape"), filepath.Join(root, "hop")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "hop"), filepath.Join(root, "hop2")))
+	// And the same chain length that stays inside, so this is not just "long
+	// chains are refused".
+	require.NoError(t, os.Symlink(filepath.Join(root, "generated"), filepath.Join(root, "in1")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "in1"), filepath.Join(root, "in2")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "in2"), filepath.Join(root, "in3")))
+
+	for name, tc := range map[string]struct {
+		path    string
+		refused bool
+	}{
+		"one hop to the escape":  {path: "hop/id_rsa", refused: true},
+		"two hops to the escape": {path: "hop2/id_rsa", refused: true},
+		"a chain that stays in":  {path: "in3/out.md"},
+		"the escape itself":      {path: "escape/id_rsa", refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := resolve(root, tc.path)
+			if !tc.refused {
+				assert.NoError(t, err, "every link in the chain points inside")
+				return
+			}
+			require.ErrorIs(t, err, ErrPathNotRelativeToRoot,
+				"the chain has to be followed to its end, not judged one hop deep")
+			assert.NotContains(t, err.Error(), parent, "and the destination is never named")
+		})
+	}
+}
+
+func TestResolve_ASymlinkCycleIsRefusedRatherThanLoopedOn(t *testing.T) {
+	// A cycle has no end to judge, so it must be refused rather than looped on.
+	//
+	// It never reaches the chain walk's own hop bound, and that is worth stating
+	// rather than staging a test that appears to exercise it: a -> b -> a makes
+	// EvalSymlinks fail with ELOOP, which is not ENOENT, so contained refuses at
+	// the branch above and the walk is never entered. The hop bound inside
+	// danglingLinkStaysInside is therefore defence in depth against a chain the
+	// kernel has not already rejected — unreachable today, kept because a walk
+	// that follows links without a bound is one filesystem change away from
+	// spinning, and its failure mode is a hang rather than a wrong answer.
+	//
+	// What IS pinned here is the outcome the module owes: refusal, and promptly.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root := tree(t)
+	require.NoError(t, os.Symlink(filepath.Join(root, "b"), filepath.Join(root, "a")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "a"), filepath.Join(root, "b")))
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := resolve(root, "a/x.md")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, ErrPathNotRelativeToRoot,
+			"a chain that does not settle has established no containment")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the walk did not terminate on a symlink cycle")
+	}
+}
+
+func TestResolve_ALinkThatWillNotSayWhereItPointsIsRefused(t *testing.T) {
+	// The Readlink failure inside the chain walk. Lstat said a symlink is there
+	// and Readlink then refuses to say where it goes, so where the chain ends is
+	// unknown — and unknown is not contained.
+	//
+	// Staging a link that lstats as a link but will not readlink needs a race, so
+	// the branch is unreachable from a static tree and this pins the DIRECTION of
+	// its decision rather than pretending to reach it.
+	//
+	// The root is passed resolved, as contained() passes it. Passing the
+	// unresolved spelling makes this refuse for an entirely different reason —
+	// /var against /private/var — which would look like a pass and prove nothing.
+	root := tree(t)
+	realRoot, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+
+	// The control: a name with nothing at it, under a correctly resolved root,
+	// is contained. So a refusal below is the branch under test and not the
+	// comparison misfiring.
+	require.NoError(t, danglingLinkStaysInside(realRoot, filepath.Join(realRoot, "no-such-link")))
+
+	refusal := unreadableLinkRefusal(realRoot, filepath.Join(realRoot, "pending"))
+
+	require.Error(t, refusal, "a chain whose end cannot be established is refused")
+	assert.NotContains(t, refusal.Error(), realRoot, "and it names the relative path")
+	assert.Contains(t, refusal.Error(), "pending", "naming the ancestor, which is inside")
+}
+
+func TestResolve_AChainEndingSomewhereUnreadableIsRefused(t *testing.T) {
+	// The chain walk's own "cannot answer" case, which is reachable where the
+	// outer walk's is not: the link is fine, and the NAME IT POINTS AT sits
+	// behind an unreadable directory, so the Lstat that would end the chain
+	// fails with EACCES rather than ENOENT.
+	//
+	// Nothing about where the chain ends has been established, so it is refused
+	// — the same rule every other lookup here follows. Read as "nothing is
+	// there", the walk would stop and judge a name it never managed to look at.
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not work this way on windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits this depends on")
+	}
+	root := tree(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "locked"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(root, "locked", "inner"), filepath.Join(root, "link")))
+	unreadable(t, filepath.Join(root, "locked"))
+
+	_, _, err := resolve(root, "link/a.md")
+
+	require.ErrorIs(t, err, ErrPathNotRelativeToRoot,
+		"a chain whose end cannot be looked at has established no containment")
+	assert.Contains(t, err.Error(), "cannot resolve")
+	assert.NotContains(t, err.Error(), root, "and it says so in the relative spelling")
 }

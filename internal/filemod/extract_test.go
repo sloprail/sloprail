@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -545,4 +546,72 @@ func TestExtract_EmptyFileMatcherActuallyFires(t *testing.T) {
 	admitted, err := m.Match(events[0])
 	require.NoError(t, err, "a declared field must never evaluate to a nil the cast rejects")
 	assert.True(t, admitted, `content == "" must fire for a genuinely empty file`)
+}
+
+// --- the spelling check runs before the dedupe can hide the breach (F-4) -----
+
+func TestObserved_ABaselineKeyedRawIsCaughtInEitherOrder(t *testing.T) {
+	// The guard was defeated by the dedupe three lines above it. seen[clean] was
+	// marked before the check ran, so a producer listing both spellings
+	// CLEAN-FIRST had the raw one — the only spelling that can produce the
+	// disagreement — dropped before the check was ever reached. The breach
+	// shipped as a create; reversing the two inputs caught it.
+	//
+	// Which made the guard order-dependent in exactly the way the defect it was
+	// written against is: the same file in the same tree coming out a create or
+	// an update by iteration order alone.
+	root := tree(t, "dir/a.md")
+
+	for name, paths := range map[string][]string{
+		// "./dir/a.md" cleans to "dir/a.md", so both spellings name one file and
+		// the dedupe collapses them. Only the RAW one can reach a baseline keyed
+		// raw, and the order it arrives in must not decide whether it is asked.
+		"clean first": {"dir/a.md", "./dir/a.md"},
+		"raw first":   {"./dir/a.md", "dir/a.md"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			events, err := observeErr(fakeObserved{
+				root:   root,
+				paths:  paths,
+				before: map[string]bool{filepath.FromSlash("./dir/a.md"): true}, // keyed raw
+			})
+
+			assert.Empty(t, events, "which of the two answers is true is what is in doubt")
+			require.ErrorIs(t, err, ErrBaselineKeyedOnRawSpelling)
+			assert.Len(t, strings.Split(err.Error(), "\n"), 1,
+				"one file, one complaint, however many spellings named it")
+		})
+	}
+}
+
+func TestObserved_TheBaselineIsAskedOncePerFileNotOncePerSpelling(t *testing.T) {
+	// Checking every spelling must not turn into interrogating the producer. The
+	// canonical question is asked once per file and cached; only the raw probe,
+	// which the contract already prices in, repeats per non-canonical spelling.
+	root := tree(t, "dir/a.md")
+
+	var asked []string
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePost,
+		module.InputPayload: recordingObserved{
+			fakeObserved: fakeObserved{
+				root:   root,
+				paths:  []string{"dir/a.md", "./dir/./a.md", "dir/a.md"},
+				before: map[string]bool{filepath.Join("dir", "a.md"): true},
+			},
+			asked: &asked,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, events, 1, "three spellings of one file are one event")
+	assert.Equal(t, KindPostUpdate, events[0].Kind)
+
+	var canonical int
+	for _, a := range asked {
+		if a == filepath.Join("dir", "a.md") {
+			canonical++
+		}
+	}
+	assert.Equal(t, 1, canonical, "one file, one canonical question")
 }

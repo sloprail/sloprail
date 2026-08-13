@@ -208,6 +208,10 @@ func (*Module) markersOnDisk(path string) []Marker {
 // classification of the ninety-nine beside it. What must not happen is the
 // silence — a path dropped without a word is how a producer that always answers
 // false, making every delete vanish, keeps looking like a working one.
+//
+// The work is split across two passes over the paths, for the reason
+// baselinesFor gives: a spelling breach is a property of the whole list, and an
+// event already appended cannot be taken back.
 func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 	observed, ok := in[module.InputPayload].(Observed)
 	if !ok {
@@ -225,12 +229,48 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 	// canonical spelling rather than on what was given.
 	seen := make(map[string]bool, len(paths))
 
+	// The baseline is established for every path BEFORE any of them is
+	// classified, because the spelling breach is a property of the whole list
+	// rather than of one entry, and an event emitted mid-list cannot be recalled.
+	//
+	// Run inside the classification loop, the check was defeated by the dedupe:
+	// given {"dir/a.md", "./dir/a.md"} with the baseline keyed raw, the clean
+	// spelling was classified and its event appended on the first iteration, and
+	// the raw one — the only spelling that can produce the disagreement — arrived
+	// afterwards, when the create had already shipped. Reversing the two inputs
+	// caught it, so the guard was order-dependent in the same way as the defect
+	// its own comment says it eliminates: the same file in the same tree coming
+	// out a create or an update by iteration order alone.
+	//
+	// Two passes is what makes the answer independent of the order Paths listed
+	// the spellings in. The canonical question is still asked once per FILE — the
+	// contract puts one question about one file — while each distinct SPELLING is
+	// probed, which is the cost the contract already prices in.
+	baselines, breached := m.baselinesFor(observed, root, paths, &problems)
+
 	for _, path := range paths {
 		clean, full, err := resolve(root, path)
 		if err != nil {
-			problems = append(problems, err)
+			// Already reported by the first pass, which refused it too.
 			continue
 		}
+		// Asked with the canonical spelling, the same one the dedupe keys on and
+		// the same one the event carries — established by the first pass, and read
+		// back here. Asking with the raw spelling made the answer depend on the
+		// order Paths happened to list them in: given {"a.md", "./a.md"} and a
+		// baseline map holding only "a.md", whichever came first won the slot, so
+		// one file in one tree classified as an update or a create depending on
+		// nothing but iteration order. Two spellings of one file cannot be allowed
+		// to carry two baselines when the rest of the contract says spelling is
+		// not part of it.
+		before := baselines[clean]
+		if breached[clean] {
+			// A spelling of this file disagreed with the baseline in the first
+			// pass. Which of the two answers is the true one is exactly what is
+			// in doubt, so no event is emitted for it at all.
+			continue
+		}
+
 		if seen[clean] {
 			continue
 		}
@@ -248,34 +288,6 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 			// is not what these kinds are about. Both are said and neither
 			// becomes an event.
 			problems = append(problems, err)
-			continue
-		}
-
-		// Asked with the canonical spelling, the same one the dedupe keys on and
-		// the same one the event carries. Asking with the raw spelling made the
-		// answer depend on the order Paths happened to list them in: given
-		// {"a.md", "./a.md"} and a baseline map holding only "a.md", whichever
-		// came first won the slot, so one file in one tree classified as an
-		// update or a create depending on nothing but iteration order. Two
-		// spellings of one file cannot be allowed to carry two baselines when the
-		// rest of the contract says spelling is not part of it.
-		before := observed.ExistedAtBaseline(clean)
-		if path != clean && !before && observed.ExistedAtBaseline(path) {
-			// The one spelling rule this module states and could not otherwise
-			// enforce. A producer keying its baseline on its own raw paths
-			// answers about "./dir/./a.md" and is asked about "dir/a.md" — false
-			// for a file that WAS there, so the update ships as a create and
-			// every delete disappears, with nothing on the tree contradicting
-			// any of it.
-			//
-			// The test is deliberately one-directional. A CONFORMING producer's
-			// map is keyed clean, so the raw spelling misses it and answers
-			// false while the canonical one answers true — disagreement, and
-			// entirely correct. Only the reverse is diagnostic: the raw spelling
-			// found something the canonical one did not, which no map keyed the
-			// way the contract asks can produce. That is a map keyed raw, said
-			// by the producer itself rather than inferred.
-			problems = append(problems, fmt.Errorf("%w: %q and %q", ErrBaselineKeyedOnRawSpelling, path, clean))
 			continue
 		}
 
@@ -311,4 +323,62 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		return nil, err
 	}
 	return events, err
+}
+
+// checkBaselineSpelling enforces the one spelling rule this module states and
+// could not otherwise enforce.
+//
+// A producer keying its baseline on its own raw paths answers about
+// "./dir/./a.md" and is asked about "dir/a.md" — false for a file that WAS
+// there, so the update ships as a create and every delete disappears, with
+// nothing on the tree contradicting any of it.
+//
+// The test is deliberately one-directional. A CONFORMING producer's map is
+// keyed clean, so the raw spelling misses it and answers false while the
+// canonical one answers true — disagreement, and entirely correct. Only the
+// reverse is diagnostic: the raw spelling found something the canonical one did
+// not, which no map keyed the way the contract asks can produce. That is a map
+// keyed raw, said by the producer itself rather than inferred.
+//
+// The canonical answer is passed in rather than asked for again: it is the one
+// the classification uses, and asking twice would make the module put two
+// questions to the producer about one file where the contract has exactly one.
+func (*Module) checkBaselineSpelling(observed Observed, path, clean string, before bool) error {
+	if path == clean || before || !observed.ExistedAtBaseline(path) {
+		return nil
+	}
+	return fmt.Errorf("%w: %q and %q", ErrBaselineKeyedOnRawSpelling, path, clean)
+}
+
+// baselinesFor asks the baseline about every path, once per file, and reports
+// which files a spelling breach was found on.
+//
+// It is the first of the two passes, and its whole purpose is to finish before
+// any event exists. Resolution errors are reported here, so the classification
+// pass simply skips what it cannot resolve rather than reporting it twice.
+func (m *Module) baselinesFor(observed Observed, root string, paths []string, problems *[]error) (baselines, breached map[string]bool) {
+	baselines = make(map[string]bool, len(paths))
+	breached = make(map[string]bool, len(paths))
+
+	for _, path := range paths {
+		clean, _, err := resolve(root, path)
+		if err != nil {
+			*problems = append(*problems, err)
+			continue
+		}
+		before, asked := baselines[clean]
+		if !asked {
+			before = observed.ExistedAtBaseline(clean)
+			baselines[clean] = before
+		}
+		if breached[clean] {
+			// Reported once per file, not once per spelling of it.
+			continue
+		}
+		if err := m.checkBaselineSpelling(observed, path, clean, before); err != nil {
+			*problems = append(*problems, err)
+			breached[clean] = true
+		}
+	}
+	return baselines, breached
 }
