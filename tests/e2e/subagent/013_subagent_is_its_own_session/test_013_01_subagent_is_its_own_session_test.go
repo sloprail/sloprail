@@ -117,8 +117,20 @@ func TestT013_01_PluginBindsSubagentStop(t *testing.T) {
 		Dispatch("d1", "do the job", subScript, "worktree"),
 	))
 	if !res.Saw("root done") {
-		t.Fatalf("the delegated cycle did not complete with SubagentStop bound — a hook that blocks here traps every sub-agent in a retry loop:\n%s", res.Output)
+		t.Fatalf("the delegated cycle did not complete with SubagentStop bound:\n%s", res.Output)
 	}
+
+	// This does NOT prove a blocking hook would be noticed, and it used to say
+	// it did. Measured: mutate subagent-stop to return an error on every cycle
+	// and this whole package stays green. A SubagentStop hook's exit status has
+	// no observable consequence through this harness — exit 0, 1 and 2 are alike
+	// invisible, no retry, no marker, and the root completes regardless.
+	//
+	// So what is actually proven is narrower: the plugin binds the hook, the
+	// bound command exists, and a delegated cycle runs to completion with it in
+	// place. Whether a refusal from it reaches anything is unobservable here.
+	// Closing that needs a channel out of SubagentStop that the mock reports —
+	// see the finding recorded with 014_subagent_dispatch_shapes.
 }
 
 // T013_02: a sub-agent dispatched into its own worktree completes cleanly with
