@@ -92,6 +92,15 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		bound = append(bound, iv.AffectedKinds()...)
 	}
 
+	// What this session has already judged. Opened once for the whole
+	// dispatch, and left nil when the session cannot be identified: an engine
+	// that could not find its record must re-judge, never exempt.
+	rev, err := openRevalidation(p)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: session state unavailable, judging everything afresh: %v\n", err)
+	}
+	defer rev.Close()
+
 	in := module.Input{
 		module.InputPhase:   module.PhasePre,
 		module.InputPayload: p,
@@ -128,6 +137,27 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		if reason, broken := refuseForBroken(invalid, e.Kind); broken {
 			return deny(cmd, reason)
 		}
+
+		// What content this event is about, asked once for the event because the
+		// content is the event's fact, not any rule's. Whether it has ALREADY
+		// been judged is asked per guardrail below — one stream of events serves
+		// every rule, and a file one rule has passed is a file another may never
+		// have seen.
+		//
+		// Reusing one answer across the loop is safe for a reason worth stating,
+		// because a guardrail's hook is an arbitrary script and may rewrite the
+		// very file this event is about: the only kind that can produce a subject
+		// here is PreFileCreate, whose subject comes from the EVENT and reads no
+		// disk. So nothing a hook does between one rule and the next can move it.
+		// That purity is pinned in revalidation_test.go, not assumed here.
+		//
+		// Which makes the hoist this path's own, not a policy the Post side may
+		// copy. A Post subject is fingerprinted FROM disk, so hoisting there
+		// would record rule B's verdict against rule A's fingerprint — the Post
+		// dispatch resolves per guardrail for exactly that reason. Subject is a
+		// pure function of the event and the cwd, so it serves either policy;
+		// this file's choice binds only this file.
+		subj, fingerprinted := rev.Subject(e, p.Cwd)
 
 		for _, d := range decls {
 			if !d.IsEnabled() {
@@ -218,6 +248,30 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 					continue
 				}
 
+				// This guardrail has already seen this exact content and let it
+				// through. Asking again is not merely waste: a judge hook is a
+				// model call rather than a function, so a second look can return
+				// a different answer and block the agent for work it already
+				// fixed and can no longer reach.
+				//
+				// Asked per guardrail, against the one subject resolved above for
+				// the whole event. The content is the same whoever is judging it,
+				// but whether it has ALREADY been judged is each rule's own fact —
+				// a file one rule has passed is a file another may never have seen.
+				if fingerprinted {
+					skip, err := rev.Skip(d.Name, subj)
+					if err != nil {
+						// Reported, never acted on. The false is already the safe
+						// answer; saying so is what keeps a session that has
+						// silently lost its record from looking like one that
+						// simply has nothing settled.
+						fmt.Fprintln(cmd.ErrOrStderr(), err)
+					}
+					if skip {
+						continue
+					}
+				}
+
 				v, err := runHooks(d, b, e)
 				if err != nil {
 					// The third member of the same family, and the one whose own
@@ -255,12 +309,36 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 					// that test the mutation "make cannot-start permit" survived
 					// the whole suite: the one branch the comment excused from
 					// coverage was the one branch with none.
+					//
+					// Nothing is recorded on this path, and that is the same
+					// judgement from the revalidation side: the hook reached no
+					// verdict, so writing a pass would exempt content nobody
+					// judged, and writing a refusal would blame the rule for the
+					// machine.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
 					return deny(cmd, fmt.Sprintf(
 						"guardrail %q could not run its hook for this %s: %v. "+
 							"The action was refused because a guardrail that cannot run must not be read as approval.",
 						d.Name, e.Kind, err))
 				}
+
+				if fingerprinted {
+					// Recorded whichever way it went, and the refusal is the half
+					// that is easy to lose: it is written BEFORE the deny below
+					// returns, so the early exit cannot skip past it.
+					//
+					// Dropping it would not look like a bug from here — a refusal
+					// denies immediately either way, so this cycle is identical.
+					// The cost lands a cycle later: with no row, the content is
+					// unjudged rather than refused, and the FIRST thing that
+					// records a pass for it is believed. Recording it is what
+					// makes the row fail the passing half of the exemption for as
+					// long as the content stays as it is.
+					if err := rev.Record(d.Name, subj, !v.Refused); err != nil {
+						fmt.Fprintln(cmd.ErrOrStderr(), err)
+					}
+				}
+
 				if v.Refused {
 					return deny(cmd, fmt.Sprintf("%s (%s)", v.Reason, d.Name))
 				}
