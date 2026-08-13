@@ -272,7 +272,8 @@ func TestNesting_WrapperArgvIsTheWrappedVector(t *testing.T) {
 //
 // This test asserts the CURRENT behaviour so the gap is visible and so closing
 // it is a deliberate change that turns these cases red rather than a silent
-// widening. See the report accompanying this work.
+// widening. Owned by the `unwrap-interpreter-payloads` task in the strategy
+// backlog, which argues the literalness line these cases are sorted by.
 func TestNesting_InterpreterPayloadsAreOpaque(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -339,7 +340,8 @@ func TestNesting_InterpreterPayloadsAreOpaque(t *testing.T) {
 //
 // Pinned as current behaviour. Unlike `sh -c`, this one is unambiguous to
 // unwrap — the vector between `-exec` and `;` is the command, spelled out — so
-// it is a gap with a clear fix rather than a resolution floor.
+// it is a gap with a clear fix rather than a resolution floor. Owned by the
+// `unwrap-exec-style-wrappers` task in the strategy backlog.
 func TestNesting_FindExecIsNotUnwrapped(t *testing.T) {
 	for _, src := range []string{
 		`find . -exec npm publish \;`,
@@ -371,6 +373,10 @@ func TestNesting_FindExecIsNotUnwrapped(t *testing.T) {
 // A pinned list rather than a silent absence: adding one of these to `wrappers`
 // should be a change that turns a named case red, so the table's contents stay
 // a decision somebody made rather than the set nobody got round to extending.
+//
+// Owned by the `unwrap-interpreter-payloads` task in the strategy backlog,
+// which carries the list and the judgement calls (`command`/`exec`/`builtin`
+// are shell builtins, `su -c` is also an interpreter payload).
 func TestNesting_UnlistedWrappersAreNotUnwrapped(t *testing.T) {
 	for _, src := range []string{
 		`setsid npm publish`,
@@ -395,73 +401,131 @@ func TestNesting_UnlistedWrappersAreNotUnwrapped(t *testing.T) {
 	}
 }
 
-// TestNesting_TimeoutFabricatesADurationAsAProgram is a parser BUG, pinned.
+// TestNesting_TimeoutConsumesItsDurationNotTheProgram.
 //
-// `timeout 5 npm publish` reports two invocations: timeout, and a program named
-// `5`. timeout's duration is a bare positional argument, and the unwrapper
-// treats the first non-flag word as the wrapped program — so the duration is
-// named as a binary and the real one, npm, is never reported at all.
+// `timeout`'s synopsis is `timeout [OPTION] DURATION COMMAND [ARG]...` — a
+// mandatory bare word before the command. Without knowing that, the unwrapper
+// took the first non-flag word as the program: it reported a binary named `5`
+// that nothing invokes AND lost npm entirely, which is both failure directions
+// at once. The module's own comment calls an argument-reported-as-a-program
+// "the one outcome worse than missing it".
 //
-// Both halves are wrong in the direction that matters. A rule about npm does
-// not fire on a line that publishes, and a rule could be made to fire on a
-// binary called `5` that no line ever runs. The module's own comment says an
-// argument reported as a program is "the one outcome worse than missing it",
-// and this produces both at once.
-//
-// Not fixed here: the fix is to teach the table that timeout consumes one
-// positional, which is a product decision about the wrapper vocabulary rather
-// than an obviously-correct edit. The test pins the damage so the fix is
-// visible when it lands.
-func TestNesting_TimeoutFabricatesADurationAsAProgram(t *testing.T) {
+// The wrapper vocabulary now carries a positional count, so the duration is
+// spent and the real program is reported.
+func TestNesting_TimeoutConsumesItsDurationNotTheProgram(t *testing.T) {
 	for _, tc := range []struct {
-		src        string
-		fabricated string
+		src  string
+		want []string
 	}{
-		{`timeout 5 npm publish`, "5"},
-		{`timeout 5s npm publish`, "5s"},
-		{`timeout -k 1 5 npm publish`, "5"},
-		{`timeout --signal=TERM 10 npm publish`, "10"},
+		{`timeout 5 npm publish`, []string{"timeout", "npm"}},
+		{`timeout 5s npm publish`, []string{"timeout", "npm"}},
+		{`timeout 1.5h npm publish`, []string{"timeout", "npm"}},
+		{`timeout infinity npm publish`, []string{"timeout", "npm"}},
+
+		// The duration comes after the options, in every spelling of them.
+		{`timeout -k 1 5 npm publish`, []string{"timeout", "npm"}},
+		{`timeout --signal=TERM 10 npm publish`, []string{"timeout", "npm"}},
+		{`timeout -s TERM 10 npm publish`, []string{"timeout", "npm"}},
+		{`timeout --preserve-status 10 npm publish`, []string{"timeout", "npm"}},
+
+		// `--` ends the OPTIONS, not the arguments — the duration still comes
+		// before the command.
+		{`timeout -- 5 npm publish`, []string{"timeout", "npm"}},
+
+		// Stacked with other wrappers, in both orders.
+		{`sudo timeout 5 npm publish`, []string{"sudo", "timeout", "npm"}},
+		{`timeout 5 sudo npm publish`, []string{"timeout", "sudo", "npm"}},
+		{`timeout 5 env FOO=1 npm publish`, []string{"timeout", "env", "npm"}},
 	} {
 		t.Run(tc.src, func(t *testing.T) {
-			got := binsOf(tc.src)
-			if !contains(got, tc.fabricated) {
-				t.Errorf("bins = %v — %q is no longer fabricated, so the bug is fixed; "+
-					"replace this case with the correct expectation", got, tc.fabricated)
-			}
-			if contains(got, "npm") {
-				t.Errorf("bins = %v — npm is now reported, so the bug is fixed; "+
-					"replace this case with the correct expectation", got)
+			assertBins(t, tc.src, tc.want)
+			if contains(binsOf(tc.src), "5") {
+				t.Errorf("bins = %v — the duration is being reported as a program", binsOf(tc.src))
 			}
 		})
 	}
 
-	// nice and ionice take their adjustment the same way when it is written
-	// without a flag letter, with the same result.
-	if got := binsOf(`nice 10 npm publish`); !contains(got, "10") {
-		t.Errorf("nice bins = %v, want the duration-shaped fabrication pinned", got)
+	// A timeout with a duration and nothing after it wraps no program. The
+	// duration must not be promoted to one just because it is the last word.
+	assertBins(t, `timeout 5`, []string{"timeout"})
+	assertBins(t, `timeout -k 1 5`, []string{"timeout"})
+
+	// The wrapped vector starts at the program, so npm's argv does not carry
+	// timeout's duration — a rule reading argv must not see an argument npm
+	// never receives.
+	invs := ExtractCommand(`timeout 5 npm publish`).Invocations
+	if !equal(invs[1].Argv, []string{"npm", "publish"}) {
+		t.Errorf("npm argv = %v, want [npm publish] without the duration", invs[1].Argv)
 	}
 }
 
-// TestNesting_ClusteredWrapperFlagSwallowsTheProgram is the second unwrapper
-// bug, and the sharper one.
+// TestNesting_NiceTakesNoBarePositional is the other half of the same decision,
+// and the reason the vocabulary is a per-wrapper count rather than a rule about
+// number-shaped words.
 //
-// `sudo -unpm publish` is how sudo's own option parsing reads `-u npm` written
-// without a space: run `publish` as user `npm`. The unwrapper does not know
-// that a value-taking short flag can carry its value inline, so it treats
-// `-unpm` as a valueless flag, and reports `publish` as a program.
-//
-// That is a fabricated binary from a line an agent can write deliberately.
-func TestNesting_ClusteredWrapperFlagSwallowsTheProgram(t *testing.T) {
-	got := binsOf(`sudo -unpm publish`)
-	if !contains(got, "publish") {
-		t.Errorf("bins = %v — `publish` is no longer promoted to a program, so the bug is "+
-			"fixed; replace this case with the correct expectation", got)
-	}
+// `nice`'s synopsis is `nice [-n increment] utility` — the increment ONLY comes
+// behind a flag. So `nice 10 npm publish` genuinely does try to run a program
+// called `10`, and reporting that is correct rather than a fabrication. A
+// heuristic that skipped number-shaped words would get this wrong in the
+// opposite direction, silently dropping a real invocation.
+func TestNesting_NiceTakesNoBarePositional(t *testing.T) {
+	assertBins(t, `nice 10 npm publish`, []string{"nice", "10"})
 
-	// The separated spelling of the same thing is handled correctly, which is
-	// what makes the inline one a bug rather than a limitation: the table
-	// already knows `-u` takes a value.
-	assertBins(t, `sudo -u npm publish`, []string{"sudo", "publish"})
+	// Behind its flag the increment is consumed, in both spellings.
+	assertBins(t, `nice -n 5 npm publish`, []string{"nice", "npm"})
+	assertBins(t, `nice --adjustment=5 npm publish`, []string{"nice", "npm"})
+
+	// The legacy `nice -5 cmd` form is a flag, so it is skipped as one.
+	assertBins(t, `nice -5 npm publish`, []string{"nice", "npm"})
+}
+
+// TestNesting_ClusteredWrapperFlagCarriesItsOwnValue.
+//
+// A short flag can carry its value with no space: `sudo -uroot npm publish` is
+// `sudo -u root npm publish`, and `sudo -unpm publish` runs `publish` as user
+// `npm`.
+//
+// This needs no special case and never did — a clustered word is not in
+// takesValue, so the lookup already declines to eat the next word, which is the
+// correct answer for exactly the right reason. My first report called this a
+// bug; it was a misreading, and these cases are here to hold the behaviour
+// rather than to mark a fix.
+func TestNesting_ClusteredWrapperFlagCarriesItsOwnValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want []string
+	}{
+		// `-unpm` is `-u npm`, so `publish` is what sudo runs.
+		{"clustered user then program", `sudo -unpm publish`, []string{"sudo", "publish"}},
+		{"clustered user then npm", `sudo -uroot npm publish`, []string{"sudo", "npm"}},
+		{"the evasion spelling", `sudo -unpm npm publish`, []string{"sudo", "npm"}},
+
+		// The separated and inline spellings already worked and must keep
+		// working — all three are the same command.
+		{"separated user", `sudo -u root npm publish`, []string{"sudo", "npm"}},
+		{"inline long user", `sudo --user=root npm publish`, []string{"sudo", "npm"}},
+
+		// A long flag does NOT cluster: `--userroot` is not `--user root` to any
+		// getopt, so it stays a valueless flag and the next word is the program.
+		{"long flag does not cluster", `sudo --userroot npm publish`, []string{"sudo", "npm"}},
+
+		// Other wrappers with value-taking short flags, same three spellings.
+		{"xargs clustered -n", `xargs -n1 npm publish`, []string{"xargs", "npm"}},
+		{"xargs separated -n", `xargs -n 1 npm publish`, []string{"xargs", "npm"}},
+		{"xargs clustered -I", `xargs -I{} npm publish`, []string{"xargs", "npm"}},
+		{"ionice clustered", `ionice -c3 npm publish`, []string{"ionice", "npm"}},
+		{"nice clustered", `nice -n5 npm publish`, []string{"nice", "npm"}},
+		{"env clustered unset", `env -uPATH npm publish`, []string{"env", "npm"}},
+		{"timeout clustered signal", `timeout -sTERM 5 npm publish`, []string{"timeout", "npm"}},
+
+		// A short flag that takes no value never clusters — `-E` is not a
+		// prefix of anything, so `-Enpm` is one unknown valueless flag and the
+		// program is still the next word.
+		{"valueless short flag is not a value carrier", `sudo -E npm publish`, []string{"sudo", "npm"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertBins(t, tc.src, tc.want) })
+	}
 }
 
 // TestNesting_HeredocBodiesAreNotParsed: a heredoc body is data. `sh <<EOF` with

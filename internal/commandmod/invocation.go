@@ -12,19 +12,55 @@ import (
 // the wrapper because it is genuinely being invoked, and what it wraps because
 // that is what will actually do the thing.
 //
-// The value is the flags that consume the following word, which have to be
-// known to find where the wrapped command starts — in `sudo -u root npm
-// publish`, `root` is sudo's argument, not the program.
-var wrappers = map[string]map[string]bool{
-	"sudo":    {"-u": true, "--user": true, "-g": true, "--group": true, "-C": true, "-p": true, "--prompt": true, "-h": true, "--host": true, "-D": true, "--chdir": true, "-R": true},
-	"doas":    {"-u": true, "-C": true},
-	"env":     {"-u": true, "--unset": true, "-C": true, "--chdir": true, "-S": true, "--split-string": true},
-	"xargs":   {"-a": true, "--arg-file": true, "-d": true, "--delimiter": true, "-E": true, "-I": true, "-i": true, "--replace": true, "-L": true, "-l": true, "-n": true, "--max-args": true, "-P": true, "--max-procs": true, "-s": true, "--max-chars": true},
-	"nohup":   {},
-	"nice":    {"-n": true, "--adjustment": true},
-	"ionice":  {"-c": true, "-n": true, "-p": true},
-	"stdbuf":  {"-i": true, "-o": true, "-e": true},
-	"timeout": {"-k": true, "--kill-after": true, "-s": true, "--signal": true},
+// wrapper is what has to be known about one wrapper to find where the command
+// it wraps begins.
+//
+// Two things, because a wrapper's own arguments come in exactly two shapes that
+// the wrapped program has to be told apart from:
+//
+//	takesValue  a flag that consumes the following word — in `sudo -u root npm
+//	            publish`, `root` is sudo's argument, not the program.
+//	positionals a mandatory bare word BEFORE the command, taken by no flag. In
+//	            `timeout 5 npm publish`, `5` is the duration. Without this the
+//	            first non-flag word is read as the program, which both reports a
+//	            binary named `5` that nothing invokes and loses npm entirely.
+//
+// A count rather than a predicate on the word. Whether `5` looks like a
+// duration is not the question — `timeout` takes one positional wherever it
+// appears and whatever it is spelled like, and a shape test would have to guess
+// about words like `infinity` or `0.5s` and would still be a guess.
+type wrapper struct {
+	takesValue map[string]bool
+	// positionals is how many bare words the wrapper consumes before the
+	// program. Zero for every wrapper that names the command first, which is
+	// most of them.
+	positionals int
+}
+
+// wrappers are programs whose own arguments name another program to run.
+//
+// A rule about npm is defeated by `sudo npm publish` if only the wrapper is
+// reported, and a rule about sudo is defeated by omitting it. Both are emitted:
+// the wrapper because it is genuinely being invoked, and what it wraps because
+// that is what will actually do the thing.
+var wrappers = map[string]wrapper{
+	"sudo":   {takesValue: map[string]bool{"-u": true, "--user": true, "-g": true, "--group": true, "-C": true, "-p": true, "--prompt": true, "-h": true, "--host": true, "-D": true, "--chdir": true, "-R": true}},
+	"doas":   {takesValue: map[string]bool{"-u": true, "-C": true}},
+	"env":    {takesValue: map[string]bool{"-u": true, "--unset": true, "-C": true, "--chdir": true, "-S": true, "--split-string": true}},
+	"xargs":  {takesValue: map[string]bool{"-a": true, "--arg-file": true, "-d": true, "--delimiter": true, "-E": true, "-I": true, "-i": true, "--replace": true, "-L": true, "-l": true, "-n": true, "--max-args": true, "-P": true, "--max-procs": true, "-s": true, "--max-chars": true}},
+	"nohup":  {},
+	"ionice": {takesValue: map[string]bool{"-c": true, "-n": true, "-p": true}},
+	"stdbuf": {takesValue: map[string]bool{"-i": true, "-o": true, "-e": true}},
+
+	// `nice` takes its increment ONLY behind a flag — the synopsis is
+	// `nice [-n increment] utility`. So `nice 10 npm publish` really would try
+	// to run a program called `10`, and reporting that is correct rather than a
+	// fabrication. No positional here.
+	"nice": {takesValue: map[string]bool{"-n": true, "--adjustment": true}},
+
+	// `timeout` is the one wrapper whose synopsis puts a mandatory bare word
+	// before the command: `timeout [OPTION] DURATION COMMAND [ARG]...`.
+	"timeout": {takesValue: map[string]bool{"-k": true, "--kill-after": true, "-s": true, "--signal": true}, positionals: 1},
 }
 
 // fromArgv turns one resolved argument vector into the invocations it performs
@@ -59,35 +95,76 @@ func fromArgv(argv []string) []Invocation {
 // unwrap returns the vector a wrapper is wrapping, or nil if this is not a
 // wrapper or names nothing to run.
 func unwrap(argv []string) []string {
-	takesValue, isWrapper := wrappers[basename(argv[0])]
+	w, isWrapper := wrappers[basename(argv[0])]
 	if !isWrapper {
 		return nil
 	}
+
+	// How many of the wrapper's own bare words are still to come before the
+	// program. Counted down as they are passed, so `timeout 5 npm publish`
+	// spends the one on `5` and reports npm.
+	positionals := w.positionals
 
 	for i := 1; i < len(argv); i++ {
 		arg := argv[i]
 
 		// `--` ends the wrapper's own options; whatever follows is the command.
+		// Its positionals still come first — `timeout -- 5 npm` is the duration
+		// then the program, since `--` ends options, not arguments.
 		if arg == "--" {
-			return rest(argv, i+1)
+			return afterPositionals(argv, i+1, positionals)
 		}
 		if !strings.HasPrefix(arg, "-") || arg == "-" {
 			// An `env` assignment prefix — `env FOO=1 npm publish` — is
 			// env's argument, not the program. Skip past it the way env does.
+			// A word STARTING with `=` has no variable name in front of the
+			// equals, so env does not take it as an assignment and neither do we.
 			if strings.Contains(arg, "=") && !strings.HasPrefix(arg, "=") {
+				continue
+			}
+			// A bare word the wrapper itself consumes — timeout's duration.
+			if positionals > 0 {
+				positionals--
 				continue
 			}
 			return rest(argv, i)
 		}
-		// A flag written `--user=root` carries its value inline; one listed in
-		// takesValue eats the next word.
-		if !strings.Contains(arg, "=") && takesValue[arg] {
+		if w.consumesNextWord(arg) {
 			i++
 		}
 	}
 	// A wrapper with no command after it — bare `sudo`, or `xargs` reading
 	// its program from a default. Nothing further can be seen.
 	return nil
+}
+
+// consumesNextWord reports whether this flag eats the word after it.
+//
+// Only the SEPARATED spelling does, and a plain lookup is the whole test —
+// because the other two spellings are not keys in the table:
+//
+//	--user root   separated — listed in takesValue, so the next word is eaten
+//	--user=root   inline    — the value is already here. No key contains `=`,
+//	                          so the lookup declines, which is correct.
+//	-uroot        clustered — a short flag carrying its value with no space.
+//	                          The whole word is not a key either, so the lookup
+//	                          declines. `sudo -uroot npm publish` reports npm,
+//	                          and `sudo -unpm publish` reports publish — run as
+//	                          user npm.
+//
+// An explicit `strings.Contains(arg, "=")` guard was tried here and proven
+// unobservable: it can only change the answer for a word that is both
+// `=`-bearing AND a takesValue key, and no key in the table contains an `=`.
+// Left out rather than kept as a branch a reader would take as load-bearing.
+func (w wrapper) consumesNextWord(arg string) bool {
+	return w.takesValue[arg]
+}
+
+// afterPositionals returns the vector starting past the wrapper's own remaining
+// bare words. Used after a `--`, where options have ended but the wrapper's
+// positional arguments have not.
+func afterPositionals(argv []string, from, positionals int) []string {
+	return rest(argv, from+positionals)
 }
 
 func rest(argv []string, from int) []string {
@@ -140,14 +217,20 @@ func parseFlags(args []string) map[string]string {
 		}
 
 		name := strings.TrimLeft(arg, "-")
-		if name == "" {
-			continue
-		}
 
 		value := ""
 		if eq := strings.Index(name, "="); eq >= 0 {
 			value, name = name[eq+1:], name[:eq]
 		}
+		// An all-dashes word — `---`, or `-=x` whose name is empty once the
+		// value is split off. A flag keyed by the empty string would be
+		// reachable as `"" in .flags`, which is a match no rule means.
+		//
+		// One guard, not two. A check before the `=` split was proven
+		// unreachable: `-` and `--` leave the loop earlier (the length test and
+		// the `--` break), and every other all-dash word reaches here with an
+		// empty name anyway. Verified by removing it and confirming
+		// parseFlags's output is unchanged across every dash spelling.
 		if name == "" {
 			continue
 		}
