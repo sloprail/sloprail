@@ -72,7 +72,25 @@ func (*Module) Kinds() []module.KindDecl {
 			Name: KindPreInvoke,
 			Fields: []module.FieldDecl{
 				{Name: FieldRaw, Type: module.TypeString},
-				{Name: FieldInvocations, Type: module.TypeList},
+				{
+					Name: FieldInvocations,
+					Type: module.TypeList,
+					// The element's own shape, declared so that a name inside a
+					// predicate is checked the same way a top-level one is.
+					// Without it `any(invocations, .bni == "npm")` compiles,
+					// loads, and evaluates false on every command — a rule that
+					// reads as satisfied because nothing it names exists. The
+					// typo is one character from a rule that works, and the
+					// engine has the declaration needed to catch it.
+					Elem: &module.FieldDecl{
+						Type: module.TypeMap,
+						Fields: []module.FieldDecl{
+							{Name: KeyBin, Type: module.TypeString},
+							{Name: KeyArgv, Type: module.TypeList},
+							{Name: KeyFlags, Type: module.TypeMap},
+						},
+					},
+				},
 			},
 		},
 	}
