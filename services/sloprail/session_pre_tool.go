@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/event"
-	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
 )
@@ -38,7 +37,7 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	reg, err := module.NewRegistry(filemod.New())
+	reg, err := registry()
 	if err != nil {
 		return nil
 	}
