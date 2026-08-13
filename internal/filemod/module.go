@@ -2,7 +2,11 @@
 // what a cycle turned out to have changed.
 package filemod
 
-import "github.com/sloprail/sloprail/internal/module"
+import (
+	"os"
+
+	"github.com/sloprail/sloprail/internal/module"
+)
 
 // Name identifies this module. It is how the engine reports which module
 // produced an event, and how a module is switched off — not a prefix the
@@ -73,4 +77,11 @@ func (*Module) Kinds() []module.KindDecl {
 		{Name: KindPostUpdate, Fields: []module.FieldDecl{path}},
 		{Name: KindPostDelete, Fields: []module.FieldDecl{path}},
 	}
+}
+
+// exists reports whether a path is already on disk, which is what separates a
+// creation from a change to something that was already there.
+func (*Module) exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
