@@ -467,6 +467,56 @@ func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]st
 	}
 }
 
+// RemoveGuardrail takes a guardrail out of a project mid-session, the way a
+// user removes a rule: the whole folder goes.
+//
+// The WHOLE folder, and that is not a convenience. Deleting only GUARDRAIL.md
+// leaves a folder the project still keeps as a guardrail and which can no
+// longer be read — and the engine refuses every action while a declaration
+// cannot be parsed, deliberately, because an unreadable rule must not be read
+// as approval merely for being unreadable. So a half-removal does not remove a
+// rule; it disarms the session. That behaviour is pinned by
+// pre_tool/013_broken_declaration_is_not_silent, and this helper exists to keep
+// tests about REMOVAL from accidentally exercising it.
+//
+// It returns the rule's ledger lines as they stood at removal, because the
+// ledger lives inside the folder that is about to go. A test asking whether a
+// removed rule kept firing compares this against what it finds afterwards: with
+// the folder gone, a rule that somehow still ran would recreate the file, and an
+// absent file is the answer that nothing did.
+func (e *Env) RemoveGuardrail(projDir, name, ledgerFile string) []string {
+	e.t.Helper()
+	before := e.Ledger(projDir, name, ledgerFile)
+	dir := filepath.Join(projDir, ".sloprail", "guardrails", name)
+	if err := os.RemoveAll(dir); err != nil {
+		e.t.Fatalf("harness: remove guardrail %s: %v", name, err)
+	}
+	return before
+}
+
+// DisableGuardrail turns a rule off the other way a user can: the declaration
+// stays and says so.
+//
+// A distinct mechanism from removal rather than a synonym for it — the folder,
+// the scripts and the LEDGER all remain, so a disabled rule that kept firing
+// appends a line to a file that is still there, which removal cannot observe.
+// Written by replacing the declaration wholesale, because the frontmatter is
+// what the engine parses and a test that patched a line would be asserting
+// something about yaml editing.
+func (e *Env) DisableGuardrail(projDir, name, declaration string) {
+	e.t.Helper()
+	disabled := strings.Replace(declaration, "---\n", "---\nenabled: false\n", 1)
+	if disabled == declaration {
+		e.t.Fatalf("harness: disable guardrail %s: the declaration has no frontmatter to add "+
+			"`enabled: false` to, so nothing was turned off and a test resting on this would "+
+			"pass against a rule that is still live", name)
+	}
+	path := filepath.Join(projDir, ".sloprail", "guardrails", name, "GUARDRAIL.md")
+	if err := os.WriteFile(path, []byte(disabled), 0o644); err != nil {
+		e.t.Fatalf("harness: disable guardrail %s: %v", name, err)
+	}
+}
+
 // Ledger returns the lines a guardrail's hooks appended to a file in their own
 // folder, or nothing when the file was never created.
 //
