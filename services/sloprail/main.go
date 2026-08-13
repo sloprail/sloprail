@@ -52,6 +52,7 @@ func newSessionCmd() *cobra.Command {
 	}
 	cmd.AddCommand(
 		newSessionStartCmd(), newSessionPreToolCmd(), newSessionStopCmd(),
+		newSessionSubagentStopCmd(),
 		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(),
 	)
 	return cmd

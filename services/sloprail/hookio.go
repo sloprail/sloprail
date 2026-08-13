@@ -5,6 +5,8 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
+
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // HookPayload is what a harness puts on a hook's standard input.
@@ -14,11 +16,82 @@ import (
 // it down is what makes a change visible as a difference rather than as a
 // guardrail that quietly stops firing.
 type HookPayload struct {
-	TranscriptPath string          `json:"transcript_path"`
+	TranscriptPath string `json:"transcript_path"`
+
+	// AgentTranscriptPath is the SUB-AGENT's own record, present when this hook
+	// is a sub-agent's rather than the dispatching session's. The harness reports
+	// it alongside the parent's path rather than instead of it, so a hook reading
+	// TranscriptPath alone silently answers for the parent — see record().
+	AgentTranscriptPath string `json:"agent_transcript_path"`
+
+	// AgentID names the sub-agent within the session that dispatched it. Kept
+	// because it is how the sub-agent's own record is found when a harness
+	// reports the sub-agent without reporting where it wrote it.
+	AgentID string `json:"agent_id"`
+
 	Cwd            string          `json:"cwd"`
 	ToolName       string          `json:"tool_name"`
 	ToolInput      json.RawMessage `json:"tool_input"`
 	StopHookActive bool            `json:"stop_hook_active"`
+}
+
+// record is the transcript whose session this hook belongs to.
+//
+// A sub-agent is a session in its own right — its own record, possibly its own
+// worktree, its own moment of ending — so everything the engine keys per session
+// is a thing it has separately. Which means the only question that matters here
+// is WHICH record identifies the caller, and a harness that reports both makes
+// that a choice rather than a lookup.
+//
+// The sub-agent's own path wins wherever it is there. It is reported only to a
+// sub-agent's hook, so its presence IS the discriminator; nothing has to be
+// inferred from names or directory shapes. Preferring the parent's instead — or
+// merely reading TranscriptPath, which is present on both — would resolve the
+// PARENT's identity inside a sub-agent's hook, and the sub-agent's baseline,
+// read mark, guardrail memory and file verdicts would all be written into the
+// parent's state. When the sub-agent holds its own worktree those verdicts
+// describe different content at the same paths, so they would not merely be
+// shared with the parent, they would be wrong for it.
+//
+// When only an agent id is reported, the path is reconstructed from the
+// parent's. That fallback is not tidiness: giving up and using the parent's path
+// is precisely the confusion above, so the choice is between reconstructing and
+// refusing, and refusing would stop a sub-agent's guardrails working at all.
+// SubagentTranscriptPath refuses an id that is not a name rather than repairing
+// it, so a reconstruction cannot leave the conversation's own directory.
+//
+// A payload naming neither is the ordinary root session, which is the common
+// case and not a fault.
+func (p HookPayload) record() (string, error) {
+	if p.AgentTranscriptPath != "" {
+		return p.AgentTranscriptPath, nil
+	}
+	if p.AgentID != "" && p.TranscriptPath != "" {
+		return transcript.SubagentTranscriptPath(p.TranscriptPath, p.AgentID)
+	}
+	return p.TranscriptPath, nil
+}
+
+// IsSubagent reports whether this payload belongs to a sub-agent rather than the
+// session that dispatched it.
+//
+// Which agent is ending is never derived from a transcript's contents — the
+// event that fired already said. Stop fires only in the root and SubagentStop
+// only in a sub-agent, so the invocation carries the answer, and the two fields
+// below are reported to a sub-agent's hook and to no other.
+//
+// Sniffing isSidechain instead would be worse than redundant. A root transcript
+// legitimately contains sidechain records — every root that has ever dispatched
+// anything does — so a rule that read the field to decide whose cycle this is
+// would be wrong in the common case rather than in an edge one. That trap is why
+// this package exposes no "is this file a sub-agent's" helper: the question is
+// answered by the invocation, and offering a second way to answer it from
+// evidence is offering a way to get it wrong.
+//
+// Used for reporting and for guarding, not for routing: record() already picks
+// by the same fields, so nothing depends on this to find a transcript.
+func (p HookPayload) IsSubagent() bool {
+	return p.AgentTranscriptPath != "" || p.AgentID != ""
 }
 
 // Tool implements filemod.Pending: what the harness calls the tool it is about

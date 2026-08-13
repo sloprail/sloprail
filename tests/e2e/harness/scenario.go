@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -49,6 +50,38 @@ func Bash(id, command string) Turn {
 // business, not evidence about the agent.
 func Skill(id, skill string) Turn {
 	return Turn{jsonl: toolUse(id, "Skill", map[string]string{"skill": skill})}
+}
+
+// Dispatch returns a turn where the agent delegates work to a sub-agent, which
+// then runs the scenario at scriptPath in a session of its own.
+//
+// isolation is "worktree" to give the sub-agent its own tree — the mock binds a
+// real `git worktree add` of the project's HEAD, so the sub-agent's hooks run
+// with a genuinely separate working directory — and empty to share the
+// dispatching session's. The two are the cases a sub-agent's state has to be
+// right for, and they differ in exactly one field, which is the point: sharing
+// the tree is meant to be the ordinary path, not a second mechanism.
+//
+// The script field is the mock's own: real Claude Code lets a model decide what
+// the sub-agent does, and a test cannot, so the sub-agent's behaviour is
+// supplied the same way the dispatching session's is.
+func Dispatch(id, prompt, scriptPath, isolation string) Turn {
+	input := map[string]string{
+		"description":   "delegated work",
+		"prompt":        prompt,
+		"subagent_type": "general-purpose",
+		"script":        scriptPath,
+	}
+	if isolation != "" {
+		input["isolation"] = isolation
+	}
+	return Turn{jsonl: toolUse(id, "Task", input)}
+}
+
+// Script writes a scenario as a standalone script file and returns its path, for
+// handing to Dispatch as what the sub-agent runs.
+func (s Scenario) Script(path string) error {
+	return os.WriteFile(path, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755)
 }
 
 // script renders the scenario as the shell the mock runs.

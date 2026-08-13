@@ -42,4 +42,10 @@ var (
 	// reporting nothing matched would report no violations without having
 	// looked.
 	ErrExpressionNeverRan = errors.New("expression could not be evaluated against any entry")
+
+	// ErrNotAnAgentID: what was offered as a sub-agent's id is not a name, so no
+	// file path may be built from it. An id carrying a path separator would
+	// traverse out of the directory it is joined into and read — then key state
+	// against — another conversation entirely.
+	ErrNotAnAgentID = errors.New("the reported agent id is not an agent id")
 )

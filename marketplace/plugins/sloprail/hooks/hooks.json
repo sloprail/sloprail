@@ -10,6 +10,9 @@
     ],
     "Stop": [
       { "matcher": "*", "hooks": [{ "type": "command", "command": "sloprail session stop" }] }
+    ],
+    "SubagentStop": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "sloprail session subagent-stop" }] }
     ]
   }
 }
