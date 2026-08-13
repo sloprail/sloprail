@@ -19,6 +19,18 @@ const (
 	// MetaTranscriptRead is how far the session's own record has been read. A
 	// position rather than a state, because a record only grows.
 	MetaTranscriptRead = "transcript_read"
+
+	// MetaTranscriptOffered is how far the record had been read out to something
+	// that could judge it, before any cycle confirmed having judged it.
+	//
+	// Separate from MetaTranscriptRead because the two answer different
+	// questions and the gap between them is where a turn goes missing. This one
+	// is written when the record is handed out; the other is written when a
+	// cycle ends. A record only grows, so a turn appended after the handing-out
+	// is behind neither position and is offered to the next cycle — which is the
+	// whole point. Deriving the read position afresh at the end of a cycle would
+	// mark that turn judged by a cycle that was never shown it.
+	MetaTranscriptOffered = "transcript_offered"
 )
 
 // Meta reads a session fact.

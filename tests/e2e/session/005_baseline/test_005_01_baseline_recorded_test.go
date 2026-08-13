@@ -76,20 +76,31 @@ func TestT005_03_CommittingDoesNotMoveThePoint(t *testing.T) {
 	}
 }
 
-// T005_04: the agent switches branches, and the point follows.
+// T005_04: the agent leaves for another line of history, and the point follows.
 //
 // A point recorded on the line the tree left describes a history it no longer
 // has, and the difference against it is every commit between the two — an
 // entire branch delta arriving at one cycle as though this session had written
 // it. The Stop hook is where that is noticed.
-func TestT005_04_BranchSwitchRetakesThePoint(t *testing.T) {
+//
+// The branch it switches to is prepared off the root, so it genuinely does not
+// contain the session's point. Switching to a branch created from where the
+// tree already is leaves nothing behind, and is T005_06.
+func TestT005_04_LeavingTheHistoryRetakesThePoint(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
+	e.Git(proj, "commit", "--allow-empty", "-m", "second on main")
+
+	root := e.Git(proj, "rev-list", "--max-parents=0", "HEAD")
+	e.Git(proj, "checkout", "-b", "feature", root)
+	e.Git(proj, "commit", "--allow-empty", "-m", "on feature")
+	featureTip := e.Git(proj, "rev-parse", "HEAD")
+	e.Git(proj, "checkout", "main")
 
 	const sess = "s-005-04"
 	e.Run(proj, sess, "switch branches", Turns("done",
-		Bash("b1", "git checkout -b feature && git commit --allow-empty -m 'on feature'"),
+		Bash("b1", "git checkout feature"),
 	))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
@@ -98,17 +109,78 @@ func TestT005_04_BranchSwitchRetakesThePoint(t *testing.T) {
 	if got := e.Meta(proj, sess, metaBaselineBranch); got != "feature" {
 		t.Fatalf("baseline branch = %q, want it to have followed the tree to %q", got, "feature")
 	}
-	if got, head := e.Meta(proj, sess, metaBaselineCommit), e.Git(proj, "rev-parse", "HEAD"); got != head {
-		t.Fatalf("baseline commit = %q, want the point re-taken on the new line (%q)", got, head)
+	if got := e.Meta(proj, sess, metaBaselineCommit); got != featureTip {
+		t.Fatalf("baseline commit = %q, want the point re-taken on the new line (%q)", got, featureTip)
 	}
 }
 
-// T005_05: a completed cycle remembers how far the record has been read.
+// T005_06: a new branch off the session's own work does not move the point.
 //
-// The mark is what lets the next cycle read only what has not been judged. It
-// is written by the Stop hook, so what this proves is that a session ending
-// leaves one behind at all.
-func TestT005_05_CompletedCycleLeavesAReadMark(t *testing.T) {
+// `git checkout -b` changes the name and moves no history. Re-taking the point
+// here would push the agent's own committed work out of the difference through
+// the branch door — the same loss the record-once rule exists to prevent,
+// reached by an operation that changed no history at all.
+func TestT005_06_NewBranchOffOwnWorkDoesNotMoveThePoint(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	start := e.Git(proj, "rev-parse", "HEAD")
+
+	const sess = "s-005-06"
+	e.Run(proj, sess, "commit then branch", Turns("done",
+		Write("w1", "notes.md", "hello"),
+		Bash("b1", "git add -A && git commit -m 'agent commit' && git checkout -b feature"),
+	))
+
+	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
+		t.Fatalf("the agent is on %q, not on the new branch, so this proves nothing", got)
+	}
+	if now := e.Git(proj, "rev-parse", "HEAD"); now == start {
+		t.Fatalf("the agent did not actually commit, so this proves nothing")
+	}
+	if got := e.Meta(proj, sess, metaBaselineCommit); got != start {
+		t.Fatalf("baseline commit = %q, want it still at the session's start (%q) — "+
+			"the agent's own commit must stay inside the difference", got, start)
+	}
+}
+
+// T005_07: renaming the branch does not move the point.
+//
+// Same commit, same history, a different name. Nothing was left, so there is
+// nothing to re-measure from.
+func TestT005_07_RenamingTheBranchDoesNotMoveThePoint(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	start := e.Git(proj, "rev-parse", "HEAD")
+
+	const sess = "s-005-07"
+	e.Run(proj, sess, "rename the branch", Turns("done",
+		Write("w1", "notes.md", "hello"),
+		Bash("b1", "git add -A && git commit -m 'agent commit' && git branch -m main trunk"),
+	))
+
+	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "trunk" {
+		t.Fatalf("the branch was not actually renamed (on %q), so this proves nothing", got)
+	}
+	if got := e.Meta(proj, sess, metaBaselineCommit); got != start {
+		t.Fatalf("baseline commit = %q, want it still at the session's start (%q) — "+
+			"a rename is not a change of history", got, start)
+	}
+}
+
+// T005_05: a cycle that judged nothing marks nothing as judged.
+//
+// The mark asserts a position has been judged, so it may only move over work
+// something actually looked at. This session has no guardrail reading the
+// record, and the Post events are not dispatched yet — so nothing judged
+// anything, and the mark must stay empty.
+//
+// The inverse of the test that used to be here, which asserted a mark existed
+// after any session at all. That was the F1 bug stated as a requirement: it
+// passed because the mark was re-derived from the record at write time, which
+// is exactly how turns nothing had seen were being marked judged.
+func TestT005_05_ACycleThatJudgedNothingLeavesNoReadMark(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 
@@ -117,7 +189,8 @@ func TestT005_05_CompletedCycleLeavesAReadMark(t *testing.T) {
 		Write("w1", "notes.md", "hello"),
 	))
 
-	if got := e.Meta(proj, sess, metaTranscriptRead); got == "" {
-		t.Fatal("a completed cycle left no read mark, so the next one would re-judge the whole session")
+	if got := e.Meta(proj, sess, metaTranscriptRead); got != "" {
+		t.Fatalf("read mark = %q, want none — nothing judged this session, so nothing may be "+
+			"marked judged; a mark here means the next cycle silently skips those turns", got)
 	}
 }

@@ -149,6 +149,143 @@ func uuidsOf(entries []transcript.Entry) []string {
 	return out
 }
 
+// offered reads the position the record was last read out to, which is what a
+// completed cycle carries forward as the mark.
+func (s *session) offered() string {
+	s.t.Helper()
+	store, err := openEngineState(HookPayload{TranscriptPath: s.transcriptPath, Cwd: s.dir})
+	require.NoError(s.t, err)
+	defer store.Close()
+	v, _, err := store.Meta(sessionstate.MetaTranscriptOffered)
+	require.NoError(s.t, err)
+	return v
+}
+
+// dispatched ends a cycle with the judging step standing in as having run.
+//
+// The mark is held until the Post events are dispatched, and that step is not
+// implemented yet. A test about the mark's POSITION must not be a test about
+// that step being missing, so it is stood in for here — which also means these
+// tests keep working, and keep meaning the same thing, once it lands for real.
+func (s *session) dispatched(stopHookActive bool) (stdout, stderr string) {
+	s.t.Helper()
+	restore := dispatchPostEvents
+	dispatchPostEvents = func(*cobra.Command, sessionstate.Store, HookPayload) bool { return true }
+	defer func() { dispatchPostEvents = restore }()
+	return s.stop(stopHookActive)
+}
+
+// cycle is a whole cycle: a rule reads the record, then the cycle ends.
+//
+// The read is not incidental. The mark is the position a cycle READ, so a cycle
+// that never queried has nothing to carry forward — which is the rule F1 turns
+// on. A test about where the mark lands has to have something actually read the
+// record, the way a session with any guardrail in it does.
+func (s *session) cycle() {
+	s.t.Helper()
+	s.query()
+	s.dispatched(false)
+}
+
+func TestReadMark_DoesNotMarkTurnsAppendedAfterTheCycleRead(t *testing.T) {
+	// F1, and the reason the mark is carried forward rather than re-derived.
+	//
+	// A turn appended between the cycle's read and the cycle's end was never
+	// offered to anything. Marking it judged skips it permanently and silently:
+	// the record only grows, the mark only moves forward, and nothing goes back.
+	s := newSession(t)
+	first := s.turn()
+
+	// The cycle reads. This is everything it was ever shown.
+	require.Equal(t, []string{s.uuid(0), first}, uuidsOf(s.query()))
+
+	// The agent appends another turn before the cycle ends. Nothing has judged
+	// it, and nothing has been given the chance to.
+	racing := s.turn()
+
+	s.dispatched(false)
+
+	assert.Equal(t, first, s.mark(),
+		"the mark must be where the cycle READ, not where the record happens to end at write time")
+	assert.Equal(t, []string{racing}, uuidsOf(s.query()),
+		"a turn appended during the cycle must still be offered — skipping it loses it for good")
+}
+
+func TestReadMark_SeveralTurnsAppendedDuringACycleAreAllStillOffered(t *testing.T) {
+	// The same race, wider. Everything after the read belongs to the next cycle,
+	// however much of it arrived.
+	s := newSession(t)
+	s.query()
+	s.dispatched(false)
+
+	var racing []string
+	for range 3 {
+		racing = append(racing, s.turn())
+	}
+	// A second cycle ends without ever having read. It judged nothing, so it
+	// may claim nothing.
+	s.dispatched(false)
+
+	assert.Equal(t, racing, uuidsOf(s.query()),
+		"turns nothing was shown must survive a cycle ending")
+}
+
+func TestReadMark_ACycleThatNeverReadAdvancesNothing(t *testing.T) {
+	// A cycle that queried nothing has judged nothing. Re-deriving the position
+	// at write time would have it claim the whole record regardless.
+	s := newSession(t)
+	unread := s.turn()
+
+	s.dispatched(false)
+
+	assert.Empty(t, s.mark(), "a cycle that read nothing has no position to claim")
+	assert.Equal(t, []string{s.uuid(0), unread}, uuidsOf(s.query()))
+}
+
+func TestReadMark_IsNotDraggedBackwardsByALaterNarrowerRead(t *testing.T) {
+	// Several rules may query within one cycle. The cycle as a whole saw the
+	// furthest of them, and a position only ever moves forward.
+	s := newSession(t)
+	a := s.turn()
+	s.query()
+	require.Equal(t, a, s.offered())
+
+	// A second rule queries after another turn lands, then the record is
+	// replaced by a shorter one — the position it recorded is no longer there.
+	b := s.turn()
+	s.query()
+	require.Equal(t, b, s.offered())
+
+	// Reading again with nothing new must not move the position backwards.
+	s.query()
+	assert.Equal(t, b, s.offered())
+}
+
+func TestReadMark_HeldUntilTheCycleActuallyDispatches(t *testing.T) {
+	// The ordering F1 asked to be made explicit rather than vacuous.
+	//
+	// The mark asserts a position has been judged. Until the Post events are
+	// dispatched, no cycle has judged anything, so the mark must not move — and
+	// nothing is lost by waiting, because the position read is remembered and
+	// carried forward by whichever cycle finally dispatches.
+	s := newSession(t)
+	a := s.turn()
+	require.NotEmpty(t, uuidsOf(s.query()))
+	require.Equal(t, a, s.offered(), "the read position is recorded either way")
+
+	// Dispatch does not happen, so the mark does not move.
+	s.stop(false)
+	assert.Empty(t, s.mark(),
+		"the mark must not claim a position judged before any judging is dispatched")
+
+	// Everything read is still on offer, because nothing judged it.
+	assert.Equal(t, []string{s.uuid(0), a}, uuidsOf(s.query()))
+
+	// Once a cycle dispatches, the position it read is carried forward.
+	s.dispatched(false)
+	assert.Equal(t, a, s.mark())
+}
+
 func TestReadMark_FirstCycleReadsTheWholeSession(t *testing.T) {
 	// Nothing has been read yet, so everything is this cycle's work. Correct
 	// rather than a special case.
@@ -166,7 +303,7 @@ func TestReadMark_AdvancesWhenACycleCompletes(t *testing.T) {
 	s.turn()
 	last := s.turn()
 
-	s.stop(false)
+	s.cycle()
 	assert.Equal(t, last, s.mark())
 
 	// Nothing new since, so there is nothing to judge.
@@ -187,12 +324,13 @@ func TestReadMark_DoesNotAdvanceOnAnInterruptedCycle(t *testing.T) {
 	s := newSession(t)
 	first := s.turn()
 
-	s.stop(false)
+	s.cycle()
 	require.Equal(t, first, s.mark())
 
-	// A second cycle's work, and it is interrupted.
+	// A second cycle reads its work, and is then interrupted.
 	unjudged := s.turn()
-	s.stop(true)
+	s.query()
+	s.dispatched(true)
 
 	assert.Equal(t, first, s.mark(), "an interrupted cycle must not move the mark")
 	assert.Equal(t, []string{unjudged}, uuidsOf(s.query()),
@@ -203,13 +341,14 @@ func TestReadMark_InterruptedCycleDoesNotLoseTurnsAtAll(t *testing.T) {
 	// Several turns across an interruption. Every one of them is still on
 	// offer, because none of them is known to have been judged.
 	s := newSession(t)
-	s.stop(false)
+	s.cycle()
 
 	var written []string
 	for range 3 {
 		written = append(written, s.turn())
 	}
-	s.stop(true)
+	s.query()
+	s.dispatched(true)
 
 	assert.Equal(t, written, uuidsOf(s.query()))
 }
@@ -219,7 +358,7 @@ func TestReadMark_WholeSessionIgnoresThePosition(t *testing.T) {
 	// rather than about this cycle's work.
 	s := newSession(t)
 	a := s.turn()
-	s.stop(false)
+	s.cycle()
 	b := s.turn()
 
 	assert.Equal(t, []string{b}, uuidsOf(s.query()), "the default is the unjudged part")
@@ -233,11 +372,11 @@ func TestReadMark_EmptyRecordLeavesThePositionStanding(t *testing.T) {
 	// correct is kept rather than discarded.
 	s := newSession(t)
 	last := s.turn()
-	s.stop(false)
+	s.cycle()
 	require.Equal(t, last, s.mark())
 
 	// Nothing happened since; the cycle still completes.
-	s.stop(false)
+	s.cycle()
 	assert.Equal(t, last, s.mark())
 }
 
@@ -246,12 +385,12 @@ func TestReadMark_AdvancesAcrossSeveralCompletedCycles(t *testing.T) {
 	// and nothing before it. The first cycle also sees the root record, since
 	// nothing has been read yet when it runs.
 	s := newSession(t)
-	s.stop(false)
+	s.cycle()
 
 	for range 4 {
 		want := s.turn()
 		assert.Equal(t, []string{want}, uuidsOf(s.query()))
-		s.stop(false)
+		s.dispatched(false)
 		assert.Equal(t, want, s.mark())
 	}
 }
@@ -262,7 +401,7 @@ func TestReadMark_UnreadablePositionReadsTheWholeRecord(t *testing.T) {
 	// because the engine could not open its own database.
 	s := newSession(t)
 	a := s.turn()
-	s.stop(false)
+	s.cycle()
 	require.Equal(t, a, s.mark())
 
 	// A mark pointing at an entry that is not in this record — the record it
@@ -283,8 +422,12 @@ func TestStop_InterruptedCycleDoesNotTakeANewBaselineEither(t *testing.T) {
 	s := newSession(t)
 	initRepoAt(t, s.dir)
 	commitFile(t, s.dir, "a.txt", "one")
+	commitFile(t, s.dir, "b.txt", "two")
+	// Another line, so the switch below is one a completed cycle WOULD move the
+	// point for. Otherwise this passes without the interrupted path mattering.
+	divergentBranch(t, s.dir, "feature")
 
-	s.stop(false)
+	s.dispatched(false)
 	store, err := openEngineState(HookPayload{TranscriptPath: s.transcriptPath, Cwd: s.dir})
 	require.NoError(t, err)
 	before, _, err := store.Meta(sessionstate.MetaBaselineBranch)
@@ -293,9 +436,8 @@ func TestStop_InterruptedCycleDoesNotTakeANewBaselineEither(t *testing.T) {
 	require.Equal(t, "main", before)
 
 	// The agent switches branches, and the cycle is interrupted.
-	runGit(t, s.dir, "checkout", "-b", "feature")
-	commitFile(t, s.dir, "b.txt", "two")
-	s.stop(true)
+	runGit(t, s.dir, "checkout", "feature")
+	s.dispatched(true)
 
 	store, err = openEngineState(HookPayload{TranscriptPath: s.transcriptPath, Cwd: s.dir})
 	require.NoError(t, err)
@@ -311,7 +453,11 @@ func TestStop_CompletedCycleRebaselinesAndSaysSo(t *testing.T) {
 	s := newSession(t)
 	initRepoAt(t, s.dir)
 	commitFile(t, s.dir, "a.txt", "one")
-	s.stop(false)
+	commitFile(t, s.dir, "b.txt", "two")
+	// A line that does not contain the point, so switching to it really is
+	// leaving the history rather than renaming where the tree already is.
+	divergentBranch(t, s.dir, "feature")
+	s.dispatched(false)
 
 	// A guardrail refused something, and nobody fixed it.
 	store, err := openEngineState(HookPayload{TranscriptPath: s.transcriptPath, Cwd: s.dir})
@@ -320,9 +466,8 @@ func TestStop_CompletedCycleRebaselinesAndSaysSo(t *testing.T) {
 		sessionstate.Verdict{Fingerprint: "bad", Passed: false}))
 	require.NoError(t, store.Close())
 
-	runGit(t, s.dir, "checkout", "-b", "feature")
-	commitFile(t, s.dir, "b.txt", "two")
-	_, stderr := s.stop(false)
+	runGit(t, s.dir, "checkout", "feature")
+	_, stderr := s.dispatched(false)
 
 	assert.Contains(t, stderr, "another branch")
 

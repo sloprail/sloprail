@@ -17,11 +17,28 @@ import (
 // inside the difference rather than dropping out of it — an agent that commits
 // its unfixed work would otherwise move the point past its own violation.
 //
-// The one exception is the branch. An agent may switch branches mid-session,
-// and a point recorded on the line it left describes a history the tree no
-// longer has: the difference against it is every commit between the two, an
-// entire branch delta arriving at one cycle as though this session had written
-// it. So when the branch changes, and only then, the point is taken again.
+// The one exception is the tree LEAVING the history the point sits in. An agent
+// may switch to another line mid-session, and a point recorded on the line it
+// left describes a history the tree no longer has: the difference against it is
+// every commit between the two, an entire branch delta arriving at one cycle as
+// though this session had written it.
+//
+// What "leaving" means is reachability, not the branch name. The name is the
+// wrong question in both directions, and asking it was the original bug:
+//
+//   - The name can change while the history does not. `git checkout -b feature`
+//     and `git branch -m` both keep HEAD exactly where it is; re-taking the
+//     point on either would push the session's own commits out of the
+//     difference through the branch door, which is the very thing the
+//     record-once rule exists to prevent.
+//   - The history can change while the name does not. Two unrelated detached
+//     checkouts both report no branch at all, so comparing names would call
+//     them the same place and leave the point on a commit the tree has left.
+//
+// So the question asked is whether the recorded commit is still reachable from
+// HEAD. Reachable means everything between it and HEAD arrived along the way
+// and belongs inside the difference. Unreachable means the point describes a
+// history this tree no longer has, and it is taken again.
 //
 // Moving it is safe only because an unfixed refusal does not depend on it. A
 // failing verdict is kept in file_checks in its own right, keyed by path and
@@ -42,9 +59,9 @@ const (
 	// case at session start.
 	baselineRecorded
 
-	// baselineMoved: the tree is on a different line of history than the point
-	// was taken on, so a new point was taken. What keeps a branch switch from
-	// delivering an entire branch delta to the next cycle.
+	// baselineMoved: the tree has left the history the point was taken in, so a
+	// new point was taken. What keeps a branch switch from delivering an entire
+	// branch delta to the next cycle.
 	baselineMoved
 
 	// baselineUnavailable: there is nothing to record — the tree is not a
@@ -58,13 +75,13 @@ const (
 // point if the tree has moved to another line of history.
 //
 // Called at session start to establish the point, and at the end of every cycle
-// to notice a switch. The two are the same call because the rule is the same
-// one: the point is whatever describes the line the tree is on now, and it is
-// only ever re-taken when that line has changed.
+// to notice the tree leaving. The two are the same call because the rule is the
+// same one: the point is a commit the tree can still reach, and it is only ever
+// re-taken when the tree can no longer reach it.
 //
-// A branch that cannot be read is not a branch that changed. Every failure path
-// leaves the recorded point exactly as it was, because the alternative —
-// treating an unreadable branch as a different one — would move the point on a
+// A history that cannot be read is not a history that changed. Every failure
+// path leaves the recorded point exactly as it was, because the alternative —
+// treating an unreadable state as a different one — would move the point on a
 // transient git failure, and the whole reason the point holds still is so that
 // unfixed work stays inside the difference.
 func ensureBaseline(store sessionstate.Store, dir string) (baselineOutcome, error) {
@@ -85,40 +102,73 @@ func ensureBaseline(store sessionstate.Store, dir string) (baselineOutcome, erro
 	if err != nil {
 		return baselineUnavailable, err
 	}
-	_, hadCommit, err := store.Meta(sessionstate.MetaBaselineCommit)
+	recordedCommit, hadCommit, err := store.Meta(sessionstate.MetaBaselineCommit)
 	if err != nil {
 		return baselineUnavailable, err
 	}
 
-	switch {
-	case !hadCommit || !hadBranch:
+	if !hadCommit || !hadBranch {
 		// No point yet. The first cycle in a session, or the first one after
 		// the tree became a repository.
 		if err := writeBaseline(store, pos); err != nil {
 			return baselineUnavailable, err
 		}
 		return baselineRecorded, nil
+	}
 
-	case recordedBranch != pos.Branch:
-		// The tree is on another line of history. The recorded commit
-		// describes a history this tree no longer has, so the difference
-		// against it would be the whole delta between the two branches.
-		//
-		// The unfixed refusals recorded so far are untouched by this: they sit
-		// in file_checks keyed by path and guardrail, not against the point,
-		// and keep surfacing until a hook passes them.
-		if err := writeBaseline(store, pos); err != nil {
-			return baselineUnavailable, err
-		}
-		return baselineMoved, nil
-
-	default:
-		// Same line of history. The point stays where it is even though HEAD
-		// may have moved along that line — an agent that commits mid-session
-		// must not push its own work out of the difference, which is exactly
-		// what following HEAD would do.
+	if recordedCommit == pos.Commit {
+		// The tree has not moved at all. Nothing to decide, and worth answering
+		// before asking git anything: this is the common case on a cycle that
+		// changed no history, and it is the case where a branch RENAME lands —
+		// same commit, same history, a different name, and no reason to move.
 		return baselineUnchanged, nil
 	}
+
+	// The tree moved. Whether it moved ALONG the recorded history or LEFT it is
+	// the only thing that matters, and only reachability answers that.
+	stillReachable, err := gitrepo.Contains(dir, recordedCommit)
+	if err != nil {
+		return baselineUnavailable, err
+	}
+	if stillReachable {
+		// Moved along the same history. The point stays where it is — an agent
+		// that commits mid-session must not push its own work out of the
+		// difference, which is exactly what following HEAD would do. This is
+		// also where `git checkout -b` lands: a new branch off the session's
+		// own commits reaches all of them, so nothing has been left.
+		return baselineUnchanged, nil
+	}
+
+	// The tree has left the history the point sits in. The recorded commit
+	// describes a history this tree no longer has, so the difference against it
+	// would be the whole delta between the two.
+	//
+	// The unfixed refusals recorded so far are untouched by this: they sit in
+	// file_checks keyed by path and guardrail, not against the point, and keep
+	// surfacing until a hook passes them.
+	//
+	// One exception, and it is the reason Position.Branch still exists. A rebase
+	// walks a detached HEAD through commits that reach nothing recorded, at
+	// every step. Left to reachability alone the point would be re-taken several
+	// times over a single rebase, each time landing on a commit the operation is
+	// about to replace. So while an operation is RUNNING on the branch the point
+	// was taken on, the point waits for it to finish.
+	//
+	// Only while it is running. A rebase rewrites the commits it walks, so the
+	// moment it finishes the branch reads exactly as it did before while the
+	// history under it has been replaced — and the recorded point is on a commit
+	// the rebase discarded. Holding on the name alone would keep it there for
+	// the rest of the session. Position.Operation is what separates "still
+	// moving" from "settled", and once it is settled the question above is asked
+	// properly and the point moves if the history really did.
+	if pos.Operation && pos.Branch == recordedBranch {
+		return baselineUnchanged, nil
+	}
+
+	if err := writeBaseline(store, pos); err != nil {
+		return baselineUnavailable, err
+	}
+	return baselineMoved, nil
 }
 
 // writeBaseline records the point and the line it was taken on.

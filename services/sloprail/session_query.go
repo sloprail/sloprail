@@ -72,10 +72,21 @@ func runSessionQuery(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("sloprail: no transcript path on the hook payload — there is no record to read")
 	}
 
-	entries, err := transcript.Read(path)
+	whole, err := transcript.Read(path)
 	if err != nil {
 		return err
 	}
+	entries := whole
+
+	// Where this read ends, remembered before anything narrows the answer.
+	//
+	// Taken from the whole record rather than from what comes back, and taken
+	// here rather than at the end of the cycle. Both matter. A --where that
+	// matches nothing still means this much of the record was looked at, so the
+	// position is about the reading and not about the verdict. And a turn
+	// appended after this moment is behind this position, so the cycle that
+	// ends later cannot claim to have judged it.
+	offered := transcript.Mark(whole)
 
 	if !wholeSession {
 		entries = transcript.Since(entries, readMark(cmd, p))
@@ -88,6 +99,8 @@ func runSessionQuery(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+
+	recordOffered(cmd, p, whole, offered)
 
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetEscapeHTML(false)
@@ -121,4 +134,38 @@ func readMark(cmd *cobra.Command, p HookPayload) string {
 		return ""
 	}
 	return mark
+}
+
+// recordOffered remembers how far the record was read out, for the end of the
+// cycle to carry forward.
+//
+// This is the position a cycle is entitled to mark as judged. The alternative —
+// reading the record again when the cycle ends and marking whatever is last
+// then — marks turns that were appended after the reading, which no rule was
+// ever shown. A turn skipped that way is skipped permanently, because a record
+// only grows and nothing afterwards goes back.
+//
+// It only ever moves forward. Several rules may query within one cycle, each
+// getting the record as it stood when it asked, and the cycle as a whole saw the
+// furthest of them. A later query that somehow reads less — a record truncated
+// or replaced underneath the session — must not drag the position backwards into
+// re-judging settled work.
+//
+// Failure is reported and swallowed, the same as everywhere else in this
+// bookkeeping. Not recording the position costs the next cycle a re-read;
+// refusing here would block the agent's work over the engine's own records.
+func recordOffered(cmd *cobra.Command, p HookPayload, entries []transcript.Entry, offered string) {
+	if offered == "" {
+		return
+	}
+	store, err := openEngineState(p)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: read position not recorded:", err)
+		return
+	}
+	defer store.Close()
+
+	if err := advanceOffered(store, entries, offered); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: read position not recorded:", err)
+	}
 }

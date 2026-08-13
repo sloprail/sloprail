@@ -73,44 +73,122 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 			"sloprail: the tree moved to another branch — measuring from a new point; recorded violations still stand")
 	}
 
+	// Diffing the tree and dispatching the Post events belongs here, between the
+	// baseline and the mark, and it does not exist yet.
+	//
+	// The ORDER is the load-bearing part, not the placement. The mark says a
+	// position has been judged, and it is only true once the events for that
+	// position have been dispatched. Advance it before dispatch exists and the
+	// claim is one nothing has earned: the position is recorded as judged by a
+	// cycle that ran no judging at all.
+	//
+	// So the mark is held until dispatch is a step that ran. dispatchPostEvents
+	// reports whether it did, and today it reports that it did not, which stops
+	// the mark rather than letting an ordering that is currently vacuous look
+	// correct. What the mark loses by waiting is nothing: the position is kept
+	// in MetaTranscriptOffered, only grows, and the cycle that finally dispatches
+	// carries it forward for every cycle that could not.
+	if !dispatchPostEvents(cmd, store, p) {
+		return nil
+	}
+
 	// Where this cycle's reading ended, for the next one to resume after. Only
 	// on this path: a cycle that was interrupted may have judged nothing, and
 	// moving the mark anyway skips whatever it never looked at.
 	advanceReadMark(cmd, store, p)
 
-	return nil // TODO: diff the tree, dispatch the Post events
+	return nil
 }
 
-// advanceReadMark records how far this session's record has been read.
+// dispatchPostEvents runs the guardrails bound to what this cycle changed, and
+// reports whether it ran at all.
 //
-// The mark is the uuid of the last entry in the record as it stands now, which
-// is what the cycle that just finished was able to see. The next cycle resumes
-// after it.
+// Not implemented. Owned by the work that diffs the tree and dispatches the
+// events; this exists so the read mark has something real to wait on rather
+// than a comment promising an order the code does not keep.
 //
-// An empty record leaves the previous mark standing rather than clearing it.
-// Writing an empty mark would mean "nothing has been read", and the next cycle
-// would read the session from its beginning — safe, but it discards a position
-// that was correct, and every subsequent cycle would re-judge everything before
-// it.
+// Returning false is what holds the mark. A cycle that dispatched nothing has
+// judged nothing, so it has no position to claim as judged — and the position
+// it read is remembered elsewhere and lost by no one.
+//
+// A variable so a test about the mark's POSITION can stand this step in and
+// still be testing the position rather than this step's absence. The tests that
+// do keep meaning the same thing once this is implemented for real.
+var dispatchPostEvents = func(_ *cobra.Command, _ sessionstate.Store, _ HookPayload) bool {
+	// TODO: diff the tree against the baseline, dispatch the Post events, and
+	// return true once a cycle's judging actually happens here.
+	return false
+}
+
+// advanceReadMark carries forward the position this cycle actually read.
+//
+// The mark is NOT the end of the record as it stands now. It is the position
+// `session query` recorded when it handed the record out, carried forward
+// unchanged. Those are different positions whenever a turn was appended between
+// the query and this moment, and the difference is a turn lost for good: marked
+// judged without ever having been offered to anything, and never revisited,
+// because a record only grows and the mark only moves forward.
+//
+// So nothing is re-read here. A cycle that queried nothing advances nothing,
+// which is correct — a cycle that looked at no part of the record has judged no
+// part of it, and the next cycle is owed everything.
 //
 // Failure is reported and swallowed. The cost of not moving the mark is that
 // the next cycle re-reads some turns; the cost of refusing here is the agent's
 // work blocked over the engine's bookkeeping.
 func advanceReadMark(cmd *cobra.Command, store sessionstate.Store, p HookPayload) {
-	path, err := p.record()
-	if err != nil || path == "" {
-		return
-	}
-	entries, err := transcript.Read(path)
+	offered, ok, err := store.Meta(sessionstate.MetaTranscriptOffered)
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: read mark not advanced:", err)
 		return
 	}
-	mark := transcript.Mark(entries)
-	if mark == "" {
+	if !ok || offered == "" {
+		// Nothing was read out during this cycle, so there is nothing this cycle
+		// is entitled to call judged. The previous mark stands.
 		return
 	}
-	if err := store.SetMeta(sessionstate.MetaTranscriptRead, mark); err != nil {
+	if err := store.SetMeta(sessionstate.MetaTranscriptRead, offered); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: read mark not advanced:", err)
 	}
+}
+
+// advanceOffered records how far the record has been read out, never letting
+// the position go backwards.
+//
+// Several rules may query within one cycle, each seeing the record as it stood
+// when it asked. The cycle as a whole saw the furthest of them, so the position
+// keeps the furthest and ignores the rest.
+//
+// Order is decided by position in entries rather than by comparing the uuids,
+// which carry no order of their own. A recorded position that is not in the
+// record is treated as behind the new one: it names a place this record cannot
+// confirm — the record it pointed into was replaced or truncated — and holding
+// onto it would keep a position nothing can locate.
+func advanceOffered(store sessionstate.Store, entries []transcript.Entry, offered string) error {
+	current, ok, err := store.Meta(sessionstate.MetaTranscriptOffered)
+	if err != nil {
+		return err
+	}
+	if ok && current != "" && !isBefore(entries, current, offered) {
+		return nil
+	}
+	return store.SetMeta(sessionstate.MetaTranscriptOffered, offered)
+}
+
+// isBefore reports whether the entry named by a comes strictly before the one
+// named by b, as the record orders them. A name the record does not hold counts
+// as before every name it does.
+func isBefore(entries []transcript.Entry, a, b string) bool {
+	ia, ib := indexOf(entries, a), indexOf(entries, b)
+	return ia < ib
+}
+
+// indexOf is where a uuid sits in the record, or -1 when it is not there.
+func indexOf(entries []transcript.Entry, uuid string) int {
+	for i, e := range entries {
+		if e.UUID == uuid {
+			return i
+		}
+	}
+	return -1
 }
