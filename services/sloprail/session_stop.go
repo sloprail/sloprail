@@ -226,16 +226,86 @@ func advanceReadMark(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 // which carry no order of their own. What each combination of "present" and
 // "absent" means is isBefore's business, and it is not the arithmetic on -1
 // that an index comparison falls into by default — see there.
+//
+// F11. Reading the position, deciding against it, and writing is a
+// read-modify-write, and the rules querying within one cycle are separate hook
+// PROCESSES that may run at once — so two of them can both read the same
+// position, both decide theirs is further, and the later write can land on a
+// value its comparison never saw. Measured at 1 lost update in 200 concurrent
+// runs, which left the position at the nearer of the two.
+//
+// The lost update lands BACKWARDS, so it costs a re-read rather than a skipped
+// turn — the same direction everything in this bookkeeping errs in. It is fixed
+// anyway because the claim was the problem: recordOffered says the position only
+// ever moves forward, and a claim that is false under concurrency is worse than
+// no claim, since the reasoning downstream of it is what stops turns going
+// missing.
+//
+// So the decision and the write are one step against the database. A swap that
+// loses means another query moved the position while this one was deciding, and
+// the answer is to decide again against what is there now rather than to
+// overwrite it: the winner may already be further on, in which case this read
+// has nothing to add. Bounded because each retry has a winner, so the position
+// advances every time round and a caller cannot spin against a position that
+// keeps changing without it also keeps moving forward.
+//
+// F12. A position is only taken when it is the END of the record it was read
+// from, which is the one thing that makes index order mean forward movement.
+//
+// isBefore reads "a sits at a lower index than b" as "b is further on", and that
+// only follows while the record is append-only. Let the entries before the
+// recorded position be REORDERED — recorded c, record rewritten to a,c,b,d, a
+// later read naming b — and the index comparison says c is before b, the
+// position moves to b, and the next cycle's Since returns [d]. The entry b was
+// marked judged by nothing, which is the one direction this bookkeeping must
+// never err in.
+//
+// Refusing a mid-record position closes it without having to detect the rewrite.
+// The caller records transcript.Mark(whole) — the last entry of the record it
+// just read — on every path, so this rejects nothing the engine actually does;
+// what it rejects is a position that CANNOT have come from reading a record to
+// its end. A transcript is append-only in normal operation, so this needs an
+// external rewrite to reach at all: a guard rather than a live defect.
 func advanceOffered(store sessionstate.Store, entries []transcript.Entry, offered string) error {
-	current, ok, err := store.Meta(sessionstate.MetaTranscriptOffered)
-	if err != nil {
-		return err
-	}
-	if ok && current != "" && !isBefore(entries, current, offered) {
+	if len(entries) > 0 && offered != transcript.Mark(entries) {
+		// Not the end of this record, so index order says nothing about whether
+		// it is further on than what is stored. Holding costs a re-read.
 		return nil
 	}
-	return store.SetMeta(sessionstate.MetaTranscriptOffered, offered)
+	for range offeredSwapAttempts {
+		current, ok, err := store.Meta(sessionstate.MetaTranscriptOffered)
+		if err != nil {
+			return err
+		}
+		if ok && current != "" && !isBefore(entries, current, offered) {
+			// Whatever is stored is at least as far on as this read. Nothing to
+			// add, and nothing to race over.
+			return nil
+		}
+		// Absent and empty are both "no position recorded", and both are matched
+		// by an empty old — so the first write of the key and a write over a
+		// cleared one take the same path.
+		swapped, err := store.SwapMeta(sessionstate.MetaTranscriptOffered, current, offered)
+		if err != nil {
+			return err
+		}
+		if swapped {
+			return nil
+		}
+		// Lost the swap: another query wrote between the read and the write. Its
+		// value is what the next decision must be made against.
+	}
+	// Every attempt lost, which means the position moved forward on each one. The
+	// mark is not wrong — it is somewhere a real read reached — so this is
+	// reported rather than retried forever, and the caller swallows it the way it
+	// swallows every other failure to record.
+	return fmt.Errorf("sloprail: read position contended by other queries after %d attempts", offeredSwapAttempts)
 }
+
+// offeredSwapAttempts bounds the retry in advanceOffered. Every losing attempt
+// means another query won and moved the position forward, so a handful is far
+// past what the few rules querying within one cycle can produce.
+const offeredSwapAttempts = 10
 
 // isBefore reports whether the entry named by a comes strictly before the one
 // named by b, as the record orders them — which is to say, whether replacing a

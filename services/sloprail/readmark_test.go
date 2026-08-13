@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -775,4 +776,155 @@ func TestReadMark_ClearingAnInterruptedPositionCostsARereadAndNotATurn(t *testin
 	// And the cycle that does complete marks exactly what it read.
 	s.dispatched(false)
 	assert.Equal(t, c, s.mark())
+}
+
+// racingStore is a Store that lets another writer in through the exact window a
+// read-modify-write leaves open: between the read of the position and the write
+// that acts on it.
+//
+// This is what makes F11 a test rather than a coin flip. Two hook processes
+// really do lose one another's updates, but only when they interleave — measured
+// at 1 run in 200 — and a test that spawns goroutines and hopes would pass on a
+// branch that fixed nothing. Injecting the interleaving makes the window
+// deterministic, so the assertion is about the code and not about the scheduler.
+type racingStore struct {
+	sessionstate.Store
+	// interlopers write on the next N reads of the offered position, one each,
+	// standing in for another query getting there first.
+	interlopers []string
+}
+
+func (r *racingStore) Meta(key string) (string, bool, error) {
+	v, ok, err := r.Store.Meta(key)
+	if key == sessionstate.MetaTranscriptOffered && len(r.interlopers) > 0 {
+		// Another query wins the position after this read and before the write
+		// that the read is about to inform.
+		next := r.interlopers[0]
+		r.interlopers = r.interlopers[1:]
+		if err := r.Store.SetMeta(key, next); err != nil {
+			return "", false, err
+		}
+	}
+	return v, ok, err
+}
+
+func TestAdvanceOffered_DoesNotLoseAnotherQuerysUpdate(t *testing.T) {
+	// F11. Two queries in one cycle advance the position at the same time: one
+	// reaches "e", the other "b". The cycle as a whole read as far as "e", so
+	// that is what must be recorded.
+	//
+	// Read-then-write loses it. Both read the same starting value, both decide
+	// theirs is further, and whichever writes last wins regardless of which
+	// actually read further — leaving "b", a position BEHIND one a real read
+	// reached. That is only a re-read rather than a skipped turn, but
+	// recordOffered claims the position only ever moves forward, and the claim
+	// has to be true for the reasoning built on it to hold.
+	// Each query is given the record as IT saw it, ending at the position it
+	// reports — which is the only shape recordOffered ever produces, and the shape
+	// the end-of-record guard requires. The slower query saw the record only as
+	// far as "b"; the other had already read through to "e".
+	shorter := entriesNamed("a", "b")
+	store := &racingStore{
+		Store: openStore(t),
+		// The winner reaches "e" inside this call's window; this call is the one
+		// carrying "b", which is behind it.
+		interlopers: []string{"e"},
+	}
+
+	require.NoError(t, advanceOffered(store, shorter, "b"))
+
+	assert.Equal(t, "e", metaOffered(t, store.Store),
+		"a position another query already reached must not be overwritten by a nearer one")
+}
+
+func TestAdvanceOffered_StillAdvancesAfterLosingARace(t *testing.T) {
+	// The retry must not turn into a refusal to record. Losing the swap means
+	// deciding again against what the winner left — and when this read really is
+	// further on, it still lands.
+	full := entriesNamed("a", "b", "c", "d", "e")
+	store := &racingStore{
+		Store:       openStore(t),
+		interlopers: []string{"b"},
+	}
+
+	require.NoError(t, advanceOffered(store, full, "e"))
+
+	assert.Equal(t, "e", metaOffered(t, store.Store),
+		"losing a swap costs a retry, not the position")
+}
+
+func TestAdvanceOffered_ConcurrentQueriesDoNotLoseTheFurthestPosition(t *testing.T) {
+	// F11 against the real thing rather than an injected window. Two hook
+	// processes advancing at once are two separate store handles on one database
+	// file, which is the shape the injected test above abstracts — and the shape
+	// the defect actually needed: a single handle serialises its own writers
+	// (SetMaxOpenConns(1)), so a goroutine pair sharing one store never
+	// reproduced this at all and would have "passed" against the broken code.
+	//
+	// Read-then-write loses 14 of 200 here. The swap loses none, and cannot: the
+	// comparison happens inside the write, so a loser is told and decides again.
+	full := entriesNamed("a", "b", "c", "d", "e")
+	const runs = 200
+
+	for range runs {
+		dbPath := filepath.Join(t.TempDir(), "state.db")
+		one, err := sessionstate.Open(dbPath)
+		require.NoError(t, err)
+		two, err := sessionstate.Open(dbPath)
+		require.NoError(t, err)
+
+		// Released together so the two calls overlap rather than queue.
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); <-start; _ = advanceOffered(one, full, "e") }()
+		go func() { defer wg.Done(); <-start; _ = advanceOffered(two, full, "b") }()
+		close(start)
+		wg.Wait()
+
+		position, _, err := one.Meta(sessionstate.MetaTranscriptOffered)
+		require.NoError(t, err)
+		require.Equal(t, "e", position,
+			"the cycle read as far as e, so the position must not settle on the nearer b")
+
+		require.NoError(t, one.Close())
+		require.NoError(t, two.Close())
+	}
+}
+
+func TestAdvanceOffered_HoldsWhenThePositionIsNotTheEndOfTheRecord(t *testing.T) {
+	// F12. A record whose earlier entries were REORDERED breaks the one thing
+	// index order is trusted for.
+	//
+	// Recorded c. The record is then rewritten to a,c,b,d and a later read names
+	// b. isBefore sees c at index 1 and b at index 2 and calls that forward, so
+	// the position moves to b — and the next cycle's Since returns [d], with b
+	// marked judged by nothing that ever looked at it. Forwards onto an unjudged
+	// turn is the one direction this bookkeeping must never err in.
+	//
+	// The guard is that a position is only taken when it is the END of the record
+	// it came from, which is the only circumstance under which "lower index" means
+	// "already read". b is mid-record here, so it is refused.
+	store := openStore(t)
+	require.NoError(t, advanceOffered(store, entriesNamed("a", "b", "c"), "c"))
+	require.Equal(t, "c", metaOffered(t, store))
+
+	// The record comes back reordered, and this read reports a position inside it.
+	require.NoError(t, advanceOffered(store, entriesNamed("a", "c", "b", "d"), "b"))
+
+	assert.Equal(t, "c", metaOffered(t, store),
+		"a mid-record position must not drag the mark forward past an entry nothing judged")
+}
+
+func TestAdvanceOffered_TakesThePositionAtTheEndOfAReorderedRecord(t *testing.T) {
+	// The guard must not become a refusal to record at all. The end of the record
+	// is still a position a read genuinely reached, so it is taken — which is what
+	// the caller always supplies, since it records transcript.Mark of the record
+	// it just read.
+	store := openStore(t)
+	require.NoError(t, advanceOffered(store, entriesNamed("a", "b", "c"), "c"))
+
+	require.NoError(t, advanceOffered(store, entriesNamed("a", "c", "b", "d"), "d"))
+
+	assert.Equal(t, "d", metaOffered(t, store))
 }

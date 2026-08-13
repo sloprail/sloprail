@@ -131,18 +131,60 @@ var ErrWrongSession = errors.New("the transcript at that path belongs to another
 // to another conversation resolves silently and hands back that conversation's
 // identity — after which the engine keys its baseline and its read mark on it.
 //
-// Claude Code stamps every record with the session it was written under, and
-// across 300 real transcripts every record's sessionId equalled its filename
-// stem, with no exceptions. So the file says who it is and does not have to be
-// trusted to match its own name.
+// Claude Code stamps every record with the session it was written under, so the
+// file says who it is and does not have to be trusted to match its own name.
 //
-// A file carrying no sessionId at all answers true. The field is observed
+// The question is which claim the file makes. A transcript is NOT single-valued
+// in sessionId, and an earlier version of this check assumed it was: it read the
+// first record carrying an id and treated that as the file's identity. That is
+// the property a fork breaks, and breaking it is the whole reason identity.go
+// exists. When Claude Code re-forks a session it continues writing into the
+// file, and the records already there keep the id they were written under — so a
+// forked transcript carries the OLD id on its early records and the new one only
+// from the fork point on. Reading the first id then refuses precisely the
+// re-fork this package was built to survive.
+//
+// Measured rather than assumed, because the earlier assumption was also measured
+// and still sampled the wrong property. Across 8085 real transcripts: 8083 carry
+// at least one sessionId; exactly one is multi-valued, and it carries the old id
+// on its first 303 records and the stem only on its last 11. "Every record's
+// sessionId equals the stem" is false, with a counterexample. "Some record's
+// sessionId equals the stem" is true, with none.
+//
+// So the file belongs to a session if it names that session ANYWHERE. A file
+// spanning two sessions genuinely belongs to both — the records under the old id
+// are the same conversation's history, which is what makes the fork worth
+// following rather than abandoning.
+//
+// Consulting the LAST id instead of the first would accept the observed fork
+// file, and is still wrong: it makes the answer depend on where in the file the
+// harness happened to stop writing the old id, which is the same
+// position-dependence that failed here, mirrored. Containment does not care
+// where the fork boundary falls.
+//
+// The cost of reading further is paid where it should be. For 8082 of 8083 files
+// the stem is on the first id-carrying record and the scan stops there; the one
+// forked file reads 304 records. Only a file that never names this session is
+// read to the end, and that is the case being caught.
+//
+// A file carrying no sessionId AT ALL answers true. The field is observed
 // rather than promised, and a harness that stops writing it must not turn every
 // session into a refusal — the check is here to catch a guess landing on
 // someone ELSE's conversation, which is a positive disagreement, not an absence
 // of evidence. Both the check and its limit are the point: what is caught is a
-// file naming a different session, and what is not caught is a file naming no
-// session.
+// file that names sessions and none of them is this one, and what is not caught
+// is a file naming no session at all.
+//
+// F10, and the line between those two. The scan SKIPS a record with no
+// sessionId rather than stopping at it, so a file whose leading records carry no
+// id is still judged on the ids further in — and refused when none of them is
+// this session. That is deliberate. The acceptance above is for absence of
+// evidence, and a file with a foreign id in it is not absent of evidence; it is
+// disagreeing, with a preamble in front. Claude Code's own leading records —
+// custom-title, mode, queue-operation — carry no uuid and sometimes no id, so
+// stopping at the first id-less record would switch the check off for exactly
+// the files that do have something to say, and a guess colliding with a real
+// conversation would resolve silently again.
 //
 // An unreadable file answers true and leaves the failure to whoever reads it
 // properly, which reports the open error with its own path in it.
@@ -150,20 +192,29 @@ func BelongsToSession(path, sessionID string) (bool, error) {
 	if sessionID == "" {
 		return true, nil
 	}
-	var found string
+	// first is kept only for the diagnosis. What decides is found: whether the
+	// id appears at all.
+	var first string
+	found := false
 	err := scanFile(path, func(rec claudeRecord) bool {
 		if rec.SessionID == "" {
 			return true
 		}
-		found = rec.SessionID
-		return false
+		if first == "" {
+			first = rec.SessionID
+		}
+		if rec.SessionID == sessionID {
+			found = true
+			return false
+		}
+		return true
 	})
 	if err != nil {
 		return true, nil
 	}
-	if found == "" || found == sessionID {
+	if found || first == "" {
 		return true, nil
 	}
-	return false, fmt.Errorf("%w: %s says it belongs to %s, not %s",
-		ErrWrongSession, path, found, sessionID)
+	return false, fmt.Errorf("%w: %s names %s and never %s",
+		ErrWrongSession, path, first, sessionID)
 }

@@ -150,11 +150,17 @@ func readMark(cmd *cobra.Command, p HookPayload) string {
 // ever shown. A turn skipped that way is skipped permanently, because a record
 // only grows and nothing afterwards goes back.
 //
-// It only ever moves forward. Several rules may query within one cycle, each
-// getting the record as it stood when it asked, and the cycle as a whole saw the
-// furthest of them. A later query that somehow reads less — a record truncated
-// or replaced underneath the session — must not drag the position backwards into
-// re-judging settled work.
+// It only ever moves forward, including when the rules querying within one cycle
+// run at once. Each gets the record as it stood when it asked, and the cycle as
+// a whole saw the furthest of them. A later query that somehow reads less — a
+// record truncated or replaced underneath the session — must not drag the
+// position backwards into re-judging settled work.
+//
+// The concurrent half of that is not free, and was not true when it was first
+// claimed here: these are separate hook processes, so comparing against the
+// stored position and then writing let two of them lose one another's updates.
+// The comparison and the write are one step against the database now — see
+// advanceOffered, which is where the claim is actually kept.
 //
 // Failure is reported and swallowed, the same as everywhere else in this
 // bookkeeping. Not recording the position costs the next cycle a re-read;
