@@ -31,7 +31,7 @@ func newSessionStateSetCmd() *cobra.Command {
 				return err
 			}
 
-			store, guardrail, err := openSessionState(cmd)
+			store, guardrail, err := openSessionState()
 			if err != nil {
 				return err
 			}

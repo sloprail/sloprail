@@ -13,11 +13,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	// The database is this package's resource: nothing else opens it, so
-	// nothing else needs the driver.
+	// nothing else needs the driver. Registered by this import; migrate.go also
+	// imports it by name, to recognise a busy database by the driver's own code
+	// rather than by its message text.
 	_ "modernc.org/sqlite"
 )
 
@@ -25,6 +29,14 @@ import (
 // sentinel rather than the driver's own error, so a caller can recognise it
 // without knowing which driver produced it.
 var ErrClosed = errors.New("sessionstate: store is closed")
+
+// ErrSchemaTooNew reports a database written by a newer binary than this one.
+//
+// A sentinel because a caller has a real decision to make on it — telling the
+// user to update rather than reporting a broken session — and matching that on
+// a substring of a formatted message would break the first time the wording
+// changed.
+var ErrSchemaTooNew = errors.New("sessionstate: database schema is newer than this binary")
 
 // Store is one session's memory.
 //
@@ -104,26 +116,68 @@ func Open(path string) (Store, error) {
 	return open(path)
 }
 
+// pragmas are applied to every connection as it opens, by putting them in the
+// DSN rather than running them afterwards.
+//
+// The difference matters. database/sql hands each statement whichever pooled
+// connection is free, so a pragma sent through Exec configures one connection
+// and says nothing about the next — and busy_timeout is per connection. Sent
+// that way, the timeout can be absent from the very connection that then hits
+// contention, which is how the first attempt at this still failed with
+// SQLITE_BUSY on the WAL switch itself.
+//
+// Order within the DSN is still deliberate: _pragma is applied in sequence, and
+// the timeout has to exist before the WAL switch, which takes an exclusive lock
+// and is the first thing two simultaneous openers contend on.
+var pragmas = []string{
+	// What makes a losing writer wait rather than fail. The contending writers
+	// here are separate hook PROCESSES, which no in-process connection limit
+	// reaches, and SQLite's own answer to a second writer is to fail it at once
+	// with SQLITE_BUSY — a non-zero exit, which a harness reads as a refusal of
+	// the agent's work. Five seconds is far longer than any write here takes
+	// and still bounded, so a genuinely stuck database surfaces rather than
+	// hanging a hook forever.
+	"busy_timeout(5000)",
+	// A reader no longer blocks a writer, so one hook reading its state while
+	// another records a verdict stops contending at all.
+	"journal_mode(WAL)",
+	// Durability at commit rather than at every write. WAL's own crash
+	// guarantee is what this store needs, and the stricter setting costs a disk
+	// sync per verdict for a database that is rebuilt if it is ever lost.
+	"synchronous(NORMAL)",
+	"foreign_keys(ON)",
+}
+
 // open is Open without the directory, which is also what the tests use against
 // an in-memory database — one that has no directory to make.
-func open(dsn string) (*store, error) {
+func open(path string) (*store, error) {
+	// _txlock=immediate takes the write lock when a transaction BEGINs rather
+	// than at its first write. Migration reads the schema version and acts on
+	// it in one transaction, and a deferred lock would let another process slip
+	// between the two.
+	dsn := path + "?_txlock=immediate&" + pragmaQuery()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("sessionstate: open %s: %w", dsn, err)
+		return nil, fmt.Errorf("sessionstate: open %s: %w", path, err)
 	}
-	// One connection. A session's hooks run one at a time, and SQLite's own
-	// answer to concurrent writers is to fail the loser; serialising here means
-	// the second writer waits instead.
+	// Serialises this process's own writers. The cross-process half of the
+	// problem is busy_timeout's, above.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("sessionstate: configure %s: %w", dsn, err)
-	}
+
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &store{db: db}, nil
+}
+
+// pragmaQuery renders the pragmas as the driver's DSN parameters.
+func pragmaQuery() string {
+	parts := make([]string, 0, len(pragmas))
+	for _, p := range pragmas {
+		parts = append(parts, "_pragma="+url.QueryEscape(p))
+	}
+	return strings.Join(parts, "&")
 }
 
 func (s *store) Close() error {

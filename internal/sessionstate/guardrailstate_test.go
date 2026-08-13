@@ -1,6 +1,7 @@
 package sessionstate
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -154,18 +155,69 @@ func TestListState_PrefixTreatsPatternCharactersLiterally(t *testing.T) {
 }
 
 func TestListState_PrefixHandlesHighBytes(t *testing.T) {
-	// The range bound is computed by raising the prefix's last byte, which has
-	// no answer when that byte is already the highest. The scan must still be
-	// correct there rather than dropping the group.
-	s := openTestStore(t)
-	high := "k\xff"
-	require.NoError(t, s.SetState("g", high+"/a", "1"))
-	require.NoError(t, s.SetState("g", high+"/b", "2"))
-	require.NoError(t, s.SetState("g", "other", "3"))
+	// The range bound is computed by raising the prefix's last byte. When that
+	// byte is 0xFF the raise carries left, and when EVERY byte is 0xFF there is
+	// nothing left to carry into — the prefix has no upper bound at all.
+	//
+	// That last case is the one that bites: the bound comes back empty, and a
+	// scan that mistakes "no upper bound" for "bounded by the empty string"
+	// returns nothing while exiting zero. A rule reconciling a declared
+	// refactor would read "nothing stored" and conclude the work was never
+	// declared.
+	cases := []struct {
+		name   string
+		prefix string
+	}{
+		{"carries out of a high byte", "k\xff"},
+		{"all high bytes, one", "\xff"},
+		{"all high bytes, two", "\xff\xff"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTestStore(t)
+			require.NoError(t, s.SetState("g", tc.prefix+"/a", "1"))
+			require.NoError(t, s.SetState("g", tc.prefix+"/b", "2"))
+			require.NoError(t, s.SetState("g", tc.prefix, "self"))
+			require.NoError(t, s.SetState("g", "other", "3"))
 
-	entries, err := s.ListState("g", high)
-	require.NoError(t, err)
-	assert.Equal(t, []string{high + "/a", high + "/b"}, keysOf(entries))
+			entries, err := s.ListState("g", tc.prefix)
+			require.NoError(t, err)
+			assert.Equal(t, []string{tc.prefix, tc.prefix + "/a", tc.prefix + "/b"}, keysOf(entries))
+		})
+	}
+}
+
+func TestListState_MatchesHasPrefixOverTheWholeKeyspace(t *testing.T) {
+	// The property the range exists to satisfy, run through the database
+	// rather than against a Go re-statement of the predicate. The earlier
+	// version of this test checked the bound arithmetic in Go and never
+	// queried anything, so it passed while the SQL bound the wrong parameter
+	// and dropped every all-0xFF group.
+	keys := []string{
+		"", "a", "ab", "abc", "b", "p", "p/", "p/a", "p0",
+		"pending/x", "pending/y", "a%b/1", "axb/1", "a_b/1", "a*b/1", "a[b]/1",
+		"k\xff", "k\xff/a", "\xff", "\xff/a", "\xff\xff", "\xff\xff/a", "\xfe",
+	}
+	prefixes := append([]string{"", "zzz", "\xff\xff\xff"}, keys...)
+
+	s := openTestStore(t)
+	for _, k := range keys {
+		require.NoError(t, s.SetState("g", k, "v"))
+	}
+
+	for _, prefix := range prefixes {
+		var want []string
+		for _, k := range keys {
+			if strings.HasPrefix(k, prefix) {
+				want = append(want, k)
+			}
+		}
+		sort.Strings(want)
+
+		entries, err := s.ListState("g", prefix)
+		require.NoError(t, err, "prefix %q", prefix)
+		assert.Equal(t, want, keysOf(entries), "prefix %q", prefix)
+	}
 }
 
 func TestPrefixUpperBound(t *testing.T) {
@@ -198,7 +250,13 @@ func TestPrefixUpperBound_BoundsExactlyThePrefixedKeys(t *testing.T) {
 	}
 }
 
+// keysOf returns nil rather than an empty slice for no entries, so a caller
+// comparing against a nil expectation is comparing contents rather than which
+// of two empty representations each side happened to build.
 func keysOf(entries []Entry) []string {
+	if len(entries) == 0 {
+		return nil
+	}
 	keys := make([]string, 0, len(entries))
 	for _, e := range entries {
 		keys = append(keys, e.Key)

@@ -1,7 +1,10 @@
 package sessionstate
 
 import (
+	"fmt"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,6 +62,82 @@ func TestOpen_MigrationIsIdempotent(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, s.Close())
 	}
+}
+
+func TestOpen_ConcurrentWritersAcrossHandlesDoNotFail(t *testing.T) {
+	// Two hooks firing in one cycle are two PROCESSES, which no in-process
+	// connection limit reaches. Separate handles on one file are the closest
+	// this can get to that without spawning binaries, and they contend the same
+	// way: without a busy timeout the losing writer fails immediately with
+	// SQLITE_BUSY, and a failed write exits non-zero, which a harness reads as
+	// a refusal of the agent's work.
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	const handles, writesPerHandle = 4, 25
+	var wg sync.WaitGroup
+	errs := make(chan error, handles*writesPerHandle)
+
+	for h := range handles {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s, err := Open(path)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer s.Close()
+			for i := range writesPerHandle {
+				if err := s.SetState("g", fmt.Sprintf("h%d/k%d", h, i), "v"); err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	// Every write landed — contention delayed writers rather than dropping
+	// what they wrote.
+	s, err := Open(path)
+	require.NoError(t, err)
+	defer s.Close()
+	entries, err := s.ListState("g", "")
+	require.NoError(t, err)
+	assert.Len(t, entries, handles*writesPerHandle)
+}
+
+func TestOpen_UsesWAL(t *testing.T) {
+	// The mode a losing writer's wait depends on. Asserted because it is set by
+	// a pragma that fails silently into the previous mode if it cannot apply.
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := open(path)
+	require.NoError(t, err)
+	defer s.Close()
+
+	var mode string
+	require.NoError(t, s.db.QueryRow("PRAGMA journal_mode").Scan(&mode))
+	assert.Equal(t, "wal", strings.ToLower(mode))
+}
+
+func TestOpen_RefusesASchemaFromANewerBinary(t *testing.T) {
+	// An older binary cannot know which columns it is missing, so running
+	// against a schema it does not understand would corrupt a session's record
+	// rather than fail it. A sentinel because the caller's response — tell the
+	// user to update — is a real decision, not a generic failure.
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := open(path)
+	require.NoError(t, err)
+	_, err = s.db.Exec("PRAGMA user_version = 99")
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	_, err = Open(path)
+	assert.ErrorIs(t, err, ErrSchemaTooNew)
 }
 
 func TestStore_ClosedStoreReportsItself(t *testing.T) {

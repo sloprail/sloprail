@@ -74,10 +74,17 @@ func (s *store) ListState(guardrail, prefix string) ([]Entry, error) {
 	// legitimately contain, so the prefix is compared as a range instead: every
 	// key that sorts at or after the prefix and before its upper bound begins
 	// with it, whatever it is made of.
+	//
+	// The guard tests the BOUND, not the prefix. An empty bound means there is
+	// no key above the range — true of the empty prefix and of an all-0xFF one
+	// — and in both cases the lower bound alone is the whole answer. Testing
+	// the prefix instead reads an all-0xFF prefix as bounded by "", which no
+	// key sorts below, and silently returns nothing.
+	bound := prefixUpperBound(prefix)
 	rows, err := db.Query(`
 		SELECT key, value FROM guardrail_state
 		WHERE guardrail = ? AND key >= ? AND (? = '' OR key < ?)
-		ORDER BY key`, guardrail, prefix, prefix, prefixUpperBound(prefix))
+		ORDER BY key`, guardrail, prefix, bound, bound)
 	if err != nil {
 		return nil, fmt.Errorf("sessionstate: list state %q/%q*: %w", guardrail, prefix, err)
 	}
@@ -100,10 +107,12 @@ func (s *store) ListState(guardrail, prefix string) ([]Entry, error) {
 // prefixUpperBound is the first string that sorts after every string beginning
 // with prefix: the prefix with its last byte raised by one.
 //
-// A prefix whose last bytes are all 0xFF has no such bound below the end of the
-// keyspace, and neither does the empty prefix. Both return "", which the query
-// reads as "no upper bound" — correct in both cases, since what they exclude is
-// nothing.
+// Two inputs have no such bound: the empty prefix, and one whose bytes are all
+// 0xFF. Both return "", which means "no upper bound" and NOT "the empty string"
+// — a caller comparing keys against it directly would exclude everything, since
+// no key sorts below "". A caller must test the returned bound for emptiness
+// and drop the upper comparison when it is empty; testing the prefix instead
+// gets the empty case right and the all-0xFF case exactly backwards.
 func prefixUpperBound(prefix string) string {
 	b := []byte(prefix)
 	for i := len(b) - 1; i >= 0; i-- {

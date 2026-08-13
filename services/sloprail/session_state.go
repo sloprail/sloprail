@@ -30,7 +30,7 @@ func newSessionStateCmd() *cobra.Command {
 // Both the guardrail and the session come from the environment the engine set
 // when it ran the hook, never from arguments. A hook able to name either could
 // read a rule it was never told about, or reach into another session's record.
-func openSessionState(cmd *cobra.Command) (sessionstate.Store, string, error) {
+func openSessionState() (sessionstate.Store, string, error) {
 	guardrail := os.Getenv(GuardrailEnv)
 	if guardrail == "" {
 		return nil, "", fmt.Errorf("sloprail: no guardrail in scope — %s is set by the engine when it runs a hook", GuardrailEnv)

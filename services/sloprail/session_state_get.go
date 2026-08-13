@@ -18,7 +18,7 @@ func newSessionStateGetCmd() *cobra.Command {
 		Short: "Read back what this guardrail stored under a key",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, guardrail, err := openSessionState(cmd)
+			store, guardrail, err := openSessionState()
 			if err != nil {
 				return err
 			}
