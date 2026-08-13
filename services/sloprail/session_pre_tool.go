@@ -82,15 +82,7 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	// occurrence has to be noticed in order to say so — leaving them out would
 	// mean the one case that must be reported is the one case no event is
 	// produced for.
-	var bound []string
-	for _, d := range decls {
-		if d.IsEnabled() {
-			bound = append(bound, d.BoundKinds()...)
-		}
-	}
-	for _, iv := range invalid {
-		bound = append(bound, iv.AffectedKinds()...)
-	}
+	bound := boundKinds(decls, invalid)
 
 	// Who this session is, resolved ONCE for the whole dispatch and used for both
 	// things that need it: the store of what has already been judged, and the
@@ -685,4 +677,31 @@ func plainText(b []byte) string {
 		return ""
 	}
 	return text
+}
+
+// boundKinds is every event kind something in this project actually asks about.
+//
+// A function rather than a loop at the call site because its `enabled` half is
+// otherwise untestable. Removing that half leaves the whole repository's suite
+// green: a disabled guardrail's kinds would be collected, its module would run,
+// and only the dispatch-time enabled check would stop the hook — so every
+// observable effect is identical and the cost is the only difference. Cost is
+// exactly what `extractor_runs_bound` exists to prevent, and exactly what no
+// end-to-end test can see.
+//
+// The broken declarations are included, and NOT filtered on enabled, because
+// there is no `enabled` to read off a declaration that did not parse. Their
+// bindings are what has stopped being enforced, and the events they named are
+// the ones whose occurrence has to be noticed in order to say so.
+func boundKinds(decls []guardrail.Declaration, invalid []guardrail.Invalid) []string {
+	var bound []string
+	for _, d := range decls {
+		if d.IsEnabled() {
+			bound = append(bound, d.BoundKinds()...)
+		}
+	}
+	for _, iv := range invalid {
+		bound = append(bound, iv.AffectedKinds()...)
+	}
+	return bound
 }
