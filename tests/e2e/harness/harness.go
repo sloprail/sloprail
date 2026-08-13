@@ -58,6 +58,21 @@ func repoRoot(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
+// Cleanup removes what build left behind. Call it from TestMain after m.Run,
+// which is the only place that can: the binary is shared by every test in the
+// process, so it must outlive each of them, and t.Cleanup would delete it out
+// from under the second test to ask for it.
+//
+// Skipping this leaks 15M per test process, and there is one process per e2e
+// package. That reached 337 directories and 5GB during one wave of work, and
+// filled the disk mid-run — which fails as a build error in whichever test is
+// unlucky, not as anything that names the real cause.
+func Cleanup() {
+	if builtDir != "" {
+		os.RemoveAll(builtDir)
+	}
+}
+
 // build compiles the sloprail binary once per test process.
 func build(t *testing.T) string {
 	t.Helper()
@@ -68,13 +83,17 @@ func build(t *testing.T) string {
 			buildErr = err
 			return
 		}
+		// Recorded before the build, not after. A build that fails still leaves
+		// the directory behind, and the failure that matters here is a full
+		// disk — so the path that leaks is the one that runs when leaking is
+		// already the problem.
+		builtDir = dir
 		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "sloprail"), "./services/sloprail")
 		cmd.Dir = root
 		if out, err := cmd.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build sloprail: %v\n%s", err, out)
 			return
 		}
-		builtDir = dir
 	})
 	if buildErr != nil {
 		t.Fatalf("harness: %v", buildErr)
