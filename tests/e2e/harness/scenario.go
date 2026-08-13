@@ -40,6 +40,17 @@ func Bash(id, command string) Turn {
 	return Turn{jsonl: toolUse(id, "Bash", map[string]string{"command": command})}
 }
 
+// Skill returns a turn where the agent loads a skill.
+//
+// The mock does not implement the Skill tool and answers with an error, which
+// is correct for what this is for: the tool_use record lands in the transcript
+// either way, and a rule asking whether the agent reached for a skill is asking
+// about the reaching. Whether the skill then loaded is the environment's
+// business, not evidence about the agent.
+func Skill(id, skill string) Turn {
+	return Turn{jsonl: toolUse(id, "Skill", map[string]string{"skill": skill})}
+}
+
 // script renders the scenario as the shell the mock runs.
 //
 // Each turn is gated on its own marker being absent from the conversation so
@@ -63,6 +74,20 @@ fi
 	return b.String()
 }
 
+// toolUse renders one assistant turn invoking a tool.
+//
+// The record carries a uuid, keyed off the turn's own id. Without one the line
+// is not merely untidy — `transcript.Read` SKIPS every record that has no uuid,
+// because Claude Code's own preamble and bookkeeping lines carry none. A turn
+// emitted without one therefore never reaches `sloprail session query`, so a
+// rule reading the trajectory sees an empty session and a test asserting on
+// what the agent did passes or fails for reasons that have nothing to do with
+// the rule.
+//
+// The parent is deliberately left off. Nothing this harness drives walks the
+// chain — the identity walk reads the seeded ROOT record, which has its own
+// uuid and an explicit null parent — and inventing a plausible parent chain
+// here would be this file asserting a shape it does not maintain.
 func toolUse(id, name string, input map[string]string) string {
 	var ib strings.Builder
 	ib.WriteByte('{')
@@ -75,8 +100,8 @@ func toolUse(id, name string, input map[string]string) string {
 		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
 	}
 	ib.WriteByte('}')
-	return fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
-		id, name, ib.String())
+	return fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
+		"e2e-turn-"+id, id, name, ib.String())
 }
 
 func result(text string) string {
