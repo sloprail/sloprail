@@ -64,7 +64,18 @@ func Skill(id, skill string) Turn {
 //
 // The script field is the mock's own: real Claude Code lets a model decide what
 // the sub-agent does, and a test cannot, so the sub-agent's behaviour is
-// supplied the same way the dispatching session's is.
+// supplied the same way the dispatching session's is. Every other field is real:
+// description, prompt, subagent_type and isolation are all Agent inputs Claude
+// Code emits.
+//
+// The tool is named Agent, which is what Claude Code emits today. Task is the
+// tool's former name — it was renamed to Agent in v2.1.63 and Task kept working
+// as an accepted alias — so a hook that only matches Task still fires against
+// older sessions but never against current ones. A survey of 8,458 local
+// transcripts (94,960 tool_use entries) found 493 Agent and zero Task, so a
+// harness that emits Task exercises only the legacy alias and would never prove
+// a guardrail fires against the name real sessions carry. Consumers should
+// accept both names; the harness emits the one production emits.
 func Dispatch(id, prompt, scriptPath, isolation string) Turn {
 	input := map[string]string{
 		"description":   "delegated work",
@@ -75,7 +86,7 @@ func Dispatch(id, prompt, scriptPath, isolation string) Turn {
 	if isolation != "" {
 		input["isolation"] = isolation
 	}
-	return Turn{jsonl: toolUse(id, "Task", input)}
+	return Turn{jsonl: toolUse(id, "Agent", input)}
 }
 
 // Script writes a scenario as a standalone script file and returns its path, for
