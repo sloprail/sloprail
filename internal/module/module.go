@@ -19,9 +19,10 @@
 // implementations of Module, so it will find it wherever you put it.
 //
 // There is exactly one module list in a build. NewRegistry takes a token only
-// packages under internal/module/ can name, so modules.Registry is the only
-// registry a hook point can be handed — assembling a different one elsewhere
-// does not compile. See internal/module/internal/registryauth.
+// packages under internal/module/ can name, and which no other package can
+// construct without naming it, so modules.Registry is the only registry a hook
+// point can be handed — assembling a different one elsewhere does not compile.
+// See internal/module/internal/registryauth.
 package module
 
 import "github.com/sloprail/sloprail/internal/event"

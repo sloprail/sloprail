@@ -28,10 +28,12 @@ type Registry struct {
 // NewRegistry returns a registry holding the given modules.
 //
 // The token is the fence, not a parameter with a value. It is a type only
-// packages under internal/module/ can name, which makes internal/module/modules
-// the only place in the repo that can assemble a module list — see
-// internal/module/internal/registryauth for why. Everything else takes the
-// registry modules.Registry hands it.
+// packages under internal/module/ can name, AND one no other package can
+// construct without naming it — its unexported field is what makes the second
+// half true, and the fence is worth nothing without it. Together they make
+// internal/module/modules the only place in the repo that can assemble a module
+// list — see internal/module/internal/registryauth for why. Everything else
+// takes the registry modules.Registry hands it.
 //
 // So a hook point cannot quietly enforce against a vocabulary of its own. That
 // is not a style preference: `guardrail help` is the only registry observable
