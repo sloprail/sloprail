@@ -9,12 +9,29 @@ CREATE TABLE meta (
 -- file: keying by file alone would make a newly added guardrail skip everything
 -- already judged, and would leave nowhere to record that a file satisfies one
 -- rule while violating another.
+--
+-- The CONTENT is part of the key, not just a column, so a verdict is remembered
+-- per (path, guardrail, content) rather than one row being overwritten by the
+-- next thing written to the path. Keying on (path, guardrail) alone rests on
+-- the assumption that superseded content "cannot come back under the same path"
+-- — and it can: an agent that edits a file and then reverts it restores exactly
+-- the bytes an earlier cycle judged. With a single row the revert finds a
+-- fingerprint that no longer matches and the settled question is re-opened,
+-- which identity_is_content forbids.
+--
+-- path stays in the key, and that is what keeps a MOVE a new question: the same
+-- content arriving at a path it has never been checked at finds no row and is
+-- judged there. See T020_01 and T020_02, which fail in opposite directions if
+-- either column is dropped from the key.
 CREATE TABLE file_checks (
     path        TEXT NOT NULL,
     guardrail   TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
     passed      INTEGER NOT NULL,
-    PRIMARY KEY (path, guardrail)
+    -- Monotonic per write, so "the verdict that stands" has an answer when a
+    -- path has been judged at several contents. Nothing reads it as a time.
+    seq         INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (path, guardrail, fingerprint)
 ) WITHOUT ROWID;
 
 -- What one guardrail remembers within one session. Keyed per entry rather than

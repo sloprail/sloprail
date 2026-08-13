@@ -416,6 +416,40 @@ func dataHome(home string) string {
 	}
 }
 
+// WriteFile puts a file into a project, creating the directories above it.
+//
+// For the state a project is in BEFORE a session runs — the files an agent will
+// go on to edit or delete. What the agent itself does belongs in a scenario, so
+// that it travels through the tool calls a harness reports rather than being
+// arranged behind the engine's back.
+func (e *Env) WriteFile(projDir, rel, body string) {
+	e.t.Helper()
+	full := filepath.Join(projDir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		e.t.Fatalf("harness: write %s: %v", rel, err)
+	}
+}
+
+// Exists reports whether a path is present in a project.
+//
+// How a test asks what actually happened to the tree, as opposed to what came
+// back on the stream. Whether a message travelled says nothing about whether a
+// write landed, and "the work was prevented" is a claim about the tree.
+func (e *Env) Exists(projDir, rel string) bool {
+	e.t.Helper()
+	_, err := os.Stat(filepath.Join(projDir, rel))
+	if err == nil {
+		return true
+	}
+	if !os.IsNotExist(err) {
+		e.t.Fatalf("harness: stat %s: %v", rel, err)
+	}
+	return false
+}
+
 // Guardrail writes a declaration and its hook scripts into a project.
 func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]string) {
 	e.t.Helper()
@@ -720,6 +754,75 @@ func (e *Env) SessionIdentity(projDir, sessionID string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// BlockingErrors returns the text of every blocking hook error the harness
+// recorded for a session, in order.
+//
+// Read from the conversation record rather than from the stream, because that
+// is where the text actually lands. Measured on this harness, of the ways a
+// Stop hook can refuse:
+//
+//	exit 2 with text on stderr          blocks, and the text arrives
+//	exit 0 with {"decision":"block"}    blocks, and the reason arrives
+//	exit 1 with text on stderr          does not block, and nothing arrives
+//	exit 0 silent                       does not block
+//
+// Both blocking forms deliver their words the same way: an attachment record of
+// type hook_blocking_error, never a line on the result stream. A test asserting
+// on Result.Output would therefore be asserting on a channel the text never
+// travels, and would fail for a working engine.
+//
+// Only the attachment's own text is returned, NOT the record as a whole. A
+// guardrail's folder path travels on every hook payload, so searching the whole
+// transcript for a rule's name finds it whether or not the refusal ever named
+// it — an assertion that cannot fail.
+func (e *Env) BlockingErrors(projDir, sessionID string) []string {
+	e.t.Helper()
+
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec struct {
+			Attachment struct {
+				Type          string `json:"type"`
+				BlockingError struct {
+					BlockingError string `json:"blockingError"`
+				} `json:"blockingError"`
+			} `json:"attachment"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec.Attachment.Type != "hook_blocking_error" {
+			continue
+		}
+		text := rec.Attachment.BlockingError.BlockingError
+		// A blocked stop is retried, so the same refusal is recorded once per
+		// attempt. What a test asks is which refusals arrived, not how many
+		// times the agent was driven round.
+		if text != "" && !seen[text] {
+			seen[text] = true
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+// transcript returns the whole conversation record the harness wrote.
+func (e *Env) transcript(projDir, sessionID string) string {
+	e.t.Helper()
+	b, err := os.ReadFile(e.transcriptPath(projDir, sessionID))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read transcript: %v", err)
+	}
+	return string(b)
 }
 
 // Result is what a run produced.

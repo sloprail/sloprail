@@ -1,39 +1,11 @@
-//go:build sloprail_post_dispatch
-
-// GATED, and this is the fallback rather than the goal.
+// The `after` half of before_refusable_only, restored through the plugin.
 //
-// The invariant below is implemented and passes — but only where the end of a
-// cycle actually dispatches Post events, which is impl/stop-diff-impl, and only
-// with the harness helpers that work arrived with. Re-checked against the base
-// as it stands: GitInit and Git have since LANDED, but Exists (line 160) and
-// BlockingErrors (line 184) have not, so without this tag the package still
-// does not COMPILE on the base branch, which would take the other five
-// 006/pre-tool tests down with it.
-//
-// A build tag rather than a t.Skip for exactly that reason, and the reason is
-// still live: a skip still has to compile, and what is missing here is harness
-// METHODS rather than behaviour. `go vet -tags sloprail_post_dispatch` on this
-// package still stops at `e.Exists undefined`, which is the whole argument in
-// one line. The repo's other gates are t.Skip because there the code compiles
-// and only the behaviour is absent — different gap, different gate.
-//
-// This file is now the ONLY thing impl/e2e-coverage still carries. The rest of
-// that branch — hookScope, SR_TRANSCRIPT, the record() derivation, and the
-// lifting of the T008_02 and T013_04/05 skips — landed independently through
-// impl/hook-env, which reached the same resolution of impl/recursion-guard's
-// HOOKENV-ROUTING.md note (LaunchedByEnv folded into hookScope.env, hookEnv
-// deleted). Nothing was dropped; it merely arrived by the other path.
-//
-// Verified in a scratch integration worktree built from origin/impl/engine-skeleton
-// + impl/baseline-mark + impl/observed-extract + impl/fingerprint-skip +
-// impl/stop-diff-impl with that branch's INTEGRATION.patch applied:
-//
-//	go test -count=1 -race -tags sloprail_post_dispatch ./tests/e2e/pre_tool/006_before_refusable_only/
-//
-// It passes there, and each of its four assertions was confirmed to fail against
-// a deliberately broken engine — see the mutation notes on the assertions
-// themselves. DELETE THIS TAG when stop-diff-impl merges; nothing else about the
-// test changes.
+// Gated behind a build tag until impl/stop-diff-impl landed, because what was
+// missing was harness METHODS rather than behaviour — Exists and BlockingErrors
+// did not exist on the base, so a t.Skip would still not have compiled and would
+// have taken the other five tests in this package down with it. Both helpers
+// have landed with the dispatcher, the tag's own instruction was to delete it on
+// that merge, and this is that deletion.
 
 package e2e
 

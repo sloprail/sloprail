@@ -107,7 +107,6 @@ func countPath(got []observed, path string) int {
 // id, which is what makes the second one a later cycle of the same session
 // rather than a fresh one with a fresh baseline.
 func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -152,7 +151,6 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 // it, so it is present in the tree at the end of the second cycle without being
 // part of the second cycle's diff against the re-taken point.
 func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -202,7 +200,14 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 
 	e.Run(proj, sess, "switch branches", Turns("done",
 		Bash("b2", "git checkout feature"),
-		Write("w2", "unrelated.md", "fine\n"),
+		// Re-created after the switch, which the doc comment above describes and
+		// which the arrangement genuinely needs: `feature` was cut from the root,
+		// so checking it out DELETES bad-file.md from the tree. Without writing
+		// it back the file is not merely absent from the diff — it is absent from
+		// the project, and "still broken with nothing to report it" would be a
+		// claim about a file that no longer exists.
+		Write("w2", "bad-file.md", "violates\n"),
+		Write("w3", "unrelated.md", "fine\n"),
 	))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
@@ -210,12 +215,23 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 			"never moved and this proves nothing", got)
 	}
 
+	// The rule must be asked about the offending file AGAIN, after the point it
+	// was measured from has moved.
+	//
+	// Counted over the entries this cycle added rather than over the ledger as a
+	// whole. A refusal blocks the turn and the agent is driven round again, so
+	// one unfixed violation writes many lines in a single cycle — a comparison
+	// of cumulative totals measures how many times the mock retried, not whether
+	// the refusal outlived the branch switch.
 	after := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
-	if countPath(after, "bad-file.md") <= countPath(first, "bad-file.md") {
-		t.Fatalf("an unfixed refusal was dropped when the measuring point moved: saw the file %d times "+
-			"before the branch switch and %d times after (%v) — the refusal was tied to the baseline, "+
-			"so switching branches left a broken file with nothing to report it",
-			countPath(first, "bad-file.md"), countPath(after, "bad-file.md"), after)
+	if len(after) <= len(first) {
+		t.Fatalf("the second cycle observed nothing at all (%d entries, was %d), so there is "+
+			"no evidence either way about the refusal surviving: %v", len(after), len(first), after)
+	}
+	if countPath(after[len(first):], "bad-file.md") == 0 {
+		t.Fatalf("an unfixed refusal was dropped when the measuring point moved: the file was not "+
+			"reported again after the branch switch (%v) — the refusal was tied to the baseline, "+
+			"so switching branches left a broken file with nothing to report it", after[len(first):])
 	}
 }
 
@@ -229,7 +245,6 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 // The fix is a rename of the content, not of the path — the same path now holds
 // content the rule accepts.
 func TestT015_03_AFixedFileStopsBeingReported(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)

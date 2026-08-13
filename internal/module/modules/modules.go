@@ -23,6 +23,7 @@ package modules
 
 import (
 	"github.com/sloprail/sloprail/internal/commandmod"
+	"github.com/sloprail/sloprail/internal/cyclemod"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/module"
 )
@@ -36,6 +37,13 @@ func All() []module.Module {
 	return []module.Module{
 		filemod.New(),
 		commandmod.New(),
+		// The cycle itself. It extracts nothing — a cycle ending is the hook
+		// point rather than anything a harness reports — but it is what
+		// DECLARES TurnEnd, and a kind no module declares cannot be bound to:
+		// the loader rejects the binding outright. Without this entry the
+		// dispatcher fires TurnEnd into a build where no guardrail is permitted
+		// to name it.
+		cyclemod.New(),
 	}
 }
 

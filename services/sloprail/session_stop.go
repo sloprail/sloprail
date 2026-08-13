@@ -161,22 +161,15 @@ func discardOffered(cmd *cobra.Command, p HookPayload) {
 // dispatchPostEvents runs the guardrails bound to what this cycle changed, and
 // reports whether it ran at all.
 //
-// Not implemented. Owned by the work that diffs the tree and dispatches the
-// events; this exists so the read mark has something real to wait on rather
-// than a comment promising an order the code does not keep.
-//
 // Returning false is what holds the mark. A cycle that dispatched nothing has
 // judged nothing, so it has no position to claim as judged — and the position
 // it read is remembered elsewhere and lost by no one.
 //
 // A variable so a test about the mark's POSITION can stand this step in and
-// still be testing the position rather than this step's absence. The tests that
-// do keep meaning the same thing once this is implemented for real.
-var dispatchPostEvents = func(_ *cobra.Command, _ sessionstate.Store, _ HookPayload) bool {
-	// TODO: diff the tree against the baseline, dispatch the Post events, and
-	// return true once a cycle's judging actually happens here.
-	return false
-}
+// still be testing the position rather than this step's behaviour. Those tests
+// mean the same thing now that it is implemented as they did while it was a
+// stub.
+var dispatchPostEvents = runPostDispatch
 
 // advanceReadMark carries forward the position this cycle actually read.
 //

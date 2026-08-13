@@ -60,27 +60,41 @@ hooks:
 
 // askScript records one line per invocation: the entries the engine handed back.
 //
-// It calls `session query` with NO payload on stdin, which is deliberate and is
-// the part of this fixture that depends on impl/hook-env.
-//
 // A guardrail's hook is handed `{event, guardrailDir}` — the event payload, not
 // the harness's raw hook payload — so it has no transcript_path to forward, and
 // its working directory is the guardrail's own folder rather than the project.
-// Verified against this worktree: piping the payload in makes the command answer
-// "no transcript path on the hook payload", every time, for every test in this
-// directory. A fixture written that way records that sentence as its "answer"
-// and every marker assertion below reads false, which looks exactly like correct
-// narrowing and would report coverage that does not exist.
+// Piping that payload in makes the command answer "no transcript path on the
+// hook payload" every time, and a fixture written that way records that sentence
+// as its "answer" — every marker assertion below then reads false, which looks
+// exactly like correct narrowing and would report coverage that does not exist.
 //
-// impl/hook-env is what closes this: it sets SR_WORKSPACE and SR_SESSION_ID on
-// every hook process and teaches `session query` to resolve the record from
-// them. The command is therefore invoked bare here, as a hook on that branch
-// actually invokes it. The guard below is what stops a silent regression: if the
-// answer is an error rather than entries, the test says so instead of reading it
-// as an absence.
+// What closes it is SR_TRANSCRIPT, which impl/hook-env sets on every hook
+// process beside SR_GUARDRAIL, SR_SESSION_ID and SR_WORKSPACE. `session query`
+// does not read the environment itself — it is told which record to read, in the
+// same payload shape a harness sends — so the path is passed through explicitly,
+// which is the idiom the shipped example performs by name.
+//
+// SR_WORKSPACE travels in the same payload as `cwd`, and it is what the
+// NARROWING depends on: the read mark lives in this session's own store, and
+// the store is keyed by the tree being guarded. Without it the command still
+// reads the record but every cycle is handed the whole of it, which is exactly
+// the assertion these tests make.
+//
+// SR_SESSION_ID is NOT a substitute: it carries the stable id, the uuid of the
+// conversation's root record, not the transcript's filename, so a path built
+// from it lands on no file. The variable is unset rather than empty when there
+// is no record, so `test -n` is the whole check.
+//
+// The guard below is what stops a silent regression: if the answer is an error
+// rather than entries, the test says so instead of reading it as an absence.
 const askScript = `#!/bin/sh
 cat > /dev/null
-sloprail session query >> "$PWD/answers" 2>&1
+if [ -z "${SR_TRANSCRIPT:-}" ]; then
+  echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "$PWD/answers"
+  exit 0
+fi
+printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
+  sloprail session query >> "$PWD/answers" 2>&1
 exit 0
 `
 
@@ -122,9 +136,12 @@ func promptsIn(answer string, markers ...string) []string {
 // An engine reading the whole record every time fails on the second clause,
 // which is exactly the behaviour this worktree ships today.
 func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl (dispatchPostEvents in session_stop.go is still the stub returning false, so this Post-bound hook never runs) and impl/hook-env (hookEnv in services/sloprail/provenance.go sets only SLOPRAIL_LAUNCHED_BY, so a guardrail hook gets no SR_SESSION_ID and no SR_WORKSPACE and `session query` cannot find the record). NOT blocked on impl/baseline-mark any more: sessionstate.MetaTranscriptRead and MetaTranscriptOffered have landed, so the read position now has somewhere to live")
 	e := New(t)
 	proj := e.Project()
+	// A repository, so the cycle has a baseline to measure its difference
+	// from. Without one there is no diff and no PostFile* event, and a rule
+	// bound to one would never run.
+	e.GitInit(proj)
 	e.Guardrail(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
 
 	const sess = "s-018-01"
@@ -160,7 +177,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 
 	// The second cycle's own work must be in what it was given, or the engine
 	// is simply returning nothing and the real assertion cannot fail.
-	if len(promptsIn(second, secondMarker)) == 0 {
+	if !strings.Contains(second, "second cycle") {
 		t.Fatalf("the second cycle was not given its own turns:\n%s", second)
 	}
 	// The invariant proper.
@@ -184,9 +201,12 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 // This is what separates "remember where the reading ended" from "remember where
 // the session got to". The second loses turns nothing ever judged.
 func TestT018_02_TurnsNothingJudgedAreStillGivenToTheNextCycle(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl (dispatchPostEvents in session_stop.go is still the stub returning false, so this Post-bound hook never runs) and impl/hook-env (hookEnv in services/sloprail/provenance.go sets only SLOPRAIL_LAUNCHED_BY, so a guardrail hook gets no SR_SESSION_ID and no SR_WORKSPACE and `session query` cannot find the record). NOT blocked on impl/baseline-mark any more: sessionstate.MetaTranscriptRead and MetaTranscriptOffered have landed, so the read position now has somewhere to live")
 	e := New(t)
 	proj := e.Project()
+	// A repository, so the cycle has a baseline to measure its difference
+	// from. Without one there is no diff and no PostFile* event, and a rule
+	// bound to one would never run.
+	e.GitInit(proj)
 
 	const sess = "s-018-02"
 	const firstMarker = "MARKERGAMMA"
@@ -208,7 +228,7 @@ func TestT018_02_TurnsNothingJudgedAreStillGivenToTheNextCycle(t *testing.T) {
 		t.Fatalf("the hook never asked the engine anything, so nothing here can be observed")
 	}
 	answered(t, answers)
-	if len(promptsIn(answers, secondMarker)) == 0 {
+	if !strings.Contains(answers, "judged cycle") {
 		t.Fatalf("the cycle was not given its own turns, so this proves nothing:\n%s", answers)
 	}
 	if len(promptsIn(answers, firstMarker)) == 0 {
