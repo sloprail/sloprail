@@ -258,7 +258,9 @@ func TestPreTool_RefusalIsRecordedNotDropped(t *testing.T) {
 	// content that was judged, marked as NOT passing. Read it directly: this is
 	// the fact the dispatcher is responsible for, and every behavioural proxy
 	// for it is indistinguishable from the mutant.
-	rev, err := openRevalidation(HookPayload{TranscriptPath: d.transcript(), Cwd: d.proj})
+	id, err := stableID(HookPayload{TranscriptPath: d.transcript(), Cwd: d.proj})
+	require.NoError(t, err)
+	rev, err := openRevalidation(id, d.proj)
 	require.NoError(t, err)
 	defer rev.Close()
 
@@ -362,7 +364,9 @@ func TestPreTool_EveryGuardrailJudgesTheOneSubjectTheEventNamed(t *testing.T) {
 
 	d.write("notes.md", "hello")
 
-	rev, err := openRevalidation(HookPayload{TranscriptPath: d.transcript(), Cwd: d.proj})
+	id, err := stableID(HookPayload{TranscriptPath: d.transcript(), Cwd: d.proj})
+	require.NoError(t, err)
+	rev, err := openRevalidation(id, d.proj)
 	require.NoError(t, err)
 	defer rev.Close()
 

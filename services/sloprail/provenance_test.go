@@ -75,31 +75,41 @@ func TestAppendLaunchedByStartsFromNothing(t *testing.T) {
 	}
 }
 
-// hookEnv must put the engine's own answer LAST. Go's exec resolves a repeated
-// name to the last occurrence, so a value inherited from an outer process must
-// not be able to override what the engine says is running.
+// The provenance variable must carry the engine's own answer, and carry it LAST.
+// Go's exec resolves a repeated name to the last occurrence, so a value
+// inherited from an outer process must not be able to override what the engine
+// says is running.
+//
+// Asserted against hookScope.env because that is now the only thing that builds
+// a hook's environment. This branch's own hookEnv was folded into it: two
+// functions each appending to os.Environ() for the same exec is how one silently
+// drops the other's variable, so the invariant moved rather than the mechanism.
+// envValue reads the slice the way exec does, so this is a claim about what the
+// hook process actually sees rather than about slice positions.
 func TestHookEnvAppendsAfterTheInheritedBlock(t *testing.T) {
-	env := hookEnv("judge-notes")
+	env := hookScope{SessionID: "s", Workspace: "/w"}.env("judge-notes")
 
-	last := ""
-	for _, kv := range env {
-		if len(kv) > len(LaunchedByEnv) && kv[:len(LaunchedByEnv)+1] == LaunchedByEnv+"=" {
-			last = kv
-		}
+	got, ok := envValue(env, LaunchedByEnv)
+	if !ok {
+		t.Fatalf("env set no %s", LaunchedByEnv)
 	}
-	if last == "" {
-		t.Fatalf("hookEnv set no %s", LaunchedByEnv)
-	}
-	if last != LaunchedByEnv+"=judge-notes" && !contains(last, "judge-notes") {
-		t.Fatalf("the engine's own value did not win: %q", last)
+	if got != "judge-notes" {
+		t.Fatalf("the engine's own value did not win: %q", got)
 	}
 }
 
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
+// The same ordering claim where it actually bites: an outer value is EXTENDED by
+// the engine, never replaced by it and never allowed to stand on its own.
+func TestHookEnvExtendsAnInheritedProvenance(t *testing.T) {
+	t.Setenv(LaunchedByEnv, "outer-rule")
+
+	env := hookScope{SessionID: "s", Workspace: "/w"}.env("judge-notes")
+
+	got, ok := envValue(env, LaunchedByEnv)
+	if !ok {
+		t.Fatalf("env set no %s", LaunchedByEnv)
 	}
-	return false
+	if got != "outer-rule:judge-notes" {
+		t.Fatalf("want the outer rule kept and this one appended, got %q", got)
+	}
 }

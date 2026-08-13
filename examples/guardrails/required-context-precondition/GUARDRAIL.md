@@ -104,57 +104,30 @@ it. That is the cheaper failure. A blocked write is visible in the next thing
 the agent says; a silently permitted one is found weeks later in the wrong shape
 in the wrong folder.
 
-## Not yet runnable: SR_TRANSCRIPT
-
-**On every branch as of this writing, this rule refuses every write under a
-prefix in its table** — the check it would run cannot run, and it fails closed
-rather than permitting. Writes elsewhere are unaffected: a path the table does
-not name is permitted before the trajectory is ever consulted, so the rule keeps
-its scope even while it cannot do its job inside it.
-
-It is written against an interface the engine does not yet offer.
+## What it reads the trajectory through: SR_TRANSCRIPT
 
 Reading the trajectory means calling `sloprail session query`, which is told
-which record to read via a `transcript_path` on its stdin payload. A hook is
-handed `{event, guardrailDir}` and nothing naming the session's record, so it
-has no path to pass.
+which record to read via a `transcript_path` on its stdin payload. The path
+comes from **`SR_TRANSCRIPT`**, set on the hook's environment beside
+`SR_GUARDRAIL`, `SR_SESSION_ID` and `SR_WORKSPACE`.
 
-`impl/hook-env` is the branch that gives hooks an environment at all —
-`SR_GUARDRAIL`, `SR_SESSION_ID`, `SR_WORKSPACE` — and it is necessary but **not
-sufficient** for this rule. `SR_SESSION_ID` carries the *stable* session id,
-which is the uuid of the conversation's root record, deliberately not the
-harness's own id and therefore not the transcript's filename. Building a path
-from it lands on a file that does not exist.
-
-Worth naming precisely, because it looks derivable and is not: joining the
+`SR_SESSION_ID` cannot stand in for it, and this is worth naming precisely
+because it looks derivable and is not: that variable carries the *stable*
+session id, the uuid of the conversation's root record, deliberately not the
+harness's own id and therefore not the transcript's filename. Joining the
 encoded workspace and `SR_SESSION_ID` produces a plausible path that silently
 points at no file, rather than an error.
 
-### What closes it
+The record's path is environment rather than a `--transcript` flag on `sloprail
+session query`, and deliberately so. A flag would put the record's identity in
+the hook's hands, so a hook could name a session it was not running in; every
+other piece of scope the engine gives a hook is environment for exactly that
+reason.
 
-**One more variable: `SR_TRANSCRIPT`, the record's path, set beside the three
-`impl/hook-env` already sets.** That is the whole fix, and the engine already
-holds the value — it parses `transcript_path` off the hook payload into
-`HookPayload.TranscriptPath`, and builds the `hookScope` from that same payload.
-So it is a field on the scope, a line in the environment it constructs, and the
-same not-a-path sentinel `SR_WORKSPACE` already uses for the case where the
-engine could not resolve one.
-
-It is filed as `hook-transcript-path` in the backlog, at P0, which carries the
-argument in full.
-
-The alternative — a `--transcript` flag on `sloprail session query` — would also
-work and is deliberately not the plan. A flag puts the record's identity in the
-hook's hands, so a hook could name a session it was not running in; every other
-piece of scope the engine gives a hook is environment rather than argument for
-exactly that reason. It would also leave the derivable-looking `SR_SESSION_ID`
-trap in place for the next author.
-
-### What the rule does until then
-
-Exactly what it does now, and nothing about the script changes when the variable
-arrives — it is already written against it. Every write under a prefix in the
-table is refused by name, saying `SR_TRANSCRIPT` is unset. That is the correct
-behaviour for a precondition it cannot check, and it is why this rule should be
-enabled only once that variable exists. Writes elsewhere are unaffected, as
-above.
+`SR_TRANSCRIPT` is **unset** — not empty — when the payload named no record, so
+the check is `test -n "$SR_TRANSCRIPT"`. The script performs it and refuses by
+name when the variable is missing: a precondition that could not be checked has
+established nothing, and permitting there would turn a gap in the environment
+into consent. Writes outside the table are unaffected either way — a path the
+table does not name is permitted before the trajectory is ever consulted, so the
+rule keeps its scope regardless.

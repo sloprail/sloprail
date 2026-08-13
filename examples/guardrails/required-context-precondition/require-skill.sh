@@ -56,13 +56,16 @@ esac
 # which is what the subcommand exists to absorb.
 #
 # It is told which record to read on stdin, in the same payload shape a harness
-# sends its own hook points. What this script does not have is the path to put
-# there: the engine hands a hook `{event, guardrailDir}` and nothing naming the
-# session's record.
+# sends its own hook points. The path to put there comes from SR_TRANSCRIPT,
+# which the engine sets on the hook's environment beside SR_GUARDRAIL,
+# SR_SESSION_ID and SR_WORKSPACE.
 #
-# SR_TRANSCRIPT is the variable that closes that gap. It does not exist yet on
-# any branch — see the note in GUARDRAIL.md. Until it does, this rule refuses
-# every write it is shown, loudly and by name, rather than permitting one.
+# SR_SESSION_ID is NOT a substitute, though it looks like one: it carries the
+# stable session id — the uuid of the conversation's root record — rather than
+# the transcript's filename, so a path built from it lands on no file at all.
+#
+# The variable is unset rather than empty when the payload named no record,
+# which is what makes the -n test below the whole check.
 # ---------------------------------------------------------------------------
 transcript="${SR_TRANSCRIPT:-}"
 if [ -z "$transcript" ]; then

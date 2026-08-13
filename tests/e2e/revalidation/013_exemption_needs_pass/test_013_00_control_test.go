@@ -60,8 +60,10 @@ func TestT013_00_ControlSessionStateRoundTrips(t *testing.T) {
 		t.Fatalf("the first hook of the session found state nobody had written: %q", lines[0])
 	}
 	if !strings.Contains(lines[1], "before=[yes]") {
-		t.Skipf("the session store does not open on this branch — a hook cannot read back what "+
-			"the previous hook stored, so no skip in this tree can be observed. Fix on "+
-			"impl/hook-env. Got: %v", lines)
+		t.Fatalf("a hook could not read back what the previous hook in the same session stored, "+
+			"so no skip in this tree can be observed and every test gated on this control is "+
+			"vacuous. The pieces this needs — a transcript path on the PreToolUse payload and "+
+			"c.Env on the hook process — are in this tree, so this is a regression rather than "+
+			"a missing branch. Got: %v", lines)
 	}
 }

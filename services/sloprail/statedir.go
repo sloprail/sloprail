@@ -28,6 +28,16 @@ const SessionEnv = "SR_SESSION_ID"
 // the workspace and cannot stand in for it.
 const WorkspaceEnv = "SR_WORKSPACE"
 
+// TranscriptEnv is the path of the record this session is writing, for a rule
+// that reads the trajectory rather than the pending call.
+//
+// SessionEnv cannot stand in for it: that is the STABLE id, the uuid of the
+// conversation's origin record, deliberately not the harness's current id and
+// therefore not the transcript's filename. Unset when the payload named no
+// record — see transcriptEnv for why this one is omitted where the workspace is
+// given a sentinel instead.
+const TranscriptEnv = "SR_TRANSCRIPT"
+
 // dataHome is the platform's directory for data a program keeps between runs.
 //
 // Deliberately outside the guarded project: state written into the tree would
@@ -145,7 +155,17 @@ func sessionDBPath(cwd, sessionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if cwd == unresolvedWorkspace {
+		// The engine ran this hook but could not say which tree it guards. The
+		// fallback below must not be reached here: a hook's process directory is
+		// the guardrail's own folder, so falling back would key this rule's state
+		// by where its scripts live and hand every rule a private database.
+		return "", errUnresolvedWorkspace()
+	}
 	if cwd == "" {
+		// Reached from a person running the CLI by hand, where the process's own
+		// directory IS the tree they mean. A hook never arrives here: the engine
+		// always sets the variable, to the sentinel above when it has no answer.
 		if cwd, err = os.Getwd(); err != nil {
 			return "", fmt.Errorf("sloprail: locate working directory: %w", err)
 		}
