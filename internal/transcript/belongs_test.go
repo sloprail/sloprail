@@ -198,3 +198,172 @@ func TestBelongsToSession_AgainstEveryRealTranscript(t *testing.T) {
 	}
 	t.Logf("checked %d real transcripts, %d refused", len(paths), refused)
 }
+
+// sessionRecord is an ordinary record carrying the two fields the guess checks
+// look at: which session wrote it, and which tree it was written in.
+func sessionRecord(uuid, sessionID, cwd string) string {
+	return `{"type":"user","uuid":"` + uuid + `","parentUuid":null,"sessionId":"` + sessionID +
+		`","cwd":"` + cwd + `","message":{"role":"user","content":"hi"}}`
+}
+
+func TestBelongsToTree_AcceptsItsOwnTree(t *testing.T) {
+	// The tree check's positive case: the records were written in the directory
+	// being asked about.
+	dir := t.TempDir()
+	path := write(t, "s-1.jsonl", sessionRecord("u-1", "s-1", dir))
+
+	ok, err := BelongsToTree(path, dir)
+
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestBelongsToTree_RefusesACollidingSiblingTree(t *testing.T) {
+	// The collision BelongsToSession cannot see. EncodeProjectDir maps every
+	// non-alphanumeric byte to "-", so a separator and a literal hyphen become
+	// the same character: the subdirectory "<base>/proj/pkg" and the sibling
+	// checkout "<base>/proj-pkg" encode identically. A guess from one lands on
+	// the other's transcript, and that transcript's session id genuinely
+	// matches — so only the recorded cwd distinguishes them.
+	base := t.TempDir()
+	sub := filepath.Join(base, "proj", "pkg")
+	sibling := filepath.Join(base, "proj-pkg")
+	require.Equal(t, EncodeProjectDir(sub), EncodeProjectDir(sibling),
+		"the collision under test must actually collide")
+
+	path := write(t, "s-1.jsonl", sessionRecord("u-1", "s-1", sibling))
+
+	ok, err := BelongsToSession(path, "s-1")
+	require.NoError(t, err)
+	require.True(t, ok, "the session check agrees — the id really is that file's own")
+
+	ok, err = BelongsToTree(path, sub)
+
+	assert.False(t, ok, "same encoded directory, different tree")
+	assert.ErrorIs(t, err, ErrWrongTree)
+}
+
+func TestBelongsToTree_AcceptsWhenAnyRecordMatches(t *testing.T) {
+	// A session that cd's into a subdirectory writes records with several
+	// distinct cwds — 57 of 8085 real transcripts do. Any one of them matching
+	// is enough, so the match must not depend on which record comes first;
+	// testing only the first would falsely refuse 7.
+	base := t.TempDir()
+	sub := filepath.Join(base, "src")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+
+	// The first recorded cwd is the subdirectory; the tree being asked about
+	// appears only later.
+	path := write(t, "s-1.jsonl",
+		sessionRecord("u-1", "s-1", sub),
+		sessionRecord("u-2", "s-1", base))
+
+	ok, err := BelongsToTree(path, base)
+
+	require.NoError(t, err, "a later record carries the very tree asked about")
+	assert.True(t, ok)
+}
+
+func TestBelongsToTree_AcceptsATreeBeneathTheOneAsked(t *testing.T) {
+	// Beneath counts, because the guess is keyed on the project directory of a
+	// tree and a session that cd'd into a subdirectory still belongs to it. The
+	// prefix is component-wise, so a sibling sharing a name prefix does not
+	// qualify — "/a/b" must not swallow "/a/bc".
+	base := t.TempDir()
+	beneath := filepath.Join(base, "pkg")
+	require.NoError(t, os.MkdirAll(beneath, 0o755))
+
+	ok, err := BelongsToTree(write(t, "a.jsonl", sessionRecord("u-1", "s", beneath)), base)
+	require.NoError(t, err)
+	assert.True(t, ok, "a subdirectory of the tree is still the tree")
+
+	adjacent := base + "c"
+	require.NoError(t, os.MkdirAll(adjacent, 0o755))
+	ok, err = BelongsToTree(write(t, "b.jsonl", sessionRecord("u-1", "s", adjacent)), base)
+	assert.False(t, ok, "a name-prefix sibling is a different tree")
+	assert.ErrorIs(t, err, ErrWrongTree)
+}
+
+func TestBelongsToTree_AllowsWhatItCannotJudge(t *testing.T) {
+	// No cwd on any record, and an empty cwd to compare against: nothing to
+	// disagree with, so both are allowed through. Absence of evidence must not
+	// turn every session into a refusal — what is caught is positive
+	// disagreement.
+	path := write(t, "s-1.jsonl",
+		`{"type":"file-history-snapshot","messageId":"m-1","isSnapshotUpdate":false,"snapshot":{}}`,
+		`{"type":"user","uuid":"origin","parentUuid":null}`)
+
+	ok, err := BelongsToTree(path, "/whatever")
+	require.NoError(t, err)
+	assert.True(t, ok, "144 real transcripts carry no cwd at all")
+
+	withCwd := write(t, "s-2.jsonl", sessionRecord("u-1", "s-2", "/elsewhere"))
+	ok, err = BelongsToTree(withCwd, "")
+	require.NoError(t, err)
+	assert.True(t, ok, "no tree was asked about")
+
+	ok, err = BelongsToTree(filepath.Join(t.TempDir(), "absent.jsonl"), "/w")
+	require.NoError(t, err)
+	assert.True(t, ok, "an unreadable file is the reader's error to report")
+}
+
+func TestBelongsToTree_StatedLimits(t *testing.T) {
+	// The stated limits of the tree check, pinned so they stay limits rather
+	// than quietly becoming something worse. Each is a case the check ACCEPTS,
+	// and the comment on BelongsToTree says so. This narrows the collision; it
+	// does not close it.
+	base := t.TempDir()
+	victim := filepath.Join(base, "proj", "pkg")
+	sibling := filepath.Join(base, "proj-pkg")
+	require.NoError(t, os.MkdirAll(victim, 0o755))
+	require.NoError(t, os.MkdirAll(sibling, 0o755))
+
+	// A sibling session that really did cd into the victim tree records that
+	// tree, so nothing written down distinguishes it.
+	both := write(t, "s-1.jsonl",
+		sessionRecord("u-1", "s-1", sibling),
+		sessionRecord("u-2", "s-1", victim))
+	ok, err := BelongsToTree(both, victim)
+	require.NoError(t, err)
+	assert.True(t, ok, "the file genuinely records a turn run in this tree")
+
+	// A record longer than maxRecordBytes stops the scan, and a mismatch behind
+	// it is not seen. BelongsToSession has the same gap on the same line, so the
+	// two do not cover for each other.
+	huge := write(t, "s-2.jsonl",
+		`{"type":"user","uuid":"u-1","cwd":"`+sibling+`","pad":"`+strings.Repeat("x", maxRecordBytes+1)+`"}`,
+		sessionRecord("u-2", "s-2", sibling))
+	ok, err = BelongsToTree(huge, victim)
+	require.NoError(t, err)
+	assert.True(t, ok, "the oversized line ends the scan; this is the stated gap")
+}
+
+func TestBelongsToSession_KeepsLookingPastADisagreeingRecord(t *testing.T) {
+	// A disagreeing record is not a verdict. One real transcript in this corpus
+	// opens with 303 records carrying an OLDER session's id and only reaches its
+	// own on line 304 — a resumed conversation whose earlier records were copied
+	// forward. Concluding from the first id present refuses that file, denying a
+	// legitimate session its own record.
+	path := write(t, "x.jsonl",
+		sessionRecord("u-1", "older-session", "/w"),
+		sessionRecord("u-2", "older-session", "/w"),
+		sessionRecord("u-3", "x", "/w"))
+
+	ok, err := BelongsToSession(path, "x")
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestBelongsToSession_RefusesWhenNoRecordAgrees(t *testing.T) {
+	// The scan keeps going, but it is still a check: a file where NO record
+	// names this session is refused, and the diagnosis names the first
+	// disagreeing id rather than the last.
+	path := write(t, "x.jsonl",
+		sessionRecord("u-1", "someone-else", "/w"),
+		sessionRecord("u-2", "a-third-party", "/w"))
+
+	ok, err := BelongsToSession(path, "x")
+	assert.False(t, ok)
+	assert.ErrorIs(t, err, ErrWrongSession)
+	assert.Contains(t, err.Error(), "someone-else")
+}

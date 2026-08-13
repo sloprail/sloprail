@@ -87,6 +87,30 @@ func TestPayloadTranscript_ABackslashIsRefusedToo(t *testing.T) {
 	assert.ErrorIs(t, err, errNotASessionID)
 }
 
+// "." and ".." carry no separator, so they are not refused as names — and they
+// need no clause of their own, because the suffix defuses them before the join:
+// "." becomes "..jsonl" and ".." becomes "...jsonl", both ordinary filenames
+// inside the project directory. This pins that they stay INSIDE it, which is
+// the property a traversal guard is actually for; refusing them as well would
+// be a clause that can never fire.
+func TestPayloadTranscript_DotIDsNameAFileInsideTheProjectDir(t *testing.T) {
+	cfg := t.TempDir()
+	cwd := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	dir := transcript.ProjectDir(cfg, cwd)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	for id, want := range map[string]string{".": "..jsonl", "..": "...jsonl"} {
+		// No file is there, so the guess resolves to nothing — but what
+		// matters is WHERE it pointed.
+		got, err := HookPayload{SessionID: id, Cwd: cwd}.record()
+		require.NoError(t, err, "no separator, so not refused as a name")
+		assert.Equal(t, filepath.Join(dir, want), got,
+			"session id %q must stay inside the project directory", id)
+		assert.Equal(t, dir, filepath.Dir(got), "it must not climb out")
+	}
+}
+
 func TestPayloadTranscript_AGuessLandingOnAnotherConversationIsRefused(t *testing.T) {
 	// F8's second half, and the one the "a wrong guess fails loudly" reasoning
 	// did not cover: it only ever caught a file that does NOT exist.
@@ -233,4 +257,72 @@ func TestPayloadTranscript_AGuessAtAFileNotWrittenYetStillResolves(t *testing.T)
 	got, err := p.record()
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
+}
+
+// seedTree writes a one-record transcript carrying both fields the guess checks
+// look at: which session wrote it, and which tree it ran in.
+func seedTree(t *testing.T, configDir, cwd, sessionFile, wantID string) {
+	t.Helper()
+	dir := transcript.ProjectDir(configDir, cwd)
+	require.NotEmpty(t, dir)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	line := `{"type":"user","uuid":"` + wantID + `","parentUuid":null,"cwd":"` + cwd +
+		`","sessionId":"` + sessionFile + `","message":{"role":"user","content":"hi"}}` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, sessionFile+".jsonl"), []byte(line), 0o644))
+}
+
+func TestPayloadTranscript_RefusesAGuessFromACollidingSiblingCheckout(t *testing.T) {
+	// The collision BelongsToSession cannot see, closed at the caller.
+	// EncodeProjectDir maps every non-alphanumeric byte to "-", so the
+	// subdirectory "<base>/proj/pkg" and the sibling checkout "<base>/proj-pkg"
+	// name the same project directory. The sibling genuinely ran a session with
+	// this id, so the file agrees about the SESSION — only the tree disagrees.
+	// Two hyphenated sibling checkouts is an ordinary layout, not an attack.
+	cfg := t.TempDir()
+	base := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+
+	proj := filepath.Join(base, "proj")
+	sibling := filepath.Join(base, "proj-pkg")
+	sub := filepath.Join(proj, "pkg")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	require.NoError(t, os.MkdirAll(sibling, 0o755))
+
+	// The sibling checkout genuinely ran session "s-1".
+	seedTree(t, cfg, sibling, "s-1", "SIBLING-ORIGIN")
+
+	require.Equal(t,
+		transcript.ProjectDir(cfg, sub), transcript.ProjectDir(cfg, sibling),
+		"the collision this test is about must actually collide")
+
+	got, err := HookPayload{SessionID: "s-1", Cwd: sub}.record()
+
+	assert.ErrorIs(t, err, transcript.ErrWrongTree,
+		"the sibling's transcript belongs to another tree and must be refused")
+	assert.Empty(t, got)
+
+	// And the identity must not come back either.
+	id, err := stableID(HookPayload{SessionID: "s-1", Cwd: sub})
+	require.Error(t, err)
+	assert.NotEqual(t, "SIBLING-ORIGIN", id,
+		"another project's origin must never be this session's identity")
+	assert.Empty(t, id)
+}
+
+func TestPayloadTranscript_AcceptsAGuessFromTheSameTree(t *testing.T) {
+	// The tree check must not refuse the ordinary case: a session whose records
+	// carry the very cwd being asked about still resolves.
+	cfg := t.TempDir()
+	cwd := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	seedTree(t, cfg, cwd, "s-1", "OWN-ORIGIN")
+
+	got, err := HookPayload{SessionID: "s-1", Cwd: cwd}.record()
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(transcript.ProjectDir(cfg, cwd), "s-1.jsonl"), got)
+
+	id, err := stableID(HookPayload{SessionID: "s-1", Cwd: cwd})
+	require.NoError(t, err)
+	assert.Equal(t, "OWN-ORIGIN", id)
 }

@@ -38,6 +38,11 @@ type claudeRecord struct {
 	// that a path GUESSED from a session id can be checked against what the
 	// file it landed on says about itself — see BelongsToSession.
 	SessionID string `json:"sessionId"`
+
+	// Cwd is the working directory the harness ran this turn in. Kept only so
+	// that a GUESSED path can be checked against the tree it was written in,
+	// which is the half BelongsToSession cannot see — see BelongsToTree.
+	Cwd string `json:"cwd"`
 }
 
 // entry converts a record into the canonical shape.

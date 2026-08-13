@@ -103,6 +103,34 @@ type HookPayload struct {
 //   - BelongsToSession asks the file whether it is this session's. A guessed
 //     name colliding with another conversation's transcript otherwise resolves
 //     silently and hands back that conversation's identity.
+//   - BelongsToTree asks whether it was written in this tree. EncodeProjectDir
+//     maps every non-alphanumeric byte to "-", so a separator and a literal
+//     hyphen become the same character: cwd "/home/u/proj" with subdirectory
+//     "pkg" and the sibling checkout "/home/u/proj-pkg" both encode to
+//     "-home-u-proj-pkg". If that sibling has a session by this id the guess
+//     lands on its real transcript and the SESSION check agrees, because the id
+//     really is that file's own. Only the tree disagrees. Two hyphenated sibling
+//     checkouts is an ordinary layout, not an attack.
+//
+// Neither check subsumes the other: the session check catches a filename
+// colliding with an unrelated conversation in the SAME tree, the tree check
+// catches the same id existing in a colliding directory. What the tree check
+// still cannot separate is stated on BelongsToTree, and the honest summary is
+// that it narrows the collision rather than closing it — a sibling session that
+// genuinely ran in this tree is indistinguishable by anything written down.
+//
+// The tree check sits on this branch and NOT on the reported-path branches
+// above, which is what keeps it compatible with an isolated sub-agent. A
+// sub-agent dispatched into its own worktree records that worktree as its cwd
+// while the harness still nests its record under the DISPATCHING session's
+// project directory: of 337 real sub-agent transcripts carrying a cwd, 18 record
+// a sibling worktree not under the parent's tree at all, and asking
+// BelongsToTree about those would refuse a sub-agent its own record. It is never
+// asked, because a sub-agent's path is always REPORTED — by agent_transcript_path,
+// or reconstructed from agent_id against the parent's own reported path — and
+// both return above. projectDirOf is the same fact from the other side: for a
+// sub-agent the transcript's own LOCATION is authoritative and the recorded cwd
+// is not.
 func (p HookPayload) record() (string, error) {
 	if p.AgentTranscriptPath != "" {
 		return p.AgentTranscriptPath, nil
@@ -127,6 +155,9 @@ func (p HookPayload) record() (string, error) {
 	}
 	path := filepath.Join(dir, p.SessionID+".jsonl")
 	if ok, err := transcript.BelongsToSession(path, p.SessionID); !ok {
+		return "", err
+	}
+	if ok, err := transcript.BelongsToTree(path, p.Cwd); !ok {
 		return "", err
 	}
 	return path, nil
