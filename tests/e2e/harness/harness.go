@@ -397,38 +397,6 @@ func (e *Env) transcriptPath(projDir, sessionID string) string {
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
 }
 
-// BlockingErrors is every reason a Stop hook gave for blocking the turn.
-//
-// Read from the record's own blocking attachments rather than from the stream,
-// because a Stop refusal never appears on the stream at all — it is delivered
-// as a `hook_blocking_error` the agent is handed on its next turn. A test
-// asserting on the stream would be asserting on a channel this refusal does not
-// use, and would pass or fail for reasons unrelated to what it names.
-//
-// Narrower than the record as a whole, deliberately. A guardrail's own folder
-// path travels on every hook payload, so searching the file for a rule's name
-// finds it whether or not the refusal ever named it — an assertion that cannot
-// fail. Only what the block itself carried is returned.
-func (e *Env) BlockingErrors(projDir, sessionID string) []string {
-	e.t.Helper()
-	data, err := os.ReadFile(e.transcriptPath(projDir, sessionID))
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, "hook_blocking_error") {
-			// The whole record, not a field picked out of it. The
-			// attachment's shape is the harness's rather than ours, and a
-			// reader that reached into it could silently stop matching when
-			// the harness nests it differently. What a test needs to know is
-			// that the reason travelled.
-			out = append(out, line)
-		}
-	}
-	return out
-}
-
 // dataHome mirrors the engine's own platform data directory, for the sandboxed
 // home the mock ran under.
 func dataHome(home string) string {
@@ -786,6 +754,75 @@ func (e *Env) SessionIdentity(projDir, sessionID string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// BlockingErrors returns the text of every blocking hook error the harness
+// recorded for a session, in order.
+//
+// Read from the conversation record rather than from the stream, because that
+// is where the text actually lands. Measured on this harness, of the ways a
+// Stop hook can refuse:
+//
+//	exit 2 with text on stderr          blocks, and the text arrives
+//	exit 0 with {"decision":"block"}    blocks, and the reason arrives
+//	exit 1 with text on stderr          does not block, and nothing arrives
+//	exit 0 silent                       does not block
+//
+// Both blocking forms deliver their words the same way: an attachment record of
+// type hook_blocking_error, never a line on the result stream. A test asserting
+// on Result.Output would therefore be asserting on a channel the text never
+// travels, and would fail for a working engine.
+//
+// Only the attachment's own text is returned, NOT the record as a whole. A
+// guardrail's folder path travels on every hook payload, so searching the whole
+// transcript for a rule's name finds it whether or not the refusal ever named
+// it — an assertion that cannot fail.
+func (e *Env) BlockingErrors(projDir, sessionID string) []string {
+	e.t.Helper()
+
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec struct {
+			Attachment struct {
+				Type          string `json:"type"`
+				BlockingError struct {
+					BlockingError string `json:"blockingError"`
+				} `json:"blockingError"`
+			} `json:"attachment"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec.Attachment.Type != "hook_blocking_error" {
+			continue
+		}
+		text := rec.Attachment.BlockingError.BlockingError
+		// A blocked stop is retried, so the same refusal is recorded once per
+		// attempt. What a test asks is which refusals arrived, not how many
+		// times the agent was driven round.
+		if text != "" && !seen[text] {
+			seen[text] = true
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+// transcript returns the whole conversation record the harness wrote.
+func (e *Env) transcript(projDir, sessionID string) string {
+	e.t.Helper()
+	b, err := os.ReadFile(e.transcriptPath(projDir, sessionID))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read transcript: %v", err)
+	}
+	return string(b)
 }
 
 // Result is what a run produced.

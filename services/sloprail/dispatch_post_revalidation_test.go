@@ -75,6 +75,11 @@ func (s *postSession) run() (stdout, stderr string) {
 }
 
 // check reads the verdict the dispatch stored for a (path, guardrail) pair.
+//
+// The identity is resolved the same single way the dispatcher resolves it —
+// stableID off the payload — rather than by the harness's reported id. A test
+// that derived it differently would open a different store and report "nothing
+// recorded" for a verdict that was written correctly.
 func (s *postSession) check(path, guardrail string) (sessionstate.Verdict, bool) {
 	s.t.Helper()
 	id, err := stableID(s.p)

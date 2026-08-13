@@ -166,8 +166,9 @@ func (s *session) offered() string {
 //
 // The mark is held until the Post events are dispatched. That step is real now,
 // and it is still stood in for here: a test about the mark's POSITION must not
-// depend on what the differ makes of a particular tree, or it becomes a test of
-// the diff rather than of the mark.
+// depend on what the dispatcher does with a particular tree, or it becomes a
+// test of the diff rather than of the mark. Standing it in keeps these tests
+// meaning exactly what they meant while it was a stub.
 func (s *session) dispatched(stopHookActive bool) (stdout, stderr string) {
 	s.t.Helper()
 	return s.withDispatch(true, func() (string, string) { return s.stop(stopHookActive) })
@@ -177,17 +178,17 @@ func (s *session) dispatched(stopHookActive bool) (stdout, stderr string) {
 // run — a cycle that reached the end without dispatching anything.
 //
 // Explicit, because it used to be what `stop` did on its own: while the
-// dispatcher was a stub returning false, EVERY cycle was a cycle that dispatched
+// dispatcher was a stub returning false, every cycle was a cycle that dispatched
 // nothing, and a test asserting the mark is held read as though it had arranged
 // that. It had not. Now that the step really dispatches, the arrangement has to
 // be made rather than inherited — otherwise the test quietly becomes an
-// assertion about a differ finding nothing in an empty tree.
+// assertion about a real diff finding nothing to do.
 func (s *session) notDispatched(stopHookActive bool) (stdout, stderr string) {
 	s.t.Helper()
 	return s.withDispatch(false, func() (string, string) { return s.stop(stopHookActive) })
 }
 
-// withDispatch runs fn with the judging step forced to the given outcome.
+// withDispatch runs fn with the judging step reporting the given outcome.
 func (s *session) withDispatch(ran bool, fn func() (string, string)) (stdout, stderr string) {
 	s.t.Helper()
 	restore := dispatchPostEvents
@@ -342,7 +343,7 @@ func TestReadMark_HeldCycleDoesNotHandItsPositionOnEither(t *testing.T) {
 	a := s.turn()
 	require.NotEmpty(t, uuidsOf(s.query()))
 
-	s.notDispatched(false) // no judging step ran, so the mark is held
+	s.notDispatched(false) // dispatch does not run, so the mark is held
 	require.Empty(t, s.mark())
 	assert.Empty(t, s.offered(), "a held cycle's reading is not the next cycle's to claim")
 

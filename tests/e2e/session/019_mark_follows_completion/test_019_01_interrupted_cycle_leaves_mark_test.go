@@ -39,17 +39,17 @@ hooks:
 # Asks the engine what the session has done, and records the answer
 `
 
-// Called bare, with the payload discarded. A guardrail hook is handed
-// `{event, guardrailDir}` rather than the harness payload, so it has no
-// transcript_path to forward; impl/hook-env is what sets SR_WORKSPACE and
-// SR_SESSION_ID on the hook process and lets `session query` resolve the record
-// from them. Piping the event payload in makes the command answer "no
-// transcript path on the hook payload" every time — an answer in which every
+// The event payload is discarded and the record is named explicitly. A
+// guardrail hook is handed `{event, guardrailDir}` rather than the harness
+// payload, so it has no transcript_path to forward; piping that in makes the
+// command answer "no transcript path on the hook payload" every time — an
+// answer in which every
 // marker below reads as absent, which is indistinguishable from correct
 // narrowing. See answered() for the guard that keeps that from passing.
 const askScript = `#!/bin/sh
 cat > /dev/null
-sloprail session query >> "$PWD/answers" 2>&1
+printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
+  sloprail session query >> "$PWD/answers" 2>&1
 exit 0
 `
 
@@ -62,7 +62,8 @@ exit 0
 // observe from.
 const crashingAskScript = `#!/bin/sh
 cat > /dev/null
-sloprail session query >> "$PWD/answers" 2>&1
+printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
+  sloprail session query >> "$PWD/answers" 2>&1
 echo "this cycle did not finish" >&2
 exit 2
 `
@@ -100,9 +101,12 @@ func promptsIn(answer string, markers ...string) []string {
 // second cycle completes and its answer can be read without a refusal in the
 // way. Both write to the same ledger file, so the answers accumulate in order.
 func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl (dispatchPostEvents in session_stop.go is still the stub returning false, so this Post-bound hook never runs) and impl/hook-env (hookEnv in services/sloprail/provenance.go sets only SLOPRAIL_LAUNCHED_BY, so a guardrail hook gets no SR_SESSION_ID and no SR_WORKSPACE and `session query` cannot find the record). NOT blocked on impl/baseline-mark any more: sessionstate.MetaTranscriptRead and MetaTranscriptOffered have landed, so the read position now has somewhere to live")
 	e := New(t)
 	proj := e.Project()
+	// A repository, so the cycle has a baseline to measure its difference
+	// from. Without one there is no diff and no PostFile* event, and a rule
+	// bound to one would never run.
+	e.GitInit(proj)
 
 	const sess = "s-019-01"
 	const firstMarker = "MARKEREPSILON"
@@ -115,9 +119,16 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	))
 	// The premise: the cycle really did not finish cleanly. Without this the
 	// test is about an ordinary completed cycle and proves nothing.
-	if !first.Saw("this cycle did not finish") {
-		t.Fatalf("the first cycle completed normally, so there is no interrupted cycle here:\n%s",
-			first.Output)
+	//
+	// Read from the blocking attachments rather than from the stream. A Post
+	// hook's refusal blocks the Stop and its words travel to the agent as a
+	// hook_blocking_error record in the conversation, never as a line on the
+	// result stream — so Result.Saw would be asking a channel this text does not
+	// use, and would fail for a working engine.
+	if blocking := e.BlockingErrors(proj, sess); len(blocking) == 0 ||
+		!strings.Contains(strings.Join(blocking, "\n"), "this cycle did not finish") {
+		t.Fatalf("the first cycle completed normally, so there is no interrupted cycle here:\n%s\nblocking: %v",
+			first.Output, blocking)
 	}
 	if len(e.Ledger(proj, "asker", "answers")) == 0 {
 		t.Fatalf("the interrupted cycle never reached the hook at all, so this proves nothing")
@@ -139,7 +150,7 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	second := strings.Join(answers[before:], "\n")
 	answered(t, second)
 
-	if len(promptsIn(second, secondMarker)) == 0 {
+	if !strings.Contains(second, "completed cycle") {
 		t.Fatalf("the second cycle was not given its own turns, so the assertion below "+
 			"cannot distinguish anything:\n%s", second)
 	}
@@ -162,9 +173,12 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 // pins down in THIS directory is that completion is what licenses the advance.
 // If T019_01 passes and this fails, the mark is simply never moving.
 func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl (dispatchPostEvents in session_stop.go is still the stub returning false, so this Post-bound hook never runs) and impl/hook-env (hookEnv in services/sloprail/provenance.go sets only SLOPRAIL_LAUNCHED_BY, so a guardrail hook gets no SR_SESSION_ID and no SR_WORKSPACE and `session query` cannot find the record). NOT blocked on impl/baseline-mark any more: sessionstate.MetaTranscriptRead and MetaTranscriptOffered have landed, so the read position now has somewhere to live")
 	e := New(t)
 	proj := e.Project()
+	// A repository, so the cycle has a baseline to measure its difference
+	// from. Without one there is no diff and no PostFile* event, and a rule
+	// bound to one would never run.
+	e.GitInit(proj)
 	e.Guardrail(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
 
 	const sess = "s-019-02"
@@ -190,7 +204,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 	second := strings.Join(answers[before:], "\n")
 	answered(t, second)
 
-	if len(promptsIn(second, secondMarker)) == 0 {
+	if !strings.Contains(second, "second cycle") {
 		t.Fatalf("the second cycle was not given its own turns:\n%s", second)
 	}
 	if len(promptsIn(second, firstMarker)) > 0 {

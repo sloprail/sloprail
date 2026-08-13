@@ -353,10 +353,18 @@ hooks:
 	assert.Contains(t, stderr, "this file should not exist", "the refusal must be reported")
 	assert.Contains(t, stderr, "objects", "a refusal names the guardrail that produced it")
 
-	// It did not block.
-	assert.True(t, ran, "a Post refusal must not stop the cycle from having dispatched")
+	// The dispatch carried on past the refusal rather than returning at it.
+	// Asserted on what actually ran, because that is the property: TurnEnd is
+	// bound after the refusing rule and still fired.
 	assert.Equal(t, []string{"TurnEnd"}, kindsSeen(t, ldir),
 		"TurnEnd must still fire after a Post hook refused — the dispatch carried on")
+
+	// The cycle reports that it did NOT complete, and that is deliberate. A
+	// Post refusal blocks the turn, so the agent goes round again in this same
+	// session over these same turns — and a mark advanced now would put exactly
+	// the work it has to fix behind it, never to be offered again. Re-reading a
+	// turn costs a second look; skipping one loses a violation for good.
+	assert.False(t, ran, "a refused cycle has an objection outstanding, so its mark must not advance")
 
 	// And above all, the work is still there. "Prevented" is a claim about the
 	// tree, not about what came back on a stream.
@@ -410,8 +418,10 @@ hooks:
 		require.NoError(t, os.WriteFile(filepath.Join(proj, n), []byte("x"), 0o644))
 	}
 
-	_, ran := dispatchIn(t, proj, store)
-	require.True(t, ran)
+	// The return value is not the subject here — one of these rules refuses, so
+	// the cycle reports incomplete by design. What matters is that the OTHER
+	// files were still judged.
+	dispatchIn(t, proj, store)
 
 	assert.Len(t, kindsSeen(t, ldir), 3,
 		"every changed file must still be judged after another rule refused one of them")

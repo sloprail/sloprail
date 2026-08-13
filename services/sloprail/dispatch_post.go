@@ -30,10 +30,21 @@ type objection struct {
 // to it, and reports that the cycle ended — then blocks the turn if anything
 // objected.
 //
-// It returns whether it dispatched, because the read mark waits on that: a
-// cycle that dispatched nothing has judged nothing and has no position to claim
-// as judged. Dispatching and refusing are different questions — a cycle that ran
-// every hook and collected three objections DID judge, and its mark advances.
+// It returns whether the cycle COMPLETED, because the read mark waits on that:
+// a cycle that dispatched nothing has judged nothing and has no position to
+// claim as judged.
+//
+// A refusal reports false, and that is not the same claim as "nothing was
+// judged". The hooks ran and some of them reached a verdict. But a Post refusal
+// BLOCKS the turn, so the agent is sent round again in this same session to fix
+// what was refused — and if the mark advanced, the very turns it must correct
+// would be behind it and would never be offered again. The cycle did not
+// finish; it was stopped mid-judging with an objection outstanding.
+//
+// The asymmetry is what decides it, and it is the spec's own: re-reading a turn
+// costs a second look, while skipping one loses a violation for good. See
+// T019_01, which is exactly this case — a cycle whose judging was cut short
+// must leave its turns available to the next one.
 //
 // What a refusal here means. It cannot undo the write: the file is on disk, the
 // cycle is over, and an engine claiming otherwise would be promising a rollback
@@ -69,27 +80,37 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 		}
 	}
 
-	// Who this session is, resolved ONCE for the whole dispatch and used for both
-	// things that need it: the store of what has already been judged, and the
-	// environment every hook is given. The pre-tool path does the same, for the
-	// same reason — two calls to stableID are two derivations free to drift, and
-	// a hook reading `session state` must land in the store this dispatch opened.
+	// Who this session is, resolved ONCE for the whole dispatch and used for
+	// both things that need it: the store of what has already been judged, and
+	// the environment every hook is given. Two calls to stableID would be two
+	// derivations free to drift, which this codebase has already had to
+	// converge more than once — and here the drift would be worse than
+	// cosmetic, because a hook landing in a different store than the dispatcher
+	// opened would record its verdict where the next cycle does not look.
+	//
+	// A session that cannot be identified is not a reason to refuse. The rules
+	// that need no memory still work. It does mean nothing can be exempted — an
+	// engine that could not find its record must re-judge, never skip — and
+	// that is what the empty id yields, since openRevalidation is not called
+	// without one.
+	//
+	// The same shape as the pre-tool point, deliberately: one identity, one
+	// scope, both carried down rather than re-derived where they are used.
 	scope := hookScope{Workspace: p.Cwd}
 	if id, err := stableID(p); err == nil {
 		scope.SessionID = id
 	} else {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %v\n", err)
 	}
-	// The record itself, for a rule that reads the trajectory. From the same
-	// p.record() stableID is built on, so the id and the path cannot name
-	// different files.
+	// The record itself, for a rule that reads the trajectory rather than the
+	// tree. From the same p.record() stableID is built on, so the id and the
+	// path cannot name different files.
 	if path, err := p.record(); err == nil {
 		scope.Transcript = path
 	}
 
 	// What this session has already judged. Opened once for the whole dispatch,
-	// and left nil when the session cannot be identified: an engine that could
-	// not find its record must re-judge, never exempt.
+	// and left nil when the session cannot be identified.
 	var rev *revalidation
 	if scope.SessionID != "" {
 		var err error
@@ -118,13 +139,17 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// it carries no fields are stated in the same place they are declared.
 	events = append(events, cyclemod.Event())
 
-	objections := dispatchAll(cmd, reg, decls, rev, p, scope, events)
+	objections := dispatchAll(cmd, reg, decls, rev, scope, events)
 	if len(objections) > 0 {
 		// The turn does not end. Reported through the one channel measured to
 		// both block and carry its words — see block().
 		if err := block(cmd, refusalText(objections)); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		}
+		// And the mark does not move. The agent is about to go again over these
+		// same turns, which it cannot do if the cycle has just declared them
+		// judged.
+		return false
 	}
 	return true
 }
@@ -223,7 +248,7 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 // guardrail silence every other, and the agent would fix them one turn at a
 // time. Everything is dispatched; the objections are answered once, together,
 // by the caller.
-func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Declaration, rev *revalidation, p HookPayload, scope hookScope, events []event.Event) []objection {
+func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Declaration, rev *revalidation, scope hookScope, events []event.Event) []objection {
 	var objections []objection
 
 	for _, e := range events {
@@ -261,7 +286,7 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 				// The pre-tool point is safe hoisting it because its only
 				// fingerprinted kind is PreFileCreate, whose content comes off
 				// the event and reads no disk.
-				subj, fingerprinted := rev.Subject(e, p.Cwd)
+				subj, fingerprinted := rev.Subject(e, scope.Workspace)
 
 				// This guardrail has already seen this exact content and let it
 				// through. Asking again is not merely waste: a judge hook is a

@@ -107,3 +107,58 @@ func TestSkippable(t *testing.T) {
 		})
 	}
 }
+
+// TestFileChecks_RevertedContentIsStillSkippable.
+//
+// A verdict is remembered per (path, guardrail, CONTENT), not one row per
+// (path, guardrail) overwritten by whatever was written last.
+//
+// The overwriting shape rests on an assumption that does not hold: that
+// superseded content cannot come back under the same path. It can — an agent
+// that edits a file and then reverts it restores exactly the bytes an earlier
+// cycle judged, and with a single row the revert finds a fingerprint that no
+// longer matches and a settled question is asked again. identity_is_content
+// forbids that: content reverted to something already judged has not become new.
+func TestFileChecks_RevertedContentIsStillSkippable(t *testing.T) {
+	s := openTestStore(t)
+
+	require.NoError(t, s.RecordFileCheck("a.go", "no-slop", Verdict{Fingerprint: "fp-original", Passed: true}))
+	require.NoError(t, s.RecordFileCheck("a.go", "no-slop", Verdict{Fingerprint: "fp-edited", Passed: true}))
+
+	// Back to the content the first check passed.
+	skippable, err := s.Skippable("a.go", "no-slop", "fp-original")
+	require.NoError(t, err)
+	assert.True(t, skippable,
+		"content this guardrail already judged and passed must not be re-judged because something else was written in between")
+
+	// The intervening content is still settled too.
+	skippable, err = s.Skippable("a.go", "no-slop", "fp-edited")
+	require.NoError(t, err)
+	assert.True(t, skippable)
+
+	// Content never judged is still judged, whatever else this path has held.
+	skippable, err = s.Skippable("a.go", "no-slop", "fp-never-seen")
+	require.NoError(t, err)
+	assert.False(t, skippable, "content with no verdict must be judged")
+
+	// The same content at another path is a question that has not been asked.
+	skippable, err = s.Skippable("b.go", "no-slop", "fp-original")
+	require.NoError(t, err)
+	assert.False(t, skippable, "a verdict is recorded for a path, so the same content elsewhere is new")
+}
+
+// TestFileChecks_ARefusalIsNotErasedByALaterPass: the retained refusal survives
+// the content moving away and back, which is the half that keeps a violation
+// resurfacing.
+func TestFileChecks_ARefusalIsNotErasedByALaterPass(t *testing.T) {
+	s := openTestStore(t)
+
+	require.NoError(t, s.RecordFileCheck("a.go", "no-slop", Verdict{Fingerprint: "fp-bad", Passed: false}))
+	require.NoError(t, s.RecordFileCheck("a.go", "no-slop", Verdict{Fingerprint: "fp-fixed", Passed: true}))
+
+	// Reverting to the refused content must NOT be skippable: the violation is
+	// back, and so is the obligation to report it.
+	skippable, err := s.Skippable("a.go", "no-slop", "fp-bad")
+	require.NoError(t, err)
+	assert.False(t, skippable, "content that was refused must be refused again when it comes back")
+}

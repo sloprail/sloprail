@@ -19,7 +19,8 @@ func (s *store) FileCheck(path, guardrail string) (Verdict, bool, error) {
 	var v Verdict
 	err = db.QueryRow(`
 		SELECT fingerprint, passed FROM file_checks
-		WHERE path = ? AND guardrail = ?`, path, guardrail).Scan(&v.Fingerprint, &v.Passed)
+		WHERE path = ? AND guardrail = ?
+		ORDER BY seq DESC LIMIT 1`, path, guardrail).Scan(&v.Fingerprint, &v.Passed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Verdict{}, false, nil
 	}
@@ -42,10 +43,11 @@ func (s *store) RecordFileCheck(path, guardrail string, v Verdict) error {
 		return err
 	}
 	_, err = db.Exec(`
-		INSERT INTO file_checks (path, guardrail, fingerprint, passed) VALUES (?, ?, ?, ?)
-		ON CONFLICT (path, guardrail) DO UPDATE SET
-			fingerprint = excluded.fingerprint,
-			passed      = excluded.passed`,
+		INSERT INTO file_checks (path, guardrail, fingerprint, passed, seq)
+		VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM file_checks))
+		ON CONFLICT (path, guardrail, fingerprint) DO UPDATE SET
+			passed = excluded.passed,
+			seq    = excluded.seq`,
 		path, guardrail, v.Fingerprint, v.Passed)
 	if err != nil {
 		return fmt.Errorf("sessionstate: write check %q/%q: %w", path, guardrail, err)
@@ -60,10 +62,26 @@ func (s *store) RecordFileCheck(path, guardrail string, v Verdict) error {
 // Anything else runs the hook: different content, a failing verdict, or no row
 // at all. Expressed here rather than left to each caller because getting it
 // wrong in the permissive direction means a rule silently stops firing.
+// The row is looked up BY FINGERPRINT rather than by reading whatever this
+// guardrail last said about the path. Those differ exactly when a path has been
+// judged at more than one content — an agent that edits a file and then reverts
+// it — and reading only the latest verdict would answer "no" for content this
+// guardrail has already seen and permitted, re-opening a settled question.
 func (s *store) Skippable(path, guardrail, fingerprint string) (bool, error) {
-	v, found, err := s.FileCheck(path, guardrail)
-	if err != nil || !found {
+	db, err := s.conn()
+	if err != nil {
 		return false, err
 	}
-	return v.Passed && v.Fingerprint == fingerprint, nil
+	var passed bool
+	err = db.QueryRow(`
+		SELECT passed FROM file_checks
+		WHERE path = ? AND guardrail = ? AND fingerprint = ?`,
+		path, guardrail, fingerprint).Scan(&passed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("sessionstate: read check %q/%q: %w", path, guardrail, err)
+	}
+	return passed, nil
 }

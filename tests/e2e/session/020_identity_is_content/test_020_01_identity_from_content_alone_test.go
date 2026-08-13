@@ -108,7 +108,6 @@ func countPath(got []observed, path string) int {
 // genuinely new, or "did not run in cycle three" means only that the hook never
 // runs at all.
 func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -161,7 +160,6 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 // The move is done as a real rename through the shell, so the destination has
 // content byte-identical to something already passed.
 func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
-	t.Skip("blocked on impl/stop-diff-impl: dispatchPostEvents in services/sloprail/session_stop.go is still the stub (`TODO: diff the tree against the baseline, dispatch the Post events` — returns false), so no PostFile* event is ever dispatched and no binding can observe one")
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
