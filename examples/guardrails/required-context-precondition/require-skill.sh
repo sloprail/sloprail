@@ -89,6 +89,15 @@ fi
 # than a list; the engine reports an expression that no entry could be evaluated
 # against as an error rather than as "nothing matched", so keeping the reach out
 # of the expression is what keeps this working on a real session.
+#
+# `.input.skill` is read outright, with no fallback. It used to be
+# `.input.skill // .input.command`, hedging between two field names because
+# nothing declared which one a Skill tool_use carries. The spec now declares it
+# — see `SkillToolInput` in the claude-code dependency — and the measurement
+# behind that declaration settles the hedge: across 664 Skill calls in real
+# transcripts, `skill` is present on every one and `command` on none. A fallback
+# to a field that never occurs is not caution, it is a second thing that can
+# silently start matching the wrong entry.
 loaded="$(
   printf '{"transcript_path":%s}' "$(printf '%s' "$transcript" | jq -R .)" |
     sloprail session query --where 'type == "assistant"' 2>/dev/null |
@@ -98,7 +107,7 @@ loaded="$(
         | select(type == "array")
         | .[]
         | select(.type == "tool_use" and .name == "Skill")
-        | select((.input.skill // .input.command // "") == $s)
+        | select(.input.skill == $s)
       ] | length
     ' 2>/dev/null
 )"
