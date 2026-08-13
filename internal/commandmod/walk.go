@@ -28,7 +28,7 @@ func walk(raw string) (invs []Invocation) {
 		return nil
 	}
 
-	cfg := safeConfig()
+	cfg := newConfig()
 
 	// syntax.Walk, not a hand-rolled switch over statement types. `time cmd`
 	// is a TimeClause, `! cmd` a negated Stmt, `{ cmd; }` a Block, `cmd &` a
@@ -46,6 +46,16 @@ func walk(raw string) (invs []Invocation) {
 	})
 	return invs
 }
+
+// newConfig builds the expansion used for a walk.
+//
+// A variable rather than a direct call so a test can substitute an expansion
+// that panics. The panic this guards against is a bug inside the parser, which
+// cannot be provoked from a command line once the ProcSubst handler is in
+// place — so without a seam the recover above is unreachable, and an
+// unreachable guard is one nobody can prove still works. The production path
+// never reassigns this.
+var newConfig = safeConfig
 
 // safeConfig is an expansion that resolves what it can and refuses to resolve
 // anything it cannot resolve without side effects.
@@ -84,64 +94,7 @@ func safeConfig() *expand.Config {
 	}
 }
 
-// expandPerWord expands each word on its own, keeping those that resolve and
-// dropping those that do not.
-//
-// This is the honest floor of static resolution. A word that cannot be
-// resolved without running something is not guessed at and not replaced with a
-// placeholder — a placeholder in argv[0] would be a program name no rule
-// should match, and one further along would be a value the command never
-// receives. It is simply absent, and the vector is what remains.
-func expandPerWord(cfg *expand.Config, words []*syntax.Word) []string {
-	var fields []string
-	for _, w := range words {
-		got, err := expand.Fields(cfg, w)
-		if err != nil {
-			continue
-		}
-		fields = append(fields, got...)
-	}
-	return fields
-}
-
 // procSubstPath is what a process substitution resolves to. A shell would hand
 // the program a file descriptor path; nothing is opened here, and the value
 // exists only so the argument vector keeps its shape.
 const procSubstPath = "/dev/fd/63"
-
-// resolve turns one parsed call into the invocations it performs.
-//
-// Assigns are not consulted: mvdan/sh already separates an environment prefix
-// from the argument vector, so `FOO=1 npm publish` arrives with Args holding
-// npm and publish alone. That separation is the whole reason for parsing
-// rather than matching the string — a regex cannot tell an assignment from a
-// program.
-func resolve(cfg *expand.Config, call *syntax.CallExpr) []Invocation {
-	if len(call.Args) == 0 {
-		// A bare assignment — `FOO=1` on its own — parses as a call with no
-		// arguments. It runs no program, so it is not an invocation.
-		return nil
-	}
-
-	fields, err := expand.Fields(cfg, call.Args...)
-	if err != nil {
-		// Expansion refused the vector as a whole, which is the intended
-		// outcome for a command substitution — `echo $(npm publish)` cannot
-		// resolve, because resolving it would mean running npm.
-		//
-		// Refusing the whole vector over one word would lose echo, which is
-		// genuinely about to run. So the words are expanded one at a time and
-		// the ones that resolve are kept. That is strictly what can be seen:
-		// npm is still reported, from walking the substitution's own
-		// statements, and the argument echo would have received is omitted
-		// rather than invented.
-		fields = expandPerWord(cfg, call.Args)
-	}
-	if len(fields) == 0 {
-		// Every word expanded to nothing, or none could be resolved. Nothing
-		// can honestly be said to be about to run.
-		return nil
-	}
-
-	return fromArgv(fields)
-}

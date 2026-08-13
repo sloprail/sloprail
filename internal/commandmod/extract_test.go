@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"mvdan.cc/sh/v3/expand"
+	"mvdan.cc/sh/v3/syntax"
+
 	"github.com/sloprail/sloprail/internal/module"
 )
 
@@ -82,6 +85,13 @@ func TestExtractCommand_Flattens(t *testing.T) {
 		{"stacked wrappers", `sudo nohup npm publish`, []string{"sudo", "nohup", "npm"}},
 		{"bare wrapper", `sudo`, []string{"sudo"}},
 
+		// A wrapper whose wrapped program is an empty word. sudo is genuinely
+		// invoked and is reported; the nested invocation has no name, and an
+		// empty bin reaching a matcher is a program no rule can mean. This is
+		// the one path that reaches the empty-bin filter, since a bare empty
+		// program word is already rejected as a non-program earlier.
+		{"wrapper wrapping nothing", `sudo "" publish`, []string{"sudo"}},
+
 		// Keywords and forms that are not a CallExpr at the top. A traversal
 		// that matched only calls would see through none of these.
 		{"time clause", `time npm publish`, []string{"npm"}},
@@ -97,9 +107,24 @@ func TestExtractCommand_Flattens(t *testing.T) {
 		{"export", `export FOO=1`, []string{}},
 
 		// The program is named by a variable that expands to nothing, which
-		// shifts the vector — `publish` is now first. Reported as what can be
-		// seen rather than corrected into something it is not.
-		{"unset program shifts vector", `$NPM publish`, []string{"publish"}},
+		// shifts the vector. Nothing is emitted: `publish` is an argument, and
+		// reporting it as the program would be inventing one.
+		//
+		// The benign-looking `$UNSET npm publish` is suppressed too, and has
+		// to be. It parses identically — word 0 a ParamExp that expands to
+		// nothing, then literals — so no rule can tell an env prefix that
+		// vanished from a program that vanished. Emitting npm here would be a
+		// guess that is merely right this time, and the same guess is what
+		// turns `$CMD --force deploy` into a binary named `--force`.
+		{"unset program shifts vector", `$NPM publish`, []string{}},
+		{"unset prefix is indistinguishable", `$UNSET npm publish`, []string{}},
+
+		// An unresolvable argument is dropped from the vector rather than left
+		// as an empty string. Keeping it would put a phantom "" in argv, and
+		// here it would also stop the unwrapper at the empty word and lose the
+		// nested npm entirely — the wrapper would shield what it wraps.
+		{"unresolvable argument inside a wrapper", `sudo $(x) npm publish`, []string{"sudo", "npm", "x"}},
+		{"unresolvable argument", `echo $UNSET hi`, []string{"echo"}},
 
 		{"deep nesting", `sudo sh -c 'x' && (time npm publish | tee log)`, []string{"sudo", "sh", "npm", "tee"}},
 	} {
@@ -136,6 +161,45 @@ func TestExtractCommand_ProcSubstDoesNotPanic(t *testing.T) {
 	// receiving its output.
 	if got := bins(t, `diff <(ls a)`); !equal(got, []string{"diff", "ls"}) {
 		t.Errorf("diff <(ls a) bins = %v, want [diff ls]", got)
+	}
+}
+
+// TestExtractCommand_SurvivesAPanickingExpansion exercises the recover.
+//
+// The ProcSubst handler means no command line in the corpus can panic, so the
+// recover is unreachable from the outside and a test that only feeds it text
+// cannot prove it works — removing the recover leaves such a suite green. This
+// injects a panic from inside expansion instead, which is what the recover
+// actually guards: a bug in the parser, of the kind v3.13.1 shipped.
+//
+// What it must prove is that a panic becomes an empty result rather than a
+// crash. A panic escaping here exits the guardrail non-zero, and a harness
+// reads that as a refusal — the agent is blocked for a reason no rule
+// declared.
+func TestExtractCommand_SurvivesAPanickingExpansion(t *testing.T) {
+	orig := newConfig
+	newConfig = func() *expand.Config {
+		cfg := orig()
+		cfg.ProcSubst = func(*syntax.ProcSubst) (string, error) {
+			panic("simulated parser bug during expansion")
+		}
+		return cfg
+	}
+	t.Cleanup(func() { newConfig = orig })
+
+	// Reaches the panicking handler. Without the recover this crashes the
+	// test binary rather than failing it.
+	ev := ExtractCommand(`diff <(ls a)`)
+
+	if ev.Raw != `diff <(ls a)` {
+		t.Errorf("raw = %q, want the command line preserved", ev.Raw)
+	}
+	// Whatever was collected before the panic is kept — `ls`, from the
+	// substitution's own statements, is walked before `diff` expands.
+	for _, inv := range ev.Invocations {
+		if inv.Bin == "" {
+			t.Errorf("empty bin survived a panic: %+v", ev.Invocations)
+		}
 	}
 }
 
@@ -191,9 +255,61 @@ func TestExtractCommand_Undecidable(t *testing.T) {
 		notSeen  []string // what must not be fabricated
 	}{
 		{
-			// The program is a variable. Only `publish` survives expansion.
+			// The program is a variable. Nothing is emitted — `publish` is an
+			// argument, not a program, and promoting it would name a binary
+			// that does not exist.
 			name: "program named by a variable", src: `$NPM publish`,
-			wantSeen: []string{"publish"}, notSeen: []string{"npm", "NPM", "$NPM", ""},
+			notSeen: []string{"npm", "NPM", "$NPM", "publish", ""},
+		},
+		{
+			// The sharpest form: promoting the survivor would report a flag
+			// as a binary, and a rule bound to `--force` would fire on a
+			// command that runs no such thing.
+			name: "variable program before a flag", src: `$CMD --force deploy`,
+			notSeen: []string{"--force", "force", "deploy", "CMD", ""},
+		},
+		{
+			name: "braced variable program", src: `${BIN} install`,
+			notSeen: []string{"install", "BIN", ""},
+		},
+		{
+			// The substitution cannot run, so the program is unknown. `which`
+			// is genuinely visible inside it and is reported; `publish` is an
+			// argument and is not promoted.
+			name: "substituted program", src: `$(which npm) publish`,
+			wantSeen: []string{"which"}, notSeen: []string{"publish", "npm", ""},
+		},
+		{
+			// Expands to the empty string. An empty bin must never reach a
+			// matcher — no rule can mean a program with no name.
+			name: "program expands to empty", src: `"$EDITOR" file.txt`,
+			notSeen: []string{"", "file.txt", "EDITOR"},
+		},
+		{
+			// A parameter embedded inside the program word. This one resolves
+			// to a real name — `npm` — from source word 0, so neither the
+			// vanished-word check nor the unresolvable check rejects it. It is
+			// still a guess: the empty environment assumed ${X} was empty, and
+			// at runtime it could be anything, making the program `npXm` or
+			// something else entirely. Only requiring the word to be literal
+			// catches it.
+			name: "parameter inside the program word", src: `np${X}m publish`,
+			notSeen: []string{"npm", "publish", ""},
+		},
+		{
+			name: "parameter inside a known program", src: `ec${NOPE}ho hi`,
+			notSeen: []string{"echo", "hi", ""},
+		},
+		{
+			// A literal empty program word. Certain, and certainly not a
+			// program — the empty bin has to be filtered or it reaches a
+			// matcher as a name no rule can mean.
+			name: "empty literal program", src: `"" npm publish`,
+			notSeen: []string{"", "npm", "publish"},
+		},
+		{
+			name: "empty single-quoted program", src: `'' npm publish`,
+			notSeen: []string{"", "npm", "publish"},
 		},
 		{
 			// eval's argument is a string it will interpret at runtime.

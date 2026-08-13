@@ -37,7 +37,11 @@ var wrappers = map[string]map[string]bool{
 // gets here. What this does assume is only that a vector which survived
 // expansion non-empty has its program first, which is what a shell assumes too.
 func fromArgv(argv []string) []Invocation {
-	if len(argv) == 0 {
+	if len(argv) == 0 || basename(argv[0]) == "" {
+		// An empty program name is not a program. Reached here when a word
+		// expanded to an empty string, or when a wrapper's own arguments run
+		// out — either way there is nothing to name, and an invocation with an
+		// empty bin would reach a matcher as a program no rule can mean.
 		return nil
 	}
 
