@@ -228,10 +228,10 @@ func TestObserved_MixedCycleReportsEachPathOnce(t *testing.T) {
 			"old1.md",   // a repeated delete
 		},
 		before: map[string]bool{
+			// One entry for keep.md and no entry for "./keep.md": the baseline
+			// is asked with the canonical spelling, so one file needs one key
+			// however many ways the producer spelled it.
 			"keep.md": true, "old1.md": true, "old2.md": true,
-			// asked with the path as given, so the second spelling needs its
-			// own entry — a producer keys this on its own paths.
-			"./keep.md": true,
 		},
 	})
 
@@ -251,6 +251,72 @@ func TestObserved_MixedCycleReportsEachPathOnce(t *testing.T) {
 		"old1.md": KindPostDelete,
 		"old2.md": KindPostDelete,
 	}, byPath)
+}
+
+// --- one file, one baseline, whatever order the spellings arrive in ----------
+
+// recordingObserved notes every spelling ExistedAtBaseline was asked with, so a
+// test can assert on the question rather than only on the answer.
+type recordingObserved struct {
+	fakeObserved
+	asked *[]string
+}
+
+func (o recordingObserved) ExistedAtBaseline(path string) bool {
+	*o.asked = append(*o.asked, path)
+	return o.fakeObserved.ExistedAtBaseline(path)
+}
+
+func TestObserved_BaselineIsAskedWithTheCanonicalSpelling(t *testing.T) {
+	// The contract says which spelling, and nothing but this test holds it
+	// there. Asked with the raw path instead, everything still passes and the
+	// order-dependence below comes back.
+	root := tree(t, "dir/a.md")
+
+	var asked []string
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePost,
+		module.InputPayload: recordingObserved{
+			fakeObserved: fakeObserved{
+				root:   root,
+				paths:  []string{"./dir/./a.md"},
+				before: map[string]bool{filepath.Join("dir", "a.md"): true},
+			},
+			asked: &asked,
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{filepath.Join("dir", "a.md")}, asked,
+		"asked with the cleaned path, the same one the event carries")
+	require.Len(t, events, 1)
+	assert.Equal(t, KindPostUpdate, events[0].Kind)
+}
+
+func TestObserved_TwoSpellingsOfOneFileClassifyTheSameEitherOrder(t *testing.T) {
+	// Keyed on the raw spelling, whichever of these came first silently won the
+	// slot: {"a.md", "./a.md"} gave an update and the reverse gave a create —
+	// one file, one tree, one producer, opposite events by iteration order.
+	for name, paths := range map[string][]string{
+		"canonical first": {"a.md", "./a.md"},
+		"canonical last":  {"./a.md", "a.md"},
+		"neither is bare": {"./a.md", "dir/../a.md"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := tree(t, "a.md")
+
+			events := observe(t, fakeObserved{
+				root:   root,
+				paths:  paths,
+				before: map[string]bool{"a.md": true},
+			})
+
+			require.Len(t, events, 1, "two spellings, one file")
+			assert.Equal(t, KindPostUpdate, events[0].Kind,
+				"the file was at the baseline however the producer spelled it")
+			assert.Equal(t, "a.md", events[0].Fields[FieldPath])
+		})
+	}
 }
 
 // --- what it leaves out ------------------------------------------------------

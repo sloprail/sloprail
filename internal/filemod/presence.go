@@ -21,8 +21,8 @@ import (
 var ErrUnreadableTree = errors.New("filemod: cannot determine whether the path is on disk")
 
 // ErrPathNotRelativeToRoot is returned for a path that does not name a file
-// inside the repository: absolute, escaping through "..", or naming the root
-// itself.
+// inside the repository: absolute, escaping through "..", naming the root
+// itself, or reaching outside through a symlinked parent directory.
 //
 // Rejected rather than normalised. filepath.Join(root, "../outside.md") folds
 // the escape away and stats a real file outside the repository, but the event
@@ -30,6 +30,13 @@ var ErrUnreadableTree = errors.New("filemod: cannot determine whether the path i
 // escape again the moment a hook joins it against its own root. The events
 // carry repository-relative paths by contract; a path that cannot be one is
 // not a path this module can report.
+//
+// The symlinked-parent case is the same escape reached without any lexical
+// tell, and it is the worse of the two: "escape/id_rsa", where "escape" is a
+// link to a directory outside the repository, survives every string check and
+// the path it emits JOINS cleanly, so a hook reads the outside file through it
+// and nothing anywhere reports a problem. A containment check that never
+// touches the filesystem cannot see this, so resolve does one.
 var ErrPathNotRelativeToRoot = errors.New("filemod: path is not relative to the repository root")
 
 // ErrNoRoot is returned when an Observed names paths without naming what they
@@ -172,6 +179,12 @@ func isRegular(info os.FileInfo) bool {
 // one file, and left as given they produce two events with different `path`
 // values — a matcher scoped to `a.md` catches one and misses the other, and a
 // fingerprint keyed on path records two independent verdicts for one file.
+//
+// The lexical checks come first and the filesystem one last, because the
+// lexical ones are the cheap way to reject the spellings that are wrong on
+// their face and they need no syscall to be right. What they cannot see is a
+// parent directory that is a symlink out of the repository, which is why
+// contained follows them rather than replacing them.
 func resolve(root, path string) (clean, full string, err error) {
 	if strings.TrimSpace(root) == "" {
 		return "", "", fmt.Errorf("%w: %q", ErrNoRoot, path)
@@ -194,5 +207,78 @@ func resolve(root, path string) (clean, full string, err error) {
 		return "", "", fmt.Errorf("%w: %q escapes it", ErrPathNotRelativeToRoot, path)
 	}
 
-	return clean, filepath.Join(root, clean), nil
+	full = filepath.Join(root, clean)
+	if err := contained(root, full); err != nil {
+		return "", "", fmt.Errorf("%w: %q: %w", ErrPathNotRelativeToRoot, path, err)
+	}
+	return clean, full, nil
+}
+
+// contained reports whether full, once every symlink above its last element is
+// followed, still lies under root.
+//
+// It asks about the PARENTS and deliberately not about the leaf. Which object a
+// leaf symlink points at is lookAt's question and lookAt answers it with Lstat
+// on purpose — the link is the thing git tracks, and a link to somewhere outside
+// the repository is still a file inside it that changed. Where the link's own
+// DIRECTORY sits is a different question: if that is outside, the repository
+// does not contain the named file at all, under any reading.
+//
+// The walk goes up from the parent to the first ancestor that exists, because
+// the path may legitimately not be on disk — a delete names a file that is gone,
+// and a whole removed directory takes its parents with it. Resolving only what
+// exists is what lets those keep working; the ancestors that do not exist cannot
+// be symlinks, so there is nothing about them left to check.
+//
+// The root is resolved too. A repository reached through a symlinked ancestor is
+// ordinary — /tmp is a link to /private/tmp on darwin, which every test here
+// runs under — and comparing a resolved child against an unresolved root would
+// call every path in such a repository an escape.
+func contained(root, full string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		// The root itself cannot be resolved. Not something a path can be
+		// blamed for, and not something to pass silently either: no containment
+		// claim can be made at all, so none is.
+		return fmt.Errorf("cannot resolve the repository root %s: %w", root, err)
+	}
+
+	// Walk up to the first ancestor that is on disk. dir is always a prefix of
+	// full's parent, so this terminates at realRoot's own ancestors at worst.
+	dir := filepath.Dir(full)
+	unresolved := ""
+	for {
+		real, err := filepath.EvalSymlinks(dir)
+		if err == nil {
+			return under(realRoot, filepath.Join(real, unresolved))
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			// Permission denied on a parent, say. Presence is lookAt's to
+			// report as ErrUnreadableTree; containment simply cannot be
+			// established, and letting the path through on a failed check is
+			// the one outcome this function exists to prevent.
+			return fmt.Errorf("cannot resolve %s: %w", dir, err)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached the filesystem root without finding anything that exists.
+			return fmt.Errorf("no part of %s is on disk", full)
+		}
+		unresolved = filepath.Join(filepath.Base(dir), unresolved)
+		dir = parent
+	}
+}
+
+// under reports whether path is realRoot or sits beneath it, comparing whole
+// path elements. A prefix test on the raw string would accept "/repo-backup"
+// for a root of "/repo".
+func under(realRoot, path string) error {
+	rel, err := filepath.Rel(realRoot, path)
+	if err != nil {
+		return fmt.Errorf("%s is not reachable from %s", path, realRoot)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s resolves outside the repository", path)
+	}
+	return nil
 }

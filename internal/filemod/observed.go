@@ -35,16 +35,33 @@ type Observed interface {
 	// there is no second filter downstream.
 	//
 	// What "repository-relative" excludes is enforced, not assumed: absolute
-	// paths, paths escaping through "..", and the root itself are reported as
+	// paths, paths escaping through "..", the root itself, and paths that reach
+	// outside through a symlinked parent directory are reported as
 	// ErrPathNotRelativeToRoot rather than normalised into something stattable.
+	// The last of those needs the filesystem to see — "escape/id_rsa", where
+	// "escape" links to a directory outside, passes every string check and
+	// joins cleanly into a readable outside file — so containment is checked
+	// against the resolved tree, not against the spelling.
 	// Spelling is not part of the contract — "a.md" and "./a.md" are the same
 	// file and yield one event carrying the canonical form, so a duplicate here
 	// is tolerated rather than doubled.
 	Paths() []string
 
 	// ExistedAtBaseline reports whether the path was present at the point the
-	// cycle's difference is measured from. It is asked with the path exactly as
-	// Paths gave it, so a producer may key it on its own spelling.
+	// cycle's difference is measured from.
+	//
+	// It is asked with the CANONICAL spelling — filepath.Clean of what Paths
+	// gave, the same form the event carries — not with the raw spelling. A
+	// producer that keys a map on its own paths must clean them first, and one
+	// whose paths are already clean, which is what git reports, need do nothing.
+	//
+	// Asked with the raw spelling instead, this method would be the one place
+	// spelling mattered, and the rest of the contract says it does not: "a.md"
+	// and "./a.md" are one file and yield one event. Two spellings of one file
+	// reaching a baseline map that answers differently for each made the
+	// classification depend on which Paths listed first — the same file in the
+	// same tree coming out a create or an update by iteration order alone. One
+	// file has one baseline, so there is one spelling to ask about it with.
 	//
 	// This is the half of the classification the tree cannot answer. Whether a
 	// file is there now is a stat away; whether it was there before is a fact

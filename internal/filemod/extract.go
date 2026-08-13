@@ -233,17 +233,26 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 			continue
 		}
 
-		// Reached only for absent or presentFile: every other state left an
-		// error above. So the boolean this narrows to is the whole remaining
-		// question, and it is narrowed HERE rather than inside classify, which
-		// is about the baseline/tree pair and has no business knowing what a
-		// stat can fail to say.
-		kind, reportable := classify(observed.ExistedAtBaseline(path), p == presentFile)
+		// Asked with the canonical spelling, the same one the dedupe keys on and
+		// the same one the event carries. Asking with the raw spelling made the
+		// answer depend on the order Paths happened to list them in: given
+		// {"a.md", "./a.md"} and a baseline map holding only "a.md", whichever
+		// came first won the slot, so one file in one tree classified as an
+		// update or a create depending on nothing but iteration order. Two
+		// spellings of one file cannot be allowed to carry two baselines when the
+		// rest of the contract says spelling is not part of it.
+		//
+		// Reached only for absent or presentFile: every other state left an error
+		// above. So the boolean this narrows to is the whole remaining question,
+		// and it is narrowed HERE rather than inside classify, which is about the
+		// baseline/tree pair and has no business knowing what a stat can fail to
+		// say.
+		kind, reportable := classify(observed.ExistedAtBaseline(clean), p == presentFile)
 		if !reportable {
 			// The no/no row. Legitimately a file created and removed inside one
 			// cycle, which leaves nothing to be about — and also the one place
 			// the tree can contradict the producer's claim, so it is said.
-			problems = append(problems, fmt.Errorf("%w: %q", ErrNotADifference, path))
+			problems = append(problems, fmt.Errorf("%w: %q", ErrNotADifference, clean))
 			continue
 		}
 
