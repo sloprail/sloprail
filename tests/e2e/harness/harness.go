@@ -183,33 +183,20 @@ func (e *Env) Project() string {
 	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir .claude: %v", err)
 	}
-	e.writeSettings(dir, nil)
+	e.writeSettings(dir)
 	return dir
 }
 
-// ExtraHook attaches a raw lifecycle hook to a project, alongside the plugin.
-//
-// For the few properties that are about a hook POINT rather than about a
-// guardrail: that a refusal at an after-the-fact point cannot prevent work that
-// has already landed, for instance, is a claim about the lifecycle itself and
-// has to be made where a guardrail binding cannot reach.
-//
-// The plugin's own wiring is rewritten from the same source as Project's, so
-// this adds a hook to the ordinary arrangement rather than replacing it with a
-// hand-written one — a test using this is still running the engine a user gets.
-func (e *Env) ExtraHook(projDir, event, matcher, command string) {
-	e.t.Helper()
-	e.writeSettings(projDir, map[string]string{
-		"event": event, "matcher": matcher, "command": command,
-	})
-}
-
 // writeSettings writes the project's settings: the plugin as a user would
-// install it, plus at most one extra lifecycle hook.
+// install it, and nothing else.
 //
-// One place builds this, so the marketplace wiring a test runs against cannot
-// drift from the wiring Project documents.
-func (e *Env) writeSettings(dir string, extra map[string]string) {
+// There is deliberately no way to add a lifecycle hook from here. A test that
+// hand-wired one into settings.json would be arranging wiring no user has, and
+// whatever it then proved would be about the harness's arrangement rather than
+// about the product — the whole point of driving the mock is that what fires is
+// the plugin someone installs. A property that needs a hook point the plugin
+// does not register is a gap in the plugin, and belongs in hooks.json.
+func (e *Env) writeSettings(dir string) {
 	e.t.Helper()
 	settings := map[string]any{
 		"enabledPlugins": map[string]any{pluginKey: true},
@@ -218,16 +205,6 @@ func (e *Env) writeSettings(dir string, extra map[string]string) {
 				"source": map[string]any{"source": "directory", "path": e.repoRoot},
 			},
 		},
-	}
-	if extra != nil {
-		settings["hooks"] = map[string]any{
-			extra["event"]: []any{map[string]any{
-				"matcher": extra["matcher"],
-				"hooks": []any{map[string]any{
-					"type": "command", "command": extra["command"],
-				}},
-			}},
-		}
 	}
 	body, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -245,9 +222,9 @@ func (e *Env) writeSettings(dir string, extra map[string]string) {
 // correctly while proving nothing about whether anything ever asks it, which is
 // the whole reason Run drives the mock instead.
 //
-// This is for the commands a PERSON or an authoring agent types: `init` and
-// `guardrail help`. Nothing in a session invokes them, so there is no wiring
-// for driving the mock to prove.
+// This is for the commands an authoring agent types: `guardrail help` and the
+// root help that points at it. Nothing in a session invokes them, so there is
+// no wiring for driving the mock to prove.
 func (e *Env) CLI(dir string, args ...string) Result {
 	e.t.Helper()
 	cmd := exec.Command(filepath.Join(e.binDir, "sloprail"), args...)

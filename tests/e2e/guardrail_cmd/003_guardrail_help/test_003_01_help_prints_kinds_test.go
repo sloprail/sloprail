@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -75,11 +77,11 @@ func TestT003_01_HelpPrintsEveryDeclaredKind(t *testing.T) {
 // module and has neither blind spot.
 //
 // Add a module to the repo and not to All(), and TestAll_HoldsEveryModuleInTheRepo
-// goes red. Wire one into the binary past All() and this goes red — but that
-// case no longer needs catching at runtime: module.NewRegistry takes a token
-// only packages under internal/module/ can name, so a hook point building its
-// own list does not compile. This is the check that the one list the binary CAN
-// have is the one it reports.
+// goes red. Call module.NewRegistry from outside internal/module/modules and
+// TestOnlyModulesPackageBuildsARegistry goes red. This is the third check: that
+// the list the binary actually runs with is the one it reports — asserted
+// against the built binary's own output rather than against source, so it holds
+// even if the other two are read wrong.
 func TestT003_05_BinaryReportsExactlyTheModuleList(t *testing.T) {
 	e := New(t)
 
@@ -118,55 +120,70 @@ func TestT003_05_BinaryReportsExactlyTheModuleList(t *testing.T) {
 	}
 }
 
-// T003_02: help tells an author the things they cannot get from the file format.
+// T003_02: help points at where the format is taught.
 //
-// Not a spellcheck of the prose. Each of these is a fact an agent arrives
-// without and will guess wrong: that the body is a rubric, that a rule is turned
-// off rather than deleted, and that the glob it would reach for does not exist.
-func TestT003_02_HelpCoversWhatAnAgentDoesNotKnow(t *testing.T) {
+// It no longer teaches the format itself — a help command documents its own
+// command, and the declaration format is not one. What it must not do is leave
+// an agent that read this output with no idea where to go next, because an
+// agent that cannot find the format invents one.
+//
+// The facts this used to assert — the frontmatter shape, the matcher operators,
+// the hook contract, that the body is a rubric, that a rule is disabled rather
+// than deleted — moved to the authoring-guardrails skill. They are not asserted
+// here any more because they are not this command's to state.
+func TestT003_02_HelpPointsAtTheSkill(t *testing.T) {
 	e := New(t)
 
 	got := e.CLI(t.TempDir(), "guardrail", "help")
 
-	for _, want := range []string{
-		"GUARDRAIL.md",   // where a declaration goes
-		"rubric",         // the body is read by judge hooks
-		"enabled: false", // how a rule is turned off
-		"startsWith",     // the operators that exist
-		"endsWith",
-		"NO GLOB",       // and the one that does not
-		"guardrailDir",  // what a hook is handed
-		"exit 0",        // and what it writes back
-		"type: command", // the hook mechanism
-	} {
-		if !strings.Contains(got.Output, want) {
-			t.Errorf("help never mentions %q", want)
-		}
+	if !strings.Contains(got.Output, "authoring-guardrails") {
+		t.Errorf("help never names the skill that teaches the format — an agent reading this has nowhere to go and will guess a declaration shape:\n%s", got.Output)
 	}
 }
 
-// T003_04: help names no operator this build cannot evaluate.
+// T003_06 lives in its own file — see test_003_06_no_guardrails_is_ordinary_test.go.
+
+// T003_04: nothing an author reads offers a field this build cannot produce.
 //
 // `in` and `any(...)` read fields — `flags`, `invocations` — that only the
-// command module would declare, and it has not landed. Documented, they are
-// worse than absent: `in` quietly evaluates false and `any` errors outright, and
-// either way a rule written from this help never fires while looking enforced.
+// command module would declare, and it has not landed. Offered to an author they
+// are worse than absent: `in` quietly evaluates false and `any` errors outright,
+// and either way a rule written from them never fires while looking enforced.
 //
-// The guard is derived, not a blocklist of two names. Anything the help offers
-// as a matcher example has to be evaluable against a kind this build actually
-// declares.
-func TestT003_04_HelpNamesNoUnevaluableOperator(t *testing.T) {
+// This used to read the help's matcher prose. That prose moved to the skill, so
+// the check follows it — the skill is now what an author reads before writing a
+// matcher, and a stale field name there does the same damage it did here.
+//
+// The guard is derived, not a blocklist of two names: anything offered as
+// readable has to be a field some declared kind actually carries.
+func TestT003_04_NothingOffersAnUnproducibleField(t *testing.T) {
 	e := New(t)
 
+	// The help must still be free of them — it prints field names itself.
 	got := e.CLI(t.TempDir(), "guardrail", "help")
+
+	// The skill is added by impl/agent-help and is not on this branch yet, so
+	// its absence is tolerated rather than failed — this branch should not be
+	// red for another's missing file. Only os.IsNotExist is tolerated, and the
+	// help half below runs either way: a blanket skip would silently stop
+	// watching the half that IS on this branch. Once the branches meet, the
+	// file is there and both halves are checked.
+	skillPath := filepath.Join(repoRoot(t),
+		"marketplace", "plugins", "sloprail", "skills", "authoring-guardrails", "SKILL.md")
+	skill, err := os.ReadFile(skillPath)
+	switch {
+	case os.IsNotExist(err):
+		t.Logf("NOT CHECKED: %s is absent on this branch, so the skill half of this test did not run. It is guarded from impl/agent-help onward.", skillPath)
+		skill = nil
+	case err != nil:
+		t.Fatalf("read the authoring skill — it is what an author reads before writing a matcher: %v", err)
+	}
 
 	reg, err := modules.Registry()
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
 
-	// Every field any declared kind carries. A matcher example may read these
-	// and nothing else.
 	declared := map[string]bool{}
 	for _, kind := range reg.DeclaredKinds() {
 		decl, ok := reg.KindDeclFor(kind)
@@ -178,14 +195,15 @@ func TestT003_04_HelpNamesNoUnevaluableOperator(t *testing.T) {
 		}
 	}
 
-	// Fields the help must not present as readable, because nothing produces
-	// them. Named from the kinds that would carry them rather than assumed.
 	for _, absent := range []string{"invocations", "flags", "argv"} {
 		if declared[absent] {
-			continue // a module started declaring it — the help may use it
+			continue // a module started declaring it — both may use it
 		}
 		if strings.Contains(got.Output, absent) {
 			t.Errorf("help offers %q, which no declared kind carries — a matcher using it never fires", absent)
+		}
+		if skill != nil && strings.Contains(string(skill), absent) {
+			t.Errorf("the authoring skill offers %q, which no declared kind carries — a matcher written from it never fires", absent)
 		}
 	}
 }
@@ -200,8 +218,5 @@ func TestT003_03_RootHelpPointsAtIt(t *testing.T) {
 	got := e.CLI(t.TempDir(), "--help")
 	if !strings.Contains(got.Output, "guardrail") {
 		t.Fatalf("root help does not mention the guardrail command:\n%s", got.Output)
-	}
-	if !strings.Contains(got.Output, "init") {
-		t.Fatalf("root help does not mention init:\n%s", got.Output)
 	}
 }

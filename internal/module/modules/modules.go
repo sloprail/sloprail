@@ -16,20 +16,15 @@
 // A package of its own rather than internal/module itself, which the modules
 // import: a list there would import them back.
 //
-// A package UNDER internal/module rather than beside it, because that is what
-// makes this the only list there can be. Go lets only packages rooted at
-// internal/module/ import internal/module/internal/registryauth, and
-// module.NewRegistry takes a token from there whose unexported field means it
-// cannot be forged by a caller that never names it — so this package can build
-// a registry and no hook point can. See internal/module/internal/registryauth
-// for the hole that closed and the second one found reviewing the fix.
+// This is the only place that may call module.NewRegistry. That is enforced by
+// TestOnlyModulesPackageBuildsARegistry rather than by the compiler — see
+// module.NewRegistry for why a compile-time fence was tried and dropped.
 package modules
 
 import (
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/module"
-	"github.com/sloprail/sloprail/internal/module/internal/registryauth"
 )
 
 // All returns the modules this build knows about, in registration order.
@@ -46,12 +41,9 @@ func All() []module.Module {
 
 // Registry returns a registry over All.
 //
-// The only registry a build can have. Not by agreement — module.NewRegistry
-// takes a token this package can name and nothing under services/ can, and
-// that no package outside the fence can construct without naming either, so a
-// hook point assembling its own list does not compile. The second clause is
-// not redundant: without it the token was forgeable as `struct{}{}` and this
-// sentence was false. See internal/module/internal/registryauth.
+// The only registry a build has. Enforced by
+// TestOnlyModulesPackageBuildsARegistry, which fails if anything outside this
+// package calls module.NewRegistry.
 //
 // One constructor rather than a list written out wherever a registry is needed.
 // The hook points run it to produce events, `guardrail help` runs it to tell an
@@ -65,5 +57,5 @@ func All() []module.Module {
 // compile time that error means the build is wrong rather than the input, which
 // is why TestRegistry_RegistersCleanly exists to catch it before a caller does.
 func Registry() (*module.Registry, error) {
-	return module.NewRegistry(registryauth.Grant(), All()...)
+	return module.NewRegistry(All()...)
 }
