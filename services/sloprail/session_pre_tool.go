@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -130,6 +131,29 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 
 		for _, d := range decls {
 			if !d.IsEnabled() {
+				continue
+			}
+
+			// This session is running underneath THIS rule's own hook: the rule
+			// launched an agent, and that agent is now doing the work it was
+			// launched to do. Enforcing here is the rule re-entering itself,
+			// which is the recursion — measured to depth 8 with nothing in the
+			// engine ending it.
+			//
+			// Scoped to this one declaration, and that scoping is the design.
+			// Every OTHER rule in this loop still runs against this agent's
+			// writes, because a judging agent that edits files is still an agent
+			// editing the project's files. Skipping the whole loop instead would
+			// be simpler and would turn the launched agent — the one nobody is
+			// watching — into the only unguarded actor in the project.
+			//
+			// Placed before the matcher compiles rather than after, so a rule
+			// that does not apply here costs nothing and cannot refuse on a
+			// matcher fault it was never going to be asked about.
+			if isLaunchedBy(os.Getenv, d.Name) {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"sloprail: guardrail %q not enforced here — this session was launched by its own hook (%s)\n",
+					d.Name, LaunchedByEnv)
 				continue
 			}
 
@@ -450,6 +474,12 @@ func runHooks(d guardrail.Declaration, b guardrail.Binding, e event.Event) (verd
 		var stdout, stderr bytes.Buffer
 		c := exec.Command("sh", "-c", h.Command)
 		c.Dir = d.Dir
+		// The provenance this hook passes on. Everything the hook spawns
+		// inherits it — including, when the hook runs sr-agent, the harness it
+		// execs and that agent's own hooks. That inheritance across the exec is
+		// the entire mechanism: it is what lets the engine one level down know
+		// which rule it is running underneath.
+		c.Env = hookEnv(d.Name)
 		c.Stdin = strings.NewReader(string(payload))
 		c.Stdout = &stdout
 		c.Stderr = &stderr
