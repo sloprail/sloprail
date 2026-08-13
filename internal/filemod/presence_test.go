@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sloprail/sloprail/internal/module"
 )
 
 // --- a stat that cannot answer is not a fact about the tree (F1) -------------
@@ -1716,4 +1718,201 @@ func TestResolve_AChainEndingSomewhereUnreadableIsRefused(t *testing.T) {
 		"a chain whose end cannot be looked at has established no containment")
 	assert.Contains(t, err.Error(), "cannot resolve")
 	assert.NotContains(t, err.Error(), root, "and it says so in the relative spelling")
+}
+
+// --- the converged tri-state: both distinctions, one enum -------------------
+//
+// Two branches each grew a presence tri-state over the same question, and they
+// split it on different axes. This branch's was absent/present/unknown, where
+// only a real ENOENT counts as absent and any other stat failure is the machine
+// declining to answer. impl/filemod-defects' was absent/file/notAFile, where a
+// non-file yields no event rather than a bogus PreFileUpdate.
+//
+// Neither subsumed the other, and unioning them into two functions that agree
+// today would have left two answers to one question, free to drift apart on the
+// first change to either. So the two axes were composed into one four-state
+// enum, and the tests below pin BOTH distinctions on the ONE oracle — which is
+// what makes a later collapse of either axis fail here rather than in the field.
+
+func TestLookAt_TheFourStatesAreDistinct(t *testing.T) {
+	// The convergence's central claim: four states, not three, because two
+	// independent questions are being answered and each needs its own answer.
+	// Any two of these collapsing into one is a defect one side or the other
+	// was written to prevent.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads regardless of mode")
+	}
+	root := tree(t, "file.md", "locked/behind.md")
+	require.NoError(t, os.Mkdir(filepath.Join(root, "adir"), 0o755))
+
+	p, err := lookAt("nothing.md", filepath.Join(root, "nothing.md"))
+	require.NoError(t, err, "not being there is a fact about the tree")
+	assert.Equal(t, absent, p)
+
+	p, err = lookAt("file.md", filepath.Join(root, "file.md"))
+	require.NoError(t, err)
+	assert.Equal(t, presentFile, p)
+
+	p, err = lookAt("adir", filepath.Join(root, "adir"))
+	assert.Equal(t, presentNotAFile, p, "a directory exists, and is not a file")
+	require.ErrorIs(t, err, ErrPathIsNotAFile)
+
+	unreadable(t, filepath.Join(root, "locked"))
+	p, err = lookAt("locked/behind.md", filepath.Join(root, "locked", "behind.md"))
+	assert.Equal(t, unknown, p, "the machine could not answer, which is not absence")
+	require.ErrorIs(t, err, ErrUnreadableTree)
+}
+
+func TestLookAt_NotAFileIsNeitherAbsentNorPresentFile(t *testing.T) {
+	// The seam between the two branches' answers, stated as an assertion rather
+	// than left to be inferred. Folded into absent, a directory in the way
+	// becomes PreFileCreate — a create over a path no write can land on. Folded
+	// into presentFile, it becomes PreFileUpdate — the defect
+	// TestExtract_DirectoryIsNotAnExistingFile pins. It is its own state
+	// precisely because both foldings are wrong.
+	root := tree(t)
+	require.NoError(t, os.Mkdir(filepath.Join(root, "adir"), 0o755))
+
+	p, _ := lookAt("adir", filepath.Join(root, "adir"))
+	assert.NotEqual(t, absent, p)
+	assert.NotEqual(t, presentFile, p)
+}
+
+func TestLookAt_ANonFileThatIsNotADirectoryIsAlsoNotAFile(t *testing.T) {
+	// isRegular rather than !IsDir. Both branches' fixes were written about
+	// directories, because a directory is what an agent actually writes into by
+	// mistake — but a fifo, a device or a socket is no more writable-as-a-file,
+	// and a check naming only directories reports every one of them as a file.
+	if runtime.GOOS == "windows" {
+		t.Skip("fifos do not work this way on windows")
+	}
+	root := tree(t)
+	fifo := filepath.Join(root, "pipe")
+	require.NoError(t, syscall.Mkfifo(fifo, 0o600))
+
+	p, err := lookAt("pipe", fifo)
+	assert.Equal(t, presentNotAFile, p, "a fifo is not a file this module's kinds are about")
+	require.ErrorIs(t, err, ErrPathIsNotAFile)
+}
+
+func TestLookAt_ASymlinkIsAFileWhateverItPointsAt(t *testing.T) {
+	// The property the notAFile axis must NOT take back. lookAt uses Lstat
+	// because the link is what git tracks, and isRegular has to agree: a bare
+	// Mode().IsRegular() answers false for every symlink, so composing the two
+	// axes naively would have turned every tracked link into presentNotAFile and
+	// every change to one into silence — the failure this module exists to
+	// prevent, reached by way of fixing a different one.
+	root := tree(t, "target.md")
+	symlink(t, root, "toFile", filepath.Join(root, "target.md"))
+	symlink(t, root, "toDir", root)
+	symlink(t, root, "dangling", "nowhere")
+
+	for _, name := range []string{"toFile", "toDir", "dangling"} {
+		p, err := lookAt(name, filepath.Join(root, name))
+		require.NoErrorf(t, err, "%s", name)
+		assert.Equalf(t, presentFile, p, "%s: git tracks the link, so the link is the file", name)
+	}
+}
+
+func TestLookAt_IsTheOnlyPresenceOracle(t *testing.T) {
+	// The convergence is only real if there is ONE answer to the question. Two
+	// functions that agree today are two functions that can disagree tomorrow,
+	// and the disagreement is invisible: each has its own tests, both pass, and
+	// the two phases classify the same tree differently.
+	//
+	// So this asserts the shape rather than the behaviour — that no second stat
+	// of a path-for-presence survives in the package. markersOnDisk reads a
+	// file's CONTENT, which is a different question and stays where it is.
+	for _, name := range []string{"presence.go", "extract.go", "module.go", "event.go", "marker.go"} {
+		src, err := os.ReadFile(name)
+		require.NoError(t, err)
+		body := string(src)
+		for _, banned := range []string{"os.Stat(", "os.Lstat("} {
+			for _, line := range strings.Split(body, "\n") {
+				if !strings.Contains(line, banned) || strings.HasPrefix(strings.TrimSpace(line), "//") {
+					continue
+				}
+				assert.Equalf(t, "presence.go", name,
+					"%s calls %s outside the one presence oracle: %s", name, banned, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+func TestExtractPending_TheUnreadableStatStillCarriesContent(t *testing.T) {
+	// The one place the two branches' axes genuinely disagreed about an outcome,
+	// resolved deliberately rather than by whichever side won the merge.
+	//
+	// This branch refuses an unknown in the OBSERVED phase, because there the
+	// same lookup alone decides whether a deletion is announced — reading it as
+	// absence announces PostFileDelete for a file sitting right there. The pre
+	// phase is not that: both outcomes are events over a path the tool named
+	// either way, so nothing appears or disappears on the choice, and the lesser
+	// wrong is the one that still hands a rule the pending `content`.
+	//
+	// The asymmetry is the point, and it is asserted here so that "unify the two
+	// phases" is a change someone makes on purpose.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads regardless of mode")
+	}
+	root := tree(t, "locked/target.md")
+	unreadable(t, filepath.Join(root, "locked"))
+	path := filepath.Join(root, "locked", "target.md")
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase:   module.PhasePre,
+		module.InputPayload: writePending(path, "pending text"),
+	})
+
+	require.NoError(t, err)
+	require.Len(t, events, 1, "a stat that cannot answer must not silence the pre phase")
+	assert.Equal(t, KindPreCreate, events[0].Kind)
+	assert.Equal(t, "pending text", events[0].Fields[FieldContent],
+		"the rule still gets the text the write would leave")
+}
+
+func TestObserved_TheUnreadableStatIsRefusedNotFoldedIntoAbsence(t *testing.T) {
+	// The other half of the asymmetry above, and the reason the unknown state
+	// exists at all. impl/filemod-defects' lookAt folded every stat failure into
+	// absent, which is defensible for the pre phase and catastrophic here: the
+	// file is on disk, the producer says it changed, and folding the failure
+	// into absence classifies it PostFileDelete — every rule bound to deletion
+	// asked about a file the project still has.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads regardless of mode")
+	}
+	root := tree(t, "locked/still-here.md")
+	unreadable(t, filepath.Join(root, "locked"))
+
+	events, err := observeErr(fakeObserved{
+		root:   root,
+		paths:  []string{filepath.Join("locked", "still-here.md")},
+		before: map[string]bool{filepath.Join("locked", "still-here.md"): true},
+	})
+
+	assert.Empty(t, events, "no verdict is honest about a lookup that never answered")
+	require.ErrorIs(t, err, ErrUnreadableTree)
+	assert.NotErrorIs(t, err, ErrNotADifference,
+		"the machine failing to answer is not the tree contradicting the producer")
+}
+
+func TestObserved_ADirectoryWhereAFileIsClaimedIsReportedNotClassified(t *testing.T) {
+	// The notAFile axis carried into the observed phase, where it did not exist
+	// before. The pre phase's answer to a non-file is silence, because there is
+	// no producer to blame; here there IS one — Observed's contract is that its
+	// paths name files that differ — so the same state is a reported breach.
+	//
+	// One state, two consumers, two readings. That is what lookAt returning the
+	// value AND the error is for.
+	root := tree(t)
+	require.NoError(t, os.Mkdir(filepath.Join(root, "adir"), 0o755))
+
+	events, err := observeErr(fakeObserved{
+		root:   root,
+		paths:  []string{"adir"},
+		before: map[string]bool{},
+	})
+
+	assert.Empty(t, events, "a directory is not something these kinds are about")
+	require.ErrorIs(t, err, ErrPathIsNotAFile)
 }

@@ -267,6 +267,18 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		// two-value read is what tells "asked, answered false" from "never
 		// asked", and carrying the decision keeps the distinction instead of
 		// discarding it at the boundary.
+		// The `asked` half is EQUIVALENT today and kept anyway. baselinesFor
+		// writes an entry for every element of `paths`, on both of its branches,
+		// and this loop walks that same slice — so the lookup always hits and a
+		// mutation dropping the two-value read survives the suite. It is recorded
+		// here rather than left to be rediscovered as an untested guard.
+		//
+		// Kept because it is the distinction that makes the map's zero value
+		// safe, and "always present" is a claim about the two functions agreeing
+		// on one slice rather than about this read. Should a later pass ever
+		// filter `paths` before the second walk, the missing entry would come
+		// back as settledPath{} — resolved false, before false — and a delete
+		// would classify as a create with nothing saying so.
 		d, asked := settled[path]
 		if !asked || !d.resolved {
 			// Refused, and said so exactly once — in the first pass, which is
@@ -320,6 +332,16 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		// and it is narrowed HERE rather than inside classify, which is about the
 		// baseline/tree pair and has no business knowing what a stat can fail to
 		// say.
+		//
+		// Which makes `p == presentFile` and `p != absent` EQUIVALENT on every
+		// input that reaches this line, and a mutation between them survives the
+		// suite. Recorded so the survivor is read as an equivalence rather than
+		// as this branch being untested. The spelling here is the one that stays
+		// correct if the guard above is ever relaxed: `!= absent` would then read
+		// presentNotAFile and unknown as "the file is there" — a directory
+		// classified PostFileUpdate, and an unreadable stat classified as
+		// whatever the baseline happened to say. Naming the ONE state a file
+		// event may be built on is the direction that cannot rot.
 		kind, reportable := classify(before, p == presentFile)
 		if !reportable {
 			// The no/no row. Legitimately a file created and removed inside one
