@@ -172,11 +172,11 @@ func discardOffered(cmd *cobra.Command, p HookPayload) {
 // A variable so a test about the mark's POSITION can stand this step in and
 // still be testing the position rather than this step's absence. The tests that
 // do keep meaning the same thing once this is implemented for real.
-var dispatchPostEvents = func(_ *cobra.Command, _ sessionstate.Store, _ HookPayload) bool {
-	// TODO: diff the tree against the baseline, dispatch the Post events, and
-	// return true once a cycle's judging actually happens here.
-	return false
-}
+// A var rather than a func so a test about the MARK can arrange a cycle that
+// dispatched, or one that did not, without arranging a tree for the differ to
+// find. The mark's position and the dispatch's outcome are separate questions,
+// and a test about the first should not fail when the second changes.
+var dispatchPostEvents = runPostDispatch
 
 // advanceReadMark carries forward the position this cycle actually read.
 //

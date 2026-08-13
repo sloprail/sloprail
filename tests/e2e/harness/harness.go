@@ -397,6 +397,38 @@ func (e *Env) transcriptPath(projDir, sessionID string) string {
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
 }
 
+// BlockingErrors is every reason a Stop hook gave for blocking the turn.
+//
+// Read from the record's own blocking attachments rather than from the stream,
+// because a Stop refusal never appears on the stream at all — it is delivered
+// as a `hook_blocking_error` the agent is handed on its next turn. A test
+// asserting on the stream would be asserting on a channel this refusal does not
+// use, and would pass or fail for reasons unrelated to what it names.
+//
+// Narrower than the record as a whole, deliberately. A guardrail's own folder
+// path travels on every hook payload, so searching the file for a rule's name
+// finds it whether or not the refusal ever named it — an assertion that cannot
+// fail. Only what the block itself carried is returned.
+func (e *Env) BlockingErrors(projDir, sessionID string) []string {
+	e.t.Helper()
+	data, err := os.ReadFile(e.transcriptPath(projDir, sessionID))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "hook_blocking_error") {
+			// The whole record, not a field picked out of it. The
+			// attachment's shape is the harness's rather than ours, and a
+			// reader that reached into it could silently stop matching when
+			// the harness nests it differently. What a test needs to know is
+			// that the reason travelled.
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
 // dataHome mirrors the engine's own platform data directory, for the sandboxed
 // home the mock ran under.
 func dataHome(home string) string {
@@ -414,6 +446,40 @@ func dataHome(home string) string {
 	default:
 		return filepath.Join(home, ".local", "share")
 	}
+}
+
+// WriteFile puts a file into a project, creating the directories above it.
+//
+// For the state a project is in BEFORE a session runs — the files an agent will
+// go on to edit or delete. What the agent itself does belongs in a scenario, so
+// that it travels through the tool calls a harness reports rather than being
+// arranged behind the engine's back.
+func (e *Env) WriteFile(projDir, rel, body string) {
+	e.t.Helper()
+	full := filepath.Join(projDir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		e.t.Fatalf("harness: write %s: %v", rel, err)
+	}
+}
+
+// Exists reports whether a path is present in a project.
+//
+// How a test asks what actually happened to the tree, as opposed to what came
+// back on the stream. Whether a message travelled says nothing about whether a
+// write landed, and "the work was prevented" is a claim about the tree.
+func (e *Env) Exists(projDir, rel string) bool {
+	e.t.Helper()
+	_, err := os.Stat(filepath.Join(projDir, rel))
+	if err == nil {
+		return true
+	}
+	if !os.IsNotExist(err) {
+		e.t.Fatalf("harness: stat %s: %v", rel, err)
+	}
+	return false
 }
 
 // Guardrail writes a declaration and its hook scripts into a project.

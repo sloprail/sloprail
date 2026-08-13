@@ -164,16 +164,36 @@ func (s *session) offered() string {
 
 // dispatched ends a cycle with the judging step standing in as having run.
 //
-// The mark is held until the Post events are dispatched, and that step is not
-// implemented yet. A test about the mark's POSITION must not be a test about
-// that step being missing, so it is stood in for here — which also means these
-// tests keep working, and keep meaning the same thing, once it lands for real.
+// The mark is held until the Post events are dispatched. That step is real now,
+// and it is still stood in for here: a test about the mark's POSITION must not
+// depend on what the differ makes of a particular tree, or it becomes a test of
+// the diff rather than of the mark.
 func (s *session) dispatched(stopHookActive bool) (stdout, stderr string) {
 	s.t.Helper()
+	return s.withDispatch(true, func() (string, string) { return s.stop(stopHookActive) })
+}
+
+// notDispatched ends a cycle with the judging step standing in as NOT having
+// run — a cycle that reached the end without dispatching anything.
+//
+// Explicit, because it used to be what `stop` did on its own: while the
+// dispatcher was a stub returning false, EVERY cycle was a cycle that dispatched
+// nothing, and a test asserting the mark is held read as though it had arranged
+// that. It had not. Now that the step really dispatches, the arrangement has to
+// be made rather than inherited — otherwise the test quietly becomes an
+// assertion about a differ finding nothing in an empty tree.
+func (s *session) notDispatched(stopHookActive bool) (stdout, stderr string) {
+	s.t.Helper()
+	return s.withDispatch(false, func() (string, string) { return s.stop(stopHookActive) })
+}
+
+// withDispatch runs fn with the judging step forced to the given outcome.
+func (s *session) withDispatch(ran bool, fn func() (string, string)) (stdout, stderr string) {
+	s.t.Helper()
 	restore := dispatchPostEvents
-	dispatchPostEvents = func(*cobra.Command, sessionstate.Store, HookPayload) bool { return true }
+	dispatchPostEvents = func(*cobra.Command, sessionstate.Store, HookPayload) bool { return ran }
 	defer func() { dispatchPostEvents = restore }()
-	return s.stop(stopHookActive)
+	return fn()
 }
 
 // cycle is a whole cycle: a rule reads the record, then the cycle ends.
@@ -322,7 +342,7 @@ func TestReadMark_HeldCycleDoesNotHandItsPositionOnEither(t *testing.T) {
 	a := s.turn()
 	require.NotEmpty(t, uuidsOf(s.query()))
 
-	s.stop(false) // dispatch does not run, so the mark is held
+	s.notDispatched(false) // no judging step ran, so the mark is held
 	require.Empty(t, s.mark())
 	assert.Empty(t, s.offered(), "a held cycle's reading is not the next cycle's to claim")
 
@@ -497,7 +517,7 @@ func TestReadMark_HeldUntilTheCycleActuallyDispatches(t *testing.T) {
 	require.Equal(t, a, s.offered(), "the read position is recorded either way")
 
 	// Dispatch does not happen, so the mark does not move.
-	s.stop(false)
+	s.notDispatched(false)
 	assert.Empty(t, s.mark(),
 		"the mark must not claim a position judged before any judging is dispatched")
 
