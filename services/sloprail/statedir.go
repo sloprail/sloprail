@@ -18,15 +18,15 @@ const AppName = "sloprail"
 // ran the hook and knows, and it tells the hook by putting it here rather than
 // in the argument vector, where a hook could write a different name and read a
 // rule it was never told about — and then depend on when that rule ran.
-const GuardrailEnv = "SLOPRAIL_GUARDRAIL"
+const GuardrailEnv = "SR_GUARDRAIL"
 
 // SessionEnv names the session a hook belongs to, for the same reason.
-const SessionEnv = "SLOPRAIL_SESSION_ID"
+const SessionEnv = "SR_SESSION_ID"
 
 // WorkspaceEnv is the tree the session is guarding. A hook runs with its own
 // working directory set to the guardrail's folder, so the process's cwd is not
 // the workspace and cannot stand in for it.
-const WorkspaceEnv = "SLOPRAIL_WORKSPACE"
+const WorkspaceEnv = "SR_WORKSPACE"
 
 // dataHome is the platform's directory for data a program keeps between runs.
 //

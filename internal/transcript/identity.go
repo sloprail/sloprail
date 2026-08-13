@@ -1,6 +1,11 @@
 package transcript
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
 // The identity a conversation keeps.
 //
@@ -109,4 +114,189 @@ func rootRecord(path string) (Entry, error) {
 		return Entry{}, fmt.Errorf("%s: %w: every entry in it has a parent", path, ErrNoOriginRecord)
 	}
 	return root, nil
+}
+
+// ErrWrongSession: a transcript was reached by GUESSING its filename from a
+// session id, and the file that turned up belongs to a different conversation.
+//
+// Only ever the answer for a guess. A path handed over by the harness is
+// authoritative and is never checked this way.
+var ErrWrongSession = errors.New("the transcript at that path belongs to another session")
+
+// ErrWrongTree: a transcript was reached by GUESSING its filename, and the file
+// that turned up was written in a different working tree than the one asking.
+//
+// Only ever the answer for a guess, for the same reason as ErrWrongSession.
+var ErrWrongTree = errors.New("the transcript at that path was written in another tree")
+
+// BelongsToTree reports whether the transcript at path was written in cwd, or
+// anywhere beneath it — compared as literal paths, not as encoded directory
+// names.
+//
+// This exists because EncodeProjectDir is LOSSY: `[^a-zA-Z0-9] -> "-"` maps the
+// separator and a literal hyphen onto the same character, so
+// "/home/u/proj" + subdir "pkg" and the sibling checkout "/home/u/proj-pkg"
+// both encode to "-home-u-proj-pkg". Two hyphenated sibling checkouts is an
+// ordinary layout, not an attack. Verified collisions: /a/b-c ≡ /a/b/c,
+// /a/b_c ≡ /a/b-c, /a/b.c ≡ /a/b/c, "/home/u/x y" ≡ /home/u/x-y.
+//
+// BelongsToSession does NOT catch this. When the guess lands in the sibling's
+// directory and that sibling genuinely has a session by that id, the file's own
+// records carry the id being asked about — it agrees, because the id really is
+// its own. The disagreement is about the TREE, which that check never looks at,
+// so the answer comes back as another project's real transcript with no error.
+//
+// The records' own cwd is what settles it. Across 8085 real transcripts 7941
+// carry a cwd, first appearing by line 3 in 7522 of them. It is NOT stable
+// within a file — 57 carry several distinct values, because the harness records
+// the directory each turn ran in and a session that cd's into a subdirectory
+// writes each one. So this asks whether ANY record's cwd is the tree in
+// question or sits beneath it, rather than testing the first record: on that
+// survey the rule accepts 7941 and falsely refuses 0. Testing only the first
+// cwd would refuse 7.
+//
+// A file with no cwd on any record answers true, for the same reason
+// BelongsToSession passes a file with no sessionId: 144 transcripts carry none,
+// the field is observed rather than promised, and absence of evidence must not
+// turn every session into a refusal. What is caught is a positive disagreement.
+//
+// An unreadable file answers true and leaves that failure to whoever reads it
+// properly.
+//
+// What this does NOT catch, having been tried:
+//
+//   - An empty cwd answers true, because there is no tree to disagree with. The
+//     caller's guess is then unguarded by this check — though ProjectDir("")
+//     names the bare projects directory, which is not where transcripts live.
+//   - A session in the colliding sibling that GENUINELY cd'd into this tree
+//     records this tree's cwd, matches, and is accepted. Not a false positive
+//     in the file's own terms — it really did run there — but the two cannot be
+//     told apart by what is written down.
+//   - A record longer than maxRecordBytes stops the scan, which answers true.
+//     Same gap as BelongsToSession, and stated there.
+func BelongsToTree(path, cwd string) (bool, error) {
+	if cwd == "" {
+		return true, nil
+	}
+	// The comparison is on the RESOLVED LITERAL path, never on the encoding.
+	// Comparing encodings would be circular: the encoding is the very thing
+	// that collides, so "/home/u/proj/pkg" and "/home/u/proj-pkg" would agree
+	// and the check would pass exactly the case it exists to catch. Symlinks
+	// are resolved on both sides because the harness records its own resolved
+	// directory and macOS symlinks /var to /private/var.
+	want := ResolveWorkDir(cwd)
+	var found string
+	err := scanFile(path, func(rec claudeRecord) bool {
+		if rec.Cwd == "" {
+			return true
+		}
+		if sameTree(ResolveWorkDir(rec.Cwd), want) {
+			found = rec.Cwd
+			return false
+		}
+		if found == "" {
+			found = rec.Cwd
+		}
+		return true
+	})
+	if err != nil {
+		return true, nil
+	}
+	if found == "" || sameTree(ResolveWorkDir(found), want) {
+		return true, nil
+	}
+	return false, fmt.Errorf("%w: %s was written in %s, which is not %s",
+		ErrWrongTree, path, found, cwd)
+}
+
+// sameTree reports whether a recorded working directory is the one being asked
+// about, or somewhere beneath it.
+//
+// Beneath counts because the guess is keyed on the project directory of the
+// tree, and a session that cd's into a subdirectory still belongs to that tree
+// — 57 of 8085 real transcripts record several nested directories for exactly
+// that reason. The prefix is taken component-wise, so "/a/b" does not swallow
+// the sibling "/a/bc".
+func sameTree(rec, want string) bool {
+	return rec == want || strings.HasPrefix(rec, want+string(filepath.Separator))
+}
+
+// BelongsToSession reports whether the transcript at path was written under
+// sessionID, according to the file's own records.
+//
+// This is the check a GUESS needs and a given path does not. Reconstructing
+// "<project dir>/<session id>.jsonl" is an assumption about where a harness
+// puts things, and the reasoning that a wrong guess "fails loudly" only covers
+// a guess landing on nothing. A guess landing on a file that EXISTS but belongs
+// to another conversation resolves silently and hands back that conversation's
+// identity — after which the engine keys its state on it.
+//
+// Records that carry a sessionId say who wrote them, so the file can be asked
+// rather than trusted to match its own name. Not every record carries one:
+// across 8085 real transcripts, `file-history-snapshot` records carry only
+// {isSnapshotUpdate, messageId, snapshot, type} and appear as early as line 2.
+// So the scan SKIPS blank-sessionId records rather than concluding from the
+// first record — otherwise a mismatch would hide behind a leading fieldless one.
+//
+// And a DISAGREEING record is not enough either: the scan keeps going until it
+// finds agreement, and only reports the disagreement if none is ever found. One
+// real transcript in this corpus opens with 303 records carrying an OLDER
+// session's id and only reaches its own on line 304 — a resumed conversation
+// whose earlier records were copied forward. Stopping at the first id present
+// refuses that file, which is a legitimate session denied its own record. Over
+// the whole corpus the first-record rule falsely refuses 1 and this one
+// refuses 0.
+//
+// Depended on, and it is HARNESS BEHAVIOUR rather than anything guaranteed: a
+// refusal here can only fire if NO record in a transcript names the session its
+// filename does. Across 8109 real transcripts that holds in every one — though
+// it is a near thing, since one of them carries 303 records of an older
+// session's id before reaching its own. So on real forks this check never
+// fires: the convergence tests pass because the harness keeps a file's own id
+// somewhere in its records, not because anything forces it to. If that ever
+// changes, this turns from inert into a refusal on every fork, which is why it
+// is written down here rather than assumed.
+//
+// A file carrying no sessionId at all answers true. The field is observed
+// rather than promised, and a harness that stops writing it must not turn every
+// session into a refusal — the check is here to catch a guess landing on
+// someone ELSE's conversation, which is a positive disagreement, not an absence
+// of evidence. Both the check and its limit are the point: what is caught is a
+// file naming a different session, and what is not caught is a file naming no
+// session.
+//
+// An unreadable file answers true and leaves the failure to whoever reads it
+// properly, which reports the open error with its own path in it. This covers
+// one real gap: a record longer than maxRecordBytes stops the scan with an
+// error, so a mismatch sitting BEHIND such a line is not seen and the file is
+// allowed. Accepted rather than fixed, because the alternative — refusing every
+// file with one oversized record — turns a formatting accident into a dead
+// session. BelongsToTree has the same gap on the same line, so the two do not
+// cover for each other here; this is a limit of both, not of one.
+func BelongsToSession(path, sessionID string) (bool, error) {
+	if sessionID == "" {
+		return true, nil
+	}
+	var found string
+	err := scanFile(path, func(rec claudeRecord) bool {
+		if rec.SessionID == "" {
+			return true
+		}
+		if rec.SessionID == sessionID {
+			found = rec.SessionID
+			return false
+		}
+		if found == "" {
+			found = rec.SessionID
+		}
+		return true
+	})
+	if err != nil {
+		return true, nil
+	}
+	if found == "" || found == sessionID {
+		return true, nil
+	}
+	return false, fmt.Errorf("%w: %s says it belongs to %s, not %s",
+		ErrWrongSession, path, found, sessionID)
 }

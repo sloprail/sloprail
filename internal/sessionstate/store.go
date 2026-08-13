@@ -49,6 +49,18 @@ type Store interface {
 	Meta(key string) (string, bool, error)
 	// SetMeta records a session fact, replacing any previous value.
 	SetMeta(key, value string) error
+	// SwapMeta records a session fact only while its stored value is still the
+	// one the caller last read, reporting whether it wrote.
+	//
+	// What Meta-then-SetMeta cannot express. Two hook PROCESSES read the same
+	// value, both decide against it, and the later write lands on a value its
+	// decision never saw — the earlier one is lost with nothing to notice.
+	// Deciding and writing have to be one step against the database, which is
+	// what this is: the comparison happens inside the write.
+	//
+	// An absent key is matched by an empty old, so the first write of a key goes
+	// through this too rather than needing a separate path.
+	SwapMeta(key, old, value string) (bool, error)
 
 	// FileCheck reads one guardrail's verdict on one file. A check never
 	// recorded is a zero verdict and false.

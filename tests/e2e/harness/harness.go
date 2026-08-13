@@ -22,9 +22,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
 const (
@@ -303,6 +306,114 @@ func (e *Env) CLI(dir string, args ...string) Result {
 		e.t.Fatalf("harness: run sloprail %v: %v\n%s", args, err, out)
 	}
 	return Result{Output: string(out), Code: code}
+}
+
+// GitInit makes a project a repository with one commit on `main`.
+//
+// A test about the baseline needs a real one: what is recorded is what git
+// reports, and the branch is the whole mechanism by which a switch to another
+// line of history is noticed. Its identity is set locally so the run does not
+// depend on whatever the machine has configured.
+func (e *Env) GitInit(dir string) {
+	e.t.Helper()
+	e.Git(dir, "init", "--initial-branch=main")
+	e.Git(dir, "config", "user.email", "e2e@example.invalid")
+	e.Git(dir, "config", "user.name", "E2E")
+	e.Git(dir, "add", "-A")
+	e.Git(dir, "commit", "--allow-empty", "-m", "initial")
+}
+
+// Git runs a git command in dir and returns its trimmed output.
+func (e *Env) Git(dir string, args ...string) string {
+	e.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		e.t.Fatalf("harness: git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// Meta reads one of the engine's own per-session facts — the baseline commit,
+// the branch it was taken on, the read mark.
+//
+// Opened directly, because there is no command that prints these: `session
+// state get` serves a guardrail's own keys, and meta is the engine's. Adding a
+// command to make this test convenient would be adding product surface for a
+// test's benefit.
+//
+// Where the database sits is still not guessed. The session's identity is
+// resolved by asking the binary under test — `sloprail session id`, the same
+// walk every hook uses — so a test cannot pass against a database the engine
+// itself would never have written to.
+//
+// Returns "" for a key never written, which is the same answer the store gives.
+func (e *Env) Meta(projDir, sessionID, key string) string {
+	e.t.Helper()
+
+	db, err := sessionstate.Open(e.sessionDBPath(projDir, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+
+	value, _, err := db.Meta(key)
+	if err != nil {
+		e.t.Fatalf("harness: read meta %s: %v", key, err)
+	}
+	return value
+}
+
+// sessionDBPath mirrors where the engine puts a session's state, having asked
+// the engine itself for the only part a test could get wrong: the conversation
+// identity, which is not the id the harness reports.
+func (e *Env) sessionDBPath(projDir, sessionID string) string {
+	e.t.Helper()
+
+	payload := fmt.Sprintf(`{"transcript_path":%q,"cwd":%q}`,
+		e.transcriptPath(projDir, sessionID), projDir)
+
+	cmd := exec.Command(filepath.Join(e.binDir, "sloprail"), "session", "id")
+	cmd.Dir = projDir
+	cmd.Stdin = strings.NewReader(payload)
+	cmd.Env = append(os.Environ(), "HOME="+e.home, "CLAUDE_CONFIG_DIR="+e.configDir)
+	out, err := cmd.Output()
+	if err != nil {
+		e.t.Fatalf("harness: resolve session id: %v", err)
+	}
+	stableID := strings.TrimSpace(string(out))
+
+	// The rest is the platform data directory and the encoded workspace, which
+	// the engine derives the same way. HOME is the harness's own, so this stays
+	// inside the sandbox.
+	return filepath.Join(dataHome(e.home), "sloprail", "sessions",
+		encodeProjectDir(resolveWorkDir(projDir)), stableID, "state.db")
+}
+
+// transcriptPath is where the harness's transcript for a session sits.
+func (e *Env) transcriptPath(projDir, sessionID string) string {
+	return filepath.Join(e.configDir, "projects",
+		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
+}
+
+// dataHome mirrors the engine's own platform data directory, for the sandboxed
+// home the mock ran under.
+func dataHome(home string) string {
+	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+		return dir
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support")
+	case "windows":
+		if dir := os.Getenv("LocalAppData"); dir != "" {
+			return dir
+		}
+		return filepath.Join(home, "AppData", "Local")
+	default:
+		return filepath.Join(home, ".local", "share")
+	}
 }
 
 // Guardrail writes a declaration and its hook scripts into a project.

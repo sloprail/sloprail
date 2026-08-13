@@ -70,6 +70,16 @@ func newSessionIDCmd() *cobra.Command {
 // exist, so failing to resolve means the environment is broken — and falling
 // back to the reported id would restore the exact silent orphaning this exists
 // to prevent.
+//
+// The path is taken from p.record() rather than from the field, so a payload
+// that names the session without naming its file still resolves. That is the
+// SessionStart payload, and it is the one place where failing to resolve costs
+// the session its baseline. Whatever that resolution refuses is refused here
+// too, unchanged: a session id that is not a name, a guessed file belonging to
+// another conversation, and a guessed file written in another tree are all cases
+// where carrying on means keying this session's state on somebody else's
+// identity — the same silent orphaning this function exists to prevent, arrived
+// at from the other side.
 func stableID(p HookPayload) (string, error) {
 	path, err := p.record()
 	if err != nil {

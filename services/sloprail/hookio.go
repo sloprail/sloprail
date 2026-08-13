@@ -2,12 +2,20 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/transcript"
 )
+
+// errNotASessionID: the reported session id is not a name, so no filename may
+// be built from it. See record.
+var errNotASessionID = errors.New("sloprail: the reported session id is not a session id")
 
 // HookPayload is what a harness puts on a hook's standard input.
 //
@@ -28,6 +36,13 @@ type HookPayload struct {
 	// because it is how the sub-agent's own record is found when a harness
 	// reports the sub-agent without reporting where it wrote it.
 	AgentID string `json:"agent_id"`
+
+	// SessionID is the id the harness currently reports. Never the identity
+	// anything is keyed on — Claude Code re-forks it mid-conversation — but it
+	// names the file the harness is writing, which is what makes it worth
+	// keeping: it is the only way to find the record when the payload omits its
+	// path, and SessionStart is precisely where that happens.
+	SessionID string `json:"session_id"`
 
 	Cwd            string          `json:"cwd"`
 	ToolName       string          `json:"tool_name"`
@@ -60,8 +75,62 @@ type HookPayload struct {
 // SubagentTranscriptPath refuses an id that is not a name rather than repairing
 // it, so a reconstruction cannot leave the conversation's own directory.
 //
-// A payload naming neither is the ordinary root session, which is the common
-// case and not a fault.
+// A payload naming NO path but a session id is the last case, and it is the root
+// session's SessionStart: the hook fires as the session begins, which is the one
+// moment the baseline most needs recording, so treating the absent field as "no
+// record" would leave every session unable to take its own starting point. The
+// path is reconstructed from the id and the working directory, using the
+// encoding this codebase already keeps in one place for the identity walk.
+//
+// That last reconstruction is the only branch this process is RESPONSIBLE for
+// being wrong about, which is why it alone is guarded. Everything above it is a
+// path a harness handed over — authoritative, and nothing to check it against.
+// A guess is different: the engine keys its baseline, its read mark and its
+// verdicts on what comes back, so a guess that lands on the wrong real file is
+// silent corruption rather than a loud failure.
+//
+// Three things guard it, and each catches something the others cannot:
+//
+//   - A session id carrying a path separator is refused rather than repaired.
+//     "../-other-project/secret" joined onto the project directory is cleaned by
+//     filepath.Join AFTER the concatenation, so the traversal lands in another
+//     project's directory and resolves that conversation's identity with no
+//     error at all. filepath.Base would make the path safe and the anomaly
+//     invisible. Both slashes are refused because Windows separates on both.
+//     "." and ".." need no clause: the suffix defuses them before the join, so
+//     "." becomes "..jsonl" and ".." becomes "...jsonl", ordinary filenames
+//     inside the project directory. A clause for them could never fire.
+//   - BelongsToSession asks the file whether it is this session's. A guessed
+//     name colliding with another conversation's transcript otherwise resolves
+//     silently and hands back that conversation's identity.
+//   - BelongsToTree asks whether it was written in this tree. EncodeProjectDir
+//     maps every non-alphanumeric byte to "-", so a separator and a literal
+//     hyphen become the same character: cwd "/home/u/proj" with subdirectory
+//     "pkg" and the sibling checkout "/home/u/proj-pkg" both encode to
+//     "-home-u-proj-pkg". If that sibling has a session by this id the guess
+//     lands on its real transcript and the SESSION check agrees, because the id
+//     really is that file's own. Only the tree disagrees. Two hyphenated sibling
+//     checkouts is an ordinary layout, not an attack.
+//
+// Neither check subsumes the other: the session check catches a filename
+// colliding with an unrelated conversation in the SAME tree, the tree check
+// catches the same id existing in a colliding directory. What the tree check
+// still cannot separate is stated on BelongsToTree, and the honest summary is
+// that it narrows the collision rather than closing it — a sibling session that
+// genuinely ran in this tree is indistinguishable by anything written down.
+//
+// The tree check sits on this branch and NOT on the reported-path branches
+// above, which is what keeps it compatible with an isolated sub-agent. A
+// sub-agent dispatched into its own worktree records that worktree as its cwd
+// while the harness still nests its record under the DISPATCHING session's
+// project directory: of 337 real sub-agent transcripts carrying a cwd, 18 record
+// a sibling worktree not under the parent's tree at all, and asking
+// BelongsToTree about those would refuse a sub-agent its own record. It is never
+// asked, because a sub-agent's path is always REPORTED — by agent_transcript_path,
+// or reconstructed from agent_id against the parent's own reported path — and
+// both return above. projectDirOf is the same fact from the other side: for a
+// sub-agent the transcript's own LOCATION is authoritative and the recorded cwd
+// is not.
 func (p HookPayload) record() (string, error) {
 	if p.AgentTranscriptPath != "" {
 		return p.AgentTranscriptPath, nil
@@ -69,7 +138,29 @@ func (p HookPayload) record() (string, error) {
 	if p.AgentID != "" && p.TranscriptPath != "" {
 		return transcript.SubagentTranscriptPath(p.TranscriptPath, p.AgentID)
 	}
-	return p.TranscriptPath, nil
+	if p.TranscriptPath != "" {
+		return p.TranscriptPath, nil
+	}
+	if p.SessionID == "" {
+		// No path and no id: nothing to resolve and nothing to guess from. Not a
+		// fault in itself — the caller decides whether it can proceed without one.
+		return "", nil
+	}
+	if strings.ContainsAny(p.SessionID, `/\`) {
+		return "", fmt.Errorf("%w: %q", errNotASessionID, p.SessionID)
+	}
+	dir := transcript.ProjectDir(transcript.ConfigDir(), p.Cwd)
+	if dir == "" {
+		return "", nil
+	}
+	path := filepath.Join(dir, p.SessionID+".jsonl")
+	if ok, err := transcript.BelongsToSession(path, p.SessionID); !ok {
+		return "", err
+	}
+	if ok, err := transcript.BelongsToTree(path, p.Cwd); !ok {
+		return "", err
+	}
+	return path, nil
 }
 
 // IsSubagent reports whether this payload belongs to a sub-agent rather than the
