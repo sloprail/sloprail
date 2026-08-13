@@ -100,6 +100,13 @@ const (
 	TypeBool   FieldType = "bool"
 	TypeList   FieldType = "list"
 	TypeMap    FieldType = "map"
+
+	// TypeInt is a whole number. It exists because a field that holds one and
+	// is declared as anything else is checked wrongly in both directions: as a
+	// string, `.line > 10` is refused for a comparison that is correct; as
+	// nothing at all, `.line == "3"` loads for a comparison that can never
+	// hold. A marker's line is the first such field.
+	TypeInt FieldType = "int"
 )
 
 // Input is what a module is given to extract from.

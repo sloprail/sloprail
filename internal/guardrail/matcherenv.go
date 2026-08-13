@@ -34,6 +34,12 @@ func fieldType(f module.FieldDecl) types.Type {
 		return types.String
 	case module.TypeBool:
 		return types.Bool
+	case module.TypeInt:
+		// types.Int is TypeOf(0) — Go's `int`. A module declaring TypeInt must
+		// put a Go `int` in the event, not an int32 or an int64: the checker
+		// would accept `.line > 10` and the vm would then be comparing a type
+		// the check did not describe.
+		return types.Int
 
 	case module.TypeList:
 		// A declared element shape is what makes `any(invocations, .bin == …)`

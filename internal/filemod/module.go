@@ -30,6 +30,14 @@ const (
 const (
 	FieldPath    = "path"
 	FieldContent = "content"
+	FieldMarkers = "markers"
+
+	// Keys within one entry of FieldMarkers. Not fields of the kind: a matcher
+	// reads them off an element of the list, and the declaration describes the
+	// list itself.
+	KeyMarkerKind = "kind"
+	KeyMarkerFQN  = "fqn"
+	KeyMarkerLine = "line"
 )
 
 // Module produces file events.
@@ -57,6 +65,32 @@ func (*Module) Kinds() []module.KindDecl {
 	path := module.FieldDecl{Name: FieldPath, Type: module.TypeString}
 	content := module.FieldDecl{Name: FieldContent, Type: module.TypeString}
 
+	// markers declares its element's shape, and that is the whole point of the
+	// Elem field. A list whose Elem is nil has its collection checked and its
+	// predicate body left alone (see module.FieldDecl.Elem), so
+	// `any(markers, .knid == "docs")` — a typo INSIDE the predicate — would
+	// compile, load, and return admitted=false forever. That is the silent
+	// never-fires CompileMatcherFor exists to prevent, alive one level down.
+	// With the element named, the checker refuses it at load and names the
+	// fields there are.
+	//
+	// Elem is a TypeMap because that is what fieldType resolves to a closed
+	// structure over: a list of maps whose keys are enumerated. Naming them is
+	// this module asserting these are the fields, which is what makes refusing
+	// the others fair.
+	markers := module.FieldDecl{
+		Name: FieldMarkers,
+		Type: module.TypeList,
+		Elem: &module.FieldDecl{
+			Type: module.TypeMap,
+			Fields: []module.FieldDecl{
+				{Name: KeyMarkerKind, Type: module.TypeString},
+				{Name: KeyMarkerFQN, Type: module.TypeString},
+				{Name: KeyMarkerLine, Type: module.TypeInt},
+			},
+		},
+	}
+
 	return []module.KindDecl{
 		// Pre kinds are predictions: what a tool call or a parsed command says
 		// it is about to do. Refusing one prevents the work.
@@ -65,9 +99,15 @@ func (*Module) Kinds() []module.KindDecl {
 			// Content only here. The file does not exist yet, so a rule that
 			// wants to look at what would be written has nowhere else to look;
 			// on the other kinds it is already on disk.
-			Fields: []module.FieldDecl{path, content},
+			Fields: []module.FieldDecl{path, content, markers},
 		},
-		{Name: KindPreUpdate, Fields: []module.FieldDecl{path}},
+		{Name: KindPreUpdate, Fields: []module.FieldDecl{path, markers}},
+
+		// No markers on a delete. A deletion has no text to read them out of,
+		// so the field could only ever be empty — and an always-empty field is
+		// one a rule can match on and never learn anything from. `len(markers)
+		// == 0` is a real question to ask of a create or an update; asked of a
+		// delete it is a tautology dressed as a rule.
 		{Name: KindPreDelete, Fields: []module.FieldDecl{path}},
 
 		// Post kinds are observations, established by comparing the tree
