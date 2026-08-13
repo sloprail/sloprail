@@ -120,8 +120,16 @@ func TestMatch_NonBooleanAtRuntimeIsAnError(t *testing.T) {
 	// Where the type is not statically known, AsBool() compiles in a cast
 	// instead. The cast fails at run time, so the expression still never
 	// quietly admits — but note it surfaces as a run error, not as the
-	// "produced %T, not a boolean" message in Match. That branch is currently
-	// unreachable; this test pins the behaviour that actually occurs.
+	// "produced %T, not a boolean" message in Match.
+	//
+	// DO NOT DELETE THE !ok BRANCH IN Match (matcher.go:50-56) ON THE STRENGTH
+	// OF ITS COVERAGE. It is unreachable only because CompileMatcher passes
+	// expr.AsBool(), which guarantees the return is either a bool or an error.
+	// It is a guard against that changing: drop AsBool(), or compile a matcher
+	// by another path, and the branch becomes the only thing standing between
+	// a non-boolean result and a matcher that admits by accident. It is
+	// deliberately unreachable, not merely untested — which is why no test
+	// here exercises it, and why this one asserts that it does NOT fire.
 	m, err := CompileMatcher(`path`)
 	require.NoError(t, err, "a bare field is statically dynamic, so it compiles")
 
@@ -170,6 +178,42 @@ func TestMatch_FieldDeclaredOnAnotherKind(t *testing.T) {
 	require.NoError(t, err, "no error: an absent field is nil, and contains on nil is false")
 	assert.False(t, admitted,
 		"a rule bound to PreFileUpdate but written against content never fires, silently")
+}
+
+// TestMatch_PresentButNilFieldIsNotAnError covers a different path through
+// expr than an absent key: here the name resolves, to an explicit nil. A
+// module that set a field it had no value for produces this, and it behaves
+// like the absent case — false, with no error — even where the same
+// comparison against a string operand would fail.
+func TestMatch_PresentButNilFieldIsNotAnError(t *testing.T) {
+	nilPath := event.Event{Kind: "PreFileCreate", Fields: map[string]any{"path": nil}}
+
+	cases := []struct {
+		src      string
+		admitted bool
+	}{
+		{`path == "x"`, false},
+		{`path startsWith "memories/"`, false},
+		{`path`, false},
+		{`path == nil`, true},
+		{`path != nil`, false},
+	}
+	for _, tc := range cases {
+		m, err := CompileMatcher(tc.src)
+		require.NoError(t, err, "src %q", tc.src)
+
+		admitted, err := m.Match(nilPath)
+		require.NoError(t, err, "src %q: a nil-valued field does not error", tc.src)
+		assert.Equal(t, tc.admitted, admitted, "src %q", tc.src)
+	}
+
+	// Note the contrast with a string-valued field: `path` alone errors when
+	// path holds a string (see TestMatch_NonBooleanAtRuntimeIsAnError) but
+	// returns false when it holds nil. The bool cast tolerates nil.
+	m, err := CompileMatcher(`path`)
+	require.NoError(t, err)
+	_, err = m.Match(fileEvent("a.md"))
+	assert.Error(t, err, "the same expression errors on a string")
 }
 
 func TestMatch_NilFieldsMapIsSafe(t *testing.T) {

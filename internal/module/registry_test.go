@@ -106,13 +106,25 @@ func TestNewRegistry_KindWithNoNameIsRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "declared a kind with no name")
 }
 
-// TestNewRegistry_AddIsNotAtomic pins CURRENT behaviour worth
-// knowing: add() writes into r.owner as it walks a module's
-// kinds, so a module that declares a good kind and then a bad one has already
-// claimed the good kind by the time it fails. NewRegistry discards the whole
-// registry on error, so nothing observable escapes today — but add() is not
-// atomic, and a future caller that adds to a live registry would inherit a
-// half-registered module.
+// TestNewRegistry_AddIsNotAtomic DOCUMENTS A KNOWN DEFECT.
+//
+// This test asserts what the code does today, NOT what it should do. When the
+// defect is fixed, this test MUST be changed — its failure is the expected
+// consequence of the fix, not a regression. Do not "repair" it by reverting
+// the fix.
+//
+// The defect: add() writes into r.owner and r.decl as it walks a module's
+// kinds (registry.go:60-61), so a module declaring a valid kind and then an
+// invalid one has already claimed the valid kind by the time it returns an
+// error. NewRegistry discards the whole registry on error, so nothing
+// observable escapes today — but add() is a method on a live registry, and any
+// future caller registering into one incrementally inherits a module that owns
+// kinds while not being registered under its own name.
+//
+// Corrected behaviour would be: add() leaves the registry exactly as it found
+// it when it fails — staging the kinds and committing them only once every
+// kind has been validated. The assertion below on ownsGood would then flip
+// from True to False, and the assertion on `registered` would stay False.
 func TestNewRegistry_AddIsNotAtomic(t *testing.T) {
 	r := &Registry{
 		byName: map[string]Module{},
@@ -125,7 +137,9 @@ func TestNewRegistry_AddIsNotAtomic(t *testing.T) {
 	require.Error(t, err)
 
 	_, ownsGood := r.Lookup("GoodKind")
-	assert.True(t, ownsGood, "the kind declared before the failure is already claimed")
+	assert.True(t, ownsGood,
+		"DEFECT: the kind declared before the failure is already claimed. "+
+			"Flip to assert.False once add() rolls back on error.")
 	_, registered := r.byName["partial"]
 	assert.False(t, registered, "but the module itself was never recorded under its name")
 }

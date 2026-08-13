@@ -3,6 +3,7 @@ package guardrail
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,13 +127,28 @@ func TestSplitFrontmatter_FirstClosingFenceWins(t *testing.T) {
 	assert.Equal(t, "body\n---\nmore\n", string(body))
 }
 
-// TestSplitFrontmatter_FenceMatchingIsLoose pins CURRENT behaviour that is
-// looser than the format the spec describes: the opening fence is matched with
-// HasPrefix after trimming, so leading whitespace and trailing characters on
-// the fence line are accepted. The closing fence, by contrast, is matched with
-// Equal, so it must be exactly ---. This asymmetry is not documented anywhere.
+// TestSplitFrontmatter_FenceMatchingIsLoose DOCUMENTS A KNOWN DEFECT.
+//
+// This test asserts what the code does today, NOT what it should do. When the
+// defect is fixed, this test MUST be changed — its failure is the expected
+// consequence of the fix, not a regression. Do not "repair" it by reverting
+// the fix.
+//
+// The defect: the opening fence is matched with HasPrefix after TrimSpace
+// (store.go:100) while the closing fence is matched with Equal after TrimSpace
+// (store.go:105). So `----` and `---yaml` open frontmatter but only `---`
+// closes it, and the asymmetry is documented nowhere.
+//
+// Corrected behaviour would be: both fences matched the same way, exactly
+// `---` after trimming, so that `----`, `---yaml` and any other prefix match
+// is refused as an opening fence with the "no frontmatter" error. The
+// subtests below marked DEFECT are the ones whose expectation would flip from
+// NoError to Error; "four dashes rejected as closing fence" already asserts
+// the corrected behaviour and would keep passing.
 func TestSplitFrontmatter_FenceMatchingIsLoose(t *testing.T) {
 	t.Run("indented opening fence accepted", func(t *testing.T) {
+		// Whether indentation should be tolerated is a judgement call for
+		// whoever fixes the asymmetry; either way both fences should agree.
 		front, body, err := splitFrontmatter([]byte("   ---\na: 1\n---\nbody\n"))
 		require.NoError(t, err)
 		assert.Equal(t, "a: 1\n", string(front))
@@ -140,18 +156,21 @@ func TestSplitFrontmatter_FenceMatchingIsLoose(t *testing.T) {
 	})
 
 	t.Run("four dashes accepted as opening fence", func(t *testing.T) {
+		// DEFECT: should be refused. Flip to require.Error once fixed.
 		front, _, err := splitFrontmatter([]byte("----\na: 1\n---\nbody\n"))
 		require.NoError(t, err)
 		assert.Equal(t, "a: 1\n", string(front))
 	})
 
 	t.Run("opening fence with trailing text accepted", func(t *testing.T) {
+		// DEFECT: should be refused. Flip to require.Error once fixed.
 		front, _, err := splitFrontmatter([]byte("---yaml\na: 1\n---\nbody\n"))
 		require.NoError(t, err)
 		assert.Equal(t, "a: 1\n", string(front))
 	})
 
 	t.Run("four dashes rejected as closing fence", func(t *testing.T) {
+		// Already the corrected behaviour: this subtest survives the fix.
 		_, _, err := splitFrontmatter([]byte("---\na: 1\n----\nbody\n"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unterminated")
@@ -200,6 +219,35 @@ func TestLoad_EmptyGuardrailsDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, decls)
 	assert.Empty(t, invalid)
+}
+
+// TestLoad_UnreadableDirectoryIsAnError separates "no guardrails" from
+// "cannot tell whether there are guardrails". A missing directory is the
+// ordinary state of a project that has not adopted sloprail; a directory that
+// exists but cannot be read is a broken setup, and reporting it as no rules
+// would silently disarm the project.
+func TestLoad_UnreadableDirectoryIsAnError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits do not apply on windows")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root ignores the mode, so the directory stays readable")
+	}
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "guardrails")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	writeGuardrail(t, root, "unreachable", "---\nhooks: {}\n---\nbody\n")
+
+	require.NoError(t, os.Chmod(dir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) }) // so TempDir can clean up
+
+	decls, invalid, err := New(root).Load()
+	require.Error(t, err, "an unreadable directory is not an empty one")
+	assert.Empty(t, decls)
+	assert.Empty(t, invalid)
+	assert.Contains(t, err.Error(), "guardrail: read")
+	assert.Contains(t, err.Error(), dir, "the error names the directory it could not read")
 }
 
 func TestLoad_HappyPath(t *testing.T) {
