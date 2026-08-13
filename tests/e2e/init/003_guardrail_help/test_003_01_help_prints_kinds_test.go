@@ -4,9 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sloprail/sloprail/internal/commandmod"
-	"github.com/sloprail/sloprail/internal/filemod"
-	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
 // T003_01: help prints every kind the engine can produce, with its fields.
@@ -15,6 +13,12 @@ import (
 // same reason the help itself is: a list spelled here would be a third copy, and
 // the test would pass while the help lied. Add a module and this fails until the
 // help prints its kinds too.
+//
+// modules.Registry is the same call the binary makes — not a registry assembled
+// here to resemble it. Assembled, it would be a list to keep in step, and the
+// one time it fell behind the test went red for a module that had been added
+// correctly. Sharing the call is what makes disagreeing impossible rather than
+// merely unlikely.
 func TestT003_01_HelpPrintsEveryDeclaredKind(t *testing.T) {
 	e := New(t)
 
@@ -23,7 +27,7 @@ func TestT003_01_HelpPrintsEveryDeclaredKind(t *testing.T) {
 		t.Fatalf("guardrail help exited %d:\n%s", got.Code, got.Output)
 	}
 
-	reg, err := module.NewRegistry(filemod.New(), commandmod.New())
+	reg, err := modules.Registry()
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
@@ -45,6 +49,71 @@ func TestT003_01_HelpPrintsEveryDeclaredKind(t *testing.T) {
 			if !strings.Contains(got.Output, f.Name) {
 				t.Errorf("help does not mention field %q of kind %q — a matcher author would have to guess it", f.Name, kind)
 			}
+		}
+	}
+}
+
+// T003_05: the binary runs with the module list, not with one of its own.
+//
+// T003_01 proves the help mentions every kind the list declares. It cannot
+// prove the reverse — a binary carrying a module the list does not have would
+// print an extra kind and pass, because a superset contains everything asked
+// for. That is precisely the shape of the bug this all exists to stop: a second
+// list, and the binary running with it.
+//
+// So this compares both directions, against what the BUILT binary reports.
+// `guardrail help` prints MODULES IN THIS BUILD from the registry it is running
+// with, which makes the binary's own module list observable from outside it.
+// Every module in All() must appear there, and every module named there must be
+// in All().
+//
+// It reads that roster rather than the per-kind attribution under EVENT KINDS.
+// The attribution is emitted per kind, so a module declaring no kinds produced
+// no line and this test could not see it — a silent module could be in the
+// binary undetected, and a silent module correctly in All() failed here saying
+// the binary never mentioned it, which was false. The roster is printed per
+// module and has neither blind spot.
+//
+// Add a module to the repo and not to All(), and TestAll_HoldsEveryModuleInTheRepo
+// goes red. Wire one into the binary past All() and this goes red — but that
+// case no longer needs catching at runtime: module.NewRegistry takes a token
+// only packages under internal/module/ can name, so a hook point building its
+// own list does not compile. This is the check that the one list the binary CAN
+// have is the one it reports.
+func TestT003_05_BinaryReportsExactlyTheModuleList(t *testing.T) {
+	e := New(t)
+
+	got := e.CLI(t.TempDir(), "guardrail", "help")
+	if got.Code != 0 {
+		t.Fatalf("guardrail help exited %d:\n%s", got.Code, got.Output)
+	}
+
+	// What the binary says it is running with, read back out of its own output.
+	reported := map[string]bool{}
+	for _, line := range strings.Split(got.Output, "\n") {
+		_, rest, found := strings.Cut(line, "(module: ")
+		if !found {
+			continue
+		}
+		name, _, found := strings.Cut(rest, ")")
+		if found {
+			reported[strings.TrimSpace(name)] = true
+		}
+	}
+	if len(reported) == 0 {
+		t.Fatal("help attributed no kind to any module — this test can prove nothing, and the help lost the attribution an author needs")
+	}
+
+	listed := map[string]bool{}
+	for _, m := range modules.All() {
+		listed[m.Name()] = true
+		if !reported[m.Name()] {
+			t.Errorf("module %q is in the list but the binary never mentions it — the build is running with a different set of modules than the one declared", m.Name())
+		}
+	}
+	for name := range reported {
+		if !listed[name] {
+			t.Errorf("the binary reports module %q, which is not in the list — a second module list exists somewhere in the binary", name)
 		}
 	}
 }
@@ -91,7 +160,7 @@ func TestT003_04_HelpNamesNoUnevaluableOperator(t *testing.T) {
 
 	got := e.CLI(t.TempDir(), "guardrail", "help")
 
-	reg, err := module.NewRegistry(filemod.New(), commandmod.New())
+	reg, err := modules.Registry()
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}

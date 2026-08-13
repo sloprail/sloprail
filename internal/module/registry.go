@@ -3,6 +3,9 @@ package module
 import (
 	"fmt"
 	"sort"
+	"testing"
+
+	"github.com/sloprail/sloprail/internal/module/internal/registryauth"
 )
 
 // Registry holds the modules this build knows about, and which kinds each owns.
@@ -23,7 +26,44 @@ type Registry struct {
 }
 
 // NewRegistry returns a registry holding the given modules.
-func NewRegistry(mods ...Module) (*Registry, error) {
+//
+// The token is the fence, not a parameter with a value. It is a type only
+// packages under internal/module/ can name, AND one no other package can
+// construct without naming it — its unexported field is what makes the second
+// half true, and the fence is worth nothing without it. Together they make
+// internal/module/modules the only place in the repo that can assemble a module
+// list — see internal/module/internal/registryauth for why. Everything else
+// takes the registry modules.Registry hands it.
+//
+// So a hook point cannot quietly enforce against a vocabulary of its own. That
+// is not a style preference: `guardrail help` is the only registry observable
+// from outside the binary, so a second list anywhere else would be enforced and
+// undocumented and unseen by every test at once.
+func NewRegistry(_ registryauth.Token, mods ...Module) (*Registry, error) {
+	return newRegistry(mods)
+}
+
+// NewRegistryForTest builds a registry from arbitrary modules, for tests that
+// need a vocabulary of their own.
+//
+// The loader, the validator and the matcher are checked against modules
+// declared in the test rather than against filemod, deliberately: the engine is
+// supposed to work from declarations rather than from anything compiled into
+// it, and a test borrowing a real module's kinds would stop proving that. Those
+// tests need a door through the fence.
+//
+// It is a door with its name on it. It panics outside a test binary, so a hook
+// point reaching for it does not get a second module list — it gets a crash on
+// the first invocation, which is the loudest failure available and the opposite
+// of the silent divergence the fence exists to stop.
+func NewRegistryForTest(mods ...Module) (*Registry, error) {
+	if !testing.Testing() {
+		panic("module: NewRegistryForTest called outside a test — the shipped build has exactly one module list, and it is modules.Registry()")
+	}
+	return newRegistry(mods)
+}
+
+func newRegistry(mods []Module) (*Registry, error) {
 	r := &Registry{
 		byName: make(map[string]Module, len(mods)),
 		owner:  make(map[string]Module),
@@ -89,6 +129,24 @@ func (r *Registry) DeclaredKinds() []string {
 	}
 	sort.Strings(kinds)
 	return kinds
+}
+
+// ModuleNames returns every registered module, in a stable order, whether or
+// not it declared a kind.
+//
+// Registered rather than owning-a-kind is the distinction that matters. Kind
+// ownership was the only thing the help reported, which left a module declaring
+// no kinds invisible from outside the binary — it was in the build, it was
+// enforcing nothing, and nothing could see either fact. A module with no kinds
+// is a defect worth surfacing, not a module worth hiding: it produces no events,
+// so anything a project bound to it would sit there looking enforced.
+func (r *Registry) ModuleNames() []string {
+	names := make([]string, 0, len(r.byName))
+	for n := range r.byName {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Needed returns the modules that some binding actually asks for, given the

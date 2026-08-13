@@ -1,0 +1,69 @@
+// Package modules holds the one list of modules a build ships with.
+//
+// It sits here rather than in the binary because of who else has to know. The
+// hook points, `guardrail help` and the load check all run inside the binary
+// and could have read a list defined there; a test cannot. A test asking which
+// kinds exist, with the list unreachable, has no option but to write its own —
+// and that copy is the worst one of all, because it is the copy the binary is
+// judged against. That is not hypothetical: the help e2e held `filemod` alone,
+// and registering `commandmod` broke it. The second list appeared inside the
+// test written to prevent second lists.
+//
+// So the list is exported, and every caller — the binary and the tests that
+// check it — reaches the same function. Adding a module is one edit here, and
+// nothing can be checked against a vocabulary the engine does not have.
+//
+// A package of its own rather than internal/module itself, which the modules
+// import: a list there would import them back.
+//
+// A package UNDER internal/module rather than beside it, because that is what
+// makes this the only list there can be. Go lets only packages rooted at
+// internal/module/ import internal/module/internal/registryauth, and
+// module.NewRegistry takes a token from there whose unexported field means it
+// cannot be forged by a caller that never names it — so this package can build
+// a registry and no hook point can. See internal/module/internal/registryauth
+// for the hole that closed and the second one found reviewing the fix.
+package modules
+
+import (
+	"github.com/sloprail/sloprail/internal/commandmod"
+	"github.com/sloprail/sloprail/internal/filemod"
+	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/module/internal/registryauth"
+)
+
+// All returns the modules this build knows about, in registration order.
+//
+// The list itself, and the only place it is written down. Registry wraps it in
+// the registry every caller actually wants; this is exported for the rare
+// caller that wants the modules and not the index over them.
+func All() []module.Module {
+	return []module.Module{
+		filemod.New(),
+		commandmod.New(),
+	}
+}
+
+// Registry returns a registry over All.
+//
+// The only registry a build can have. Not by agreement — module.NewRegistry
+// takes a token this package can name and nothing under services/ can, and
+// that no package outside the fence can construct without naming either, so a
+// hook point assembling its own list does not compile. The second clause is
+// not redundant: without it the token was forgeable as `struct{}{}` and this
+// sentence was false. See internal/module/internal/registryauth.
+//
+// One constructor rather than a list written out wherever a registry is needed.
+// The hook points run it to produce events, `guardrail help` runs it to tell an
+// author which kinds exist, and the load check runs it to decide whether a
+// declaration binds to an event that exists — all from the same registry, so
+// the help cannot document a vocabulary the engine does not have and a
+// guardrail cannot pass validation only to bind to nothing at enforcement.
+//
+// It returns an error because registration is where a collision is caught: two
+// modules claiming one kind, or one registered twice. With the list fixed at
+// compile time that error means the build is wrong rather than the input, which
+// is why TestRegistry_RegistersCleanly exists to catch it before a caller does.
+func Registry() (*module.Registry, error) {
+	return module.NewRegistry(registryauth.Grant(), All()...)
+}

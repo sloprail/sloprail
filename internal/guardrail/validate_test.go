@@ -29,7 +29,7 @@ func (testModule) Extract(module.Input) ([]event.Event, error) { return nil, nil
 
 func testRegistry(t *testing.T) *module.Registry {
 	t.Helper()
-	reg, err := module.NewRegistry(testModule{})
+	reg, err := module.NewRegistryForTest(testModule{})
 	require.NoError(t, err)
 	return reg
 }
@@ -133,7 +133,7 @@ func TestValidate_UnknownEventKind(t *testing.T) {
 // A build with no modules is the engine's fault, not the declaration's, and
 // should read that way rather than as an empty list of alternatives.
 func TestValidate_RegistryWithNoKinds(t *testing.T) {
-	empty, err := module.NewRegistry()
+	empty, err := module.NewRegistryForTest()
 	require.NoError(t, err)
 
 	p := onlyProblem(t, Validate(declWith(scriptDir(t), "PreFileCreate", "", okHook()), empty), ErrUnknownEventKind)

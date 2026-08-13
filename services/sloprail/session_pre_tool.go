@@ -12,6 +12,7 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
 // newSessionPreToolCmd is the hook point that fires before a tool call runs.
@@ -30,7 +31,7 @@ func newSessionPreToolCmd() *cobra.Command {
 func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	p := readPayload(cmd)
 
-	reg, err := registry()
+	reg, err := modules.Registry()
 	if err != nil {
 		return nil
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
 // newGuardrailCmd groups what is about the declarations themselves rather than
@@ -48,7 +49,7 @@ The event kinds are printed from the modules that declare them, so this is the
 vocabulary this build actually has rather than a list written alongside it.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			reg, err := registry()
+			reg, err := modules.Registry()
 			if err != nil {
 				return err
 			}
@@ -62,6 +63,7 @@ func writeGuardrailHelp(w io.Writer, reg *module.Registry) error {
 		helpWhereItLives,
 		helpDeclarationShape,
 		helpBody,
+		helpModules,
 		helpKinds,
 		helpMatcher,
 		helpHookContract,
@@ -142,6 +144,37 @@ A hook is handed its guardrail's folder on stdin (`+"`guardrailDir`"+`), which i
 it reads this body.
 
 `)
+	return err
+}
+
+// helpModules prints every module this build registered.
+//
+// EVENT KINDS below already attributes each kind to its owner, so for a module
+// that declares kinds this repeats what is derivable. It exists for the module
+// that declares NONE. Attribution-per-kind cannot mention such a module at all,
+// which left it invisible from outside the binary: nothing reading this output
+// could tell a build carrying a silent module from a build without it, and
+// TestT003_05 — which reads exactly this output to check the binary against the
+// declared list — was blind in the same spot for the same reason.
+//
+// It is worth an author's attention too. A module here with no kinds under
+// EVENT KINDS produces no events, so it is either unfinished or misregistered,
+// and either way nothing can be bound to it.
+func helpModules(w io.Writer, reg *module.Registry) error {
+	if _, err := fmt.Fprint(w, `MODULES IN THIS BUILD
+
+Every module registered, whether or not it declares any kinds. A module listed
+here with no kinds below produces no events — nothing can be bound to it.
+
+`); err != nil {
+		return err
+	}
+	for _, name := range reg.ModuleNames() {
+		if _, err := fmt.Fprintf(w, "  (module: %s)\n", name); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(w)
 	return err
 }
 
