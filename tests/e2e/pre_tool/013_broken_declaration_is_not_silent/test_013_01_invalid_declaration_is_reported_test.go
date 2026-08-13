@@ -84,15 +84,13 @@ hooks:
 
 const refuseScript = "#!/bin/sh\ncat >/dev/null\necho 'guarded/ is off limits' >&2\nexit 1\n"
 
-// permitted reports whether the write went through.
-func permitted(output string) bool {
-	for _, sign := range []string{"deny", "denied", "block", "blocked"} {
-		if strings.Contains(output, sign) {
-			return false
-		}
-	}
-	return true
-}
+// Whether the write went through is asked of the Result — see harness.Refused.
+// A local copy of that predicate lived here and in 014, and both scanned the
+// whole stream for "deny"/"denied"/"block"/"blocked". The stream carries the
+// agent's own tool input, so a fully PERMITTED write to `deny/notes.md` was
+// reported as refused, and every `!permitted(...)` assertion below would have
+// passed on a permitted write the moment a fixture used such a path. One
+// definition, in the harness, keyed on the harness's own refusal marker.
 
 // T013_01: a matcher naming a field its kind does not carry stops the write it
 // was supposed to guard, and says why.
@@ -103,12 +101,22 @@ func permitted(output string) bool {
 // claimed the opposite.
 //
 // Note what this asserts, and why merely printing a diagnostic would not satisfy
-// it. At PreToolUse a harness forwards a hook's stderr to the agent ONLY when
-// the hook exits non-zero — verified by probing every other channel through this
-// same mock: stderr at exit 0, stdout at exit 0, `systemMessage` and
-// `additionalContext` are all swallowed. So "warn and proceed" is
-// indistinguishable from the original silence at the only place that matters.
-// The refusal is the diagnostic's delivery mechanism, not a separate decision.
+// it. No channel out of a PreToolUse hook delivers text to the agent without
+// ALSO refusing the action — measured through this same mock, one channel per
+// run: stdout and stderr at exit 0, stderr at exits 1, 3, 126 and 127,
+// `systemMessage` and `additionalContext` are all swallowed; only stderr at exit
+// 2 and the JSON `permissionDecision: "deny"` arrive, and both refuse.
+//
+// An earlier version of this comment said stderr reaches the agent "when the
+// hook exits non-zero" and claimed to have probed every other channel. Both
+// halves were wrong: it is exit 2 specifically, not any non-zero status, and the
+// unprobed channel was `permissionDecision` — the one the engine itself uses.
+// The conclusion was right anyway, which is exactly why it went unchecked. See
+// refuseForBroken in services/sloprail for the full table.
+//
+// So "warn and proceed" is indistinguishable from the original silence at the
+// only place that matters. The refusal is the diagnostic's delivery mechanism,
+// not a separate decision.
 func TestT013_01_MisspelledMatcherFieldStopsTheWriteItGuarded(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -120,7 +128,7 @@ func TestT013_01_MisspelledMatcherFieldStopsTheWriteItGuarded(t *testing.T) {
 		Write("w1", "guarded/notes.md", "hello"),
 	))
 
-	if permitted(got.Output) {
+	if got.Permitted() {
 		t.Fatalf("a guardrail that could not load let through the write it was written to guard:\n%s", got.Output)
 	}
 	if !got.Saw("paht") {
@@ -156,7 +164,7 @@ func TestT013_02_TheSameRuleSpelledRightRefuses(t *testing.T) {
 		Write("w1", "guarded/notes.md", "hello"),
 	))
 
-	if permitted(got.Output) {
+	if got.Permitted() {
 		t.Fatalf("the correctly spelled rule did not refuse the write it guards:\n%s", got.Output)
 	}
 	if !got.Saw("guarded/ is off limits") {
@@ -184,7 +192,7 @@ func TestT013_03_ABrokenRuleStopsEveryEventOfItsKind(t *testing.T) {
 		Write("w1", "elsewhere/notes.md", "hello"),
 	))
 
-	if permitted(got.Output) {
+	if got.Permitted() {
 		t.Fatalf("a rule that could not load was treated as narrowing to a path its broken matcher named:\n%s", got.Output)
 	}
 	if !got.Saw("PreFileCreate") {
@@ -210,7 +218,7 @@ func TestT013_04_ARuleBoundToNothingBlocksNothing(t *testing.T) {
 		Write("w1", "any/notes.md", "hello"),
 	))
 
-	if !permitted(got.Output) {
+	if got.Refused() {
 		t.Fatalf("a rule bound to an event that cannot occur blocked an unrelated write:\n%s", got.Output)
 	}
 }
@@ -233,7 +241,7 @@ func TestT013_05_ABrokenRuleDoesNotBlockAnUnrelatedKind(t *testing.T) {
 		Write("w1", "any/notes.md", "hello"),
 	))
 
-	if !permitted(got.Output) {
+	if got.Refused() {
 		t.Fatalf("a broken rule about deletions blocked a write it was never about:\n%s", got.Output)
 	}
 }
@@ -257,10 +265,141 @@ func TestT013_06_ASoundRuleStillRefusesOnItsOwnTerms(t *testing.T) {
 		Write("w1", "guarded/notes.md", "hello"),
 	))
 
-	if permitted(got.Output) {
+	if got.Permitted() {
 		t.Fatalf("the sound rule did not refuse while a broken one sat beside it:\n%s", got.Output)
 	}
 	if !got.Saw("guarded/ is off limits") {
 		t.Errorf("the sound rule's own reason was replaced by the broken one's:\n%s", got.Output)
+	}
+}
+
+// A declaration with no frontmatter fence at all — not a rule with a mistake in
+// it, but a file the parser cannot get a declaration out of. `loadOne` returns a
+// zero Declaration and one malformed problem carrying no event, so it binds
+// nothing and names no kinds.
+const unparseable = `this file has no frontmatter fence at all
+
+# Whatever this was meant to be
+`
+
+// The same fault by the other route: the fence opens and never closes, so the
+// frontmatter is unterminated. Included so T013_07 is about "cannot be parsed"
+// rather than about one spelling of it.
+const unterminatedFrontmatter = `---
+hooks:
+  PreFileCreate:
+    - hooks:
+        - type: command
+          command: ./refuse.sh
+
+# The closing fence is missing
+`
+
+// T013_07: a declaration that cannot be parsed at all refuses, rather than
+// going silent.
+//
+// This is the finding, and it is the round-one failure mode preserved for the
+// case where the file is MOST broken. `AffectedKinds` correctly returns nothing
+// for an unparseable declaration — there are no bindings to read off a file that
+// did not parse — but nothing else reported it either, and the name never
+// reached the stream. Announced once at session start, silent at every action
+// after it.
+//
+// "Genuinely a warning" was the framing, and the channel table makes it false:
+// no channel at this hook point delivers text to the agent without also refusing
+// the action, so "warn and proceed" IS "proceed". The more broken the file, the
+// quieter the engine got.
+//
+// Note this is deliberately not scoped. There is no evidence of what the file
+// was guarding, and "no evidence of what it guarded" is not "evidence it guarded
+// nothing" — see refuseForUnreadable.
+func TestT013_07_AnUnparseableDeclarationRefusesRatherThanGoingSilent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"no frontmatter fence", unparseable},
+		{"unterminated frontmatter", unterminatedFrontmatter},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := New(t)
+			proj := e.Project()
+			e.Guardrail(proj, "unreadable", tc.body, nil)
+
+			got := e.Run(proj, "s-013-07-"+strings.ReplaceAll(tc.name, " ", "-"),
+				"write a note", Turns("done",
+					Write("w1", "any/notes.md", "hello"),
+				))
+
+			if got.Permitted() {
+				t.Fatalf("a declaration too broken to read was treated as guarding nothing:\n%s", got.Output)
+			}
+			// The name is the whole point: it is what a person needs to find the
+			// file, and it was the thing that never reached the stream.
+			if !got.Saw("unreadable") {
+				t.Errorf("the refusal does not name the declaration that could not be read:\n%s", got.Output)
+			}
+			// A refusal an author cannot clear is a trap, and this one fires on
+			// every action until the file parses.
+			if !got.Saw("remove that folder") {
+				t.Errorf("the refusal does not say how to get unstuck:\n%s", got.Output)
+			}
+		})
+	}
+}
+
+// T013_08: the refusal does not lock the project out of fixing it.
+//
+// T013_07 refuses every action, which is the strongest response in this file and
+// the one that would be a trap if the way out were also refused. It is not: the
+// refusal names the file and says to fix or remove it, and both are done outside
+// the session. What must not happen is the engine ALSO failing to explain
+// itself — a blanket refusal carrying no name would leave an author with a
+// project that refuses everything and no idea which folder to look in.
+//
+// So this asserts the reason travels with the refusal on an unrelated action,
+// which is where a scoped refusal would have said nothing at all.
+func TestT013_08_TheBlanketRefusalAlwaysExplainsItself(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.Guardrail(proj, "unreadable", unparseable, nil)
+
+	// A command, not a write: a different module entirely, so nothing about
+	// this action is related to the file that cannot be read.
+	got := e.Run(proj, "s-013-08", "list the files", Turns("done",
+		Bash("b1", "ls -la"),
+	))
+
+	if got.Permitted() {
+		t.Fatalf("an unreadable declaration was silent on an action of another kind:\n%s", got.Output)
+	}
+	if !got.Saw("unreadable") {
+		t.Errorf("the refusal does not name the file to fix:\n%s", got.Output)
+	}
+	if !got.Saw("could not be read at all") {
+		t.Errorf("the refusal does not say what is wrong:\n%s", got.Output)
+	}
+}
+
+// T013_09: a project with no broken declarations is unaffected by any of this.
+//
+// The guard against the blanket refusal leaking. T013_07 refuses everything on
+// an unreadable file; a project whose declarations all parse must still run
+// normally, or the fix has replaced one fail-closed for every project.
+func TestT013_09_ASoundProjectIsNotRefused(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.Guardrail(proj, "correct", spelledCorrectly, map[string]string{
+		"refuse.sh": refuseScript,
+	})
+
+	// Not under guarded/, so the sound rule declines and nothing else has an
+	// opinion.
+	got := e.Run(proj, "s-013-09", "write a note", Turns("done",
+		Write("w1", "elsewhere/notes.md", "hello"),
+	))
+
+	if got.Refused() {
+		t.Fatalf("a project whose declarations all parse was refused:\n%s", got.Output)
 	}
 }

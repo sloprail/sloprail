@@ -134,8 +134,18 @@ func (iv Invalid) Has(kind error) bool {
 // Declaration and one malformed problem carrying no event. Such a declaration
 // yields no kinds here, and a caller that scopes by kind will not scope to it —
 // which is correct and deliberate. Nothing can be said about what an unreadable
-// file was guarding, and inventing a scope would mean either blocking everything
-// on a guess or blocking nothing while claiming to have checked.
+// file was guarding, and inventing a scope here would be this function claiming
+// evidence it does not have.
+//
+// What that means for ENFORCEMENT is a separate decision, and not one this
+// function gets to make by staying quiet. "No kinds" must not be read as "no
+// consequence": an enforcement point that scoped by kind and found none would
+// permit every action while a file the project keeps as a guardrail sits
+// unreadable, and — since no channel at PreToolUse delivers text without also
+// refusing — would do it silently. The pre-tool path therefore asks about this
+// case separately and refuses every action; see refuseForUnreadable in
+// services/sloprail, which carries the argument in full. Callers must decide
+// what an empty result means rather than defaulting into permission.
 func (iv Invalid) AffectedKinds() []string {
 	seen := make(map[string]bool)
 	var kinds []string

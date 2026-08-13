@@ -418,6 +418,69 @@ func TestMatch_UndeclaredElementShapeCanStillErrorAtRuntime(t *testing.T) {
 	assert.False(t, admitted, "an erroring matcher admits nothing")
 }
 
+// TestMatch_UndeclaredElementShapeAlsoFailsSILENTLY is the other half of the
+// gap above, and the worse half.
+//
+// An undeclared element shape does not only permit matcher ERRORS — which are
+// caught, because the engine refuses on them. It also permits the silent
+// never-fires, and which one an author gets depends on nothing but the operator
+// their typo lands under:
+//
+//	any(items, len(.flags.access) > 0)   // accessor: errors → the action refuses
+//	any(items, .bni == "npm")            // bare ==: false, err=nil → nothing
+//
+// The second is precisely what CompileMatcherFor was written to prevent, present
+// one level down. `.bni` is a typo for `.bin`; at the TOP level the identical
+// mistake (`paht` for `path`) is refused at load with a diagnostic naming the
+// field — see TestMatch_UndeclaredFieldIsNotSuppliedAZeroValue. Inside a
+// predicate over an element-less list, nothing checks it, nothing errors, and
+// the rule reads as satisfied on every command.
+//
+// This test asserts the CURRENT behaviour, not the desired one. It is here so
+// the gap is visible and measured rather than merely known, and it is expected
+// to be inverted — the compile becoming an error — when the module declares what
+// its list elements hold. commandmod declares `invocations` with a nil Elem and
+// its element's fields are already known (Bin, Argv, Flags), so declaring them
+// is a statement of fact; that change belongs to internal/commandmod.
+//
+// Nothing in the engine can close this from here: with no declared element shape
+// there is no vocabulary to check `.bni` against, and refusing every predicate
+// over an element-less list would refuse rules that are correct.
+func TestMatch_UndeclaredElementShapeAlsoFailsSILENTLY(t *testing.T) {
+	m, err := CompileMatcherFor(`any(items, .bni == "npm")`, looseKind)
+	require.NoError(t, err,
+		"the module did not say what items holds, so a typo inside the predicate is unchecked")
+
+	admitted, err := m.Match(event.Event{Kind: "PreLoose", Fields: map[string]any{
+		"items": []any{map[string]any{"bin": "npm"}},
+	}})
+	require.NoError(t, err, "a bare == against a nil does not error — it compares unequal")
+	assert.False(t, admitted,
+		"the rule silently does not fire on the very invocation it was written to catch")
+
+	// The same rule spelled correctly DOES fire, so the false above is the typo
+	// and not the event failing to match on its own terms.
+	right, err := CompileMatcherFor(`any(items, .bin == "npm")`, looseKind)
+	require.NoError(t, err)
+	admitted, err = right.Match(event.Event{Kind: "PreLoose", Fields: map[string]any{
+		"items": []any{map[string]any{"bin": "npm"}},
+	}})
+	require.NoError(t, err)
+	assert.True(t, admitted, "the correctly spelled rule fires on the same event")
+}
+
+// A DECLARED element shape catches the same typo at load, which is what makes
+// the gap above a missing declaration rather than a limit of the engine.
+//
+// enumeratedKind declares its list element's fields; looseKind does not. Same
+// expression shape, same typo, opposite outcome — so the fix for the silence is
+// entirely on the module's side.
+func TestMatch_DeclaredElementShapeCatchesTheSameTypoAtLoad(t *testing.T) {
+	_, err := CompileMatcherFor(`any(invocations, .bni == "npm")`, enumeratedKind)
+	require.Error(t, err, "a declared element shape is what makes the typo checkable")
+	assert.Contains(t, err.Error(), "bni", "the diagnostic must name the misspelling")
+}
+
 // An unenumerated map keeps its open type, so the fill-in must not invent keys
 // for it. matcherEnv leaves such a field as types.Any precisely because the
 // module never claimed to know its keys, and manufacturing some here would
@@ -429,6 +492,148 @@ func TestMatch_UnenumeratedMapIsNotGivenInventedKeys(t *testing.T) {
 	admitted, err := m.Match(event.Event{Kind: "PreCommand", Fields: map[string]any{}})
 	require.NoError(t, err)
 	assert.True(t, admitted, "an unenumerated map is empty, and any key of it is nil")
+}
+
+// ---------------------------------------------------------------------------
+// A value of the WRONG type is not a missing value.
+//
+// The fill-in that closed the omitted-field fail-open reopened it in a new
+// shape. It keyed on the carried VALUE rather than on presence: anything not
+// already the declared type was replaced by the zero value. So for the real rule
+// `path startsWith "guarded/"`, a producer carrying `path` as a number yielded
+// "" and the matcher returned admitted=false with no error — a clean, silent
+// non-match, and the write proceeded.
+//
+// That is strictly worse than the presence-keyed version it replaced. That one
+// left a nil, which errored, and the engine's refusal path caught it. This one
+// answers a question it cannot answer.
+//
+// Every case below is a rule that would silently not fire on exactly the
+// occurrence it was written to catch.
+// ---------------------------------------------------------------------------
+
+func TestMatch_WrongTypedCarriedValueErrors(t *testing.T) {
+	// The real rule, verbatim: this is not a synthetic expression.
+	m, err := CompileMatcherFor(`path startsWith "guarded/"`, preFileCreate())
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		what    string
+		carried any
+	}{
+		{"a number", 42},
+		{"a bool", true},
+		{"a list", []any{"guarded/x"}},
+		{"a map", map[string]any{"v": "guarded/x"}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			admitted, err := m.Match(event.Event{Kind: "PreFileCreate", Fields: map[string]any{
+				"path": tc.carried,
+			}})
+			require.Error(t, err,
+				"a declared string carried as %s has no truth value against startsWith — "+
+					"answering false is the fail-open this whole mechanism exists to close", tc.what)
+			assert.False(t, admitted, "an erroring matcher admits nothing")
+			// The producer at fault has to be findable from the message, and the
+			// reader is usually a rule author who did not write the producer.
+			assert.Contains(t, err.Error(), "path", "the message must name the field")
+			assert.Contains(t, err.Error(), "string", "the message must say what was declared")
+		})
+	}
+}
+
+// The same claim for every declared type, so this is the rule rather than one
+// special case for strings.
+func TestMatch_WrongTypeErrorsForEveryDeclaredType(t *testing.T) {
+	kind := module.KindDecl{Name: "Everything", Fields: []module.FieldDecl{
+		{Name: "s", Type: module.TypeString},
+		{Name: "b", Type: module.TypeBool},
+		{Name: "l", Type: module.TypeList},
+		{Name: "mp", Type: module.TypeMap},
+	}}
+
+	for _, tc := range []struct {
+		src     string
+		field   string
+		carried any
+	}{
+		{`s == ""`, "s", 42},
+		{`b == false`, "b", "yes"},
+		{`len(l) == 0`, "l", "not-a-list"},
+		{`len(mp) == 0`, "mp", []any{"not-a-map"}},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			m, err := CompileMatcherFor(tc.src, kind)
+			require.NoError(t, err)
+
+			admitted, err := m.Match(event.Event{Kind: "Everything", Fields: map[string]any{
+				tc.field: tc.carried,
+			}})
+			require.Error(t, err, "a wrong-typed %s must not be silently zeroed", tc.field)
+			assert.False(t, admitted)
+		})
+	}
+}
+
+// The check descends, because so does the fill-in. A wrong-typed value nested
+// inside an enumerated map or a typed list element is the same fact one level
+// down, and stopping at the top would leave the fail-open exactly where the
+// recursion was added to close it.
+func TestMatch_WrongTypeErrorsInsideNestedStructures(t *testing.T) {
+	t.Run("enumerated map key", func(t *testing.T) {
+		m, err := CompileMatcherFor(`meta.user == "nikita"`, enumeratedKind)
+		require.NoError(t, err)
+
+		admitted, err := m.Match(event.Event{Kind: "PreThing", Fields: map[string]any{
+			"path": "a", "meta": map[string]any{"user": 7},
+		}})
+		require.Error(t, err, "a declared key carried at the wrong type must not be zeroed")
+		assert.False(t, admitted)
+		assert.Contains(t, err.Error(), "user")
+	})
+
+	t.Run("typed list element field", func(t *testing.T) {
+		m, err := CompileMatcherFor(`any(invocations, .bin == "npm")`, enumeratedKind)
+		require.NoError(t, err)
+
+		admitted, err := m.Match(event.Event{Kind: "PreThing", Fields: map[string]any{
+			"path":        "a",
+			"invocations": []any{map[string]any{"bin": 3, "flags": []any{}}},
+		}})
+		require.Error(t, err, "a declared element field at the wrong type must not be zeroed")
+		assert.False(t, admitted)
+		assert.Contains(t, err.Error(), "bin")
+	})
+}
+
+// The other half, and the one that keeps the fix from being a blanket refusal:
+// ABSENCE still fills in, in both its spellings, at every depth. Erroring here
+// instead would undo the defect this fill-in was originally written to close.
+func TestMatch_AbsenceStillFillsInAfterTheWrongTypeCheck(t *testing.T) {
+	for _, tc := range []struct {
+		what   string
+		fields map[string]any
+	}{
+		{"omitted entirely", map[string]any{"path": "a.txt"}},
+		{"carried as an explicit null", map[string]any{"path": "a.txt", "content": nil}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			m, err := CompileMatcherFor(`content == ""`, preFileCreate())
+			require.NoError(t, err)
+
+			admitted, err := m.Match(event.Event{Kind: "PreFileCreate", Fields: tc.fields})
+			require.NoError(t, err, "absence is not a type disagreement")
+			assert.True(t, admitted, `content == "" is the rule for an empty file`)
+		})
+	}
+
+	// And an omitted ENUMERATED map still gets its declared keys, which the
+	// absence short-circuit has to recurse to supply.
+	m, err := CompileMatcherFor(`meta.user == "" && meta.admin == false`, enumeratedKind)
+	require.NoError(t, err)
+	admitted, err := m.Match(event.Event{Kind: "PreThing", Fields: map[string]any{"path": "a"}})
+	require.NoError(t, err, "an omitted enumerated map must still fill its declared keys")
+	assert.True(t, admitted)
 }
 
 func TestMatch_CarriedValueBeatsTheZeroValue(t *testing.T) {

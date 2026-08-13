@@ -358,6 +358,62 @@ type Result struct {
 // refusal travels back in, or the agent's own output.
 func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) }
 
+// blockedMarkers are what the harness emits when a PreToolUse hook refused the
+// call. Measured through this harness, one channel per run, rather than guessed:
+// the two delivering channels do NOT share a marker.
+//
+//   - `permissionDecision: "deny"` at exit 0 — the channel this engine uses, see
+//     deny in hookio.go — turns the tool call into a tool_result with is_error
+//     true whose content is
+//
+//     [{"text":"Tool call blocked by a PreToolUse hook: <reason>","type":"text"}]
+//
+//   - Exiting 2 with the reason on stderr never becomes a tool_result at all.
+//     The harness reports it on its own line, "claude-mock: PreToolUse hook
+//     blocked: ...", and the run carries no tool result for that call.
+//
+// Both are listed because a refusal is a refusal whichever channel carried it,
+// and a predicate that knew only the engine's current channel would silently
+// start answering "permitted" the day that changed. See refuseForBroken in
+// services/sloprail for the full measured table, including the channels that
+// deliver nothing.
+var blockedMarkers = []string{
+	"Tool call blocked by a PreToolUse hook",
+	"PreToolUse hook blocked",
+}
+
+// Refused reports whether the action was stopped before it happened.
+//
+// It reads the harness's own refusal marker rather than scanning the stream for
+// words. Two copies of a helper that scanned for "deny"/"denied"/"block"/
+// "blocked" anywhere in the output shipped in 013 and 014, and the stream
+// contains the agent's own tool input — the path it asked to write, and the
+// content. So a guardrail permitting EVERYTHING, writing to `deny/notes.md`,
+// produced "File written successfully" and a helper that answered "refused".
+//
+// That is not a cosmetic flaw. Every test asserting a refusal would pass on a
+// fully permitted write as soon as a trigger word appeared in the fixture, which
+// is precisely the reading a suite about fail-open must never get wrong. The
+// eight refusal-asserting tests in 013 and 014 were non-vacuous only by the
+// accident of using clean paths.
+//
+// One definition, in the harness, because both packages need the same answer and
+// two copies of a predicate are two chances to be wrong about it.
+func (r Result) Refused() bool {
+	for _, marker := range blockedMarkers {
+		if strings.Contains(r.Output, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// Permitted reports whether the action went through.
+//
+// The complement of Refused, named separately because that is how the assertions
+// read at the call sites and a negation there is easy to misread.
+func (r Result) Permitted() bool { return !r.Refused() }
+
 // Run drives a scenario through the mock as a real session.
 func (e *Env) Run(projDir, sessionID, prompt string, s Scenario) Result {
 	e.t.Helper()
