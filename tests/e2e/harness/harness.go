@@ -42,6 +42,7 @@ type Env struct {
 	pluginDir string
 	repoRoot  string
 	mock      string
+	shimDir   string // a `claude` that is really the mock, ahead of the real one on PATH
 }
 
 var (
@@ -122,11 +123,21 @@ func build(t *testing.T) string {
 		// disk — so the path that leaks is the one that runs when leaking is
 		// already the problem.
 		builtDir = dir
-		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "sloprail"), "./services/sloprail")
-		cmd.Dir = root
-		if out, err := cmd.CombinedOutput(); err != nil {
-			buildErr = fmt.Errorf("build sloprail: %v\n%s", err, out)
-			return
+		// Both binaries a session can reach. sr-agent is built too because a
+		// guardrail hook that launches an agent runs it by name off PATH, and a
+		// test driving that arrangement must reach the build under test rather
+		// than whatever is installed on the machine.
+		for _, svc := range []string{"sloprail", "agent"} {
+			out := filepath.Join(dir, svc)
+			if svc == "agent" {
+				out = filepath.Join(dir, "sr-agent")
+			}
+			cmd := exec.Command("go", "build", "-o", out, "./services/"+svc)
+			cmd.Dir = root
+			if o, err := cmd.CombinedOutput(); err != nil {
+				buildErr = fmt.Errorf("build %s: %v\n%s", svc, err, o)
+				return
+			}
 		}
 	})
 	if buildErr != nil {
@@ -165,8 +176,62 @@ func New(t *testing.T) *Env {
 			t.Fatalf("harness: mkdir %s: %v", d, err)
 		}
 	}
+	e.shimDir = filepath.Join(root, "shim")
+	if err := os.MkdirAll(e.shimDir, 0o755); err != nil {
+		t.Fatalf("harness: mkdir shim: %v", err)
+	}
 	return e
 }
+
+// InstallClaudeShim puts a `claude` on PATH that is really the mock.
+//
+// Needed because sr-agent runs the harness BY NAME: claudeCodeSpec.binary is
+// "claude", resolved through PATH in the hook's own child process. Nothing in
+// the e2e wiring redirects that today — Run invokes the mock by ABSOLUTE path,
+// so a hook that launches an agent inside a test would reach the operator's
+// real, billed `claude` and drive it against a temporary project. The
+// investigation into this hit exactly that and worked around it with a shim;
+// this is that shim, made part of the harness so no test has to remember.
+//
+// The shim runs the same scenario script the outer session runs, because a
+// launched agent in these tests exists to DO something file-shaped — that is
+// the whole case worth protecting. It gets its own session id so its transcript
+// and state do not land under the parent's.
+//
+// It also carries SLOP_TEST_DEPTH through unchanged. exec passes the
+// environment down on its own; naming it here is what makes the ledger's depth
+// column a measurement of nesting rather than of luck.
+func (e *Env) InstallClaudeShim(projDir string) {
+	e.t.Helper()
+	script := "#!/bin/sh\n" +
+		"exec " + shellQuote(e.mock) + " \\\n" +
+		"  --output-format stream-json \\\n" +
+		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
+		"  --project-dir " + shellQuote(projDir) + " \\\n" +
+		"  --config-dir " + shellQuote(e.configDir) + " \\\n" +
+		"  --plugin-cache-dir " + shellQuote(e.pluginDir) + " \\\n" +
+		"  --session-id \"inner-$$\" \\\n" +
+		"  \"launched agent\"\n"
+	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write claude shim: %v", err)
+	}
+}
+
+// InnerScenario is what the agent a hook LAUNCHES does once it is running.
+//
+// Written beside the project rather than passed as an argument because the shim
+// is a fixed script: sr-agent controls the harness's argv, and a test cannot
+// reach through it to add a --script of its own.
+func (e *Env) InnerScenario(projDir string, s Scenario) {
+	e.t.Helper()
+	path := filepath.Join(projDir, ".inner-scenario.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
+		e.t.Fatalf("harness: write inner scenario: %v", err)
+	}
+}
+
+// shellQuote renders a path as one single-quoted shell word.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // Project creates a project with this repo's plugin enabled, exactly as a user
 // would have it: a marketplace source and an enabled plugin, not a hand-written
@@ -287,6 +352,20 @@ func (e *Env) Ledger(projDir, guardrail, file string) []string {
 		}
 	}
 	return lines
+}
+
+// Wrote reports whether a path exists in the project tree.
+//
+// How a test observes an INNER session's outcome. A refusal delivered to the
+// agent a hook launched travels back through that agent's own tool result,
+// which the launching hook consumed and the outer stream never carried — so
+// scanning the outer output for a refusal marker would answer "no refusal" no
+// matter what happened. The file either exists or it does not, and that is the
+// same question the rule was asked.
+func (e *Env) Wrote(projDir, relPath string) bool {
+	e.t.Helper()
+	_, err := os.Stat(filepath.Join(projDir, relPath))
+	return err == nil
 }
 
 var nonAlnumRe = regexp.MustCompile(`[^a-zA-Z0-9]`)
@@ -419,7 +498,13 @@ func (e *Env) Run(projDir, sessionID, prompt string, s Scenario) Result {
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
 		// The plugin invokes `sloprail`; this is how the hook subprocess finds
 		// the build under test rather than whatever happens to be installed.
-		"PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		//
+		// The shim dir goes FIRST, ahead of both the build dir and the real
+		// PATH. A test whose hook launches an agent must not reach the
+		// operator's actual `claude` — see InstallClaudeShim. When no shim was
+		// installed the directory is simply empty and this changes nothing.
+		"PATH="+e.shimDir+string(os.PathListSeparator)+
+			e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 
 	out, err := cmd.CombinedOutput()
