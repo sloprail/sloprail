@@ -48,6 +48,9 @@ func newSessionCmd() *cobra.Command {
 		Use:   "session",
 		Short: "Session lifecycle — the hook points a harness calls",
 	}
-	cmd.AddCommand(newSessionStartCmd(), newSessionPreToolCmd(), newSessionStopCmd(), newSessionStateCmd())
+	cmd.AddCommand(
+		newSessionStartCmd(), newSessionPreToolCmd(), newSessionStopCmd(),
+		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(),
+	)
 	return cmd
 }
