@@ -74,6 +74,16 @@ func newRegistry(mods []Module) (*Registry, error) {
 	return r, nil
 }
 
+// add registers one module, or changes nothing at all.
+//
+// Validate every kind first, write afterwards. The two loops are the whole
+// point: a single loop that wrote as it walked left a module owning the kinds
+// it had declared before the bad one while never being recorded under its own
+// name — a registry holding half a module, which is a state no caller can
+// reason about. NewRegistry discarding the registry on error hid that, but the
+// hiding is the caller's doing, and this is a method on a live registry that any
+// incremental caller can reach. An operation that fails should leave the thing
+// it operated on exactly as it found it.
 func (r *Registry) add(m Module) error {
 	name := m.Name()
 	if name == "" {
@@ -83,7 +93,12 @@ func (r *Registry) add(m Module) error {
 		return fmt.Errorf("module %q: already registered", name)
 	}
 
-	for _, k := range m.Kinds() {
+	kinds := m.Kinds()
+
+	// Staged, so a kind this module declares twice is caught here rather than
+	// by the loop below reading a half-written registry.
+	staged := make(map[string]KindDecl, len(kinds))
+	for _, k := range kinds {
 		if k.Name == "" {
 			return fmt.Errorf("module %q: declared a kind with no name", name)
 		}
@@ -94,10 +109,22 @@ func (r *Registry) add(m Module) error {
 			// happened to be asked first.
 			return fmt.Errorf("module %q: kind %q already declared by %q", name, k.Name, prev.Name())
 		}
-		r.owner[k.Name] = m
-		r.decl[k.Name] = k
+		if _, twice := staged[k.Name]; twice {
+			// A module declaring one kind twice was already refused before
+			// staging existed — by the r.owner check above, reading a write
+			// this same loop had just made. Staging removes that write, so the
+			// check has to be stated outright or the refusal would vanish as a
+			// side effect of making the operation atomic.
+			return fmt.Errorf("module %q: declared kind %q twice", name, k.Name)
+		}
+		staged[k.Name] = k
 	}
 
+	// Past here nothing can fail, so nothing can be left half-done.
+	for kind, decl := range staged {
+		r.owner[kind] = m
+		r.decl[kind] = decl
+	}
 	r.byName[name] = m
 	return nil
 }

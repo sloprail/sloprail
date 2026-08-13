@@ -79,6 +79,46 @@ func (iv Invalid) Has(kind error) bool {
 	return false
 }
 
+// AffectedKinds names the event kinds this broken declaration was bound to, in a
+// stable order.
+//
+// What it is FOR: an enforcement point has to say what the loss of this rule
+// costs, and the honest answer is "the events it was watching are no longer
+// watched". Naming them lets a refusal be scoped to the work this rule was
+// about, rather than to every action in the project — a typo in a rule about
+// commands must not block a write no rule was ever written about.
+//
+// Read off the problems rather than off the declaration, because a declaration
+// that failed to PARSE has no bindings to read: `loadOne` returns a zero
+// Declaration and one malformed problem carrying no event. Such a declaration
+// yields no kinds here, and a caller that scopes by kind will not scope to it —
+// which is correct and deliberate. Nothing can be said about what an unreadable
+// file was guarding, and inventing a scope here would be this function claiming
+// evidence it does not have.
+//
+// What that means for ENFORCEMENT is a separate decision, and not one this
+// function gets to make by staying quiet. "No kinds" must not be read as "no
+// consequence": an enforcement point that scoped by kind and found none would
+// permit every action while a file the project keeps as a guardrail sits
+// unreadable, and — since no channel at PreToolUse delivers text without also
+// refusing — would do it silently. The pre-tool path therefore asks about this
+// case separately and refuses every action; see refuseForUnreadable in
+// services/sloprail, which carries the argument in full. Callers must decide
+// what an empty result means rather than defaulting into permission.
+func (iv Invalid) AffectedKinds() []string {
+	seen := make(map[string]bool)
+	var kinds []string
+	for _, p := range iv.Problems {
+		if p.Event == "" || seen[p.Event] {
+			continue
+		}
+		seen[p.Event] = true
+		kinds = append(kinds, p.Event)
+	}
+	sort.Strings(kinds)
+	return kinds
+}
+
 // Load reads every declaration, returning those that parsed and those that did
 // not. A project with no dot-directory has no guardrails, which is not an
 // error — it is the ordinary state of a project that has not adopted any.
@@ -192,17 +232,35 @@ func malformed(format string, args ...any) Problem {
 
 var fence = []byte("---")
 
+// isFence reports whether a line is a frontmatter fence: exactly `---` once
+// surrounding whitespace is gone.
+//
+// One predicate, used for both the opening and the closing fence. They were
+// matched differently — HasPrefix opening, Equal closing — so `----` and
+// `---yaml` opened a block that only a bare `---` could close. That asymmetry
+// is not a tolerance anyone chose; it is two spellings of the same idea drifting
+// apart, and the way to keep them from drifting again is for there to be one.
+//
+// Exact rather than prefix, because a prefix match cannot tell a fence from a
+// line that starts like one. `---yaml` is a person reaching for the fenced-code
+// spelling of frontmatter, and `----` is a typo or a horizontal rule; reading
+// either as a fence means parsing the file as something its author did not
+// write. Refusing is what puts the mistake in front of them.
+func isFence(line []byte) bool {
+	return bytes.Equal(bytes.TrimSpace(line), fence)
+}
+
 // splitFrontmatter separates the leading YAML document from the prose beneath
 // it. The prose is returned untouched: it is documentation and rubric at once,
 // and normalising it would change what a judge is judging against.
 func splitFrontmatter(data []byte) (front, body []byte, err error) {
 	lines := bytes.SplitAfter(data, []byte("\n"))
-	if len(lines) == 0 || !bytes.HasPrefix(bytes.TrimSpace(lines[0]), fence) {
+	if len(lines) == 0 || !isFence(lines[0]) {
 		return nil, nil, fmt.Errorf("no frontmatter: a declaration begins with a --- fence")
 	}
 
 	for i := 1; i < len(lines); i++ {
-		if bytes.Equal(bytes.TrimSpace(lines[i]), fence) {
+		if isFence(lines[i]) {
 			front = bytes.Join(lines[1:i], nil)
 			body = bytes.Join(lines[i+1:], nil)
 			return front, body, nil

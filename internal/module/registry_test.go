@@ -1,6 +1,7 @@
 package module
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,11 +79,16 @@ func TestNewRegistry_TwoModulesClaimingOneKindIsRefused(t *testing.T) {
 }
 
 func TestNewRegistry_SelfCollisionWithinOneModule(t *testing.T) {
-	// A module declaring the same kind twice collides with itself.
+	// A module declaring the same kind twice is refused, and told which kind
+	// rather than that it collided "with file" — naming the module against
+	// itself was an artefact of the check reading a write the same loop had
+	// just made, and it read as though a second module were involved.
 	r, err := NewRegistryForTest(mod("file", "PreFileCreate", "PreFileCreate"))
 	require.Error(t, err)
 	assert.Nil(t, r)
-	assert.Contains(t, err.Error(), "already declared")
+	assert.Contains(t, err.Error(), `module "file"`)
+	assert.Contains(t, err.Error(), `kind "PreFileCreate"`)
+	assert.Contains(t, err.Error(), "twice")
 }
 
 func TestNewRegistry_ModuleWithNoNameIsRefused(t *testing.T) {
@@ -106,42 +112,88 @@ func TestNewRegistry_KindWithNoNameIsRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "declared a kind with no name")
 }
 
-// TestNewRegistry_AddIsNotAtomic DOCUMENTS A KNOWN DEFECT.
+// TestAdd_FailureLeavesTheRegistryUntouched is the invariant that replaced a
+// documented defect: add() either registers a module completely or changes
+// nothing.
 //
-// This test asserts what the code does today, NOT what it should do. When the
-// defect is fixed, this test MUST be changed — its failure is the expected
-// consequence of the fix, not a regression. Do not "repair" it by reverting
-// the fix.
-//
-// The defect: add() writes into r.owner and r.decl as it walks a module's
-// kinds (registry.go:60-61), so a module declaring a valid kind and then an
-// invalid one has already claimed the valid kind by the time it returns an
-// error. NewRegistry discards the whole registry on error, so nothing
-// observable escapes today — but add() is a method on a live registry, and any
-// future caller registering into one incrementally inherits a module that owns
-// kinds while not being registered under its own name.
-//
-// Corrected behaviour would be: add() leaves the registry exactly as it found
-// it when it fails — staging the kinds and committing them only once every
-// kind has been validated. The assertion below on ownsGood would then flip
-// from True to False, and the assertion on `registered` would stay False.
-func TestNewRegistry_AddIsNotAtomic(t *testing.T) {
-	r := &Registry{
-		byName: map[string]Module{},
-		owner:  map[string]Module{},
-		decl:   map[string]KindDecl{},
+// It used to write each kind into r.owner as it walked, so a module declaring a
+// valid kind and then an invalid one left the valid kind claimed by a module
+// that was never recorded under its own name. NewRegistry hides that by
+// discarding the registry on error — this exercises add() directly, on a live
+// registry, which is where the half-written state was actually reachable.
+func TestAdd_FailureLeavesTheRegistryUntouched(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		module Module
+		reason string
+	}{
+		{"a kind with no name", mod("partial", "GoodKind", ""), "declared a kind with no name"},
+		{"a kind another module owns", mod("partial", "GoodKind", "Taken"), "already declared by"},
+		{"the same kind twice", mod("partial", "GoodKind", "GoodKind"), "twice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// An incumbent, so the collision case has something to collide
+			// with and so the test can prove nothing already there was
+			// disturbed either.
+			r, err := NewRegistryForTest(mod("incumbent", "Taken"))
+			require.NoError(t, err)
+
+			before := snapshot(r)
+
+			err = r.add(tc.module)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.reason)
+
+			assert.Equal(t, before, snapshot(r),
+				"a failed add must leave the registry exactly as it found it")
+
+			// Spelled out as well as compared, so a failure names the thing
+			// that leaked rather than printing two maps.
+			_, ownsGood := r.Lookup("GoodKind")
+			assert.False(t, ownsGood, "the kind declared before the failure must not be claimed")
+			_, hasDecl := r.KindDeclFor("GoodKind")
+			assert.False(t, hasDecl, "nor may its declaration be recorded")
+			_, registered := r.byName["partial"]
+			assert.False(t, registered, "and the module itself is not registered")
+		})
 	}
-	m := mod("partial", "GoodKind", "")
+}
 
-	err := r.add(m)
-	require.Error(t, err)
+// TestAdd_SucceedsWholly is the other half: when add() reports success, every
+// kind is claimed and the module is registered. Without it the invariant above
+// is satisfied by an add() that never writes anything at all.
+func TestAdd_SucceedsWholly(t *testing.T) {
+	r, err := NewRegistryForTest(mod("incumbent", "Taken"))
+	require.NoError(t, err)
 
-	_, ownsGood := r.Lookup("GoodKind")
-	assert.True(t, ownsGood,
-		"DEFECT: the kind declared before the failure is already claimed. "+
-			"Flip to assert.False once add() rolls back on error.")
-	_, registered := r.byName["partial"]
-	assert.False(t, registered, "but the module itself was never recorded under its name")
+	require.NoError(t, r.add(mod("late", "One", "Two")))
+
+	for _, kind := range []string{"One", "Two"} {
+		owner, ok := r.Lookup(kind)
+		require.True(t, ok, "kind %q must be claimed", kind)
+		assert.Equal(t, "late", owner.Name())
+		_, hasDecl := r.KindDeclFor(kind)
+		assert.True(t, hasDecl, "kind %q must have its declaration recorded", kind)
+	}
+	assert.Equal(t, []string{"incumbent", "late"}, r.ModuleNames())
+}
+
+// snapshot is every mapping the registry holds, in a form two of which can be
+// compared. Comparing the maps directly is what makes the assertion "nothing
+// changed" rather than "these particular things I remembered to check did not".
+func snapshot(r *Registry) map[string][]string {
+	s := map[string][]string{}
+	for kind, m := range r.owner {
+		s["owner"] = append(s["owner"], kind+"="+m.Name())
+	}
+	for kind := range r.decl {
+		s["decl"] = append(s["decl"], kind)
+	}
+	s["byName"] = r.ModuleNames()
+	for _, v := range s {
+		sort.Strings(v)
+	}
+	return s
 }
 
 func TestLookup_KindNobodyOwns(t *testing.T) {

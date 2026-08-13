@@ -6,6 +6,8 @@
 // fields nothing here has seen.
 package event
 
+import "encoding/json"
+
 // Event is one thing that happened, or is about to.
 //
 // Two fields, because two is what the engine needs: the kind, to decide which
@@ -23,5 +25,30 @@ type Event struct {
 	// the module's, declared alongside the kind so a matcher naming a field
 	// that does not exist is caught when the guardrail loads rather than
 	// failing silently at the moment it should have fired.
+	//
+	// A subjectless event carries no fields, and on the wire that is an empty
+	// object rather than null — see MarshalJSON.
 	Fields map[string]any `json:"fields"`
+}
+
+// MarshalJSON writes an event with `fields` always an object.
+//
+// A nil map marshals to null by default, so TurnEnd — which declares no fields
+// at all — reached a hook as `"fields":null`. A hook doing the obvious thing
+// with it, `.fields.path` in jq or `payload["event"]["fields"].get("path")` in
+// Python, gets an error on null where it gets a clean miss on `{}`. The hook
+// then exits non-zero, and a non-zero exit is a refusal: an event carrying
+// nothing would have refused the work it was reporting on.
+//
+// Not `omitempty`, which drops the key entirely and moves the same failure one
+// step earlier — a hook reading `.fields` would find nothing rather than
+// nothing-in-particular. The shape a hook can rely on is the key always being
+// there and always being an object.
+func (e Event) MarshalJSON() ([]byte, error) {
+	// A named type without the method, so this does not recurse.
+	type wire Event
+	if e.Fields == nil {
+		e.Fields = map[string]any{}
+	}
+	return json.Marshal(wire(e))
 }
