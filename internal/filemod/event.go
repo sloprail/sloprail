@@ -34,32 +34,57 @@ type FileEvent struct {
 // field that vanished when it was empty would make that rule error rather than
 // hold.
 func (f FileEvent) Event(kind string) event.Event {
+	// Path is unconditional, and it is the one field that must be.
+	//
+	// Every kind this module declares carries it — TestFileEvent_PathSurvives-
+	// AnUnknownKind holds that — so for a known kind this is what the
+	// declaration says anyway. The difference is an UNKNOWN kind, where
+	// kindDeclares answers false for everything: keying path off the
+	// declaration there produced an event with no fields at all, losing the
+	// path of the file it was reporting. Event does not police the kind (the
+	// registry does), so a kind it does not recognise must still name its file
+	// rather than describe nothing.
 	fields := map[string]any{FieldPath: f.Path}
-	if f.Content != "" {
+	if kindDeclares(kind, FieldContent) {
 		fields[FieldContent] = f.Content
 	}
-	if kindCarriesMarkers(kind) {
+	if kindDeclares(kind, FieldMarkers) {
 		fields[FieldMarkers] = markerFields(f.Markers)
 	}
 	return event.Event{Kind: kind, Fields: fields}
 }
 
-// kindCarriesMarkers reports whether a kind declares the markers field, read
-// off the same list Kinds builds so the two cannot drift.
+// kindDeclares reports whether a kind declares a field, read off the same list
+// Kinds builds so the two cannot drift.
 //
-// Scoped to markers, and the scope is not modesty. The content field above does
-// NOT work this way — it is set whenever FileEvent.Content is non-empty, kind
-// be damned, so a FileEvent carrying content produces a PreFileDelete with a
-// content field nothing declares. That is pre-existing and untouched here; see
-// TestFileEvent_ContentLeaksOntoKindsThatDoNotDeclareIt, which pins it so the
-// difference between the two paths is recorded rather than assumed away.
-func kindCarriesMarkers(kind string) bool {
+// Every field goes through here, and that uniformity is the fix rather than an
+// aesthetic. The rule is: the DECLARATION decides which fields an event carries,
+// and the value decides only what they hold. Deciding presence from the value
+// broke it in both directions at once.
+//
+// Absent when it should be present: content was set only when non-empty, so
+// writing a genuinely empty file produced a PreFileCreate with no `content` —
+// a kind missing a field the spec declares required (events/main.tsp:79). A
+// matcher written `content == ""`, the exact rule an author writes to catch an
+// empty file, then met a nil where a string was declared and ERRORED rather
+// than firing. Since matcher errors now refuse (session_pre_tool.go), that
+// turned every empty-file write into a refusal citing a broken guardrail.
+//
+// Present when it should be absent: content was set whenever it was non-empty
+// whatever the kind, so a FileEvent carrying content produced a PreFileDelete
+// with a `content` field nothing declares — a field no matcher can be checked
+// against, because CompileMatcherFor validates against the declaration and
+// refuses the name.
+//
+// Both are the same bug: the emitter answering from the value instead of the
+// declaration. One rule fixes both, which is why the two are fixed together.
+func kindDeclares(kind, field string) bool {
 	for _, k := range (&Module{}).Kinds() {
 		if k.Name != kind {
 			continue
 		}
 		for _, f := range k.Fields {
-			if f.Name == FieldMarkers {
+			if f.Name == field {
 				return true
 			}
 		}

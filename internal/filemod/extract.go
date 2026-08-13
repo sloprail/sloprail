@@ -32,13 +32,56 @@ type pendingWrite struct {
 // take. A module reads what it recognises and ignores the rest.
 type Pending interface {
 	// Tool is what the harness calls it. Read only to know how to read the
-	// arguments — a rule never sees it.
+	// arguments — a rule never sees it, and nothing in this module branches on
+	// it. That is deliberate; extractPending's doc comment argues it.
 	Tool() string
 	// Arguments are the tool's own, as the harness gave them.
 	Arguments() json.RawMessage
 }
 
 // extractPending reads a pending action for the files it would touch.
+//
+// It dispatches on the SHAPE of the arguments and never on Tool(). That
+// omission looks like a bug and has been reported as one, so the argument for
+// it lives here, where someone about to "fix" it will read it.
+//
+// The objection is fair on its face: any tool whose arguments carry a
+// `file_path` produces a file event, so `Read` — which is read-only — yields a
+// PreFileCreate. That is real. It is measured, not hypothetical, and
+// TestExtractPending_ReadOnlyToolStillProducesAnEvent pins it.
+//
+// It is still the right trade, for two reasons that a name allowlist cannot
+// give back.
+//
+// The first is drift. A name allowlist is a list of strings that must track a
+// vocabulary this engine does not own and is not told about. Claude Code
+// renamed `Task` to `Agent` in v2.1.63; a corpus survey of 8,458 transcripts
+// found filemod never noticed, because it never asked. Every module that DID
+// ask broke silently — and silently is the point: an allowlist that has fallen
+// behind does not error, it stops producing events, and a guardrail that stops
+// firing looks exactly like a guardrail that is satisfied. That is the precise
+// failure this engine exists to prevent, and it is worse than the false
+// positive above, because a spurious event is visible to whoever reads the rule
+// and a missing one is visible to no one.
+//
+// The second is that the shape already does most of the filtering, which is
+// easy to miss because the defect report overstated the blast radius. Of the
+// read-only tools named as producing bogus events, only `Read` actually does.
+// `Grep` carries `pattern`/`path`, `Glob` carries `pattern`, `WebFetch`
+// carries `url` — none carries `file_path`, so none reaches an event at all.
+// The residue is `Read`, and one over-reported tool is a smaller wrong than a
+// vocabulary that goes stale without saying so.
+//
+// commandmod makes the identical choice for the identical reason, so this is
+// the engine's rule rather than this module's habit.
+//
+// What would change this: `Read`'s event is not merely spurious, it is
+// mislabelled — a PreFileCreate for a file that already exists on disk and is
+// only being read. If that becomes a problem worth solving, solve it on shape
+// too. A create whose arguments carry no `content` key at all is not a write,
+// and that is a question about the arguments rather than about the name.
+// Distinguishing an absent `content` from an empty one needs the raw JSON
+// rather than the decoded struct, which is why it is not done here today.
 func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 	pending, ok := in[module.InputPayload].(Pending)
 	if !ok {
@@ -52,21 +95,30 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		return nil, nil
 	}
 
-	kind := KindPreCreate
-	if !m.exists(w.FilePath) {
-		kind = KindPreCreate
-	} else {
-		kind = KindPreUpdate
-	}
-
 	f := FileEvent{Path: w.FilePath}
-	if kind == KindPreCreate {
+	var kind string
+	switch m.lookAt(w.FilePath) {
+	case presenceAbsent:
+		kind = KindPreCreate
 		// The file does not exist yet, so a rule that wants to look at what
 		// would be written has nowhere else to look.
 		f.Content = w.Content
 		f.Markers = Scan(w.Content)
-	} else {
+	case presenceFile:
+		kind = KindPreUpdate
 		f.Markers = m.markersOnDisk(w.FilePath)
+	case presenceNotAFile:
+		// A directory, a device, a socket. No file write can land here — the
+		// harness's own write will fail — so there is no file modification to
+		// report and no event to emit. Emitting PreFileUpdate, as this did,
+		// invented an existing file out of a stat that only said "something is
+		// here", and put every PreFileUpdate rule to work on it.
+		//
+		// Silence is right rather than an error: a module that finds nothing it
+		// owns says nothing, the same as the no-file_path case above. The write
+		// still fails, and it fails as the harness's error about a real
+		// filesystem condition rather than as a guardrail verdict.
+		return nil, nil
 	}
 	return []event.Event{f.Event(kind)}, nil
 }
