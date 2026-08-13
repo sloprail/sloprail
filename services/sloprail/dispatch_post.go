@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,19 +14,36 @@ import (
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
+// objection is one guardrail's refusal of one event, kept until the cycle has
+// finished dispatching.
+//
+// Kept rather than acted on immediately, because refusing at the first one
+// would hide the rest: the agent would fix one violation, end the turn, be told
+// about the second, and so on — the slow version of the same bug, and it also
+// silences every rule bound after the refusing one. See dispatchAll.
+type objection struct {
+	Guardrail string
+	Reason    string
+}
+
 // runPostDispatch establishes what the cycle changed, runs the guardrails bound
-// to it, and then reports that the cycle ended.
+// to it, and reports that the cycle ended — then blocks the turn if anything
+// objected.
 //
-// It returns whether it ran, because the read mark waits on that: a cycle that
-// dispatched nothing has judged nothing and has no position to claim as judged.
-// "Ran" means the dispatch happened, not that it found anything — a cycle that
-// changed no files still ended, still fired TurnEnd, and still put the session's
-// record in front of whatever bound to it.
+// It returns whether it dispatched, because the read mark waits on that: a
+// cycle that dispatched nothing has judged nothing and has no position to claim
+// as judged. Dispatching and refusing are different questions — a cycle that ran
+// every hook and collected three objections DID judge, and its mark advances.
 //
-// Nothing here can refuse. Every event this dispatches describes work that has
-// already landed, so a hook refusing one is demanding a correction rather than
-// preventing anything, and blocking would claim a rollback the engine cannot
-// perform. Refusals are reported and the cycle ends.
+// What a refusal here means. It cannot undo the write: the file is on disk, the
+// cycle is over, and an engine claiming otherwise would be promising a rollback
+// it never performed. What it can do — and must — is stop the TURN from ending,
+// which is the whole mechanism by which an after-the-fact rule gets anything
+// corrected. The agent is handed the objections and made to go again.
+//
+// Those two are easy to conflate and this comment exists because they were:
+// "a Post event cannot prevent the work" is a statement about the write, not a
+// licence to let the turn end with the violation unaddressed.
 func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload) bool {
 	reg, err := modules.Registry()
 	if err != nil {
@@ -51,6 +69,15 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 		}
 	}
 
+	// What this session has already judged. Opened once for the whole dispatch,
+	// and left nil when the session cannot be identified: an engine that could
+	// not find its record must re-judge, never exempt.
+	rev, err := openRevalidation(p)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: session state unavailable, judging everything afresh: %v\n", err)
+	}
+	defer rev.Close()
+
 	events := postEvents(cmd, store, p, reg, bound)
 
 	// TurnEnd last, and unconditionally.
@@ -70,8 +97,36 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// it carries no fields are stated in the same place they are declared.
 	events = append(events, cyclemod.Event())
 
-	dispatch(cmd, reg, decls, events)
+	objections := dispatchAll(cmd, reg, decls, rev, p, events)
+	if len(objections) > 0 {
+		// The turn does not end. Reported through the one channel measured to
+		// both block and carry its words — see block().
+		if err := block(cmd, refusalText(objections)); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
+	}
 	return true
+}
+
+// refusalText is what the agent is told when a cycle is refused.
+//
+// Every objection, not the first. The agent is about to spend a turn on this,
+// and being handed one violation at a time turns one correction into as many
+// turns as there are rules — while the rules bound after the first would not
+// even have been named.
+//
+// Each names its guardrail, because an agent told only that it was blocked
+// cannot find the rule it broke.
+func refusalText(objections []objection) string {
+	if len(objections) == 1 {
+		return fmt.Sprintf("%s (%s)", objections[0].Reason, objections[0].Guardrail)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d guardrails refused this turn's work:", len(objections))
+	for _, o := range objections {
+		fmt.Fprintf(&b, "\n  - %s (%s)", o.Reason, o.Guardrail)
+	}
+	return b.String()
 }
 
 // postEvents turns the cycle's difference into one event per changed file.
@@ -127,19 +182,18 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 	return events
 }
 
-// dispatch runs every binding admitting each event, in order, and never blocks.
+// dispatchAll runs every binding admitting each event and collects what
+// refused, without stopping.
 //
-// The matching is the pre-tool point's, deliberately: which occurrences a rule
-// sees is the binding's business at both timings, and a Post event narrowed
-// differently would make one hook, bound to both, judge two different sets of
-// files.
-//
-// What differs is the verdict's consequence. A refusal here is reported and the
-// cycle continues, because the work it describes has already landed. That is
-// not the refusal being ignored — the rule ran, it objected, and its objection
-// is on stderr where the agent and the person both see it. It is the engine
-// declining to claim it undid something it did not undo.
-func dispatch(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Declaration, events []event.Event) {
+// Nothing here returns early on a refusal, and that is the point. One rule
+// objecting must not cost the other files their judging, nor the rules bound
+// after it their run — an engine that stopped at the first would let one noisy
+// guardrail silence every other, and the agent would fix them one turn at a
+// time. Everything is dispatched; the objections are answered once, together,
+// by the caller.
+func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Declaration, rev *revalidation, p HookPayload, events []event.Event) []objection {
+	var objections []objection
+
 	for _, e := range events {
 		kindDecl, known := reg.KindDeclFor(e.Kind)
 		if !known {
@@ -158,20 +212,89 @@ func dispatch(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Declar
 				if !admits(cmd, d, b, e, kindDecl) {
 					continue
 				}
+
+				// The subject is resolved HERE, per guardrail, rather than once
+				// per event as the pre-tool point does — and the difference is
+				// not stylistic.
+				//
+				// A Post subject is fingerprinted from the file ON DISK, and a
+				// guardrail's hook is an arbitrary script that may rewrite the
+				// very file the event is about. A formatter bound to
+				// PostFileUpdate is the ordinary case, not a contrived one. Hoist
+				// this out of the loop and the second rule is asked about content
+				// that no longer exists, and — worse — its verdict is RECORDED
+				// against the first rule's fingerprint, so a pass licenses bytes
+				// nobody judged.
+				//
+				// The pre-tool point is safe hoisting it because its only
+				// fingerprinted kind is PreFileCreate, whose content comes off
+				// the event and reads no disk.
+				subj, fingerprinted := rev.Subject(e, p.Cwd)
+
+				// This guardrail has already seen this exact content and let it
+				// through. Asking again is not merely waste: a judge hook is a
+				// model call rather than a function, so a second look can return
+				// a different answer and block the agent over work it already
+				// fixed.
+				//
+				// Asked per guardrail. Whether content has been judged is each
+				// rule's own fact — a file one rule passed is a file another may
+				// never have seen — which is why a verdict is keyed on the pair
+				// and never pooled per file.
+				if fingerprinted {
+					skip, err := rev.Skip(d.Name, subj)
+					if err != nil {
+						// Reported, never acted on. The false is already the safe
+						// answer; saying so is what keeps a session that has
+						// silently lost its record from looking like one that
+						// simply has nothing settled.
+						fmt.Fprintln(cmd.ErrOrStderr(), err)
+					}
+					if skip {
+						continue
+					}
+				}
+
 				v, err := runHooks(d, b, e)
 				if err != nil {
+					// The hook did not reach a verdict, so there is nothing to
+					// record. Writing a pass here would exempt content nobody
+					// judged; writing a refusal would blame the rule for the
+					// machine.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
 					continue
 				}
+
+				if fingerprinted {
+					// Recorded whichever way it went, and the refusal is the half
+					// that is easy to lose. A refusal that is forgotten stops
+					// being enforced: with no row the content reads as unjudged
+					// rather than as refused, so the next cycle asks again and the
+					// first thing to record a pass is believed.
+					//
+					// Keeping it is also what makes the violation RESURFACE. The
+					// row fails the passing half of the exemption for as long as
+					// the content stays as it is, so the hook is asked again next
+					// cycle, refuses again, and blocks again — until the agent
+					// changes the file or the rule permits it. That is the entire
+					// mechanism by which an after-the-fact rule gets a correction
+					// rather than merely complaining once.
+					if err := rev.Record(d.Name, subj, !v.Refused); err != nil {
+						fmt.Fprintln(cmd.ErrOrStderr(), err)
+					}
+				}
+
 				if v.Refused {
-					// Reported, not returned. Refusing an event that describes
-					// work already done demands the work be corrected; it does
-					// not and cannot prevent it.
+					// Collected, not returned. The remaining events still have to
+					// be dispatched, and the agent is told about all of them at
+					// once.
+					objections = append(objections, objection{Guardrail: d.Name, Reason: v.Reason})
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s (%s)\n", v.Reason, d.Name)
 				}
 			}
 		}
 	}
+	return objections
 }
 
 // admits reports whether a binding's matcher lets this event through.

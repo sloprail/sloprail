@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -193,20 +195,30 @@ func TestT006_03_TurnEndFiresOnceWithNoSubject(t *testing.T) {
 	}
 }
 
-// T006_04: a hook refusing a Post event does not block.
+// T006_04: a hook refusing a Post event cannot undo the write, and DOES stop
+// the turn from ending.
 //
-// before_refusable_only. The work has already landed, so a refusal at this
-// timing demands a correction — it cannot prevent anything, and the engine must
-// not claim a rollback it did not perform.
+// Two different things, and conflating them was a real design error in this
+// work before the owner corrected it:
 //
-// The e2e for this was deleted while nothing dispatched Post events, because
-// there was no way to reach a Post hook at all. This is it, rewritten against a
-// hook point that now exists.
+//   - The write cannot be undone. The file is on disk and the cycle is over;
+//     an engine claiming otherwise would be promising a rollback it never
+//     performed. That is what before_refusable_only is about — preventing the
+//     ACTION — and it is why the file assertion below expects the file to
+//     survive.
+//   - The turn must not end. That is what Claude's Stop hook is for, and it is
+//     the entire mechanism by which an after-the-fact rule gets a correction
+//     rather than merely complaining once. A refusal printed to stderr with
+//     exit 0 is a refusal nobody sees and nothing acts on.
 //
-// Three things are asserted, and each closes a way the others could pass
-// vacuously: the refusing hook RAN, the session still completed, and the file
-// it objected to is still on disk.
-func TestT006_04_APostRefusalDoesNotBlockTheWork(t *testing.T) {
+// What this test now distinguishes, since the file surviving is no longer the
+// discriminator: it asserts the cycle BLOCKED, that the reason ARRIVED with the
+// block, and that the rest of the cycle was still dispatched. The measured
+// channel table is in the probe that produced it — of the channels that block,
+// several deliver no text at all, so "blocked" and "the agent was told why" are
+// separate facts and a test asserting only the first cannot tell a useful
+// refusal from an agent stuck with no idea what to fix.
+func TestT006_04_APostRefusalBlocksTheTurnWithoutUndoingTheWork(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -221,8 +233,18 @@ hooks:
 
 # Objects to every file created, after the fact
 `
-	e.Guardrail(proj, "objects", refuseEveryCreate, map[string]string{
-		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> refused.log\necho 'this file should not have been written' >&2\nexit 1\n",
+	// The hook records that it ran OUTSIDE the project, into a directory of
+	// this test's own.
+	//
+	// A hook's working directory is its guardrail's folder, which sits inside
+	// the tree the engine compares — so a hook logging there creates an
+	// untracked file, which is itself a change the same cycle reports and this
+	// same rule then refuses. One rule objecting to one file quietly became two
+	// objections, which took the multi-refusal path and made the single-refusal
+	// wording untested.
+	ranLog := filepath.Join(t.TempDir(), "ran.log")
+	e.Guardrail(proj, "zqguard", refuseEveryCreate, map[string]string{
+		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\necho 'this file should not have been written' >&2\nexit 1\n",
 	})
 	// A SECOND guardrail, bound to the end of the cycle, which the first one's
 	// refusal must not silence.
@@ -236,6 +258,7 @@ hooks:
 	// rule bound after it to observe. Confirmed by mutation: with the dispatcher
 	// made to stop at the first refusal, the file assertion below still passed
 	// and only this one caught it.
+	afterLog := filepath.Join(t.TempDir(), "after.log")
 	e.Guardrail(proj, "after", `---
 hooks:
   TurnEnd:
@@ -245,7 +268,7 @@ hooks:
 ---
 
 # Runs at the end of the cycle, after the objection
-`, map[string]string{"record.sh": recordEvent})
+`, map[string]string{"record.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + afterLog + "\nexit 0\n"})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 
@@ -253,27 +276,55 @@ hooks:
 		Write("w1", "unwanted.md", "it landed anyway"),
 	))
 
-	// The hook ran and refused. Without this the rest is a test that a file
-	// exists after nothing tried to stop it.
-	if ran := e.Ledger(proj, "objects", "refused.log"); len(ran) == 0 {
+	// The hook ran and refused. Without this the rest is a test about a file
+	// existing after nothing tried to stop it.
+	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the refusing Post hook never ran, so this proves nothing about after-the-fact refusals:\n%s", got.Output)
 	}
 
-	// The cycle carried on past the objection. This is the assertion that
-	// separates "reported and continued" from "reported and abandoned".
-	after := e.Ledger(proj, "after", "events.jsonl")
-	if len(after) == 0 {
-		t.Errorf("a Post hook's refusal stopped the rest of the cycle being dispatched — a refusal after the fact must be reported, not obeyed")
+	// The turn was blocked. A blocked stop makes the agent continue past its
+	// own end, so the mock is driven round again and emits its final result
+	// more than once — one result means the turn simply ended.
+	//
+	// This is the assertion the old version of this test lacked, and the file
+	// check below could never have supplied: the file survives whether the
+	// engine blocks or silently permits.
+	if n := strings.Count(got.Output, `"subtype":"success"`); n < 2 {
+		t.Errorf("the turn ended despite a guardrail refusing (%d result lines) — a Post refusal must stop the turn, which is the only way it gets anything corrected:\n%s", n, got.Output)
 	}
 
-	// The session completed. A Post refusal that blocked would leave the cycle
-	// unable to end.
-	if got.Code != 0 {
-		t.Errorf("a Post refusal stopped the session completing (exit %d):\n%s", got.Code, got.Output)
+	// The agent was told WHY. Separate from the block: of the channels that
+	// block a Stop, several deliver no text, so an engine can leave the agent
+	// stopped with no idea which rule objected or what to fix — worse than
+	// permitting, because now it is stuck as well as uninformed.
+	//
+	// Read from the blocking attachments the refusal produced, NOT from the
+	// record as a whole. A guardrail's own folder path travels on every hook
+	// payload, so searching the file for the rule's name finds it whether or not
+	// the refusal ever named it — an assertion that cannot fail.
+	blocking := e.BlockingErrors(proj, "s-006-04")
+	if len(blocking) == 0 {
+		t.Fatalf("the turn was blocked but no reason reached the agent — it is stopped with nothing to act on")
+	}
+	told := strings.Join(blocking, "\n")
+	if !strings.Contains(told, "this file should not have been written") {
+		t.Errorf("the hook's own words did not reach the agent, so it cannot know what to fix:\n%s", told)
+	}
+	// The guardrail's name, inside the refusal itself. An agent told only that
+	// it was blocked cannot find the rule it broke.
+	if !strings.Contains(told, "zqguard") {
+		t.Errorf("the refusal did not name the guardrail that produced it:\n%s", told)
 	}
 
-	// And the work is still there. "Prevented" is a claim about the tree, not
-	// about what came back on a stream.
+	// The rest of the cycle was still dispatched. One rule objecting must not
+	// silence the rules bound after it — an agent fixing violations one turn at
+	// a time is the slow version of the same bug.
+	if _, err := os.Stat(afterLog); err != nil {
+		t.Errorf("a Post hook's refusal stopped the rest of the cycle being dispatched")
+	}
+
+	// And the work is still there. The refusal demands a correction; it does not
+	// and cannot perform one.
 	if !e.Exists(proj, "unwanted.md") {
 		t.Errorf("a hook refusing AFTER the write removed the file — an after-the-fact refusal must demand a correction, not perform one")
 	}
@@ -305,6 +356,51 @@ func TestT006_05_UntrackedWorkIsReported(t *testing.T) {
 	events := strings.Join(e.Ledger(proj, "records", "events.jsonl"), "\n")
 	if !hasEvent(events, "PostFileCreate", "scratch.md") {
 		t.Errorf("an untracked file the agent created was never reported:\n%s", events)
+	}
+}
+
+// T006_06: every refusal in a cycle reaches the agent at once.
+//
+// Collected, not returned at the first. An agent handed one violation per turn
+// spends as many turns as there are rules — and the rules bound after the first
+// refusal would not have run at all, so it could not even see what else is
+// wrong.
+//
+// Two guardrails, both refusing, both named in the one blocking reason.
+func TestT006_06_EveryRefusalReachesTheAgentAtOnce(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+
+	for _, name := range []string{"alpharule", "betarule"} {
+		e.Guardrail(proj, name, `---
+hooks:
+  PostFileCreate:
+    - hooks:
+        - type: command
+          command: ./refuse.sh
+---
+
+# Refuses every created file
+`, map[string]string{"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho 'objection from " + name + "' >&2\nexit 1\n"})
+	}
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "the project before the session")
+
+	e.Run(proj, "s-006-06", "write a file", Turns("done",
+		Write("w1", "f.md", "x"),
+	))
+
+	blocking := e.BlockingErrors(proj, "s-006-06")
+	if len(blocking) == 0 {
+		t.Fatalf("two guardrails refused and the turn was not blocked")
+	}
+	told := blocking[0]
+	if !strings.Contains(told, "alpharule") {
+		t.Errorf("the first guardrail's objection is missing from what the agent was told:\n%s", told)
+	}
+	if !strings.Contains(told, "betarule") {
+		t.Errorf("the second guardrail's objection is missing — blocking at the first hides the rest:\n%s", told)
 	}
 }
 
