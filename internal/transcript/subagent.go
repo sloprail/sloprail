@@ -18,9 +18,9 @@ import (
 // This file is the routing that makes that true. The IDENTITY needs nothing new:
 // a sub-agent's transcript has its own origin record, so StableSessionID already
 // resolves it, and resolves it to something that is not its parent's. That was
-// verified rather than assumed — see SubagentTranscriptPath's note on the 305
-// real sub-agent transcripts this was measured against. What was missing is
-// knowing WHICH transcript to resolve, because a harness reports both.
+// verified rather than assumed — see SubagentTranscriptPath's note on the real
+// sub-agent transcripts this was measured against. What was missing is knowing
+// WHICH transcript to resolve, because a harness reports both.
 
 // SubagentDir is the directory a harness nests a session's sub-agent records
 // under, beside the session's own transcript.
@@ -36,6 +36,45 @@ const SubagentDir = "subagents"
 // the agent's own id.
 const subagentFilePrefix = "agent-"
 
+// SessionDirOfSubagent returns the session directory a sub-agent's record is
+// nested under — the directory beside which the dispatching session's own
+// transcript sits — or "" when the path is not under a subagents/ tree at all.
+//
+// Needed because "climb two levels" is not the layout, only the commonest one.
+// Two are observed on this machine, and the survey behind this file's other
+// notes counted only the first:
+//
+//   - <session>/subagents/agent-<id>.jsonl               — 322 files
+//   - <session>/subagents/workflows/wf_<id>/agent-<id>.jsonl —   9 files
+//
+// For the second, the record's own directory is wf_<id> and its parent is
+// workflows, so a fixed two-level climb lands on <session>/subagents rather than
+// on <session>. Everything keyed on the result then looks for the conversation's
+// other transcripts inside the subagents directory, finds none, and a restart
+// that should have been crossed silently is not.
+//
+// So the subagents component is SEARCHED for rather than counted to. That is
+// what makes the answer independent of how deeply a harness decides to nest a
+// record — the invariant the layouts share is that the directory is named
+// subagents and the session directory is its parent, not that the record sits
+// any particular number of levels below it.
+//
+// The search runs from the record OUTWARDS (deepest first), so a session
+// directory that itself contained a path component named subagents could not
+// capture the answer ahead of the real one.
+func SessionDirOfSubagent(path string) string {
+	for dir := filepath.Dir(path); ; {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "" // reached the root without finding it
+		}
+		if filepath.Base(dir) == SubagentDir {
+			return parent
+		}
+		dir = parent
+	}
+}
+
 // SubagentTranscriptPath returns where the sub-agent identified by agentID
 // wrote its record, given the transcript of the session that dispatched it.
 //
@@ -47,12 +86,24 @@ const subagentFilePrefix = "agent-"
 // and verdicts into the parent's state. That is the confusion this whole file
 // exists to prevent, so the fallback has to reconstruct rather than give up.
 //
-// The layout is measured. Across the 305 sub-agent transcripts in one ~/.claude,
-// every file sat at <parent transcript minus .jsonl>/subagents/agent-<id>.jsonl,
-// every record in every one of them carried isSidechain true, and every record's
-// agentId equalled its own filename's id. None carried a logicalParentUuid, and
-// all 305 origin uuids were distinct from each other and from all 7,943 main
-// transcript origins.
+// The layout is measured, and the first measurement had a hole worth stating.
+// The survey behind the "305 sub-agent transcripts" figure this branch quoted
+// matched <session>/subagents/agent-<id>.jsonl and nothing else, so it silently
+// excluded the files nested a further two levels down under
+// subagents/workflows/wf_<id>/ — it reported a clean uniform layout partly
+// because it only looked where that layout holds. Re-counted there are 331: 322
+// in the flat shape and 9 in the workflows one. See SessionDirOfSubagent, which
+// is what stops the difference from mattering to anything that has to climb back
+// out.
+//
+// What the survey did establish holds for the files it saw: every record carried
+// isSidechain true, every record's agentId equalled its own filename's id, none
+// carried a logicalParentUuid, and all origin uuids were distinct from each
+// other and from every main-transcript origin.
+//
+// This function assembles the FLAT shape, which is the only one it needs to: it
+// is reached when a harness reports an agent id without a path, and the path it
+// builds is checked against the file that is actually there.
 //
 // An agentID that is not a plain name is refused rather than repaired. It is
 // joined onto a directory path, and filepath.Join CLEANS after concatenating, so

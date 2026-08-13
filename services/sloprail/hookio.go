@@ -80,13 +80,30 @@ func (p HookPayload) record() (string, error) {
 // only in a sub-agent, so the invocation carries the answer, and the two fields
 // below are reported to a sub-agent's hook and to no other.
 //
-// Sniffing isSidechain instead would be worse than redundant. A root transcript
-// legitimately contains sidechain records — every root that has ever dispatched
-// anything does — so a rule that read the field to decide whose cycle this is
-// would be wrong in the common case rather than in an edge one. That trap is why
-// this package exposes no "is this file a sub-agent's" helper: the question is
-// answered by the invocation, and offering a second way to answer it from
-// evidence is offering a way to get it wrong.
+// Sniffing isSidechain instead would be worse than redundant, though not for
+// the reason an earlier version of this comment gave. That version claimed a
+// root transcript legitimately contains sidechain records, "every root that has
+// ever dispatched anything does". That is measurably false: of the 8,119 main
+// transcripts on one machine, ZERO contain a single sidechain record, including
+// all 89 that demonstrably dispatched a sub-agent. Claude Code writes a
+// sub-agent's records to the sub-agent's own file, not into its parent's — which
+// is also why relating a root to its sub-agents needs the sibling subagents/
+// directory, and why no scan of a root's own records could ever find one.
+//
+// The real objection is that it answers the question from the wrong kind of
+// thing. Whose cycle this is was settled by the invocation — Stop fires only in
+// a root, SubagentStop only in a sub-agent — so reading records to re-derive it
+// replaces a fact with an inference, and an inference is only ever as good as
+// the layout it was measured against. It would also be answering a question
+// about THIS INVOCATION with evidence about a FILE: the same transcript is read
+// by both a sub-agent's hook and, at the parent's own Stop, by the parent's, so
+// no property of its contents can distinguish the caller. And it would rest on
+// the absence measured above continuing to hold, which is a fact about the
+// harness's current file layout rather than anything promised.
+//
+// That trap is why this package exposes no "is this file a sub-agent's" helper:
+// the question is answered by the invocation, and offering a second way to
+// answer it from evidence is offering a way to get it wrong.
 //
 // Used for reporting and for guarding, not for routing: record() already picks
 // by the same fields, so nothing depends on this to find a transcript.

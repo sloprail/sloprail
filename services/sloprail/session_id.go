@@ -49,12 +49,13 @@ func newSessionIDCmd() *cobra.Command {
 //
 // A sub-agent needs no separate walk. Its transcript carries its own parentless
 // origin record, so StableSessionID resolves it exactly as it resolves a root
-// session's, and resolves it to something distinct: across the 305 real
-// sub-agent transcripts on one machine, all 305 resolved, all 305 were distinct
-// from one another, none equalled its parent's, and none collided with any of
-// the 7,943 main-transcript origins. Extending the walk for sub-agents would
-// have been a fourth derivation of session identity on a project that has
-// already had to converge three.
+// session's, and resolves it to something distinct: across the 331 real
+// sub-agent transcripts on one machine, every origin record carried a uuid and
+// an explicitly null parentUuid, all resolved, all were distinct from one
+// another, none equalled its parent's, and none collided with any of the 8,119
+// main-transcript origins. Extending the walk for sub-agents would have been a
+// fourth derivation of session identity on a project that has already had to
+// converge three.
 //
 // The project directory IS derived, because crossing a restart means reading the
 // conversation's other transcripts and no payload names those. It is derived
@@ -86,10 +87,16 @@ func stableID(p HookPayload) (string, error) {
 // Taken from the transcript's own location wherever that is knowable, because
 // the transcript is already in the directory being looked for and a path is a
 // fact where an encoded working directory is an assumption. A sub-agent's record
-// sits one level deeper — <project>/<session>/subagents/agent-<id>.jsonl — so
-// the directory is reached by climbing out of the two levels the harness nested
-// it in, rather than by encoding a cwd that for an isolated sub-agent names
-// somewhere else entirely.
+// is nested under <project>/<session>/subagents/, so the directory is reached by
+// climbing back out of that nesting rather than by encoding a cwd that for an
+// isolated sub-agent names somewhere else entirely.
+//
+// How FAR out is not a constant, which is why the climb is delegated rather than
+// written here as two calls to filepath.Dir. Real data carries a second layout,
+// <session>/subagents/workflows/wf_<id>/agent-<id>.jsonl, one a fixed two-level
+// climb resolves to <session>/subagents — a directory holding no transcripts at
+// all, so the conversation's history would read as empty. SessionDirOfSubagent
+// finds the subagents component instead of counting to it; see its note.
 //
 // Falls back to encoding the working directory when the path is empty, which is
 // the SessionStart case: the hook fires as the session begins and no record has
@@ -98,11 +105,11 @@ func projectDirOf(path, cwd string) string {
 	if path == "" {
 		return transcript.ProjectDir(transcript.ConfigDir(), cwd)
 	}
-	dir := filepath.Dir(path)
-	// A sub-agent's record is nested in <session>/subagents/; the conversation's
-	// other transcripts are two levels up, beside the session's own file.
-	if filepath.Base(dir) == transcript.SubagentDir {
-		return filepath.Dir(filepath.Dir(dir))
+	// A sub-agent's record is nested under <session>/subagents/; the
+	// conversation's other transcripts sit beside the session's own file, one
+	// level above that directory.
+	if sessionDir := transcript.SessionDirOfSubagent(path); sessionDir != "" {
+		return filepath.Dir(sessionDir)
 	}
-	return dir
+	return filepath.Dir(path)
 }

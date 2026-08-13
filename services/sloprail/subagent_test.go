@@ -109,6 +109,56 @@ func TestProjectDirOfClimbsOutOfSubagents(t *testing.T) {
 	assert.Equal(t, "/cfg/projects/-proj", projectDirOf(own, "/whatever"))
 }
 
+// TestProjectDirOfHandlesTheWorkflowsLayout pins the second real layout, which a
+// fixed two-level climb got wrong.
+//
+// Claude Code writes some sub-agent records a further two levels down, under
+// subagents/workflows/wf_<id>/ — 9 such files against 322 flat ones on the
+// machine this was measured on. Climbing exactly two levels from one of those
+// lands on <session>/subagents, a directory containing no transcripts at all, so
+// every other transcript of the conversation becomes unreadable and a restart
+// that should have been crossed silently is not.
+//
+// Latent rather than harmless: the project directory is consulted when an origin
+// record carries a logicalParentUuid, and none of the sub-agents observed do.
+// But TestSubagentIdentitySurvivesAFork asserts that exact case decides the
+// identity, so the branch is one this codebase claims to support — and a layout
+// it mishandles is not made safe by today's data happening not to reach it.
+func TestProjectDirOfHandlesTheWorkflowsLayout(t *testing.T) {
+	nested := filepath.Join(
+		"/cfg/projects/-proj/parent-session", transcript.SubagentDir,
+		"workflows", "wf_123", "agent-abc.jsonl")
+	assert.Equal(t, "/cfg/projects/-proj", projectDirOf(nested, "/an/isolated/worktree"),
+		"a sub-agent nested under workflows/ must resolve to the same project directory as a flat one")
+}
+
+// TestProjectDirOfIgnoresASubagentsNameAboveTheSession guards the search added
+// for the layout above.
+//
+// Searching outwards for a directory named subagents is what makes the climb
+// independent of depth, but a search can also find the WRONG one: a project
+// whose own encoded path contains the component would otherwise capture it. The
+// search runs deepest-first for exactly this reason, so the record's nearest
+// enclosing subagents directory wins over any higher namesake.
+func TestProjectDirOfIgnoresASubagentsNameAboveTheSession(t *testing.T) {
+	sub := filepath.Join(
+		"/cfg/projects/-proj", transcript.SubagentDir, "parent-session",
+		transcript.SubagentDir, "agent-abc.jsonl")
+	assert.Equal(t, filepath.Join("/cfg/projects/-proj", transcript.SubagentDir),
+		projectDirOf(sub, "/whatever"),
+		"the nearest enclosing subagents directory decides, not the outermost")
+}
+
+// TestProjectDirOfANonSubagentPathIsItsOwnDirectory pins the ordinary case
+// against the search: a root transcript is in the project directory already, and
+// nothing about it should be climbed.
+func TestProjectDirOfANonSubagentPathIsItsOwnDirectory(t *testing.T) {
+	assert.Equal(t, "/cfg/projects/-proj",
+		projectDirOf("/cfg/projects/-proj/session.jsonl", "/whatever"))
+	assert.Equal(t, "/cfg/projects/-proj",
+		projectDirOf("/cfg/projects/-proj/not-subagents/../session.jsonl", "/whatever"))
+}
+
 // TestStableIDOfSubagentIsItsOwn drives the whole payload path end to end, on
 // real files in the real nested layout: a parent transcript and a sub-agent's
 // beside it. The two identities must differ, because everything downstream is

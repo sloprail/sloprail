@@ -12,8 +12,9 @@ import (
 
 // sidechainRoot is the shape a sub-agent's transcript actually opens with: a
 // parentless record of its own, carrying isSidechain and the agent's id. Taken
-// from a real one rather than invented — every one of the 305 on the machine
-// this was measured on looks like this.
+// from a real one rather than invented — every one of the 331 on the machine
+// this was measured on looks like this, in both of the layouts they are written
+// in (see SessionDirOfSubagent).
 func sidechainRoot(uuid, agentID, parentSessionID string) string {
 	return `{"type":"user","uuid":"` + uuid + `","parentUuid":null,"isSidechain":true,` +
 		`"agentId":"` + agentID + `","sessionId":"` + parentSessionID + `",` +
@@ -66,8 +67,9 @@ func TestSubagentIdentityIsItsOwnOrigin(t *testing.T) {
 // mid-run must still resolve to the same identity, or the sub-agent loses its
 // baseline and every verdict partway through exactly as a root session would.
 //
-// Not observed in the wild — none of the 305 real sub-agent transcripts carried
-// a logicalParentUuid — but it is the same file format written by the same
+// Not observed in the wild — a key census over all 331 real sub-agent
+// transcripts (35,825 records) found no logicalParentUuid on any of them — but
+// it is the same file format written by the same
 // harness, and a sub-agent long enough to compact is the case where losing state
 // costs the most. Pinned so that whatever makes a root session survive a fork
 // keeps working here.

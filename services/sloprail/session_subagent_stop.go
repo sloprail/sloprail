@@ -16,13 +16,21 @@ import (
 // already said it. A single command that had to decide would be re-deriving,
 // from evidence, a fact it was handed.
 //
-// And the evidence available to derive it from is actively misleading. A
-// transcript marks a sub-agent's records with isSidechain, and a command that
-// sniffed that field would be reading records to answer a question the
-// invocation had already answered — getting it wrong for every root transcript
-// that happens to contain sidechain records, which is every root transcript that
-// has ever dispatched anything. Being a separate command is what makes that
-// mistake unavailable rather than merely discouraged.
+// Deriving it from the records instead would be answering a settled question
+// with the wrong kind of evidence. A transcript marks a sub-agent's records with
+// isSidechain, and it is tempting to read that field — but the same file is read
+// by the sub-agent's own hook here AND by the parent's hook at its own Stop, so
+// nothing in its contents distinguishes which of the two is calling. The
+// discriminator is the invocation, and it is exact.
+//
+// Not, to be clear, because roots are full of sidechain records: they are not.
+// Of the 8,119 main transcripts measured on one machine, zero contained one,
+// including all 89 that demonstrably dispatched a sub-agent. An earlier version
+// of this comment asserted the opposite as the reason to avoid the field, and
+// was simply wrong on the fact. The conclusion survives its own bad argument —
+// what makes sniffing wrong is that it re-derives from a mutable file layout
+// something the caller was handed outright. Being a separate command is what
+// makes that mistake unavailable rather than merely discouraged.
 //
 // Without this, a sub-agent's cycle ends with no guardrail running at all. Stop
 // fires only in the root, so before this command existed the plugin bound
@@ -73,8 +81,14 @@ func newSessionSubagentStopCmd() *cobra.Command {
 			// complete is not, and a guardrail engine that bricks delegation is
 			// worse than one that stays quiet about a cycle it could not place.
 			//
-			// It is not silent: the reason goes to stderr, where the harness
-			// surfaces it, so the gap is visible without being fatal.
+			// It is not silent, but it is quiet, and the difference is worth
+			// knowing. The reason goes to stderr, which reaches a person tailing
+			// logs; measured against this harness, a SubagentStop hook that
+			// exits zero has neither stream forwarded into the run's own
+			// output. The only channel from here that the session can see is a
+			// non-zero exit — which is the block this branch exists to avoid. So
+			// the gap is visible where gaps are looked for, and invisible to the
+			// sub-agent, which is the right way round.
 			if !p.IsSubagent() {
 				fmt.Fprintln(cmd.ErrOrStderr(),
 					"sloprail: subagent-stop was invoked without a sub-agent on the payload — not judging this cycle rather than judging it as the session that dispatched it")
