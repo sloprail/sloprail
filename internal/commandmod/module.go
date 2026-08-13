@@ -1,0 +1,79 @@
+// Package commandmod is the module for commands: what a shell command line is
+// about to run.
+//
+// One command line is rarely one program. A pipeline, an `&&` chain, a
+// subshell, a `sudo` or an `xargs` each nest invocations inside a single
+// string, and a rule about what an agent is about to run has to see all of
+// them. This walks that structure once and emits every invocation it finds, so
+// no rule has to recurse through shell syntax itself — and so nesting an
+// invocation one level deeper does not defeat a rule written against it.
+//
+// Resolution has a floor. A program named by a variable, a payload decoded and
+// piped to a shell, splitting that depends on the runtime IFS: none of these
+// can be known without running them, and running them is exactly what a
+// guardrail must not do. What can be seen is emitted; what cannot is left
+// alone rather than guessed at. This is a correctness aid, never a security
+// boundary.
+package commandmod
+
+import "github.com/sloprail/sloprail/internal/module"
+
+// Name identifies this module. It is how the engine reports which module
+// produced an event, and how a module is switched off — not a prefix the kinds
+// carry.
+const Name = "command"
+
+// KindPreInvoke is the one kind this module declares.
+//
+// One kind, not one per program or one per shell construct. What a rule asks
+// is whether the agent is about to run something, and the answer is the same
+// question whether the something sits in a pipeline or behind a sudo. The
+// nesting is flattened into the event rather than encoded in its name.
+//
+// There is no Post counterpart. A file has a settled state a diff can
+// establish afterwards; a command that already ran has no equivalent — what it
+// changed shows up as the file module's Post events, which is where a rule
+// about consequences belongs.
+const KindPreInvoke = "PreCommandInvoke"
+
+// Field names. They appear here, in Kinds below, and in the conversion in
+// event.go — nowhere else, so a rename cannot leave a matcher checking against
+// a name the events no longer carry.
+const (
+	FieldRaw         = "raw"
+	FieldInvocations = "invocations"
+
+	// Keys within one entry of FieldInvocations. Not fields of the kind: a
+	// matcher reads them off an element of the list, and the declaration
+	// describes the list itself.
+	KeyBin   = "bin"
+	KeyArgv  = "argv"
+	KeyFlags = "flags"
+)
+
+// Module produces command events.
+type Module struct{}
+
+// New returns the command module.
+func New() *Module { return &Module{} }
+
+// Name implements module.Module.
+func (*Module) Name() string { return Name }
+
+// Kinds implements module.Module.
+//
+// Both fields are carried on purpose. `invocations` is what a rule matches
+// against — resolved, flattened, with the quoting already undone. `raw` is what
+// a refusal quotes back, because telling an author that `npm` was refused is
+// less use than showing them the line they actually wrote.
+func (*Module) Kinds() []module.KindDecl {
+	return []module.KindDecl{
+		{
+			Name: KindPreInvoke,
+			Fields: []module.FieldDecl{
+				{Name: FieldRaw, Type: module.TypeString},
+				{Name: FieldInvocations, Type: module.TypeList},
+			},
+		},
+	}
+}
