@@ -12,7 +12,7 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
-	"github.com/sloprail/sloprail/internal/modules"
+	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
 // newSessionPreToolCmd is the hook point that fires before a tool call runs.

@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/guardrail"
-	"github.com/sloprail/sloprail/internal/modules"
+	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
 // newSessionStartCmd is the hook point that fires when a session begins.

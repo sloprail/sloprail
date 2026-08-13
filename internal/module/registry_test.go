@@ -35,7 +35,7 @@ func mod(name string, kinds ...string) *fakeModule {
 }
 
 func TestNewRegistry_Empty(t *testing.T) {
-	r, err := NewRegistry()
+	r, err := NewRegistryForTest()
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Empty(t, r.DeclaredKinds())
@@ -46,7 +46,7 @@ func TestNewRegistry_HappyPath(t *testing.T) {
 	file := mod("file", "PreFileCreate", "PostFileCreate")
 	command := mod("command", "PreCommand")
 
-	r, err := NewRegistry(file, command)
+	r, err := NewRegistryForTest(file, command)
 	require.NoError(t, err)
 
 	owner, ok := r.Lookup("PreFileCreate")
@@ -69,7 +69,7 @@ func TestNewRegistry_TwoModulesClaimingOneKindIsRefused(t *testing.T) {
 	first := mod("file", "PreFileCreate")
 	second := mod("shadow", "PreFileCreate")
 
-	r, err := NewRegistry(first, second)
+	r, err := NewRegistryForTest(first, second)
 	require.Error(t, err)
 	assert.Nil(t, r, "a colliding registry is not returned half-built")
 	assert.Contains(t, err.Error(), `module "shadow"`)
@@ -79,28 +79,28 @@ func TestNewRegistry_TwoModulesClaimingOneKindIsRefused(t *testing.T) {
 
 func TestNewRegistry_SelfCollisionWithinOneModule(t *testing.T) {
 	// A module declaring the same kind twice collides with itself.
-	r, err := NewRegistry(mod("file", "PreFileCreate", "PreFileCreate"))
+	r, err := NewRegistryForTest(mod("file", "PreFileCreate", "PreFileCreate"))
 	require.Error(t, err)
 	assert.Nil(t, r)
 	assert.Contains(t, err.Error(), "already declared")
 }
 
 func TestNewRegistry_ModuleWithNoNameIsRefused(t *testing.T) {
-	r, err := NewRegistry(mod("", "SomeKind"))
+	r, err := NewRegistryForTest(mod("", "SomeKind"))
 	require.Error(t, err)
 	assert.Nil(t, r)
 	assert.Contains(t, err.Error(), "registered with no name")
 }
 
 func TestNewRegistry_DuplicateNameIsRefused(t *testing.T) {
-	r, err := NewRegistry(mod("file", "A"), mod("file", "B"))
+	r, err := NewRegistryForTest(mod("file", "A"), mod("file", "B"))
 	require.Error(t, err)
 	assert.Nil(t, r)
 	assert.Contains(t, err.Error(), `module "file": already registered`)
 }
 
 func TestNewRegistry_KindWithNoNameIsRefused(t *testing.T) {
-	r, err := NewRegistry(mod("file", ""))
+	r, err := NewRegistryForTest(mod("file", ""))
 	require.Error(t, err)
 	assert.Nil(t, r)
 	assert.Contains(t, err.Error(), "declared a kind with no name")
@@ -145,7 +145,7 @@ func TestNewRegistry_AddIsNotAtomic(t *testing.T) {
 }
 
 func TestLookup_KindNobodyOwns(t *testing.T) {
-	r, err := NewRegistry(mod("file", "PreFileCreate"))
+	r, err := NewRegistryForTest(mod("file", "PreFileCreate"))
 	require.NoError(t, err)
 
 	for _, kind := range []string{"NoSuchKind", "", "prefilecreate", "PreFileCreate "} {
@@ -163,7 +163,7 @@ func TestKindDeclFor(t *testing.T) {
 		{Name: "PreFileUpdate", Fields: []FieldDecl{path}},
 	}}
 
-	r, err := NewRegistry(file)
+	r, err := NewRegistryForTest(file)
 	require.NoError(t, err)
 
 	decl, ok := r.KindDeclFor("PreFileCreate")
@@ -179,7 +179,7 @@ func TestKindDeclFor(t *testing.T) {
 }
 
 func TestKindDeclFor_KindNobodyOwns(t *testing.T) {
-	r, err := NewRegistry(mod("file", "PreFileCreate"))
+	r, err := NewRegistryForTest(mod("file", "PreFileCreate"))
 	require.NoError(t, err)
 
 	decl, ok := r.KindDeclFor("NoSuchKind")
@@ -192,7 +192,7 @@ func TestKindDeclFor_KindNobodyOwns(t *testing.T) {
 }
 
 func TestDeclaredKinds_SortedAndComplete(t *testing.T) {
-	r, err := NewRegistry(
+	r, err := NewRegistryForTest(
 		mod("zeta", "Zed", "Alpha"),
 		mod("alpha", "Mid"),
 	)
@@ -207,7 +207,7 @@ func TestNeeded_OnlyWhatSomeBindingAsksFor(t *testing.T) {
 	command := mod("command", "PreCommand")
 	marker := mod("marker", "TurnEnd")
 
-	r, err := NewRegistry(file, command, marker)
+	r, err := NewRegistryForTest(file, command, marker)
 	require.NoError(t, err)
 
 	needed := r.Needed([]string{"PreFileCreate"})
@@ -220,7 +220,7 @@ func TestNeeded_OnlyWhatSomeBindingAsksFor(t *testing.T) {
 }
 
 func TestNeeded_NoBindingsNeedsNoModules(t *testing.T) {
-	r, err := NewRegistry(mod("file", "PreFileCreate"), mod("command", "PreCommand"))
+	r, err := NewRegistryForTest(mod("file", "PreFileCreate"), mod("command", "PreCommand"))
 	require.NoError(t, err)
 
 	assert.Empty(t, r.Needed(nil))
@@ -231,7 +231,7 @@ func TestNeeded_UnknownKindsAreIgnored(t *testing.T) {
 	// A declaration naming a kind that will never arrive does not make a
 	// module needed, and does not fail here — Needed is a selection, not a
 	// validation.
-	r, err := NewRegistry(mod("file", "PreFileCreate"))
+	r, err := NewRegistryForTest(mod("file", "PreFileCreate"))
 	require.NoError(t, err)
 
 	assert.Empty(t, r.Needed([]string{"NoSuchKind", "AlsoMissing"}))
@@ -244,7 +244,7 @@ func TestNeeded_UnknownKindsAreIgnored(t *testing.T) {
 func TestNeeded_DeduplicatesAcrossKinds(t *testing.T) {
 	// Two bindings on two kinds of one module still need that module once.
 	file := mod("file", "PreFileCreate", "PostFileCreate", "PreFileDelete")
-	r, err := NewRegistry(file)
+	r, err := NewRegistryForTest(file)
 	require.NoError(t, err)
 
 	needed := r.Needed([]string{
@@ -257,7 +257,7 @@ func TestNeeded_DeduplicatesAcrossKinds(t *testing.T) {
 func TestNeeded_StableOrderRegardlessOfInputOrder(t *testing.T) {
 	// Sorted by module name, so the same set of bindings always produces the
 	// same extractor order however the kinds were listed.
-	r, err := NewRegistry(
+	r, err := NewRegistryForTest(
 		mod("zulu", "Z1"),
 		mod("alpha", "A1"),
 		mod("mike", "M1"),

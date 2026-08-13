@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sloprail/sloprail/internal/modules"
+	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
 // T003_01: help prints every kind the engine can produce, with its fields.
@@ -62,14 +62,24 @@ func TestT003_01_HelpPrintsEveryDeclaredKind(t *testing.T) {
 // list, and the binary running with it.
 //
 // So this compares both directions, against what the BUILT binary reports.
-// `guardrail help` names the owning module for each kind, which makes the
-// binary's own module list observable from outside it. Every module in All()
-// must appear there, and every module named there must be in All().
+// `guardrail help` prints MODULES IN THIS BUILD from the registry it is running
+// with, which makes the binary's own module list observable from outside it.
+// Every module in All() must appear there, and every module named there must be
+// in All().
 //
-// Add a module to internal/ and not to All(), and this stays green while
-// TestAll_HoldsEveryModulePackage goes red. Wire one into the binary past All()
-// and this goes red. Between them there is no way to add a module in one place
-// only.
+// It reads that roster rather than the per-kind attribution under EVENT KINDS.
+// The attribution is emitted per kind, so a module declaring no kinds produced
+// no line and this test could not see it — a silent module could be in the
+// binary undetected, and a silent module correctly in All() failed here saying
+// the binary never mentioned it, which was false. The roster is printed per
+// module and has neither blind spot.
+//
+// Add a module to the repo and not to All(), and TestAll_HoldsEveryModuleInTheRepo
+// goes red. Wire one into the binary past All() and this goes red — but that
+// case no longer needs catching at runtime: module.NewRegistry takes a token
+// only packages under internal/module/ can name, so a hook point building its
+// own list does not compile. This is the check that the one list the binary CAN
+// have is the one it reports.
 func TestT003_05_BinaryReportsExactlyTheModuleList(t *testing.T) {
 	e := New(t)
 

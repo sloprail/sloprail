@@ -6,6 +6,22 @@
 // those declarations rather than from anything compiled into it, so adding a
 // domain is adding a module rather than editing the parts that route, match and
 // dispatch.
+//
+// # Adding one
+//
+// Write a type satisfying Module, anywhere, named anything — nothing in this
+// package or the tests around it cares where it lives or what its package is
+// called, and Name() is the module's own and need not resemble either. Then add
+// it to modules.All in internal/module/modules. That is the whole procedure,
+// and the second step is not optional: a module absent from that list is dead
+// code, and internal/module/modules.TestAll_HoldsEveryModuleInTheRepo fails
+// until it is there. That test finds your type by type-checking the repo for
+// implementations of Module, so it will find it wherever you put it.
+//
+// There is exactly one module list in a build. NewRegistry takes a token only
+// packages under internal/module/ can name, so modules.Registry is the only
+// registry a hook point can be handed — assembling a different one elsewhere
+// does not compile. See internal/module/internal/registryauth.
 package module
 
 import "github.com/sloprail/sloprail/internal/event"

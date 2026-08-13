@@ -13,14 +13,22 @@
 // check it — reaches the same function. Adding a module is one edit here, and
 // nothing can be checked against a vocabulary the engine does not have.
 //
-// A package of its own rather than internal/module, which the modules
-// themselves import: a list there would import them back.
+// A package of its own rather than internal/module itself, which the modules
+// import: a list there would import them back.
+//
+// A package UNDER internal/module rather than beside it, because that is what
+// makes this the only list there can be. Go lets only packages rooted at
+// internal/module/ import internal/module/internal/registryauth, and
+// module.NewRegistry takes a token from there — so this package can build a
+// registry and no hook point can. See internal/module/internal/registryauth for
+// the hole that closed.
 package modules
 
 import (
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/module/internal/registryauth"
 )
 
 // All returns the modules this build knows about, in registration order.
@@ -37,6 +45,10 @@ func All() []module.Module {
 
 // Registry returns a registry over All.
 //
+// The only registry a build can have. Not by agreement — module.NewRegistry
+// takes a token this package can name and nothing under services/ can, so a
+// hook point assembling its own list does not compile.
+//
 // One constructor rather than a list written out wherever a registry is needed.
 // The hook points run it to produce events, `guardrail help` runs it to tell an
 // author which kinds exist, and the load check runs it to decide whether a
@@ -49,5 +61,5 @@ func All() []module.Module {
 // compile time that error means the build is wrong rather than the input, which
 // is why TestRegistry_RegistersCleanly exists to catch it before a caller does.
 func Registry() (*module.Registry, error) {
-	return module.NewRegistry(All()...)
+	return module.NewRegistry(registryauth.Grant(), All()...)
 }
