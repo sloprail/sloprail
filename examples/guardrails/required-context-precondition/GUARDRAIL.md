@@ -41,6 +41,13 @@ stand in for "the agent has the context":
 - **What the agent did.** A `Skill` tool_use is in the record or it is not.
   There is no wording that puts it there. **This is what is checked.**
 
+The name is read from `.input.skill`, which the spec declares — see
+`SkillToolInput` in the claude-code dependency. That mattered: the script used to
+hedge, `.input.skill // .input.command`, because nothing said which field a
+`Skill` tool_use carries. Measuring real transcripts settled it — `skill` on all
+664 calls, `command` on none — and the hedge is gone. A fallback to a field that
+never occurs is not caution; it is a second way to match the wrong thing quietly.
+
 Sub-agent entries do not count. A skill loaded inside a delegated sub-agent was
 loaded on a different line of work than the one now writing the file, and the
 agent doing the writing did not read it.
@@ -119,9 +126,35 @@ which is the uuid of the conversation's root record, deliberately not the
 harness's own id and therefore not the transcript's filename. Building a path
 from it lands on a file that does not exist.
 
-What is missing is a variable naming the record itself. `SR_TRANSCRIPT` is what
-this script reads, and adding it is a one-line change beside the three that
-branch already sets. Until then the hook takes its unset-transcript path on
-every write and refuses by name, which is the correct behaviour for a
-precondition it cannot check — and which is why this rule should be enabled only
-once that variable exists.
+Worth naming precisely, because it looks derivable and is not: joining the
+encoded workspace and `SR_SESSION_ID` produces a plausible path that silently
+points at no file, rather than an error.
+
+### What closes it
+
+**One more variable: `SR_TRANSCRIPT`, the record's path, set beside the three
+`impl/hook-env` already sets.** That is the whole fix, and the engine already
+holds the value — it parses `transcript_path` off the hook payload into
+`HookPayload.TranscriptPath`, and builds the `hookScope` from that same payload.
+So it is a field on the scope, a line in the environment it constructs, and the
+same not-a-path sentinel `SR_WORKSPACE` already uses for the case where the
+engine could not resolve one.
+
+It is filed as `hook-transcript-path` in the backlog, at P0, which carries the
+argument in full.
+
+The alternative — a `--transcript` flag on `sloprail session query` — would also
+work and is deliberately not the plan. A flag puts the record's identity in the
+hook's hands, so a hook could name a session it was not running in; every other
+piece of scope the engine gives a hook is environment rather than argument for
+exactly that reason. It would also leave the derivable-looking `SR_SESSION_ID`
+trap in place for the next author.
+
+### What the rule does until then
+
+Exactly what it does now, and nothing about the script changes when the variable
+arrives — it is already written against it. Every write under a prefix in the
+table is refused by name, saying `SR_TRANSCRIPT` is unset. That is the correct
+behaviour for a precondition it cannot check, and it is why this rule should be
+enabled only once that variable exists. Writes elsewhere are unaffected, as
+above.
