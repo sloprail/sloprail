@@ -149,9 +149,20 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 		return nil
 	}
 
+	// The difference is taken FIRST and the problem reported after, the same
+	// way the module's own events are taken below.
+	//
+	// A difference that came back is a difference worth dispatching even when
+	// something in it could not be read: git may have named one path with a
+	// status this engine does not know, and the other ninety-nine are still
+	// real changes that rules are bound to. Throwing them away would turn one
+	// unclassifiable file into a whole cycle judged by nothing — a silence
+	// larger than the one it was reporting.
 	diff, err := newTreeDifference(p.Cwd, commit)
 	if err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: tree not compared:", err)
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: tree not fully compared:", err)
+	}
+	if diff == nil {
 		return nil
 	}
 	if diff.empty() {
@@ -287,8 +298,24 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 				if v.Refused {
 					// Collected, not returned. The remaining events still have to
 					// be dispatched, and the agent is told about all of them at
-					// once.
+					// once — see runPostDispatch, which blocks with all of them.
 					objections = append(objections, objection{Guardrail: d.Name, Reason: v.Reason})
+
+					// Also written out one refusal at a time, and this line is
+					// NOT how the agent learns of it.
+					//
+					// This command exits 0 and blocks by writing
+					// {"decision":"block"} on stdout, so its stderr reaches no
+					// agent at all — measured, along with every other way a Stop
+					// hook can refuse, on harness.BlockingErrors. What carries
+					// the words is block(), once, at the end.
+					//
+					// It stays because it is the only per-refusal record a person
+					// debugging a session can read: the blocking reason is one
+					// joined string built after every event was dispatched, while
+					// these arrive in dispatch order, interleaved with the other
+					// diagnostics on this stream. Dropping it is invisible to the
+					// agent and costs an operator the order things happened in.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s (%s)\n", v.Reason, d.Name)
 				}
 			}

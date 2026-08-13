@@ -43,12 +43,30 @@ type treeDifference struct {
 // twice. Git does not emit two spellings of one path, but a rename whose source
 // and destination clean to the same string would, and one entry per file is
 // what the interface promises.
-func newTreeDifference(root, commit string) (*treeDifference, error) {
-	changes, err := gitrepo.Changed(root, commit)
+// The directory asked about is the one the hook was invoked in, which is NOT
+// necessarily the root the answers are relative to. gitrepo.Change.Path is
+// repository-relative, and Observed.Root is documented as the repository root,
+// so the root is resolved rather than assumed to be the cwd.
+//
+// Assuming them equal is F1. A hook invoked below the top of the tree would
+// hold paths relative to the root and a root that is the subdirectory, so
+// joining the two resolves nothing: every modified file outside that
+// subdirectory stats as absent, and a file still sitting on disk is classified
+// as a DELETE.
+func newTreeDifference(dir, commit string) (*treeDifference, error) {
+	root, err := gitrepo.Root(dir)
 	if err != nil {
 		return nil, err
 	}
-	return differenceOf(root, changes), nil
+	// The changes and the problem travel together. gitrepo reports a status it
+	// could not classify without discarding the paths it could, so a nil
+	// difference and a non-nil error are different answers: the first means
+	// nothing could be established, the second means not everything could.
+	changes, unclassified := gitrepo.Changed(dir, commit)
+	if changes == nil && unclassified != nil {
+		return nil, unclassified
+	}
+	return differenceOf(root, changes), unclassified
 }
 
 // differenceOf builds the difference from changes already established.

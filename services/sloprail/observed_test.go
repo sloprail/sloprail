@@ -215,8 +215,66 @@ func TestTreeDifference_RootIsTheRepositoryAndNeverEmpty(t *testing.T) {
 
 	d, err := newTreeDifference(proj, base)
 	require.NoError(t, err)
-	assert.Equal(t, proj, d.Root())
 	assert.NotEmpty(t, d.Root())
+
+	// Compared after resolving symlinks rather than against the literal string.
+	// The root comes from git, which reports a path with its symlinks resolved,
+	// and on macOS the temp dir is reached through /var -> /private/var. What
+	// the contract requires is that the root IS the repository, not that it is
+	// spelled the way the caller happened to spell it.
+	wantRoot, err := filepath.EvalSymlinks(proj)
+	require.NoError(t, err)
+	gotRoot, err := filepath.EvalSymlinks(d.Root())
+	require.NoError(t, err)
+	assert.Equal(t, wantRoot, gotRoot)
+
+	// The paths the root is there to resolve actually resolve against it.
+	for _, p := range d.Paths() {
+		_, err := os.Stat(filepath.Join(d.Root(), p))
+		assert.NoErrorf(t, err, "%q must resolve against the root", p)
+	}
+}
+
+// TestTreeDifference_FromASubdirectoryStillRootsAtTheRepository is F1 at the
+// consumer's boundary.
+//
+// The engine is invoked with the cwd the hook reported, which is wherever the
+// agent was working — not necessarily the top of the tree. Every path the
+// producer reports is repository-relative, so a difference rooted at the cwd
+// resolves none of them and every modified file outside that subdirectory
+// stats as absent. filemod.classify maps existed-before/absent-now to a
+// DELETE, so the cycle dispatches a deletion for a file that is still on disk.
+func TestTreeDifference_FromASubdirectoryStillRootsAtTheRepository(t *testing.T) {
+	proj := initRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(proj, "sub", "deep"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "top.md"), []byte("one"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "sub", "deep", "inner.md"), []byte("one"), 0o644))
+	runGit(t, proj, "add", ".")
+	runGit(t, proj, "commit", "-m", "base")
+	base := runGit(t, proj, "rev-parse", "HEAD")
+
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "top.md"), []byte("two"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "sub", "deep", "inner.md"), []byte("two"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "sub", "deep", "new.md"), []byte("fresh"), 0o644))
+
+	// Asked from two levels down, the way a hook invoked there asks it.
+	d, err := newTreeDifference(filepath.Join(proj, "sub", "deep"), base)
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, []string{"top.md", "sub/deep/inner.md", "sub/deep/new.md"}, d.Paths())
+
+	// The property that actually protects the classification: every reported
+	// path resolves against the reported root. Without it, top.md and
+	// sub/deep/inner.md — both modified, both still present — are dispatched as
+	// deletions.
+	for _, p := range d.Paths() {
+		_, err := os.Stat(filepath.Join(d.Root(), p))
+		assert.NoErrorf(t, err, "%q does not resolve against the root, so it dispatches as a delete", p)
+	}
+
+	assert.True(t, d.ExistedAtBaseline("top.md"), "a modified file was at the baseline")
+	assert.True(t, d.ExistedAtBaseline("sub/deep/inner.md"), "a modified file was at the baseline")
+	assert.False(t, d.ExistedAtBaseline("sub/deep/new.md"), "a new file was not at the baseline")
 }
 
 // TestTreeDifference_UnchangedTreeIsEmpty: untouched_stays_silent at the

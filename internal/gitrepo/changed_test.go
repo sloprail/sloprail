@@ -3,6 +3,7 @@ package gitrepo
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -365,9 +366,34 @@ func TestParseNameStatus_RejectsATruncatedRenameEntry(t *testing.T) {
 // An unrecognised verb must not be guessed at. Defaulting it to "existed" or
 // "did not exist" would classify a file on a status nothing understood, and the
 // wrong answer here is invisible — it becomes an ordinary-looking event.
-func TestParseNameStatus_RejectsAnUnknownStatus(t *testing.T) {
-	_, err := parseNameStatus("X\x00weird.md\x00")
-	assert.Error(t, err)
+// TestParseNameStatus_ReportsAnUnknownStatusWithoutDroppingTheRest.
+//
+// An unrecognised letter is still reported — the path cannot be classified, so
+// it must not be silently treated as unchanged. What changed is the BLAST
+// RADIUS: it used to fail the whole parse, and the caller turns a failed parse
+// into zero events for the entire cycle. One status nobody had seen before
+// therefore disabled every file rule for that turn, which is a far larger
+// silence than the one unclassifiable path it was reporting.
+func TestParseNameStatus_ReportsAnUnknownStatusWithoutDroppingTheRest(t *testing.T) {
+	got, err := parseNameStatus("M\x00before.md\x00X\x00weird.md\x00A\x00after.md\x00")
+
+	assert.Error(t, err, "a status that cannot be classified must be reported")
+	assert.Contains(t, err.Error(), "weird.md", "the error names the path it could not classify")
+
+	assert.True(t, got["before.md"], "a change read before the unknown status survives it")
+	assert.False(t, got["after.md"], "a change read after the unknown status survives it")
+	assert.NotContains(t, got, "weird.md", "the path that could not be classified is not guessed at")
+	assert.Len(t, got, 2)
+}
+
+// TestParseNameStatus_EveryUnknownStatusIsReported: a second unreadable status
+// does not hide the first, which is why they are collected rather than
+// returned at the first one.
+func TestParseNameStatus_EveryUnknownStatusIsReported(t *testing.T) {
+	_, err := parseNameStatus("X\x00one.md\x00Y\x00two.md\x00")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "one.md")
+	assert.Contains(t, err.Error(), "two.md")
 }
 
 // TestParseNameStatus_HandlesAPathHoldingANewline.
@@ -405,4 +431,197 @@ func TestParseNameStatus_EmptyOutputIsNoChanges(t *testing.T) {
 		require.NoErrorf(t, err, "output %q", out)
 		assert.Emptyf(t, got, "output %q", out)
 	}
+}
+
+// TestChanged_FromASubdirectoryReportsRepositoryRelativePaths is F1: the two
+// git commands do not speak the same path language.
+//
+// `git diff --name-status` names paths from the REPOSITORY ROOT wherever it is
+// run from. `git ls-files --others` names them from the CURRENT DIRECTORY. Run
+// anywhere but the root, the union of the two carries both conventions at once
+// and nothing downstream can tell which is which.
+//
+// What that costs is not a cosmetic mis-spelling. The consumer stats Root()
+// joined to the path to decide whether a file exists NOW, so a path in the
+// wrong convention does not resolve, reads as absent, and a file that was at
+// the baseline and is still on disk classifies as a DELETE. Every modified file
+// outside the invocation subdirectory is dispatched as a deletion of a file
+// that is still there.
+//
+// The cwd is a subdirectory two levels down and the tree holds a modified file
+// at the root, a modified file in that subdirectory, and a new file in it —
+// which is the shape that makes both conventions appear in one answer.
+func TestChanged_FromASubdirectoryReportsRepositoryRelativePaths(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "top.md", "one")
+	write(t, dir, "sub/deep/inner.md", "one")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "base")
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	write(t, dir, "top.md", "two")
+	write(t, dir, "sub/deep/inner.md", "two")
+	write(t, dir, "sub/deep/new.md", "fresh")
+
+	// Asked from the subdirectory, the way a hook invoked with a cwd below the
+	// root asks it.
+	got := changedMap(t, filepath.Join(dir, "sub", "deep"), base)
+
+	assert.Equal(t, map[string]bool{
+		"top.md":            true,
+		"sub/deep/inner.md": true,
+		"sub/deep/new.md":   false,
+	}, got, "every path is repository-relative regardless of which directory the question was asked from")
+
+	// Stated separately, because the map assertion above would still pass if
+	// the untracked file were reported cwd-relative AND the test's expectation
+	// were written to match. This is the property the consumer depends on: the
+	// path resolves against the repository root.
+	for p := range got {
+		_, err := os.Stat(filepath.Join(dir, p))
+		assert.NoErrorf(t, err, "%q does not resolve against the repository root, so it will classify as a delete", p)
+	}
+}
+
+// TestChanged_TypechangeIsAnUpdate is F2, against real git rather than a
+// hand-written status string.
+//
+// Replacing a regular file with a symlink changes neither its presence nor its
+// path — only its mode — and git reports that as `T`. The file was at the
+// baseline and is there now, so it is an update.
+//
+// Written against a real tree because the point is that git actually emits this
+// letter. A parser test alone would only assert that the code agrees with the
+// test's own guess about git's alphabet, and the arm survived a full suite
+// precisely because nothing ever produced a T.
+//
+// What removing the arm costs is out of all proportion to the case: an
+// unrecognised status is an error for the WHOLE diff, and the caller turns that
+// error into zero events for the entire cycle. One symlink would silently
+// disable every file rule for that turn — see
+// TestChanged_OneUnreadableStatusDoesNotSilenceTheRest.
+func TestChanged_TypechangeIsAnUpdate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test cannot assume on windows")
+	}
+	dir := initRepo(t)
+	write(t, dir, "thing.md", "a regular file")
+	write(t, dir, "target.md", "the target")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "base")
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "thing.md")))
+	require.NoError(t, os.Symlink(filepath.Join(dir, "target.md"), filepath.Join(dir, "thing.md")))
+
+	// The status really is T, or this test is proving something else.
+	require.Contains(t, git(t, dir, "diff", "--name-status", base), "T\tthing.md",
+		"git no longer reports a typechange as T, so this test is no longer about the T arm")
+
+	got := changedMap(t, dir, base)
+	assert.True(t, got["thing.md"], "a file whose type changed was still at the baseline")
+	assert.Len(t, got, 1)
+}
+
+// TestParseNameStatus_TypechangeIsAnUpdate pins the same arm at the parser,
+// where the letter can be stated outright.
+func TestParseNameStatus_TypechangeIsAnUpdate(t *testing.T) {
+	got, err := parseNameStatus("T\x00thing.md\x00")
+	require.NoError(t, err)
+	assert.True(t, got["thing.md"], "a typechange is present on both sides, so it is an update")
+	assert.Len(t, got, 1)
+}
+
+// TestChanged_StagedThenDeletedIsReportedAsNoChange is F3: the one shape the
+// two-command union is structurally blind to, pinned so it is a decision rather
+// than an accident.
+//
+// A file created, staged, and then removed from disk before the cycle ends.
+// `git status` calls it "AD". Neither question this asks can see it:
+//
+//	git diff --name-status <baseline>   nothing: absent from the worktree AND
+//	                                    from the baseline commit, so there is
+//	                                    no difference between those two
+//	git ls-files --others               nothing: the path is TRACKED, having
+//	                                    been added to the index
+//
+// So the answer is zero changes, and that is defensible rather than merely
+// convenient: what a Post event describes is what the cycle did to the TREE,
+// and the tree ends the cycle exactly as the baseline had it. The file has no
+// content to judge and no path a rule could look at. classify's own no/no row
+// says the same thing — not there before, not there now, so nothing happened.
+//
+// What is lost is the intermediate state: a rule that wants to object to a file
+// having existed at all, however briefly, cannot see it here. Reading the index
+// as a third question would surface it, and would also start reporting paths
+// that are not in the tree the other rules are judging. That trade is not taken;
+// this test is what makes the choice visible if it is ever revisited.
+func TestChanged_StagedThenDeletedIsReportedAsNoChange(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "seed.md", "seed")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "base")
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	write(t, dir, "staged.md", "written, added, then removed")
+	git(t, dir, "add", "staged.md")
+	require.NoError(t, os.Remove(filepath.Join(dir, "staged.md")))
+
+	// The state really is the one this test is about.
+	require.Contains(t, git(t, dir, "status", "--short"), "AD staged.md",
+		"git no longer calls this AD, so this test is no longer about that state")
+
+	changes, err := Changed(dir, base)
+	require.NoError(t, err)
+	assert.Empty(t, changes,
+		"a file staged and then deleted leaves the tree as the baseline had it, so the cycle changed nothing")
+}
+
+// TestChanged_SubmoduleIsAGitlinkNotItsContents is F4, pinned as a decision.
+//
+// A submodule is one entry in the parent's tree — a GITLINK, recording which
+// commit of another repository this one points at. Two consequences, both of
+// which this test states:
+//
+//	Adding one reports .gitmodules and the submodule's PATH. The path is not a
+//	file, but it is what git names and it is handed to file rules as though it
+//	were one. A rule bound to a path pattern will match on it.
+//
+//	Changing a file INSIDE the submodule reports NOTHING. The parent only
+//	notices a submodule when the commit it points at moves, and editing a file
+//	in the submodule's worktree does not move it — that needs a commit in the
+//	submodule and then staging the new pointer in the parent.
+//
+// Left as it is rather than "fixed". Recursing into submodules would mean
+// judging another repository's files against this project's rules, with its own
+// baseline, its own ignore rules and its own history — a different question from
+// the one a cycle asks. What the engine owes here is to say so rather than to
+// let a project discover it by having a rule silently never fire.
+func TestChanged_SubmoduleIsAGitlinkNotItsContents(t *testing.T) {
+	inner := initRepo(t)
+	write(t, inner, "lib.md", "v1")
+	git(t, inner, "add", ".")
+	git(t, inner, "commit", "-m", "init")
+
+	dir := initRepo(t)
+	write(t, dir, "seed.md", "seed")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "base")
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	// file:// transport between local repositories is refused by default in
+	// modern git; this is a local fixture, not a fetch from anywhere.
+	git(t, dir, "-c", "protocol.file.allow=always", "submodule", "add", inner, "vendor/sub")
+
+	got := changedMap(t, dir, base)
+	assert.False(t, got[".gitmodules"], "the file recording the submodule is itself a new file")
+	assert.False(t, got["vendor/sub"], "the gitlink is reported under the submodule's PATH, not its contents")
+	assert.NotContains(t, got, "vendor/sub/lib.md", "a file inside a submodule is not this repository's to report")
+
+	// Dirtying the submodule's worktree moves nothing the parent records.
+	write(t, filepath.Join(dir, "vendor", "sub"), "lib.md", "v2")
+	after := changedMap(t, dir, base)
+	assert.NotContains(t, after, "vendor/sub/lib.md",
+		"editing a file inside a submodule is invisible to the parent's diff")
+	assert.Equal(t, got, after, "dirtying a submodule's contents changes nothing the parent reports")
 }
