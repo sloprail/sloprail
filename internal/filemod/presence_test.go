@@ -87,12 +87,46 @@ func TestObserved_DiagnosticsNameTheRepositoryRelativePath(t *testing.T) {
 	})
 
 	require.ErrorIs(t, err, ErrUnreadableTree)
-	// The sentinel's own line names the relative path. The wrapped *PathError
-	// still carries the absolute one, which is why the whole message is not
-	// searched for the root.
-	line, _, _ := strings.Cut(err.Error(), ": lstat")
-	require.Contains(t, line, filepath.FromSlash("locked/present.md"))
-	assert.NotContains(t, line, root, "the diagnostic leads with the relative path, as the others do")
+
+	// The claim is that the sentinel's own line LEADS with the relative path,
+	// the wrapped *PathError being allowed to carry the absolute one after it.
+	// So the assertion is on the prefix, and it is built from the two things the
+	// claim is made of rather than found by cutting the message on a literal.
+	//
+	// The mechanism matters as much as the claim here. This was asserted by
+	// `strings.Cut(err.Error(), ": lstat")` and then searching the REMAINDER for
+	// the root — which discarded precisely the segment that could leak, so the
+	// NotContains held no matter what the code did with the absolute path, and
+	// held equally if the wrapped error stopped being a *PathError and the cut
+	// found nothing to cut on. An assertion whose data never reaches the thing it
+	// claims about is not evidence.
+	want := fmt.Sprintf("%s: %s: ", ErrUnreadableTree, filepath.FromSlash("locked/present.md"))
+	require.Truef(t, strings.HasPrefix(err.Error(), want),
+		"the diagnostic must lead with the sentinel and the repository-relative path\n  want prefix: %q\n  got:         %q",
+		want, err.Error())
+
+	// The module's own sentence is the whole message MINUS the wrapped error's
+	// text, and that subtraction is the point. Bounding it by a literal instead —
+	// cutting on ": lstat", or trusting a prefix to stop where the syscall error
+	// starts — leaves everything past the boundary unexamined, so a leak that
+	// lands one word later is invisible. The wrapped error is the only thing
+	// licensed to carry the absolute path, so it is the only thing removed, and
+	// whatever remains is this module's to answer for.
+	var pathErr *os.PathError
+	require.ErrorAs(t, err, &pathErr,
+		"the diagnostic is expected to wrap the syscall's own *PathError")
+	require.Contains(t, pathErr.Error(), root,
+		"the wrapped *PathError is what legitimately carries the absolute path — "+
+			"if it stopped doing so, the subtraction below would be removing nothing "+
+			"and this test would be asserting against an empty allowance")
+
+	ours := strings.ReplaceAll(err.Error(), pathErr.Error(), "")
+	assert.NotContainsf(t, ours, root,
+		"this module's own sentence names an absolute path.\n  full message: %q\n  after removing the wrapped *PathError: %q",
+		err.Error(), ours)
+	assert.Contains(t, ours, filepath.FromSlash("locked/present.md"),
+		"and it still names the repository-relative path — without this the check above "+
+			"would pass for a sentence that named no path at all")
 }
 
 func TestLookAt_DistinguishesAbsentFromUnanswerable(t *testing.T) {
