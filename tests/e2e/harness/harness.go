@@ -348,6 +348,207 @@ func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
 	}
 }
 
+// ControlDecl and ControlScript are the positive control every revalidation
+// test rests on: a hook that stores something under its own scope and reads it
+// back on its next invocation.
+//
+// Here rather than in one scenario package because every scenario needs it and
+// a Go test package cannot import another's helpers. Exported so the scenario
+// that reports the control as a test of its own runs the SAME rule this package
+// gates on — two copies could drift, and the copy the gate used would be the
+// one nobody was reading. See RequireSessionStore.
+const ControlDecl = `---
+hooks:
+  PreFileCreate:
+    - hooks:
+        - type: command
+          command: ./probe.sh
+  PreFileUpdate:
+    - hooks:
+        - type: command
+          command: ./probe.sh
+---
+
+# Reads its own state back, and says what it found.
+`
+
+const ControlScript = `#!/bin/sh
+cat >/dev/null
+echo "before=[$(sloprail session state get seen 2>&1)]" >> "$PWD/log"
+sloprail session state set seen yes >/dev/null 2>&1
+exit 0
+`
+
+// SessionStoreOpens reports whether the engine can identify this session and
+// open its state at all.
+//
+// This is the positive control, and it is why every skip test in this tree can
+// be believed. A revalidation test asserts a hook did NOT run again — a claim
+// that passes trivially when the hook never ran, and just as trivially when
+// the engine could not identify the session and so had no record to skip
+// against. Both failures are silent, and both make a green suite mean nothing.
+//
+// The branch that first wrote an e2e for this feature hit exactly that: the
+// mock's main-session PreToolUse payload carries no transcript_path, session
+// identity failed, no store was opened, every hook re-judged — and the test
+// passed whether the skip worked or not. It deleted the test rather than bank
+// a vacuous one.
+//
+// So this establishes the capability POSITIVELY: something is written in one
+// hook invocation and read back in the next. Nothing about that can pass by
+// accident. A store that never opened returns an error to the hook; one keyed
+// differently per invocation returns "not found"; only a store that really
+// opened, under one identity, across two separate hook processes, hands back
+// what the earlier one put there.
+//
+// Deliberately a check of the observable capability rather than of the branch
+// or the harness, so it keeps working unchanged when the missing piece lands
+// rather than needing to be told that it did.
+func (e *Env) SessionStoreOpens() (bool, string) {
+	e.t.Helper()
+
+	proj := e.Project()
+	e.Guardrail(proj, "control", ControlDecl, map[string]string{"probe.sh": ControlScript})
+
+	// Two DIFFERENT paths, so neither invocation can be exempted by the other.
+	// The control must not be silenced by the very mechanism it exists to make
+	// testable: two writes of one path would let the second be legitimately
+	// skipped, and the control would report "unreachable" on a build where the
+	// store works perfectly.
+	e.Run(proj, "s-control", "write twice", Turns("done",
+		Write("c1", "one.md", "first"),
+		Write("c2", "two.md", "second"),
+	))
+
+	lines := e.Ledger(proj, "control", "log")
+	if len(lines) != 2 {
+		return false, "the control guardrail's hook did not run twice (got " +
+			strings.Join(lines, " | ") + ") — nothing about session state can be concluded"
+	}
+	// The SECOND invocation is the one that matters. The first legitimately
+	// finds nothing: it is what wrote the mark.
+	if !strings.Contains(lines[1], "before=[yes]") {
+		return false, "a hook could not read back what the previous hook in the same session stored: " +
+			strings.Join(lines, " | ")
+	}
+	return true, ""
+}
+
+// RequireSessionStore skips the calling test, naming the branch that closes the
+// gap, when the session store cannot be shown to open.
+//
+// Skipped rather than failed, and skipped rather than left to pass: this branch
+// owns tests/e2e/ only, and the two pieces the store needs — a transcript path
+// the mock does not send on PreToolUse, and the hook environment `session
+// state` resolves its scope from — are both on impl/hook-env. A test asserting
+// "the hook did not run again" while the store is unreachable would be green
+// and worthless, which is the precise failure the control exists to prevent.
+func RequireSessionStore(t *testing.T) {
+	t.Helper()
+	e := New(t)
+	if ok, why := e.SessionStoreOpens(); !ok {
+		t.Skipf("the session store does not open on this branch, so a skip cannot be observed "+
+			"and a passing skip test would be vacuous — the fix (transcript path derived from "+
+			"session id + cwd, and c.Env on the hook process) is on impl/hook-env: %s", why)
+	}
+}
+
+// Fork makes a NEW session id that a conversation continues under, the way a
+// harness re-forks one mid-conversation.
+//
+// This is the only way to test that state survives a re-fork, and it has to be
+// built rather than asked for: the mock has no compaction or retry path that
+// changes the id of a running session, so the transcript a fork would leave is
+// written here instead. What is written is the shape the identity walk actually
+// looks for — nothing about it is invented for the test's convenience:
+//
+//   - the new transcript's own root record is parentless, so it IS a root
+//     within its file, exactly like any other transcript's first record;
+//   - it carries logicalParentUuid naming a record in the OLD transcript,
+//     which is what marks it a continuation rather than a new conversation;
+//   - the record it names is really in the old file, so the walk crossing the
+//     restart finds it where it says.
+//
+// The conversation's identity is therefore the OLD transcript's root uuid,
+// reached by one hop, while the id the harness reports is the new one. That is
+// precisely the situation the invariant is about: a store keyed on the reported
+// id opens an empty database, and a store keyed on the origin finds the
+// verdicts already recorded.
+//
+// The old session must have been Run (or seeded) first — a fork continuing a
+// file that does not exist is not a fork, and the walk would fail rather than
+// resolve to the wrong thing, which would make the test pass for the wrong
+// reason.
+func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
+	e.t.Helper()
+
+	dir := filepath.Join(e.configDir, "projects", encodeProjectDir(resolveWorkDir(cwd)))
+	oldPath := filepath.Join(dir, oldSessionID+".jsonl")
+	if _, err := os.Stat(oldPath); err != nil {
+		e.t.Fatalf("harness: fork %s: the session being continued has no transcript at %s: %v",
+			oldSessionID, oldPath, err)
+	}
+
+	// The record the new file continues FROM. seedTranscript's root is the one
+	// record every seeded session is guaranteed to have, and it is genuinely in
+	// the old file — asserted below rather than assumed, because a fork pointing
+	// at a record that is not there resolves to nothing and the test would fail
+	// for a reason that has nothing to do with the invariant.
+	continued := "e2e-root-" + oldSessionID
+	body, err := os.ReadFile(oldPath)
+	if err != nil {
+		e.t.Fatalf("harness: fork %s: read %s: %v", oldSessionID, oldPath, err)
+	}
+	if !strings.Contains(string(body), `"uuid":"`+continued+`"`) {
+		e.t.Fatalf("harness: fork %s: %s does not hold the record %q the fork would continue from",
+			oldSessionID, oldPath, continued)
+	}
+
+	// Parentless within its own file AND naming what it continues: both, which
+	// is what a real re-forked transcript looks like and what makes the walk
+	// take its second hop instead of stopping here.
+	line := fmt.Sprintf(
+		`{"type":"user","uuid":%q,"parentUuid":null,"logicalParentUuid":%q,"cwd":%q,"message":{"role":"user","content":"continued"}}`+"\n",
+		"e2e-fork-"+newSessionID, continued, cwd)
+
+	path := filepath.Join(dir, newSessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		e.t.Fatalf("harness: fork %s: %v", oldSessionID, err)
+	}
+}
+
+// SessionIdentity is the identity the engine resolves for a session's
+// transcript — the conversation's own origin, not the id the harness reports.
+//
+// Asked of the binary under test rather than derived here. The walk that
+// crosses a re-fork is the thing under test, so a test computing it a second
+// way would be comparing its own reimplementation against itself and would
+// agree with a broken engine.
+//
+// Returns "" when the engine cannot resolve one, which is an answer rather than
+// a failure: a test asserting that two transcripts resolve alike needs to be
+// able to say that neither did.
+func (e *Env) SessionIdentity(projDir, sessionID string) string {
+	e.t.Helper()
+
+	transcript := filepath.Join(e.configDir, "projects",
+		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
+	payload := fmt.Sprintf(`{"transcript_path":%q,"cwd":%q}`, transcript, projDir)
+
+	cmd := exec.Command(filepath.Join(e.binDir, "sloprail"), "session", "id")
+	cmd.Dir = projDir
+	cmd.Stdin = strings.NewReader(payload)
+	cmd.Env = append(os.Environ(),
+		"HOME="+e.home,
+		"CLAUDE_CONFIG_DIR="+e.configDir,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // Result is what a run produced.
 type Result struct {
 	Output string
