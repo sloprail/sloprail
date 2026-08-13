@@ -1,11 +1,13 @@
-// The `after` half of before_refusable_only, restored through the plugin.
+// before_refusable_only: refusing a `before` event prevents the work, while
+// refusing an `after` event demands the work be corrected.
 //
-// Gated behind a build tag until impl/stop-diff-impl landed, because what was
-// missing was harness METHODS rather than behaviour — Exists and BlockingErrors
-// did not exist on the base, so a t.Skip would still not have compiled and would
-// have taken the other five tests in this package down with it. Both helpers
-// have landed with the dispatcher, the tag's own instruction was to delete it on
-// that merge, and this is that deletion.
+// This file covers the `after` half. It was gated behind the
+// sloprail_post_dispatch build tag until impl/stop-diff-impl merged (7289bc3);
+// the tag's own header said to delete it on that merge, and the prerequisites it
+// named — Env.Exists and Env.BlockingErrors — are both present on the harness
+// now. Ungated during the invariant audit, with each assertion re-confirmed to
+// fail against a deliberately broken engine (blanking the objections check in
+// runPostDispatch turns T006_02 red).
 
 package e2e
 

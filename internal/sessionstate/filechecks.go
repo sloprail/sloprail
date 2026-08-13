@@ -30,13 +30,15 @@ func (s *store) FileCheck(path, guardrail string) (Verdict, bool, error) {
 	return v, true, nil
 }
 
-// RecordFileCheck stores a verdict, replacing whatever the same guardrail last
-// said about the same file.
+// RecordFileCheck stores a verdict for one guardrail's judgement of one version
+// of one file's content.
 //
-// Replacing is the point: the row answers "has this guardrail already judged
-// the content the file holds now", and a superseded fingerprint answers nothing
-// — the content it described is gone and cannot come back under the same path
-// without producing the same fingerprint again.
+// A row PER FINGERPRINT, not one per (path, guardrail). The obvious design —
+// overwrite, because "the content it described is gone" — rests on a claim that
+// is false: content edited away and edited back produces exactly the same
+// fingerprint again, and under an overwriting key the verdict that already
+// judged it has been destroyed, so the file is judged from scratch. That is
+// `identity_is_content` failing, and it is the reason the key is what it is.
 func (s *store) RecordFileCheck(path, guardrail string, v Verdict) error {
 	db, err := s.conn()
 	if err != nil {
