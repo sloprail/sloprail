@@ -83,12 +83,20 @@ func Root(dir string) (string, error) {
 // See TestChanged_StagedThenDeletedIsReportedAsNoChange.
 //
 // A submodule is reported as ONE path — the gitlink — and never as the files
-// inside it. Adding one reports .gitmodules and the submodule's own path;
-// changing a file INSIDE the submodule reports nothing, because the parent
-// repository's diff only notices a submodule when the commit it points at
-// moves. The gitlink is then handed to file rules as though it were a file,
-// which is what a rule bound to a path pattern will match on. See
-// TestChanged_SubmoduleIsAGitlinkNotItsContents.
+// inside it. Adding one reports .gitmodules and the submodule's own path.
+//
+// It is NOT true that changing a file inside a submodule reports nothing. Git
+// reports `M <gitlink>` whenever the submodule's worktree is merely dirty — an
+// uncommitted edit, or even an untracked file sitting in it — because the
+// recorded gitlink and the submodule's actual state disagree. This comment
+// claimed the opposite until a test measured it.
+//
+// That has a consequence worth naming, because it is silence rather than noise:
+// the gitlink is a DIRECTORY on disk, so filemod answers presentNotAFile and
+// every dirty submodule yields ErrPathIsNotAFile. A project using submodules
+// gets a diagnostic per cycle for work no rule is about. Whether the right
+// answer is to suppress gitlinks or to keep reporting them is a product
+// decision nobody has made. See TestChanged_ADirtySubmoduleReportsTheGitlinkAsAnUpdate.
 func Changed(dir, commit string) ([]Change, error) {
 	if commit == "" {
 		// Nothing to measure from. Not an error: a repository with no commit
