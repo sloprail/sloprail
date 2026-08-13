@@ -1,6 +1,11 @@
 package e2e
 
-import "github.com/sloprail/sloprail/tests/e2e/harness"
+import (
+	"os"
+	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+)
 
 var (
 	New   = harness.New
@@ -8,3 +13,11 @@ var (
 	Write = harness.Write
 	Bash  = harness.Bash
 )
+
+// TestMain removes the binary build dir when this package's tests finish.
+// Without it every e2e package leaks 15M for the life of the machine.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	harness.Cleanup()
+	os.Exit(code)
+}

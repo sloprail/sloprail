@@ -78,8 +78,17 @@ func TestT006_02_PostHookCannotPreventTheWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 
+	// The hook records that it ran, to a path of its own, before refusing.
+	//
+	// Without this line the test is vacuous: its only claim would be that the
+	// file exists after a refusing Post hook, and a Post hook that never fired
+	// at all produces exactly that. The file would exist because nothing tried
+	// to stop it, not because an after-the-fact refusal was correctly ignored.
+	// Point the ExtraHook at an event that cannot fire and the difference is the
+	// whole test — the ran-marker disappears, the write still lands.
+	ran := filepath.Join(proj, "post-hook-ran")
 	script := filepath.Join(proj, "refuse-after.sh")
-	body := "#!/bin/sh\ncat >/dev/null\necho \"refused after it landed\" >&2\nexit 1\n"
+	body := "#!/bin/sh\ncat >/dev/null\necho ran >> " + ran + "\necho \"refused after it landed\" >&2\nexit 1\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
@@ -89,12 +98,26 @@ func TestT006_02_PostHookCannotPreventTheWrite(t *testing.T) {
 	// after-the-fact rule added, not a project with the engine taken out.
 	e.ExtraHook(proj, "PostToolUse", "Write", script)
 
-	e.Run(proj, "s-006-02", "write a note", Turns("done",
+	got := e.Run(proj, "s-006-02", "write a note", Turns("done",
 		Write("w1", "some/notes.md", "hello"),
 	))
 
-	// The work landed. A refusal after the fact demands a correction; it does
-	// not and cannot undo the write.
+	// The hook fired. Asserted first: everything below is about what its refusal
+	// failed to prevent, and none of it means anything if the hook was never
+	// reached.
+	//
+	// Read from the marker file, not the stream. The refusal is NOT carried back
+	// to the agent here, and that absence is itself part of the invariant rather
+	// than a gap in the observation — an after-the-fact refusal has nothing left
+	// to refuse, so there is no tool call for it to come back on. Which leaves
+	// the marker as the only channel that distinguishes a hook that ran and was
+	// ignored from one that never fired.
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatalf("the PostToolUse hook never ran, so this proves nothing about after-the-fact refusals: %v\n%s", err, got.Output)
+	}
+
+	// The work landed anyway. A refusal after the fact demands a correction; it
+	// does not and cannot undo the write.
 	if _, err := os.Stat(filepath.Join(proj, "some", "notes.md")); err != nil {
 		t.Fatalf("a hook refusing AFTER the write prevented it — the two timings are being treated alike: %v", err)
 	}

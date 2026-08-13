@@ -113,12 +113,20 @@ func TestT008_01_DispatcherCarriesNothingKindSpecific(t *testing.T) {
 // dispatcher avoids holding the memory itself: it names the scope and the
 // producer keeps the contents.
 //
-// SKIPPED, not deleted, and not weakened into something that passes: the engine
-// does not set that environment today, so `session state` cannot be used from
-// any hook. Written out here so the coverage claim is honest and so this starts
-// passing the moment the gap is closed. See the report accompanying this branch.
+// SKIPPED, not deleted, and not weakened into something that passes: on THIS
+// branch runHooks sets no environment on the hook process at all, so
+// `session state` cannot resolve its scope and fails from every hook. Written
+// out here so the coverage claim is honest and so this starts passing the
+// moment the gap is closed.
+//
+// The gap is closed elsewhere: impl/hook-env adds the `c.Env` assignment and
+// renames the variables to SR_GUARDRAIL / SR_SESSION_ID / SR_WORKSPACE. That
+// branch also carries its own 008 tests. The names below therefore track
+// statedir.go AS IT IS HERE, and the skip lifts when the two branches meet —
+// closing it from this branch would mean editing services/sloprail/, which this
+// branch does not own.
 func TestT008_02_HookIsToldItsOwnScope(t *testing.T) {
-	t.Skip("engine does not set SLOPRAIL_GUARDRAIL/SLOPRAIL_SESSION_ID/SLOPRAIL_WORKSPACE when running a hook, so `sloprail session state` fails from every hook — see report")
+	t.Skip("this branch's runHooks sets no hook environment, so `sloprail session state` cannot resolve its scope from any hook; the fix and the SR_* rename live on impl/hook-env")
 
 	e := New(t)
 	proj := e.Project()
