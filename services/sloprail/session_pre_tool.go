@@ -138,23 +138,25 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 			return deny(cmd, reason)
 		}
 
-		// What content this event is about, asked once for the event because
-		// the content is the same whoever is about to judge it. Whether it has
-		// ALREADY been judged is asked per guardrail below — one stream of
-		// events serves every rule, and a file one rule has passed is a file
-		// another may never have seen.
+		// What content this event is about, asked once for the event because the
+		// content is the event's fact, not any rule's. Whether it has ALREADY
+		// been judged is asked per guardrail below — one stream of events serves
+		// every rule, and a file one rule has passed is a file another may never
+		// have seen.
 		//
-		// Hoisting is correct HERE and is not a policy the Post side may copy.
-		// A guardrail's hook is an arbitrary script and may rewrite the very
-		// file this event is about, so an answer reused across the loop is only
-		// safe while nothing a hook does can move it. That holds on this path
-		// for one reason: the only Pre kind that can produce a subject is
-		// PreFileCreate, whose content comes off the EVENT and reads no disk.
-		// A Post subject is fingerprinted FROM disk, so the same hoist there
-		// would record rule B's verdict against rule A's fingerprint — which is
-		// why the Post dispatch resolves per guardrail instead. Subject is a
-		// pure function of the event and the cwd, so it is free to be called
-		// either way; this file's choice binds only this file.
+		// Reusing one answer across the loop is safe for a reason worth stating,
+		// because a guardrail's hook is an arbitrary script and may rewrite the
+		// very file this event is about: the only kind that can produce a subject
+		// here is PreFileCreate, whose subject comes from the EVENT and reads no
+		// disk. So nothing a hook does between one rule and the next can move it.
+		// That purity is pinned in revalidation_test.go, not assumed here.
+		//
+		// Which makes the hoist this path's own, not a policy the Post side may
+		// copy. A Post subject is fingerprinted FROM disk, so hoisting there
+		// would record rule B's verdict against rule A's fingerprint — the Post
+		// dispatch resolves per guardrail for exactly that reason. Subject is a
+		// pure function of the event and the cwd, so it serves either policy;
+		// this file's choice binds only this file.
 		subj, fingerprinted := rev.Subject(e, p.Cwd)
 
 		for _, d := range decls {
@@ -251,8 +253,23 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 				// model call rather than a function, so a second look can return
 				// a different answer and block the agent for work it already
 				// fixed and can no longer reach.
-				if fingerprinted && rev.Skip(d.Name, subj) {
-					continue
+				//
+				// Asked per guardrail, against the one subject resolved above for
+				// the whole event. The content is the same whoever is judging it,
+				// but whether it has ALREADY been judged is each rule's own fact —
+				// a file one rule has passed is a file another may never have seen.
+				if fingerprinted {
+					skip, err := rev.Skip(d.Name, subj)
+					if err != nil {
+						// Reported, never acted on. The false is already the safe
+						// answer; saying so is what keeps a session that has
+						// silently lost its record from looking like one that
+						// simply has nothing settled.
+						fmt.Fprintln(cmd.ErrOrStderr(), err)
+					}
+					if skip {
+						continue
+					}
 				}
 
 				v, err := runHooks(d, b, e)
@@ -306,10 +323,17 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 				}
 
 				if fingerprinted {
-					// Recorded whichever way it went. The pass is what lets the
-					// next cycle skip; the refusal is what makes the violation
-					// resurface every cycle until the content changes or the
-					// hook permits it.
+					// Recorded whichever way it went, and the refusal is the half
+					// that is easy to lose: it is written BEFORE the deny below
+					// returns, so the early exit cannot skip past it.
+					//
+					// Dropping it would not look like a bug from here — a refusal
+					// denies immediately either way, so this cycle is identical.
+					// The cost lands a cycle later: with no row, the content is
+					// unjudged rather than refused, and the FIRST thing that
+					// records a pass for it is believed. Recording it is what
+					// makes the row fail the passing half of the exemption for as
+					// long as the content stays as it is.
 					if err := rev.Record(d.Name, subj, !v.Refused); err != nil {
 						fmt.Fprintln(cmd.ErrOrStderr(), err)
 					}

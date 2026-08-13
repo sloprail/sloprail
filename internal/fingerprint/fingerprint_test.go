@@ -1,11 +1,13 @@
 package fingerprint
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,4 +96,53 @@ func truncate(s string) string {
 		return s[:40] + "..."
 	}
 	return s
+}
+
+func TestOfFile_AFileThatChangesWhileBeingReadHasNoFingerprint(t *testing.T) {
+	// The header commits to a length BEFORE the bytes are read, so a file that
+	// changes underneath produces a hash matching neither what was there nor what
+	// is now. Returning it would be worse than returning nothing: a wrong hash
+	// that happens to match a stored pass exempts the file, which is a rule
+	// silently not firing — the failure mode this whole package exists to avoid.
+	//
+	// Staged as a real race, because there is no seam between the stat and the
+	// read to hook: OfFile stats the handle it already opened. The file is made
+	// large enough that io.Copy needs many reads, and is truncated while they are
+	// happening.
+	//
+	// An attempt where the copy finished before the truncation landed proves
+	// nothing and is retried. But retries running out is a FAILURE, not a skip:
+	// with the guard removed every attempt returns a hash, so twenty quiet
+	// successes is exactly what the defect looks like. An earlier version of this
+	// test skipped there and the mutant walked straight through it.
+	dir := t.TempDir()
+
+	const attempts = 20
+	for attempt := range attempts {
+		path := filepath.Join(dir, fmt.Sprintf("big-%d", attempt))
+		require.NoError(t, os.WriteFile(path, make([]byte, 64<<20), 0o644))
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			time.Sleep(time.Millisecond)
+			os.Truncate(path, 0)
+		}()
+
+		fp, err := OfFile(path)
+		<-done
+		os.Remove(path)
+
+		if err == nil {
+			// Either the copy won the race — a correct answer about content that
+			// really was there — or the guard is gone. The loop cannot tell them
+			// apart, so it retries; running out is what tells them apart.
+			continue
+		}
+		assert.Empty(t, fp, "a file that changed under the read must yield no fingerprint at all")
+		assert.Contains(t, err.Error(), "changed while being read",
+			"and the reason must name the race rather than something incidental")
+		return
+	}
+	t.Fatalf("%d truncations mid-read and every one produced a fingerprint — the short-read guard is not firing", attempts)
 }
