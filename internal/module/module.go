@@ -46,6 +46,31 @@ type KindDecl struct {
 type FieldDecl struct {
 	Name string
 	Type FieldType
+
+	// Elem describes what a TypeList holds, when the module can say. Ignored
+	// for every other type.
+	//
+	// It exists because the matchers that read a list read inside it:
+	//
+	//   any(invocations, .bin == "npm" && "--access" in .flags)
+	//
+	// is the form the spec documents, and it is where a command rule lives.
+	// Without an element shape the collection is checked and the predicate
+	// body is not, so `.bni` inside that expression would load and never fire —
+	// precisely the silence declaring fields exists to prevent, reappearing one
+	// level down.
+	//
+	// A list whose Elem is nil is a list of something unspecified, and a
+	// predicate over it is left unchecked rather than refused. That is the
+	// honest answer when a module has not said: unlike a map's keys, an
+	// element's fields CAN be enumerated, so a module that knows them should
+	// declare them and get the check.
+	Elem *FieldDecl
+
+	// Fields describes a TypeMap's or a list element's own fields, when the
+	// module can enumerate them. Nil means it cannot, and reads of arbitrary
+	// keys go unchecked rather than refused.
+	Fields []FieldDecl
 }
 
 // FieldType is what a matcher can expect a field to hold. Deliberately small:
