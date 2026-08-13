@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"strings"
 )
 
@@ -98,18 +97,4 @@ func appendLaunchedBy(getenv func(string) string, guardrail string) string {
 		}
 	}
 	return strings.Join(append(existing, guardrail), ":")
-}
-
-// hookEnv is the environment to run one guardrail's hook in.
-//
-// The parent's environment is inherited because a hook is an ordinary shell
-// command with ordinary needs — PATH above all, since without it `sh -c` cannot
-// find `sloprail` or `sr-agent` at all, and a hook that cannot run is a refusal.
-//
-// The provenance variable is appended AFTER the inherited block, which is what
-// makes it win: Go's exec resolves a repeated name to the last occurrence, so a
-// value inherited from an outer process cannot override the engine's own
-// answer about which rules are currently running.
-func hookEnv(guardrail string) []string {
-	return append(os.Environ(), LaunchedByEnv+"="+appendLaunchedBy(os.Getenv, guardrail))
 }

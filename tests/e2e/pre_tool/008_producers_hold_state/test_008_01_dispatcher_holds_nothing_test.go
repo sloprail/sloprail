@@ -113,21 +113,12 @@ func TestT008_01_DispatcherCarriesNothingKindSpecific(t *testing.T) {
 // dispatcher avoids holding the memory itself: it names the scope and the
 // producer keeps the contents.
 //
-// SKIPPED, not deleted, and not weakened into something that passes: on THIS
-// branch runHooks sets no environment on the hook process at all, so
-// `session state` cannot resolve its scope and fails from every hook. Written
-// out here so the coverage claim is honest and so this starts passing the
-// moment the gap is closed.
-//
-// The gap is closed elsewhere: impl/hook-env adds the `c.Env` assignment and
-// renames the variables to SR_GUARDRAIL / SR_SESSION_ID / SR_WORKSPACE. That
-// branch also carries its own 008 tests. The names below therefore track
-// statedir.go AS IT IS HERE, and the skip lifts when the two branches meet —
-// closing it from this branch would mean editing services/sloprail/, which this
-// branch does not own.
+// This was written skipped, against a branch whose runHooks set no environment
+// on the hook process at all — the test stated the invariant honestly and waited
+// for the gap to close. The gap is closed here: runHooks now assigns c.Env, and
+// the variables are SR_GUARDRAIL / SR_SESSION_ID / SR_WORKSPACE. The skip is
+// lifted, and this passes.
 func TestT008_02_HookIsToldItsOwnScope(t *testing.T) {
-	t.Skip("this branch's runHooks sets no hook environment, so `sloprail session state` cannot resolve its scope from any hook; the fix and the SR_* rename live on impl/hook-env")
-
 	e := New(t)
 	proj := e.Project()
 	e.Guardrail(proj, "remembers", recordPayload, map[string]string{

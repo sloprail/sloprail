@@ -601,22 +601,28 @@ func (e *Env) SessionStoreOpens() (bool, string) {
 	return true, ""
 }
 
-// RequireSessionStore skips the calling test, naming the branch that closes the
-// gap, when the session store cannot be shown to open.
+// RequireSessionStore skips the calling test, naming what is missing, when the
+// session store cannot be shown to open.
 //
-// Skipped rather than failed, and skipped rather than left to pass: this branch
-// owns tests/e2e/ only, and the two pieces the store needs — a transcript path
-// the mock does not send on PreToolUse, and the hook environment `session
-// state` resolves its scope from — are both on impl/hook-env. A test asserting
-// "the hook did not run again" while the store is unreachable would be green
-// and worthless, which is the precise failure the control exists to prevent.
+// Skipped rather than failed, and skipped rather than left to pass: a test
+// asserting "the hook did not run again" while the store is unreachable would be
+// green and worthless, which is the precise failure the control exists to
+// prevent.
+//
+// The two pieces the store needs — a transcript path on the PreToolUse payload
+// and the hook environment `session state` resolves its scope from — landed with
+// impl/hook-env, so this now passes rather than skips. It is kept because it is
+// a real precondition rather than a note about a branch: it fails loudly if
+// either piece regresses, and the tests that depend on it would otherwise go
+// quietly vacuous again.
 func RequireSessionStore(t *testing.T) {
 	t.Helper()
 	e := New(t)
 	if ok, why := e.SessionStoreOpens(); !ok {
 		t.Skipf("the session store does not open on this branch, so a skip cannot be observed "+
-			"and a passing skip test would be vacuous — the fix (transcript path derived from "+
-			"session id + cwd, and c.Env on the hook process) is on impl/hook-env: %s", why)
+			"and a passing skip test would be vacuous — this needs a transcript path on the "+
+			"PreToolUse payload and c.Env on the hook process, both of which impl/hook-env "+
+			"provides: %s", why)
 	}
 }
 

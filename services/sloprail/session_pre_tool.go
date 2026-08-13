@@ -92,12 +92,40 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		bound = append(bound, iv.AffectedKinds()...)
 	}
 
+	// Who this session is, resolved ONCE for the whole dispatch and used for both
+	// things that need it: the store of what has already been judged, and the
+	// environment every hook is given. Two calls to stableID would be two
+	// derivations free to drift, which is the thing this codebase has already had
+	// to converge more than once.
+	//
+	// A session that cannot be identified is not a reason to refuse. The rules
+	// that need no memory still work, and blocking every action because the
+	// transcript could not be read would be the engine refusing on its own
+	// behalf. It does mean nothing can be exempted — an engine that could not
+	// find its record must re-judge, never skip — and that is what the empty id
+	// below yields, since openRevalidation is not called without one.
+	scope := hookScope{Workspace: p.Cwd}
+	if id, err := stableID(p); err == nil {
+		scope.SessionID = id
+	} else {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %v\n", err)
+	}
+	// The record itself, for a rule that reads the trajectory rather than the
+	// pending call. From the same p.record() stableID is built on, so the id and
+	// the path cannot name different files.
+	if path, err := p.record(); err == nil {
+		scope.Transcript = path
+	}
+
 	// What this session has already judged. Opened once for the whole
 	// dispatch, and left nil when the session cannot be identified: an engine
 	// that could not find its record must re-judge, never exempt.
-	rev, err := openRevalidation(p)
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: session state unavailable, judging everything afresh: %v\n", err)
+	var rev *revalidation
+	if scope.SessionID != "" {
+		var err error
+		if rev, err = openRevalidation(scope.SessionID, p.Cwd); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: session state unavailable, judging everything afresh: %v\n", err)
+		}
 	}
 	defer rev.Close()
 
@@ -272,7 +300,7 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 					}
 				}
 
-				v, err := runHooks(d, b, e)
+				v, err := runHooks(d, b, e, scope)
 				if err != nil {
 					// The third member of the same family, and the one whose own
 					// comment already said so: runHooks returns an error when the
@@ -532,7 +560,7 @@ const (
 // that wrote its reason somewhere unexpected, as approval — turns every failure
 // of the mechanism into silent permission, which is the one failure mode a
 // guardrail must not have.
-func runHooks(d guardrail.Declaration, b guardrail.Binding, e event.Event) (verdict, error) {
+func runHooks(d guardrail.Declaration, b guardrail.Binding, e event.Event, scope hookScope) (verdict, error) {
 	payload, err := json.Marshal(map[string]any{
 		"event":        e,
 		"guardrailDir": d.Dir,
@@ -552,12 +580,19 @@ func runHooks(d guardrail.Declaration, b guardrail.Binding, e event.Event) (verd
 		var stdout, stderr bytes.Buffer
 		c := exec.Command("sh", "-c", h.Command)
 		c.Dir = d.Dir
-		// The provenance this hook passes on. Everything the hook spawns
-		// inherits it — including, when the hook runs sr-agent, the harness it
-		// execs and that agent's own hooks. That inheritance across the exec is
-		// the entire mechanism: it is what lets the engine one level down know
-		// which rule it is running underneath.
-		c.Env = hookEnv(d.Name)
+		// Which guardrail is asking, which session and tree its state is keyed
+		// by, the record to read, and the provenance this hook passes on — all
+		// from one place, because they are one exec's environment. The guardrail
+		// travels here rather than in the argument vector: the hook is free to
+		// pass it on, but it never has to name itself to reach its own entries,
+		// and a rule that never names one cannot reach another's by accident.
+		//
+		// The provenance in particular is inherited by everything the hook
+		// spawns — including, when the hook runs sr-agent, the harness it execs
+		// and that agent's own hooks. That inheritance across the exec is the
+		// entire mechanism: it is what lets the engine one level down know which
+		// rule it is running underneath.
+		c.Env = scope.env(d.Name)
 		c.Stdin = strings.NewReader(string(payload))
 		c.Stdout = &stdout
 		c.Stderr = &stderr

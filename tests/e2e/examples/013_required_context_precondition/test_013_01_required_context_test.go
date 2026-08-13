@@ -93,32 +93,6 @@ func TestT013_01_GuardedPrefixIsRefused(t *testing.T) {
 
 // T013_06: today's refusal is the fail-closed one, for the stated reason.
 //
-// Pinned separately from T013_01 because it is a claim about the CURRENT
-// environment rather than about the rule. The example documents that it cannot
-// read the trajectory yet and therefore refuses without having checked; if that
-// stopped being true and nobody noticed, its rubric would be describing a
-// version of itself that no longer exists.
-//
-// This is the test that is EXPECTED to fail when the dependency lands, and the
-// failure is the signal: delete it, lift the skips, and the example's
-// SR_TRANSCRIPT section comes out with it.
-func TestT013_06_TodayTheCheckCannotRunAndSoRefuses(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	installExample(t, proj)
-
-	got := e.Run(proj, "s-013-06", "start a topic", Turns("done",
-		harness.Write("w1", guardedTopic, "# no-slop"),
-	))
-
-	if !got.Saw(cannotCheckRefusal) {
-		t.Fatalf("the example no longer takes its cannot-check path — a hook can now read the record, so lift the skips in T013_04/T013_05, delete this test, and remove the SR_TRANSCRIPT section from GUARDRAIL.md:\n%s", got.Output)
-	}
-	if got.Saw(skillRequiredRefusal) {
-		t.Fatalf("the example reported having checked the trajectory, which it cannot do yet:\n%s", got.Output)
-	}
-}
-
 // T013_02: the second guarded prefix demands its own skill, not the first's.
 //
 // A rule that mapped every guarded path to one skill would pass T013_01 and be
@@ -169,40 +143,6 @@ func TestT013_03_UnguardedPathIsPermitted(t *testing.T) {
 	}
 }
 
-// needsTrajectory skips a test that cannot run until a hook can read the
-// session's record, and says exactly what is missing.
-//
-// DELETE THIS ONE LINE FROM A TEST'S BODY to lift its skip. Nothing else about
-// the test changes: they are written against the behaviour the example already
-// has, not against a behaviour still to be designed.
-func needsTrajectory(t *testing.T) {
-	t.Helper()
-	t.Skip(`skipped: this example's hook cannot read the session's trajectory yet.
-
-` + "`sloprail session query`" + ` is told which record to read via a transcript_path on
-its stdin payload. A hook is handed {event, guardrailDir} and no environment at
-all, so it has neither the path nor anything to derive one from, and the example
-takes its cannot-check path on every write.
-
-impl/hook-env is NECESSARY but NOT SUFFICIENT. It gives hooks SR_GUARDRAIL,
-SR_SESSION_ID and SR_WORKSPACE — but SR_SESSION_ID is the STABLE session id, the
-uuid of the conversation's root record, deliberately not the harness's own id
-and therefore not the transcript's filename. Building a path from it lands on a
-file that does not exist; that was checked against the branch, not assumed.
-
-What is missing on top of impl/hook-env is a variable naming the record itself.
-The example reads SR_TRANSCRIPT. Adding it is a one-line change beside the three
-that branch already sets.
-
-Until then this test is zero coverage. It is written and kept so that it starts
-passing the moment the dependency lands — which was verified rather than hoped
-for: both skipped tests were run green against a scratch build carrying
-impl/hook-env plus that one line.
-
-T013_06 is the tripwire. It pins today's behaviour and FAILS when the dependency
-arrives, so nothing here can sit skipped after it stops needing to be.`)
-}
-
 // T013_04: a session that loaded the required skill is PERMITTED.
 //
 // The half that proves the rule is about the trajectory rather than about the
@@ -214,8 +154,6 @@ arrives, so nothing here can sit skipped after it stops needing to be.`)
 // as T013_01, same rule, opposite verdict; the only difference between the two
 // runs is what the agent did first.
 func TestT013_04_LoadedSkillPermitsTheWrite(t *testing.T) {
-	needsTrajectory(t)
-
 	e := New(t)
 	proj := e.Project()
 	installExample(t, proj)
@@ -242,8 +180,6 @@ func TestT013_04_LoadedSkillPermitsTheWrite(t *testing.T) {
 // Skill tool was used. A hook matching on the tool name alone would pass T013_04
 // and hand every guarded folder to any agent that had loaded anything at all.
 func TestT013_05_WrongSkillDoesNotSatisfy(t *testing.T) {
-	needsTrajectory(t)
-
 	e := New(t)
 	proj := e.Project()
 	installExample(t, proj)

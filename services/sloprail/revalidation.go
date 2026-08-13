@@ -43,16 +43,18 @@ type revalidation struct {
 
 // openRevalidation resolves the session's store, or reports why it could not.
 //
-// The session is the CONVERSATION, resolved the same way `session id` resolves
-// it, not the id the harness currently reports — that one re-forks
-// mid-conversation, and a store keyed on it would open an empty database
-// halfway through a session and re-judge everything already settled.
-func openRevalidation(p HookPayload) (*revalidation, error) {
-	id, err := stableID(p)
-	if err != nil {
-		return nil, err
-	}
-	path, err := sessionDBPath(p.Cwd, id)
+// The identity is passed IN rather than derived here, and that is the point: the
+// caller has already resolved it once, for the environment it gives each hook,
+// and a second stableID call would be a second derivation free to drift from the
+// first. A hook reading `session state` must land in the store this opens, so
+// the two must key on one answer rather than on two computed the same way today.
+//
+// The id it is given is the CONVERSATION's — resolved the way `session id`
+// resolves it, not the id the harness currently reports, which re-forks
+// mid-conversation and would open an empty database halfway through a session
+// and re-judge everything already settled.
+func openRevalidation(sessionID, cwd string) (*revalidation, error) {
+	path, err := sessionDBPath(cwd, sessionID)
 	if err != nil {
 		return nil, err
 	}
