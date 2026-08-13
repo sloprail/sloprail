@@ -2,8 +2,9 @@ package filemod
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/module"
@@ -98,17 +99,28 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 
 	f := FileEvent{Path: w.FilePath}
 	var kind string
-	switch m.lookAt(w.FilePath) {
-	case presenceAbsent:
+	// The pre phase has one spelling and no root: a write tool names the path it
+	// is about to write, as it names it. Both arguments are that one path.
+	p, _ := lookAt(w.FilePath, w.FilePath)
+	switch p {
+	case absent, unknown:
+		// A stat that cannot answer is treated as "not there" HERE and nowhere
+		// else, and the asymmetry with extractObserved is the point. The two
+		// outcomes here are PreFileCreate and PreFileUpdate over a path the tool
+		// named either way — no event appears or disappears on the choice, so the
+		// lesser wrong is the one that still carries `content`, which a rule can
+		// read when the file on disk is unreadable. In the observed phase the same
+		// lookup alone decides whether a DELETION is announced, so there the
+		// unknown is refused rather than folded.
 		kind = KindPreCreate
 		// The file does not exist yet, so a rule that wants to look at what
 		// would be written has nowhere else to look.
 		f.Content = w.Content
 		f.Markers = Scan(w.Content)
-	case presenceFile:
+	case presentFile:
 		kind = KindPreUpdate
 		f.Markers = m.markersOnDisk(w.FilePath)
-	case presenceNotAFile:
+	case presentNotAFile:
 		// A directory, a device, a socket. No file write can land here — the
 		// harness's own write will fail — so there is no file modification to
 		// report and no event to emit. Emitting PreFileUpdate, as this did,
@@ -119,6 +131,10 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		// owns says nothing, the same as the no-file_path case above. The write
 		// still fails, and it fails as the harness's error about a real
 		// filesystem condition rather than as a guardrail verdict.
+		//
+		// lookAt's error is deliberately dropped on this path. It names a producer
+		// mistake, and there is no producer here — a harness aiming a write at a
+		// directory is reporting a filesystem condition, not breaching a contract.
 		return nil, nil
 	}
 	return []event.Event{f.Event(kind)}, nil
@@ -164,39 +180,89 @@ func (*Module) markersOnDisk(path string) []Marker {
 // is there now, which is a stat. A tool call's claim about what it did reaches
 // none of it.
 //
-// A path the producer names but that was neither there before nor there now
-// yields nothing; see classify. A payload this module cannot read yields
-// nothing either, which is the same answer extractPending gives and for the
-// same reason: a module reads what it recognises.
+// A payload this module cannot read yields nothing, which is the same answer
+// extractPending gives and for the same reason: a module reads what it
+// recognises.
+//
+// Everything else a path can be wrong about is reported rather than skipped.
+// The events go out alongside the error: one path the machine could not stat,
+// or one the producer named in error, is not a reason to withhold the
+// classification of the ninety-nine beside it. What must not happen is the
+// silence — a path dropped without a word is how a producer that always answers
+// false, making every delete vanish, keeps looking like a working one.
 func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 	observed, ok := in[module.InputPayload].(Observed)
 	if !ok {
 		return nil, nil
 	}
 
+	root := observed.Root()
 	paths := observed.Paths()
+
 	events := make([]event.Event, 0, len(paths))
+	var problems []error
+	// Two paths that clean to the same file are one file, and Observed
+	// promises everything it names becomes an event with no second filter
+	// downstream — so the deduplication is this code's, and it is keyed on the
+	// canonical spelling rather than on what was given.
+	seen := make(map[string]bool, len(paths))
+
 	for _, path := range paths {
-		if path == "" {
+		clean, full, err := resolve(root, path)
+		if err != nil {
+			problems = append(problems, err)
 			continue
 		}
-		kind, reportable := classify(
-			observed.ExistedAtBaseline(path),
-			m.lookAt(filepath.Join(observed.Root(), path)) == presenceFile,
-		)
+		if seen[clean] {
+			continue
+		}
+		// Marked before the classification rather than after it, so that a
+		// repeated path is looked at once whatever it turns out to be — a file
+		// named twice should not be stat'd twice, nor reported twice as a
+		// producer error.
+		seen[clean] = true
+
+		p, err := lookAt(clean, full)
+		if err != nil {
+			// Either the stat could not answer — not a fact about the tree, and
+			// classifying on it would report a difference from a lookup that
+			// never happened — or a non-file now sits there, which exists and
+			// is not what these kinds are about. Both are said and neither
+			// becomes an event.
+			problems = append(problems, err)
+			continue
+		}
+
+		// Reached only for absent or presentFile: every other state left an
+		// error above. So the boolean this narrows to is the whole remaining
+		// question, and it is narrowed HERE rather than inside classify, which
+		// is about the baseline/tree pair and has no business knowing what a
+		// stat can fail to say.
+		kind, reportable := classify(observed.ExistedAtBaseline(path), p == presentFile)
 		if !reportable {
+			// The no/no row. Legitimately a file created and removed inside one
+			// cycle, which leaves nothing to be about — and also the one place
+			// the tree can contradict the producer's claim, so it is said.
+			problems = append(problems, fmt.Errorf("%w: %q", ErrNotADifference, path))
 			continue
 		}
+
 		// No content on any of them, including the create. Unlike PreFileCreate
 		// the file is on disk by now and a hook can read it there; and for the
 		// delete there is nothing left to read at all. Carrying content on one
 		// kind and not the others would make the delete the odd case a hook has
 		// to special-case, which is exactly the shape the Post kinds are
 		// declared flat to avoid.
-		events = append(events, FileEvent{Path: path}.Event(kind))
+		events = append(events, FileEvent{Path: clean}.Event(kind))
 	}
+
+	err := errors.Join(problems...)
 	if len(events) == 0 {
-		return nil, nil
+		// Distinct from the empty slice on purpose: a cycle that changed
+		// nothing needing judgement produced no events, and a caller appending
+		// to its own slice should not have to tell an empty result from a
+		// present-but-empty one.
+		return nil, err
 	}
-	return events, nil
+	return events, err
 }

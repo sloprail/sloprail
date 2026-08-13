@@ -40,15 +40,21 @@ func tree(t *testing.T, present ...string) string {
 	return root
 }
 
-// observe runs the post phase over an already-established difference.
+// observe runs the post phase over an already-established difference and
+// requires that nothing about it was wrong.
 func observe(t *testing.T, o fakeObserved) []event.Event {
 	t.Helper()
-	events, err := New().Extract(module.Input{
+	events, err := observeErr(o)
+	require.NoError(t, err)
+	return events
+}
+
+// observeErr is the same, for the cases whose point is what got reported.
+func observeErr(o fakeObserved) ([]event.Event, error) {
+	return New().Extract(module.Input{
 		module.InputPhase:   module.PhasePost,
 		module.InputPayload: o,
 	})
-	require.NoError(t, err)
-	return events
 }
 
 // --- the three classifications ----------------------------------------------
@@ -100,15 +106,19 @@ func TestObserved_PresentBeforeAndGoneNowIsADelete(t *testing.T) {
 func TestObserved_AbsentBeforeAndGoneNowIsNoEvent(t *testing.T) {
 	// Created and removed inside the same cycle: no difference against the
 	// baseline and nothing on disk, so there is no file for a rule to be about.
+	// No event — but the row is also what a producer answering ExistedAtBaseline
+	// wrongly looks like, and the two are indistinguishable on the tree, so it
+	// is reported rather than dropped.
 	root := tree(t)
 
-	events := observe(t, fakeObserved{
+	events, err := observeErr(fakeObserved{
 		root:   root,
 		paths:  []string{"scratch.tmp"},
 		before: nil,
 	})
 
 	assert.Empty(t, events)
+	assert.ErrorIs(t, err, ErrNotADifference)
 }
 
 func TestClassify_EveryCombination(t *testing.T) {
@@ -206,11 +216,26 @@ func TestObserved_OneEventPerFile(t *testing.T) {
 func TestObserved_MixedCycleReportsEachPathOnce(t *testing.T) {
 	root := tree(t, "keep.md", "new1.md", "new2.md")
 
+	// The input repeats paths, and repeats one of them under a second spelling.
+	// Without that the "reported twice" assertion below can never fire and the
+	// test only reads as coverage of the thing its name claims.
 	events := observe(t, fakeObserved{
-		root:   root,
-		paths:  []string{"new1.md", "keep.md", "old1.md", "new2.md", "old2.md"},
-		before: map[string]bool{"keep.md": true, "old1.md": true, "old2.md": true},
+		root: root,
+		paths: []string{
+			"new1.md", "keep.md", "old1.md", "new2.md", "old2.md",
+			"new1.md",   // the same path again
+			"./keep.md", // the same file, spelled differently
+			"old1.md",   // a repeated delete
+		},
+		before: map[string]bool{
+			"keep.md": true, "old1.md": true, "old2.md": true,
+			// asked with the path as given, so the second spelling needs its
+			// own entry — a producer keys this on its own paths.
+			"./keep.md": true,
+		},
 	})
+
+	require.Len(t, events, 5, "eight paths naming five files")
 
 	byPath := map[string]string{}
 	for _, e := range events {
@@ -264,12 +289,13 @@ func TestObserved_EmptyPathIsSkipped(t *testing.T) {
 	// which exists, and turn into an update of nothing.
 	root := tree(t, "real.md")
 
-	events := observe(t, fakeObserved{
+	events, err := observeErr(fakeObserved{
 		root:   root,
 		paths:  []string{"", "real.md"},
 		before: map[string]bool{"real.md": true},
 	})
 
+	assert.ErrorIs(t, err, ErrPathNotRelativeToRoot)
 	require.Len(t, events, 1)
 	assert.Equal(t, "real.md", events[0].Fields[FieldPath])
 }
