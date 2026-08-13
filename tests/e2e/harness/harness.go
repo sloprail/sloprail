@@ -16,6 +16,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -146,20 +147,62 @@ func (e *Env) Project() string {
 	}
 	e.t.Cleanup(func() { os.RemoveAll(dir) })
 
-	claudeDir := filepath.Join(dir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir .claude: %v", err)
 	}
-	settings := fmt.Sprintf(`{
-  "enabledPlugins": { %q: true },
-  "extraKnownMarketplaces": {
-    %q: { "source": { "source": "directory", "path": %q } }
-  }
-}`, pluginKey, marketplaceName, e.repoRoot)
-	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(settings), 0o644); err != nil {
+	e.writeSettings(dir, nil)
+	return dir
+}
+
+// ExtraHook attaches a raw lifecycle hook to a project, alongside the plugin.
+//
+// For the few properties that are about a hook POINT rather than about a
+// guardrail: that a refusal at an after-the-fact point cannot prevent work that
+// has already landed, for instance, is a claim about the lifecycle itself and
+// has to be made where a guardrail binding cannot reach.
+//
+// The plugin's own wiring is rewritten from the same source as Project's, so
+// this adds a hook to the ordinary arrangement rather than replacing it with a
+// hand-written one — a test using this is still running the engine a user gets.
+func (e *Env) ExtraHook(projDir, event, matcher, command string) {
+	e.t.Helper()
+	e.writeSettings(projDir, map[string]string{
+		"event": event, "matcher": matcher, "command": command,
+	})
+}
+
+// writeSettings writes the project's settings: the plugin as a user would
+// install it, plus at most one extra lifecycle hook.
+//
+// One place builds this, so the marketplace wiring a test runs against cannot
+// drift from the wiring Project documents.
+func (e *Env) writeSettings(dir string, extra map[string]string) {
+	e.t.Helper()
+	settings := map[string]any{
+		"enabledPlugins": map[string]any{pluginKey: true},
+		"extraKnownMarketplaces": map[string]any{
+			marketplaceName: map[string]any{
+				"source": map[string]any{"source": "directory", "path": e.repoRoot},
+			},
+		},
+	}
+	if extra != nil {
+		settings["hooks"] = map[string]any{
+			extra["event"]: []any{map[string]any{
+				"matcher": extra["matcher"],
+				"hooks": []any{map[string]any{
+					"type": "command", "command": extra["command"],
+				}},
+			}},
+		}
+	}
+	body, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		e.t.Fatalf("harness: encode settings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), body, 0o644); err != nil {
 		e.t.Fatalf("harness: write settings: %v", err)
 	}
-	return dir
 }
 
 // CLI runs the sloprail binary directly and returns what it produced.
@@ -202,6 +245,38 @@ func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]st
 			e.t.Fatalf("harness: write script %s: %v", file, err)
 		}
 	}
+}
+
+// Ledger returns the lines a guardrail's hooks appended to a file in their own
+// folder, or nothing when the file was never created.
+//
+// This is how a test observes what DID NOT happen. A refusal travels back
+// through the tool result and can be read off the stream, but "this hook never
+// ran", "this extractor produced nothing" and "these two hooks ran in this
+// order" leave no trace there — a hook that stays silent and a hook that never
+// ran look identical from outside.
+//
+// So the hooks write. A hook is an ordinary shell script run with its working
+// directory set to the guardrail's folder, so appending a line to a file there
+// is the one channel that records a run without the engine's cooperation and
+// without a test reaching inside the binary. An absent file is a real answer:
+// nothing ran.
+func (e *Env) Ledger(projDir, guardrail, file string) []string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "guardrails", guardrail, file))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read ledger %s/%s: %v", guardrail, file, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
 }
 
 var nonAlnumRe = regexp.MustCompile(`[^a-zA-Z0-9]`)
