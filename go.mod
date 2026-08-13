@@ -6,12 +6,13 @@ module github.com/sloprail/sloprail
 // replace directives and separate tidies without buying isolation the exec
 // boundary does not already give.
 
-go 1.24
+go 1.25.0
 
 require (
 	github.com/expr-lang/expr v1.17.8
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
+	mvdan.cc/sh/v3 v3.13.1
 )
 
 require (
