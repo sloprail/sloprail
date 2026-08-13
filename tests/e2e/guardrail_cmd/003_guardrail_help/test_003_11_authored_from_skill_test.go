@@ -5,26 +5,30 @@ import (
 	"testing"
 )
 
-// T003_11: a guardrail written from nothing but `sloprail guardrail help`
-// actually fires.
+// T003_11: a guardrail written from nothing but the authoring-guardrails skill
+// and `guardrail help` actually fires.
 //
-// This is the acceptance test for the help itself. Every other test here checks
+// This is the acceptance test for the pair of them. Every other test here checks
 // that a particular sentence is true; this checks that the sentences ADD UP to
-// enough — that an agent handed only this output can produce a working rule
-// rather than a plausible file. The help is the authoring interface, so a help
-// that is individually accurate and collectively insufficient has still failed.
+// enough — that an agent handed the skill for the format and the command for the
+// vocabulary can produce a working rule rather than a plausible file. Between
+// them they are the authoring interface, so a set of individually accurate
+// documents that is collectively insufficient has still failed.
 //
-// The declaration below was written against the printed output and nothing
-// else. It deliberately exercises what an author has to get right from reading
-// alone and gets no second chance at:
+// The split is the thing being tested as much as the content: the kind below
+// comes from `guardrail help`, everything shaping it comes from the skill, and
+// a rule needing both is what proves neither half was left hollow.
 //
-//   - a kind picked off EVENT KINDS, with the module attribution ignored
+// The declaration deliberately exercises what an author has to get right from
+// reading alone and gets no second chance at:
+//
+//   - a kind picked off `guardrail help`, with the module attribution ignored
 //   - a `list` field matched with `any(...)`, the operator group the string
 //     table does not cover
 //   - `hooks` as a map to a LIST of bindings, which is the shape most likely to
 //     be guessed as a bare mapping
-//   - stdin read exactly once, then reused, which is the mistake WHAT A HOOK
-//     MAY CALL BACK INTO exists to prevent
+//   - stdin read exactly once, then reused, which is the mistake the skill's
+//     hook-script section exists to prevent
 //   - a JSON `reason` on stdout with a non-zero exit
 //
 // It binds to PreCommandInvoke rather than to a file kind on purpose: the file
@@ -51,7 +55,7 @@ The command runs nothing that fetches over the network.
 Any invocation in the command line is a network fetcher.
 `
 
-// The hook, written from the HOOKS and WHAT A HOOK MAY CALL BACK INTO sections.
+// The hook, written from the skill's hook contract section.
 //
 // `set -uo pipefail` rather than `set -e`, stdin captured once into a variable,
 // the refusal as JSON with a reason addressed to the agent, and a non-zero exit
@@ -64,19 +68,19 @@ printf '{"decision":"block","reason":"This command fetches over the network (%s)
 exit 1
 `
 
-func TestT003_11_GuardrailAuthoredFromHelpFires(t *testing.T) {
+func TestT003_11_GuardrailAuthoredFromSkillFires(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.Guardrail(proj, "no-network-fetch", authoredFromHelp, map[string]string{
 		"no-network.sh": noNetworkScript,
 	})
 
-	// The load check the help tells an author to run. A declaration that does
+	// The load check the skill tells an author to run. A declaration that does
 	// not load would make the firing test below fail for the wrong reason, and
 	// the help promises this reports it.
 	load := e.CLI(proj, "session", "start")
 	if strings.Contains(load.Output, "not loaded") {
-		t.Fatalf("the declaration written from the help does not load:\n%s", load.Output)
+		t.Fatalf("the declaration written from the skill does not load:\n%s", load.Output)
 	}
 
 	got := e.Run(proj, "s-003-11", "fetch the data", Turns("done",
@@ -84,13 +88,13 @@ func TestT003_11_GuardrailAuthoredFromHelpFires(t *testing.T) {
 	))
 
 	if !got.Saw("fetches over the network") {
-		t.Fatalf("a guardrail written from `guardrail help` alone never fired — the help is not sufficient to author against:\n%s", got.Output)
+		t.Fatalf("a guardrail written from the skill plus `guardrail help` never fired — together they are not sufficient to author against:\n%s", got.Output)
 	}
-	// The engine appends the guardrail's name, which the help says not to
+	// The engine appends the guardrail's name, which the skill says not to
 	// include in the reason. If that stopped happening, every refusal would
-	// become unattributable and the help's instruction would be wrong.
+	// become unattributable and the skill's instruction would be wrong.
 	if !got.Saw("no-network-fetch") {
-		t.Errorf("the refusal does not name the guardrail, but the help tells authors to leave the name out because the engine adds it:\n%s", got.Output)
+		t.Errorf("the refusal does not name the guardrail, but the skill tells authors to leave the name out because the engine adds it:\n%s", got.Output)
 	}
 }
 

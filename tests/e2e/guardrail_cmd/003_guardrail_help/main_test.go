@@ -12,10 +12,15 @@ import (
 // `guardrail help` is typed by an authoring agent rather than invoked by a
 // harness, so it drives the binary directly. Everything a session triggers is
 // tested through the mock instead — see tests/e2e/pre_tool.
+//
+// The scenario builders are here for T003_11/T003_12, which have to drive a real
+// session: proving the skill is enough to author against means running what was
+// authored, and a rule that only loads has not been shown to do anything.
 var (
 	New   = harness.New
 	Turns = harness.Turns
 	Write = harness.Write
+	Bash  = harness.Bash
 )
 
 // TestMain removes the binary build dir when this package's tests finish.
