@@ -3,6 +3,7 @@ package filemod
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/module"
@@ -150,7 +151,52 @@ func (*Module) markersOnDisk(path string) []Marker {
 	return Scan(string(b))
 }
 
-// extractObserved compares the tree against the session's starting point.
-func (m *Module) extractObserved(module.Input) ([]event.Event, error) {
-	return nil, nil // TODO
+// extractObserved turns the difference between the tree and the session's
+// baseline into one event per file.
+//
+// One event per file rather than one carrying a list: a rule about files is
+// written against a file, and a cycle that touched a hundred of them should
+// dispatch a hundred events each matcher narrows, not hand every hook a
+// hundred-entry array to filter itself.
+//
+// Each path is classified from two facts and no prediction — whether it was
+// there at the baseline, which the difference's producer holds, and whether it
+// is there now, which is a stat. A tool call's claim about what it did reaches
+// none of it.
+//
+// A path the producer names but that was neither there before nor there now
+// yields nothing; see classify. A payload this module cannot read yields
+// nothing either, which is the same answer extractPending gives and for the
+// same reason: a module reads what it recognises.
+func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
+	observed, ok := in[module.InputPayload].(Observed)
+	if !ok {
+		return nil, nil
+	}
+
+	paths := observed.Paths()
+	events := make([]event.Event, 0, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		kind, reportable := classify(
+			observed.ExistedAtBaseline(path),
+			m.lookAt(filepath.Join(observed.Root(), path)) == presenceFile,
+		)
+		if !reportable {
+			continue
+		}
+		// No content on any of them, including the create. Unlike PreFileCreate
+		// the file is on disk by now and a hook can read it there; and for the
+		// delete there is nothing left to read at all. Carrying content on one
+		// kind and not the others would make the delete the odd case a hook has
+		// to special-case, which is exactly the shape the Post kinds are
+		// declared flat to avoid.
+		events = append(events, FileEvent{Path: path}.Event(kind))
+	}
+	if len(events) == 0 {
+		return nil, nil
+	}
+	return events, nil
 }

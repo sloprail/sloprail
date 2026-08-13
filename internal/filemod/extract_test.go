@@ -311,10 +311,10 @@ func TestExtract_DefaultsToPendingWhenPhaseIsUnset(t *testing.T) {
 	}
 }
 
-func TestExtract_PostPhaseProducesNothingYet(t *testing.T) {
-	// extractObserved is a TODO: comparing the tree against the session's
-	// starting point is not implemented, so the post phase reports nothing.
-	// This pins the placeholder, and will need updating when it lands.
+func TestExtract_PostPhaseIgnoresAPendingPayload(t *testing.T) {
+	// The post phase reads an Observed, not a Pending. Handed the wrong one it
+	// reports nothing rather than falling back to predicting from a tool call —
+	// which is the whole distinction between the two halves.
 	events, err := New().Extract(module.Input{
 		module.InputPhase:   module.PhasePost,
 		module.InputPayload: writePending("anything.md", "x"),
