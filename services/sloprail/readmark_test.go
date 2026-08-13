@@ -233,6 +233,10 @@ func TestReadMark_SeveralTurnsAppendedDuringACycleAreAllStillOffered(t *testing.
 func TestReadMark_ACycleThatNeverReadAdvancesNothing(t *testing.T) {
 	// A cycle that queried nothing has judged nothing. Re-deriving the position
 	// at write time would have it claim the whole record regardless.
+	//
+	// This is the FIRST cycle of the session, so nothing has ever been recorded
+	// and the trivial case is all it reaches. The general property its name
+	// asserts is the one below, where an earlier cycle DID read.
 	s := newSession(t)
 	unread := s.turn()
 
@@ -242,23 +246,241 @@ func TestReadMark_ACycleThatNeverReadAdvancesNothing(t *testing.T) {
 	assert.Equal(t, []string{s.uuid(0), unread}, uuidsOf(s.query()))
 }
 
-func TestReadMark_IsNotDraggedBackwardsByALaterNarrowerRead(t *testing.T) {
-	// Several rules may query within one cycle. The cycle as a whole saw the
-	// furthest of them, and a position only ever moves forward.
+func TestReadMark_ACycleThatNeverReadInheritsNothingFromAnInterruptedOne(t *testing.T) {
+	// F5, and the same defect shape as the one F1 was written to fix: the
+	// position was written by `session query` and never cleared, so a later
+	// cycle inherited it and marked turns judged that it was never shown.
+	//
+	// Reachable in an ordinary session, which is why it is worth a test rather
+	// than a comment: a cycle reads and is interrupted, turns land, and the next
+	// cycle finishes without any rule having queried.
+	s := newSession(t)
+	first := s.turn()
+
+	// Cycle one reads, then is interrupted. The mark correctly does not move.
+	require.NotEmpty(t, uuidsOf(s.query()))
+	s.dispatched(true)
+	require.Empty(t, s.mark())
+
+	// Turns land that nothing has been shown.
+	second := s.turn()
+	third := s.turn()
+
+	// Cycle two queries NOTHING and completes.
+	s.dispatched(false)
+
+	assert.Empty(t, s.mark(),
+		"a cycle that queried nothing must not claim a position an earlier cycle read")
+	assert.Equal(t, []string{s.uuid(0), first, second, third}, uuidsOf(s.query()),
+		"every turn is still owed to something, including the ones the interrupted cycle saw")
+}
+
+func TestReadMark_AnInterruptedCycleDoesNotHandItsPositionToTheNextOne(t *testing.T) {
+	// The same rule stated as a fact about the store, so it fails on the cause
+	// rather than only on the consequence.
+	//
+	// The position answers "how far did THIS cycle read". Left standing at the
+	// end of a cycle it stops being about that cycle and becomes a claim the
+	// next one inherits.
+	s := newSession(t)
+	s.turn()
+	require.NotEmpty(t, uuidsOf(s.query()))
+	require.NotEmpty(t, s.offered(), "the read position is recorded while the cycle runs")
+
+	s.dispatched(true)
+	assert.Empty(t, s.offered(), "the position is spent when the cycle ends, interrupted or not")
+}
+
+func TestReadMark_ACompletedCycleSpendsItsPositionToo(t *testing.T) {
+	// The other path a cycle ends on. The mark takes the position, and then the
+	// position is gone — otherwise the cycle after this one would inherit it and
+	// re-claim the same turns without reading them.
+	s := newSession(t)
+	last := s.turn()
+	s.cycle()
+	require.Equal(t, last, s.mark())
+
+	assert.Empty(t, s.offered(), "carried into the mark, and not left behind as well")
+
+	// A following cycle that queries nothing leaves the mark exactly where the
+	// cycle that DID read put it.
+	s.turn()
+	s.dispatched(false)
+	assert.Equal(t, last, s.mark())
+}
+
+func TestReadMark_HeldCycleDoesNotHandItsPositionOnEither(t *testing.T) {
+	// The path where dispatch never ran. The comment on completeCycle used to
+	// say the position was kept for "the cycle that finally dispatches" to carry
+	// forward, which is the same inheritance F5 is about — a later cycle
+	// claiming a read it did not perform.
+	//
+	// What is lost by clearing is a re-read, not a turn: the mark has not moved,
+	// so the next cycle is still offered everything this one saw.
 	s := newSession(t)
 	a := s.turn()
-	s.query()
-	require.Equal(t, a, s.offered())
+	require.NotEmpty(t, uuidsOf(s.query()))
 
-	// A second rule queries after another turn lands, then the record is
-	// replaced by a shorter one — the position it recorded is no longer there.
+	s.stop(false) // dispatch does not run, so the mark is held
+	require.Empty(t, s.mark())
+	assert.Empty(t, s.offered(), "a held cycle's reading is not the next cycle's to claim")
+
+	// A later cycle that reads nothing claims nothing.
+	s.dispatched(false)
+	assert.Empty(t, s.mark())
+	assert.Equal(t, []string{s.uuid(0), a}, uuidsOf(s.query()),
+		"everything is still on offer, because nothing has judged it")
+}
+
+func TestReadMark_IsNotDraggedBackwardsByALaterNarrowerRead(t *testing.T) {
+	// F6. Several rules may query within one cycle. The cycle as a whole saw the
+	// furthest of them, and a position only ever moves forward.
+	//
+	// The record has to actually SHRINK for the guard to be reached. An earlier
+	// version of this test only ever grew the record across its three queries,
+	// so the backwards branch never executed and the whole guard could be
+	// deleted with the suite staying green.
+	s := newSession(t)
+	a := s.turn()
 	b := s.turn()
+	c := s.turn()
 	s.query()
-	require.Equal(t, b, s.offered())
+	require.Equal(t, c, s.offered(), "the furthest read so far")
 
-	// Reading again with nothing new must not move the position backwards.
+	// The record is replaced by a shorter one holding the root and the first two
+	// turns — a rule reading it now genuinely reads LESS than the one before did,
+	// and the position it would record sits behind the one already there.
+	s.truncateTo(3)
 	s.query()
-	assert.Equal(t, b, s.offered())
+
+	assert.Equal(t, c, s.offered(),
+		"a later read that sees less must not drag the position back into re-judging settled work")
+
+	// The entry it would have been dragged back to is a real one that the
+	// truncated record still holds, so this is the guard holding rather than the
+	// shorter read having nothing to offer.
+	assert.Equal(t, []string{s.uuid(0), a, b}, uuidsOf(s.readWhole()))
+}
+
+// truncateTo rewrites the record to hold only its first n turns, the way a
+// record replaced or truncated underneath a session looks.
+func (s *session) truncateTo(n int) {
+	s.t.Helper()
+	b, err := os.ReadFile(s.transcriptPath)
+	require.NoError(s.t, err)
+	lines := strings.SplitAfter(string(b), "\n")
+	require.GreaterOrEqual(s.t, len(lines), n)
+	require.NoError(s.t, os.WriteFile(s.transcriptPath,
+		[]byte(strings.Join(lines[:n], "")), 0o644))
+	s.entries = n
+}
+
+// readWhole is every entry the record currently holds, ignoring the mark.
+func (s *session) readWhole() []transcript.Entry {
+	s.t.Helper()
+	entries, err := transcript.Read(s.transcriptPath)
+	require.NoError(s.t, err)
+	return entries
+}
+
+func TestAdvanceOffered_HoldsWhenTheRecordShrinksPastTheRecordedPosition(t *testing.T) {
+	// The guard at the unit, driven through the store rather than the commands,
+	// so the branch is reached without depending on how a cycle happens to run.
+	store := openStore(t)
+	full := entriesNamed("a", "b", "c")
+
+	require.NoError(t, advanceOffered(store, full, "c"))
+	require.Equal(t, "c", metaOffered(t, store))
+
+	// The record now holds only a and b. "b" is a real entry in it and sits
+	// behind the recorded position, which is exactly the drag the guard stops.
+	require.NoError(t, advanceOffered(store, entriesNamed("a", "b"), "b"))
+	assert.Equal(t, "c", metaOffered(t, store))
+}
+
+func TestAdvanceOffered_MovesForwardWithinTheSameRecord(t *testing.T) {
+	// The guard must not be a guard against everything. A later read that really
+	// did go further moves the position, which is the whole reason it is written
+	// at all.
+	store := openStore(t)
+	full := entriesNamed("a", "b", "c")
+
+	require.NoError(t, advanceOffered(store, full, "a"))
+	require.NoError(t, advanceOffered(store, full, "c"))
+	assert.Equal(t, "c", metaOffered(t, store))
+}
+
+func TestAdvanceOffered_FirstPositionIsTakenWithNothingToCompareTo(t *testing.T) {
+	// Nothing recorded yet, so there is no order to keep and the first read wins.
+	store := openStore(t)
+	require.NoError(t, advanceOffered(store, entriesNamed("a", "b"), "b"))
+	assert.Equal(t, "b", metaOffered(t, store))
+}
+
+func TestIsBefore_OrdersTwoNamesTheRecordHolds(t *testing.T) {
+	// The ordinary case: both present, and the record decides.
+	e := entriesNamed("a", "b", "c")
+	assert.True(t, isBefore(e, "a", "c"), "forward")
+	assert.False(t, isBefore(e, "c", "a"), "backward")
+	assert.False(t, isBefore(e, "b", "b"), "the same place is not before itself")
+}
+
+func TestIsBefore_HoldsWhenTheNewNameIsNotInTheRecord(t *testing.T) {
+	// Moving to a name this record cannot locate would leave the position
+	// somewhere no later read can resume from. The one it has works.
+	e := entriesNamed("a", "b", "c")
+	assert.False(t, isBefore(e, "b", "not-here"))
+}
+
+func TestIsBefore_TakesTheNewNameWhenTheRecordHoldsNeither(t *testing.T) {
+	// The doc's "treated as behind the new one", and the case naive index
+	// arithmetic gets wrong: -1 < -1 is false, which holds a stale position
+	// nothing can locate over this cycle's own reading. Neither is locatable, so
+	// there is nothing to recommend keeping the older one.
+	e := entriesNamed("a", "b", "c")
+	assert.True(t, isBefore(e, "gone", "also-gone"))
+}
+
+func TestIsBefore_HoldsWhenTheOldNameIsGoneFromTheRecord(t *testing.T) {
+	// A record that no longer holds the recorded position is a record that lost
+	// turns, and nothing left in it says where that position sat — so a new name
+	// anywhere in it may be behind the old one. This is the truncation
+	// recordOffered promises not to be dragged back by, and it cannot be told
+	// apart from a legitimate replacement by looking at the record.
+	//
+	// Held either way. The tie goes to the direction it is safe to be wrong in:
+	// an unlocatable position costs the next read a re-read from the start,
+	// while a position dragged backwards costs re-judging settled work.
+	e := entriesNamed("a", "b", "c")
+	assert.False(t, isBefore(e, "gone", "b"), "a name mid-record may sit behind where the old one was")
+	assert.False(t, isBefore(e, "gone", "c"), "and the end of a record that lost turns is not necessarily further on")
+}
+
+func TestIndexOf_FindsAPositionAndReportsAbsenceAsMinusOne(t *testing.T) {
+	// The sentinel every branch above is written around, pinned so that changing
+	// it breaks here rather than silently changing what isBefore decides.
+	e := entriesNamed("a", "b", "c")
+	assert.Equal(t, 0, indexOf(e, "a"))
+	assert.Equal(t, 2, indexOf(e, "c"))
+	assert.Equal(t, -1, indexOf(e, "not-here"))
+	assert.Equal(t, -1, indexOf(nil, "a"), "an empty record holds no position")
+}
+
+// entriesNamed is a record of nothing but uuids, which is all order is read from.
+func entriesNamed(uuids ...string) []transcript.Entry {
+	out := make([]transcript.Entry, 0, len(uuids))
+	for _, u := range uuids {
+		out = append(out, transcript.Entry{UUID: u})
+	}
+	return out
+}
+
+// metaOffered reads the recorded read position straight off a store.
+func metaOffered(t *testing.T, store sessionstate.Store) string {
+	t.Helper()
+	v, _, err := store.Meta(sessionstate.MetaTranscriptOffered)
+	require.NoError(t, err)
+	return v
 }
 
 func TestReadMark_HeldUntilTheCycleActuallyDispatches(t *testing.T) {
@@ -526,4 +748,31 @@ func initRepoAt(t *testing.T, dir string) {
 	runGit(t, dir, "init", "--initial-branch=main")
 	runGit(t, dir, "config", "user.email", "test@example.invalid")
 	runGit(t, dir, "config", "user.name", "Test")
+}
+
+func TestReadMark_ClearingAnInterruptedPositionCostsARereadAndNotATurn(t *testing.T) {
+	// The claim discardOffered rests on, checked rather than asserted.
+	//
+	// Discarding the position when a cycle is interrupted could plausibly lose
+	// the turns that cycle read. It does not, and the reason is that the MARK is
+	// what the next read resumes from and the mark did not move — so every turn
+	// the interrupted cycle saw comes round again, and the only cost is looking
+	// at it twice.
+	s := newSession(t)
+	a := s.turn()
+	b := s.turn()
+
+	// A cycle reads both turns and is then interrupted.
+	require.Equal(t, []string{s.uuid(0), a, b}, uuidsOf(s.query()))
+	s.dispatched(true)
+	require.Empty(t, s.offered(), "the position is discarded")
+
+	// Every turn it saw is offered again, plus whatever arrived since.
+	c := s.turn()
+	assert.Equal(t, []string{s.uuid(0), a, b, c}, uuidsOf(s.query()),
+		"a discarded position costs a re-read; it must not cost a turn")
+
+	// And the cycle that does complete marks exactly what it read.
+	s.dispatched(false)
+	assert.Equal(t, c, s.mark())
 }

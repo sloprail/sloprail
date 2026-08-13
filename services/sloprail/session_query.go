@@ -66,6 +66,11 @@ func runSessionQuery(cmd *cobra.Command, _ []string) error {
 	p := readPayload(cmd)
 	path, err := p.record()
 	if err != nil {
+		// A session id that is not a name, a guessed file belonging to another
+		// conversation, or one written in another tree. Reported as itself rather
+		// than folded into "no record": the difference between having nothing to
+		// read and being pointed somewhere it must not read is the whole point of
+		// refusing.
 		return err
 	}
 	if path == "" {

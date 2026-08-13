@@ -324,3 +324,83 @@ func TestHead_RebaseInALinkedWorktreeFindsItsOwnOperation(t *testing.T) {
 	assert.Equal(t, "wtbranch", pos.Branch,
 		"the operation belongs to this worktree, and is where this worktree keeps it")
 }
+
+func TestHead_ADanglingLinkedWorktreeIsNotARepository(t *testing.T) {
+	// F7. A linked worktree whose parent has been deleted is an everyday thing
+	// to find on disk — someone removed the checkout the worktree hung off. git
+	// says "not a git repository" about it, and so must this: judging the .git
+	// NAME alone reported a fault, so ensureBaseline errored on a normal state
+	// instead of quietly recording no baseline.
+	parent := initRepo(t)
+	commit(t, parent, "a.txt", "one")
+	linked := filepath.Join(t.TempDir(), "linked")
+	git(t, parent, "worktree", "add", "-b", "side", linked)
+
+	// The .git file survives; what it points at does not.
+	require.NoError(t, os.RemoveAll(parent))
+
+	_, err := Head(linked)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotARepository,
+		"a .git file pointing at a gitdir that is gone is an absence, the same way git reads it")
+}
+
+func TestHead_AnEmptyGitDirectoryIsNotARepository(t *testing.T) {
+	// The other half of F7, and what a half-finished copy leaves behind. The
+	// name is there and nothing else is, which is not a repository git can find
+	// and not one this package may call broken.
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, ".git"), 0o755))
+	// So the walk cannot climb out of the temporary directory into a real
+	// repository above it and answer about that one instead.
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
+
+	_, err := Head(dir)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotARepository)
+}
+
+func TestHead_AGitFilePointingNowhereIsNotARepository(t *testing.T) {
+	// A submodule's .git file left behind after the submodule was removed. Same
+	// shape as the dangling worktree, reached a different way.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"),
+		[]byte("gitdir: "+filepath.Join(dir, "nowhere")+"\n"), 0o644))
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
+
+	_, err := Head(dir)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotARepository)
+}
+
+func TestHead_ACorruptGitDirIsStillAFaultNotAnAbsence(t *testing.T) {
+	// The line F7's fix must not cross, and the case hasGitDir exists for.
+	//
+	// A gitdir carrying HEAD, objects and refs IS a repository — a garbage HEAD
+	// makes it a broken one, and git says "not a git repository" about that too.
+	// Following the .git name to what it points at must check that the gitdir is
+	// THERE, never that its contents are healthy: read as an absence, the
+	// session silently stops measuring and says nothing about why.
+	dir := initRepo(t)
+	commit(t, dir, "a.txt", "one")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git", "HEAD"),
+		[]byte("garbage-not-a-ref\n"), 0o644))
+
+	_, err := Head(dir)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrNotARepository,
+		"a repository that cannot be read is a fault to report, not an absence to skip past")
+}
+
+func TestHead_ALiveLinkedWorktreeIsStillARepository(t *testing.T) {
+	// The fix follows a .git FILE to its target, so the ordinary linked worktree
+	// — where the target is very much there — must keep working.
+	parent := initRepo(t)
+	want := commit(t, parent, "a.txt", "one")
+	linked := filepath.Join(t.TempDir(), "linked")
+	git(t, parent, "worktree", "add", "--detach", linked, "HEAD")
+
+	pos, err := Head(linked)
+	require.NoError(t, err)
+	assert.Equal(t, want, pos.Commit)
+}

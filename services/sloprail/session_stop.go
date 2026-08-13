@@ -24,11 +24,15 @@ func newSessionStopCmd() *cobra.Command {
 				// Already refused once this cycle. Refusing again would be a
 				// loop the agent cannot leave.
 				//
-				// Nothing is recorded on this path, and that is deliberate on
-				// both counts. The cycle did not finish, so the read mark must
-				// not move past turns nothing judged. And the point stays where
-				// it is, since a refusal outstanding is exactly the work that
+				// The mark does not move and the point does not move. The cycle
+				// did not finish, so the mark must not move past turns nothing
+				// judged; and a refusal outstanding is exactly the work that
 				// must remain inside the next cycle's difference.
+				//
+				// The read position IS discarded, which is the one thing this
+				// path writes. See discardOffered: a position is a fact about a
+				// cycle's reading, and this cycle is over.
+				discardOffered(cmd, p)
 				return nil
 			}
 			return completeCycle(cmd, p)
@@ -85,19 +89,73 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	// So the mark is held until dispatch is a step that ran. dispatchPostEvents
 	// reports whether it did, and today it reports that it did not, which stops
 	// the mark rather than letting an ordering that is currently vacuous look
-	// correct. What the mark loses by waiting is nothing: the position is kept
-	// in MetaTranscriptOffered, only grows, and the cycle that finally dispatches
-	// carries it forward for every cycle that could not.
+	// correct.
+	//
+	// What the mark loses by waiting is a re-read, not a turn. The position is
+	// discarded with the cycle either way, so the next cycle reads from the mark
+	// — which has not moved — and sees everything this one saw, plus whatever
+	// arrived since. Carrying the position across instead would hand it to a
+	// cycle that never read those turns; see discardOffered.
 	if !dispatchPostEvents(cmd, store, p) {
+		discardOffered(cmd, p)
 		return nil
 	}
 
-	// Where this cycle's reading ended, for the next one to resume after. Only
-	// on this path: a cycle that was interrupted may have judged nothing, and
-	// moving the mark anyway skips whatever it never looked at.
+	// Where this cycle's reading ended, for the next one to resume after, and
+	// then the position is spent. Only on this path: a cycle that was
+	// interrupted may have judged nothing, and moving the mark anyway skips
+	// whatever it never looked at.
 	advanceReadMark(cmd, store, p)
+	discardOffered(cmd, p)
 
 	return nil
+}
+
+// discardOffered forgets how far the record was read out, because the cycle
+// that read it is over.
+//
+// F5, and the same defect the mark itself was built around: a position asserted
+// by something that never earned it.
+//
+// MetaTranscriptOffered is written by `session query` and answers "how far did
+// THIS cycle read". Left standing at the end of a cycle it stops being about
+// this cycle and becomes a claim the next one inherits — and a later cycle that
+// queries nothing then completes would take the mark from it, marking turns
+// judged that it was never shown. Reachable in an ordinary session: a cycle
+// reads and is interrupted, turns land, and the next cycle finishes without any
+// rule having queried.
+//
+// So it is cleared on all three paths a cycle ends on: interrupted, held for
+// want of dispatch, and completed. What the first two lose is only a re-read —
+// the mark did not move, so the next cycle reads from where it still is and is
+// offered every turn this one saw. Re-reading a turn costs a second look;
+// skipping one loses a violation for good, which is the direction this errs in.
+//
+// A fourth path exists and is deliberately not one of them: completeCycle
+// returns early when the store cannot be opened at all. Nothing is reachable
+// there, because clearing needs the same store that just failed to open — the
+// stale position survives, and the next cycle inherits it. That is a real hole
+// rather than a covered one, and it is the same hole every piece of this
+// bookkeeping has when its own database is unavailable; the failure is already
+// reported on stderr where it happens.
+//
+// Failure here is likewise reported and swallowed — with one thing worth naming,
+// since it is a failure to UNDO. A clear that does not land leaves the stale
+// position exactly where it was, so the defect above is live again on the next
+// cycle. It is still not worth refusing the agent's work over: the cost is a
+// re-read of turns a cycle did see rather than a turn skipped, and blocking here
+// would refuse work for a reason no guardrail asked for.
+func discardOffered(cmd *cobra.Command, p HookPayload) {
+	store, err := openEngineState(p)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: read position not cleared:", err)
+		return
+	}
+	defer store.Close()
+
+	if err := store.SetMeta(sessionstate.MetaTranscriptOffered, ""); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: read position not cleared:", err)
+	}
 }
 
 // dispatchPostEvents runs the guardrails bound to what this cycle changed, and
@@ -133,6 +191,11 @@ var dispatchPostEvents = func(_ *cobra.Command, _ sessionstate.Store, _ HookPayl
 // which is correct — a cycle that looked at no part of the record has judged no
 // part of it, and the next cycle is owed everything.
 //
+// That holds only because the position is discarded when a cycle ends. It is
+// read here, not owned here: without the clearing it would carry over from an
+// earlier cycle and this function would happily advance the mark on behalf of a
+// cycle that queried nothing at all. See discardOffered.
+//
 // Failure is reported and swallowed. The cost of not moving the mark is that
 // the next cycle re-reads some turns; the cost of refusing here is the agent's
 // work blocked over the engine's bookkeeping.
@@ -160,10 +223,9 @@ func advanceReadMark(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 // keeps the furthest and ignores the rest.
 //
 // Order is decided by position in entries rather than by comparing the uuids,
-// which carry no order of their own. A recorded position that is not in the
-// record is treated as behind the new one: it names a place this record cannot
-// confirm — the record it pointed into was replaced or truncated — and holding
-// onto it would keep a position nothing can locate.
+// which carry no order of their own. What each combination of "present" and
+// "absent" means is isBefore's business, and it is not the arithmetic on -1
+// that an index comparison falls into by default — see there.
 func advanceOffered(store sessionstate.Store, entries []transcript.Entry, offered string) error {
 	current, ok, err := store.Meta(sessionstate.MetaTranscriptOffered)
 	if err != nil {
@@ -176,11 +238,55 @@ func advanceOffered(store sessionstate.Store, entries []transcript.Entry, offere
 }
 
 // isBefore reports whether the entry named by a comes strictly before the one
-// named by b, as the record orders them. A name the record does not hold counts
-// as before every name it does.
+// named by b, as the record orders them — which is to say, whether replacing a
+// with b moves the position forward.
+//
+// Four cases, and only one of them is an ordering question. Written out rather
+// than left to `indexOf(a) < indexOf(b)`, which silently gives -1 an order it
+// has not got and answers two of the other three wrongly:
+//
+//   - Both present: the record orders them, and that is the answer.
+//   - Only a is present: b is a name this record cannot locate, so nothing says
+//     it is further on. Holding still is the only safe answer — moving to it
+//     would leave the position somewhere no later read can resume from.
+//   - Only b is present: a is the unlocatable one, so the record it was taken
+//     from was replaced or truncated. It is tempting to move — b is at least
+//     somewhere this record has — and the doc here used to say so. But a record
+//     that no longer holds a is a record that LOST turns, and nothing left in
+//     it says where a sat, so b may well be behind it. That is the truncation
+//     recordOffered promises not to be dragged backwards by, and it cannot be
+//     told apart from a legitimate replacement by looking at this record. So
+//     this holds, and the tie is broken by which way it is safe to be wrong:
+//     an unlocatable position makes the next read start from the beginning of
+//     the record, which costs a re-read, while a position dragged backwards
+//     costs re-judging settled work and a position dragged forwards loses a
+//     turn for good.
+//   - Neither present: the record confirms nothing about either, so neither is
+//     a position anything can resume from and there is no re-reading to save.
+//     Naive index arithmetic says -1 < -1 is false and keeps the older one for
+//     no reason; this cycle's own reading is the better of two names the record
+//     cannot place.
+//
+// Every case that is not a plain ordering errs the same way: never forwards
+// onto a turn nothing read, and never backwards onto work already judged.
 func isBefore(entries []transcript.Entry, a, b string) bool {
 	ia, ib := indexOf(entries, a), indexOf(entries, b)
-	return ia < ib
+	switch {
+	case ia >= 0 && ib >= 0:
+		return ia < ib
+	case ia >= 0:
+		// b is unlocatable and a works. Moving would give up a position a later
+		// read can resume from for one it cannot.
+		return false
+	case ib >= 0:
+		// a is unlocatable, b is not, and where a sat is unknowable from here.
+		// Holding costs a re-read; moving risks going backwards.
+		return false
+	default:
+		// Neither is locatable, so neither saves a re-read. The newer one is at
+		// least this cycle's own reading.
+		return true
+	}
 }
 
 // indexOf is where a uuid sits in the record, or -1 when it is not there.

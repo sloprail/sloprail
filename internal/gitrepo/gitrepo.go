@@ -336,14 +336,33 @@ func isNotARepository(stderr string) bool {
 // it, judged from the filesystem rather than from what git said.
 //
 // This is what separates "there is no repository" from "there is one and it is
-// broken". A .git that exists while git refuses to read it is a fault, and a
-// fault has to be reported: treated as an absence it becomes an absent
+// broken". A repository that exists while git refuses to read it is a fault,
+// and a fault has to be reported: treated as an absence it becomes an absent
 // position, the recorded baseline is abandoned, and the session measures
 // nothing while printing nothing.
 //
-// Walking upwards because a repository at any ancestor makes dir part of it,
-// which is the same search git performs. A .git FILE rather than a directory is
-// accepted too: that is what a linked worktree and a submodule both have.
+// Walking upwards because a repository at any ancestor makes dir part of it.
+//
+// What is NOT enough is the .git name existing, and an earlier version of this
+// stopped there. Two everyday states carry that name while git correctly says
+// there is no repository, and reporting either as a fault makes an ordinary
+// situation noisy:
+//
+//   - A linked worktree whose parent has been deleted. Its .git is a file
+//     reading "gitdir: <path>", and once the parent is gone that path names
+//     nothing. git says "not a git repository: <that path>". An abandoned
+//     worktree left behind after its checkout was removed is a normal thing to
+//     find on disk, not a broken repository.
+//   - An empty .git directory — what a half-finished copy or an interrupted
+//     clone leaves. git says "not a git repository (or any of the parent
+//     directories)".
+//
+// So the name is followed to what it points at and that is checked for being a
+// gitdir. This is deliberately the same shallow test git itself uses to decide
+// whether a candidate directory is one, and no deeper: the point is to separate
+// absence from breakage, so a gitdir whose CONTENTS are corrupt must still
+// answer true. A repository with a garbage HEAD has all three markers and is
+// reported as the fault it is, which is the case this function was added for.
 //
 // Erring towards "present" on an unreadable path. Reporting a fault about a
 // directory that turns out to have no repository costs a line on stderr;
@@ -357,7 +376,7 @@ func hasGitDir(dir string) bool {
 	// this one too, or the two would disagree about where a repository begins.
 	ceilings := ceilingDirs()
 	for {
-		if _, err := os.Lstat(filepath.Join(abs, ".git")); err == nil {
+		if isGitDirAt(filepath.Join(abs, ".git")) {
 			return true
 		}
 		parent := filepath.Dir(abs)
@@ -366,6 +385,64 @@ func hasGitDir(dir string) bool {
 		}
 		abs = parent
 	}
+}
+
+// isGitDirAt reports whether the .git at path resolves to something that is
+// actually a gitdir.
+//
+// A .git FILE is a linked worktree or a submodule: it holds "gitdir: <path>"
+// naming where the real one lives, and it is worth nothing on its own — the
+// file outliving what it points at is exactly the dangling-worktree case.
+//
+// An unreadable path answers true, for the same reason the caller errs towards
+// "present": a state we could not look at is not a state we may call empty.
+func isGitDirAt(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	if info.Mode().IsRegular() {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return true
+		}
+		target := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(b)), "gitdir:"))
+		if target == "" {
+			return false
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		return isGitDirContents(target)
+	}
+	return isGitDirContents(path)
+}
+
+// isGitDirContents reports whether dir holds the markers git looks for when it
+// decides a directory is a gitdir: HEAD, objects, and refs.
+//
+// Their presence, not their health. A gitdir whose HEAD is garbage is a broken
+// repository rather than an absent one, and the whole reason the caller asks is
+// to keep those two apart.
+func isGitDirContents(dir string) bool {
+	info, err := os.Stat(dir)
+	if err != nil {
+		// A path that does not resolve is the dangling case. Anything else is a
+		// path we could not read, and unreadable errs towards present.
+		return !os.IsNotExist(err)
+	}
+	if !info.IsDir() {
+		return false
+	}
+	for _, marker := range []string{"HEAD", "objects", "refs"} {
+		if _, err := os.Stat(filepath.Join(dir, marker)); err != nil {
+			if os.IsNotExist(err) {
+				return false
+			}
+			return true // unreadable errs towards present
+		}
+	}
+	return true
 }
 
 // ceilingDirs is the set of directories git will not search above, as the

@@ -1,6 +1,9 @@
 package transcript
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // The identity a conversation keeps.
 //
@@ -109,4 +112,58 @@ func rootRecord(path string) (Entry, error) {
 		return Entry{}, fmt.Errorf("%s: %w: every entry in it has a parent", path, ErrNoOriginRecord)
 	}
 	return root, nil
+}
+
+// ErrWrongSession: a transcript was reached by GUESSING its filename from a
+// session id, and the file that turned up belongs to a different conversation.
+//
+// Only ever the answer for a guess. A path handed over by the harness is
+// authoritative and is never checked this way.
+var ErrWrongSession = errors.New("the transcript at that path belongs to another session")
+
+// BelongsToSession reports whether the transcript at path was written under
+// sessionID, according to the file's own records.
+//
+// This is the check a GUESS needs and a given path does not. Reconstructing
+// "<project dir>/<session id>.jsonl" is an assumption about where a harness
+// puts things, and the reasoning that a wrong guess "fails loudly" only covers
+// a guess landing on nothing. A guess landing on a file that EXISTS but belongs
+// to another conversation resolves silently and hands back that conversation's
+// identity — after which the engine keys its baseline and its read mark on it.
+//
+// Claude Code stamps every record with the session it was written under, and
+// across 300 real transcripts every record's sessionId equalled its filename
+// stem, with no exceptions. So the file says who it is and does not have to be
+// trusted to match its own name.
+//
+// A file carrying no sessionId at all answers true. The field is observed
+// rather than promised, and a harness that stops writing it must not turn every
+// session into a refusal — the check is here to catch a guess landing on
+// someone ELSE's conversation, which is a positive disagreement, not an absence
+// of evidence. Both the check and its limit are the point: what is caught is a
+// file naming a different session, and what is not caught is a file naming no
+// session.
+//
+// An unreadable file answers true and leaves the failure to whoever reads it
+// properly, which reports the open error with its own path in it.
+func BelongsToSession(path, sessionID string) (bool, error) {
+	if sessionID == "" {
+		return true, nil
+	}
+	var found string
+	err := scanFile(path, func(rec claudeRecord) bool {
+		if rec.SessionID == "" {
+			return true
+		}
+		found = rec.SessionID
+		return false
+	})
+	if err != nil {
+		return true, nil
+	}
+	if found == "" || found == sessionID {
+		return true, nil
+	}
+	return false, fmt.Errorf("%w: %s says it belongs to %s, not %s",
+		ErrWrongSession, path, found, sessionID)
 }

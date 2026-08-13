@@ -89,14 +89,20 @@ type HookPayload struct {
 // verdicts on what comes back, so a guess that lands on the wrong real file is
 // silent corruption rather than a loud failure.
 //
-// A session id carrying a path separator is refused rather than repaired.
-// "../-other-project/secret" joined onto the project directory is cleaned by
-// filepath.Join AFTER the concatenation, so the traversal lands in another
-// project's directory and resolves that conversation's identity with no error at
-// all. filepath.Base would make the path safe and the anomaly invisible. Both
-// slashes are refused because Windows separates on both. "." and ".." need no
-// clause: the suffix defuses them before the join, so "." becomes "..jsonl" and
-// ".." becomes "...jsonl", ordinary filenames inside the project directory.
+// Three things guard it, and each catches something the others cannot:
+//
+//   - A session id carrying a path separator is refused rather than repaired.
+//     "../-other-project/secret" joined onto the project directory is cleaned by
+//     filepath.Join AFTER the concatenation, so the traversal lands in another
+//     project's directory and resolves that conversation's identity with no
+//     error at all. filepath.Base would make the path safe and the anomaly
+//     invisible. Both slashes are refused because Windows separates on both.
+//     "." and ".." need no clause: the suffix defuses them before the join, so
+//     "." becomes "..jsonl" and ".." becomes "...jsonl", ordinary filenames
+//     inside the project directory. A clause for them could never fire.
+//   - BelongsToSession asks the file whether it is this session's. A guessed
+//     name colliding with another conversation's transcript otherwise resolves
+//     silently and hands back that conversation's identity.
 func (p HookPayload) record() (string, error) {
 	if p.AgentTranscriptPath != "" {
 		return p.AgentTranscriptPath, nil
@@ -119,7 +125,11 @@ func (p HookPayload) record() (string, error) {
 	if dir == "" {
 		return "", nil
 	}
-	return filepath.Join(dir, p.SessionID+".jsonl"), nil
+	path := filepath.Join(dir, p.SessionID+".jsonl")
+	if ok, err := transcript.BelongsToSession(path, p.SessionID); !ok {
+		return "", err
+	}
+	return path, nil
 }
 
 // IsSubagent reports whether this payload belongs to a sub-agent rather than the
