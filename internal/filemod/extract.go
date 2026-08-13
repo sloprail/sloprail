@@ -2,6 +2,8 @@ package filemod
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/sloprail/sloprail/internal/event"
@@ -14,6 +16,24 @@ import (
 // names its path outright. After a cycle it does not predict — it compares the
 // tree against where the session started and reports what is actually
 // different, which is what catches everything the prediction missed.
+//
+// This returns events ALONGSIDE a non-nil error, which module.Module's own
+// documentation requires a caller not to discard, and which the caller at
+// services/sloprail/session_pre_tool.go does discard: it prints the error and
+// `continue`s past the events. That is precisely the silence the module is
+// built to prevent — a producer degrading with ninety-nine good classifications
+// dropped for one bad path — and it is unpinned in BOTH directions, since
+// mutating the caller to HONOR the contract also leaves the suite green.
+//
+// Fixing it is another agent's, but what would pin it is worth stating, because
+// an unpinned contract is how this arrives back here a fourth time. A test in
+// the caller's own package, over a stub module returning one event and one
+// error together, asserting that the event reaches the matching stage. It has
+// to assert the EVENT's arrival and not the error's printing: the error is
+// already visible on stderr, so a test watching only that passes under both
+// behaviours, which is exactly why the mutation survives now. The module side
+// cannot host that test — from in here the return value is correct either way,
+// and what happens to it afterwards is not observable.
 func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 	if in[module.InputPhase] == module.PhasePost {
 		return m.extractObserved(in)
@@ -97,17 +117,28 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 
 	f := FileEvent{Path: w.FilePath}
 	var kind string
-	switch m.lookAt(w.FilePath) {
-	case presenceAbsent:
+	// The pre phase has one spelling and no root: a write tool names the path it
+	// is about to write, as it names it. Both arguments are that one path.
+	p, _ := lookAt(w.FilePath, w.FilePath)
+	switch p {
+	case absent, unknown:
+		// A stat that cannot answer is treated as "not there" HERE and nowhere
+		// else, and the asymmetry with extractObserved is the point. The two
+		// outcomes here are PreFileCreate and PreFileUpdate over a path the tool
+		// named either way — no event appears or disappears on the choice, so the
+		// lesser wrong is the one that still carries `content`, which a rule can
+		// read when the file on disk is unreadable. In the observed phase the same
+		// lookup alone decides whether a DELETION is announced, so there the
+		// unknown is refused rather than folded.
 		kind = KindPreCreate
 		// The file does not exist yet, so a rule that wants to look at what
 		// would be written has nowhere else to look.
 		f.Content = w.Content
 		f.Markers = Scan(w.Content)
-	case presenceFile:
+	case presentFile:
 		kind = KindPreUpdate
 		f.Markers = m.markersOnDisk(w.FilePath)
-	case presenceNotAFile:
+	case presentNotAFile:
 		// A directory, a device, a socket. No file write can land here — the
 		// harness's own write will fail — so there is no file modification to
 		// report and no event to emit. Emitting PreFileUpdate, as this did,
@@ -118,6 +149,10 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		// owns says nothing, the same as the no-file_path case above. The write
 		// still fails, and it fails as the harness's error about a real
 		// filesystem condition rather than as a guardrail verdict.
+		//
+		// lookAt's error is deliberately dropped on this path. It names a producer
+		// mistake, and there is no producer here — a harness aiming a write at a
+		// directory is reporting a filesystem condition, not breaching a contract.
 		return nil, nil
 	}
 	return []event.Event{f.Event(kind)}, nil
@@ -150,7 +185,270 @@ func (*Module) markersOnDisk(path string) []Marker {
 	return Scan(string(b))
 }
 
-// extractObserved compares the tree against the session's starting point.
-func (m *Module) extractObserved(module.Input) ([]event.Event, error) {
-	return nil, nil // TODO
+// extractObserved turns the difference between the tree and the session's
+// baseline into one event per file.
+//
+// One event per file rather than one carrying a list: a rule about files is
+// written against a file, and a cycle that touched a hundred of them should
+// dispatch a hundred events each matcher narrows, not hand every hook a
+// hundred-entry array to filter itself.
+//
+// Each path is classified from two facts and no prediction — whether it was
+// there at the baseline, which the difference's producer holds, and whether it
+// is there now, which is a stat. A tool call's claim about what it did reaches
+// none of it.
+//
+// A payload this module cannot read yields nothing, which is the same answer
+// extractPending gives and for the same reason: a module reads what it
+// recognises.
+//
+// Everything else a path can be wrong about is reported rather than skipped.
+// The events go out alongside the error: one path the machine could not stat,
+// or one the producer named in error, is not a reason to withhold the
+// classification of the ninety-nine beside it. What must not happen is the
+// silence — a path dropped without a word is how a producer that always answers
+// false, making every delete vanish, keeps looking like a working one.
+//
+// The work is split across two passes over the paths, for the reason
+// baselinesFor gives: a spelling breach is a property of the whole list, and an
+// event already appended cannot be taken back.
+func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
+	observed, ok := in[module.InputPayload].(Observed)
+	if !ok {
+		return nil, nil
+	}
+
+	root := observed.Root()
+	paths := observed.Paths()
+
+	events := make([]event.Event, 0, len(paths))
+	var problems []error
+	// Two paths that clean to the same file are one file, and Observed
+	// promises everything it names becomes an event with no second filter
+	// downstream — so the deduplication is this code's, and it is keyed on the
+	// canonical spelling rather than on what was given.
+	seen := make(map[string]bool, len(paths))
+
+	// The baseline is established for every path BEFORE any of them is
+	// classified, because the spelling breach is a property of the whole list
+	// rather than of one entry, and an event emitted mid-list cannot be recalled.
+	//
+	// Run inside the classification loop, the check was defeated by the dedupe:
+	// given {"dir/a.md", "./dir/a.md"} with the baseline keyed raw, the clean
+	// spelling was classified and its event appended on the first iteration, and
+	// the raw one — the only spelling that can produce the disagreement — arrived
+	// afterwards, when the create had already shipped. Reversing the two inputs
+	// caught it, so the guard was order-dependent in the same way as the defect
+	// its own comment says it eliminates: the same file in the same tree coming
+	// out a create or an update by iteration order alone.
+	//
+	// Two passes is what makes the answer independent of the order Paths listed
+	// the spellings in. The canonical question is still asked once per FILE — the
+	// contract puts one question about one file — while each distinct SPELLING is
+	// probed, which is the cost the contract already prices in.
+	settled, breached := m.baselinesFor(observed, root, paths, &problems)
+
+	for _, path := range paths {
+		// The first pass's own answer, not a second one. resolve is asked once
+		// per spelling and the verdict is carried forward, because asking twice
+		// makes the two passes able to DISAGREE — and every way they can disagree
+		// is a silence or a misclassification.
+		//
+		// Resolved then refused: the tree moved between the calls, which the
+		// producer's own ExistedAtBaseline is enough to do. Pass two refused the
+		// path and `continue`d on the strength of "already reported by the first
+		// pass", which had reported nothing, so a delete that was owed produced
+		// neither an event nor an error — indistinguishable from a tree that did
+		// not change, which is the one outcome this module exists to prevent.
+		//
+		// Refused then resolved: pass one never wrote the baseline, so reading
+		// the map gave Go's zero value — false for a file that WAS at the
+		// baseline, classifying a delete or an update as PostFileCreate. The
+		// two-value read is what tells "asked, answered false" from "never
+		// asked", and carrying the decision keeps the distinction instead of
+		// discarding it at the boundary.
+		d, asked := settled[path]
+		if !asked || !d.resolved {
+			// Refused, and said so exactly once — in the first pass, which is
+			// where every spelling is resolved. Reporting it again here would
+			// make one bad path complain once per spelling of it.
+			continue
+		}
+		clean, full := d.clean, d.full
+		// Asked with the canonical spelling, the same one the dedupe keys on and
+		// the same one the event carries — established by the first pass, and read
+		// back here. Asking with the raw spelling made the answer depend on the
+		// order Paths happened to list them in: given {"a.md", "./a.md"} and a
+		// baseline map holding only "a.md", whichever came first won the slot, so
+		// one file in one tree classified as an update or a create depending on
+		// nothing but iteration order. Two spellings of one file cannot be allowed
+		// to carry two baselines when the rest of the contract says spelling is
+		// not part of it.
+		before := d.before
+		if breached[clean] {
+			// A spelling of this file disagreed with the baseline in the first
+			// pass. Which of the two answers is the true one is exactly what is
+			// in doubt, so no event is emitted for it at all.
+			continue
+		}
+
+		if seen[clean] {
+			continue
+		}
+		// Marked before the classification rather than after it, so that a
+		// repeated path is looked at once whatever it turns out to be — a file
+		// named twice should not be stat'd twice, nor reported twice as a
+		// producer error. Both `continue`s below are problem reports, so marking
+		// after either of them makes one file complain once per spelling: three
+		// spellings of one directory produce three ErrPathIsNotAFile, and the
+		// count is the only thing that tells the mistake from the fix.
+		seen[clean] = true
+
+		p, err := lookAt(clean, full)
+		if err != nil {
+			// Either the stat could not answer — not a fact about the tree, and
+			// classifying on it would report a difference from a lookup that
+			// never happened — or a non-file now sits there, which exists and
+			// is not what these kinds are about. Both are said and neither
+			// becomes an event.
+			problems = append(problems, err)
+			continue
+		}
+
+		// Reached only for absent or presentFile: every other state left an error
+		// above. So the boolean this narrows to is the whole remaining question,
+		// and it is narrowed HERE rather than inside classify, which is about the
+		// baseline/tree pair and has no business knowing what a stat can fail to
+		// say.
+		kind, reportable := classify(before, p == presentFile)
+		if !reportable {
+			// The no/no row. Legitimately a file created and removed inside one
+			// cycle, which leaves nothing to be about — and also the one place
+			// the tree can contradict the producer's claim, so it is said.
+			problems = append(problems, fmt.Errorf("%w: %q", ErrNotADifference, clean))
+			continue
+		}
+
+		// No content on any of them, including the create. Unlike PreFileCreate
+		// the file is on disk by now and a hook can read it there; and for the
+		// delete there is nothing left to read at all. Carrying content on one
+		// kind and not the others would make the delete the odd case a hook has
+		// to special-case, which is exactly the shape the Post kinds are
+		// declared flat to avoid.
+		events = append(events, FileEvent{Path: clean}.Event(kind))
+	}
+
+	err := errors.Join(problems...)
+	if len(events) == 0 {
+		// Distinct from the empty slice on purpose: a cycle that changed
+		// nothing needing judgement produced no events, and a caller appending
+		// to its own slice should not have to tell an empty result from a
+		// present-but-empty one.
+		return nil, err
+	}
+	return events, err
+}
+
+// checkBaselineSpelling enforces the one spelling rule this module states and
+// could not otherwise enforce.
+//
+// A producer keying its baseline on its own raw paths answers about
+// "./dir/./a.md" and is asked about "dir/a.md" — false for a file that WAS
+// there, so the update ships as a create and every delete disappears, with
+// nothing on the tree contradicting any of it.
+//
+// The test is deliberately one-directional. A CONFORMING producer's map is
+// keyed clean, so the raw spelling misses it and answers false while the
+// canonical one answers true — disagreement, and entirely correct. Only the
+// reverse is diagnostic: the raw spelling found something the canonical one did
+// not, which no map keyed the way the contract asks can produce. That is a map
+// keyed raw, said by the producer itself rather than inferred.
+//
+// The canonical answer is passed in rather than asked for again: it is the one
+// the classification uses, and asking twice would make the module put two
+// questions to the producer about one file where the contract has exactly one.
+func (*Module) checkBaselineSpelling(observed Observed, path, clean string, before bool) error {
+	if path == clean || before || !observed.ExistedAtBaseline(path) {
+		return nil
+	}
+	return fmt.Errorf("%w: %q and %q", ErrBaselineKeyedOnRawSpelling, path, clean)
+}
+
+// settledPath is the first pass's verdict on one SPELLING, carried to the second
+// rather than recomputed there.
+//
+// It holds the resolution as well as the baseline because those are the two
+// facts the second pass would otherwise establish for itself, and every way the
+// two passes can disagree about them is a defect the tree can cause on its own.
+// A `resolved` flag rather than a nil check on clean: an unresolved path has no
+// canonical spelling to be absent, and the flag says which question was answered
+// instead of leaving it to be inferred from a zero value — the same distinction
+// the two-value map read below is for.
+type settledPath struct {
+	// resolved is false when resolve refused this spelling. The refusal is
+	// already in problems; nothing further is owed for it.
+	resolved bool
+	// clean and full are resolve's own answers, meaningful only when resolved.
+	clean, full string
+	// before is what the baseline said about clean. Meaningful only when
+	// resolved, because that is the only case in which it was asked.
+	before bool
+}
+
+// baselinesFor asks the baseline about every path, once per file, and returns
+// what it settled about each SPELLING along with the files a breach was found on.
+//
+// It is the first of the two passes, and its whole purpose is to finish before
+// any event exists. Resolution errors are reported here, so the classification
+// pass simply skips what it cannot resolve rather than reporting it twice.
+//
+// The verdicts are keyed on the RAW spelling, which is what the second pass
+// iterates: two spellings of one file each get an entry, and both point at the
+// one canonical answer, so the baseline is still asked once per file. Keyed on
+// the canonical spelling instead there would be no entry at all for a spelling
+// that was refused, and "refused" would be indistinguishable from "never seen".
+//
+// A path repeated verbatim overwrites its own entry with the identical verdict,
+// since resolve is a function of (root, path) and the baseline is memoised per
+// file. Nothing is lost and nothing accumulates.
+func (m *Module) baselinesFor(observed Observed, root string, paths []string, problems *[]error) (settled map[string]settledPath, breached map[string]bool) {
+	settled = make(map[string]settledPath, len(paths))
+	breached = make(map[string]bool, len(paths))
+	// The canonical answer, memoised so the contract's one-question-per-file
+	// promise survives however many spellings named it.
+	baselines := make(map[string]bool, len(paths))
+
+	for _, path := range paths {
+		if _, done := settled[path]; done {
+			// This exact spelling has already been resolved and its verdict
+			// recorded. Resolving it again would ask the filesystem a second
+			// time about a question already answered, and a tree that moved in
+			// between would answer differently — the same disagreement between
+			// two resolutions that the second pass no longer makes. It is also
+			// what keeps a refusal to ONE complaint however many times the
+			// producer repeated the bad spelling.
+			continue
+		}
+		clean, full, err := resolve(root, path)
+		if err != nil {
+			*problems = append(*problems, err)
+			settled[path] = settledPath{}
+			continue
+		}
+		before, asked := baselines[clean]
+		if !asked {
+			before = observed.ExistedAtBaseline(clean)
+			baselines[clean] = before
+		}
+		settled[path] = settledPath{resolved: true, clean: clean, full: full, before: before}
+		if breached[clean] {
+			// Reported once per file, not once per spelling of it.
+			continue
+		}
+		if err := m.checkBaselineSpelling(observed, path, clean, before); err != nil {
+			*problems = append(*problems, err)
+			breached[clean] = true
+		}
+	}
+	return settled, breached
 }

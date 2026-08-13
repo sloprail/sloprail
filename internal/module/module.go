@@ -45,6 +45,10 @@ type Module interface {
 	// Extract turns what a harness reported into events. Producing none is
 	// ordinary — most of what happens in a session concerns most modules not
 	// at all.
+	//
+	// A module may return events ALONGSIDE a non-nil error, and a caller must
+	// not discard them: one input a module could not make sense of is not a
+	// reason to drop the events it did produce from the rest.
 	Extract(Input) ([]event.Event, error)
 }
 

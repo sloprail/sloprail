@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -311,10 +313,10 @@ func TestExtract_DefaultsToPendingWhenPhaseIsUnset(t *testing.T) {
 	}
 }
 
-func TestExtract_PostPhaseProducesNothingYet(t *testing.T) {
-	// extractObserved is a TODO: comparing the tree against the session's
-	// starting point is not implemented, so the post phase reports nothing.
-	// This pins the placeholder, and will need updating when it lands.
+func TestExtract_PostPhaseIgnoresAPendingPayload(t *testing.T) {
+	// The post phase reads an Observed, not a Pending. Handed the wrong one it
+	// reports nothing rather than falling back to predicting from a tool call —
+	// which is the whole distinction between the two halves.
 	events, err := New().Extract(module.Input{
 		module.InputPhase:   module.PhasePost,
 		module.InputPayload: writePending("anything.md", "x"),
@@ -545,4 +547,299 @@ func TestExtract_EmptyFileMatcherActuallyFires(t *testing.T) {
 	admitted, err := m.Match(events[0])
 	require.NoError(t, err, "a declared field must never evaluate to a nil the cast rejects")
 	assert.True(t, admitted, `content == "" must fire for a genuinely empty file`)
+}
+
+// --- the spelling check runs before the dedupe can hide the breach (F-4) -----
+
+func TestObserved_ABaselineKeyedRawIsCaughtInEitherOrder(t *testing.T) {
+	// The guard was defeated by the dedupe three lines above it. seen[clean] was
+	// marked before the check ran, so a producer listing both spellings
+	// CLEAN-FIRST had the raw one — the only spelling that can produce the
+	// disagreement — dropped before the check was ever reached. The breach
+	// shipped as a create; reversing the two inputs caught it.
+	//
+	// Which made the guard order-dependent in exactly the way the defect it was
+	// written against is: the same file in the same tree coming out a create or
+	// an update by iteration order alone.
+	root := tree(t, "dir/a.md")
+
+	for name, paths := range map[string][]string{
+		// "./dir/a.md" cleans to "dir/a.md", so both spellings name one file and
+		// the dedupe collapses them. Only the RAW one can reach a baseline keyed
+		// raw, and the order it arrives in must not decide whether it is asked.
+		"clean first": {"dir/a.md", "./dir/a.md"},
+		"raw first":   {"./dir/a.md", "dir/a.md"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			events, err := observeErr(fakeObserved{
+				root:   root,
+				paths:  paths,
+				before: map[string]bool{filepath.FromSlash("./dir/a.md"): true}, // keyed raw
+			})
+
+			assert.Empty(t, events, "which of the two answers is true is what is in doubt")
+			require.ErrorIs(t, err, ErrBaselineKeyedOnRawSpelling)
+			assert.Len(t, strings.Split(err.Error(), "\n"), 1,
+				"one file, one complaint, however many spellings named it")
+		})
+	}
+}
+
+func TestObserved_TheBaselineIsAskedOncePerFileNotOncePerSpelling(t *testing.T) {
+	// Checking every spelling must not turn into interrogating the producer. The
+	// canonical question is asked once per file and cached; only the raw probe,
+	// which the contract already prices in, repeats per non-canonical spelling.
+	root := tree(t, "dir/a.md")
+
+	var asked []string
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePost,
+		module.InputPayload: recordingObserved{
+			fakeObserved: fakeObserved{
+				root:   root,
+				paths:  []string{"dir/a.md", "./dir/./a.md", "dir/a.md"},
+				before: map[string]bool{filepath.Join("dir", "a.md"): true},
+			},
+			asked: &asked,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, events, 1, "three spellings of one file are one event")
+	assert.Equal(t, KindPostUpdate, events[0].Kind)
+
+	var canonical int
+	for _, a := range asked {
+		if a == filepath.Join("dir", "a.md") {
+			canonical++
+		}
+	}
+	assert.Equal(t, 1, canonical, "one file, one canonical question")
+}
+
+// --- the two passes must agree, or a path vanishes (F5-1, F5-2) --------------
+
+// movingObserved is a producer whose own ExistedAtBaseline call moves the tree,
+// which is not a contrivance: the producer runs arbitrary code between the two
+// passes by construction, and an agent's cycle is still finishing around it.
+//
+// The swap runs once, after the nth baseline question, which is what lets a test
+// place it precisely between the first pass's decision about a path and the
+// second pass's. Everything else is fakeObserved's.
+type movingObserved struct {
+	fakeObserved
+	// after is how many baseline questions to answer before moving the tree.
+	after int
+	swap  func()
+	asked int
+}
+
+func (o *movingObserved) ExistedAtBaseline(path string) bool {
+	o.asked++
+	if o.asked == o.after {
+		o.swap()
+	}
+	return o.fakeObserved.ExistedAtBaseline(path)
+}
+
+// escapeRepo lays out a repository beside a directory outside it, and returns
+// both. The outside directory is what a swapped-in symlink points at.
+func escapeRepo(t *testing.T) (root, outside string) {
+	t.Helper()
+	parent := t.TempDir()
+	root = filepath.Join(parent, "repo")
+	outside = filepath.Join(parent, "outside")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	return root, outside
+}
+
+func TestObserved_APathTheSecondPassRefusesIsStillReported(t *testing.T) {
+	// The silent drop the two-pass rework introduced, and the one failure mode
+	// this module says everywhere it exists to prevent.
+	//
+	// Both passes used to call resolve independently on the same path, and the
+	// second one's `continue` was justified by "already reported by the first
+	// pass, which refused it too" — true only when the two agree. They agree only
+	// while the tree holds still, and the producer's own ExistedAtBaseline is
+	// enough to move it: pass one resolves repo/dir as a real directory and asks
+	// the baseline, the producer swaps the directory for a link outside, pass two
+	// refuses the path and continues without a word.
+	//
+	// A delete that was owed then produced NO event and NO error — indistinguishable
+	// from a tree that did not change, which is exactly what ErrNotADifference
+	// exists to make impossible, reached by a route it does not cover.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root, outside := escapeRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "dir"), 0o755))
+	path := filepath.FromSlash("dir/id_rsa")
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePost,
+		module.InputPayload: &movingObserved{
+			fakeObserved: fakeObserved{
+				root:   root,
+				paths:  []string{path},
+				before: map[string]bool{path: true},
+			},
+			after: 1,
+			swap: func() {
+				// The escape appears underneath a path already resolved.
+				require.NoError(t, os.RemoveAll(filepath.Join(root, "dir")))
+				require.NoError(t, os.Symlink(outside, filepath.Join(root, "dir")))
+			},
+		},
+	})
+
+	// Whichever verdict the module reaches, it must reach ONE of them out loud.
+	// Silence is the only answer that is wrong here: it says the cycle changed
+	// nothing about a file the producer named as changed.
+	if len(events) == 0 {
+		require.Error(t, err,
+			"a path that produces neither an event nor an error is a change that vanished")
+	}
+	require.Len(t, events, 1, "the path resolved when it was judged, so it is classified")
+	assert.Equal(t, KindPostDelete, events[0].Kind,
+		"the file was at the baseline and is not on disk: the delete is owed")
+	assert.Equal(t, path, events[0].Fields[FieldPath])
+}
+
+func TestObserved_APathTheFirstPassRefusedCarriesNoZeroValueBaseline(t *testing.T) {
+	// The mirror of the drop above, and it misclassifies rather than dropping.
+	//
+	// Pass one refuses the path, so it never asks the baseline and never writes
+	// the map. Pass two then resolved it for itself and read baselines[clean] —
+	// Go's zero value, false, for a file that WAS at the baseline. A delete or an
+	// update ships as PostFileCreate, and every event is plausible on its face.
+	//
+	// baselinesFor already used the two-value read internally and discarded the
+	// distinction at its boundary; telling "asked, answered false" from "never
+	// asked" is the whole fix, and carrying the pass's decision forward is what
+	// keeps it.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root, outside := escapeRepo(t)
+	// The escape is in place while the first pass runs, so "dir/a.md" is refused
+	// there and no baseline is recorded for it.
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "dir")))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "trigger.md"), []byte("x\n"), 0o644))
+	path := filepath.FromSlash("dir/a.md")
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePost,
+		module.InputPayload: &movingObserved{
+			fakeObserved: fakeObserved{
+				// The trigger is last, so its baseline question fires after the
+				// first pass has already refused the path above it.
+				root:   root,
+				paths:  []string{path, "trigger.md"},
+				before: map[string]bool{path: true, "trigger.md": true},
+			},
+			after: 1,
+			swap: func() {
+				// The escape is replaced by a real directory holding the file, so
+				// the path resolves for anyone who asks again.
+				require.NoError(t, os.Remove(filepath.Join(root, "dir")))
+				require.NoError(t, os.MkdirAll(filepath.Join(root, "dir"), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(root, "dir", "a.md"), []byte("x\n"), 0o644))
+			},
+		},
+	})
+
+	require.ErrorIs(t, err, ErrPathNotRelativeToRoot, "the refusal is said, once")
+	for _, e := range events {
+		assert.NotEqual(t, KindPostCreate, e.Kind,
+			"a file that was at the baseline is never a create, whatever the second pass sees")
+	}
+	require.Len(t, events, 1, "only the trigger, whose own path never moved")
+	assert.Equal(t, "trigger.md", events[0].Fields[FieldPath])
+}
+
+func TestObserved_ARefusedPathIsReportedExactlyOnce(t *testing.T) {
+	// The once-and-only-once property, which nothing asserted. Both directions of
+	// getting it wrong survived every test: reporting a refusal in neither pass is
+	// the silent drop above, and reporting it in both is the same path complaining
+	// twice, which teaches a producer that one bad spelling is two problems.
+	//
+	// Repeated spellings are included because the count is per FILE and not per
+	// mention: a producer that listed its one bad path four times has one thing
+	// wrong with it.
+	root := tree(t, "fine.md")
+
+	events, err := observeErr(fakeObserved{
+		root: root,
+		paths: []string{
+			"../escape.md", "fine.md", "../escape.md", "../escape.md",
+		},
+		before: map[string]bool{"fine.md": true},
+	})
+
+	require.ErrorIs(t, err, ErrPathNotRelativeToRoot)
+	assert.Len(t, strings.Split(err.Error(), "\n"), 1,
+		"one refused path, one complaint, however many times it was named")
+	require.Len(t, events, 1, "and the good path beside it is unaffected")
+	assert.Equal(t, "fine.md", events[0].Fields[FieldPath])
+}
+
+// --- a repeated path is one problem, not one per spelling (F5-5) -------------
+
+func TestObserved_ARepeatedPathIsOneProblemWhicheverProblemItIs(t *testing.T) {
+	// The dedupe's ORDERING, which no test held. Marking seen[clean] before the
+	// classification is what makes a file named three times produce one complaint;
+	// moved after either of the two problem branches, the same file complains once
+	// per spelling and a producer reading the log sees three faults where it has
+	// one.
+	//
+	// The existing repeated-path test only covers the no/no row, whose branch
+	// happens to sit last. The lookAt failures sit ABOVE it, so a marking moved
+	// just far enough to clear the no/no row still triples these — which is the
+	// mutation that survived. Every problem branch is asserted here, so the
+	// property is about the loop rather than about one row of it.
+	root := tree(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "adir"), 0o755))
+
+	for name, tc := range map[string]struct {
+		paths    []string
+		before   map[string]bool
+		sentinel error
+	}{
+		"a directory where a file was expected": {
+			paths:    []string{"adir", "adir", "./adir", filepath.FromSlash("dir/../adir")},
+			sentinel: ErrPathIsNotAFile,
+		},
+		"a path that differs from nothing": {
+			paths:    []string{"scratch.tmp", "scratch.tmp", "./scratch.tmp"},
+			sentinel: ErrNotADifference,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			events, err := observeErr(fakeObserved{root: root, paths: tc.paths, before: tc.before})
+
+			assert.Empty(t, events)
+			require.ErrorIs(t, err, tc.sentinel)
+			assert.Len(t, strings.Split(err.Error(), "\n"), 1,
+				"one file, one complaint, whichever branch reported it")
+		})
+	}
+}
+
+func TestObserved_TheTreeIsLookedAtOncePerFile(t *testing.T) {
+	// The other half of the same ordering, and the half an error count cannot see.
+	// A file named four ways is stat'd once, because the marking happens before
+	// anything can `continue` past it — a property the comment claims and nothing
+	// measured.
+	root := tree(t, "a.md")
+
+	events := observe(t, fakeObserved{
+		root:   root,
+		paths:  []string{"a.md", "./a.md", filepath.FromSlash("dir/../a.md"), "a.md"},
+		before: map[string]bool{"a.md": true},
+	})
+
+	require.Len(t, events, 1, "four spellings of one file are one event")
+	assert.Equal(t, KindPostUpdate, events[0].Kind)
+	assert.Equal(t, "a.md", events[0].Fields[FieldPath])
 }
