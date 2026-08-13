@@ -227,17 +227,15 @@ Operators:
   endsWith       path endsWith ".md"
   contains       path contains "/decisions/"
   matches        path matches "^docs/[0-9]+-"      # regular expression
-  in             "--access" in flags
   &&  ||  !      path startsWith "src/" && !(path endsWith "_test.go")
-  ==  !=         kind-carried strings compare as you would expect
-  any(list, predicate)
-                 any(invocations, .bin == "npm")
+  ==  !=         path == "README.md"
 
-`+"`any`"+` is how a list field is asked a question. Inside the predicate, `+"`.`"+` is the
-element: `+"`any(invocations, .bin == \"npm\" && \"--access\" in .flags)`"+`. A command
-line is matched against the flattened invocations rather than the raw string, so
-a rule holds however the invocation was nested — behind a pipe, an && chain, a
-subshell, a sudo.
+Every kind this build declares carries string fields only, so the operators
+above are the whole usable set. Operators for asking questions of a list or a
+map exist in the expression language but have nothing to read yet — a matcher
+using one either evaluates false or errors, and both leave a rule that never
+fires. They will be worth documenting when a module declares a field of that
+shape; until then EVENT KINDS above is the honest inventory.
 
 THERE IS NO GLOB. Not an omission. A glob's semantics differ between tools
 enough that a familiar-looking pattern would be familiar and subtly wrong —
@@ -251,9 +249,7 @@ an author might have learned it. Write what you mean:
   markdown under memories/      path startsWith "memories/" && path endsWith ".md"
   a real pattern                path matches "^memories/[0-9]{8}_"
 
-The language has no loops, so a matcher always terminates. The recursion a
-nested command line needs has already happened: the invocations arrive
-flattened.
+The language has no loops, so a matcher always terminates.
 
 Narrowing is the matcher's job, not the hook's. A hook that re-checks whether
 the event concerns it is re-implementing its own binding, and the two will
@@ -288,17 +284,25 @@ guardrail this is, is not carried: the engine ran the hook and already knows.
 WHAT IT WRITES BACK is its exit status, and stdout explaining it:
 
   exit 0                  permitted. Print nothing — silence is consent.
-  exit non-zero           refused. What it printed on stdout says why, and it
-                          must print something: a refusal with an empty stdout
-                          currently reads as permission.
+  exit non-zero           refused.
 
-On a refusal the engine reads stdout as JSON and takes the `+"`reason`"+` field:
+A non-zero exit is never consent. It refuses whatever the hook did or did not
+write, and whether or not it managed to run at all — a hook that is not
+executable, or whose interpreter is missing, refuses rather than letting the
+work through.
 
-  {"decision":"block","reason":"Writing <path> requires the 'x' skill ..."}
+On a refusal the engine looks for the reason in this order:
 
-Plain text on stdout is used as the reason as well, so a hook that just echoes a
-sentence and exits 1 works. Either way the reason is rendered into whatever
-shape the harness expects, and reaches the agent that has to act on it.
+  1. `+"`reason`"+` from JSON on stdout:
+     {"decision":"block","reason":"Writing <path> requires the 'x' skill ..."}
+  2. plain text on stdout
+  3. plain text on stderr — `+"`echo \"...\" >&2; exit 1`"+` is an ordinary way to
+     refuse and is read as one
+  4. failing all of that, a message naming the hook and its exit status
+
+Write a reason anyway: the synthesised one can name what failed, but only the
+hook knows what the agent should do instead. It is rendered into whatever shape
+the harness expects and reaches the agent that has to act on it.
 
 Address the reason to that agent and say what to do rather than what went wrong.
 Do not name the guardrail in it — the engine adds that.
@@ -386,10 +390,9 @@ not parse. It is not a check that your rule FIRES — a mistyped kind or field
 name loads perfectly well. Confirm firing by causing the event and seeing the
 refusal.
 
-Make the hook executable (chmod +x), and always print a reason when you refuse.
-A hook that exits non-zero having printed nothing on stdout is currently read
-as permitting — so a hook the shell cannot run at all (exit 126, no output)
-lets the work through silently. Your refusal path must write the reason.
+Make the hook executable (chmod +x). One that is not refuses every event it is
+bound to, with a message saying so — noisy rather than silent, but your rule is
+not running until you fix it.
 
 `)
 	return err

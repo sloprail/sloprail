@@ -3,6 +3,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -92,5 +93,31 @@ func TestT002_04_InitIsIdempotent(t *testing.T) {
 	}
 	if string(body) != "---\nhooks: {}\n---\n\nkeep me\n" {
 		t.Fatalf("second init rewrote an existing guardrail:\n%s", body)
+	}
+}
+
+// T002_05: init fails when the guardrails path is occupied by a file.
+//
+// "Already exists, left as it is" would be a lie here: Load's ReadDir cannot
+// read a file, so no guardrail could ever be declared. Setup reporting success
+// over a project that cannot work is worse than setup failing, because the
+// failure surfaces later and somewhere else.
+func TestT002_05_InitRefusesWhenPathIsAFile(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+
+	if err := os.MkdirAll(filepath.Join(proj, ".sloprail"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".sloprail", "guardrails"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got := e.CLI(proj, "init")
+	if got.Code == 0 {
+		t.Fatalf("init reported success over a file where the directory belongs:\n%s", got.Output)
+	}
+	if !strings.Contains(got.Output, "not a directory") {
+		t.Errorf("the error does not say what is wrong:\n%s", got.Output)
 	}
 }

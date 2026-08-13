@@ -64,7 +64,6 @@ func TestT003_02_HelpCoversWhatAnAgentDoesNotKnow(t *testing.T) {
 		"enabled: false", // how a rule is turned off
 		"startsWith",     // the operators that exist
 		"endsWith",
-		"any(",
 		"NO GLOB",       // and the one that does not
 		"guardrailDir",  // what a hook is handed
 		"exit 0",        // and what it writes back
@@ -72,6 +71,51 @@ func TestT003_02_HelpCoversWhatAnAgentDoesNotKnow(t *testing.T) {
 	} {
 		if !strings.Contains(got.Output, want) {
 			t.Errorf("help never mentions %q", want)
+		}
+	}
+}
+
+// T003_04: help names no operator this build cannot evaluate.
+//
+// `in` and `any(...)` read fields — `flags`, `invocations` — that only the
+// command module would declare, and it has not landed. Documented, they are
+// worse than absent: `in` quietly evaluates false and `any` errors outright, and
+// either way a rule written from this help never fires while looking enforced.
+//
+// The guard is derived, not a blocklist of two names. Anything the help offers
+// as a matcher example has to be evaluable against a kind this build actually
+// declares.
+func TestT003_04_HelpNamesNoUnevaluableOperator(t *testing.T) {
+	e := New(t)
+
+	got := e.CLI(t.TempDir(), "guardrail", "help")
+
+	reg, err := module.NewRegistry(filemod.New())
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+
+	// Every field any declared kind carries. A matcher example may read these
+	// and nothing else.
+	declared := map[string]bool{}
+	for _, kind := range reg.DeclaredKinds() {
+		decl, ok := reg.KindDeclFor(kind)
+		if !ok {
+			continue
+		}
+		for _, f := range decl.Fields {
+			declared[f.Name] = true
+		}
+	}
+
+	// Fields the help must not present as readable, because nothing produces
+	// them. Named from the kinds that would carry them rather than assumed.
+	for _, absent := range []string{"invocations", "flags", "argv"} {
+		if declared[absent] {
+			continue // a module started declaring it — the help may use it
+		}
+		if strings.Contains(got.Output, absent) {
+			t.Errorf("help offers %q, which no declared kind carries — a matcher using it never fires", absent)
 		}
 	}
 }

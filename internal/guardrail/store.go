@@ -45,10 +45,16 @@ func (s *Store) declarationPath(name string) string {
 // name.
 func (s *Store) Init() (created bool, err error) {
 	dir := s.guardrailsDir()
-	if _, err := os.Stat(dir); err == nil {
+	switch info, statErr := os.Stat(dir); {
+	case statErr == nil && info.IsDir():
 		return false, nil
-	} else if !os.IsNotExist(err) {
-		return false, fmt.Errorf("guardrail: stat %s: %w", dir, err)
+	case statErr == nil:
+		// Something is there and it is not a directory, so Load's ReadDir will
+		// fail and no guardrail can ever be declared. Reporting success here
+		// would leave a project that setup called finished and that cannot work.
+		return false, fmt.Errorf("guardrail: %s exists but is not a directory", dir)
+	case !os.IsNotExist(statErr):
+		return false, fmt.Errorf("guardrail: stat %s: %w", dir, statErr)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, fmt.Errorf("guardrail: create %s: %w", dir, err)
