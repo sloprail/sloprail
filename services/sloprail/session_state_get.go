@@ -16,7 +16,17 @@ func newSessionStateGetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <key>",
 		Short: "Read back what this guardrail stored under a key",
-		Args:  cobra.ExactArgs(1),
+		Long: `Read back what this guardrail stored under a key.
+
+A key that was never written is empty output and exit 0, not an error. A rule
+asking whether it has seen something before should not have to tell "no" apart
+from "broken", and a hook running under ` + "`set -e`" + ` would abort on the
+ordinary first-time case if this failed.
+
+Which guardrail is asking is never an argument — it comes from ` + GuardrailEnv + `,
+which the engine sets when it runs a hook. See ` + "`sloprail guardrail help`" + `
+for whether that is wired on this build.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, guardrail, err := openSessionState()
 			if err != nil {
