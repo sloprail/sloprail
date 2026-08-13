@@ -2,6 +2,7 @@ package filemod
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1469,14 +1470,25 @@ func TestResolve_AChainOfDanglingLinksIsJudgedAtItsEnd(t *testing.T) {
 func TestResolve_ASymlinkCycleIsRefusedRatherThanLoopedOn(t *testing.T) {
 	// A cycle has no end to judge, so it must be refused rather than looped on.
 	//
-	// It never reaches the chain walk's own hop bound, and that is worth stating
-	// rather than staging a test that appears to exercise it: a -> b -> a makes
-	// EvalSymlinks fail with ELOOP, which is not ENOENT, so contained refuses at
-	// the branch above and the walk is never entered. The hop bound inside
-	// danglingLinkStaysInside is therefore defence in depth against a chain the
-	// kernel has not already rejected — unreachable today, kept because a walk
-	// that follows links without a bound is one filesystem change away from
-	// spinning, and its failure mode is a hang rather than a wrong answer.
+	// THIS path never reaches the chain walk's own hop bound, and the reason is
+	// worth stating: a -> b -> a makes EvalSymlinks fail with ELOOP, which is not
+	// ENOENT, so contained refuses at the branch above and the walk is never
+	// entered. A cycle is the kernel's to reject and it rejects it first.
+	//
+	// What an earlier version of this comment went on to claim — that the hop
+	// bound is therefore "unreachable today" — was false, and the falsification is
+	// one line away from the code it described. A cycle is not the only chain that
+	// fails to settle. A DANGLING chain never touches ELOOP at all: its end does
+	// not exist, EvalSymlinks returns ENOENT, contained takes the dangling-link
+	// branch, and danglingLinkStaysInside walks it hop by hop. Forty-one links
+	// deep is a static tree that reaches the bound with no race and no cycle, and
+	// TestResolve_TheHopBoundIsWhereTheChainStopsBeingFollowed stages exactly that.
+	//
+	// The bound is a live guard on real input, then, and its off-by-one is a real
+	// behaviour difference rather than a matter of taste — pinned on both sides
+	// there. How much it is load-bearing is a separate question with its own test:
+	// the kernel's own limit is lower, so chains between the two are contained here
+	// and unreadable at lookAt. See TestResolve_TheHopBoundSitsAboveTheKernelsOwn.
 	//
 	// What IS pinned here is the outcome the module owes: refusal, and promptly.
 	if runtime.GOOS == "windows" {
@@ -1499,6 +1511,155 @@ func TestResolve_ASymlinkCycleIsRefusedRatherThanLoopedOn(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the walk did not terminate on a symlink cycle")
 	}
+}
+
+// danglingChain lays out n dangling symlinks in root, each pointing at the next,
+// with the last pointing at a target that is never created. It returns the name
+// of the first link, which is therefore n hops from the end of the chain.
+//
+// Every link is inside the repository and so is the final target, so the chain is
+// the generated-output case danglingLinkStaysInside exists to admit: nothing
+// about it should be refused except its LENGTH.
+func danglingChain(t *testing.T, root, prefix string, n int) string {
+	t.Helper()
+	require.Positive(t, n)
+	for i := range n {
+		target := filepath.Join(root, fmt.Sprintf("%s%d", prefix, i+1))
+		if i == n-1 {
+			target = filepath.Join(root, prefix+"generated")
+		}
+		require.NoError(t, os.Symlink(target, filepath.Join(root, fmt.Sprintf("%s%d", prefix, i))))
+	}
+	return prefix + "0"
+}
+
+func TestResolve_TheHopBoundIsWhereTheChainStopsBeingFollowed(t *testing.T) {
+	// The bound had no test at all, and both ways of getting it wrong survived:
+	// moving the comparison one hop (> to >=) and removing it outright.
+	//
+	// It is reachable on a static tree, which the cycle test's comment used to
+	// deny. A cycle fails ELOOP before the walk is entered; a DANGLING chain never
+	// touches ELOOP, so it is followed link by link and this is the only thing
+	// that stops it.
+	//
+	// Both sides are asserted because both directions of being wrong have a cost,
+	// and they are not the same cost. One link too FEW and an ordinary
+	// generated-output chain — every link inside the repository, the target simply
+	// not created yet — is refused, which produces no event for a real change: the
+	// silence, reached from the direction that looks like caution. One link too
+	// MANY, or none at all, and a walk that does not settle is followed anyway.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	for name, tc := range map[string]struct {
+		hops    int
+		refused bool
+	}{
+		"well inside the bound": {hops: maxSymlinkHops - 1},
+		"exactly at the bound":  {hops: maxSymlinkHops},
+		"one past the bound":    {hops: maxSymlinkHops + 1, refused: true},
+		"well past the bound":   {hops: maxSymlinkHops * 2, refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := tree(t)
+			first := danglingChain(t, root, "link", tc.hops)
+
+			clean, _, err := resolve(root, filepath.Join(first, "out.md"))
+
+			if !tc.refused {
+				require.NoError(t, err,
+					"every link points inside; a chain this long is contained, not an escape")
+				assert.Equal(t, filepath.Join(first, "out.md"), clean)
+				return
+			}
+			require.ErrorIs(t, err, ErrPathNotRelativeToRoot,
+				"a chain that does not settle has established no containment")
+			assert.Contains(t, err.Error(), "does not settle",
+				"refused for its length, not for where it points")
+			assert.NotContains(t, err.Error(), root, "and it says so relatively")
+		})
+	}
+}
+
+func TestObserved_AShortDanglingChainStillProducesItsEvent(t *testing.T) {
+	// The bound's cost stated where it is actually paid. Refusal is not a neutral
+	// outcome for a path: the file under it produces NO EVENT, so a guardrail
+	// bound to that path never runs, and the only thing left to distinguish it
+	// from a tree that did not change is the error.
+	//
+	// A SHORT chain, well under the bound and well under the kernel's own, is what
+	// shows the guard is a boundary rather than a blanket: every link inside the
+	// repository, the target simply not created yet, and an ordinary delete comes
+	// out the other side. That is the generated-output case the dangling-link
+	// branch exists to admit, and the hop bound must not be what takes it away.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root := tree(t)
+	first := danglingChain(t, root, "ok", 5)
+	path := filepath.Join(first, "out.md")
+
+	events := observe(t, fakeObserved{
+		root:   root,
+		paths:  []string{path},
+		before: map[string]bool{path: true},
+	})
+
+	require.Len(t, events, 1, "a contained chain's file is classified like any other")
+	assert.Equal(t, KindPostDelete, events[0].Kind, "the target was never created")
+	assert.Equal(t, path, events[0].Fields[FieldPath])
+
+	// Past the bound the change goes silent in the event stream, which is the
+	// whole reason the bound's exact position is a decision worth pinning rather
+	// than a number nobody has to defend.
+	tooLong := danglingChain(t, root, "over", maxSymlinkHops+1)
+	events, err := observeErr(fakeObserved{
+		root:   root,
+		paths:  []string{filepath.Join(tooLong, "out.md")},
+		before: map[string]bool{filepath.Join(tooLong, "out.md"): true},
+	})
+	assert.Empty(t, events, "no event at all — refused, and the delete has nowhere to appear")
+	require.ErrorIs(t, err, ErrPathNotRelativeToRoot,
+		"so the refusal has to be audible in the error, which is all that is left")
+}
+
+func TestResolve_TheHopBoundSitsAboveTheKernelsOwn(t *testing.T) {
+	// Worth recording, because it bounds what the bound can be FOR and the
+	// surrounding comments would otherwise overstate it.
+	//
+	// maxSymlinkHops is 40, and the kernel gives up on a chain long before that:
+	// darwin's MAXSYMLINKS is 32 and every element of the path spends from the
+	// same budget, so an Lstat through a chain of this length fails ELOOP well
+	// under twenty links. containment is therefore settled by this module for
+	// chains the kernel will not walk at all.
+	//
+	// That is not a silence and it is the reason the number is not urgent: the
+	// path is contained, and the Lstat that follows says ErrUnreadableTree —
+	// "the machine could not answer", which is exactly what happened and exactly
+	// what lookAt's tri-state exists to say. What must never happen is the chain
+	// being called absent, which would announce a PostFileDelete for a file
+	// nothing ever looked at.
+	//
+	// So the bound's real job is termination on a chain the kernel has NOT already
+	// rejected — a walk that follows links with no bound is one filesystem change
+	// away from spinning — and its exact position is a defensible number rather
+	// than a load-bearing one. It is pinned so that changing it is a decision
+	// somebody makes rather than one that happens.
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege this test will not assume on windows")
+	}
+	root := tree(t)
+	first := danglingChain(t, root, "deep", maxSymlinkHops)
+
+	clean, full, err := resolve(root, filepath.Join(first, "out.md"))
+	require.NoError(t, err, "the chain is at the bound, so containment is established")
+
+	p, err := lookAt(clean, full)
+
+	assert.Equal(t, unknown, p, "a chain the kernel will not walk is not a fact about the tree")
+	require.ErrorIs(t, err, ErrUnreadableTree,
+		"and it is said, rather than being taken for absence and announced as a delete")
+	assert.ErrorIs(t, err, syscall.ELOOP, "which is what the kernel actually reported")
 }
 
 func TestResolve_ALinkThatWillNotSayWhereItPointsIsRefused(t *testing.T) {

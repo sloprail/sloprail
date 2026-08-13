@@ -108,8 +108,36 @@ var ErrBaselineKeyedOnRawSpelling = errors.New("filemod: baseline answers differ
 
 // maxSymlinkHops bounds how far a chain of dangling symlinks is followed before
 // it is called unsettleable and refused. The kernel's own limit is this order of
-// magnitude; what matters here is only that the walk terminates on a cycle,
-// which no Lstat can detect, and refuses rather than allows when it gives up.
+// magnitude; what matters here is that the walk terminates on a chain that does
+// not settle — which no single Lstat can detect — and refuses rather than allows
+// when it gives up.
+//
+// The bound is observable behaviour on a static tree, not defence in depth
+// against something unreachable — which an earlier comment on the cycle test
+// claimed, and this contradicts on purpose. A CYCLE is caught before the walk
+// starts: EvalSymlinks fails ELOOP, which is not ENOENT, so contained refuses at
+// the branch above. A DANGLING chain is not — its end does not exist, so
+// EvalSymlinks answers ENOENT, the dangling-link branch is taken, and this loop
+// follows it hop by hop with nothing else to stop it. Forty-one dangling links
+// reach the bound on a static tree, with no cycle and no race.
+//
+// Both directions of being wrong have a cost, and refusing too eagerly is the
+// SILENCE direction: a generated-output chain entirely inside the repository —
+// the case danglingLinkStaysInside exists to let through — produces no event at
+// all when it is refused. Refusing too late risks a walk that does not terminate.
+// TestResolve_TheHopBoundIsWhereTheChainStopsBeingFollowed pins both sides.
+//
+// What this number is NOT is the thing standing between a real chain and a wrong
+// answer, and saying so keeps the paragraph above from being read as more than it
+// is. The kernel gives up long before forty: darwin's MAXSYMLINKS is 32 and every
+// element of a path spends from the same budget, so an Lstat through a chain of
+// this length fails ELOOP under twenty links. Chains between the kernel's limit
+// and this one are contained here and then unreadable at lookAt — which reports
+// ErrUnreadableTree, the honest "could not answer", rather than absence. So the
+// bound's live job is termination on a chain the kernel has not already rejected,
+// and its exact position is defensible rather than load-bearing.
+// TestResolve_TheHopBoundSitsAboveTheKernelsOwn records that relationship so the
+// two limits are not confused for one.
 const maxSymlinkHops = 40
 
 // presence is what a stat can tell us about a path.
@@ -403,6 +431,20 @@ func contained(root, full string) error {
 			// report as ErrUnreadableTree; containment simply cannot be
 			// established, and letting the path through on a failed check is
 			// the one outcome this function exists to prevent.
+			//
+			// Written inline rather than through ancestorUnresolvable, and the
+			// two are EQUIVALENT: that helper's body is this same Errorf with
+			// this same format and this same argument, and it discards the error
+			// it is handed. Rewriting this line as a call to it changes no
+			// message, no verdict and no test. Recorded here so the swap is
+			// understood as an equivalence rather than mistaken for this branch
+			// being untested the next time it survives a mutation.
+			//
+			// Both spellings exist because the helper is named for the two
+			// branches BELOW, which no static tree reaches and which therefore
+			// need something a test can call directly. This branch is reachable
+			// and is pinned through resolve by
+			// TestContained_AnEvalSymlinksFailingForItsOwnReasonIsRefused.
 			return fmt.Errorf("cannot resolve an ancestor: %s", relativeTo(realRoot, dir))
 		}
 		// EvalSymlinks said ENOENT. That is not yet permission to skip dir:
@@ -453,6 +495,21 @@ func contained(root, full string) error {
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			// Reached the filesystem root without finding anything that exists.
+			//
+			// Unreachable from any input this package can construct, and worth
+			// stating so a mutation replacing this line — with a `return nil`,
+			// even — is understood as an equivalence rather than as an untested
+			// guard. full is always absolute: resolve refuses a root that is not,
+			// and filepath.Join keeps an absolute first element absolute. The
+			// climb therefore terminates at "/", EvalSymlinks("/") always
+			// succeeds, and the loop has already returned under()'s answer before
+			// parent can equal dir.
+			//
+			// Kept because "unreachable" is a claim about today's callers rather
+			// than about this loop — the same reason under()'s Rel error is kept
+			// — and because the alternative to refusing is treating a walk that
+			// found nothing as containment, which is the one outcome this
+			// function exists to prevent.
 			return errors.New("no part of the path is on disk")
 		}
 		dir = parent
@@ -571,6 +628,24 @@ func danglingLinkStaysInside(realRoot, dir string) error {
 		next, err := os.Readlink(target)
 		if err != nil {
 			// It answered as a link and will not say where it points. Refused.
+			//
+			// The choice between this refusal and ancestorUnresolvable's is
+			// EQUIVALENT for everything a test can observe: both refuse, both name
+			// the same ancestor relatively, both disclose nothing outside the
+			// repository. Only the sentence differs, and no caller reads the
+			// sentence. Recorded so a mutation swapping them is understood as an
+			// equivalence rather than as this branch being untested.
+			//
+			// The branch itself needs Lstat to answer "symlink" and Readlink to
+			// then fail on that same name, which only a race produces, so no
+			// static tree reaches it. What CAN be pinned is the DIRECTION, and
+			// TestResolve_ALinkThatWillNotSayWhereItPointsIsRefused pins it by
+			// calling the decision directly.
+			//
+			// The distinct wording is kept for the reader rather than for a test:
+			// "a symlink that cannot be read" says the chain was followed and one
+			// link would not answer, where "cannot resolve an ancestor" says the
+			// lookup never got that far. Only the first is true here.
 			return unreadableLinkRefusal(realRoot, dir)
 		}
 		if !filepath.IsAbs(next) {

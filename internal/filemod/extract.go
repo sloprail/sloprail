@@ -246,14 +246,35 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 	// the spellings in. The canonical question is still asked once per FILE — the
 	// contract puts one question about one file — while each distinct SPELLING is
 	// probed, which is the cost the contract already prices in.
-	baselines, breached := m.baselinesFor(observed, root, paths, &problems)
+	settled, breached := m.baselinesFor(observed, root, paths, &problems)
 
 	for _, path := range paths {
-		clean, full, err := resolve(root, path)
-		if err != nil {
-			// Already reported by the first pass, which refused it too.
+		// The first pass's own answer, not a second one. resolve is asked once
+		// per spelling and the verdict is carried forward, because asking twice
+		// makes the two passes able to DISAGREE — and every way they can disagree
+		// is a silence or a misclassification.
+		//
+		// Resolved then refused: the tree moved between the calls, which the
+		// producer's own ExistedAtBaseline is enough to do. Pass two refused the
+		// path and `continue`d on the strength of "already reported by the first
+		// pass", which had reported nothing, so a delete that was owed produced
+		// neither an event nor an error — indistinguishable from a tree that did
+		// not change, which is the one outcome this module exists to prevent.
+		//
+		// Refused then resolved: pass one never wrote the baseline, so reading
+		// the map gave Go's zero value — false for a file that WAS at the
+		// baseline, classifying a delete or an update as PostFileCreate. The
+		// two-value read is what tells "asked, answered false" from "never
+		// asked", and carrying the decision keeps the distinction instead of
+		// discarding it at the boundary.
+		d, asked := settled[path]
+		if !asked || !d.resolved {
+			// Refused, and said so exactly once — in the first pass, which is
+			// where every spelling is resolved. Reporting it again here would
+			// make one bad path complain once per spelling of it.
 			continue
 		}
+		clean, full := d.clean, d.full
 		// Asked with the canonical spelling, the same one the dedupe keys on and
 		// the same one the event carries — established by the first pass, and read
 		// back here. Asking with the raw spelling made the answer depend on the
@@ -263,7 +284,7 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		// nothing but iteration order. Two spellings of one file cannot be allowed
 		// to carry two baselines when the rest of the contract says spelling is
 		// not part of it.
-		before := baselines[clean]
+		before := d.before
 		if breached[clean] {
 			// A spelling of this file disagreed with the baseline in the first
 			// pass. Which of the two answers is the true one is exactly what is
@@ -277,7 +298,10 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		// Marked before the classification rather than after it, so that a
 		// repeated path is looked at once whatever it turns out to be — a file
 		// named twice should not be stat'd twice, nor reported twice as a
-		// producer error.
+		// producer error. Both `continue`s below are problem reports, so marking
+		// after either of them makes one file complain once per spelling: three
+		// spellings of one directory produce three ErrPathIsNotAFile, and the
+		// count is the only thing that tells the mistake from the fix.
 		seen[clean] = true
 
 		p, err := lookAt(clean, full)
@@ -350,20 +374,65 @@ func (*Module) checkBaselineSpelling(observed Observed, path, clean string, befo
 	return fmt.Errorf("%w: %q and %q", ErrBaselineKeyedOnRawSpelling, path, clean)
 }
 
-// baselinesFor asks the baseline about every path, once per file, and reports
-// which files a spelling breach was found on.
+// settledPath is the first pass's verdict on one SPELLING, carried to the second
+// rather than recomputed there.
+//
+// It holds the resolution as well as the baseline because those are the two
+// facts the second pass would otherwise establish for itself, and every way the
+// two passes can disagree about them is a defect the tree can cause on its own.
+// A `resolved` flag rather than a nil check on clean: an unresolved path has no
+// canonical spelling to be absent, and the flag says which question was answered
+// instead of leaving it to be inferred from a zero value — the same distinction
+// the two-value map read below is for.
+type settledPath struct {
+	// resolved is false when resolve refused this spelling. The refusal is
+	// already in problems; nothing further is owed for it.
+	resolved bool
+	// clean and full are resolve's own answers, meaningful only when resolved.
+	clean, full string
+	// before is what the baseline said about clean. Meaningful only when
+	// resolved, because that is the only case in which it was asked.
+	before bool
+}
+
+// baselinesFor asks the baseline about every path, once per file, and returns
+// what it settled about each SPELLING along with the files a breach was found on.
 //
 // It is the first of the two passes, and its whole purpose is to finish before
 // any event exists. Resolution errors are reported here, so the classification
 // pass simply skips what it cannot resolve rather than reporting it twice.
-func (m *Module) baselinesFor(observed Observed, root string, paths []string, problems *[]error) (baselines, breached map[string]bool) {
-	baselines = make(map[string]bool, len(paths))
+//
+// The verdicts are keyed on the RAW spelling, which is what the second pass
+// iterates: two spellings of one file each get an entry, and both point at the
+// one canonical answer, so the baseline is still asked once per file. Keyed on
+// the canonical spelling instead there would be no entry at all for a spelling
+// that was refused, and "refused" would be indistinguishable from "never seen".
+//
+// A path repeated verbatim overwrites its own entry with the identical verdict,
+// since resolve is a function of (root, path) and the baseline is memoised per
+// file. Nothing is lost and nothing accumulates.
+func (m *Module) baselinesFor(observed Observed, root string, paths []string, problems *[]error) (settled map[string]settledPath, breached map[string]bool) {
+	settled = make(map[string]settledPath, len(paths))
 	breached = make(map[string]bool, len(paths))
+	// The canonical answer, memoised so the contract's one-question-per-file
+	// promise survives however many spellings named it.
+	baselines := make(map[string]bool, len(paths))
 
 	for _, path := range paths {
-		clean, _, err := resolve(root, path)
+		if _, done := settled[path]; done {
+			// This exact spelling has already been resolved and its verdict
+			// recorded. Resolving it again would ask the filesystem a second
+			// time about a question already answered, and a tree that moved in
+			// between would answer differently — the same disagreement between
+			// two resolutions that the second pass no longer makes. It is also
+			// what keeps a refusal to ONE complaint however many times the
+			// producer repeated the bad spelling.
+			continue
+		}
+		clean, full, err := resolve(root, path)
 		if err != nil {
 			*problems = append(*problems, err)
+			settled[path] = settledPath{}
 			continue
 		}
 		before, asked := baselines[clean]
@@ -371,6 +440,7 @@ func (m *Module) baselinesFor(observed Observed, root string, paths []string, pr
 			before = observed.ExistedAtBaseline(clean)
 			baselines[clean] = before
 		}
+		settled[path] = settledPath{resolved: true, clean: clean, full: full, before: before}
 		if breached[clean] {
 			// Reported once per file, not once per spelling of it.
 			continue
@@ -380,5 +450,5 @@ func (m *Module) baselinesFor(observed Observed, root string, paths []string, pr
 			breached[clean] = true
 		}
 	}
-	return baselines, breached
+	return settled, breached
 }
