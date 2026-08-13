@@ -12,16 +12,23 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sloprail/sloprail/internal/fingerprint"
 )
 
-// These tests drive the pre-tool dispatch itself, which is the only place the
-// skip is actually applied. The e2e harness cannot reach it: a10n-claude-mock
-// omits transcript_path from its PreToolUse payload, and without that the
-// session cannot be identified, so every hook re-judges and a test driven
-// through the mock would pass whether the skip worked or not.
+// These tests drive the pre-tool dispatch itself, which is where the skip is
+// applied.
 //
-// What it cannot skip, it must not silently skip either — the last case here
-// pins exactly that: no session, no exemption.
+// They are not the only reach into it. An earlier version of this file claimed
+// the e2e harness could not get here at all, because a10n-claude-mock omits
+// transcript_path from its PreToolUse payload — the omission is real, the
+// conclusion was not, and an e2e was deleted over it. The record is located by
+// the harness's own naming instead, and tests/e2e/pre_tool/013 drives all of
+// this through a real session.
+//
+// What these add is what a session cannot stage: a store inspected directly
+// (a refusal that was recorded rather than merely obeyed), a hook that rewrites
+// the file mid-dispatch, and a payload deliberately stripped of its record.
 
 // dispatch is one project set up so runSessionPreTool can be called against it,
 // with everything the engine reads from the environment pointed at temp dirs.
@@ -183,6 +190,193 @@ func TestPreTool_RefusalReFiresOnUnchangedContent(t *testing.T) {
 		"an unfixed violation must be put back in front of the rule every cycle")
 	assert.Contains(t, first, "the rule says no")
 	assert.Contains(t, second, "the rule says no", "the refusal must still reach the agent the second time")
+}
+
+// verdictOf makes a guardrail's answer depend on a file the test controls, so
+// one rule can refuse in one cycle and permit in the next while the CONTENT it
+// is judging stays identical. That separation is what the refusal-retained
+// property needs: a refusal that is never recorded is invisible for as long as
+// the rule keeps refusing.
+func (d *dispatch) switchable(name string) {
+	d.t.Helper()
+	dir := filepath.Join(d.proj, ".sloprail", "guardrails", name)
+	require.NoError(d.t, os.MkdirAll(dir, 0o755))
+
+	const decl = `---
+hooks:
+  PreFileCreate:
+    - hooks:
+        - type: command
+          command: ./judge.sh
+  PreFileUpdate:
+    - hooks:
+        - type: command
+          command: ./judge.sh
+---
+
+# Answers whatever ./verdict says
+`
+	require.NoError(d.t, os.WriteFile(filepath.Join(dir, "GUARDRAIL.md"), []byte(decl), 0o644))
+
+	script := "#!/bin/sh\ncat >/dev/null\necho ran >> ./ran.log\n" +
+		"if [ \"$(cat ./verdict 2>/dev/null)\" = refuse ]; then echo 'the rule says no' >&2; exit 1; fi\nexit 0\n"
+	require.NoError(d.t, os.WriteFile(filepath.Join(dir, "judge.sh"), []byte(script), 0o755))
+}
+
+// setVerdict tells a switchable guardrail what to answer next.
+func (d *dispatch) setVerdict(name, answer string) {
+	d.t.Helper()
+	require.NoError(d.t, os.WriteFile(
+		filepath.Join(d.proj, ".sloprail", "guardrails", name, "verdict"), []byte(answer), 0o644))
+}
+
+func TestPreTool_RefusalIsRecordedNotDropped(t *testing.T) {
+	// FINDING 2. refusal_is_retained, pinned at the DISPATCHER rather than at the
+	// store. Recording only passes survives every other test here, because a
+	// refusal denies immediately and so a cycle that dropped the row looks
+	// exactly like one that wrote it.
+	//
+	// What separates them is what the row is worth a cycle LATER. So the rule
+	// refuses once, then permits — and because the content never changed, the
+	// pass is recorded under the same fingerprint the refusal was. Offer the
+	// content a third time and the question becomes: was there a row to
+	// overwrite, or did the pass land on an empty slot?
+	//
+	// Both answers skip on cycle 3, which is why the assertion is on cycle 2:
+	// with the refusal recorded, cycle 2 finds a row that FAILS the passing half
+	// and re-judges. Without it, cycle 2 finds nothing — which is also a
+	// re-judge. So the pin has to be the row itself.
+	d := newDispatch(t)
+	d.switchable("counter")
+	d.setVerdict("counter", "refuse")
+
+	out := d.write("notes.md", "hello")
+	require.Contains(t, out, "the rule says no", "cycle 1 refuses, so the write does not land")
+	require.Equal(t, 1, d.runs("counter"))
+
+	// The refusal must be in the record now — under the fingerprint of the
+	// content that was judged, marked as NOT passing. Read it directly: this is
+	// the fact the dispatcher is responsible for, and every behavioural proxy
+	// for it is indistinguishable from the mutant.
+	rev, err := openRevalidation(HookPayload{TranscriptPath: d.transcript(), Cwd: d.proj})
+	require.NoError(t, err)
+	defer rev.Close()
+
+	v, found, err := rev.store.FileCheck("notes.md", "counter")
+	require.NoError(t, err)
+	require.True(t, found, "the refusal must be written, not dropped — with no row the next pass lands on an empty slot")
+	assert.False(t, v.Passed, "and it must be written AS a refusal")
+	assert.Equal(t, fingerprint.Of([]byte("hello")), v.Fingerprint,
+		"keyed on the content that was judged, so it stops being a licence the moment that content changes")
+}
+
+func TestPreTool_ARecordedRefusalIsWhatTheNextPassReplaces(t *testing.T) {
+	// The consequence of the row above, driven through the dispatcher: the
+	// refusal stands until the SAME guardrail permits the SAME content, and only
+	// then is the file exempt. Content identical in all three cycles, so the only
+	// thing that moves is the verdict.
+	d := newDispatch(t)
+	d.switchable("counter")
+	d.setVerdict("counter", "refuse")
+
+	first := d.write("notes.md", "hello")
+	require.Contains(t, first, "the rule says no")
+	require.Equal(t, 1, d.runs("counter"))
+
+	// Still refusing, and still unchanged content: the stored refusal must not
+	// exempt it.
+	second := d.write("notes.md", "hello")
+	require.Contains(t, second, "the rule says no", "an unfixed violation resurfaces every cycle")
+	require.Equal(t, 2, d.runs("counter"))
+
+	// The rule relents. Same bytes, so the pass overwrites the refusal.
+	d.setVerdict("counter", "permit")
+	third := d.write("notes.md", "hello")
+	require.NotContains(t, third, "deny")
+	require.Equal(t, 3, d.runs("counter"))
+
+	// And now, and only now, it is settled.
+	d.write("notes.md", "hello")
+	assert.Equal(t, 3, d.runs("counter"), "once permitted, the same content is left alone")
+}
+
+// meddler declares a rule whose hook REWRITES the file the event is about
+// before permitting it. A guardrail is an arbitrary shell script, so this is
+// something a real one can do — a formatter that fixes what it objects to
+// rather than refusing it is the ordinary case.
+func (d *dispatch) meddler(name, path, content string) {
+	d.t.Helper()
+	dir := filepath.Join(d.proj, ".sloprail", "guardrails", name)
+	require.NoError(d.t, os.MkdirAll(dir, 0o755))
+
+	const decl = `---
+hooks:
+  PreFileCreate:
+    - hooks:
+        - type: command
+          command: ./fix.sh
+  PreFileUpdate:
+    - hooks:
+        - type: command
+          command: ./fix.sh
+---
+
+# Rewrites the file, then permits
+`
+	require.NoError(d.t, os.WriteFile(filepath.Join(dir, "GUARDRAIL.md"), []byte(decl), 0o644))
+
+	script := fmt.Sprintf("#!/bin/sh\ncat >/dev/null\necho ran >> ./ran.log\nprintf %%s %q > %q\nexit 0\n",
+		content, filepath.Join(d.proj, path))
+	require.NoError(d.t, os.WriteFile(filepath.Join(dir, "fix.sh"), []byte(script), 0o755))
+}
+
+func TestPreTool_EveryGuardrailJudgesTheOneSubjectTheEventNamed(t *testing.T) {
+	// M10, and the honest version of it.
+	//
+	// The claim was "subject once per event, skip asked per guardrail". Half of
+	// that is a real property and is pinned here; the other half turned out not
+	// to be a behavioural claim at all once Finding 1 was fixed. Both halves are
+	// worth stating, because the reason it is safe is the interesting part.
+	//
+	// The REAL property, asserted below: every guardrail bound to one event is
+	// recorded against the SAME subject — the content that event is about — even
+	// when an earlier rule's hook has rewritten the file underneath them. Rows
+	// that disagreed would key the next cycle's exemptions on content that was
+	// never the pending action.
+	//
+	// Why moving the resolution into the guardrail loop is now merely wasteful
+	// rather than wrong: after Finding 1, the only kind this hook point can
+	// produce a subject for is PreFileCreate, whose subject is the pending bytes
+	// ON THE EVENT. It reads no disk, so re-resolving it cannot observe anything
+	// an earlier hook did. TestRevalidation_PreSubjectDoesNotMoveWhenTheDiskDoes
+	// pins exactly that, and it is what makes the two placements equivalent —
+	// which is a fact about Subject, not about this loop, so that is where it is
+	// pinned.
+	//
+	// The first rule here rewrites the file and permits; all three must still be
+	// recorded against what the event named.
+	d := newDispatch(t)
+	d.meddler("a-meddler", "notes.md", "REWRITTEN BY THE HOOK")
+	d.guardrail("b-quiet", 0)
+	d.guardrail("c-quiet", 0)
+
+	d.write("notes.md", "hello")
+
+	rev, err := openRevalidation(HookPayload{TranscriptPath: d.transcript(), Cwd: d.proj})
+	require.NoError(t, err)
+	defer rev.Close()
+
+	want := fingerprint.Of([]byte("hello"))
+	require.NotEqual(t, want, fingerprint.Of([]byte("REWRITTEN BY THE HOOK")),
+		"the meddler must actually change what a disk-reading subject would be, or this test proves nothing")
+
+	for _, n := range []string{"a-meddler", "b-quiet", "c-quiet"} {
+		v, found, err := rev.store.FileCheck("notes.md", n)
+		require.NoError(t, err)
+		require.Truef(t, found, "guardrail %q has its own row", n)
+		assert.Equalf(t, want, v.Fingerprint,
+			"guardrail %q must be recorded against the event's one subject, not against whatever an earlier hook left on disk", n)
+	}
 }
 
 func TestPreTool_EachGuardrailJudgesForItself(t *testing.T) {
