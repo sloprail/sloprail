@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/module"
 )
 
 // fileEvent is the shape a file module produces, built inline so a test says
@@ -271,4 +272,246 @@ func TestMatch_DoesNotMutateTheEvent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{"path": "memories/a.md"}, e.Fields)
 	assert.Len(t, e.Fields, 1)
+}
+
+// ---------------------------------------------------------------------------
+// Load-time checking of a matcher against the fields its kind declares.
+//
+// The tests above are about what a matcher DOES once it runs. These are about
+// whether it is allowed to load at all, which is the only place a misspelled
+// field can still be distinguished from a rule that legitimately does not match.
+// ---------------------------------------------------------------------------
+
+// fileKind mirrors what the file module declares for a pending create: a path
+// and the content that would be written.
+var fileKind = module.KindDecl{
+	Name: "PreFileCreate",
+	Fields: []module.FieldDecl{
+		{Name: "path", Type: module.TypeString},
+		{Name: "content", Type: module.TypeString},
+	},
+}
+
+// commandKind stands in for the kinds arriving with the command module. Kept
+// here so the container field types are exercised before a module ships them —
+// a list of maps is the shape the spec's own example matcher reads.
+//
+// invocations declares its element's fields, which is what makes the predicate
+// body of `any(invocations, …)` checkable. meta does not declare keys, standing
+// for the case where a module genuinely cannot enumerate them.
+var commandKind = module.KindDecl{
+	Name: "PreCommand",
+	Fields: []module.FieldDecl{
+		{Name: "raw", Type: module.TypeString},
+		{
+			Name: "invocations",
+			Type: module.TypeList,
+			Elem: &module.FieldDecl{
+				Type: module.TypeMap,
+				Fields: []module.FieldDecl{
+					{Name: "bin", Type: module.TypeString},
+					{Name: "flags", Type: module.TypeList, Elem: &module.FieldDecl{Type: module.TypeString}},
+				},
+			},
+		},
+		{Name: "meta", Type: module.TypeMap},
+	},
+}
+
+// looseKind declares a list without an element shape — the honest state before
+// a module says what its list holds.
+var looseKind = module.KindDecl{
+	Name: "PreLoose",
+	Fields: []module.FieldDecl{
+		{Name: "items", Type: module.TypeList},
+	},
+}
+
+func TestCompileMatcherFor_AcceptsDeclaredField(t *testing.T) {
+	m, err := CompileMatcherFor(`path startsWith "guarded/"`, fileKind)
+	require.NoError(t, err)
+
+	admitted, err := m.Match(event.Event{
+		Kind:   "PreFileCreate",
+		Fields: map[string]any{"path": "guarded/notes.md"},
+	})
+	require.NoError(t, err)
+	assert.True(t, admitted, "a matcher over a declared field should still work")
+}
+
+// The point of the whole task: the typo and the rule are both well-formed
+// expressions, and only the kind's declared fields tell them apart.
+func TestCompileMatcherFor_RefusesMisspelledField(t *testing.T) {
+	_, err := CompileMatcherFor(`pth startsWith "guarded/"`, fileKind)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pth")
+}
+
+// The acceptance half of the same check. A validator that refused every name
+// would pass the test above and be useless.
+func TestCompileMatcherFor_AcceptsEveryDeclaredField(t *testing.T) {
+	for _, f := range fileKind.Fields {
+		_, err := CompileMatcherFor(f.Name+` != ""`, fileKind)
+		assert.NoErrorf(t, err, "field %q is declared and should be readable", f.Name)
+	}
+}
+
+// A field one kind carries and another does not is the case a shared
+// environment would miss. content exists on PreFileCreate alone.
+func TestCompileMatcherFor_FieldOfAnotherKindIsUnknown(t *testing.T) {
+	preUpdate := module.KindDecl{
+		Name:   "PreFileUpdate",
+		Fields: []module.FieldDecl{{Name: "path", Type: module.TypeString}},
+	}
+
+	_, err := CompileMatcherFor(`content != ""`, fileKind)
+	require.NoError(t, err, "content is declared on PreFileCreate")
+
+	_, err = CompileMatcherFor(`content != ""`, preUpdate)
+	require.Error(t, err, "content is not declared on PreFileUpdate")
+	assert.Contains(t, err.Error(), "content")
+}
+
+func TestCompileMatcherFor_RefusesNonBoolean(t *testing.T) {
+	_, err := CompileMatcherFor(`path`, fileKind)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bool")
+}
+
+func TestCompileMatcherFor_RefusesMismatchedComparison(t *testing.T) {
+	// path is declared a string, so comparing it to a number is a rule that
+	// could never hold — caught by the same type check that catches the typo.
+	_, err := CompileMatcherFor(`path == 3`, fileKind)
+	require.Error(t, err)
+}
+
+func TestCompileMatcherFor_RefusesSyntaxError(t *testing.T) {
+	_, err := CompileMatcherFor(`path startsWith`, fileKind)
+	require.Error(t, err)
+}
+
+// An absent matcher means every occurrence, and must survive the type check
+// rather than being refused for reading no fields.
+func TestCompileMatcherFor_EmptyAdmitsEverything(t *testing.T) {
+	m, err := CompileMatcherFor("", fileKind)
+	require.NoError(t, err)
+
+	admitted, err := m.Match(event.Event{Kind: "PreFileCreate"})
+	require.NoError(t, err)
+	assert.True(t, admitted)
+}
+
+// The spec documents this exact expression as how a command line is matched.
+// A list field must not be typed so tightly that it stops compiling.
+func TestCompileMatcherFor_AcceptsSpecCommandExample(t *testing.T) {
+	_, err := CompileMatcherFor(`any(invocations, .bin == "npm" && "--access" in .flags)`, commandKind)
+	require.NoError(t, err)
+}
+
+// The predicate body is where a command rule actually lives, so a misspelling
+// inside it is the same silent never-fires as one at the top level. Catching it
+// is what the element shape on invocations buys.
+func TestCompileMatcherFor_RefusesMisspelledFieldInsidePredicate(t *testing.T) {
+	_, err := CompileMatcherFor(`any(invocations, .nosuchfield == "x")`, commandKind)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nosuchfield")
+}
+
+// Every collection operator gets the same treatment, since a rule may be
+// written with any of them.
+func TestCompileMatcherFor_ChecksPredicateBodyOfEveryOperator(t *testing.T) {
+	for _, op := range []string{"any", "all", "one", "none"} {
+		_, err := CompileMatcherFor(op+`(invocations, .bin == "npm")`, commandKind)
+		assert.NoErrorf(t, err, "%s over a declared element field should compile", op)
+
+		_, err = CompileMatcherFor(op+`(invocations, .bni == "npm")`, commandKind)
+		assert.Errorf(t, err, "%s over a misspelled element field should be refused", op)
+	}
+}
+
+// Indexing reaches the element type too.
+func TestCompileMatcherFor_ChecksIndexedElementFields(t *testing.T) {
+	_, err := CompileMatcherFor(`invocations[0].bin == "npm"`, commandKind)
+	require.NoError(t, err)
+
+	_, err = CompileMatcherFor(`invocations[0].nope == "npm"`, commandKind)
+	require.Error(t, err)
+}
+
+// A type error inside the predicate is caught for the same reason as at the
+// top level: bin is declared a string.
+func TestCompileMatcherFor_RefusesMismatchedComparisonInsidePredicate(t *testing.T) {
+	_, err := CompileMatcherFor(`any(invocations, .bin == 3)`, commandKind)
+	require.Error(t, err)
+}
+
+// A list whose element shape the module did not declare leaves its predicate
+// body unchecked rather than refusing it. Checking what was never declared
+// would refuse a correct matcher for a gap that is ours.
+func TestCompileMatcherFor_UndeclaredElementShapeLeavesBodyUnchecked(t *testing.T) {
+	_, err := CompileMatcherFor(`any(items, .anything == "x")`, looseKind)
+	assert.NoError(t, err, "the module did not say what items holds")
+}
+
+// A map field's keys are not something KindDecl can express, so reading one
+// must be allowed. The alternative punishes an author for our vocabulary.
+func TestCompileMatcherFor_AcceptsAnyKeyOfMapField(t *testing.T) {
+	_, err := CompileMatcherFor(`meta.whatever == "x"`, commandKind)
+	require.NoError(t, err)
+}
+
+// ...while an undeclared name at the top level is still refused. This is what
+// makes the concession above safe.
+func TestCompileMatcherFor_RefusesUnknownNameAlongsideMapField(t *testing.T) {
+	_, err := CompileMatcherFor(`whatever == "x"`, commandKind)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "whatever")
+}
+
+func TestCompileMatcherFor_RefusesUnknownNameInCompoundExpression(t *testing.T) {
+	// The and-ed clause is the one at fault. A check reading only the first
+	// name would pass this.
+	_, err := CompileMatcherFor(`path startsWith "a" && pth endsWith "b"`, fileKind)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pth")
+}
+
+// CompileMatcher keeps working for callers with no kind in hand, and keeps
+// checking the one thing it still can.
+func TestCompileMatcher_WithoutKindChecksBooleanOnly(t *testing.T) {
+	_, err := CompileMatcher(`pth startsWith "x"`)
+	assert.NoError(t, err, "no kind means no field to check against")
+
+	_, err = CompileMatcher(`"not a bool"`)
+	assert.Error(t, err, "the boolean requirement holds with or without a kind")
+}
+
+// A field the kind declares but this occurrence does not carry reads as its
+// zero value, so the matcher declines rather than failing.
+//
+// Recorded because it is the reason the load check matters rather than a gap in
+// it. At runtime a missing field and a non-matching one are indistinguishable —
+// both simply do not fire — which is exactly the silence CompileMatcherFor
+// exists to rule out beforehand. Once loading guarantees every name is
+// declared, the only way to reach here is an occurrence that genuinely omitted
+// an optional field, and declining is the right answer to that.
+func TestMatch_MissingFieldDeclinesRatherThanFailing(t *testing.T) {
+	m, err := CompileMatcherFor(`path startsWith "x"`, fileKind)
+	require.NoError(t, err)
+
+	admitted, err := m.Match(event.Event{Kind: "PreFileCreate", Fields: map[string]any{}})
+	require.NoError(t, err)
+	assert.False(t, admitted)
+}
+
+func TestMatch_DeclinesWhenTheFieldDoesNotSatisfy(t *testing.T) {
+	m, err := CompileMatcherFor(`path startsWith "guarded/"`, fileKind)
+	require.NoError(t, err)
+
+	admitted, err := m.Match(event.Event{
+		Kind:   "PreFileCreate",
+		Fields: map[string]any{"path": "elsewhere/notes.md"},
+	})
+	require.NoError(t, err)
+	assert.False(t, admitted)
 }

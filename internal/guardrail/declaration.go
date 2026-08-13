@@ -29,6 +29,12 @@ type Declaration struct {
 	// Dir is the guardrail's own folder, so a hook can read what sits beside
 	// it and so its commands resolve relative to it.
 	Dir string `yaml:"-"`
+
+	// Warnings are problems found at load that did not disqualify the rule —
+	// the machine being wrong rather than the declaration. A hook that is not
+	// executable is the case: the rule is loaded anyway so that it can still
+	// refuse, and this is what says so out loud. See Fault.
+	Warnings []Problem `yaml:"-"`
 }
 
 // Binding ties one event kind to the hooks that run for it.

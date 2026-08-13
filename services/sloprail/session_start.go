@@ -21,14 +21,43 @@ func newSessionStartCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p := readPayload(cmd)
-			_, invalid, err := guardrail.New(dotDir(p.Cwd)).Load()
+
+			reg, err := registry()
+			if err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+				return nil
+			}
+
+			// LoadWith rather than Load: the checks worth running here are the
+			// ones that need to know which events exist and what they carry.
+			// Session start is where a person is still watching, so it is where
+			// a rule that could never fire should say so.
+			decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
 			if err != nil {
 				// Reported, not fatal — see above.
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 				return nil
 			}
 			for _, iv := range invalid {
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q not loaded: %s\n", iv.Name, iv.Reason)
+				// One line per fault, rather than all of them joined. An author
+				// reading a terminal is the reason validation reports
+				// everything at once, and running them together undoes that.
+				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q not loaded:\n", iv.Name)
+				for _, reason := range iv.Reasons {
+					fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", reason)
+				}
+			}
+
+			// Rules that loaded despite something being wrong with the machine.
+			// Said differently from "not loaded", because the consequence is
+			// different: this rule is in force and will refuse the work it
+			// guards until the hook can run.
+			for _, d := range decls {
+				for _, w := range d.Warnings {
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"sloprail: guardrail %q will refuse until this is fixed: %s\n",
+						d.Name, w.Message())
+				}
 			}
 			return nil
 		},

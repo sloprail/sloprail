@@ -445,3 +445,247 @@ body
 	require.NoError(t, err)
 	assert.True(t, admitted)
 }
+
+// ---------------------------------------------------------------------------
+// Loading WITH a registry: validation of what a declaration says it will do.
+// ---------------------------------------------------------------------------
+
+// writeGuardrail creates one guardrail folder with its declaration and an
+// executable hook beside it, and returns the dot-directory root.
+func writeGuardrailWithHook(t *testing.T, root, name, declaration string) string {
+	t.Helper()
+	dir := filepath.Join(root, "guardrails", name)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "GUARDRAIL.md"), []byte(declaration), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "ok.sh"), []byte("#!/bin/sh\n"), 0o755))
+	return root
+}
+
+const soundDeclaration = `---
+hooks:
+  PreFileCreate:
+    - matcher: path startsWith "guarded/"
+      hooks:
+        - type: command
+          command: ./ok.sh
+---
+
+# A rule that can do what it says
+`
+
+const misspelledField = `---
+hooks:
+  PreFileCreate:
+    - matcher: pth startsWith "guarded/"
+      hooks:
+        - type: command
+          command: ./ok.sh
+---
+
+# A rule that would never fire
+`
+
+const duplicatedKind = `---
+hooks:
+  PreFileCreate:
+    - matcher: path startsWith "a/"
+      hooks:
+        - type: command
+          command: ./ok.sh
+  PreFileCreate:
+    - matcher: path startsWith "b/"
+      hooks:
+        - type: command
+          command: ./ok.sh
+---
+
+# A rule whose second binding collides with its first
+`
+
+func TestLoadWith_SoundDeclarationLoads(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "sound", soundDeclaration)
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, invalid)
+	require.Len(t, decls, 1)
+	assert.Equal(t, "sound", decls[0].Name)
+}
+
+func TestLoadWith_MatcherFaultMakesItInvalid(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "typo", misspelledField)
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, decls, "a rule that could never fire must not load as enforceable")
+	require.Len(t, invalid, 1)
+	assert.True(t, invalid[0].Has(ErrBadMatcher))
+	assert.Contains(t, invalid[0].Reason, "pth")
+}
+
+// The isolation property, and the reason validation reports rather than
+// refuses: a single typo must not silently disarm a whole project.
+func TestLoadWith_OneBadDeclarationDisablesOnlyItself(t *testing.T) {
+	root := t.TempDir()
+	writeGuardrailWithHook(t, root, "sound", soundDeclaration)
+	writeGuardrailWithHook(t, root, "typo", misspelledField)
+	writeGuardrailWithHook(t, root, "dupe", duplicatedKind)
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+
+	require.Len(t, decls, 1)
+	assert.Equal(t, "sound", decls[0].Name, "the sound rule still enforces")
+
+	require.Len(t, invalid, 2)
+	assert.Equal(t, "dupe", invalid[0].Name)
+	assert.Equal(t, "typo", invalid[1].Name, "reported in a stable order")
+}
+
+func TestLoadWith_DuplicateKindIsReported(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "dupe", duplicatedKind)
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, decls)
+	require.Len(t, invalid, 1)
+	assert.Contains(t, invalid[0].Reason, "PreFileCreate")
+	assert.True(t, invalid[0].Has(ErrDuplicateKey))
+}
+
+// Reason and Reasons say the same thing, because one is derived from the other.
+func TestLoadWith_ReasonSummarisesReasons(t *testing.T) {
+	const twoFaults = `---
+hooks:
+  PreFileCreate:
+    - matcher: pth startsWith "a/"
+      hooks:
+        - type: script
+          command: ./ok.sh
+---
+`
+	root := writeGuardrailWithHook(t, t.TempDir(), "two", twoFaults)
+
+	_, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, invalid, 1)
+
+	assert.Len(t, invalid[0].Reasons, 2)
+	for _, r := range invalid[0].Reasons {
+		assert.Contains(t, invalid[0].Reason, r)
+	}
+}
+
+// Load keeps working for callers with no registry: it still catches what it
+// can, and does not invent kinds it has no way to know about.
+func TestLoad_WithoutRegistrySkipsKindChecks(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "typo", misspelledField)
+
+	decls, invalid, err := New(root).Load()
+	require.NoError(t, err)
+	assert.Empty(t, invalid, "no registry means no kind to check the matcher against")
+	assert.Len(t, decls, 1)
+}
+
+// A duplicate is a property of the file, so it is caught with or without a
+// registry.
+func TestLoad_WithoutRegistryStillCatchesDuplicates(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "dupe", duplicatedKind)
+
+	_, invalid, err := New(root).Load()
+	require.NoError(t, err)
+	require.Len(t, invalid, 1)
+	assert.Contains(t, invalid[0].Reason, "PreFileCreate")
+}
+
+// A project that has not adopted sloprail is the ordinary case, not an error.
+func TestLoadWith_NoDotDirectory(t *testing.T) {
+	decls, invalid, err := New(filepath.Join(t.TempDir(), "absent")).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, decls)
+	assert.Empty(t, invalid)
+}
+
+func TestLoadWith_MissingFrontmatterIsReported(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "prose-only", "# Just prose\n")
+
+	_, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, invalid, 1)
+	assert.Contains(t, invalid[0].Reason, "frontmatter")
+}
+
+// ---------------------------------------------------------------------------
+// A rule whose hook cannot run stays loaded.
+//
+// This is the load-time half of the fail-open guarantee. The runtime refuses an
+// action whose hook exits non-zero, including the 126 of a file that is not
+// executable — but only for a rule it was given. Dropping the rule here would
+// mean nothing dispatches and the action proceeds, which is the bug by a
+// different route.
+// ---------------------------------------------------------------------------
+
+const unrunnableHook = `---
+hooks:
+  PreFileCreate:
+    - hooks:
+        - type: command
+          command: ./ok.sh
+---
+
+# Its hook exists but is not executable
+`
+
+func TestLoadWith_UnrunnableHookStillLoads(t *testing.T) {
+	root := t.TempDir()
+	writeGuardrailWithHook(t, root, "unrunnable", unrunnableHook)
+	// Take away what makes it runnable, leaving the declaration untouched.
+	require.NoError(t, os.Chmod(filepath.Join(root, "guardrails", "unrunnable", "ok.sh"), 0o644))
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+
+	assert.Empty(t, invalid, "a chmod away from working is not a broken declaration")
+	require.Len(t, decls, 1, "the rule must load, or nothing refuses the write it guards")
+
+	require.Len(t, decls[0].Warnings, 1, "and it must say what is wrong")
+	assert.ErrorIs(t, decls[0].Warnings[0], ErrHookNotRunnable)
+	assert.Contains(t, decls[0].Warnings[0].Message(), "not executable")
+}
+
+// The same declaration with its hook executable loads clean, so the warning
+// above is the check working rather than a warning nobody can clear.
+func TestLoadWith_RunnableHookLoadsWithoutWarnings(t *testing.T) {
+	root := writeGuardrailWithHook(t, t.TempDir(), "fine", unrunnableHook)
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, invalid)
+	require.Len(t, decls, 1)
+	assert.Empty(t, decls[0].Warnings)
+}
+
+// A declaration fault still disqualifies, and takes the environment complaint
+// with it into the report so the author sees both at once.
+func TestLoadWith_DeclarationFaultStillDisqualifies(t *testing.T) {
+	const bothFaults = `---
+hooks:
+  PreFileCreate:
+    - matcher: pth startsWith "a/"
+      hooks:
+        - type: command
+          command: ./ok.sh
+---
+`
+	root := t.TempDir()
+	writeGuardrailWithHook(t, root, "both", bothFaults)
+	require.NoError(t, os.Chmod(filepath.Join(root, "guardrails", "both", "ok.sh"), 0o644))
+
+	decls, invalid, err := New(root).LoadWith(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, decls)
+	require.Len(t, invalid, 1)
+
+	assert.True(t, invalid[0].Has(ErrBadMatcher))
+	assert.True(t, invalid[0].Has(ErrHookNotRunnable), "the chmod is reported too, not swallowed")
+}

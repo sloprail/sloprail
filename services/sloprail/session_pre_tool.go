@@ -30,16 +30,19 @@ func newSessionPreToolCmd() *cobra.Command {
 func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	p := readPayload(cmd)
 
-	decls, _, err := guardrail.New(dotDir(p.Cwd)).Load()
+	reg, err := registry()
+	if err != nil {
+		return nil
+	}
+
+	// LoadWith, so a declaration that cannot do what it says never reaches
+	// enforcement. Without it a matcher naming a field its kind does not carry
+	// would be compiled here and quietly admit nothing.
+	decls, _, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
 	if err != nil || len(decls) == 0 {
 		// Nothing declared, or nothing readable. Either way there is no rule to
 		// enforce, and an engine that refused here would be refusing on its own
 		// behalf rather than on any project's.
-		return nil
-	}
-
-	reg, err := registry()
-	if err != nil {
 		return nil
 	}
 
@@ -70,12 +73,25 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	}
 
 	for _, e := range events {
+		// The kind is in hand here, so every matcher below is compiled against
+		// the fields it will actually see — the same check the declaration
+		// already passed at load. Compiling without it would leave enforcement
+		// running an expression nobody had checked.
+		kindDecl, known := reg.KindDeclFor(e.Kind)
+		if !known {
+			// An event from a module the registry does not own cannot be
+			// matched against anything. It should not be reachable, since the
+			// events came from this registry's own modules.
+			continue
+		}
+
 		for _, d := range decls {
 			if !d.IsEnabled() {
 				continue
 			}
+
 			for _, b := range d.Hooks[e.Kind] {
-				m, err := guardrail.CompileMatcher(b.Matcher)
+				m, err := guardrail.CompileMatcherFor(b.Matcher, kindDecl)
 				if err != nil {
 					// A matcher that will not compile disables its binding and
 					// says so. Treating it as "matches everything" would turn a
