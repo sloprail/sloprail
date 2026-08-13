@@ -18,11 +18,24 @@ func main() {
 
 func newRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "sloprail",
-		Short:         "Declarative contracts that keep an agent's output honest",
+		Use:   "sloprail",
+		Short: "Declarative contracts that keep an agent's output honest",
+		Long: `Declarative contracts that keep an agent's output honest.
+
+A project declares guardrails under ` + DotDirName + `/guardrails/; the harness calls the
+session hook points, and the engine runs whichever guardrails bind to what is
+about to happen.
+
+  sloprail init              create the directory a project keeps guardrails in
+  sloprail guardrail help    how to write one — read this before authoring
+
+The session subcommands are invoked by a harness with a payload on stdin, not
+typed by a person.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.AddCommand(newInitCmd())
+	root.AddCommand(newGuardrailCmd())
 	root.AddCommand(newSessionCmd())
 	return root
 }

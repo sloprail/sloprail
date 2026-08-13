@@ -143,6 +143,31 @@ func (e *Env) Project() string {
 	return dir
 }
 
+// CLI runs the sloprail binary directly and returns what it produced.
+//
+// The session subcommands are not tested this way — those are invoked by a
+// harness, and a test that called them itself would prove the engine decides
+// correctly while proving nothing about whether anything ever asks it, which is
+// the whole reason Run drives the mock instead.
+//
+// This is for the commands a PERSON or an authoring agent types: `init` and
+// `guardrail help`. Nothing in a session invokes them, so there is no wiring
+// for driving the mock to prove.
+func (e *Env) CLI(dir string, args ...string) Result {
+	e.t.Helper()
+	cmd := exec.Command(filepath.Join(e.binDir, "sloprail"), args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "HOME="+e.home)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		e.t.Fatalf("harness: run sloprail %v: %v\n%s", args, err, out)
+	}
+	return Result{Output: string(out), Code: code}
+}
+
 // Guardrail writes a declaration and its hook scripts into a project.
 func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]string) {
 	e.t.Helper()
