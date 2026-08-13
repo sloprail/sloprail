@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -24,12 +25,22 @@ import (
 func newSessionQueryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "query",
-		Short: "What the agent did — the session's own record, filtered",
-		Long: `What the agent did — the session's own record, filtered.
+		Short: "What the agent did — the part of the session not yet judged",
+		Long: `What the agent did — the part of the session not yet judged.
 
-Reads the whole session. Narrowing to just the part not yet judged needs the
-position the last cycle stopped at, which is not yet recorded, so nothing here
-takes it as given.
+Reads from where the last completed cycle stopped. A session's record only
+grows, so a turn already judged has not changed, and judging it again both
+wastes the reading and invites a judge — a model call, not a function — to
+reach a different verdict on a turn the agent can no longer reach to fix.
+
+The position moves only when a cycle finishes. A cycle that was interrupted may
+have judged nothing, so the next one reads those turns again: re-reading a turn
+costs a second look, skipping one loses a violation for good. The first cycle of
+a session, and any session whose position cannot be read, gets the whole record
+for the same reason.
+
+--whole-session ignores the position and reads the entire record, for a rule
+asking about the session as a whole rather than about this cycle's work.
 
 Entries belonging to sub-agents are left out unless asked for: a rule asking
 what the agent did usually means the main line of work.
@@ -42,42 +53,33 @@ The answer is entries as JSON, for whatever the hook already uses to read JSON.`
 		"Narrow which entries come back, over the same expression language a guardrail's matcher uses")
 	cmd.Flags().Bool("include-sidechains", false,
 		"Include entries belonging to sub-agents")
+	cmd.Flags().Bool("whole-session", false,
+		"Read the entire record, not just the part no cycle has judged yet")
 	return cmd
 }
 
 func runSessionQuery(cmd *cobra.Command, _ []string) error {
 	where, _ := cmd.Flags().GetString("where")
 	includeSidechains, _ := cmd.Flags().GetBool("include-sidechains")
+	wholeSession, _ := cmd.Flags().GetBool("whole-session")
 
 	p := readPayload(cmd)
-	if p.TranscriptPath == "" {
+	path, err := p.record()
+	if err != nil {
+		return err
+	}
+	if path == "" {
 		return fmt.Errorf("sloprail: no transcript path on the hook payload — there is no record to read")
 	}
 
-	entries, err := transcript.Read(p.TranscriptPath)
+	entries, err := transcript.Read(path)
 	if err != nil {
 		return err
 	}
 
-	// There is deliberately no --whole-session flag yet.
-	//
-	// A rule asking what the agent did means this cycle's work, and the answer
-	// should be the part of the session not already judged: re-reading settled
-	// work wastes the reading and lets a judge reach a different verdict on a
-	// turn the agent can no longer reach to fix. So narrowing is right, and a
-	// flag to widen back out is right beside it.
-	//
-	// But where the last cycle stopped is a REMEMBERED position, not anything
-	// the record says — the store now has sessionstate.MetaTranscriptRead
-	// waiting to hold it, and reading and advancing it is the read-mark task,
-	// not this one. Until that is wired, both settings of such a flag would
-	// return the identical whole record, and a flag whose two positions do the
-	// same thing is a promise in --help that the code does not keep. One honest
-	// behaviour beats a flag that appears to do something.
-	//
-	// The whole record is also the safe direction to be wrong in while waiting:
-	// re-reading a turn costs a second look, skipping one loses a violation for
-	// good.
+	if !wholeSession {
+		entries = transcript.Since(entries, readMark(cmd, p))
+	}
 
 	entries, err = transcript.Filter(entries, transcript.Query{
 		Where:             where,
@@ -90,4 +92,33 @@ func runSessionQuery(cmd *cobra.Command, _ []string) error {
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetEscapeHTML(false)
 	return enc.Encode(entries)
+}
+
+// readMark is the position the last completed cycle read up to, or "" for a
+// session where nothing has been recorded yet.
+//
+// Every failure yields "", which reads the whole record. That is the safe
+// direction to be wrong in and the only one: a position that cannot be read is
+// not a position saying nothing needs judging, and defaulting the other way
+// would have a rule report no violations because the engine could not open its
+// own database. Re-reading a turn costs a second look; skipping one loses a
+// violation for good.
+//
+// Reported on stderr rather than silently, because a session persistently
+// unable to read its position is re-judging everything on every cycle, and the
+// only symptom otherwise is that things get slower.
+func readMark(cmd *cobra.Command, p HookPayload) string {
+	store, err := openEngineState(p)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: reading the whole session:", err)
+		return ""
+	}
+	defer store.Close()
+
+	mark, _, err := store.Meta(sessionstate.MetaTranscriptRead)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: reading the whole session:", err)
+		return ""
+	}
+	return mark
 }

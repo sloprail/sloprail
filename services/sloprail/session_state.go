@@ -59,3 +59,24 @@ func openSessionState() (sessionstate.Store, string, error) {
 	}
 	return store, guardrail, nil
 }
+
+// openEngineState opens the store for the session a hook payload belongs to.
+//
+// Distinct from openSessionState, which serves a guardrail's own hook and reads
+// the environment the engine set for it. This one is for the engine's own hook
+// points — session start, stop, query — which run before any guardrail is in
+// scope and have no such environment. What they have is the payload, and the
+// session's identity is derived from it the same way `session id` derives it:
+// from where the conversation began, not from the id the harness currently
+// reports, which Claude Code re-forks mid-conversation.
+func openEngineState(p HookPayload) (sessionstate.Store, error) {
+	id, err := stableID(p)
+	if err != nil {
+		return nil, err
+	}
+	path, err := sessionDBPath(p.Cwd, id)
+	if err != nil {
+		return nil, err
+	}
+	return sessionstate.Open(path)
+}

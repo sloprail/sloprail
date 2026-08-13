@@ -23,6 +23,12 @@ func newSessionStartCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p := readPayload(cmd)
 
+			// Where this session measures from. Recorded before the
+			// declarations are touched: a malformed guardrail is a reason to
+			// print something, never a reason for the session to have no point
+			// to diff against.
+			recordBaseline(cmd, p)
+
 			reg, err := modules.Registry()
 			if err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
@@ -57,5 +63,27 @@ func newSessionStartCmd() *cobra.Command {
 			}
 			return nil
 		},
+	}
+}
+
+// recordBaseline records the commit this session measures from and the branch
+// it belongs to.
+//
+// Every failure is reported and swallowed. A session that cannot start because
+// of a guardrail is worse than a session with none, and that applies with more
+// force to the engine's own bookkeeping than to any rule a project wrote: a
+// missing baseline costs the difference this session would have measured, while
+// a refusal here costs the session itself. The next cycle asks again, and takes
+// the point then if it can.
+func recordBaseline(cmd *cobra.Command, p HookPayload) {
+	store, err := openEngineState(p)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)
+		return
+	}
+	defer store.Close()
+
+	if _, err := ensureBaseline(store, p.Cwd); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)
 	}
 }
