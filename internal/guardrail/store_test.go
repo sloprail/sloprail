@@ -127,61 +127,69 @@ func TestSplitFrontmatter_FirstClosingFenceWins(t *testing.T) {
 	assert.Equal(t, "body\n---\nmore\n", string(body))
 }
 
-// TestSplitFrontmatter_FenceMatchingIsLoose DOCUMENTS A KNOWN DEFECT.
+// TestSplitFrontmatter_BothFencesMatchTheSameWay is the invariant that replaced
+// a documented defect: opening and closing fences are now one predicate.
 //
-// This test asserts what the code does today, NOT what it should do. When the
-// defect is fixed, this test MUST be changed — its failure is the expected
-// consequence of the fix, not a regression. Do not "repair" it by reverting
-// the fix.
+// They used to be two. HasPrefix opened a block and Equal closed it, so `----`
+// and `---yaml` opened frontmatter that only a bare `---` could close. The pairs
+// below are the point of the test — each spelling is asserted in BOTH positions,
+// so the two matchers cannot drift apart again without one of these failing.
+func TestSplitFrontmatter_BothFencesMatchTheSameWay(t *testing.T) {
+	// Each candidate is tried as the opening fence and as the closing fence.
+	// accepted says whether it is a fence at all; the assertion is that the
+	// answer does not depend on which end of the document it appears at.
+	for _, tc := range []struct {
+		name     string
+		line     string
+		accepted bool
+	}{
+		{"bare", "---", true},
+		{"indented and trailing space", "   ---   ", true},
+		{"four dashes", "----", false},
+		{"trailing text", "---yaml", false},
+		{"two dashes", "--", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("as opening fence", func(t *testing.T) {
+				front, body, err := splitFrontmatter([]byte(tc.line + "\na: 1\n---\nbody\n"))
+				if !tc.accepted {
+					require.Error(t, err, "%q must not open frontmatter", tc.line)
+					assert.Contains(t, err.Error(), "no frontmatter")
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, "a: 1\n", string(front))
+				assert.Equal(t, "body\n", string(body))
+			})
+
+			t.Run("as closing fence", func(t *testing.T) {
+				_, body, err := splitFrontmatter([]byte("---\na: 1\n" + tc.line + "\nbody\n"))
+				if !tc.accepted {
+					require.Error(t, err, "%q must not close frontmatter", tc.line)
+					assert.Contains(t, err.Error(), "unterminated")
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, "body\n", string(body))
+			})
+		})
+	}
+}
+
+// TestSplitFrontmatter_NonFenceOpenerIsRefusedNotReinterpreted pins what a
+// refused opener does instead of opening: it is reported, not silently treated
+// as a file with no frontmatter and a body that happens to start with dashes.
 //
-// The defect: the opening fence is matched with HasPrefix after TrimSpace
-// (store.go:100) while the closing fence is matched with Equal after TrimSpace
-// (store.go:105). So `----` and `---yaml` open frontmatter but only `---`
-// closes it, and the asymmetry is documented nowhere.
-//
-// Corrected behaviour would be: both fences matched the same way, exactly
-// `---` after trimming, so that `----`, `---yaml` and any other prefix match
-// is refused as an opening fence with the "no frontmatter" error. The
-// subtests below marked DEFECT are the ones whose expectation would flip from
-// NoError to Error; "four dashes rejected as closing fence" already asserts
-// the corrected behaviour and would keep passing.
-func TestSplitFrontmatter_FenceMatchingIsLoose(t *testing.T) {
-	t.Run("indented opening fence accepted", func(t *testing.T) {
-		// Whether indentation should be tolerated is a judgement call for
-		// whoever fixes the asymmetry; either way both fences should agree.
-		front, body, err := splitFrontmatter([]byte("   ---\na: 1\n---\nbody\n"))
-		require.NoError(t, err)
-		assert.Equal(t, "a: 1\n", string(front))
-		assert.Equal(t, "body\n", string(body))
-	})
-
-	t.Run("four dashes accepted as opening fence", func(t *testing.T) {
-		// DEFECT: should be refused. Flip to require.Error once fixed.
-		front, _, err := splitFrontmatter([]byte("----\na: 1\n---\nbody\n"))
-		require.NoError(t, err)
-		assert.Equal(t, "a: 1\n", string(front))
-	})
-
-	t.Run("opening fence with trailing text accepted", func(t *testing.T) {
-		// DEFECT: should be refused. Flip to require.Error once fixed.
-		front, _, err := splitFrontmatter([]byte("---yaml\na: 1\n---\nbody\n"))
-		require.NoError(t, err)
-		assert.Equal(t, "a: 1\n", string(front))
-	})
-
-	t.Run("four dashes rejected as closing fence", func(t *testing.T) {
-		// Already the corrected behaviour: this subtest survives the fix.
-		_, _, err := splitFrontmatter([]byte("---\na: 1\n----\nbody\n"))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unterminated")
-	})
-
-	t.Run("indented closing fence accepted", func(t *testing.T) {
-		// TrimSpace runs before the Equal, so indentation is tolerated here.
-		_, body, err := splitFrontmatter([]byte("---\na: 1\n   ---   \nbody\n"))
-		require.NoError(t, err)
-		assert.Equal(t, "body\n", string(body))
-	})
+// The distinction matters to an author. `---yaml` is somebody reaching for the
+// fenced-code spelling; parsing their declaration as pure prose would load a
+// guardrail whose entire hooks map went unread, which reads as a rule that
+// declares nothing rather than as a file that needs one character changed.
+func TestSplitFrontmatter_NonFenceOpenerIsRefusedNotReinterpreted(t *testing.T) {
+	front, body, err := splitFrontmatter([]byte("---yaml\nhooks:\n  PreFileCreate: []\n---\nbody\n"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "a declaration begins with a --- fence")
+	assert.Nil(t, front, "nothing is handed back to be parsed as frontmatter")
+	assert.Nil(t, body)
 }
 
 // --- Load -------------------------------------------------------------------

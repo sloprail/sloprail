@@ -233,17 +233,35 @@ func malformed(format string, args ...any) Problem {
 
 var fence = []byte("---")
 
+// isFence reports whether a line is a frontmatter fence: exactly `---` once
+// surrounding whitespace is gone.
+//
+// One predicate, used for both the opening and the closing fence. They were
+// matched differently — HasPrefix opening, Equal closing — so `----` and
+// `---yaml` opened a block that only a bare `---` could close. That asymmetry
+// is not a tolerance anyone chose; it is two spellings of the same idea drifting
+// apart, and the way to keep them from drifting again is for there to be one.
+//
+// Exact rather than prefix, because a prefix match cannot tell a fence from a
+// line that starts like one. `---yaml` is a person reaching for the fenced-code
+// spelling of frontmatter, and `----` is a typo or a horizontal rule; reading
+// either as a fence means parsing the file as something its author did not
+// write. Refusing is what puts the mistake in front of them.
+func isFence(line []byte) bool {
+	return bytes.Equal(bytes.TrimSpace(line), fence)
+}
+
 // splitFrontmatter separates the leading YAML document from the prose beneath
 // it. The prose is returned untouched: it is documentation and rubric at once,
 // and normalising it would change what a judge is judging against.
 func splitFrontmatter(data []byte) (front, body []byte, err error) {
 	lines := bytes.SplitAfter(data, []byte("\n"))
-	if len(lines) == 0 || !bytes.HasPrefix(bytes.TrimSpace(lines[0]), fence) {
+	if len(lines) == 0 || !isFence(lines[0]) {
 		return nil, nil, fmt.Errorf("no frontmatter: a declaration begins with a --- fence")
 	}
 
 	for i := 1; i < len(lines); i++ {
-		if bytes.Equal(bytes.TrimSpace(lines[i]), fence) {
+		if isFence(lines[i]) {
 			front = bytes.Join(lines[1:i], nil)
 			body = bytes.Join(lines[i+1:], nil)
 			return front, body, nil

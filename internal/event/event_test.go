@@ -60,17 +60,45 @@ func TestEvent_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestEvent_NilFieldsMarshalsAsNull(t *testing.T) {
-	// CURRENT behaviour: no omitempty, so an event with no fields serialises
-	// "fields":null rather than an empty object. A hook script reading
-	// .fields.path gets null either way, but one indexing .fields directly
-	// sees null, not {}.
-	out, err := json.Marshal(Event{Kind: "TurnEnd"})
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"kind":"TurnEnd","fields":null}`, string(out))
+func TestEvent_FieldsIsAlwaysAnObjectOnTheWire(t *testing.T) {
+	// A subjectless event used to serialise "fields":null, which a hook
+	// indexing .fields cannot read. The key is always present and always an
+	// object, so a hook needs no special case for the events carrying nothing.
+	for _, e := range []Event{
+		{Kind: "TurnEnd"}, // nil map
+		{Kind: "TurnEnd", Fields: map[string]any{}}, // empty map
+	} {
+		out, err := json.Marshal(e)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"kind":"TurnEnd","fields":{}}`, string(out))
+		assert.NotContains(t, string(out), "null")
+	}
+}
 
+func TestEvent_MarshalDoesNotMutateTheEvent(t *testing.T) {
+	// MarshalJSON fills in the empty map on its own copy. An event whose
+	// Fields turned from nil into {} by being serialised would be a value that
+	// changes when it is looked at.
+	e := Event{Kind: "TurnEnd"}
+	_, err := json.Marshal(e)
+	require.NoError(t, err)
+	assert.Nil(t, e.Fields, "serialising an event must not change it")
+}
+
+func TestEvent_NestedMarshalAlsoGetsAnObject(t *testing.T) {
+	// How a hook actually receives one: nested under a payload, which is what
+	// session_pre_tool marshals. A method on the value type is reached here
+	// only because the event is stored as a value, so this is worth pinning.
+	out, err := json.Marshal(map[string]any{"event": Event{Kind: "TurnEnd"}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"event":{"kind":"TurnEnd","fields":{}}}`, string(out))
+}
+
+func TestEvent_NullFieldsStillUnmarshals(t *testing.T) {
+	// Reading is unchanged: an event recorded before this, or written by hand,
+	// still parses. Only what we emit is constrained.
 	var back Event
-	require.NoError(t, json.Unmarshal(out, &back))
+	require.NoError(t, json.Unmarshal([]byte(`{"kind":"TurnEnd","fields":null}`), &back))
 	assert.Nil(t, back.Fields)
 }
 
