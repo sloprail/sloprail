@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/sloprail/sloprail/internal/event"
-	"github.com/sloprail/sloprail/internal/module"
 )
 
 // FileEvent is what this module's own code passes around.
@@ -16,32 +15,25 @@ type FileEvent struct {
 	// Path is relative to the repository root.
 	Path string
 
-	// Content is what would be written. Set on pre_create alone — anywhere
+	// Content is what would be written. Set on PreFileCreate alone — anywhere
 	// else the file is on disk and a hook can read it there rather than
 	// having it copied through every event.
 	Content string
 }
 
-// Event converts to the wire form under the given unqualified kind.
+// Event converts to the wire form under the given kind.
 func (f FileEvent) Event(kind string) event.Event {
 	fields := map[string]any{FieldPath: f.Path}
 	if f.Content != "" {
 		fields[FieldContent] = f.Content
 	}
-	return event.Event{
-		Kind:   module.Kind(Name, kind),
-		Fields: fields,
-	}
+	return event.Event{Kind: kind, Fields: fields}
 }
 
 // FromEvent converts back, for this module's own reads of events it produced.
-// An event of another module's kind is an error rather than a zero value:
-// silently returning an empty path would let a caller act on a file that was
-// never named.
+// An event carrying no path is an error rather than a zero value: silently
+// returning an empty one would let a caller act on a file that was never named.
 func FromEvent(e event.Event) (FileEvent, error) {
-	if e.Module() != Name {
-		return FileEvent{}, fmt.Errorf("filemod: %q is not a file event", e.Kind)
-	}
 	f := FileEvent{}
 	if v, ok := e.Fields[FieldPath].(string); ok {
 		f.Path = v

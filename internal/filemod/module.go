@@ -4,17 +4,20 @@ package filemod
 
 import "github.com/sloprail/sloprail/internal/module"
 
-// Name is this module's namespace. Every kind it produces is prefixed with it.
+// Name identifies this module. It is how the engine reports which module
+// produced an event, and how a module is switched off — not a prefix the
+// kinds carry.
 const Name = "file"
 
-// Kind names, unqualified. Qualified they read "file.pre_create".
+// The kinds this module declares. The name says what happened and when; which
+// module owns it is the registry's to know, since the module registered it.
 const (
-	KindPreCreate  = "pre_create"
-	KindPreUpdate  = "pre_update"
-	KindPreDelete  = "pre_delete"
-	KindPostCreate = "post_create"
-	KindPostUpdate = "post_update"
-	KindPostDelete = "post_delete"
+	KindPreCreate  = "PreFileCreate"
+	KindPreUpdate  = "PreFileUpdate"
+	KindPreDelete  = "PreFileDelete"
+	KindPostCreate = "PostFileCreate"
+	KindPostUpdate = "PostFileUpdate"
+	KindPostDelete = "PostFileDelete"
 )
 
 // Field names. They appear here, in Kinds below, and in the conversion in
@@ -36,7 +39,7 @@ func (*Module) Name() string { return Name }
 
 // Kinds implements module.Module.
 //
-// Timing is in the name and nowhere else. "file.pre_create" says when it fires;
+// Timing is in the name and nowhere else. "PreFileCreate" says when it fires;
 // a field repeating that would be the same fact in two places, and two copies
 // of a fact can disagree. The engine has no use for it either — it is running
 // at a pre-tool hook or at the end of a cycle, and knows which without asking
