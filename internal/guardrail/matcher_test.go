@@ -143,14 +143,103 @@ func TestMatch_NonBooleanAtRuntimeIsAnError(t *testing.T) {
 		"documents that the runtime type check in Match is not what fires here")
 }
 
+// preFileCreate is the kind as the file module declares it, and as the spec
+// defines it: path and content, both strings, both required.
+func preFileCreate() module.KindDecl {
+	return module.KindDecl{Name: "PreFileCreate", Fields: []module.FieldDecl{
+		{Name: "path", Type: module.TypeString},
+		{Name: "content", Type: module.TypeString},
+	}}
+}
+
+// TestMatch_DeclaredFieldOmittedByTheProducerIsItsZeroValue is the invariant
+// behind a defect that made a rule fail open on the only file it was about.
+//
+// The file module omits `content` from a PreFileCreate when it is empty, so a
+// genuinely empty file produced an event missing a field its kind declares. The
+// matcher had been type-checked against that declaration, so `content == ""`
+// compiled — then evaluated nil against a string, errored, and the engine skips
+// a binding whose matcher errors. The rule for empty files let empty files
+// through.
+//
+// A declared field the event omits is now supplied at its type's zero value, so
+// the expression sees the shape it was compiled against.
+func TestMatch_DeclaredFieldOmittedByTheProducerIsItsZeroValue(t *testing.T) {
+	// Exactly what filemod emits for an empty file: content omitted.
+	empty := event.Event{Kind: "PreFileCreate", Fields: map[string]any{"path": "empty.txt"}}
+
+	m, err := CompileMatcherFor(`content == ""`, preFileCreate())
+	require.NoError(t, err)
+
+	admitted, err := m.Match(empty)
+	require.NoError(t, err,
+		"a declared field the producer omitted must not error the matcher")
+	assert.True(t, admitted,
+		`content == "" is the rule for an empty file and must fire on one`)
+}
+
+func TestMatch_ZeroValueMatchesTheDeclaredType(t *testing.T) {
+	// One declared field per type, none of them carried by the event. Each
+	// expression is one only that type supports, so a wrong-shaped fill-in
+	// errors rather than quietly comparing false.
+	kind := module.KindDecl{Name: "Everything", Fields: []module.FieldDecl{
+		{Name: "s", Type: module.TypeString},
+		{Name: "b", Type: module.TypeBool},
+		{Name: "l", Type: module.TypeList},
+		{Name: "mp", Type: module.TypeMap},
+	}}
+	bare := event.Event{Kind: "Everything", Fields: map[string]any{}}
+
+	for _, tc := range []struct {
+		src      string
+		admitted bool
+	}{
+		{`s == ""`, true},
+		{`s startsWith "x"`, false},
+		{`b == false`, true},
+		{`b`, false},
+		{`len(l) == 0`, true},
+		{`len(mp) == 0`, true},
+	} {
+		t.Run(tc.src, func(t *testing.T) {
+			m, err := CompileMatcherFor(tc.src, kind)
+			require.NoError(t, err)
+
+			admitted, err := m.Match(bare)
+			require.NoError(t, err, "the zero value must have the declared shape")
+			assert.Equal(t, tc.admitted, admitted)
+		})
+	}
+}
+
+func TestMatch_CarriedValueBeatsTheZeroValue(t *testing.T) {
+	// The fill-in must never shadow what the producer actually sent — including
+	// a field explicitly carried as its zero value.
+	m, err := CompileMatcherFor(`content == "x"`, preFileCreate())
+	require.NoError(t, err)
+
+	admitted, err := m.Match(event.Event{Kind: "PreFileCreate", Fields: map[string]any{
+		"path": "a.txt", "content": "x",
+	}})
+	require.NoError(t, err)
+	assert.True(t, admitted, "a carried value is what the expression reads")
+}
+
+func TestMatch_UndeclaredFieldIsNotSuppliedAZeroValue(t *testing.T) {
+	// The fill-in covers DECLARED fields only. A typo is caught at load by
+	// CompileMatcherFor, and inventing a value for an unknown name here would
+	// undo that check — so the compile must still refuse.
+	_, err := CompileMatcherFor(`paht == ""`, preFileCreate())
+	require.Error(t, err, "a misspelled field is refused at compile, not filled in")
+	assert.Contains(t, err.Error(), "paht")
+}
+
 func TestMatch_UnknownFieldIsNilNotAnError(t *testing.T) {
-	// CURRENT BEHAVIOUR, deliberately pinned: the environment is exactly the
-	// event's fields, and expr resolves an absent name to nil rather than
-	// failing. So a matcher naming a field the kind does not carry compiles,
-	// runs, and quietly evaluates false — the "silently never fires" outcome
-	// the matcher design says it exists to prevent. Nothing validates a
-	// matcher against the kind's declared fields yet (Registry.KindDeclFor is
-	// the hook for it, and no caller uses it for this).
+	// This is CompileMatcher — the kindless form, used where no kind is in
+	// hand. With no declaration to check against, an absent name resolves to
+	// nil and the matcher quietly evaluates false. That is why CompileMatcherFor
+	// exists and why every load-time and enforcement-time caller uses it;
+	// TestMatch_UndeclaredFieldIsNotSuppliedAZeroValue is the contrast.
 	m, err := CompileMatcher(`missingfield == "x"`)
 	require.NoError(t, err)
 
