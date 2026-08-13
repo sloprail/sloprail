@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -155,7 +156,7 @@ build can actually produce.
 		}
 	}
 
-	_, err := fmt.Fprint(w, `A kind's name carries its timing, and nothing else does. A `+"`Pre`"+` kind fires
+	if _, err := fmt.Fprint(w, `A kind's name carries its timing, and nothing else does. A `+"`Pre`"+` kind fires
 before the action and can refuse it, which also makes it a prediction of what a
 tool call is about to do. A `+"`Post`"+` kind reports what a cycle turned out to have
 done, established by diff rather than by trusting what any action announced.
@@ -163,12 +164,81 @@ done, established by diff rather than by trusting what any action announced.
 Bind only to a kind on this list. A kind no module declares is an event that
 will never arrive, and nothing warns you: the rule sits in the project looking
 enforced and never fires once. Spelling is the whole defence — the names are
-case-sensitive. The same holds for the field names above: a matcher naming a
-field its kind does not carry is not currently caught, and evaluates to false
-forever.
+case-sensitive.
+
+A matcher naming a field its kind does not carry IS caught: it is type-checked
+against the fields above when the guardrail loads, and the binding is refused by
+name. What is not caught is a key read off an element of a `+"`list`"+` field. The
+check reaches exactly as deep as the declaration does, and a module that does
+not say what its list holds leaves the predicate body unchecked — so a mistyped
+key in there compiles, loads, and evaluates to false forever.
+
+`); err != nil {
+		return err
+	}
+	return helpUndispatched(w, reg)
+}
+
+// helpUndispatched names the declared kinds nothing dispatches yet.
+//
+// Being on the list above means a module declares the kind, which is what makes
+// it bind and validate. It does not mean anything ever produces one. Only
+// pre-tool dispatches today, and only with PhasePre, so every Post kind loads,
+// validates, and never arrives — the exact silent no-op the rest of this output
+// warns about, sitting inside the list an author picks from.
+//
+// This belongs here rather than in the skill for the same reason the kinds do:
+// it is derived. Which kinds are stranded follows from the phases the commands
+// actually pass, so it corrects itself the day a Post dispatch lands, where a
+// sentence in a hand-written file would sit there going quietly out of date in
+// whichever direction the code moved.
+func helpUndispatched(w io.Writer, reg *module.Registry) error {
+	var stranded []string
+	for _, kind := range reg.DeclaredKinds() {
+		if !dispatchedPhases[phaseOf(kind)] {
+			stranded = append(stranded, kind)
+		}
+	}
+	if len(stranded) == 0 {
+		return nil
+	}
+
+	if _, err := fmt.Fprint(w, `NOT DISPATCHED YET, though declared and bindable:
+
+`); err != nil {
+		return err
+	}
+	for _, kind := range stranded {
+		if _, err := fmt.Fprintf(w, "  %s\n", kind); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprint(w, `
+These load, validate, and never arrive. The cycle-end hook point does not yet
+produce them, so a rule bound to one is inert in the way that looks enforced.
+Bind to a Pre kind, or do not write the rule yet.
 
 `)
 	return err
+}
+
+// dispatchedPhases is the set of phases some hook point actually extracts with.
+//
+// One entry, and that is the point: session pre-tool passes module.PhasePre and
+// nothing passes module.PhasePost, so this is the honest set rather than the
+// intended one. Adding the Post dispatch means adding PhasePost here, and the
+// warning above disappears on its own.
+var dispatchedPhases = map[string]bool{
+	module.PhasePre: true,
+}
+
+// phaseOf reads a kind's timing off its name, which is where it lives — see the
+// note above about the name carrying the timing and nothing else doing so.
+func phaseOf(kind string) string {
+	if strings.HasPrefix(kind, "Post") {
+		return module.PhasePost
+	}
+	return module.PhasePre
 }
 
 // helpAuthoring points at the skill rather than teaching the format.
