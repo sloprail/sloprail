@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/module"
 )
@@ -22,7 +23,7 @@ func TestT003_01_HelpPrintsEveryDeclaredKind(t *testing.T) {
 		t.Fatalf("guardrail help exited %d:\n%s", got.Code, got.Output)
 	}
 
-	reg, err := module.NewRegistry(filemod.New())
+	reg, err := module.NewRegistry(filemod.New(), commandmod.New())
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestT003_04_HelpNamesNoUnevaluableOperator(t *testing.T) {
 
 	got := e.CLI(t.TempDir(), "guardrail", "help")
 
-	reg, err := module.NewRegistry(filemod.New())
+	reg, err := module.NewRegistry(filemod.New(), commandmod.New())
 	if err != nil {
 		t.Fatalf("registry: %v", err)
 	}

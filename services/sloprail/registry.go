@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/module"
 )
@@ -14,5 +15,5 @@ import (
 // be the copy an author trusts, and the one nobody remembers to update when a
 // module is added.
 func registry() (*module.Registry, error) {
-	return module.NewRegistry(filemod.New())
+	return module.NewRegistry(filemod.New(), commandmod.New())
 }
