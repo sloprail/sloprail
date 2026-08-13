@@ -153,11 +153,15 @@ func resolve(cfg *expand.Config, call *syntax.CallExpr) []Invocation {
 		}
 		argv = append(argv, f.value)
 	}
-	if len(argv) == 0 || argv[0] == "" {
-		// A word can expand to an empty string — `"$EDITOR" file.txt` with
-		// EDITOR unset. An empty program name is not a program.
+	if len(argv) == 0 {
 		return nil
 	}
+	// An empty program word — `"" npm publish`, or `"$EDITOR" file.txt` with
+	// EDITOR unset — is filtered in fromArgv, which rejects any vector whose
+	// basename is empty. A second `argv[0] == ""` test here was proven
+	// redundant rather than merely unused: basename returns "" for the empty
+	// string and for nothing else, so the two conditions are the same one, and
+	// whichever runs first suppresses the case.
 
 	return fromArgv(argv)
 }
