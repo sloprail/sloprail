@@ -2,6 +2,7 @@ package commandmod
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -106,6 +107,38 @@ func TestPayload_PrintfIsRenderedOnlyWhereItIsExact(t *testing.T) {
 			`printf '%s' hello > f.md`:    "hello",
 			`printf '%s\n' hello > f.md`:  "hello\n",
 			`printf 'x: %s\n' val > f.md`: "x: val\n",
+			// %d, where the argument is ALREADY a decimal integer. Rendered as
+			// itself: no normalisation, which is why the narrow cases below
+			// are declined rather than tidied up.
+			`printf '%d' 5 > f.md`:         "5",
+			`printf '%d items\n' 5 > f.md`: "5 items\n",
+			`printf '%d' -5 > f.md`:        "-5",
+			`printf '%d' 0 > f.md`:         "0",
+			// Several conversions in one format, consumed left to right.
+			`printf '%s %s' a b > f.md`:   "a b",
+			`printf '%s=%d\n' k 7 > f.md`: "k=7\n",
+			// Surplus arguments REUSE the format. This is printf's specified
+			// loop and the reason `printf '%s\n' a b c` writes three lines,
+			// which is a real spelling rather than a curiosity.
+			`printf '%s\n' a b c > f.md`:      "a\nb\nc\n",
+			`printf '%s=%s\n' k v x y > f.md`: "k=v\nx=y\n",
+			// A pass that runs out of arguments finishes the format with the
+			// missing ones empty, rather than stopping where they ran out.
+			// `printf '%s=%s\n' a` writes "a=\n", not "a=".
+			`printf '%s=%s\n' a > f.md`: "a=\n",
+			`printf '%s\n' > f.md`:      "\n",
+			// An escape beside a conversion. The verbs are read off the RAW
+			// format and rendered against the ESCAPED one, so these pin that
+			// the two agree about where the conversions are.
+			`printf 'a\\%s' x > f.md`:    "a\\x",
+			`printf 'a\tb%s\n' x > f.md`: "a\tbx\n",
+			// A literal percent consumes no argument, so a format carrying
+			// one alongside a conversion still takes exactly ONE argument per
+			// pass — and the loop reuses the format for the rest.
+			`printf '100%%\n' > f.md`:       "100%\n",
+			`printf '%s%%\n' 50 > f.md`:     "50%\n",
+			`printf '%s%%\n' 50 75 > f.md`:  "50%\n75%\n",
+			`printf '%d%% done\n' 7 > f.md`: "7% done\n",
 		} {
 			t.Run(line, func(t *testing.T) {
 				p := payloadFor(t, line)
@@ -117,16 +150,41 @@ func TestPayload_PrintfIsRenderedOnlyWhereItIsExact(t *testing.T) {
 
 	t.Run("declined", func(t *testing.T) {
 		for _, line := range []string{
-			// A conversion this does not model.
-			`printf '%d' 5 > f.md`,
+			// A WIDTH or a precision. Renderable in principle; declined
+			// because the padding rules are where an approximation is wrong by
+			// invisible whitespace.
 			`printf '%5s' x > f.md`,
-			// Two conversions, or a format reused across surplus arguments —
-			// printf LOOPS, which is not modelled.
-			`printf '%s %s' a b > f.md`,
-			`printf '%s\n' a b c > f.md`,
-			// A literal format with surplus arguments loops too.
+			`printf '%-3d' 1 > f.md`,
+			`printf '%.2f' 1.5 > f.md`,
+			// Conversions whose output depends on a locale, a default
+			// precision, or a character encoding.
+			`printf '%f' 1.5 > f.md`,
+			`printf '%x' 255 > f.md`,
+			`printf '%o' 8 > f.md`,
+			`printf '%c' a > f.md`,
+			// Shell-dependent conversions: %b is a bash extension and %q's
+			// quoting style differs between implementations.
+			`printf '%b' 'a\tb' > f.md`,
+			`printf '%q' x > f.md`,
+			// A %d argument that is not already exactly a decimal integer.
+			// Rendering these means NORMALISING — dropping a leading zero or a
+			// plus — which is a judgement rather than a reading, and the
+			// hex/character forms differ between implementations outright.
+			`printf '%d' 007 > f.md`,
+			`printf '%d' +5 > f.md`,
+			`printf '%d' 0x1F > f.md`,
+			`printf '%d' " 5" > f.md`,
+			`printf '%d' abc > f.md`,
+			`printf '%d' 1.5 > f.md`,
+			// A literal format with surplus arguments. printf prints it ONCE —
+			// a format consuming no arguments stops the loop — but the rule is
+			// about a shape nobody writes deliberately, so it stays declined.
 			`printf 'x' a > f.md`,
-			// An escape form this declines rather than approximates.
+			// A trailing lone `%`, whose behaviour is unspecified.
+			`printf 'done%' > f.md`,
+			// An escape form this declines rather than approximates: whether
+			// the FORMAT's octal and hex escapes are interpreted at all differs
+			// between printf(1) and the shell builtin.
 			`printf '\x41' > f.md`,
 			`printf '\101' > f.md`,
 		} {
@@ -134,6 +192,47 @@ func TestPayload_PrintfIsRenderedOnlyWhereItIsExact(t *testing.T) {
 				"line %q is not exactly renderable", line)
 		}
 	})
+}
+
+// TestPayload_PrintfAlwaysTerminates is a property rather than a case, and it
+// exists because the format-reuse loop was found to HANG rather than fail.
+//
+// printf repeats its format until the arguments run out, so the loop's exit
+// condition is the thing that has to be right. Written as "stop when the
+// arguments are gone" it spins forever on any format whose pass consumes
+// nothing — the vector a mutation to printfVerbs produced, where the suite hung
+// instead of going red and a hang is not a test failure anyone reads. It is now
+// written as "stop when a pass consumed nothing", which terminates whatever the
+// format turns out to be.
+//
+// Every line below is asserted only to ANSWER, not to answer any particular
+// way: the property is termination, and the individual renderings are pinned by
+// TestPayload_PrintfIsRenderedOnlyWhereItIsExact. The timeout is what makes a
+// hang a failure.
+func TestPayload_PrintfAlwaysTerminates(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, line := range []string{
+			`printf '%%' x > f.md`,
+			`printf '%%%%' x y z > f.md`,
+			`printf '100%%\n' x > f.md`,
+			`printf 'literal' a b c > f.md`,
+			`printf '' a b > f.md`,
+			`printf '%s' > f.md`,
+			`printf '%s%%' a b > f.md`,
+			`printf '%d%%' 1 2 3 > f.md`,
+		} {
+			// The value is not the point; returning at all is.
+			_ = payloadFor(t, line)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("printf rendering did not terminate: a pass that consumes no " +
+			"argument must end the format-reuse loop")
+	}
 }
 
 // TestPayload_TruncatingCommandsProduceARealEmpty is the tier where "" is a
@@ -360,7 +459,7 @@ func TestPayload_AHeredocDoesNotOverrideAProgramThatIgnoresStdin(t *testing.T) {
 		p := payloadFor(t, "cp a.md b.md <<'EOF'\nDISCARDED\nEOF\n")
 		assert.Equal(t, PayloadCopyOf, p.Kind,
 			"cp does not read stdin, so the heredoc is discarded by the shell")
-		assert.Equal(t, "a.md", p.From)
+		assert.Equal(t, []string{"a.md"}, p.From)
 		assert.NotEqual(t, "DISCARDED\n", p.Text,
 			"reporting the discarded heredoc would be a confidently wrong answer")
 	})
@@ -397,7 +496,7 @@ func TestPayload_CopyingNamesItsSourceRatherThanReadingIt(t *testing.T) {
 			}
 			require.Equal(t, "b.md", dst.Path)
 			assert.Equal(t, PayloadCopyOf, dst.Payload.Kind)
-			assert.Equal(t, "a.md", dst.Payload.From,
+			assert.Equal(t, []string{"a.md"}, dst.Payload.From,
 				"the source is NAMED, not read: reading it is filemod's half")
 			assert.Empty(t, dst.Payload.Text, "a reference carries no bytes")
 		})
@@ -444,6 +543,328 @@ func TestPayload_CopyingIntoADirectoryClaimsNothing(t *testing.T) {
 	}
 }
 
+// TestPayload_ConcatenatingNamedFilesNamesThemAllInOrder is the multi-source
+// tier, and the reason Payload.From is a slice rather than a string.
+//
+// `cat a.md b.md > c.md` determines c.md's bytes completely: they are a.md's
+// followed by b.md's. Nothing but READING them is left, which is filemod's half
+// — so this is the same seam cp uses, with more than one source through it.
+//
+// The ORDER is asserted rather than the set. `cat b.md a.md > c.md` is a
+// different file, and a payload that lost the order would produce the right
+// bytes only half the time.
+func TestPayload_ConcatenatingNamedFilesNamesThemAllInOrder(t *testing.T) {
+	p := payloadFor(t, "cat a.md b.md > c.md")
+	assert.Equal(t, PayloadCopyOf, p.Kind)
+	assert.Equal(t, []string{"a.md", "b.md"}, p.From,
+		"the sources are NAMED in order, not read: reading them is filemod's half")
+	assert.Empty(t, p.Text, "a reference carries no bytes")
+
+	t.Run("the order is the command's own", func(t *testing.T) {
+		assert.Equal(t, []string{"b.md", "a.md"}, payloadFor(t, "cat b.md a.md > c.md").From)
+	})
+
+	t.Run("one source is the same shape as a copy", func(t *testing.T) {
+		p := payloadFor(t, "cat only.md > c.md")
+		assert.Equal(t, PayloadCopyOf, p.Kind)
+		assert.Equal(t, []string{"only.md"}, p.From)
+	})
+}
+
+// TestPayload_ConcatenationNamesNoFileItMerelyReads is the half that keeps the
+// case above from firing rules on the wrong files.
+//
+// cat WRITES nothing. `cat a.md b.md > c.md` names c.md through the
+// redirection, and a.md and b.md are read. Reporting them as targets would fire
+// a write-or-delete rule on files the command only looks at, which is the
+// failure TestExtractCommand_ACommandTouchingNothingProducesNoEvent guards at
+// the module level.
+func TestPayload_ConcatenationNamesNoFileItMerelyReads(t *testing.T) {
+	var paths []string
+	for _, tg := range FileTargets("cat a.md b.md > c.md") {
+		paths = append(paths, tg.Path)
+	}
+	assert.Equal(t, []string{"c.md"}, paths,
+		"only the redirection's destination is written")
+}
+
+// TestPayload_ConcatenationWithATransformingFlagClaimsNothing is the boundary,
+// and it is an allowlist rather than a denylist on purpose.
+//
+// Every one of cat's flags TRANSFORMS the output — `-n` numbers the lines, `-s`
+// squeezes blanks, `-v`/`-e`/`-t` render non-printing characters visibly — so
+// the result is not the sources' bytes. A version that skipped flags generically
+// would report `cat -n a.md > b.md` as an exact copy, which is bytes the file
+// never holds. Refusing every flag means a flag nobody here has heard of is
+// refused with the rest.
+func TestPayload_ConcatenationWithATransformingFlagClaimsNothing(t *testing.T) {
+	for _, line := range []string{
+		"cat -n a.md > c.md",
+		"cat -b a.md > c.md",
+		"cat -s a.md > c.md",
+		"cat -v a.md > c.md",
+		"cat -e a.md > c.md",
+		"cat -A a.md > c.md",
+		// A flag this list has never heard of is refused with the rest.
+		"cat --some-future-flag a.md > c.md",
+		// `-` is STDIN, whose bytes the line does not carry, even though every
+		// other operand is a real file.
+		"cat a.md - b.md > c.md",
+		// A glob names a set of files the shell expands against a tree this
+		// package does not read.
+		"cat *.md > c.md",
+	} {
+		assert.Equalf(t, PayloadNone, payloadFor(t, line).Kind,
+			"line %q does not put its sources' exact bytes in the file", line)
+	}
+}
+
+// TestPayload_ConcatenatingOntoAnAppendClaimsNothing is the shape gap, stated
+// rather than papered over.
+//
+// `cat a.md >> b.md` IS derivable in principle — b.md's current bytes followed
+// by a.md's — but PayloadAppend carries a literal Text and has nowhere to put a
+// reference. So the honest answer is none, and the alternative would be worse
+// than absent: appending the empty Text would report b.md as unchanged, which is
+// a confidently wrong result rather than a missing one.
+func TestPayload_ConcatenatingOntoAnAppendClaimsNothing(t *testing.T) {
+	p := payloadFor(t, "cat a.md >> b.md")
+	assert.Equal(t, PayloadNone, p.Kind,
+		"an append of a REFERENCE is a shape Payload does not model")
+	assert.NotEqual(t, PayloadAppend, p.Kind,
+		"an append carrying the empty tail would report the file as unchanged")
+}
+
+// TestPayload_DdWithAnInputFileIsACopy is dd's derivable tier.
+//
+// `dd if=a.md of=b.md` is a copy spelled differently, and it determines b.md's
+// bytes exactly as `cp a.md b.md` does.
+func TestPayload_DdWithAnInputFileIsACopy(t *testing.T) {
+	for _, line := range []string{
+		"dd if=a.md of=b.md",
+		"dd of=b.md if=a.md",
+		// A block size changes how the bytes are read, not which ones — with
+		// no count= to multiply, the whole input is copied either way.
+		"dd if=a.md of=b.md bs=4096",
+		"dd if=a.md of=b.md ibs=512 obs=512",
+		"dd if=a.md of=b.md status=none",
+	} {
+		p := payloadFor(t, line)
+		assert.Equalf(t, PayloadCopyOf, p.Kind, "line %q copies its input entire", line)
+		assert.Equalf(t, []string{"a.md"}, p.From, "line %q", line)
+	}
+}
+
+// TestPayload_DdWithAPartialCopyClaimsNothing is the boundary, and the operand
+// test behind it is an ALLOWLIST for the reason this case demonstrates.
+//
+// dd's operand vocabulary is long and implementation-varying. `count=` bounds
+// the copy and `skip=`/`seek=` offset it, which are the obvious ones — but
+// `conv=ucase` upper-cases the data, `conv=swab` swaps byte pairs, and `iflag=`
+// changes the I/O semantics. A denylist naming only the obvious four would let
+// every one of those through as a whole copy, reporting bytes the file never
+// holds. So an operand that is not provably harmless means no claim.
+func TestPayload_DdWithAPartialCopyClaimsNothing(t *testing.T) {
+	for _, line := range []string{
+		"dd if=a.md of=b.md count=1",
+		"dd if=a.md of=b.md bs=1 count=10",
+		"dd if=a.md of=b.md skip=100",
+		"dd if=a.md of=b.md seek=100",
+		// The operands a denylist would have missed.
+		"dd if=a.md of=b.md conv=ucase",
+		"dd if=a.md of=b.md conv=swab",
+		"dd if=a.md of=b.md cbs=16 conv=block",
+		"dd if=a.md of=b.md iflag=direct",
+		"dd if=a.md of=b.md oflag=append",
+		// An operand this has never heard of is refused with the rest.
+		"dd if=a.md of=b.md future=thing",
+		// A bare word that is not an operand at all.
+		"dd if=a.md of=b.md --verbose",
+	} {
+		assert.Equalf(t, PayloadNone, payloadFor(t, line).Kind,
+			"line %q does not copy its input entire", line)
+	}
+}
+
+// TestPayload_ADdInputFileWinsOverADiscardedHeredoc is the precedence case, and
+// it is the confidently-wrong direction rather than the missing one.
+//
+// dd reading `if=` never looks at stdin, so a here-document on the same
+// statement is discarded by the shell. Overwriting the copy reference with it
+// would report bytes that never reach the file — the same failure
+// TestPayload_AHeredocDoesNotOverrideAProgramThatIgnoresStdin pins for cp,
+// reached through a program that DOES sometimes consume stdin.
+func TestPayload_ADdInputFileWinsOverADiscardedHeredoc(t *testing.T) {
+	p := payloadFor(t, "dd if=a.md of=b.md <<'EOF'\nDISCARDED\nEOF\n")
+	assert.Equal(t, PayloadCopyOf, p.Kind,
+		"dd with an if= ignores stdin, so the heredoc never reaches the file")
+	assert.Equal(t, []string{"a.md"}, p.From)
+	assert.NotEqual(t, "DISCARDED\n", p.Text)
+}
+
+// TestPayload_InstallIsACopy applies cp's two-operand analysis to the utility
+// that shares its operand shape. `install a.md b.md` leaves b.md holding a.md's
+// current bytes; the mode it also sets is not something a file event carries.
+func TestPayload_InstallIsACopy(t *testing.T) {
+	p := payloadFor(t, "install a.md b.md")
+	assert.Equal(t, PayloadCopyOf, p.Kind)
+	assert.Equal(t, []string{"a.md"}, p.From)
+
+	t.Run("a mode does not slide into operand position", func(t *testing.T) {
+		// The failure this prevents is specific: an unskipped `644` becomes an
+		// operand, and with two real ones beside it the DESTINATION becomes a
+		// path named after a permission bit.
+		for _, line := range []string{
+			"install -m 644 a.md b.md",
+			"install -o root a.md b.md",
+			"install -g wheel a.md b.md",
+		} {
+			var dst FileTarget
+			for _, tg := range FileTargets(line) {
+				if tg.Effect == Write {
+					dst = tg
+				}
+			}
+			assert.Equalf(t, "b.md", dst.Path, "line %q", line)
+			assert.Equalf(t, PayloadCopyOf, dst.Payload.Kind, "line %q", line)
+			assert.Equalf(t, []string{"a.md"}, dst.Payload.From, "line %q", line)
+		}
+	})
+}
+
+// TestPayload_InstallWithATargetDirectoryFlagClaimsNothing is the shape that
+// INVERTS install's operand reading, and it was a measured wrong answer rather
+// than a hypothetical one.
+//
+// `-t DIR` names the destination as a flag value, so every operand is a SOURCE
+// and the destination is not among them. Read positionally, the last source
+// looks like the destination: `install -t target-dir a.md b.md` reported b.md
+// as written carrying a.md's bytes, when the real results are target-dir/a.md
+// and target-dir/b.md and b.md is only read.
+//
+// That is the confidently-wrong class — a rule fires on the wrong file and
+// judges bytes that never land there. Refused outright, which costs a rule that
+// does not fire on a spelling agents essentially never write.
+func TestPayload_InstallWithATargetDirectoryFlagClaimsNothing(t *testing.T) {
+	for _, line := range []string{
+		"install -t target-dir a.md",
+		"install -t target-dir a.md b.md",
+		"install --target-directory target-dir a.md b.md",
+		"install --target-directory=target-dir a.md b.md",
+	} {
+		assert.Emptyf(t, FileTargets(line),
+			"line %q names its destination as a flag value, so the operands are all sources", line)
+	}
+}
+
+// TestPayload_InstallMakingDirectoriesIsNotACopy is install's other shape.
+// `install -d dir` CREATES directories rather than copying, so every operand is
+// a directory and none is a source. Reading it as a copy would name the last
+// directory as a file holding another directory's bytes.
+func TestPayload_InstallMakingDirectoriesIsNotACopy(t *testing.T) {
+	for _, line := range []string{"install -d a b", "install --directory a b"} {
+		assert.Emptyf(t, FileTargets(line),
+			"line %q makes directories, and no file event can be about one", line)
+	}
+}
+
+// TestPayload_LinkingClaimsNoContent is the ln verdict: derivable in one narrow
+// reading, and deliberately not claimed.
+//
+// A SYMLINK's bytes are its target PATH, not the target's contents. So
+// `ln -s a.md b.md` does not leave b.md holding a.md's bytes, and a copy
+// reference naming a.md would be the confidently-wrong class of answer — a rule
+// reading `content` would judge text that is not in the file.
+//
+// A HARD link's contents genuinely are the target's, and that IS derivable. It
+// is unclaimed anyway: the spelling essentially does not appear in
+// agent-written command lines, and a shape nobody writes is maintenance with no
+// reader.
+func TestPayload_LinkingClaimsNoContent(t *testing.T) {
+	for _, line := range []string{
+		"ln -s a.md b.md",
+		"ln -sf a.md b.md",
+		"ln a.md b.md",
+	} {
+		var dst FileTarget
+		for _, tg := range FileTargets(line) {
+			if tg.Effect == Write {
+				dst = tg
+			}
+		}
+		require.Equalf(t, "b.md", dst.Path, "line %q still names the link it creates", line)
+		assert.Equalf(t, PayloadNone, dst.Payload.Kind,
+			"line %q: a symlink holds a path, not the target's bytes", line)
+	}
+}
+
+// TestPayload_ACopyStatesBothReadingsOfItsDestination is the second case, after
+// touch, where one line means different things depending on the tree.
+//
+// `cp a.md dest` writes dest when dest is a file and dest/a.md when dest is a
+// directory, and only a stat can tell. So the line states BOTH — the file
+// reading in Payload, the directory reading in Into — and filemod picks. This
+// package still reads no tree.
+func TestPayload_ACopyStatesBothReadingsOfItsDestination(t *testing.T) {
+	t.Run("two operands state both", func(t *testing.T) {
+		var dst FileTarget
+		for _, tg := range FileTargets("cp a.md dest") {
+			if tg.Effect == Write {
+				dst = tg
+			}
+		}
+		assert.Equal(t, "dest", dst.Path)
+		assert.Equal(t, PayloadCopyOf, dst.Payload.Kind, "the file reading")
+		assert.Equal(t, []string{"a.md"}, dst.Payload.From)
+		assert.Equal(t, []string{"a.md"}, dst.Into, "the directory reading")
+	})
+
+	t.Run("three or more operands have only the directory reading", func(t *testing.T) {
+		// `cp a.md b.md c.md` with c.md a regular file is an ERROR, not a copy
+		// onto it, so there is no file reading to state.
+		var dst FileTarget
+		for _, tg := range FileTargets("cp a.md b.md target-dir") {
+			if tg.Effect == Write {
+				dst = tg
+			}
+		}
+		assert.Equal(t, "target-dir", dst.Path)
+		assert.Equal(t, PayloadNone, dst.Payload.Kind,
+			"a third operand rules out the destination being a file")
+		assert.Equal(t, []string{"a.md", "b.md"}, dst.Into)
+	})
+
+	t.Run("mv and install share the shape", func(t *testing.T) {
+		for _, line := range []string{"mv a.md b.md target-dir", "install a.md b.md target-dir"} {
+			var dst FileTarget
+			for _, tg := range FileTargets(line) {
+				if tg.Effect == Write {
+					dst = tg
+				}
+			}
+			assert.Equalf(t, []string{"a.md", "b.md"}, dst.Into, "line %q", line)
+		}
+	})
+}
+
+// TestPayload_OnlyACopyStatesADirectoryReading is the negative half. A field set
+// on everything would make filemod expand every write into a directory listing.
+func TestPayload_OnlyACopyStatesADirectoryReading(t *testing.T) {
+	for _, line := range []string{
+		"echo hi > f.md",
+		"touch f.md",
+		"rm f.md",
+		"ln -s a.md b.md",
+		"tee f.md",
+		"dd if=a.md of=b.md",
+		"truncate -s 0 f.md",
+	} {
+		for _, tg := range FileTargets(line) {
+			assert.Emptyf(t, tg.Into, "line %q names no directory to copy into", line)
+		}
+	}
+}
+
 // --- the unknowable tier ----------------------------------------------------
 
 // TestPayload_AnUnknownProgramClaimsNothing is the case the whole design is
@@ -477,15 +898,44 @@ func TestPayload_AnUnknownProgramClaimsNothing(t *testing.T) {
 // hold space, alternate delimiters, the `s` flags — against a file this package
 // does not read, and then being byte-exact or being worse than useless.
 //
-// A narrow literal-substitution subset was considered and rejected. The subset
-// that is genuinely safe (`s/literal/literal/` with no flags, no addresses, no
-// regex metacharacters anywhere) is a small fraction of real sed usage, and the
-// cost of getting the boundary wrong is a `result` that is confidently wrong —
-// which is strictly worse than an honest "not known", because a rule cannot
-// tell a wrong answer from a right one.
+// # The narrow subset, reconsidered and rejected again
 //
-// So the answer is no, and `resultKnown` is what makes that answer sayable
-// instead of silent. This is the case that field exists for.
+// The open question was whether `s/LITERAL/LITERAL/` — no address, no flags, no
+// regex metacharacter in either half — is worth deriving. It is genuinely
+// computable against the file's current bytes, so the objection is not that it
+// cannot be done. Three things decide it:
+//
+//  1. The subset is a small fraction of real usage. Almost every sed an agent
+//     writes carries a `g` flag, an address, an alternate delimiter, or a
+//     character class — and each of those is a case the subset must REFUSE,
+//     which means the common path lands back at PayloadNone anyway. The tier
+//     would buy the uncommon spelling and leave the common one exactly where it
+//     is now.
+//
+//  2. The boundary is where the danger is, not the arithmetic. The rejection
+//     would have to be a strict allowlist of permitted characters — never a
+//     denylist of forbidden ones — because a denylist that has not heard of one
+//     metacharacter derives a substitution that sed would not perform. And the
+//     allowlist has to hold for the DELIMITER too: `s|a|b|` and `s#a#b#` are the
+//     same command with different syntax, and BSD and GNU sed differ on what a
+//     backslash means inside a bracket expression. Getting any of it wrong
+//     produces a `result` that is confidently WRONG.
+//
+//  3. Wrong is worse than absent, and by a wide margin. `resultKnown: false`
+//     costs a rule that does not judge content on this line. A wrong `result`
+//     costs a rule that judges the WRONG content and reports its verdict with
+//     full confidence — and no rule, and no reader of one, can tell a wrong
+//     answer from a right one.
+//
+// Points 1 and 3 together are what settle it: the tier is bought at the price of
+// the worst failure this engine can produce, and it is not even bought for the
+// spelling people write. Executing sed is out of the question for the separate
+// and obvious reason that this package runs nothing.
+//
+// So the answer is no, deliberately, and `resultKnown` is what makes that answer
+// sayable instead of silent. This is the case that field exists for — see
+// TestExtractCommand_SedInPlaceIsAnUpdateWithNoDerivableResult for the other
+// half, where the PATH still fires and only the content abstains.
 func TestPayload_SedInPlaceClaimsNothing(t *testing.T) {
 	for _, line := range []string{
 		"sed -i 's/a/b/' f.md",
@@ -502,12 +952,11 @@ func TestPayload_SedInPlaceClaimsNothing(t *testing.T) {
 	}
 }
 
-// TestPayload_DdClaimsNothingWithoutAHeredoc holds dd's ordinary case: its
-// bytes come from `if=` or from stdin, neither of which the line's own text
-// carries.
-func TestPayload_DdClaimsNothingWithoutAHeredoc(t *testing.T) {
+// TestPayload_DdWithoutAnInputFileClaimsNothing holds dd's unknowable case: with
+// no `if=` its bytes come from STDIN, which the line's own text does not carry.
+func TestPayload_DdWithoutAnInputFileClaimsNothing(t *testing.T) {
 	assert.Equal(t, PayloadNone, payloadFor(t, "dd of=f.md").Kind)
-	assert.Equal(t, PayloadNone, payloadFor(t, "dd if=other.md of=f.md").Kind)
+	assert.Equal(t, PayloadNone, payloadFor(t, "generate | dd of=f.md").Kind)
 }
 
 // TestPayload_AHeredocIntoDdIsTheFilesContent is dd's knowable case, and it is
@@ -569,5 +1018,5 @@ func TestPayload_EachTargetOnALineKeepsItsOwnPayload(t *testing.T) {
 	assert.Equal(t, PayloadLiteral, got["b.md"].Kind)
 
 	assert.Equal(t, PayloadCopyOf, got["c.md"].Kind)
-	assert.Equal(t, "src.md", got["c.md"].From)
+	assert.Equal(t, []string{"src.md"}, got["c.md"].From)
 }

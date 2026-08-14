@@ -165,14 +165,17 @@ func TestExtractCommand_ACreationIsNotPredictedWhenItsBytesAreUnknowable(t *test
 		// A non-literal word: the content is resolved out of an assumed empty
 		// environment, which safeConfig refuses to treat as real.
 		"echo $GREETING > " + absent,
-		// printf with a format this does not model exactly.
-		"printf '%d items' 5 > " + absent,
+		// printf with a format this does not model exactly. %f carries a
+		// default precision and a locale-dependent decimal point; a WIDTH
+		// pads with whitespace this deliberately will not guess at.
+		"printf '%f' 1.5 > " + absent,
+		"printf '%5s' x > " + absent,
 		// cp from a source that is not there: the command fails, so nothing is
 		// created and nothing may be claimed.
 		"cp " + filepath.Join(dir, "missing-source.md") + " " + absent,
-		// A copy INTO a directory, where the resulting filename is
-		// `dir/base(src)` — a path this deliberately does not compute.
-		"cp /etc/hosts " + dir,
+		// A copy whose source is a DIRECTORY. `cp -r somedir dst` produces a
+		// tree rather than a file, and no single content can describe it.
+		"cp -r " + dir + " " + absent,
 	} {
 		events, err := extractFor(t, command)
 		require.NoError(t, err, "command %q", command)
@@ -279,6 +282,475 @@ func TestExtractCommand_CopyingAFileCarriesTheSourcesCurrentBytes(t *testing.T) 
 			assert.Equal(t, "# Source body\n", create.Fields[FieldContent],
 				"the destination's bytes are the source's current bytes")
 		})
+	}
+}
+
+// TestExtractCommand_AbsentContentIsNotEmptyContent is the reference case the
+// whole tier exists to protect, asserted on the FIELD rather than on the event.
+//
+// `touch new.md` and `some-unknown-tool > new.md` both create a file. The first
+// genuinely leaves it EMPTY, and `content: ""` is the true answer. The second's
+// bytes are not derivable, and the same `""` would be a lie indistinguishable
+// from the first.
+//
+// The two are distinguished by whether the field is THERE at all — which is why
+// the assertion below reads the map's second return value rather than comparing
+// to "". A test written `assert.Equal(t, "", content)` would pass for both, and
+// pass for exactly the bug this exists to prevent.
+//
+// This is not academic. The owner's live frontmatter-transcript-path guardrail
+// branches on `has("content")` for precisely this reason, so collapsing the two
+// would change what that rule does to real work.
+func TestExtractCommand_AbsentContentIsNotEmptyContent(t *testing.T) {
+	contentField := func(t *testing.T, command string) (any, bool, int) {
+		t.Helper()
+		events, err := extractFor(t, command)
+		require.NoError(t, err)
+		if len(events) != 1 {
+			return nil, false, len(events)
+		}
+		v, present := events[0].Fields[FieldContent]
+		return v, present, 1
+	}
+
+	t.Run("a real empty carries the field", func(t *testing.T) {
+		for _, command := range []string{
+			"touch %s",
+			": > %s",
+			"truncate -s 0 %s",
+			"printf '' > %s",
+			"echo -n > %s",
+		} {
+			path := filepath.Join(t.TempDir(), "new.md")
+			v, present, n := contentField(t, fmt.Sprintf(command, path))
+			require.Equalf(t, 1, n, "command %q creates a file", command)
+			require.Truef(t, present,
+				"command %q leaves a genuinely empty file, so content must be PRESENT", command)
+			assert.Equalf(t, "", v, "command %q", command)
+		}
+	})
+
+	t.Run("an underivable create omits the field entirely", func(t *testing.T) {
+		for _, command := range []string{
+			"some-unknown-tool > %s",
+			"curl https://example.com > %s",
+			"python script.py > %s",
+			// The tiers this task decided AGAINST, held to the same bar: each
+			// must omit the field rather than render an empty one.
+			"printf '%%5s' x > %s",
+			"cat -n other.md > %s",
+			"dd if=other.md of=%s count=1",
+		} {
+			path := filepath.Join(t.TempDir(), "new.md")
+			events, err := extractFor(t, fmt.Sprintf(command, path))
+			require.NoErrorf(t, err, "command %q", command)
+			for _, e := range events {
+				_, present := e.Fields[FieldContent]
+				assert.Falsef(t, present,
+					"command %q cannot derive its bytes, so content must be ABSENT — "+
+						"an empty one would be indistinguishable from touch", command)
+			}
+		}
+	})
+}
+
+// TestExtractCommand_ConcatenatingNamedFilesCarriesTheirBytesInOrder is the
+// multi-source half of the copy tier, and it needs both sides of the seam for
+// several files at once.
+//
+// `cat a.md b.md > c.md` determines c.md completely: a.md's bytes followed by
+// b.md's. commandmod names them in order without reading either, and this side
+// reads them.
+func TestExtractCommand_ConcatenatingNamedFilesCarriesTheirBytesInOrder(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	b := filepath.Join(dir, "b.md")
+	require.NoError(t, os.WriteFile(a, []byte("# First\n"), 0o644))
+	require.NoError(t, os.WriteFile(b, []byte("# Second\n"), 0o644))
+
+	t.Run("into a new file", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "joined.md")
+		events, err := extractFor(t, "cat "+a+" "+b+" > "+out)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		require.Equal(t, KindPreCreate, events[0].Kind)
+		assert.Equal(t, "# First\n# Second\n", events[0].Fields[FieldContent],
+			"the sources' bytes, concatenated in the order the line names them")
+	})
+
+	// The ORDER, at the module level. A payload that lost it would produce the
+	// right bytes only half the time, and both halves read as plausible.
+	t.Run("the reverse order is a different file", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "joined.md")
+		events, err := extractFor(t, "cat "+b+" "+a+" > "+out)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, "# Second\n# First\n", events[0].Fields[FieldContent])
+	})
+
+	t.Run("over an existing file it is a known result", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "joined.md")
+		require.NoError(t, os.WriteFile(out, []byte("replaced\n"), 0o644))
+		events, err := extractFor(t, "cat "+a+" "+b+" > "+out)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		require.Equal(t, KindPreUpdate, events[0].Kind)
+		assert.Equal(t, true, events[0].Fields[FieldResultKnown])
+		assert.Equal(t, "# First\n# Second\n", events[0].Fields[FieldResult])
+	})
+}
+
+// TestExtractCommand_AConcatenationWithAnUnreadableSourceClaimsNothing is the
+// failure direction, and the whole-or-nothing rule is the point.
+//
+// `cat a.md missing.md > c.md` writes a.md's bytes and then FAILS, so c.md's
+// final contents are not what a partial concatenation would report. Reporting
+// the readable PREFIX would be a confidently wrong answer — bytes that look
+// like a complete file and are not.
+func TestExtractCommand_AConcatenationWithAnUnreadableSourceClaimsNothing(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	require.NoError(t, os.WriteFile(a, []byte("# First\n"), 0o644))
+	out := filepath.Join(dir, "joined.md")
+
+	for name, command := range map[string]string{
+		"a missing source after a readable one":  "cat " + a + " " + filepath.Join(dir, "gone.md") + " > " + out,
+		"a missing source before a readable one": "cat " + filepath.Join(dir, "gone.md") + " " + a + " > " + out,
+		"a source that is a directory":           "cat " + a + " " + dir + " > " + out,
+	} {
+		t.Run(name, func(t *testing.T) {
+			events, err := extractFor(t, command)
+			require.NoError(t, err)
+			assert.Empty(t, events,
+				"the concatenation fails, so no content may be claimed — not even the readable part")
+		})
+	}
+}
+
+// TestExtractCommand_CopyingIntoADirectoryNamesTheResultingFiles resolves the
+// ambiguity commandmod deliberately leaves open.
+//
+// `cp a.md b.md target/` produces target/a.md and target/b.md, not a file
+// called target. Which it is depends on whether target is a directory, which is
+// a tree question — so commandmod states both readings and this side stats and
+// picks. Each resulting file carries its OWN source's bytes: a payload spread
+// across both would attach one file's contents to the other's path.
+func TestExtractCommand_CopyingIntoADirectoryNamesTheResultingFiles(t *testing.T) {
+	for _, bin := range []string{"cp", "mv", "install"} {
+		t.Run(bin, func(t *testing.T) {
+			dir := t.TempDir()
+			a := filepath.Join(dir, "a.md")
+			b := filepath.Join(dir, "b.md")
+			require.NoError(t, os.WriteFile(a, []byte("# A\n"), 0o644))
+			require.NoError(t, os.WriteFile(b, []byte("# B\n"), 0o644))
+			target := filepath.Join(dir, "target")
+			require.NoError(t, os.Mkdir(target, 0o755))
+
+			events, err := extractFor(t, bin+" "+a+" "+b+" "+target)
+			require.NoError(t, err)
+
+			got := map[string]string{}
+			for _, e := range events {
+				if e.Kind != KindPreCreate {
+					continue
+				}
+				path, _ := e.Fields[FieldPath].(string)
+				content, _ := e.Fields[FieldContent].(string)
+				got[path] = content
+			}
+			assert.Equal(t, map[string]string{
+				filepath.Join(target, "a.md"): "# A\n",
+				filepath.Join(target, "b.md"): "# B\n",
+			}, got, "each resulting file carries its OWN source's bytes")
+
+			// The DIRECTORY itself is not reported. It is not a file, and a
+			// rule about target/ is not the rule anyone wrote.
+			for _, e := range events {
+				assert.NotEqual(t, target, e.Fields[FieldPath],
+					"the directory is not one of the files that change")
+			}
+		})
+	}
+}
+
+// TestExtractCommand_ACopySourceWithNoBasenameNamesNoFileInside is the crafted
+// case, and it was found by mutation: removing the basename guard left every
+// other test green.
+//
+// `cp somedir/. target/` and `cp somedir/.. target/` are shapes no ordinary
+// copy has, but a command line can carry them. filepath.Base returns "." and
+// ".." for them, and joining either onto the directory produces the DIRECTORY
+// ITSELF or a path OUTSIDE it — so a target would be predicted for a path the
+// copy does not create, one of which is above the destination entirely.
+//
+// The event that must not appear is the one naming the directory or its parent.
+// Skipping the source is the honest answer: the line's real effect is a
+// recursive copy whose resulting files are not derivable anyway.
+func TestExtractCommand_ACopySourceWithNoBasenameNamesNoFileInside(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	require.NoError(t, os.Mkdir(sub, 0o755))
+	target := filepath.Join(dir, "target")
+	require.NoError(t, os.Mkdir(target, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, "sub"), []byte("decoy\n"), 0o644))
+
+	for _, src := range []string{sub + "/.", sub + "/.."} {
+		events, err := extractFor(t, "cp -r "+src+" "+target)
+		require.NoErrorf(t, err, "source %q", src)
+		for _, e := range events {
+			assert.NotEqualf(t, target, e.Fields[FieldPath],
+				"source %q must not resolve to the destination directory itself", src)
+			assert.NotEqualf(t, dir, e.Fields[FieldPath],
+				"source %q must not resolve to a path ABOVE the destination", src)
+		}
+	}
+}
+
+// TestExtractCommand_ASymlinkToADirectoryIsNotExpanded is the boundary of the
+// directory question, and it was found by mutation: switching isDirectory from
+// Lstat to Stat left every other test green.
+//
+// `cp a.md link-to-dir` DOES follow the link on a real system, so the honest
+// answer here is narrower than the truth — and deliberately so. Expanding it
+// means resolving a path the command line did not name, which is a guess about
+// the tree rather than a reading of it. The cost is one unclaimed result on a
+// spelling nobody writes; the alternative is this module deciding where a link
+// points, which is the class of judgement it refuses everywhere else.
+//
+// What must NOT happen either way is a confidently wrong answer. The link
+// itself is what lookAt sees, so the event is about the link — never about a
+// file inside whatever it points at.
+func TestExtractCommand_ASymlinkToADirectoryIsNotExpanded(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	require.NoError(t, os.WriteFile(a, []byte("# A\n"), 0o644))
+	real := filepath.Join(dir, "realdir")
+	require.NoError(t, os.Mkdir(real, 0o755))
+	link := filepath.Join(dir, "linkdir")
+	require.NoError(t, os.Symlink(real, link))
+
+	events, err := extractFor(t, "cp "+a+" "+link)
+	require.NoError(t, err)
+
+	for _, e := range events {
+		assert.NotEqual(t, filepath.Join(link, "a.md"), e.Fields[FieldPath],
+			"the link is not resolved, so no path inside it is predicted")
+		assert.NotEqual(t, filepath.Join(real, "a.md"), e.Fields[FieldPath],
+			"and certainly not a path inside what it points at")
+	}
+}
+
+// TestExtractCommand_ATwoOperandCopyOntoADirectoryIsAlsoExpanded is the case
+// that makes the ambiguity real rather than theoretical.
+//
+// `cp a.md target/` has TWO operands, the shape commandmod reads as a copy onto
+// a path — and if target is a directory the result is target/a.md instead. Only
+// the stat separates them, which is why both readings are stated.
+func TestExtractCommand_ATwoOperandCopyOntoADirectoryIsAlsoExpanded(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	require.NoError(t, os.WriteFile(a, []byte("# A\n"), 0o644))
+	target := filepath.Join(dir, "target")
+	require.NoError(t, os.Mkdir(target, 0o755))
+
+	events, err := extractFor(t, "cp "+a+" "+target)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, KindPreCreate, events[0].Kind)
+	assert.Equal(t, filepath.Join(target, "a.md"), events[0].Fields[FieldPath],
+		"the destination is INSIDE the directory, not the directory")
+	assert.Equal(t, "# A\n", events[0].Fields[FieldContent])
+}
+
+// TestExtractCommand_ACopyOntoAFileIsNotExpanded is the other side of the same
+// stat. With a regular file at the destination the two-operand reading is the
+// right one, and the payload commandmod already attached stands.
+func TestExtractCommand_ACopyOntoAFileIsNotExpanded(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	dst := filepath.Join(dir, "dest.md")
+	require.NoError(t, os.WriteFile(a, []byte("# A\n"), 0o644))
+	require.NoError(t, os.WriteFile(dst, []byte("replaced\n"), 0o644))
+
+	events, err := extractFor(t, "cp "+a+" "+dst)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, KindPreUpdate, events[0].Kind)
+	assert.Equal(t, dst, events[0].Fields[FieldPath])
+	assert.Equal(t, true, events[0].Fields[FieldResultKnown])
+	assert.Equal(t, "# A\n", events[0].Fields[FieldResult])
+}
+
+// TestExtractCommand_CopyingIntoADirectoryOverExistingFilesIsAnUpdate holds
+// that an expanded target is classified by exactly the same code every other
+// target is — the reason the expansion happens BEFORE the loop rather than
+// inside it.
+func TestExtractCommand_CopyingIntoADirectoryOverExistingFilesIsAnUpdate(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	require.NoError(t, os.WriteFile(a, []byte("# New\n"), 0o644))
+	target := filepath.Join(dir, "target")
+	require.NoError(t, os.Mkdir(target, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(target, "a.md"), []byte("# Old\n"), 0o644))
+
+	events, err := extractFor(t, "cp "+a+" "+target)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, KindPreUpdate, events[0].Kind,
+		"a file already inside the directory is replaced, not created")
+	assert.Equal(t, true, events[0].Fields[FieldResultKnown])
+	assert.Equal(t, "# New\n", events[0].Fields[FieldResult])
+}
+
+// TestExtractCommand_MovingIntoADirectoryStillRemovesItsSources is the half a
+// destination expansion must not displace. `mv a.md target/` is a removal AND a
+// create, and the removal is what a delete rule is about.
+func TestExtractCommand_MovingIntoADirectoryStillRemovesItsSources(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	require.NoError(t, os.WriteFile(a, []byte("# A\n"), 0o644))
+	target := filepath.Join(dir, "target")
+	require.NoError(t, os.Mkdir(target, 0o755))
+
+	events, err := extractFor(t, "mv "+a+" "+target)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		a:                             KindPreDelete,
+		filepath.Join(target, "a.md"): KindPreCreate,
+	}, kindsByPath(events))
+}
+
+// TestExtractCommand_DdWithAnInputFileCarriesItsBytes is dd's derivable tier at
+// the module level: a copy spelled differently resolves the same way cp does.
+func TestExtractCommand_DdWithAnInputFileCarriesItsBytes(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source.md")
+	require.NoError(t, os.WriteFile(src, []byte("# Source\n"), 0o644))
+	dst := filepath.Join(t.TempDir(), "out.md")
+
+	events, err := extractFor(t, "dd if="+src+" of="+dst)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, KindPreCreate, events[0].Kind)
+	assert.Equal(t, "# Source\n", events[0].Fields[FieldContent])
+}
+
+// TestExtractCommand_DdWithAPartialCopyIsNotDerivable is the boundary. A
+// `count=` bounds the copy and a `conv=` transforms it, so the output is not
+// the input's bytes and no content may be claimed.
+func TestExtractCommand_DdWithAPartialCopyIsNotDerivable(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source.md")
+	require.NoError(t, os.WriteFile(src, []byte("# Source\n"), 0o644))
+
+	for _, operand := range []string{"count=1", "skip=1", "seek=1", "conv=ucase", "iflag=direct"} {
+		t.Run(operand, func(t *testing.T) {
+			// An existing destination, so the event is an UPDATE and survives
+			// to state resultKnown — a create would simply be withheld, which
+			// would pass for the wrong reason.
+			dst := filepath.Join(t.TempDir(), "out.md")
+			require.NoError(t, os.WriteFile(dst, []byte("before\n"), 0o644))
+
+			events, err := extractFor(t, "dd if="+src+" of="+dst+" "+operand)
+			require.NoError(t, err)
+			require.Len(t, events, 1)
+			require.Equal(t, KindPreUpdate, events[0].Kind)
+			assert.Equal(t, false, events[0].Fields[FieldResultKnown],
+				operand+" makes the copy partial, so the result is not derivable")
+		})
+	}
+}
+
+// TestExtractCommand_LinkingDoesNotClaimTheTargetsBytes is the ln verdict at the
+// module level, and it is the confidently-wrong direction being refused.
+//
+// A symlink's bytes are its target PATH. Reporting a.md's contents for
+// `ln -s a.md b.md` would hand a rule text that is nowhere in the file.
+func TestExtractCommand_LinkingDoesNotClaimTheTargetsBytes(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a.md")
+	require.NoError(t, os.WriteFile(src, []byte("# Target body\n"), 0o644))
+	link := filepath.Join(dir, "b.md")
+
+	events, err := extractFor(t, "ln -s "+src+" "+link)
+	require.NoError(t, err)
+	assert.Empty(t, events,
+		"the link's bytes are a path, not the target's content, so the create stays silent")
+}
+
+// TestExtractCommand_PrintfWidenedFormatsAreRenderedExactly is the widened
+// printf tier, end to end. %d, several conversions, and the format-reuse loop
+// are all exactly specified, so they are rendered rather than declined.
+func TestExtractCommand_PrintfWidenedFormatsAreRenderedExactly(t *testing.T) {
+	for name, tc := range map[string]struct {
+		command string
+		want    string
+	}{
+		"%d renders an integer as itself": {
+			command: "printf '%%d items\\n' 5 > %s",
+			want:    "5 items\n",
+		},
+		"several conversions consume left to right": {
+			command: "printf '%%s=%%d\\n' k 7 > %s",
+			want:    "k=7\n",
+		},
+		"surplus arguments reuse the format": {
+			command: "printf '%%s\\n' a b c > %s",
+			want:    "a\nb\nc\n",
+		},
+		"an exhausted pass finishes with empties": {
+			command: "printf '%%s=%%s\\n' a > %s",
+			want:    "a=\n",
+		},
+		"a literal percent consumes no argument": {
+			command: "printf '100%%%%\\n' > %s",
+			want:    "100%\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "created.md")
+			events, err := extractFor(t, fmt.Sprintf(tc.command, path))
+			require.NoError(t, err)
+			require.Len(t, events, 1)
+			require.Equal(t, KindPreCreate, events[0].Kind)
+			assert.Equal(t, tc.want, events[0].Fields[FieldContent])
+		})
+	}
+}
+
+// TestExtractCommand_SedInPlaceIsAnUpdateWithNoDerivableResult is the shape this
+// task deliberately left underivable, pinned in BOTH directions at once.
+//
+// The PATH half fires: `sed -i` names its file and the event happens, so a rule
+// bound to PreFileUpdate on it is asked. The CONTENT half does not:
+// `resultKnown` is false, which is the field that lets "not derivable" be SAID
+// rather than silently rendered as an empty result.
+//
+// The reasoning, argued rather than assumed. Deriving the result means
+// implementing sed's expression language — addresses, ranges, hold space,
+// alternate delimiters, the `s` flags — against a file this package does not
+// read, and being byte-exact or being worse than useless. The narrow subset that
+// is genuinely safe (`s/literal/literal/`, no address, no flags, no regex
+// metacharacter anywhere) is a small fraction of real usage, and the cost of
+// misjudging the boundary is a `result` that is confidently WRONG rather than
+// absent. A rule cannot tell a wrong answer from a right one, so an absent one
+// is strictly better.
+func TestExtractCommand_SedInPlaceIsAnUpdateWithNoDerivableResult(t *testing.T) {
+	for _, command := range []string{
+		"sed -i 's/a/b/' %s",
+		"sed -i '' 's/a/b/' %s",
+		"sed -i.bak 's/a/b/' %s",
+		"perl -i -pe 's/a/b/' %s",
+	} {
+		path := filepath.Join(t.TempDir(), "existing.md")
+		require.NoError(t, os.WriteFile(path, []byte("a line\n"), 0o644))
+
+		events, err := extractFor(t, fmt.Sprintf(command, path))
+		require.NoError(t, err, "command %q", command)
+		require.Lenf(t, events, 1, "command %q still names its file", command)
+		require.Equal(t, KindPreUpdate, events[0].Kind)
+		assert.Equalf(t, false, events[0].Fields[FieldResultKnown],
+			"command %q states a transformation, not an outcome", command)
 	}
 }
 

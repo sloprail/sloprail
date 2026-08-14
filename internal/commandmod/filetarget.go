@@ -71,6 +71,28 @@ type FileTarget struct {
 	// guardrail refusing empty results would fire on a command that changes
 	// nothing.
 	MTimeOnly bool
+
+	// Into are the sources copied INTO this path when it is a directory —
+	// `cp a.md b.md target-dir/`, whose real results are target-dir/a.md and
+	// target-dir/b.md.
+	//
+	// The second case, after MTimeOnly, where one line means different things
+	// depending on the tree, and it is the same shape of answer. Whether the
+	// last operand is a directory decides whether this line writes ONE file
+	// (a two-operand copy onto a path) or SEVERAL (a copy into a directory),
+	// and this package refuses to look. So it states both readings — Path with
+	// its Payload for the file case, and this list for the directory case —
+	// and filemod, which has already stat'd the path, picks.
+	//
+	// Empty for every other command, and empty for a two-operand copy, where
+	// there is no directory reading to state: `cp a.md b.md` writes b.md
+	// whether or not b.md exists, and the only way `b.md` is a directory is
+	// the one this field covers.
+	//
+	// The resulting NAME is base(source), which is the utility's own rule and
+	// is not a tree question. What is a tree question is whether the rule
+	// applies at all, and that is exactly what is deferred.
+	Into []string
 }
 
 // FileTargets finds every path a command line is about to change.
@@ -224,6 +246,15 @@ func fromRedirs(cfg *expand.Config, stmt *syntax.Stmt) []FileTarget {
 		case syntax.RdrOut, syntax.RdrClob:
 			payload = produced
 		case syntax.AppOut, syntax.AppClob:
+			// Only a LITERAL tail can be appended, and the restriction is
+			// load-bearing rather than incidental. `cat a.md >> b.md` produces
+			// a PayloadCopyOf, whose tail is a reference this package has not
+			// read — PayloadAppend carries Text and has nowhere to put a From,
+			// so building one here would append the EMPTY string and report
+			// b.md as unchanged: a confidently wrong answer rather than an
+			// absent one. Appending a reference is a shape neither Payload nor
+			// resolvePayload models, and until one of them does, none is the
+			// honest answer.
 			if produced.Kind == PayloadLiteral {
 				payload = Payload{Kind: PayloadAppend, Text: produced.Text}
 			}
