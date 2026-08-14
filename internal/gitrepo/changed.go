@@ -85,18 +85,19 @@ func Root(dir string) (string, error) {
 // A submodule is reported as ONE path — the gitlink — and never as the files
 // inside it. Adding one reports .gitmodules and the submodule's own path.
 //
-// It is NOT true that changing a file inside a submodule reports nothing. Git
-// reports `M <gitlink>` whenever the submodule's worktree is merely dirty — an
-// uncommitted edit, or even an untracked file sitting in it — because the
-// recorded gitlink and the submodule's actual state disagree. This comment
-// claimed the opposite until a test measured it.
+// A submodule whose POINTER MOVED is reported; one that is merely DIRTY is not.
+// Git reports `M <gitlink>` for both — an uncommitted edit inside the submodule,
+// or even an untracked file sitting in it, makes the recorded gitlink and the
+// submodule's actual state disagree — and the two cases are not the same change.
+// A moved pointer is a real change TO THIS REPOSITORY, the thing a rule about
+// dependency bumps is about; a dirty worktree is a change to a DIFFERENT
+// repository, which this one records nothing of. See diffAgainst for how git is
+// asked to draw that line, and
+// TestChanged_ADirtySubmoduleIsNotThisRepositorysChange.
 //
-// That has a consequence worth naming, because it is silence rather than noise:
-// the gitlink is a DIRECTORY on disk, so filemod answers presentNotAFile and
-// every dirty submodule yields ErrPathIsNotAFile. A project using submodules
-// gets a diagnostic per cycle for work no rule is about. Whether the right
-// answer is to suppress gitlinks or to keep reporting them is a product
-// decision nobody has made. See TestChanged_ADirtySubmoduleReportsTheGitlinkAsAnUpdate.
+// The two halves are ASKED OF DIFFERENT COMMANDS, which is why they are excluded
+// in different places: a submodule reaches the diff, and a nested worktree
+// reaches the untracked listing. See untrackedPaths for the second.
 func Changed(dir, commit string) ([]Change, error) {
 	if commit == "" {
 		// Nothing to measure from. Not an error: a repository with no commit
@@ -181,8 +182,32 @@ func Changed(dir, commit string) ([]Change, error) {
 // git's default, would otherwise turn one R entry into a separate D and A
 // silently. Both shapes are handled below, so either way the events are right;
 // the flag only fixes which shape arrives.
+// `--ignore-submodules=dirty` is what separates a submodule POINTER THAT MOVED
+// from one that is merely dirty, and it is asked of git rather than decided
+// here because git is the only party that still knows the difference. By the
+// time a gitlink reaches filemod the one remaining fact about it is that a
+// directory sits there, which is equally true of both cases — so a suppression
+// downstream could only drop them together, taking the real change with the
+// noise.
+//
+// The distinction git draws, measured on git 2.39 against real repositories:
+//
+//	dirty  :160000 160000 9e975c2 9e975c2 M  vendor/sub  — the same OID twice
+//	moved  :160000 160000 9e975c2 0000000 M  vendor/sub  — the destination null
+//
+// and this flag drops the first shape while keeping the second. The OIDs are
+// the underlying evidence and `--raw` would expose them, but reading them here
+// would mean parsing a second output format to re-derive a judgement git
+// already makes; the flag is the same fact in one word.
+//
+// What it does NOT touch, each pinned by a test, because a flag that suppressed
+// any of them would trade one silence for a worse one: an ordinary file's M, a
+// submodule being ADDED (A), a submodule being REMOVED (D), and a submodule
+// that is both moved AND dirty — which stays reported, because the pointer
+// moving is a change this repository records whatever else is going on in the
+// other one.
 func diffAgainst(dir, commit string) (map[string]bool, error) {
-	out, err := run(dir, "diff", "--name-status", "-z", "-M", commit)
+	out, err := run(dir, "diff", "--name-status", "-z", "-M", "--ignore-submodules=dirty", commit)
 	if err != nil {
 		return nil, err
 	}
@@ -301,9 +326,45 @@ func parseNameStatus(out string) (map[string]bool, error) {
 // guardrail on the first cycle a dependency is installed — the flood
 // untouched_stays_silent exists to prevent, arriving through a different door.
 //
-// Directories are not listed as such: without --directory git names each file
-// inside an untracked directory individually, which is what the events want
-// since they are about files.
+// Directories are not listed as such — with ONE exception, which is the whole
+// of the nested-worktree exclusion below. Without --directory git names each
+// file inside an untracked directory individually, which is what the events
+// want since they are about files. But git will not descend into a NESTED
+// REPOSITORY, and what it emits for one instead is the directory itself with a
+// TRAILING SLASH:
+//
+//	.claude/worktrees/agent-d1/     a sub-agent's linked worktree
+//	vendor/clone/                   an unrelated clone someone left in the tree
+//	plaindir/a.md                   an ordinary untracked directory, walked into
+//
+// So the trailing slash in this listing is not a generic "this is a directory"
+// marker. It is git saying it stopped at a repository boundary — the one signal
+// that distinguishes another repository's tree from this one's content, and it
+// arrives without a second question or a stat.
+//
+// Those paths are dropped. A directory git itself reports as a separate
+// checkout is not this tree's content, whoever put it there and whatever it is
+// called, so a cycle measuring what THIS session changed must not carry it. The
+// alternative rule — ignoring `.claude/` — was rejected: the guardrail
+// declarations live there and are exactly the content the engine must see
+// change, and `.claude/worktrees/` is one harness's layout rather than a
+// contract sloprail can bind to.
+//
+// The exclusion is about what the thing IS, so it costs nothing in coverage.
+// The nested repository's own files were never in this listing to begin with —
+// git had already declined to walk them — so the only path removed is the
+// boundary marker itself, which named no file and could produce no file event.
+// What it did produce was one ErrPathIsNotAFile per cycle, downstream, for as
+// long as the worktree existed.
+//
+// Deliberately NOT derived from `git worktree list`, though the task proposed
+// it. That command knows only about linked worktrees of THIS repository, and
+// the noise is not particular to those: an unrelated clone sitting in the tree
+// produces the identical entry and is just as much not this repository's
+// content. The trailing slash covers both because it is git reporting the
+// boundary rather than the relationship — and it is already in the output being
+// read, where `git worktree list` would be a second question that could
+// disagree with the first.
 //
 // `--full-name` is what makes this answer the same QUESTION as the diff.
 // `ls-files` names paths relative to the CURRENT DIRECTORY, while `git diff
@@ -324,9 +385,16 @@ func untrackedPaths(dir string) ([]string, error) {
 	}
 	var paths []string
 	for _, p := range strings.Split(out, "\x00") {
-		if p != "" {
-			paths = append(paths, p)
+		if p == "" {
+			continue
 		}
+		// A nested repository's boundary marker, not a file of this tree. See
+		// the trailing-slash paragraph above for why this is git's own signal
+		// rather than a guess about the path.
+		if strings.HasSuffix(p, "/") {
+			continue
+		}
+		paths = append(paths, p)
 	}
 	return paths, nil
 }

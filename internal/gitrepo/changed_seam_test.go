@@ -343,31 +343,166 @@ func TestChanged_ATrackedFileThatGitignoreAlsoNamesIsStillReported(t *testing.T)
 
 // --- submodules -------------------------------------------------------------
 
-// TestChanged_ADirtySubmoduleReportsTheGitlinkAsAnUpdate.
+// repoWithCommittedSubmodule builds a parent holding a submodule whose gitlink
+// is COMMITTED, and returns the parent, the submodule's own directory, and the
+// baseline.
 //
-// This contradicts Changed's own doc comment, which states that "changing a
-// file INSIDE the submodule reports nothing, because the parent repository's
-// diff only notices a submodule when the commit it points at moves".
+// Committed rather than merely added, because an uncommitted gitlink reads as
+// `A` and masks every subsequent difference behind it — the reason
+// TestChanged_SubmoduleIsAGitlinkNotItsContents passed for an unrelated reason
+// for as long as it did. The submodule is given TWO commits so a test can move
+// the pointer between them.
 //
-// Git does not behave that way. A submodule whose worktree is merely DIRTY —
-// contents edited, nothing committed, the gitlink pointing exactly where it did
-// — is reported by the parent's diff as `M <gitlink>`. The commit it points at
-// has not moved, and git reports it anyway, because the recorded gitlink and
-// the submodule's actual HEAD-plus-dirt no longer agree.
+// Returns the submodule's second commit so a caller moving the pointer has
+// somewhere to move it to.
+func repoWithCommittedSubmodule(t *testing.T) (dir, sub, base, other string) {
+	t.Helper()
+	inner := initRepo(t)
+	write(t, inner, "lib.md", "v1")
+	git(t, inner, "add", ".")
+	git(t, inner, "commit", "-m", "init")
+	first := git(t, inner, "rev-parse", "HEAD")
+	write(t, inner, "lib.md", "v2")
+	git(t, inner, "add", ".")
+	git(t, inner, "commit", "-m", "second")
+	other = git(t, inner, "rev-parse", "HEAD")
+	// Left on the FIRST commit, so the parent records that one and the second
+	// is somewhere for the pointer to move to.
+	git(t, inner, "checkout", "-q", first)
+
+	dir = initRepo(t)
+	write(t, dir, "seed.md", "seed")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "seed")
+
+	// file:// between local repositories is refused by default in modern git.
+	git(t, dir, "-c", "protocol.file.allow=always", "submodule", "add", inner, "vendor/sub")
+	git(t, dir, "commit", "-m", "add submodule")
+	base = git(t, dir, "rev-parse", "HEAD")
+	sub = filepath.Join(dir, "vendor", "sub")
+
+	require.Empty(t, changedMap(t, dir, base),
+		"the baseline must be a clean tree, or nothing measured after it can be attributed")
+	return dir, sub, base, other
+}
+
+// TestChanged_ADirtySubmoduleIsNotThisRepositorysChange.
 //
-// The existing TestChanged_SubmoduleIsAGitlinkNotItsContents does not catch
-// this: it dirties the submodule while the gitlink is still an uncommitted `A`,
-// and `A` masks the difference — the entry reads `A vendor/sub` before and
-// after, so its `assert.Equal(got, after)` holds for a reason that has nothing
-// to do with the claim. Here the gitlink is COMMITTED first, which is the only
-// arrangement in which the M can appear.
+// A submodule whose worktree is merely DIRTY — contents edited, nothing
+// committed, the gitlink pointing exactly where the parent recorded it — is
+// reported by git's default diff as `M <gitlink>`, because the recorded gitlink
+// and the submodule's actual HEAD-plus-dirt no longer agree.
 //
-// The consequence downstream is the point. The gitlink is handed to file rules
-// as a path, and on disk it is a DIRECTORY — so filemod classifies it
-// presentNotAFile and reports ErrPathIsNotAFile. Every `git add` inside a
-// submodule therefore produces a path that is guaranteed to fail
-// classification, which is worth knowing whether or not it is worth changing.
-func TestChanged_ADirtySubmoduleReportsTheGitlinkAsAnUpdate(t *testing.T) {
+// It is not this repository's change. Nothing this repository records has
+// moved; the edit belongs to another repository entirely, which has its own
+// baseline and its own cycle. Reported, it produced one path per cycle that no
+// file rule could ever accept — the gitlink is a DIRECTORY, so filemod answers
+// presentNotAFile and yields ErrPathIsNotAFile for as long as the submodule
+// stays dirty.
+//
+// The raw diff is asserted FIRST, and asserted to still contain the M. That is
+// the half that makes this test about the engine rather than about git: git
+// still reports the dirty submodule when asked plainly, and Changed is silent
+// about it because it asks differently. Without that require, a future git that
+// stopped reporting dirty submodules would leave this passing while measuring
+// nothing.
+//
+// The counterpart is TestChanged_ASubmodulePointerThatMovedIsReported. Together
+// they are the decision: the pointer is this repository's content, the
+// submodule's worktree is not.
+func TestChanged_ADirtySubmoduleIsNotThisRepositorysChange(t *testing.T) {
+	dir, sub, base, _ := repoWithCommittedSubmodule(t)
+
+	// Dirty the submodule's WORKTREE only. No commit, so the gitlink still
+	// points exactly where the parent recorded it.
+	write(t, sub, "lib.md", "edited but never committed")
+
+	// The premise: git, asked without the flag, DOES report this. If it stops,
+	// the silence below is git's rather than the engine's and proves nothing.
+	require.Equalf(t, []string{"M", "vendor/sub"}, rawDiff(t, dir, base),
+		"git no longer reports a merely-dirty submodule at all, so this test's silence is not "+
+			"the engine's doing and the exclusion it exists to prove is now untested")
+
+	got := changedMap(t, dir, base)
+
+	assert.NotContainsf(t, got, "vendor/sub",
+		"a submodule whose pointer has not moved is another repository's dirt: the gitlink is a "+
+			"directory, so reporting it costs one ErrPathIsNotAFile per cycle and can never "+
+			"produce a file event")
+	assert.NotContains(t, got, "vendor/sub/lib.md",
+		"the file inside the submodule is still not this repository's to report")
+
+	// The fact that made the exclusion necessary, kept because it is the reason
+	// this could not be decided downstream: by the time filemod sees the path,
+	// a directory is ALL that is left of it, and a moved pointer looks the same.
+	info, err := os.Lstat(sub)
+	require.NoError(t, err)
+	assert.Truef(t, info.IsDir(),
+		"the gitlink resolves to a directory on disk — which is equally true of a pointer that "+
+			"MOVED, which is why the two must be separated here and not in filemod")
+}
+
+// TestChanged_ASubmodulePointerThatMovedIsReported.
+//
+// The other side of the decision, and the reason the exclusion is not simply
+// "drop gitlinks". A submodule pointer that MOVES is a real change to THIS
+// repository — it is the parent's own recorded state changing, the thing a rule
+// about dependency bumps is entirely about — and it must survive.
+//
+// Both halves matter and are asserted separately, because a rule that kept this
+// by keeping everything would be no rule at all: the moved pointer is reported,
+// and it is reported as having been at the baseline (an update, not a create).
+func TestChanged_ASubmodulePointerThatMovedIsReported(t *testing.T) {
+	dir, sub, base, other := repoWithCommittedSubmodule(t)
+
+	// Move the pointer, and DO NOT stage it in the parent. The submodule's HEAD
+	// now disagrees with the recorded gitlink, which is the change.
+	git(t, sub, "checkout", "-q", other)
+
+	got := changedMap(t, dir, base)
+
+	existed, ok := got["vendor/sub"]
+	require.Truef(t, ok,
+		"a submodule pointer that moved is this repository's own recorded state changing, and "+
+			"the exclusion for dirty submodules has swallowed it — a dependency bump is now "+
+			"invisible to every rule")
+	assert.Truef(t, existed,
+		"the gitlink was at the baseline, so a moved pointer is an update; reported as a create, "+
+			"every rule bound to updates goes silent about dependency bumps")
+}
+
+// TestChanged_ASubmoduleBothMovedAndDirtyIsStillReported.
+//
+// The case where the two states coincide, which is the ordinary shape of a real
+// dependency bump in progress: the pointer has moved AND there is uncommitted
+// work in the submodule. The moved pointer wins, because it is this
+// repository's change whatever else is happening in the other one.
+//
+// Pinned separately because it is exactly where a naive "suppress any gitlink
+// whose worktree is dirty" rule would be wrong, and the flag's behaviour here
+// is not something a reader could assume from its name.
+func TestChanged_ASubmoduleBothMovedAndDirtyIsStillReported(t *testing.T) {
+	dir, sub, base, other := repoWithCommittedSubmodule(t)
+
+	git(t, sub, "checkout", "-q", other)
+	write(t, sub, "lib.md", "moved AND edited on top")
+
+	got := changedMap(t, dir, base)
+	assert.Containsf(t, got, "vendor/sub",
+		"the pointer moved, so this repository changed; dirt on top of it does not make the "+
+			"move stop being this repository's change")
+}
+
+// TestChanged_AddingAndRemovingASubmoduleSurviveTheDirtyExclusion.
+//
+// The exclusion narrows what the diff reports, so what it must NOT narrow is
+// pinned too. Adding a submodule is an A on the gitlink and removing one is a
+// D, and both are the parent's own tree changing.
+//
+// Written as one test over both because it is one claim — the flag touches only
+// the M-with-unmoved-pointer shape — and splitting it would suggest the two
+// could fail independently of each other.
+func TestChanged_AddingAndRemovingASubmoduleSurviveTheDirtyExclusion(t *testing.T) {
 	inner := initRepo(t)
 	write(t, inner, "lib.md", "v1")
 	git(t, inner, "add", ".")
@@ -377,41 +512,52 @@ func TestChanged_ADirtySubmoduleReportsTheGitlinkAsAnUpdate(t *testing.T) {
 	write(t, dir, "seed.md", "seed")
 	git(t, dir, "add", ".")
 	git(t, dir, "commit", "-m", "seed")
-
-	// file:// between local repositories is refused by default in modern git.
-	git(t, dir, "-c", "protocol.file.allow=always", "submodule", "add", inner, "vendor/sub")
-	// COMMITTED, unlike the existing test — an uncommitted gitlink reads as A
-	// and hides every subsequent difference behind it.
-	git(t, dir, "commit", "-m", "add submodule")
 	base := git(t, dir, "rev-parse", "HEAD")
 
-	// Nothing has changed yet.
-	require.Empty(t, changedMap(t, dir, base),
-		"the baseline must be a clean tree, or the M below cannot be attributed to the dirtying")
+	git(t, dir, "-c", "protocol.file.allow=always", "submodule", "add", inner, "vendor/sub")
 
-	// Dirty the submodule's WORKTREE only. No commit, so the gitlink still
-	// points exactly where the parent recorded it.
-	write(t, filepath.Join(dir, "vendor", "sub"), "lib.md", "v2")
+	added := changedMap(t, dir, base)
+	assert.Containsf(t, added, "vendor/sub",
+		"a submodule being ADDED is this tree gaining a gitlink it did not have")
+	assert.Contains(t, added, ".gitmodules",
+		"the file recording the submodule is itself a new file")
 
-	fields := rawDiff(t, dir, base)
-	require.Equalf(t, []string{"M", "vendor/sub"}, fields,
-		"git no longer reports a merely-dirty submodule, so the doc comment would now be right")
+	git(t, dir, "commit", "-m", "add submodule")
+	afterAdd := git(t, dir, "rev-parse", "HEAD")
+
+	git(t, dir, "rm", "-q", "vendor/sub")
+
+	removed := changedMap(t, dir, afterAdd)
+	existed, ok := removed["vendor/sub"]
+	require.Truef(t, ok,
+		"a submodule being REMOVED is this tree losing a gitlink it had")
+	assert.Truef(t, existed,
+		"the gitlink was at the baseline and is gone, which is a deletion")
+}
+
+// TestChanged_AnOrdinaryFilesModificationSurvivesTheDirtyExclusion.
+//
+// The control for the flag, and the one that would catch it being over-broad.
+// `--ignore-submodules=dirty` is asked of the same command that reports every
+// tracked file, so the failure worth fearing is not that it drops too few
+// gitlinks but that it drops something that is not a gitlink at all.
+//
+// Measured alongside a dirty submodule rather than on its own, because the
+// interesting claim is that git applies the flag SELECTIVELY within one diff —
+// one entry suppressed, the other kept, in the same output.
+func TestChanged_AnOrdinaryFilesModificationSurvivesTheDirtyExclusion(t *testing.T) {
+	dir, sub, base, _ := repoWithCommittedSubmodule(t)
+
+	write(t, sub, "lib.md", "another repository's dirt")
+	write(t, dir, "seed.md", "this repository's own work")
 
 	got := changedMap(t, dir, base)
 
-	assert.Truef(t, got["vendor/sub"],
-		"the gitlink was at the baseline and git reports it modified — this is the case the "+
-			"doc comment says produces nothing")
-	assert.NotContains(t, got, "vendor/sub/lib.md",
-		"the file inside the submodule is still not this repository's to report")
-
-	// The consequence, stated as a fact about the tree rather than left implied:
-	// the reported path is a directory, so no file event can honestly be about it.
-	info, err := os.Lstat(filepath.Join(dir, "vendor", "sub"))
-	require.NoError(t, err)
-	assert.Truef(t, info.IsDir(),
-		"the gitlink resolves to a directory on disk, so filemod classifies it presentNotAFile "+
-			"and reports ErrPathIsNotAFile for every dirty submodule")
+	require.Containsf(t, got, "seed.md",
+		"an ordinary tracked file's modification is the cycle's work and the flag must not "+
+			"touch it — if this is gone the exclusion is suppressing the whole diff")
+	assert.NotContains(t, got, "vendor/sub",
+		"the two are in one diff and only the gitlink is dropped")
 }
 
 // TestChanged_AnUntrackedFileInsideASubmoduleIsNotThisRepositorysToReport.
@@ -444,6 +590,238 @@ func TestChanged_AnUntrackedFileInsideASubmoduleIsNotThisRepositorysToReport(t *
 
 	got := changedMap(t, dir, base)
 	assert.NotContains(t, got, "vendor/sub/brand-new.md")
+
+	// An untracked file is enough to make git call the submodule dirty, so the
+	// gitlink is silent for the same reason an edited one is. Asserted here
+	// rather than left to the dirty test because this is the cheaper way to
+	// reach the state — no edit, just a file appearing — and it is the shape a
+	// build directory inside a submodule produces on every single cycle.
+	assert.NotContainsf(t, got, "vendor/sub",
+		"an untracked file inside a submodule moves no pointer this repository records")
+}
+
+// --- nested repositories in the untracked listing ---------------------------
+
+// The other half of the same defect, arriving through the other command.
+//
+// `git ls-files --others` walks into an ordinary untracked directory and names
+// each file in it, but it will NOT descend into a nested repository — it stops
+// at the boundary and emits the directory itself with a TRAILING SLASH. That
+// path is a directory, so it reached filemod and yielded ErrPathIsNotAFile once
+// per cycle, for work belonging to another repository entirely.
+
+// initNestedRepo makes dir/rel a real, valid repository with one commit in it
+// and returns its absolute path.
+//
+// Committed rather than merely `git init`-ed, because an empty repository is
+// not the case of interest and a caller asserting on the boundary wants
+// something inside it that git is declining to walk.
+func initNestedRepo(t *testing.T, dir, rel string) string {
+	t.Helper()
+	nested := filepath.Join(dir, rel)
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	git(t, nested, "init", "-q", "--initial-branch=main", ".")
+	git(t, nested, "config", "user.email", "seam@example.invalid")
+	git(t, nested, "config", "user.name", "Seam")
+	write(t, nested, "theirs.md", "another repository's file")
+	git(t, nested, "add", ".")
+	git(t, nested, "commit", "-m", "the other repository's own commit")
+	return nested
+}
+
+// TestUntrackedPaths_ATrailingSlashIsOnlyEverANestedRepository.
+//
+// The premise the whole exclusion rests on, measured rather than assumed: in
+// this listing a trailing slash is not a generic "directory" marker. It appears
+// for a nested repository and for nothing else — an ordinary untracked
+// directory is walked into and its files named individually.
+//
+// Pinned as its own test because the exclusion is a one-line suffix check, and
+// a suffix check is only as good as the claim about what carries the suffix. If
+// git ever started emitting bare directories here, the exclusion would silently
+// begin dropping ordinary untracked files and this is the test that says so.
+//
+// Deliberately reads untrackedPaths' RAW command rather than untrackedPaths
+// itself, because untrackedPaths is what applies the exclusion and cannot
+// witness its own input.
+func TestUntrackedPaths_ATrailingSlashIsOnlyEverANestedRepository(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "seed.md", "seed")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "seed")
+
+	// An ordinary untracked directory with a file in it.
+	write(t, dir, "plain/inside.md", "this repository's own new file")
+	// A nested repository, and a nested LINKED WORKTREE of this repository.
+	initNestedRepo(t, dir, "vendor/clone")
+	git(t, dir, "worktree", "add", "-q", filepath.Join(".claude", "worktrees", "agent-d1"))
+
+	out, err := run(dir, "ls-files", "-z", "--others", "--exclude-standard", "--full-name")
+	require.NoError(t, err)
+	var raw []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			raw = append(raw, p)
+		}
+	}
+
+	var slashed, plain []string
+	for _, p := range raw {
+		if strings.HasSuffix(p, "/") {
+			slashed = append(slashed, p)
+		} else {
+			plain = append(plain, p)
+		}
+	}
+
+	assert.ElementsMatchf(t, []string{".claude/worktrees/agent-d1/", "vendor/clone/"}, slashed,
+		"the trailing slash must mark exactly the nested repositories; anything else carrying "+
+			"one is a path the exclusion will drop wrongly, and any nested repository lacking "+
+			"one is noise the exclusion will miss. Raw listing: %v", raw)
+	assert.Containsf(t, plain, "plain/inside.md",
+		"an ordinary untracked directory is walked into and its files named individually — if "+
+			"it were emitted as `plain/` instead, the exclusion would swallow this repository's "+
+			"own new files. Raw listing: %v", raw)
+}
+
+// TestChanged_ANestedWorktreeIsNotThisTreesContent.
+//
+// The engine's half. A sub-agent dispatched with isolation "worktree" gets a
+// real `git worktree add` at a path INSIDE the parent's tree, and nothing
+// gitignores it. That checkout is not the parent's content: it has its own
+// baseline, its own cycle, and its own session, and the parent accounting for it
+// would be one repository answering for another's work.
+//
+// The control is asserted first and is not decoration. "Nothing under
+// .claude/worktrees was reported" is trivially true of a differ that reports
+// nothing at all, so the root's own change has to be shown arriving in the same
+// answer.
+//
+// The path NOT taken, recorded because the task proposed it: `git worktree
+// list`. It answers a narrower question — linked worktrees of THIS repository —
+// and the exclusion is not about the relationship. See
+// TestChanged_AnUnrelatedNestedCloneIsAlsoNotThisTreesContent.
+func TestChanged_ANestedWorktreeIsNotThisTreesContent(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "tracked.md", "before")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "the project before the session")
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	git(t, dir, "worktree", "add", "-q", filepath.Join(".claude", "worktrees", "agent-d1"))
+	write(t, dir, "root-own.md", "the root's own work")
+
+	// The premise: git really does consider that a separate checkout. Without
+	// it this is a test about an untracked directory with a suggestive name.
+	require.Containsf(t, git(t, dir, "worktree", "list"), filepath.Join(".claude", "worktrees", "agent-d1"),
+		"git does not report a nested worktree, so there is no boundary here to stop at")
+
+	got := changedMap(t, dir, base)
+
+	require.Containsf(t, got, "root-own.md",
+		"the root's own change is missing, so the silence asserted below proves nothing")
+	for p := range got {
+		assert.NotContainsf(t, p, ".claude/worktrees/",
+			"the root's difference names a path inside a sub-agent's own checkout: %q", p)
+	}
+}
+
+// TestChanged_ANestedWorktreeDoesNotHideTheGuardrailDeclarationsBesideIt.
+//
+// The exclusion's blast radius, and the reason it is written against the
+// boundary rather than against `.claude/`. The declarations live in `.claude/`
+// and are exactly the content the engine must see change; a rule that ignored
+// the directory would blind the engine to its own configuration in order to
+// silence a sub-agent.
+//
+// So the two are put in the tree TOGETHER — a worktree under
+// `.claude/worktrees/` and a declaration under `.claude/guardrails/` — and the
+// declaration must arrive.
+func TestChanged_ANestedWorktreeDoesNotHideTheGuardrailDeclarationsBesideIt(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "tracked.md", "before")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "base")
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	git(t, dir, "worktree", "add", "-q", filepath.Join(".claude", "worktrees", "agent-d1"))
+	write(t, dir, ".claude/guardrails/no-slop.md", "the declaration the engine must watch")
+
+	got := changedMap(t, dir, base)
+
+	assert.Containsf(t, got, ".claude/guardrails/no-slop.md",
+		"a guardrail declaration under .claude/ is the engine's own content and must survive "+
+			"the nested-worktree exclusion — ignoring .claude/ wholesale is the fix that was "+
+			"rejected, and this is what it would have cost")
+	for p := range got {
+		assert.NotContains(t, p, ".claude/worktrees/")
+	}
+}
+
+// TestChanged_AnUnrelatedNestedCloneIsAlsoNotThisTreesContent.
+//
+// Why the rule is the boundary and not `git worktree list`. A clone of some
+// other project sitting in the tree is not a linked worktree of this repository
+// and `git worktree list` says nothing about it — but it produces the identical
+// entry in the untracked listing, for the identical reason, and is just as much
+// not this repository's content.
+//
+// This is the test that fails if someone later "improves" the exclusion by
+// deriving it from `git worktree list`.
+func TestChanged_AnUnrelatedNestedCloneIsAlsoNotThisTreesContent(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "tracked.md", "before")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "base")
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	initNestedRepo(t, dir, "vendor/clone")
+	write(t, dir, "root-own.md", "the root's own work")
+
+	// The premise, and the whole distinction: git does not consider this a
+	// worktree of ours.
+	require.NotContainsf(t, git(t, dir, "worktree", "list"), "vendor/clone",
+		"this clone must NOT be a linked worktree, or it does not distinguish the boundary "+
+			"rule from a `git worktree list` rule")
+
+	got := changedMap(t, dir, base)
+
+	require.Contains(t, got, "root-own.md",
+		"the root's own change is missing, so the silence below proves nothing")
+	assert.NotContainsf(t, got, "vendor/clone/",
+		"an unrelated clone in the tree is another repository's content for the same reason a "+
+			"sub-agent's worktree is, and `git worktree list` would not have caught it")
+	assert.NotContains(t, got, "vendor/clone/theirs.md",
+		"git never descended into it, so its files were never in the listing to begin with")
+}
+
+// TestChanged_ADirectoryNamedLikeARepositoryButNotOneIsStillThisTreesContent.
+//
+// The exclusion's boundary from the other side. A directory holding a `.git`
+// that is not a valid repository — a leftover gitfile pointing nowhere, which
+// is what a removed submodule leaves behind — is NOT a boundary git stops at.
+// Git walks it and names its files, so nothing here is dropped.
+//
+// Worth pinning because it shows the exclusion tracks git's own validation
+// rather than the presence of a `.git` name, and because the alternative
+// implementation the task floated — "the directory holding a .git FILE rather
+// than being tracked content" — would have got this case wrong by hand.
+func TestChanged_ADirectoryNamedLikeARepositoryButNotOneIsStillThisTreesContent(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "tracked.md", "before")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-m", "base")
+	base := git(t, dir, "rev-parse", "HEAD")
+
+	// A gitfile pointing nowhere, exactly what removing a submodule can leave.
+	write(t, dir, "leftover/.git", "gitdir: /nowhere/that/exists")
+	write(t, dir, "leftover/real-work.md", "written by this session")
+
+	got := changedMap(t, dir, base)
+
+	assert.Containsf(t, got, "leftover/real-work.md",
+		"git does not treat a dangling gitfile as a repository boundary, so this file is this "+
+			"session's work and the exclusion must not reach it")
 }
 
 // --- repository states ------------------------------------------------------

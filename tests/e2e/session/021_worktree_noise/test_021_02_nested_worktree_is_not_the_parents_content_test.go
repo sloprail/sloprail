@@ -13,35 +13,37 @@ import (
 
 // A sub-agent's own worktree is not the parent's changed content.
 //
-// THIS DIRECTORY PINS A KNOWN DEFECT — task:
-// strategy/memories/tasks/worktree-noise-in-parent-diff/TASK.md, not started.
+// FIXED — task: strategy/memories/tasks/worktree-noise-in-parent-diff/TASK.md.
 //
-// The mechanism. A sub-agent dispatched with isolation "worktree" gets a real
-// `git worktree add` at `.claude/worktrees/agent-<id>` — a path INSIDE the
-// parent's working tree — and nothing gitignores it. gitrepo.Changed unions the
-// tracked diff with `git ls-files -z --others --exclude-standard`, and that
-// second question reports the nested checkout as the parent's own untracked
-// content.
+// The mechanism that was wrong. A sub-agent dispatched with isolation
+// "worktree" gets a real `git worktree add` at `.claude/worktrees/agent-<id>` —
+// a path INSIDE the parent's working tree — and nothing gitignores it.
+// gitrepo.Changed unions the tracked diff with `git ls-files -z --others
+// --exclude-standard`, and that second question reported the nested checkout as
+// the parent's own untracked content.
 //
-// WHAT WAS MEASURED, because it differs from what the task predicts and the
-// difference decides where the test can bite:
+// WHAT WAS MEASURED, because it is narrower than the task originally predicted
+// and the difference decided where the fix could go:
 //
 //   - git does NOT descend into the child's checkout. It stops at the nested
-//     `.git` and reports the whole thing as ONE path with a trailing slash:
-//     `.claude/worktrees/agent-d1/`. So the parent's difference is polluted by a
-//     single directory entry, not by every file the sub-agent wrote. The task's
-//     "walks the child's whole checkout" overstates it; the pollution is real
-//     but its shape is one path.
-//   - That path DOES reach gitrepo.Changed, which is where T021_01 pins it.
-//   - It does NOT reach a guardrail as a file event, because filemod's lookAt
-//     stats it, finds a directory, and reports ErrPathIsNotAFile rather than
-//     emitting a kind. So today the noise is absorbed one layer below the rules
-//     by a check that exists for an unrelated reason.
+//     `.git` and reports the whole thing as ONE path with a TRAILING SLASH:
+//     `.claude/worktrees/agent-d1/`. So the pollution was a single directory
+//     entry, not every file the sub-agent wrote.
+//   - That trailing slash turned out to be the fix rather than an incidental
+//     detail. In this listing git emits it for a nested repository and for
+//     nothing else — an ordinary untracked directory is walked into and its
+//     files named individually — so it is git's own report of a repository
+//     boundary. untrackedPaths drops those paths;
+//     TestUntrackedPaths_ATrailingSlashIsOnlyEverANestedRepository in
+//     internal/gitrepo pins the claim the exclusion rests on.
+//   - The noise never reached a rule, because filemod's lookAt stats a
+//     directory and reports ErrPathIsNotAFile rather than emitting a kind. It
+//     cost one diagnostic per cycle, absorbed one layer below the rules by a
+//     check that exists for an unrelated reason. T021_03 records that, and
+//     records it as a fact that must keep holding rather than as a consolation.
 //
-// That last point is why the e2e half (T021_03) currently observes silence
-// rather than leakage — and why it is written as a REPRODUCTION of the present
-// behaviour rather than as the invariant. The invariant test is T021_02, which
-// asserts what must be true of the difference itself and fails today.
+// T021_01 reproduced the defect and was deleted when the fix landed, on its own
+// instructions. T021_02 is the invariant it guarded and is now live.
 
 // bindPostFileEvents records every after-the-fact file event the cycle
 // dispatches, so a test can read exactly which paths were put in front of a rule
@@ -170,84 +172,70 @@ func repoWithNestedWorktree(t *testing.T) (dir, baseline string) {
 	return dir, baseline
 }
 
-// T021_01: THE REPRODUCTION — the nested checkout really is in the parent's
-// difference.
+// T021_01 was the reproduction: it asserted the DEFECT, so it passed while the
+// defect was present and failed the day the fix landed. Deleted then, on its own
+// instructions, because a reproduction of a defect that no longer exists can
+// only ever fail.
 //
-// Asserts the DEFECT, so it passes today and is expected to FAIL the day the
-// task lands. That inversion is deliberate: it makes the defect a measured fact
-// rather than a claim, and it means the invariant below cannot quietly become
-// vacuous — if this stops reproducing, this test says so.
-//
-// Delete this test and un-skip T021_02 when nested worktrees are excluded.
-func TestT021_01_ANestedWorktreeIsCurrentlyInTheParentsDifference(t *testing.T) {
-	dir, baseline := repoWithNestedWorktree(t)
-
-	changes, err := gitrepo.Changed(dir, baseline)
-	if err != nil {
-		t.Fatalf("the difference could not be taken at all: %v", err)
-	}
-
-	// The control: the root's own work IS in the difference. Without it, "the
-	// worktree is in the difference" could be read off a differ that reports
-	// everything, and the absence T021_02 wants would be unreadable.
-	var sawRoot bool
-	var nested []string
-	for _, c := range changes {
-		if c.Path == "root-own.md" {
-			sawRoot = true
-		}
-		if strings.Contains(c.Path, ".claude/worktrees/") {
-			nested = append(nested, c.Path)
-		}
-	}
-	if !sawRoot {
-		t.Fatalf("the root's own change is missing from the difference (%v) — the differ is not "+
-			"reporting this tree at all, so nothing here can be concluded", changes)
-	}
-
-	if len(nested) == 0 {
-		t.Fatalf("no path under .claude/worktrees/ is in the difference: %v\n"+
-			"This test PINS A DEFECT and passes while the defect is present. Nothing arriving "+
-			"means either the defect is FIXED — delete this test and un-skip T021_02 — or the "+
-			"arrangement stopped reproducing it, in which case T021_02 is vacuous and must be "+
-			"re-established before it is trusted.", changes)
-	}
-
-	// The measured shape, recorded so the next reader does not have to re-derive
-	// it: ONE directory path, trailing slash, because git stops at the nested
-	// .git rather than descending.
-	t.Logf("the parent's difference includes the sub-agent's checkout as %d path(s): %v", len(nested), nested)
-	for _, p := range nested {
-		if !strings.HasSuffix(p, "/") {
-			t.Errorf("expected the nested checkout to appear as a directory path with a trailing "+
-				"slash, got %q — git's behaviour here has changed and the note in this file's "+
-				"header is now wrong", p)
-		}
-	}
-}
+// What it was guarding against — T021_02 becoming vacuous by the arrangement
+// silently stopping producing a nested worktree — did not go away with it, so it
+// was not simply dropped. It moved INTO T021_02 as a premise: that test now
+// requires git to report the worktree in its raw listing before it asserts the
+// engine is silent about it, which holds the same line without needing a test
+// that must be deleted to succeed.
 
 // T021_02: THE INVARIANT — a cycle in the root's tree reports what the root's
 // session changed, and a nested sub-agent worktree is not part of that.
 //
-// The task's stated outcome, asserted against the difference itself. It FAILS
-// today; T021_01 is the standing proof that the failure is the engine's rather
-// than the arrangement's.
+// The task's stated outcome, asserted against the difference itself.
 //
 // The fix is NOT ignoring `.claude/` wholesale — the guardrail declarations live
 // there and are exactly the content the engine must watch change. It is
 // excluding a nested WORKING TREE: a directory git itself reports as a separate
-// checkout is not this tree's content, whoever put it there. Deriving it from
-// `git worktree list` keeps the rule about what the thing IS rather than about
-// the path one harness happens to use, which matters because sloprail is
-// harness-agnostic and `.claude/worktrees/` is Claude Code's layout, not a
-// contract.
+// checkout is not this tree's content, whoever put it there.
+//
+// It is also not derived from `git worktree list`, which is what this comment
+// used to propose. That command knows only about linked worktrees of THIS
+// repository, and the noise is not particular to those — an unrelated clone
+// sitting in the tree produces the identical entry for the identical reason.
+// What the exclusion reads instead is the TRAILING SLASH git puts on a path in
+// `ls-files --others` when it declines to descend into a nested repository. It
+// is the same fact, already in the output being read, and it keeps the rule
+// about what the thing IS rather than about the path one harness happens to use
+// — which matters because sloprail is harness-agnostic and
+// `.claude/worktrees/` is Claude Code's layout, not a contract.
+//
+// TWO premises are required before the silence is read, and the second is the
+// one T021_01 used to supply: the root's own change must be present (or the
+// differ is reporting nothing and any absence is meaningless), and git must
+// still be naming the worktree in its own raw listing (or the arrangement has
+// stopped producing the noise and the engine's silence is not the engine's).
 func TestT021_02_ANestedWorktreeIsNotTheParentsChangedContent(t *testing.T) {
-	t.Skip("PINS A KNOWN DEFECT (task worktree-noise-in-parent-diff, not started): the nested " +
-		"checkout at .claude/worktrees/agent-<id> is reported by `git ls-files --others` and " +
-		"reaches gitrepo.Changed as the parent's own untracked content. T021_01 reproduces it. " +
-		"Un-skip this and DELETE T021_01 when nested worktrees are excluded from the difference.")
-
 	dir, baseline := repoWithNestedWorktree(t)
+
+	// The anti-vacuity premise, inherited from the deleted T021_01: the noise
+	// this test asserts the absence of must actually be on offer. git names the
+	// nested checkout in the untracked listing — as one path with a trailing
+	// slash — and gitrepo.Changed is what declines to carry it.
+	others := git(t, dir, "ls-files", "-z", "--others", "--exclude-standard", "--full-name")
+	var offered []string
+	for _, p := range strings.Split(others, "\x00") {
+		if strings.Contains(p, ".claude/worktrees/") {
+			offered = append(offered, p)
+		}
+	}
+	if len(offered) == 0 {
+		t.Fatalf("git no longer names the nested checkout in its untracked listing:\n%q\n"+
+			"there is no noise here for the engine to be excluding, so this test's silence "+
+			"proves nothing and the exclusion is now untested", others)
+	}
+	for _, p := range offered {
+		if !strings.HasSuffix(p, "/") {
+			t.Fatalf("git named the nested checkout as %q, without the trailing slash the "+
+				"exclusion keys on — git's behaviour has changed and the fix no longer "+
+				"rests on what it was measured against", p)
+		}
+	}
 
 	changes, err := gitrepo.Changed(dir, baseline)
 	if err != nil {
@@ -280,21 +268,29 @@ func TestT021_02_ANestedWorktreeIsNotTheParentsChangedContent(t *testing.T) {
 // T021_03: through the real wiring — a dispatched sub-agent's worktree, and what
 // a guardrail bound to the root's files is actually shown.
 //
-// This is the end-to-end half, and what it records is that the noise does NOT
-// currently reach a rule: filemod's lookAt stats `.claude/worktrees/agent-<id>/`,
-// finds a directory, and reports ErrPathIsNotAFile instead of emitting an event.
-// So the difference is polluted (T021_01) while the file rules are, today,
-// shielded from it by a check that exists for an unrelated reason.
+// The end-to-end half. It asserts the same silence as T021_02 but one layer up
+// and through the real dispatch rather than a hand-built tree, which is what
+// makes it a different test rather than a restatement: T021_02 proves
+// gitrepo.Changed does not carry the path, this proves nothing else downstream
+// puts it back.
 //
-// Worth pinning as its own fact rather than left implicit, because it is load
-// bearing in both directions: it is why this directory's e2e cannot assert
-// leakage, and it is exactly what would change if a future kind were bound to
-// something other than a regular file — at which point the pollution T021_01
-// measures would arrive at a rule.
+// Its history is worth keeping, because it explains why this directory's e2e
+// could not bite before the fix. The noise never reached a rule even when the
+// difference was polluted — filemod's lookAt stats
+// `.claude/worktrees/agent-<id>/`, finds a directory, and reports
+// ErrPathIsNotAFile instead of emitting an event. So the leakage this test would
+// have caught was already absorbed one layer below the rules by a check that
+// exists for an unrelated reason, and the defect showed up as a diagnostic per
+// cycle rather than as a guardrail judging another tree's file.
+//
+// That absorption is now defence in depth rather than the only defence, and this
+// test is what would notice if a future kind were bound to something other than
+// a regular file — at which point the exclusion in gitrepo is the only thing
+// standing between a sub-agent's checkout and a rule about this project.
 //
 // The root's own file is asserted first so the silence about the worktree is
 // read against a ledger that has just been shown to register something.
-func TestT021_03_TheNoiseDoesNotCurrentlyReachAFileRule(t *testing.T) {
+func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
