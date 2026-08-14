@@ -50,7 +50,7 @@ esac
 # ---------------------------------------------------------------------------
 # The trajectory.
 #
-# `sloprail session query` is what reads the session's record. Parsing the JSONL
+# `sr-session query` is what reads the session's record. Parsing the JSONL
 # here would work today and break the first time the harness moves a field — and
 # every rule doing it would reimplement the same traversal slightly differently,
 # which is what the subcommand exists to absorb.
@@ -103,7 +103,7 @@ fi
 # silently start matching the wrong entry.
 loaded="$(
   printf '{"transcript_path":%s}' "$(printf '%s' "$transcript" | jq -R .)" |
-    sloprail session query --where 'type == "assistant"' 2>/dev/null |
+    sr-session query --where 'type == "assistant"' 2>/dev/null |
     jq --arg s "$required_skill" '
       [ .[]
         | (.message.content // [])
