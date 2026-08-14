@@ -317,7 +317,20 @@ func TestRevalidation_APassOnOneUpdateCannotExemptAnother(t *testing.T) {
 	malicious := filemod.FileEvent{Path: "notes.md", Content: "SECRET=hunter2"}.Event(filemod.KindPreUpdate)
 	subj, ok := rev.Subject(malicious, cwd)
 	if !ok {
-		return // no subject, so the dispatcher runs the hook: nothing to bypass
+		// No subject, so the dispatcher runs the hook and there is nothing to
+		// bypass. That is the CURRENT engine — PreFileUpdate has no subject —
+		// which means the assertion below is unreachable today and this test
+		// asserts nothing.
+		//
+		// Said out loud rather than returned silently. A test that quietly
+		// asserts nothing is indistinguishable from one that passed, and this
+		// one is written to outlive the condition that makes it dormant: it
+		// starts biting the moment PreFileUpdate gains a real subject. Naming
+		// the state in the log is what keeps "dormant by design" from decaying
+		// into "green and empty".
+		t.Log("dormant: PreFileUpdate has no subject on this engine, so the exemption this " +
+			"test guards against cannot arise. It begins asserting when the kind carries content.")
+		return
 	}
 	assert.False(t, skips(t, rev, "no-slop", subj),
 		"a pass recorded for one pending payload must never exempt a different one")

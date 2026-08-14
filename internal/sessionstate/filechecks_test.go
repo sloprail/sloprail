@@ -161,4 +161,41 @@ func TestFileChecks_ARefusalIsNotErasedByALaterPass(t *testing.T) {
 	skippable, err := s.Skippable("a.go", "no-slop", "fp-bad")
 	require.NoError(t, err)
 	assert.False(t, skippable, "content that was refused must be refused again when it comes back")
+
+	// The two positive controls that stop the assertion above from passing for
+	// the wrong reason, and they are what this test was missing.
+	//
+	// Skippable answers false for a RETAINED refusal (the row is there and
+	// says it failed) and false for NO ROW AT ALL, and those are the two
+	// readings the name of this test is meant to distinguish. Measured: making
+	// RecordFileCheck discard failing verdicts left the assertion above green,
+	// so the claim "not erased" was not pinned by anything.
+	//
+	// First that the writer works at all in this setup — otherwise a store
+	// recording nothing whatsoever would satisfy every negative here.
+	fixedSkippable, err := s.Skippable("a.go", "no-slop", "fp-fixed")
+	require.NoError(t, err)
+	require.True(t, fixedSkippable,
+		"the passing verdict was not stored either, so this store records nothing and the "+
+			"refusal assertion above says nothing about refusals")
+
+	// And then that the refusal is PRESENT rather than absent, which is the
+	// half Skippable cannot express: it answers false for a retained refusal
+	// and false for a missing row alike, so the assertion above is satisfied by
+	// a store that discarded the refusal entirely.
+	//
+	// FileCheck is the reader that can tell them apart, and it reports the
+	// LATEST verdict for the pair. So the refusal is put back last: with the
+	// row retained, the latest verdict for a.go/no-slop is a refusal on
+	// fp-bad; with failing verdicts discarded, the write is a no-op and the
+	// latest verdict is still the pass on fp-fixed. That difference is the
+	// whole of what "not erased" means here.
+	require.NoError(t, s.RecordFileCheck("a.go", "no-slop", Verdict{Fingerprint: "fp-bad", Passed: false}))
+
+	v, found, err := s.FileCheck("a.go", "no-slop")
+	require.NoError(t, err)
+	require.True(t, found, "no verdict at all was recorded for this file")
+	assert.Equal(t, Verdict{Fingerprint: "fp-bad", Passed: false}, v,
+		"the refusal was not retained — a discarded refusal reads as never-judged rather than "+
+			"as refused, and the first thing to record a pass for that content is then believed")
 }
