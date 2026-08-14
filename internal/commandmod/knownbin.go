@@ -370,7 +370,7 @@ func hasGlob(path string) bool {
 // names no path this can be sure of, and the empty environment would resolve it
 // to nothing at all — reporting a guess would fire a rule on a file the command
 // may never touch.
-func fromCall(cfg *expand.Config, call *syntax.CallExpr) []FileTarget {
+func fromCall(cfg *expand.Config, call *syntax.CallExpr, depth int) []FileTarget {
 	if len(call.Args) == 0 {
 		return nil
 	}
@@ -423,12 +423,18 @@ func fromCall(cfg *expand.Config, call *syntax.CallExpr) []FileTarget {
 		}
 		argv = append(argv, f.value)
 	}
-	return targetsForArgv(argv)
+	return targetsForArgv(argv, depth)
 }
 
 // targetsForArgv reads one resolved vector against the table, unwrapping
-// wrappers the way fromArgv does.
-func targetsForArgv(argv []string) []FileTarget {
+// wrappers and interpreter payloads the way fromArgv does.
+//
+// depth is how many interpreter payloads have been entered to get here, and it
+// is threaded for the same reason fromArgv threads it: each payload is a fresh
+// parse of text an agent chose, so the descent needs the same bound. Wrapper
+// unwrapping does not spend it — that recursion consumes words from a vector of
+// finite length and terminates on its own.
+func targetsForArgv(argv []string, depth int) []FileTarget {
 	if len(argv) == 0 || basename(argv[0]) == "" {
 		return nil
 	}
@@ -440,9 +446,38 @@ func targetsForArgv(argv []string) []FileTarget {
 	if nested := unwrap(asWords(argv)); len(nested) > 0 {
 		// Recursive for the same reason fromArgv is: wrappers stack, and
 		// `sudo nohup rm notes.md` is two deep.
-		targets = append(targets, targetsForArgv(values(nested))...)
+		targets = append(targets, targetsForArgv(values(nested), depth)...)
 	}
+	// An interpreter payload names files too, and this was the gap.
+	//
+	// `sh -c 'rm notes.md'` reported the rm INVOCATION and no file target at
+	// all, so the two halves of this package disagreed about one command line:
+	// a rule about running rm fired, and a rule about deleting notes.md did
+	// not. A harness that wraps everything in `bash -lc` — the case the depth
+	// bound's own comment says this module exists for — made every file rule
+	// cover nothing.
+	//
+	// The same precondition governs it as the invocation side, because it is
+	// the same payload word: literal, or nothing is read.
+	targets = append(targets, targetsFromPayload(asWords(argv), depth)...)
 	return targets
+}
+
+// targetsFromPayload re-parses a literal interpreter payload and returns the
+// file targets inside it.
+//
+// Nothing when this is not an interpreter, when it names no payload, when the
+// payload word was not literal, or when the depth budget is spent — each the
+// case where the honest answer is that no file can be named.
+func targetsFromPayload(argv []word, depth int) []FileTarget {
+	if depth >= maxUnwrapDepth {
+		return nil
+	}
+	payload, ok := interpreterPayload(argv)
+	if !ok {
+		return nil
+	}
+	return fileTargetsAt(payload, depth+1)
 }
 
 // asWords re-attaches the certainty that this path encodes positionally, so an

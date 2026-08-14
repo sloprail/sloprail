@@ -60,7 +60,23 @@ type FileTarget struct {
 // refusal — so a bug would block the agent's work rather than degrade the rule.
 // Whatever was collected before a panic is kept: half a list still lets a rule
 // fire, where none lets it silently pass.
-func FileTargets(raw string) (targets []FileTarget) {
+func FileTargets(raw string) []FileTarget {
+	return fileTargetsAt(raw, 0)
+}
+
+// fileTargetsAt is FileTargets at a known interpreter-payload depth.
+//
+// The depth is threaded through the parse rather than kept in a package
+// variable, for the reason walkAt states: two payloads in one line are
+// independent, and a shared counter would make the second one's budget depend
+// on the first one's.
+//
+// Its own recover, so a panic parsing a PAYLOAD cannot take the outer line's
+// targets with it. A payload is text an agent chose and this is one of the two
+// places the module feeds such text back into the parser, so if any input can
+// find a parser bug it is this one — and losing the outer line's files on top
+// of the payload's would turn a partial answer into no answer.
+func fileTargetsAt(raw string, depth int) (targets []FileTarget) {
 	defer func() {
 		_ = recover()
 	}()
@@ -88,7 +104,7 @@ func FileTargets(raw string) (targets []FileTarget) {
 		case *syntax.Stmt:
 			targets = append(targets, fromRedirs(cfg, node.Redirs)...)
 		case *syntax.CallExpr:
-			targets = append(targets, fromCall(cfg, node)...)
+			targets = append(targets, fromCall(cfg, node, depth)...)
 		}
 		return true
 	})
@@ -176,6 +192,17 @@ func writesAFile(r *syntax.Redirect) bool {
 // A word that expands to several fields is also declined. `> $FILES` producing
 // two paths means the shell would fail on an ambiguous redirect anyway, and
 // picking one of them would be a guess about which.
+//
+// The `got[0] == ""` half is EQUIVALENT today and kept anyway, so the survivor
+// is read as an equivalence rather than as this guard being untested. Every
+// path built here goes through targetsFor, which drops the empty string for its
+// own reasons — so `> ""` is declined one step later whether or not this
+// condition exists. Verified by mutation: relaxing it alone leaves the suite
+// green, and removing BOTH it and targetsFor's drop turns five tests red.
+//
+// Kept because the two are the same only by the coincidence that every caller
+// happens to route through targetsFor. Naming the requirement HERE, where the
+// redirection's path is chosen, is the spelling that cannot rot.
 func literalWord(cfg *expand.Config, w *syntax.Word) (string, bool) {
 	if w == nil || !isLiteral(w) {
 		return "", false

@@ -286,6 +286,24 @@ type interpreter struct {
 	// that word, reading it as a script file, and the `-c` after it is never
 	// reached. Zero for everything whose `-c` comes first, which is every shell.
 	positionals int
+	// takesValue are this interpreter's OWN flags that consume the following
+	// word, beyond the shell-common set in interpreterFlagsTakingValue.
+	//
+	// Needed because the non-shell interpreters have value-taking options whose
+	// VALUE is a bare word, and a bare word is what the scan reads as "options
+	// are over, there is no payload". Measured: `su -s /bin/sh -c "npm publish"`
+	// reported su alone, because `/bin/sh` was read as the user name and the
+	// `-c` after it was never reached. The same for `su -g`, `flock -w`,
+	// `flock -E` and runuser's `-s`/`-g`.
+	//
+	// A silent MISS rather than a fabrication, which is the safer direction —
+	// but a miss on a spelling that runs, so a rule about the payload never
+	// fired on it. The wrapper table already declared these same flags as
+	// value-taking for its own scan; this is the interpreter scan being told
+	// what the wrapper scan already knew.
+	//
+	// Nil for the shells, whose own value-taking options are the shared set.
+	takesValue map[string]bool
 }
 
 var interpreters = map[string]interpreter{
@@ -305,7 +323,14 @@ var interpreters = map[string]interpreter{
 	// and this entry re-parses that same payload as the shell script it is. su
 	// runs it through the target user's shell, so it is a command string in
 	// exactly the sense this path means.
-	"su": {},
+	//
+	// `-s`/`-g`/`-G` take a value that is a BARE WORD, which the scan would
+	// otherwise read as the user name and stop on — losing the `-c` behind it.
+	"su": {takesValue: map[string]bool{
+		"-s": true, "--shell": true,
+		"-g": true, "--group": true,
+		"-G": true, "--supp-group": true,
+	}},
 
 	// `flock file -c "npm publish"` runs the payload through `sh -c`, so it is
 	// a command string in exactly this sense. Its other spelling,
@@ -314,11 +339,23 @@ var interpreters = map[string]interpreter{
 	// accepts, which is what su does too. The lock file is a bare word BEFORE
 	// the `-c`, so it is spent as a positional rather than mistaken for a
 	// script.
-	"flock": {positionals: 1},
+	//
+	// `-w`/`-E` take a value that is a bare word. Without declaring them the
+	// value is spent as the lock-file positional, the real lock file then ends
+	// the scan, and the `-c` behind it is never reached.
+	"flock": {positionals: 1, takesValue: map[string]bool{
+		"-w": true, "--wait": true, "--timeout": true,
+		"-E": true, "--conflict-exit-code": true,
+	}},
 
 	// `runuser -c "npm publish" user` is the same command-string form as su's,
-	// and runuser is likewise in both tables.
-	"runuser": {},
+	// and runuser is likewise in both tables. Same value-taking options as su.
+	"runuser": {takesValue: map[string]bool{
+		"-s": true, "--shell": true,
+		"-g": true, "--group": true,
+		"-G": true, "--supp-group": true,
+		"-u": true, "--user": true,
+	}},
 }
 
 // interpreterFlagsTakingValue are the interpreter's own flags that consume the
@@ -362,9 +399,15 @@ func interpreterPayload(argv []word) (string, bool) {
 		arg := argv[i].value
 
 		if arg == "--" {
-			// `--` ends the interpreter's options. A payload can only be named
-			// by a flag, so once options are over there is none — what follows
-			// is a script file and its arguments.
+			// Reached only BEFORE any `-c`. A terminator that FOLLOWS a `-c` is
+			// stepped over where the payload is chosen below, so it never
+			// arrives here — and the difference between the two positions is the
+			// whole of what this branch decides.
+			//
+			// Here options really are over, and a payload can only be named by a
+			// flag, so there is none: what follows is a script FILE and its
+			// arguments. Real sh agrees — `sh -- -c "npm publish"` answers
+			// `-c: No such file or directory`, running nothing.
 			return "", false
 		}
 		if !strings.HasPrefix(arg, "-") || arg == "-" {
@@ -382,24 +425,46 @@ func interpreterPayload(argv []word) (string, bool) {
 			}
 			return "", false
 		}
-		if interpreterFlagsTakingValue[arg] {
+		if interpreterFlagsTakingValue[arg] || in.takesValue[arg] {
+			// A flag whose VALUE is the next word. The per-interpreter half
+			// matters most when that value is a BARE word — `su -s /bin/sh -c
+			// ...` — because a bare word is otherwise read as the user name and
+			// ends the scan, losing the `-c` behind it.
 			i++
 			continue
 		}
 		if !in.isCommandStringFlag(arg) {
 			continue
 		}
-		// The payload is the next word. Its literalness is the whole
-		// precondition: `sh -c "np${X}m publish"` resolves to the same string
-		// as the certain case and must not be read as if it were one.
-		if i+1 >= len(argv) {
+		// The command-string flag. The payload is the word after it — or the
+		// word after a single `--`, which is the option terminator rather than
+		// the payload.
+		//
+		// Verified against real shells rather than reasoned about:
+		//
+		//	sh -c -- "echo HI"        prints HI      the -- is the terminator
+		//	sh -c -- -- 'echo HI'     --: not found  the SECOND -- is the payload
+		//
+		// So exactly one terminator is stepped over. Reading it as the payload
+		// instead lost the real one AND let the `--` fall through to the wrapper
+		// path, where it was promoted to a program — a binary nothing invokes,
+		// reported off a line that genuinely runs npm. Both failure directions
+		// at once, which is why this is spelled out rather than folded into the
+		// loop.
+		payload := i + 1
+		if payload < len(argv) && argv[payload].value == "--" {
+			payload++
+		}
+		if payload >= len(argv) {
 			return "", false
 		}
-		p := argv[i+1]
-		if !p.literal {
-			return "", false
+		// Literalness is the whole precondition: `sh -c "np${X}m publish"`
+		// resolves to the same string as the certain case and must not be read
+		// as if it were one.
+		if p := argv[payload]; p.literal {
+			return p.value, true
 		}
-		return p.value, true
+		return "", false
 	}
 	return "", false
 }
