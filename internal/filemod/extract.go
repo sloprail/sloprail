@@ -292,7 +292,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 		f := FileEvent{Path: t.Path}
 		kind := KindPreUpdate
 		if t.Effect == commandmod.Remove {
-			kind = KindPreUpdate
+			kind = KindPreDelete
 		} else {
 			// An update carries the markers the file has NOW, the same as the
 			// tool-write path. See markersOnDisk on what those actually describe.
