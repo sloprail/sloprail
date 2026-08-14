@@ -246,6 +246,14 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 		// error. Note this does not gate on the tool's NAME, for the reason
 		// extractPending argues at length: a harness that renames its shell tool
 		// must not silently stop being watched.
+		//
+		// The `== ""` half is EQUIVALENT and kept anyway. An empty command line
+		// parses to an empty file, which yields no targets and so no events —
+		// measured for "", "   ", "\n" and "\t" alike — so removing this test
+		// changes nothing observable and a mutation between the two survives.
+		// It mirrors the identical guard in commandmod.Extract, and stating the
+		// condition where the payload is read is what keeps the two modules
+		// answering the same way about the same payload.
 		return nil, nil
 	}
 
