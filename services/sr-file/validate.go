@@ -224,6 +224,27 @@ func toProblems(err error, doc Document) []Problem {
 		msgFormat, msgArgs := e.Msg()
 		message := fmt.Sprintf(msgFormat, msgArgs...)
 
+		// The same empty rendering renderCUE guards against, guarded here for
+		// the same reason. CUE reports some faults as the format "%s" with a
+		// single argument that itself renders empty, so Sprintf yields "" while
+		// the error's own Error() carries the whole sentence.
+		//
+		// Validate's len(problems)==0 fallback cannot catch it, exactly as
+		// renderCUE's len(parts)==0 could not: there IS a problem, its Message
+		// is merely empty, so the guard passes and Problem.String() prints
+		// "path: " and stops. A refusal an author cannot read is the failure
+		// this file's reporting half exists to prevent.
+		//
+		// Added by the twin question rather than by a reproduction — the parse
+		// path reaches this shape and the validation path was not shown to.
+		// Guarding the unreachable half costs one comparison; leaving one of two
+		// identical constructions unguarded is how the first one got missed.
+		if strings.TrimSpace(message) == "" {
+			if fallback := strings.TrimSpace(e.Error()); fallback != "" {
+				message = fallback
+			}
+		}
+
 		// A disjunction that fails emits a COUNTING line beside the real ones —
 		// "3 errors in empty disjunction" — which carries no position and names
 		// no expectation. It restates that the errors below exist. An agent

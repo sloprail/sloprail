@@ -42,8 +42,16 @@ import (
 // this at it. Empty in a normal install, so it never affects production layout.
 const EnvDir = "SLOP_SUBBIN_DIR"
 
-// Find returns the absolute path of a co-installed service binary, or an error
+// Find returns the path of a co-installed service binary, or an error
 // naming every location tried.
+//
+// The path is absolute for the two resolution routes that matter — the sibling
+// directory of the running binary, and a PATH lookup — because both start from
+// one. It is NOT absolute when SLOP_SUBBIN_DIR names a relative directory, in
+// which case the join is relative too and resolves against the caller's working
+// directory. That variable is test-only and setting it already implies control
+// of the environment, so this is a statement about the docstring rather than a
+// hole; it said "absolute" unconditionally and one route does not.
 func Find(name string) (string, error) {
 	var tried []string
 
