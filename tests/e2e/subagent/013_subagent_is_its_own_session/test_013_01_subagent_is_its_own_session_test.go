@@ -43,11 +43,19 @@ import (
 //     SubagentStop hook that exits zero has neither stream forwarded anywhere
 //     the run can see. The only channel out of that hook that reaches the stream
 //     is a non-zero exit, which is a BLOCK and re-runs the turn.
-//  3. The mock does not APPLY a sub-agent's tool calls. It runs the sub-agent's
-//     script for the result it reports; a Write in a sub-agent's scenario
-//     creates no file. So the sub-agent's effects on a tree are not observable
-//     either, and assertions here are written against what the dispatch itself
-//     bound — the worktree — rather than against files.
+//  3. The mock does not apply a sub-agent's WRITE calls. It runs the
+//     sub-agent's script for the result it reports; a Write in a sub-agent's
+//     scenario creates no file. So the assertions here are written against what
+//     the dispatch itself bound — the worktree — rather than against files.
+//
+//     CORRECTED, and the correction is large enough to have moved the whole
+//     feature's coverage: this is true of Write and FALSE of Bash. A sub-agent's
+//     Bash IS executed, and for an isolated sub-agent it executes INSIDE the
+//     bound worktree. So a sub-agent's effects on a tree ARE observable, its
+//     Post cycle does have a difference to judge, and a guardrail does fire in
+//     it under the sub-agent's own identity. See
+//     015_subagent_own_cycle, which is built on that and covers the two
+//     invariants this file and 014 both give up on.
 //
 // Together those mean a sub-agent's identity cannot be observed from inside a
 // test through the plugin's own wiring. That is a finding about the harness, not
@@ -120,17 +128,18 @@ func TestT013_01_PluginBindsSubagentStop(t *testing.T) {
 		t.Fatalf("the delegated cycle did not complete with SubagentStop bound:\n%s", res.Output)
 	}
 
-	// This does NOT prove a blocking hook would be noticed, and it used to say
-	// it did. Measured: mutate subagent-stop to return an error on every cycle
-	// and this whole package stays green. A SubagentStop hook's exit status has
-	// no observable consequence through this harness — exit 0, 1 and 2 are alike
-	// invisible, no retry, no marker, and the root completes regardless.
-	//
-	// So what is actually proven is narrower: the plugin binds the hook, the
+	// What this test itself proves is narrow: the plugin binds the hook, the
 	// bound command exists, and a delegated cycle runs to completion with it in
-	// place. Whether a refusal from it reaches anything is unobservable here.
-	// Closing that needs a channel out of SubagentStop that the mock reports —
-	// see the finding recorded with 014_subagent_dispatch_shapes.
+	// place.
+	//
+	// It used to claim more than that in the other direction — that a refusal
+	// from SubagentStop is unobservable, "exit 0, 1 and 2 alike invisible, no
+	// retry, no marker". That was measured against a subagent-stop that was a
+	// stub returning nil before it could reach a refusal, and it is WRONG. The
+	// mock drives the block loop, reports the retry and its cap, and records the
+	// refusal's own words as a hook_blocking_error. T013_06 asserts exactly that,
+	// and 015_subagent_own_cycle drives a refusal, a retry and a recovery
+	// end to end.
 }
 
 // T013_02: a sub-agent dispatched into its own worktree completes cleanly with
