@@ -201,9 +201,28 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 //
 // Three cases, and the third is the one worth stating.
 //
-// A path already relative is left alone. A harness that sends a
-// workspace-relative path has already produced the spelling a matcher wants,
-// and re-resolving it against the root would mean resolving it twice.
+// A path already relative is CLEANED and left relative. A harness that sends a
+// workspace-relative path has already produced the spelling a matcher wants, so
+// it is not re-resolved against the root — but it is put in canonical form
+// first, and that is not cosmetic.
+//
+// A matcher is a prefix test, so an uncleaned relative path is a way round every
+// narrowed rule in the project. `./secret/keys.md` and `secret/keys.md` name one
+// file; returning the first verbatim means `path startsWith "secret/"` does not
+// admit it, the hook is never asked, and the write lands. Measured end to end
+// before this was cleaned: the guarded write went through unrefused. The same
+// holds for `secret/./keys.md` and for any spelling with a redundant separator.
+//
+// It also gives the revalidation store one key per file. A verdict is recorded
+// against the reported path, so two spellings of one file were two subjects, and
+// a rule that had judged one had not judged the other.
+//
+// Clean does not resolve symlinks and does not touch the filesystem, which is
+// what keeps this the cheap branch. It is purely lexical, so it cannot pull an
+// outside path in: `../x` cleans to `../x` and stays outside. A relative path
+// that climbs out of the workspace is left as it is for the same reason the
+// absolute branch below leaves outside paths alone — no project-relative matcher
+// should admit it.
 //
 // A path inside the workspace becomes relative to it, with forward slashes.
 // This is what makes `path startsWith "memories/"` admit a write Claude Code
@@ -219,7 +238,7 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 // is the honest answer — the write is outside the rule's subject.
 func reportable(path, root string) string {
 	if !filepath.IsAbs(path) {
-		return path
+		return filepath.ToSlash(filepath.Clean(path))
 	}
 	if root == "" {
 		// No workspace was named, so there is nothing to be relative TO.
