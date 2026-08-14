@@ -313,19 +313,35 @@ func (e *Env) writeSettings(dir string) {
 // exist to show the two agree.
 func (e *Env) CLI(dir string, args ...string) Result {
 	e.t.Helper()
-	return e.runBin(dir, "sr", args...)
+	return e.runBin(dir, "", "sr", args...)
 }
 
 // CLIDirect runs one service binary by name, bypassing the proxy.
 func (e *Env) CLIDirect(dir, binary string, args ...string) Result {
 	e.t.Helper()
-	return e.runBin(dir, binary, args...)
+	return e.runBin(dir, "", binary, args...)
 }
 
-func (e *Env) runBin(dir, binary string, args ...string) Result {
+// CLIStdin runs the proxy with a payload on standard input.
+func (e *Env) CLIStdin(dir, stdin string, args ...string) Result {
+	e.t.Helper()
+	return e.runBin(dir, stdin, "sr", args...)
+}
+
+// CLIDirectStdin runs one service binary with a payload on standard input,
+// bypassing the proxy.
+func (e *Env) CLIDirectStdin(dir, stdin, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBin(dir, stdin, binary, args...)
+}
+
+func (e *Env) runBin(dir, stdin, binary string, args ...string) Result {
 	e.t.Helper()
 	cmd := exec.Command(filepath.Join(e.binDir, binary), args...)
 	cmd.Dir = dir
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	// SLOP_SUBBIN_DIR so the proxy dispatches to the binaries built for this
 	// run. They are already siblings, which subbin finds on its own, but naming
 	// it makes the test independent of that layout rather than quietly relying
