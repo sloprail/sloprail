@@ -352,6 +352,49 @@ func TestNesting_InterpreterPayloadsAreOpaque(t *testing.T) {
 			whyRight: "the payload is a file; its contents are not in the command line",
 		},
 		{
+			// Once a script file is named, the interpreter's own options are
+			// over: a later `-c` is an ARGUMENT passed to that script, not a
+			// flag naming a payload. Scanning past the file reports a program
+			// called `-c` — an argument promoted to a binary.
+			//
+			// Measured: not stopping at the script file changes exactly this
+			// line and `su someuser -c ...`, and nothing else noticed.
+			name: "a -c after a script file is the script's argument",
+			src:  `sh script.sh -c "npm publish"`, want: []string{"sh"}, unseen: "npm",
+			whyRight: "the script file ends sh's options; the -c belongs to the script",
+		},
+		{
+			// A lone `-` is su's login marker and conventionally stdin for a
+			// shell. Either way it is not a flag, and a `-c` after it is not
+			// this interpreter's payload flag.
+			name: "a lone dash stops the scan", src: `sh - -c "npm publish"`,
+			want: []string{"sh"}, unseen: "npm",
+			whyRight: "a lone - is not an option; what follows is not sh's own flag",
+		},
+		{
+			// A KNOWN SHORTFALL, recorded rather than left to be discovered.
+			//
+			// util-linux su accepts `su user -c command`, so this really does
+			// run npm and npm is not reported. BSD/macOS su does not — its
+			// synopsis is `su [-] [-flm] [login [args]]`, where everything
+			// after the login name is an argument to that user's shell, and a
+			// `-c` there is not su's flag at all.
+			//
+			// The two disagree, and which one is installed is not knowable from
+			// the command line. Stopping at the user name is the direction that
+			// cannot fabricate: it costs npm on the util-linux spelling, where
+			// reading on would invent a payload on the BSD one. A miss is the
+			// cheaper error, and it is the same judgement the module makes
+			// everywhere else.
+			//
+			// `su -c "npm publish" someuser` — the flag-first spelling both
+			// accept — IS unwrapped, and is pinned in
+			// TestNesting_PreviouslyUnlistedWrappersAreNowUnwrapped.
+			name: "su with the user before the flag is not unwrapped",
+			src:  `su someuser -c "npm publish"`, want: []string{"su"}, unseen: "npm",
+			whyRight: "util-linux su would run it but BSD su would not; stopping cannot fabricate, reading on could",
+		},
+		{
 			// `-s` reads the script from STDIN and the string becomes $0.
 			// Verified against real sh: `sh -s "echo x"` runs nothing.
 			name: "sh -s does not run its argument", src: `sh -s "npm publish"`, want: []string{"sh"}, unseen: "npm",
@@ -378,6 +421,25 @@ func TestNesting_InterpreterPayloadsAreOpaque(t *testing.T) {
 			name: "long option containing c is not the payload flag", src: `sh --norc npm publish`,
 			want: []string{"sh"}, unseen: "npm",
 			whyRight: "--norc is an option, not -c; the bare word after it is a script FILE",
+		},
+
+		// `--` ends the interpreter's options, so a `-c` after it is a
+		// FILENAME rather than a flag and the payload never runs. Verified
+		// against real sh, which answers `sh: -c: No such file or directory`.
+		//
+		// Reporting npm here would be a rule firing on a line that runs
+		// nothing — and `--` is exactly what someone would append to smuggle a
+		// payload past a reader that skipped it. Measured: not honouring `--`
+		// on this path changes only these lines.
+		{
+			name: "double dash makes -c a filename", src: `sh -- -c "npm publish"`,
+			want: []string{"sh"}, unseen: "npm",
+			whyRight: "after -- the -c is a script filename; real sh reports it as a missing file",
+		},
+		{
+			name: "double dash before a cluster", src: `bash -- -lc "npm publish"`,
+			want: []string{"bash"}, unseen: "npm",
+			whyRight: "same — options ended, so the cluster is a filename",
 		},
 		{
 			name: "rcfile takes a value and is not the payload flag", src: `bash --rcfile npm publish`,
@@ -620,6 +682,32 @@ func TestNesting_InterpreterPayloadDepthIsBounded(t *testing.T) {
 		got := binsOf(`sh -c '` + strings.Repeat("sudo ", 100) + `npm publish'`)
 		if !contains(got, "npm") {
 			t.Errorf("bins has %d entries and no npm; wrapper stacking must not spend the payload budget", len(got))
+		}
+	})
+
+	// The same fact from the other side, and the side that is actually
+	// reachable by hand: wrappers stacked BEFORE the interpreter.
+	//
+	// The case above nests wrappers inside a payload, which spends one payload
+	// level however many wrappers there are — so it passes even if each
+	// wrapper charges the budget. This one does not: five sudos in front of an
+	// `sh -c` would exhaust a budget of four before the interpreter is reached,
+	// and npm would vanish from a line anybody might write.
+	//
+	// Measured: charging wrapper recursion to the payload budget was invisible
+	// to the whole suite until this case existed.
+	t.Run("wrappers before the interpreter do not spend the budget", func(t *testing.T) {
+		for _, n := range []int{1, 4, 5, 20} {
+			src := strings.Repeat("sudo ", n) + `sh -c 'npm publish'`
+			got := binsOf(src)
+			if !contains(got, "npm") {
+				t.Errorf("%d stacked wrappers before sh -c: bins = %v, want npm — a wrapper "+
+					"is not a new parse and must spend none of the payload budget", n, got)
+			}
+			if want := n + 2; len(got) != want {
+				t.Errorf("%d stacked wrappers: bins = %v (%d), want %d — every sudo, sh, npm",
+					n, got, len(got), want)
+			}
 		}
 	})
 
