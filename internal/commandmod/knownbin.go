@@ -589,6 +589,20 @@ func targetsForArgv(argv []string, depth int, stdin Payload) []FileTarget {
 		// what the inner program does with its stdin.
 		targets = append(targets, targetsForArgv(values(nested), depth, stdin)...)
 	}
+	// The infix form — `find . -exec rm notes.md \;` — for the same reason the
+	// payload branch below exists: without it the two halves of this package
+	// disagree about one command line, a rule about RUNNING rm firing where a
+	// rule about DELETING notes.md does not.
+	//
+	// The heredoc does NOT travel with it, and that is the difference from the
+	// wrapper branch above. A wrapper is transparent to stdin — `sudo tee f.md
+	// <<'EOF'` hands the document straight through — but find gives the command
+	// it runs no stdin of its own, and `-exec` clauses are run once per matched
+	// path. Attaching the outer statement's document to the inner command would
+	// claim content for a file that never receives it.
+	for _, cmd := range unwrapInfix(asWords(argv)) {
+		targets = append(targets, targetsForArgv(values(cmd), depth, Payload{})...)
+	}
 	// An interpreter payload names files too, and this was the gap.
 	//
 	// `sh -c 'rm notes.md'` reported the rm INVOCATION and no file target at
