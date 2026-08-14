@@ -383,11 +383,14 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 		// The events are taken FIRST, and the error reported after.
 		//
 		// A module returns both together by contract, and the error describes
-		// the paths it could not classify rather than the ones it could. The
-		// caller at the pre-tool point does the opposite — it prints and
-		// `continue`s, throwing the events away — which is exactly the silence
-		// the module documents: ninety-nine correct classifications dropped
-		// because one path would not stat.
+		// the paths it could not classify rather than the ones it could.
+		//
+		// This used to add that the pre-tool caller did the opposite, printing
+		// and `continue`ing past the events. It no longer does — both callers
+		// take the events first — and the claim is removed rather than left to
+		// mislead the next reader into thinking one half of the engine still
+		// drops ninety-nine correct classifications because one path would not
+		// stat. See session_pre_tool.go, and the test that holds it there.
 		events = append(events, evs...)
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: module %q: %v\n", m.Name(), err)

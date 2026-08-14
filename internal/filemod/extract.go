@@ -21,22 +21,25 @@ import (
 // different, which is what catches everything the prediction missed.
 //
 // This returns events ALONGSIDE a non-nil error, which module.Module's own
-// documentation requires a caller not to discard, and which the caller at
-// services/sr-session/session_pre_tool.go does discard: it prints the error and
-// `continue`s past the events. That is precisely the silence the module is
-// built to prevent — a producer degrading with ninety-nine good classifications
-// dropped for one bad path — and it is unpinned in BOTH directions, since
-// mutating the caller to HONOR the contract also leaves the suite green.
+// documentation requires a caller not to discard. BOTH callers now honour that:
+// services/sr-session/session_pre_tool.go and dispatch_post.go each append the
+// events first and report the error after.
 //
-// Fixing it is another agent's, but what would pin it is worth stating, because
-// an unpinned contract is how this arrives back here a fourth time. A test in
-// the caller's own package, over a stub module returning one event and one
-// error together, asserting that the event reaches the matching stage. It has
-// to assert the EVENT's arrival and not the error's printing: the error is
-// already visible on stderr, so a test watching only that passes under both
-// behaviours, which is exactly why the mutation survives now. The module side
-// cannot host that test — from in here the return value is correct either way,
-// and what happens to it afterwards is not observable.
+// This comment used to say the Pre caller discarded them and that the contract
+// was "unpinned in BOTH directions", and it outlived both facts. The discard is
+// gone, and the test it asked for exists: TestPreTool_ModuleErrorDoesNotDiscard-
+// ItsEvents, in the caller's own package, over a module returning one event and
+// one error together. It asserts the EVENT's arrival rather than the error's
+// printing, which is the distinction the old note was right about — a test
+// watching stderr alone passes under either behaviour. Verified by mutation:
+// restoring the `continue` turns that test red.
+//
+// Why it mattered, kept because it is the argument for not regressing it:
+// `rm a.md b.md` is ONE tool call producing TWO targets, so one path that will
+// not stat makes this return a problem for that path together with a perfectly
+// good PreFileDelete for the other. Dropping the slice meant the rule guarding
+// the readable file never ran and the deletion proceeded, with the only trace on
+// a stream that at exit 0 reaches no agent.
 func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 	if in[module.InputPhase] == module.PhasePost {
 		return m.extractObserved(in)
