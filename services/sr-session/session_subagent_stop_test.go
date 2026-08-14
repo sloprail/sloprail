@@ -86,16 +86,29 @@ func TestSubagentStopStandsDownRatherThanActingAsTheParent(t *testing.T) {
 // TestSubagentStopHonoursStopHookActive: already refused once this cycle, so
 // refusing again would be a loop the sub-agent cannot leave.
 //
-// What must not happen is a second refusal, and what must not happen is the
-// cycle being judged again — NOT that the command falls silent. This path still
-// discards the read position, exactly as the root's Stop does, because a
-// position is a fact about a cycle's reading and this cycle is over; when the
-// store cannot be opened to clear it, saying so on stderr is the same
-// reported-and-swallowed bookkeeping failure it is everywhere else.
+// The command's own doc cites this test as the contract for doing NOTHING here
+// — not even discarding the read position the way stop's interrupted path does
+// — so it is worth being precise about what the test actually pins, and what it
+// leaves open.
 //
-// An earlier version of this test asserted an empty stderr, which quietly
-// asserted that this path does no bookkeeping at all. It passed only while the
-// command was a stub.
+// Pinned: no second refusal, and nothing on the block channel. Those are the
+// deadlock conditions, and they are what the assertions below check.
+//
+// NOT pinned, and deliberately no longer implied: silence. An earlier version
+// asserted an empty stderr, which quietly asserted that this path does no
+// bookkeeping at all — a much stronger claim than the deadlock one, and the
+// reason a later attempt to add the discard here read as a regression rather
+// than as a decision to weigh.
+//
+// The open consequence, named rather than left implicit: a sub-agent whose
+// cycle was refused leaves MetaTranscriptOffered standing. On the root that
+// stale position is cleared precisely because a later cycle which queries
+// nothing would otherwise take the mark from it and declare turns judged that
+// nothing read. The same hazard exists for a sub-agent that goes round again
+// after a refusal. It is not closed here because closing it means opening the
+// store on a path whose whole purpose is to do nothing — a real trade rather
+// than an oversight, and one worth revisiting if a sub-agent is ever observed
+// advancing its mark over turns it never saw.
 func TestSubagentStopHonoursStopHookActive(t *testing.T) {
 	stdout, _, err := runSubagentStop(t,
 		`{"transcript_path":"/nowhere/s.jsonl","agent_id":"abc","stop_hook_active":true}`)
