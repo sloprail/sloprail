@@ -363,8 +363,6 @@ func reportable(path, root string) string {
 	return filepath.ToSlash(path)
 }
 
-
-
 // extractCommand reads a pending shell command for the files it would change.
 //
 // # Why this is here and not in a module of its own
@@ -627,8 +625,24 @@ func (m *Module) resolvePayload(p commandmod.Payload, before string) (string, bo
 	case commandmod.PayloadCopyOf:
 		// The source as the command line spelled it, which is the same spelling
 		// the target's path uses — both come off the line, and neither has been
-		// resolved against a root. lookAt is asked first so a directory or a
-		// missing source is refused rather than read as empty.
+		// resolved against a root.
+		//
+		// The two checks below are MUTUALLY REDUNDANT and JOINTLY load-bearing,
+		// which is worth stating because each survives mutation alone and the
+		// pair does not. A missing source fails lookAt and would also fail
+		// ReadFile; a directory fails lookAt and would read as an error too. So
+		// removing either one leaves the suite green, and removing BOTH turns
+		// TestExtractCommand_CopyingFromAnUnreadableSourceClaimsNothing and
+		// TestExtractCommand_ACreationIsNotPredictedWhenItsBytesAreUnknowable
+		// red — measured, not asserted.
+		//
+		// Both are kept because they answer different questions. lookAt asks
+		// "is this a regular file this module's kinds can be about", which is
+		// the same tri-state question every other path in this module asks and
+		// is what rejects a directory for the right reason. The error check
+		// asks "did the read actually work", which covers a permission denial
+		// and a file that vanished between the two calls. Dropping either would
+		// leave the survivor accidentally carrying a case it does not describe.
 		if src, err := lookAt(p.From, p.From); err != nil || src != presentFile {
 			return "", false
 		}

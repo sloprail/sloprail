@@ -282,6 +282,34 @@ func TestExtractCommand_CopyingAFileCarriesTheSourcesCurrentBytes(t *testing.T) 
 	}
 }
 
+// TestExtractCommand_CopyingFromAnUnreadableSourceClaimsNothing is the failure
+// direction of the copy tier, and it was found by mutation: removing the
+// source's presence check left every other copy test green.
+//
+// The danger is specific. `cp missing.md dst.md` FAILS, so dst.md is never
+// created — but os.ReadFile on a missing path returns ("", err), and a version
+// that ignored the error would report a create carrying `content: ""`. That is
+// the exact wrong this whole change removes, reintroduced at the other end of
+// the pipeline: an empty string standing in for "not known", indistinguishable
+// from `touch dst.md`.
+func TestExtractCommand_CopyingFromAnUnreadableSourceClaimsNothing(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "destination.md")
+
+	t.Run("a source that does not exist", func(t *testing.T) {
+		events, err := extractFor(t, "cp "+filepath.Join(dir, "missing.md")+" "+dst)
+		require.NoError(t, err)
+		assert.Empty(t, events,
+			"the copy fails, so nothing is created and no content may be claimed")
+	})
+
+	t.Run("a source that is a directory", func(t *testing.T) {
+		events, err := extractFor(t, "cp "+dir+" "+dst)
+		require.NoError(t, err)
+		assert.Empty(t, events, "a directory's bytes are not a file's content")
+	})
+}
+
 // TestExtractCommand_AppendingCarriesTheWholeResultingFile is the append tier.
 //
 // `echo x >> log.md` is an UPDATE, not a create, and its result is the file's

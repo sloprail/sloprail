@@ -196,6 +196,22 @@ func resultFor(a pendingArgs, before string, exists bool) (string, error) {
 	case a.isNotebook():
 		// A notebook write is real and its path is known; its resulting bytes
 		// are not. Both facts are reported.
+		//
+		// EQUIVALENT to falling through to the default, and kept anyway so the
+		// survivor is read as an equivalence rather than as this branch being
+		// untested. Both arms return errNotDerivable, so a mutation deleting
+		// this case leaves the suite green — verified.
+		//
+		// Kept because the two are the same only by arithmetic. A notebook is
+		// not-derivable for a REASON the default has nothing to do with: the
+		// default means "this call states no body at all" (a `Read`), while
+		// this means "a body was stated and it is one cell of a JSON document
+		// the engine declines to re-serialise". Those are different facts that
+		// happen to share an answer, and naming the notebook case here is what
+		// stops the next person from reading `new_source` as content — the
+		// tempting wrong fix that
+		// TestExtractPending_ANotebookNeverReportsCellSourceAsFileContent
+		// exists to forbid.
 		return "", errNotDerivable
 
 	default:

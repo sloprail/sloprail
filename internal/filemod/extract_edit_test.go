@@ -593,6 +593,45 @@ func TestExtractPending_AnEmptyOldStringIsOnlyAnInsertionIntoANewFile(t *testing
 	})
 }
 
+// TestExtractPending_APerEditReplaceAllIsNotHonouredAndStaysSilent records a
+// KNOWN, deliberate imprecision rather than an oversight.
+//
+// `Edit` carries `replace_all` per CALL and an edits array would carry it per
+// EDIT. The per-edit spelling is not decoded, so an edits entry whose
+// old_string repeats is treated as ambiguous and the whole call goes silent —
+// even though `replace_all: true` would make it perfectly determined.
+//
+// That is the conservative direction and it is chosen on purpose. A false
+// "cannot apply" costs a missed event, which the Post-phase tree diff still
+// reports. A false "applied" would put bytes in an event that the file never
+// holds, which nothing downstream can correct. Given MultiEdit appears zero
+// times in the 8,458-transcript corpus, paying for precision here would be
+// speculative work on a shape no harness currently sends.
+//
+// If a harness does start sending it, this test is the one to change: decode
+// the per-edit flag and thread it through applyEdits, which already takes a
+// replaceAll parameter for the single-edit path.
+func TestExtractPending_APerEditReplaceAllIsNotHonouredAndStaysSilent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "existing.md")
+	require.NoError(t, os.WriteFile(path, []byte("dup\nmid\ndup\n"), 0o644))
+
+	args, err := json.Marshal(map[string]any{
+		"file_path": path,
+		"edits": []map[string]any{
+			{"old_string": "dup", "new_string": "X", "replace_all": true},
+		},
+	})
+	require.NoError(t, err)
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase:   module.PhasePre,
+		module.InputPayload: fakePending{tool: "MultiEdit", args: json.RawMessage(args)},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, events,
+		"silence is the safe wrong here: a missed event, not an invented result")
+}
+
 // TestExtractPending_AnEmptyEditsArrayProducesNoEvent holds the degenerate
 // shape. An edits array with nothing in it changes no bytes, so there is no
 // modification to be about.

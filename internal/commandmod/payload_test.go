@@ -271,6 +271,22 @@ func TestPayload_AQuotedHeredocIsLiteralAndAnUnquotedOneIsNot(t *testing.T) {
 		assert.Equal(t, PayloadNone, p.Kind,
 			"the body expands against an environment this package does not have")
 	})
+
+	// The case above is refused twice over — the delimiter is unquoted AND the
+	// body holds a ParamExp — so a mutation removing the delimiter test alone
+	// survived it. This one has a body that is entirely literal, so the
+	// DELIMITER is the only thing that can refuse it.
+	//
+	// It must still be refused. An unquoted delimiter means the shell will
+	// expand the body, and a body with nothing to expand today is one
+	// backtick away from having something tomorrow; more to the point, the
+	// engine cannot claim "this expands to itself" without doing the expansion
+	// it deliberately refuses to do.
+	t.Run("unquoted is refused even when the body has nothing to expand", func(t *testing.T) {
+		p := payloadFor(t, "cat > f.md <<EOF\nplain text only\nEOF\n")
+		assert.Equal(t, PayloadNone, p.Kind,
+			"the delimiter decides, and an unquoted one means the body is expanded")
+	})
 }
 
 // TestPayload_ADashHeredocStripsLeadingTabsOnly models `<<-` exactly.
@@ -323,6 +339,43 @@ func TestPayload_AHeredocIntoTeeIsTheFilesContent(t *testing.T) {
 func TestPayload_TeeWithoutAHeredocClaimsNothing(t *testing.T) {
 	assert.Equal(t, PayloadNone, payloadFor(t, "tee f.md").Kind)
 	assert.Equal(t, PayloadNone, payloadFor(t, "generate | tee f.md").Kind)
+}
+
+// TestPayload_AHeredocDoesNotOverrideAProgramThatIgnoresStdin is the boundary
+// of the stdin rule, and it was found by mutation rather than by design — the
+// version that asked no question at all about the program survived every other
+// test in this file.
+//
+// A here-document attached to a program that does NOT read stdin is simply
+// discarded by the shell. `cp a.md b.md <<'EOF'` copies a.md exactly as it
+// would without the heredoc, so the destination's content is still
+// PayloadCopyOf naming a.md.
+//
+// Applying the heredoc to whatever file the line happened to name would be the
+// worst class of bug this change can produce: not a missing content, but a
+// CONFIDENTLY WRONG one, reporting bytes that never touch the file. A rule
+// reading it would judge text the command discarded.
+func TestPayload_AHeredocDoesNotOverrideAProgramThatIgnoresStdin(t *testing.T) {
+	t.Run("cp keeps its copy reference", func(t *testing.T) {
+		p := payloadFor(t, "cp a.md b.md <<'EOF'\nDISCARDED\nEOF\n")
+		assert.Equal(t, PayloadCopyOf, p.Kind,
+			"cp does not read stdin, so the heredoc is discarded by the shell")
+		assert.Equal(t, "a.md", p.From)
+		assert.NotEqual(t, "DISCARDED\n", p.Text,
+			"reporting the discarded heredoc would be a confidently wrong answer")
+	})
+
+	t.Run("touch keeps its empty create", func(t *testing.T) {
+		p := payloadFor(t, "touch f.md <<'EOF'\nDISCARDED\nEOF\n")
+		assert.Equal(t, PayloadLiteral, p.Kind)
+		assert.Equal(t, "", p.Text, "touch creates an empty file whatever is on its stdin")
+	})
+
+	t.Run("truncate keeps its empty result", func(t *testing.T) {
+		p := payloadFor(t, "truncate -s 0 f.md <<'EOF'\nDISCARDED\nEOF\n")
+		assert.Equal(t, PayloadLiteral, p.Kind)
+		assert.Equal(t, "", p.Text)
+	})
 }
 
 // --- copies -----------------------------------------------------------------
@@ -455,6 +508,18 @@ func TestPayload_SedInPlaceClaimsNothing(t *testing.T) {
 func TestPayload_DdClaimsNothingWithoutAHeredoc(t *testing.T) {
 	assert.Equal(t, PayloadNone, payloadFor(t, "dd of=f.md").Kind)
 	assert.Equal(t, PayloadNone, payloadFor(t, "dd if=other.md of=f.md").Kind)
+}
+
+// TestPayload_AHeredocIntoDdIsTheFilesContent is dd's knowable case, and it is
+// here because a mutation dropping dd from the stdin list survived without it —
+// tee alone was carrying the whole rule.
+//
+// `dd of=f.md <<'EOF'` writes the here-document into f.md, exactly as tee
+// does. The two are listed together and so must be tested together.
+func TestPayload_AHeredocIntoDdIsTheFilesContent(t *testing.T) {
+	p := payloadFor(t, "dd of=f.md <<'EOF'\nwritten by dd\nEOF\n")
+	assert.Equal(t, PayloadLiteral, p.Kind)
+	assert.Equal(t, "written by dd\n", p.Text)
 }
 
 // --- payloads survive the wrappers the path half already unwraps -------------
