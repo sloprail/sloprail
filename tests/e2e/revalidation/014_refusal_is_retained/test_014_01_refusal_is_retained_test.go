@@ -65,17 +65,25 @@ hooks:
 # Refuses content holding a secret, and records every time it is asked.
 `
 
-// judgeScript refuses any content holding SECRET, and records what it saw so a
-// test can tell an invocation that judged the pending bytes from one that
-// judged whatever happened to be on disk.
+// judgeScript refuses any PENDING content holding SECRET, and records what it
+// saw so a test can tell an invocation that judged the pending bytes from one
+// that judged whatever happened to be on disk.
+//
+// The pending bytes live under a different field name per kind, and reading the
+// right one is the whole point. PreFileCreate states them as `content`;
+// PreFileUpdate states them as `result` — the POST-edit bytes — alongside
+// `resultKnown`. Falling back to the file on disk would read the bytes the
+// write is about to REPLACE, which is one write behind and judges the wrong
+// content: it passes the offer that should be refused and refuses the next one.
 const judgeScript = `#!/bin/sh
 payload=$(cat)
 path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
 ws=$(printf '%s' "$payload" | sed -n 's|.*"guardrailDir":"\(.*\)/\.sloprail/guardrails/.*|\1|p')
 echo "asked disk=[$(cat "$ws/$path" 2>/dev/null)]" >> "$PWD/log"
+# A create states its body as content; an update states its outcome as result.
 body=$(printf '%s' "$payload" | grep -o '"content":"[^"]*"' || true)
 if [ -z "$body" ]; then
-  body=$(cat "$ws/$path" 2>/dev/null || true)
+  body=$(printf '%s' "$payload" | grep -o '"result":"[^"]*"' || true)
 fi
 case "$body" in
   *SECRET*) echo "content holds a secret" >&2; exit 2 ;;
@@ -140,9 +148,8 @@ func TestT014_01_ARefusalRefiresEveryCycleUntilTheContentChanges(t *testing.T) {
 // as the bypass in 013, arrived at by going backwards instead of forwards.
 //
 // Every offer here is a creation, because a refused write never lands and so
-// the file is never there — which is what keeps the pending bytes on the event
-// where the hook can see them. See T014_03 for the same claim on the update
-// path, and why it cannot yet be made there.
+// the file is never there. See T014_03 for the same claim on the update path,
+// where the pending bytes arrive as `result` rather than `content`.
 func TestT014_02_EditingAwayAndBackDoesNotClearTheRefusal(t *testing.T) {
 	harness.RequireSessionStore(t)
 
@@ -151,9 +158,9 @@ func TestT014_02_EditingAwayAndBackDoesNotClearTheRefusal(t *testing.T) {
 	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
 
 	// The benign write in the middle lands, so it is removed before the third
-	// offer — otherwise that offer would be an update, whose pending content
-	// the hook cannot see (T014_03), and the test would be measuring the wrong
-	// thing.
+	// offer — otherwise that offer would be an update, which states its pending
+	// bytes as `result` rather than `content` (T014_03), and this test would be
+	// exercising the update path while claiming to be the create one.
 	got := e.Run(proj, "s-014-02", "bad, good, bad again", Turns("done",
 		Write("w1", "notes.md", "SECRET=hunter2"),
 		Write("w2", "notes.md", "benign"),
@@ -188,28 +195,22 @@ func TestT014_02_EditingAwayAndBackDoesNotClearTheRefusal(t *testing.T) {
 
 // T014_03: the same claim as T014_02, on the update path.
 //
-// SKIPPED, and the skip lifts by deleting one line. PreFileUpdate is declared
-// with a path and NO content — internal/filemod/module.go:70, against
-// PreFileCreate at :64 which does carry it. So a hook bound to an update
-// cannot see the payload it is being asked to permit, and reading the file
-// gets the bytes the write would REPLACE.
+// This used to be skipped, and the reason it gave has expired. PreFileUpdate
+// carried a path and no content, so a hook bound to an update could not see the
+// payload it was being asked to permit and reading the file got the bytes the
+// write would REPLACE — one write behind, refusing and passing at the wrong
+// moments. The kind now carries `result` (the POST-edit bytes) and
+// `resultKnown`, so the pending content is on the event and this asserts.
 //
-// That makes this test unwritable rather than merely awkward. The sequence is
-// refuse / fix / restore against a file that EXISTS throughout, so every offer
-// is an update — and on every one of them the judge would be shown the
-// previous write's content instead of the pending one. It would refuse and
-// pass at the wrong moments, and any assertion made about it would be
-// measuring the hole rather than the invariant.
+// The sequence is refuse / fix / restore against a file that EXISTS throughout,
+// so every offer is an update — which is what makes this the update-path twin
+// of T014_02 rather than a second copy of it.
 //
-// Written out rather than omitted so the coverage claim is honest: this half of
-// refusal_is_retained is NOT covered today. When PreFileUpdate carries content,
-// delete the t.Skip and this starts asserting.
+// Note the setup write is judged too. `printf > notes.md` creates the file, and
+// a create is a file modification like any other, so the guardrail is asked
+// FOUR times: once for the setup and once per offer. Counting only the three
+// offers would have meant asserting the engine misses the create.
 func TestT014_03_EditingAwayAndBackOnTheUpdatePath(t *testing.T) {
-	t.Skip("PreFileUpdate declares a path and no content (internal/filemod/module.go:70), so a " +
-		"hook bound to it cannot see the pending payload — it reads the bytes the write would " +
-		"replace. The refuse/fix/restore sequence against an existing file therefore cannot be " +
-		"judged at all on this engine. Delete this line when the kind carries content.")
-
 	harness.RequireSessionStore(t)
 
 	e := New(t)
@@ -225,12 +226,49 @@ func TestT014_03_EditingAwayAndBackOnTheUpdatePath(t *testing.T) {
 	))
 
 	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 3 {
-		t.Fatalf("the guardrail was asked %d time(s), want 3. Ledger: %v", n, lines)
+	if n := len(lines); n != 4 {
+		t.Fatalf("the guardrail was asked %d time(s), want 4 — the setup create plus the three "+
+			"offers, each judged in its own right. Ledger: %v\n%s", n, lines, got.Output)
 	}
 	if n := strings.Count(got.Output, "content holds a secret"); n != 2 {
 		t.Fatalf("the guardrail refused %d time(s), want 2 — content refused, fixed, and "+
 			"restored must be refused again.\nLedger: %v\n%s", n, lines, got.Output)
+	}
+
+	// WHICH offers were refused, not just how many. Counting alone is satisfied
+	// by a judge reading the bytes the write REPLACES rather than the pending
+	// ones: that arrangement also refuses exactly twice, but it refuses the
+	// wrong two — the secret in w1 lands, the benign w2 is blocked, and the
+	// violation reaches disk while a harmless write is reported as the problem.
+	// This is not hypothetical; it is what this test caught when the judge fell
+	// back to reading the file, and a count-only assertion passed straight
+	// through it.
+	//
+	// Keyed on the tool_use_id so each verdict is tied to its own offer.
+	blocked := func(id string) bool {
+		for _, line := range strings.Split(got.Output, "\n") {
+			if strings.Contains(line, id) && strings.Contains(line, "content holds a secret") {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range []struct {
+		id, why string
+	}{
+		{"w1", "the first offer states SECRET as its result and must be refused"},
+		{"w3", "the return to the refused content must be refused again"},
+	} {
+		if !blocked(want.id) {
+			t.Fatalf("offer %s was not refused — %s. A judge reading the pre-write bytes "+
+				"instead of `result` refuses the wrong offers and lets the secret land.\n"+
+				"Ledger: %v\n%s", want.id, want.why, lines, got.Output)
+		}
+	}
+	if blocked("w2") {
+		t.Fatalf("the benign offer w2 was refused — the judge is one write behind, reading the "+
+			"bytes being replaced rather than the pending `result`.\nLedger: %v\n%s",
+			lines, got.Output)
 	}
 }
 
