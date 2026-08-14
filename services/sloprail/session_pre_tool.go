@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -543,6 +547,32 @@ const (
 	exitNotFound      = 127
 )
 
+// hookTimeout bounds how long ONE hook may take before it is killed and read as
+// a refusal.
+//
+// Per hook rather than per dispatch. A per-dispatch budget makes one slow rule
+// starve the rules after it, so which guardrail refuses depends on declaration
+// order and on how long its neighbours happened to take — a verdict that is not
+// a function of the action being judged is not a verdict. Per hook costs the
+// multiplication (a binding with four hooks may take four times this) and that
+// is the right trade: each rule is answerable for its own time, and a slow
+// dispatch is visible as several slow hooks rather than one arbitrary casualty.
+//
+// The number is generous because a hook may legitimately be a model call — the
+// sr-agent path is exactly that, and a judge cut off mid-answer is a rule that
+// works on a fast machine and refuses on a loaded one. It is also well under
+// the harness's own deadline, and that ordering is the point: whichever bound
+// fires first decides what the user sees, and only this one can produce a
+// verdict naming the rule. If the harness killed the engine first, the engine
+// would render no answer at all and the action would proceed unjudged.
+const hookTimeout = 3000 * time.Second
+
+// hookKillGrace caps how long Wait may keep waiting once the process group has
+// been killed. SIGKILL cannot be caught, so this is only reached by a
+// descendant wedged in an uninterruptible syscall; without it, one such process
+// restores the unbounded hang this whole mechanism exists to remove.
+const hookKillGrace = 2 * time.Second
+
 // runHooks runs a binding's hooks against one event, stopping at the first
 // refusal.
 //
@@ -570,8 +600,40 @@ func runHooks(d guardrail.Declaration, b guardrail.Binding, e event.Event, scope
 		// using an ordinary shell idiom, not making a mistake, and reading only
 		// stdout threw those refusals away.
 		var stdout, stderr bytes.Buffer
-		c := exec.Command("sh", "-c", h.Command)
+		ctx, cancel := context.WithTimeout(context.Background(), hookTimeout)
+		c := exec.CommandContext(ctx, "sh", "-c", h.Command)
 		c.Dir = d.Dir
+
+		// A hook that never answers must stop being the session's problem.
+		//
+		// Every other failure here is observed as a finished process; this one
+		// is the absence of an event, so nothing in the fail-open discipline
+		// fires on its own. Without a deadline the engine waits as long as the
+		// hook takes, which for a wedged hook is forever — and then the HARNESS
+		// kills the engine, at which point sloprail has rendered no verdict and
+		// the action proceeds unjudged. That is the fail-open, arriving by way
+		// of the engine never getting to speak. The bound has to be here so the
+		// answer is still sloprail's.
+		//
+		// The kill goes to the process GROUP, not the shell. A hook is a shell
+		// line and the slow ones spawn something — sr-agent, a model call — and
+		// those children both survive a kill aimed at the shell and hold the
+		// inherited pipes open, so Wait goes on blocking and the deadline
+		// achieves nothing. Setpgid gives the shell its own group for the
+		// children to inherit; one signal to the negated pgid ends the tree.
+		// Leaking a model-calling subprocess per guarded action is its own
+		// defect, quite apart from the hang.
+		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		c.Cancel = func() error {
+			if err := syscall.Kill(-c.Process.Pid, syscall.SIGKILL); err != nil {
+				if errors.Is(err, syscall.ESRCH) {
+					return os.ErrProcessDone
+				}
+				return err
+			}
+			return nil
+		}
+		c.WaitDelay = hookKillGrace
 		// Which guardrail is asking, which session and tree its state is keyed
 		// by, the record to read, and the provenance this hook passes on — all
 		// from one place, because they are one exec's environment. The guardrail
@@ -590,8 +652,35 @@ func runHooks(d guardrail.Declaration, b guardrail.Binding, e event.Event, scope
 		c.Stderr = &stderr
 
 		err := c.Run()
+		expired := ctx.Err() != nil
+		// Released here rather than by defer: this is a loop, and a deferred
+		// cancel would hold every hook's context until the whole binding is
+		// done.
+		cancel()
+
 		if err == nil {
 			continue // permitted: exit zero, and silence is consent
+		}
+
+		// Out of time. Checked BEFORE the ExitError branch below, which would
+		// otherwise report this as a refusal at "exit -1" — Go's sentinel for
+		// "died by signal", not a status any process can return, and a number
+		// that sends the author to debug an exit path never taken.
+		//
+		// It refuses, for the same reason a hook that cannot run refuses: the
+		// rule never answered, and a mechanism that failed must not read as
+		// approval. The objection to that is real — a rule that wedges on some
+		// input now blocks that input until someone removes the rule — but the
+		// alternative is an engine that permits precisely what it could not
+		// judge, which is the one failure a guardrail may not have. The refusal
+		// says which rule and how long, because a refusal nobody can diagnose is
+		// how the wedged rule stays wedged.
+		if expired {
+			return verdict{
+				Refused: true,
+				Reason: fmt.Sprintf("guardrail hook %q was killed after %s without answering, and the action was refused because a guardrail that did not answer must not be read as approval. Make the hook decide within the deadline, or take the rule out.%s",
+					h.Command, hookTimeout, quoted(stderr.Bytes())),
+			}, nil
 		}
 
 		exitErr, isExit := err.(*exec.ExitError)
@@ -651,6 +740,15 @@ func refusalReason(command string, code int, stdout, stderr []byte) string {
 	}
 	if text := plainText(stderr); text != "" {
 		return text
+	}
+
+	// Killed by a signal, having said nothing. Go reports ExitCode() == -1 as a
+	// sentinel for "died by signal" — there is no such exit status, so printing
+	// the number sends the author looking for a bug in an exit path that was
+	// never taken. A crash, an OOM kill, a `kill -9`: the hook did not exit, and
+	// the message has to say so.
+	if code < 0 {
+		return fmt.Sprintf("guardrail hook %q was killed before it answered (no exit status: a crash, an out-of-memory kill, or a signal). The action was refused because a guardrail that did not answer must not be read as approval.", command)
 	}
 
 	// It said nothing usable. Refuse anyway, and say enough that whoever wrote
