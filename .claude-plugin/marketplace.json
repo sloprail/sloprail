@@ -1,14 +1,20 @@
 {
   "name": "sloprail-marketplace",
-  "description": "sloprail plugin marketplace (in-repo) — wires a harness's lifecycle to the sloprail engine",
-  "owner": { "name": "sloprail", "email": "build@sloprail.com" },
+  "description": "sloprail plugin marketplace (in-repo) — maps a harness's lifecycle onto sloprail's session subcommands",
+  "owner": {
+    "name": "sloprail",
+    "email": "nikita.sviridenko@voypost.com"
+  },
   "plugins": [
     {
       "name": "sloprail",
-      "description": "Maps Claude Code's lifecycle hooks onto sloprail's session subcommands, so a project's declared guardrails are enforced at the moments the harness can pause.",
+      "description": "Enforces a project's declared guardrails at the moments its harness can pause. The only Claude-Code-specific part of sloprail: it maps that harness's lifecycle names onto sr-session's subcommands, so nothing inside the engine knows whose lifecycle it is running under.",
       "version": "0.0.1",
       "source": "./marketplace/plugins/sloprail",
-      "author": { "name": "sloprail", "email": "build@sloprail.com" }
+      "author": {
+        "name": "sloprail",
+        "email": "nikita.sviridenko@voypost.com"
+      }
     }
   ]
 }
