@@ -1023,8 +1023,93 @@ func (r Result) Permitted() bool { return !r.Refused() }
 // Run drives a scenario through the mock as a real session.
 func (e *Env) Run(projDir, sessionID, prompt string, s Scenario) Result {
 	e.t.Helper()
+	return e.run(projDir, projDir, sessionID, prompt, s)
+}
 
-	e.seedTranscript(projDir, sessionID, prompt)
+// RunFrom drives a scenario as a session whose hooks fire from a SUBDIRECTORY
+// of the repository, the way a session working under `cd internal/foo` runs.
+//
+// WHAT IS BEING MOVED, because only one thing can be and the other was measured
+// rather than assumed. The mock reports its `--project-dir` as the `cwd` on
+// every hook payload, and it runs the agent's own Bash turns there too — the
+// PROCESS working directory is ignored for both. Measured against
+// a10n-claude-mock: launching it from a subdirectory with --project-dir at the
+// root yields `"cwd":"<root>"` on the Stop payload, so a harness that moved only
+// cmd.Dir would change nothing the engine can see, and every test resting on it
+// would be driving an ordinary root session while claiming otherwise.
+//
+// So the subdirectory is passed as the project dir. That is exactly the
+// arrangement the defect is about: `cwd` on the payload is a directory BELOW the
+// repository root, which is the one fact the engine has to reconcile.
+//
+// Why it matters. Everything that identifies a session derives from that
+// reported directory. The state database is keyed by the workspace anchor, and
+// the difference is rooted where the hook was invoked. Keyed on the RAW cwd, a
+// hook reporting a subdirectory opens a DIFFERENT database — an empty baseline,
+// and every verdict the session recorded unreachable, silently and mid-session.
+// The anchor now resolves to the git root (services/sr-session/statedir.go,
+// workspaceAnchor), which is what makes a root cycle and a subdirectory cycle
+// agree they are in one tree.
+//
+// The TRANSCRIPT follows the reported directory, and it has to. A harness keys
+// a conversation's record by the project dir it was given, so the mock writes
+// this session's record under the SUBDIRECTORY's encoding and puts that path on
+// every hook payload. Seeding at the repository root instead produces two files
+// for one session: the seeded one nothing reads, and the mock's own, which has
+// no parentless root record for the identity walk to land on — so the walk falls
+// through to a tool_use uuid and the session keys its state under that. Measured:
+// state.db appeared under `e2e-turn-w1` rather than `e2e-root-<session>`, the
+// baseline read back empty, and every verdict was re-judged the next cycle.
+//
+// The consequence for a caller is worth stating plainly: a cycle run with Run
+// and a cycle run with RunFrom are DIFFERENT conversations, because their
+// records sit in different directories. A test needing one session across
+// several cycles must therefore drive all of them the same way. Whether the
+// engine keys ONE session's state alike from the root and from a subdirectory —
+// the workspace anchor — cannot be observed through this harness for that
+// reason; the note where T025_03 used to sit records what was measured, and the
+// claim is pinned as a unit test instead.
+//
+// The GUARDRAIL is likewise loaded from the reported directory: the engine looks
+// for `.sloprail/` beside the cwd it was given. A test using this must put the
+// rule where the cycle will look for it, and read that rule's ledger from the
+// same place.
+func (e *Env) RunFrom(projDir, subRel, sessionID, prompt string, s Scenario) Result {
+	e.t.Helper()
+	workDir := filepath.Join(projDir, subRel)
+	if info, err := os.Stat(workDir); err != nil || !info.IsDir() {
+		e.t.Fatalf("harness: RunFrom %q: not a directory in the project (%v) — "+
+			"the agent cannot work from somewhere that is not there, and a test resting on "+
+			"this would be driving the session from the project root without saying so", subRel, err)
+	}
+	// The mock resolves `.claude/settings.json` from the project dir it is given,
+	// so the plugin has to be enabled where this session will look for it.
+	// Without this the mock finds no settings, fires no lifecycle hooks at all,
+	// and the cycle is silent — which a test reading an empty ledger would
+	// happily report as the engine correctly staying quiet.
+	//
+	// It is the SAME settings Project() writes: a marketplace source and an
+	// enabled plugin, exactly as a user would install them. Nothing about the
+	// wiring differs — only where it sits, which is what a session reporting this
+	// directory requires.
+	if err := os.MkdirAll(filepath.Join(workDir, ".claude"), 0o755); err != nil {
+		e.t.Fatalf("harness: RunFrom %q: mkdir .claude: %v", subRel, err)
+	}
+	e.writeSettings(workDir)
+	return e.run(projDir, workDir, sessionID, prompt, s)
+}
+
+// run drives the mock with the transcript's project root and the directory the
+// session reports given separately. They are the same for an ordinary session;
+// RunFrom is what separates them.
+func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result {
+	e.t.Helper()
+
+	// Seeded where the MOCK will write it, which is keyed on the directory the
+	// session reports rather than on the repository root. See RunFrom: seeding
+	// elsewhere leaves the mock's own record without a parentless root, and the
+	// identity walk then keys the session on a tool_use uuid.
+	e.seedTranscript(workDir, sessionID, prompt)
 
 	scriptPath := filepath.Join(projDir, ".scenario.sh")
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
@@ -1034,13 +1119,15 @@ func (e *Env) Run(projDir, sessionID, prompt string, s Scenario) Result {
 	cmd := exec.Command(e.mock,
 		"-p", "--output-format", "stream-json",
 		"--script", scriptPath,
-		"--project-dir", projDir,
+		// The directory the session reports, which RunFrom may place below the
+		// repository root. The mock echoes this as `cwd` on every hook payload.
+		"--project-dir", workDir,
 		"--config-dir", e.configDir,
 		"--plugin-cache-dir", e.pluginDir,
 		"--session-id", sessionID,
 		prompt,
 	)
-	cmd.Dir = projDir
+	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"HOME="+e.home,
 		"CLAUDE_CONFIG_DIR="+e.configDir,

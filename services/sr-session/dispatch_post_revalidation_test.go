@@ -441,3 +441,108 @@ hooks:
 	stdout, _ := s.run()
 	assert.Empty(t, strings.TrimSpace(stdout), "a cycle nothing objected to must not block")
 }
+
+// newPostSessionFrom is newPostSession for a session whose hook reports a
+// SUBDIRECTORY of the repository rather than its root.
+//
+// The one difference is the payload's Cwd, which is what a hook fired under
+// `cd internal/foo` carries. Everything else — the transcript, the data home,
+// the store — is arranged exactly as for a root session, because the point is
+// that only the reported directory differs.
+//
+// The transcript is keyed on the subdirectory for the same reason a harness
+// keys it on the directory the session reports, and its records carry that cwd
+// so the identity walk accepts the file as this tree's.
+func newPostSessionFrom(t *testing.T, proj, sub string) *postSession {
+	t.Helper()
+
+	t.Setenv("SLOPRAIL_TEST_PROJECT", proj)
+
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	dir := filepath.Join(cfg, "projects", encodeWorkspace(sub))
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	tp := filepath.Join(dir, "sess.jsonl")
+	require.NoError(t, os.WriteFile(tp,
+		[]byte(`{"type":"user","uuid":"root-1","parentUuid":null,"cwd":"`+sub+`","message":{"role":"user","content":"go"}}`+"\n"), 0o644))
+
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	p := HookPayload{Cwd: sub, TranscriptPath: tp, SessionID: "sess"}
+	store := openStore(t)
+	return &postSession{t: t, proj: proj, p: p, store: store}
+}
+
+// TestPostDispatch_AVerdictIsRecordedWhenTheHookFiresFromASubdirectory.
+//
+// identity_is_content and exemption_needs_pass, at the one place the two meet:
+// a verdict can only be keyed on content that was actually read, and the
+// dispatcher has to resolve the event's path to read it.
+//
+// THE DEFECT. Every path in the difference is REPOSITORY-RELATIVE — that is
+// what gitrepo reports and what treeDifference carries, and its Root() names
+// what they resolve against. The dispatcher, however, resolves the subject
+// against `scope.Workspace`, which is the payload's cwd. The two are the same
+// only when the hook fired at the top of the tree.
+//
+// Fire it from a subdirectory and they diverge: the event names
+// "sub/deep/f.md", the workspace is "<root>/sub/deep", and the join produces
+// "<root>/sub/deep/sub/deep/f.md" — a path that does not exist. fingerprint.OfFile
+// fails, Subject answers false, and `fingerprinted` is false for every event in
+// the cycle. Nothing is skipped and, worse, NOTHING IS EVER RECORDED: the whole
+// skip-and-record block is behind that flag.
+//
+// So the consequences are both of the ones the spec names, at once. No pass is
+// stored, so a settled file is re-judged on every cycle for the rest of the
+// session — and a judge hook is a model call, free to answer differently about
+// work the agent can no longer reach. And no REFUSAL is stored either, so
+// refusal_is_retained silently stops holding: the violation cannot resurface,
+// because there is no row saying it happened.
+//
+// Asserted on the stored row rather than on a count of invocations, because the
+// row is the thing that is missing and a count would also move if the skip were
+// merely mistimed.
+func TestPostDispatch_AVerdictIsRecordedWhenTheHookFiresFromASubdirectory(t *testing.T) {
+	proj := initRepo(t)
+	sub := filepath.Join(proj, "sub", "deep")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+
+	// The rule lives where a cycle reporting this directory loads it from.
+	guardrailDir(t, sub, "permits", `---
+hooks:
+  PostFileCreate:
+    - hooks:
+        - type: command
+          command: ./record.sh
+---
+
+# Permits, and records that it ran
+`, map[string]string{"record.sh": recordAndPass})
+	ldir := ledgerDir(t)
+
+	s := newPostSessionFrom(t, proj, sub)
+	baselineAt(t, s.store, proj)
+
+	// The agent's work, inside the subdirectory. Its repository-relative path is
+	// "sub/deep/ok.md", which is what the event will carry.
+	require.NoError(t, os.WriteFile(filepath.Join(sub, "ok.md"), []byte("fine"), 0o644))
+
+	s.run()
+
+	// The premise: the cycle really did dispatch this file to the rule. Without
+	// it, a missing verdict would only mean the hook never ran.
+	require.Contains(t, kindsSeen(t, ldir), "PostFileCreate",
+		"the cycle did not dispatch the created file at all, so the absence of a verdict "+
+			"below says nothing about whether one would have been recorded")
+
+	v, found := s.check("sub/deep/ok.md", "permits")
+	require.True(t, found,
+		"no verdict was recorded for a file judged by a hook that fired from a subdirectory — "+
+			"the subject is resolved against the payload's cwd while the event's path is "+
+			"repository-relative, so the join names a file that does not exist, the content "+
+			"cannot be fingerprinted, and the whole record-and-skip step is passed over; "+
+			"nothing is ever settled and no refusal can be retained")
+	assert.True(t, v.Passed, "the rule permitted the file, so the stored verdict must say so")
+	assert.Equal(t, fingerprint.Of([]byte("fine")), v.Fingerprint,
+		"the verdict is keyed on the content the rule was actually shown")
+}

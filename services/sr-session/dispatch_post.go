@@ -120,7 +120,23 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	}
 	defer rev.Close()
 
-	events := postEvents(cmd, store, p, reg, bound)
+	// The events, and the directory their paths resolve against.
+	//
+	// The root is carried out rather than re-derived, and it is NOT the payload's
+	// cwd. Every path in the difference is repository-relative, because that is
+	// what git reports; the cwd is wherever the hook happened to fire, and the
+	// two are the same only at the top of the tree. Resolving a subject against
+	// the cwd from a subdirectory joins the repository-relative path onto a
+	// directory already inside the repository — "<root>/sub/deep/sub/deep/f.md" —
+	// which names nothing, so the content cannot be fingerprinted and no verdict
+	// is ever recorded. See TestPostDispatch_AVerdictIsRecordedWhenTheHookFires
+	// FromASubdirectory, which failed before this was threaded through.
+	events, root := postEvents(cmd, store, p, reg, bound)
+	if root == "" {
+		// No difference was established, so nothing names a root. Only TurnEnd
+		// follows, which carries no path and asks for no subject.
+		root = p.Cwd
+	}
 
 	// TurnEnd last, and unconditionally.
 	//
@@ -139,7 +155,7 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// it carries no fields are stated in the same place they are declared.
 	events = append(events, cyclemod.Event())
 
-	objections := dispatchAll(cmd, reg, decls, rev, scope, events)
+	objections := dispatchAll(cmd, reg, decls, rev, scope, root, events)
 	if len(objections) > 0 {
 		// The turn does not end. Reported through the one channel measured to
 		// both block and carry its words — see block().
@@ -182,17 +198,24 @@ func refusalText(objections []objection) string {
 // repository, a git that will not answer — none of them is a rule being
 // violated, and refusing the agent's work over the engine's own inability to
 // look would be a refusal no guardrail asked for.
-func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg *module.Registry, bound []string) []event.Event {
+// It also returns the directory those events' paths resolve against — the
+// REPOSITORY root, taken from the difference itself rather than from the
+// payload's cwd. A caller fingerprinting a subject needs the same root the
+// producer used, or it joins a repository-relative path onto a directory inside
+// the repository and names a file that is not there.
+//
+// The root is "" exactly when there are no events to resolve.
+func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg *module.Registry, bound []string) ([]event.Event, string) {
 	commit, ok, err := store.Meta(sessionstate.MetaBaselineCommit)
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: baseline not read:", err)
-		return nil
+		return nil, ""
 	}
 	if !ok || commit == "" {
 		// No point to measure from — a project without git, or one with no
 		// commit yet. The cycle still ends and TurnEnd still fires; there is
 		// simply no difference to report.
-		return nil
+		return nil, ""
 	}
 
 	// The difference is taken FIRST and the problem reported after, the same
@@ -209,7 +232,7 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: tree not fully compared:", err)
 	}
 	if diff == nil {
-		return nil
+		return nil, ""
 	}
 
 	// What is still unfixed, whatever the tree now says.
@@ -227,7 +250,7 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 	readdOutstanding(cmd, store, diff)
 
 	if diff.empty() {
-		return nil
+		return nil, ""
 	}
 
 	in := module.Input{
@@ -251,7 +274,7 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: module %q: %v\n", m.Name(), err)
 		}
 	}
-	return events
+	return events, diff.Root()
 }
 
 // readdOutstanding puts every still-unfixed file back into the difference.
@@ -298,7 +321,10 @@ func readdOutstanding(cmd *cobra.Command, store sessionstate.Store, diff *treeDi
 // guardrail silence every other, and the agent would fix them one turn at a
 // time. Everything is dispatched; the objections are answered once, together,
 // by the caller.
-func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Declaration, rev *revalidation, scope hookScope, events []event.Event) []objection {
+// root is what an event's path resolves against when a subject is fingerprinted
+// — the REPOSITORY root, not the directory the hook fired in. See runPostDispatch
+// for why the two must not be confused.
+func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Declaration, rev *revalidation, scope hookScope, root string, events []event.Event) []objection {
 	var objections []objection
 
 	for _, e := range events {
@@ -336,7 +362,11 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 				// The pre-tool point is safe hoisting it because its only
 				// fingerprinted kind is PreFileCreate, whose content comes off
 				// the event and reads no disk.
-				subj, fingerprinted := rev.Subject(e, scope.Workspace)
+				// Against the repository root, which is what the event's path is
+				// relative to — never scope.Workspace, which is the directory the
+				// hook fired in and differs from the root the moment an agent
+				// works from a subdirectory.
+				subj, fingerprinted := rev.Subject(e, root)
 
 				// This guardrail has already seen this exact content and let it
 				// through. Asking again is not merely waste: a judge hook is a
