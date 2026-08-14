@@ -102,6 +102,42 @@ func TestT019_09b_TheExpiryRefusalSaysWhatHappened(t *testing.T) {
 		"the reason must say how long the hook was given, or the author cannot tell a wedged rule from a merely slow one:\n%s", res.Output)
 }
 
+// T019_09e: a hook killed by a signal it did not survive says so too.
+//
+// The sibling of 019_09b on the other path. An expired hook is killed by the
+// engine, which knows why and says how long it waited. A hook killed by anyone
+// ELSE — a segfault, the OOM killer, a stray `kill -9` — reaches the same dead
+// end from outside, and the engine has only the corpse to go on.
+//
+// 019_02 already pins that this refuses. What it never checked is what the
+// author is told, and the answer was "refused (exit -1) but gave no reason".
+// ExitCode() == -1 is Go's sentinel for "died by signal", not a status any
+// process can return, so the one actionable fact — the hook did not exit, it
+// was killed — was encoded as a number that means the opposite. An author
+// reading it goes looking for the bug in their script's exit path, which is the
+// one place it is not.
+//
+// Distinct from the timeout message deliberately: the engine must not claim a
+// deadline it did not impose. This hook died in milliseconds.
+func TestT019_09e_ACrashedHookSaysItWasKilledNotExitMinusOne(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.Guardrail(proj, "crasher", bindEveryWrite, map[string]string{
+		"h.sh": "#!/bin/sh\ncat >/dev/null\nkill -9 $$\n",
+	})
+
+	res := e.Run(proj, "s-019-09e", "write a note", Turns("done",
+		Write("w1", "notes.md", "hello"),
+	))
+
+	require.True(t, res.Refused(), "a hook killed by a signal must refuse")
+	assert.False(t, e.Exists(proj, "notes.md"), "and the work must be prevented")
+	assert.False(t, res.Saw("exit -1"),
+		"the reason reports a status no process can return, sending the author to debug an exit path never taken:\n%s", res.Output)
+	assert.True(t, res.Saw("killed"),
+		"the reason must say the hook was killed rather than that it decided:\n%s", res.Output)
+}
+
 // T019_09d: the kill reaches what the hook SPAWNED, not just the hook.
 //
 // The half of the deadline that a verdict cannot show. Bounding the wait and
