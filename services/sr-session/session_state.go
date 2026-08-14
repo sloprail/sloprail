@@ -31,9 +31,8 @@ environment the engine sets when it runs a hook — ` + GuardrailEnv + `,
 ` + SessionEnv + `, ` + WorkspaceEnv + ` — because a hook able to name either
 could read a rule it was never told about, or reach into another session.
 
-NOT YET WIRED. The dispatcher does not set that environment, so these commands
-fail with "no guardrail in scope" when called from a hook. A guardrail that
-needs to remember across cycles cannot be written on this build.`,
+Outside a hook there is no guardrail in scope, and these commands say so rather
+than guessing which rule is asking.`,
 	}
 	cmd.AddCommand(newSessionStateGetCmd(), newSessionStateSetCmd(), newSessionStateListCmd())
 	return cmd
