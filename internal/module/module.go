@@ -20,7 +20,7 @@
 //
 // There is exactly one module list in a build, and modules.Registry is the only
 // registry a hook point should be handed. A hook point that assembles its own
-// enforces against a vocabulary `guardrail help` never printed — see
+// enforces against a vocabulary the load check never reported — see
 // NewRegistry, and modules.TestOnlyModulesPackageBuildsARegistry, which is what
 // holds that property.
 package module

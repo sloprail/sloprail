@@ -11,13 +11,18 @@ import (
 	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
-// The skill is the authoring interface now that `guardrail help` prints only
-// the registry-derived vocabulary. That move is right — a help command should
-// document its command — but it costs the format the one property that kept the
-// old help honest: being generated. A skill is a hand-written file, and this
-// repo's recurring failure is a confident sentence about behaviour the code does
-// not have. Six of those shipped in the help text these tests replaced, two of
-// them found only by running the thing.
+// The skill is the ENTIRE authoring interface now. `sr-guardrail help` is gone
+// — it was the only subcommand of its binary, and a help command that describes
+// a declaration format rather than its own command's behaviour was the wrong
+// home for that content in the first place.
+//
+// That deletion moves the prose here but NOT the vocabulary, which is the point
+// these tests defend. A skill is a hand-written file, and this repo's recurring
+// failure is a confident sentence about behaviour the code does not have. Six of
+// those shipped in the help text these tests replaced, two of them found only by
+// running the thing. The kinds must therefore still come from the engine, and
+// they do: the load check reports them from the same registry the enforcement
+// runs on — see the pointer assertion at the end of T003_14.
 //
 // So the claims that can be pinned are pinned here. Not the prose — the facts
 // an author would act on and be wrong about.
@@ -45,14 +50,16 @@ func skillText(t *testing.T) string {
 	return string(body)
 }
 
-// T003_14: the skill does not restate the event vocabulary the binary derives.
+// T003_14: the skill does not restate the event vocabulary the engine derives.
 //
-// The division of labour is the whole design: `guardrail help` prints the kinds
-// and fields from the modules, so it cannot go stale; the skill carries the
-// format, which the binary no longer says. A kind name written into the skill
-// would be a second copy of the one thing that is generated — and being the copy
-// an author reads, it is the one trusted when a module is added and the skill is
-// not updated.
+// The division of labour is the whole design, and deleting `sr-guardrail help`
+// did not change it — only which derived surface the skill points at. The
+// LOAD CHECK now reports the kinds and fields, from the same registry the
+// enforcement runs on, so it still cannot go stale; the skill carries the
+// format, which no binary states. A kind name written into the skill would be a
+// second copy of the one thing that is generated — and being the copy an author
+// reads, it is the one trusted when a module is added and the skill is not
+// updated.
 //
 // Checked against the registry rather than a list of names, so a new module puts
 // its kinds under this guard automatically.
@@ -80,13 +87,21 @@ func TestT003_14_SkillDoesNotRestateTheDerivedVocabulary(t *testing.T) {
 		}
 	}
 	if len(named) > 1 {
-		t.Errorf("the skill names %d event kinds (%s) — that is a copy of the list `guardrail help` derives, and it is the copy an author trusts when a module is added",
+		t.Errorf("the skill names %d event kinds (%s) — that is a copy of the list the loader derives, and it is the copy an author trusts when a module is added",
 			len(named), strings.Join(named, ", "))
 	}
 
-	// It must point at the command that does carry them.
-	if !strings.Contains(skill, "sr-guardrail help") {
-		t.Error("the skill never tells the author to run `sr-guardrail help` — the kinds are per-build and cannot be guessed")
+	// It must point at something that DOES carry them. Not naming the vocabulary
+	// is only half the property: a skill that withholds the list and also never
+	// says where to get it leaves an author guessing kind names, which is the
+	// silent no-op this whole document exists to prevent.
+	//
+	// `sr-session start` is that surface now. It is not a help screen — it is the
+	// loader reporting, from the registry the enforcement itself runs on, every
+	// kind this build produces and every field a kind carries. T003_19 below
+	// proves it actually answers that way rather than merely being cited.
+	if !strings.Contains(skill, "sr-session start") {
+		t.Error("the skill never tells the author how to get the kinds from the engine — they are per-build and cannot be guessed, so an author who is not sent to the load check will invent a kind name")
 	}
 }
 
@@ -440,4 +455,115 @@ func TestT003_18_SkillWarnsOffOnlyWhatIsActuallyBroken(t *testing.T) {
 	if !hasPost && strings.Contains(skill, "Post") {
 		t.Error("the skill warns about Post kinds and none are declared")
 	}
+}
+
+// T003_19: the load check really is a vocabulary oracle.
+//
+// This is the test that keeps the deletion of `sr-guardrail help` honest. That
+// command was the one place an author could read the whole event vocabulary, and
+// T003_01 pinned that it printed every declared kind and field. Removing the
+// command without replacing that check would leave the skill telling authors to
+// run something that might answer with nothing — the skill's instruction would
+// be a claim about the engine with no test behind it, which is exactly the
+// failure mode the rest of this file exists to prevent.
+//
+// So the property moves rather than disappears: what used to be "the help screen
+// lists every kind" is now "the loader NAMES every kind when you miss, and names
+// a kind's fields when you misspell one". Both halves are what an author
+// actually needs, and both are derived from the registry rather than written
+// down, so a new module puts its kinds under this guard automatically.
+//
+// Driven through the real binary with real declarations, because the claim is
+// about what an author SEES — asserting against Validate's return value would
+// prove the problems exist while proving nothing about whether they reach the
+// terminal.
+func TestT003_19_LoadCheckReportsTheVocabulary(t *testing.T) {
+	e := New(t)
+
+	reg, err := modules.Registry()
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	kinds := reg.DeclaredKinds()
+	if len(kinds) == 0 {
+		t.Fatal("no kinds declared — this test would prove nothing")
+	}
+
+	const script = "#!/bin/sh\ncat >/dev/null\nexit 0\n"
+
+	// Half one: an unknown kind is answered with the kinds that do exist. This is
+	// what replaces `guardrail help`'s EVENT KINDS list as the way to find out
+	// what may be bound to at all.
+	t.Run("an unknown kind is answered with every kind this build has", func(t *testing.T) {
+		proj := e.Project()
+		e.Guardrail(proj, "probe-kind", unknownKindDeclaration, map[string]string{"h.sh": script})
+
+		got := e.CLI(proj, "session", "start")
+
+		for _, kind := range kinds {
+			if !strings.Contains(got.Output, kind) {
+				t.Errorf("the load check does not name kind %q when refusing an unknown one — an author sent here by the skill cannot discover it, and the kinds cannot be guessed:\n%s", kind, got.Output)
+			}
+		}
+	})
+
+	// Half two: a misspelled field is answered with that kind's real fields AND
+	// their types. The types matter as much as the names — the skill's operator
+	// tables are split by type, and a `list` matched with a string operator is a
+	// rule that does not compile.
+	t.Run("a misspelled field is answered with the kind's real fields and types", func(t *testing.T) {
+		for _, kind := range kinds {
+			decl, ok := reg.KindDeclFor(kind)
+			if !ok || len(decl.Fields) == 0 {
+				continue // a kind carrying no fields has no field list to report
+			}
+
+			proj := e.Project()
+			e.Guardrail(proj, "probe-field", misspelledFieldFor(kind), map[string]string{"h.sh": script})
+
+			got := e.CLI(proj, "session", "start")
+
+			for _, f := range decl.Fields {
+				if !strings.Contains(got.Output, f.Name) {
+					t.Errorf("kind %q carries field %q, and the load check does not name it when refusing a misspelling — a matcher author would have to guess it:\n%s", kind, f.Name, got.Output)
+				}
+				if !strings.Contains(got.Output, string(f.Type)) {
+					t.Errorf("the load check names field %q of %q without its type %q — the operator groups are not interchangeable, so a type-less field name is not enough to write a matcher from:\n%s", f.Name, kind, f.Type, got.Output)
+				}
+			}
+		}
+	})
+}
+
+// A kind no module can produce, so the loader has to answer with the ones that
+// exist. Deliberately not a near-miss of a real name: this is asking the engine
+// "what have you got", which is how an author with no list starts.
+const unknownKindDeclaration = `---
+hooks:
+  NoSuchKindExistsHere:
+    - hooks:
+        - type: command
+          command: ./h.sh
+---
+
+# Body
+`
+
+// misspelledFieldFor binds to one real kind with a field name no kind carries,
+// which is what makes the loader print that kind's real fields.
+//
+// Built per kind rather than written out, so this follows the registry instead
+// of becoming the second copy of the vocabulary that T003_14 forbids.
+func misspelledFieldFor(kind string) string {
+	return `---
+hooks:
+  ` + kind + `:
+    - matcher: nosuchfieldanywhere == "x"
+      hooks:
+        - type: command
+          command: ./h.sh
+---
+
+# Body
+`
 }

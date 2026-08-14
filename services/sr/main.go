@@ -2,7 +2,6 @@
 // high-level command is a separate binary, and this dispatches to them.
 //
 //	sr session ...    → sr-session
-//	sr guardrail ...  → sr-guardrail
 //	sr file ...       → sr-file
 //	sr mark ...       → sr-mark
 //	sr agent ...      → sr-agent
@@ -52,9 +51,9 @@
 // test harness pointing at a temp build), and which is unset in every normal
 // install because sibling resolution already answers.
 //
-// Adding it would cost the thing the split just bought. sr-guardrail links the
-// module registry and nothing else; putting a config layer in the shared path
-// would link a config parser into all six binaries so that none of them could
+// Adding it would cost the thing the split just bought. sr-file links the file
+// checks and nothing else; putting a config layer in the shared path would link
+// a config parser into every one of these binaries so that none of them could
 // read a setting that does not exist. Revisit if a real user-facing setting
 // ever appears — a default schema path, a global disable — and note that such a
 // setting would belong to `.sloprail/` beside the guardrails, which is
@@ -93,13 +92,13 @@ type service struct {
 // this repo otherwise refuses. Deriving them is not possible without cost: a
 // cobra root never prints its own Short (--help prints Long, and Short is shown
 // only by a parent listing children), so the only runtime source is exec'ing
-// five binaries to print one help screen. The copy is bounded — one line per
+// every service to print one help screen. The copy is bounded — one line per
 // service — and it is pinned by TestProxyShortsMatchTheServices, which reads
 // each service's Short from its source and fails on any disagreement. Three of
-// these five had ALREADY drifted when that test was written.
+// the five services in the table at the time had ALREADY drifted when that test
+// was written.
 var services = []service{
 	{"session", "Session lifecycle — the hook points a harness calls"},
-	{"guardrail", "The declarations a project holds its agents to"},
 	{"file", "Checks over a file's contents"},
 	{"mark", "Write // sr:<kind> <fqn> enforcement markers into impl files"},
 	{"agent", "Run an agent, whichever harness is running"},
@@ -122,7 +121,10 @@ Each command below is a separate binary — ` + "`sr session start`" + ` and
 ` + "`sr-session start`" + ` do the same thing. This root exists so there is one name
 to learn; the hooks a project installs name the service binaries directly.
 
-For the event kinds a guardrail may bind to, run ` + "`sr guardrail help`" + `.`,
+The event kinds a guardrail may bind to are per-build and are reported by the
+load check: ` + "`sr session start`" + ` names every kind this build produces, and
+every field a kind carries, when a declaration binds to one it does not have.
+To write a guardrail, use the authoring-guardrails skill.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

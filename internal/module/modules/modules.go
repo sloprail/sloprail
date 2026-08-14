@@ -1,7 +1,7 @@
 // Package modules holds the one list of modules a build ships with.
 //
 // It sits here rather than in the binary because of who else has to know. The
-// hook points, `guardrail help` and the load check all run inside the binary
+// hook points and the load check all run inside the binary
 // and could have read a list defined there; a test cannot. A test asking which
 // kinds exist, with the list unreachable, has no option but to write its own —
 // and that copy is the worst one of all, because it is the copy the binary is
@@ -54,7 +54,7 @@ func All() []module.Module {
 // package calls module.NewRegistry.
 //
 // One constructor rather than a list written out wherever a registry is needed.
-// The hook points run it to produce events, `guardrail help` runs it to tell an
+// The hook points run it to produce events, the load check runs it to tell an
 // author which kinds exist, and the load check runs it to decide whether a
 // declaration binds to an event that exists — all from the same registry, so
 // the help cannot document a vocabulary the engine does not have and a

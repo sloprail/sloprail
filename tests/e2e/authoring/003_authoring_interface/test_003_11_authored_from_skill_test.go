@@ -6,7 +6,7 @@ import (
 )
 
 // T003_11: a guardrail written from nothing but the authoring-guardrails skill
-// and `guardrail help` actually fires.
+// and the engine's own load check actually fires.
 //
 // This is the acceptance test for the pair of them. Every other test here checks
 // that a particular sentence is true; this checks that the sentences ADD UP to
@@ -16,13 +16,13 @@ import (
 // documents that is collectively insufficient has still failed.
 //
 // The split is the thing being tested as much as the content: the kind below
-// comes from `guardrail help`, everything shaping it comes from the skill, and
+// comes from the load check, everything shaping it comes from the skill, and
 // a rule needing both is what proves neither half was left hollow.
 //
 // The declaration deliberately exercises what an author has to get right from
 // reading alone and gets no second chance at:
 //
-//   - a kind picked off `guardrail help`, with the module attribution ignored
+//   - a kind picked off the load check's report of what this build produces
 //   - a `list` field matched with `any(...)`, the operator group the string
 //     table does not cover
 //   - `hooks` as a map to a LIST of bindings, which is the shape most likely to
@@ -88,7 +88,7 @@ func TestT003_11_GuardrailAuthoredFromSkillFires(t *testing.T) {
 	))
 
 	if !got.Saw("fetches over the network") {
-		t.Fatalf("a guardrail written from the skill plus `guardrail help` never fired — together they are not sufficient to author against:\n%s", got.Output)
+		t.Fatalf("a guardrail written from the skill plus the load check never fired — together they are not sufficient to author against:\n%s", got.Output)
 	}
 	// The engine appends the guardrail's name, which the skill says not to
 	// include in the reason. If that stopped happening, every refusal would

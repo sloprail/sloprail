@@ -42,10 +42,17 @@ func TestT025_01_ProxyMatchesDirectInvocation(t *testing.T) {
 		proxy  []string // args to `sr`, which should be the same command
 	}{
 		{
-			name:   "guardrail help",
-			binary: "sr-guardrail",
-			direct: []string{"help"},
-			proxy:  []string{"guardrail", "help"},
+			// A command that SUCCEEDS and prints a substantial screen. This case
+			// used to be `guardrail help`, which was the only subcommand of a
+			// binary that no longer exists — with the command gone, the case was
+			// asserting that two spellings of nothing agree. `mark --help` is the
+			// nearest surviving equivalent: a zero-exit command whose whole answer
+			// is its stdout, so a proxy that truncated or reordered output fails
+			// here the way the old case would have.
+			name:   "mark help",
+			binary: "sr-mark",
+			direct: []string{"--help"},
+			proxy:  []string{"mark", "--help"},
 		},
 		{
 			// A command that FAILS. The error path is where a proxy is most

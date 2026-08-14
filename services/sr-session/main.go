@@ -58,8 +58,10 @@ writes the first declaration, and a project with none is an ordinary project —
 the engine loads cleanly and no session sees a difference.
 
 The hook subcommands are invoked by a harness with a payload on stdin, not
-typed by a person. For the event kinds a guardrail may bind to, see
-` + "`sr-guardrail help`" + `.`,
+typed by a person. The event kinds a guardrail may bind to are per-build, and
+` + "`sr-session start`" + ` reports them: a declaration binding to a kind this
+build does not produce is refused by name, and the refusal lists every kind it
+does produce. To write a guardrail, use the authoring-guardrails skill.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

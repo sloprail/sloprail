@@ -19,7 +19,7 @@
 # copies to `/` when the shell substitution comes back empty. See INSTALL_DIR.
 
 BIN_DIR  := bin
-SERVICES := sr sr-session sr-guardrail sr-file sr-mark sr-agent
+SERVICES := sr sr-session sr-file sr-mark sr-agent
 BINARIES := $(addprefix $(BIN_DIR)/,$(SERVICES))
 
 # Where distribute-local installs.
@@ -63,7 +63,7 @@ where:
 	elif [ -n "$(INSTALLED_SR)" ]; then echo "  because: sr is already installed at $(INSTALLED_SR)"; \
 	else echo "  because: no sr on \$$PATH — defaulting to the Go bin dir"; fi
 
-# distribute-local installs all six binaries into ONE directory, which is what
+# distribute-local installs the whole set into ONE directory, which is what
 # sibling resolution requires: `sr session start` execs the sr-session next to
 # it, so a set split across two directories resolves through $PATH by luck.
 #
@@ -99,7 +99,7 @@ check:
 
 # The suite runs with -p 1: one test binary at a time.
 #
-# NOT a style preference. The e2e tests each build the six services into their
+# NOT a style preference. The e2e tests each build the services into their
 # own temp tree and run a real agent against them; a parallel `-race ./...`
 # across 46 e2e packages ran the disk out of space. -p 1 is the constraint, and
 # the split into unit/services/e2e is so a failure in the fast half is reported
