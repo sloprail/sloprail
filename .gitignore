@@ -1,0 +1,30 @@
+# Built binaries. Each service compiles to one at the repo root, so a plain
+# `go build ./services/...` leaves them in the working tree.
+#
+# One entry per directory under services/, and nothing else: an entry for a
+# binary that cannot be built ignores a file that would never appear, and a
+# missing entry lets a real build artefact be committed. Both were true before
+# the split — /sloprail and /sr-command named binaries that no longer exist and
+# never existed, while sr-agent was built and unlisted.
+/sr
+/sr-session
+/sr-file
+/sr-mark
+/sr-agent
+
+# Where `make build` puts the same binaries. The entries above cover a bare
+# `go build ./services/...`, which drops them at the root; the Makefile builds
+# with -o bin/ instead, so both layouts have to be listed or whichever one is
+# not gets committed.
+/bin/
+
+# Where the e2e harness builds the binary it drives. Under the git directory
+# rather than the system temp dir, because macOS reaps /var/folders mid-run —
+# see tests/e2e/harness/harness.go. Listed here for the case where someone
+# points it at the tree instead.
+/.e2e-bin/
+
+# The session state store, and the sidecars SQLite keeps beside an open one.
+*.db
+*.db-wal
+*.db-shm

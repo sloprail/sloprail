@@ -1,0 +1,1215 @@
+// Package harness drives end-to-end tests the way a session actually runs.
+//
+// The agent is a10n-claude-mock, a drop-in `claude` that streams Claude Code
+// JSONL and fires the lifecycle hooks it finds in the project's settings. The
+// hooks it fires are THIS repo's plugin, loaded from THIS repo's marketplace.
+//
+// A test therefore controls only what the agent tries to do. Everything after
+// that — the hook firing, the plugin reaching our subcommand, the engine
+// deciding, the refusal travelling back — runs as a user would get it. A test
+// that invoked our binary directly would prove the engine decides correctly
+// while proving nothing about whether anything ever asks it.
+//
+// The isolation and transcript-seeding here are ported from a10n's harness,
+// which learned them the hard way: a "sandboxed" run must never read or write
+// the host's own claude data.
+package harness
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/sloprail/sloprail/internal/sessionstate"
+)
+
+const (
+	marketplaceName = "sloprail-marketplace"
+	pluginName      = "sloprail"
+	pluginKey       = pluginName + "@" + marketplaceName
+)
+
+// Services are the directories under services/. Each is named for the binary it
+// builds, so `go install ./services/...` produces binaries that can find each
+// other — Go names an installed binary after its directory, and a directory
+// called `session` would install as `session` while the proxy looked for
+// `sr-session`. Listed once here so a new service is added in one place.
+var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent"}
+
+// Env is one isolated end-to-end environment.
+type Env struct {
+	t         *testing.T
+	binDir    string // holds every built service binary, prepended to PATH so the plugin finds them
+	home      string
+	configDir string // an isolated stand-in for ~/.claude
+	pluginDir string
+	repoRoot  string
+	mock      string
+	shimDir   string // a `claude` that is really the mock, ahead of the real one on PATH
+}
+
+var (
+	buildOnce sync.Once
+	builtDir  string
+	buildErr  error
+)
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatalf("harness: locate repo root: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// gitDir is the repository's git directory — a real directory even when the
+// worktree's own .git is a file pointing at it.
+func gitDir(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("git", "rev-parse", "--absolute-git-dir").Output()
+	if err != nil {
+		t.Fatalf("harness: locate git dir: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// Cleanup removes what build left behind. Call it from TestMain after m.Run,
+// which is the only place that can: the binary is shared by every test in the
+// process, so it must outlive each of them, and t.Cleanup would delete it out
+// from under the second test to ask for it.
+//
+// Skipping this leaks 15M per test process, and there is one process per e2e
+// package. That reached 337 directories and 5GB during one wave of work, and
+// filled the disk mid-run — which fails as a build error in whichever test is
+// unlucky, not as anything that names the real cause.
+func Cleanup() {
+	if builtDir != "" {
+		os.RemoveAll(builtDir)
+	}
+}
+
+// build compiles the sloprail binary once per test process.
+func build(t *testing.T) string {
+	t.Helper()
+	buildOnce.Do(func() {
+		root := repoRoot(t)
+		// Not the system temp dir. macOS reaps /var/folders/.../T/ on its own
+		// schedule, and it does so mid-run: a suite that builds once and then
+		// executes that binary across several minutes of tests finds it gone
+		// partway through. That surfaces as `fork/exec ...: no such file or
+		// directory` in whichever test was unlucky — an error that names the
+		// binary and says nothing about the reaper, which cost one agent eight
+		// failures in twenty-two runs before the cause was found.
+		//
+		// Under the git directory because it is inside the repo (so nothing
+		// reaps it) but outside the working tree (so it cannot be mistaken for
+		// a project file, and a test that walks the tree does not find a binary
+		// in it).
+		//
+		// Asked of git rather than joined onto the root as ".git": in a linked
+		// worktree that path is a FILE, and every agent on this project works
+		// in one, so building the path by hand fails for all of them and
+		// succeeds only in the main checkout.
+		parent := filepath.Join(gitDir(t), "sloprail-e2e")
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			buildErr = err
+			return
+		}
+		dir, err := os.MkdirTemp(parent, "bin-")
+		if err != nil {
+			buildErr = err
+			return
+		}
+		// Recorded before the build, not after. A build that fails still leaves
+		// the directory behind, and the failure that matters here is a full
+		// disk — so the path that leaks is the one that runs when leaking is
+		// already the problem.
+		builtDir = dir
+		// Every binary a session can reach, built into one directory so they
+		// are siblings — which is how the root proxy finds them, and how a
+		// service finds a service it calls (internal/subbin).
+		//
+		// The whole set rather than the ones a given test needs: they are built
+		// once per run behind a sync.Once and shared, so selecting per test
+		// would mean either rebuilding or teaching every test which binaries
+		// its scenario reaches. sr-agent in particular is needed because a
+		// guardrail hook that launches an agent runs it BY NAME off PATH, and a
+		// test driving that must reach the build under test rather than
+		// whatever is installed on the machine — the same now goes for every
+		// service a hook might name.
+		for _, svc := range Services {
+			out := filepath.Join(dir, svc)
+			cmd := exec.Command("go", "build", "-o", out, "./services/"+svc)
+			cmd.Dir = root
+			if o, err := cmd.CombinedOutput(); err != nil {
+				buildErr = fmt.Errorf("build %s: %v\n%s", svc, err, o)
+				return
+			}
+		}
+	})
+	if buildErr != nil {
+		t.Fatalf("harness: %v", buildErr)
+	}
+	return builtDir
+}
+
+// New stands up an isolated environment.
+func New(t *testing.T) *Env {
+	t.Helper()
+	mock, err := exec.LookPath("a10n-claude-mock")
+	if err != nil {
+		t.Skip("harness: a10n-claude-mock not on PATH — driving it is the whole point")
+	}
+	// A short root, not t.TempDir(): the encoded project-dir path below is a
+	// 1:1 non-alphanumeric substitution with no shortening, and a long test
+	// name pushes a single component past the filename limit.
+	root, err := os.MkdirTemp("", "slop-e2e-")
+	if err != nil {
+		t.Fatalf("harness: temp root: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+
+	e := &Env{
+		t:         t,
+		binDir:    build(t),
+		home:      filepath.Join(root, "home"),
+		configDir: filepath.Join(root, "claude-cfg"),
+		pluginDir: filepath.Join(root, "plugins"),
+		repoRoot:  repoRoot(t),
+		mock:      mock,
+	}
+	for _, d := range []string{e.home, e.configDir, e.pluginDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("harness: mkdir %s: %v", d, err)
+		}
+	}
+	e.shimDir = filepath.Join(root, "shim")
+	if err := os.MkdirAll(e.shimDir, 0o755); err != nil {
+		t.Fatalf("harness: mkdir shim: %v", err)
+	}
+	return e
+}
+
+// InstallClaudeShim puts a `claude` on PATH that is really the mock.
+//
+// Needed because sr-agent runs the harness BY NAME: claudeCodeSpec.binary is
+// "claude", resolved through PATH in the hook's own child process. Nothing in
+// the e2e wiring redirects that today — Run invokes the mock by ABSOLUTE path,
+// so a hook that launches an agent inside a test would reach the operator's
+// real, billed `claude` and drive it against a temporary project. The
+// investigation into this hit exactly that and worked around it with a shim;
+// this is that shim, made part of the harness so no test has to remember.
+//
+// The shim runs the same scenario script the outer session runs, because a
+// launched agent in these tests exists to DO something file-shaped — that is
+// the whole case worth protecting. It gets its own session id so its transcript
+// and state do not land under the parent's.
+//
+// It also carries SLOP_TEST_DEPTH through unchanged. exec passes the
+// environment down on its own; naming it here is what makes the ledger's depth
+// column a measurement of nesting rather than of luck.
+func (e *Env) InstallClaudeShim(projDir string) {
+	e.t.Helper()
+	script := "#!/bin/sh\n" +
+		"exec " + shellQuote(e.mock) + " \\\n" +
+		"  --output-format stream-json \\\n" +
+		"  --script " + shellQuote(filepath.Join(projDir, ".inner-scenario.sh")) + " \\\n" +
+		"  --project-dir " + shellQuote(projDir) + " \\\n" +
+		"  --config-dir " + shellQuote(e.configDir) + " \\\n" +
+		"  --plugin-cache-dir " + shellQuote(e.pluginDir) + " \\\n" +
+		"  --session-id \"inner-$$\" \\\n" +
+		"  \"launched agent\"\n"
+	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write claude shim: %v", err)
+	}
+}
+
+// InnerScenario is what the agent a hook LAUNCHES does once it is running.
+//
+// Written beside the project rather than passed as an argument because the shim
+// is a fixed script: sr-agent controls the harness's argv, and a test cannot
+// reach through it to add a --script of its own.
+func (e *Env) InnerScenario(projDir string, s Scenario) {
+	e.t.Helper()
+	path := filepath.Join(projDir, ".inner-scenario.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
+		e.t.Fatalf("harness: write inner scenario: %v", err)
+	}
+}
+
+// shellQuote renders a path as one single-quoted shell word.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// Project creates a project with this repo's plugin enabled, exactly as a user
+// would have it: a marketplace source and an enabled plugin, not a hand-written
+// hooks block. What fires during a test is the same wiring anyone installing
+// this would get.
+func (e *Env) Project() string {
+	e.t.Helper()
+	dir, err := os.MkdirTemp("", "slop-proj-")
+	if err != nil {
+		e.t.Fatalf("harness: temp project: %v", err)
+	}
+	e.t.Cleanup(func() { os.RemoveAll(dir) })
+
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .claude: %v", err)
+	}
+	e.writeSettings(dir)
+	return dir
+}
+
+// writeSettings writes the project's settings: the plugin as a user would
+// install it, and nothing else.
+//
+// There is deliberately no way to add a lifecycle hook from here. A test that
+// hand-wired one into settings.json would be arranging wiring no user has, and
+// whatever it then proved would be about the harness's arrangement rather than
+// about the product — the whole point of driving the mock is that what fires is
+// the plugin someone installs. A property that needs a hook point the plugin
+// does not register is a gap in the plugin, and belongs in hooks.json.
+func (e *Env) writeSettings(dir string) {
+	e.t.Helper()
+	settings := map[string]any{
+		"enabledPlugins": map[string]any{pluginKey: true},
+		"extraKnownMarketplaces": map[string]any{
+			marketplaceName: map[string]any{
+				"source": map[string]any{"source": "directory", "path": e.repoRoot},
+			},
+		},
+	}
+	body, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		e.t.Fatalf("harness: encode settings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), body, 0o644); err != nil {
+		e.t.Fatalf("harness: write settings: %v", err)
+	}
+}
+
+// CLI runs the root `sr` proxy and returns what it produced.
+//
+// The session subcommands are not tested this way — those are invoked by a
+// harness, and a test that called them itself would prove the engine decides
+// correctly while proving nothing about whether anything ever asks it, which is
+// the whole reason Run drives the mock instead.
+//
+// This is for the commands a person types rather than a harness: the root help,
+// and the load check an author runs by hand. Nothing in a session invokes them
+// that way, so there is no wiring for driving the mock to prove.
+//
+// Through the proxy rather than straight at the service, because the proxy is
+// what a person types and so it is the path worth covering. It also means every
+// one of these tests would catch a proxy that mangled output or lost an exit
+// code. CLIDirect drives a service binary without the proxy, for the tests that
+// exist to show the two agree.
+func (e *Env) CLI(dir string, args ...string) Result {
+	e.t.Helper()
+	return e.runBin(dir, "", "sr", args...)
+}
+
+// CLIDirect runs one service binary by name, bypassing the proxy.
+func (e *Env) CLIDirect(dir, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBin(dir, "", binary, args...)
+}
+
+// CLIStdin runs the proxy with a payload on standard input.
+func (e *Env) CLIStdin(dir, stdin string, args ...string) Result {
+	e.t.Helper()
+	return e.runBin(dir, stdin, "sr", args...)
+}
+
+// CLIDirectStdin runs one service binary with a payload on standard input,
+// bypassing the proxy.
+func (e *Env) CLIDirectStdin(dir, stdin, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBin(dir, stdin, binary, args...)
+}
+
+func (e *Env) runBin(dir, stdin, binary string, args ...string) Result {
+	e.t.Helper()
+	cmd := exec.Command(filepath.Join(e.binDir, binary), args...)
+	cmd.Dir = dir
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	// SLOP_SUBBIN_DIR so the proxy dispatches to the binaries built for this
+	// run. They are already siblings, which subbin finds on its own, but naming
+	// it makes the test independent of that layout rather than quietly relying
+	// on it.
+	cmd.Env = append(os.Environ(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		e.t.Fatalf("harness: run %s %v: %v\n%s", binary, args, err, out)
+	}
+	return Result{Output: string(out), Code: code}
+}
+
+// GitInit makes a project a repository with one commit on `main`.
+//
+// A test about the baseline needs a real one: what is recorded is what git
+// reports, and the branch is the whole mechanism by which a switch to another
+// line of history is noticed. Its identity is set locally so the run does not
+// depend on whatever the machine has configured.
+func (e *Env) GitInit(dir string) {
+	e.t.Helper()
+	e.Git(dir, "init", "--initial-branch=main")
+	e.Git(dir, "config", "user.email", "e2e@example.invalid")
+	e.Git(dir, "config", "user.name", "E2E")
+	e.Git(dir, "add", "-A")
+	e.Git(dir, "commit", "--allow-empty", "-m", "initial")
+}
+
+// Git runs a git command in dir and returns its trimmed output.
+func (e *Env) Git(dir string, args ...string) string {
+	e.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		e.t.Fatalf("harness: git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// Meta reads one of the engine's own per-session facts — the baseline commit,
+// the branch it was taken on, the read mark.
+//
+// Opened directly, because there is no command that prints these: `session
+// state get` serves a guardrail's own keys, and meta is the engine's. Adding a
+// command to make this test convenient would be adding product surface for a
+// test's benefit.
+//
+// Where the database sits is still not guessed. The session's identity is
+// resolved by asking the binary under test — `sr-session id`, the same
+// walk every hook uses — so a test cannot pass against a database the engine
+// itself would never have written to.
+//
+// Returns "" for a key never written, which is the same answer the store gives.
+func (e *Env) Meta(projDir, sessionID, key string) string {
+	e.t.Helper()
+
+	db, err := sessionstate.Open(e.sessionDBPath(projDir, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+
+	value, _, err := db.Meta(key)
+	if err != nil {
+		e.t.Fatalf("harness: read meta %s: %v", key, err)
+	}
+	return value
+}
+
+// sessionDBPath mirrors where the engine puts a session's state, having asked
+// the engine itself for the only part a test could get wrong: the conversation
+// identity, which is not the id the harness reports.
+func (e *Env) sessionDBPath(projDir, sessionID string) string {
+	e.t.Helper()
+
+	payload := fmt.Sprintf(`{"transcript_path":%q,"cwd":%q}`,
+		e.transcriptPath(projDir, sessionID), projDir)
+
+	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "id")
+	cmd.Dir = projDir
+	cmd.Stdin = strings.NewReader(payload)
+	cmd.Env = append(os.Environ(), "HOME="+e.home, "CLAUDE_CONFIG_DIR="+e.configDir)
+	out, err := cmd.Output()
+	if err != nil {
+		e.t.Fatalf("harness: resolve session id: %v", err)
+	}
+	stableID := strings.TrimSpace(string(out))
+
+	// The rest is the platform data directory and the encoded workspace, which
+	// the engine derives the same way. HOME is the harness's own, so this stays
+	// inside the sandbox.
+	return filepath.Join(dataHome(e.home), "sloprail", "sessions",
+		encodeProjectDir(resolveWorkDir(projDir)), stableID, "state.db")
+}
+
+// transcriptPath is where the harness's transcript for a session sits.
+func (e *Env) transcriptPath(projDir, sessionID string) string {
+	return filepath.Join(e.configDir, "projects",
+		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
+}
+
+// dataHome mirrors the engine's own platform data directory, for the sandboxed
+// home the mock ran under.
+func dataHome(home string) string {
+	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+		return dir
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support")
+	case "windows":
+		if dir := os.Getenv("LocalAppData"); dir != "" {
+			return dir
+		}
+		return filepath.Join(home, "AppData", "Local")
+	default:
+		return filepath.Join(home, ".local", "share")
+	}
+}
+
+// WriteFile puts a file into a project, creating the directories above it.
+//
+// For the state a project is in BEFORE a session runs — the files an agent will
+// go on to edit or delete. What the agent itself does belongs in a scenario, so
+// that it travels through the tool calls a harness reports rather than being
+// arranged behind the engine's back.
+func (e *Env) WriteFile(projDir, rel, body string) {
+	e.t.Helper()
+	full := filepath.Join(projDir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		e.t.Fatalf("harness: write %s: %v", rel, err)
+	}
+}
+
+// Exists reports whether a path is present in a project.
+//
+// How a test asks what actually happened to the tree, as opposed to what came
+// back on the stream. Whether a message travelled says nothing about whether a
+// write landed, and "the work was prevented" is a claim about the tree.
+func (e *Env) Exists(projDir, rel string) bool {
+	e.t.Helper()
+	_, err := os.Stat(filepath.Join(projDir, rel))
+	if err == nil {
+		return true
+	}
+	if !os.IsNotExist(err) {
+		e.t.Fatalf("harness: stat %s: %v", rel, err)
+	}
+	return false
+}
+
+// Guardrail writes a declaration and its hook scripts into a project.
+func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail", "guardrails", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir guardrail: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "GUARDRAIL.md"), []byte(declaration), 0o644); err != nil {
+		e.t.Fatalf("harness: write declaration: %v", err)
+	}
+	for file, body := range scripts {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write script %s: %v", file, err)
+		}
+	}
+}
+
+// RemoveGuardrail takes a guardrail out of a project mid-session, the way a
+// user removes a rule: the whole folder goes.
+//
+// The WHOLE folder, and that is not a convenience. Deleting only GUARDRAIL.md
+// leaves a folder the project still keeps as a guardrail and which can no
+// longer be read — and the engine refuses every action while a declaration
+// cannot be parsed, deliberately, because an unreadable rule must not be read
+// as approval merely for being unreadable. So a half-removal does not remove a
+// rule; it disarms the session. That behaviour is pinned by
+// pre_tool/013_broken_declaration_is_not_silent, and this helper exists to keep
+// tests about REMOVAL from accidentally exercising it.
+//
+// It returns the rule's ledger lines as they stood at removal, because the
+// ledger lives inside the folder that is about to go. A test asking whether a
+// removed rule kept firing compares this against what it finds afterwards: with
+// the folder gone, a rule that somehow still ran would recreate the file, and an
+// absent file is the answer that nothing did.
+func (e *Env) RemoveGuardrail(projDir, name, ledgerFile string) []string {
+	e.t.Helper()
+	before := e.Ledger(projDir, name, ledgerFile)
+	dir := filepath.Join(projDir, ".sloprail", "guardrails", name)
+	if err := os.RemoveAll(dir); err != nil {
+		e.t.Fatalf("harness: remove guardrail %s: %v", name, err)
+	}
+	return before
+}
+
+// DisableGuardrail turns a rule off the other way a user can: the declaration
+// stays and says so.
+//
+// A distinct mechanism from removal rather than a synonym for it — the folder,
+// the scripts and the LEDGER all remain, so a disabled rule that kept firing
+// appends a line to a file that is still there, which removal cannot observe.
+// Written by replacing the declaration wholesale, because the frontmatter is
+// what the engine parses and a test that patched a line would be asserting
+// something about yaml editing.
+func (e *Env) DisableGuardrail(projDir, name, declaration string) {
+	e.t.Helper()
+	disabled := strings.Replace(declaration, "---\n", "---\nenabled: false\n", 1)
+	if disabled == declaration {
+		e.t.Fatalf("harness: disable guardrail %s: the declaration has no frontmatter to add "+
+			"`enabled: false` to, so nothing was turned off and a test resting on this would "+
+			"pass against a rule that is still live", name)
+	}
+	path := filepath.Join(projDir, ".sloprail", "guardrails", name, "GUARDRAIL.md")
+	if err := os.WriteFile(path, []byte(disabled), 0o644); err != nil {
+		e.t.Fatalf("harness: disable guardrail %s: %v", name, err)
+	}
+}
+
+// Ledger returns the lines a guardrail's hooks appended to a file in their own
+// folder, or nothing when the file was never created.
+//
+// This is how a test observes what DID NOT happen. A refusal travels back
+// through the tool result and can be read off the stream, but "this hook never
+// ran", "this extractor produced nothing" and "these two hooks ran in this
+// order" leave no trace there — a hook that stays silent and a hook that never
+// ran look identical from outside.
+//
+// So the hooks write. A hook is an ordinary shell script run with its working
+// directory set to the guardrail's folder, so appending a line to a file there
+// is the one channel that records a run without the engine's cooperation and
+// without a test reaching inside the binary. An absent file is a real answer:
+// nothing ran.
+func (e *Env) Ledger(projDir, guardrail, file string) []string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "guardrails", guardrail, file))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read ledger %s/%s: %v", guardrail, file, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// Wrote reports whether a path exists in the project tree.
+//
+// How a test observes an INNER session's outcome. A refusal delivered to the
+// agent a hook launched travels back through that agent's own tool result,
+// which the launching hook consumed and the outer stream never carried — so
+// scanning the outer output for a refusal marker would answer "no refusal" no
+// matter what happened. The file either exists or it does not, and that is the
+// same question the rule was asked.
+func (e *Env) Wrote(projDir, relPath string) bool {
+	e.t.Helper()
+	_, err := os.Stat(filepath.Join(projDir, relPath))
+	return err == nil
+}
+
+var nonAlnumRe = regexp.MustCompile(`[^a-zA-Z0-9]`)
+
+// encodeProjectDir mirrors how a harness encodes a working directory into a
+// transcript path. Ported from a10n, which ported it from claude's own.
+func encodeProjectDir(dir string) string { return nonAlnumRe.ReplaceAllString(dir, "-") }
+
+// resolveWorkDir resolves symlinks so the encoded path matches what the mock
+// itself will compute — macOS resolves /var to /private/var, and a mismatch
+// puts the seeded transcript somewhere nothing looks.
+func resolveWorkDir(dir string) string {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return dir
+}
+
+// seedTranscript writes a minimal valid transcript for (cwd, sessionID): a root
+// record with a uuid and a null parentUuid, which is the shape anything looking
+// for a conversation's origin scans for.
+func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
+	e.t.Helper()
+	dir := filepath.Join(e.configDir, "projects", encodeProjectDir(resolveWorkDir(cwd)))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: seed transcript: %v", err)
+	}
+	line := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
+		"e2e-root-"+sessionID, cwd, prompt)
+	path := filepath.Join(dir, sessionID+".jsonl")
+	if _, err := os.Stat(path); err == nil {
+		return // already seeded, or the mock has started writing — never overwrite
+	}
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		e.t.Fatalf("harness: seed transcript: %v", err)
+	}
+}
+
+// ControlDecl and ControlScript are the positive control every revalidation
+// test rests on: a hook that stores something under its own scope and reads it
+// back on its next invocation.
+//
+// Here rather than in one scenario package because every scenario needs it and
+// a Go test package cannot import another's helpers. Exported so the scenario
+// that reports the control as a test of its own runs the SAME rule this package
+// gates on — two copies could drift, and the copy the gate used would be the
+// one nobody was reading. See RequireSessionStore.
+const ControlDecl = `---
+hooks:
+  PreFileCreate:
+    - hooks:
+        - type: command
+          command: ./probe.sh
+  PreFileUpdate:
+    - hooks:
+        - type: command
+          command: ./probe.sh
+---
+
+# Reads its own state back, and says what it found.
+`
+
+const ControlScript = `#!/bin/sh
+cat >/dev/null
+echo "before=[$(sr-session state get seen 2>&1)]" >> "$PWD/log"
+sr-session state set seen yes >/dev/null 2>&1
+exit 0
+`
+
+// SessionStoreOpens reports whether the engine can identify this session and
+// open its state at all.
+//
+// This is the positive control, and it is why every skip test in this tree can
+// be believed. A revalidation test asserts a hook did NOT run again — a claim
+// that passes trivially when the hook never ran, and just as trivially when
+// the engine could not identify the session and so had no record to skip
+// against. Both failures are silent, and both make a green suite mean nothing.
+//
+// The branch that first wrote an e2e for this feature hit exactly that: the
+// mock's main-session PreToolUse payload carries no transcript_path, session
+// identity failed, no store was opened, every hook re-judged — and the test
+// passed whether the skip worked or not. It deleted the test rather than bank
+// a vacuous one.
+//
+// So this establishes the capability POSITIVELY: something is written in one
+// hook invocation and read back in the next. Nothing about that can pass by
+// accident. A store that never opened returns an error to the hook; one keyed
+// differently per invocation returns "not found"; only a store that really
+// opened, under one identity, across two separate hook processes, hands back
+// what the earlier one put there.
+//
+// Deliberately a check of the observable capability rather than of the branch
+// or the harness, so it keeps working unchanged when the missing piece lands
+// rather than needing to be told that it did.
+func (e *Env) SessionStoreOpens() (bool, string) {
+	e.t.Helper()
+
+	proj := e.Project()
+	e.Guardrail(proj, "control", ControlDecl, map[string]string{"probe.sh": ControlScript})
+
+	// Two DIFFERENT paths, so neither invocation can be exempted by the other.
+	// The control must not be silenced by the very mechanism it exists to make
+	// testable: two writes of one path would let the second be legitimately
+	// skipped, and the control would report "unreachable" on a build where the
+	// store works perfectly.
+	e.Run(proj, "s-control", "write twice", Turns("done",
+		Write("c1", "one.md", "first"),
+		Write("c2", "two.md", "second"),
+	))
+
+	lines := e.Ledger(proj, "control", "log")
+	if len(lines) != 2 {
+		return false, "the control guardrail's hook did not run twice (got " +
+			strings.Join(lines, " | ") + ") — nothing about session state can be concluded"
+	}
+	// The SECOND invocation is the one that matters. The first legitimately
+	// finds nothing: it is what wrote the mark.
+	if !strings.Contains(lines[1], "before=[yes]") {
+		return false, "a hook could not read back what the previous hook in the same session stored: " +
+			strings.Join(lines, " | ")
+	}
+	return true, ""
+}
+
+// RequireSessionStore skips the calling test, naming what is missing, when the
+// session store cannot be shown to open.
+//
+// Skipped rather than failed, and skipped rather than left to pass: a test
+// asserting "the hook did not run again" while the store is unreachable would be
+// green and worthless, which is the precise failure the control exists to
+// prevent.
+//
+// The two pieces the store needs — a transcript path on the PreToolUse payload
+// and the hook environment `session state` resolves its scope from — landed with
+// impl/hook-env, so this now passes rather than skips. It is kept because it is
+// a real precondition rather than a note about a branch: it fails loudly if
+// either piece regresses, and the tests that depend on it would otherwise go
+// quietly vacuous again.
+func RequireSessionStore(t *testing.T) {
+	t.Helper()
+	e := New(t)
+	if ok, why := e.SessionStoreOpens(); !ok {
+		t.Skipf("the session store does not open on this branch, so a skip cannot be observed "+
+			"and a passing skip test would be vacuous — this needs a transcript path on the "+
+			"PreToolUse payload and c.Env on the hook process, both of which impl/hook-env "+
+			"provides: %s", why)
+	}
+}
+
+// Fork makes a NEW session id that a conversation continues under, the way a
+// harness re-forks one mid-conversation.
+//
+// This is the only way to test that state survives a re-fork, and it has to be
+// built rather than asked for: the mock has no compaction or retry path that
+// changes the id of a running session, so the transcript a fork would leave is
+// written here instead. What is written is the shape the identity walk actually
+// looks for — nothing about it is invented for the test's convenience:
+//
+//   - the new transcript's own root record is parentless, so it IS a root
+//     within its file, exactly like any other transcript's first record;
+//   - it carries logicalParentUuid naming a record in the OLD transcript,
+//     which is what marks it a continuation rather than a new conversation;
+//   - the record it names is really in the old file, so the walk crossing the
+//     restart finds it where it says.
+//
+// The conversation's identity is therefore the OLD transcript's root uuid,
+// reached by one hop, while the id the harness reports is the new one. That is
+// precisely the situation the invariant is about: a store keyed on the reported
+// id opens an empty database, and a store keyed on the origin finds the
+// verdicts already recorded.
+//
+// The old session must have been Run (or seeded) first — a fork continuing a
+// file that does not exist is not a fork, and the walk would fail rather than
+// resolve to the wrong thing, which would make the test pass for the wrong
+// reason.
+func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
+	e.t.Helper()
+
+	dir := filepath.Join(e.configDir, "projects", encodeProjectDir(resolveWorkDir(cwd)))
+	oldPath := filepath.Join(dir, oldSessionID+".jsonl")
+	if _, err := os.Stat(oldPath); err != nil {
+		e.t.Fatalf("harness: fork %s: the session being continued has no transcript at %s: %v",
+			oldSessionID, oldPath, err)
+	}
+
+	// The record the new file continues FROM. seedTranscript's root is the one
+	// record every seeded session is guaranteed to have, and it is genuinely in
+	// the old file — asserted below rather than assumed, because a fork pointing
+	// at a record that is not there resolves to nothing and the test would fail
+	// for a reason that has nothing to do with the invariant.
+	continued := "e2e-root-" + oldSessionID
+	body, err := os.ReadFile(oldPath)
+	if err != nil {
+		e.t.Fatalf("harness: fork %s: read %s: %v", oldSessionID, oldPath, err)
+	}
+	if !strings.Contains(string(body), `"uuid":"`+continued+`"`) {
+		e.t.Fatalf("harness: fork %s: %s does not hold the record %q the fork would continue from",
+			oldSessionID, oldPath, continued)
+	}
+
+	// Parentless within its own file AND naming what it continues: both, which
+	// is what a real re-forked transcript looks like and what makes the walk
+	// take its second hop instead of stopping here.
+	line := fmt.Sprintf(
+		`{"type":"user","uuid":%q,"parentUuid":null,"logicalParentUuid":%q,"cwd":%q,"message":{"role":"user","content":"continued"}}`+"\n",
+		"e2e-fork-"+newSessionID, continued, cwd)
+
+	path := filepath.Join(dir, newSessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		e.t.Fatalf("harness: fork %s: %v", oldSessionID, err)
+	}
+}
+
+// SessionIdentity is the identity the engine resolves for a session's
+// transcript — the conversation's own origin, not the id the harness reports.
+//
+// Asked of the binary under test rather than derived here. The walk that
+// crosses a re-fork is the thing under test, so a test computing it a second
+// way would be comparing its own reimplementation against itself and would
+// agree with a broken engine.
+//
+// Returns "" when the engine cannot resolve one, which is an answer rather than
+// a failure: a test asserting that two transcripts resolve alike needs to be
+// able to say that neither did.
+func (e *Env) SessionIdentity(projDir, sessionID string) string {
+	e.t.Helper()
+
+	transcript := filepath.Join(e.configDir, "projects",
+		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
+	payload := fmt.Sprintf(`{"transcript_path":%q,"cwd":%q}`, transcript, projDir)
+
+	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "id")
+	cmd.Dir = projDir
+	cmd.Stdin = strings.NewReader(payload)
+	cmd.Env = append(os.Environ(),
+		"HOME="+e.home,
+		"CLAUDE_CONFIG_DIR="+e.configDir,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// BlockingErrors returns the text of every blocking hook error the harness
+// recorded for a session, in order.
+//
+// Read from the conversation record rather than from the stream, because that
+// is where the text actually lands. Measured on this harness, of the ways a
+// Stop hook can refuse:
+//
+//	exit 2 with text on stderr          blocks, and the text arrives
+//	exit 0 with {"decision":"block"}    blocks, and the reason arrives
+//	exit 1 with text on stderr          does not block, and nothing arrives
+//	exit 0 silent                       does not block
+//
+// Both blocking forms deliver their words the same way: an attachment record of
+// type hook_blocking_error, never a line on the result stream. A test asserting
+// on Result.Output would therefore be asserting on a channel the text never
+// travels, and would fail for a working engine.
+//
+// Only the attachment's own text is returned, NOT the record as a whole. A
+// guardrail's folder path travels on every hook payload, so searching the whole
+// transcript for a rule's name finds it whether or not the refusal ever named
+// it — an assertion that cannot fail.
+func (e *Env) BlockingErrors(projDir, sessionID string) []string {
+	e.t.Helper()
+	return e.blockingErrors(projDir, sessionID, "")
+}
+
+// BlockingErrorsFrom returns the text of every blocking hook error recorded for
+// a session AT ONE LIFECYCLE EVENT — "Stop", "SubagentStop".
+//
+// Which hook refused is not a detail when a sub-agent is in play. A sub-agent
+// sharing the dispatching session's tree leaves its work where the ROOT's own
+// Stop will see it too, so a rule bound to created files refuses twice: once at
+// the sub-agent's cycle and once at the root's. A test asserting only that some
+// refusal reached the record therefore passes whether or not the sub-agent's
+// cycle judged anything at all — measured, and the reason this exists: the first
+// version of the sub-agent refusal test passed against an engine whose
+// subagent-stop was a stub returning nil.
+//
+// Everything else is BlockingErrors' behaviour, including the de-duplication;
+// see there for why the record rather than the stream.
+func (e *Env) BlockingErrorsFrom(projDir, sessionID, hookEvent string) []string {
+	e.t.Helper()
+	return e.blockingErrors(projDir, sessionID, hookEvent)
+}
+
+// blockingErrors reads refusals out of the record, optionally narrowed to one
+// lifecycle event. An empty hookEvent means every event.
+func (e *Env) blockingErrors(projDir, sessionID, hookEvent string) []string {
+	e.t.Helper()
+
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec struct {
+			Attachment struct {
+				Type          string `json:"type"`
+				HookEvent     string `json:"hookEvent"`
+				BlockingError struct {
+					BlockingError string `json:"blockingError"`
+				} `json:"blockingError"`
+			} `json:"attachment"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec.Attachment.Type != "hook_blocking_error" {
+			continue
+		}
+		if hookEvent != "" && rec.Attachment.HookEvent != hookEvent {
+			continue
+		}
+		text := rec.Attachment.BlockingError.BlockingError
+		// A blocked stop is retried, so the same refusal is recorded once per
+		// attempt. What a test asks is which refusals arrived, not how many
+		// times the agent was driven round.
+		if text != "" && !seen[text] {
+			seen[text] = true
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+// transcript returns the whole conversation record the harness wrote.
+func (e *Env) transcript(projDir, sessionID string) string {
+	e.t.Helper()
+	b, err := os.ReadFile(e.transcriptPath(projDir, sessionID))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read transcript: %v", err)
+	}
+	return string(b)
+}
+
+// Result is what a run produced.
+type Result struct {
+	Output string
+	Code   int
+}
+
+// Saw reports whether text appears anywhere in the stream — the tool results a
+// refusal travels back in, or the agent's own output.
+func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) }
+
+// blockedMarkers are what the harness emits when a PreToolUse hook refused the
+// call. Measured through this harness, one channel per run, rather than guessed:
+// the two delivering channels do NOT share a marker.
+//
+//   - `permissionDecision: "deny"` at exit 0 — the channel this engine uses, see
+//     deny in hookio.go — turns the tool call into a tool_result with is_error
+//     true whose content is
+//
+//     [{"text":"Tool call blocked by a PreToolUse hook: <reason>","type":"text"}]
+//
+//   - Exiting 2 with the reason on stderr never becomes a tool_result at all.
+//     The harness reports it on its own line, "claude-mock: PreToolUse hook
+//     blocked: ...", and the run carries no tool result for that call.
+//
+// Both are listed because a refusal is a refusal whichever channel carried it,
+// and a predicate that knew only the engine's current channel would silently
+// start answering "permitted" the day that changed. See refuseForBroken in
+// services/sr-session for the full measured table, including the channels that
+// deliver nothing.
+var blockedMarkers = []string{
+	"Tool call blocked by a PreToolUse hook",
+	"PreToolUse hook blocked",
+}
+
+// Refused reports whether the action was stopped before it happened.
+//
+// It reads the harness's own refusal marker rather than scanning the stream for
+// words. Two copies of a helper that scanned for "deny"/"denied"/"block"/
+// "blocked" anywhere in the output shipped in 013 and 014, and the stream
+// contains the agent's own tool input — the path it asked to write, and the
+// content. So a guardrail permitting EVERYTHING, writing to `deny/notes.md`,
+// produced "File written successfully" and a helper that answered "refused".
+//
+// That is not a cosmetic flaw. Every test asserting a refusal would pass on a
+// fully permitted write as soon as a trigger word appeared in the fixture, which
+// is precisely the reading a suite about fail-open must never get wrong. The
+// eight refusal-asserting tests in 013 and 014 were non-vacuous only by the
+// accident of using clean paths.
+//
+// One definition, in the harness, because both packages need the same answer and
+// two copies of a predicate are two chances to be wrong about it.
+func (r Result) Refused() bool {
+	for _, marker := range blockedMarkers {
+		if strings.Contains(r.Output, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// Permitted reports whether the action went through.
+//
+// The complement of Refused, named separately because that is how the assertions
+// read at the call sites and a negation there is easy to misread.
+func (r Result) Permitted() bool { return !r.Refused() }
+
+// Run drives a scenario through the mock as a real session.
+func (e *Env) Run(projDir, sessionID, prompt string, s Scenario) Result {
+	e.t.Helper()
+	return e.run(projDir, projDir, sessionID, prompt, s)
+}
+
+// RunFrom drives a scenario as a session whose hooks fire from a SUBDIRECTORY
+// of the repository, the way a session working under `cd internal/foo` runs.
+//
+// WHAT IS BEING MOVED, because only one thing can be and the other was measured
+// rather than assumed. The mock reports its `--project-dir` as the `cwd` on
+// every hook payload, and it runs the agent's own Bash turns there too — the
+// PROCESS working directory is ignored for both. Measured against
+// a10n-claude-mock: launching it from a subdirectory with --project-dir at the
+// root yields `"cwd":"<root>"` on the Stop payload, so a harness that moved only
+// cmd.Dir would change nothing the engine can see, and every test resting on it
+// would be driving an ordinary root session while claiming otherwise.
+//
+// So the subdirectory is passed as the project dir. That is exactly the
+// arrangement the defect is about: `cwd` on the payload is a directory BELOW the
+// repository root, which is the one fact the engine has to reconcile.
+//
+// Why it matters. Everything that identifies a session derives from that
+// reported directory. The state database is keyed by the workspace anchor, and
+// the difference is rooted where the hook was invoked. Keyed on the RAW cwd, a
+// hook reporting a subdirectory opens a DIFFERENT database — an empty baseline,
+// and every verdict the session recorded unreachable, silently and mid-session.
+// The anchor now resolves to the git root (services/sr-session/statedir.go,
+// workspaceAnchor), which is what makes a root cycle and a subdirectory cycle
+// agree they are in one tree.
+//
+// The TRANSCRIPT follows the reported directory, and it has to. A harness keys
+// a conversation's record by the project dir it was given, so the mock writes
+// this session's record under the SUBDIRECTORY's encoding and puts that path on
+// every hook payload. Seeding at the repository root instead produces two files
+// for one session: the seeded one nothing reads, and the mock's own, which has
+// no parentless root record for the identity walk to land on — so the walk falls
+// through to a tool_use uuid and the session keys its state under that. Measured:
+// state.db appeared under `e2e-turn-w1` rather than `e2e-root-<session>`, the
+// baseline read back empty, and every verdict was re-judged the next cycle.
+//
+// The consequence for a caller is worth stating plainly: a cycle run with Run
+// and a cycle run with RunFrom are DIFFERENT conversations, because their
+// records sit in different directories. A test needing one session across
+// several cycles must therefore drive all of them the same way. Whether the
+// engine keys ONE session's state alike from the root and from a subdirectory —
+// the workspace anchor — cannot be observed through this harness for that
+// reason; the note where T025_03 used to sit records what was measured, and the
+// claim is pinned as a unit test instead.
+//
+// The GUARDRAIL is likewise loaded from the reported directory: the engine looks
+// for `.sloprail/` beside the cwd it was given. A test using this must put the
+// rule where the cycle will look for it, and read that rule's ledger from the
+// same place.
+func (e *Env) RunFrom(projDir, subRel, sessionID, prompt string, s Scenario) Result {
+	e.t.Helper()
+	workDir := filepath.Join(projDir, subRel)
+	if info, err := os.Stat(workDir); err != nil || !info.IsDir() {
+		e.t.Fatalf("harness: RunFrom %q: not a directory in the project (%v) — "+
+			"the agent cannot work from somewhere that is not there, and a test resting on "+
+			"this would be driving the session from the project root without saying so", subRel, err)
+	}
+	// The mock resolves `.claude/settings.json` from the project dir it is given,
+	// so the plugin has to be enabled where this session will look for it.
+	// Without this the mock finds no settings, fires no lifecycle hooks at all,
+	// and the cycle is silent — which a test reading an empty ledger would
+	// happily report as the engine correctly staying quiet.
+	//
+	// It is the SAME settings Project() writes: a marketplace source and an
+	// enabled plugin, exactly as a user would install them. Nothing about the
+	// wiring differs — only where it sits, which is what a session reporting this
+	// directory requires.
+	if err := os.MkdirAll(filepath.Join(workDir, ".claude"), 0o755); err != nil {
+		e.t.Fatalf("harness: RunFrom %q: mkdir .claude: %v", subRel, err)
+	}
+	e.writeSettings(workDir)
+	return e.run(projDir, workDir, sessionID, prompt, s)
+}
+
+// RunReal drives the operator's ACTUAL `claude` against a project, and is the
+// one thing in this harness that is not sandboxed.
+//
+// It exists for a single property that the mock is definitionally unable to
+// show: that SLOPRAIL_LAUNCHED_BY, set by the engine on an outer hook, survives
+// the exec into a real harness and is loaded by that harness into its own hooks'
+// environment. Everything after the first link in that chain belongs to a
+// program this repo does not own, so a mock asserting it would be asserting its
+// own construction. See test_015_06_real_agent_test.go.
+//
+// # Why HOME is NOT overridden here
+//
+// Every other path in this file replaces HOME and CLAUDE_CONFIG_DIR so a run
+// cannot touch the host's claude data. This one cannot: a real `claude` reads
+// its credentials from the operator's own config, and under the isolated HOME it
+// has none and exits without running. The isolation and the property are
+// mutually exclusive, and the property is the one that was reopened as P1.
+//
+// So the trade is made explicitly rather than by accident: the caller's real
+// environment is inherited, only the PATH is prepended so the plugin's hooks
+// reach the binaries under test, and the caller must opt in through an
+// environment variable because this spends money. No test may call this without
+// that gate.
+//
+// The project's own settings.json still points at THIS repo's marketplace, so
+// what fires inside the session is the plugin under test even though the
+// harness's config directory is not in play.
+func (e *Env) RunReal(projDir, prompt string) Result {
+	e.t.Helper()
+	if os.Getenv("SLOPRAIL_REAL_AGENT") != "1" {
+		e.t.Fatalf("harness: RunReal without SLOPRAIL_REAL_AGENT=1 — it bills the operator")
+	}
+	bin, err := exec.LookPath("claude")
+	if err != nil {
+		e.t.Fatalf("harness: RunReal: no `claude` on PATH: %v", err)
+	}
+	cmd := exec.Command(bin,
+		"-p", "--model", "haiku",
+		// The outer cap. The inner agent carries its own, passed by the
+		// guardrail's script, because that is where a runaway would spend.
+		"--max-budget-usd", "0.20",
+		"--allowed-tools", "Write",
+		"--", prompt,
+	)
+	cmd.Dir = projDir
+	cmd.Env = append(os.Environ(),
+		"PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		e.t.Fatalf("harness: run real claude: %v\n%s", err, out)
+	}
+	e.t.Logf("real claude:\n%s", out)
+	return Result{Output: string(out), Code: code}
+}
+
+// run drives the mock with the transcript's project root and the directory the
+// session reports given separately. They are the same for an ordinary session;
+// RunFrom is what separates them.
+func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result {
+	e.t.Helper()
+
+	// Seeded where the MOCK will write it, which is keyed on the directory the
+	// session reports rather than on the repository root. See RunFrom: seeding
+	// elsewhere leaves the mock's own record without a parentless root, and the
+	// identity walk then keys the session on a tool_use uuid.
+	e.seedTranscript(workDir, sessionID, prompt)
+
+	scriptPath := filepath.Join(projDir, ".scenario.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
+		e.t.Fatalf("harness: write scenario: %v", err)
+	}
+
+	cmd := exec.Command(e.mock,
+		"-p", "--output-format", "stream-json",
+		"--script", scriptPath,
+		// The directory the session reports, which RunFrom may place below the
+		// repository root. The mock echoes this as `cwd` on every hook payload.
+		"--project-dir", workDir,
+		"--config-dir", e.configDir,
+		"--plugin-cache-dir", e.pluginDir,
+		"--session-id", sessionID,
+		prompt,
+	)
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(),
+		"HOME="+e.home,
+		"CLAUDE_CONFIG_DIR="+e.configDir,
+		"CLAUDE_CODE_SESSION_ID="+sessionID,
+		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
+		// The plugin invokes `sloprail`; this is how the hook subprocess finds
+		// the build under test rather than whatever happens to be installed.
+		//
+		// The shim dir goes FIRST, ahead of both the build dir and the real
+		// PATH. A test whose hook launches an agent must not reach the
+		// operator's actual `claude` — see InstallClaudeShim. When no shim was
+		// installed the directory is simply empty and this changes nothing.
+		"PATH="+e.shimDir+string(os.PathListSeparator)+
+			e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		e.t.Fatalf("harness: run mock: %v\n%s", err, out)
+	}
+	e.t.Logf("mock:\n%s", out)
+	return Result{Output: string(out), Code: code}
+}
