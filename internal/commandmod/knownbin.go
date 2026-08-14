@@ -163,7 +163,11 @@ var knownBins = map[string]binSpec{
 	// this package says what the line determines, and the caller decides what
 	// the tree makes of it.
 	"touch": func(argv []string) []FileTarget {
-		return withPayload(targetsFor(operands(argv), Write), literalPayload(""))
+		targets := withPayload(targetsFor(operands(argv), Write), literalPayload(""))
+		for i := range targets {
+			targets[i].MTimeOnly = true
+		}
+		return targets
 	},
 
 	// mkdir makes directories. Reported as Write on the path, which the file
@@ -598,6 +602,18 @@ func targetsForArgv(argv []string, depth int, stdin Payload) []FileTarget {
 	// the same payload word: literal, or nothing is read.
 	targets = append(targets, targetsFromPayload(asWords(argv), depth)...)
 	return targets
+}
+
+// consumesStdin reports whether a program writes its standard input into the
+// file its arguments name, so that a here-document on the statement is that
+// file's resulting content.
+//
+// Only the two utilities for which that is the whole behaviour. `cat` is NOT
+// here: it writes stdin to stdOUT, so a heredoc reaches a file only through a
+// redirection, which payloadForStmt already pairs — listing it here as well
+// would give one line two answers.
+func consumesStdin(bin string) bool {
+	return bin == "tee" || bin == "dd"
 }
 
 // targetsFromPayload re-parses a literal interpreter payload and returns the

@@ -287,7 +287,21 @@ func applyEdits(edits []edit, before string, exists bool, replaceAll bool) (stri
 		if created && i == 0 {
 			// A non-empty old_string against a file that does not exist. There
 			// is nothing for it to match, so the tool fails. This is the
-			// create-side of Q2 and it needs no disk read to decide.
+			// create-side of Q2.
+			//
+			// EQUIVALENT today and kept anyway, so the survivor is read as an
+			// equivalence rather than as this branch being untested. On a create
+			// `cur` is "", so strings.Count below returns 0 for any non-empty
+			// `old` and the `n == 0` arm returns the identical errWillNotApply
+			// two lines on. Verified by mutation: replacing this condition with
+			// `false` leaves the whole suite green.
+			//
+			// Kept because the two are the same only while `cur` starts empty on
+			// a create. It states the requirement where the CREATE case is
+			// decided — there is no file for a replacement to match — rather than
+			// leaving it to be re-derived from the counting arm, which is about
+			// something else. It is also the spelling that stays correct if a
+			// later change ever seeds `cur` from somewhere other than "".
 			return "", errWillNotApply
 		}
 

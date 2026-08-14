@@ -176,20 +176,38 @@ func TestReportable_ASymlinkIntoTheRepositoryFromOutsideIsReportedAsInside(t *te
 		"a link INTO the repository names a file the repository holds; refusing it makes a rule about that file inert")
 }
 
-// TestReportable_ARelativePathIsLeftExactlyAsGiven pins the first branch, and
-// specifically that it does not quietly canonicalise.
+// TestReportable_ARelativePathIsCleanedButNotResolved pins the first branch:
+// folded lexically, never resolved against a filesystem.
 //
-// A harness sending a relative path has already produced the spelling a matcher
-// wants, and there is no root to resolve it against in general. What makes this
-// worth a test rather than an assertion about three lines is that the OTHER
-// branches all return a cleaned spelling, so "clean it here too" reads as a
-// consistency improvement — and it is not one: it would resolve the path
-// against this process's working directory, which is not the workspace.
-func TestReportable_ARelativePathIsLeftExactlyAsGiven(t *testing.T) {
+// This test used to assert the opposite — that `./memories/a.md` is returned
+// exactly as given — and that assertion was the bypass. A matcher is a prefix
+// test, so `path startsWith "memories/"` did not admit `./memories/a.md`, the
+// hook was never asked, and the write landed. One character, typed with no
+// intent to evade, defeating every prefix-narrowed rule in every project.
+//
+// The old argument was that cleaning "would resolve the path against this
+// process's working directory, which is not the workspace". That confuses two
+// operations. filepath.Clean is LEXICAL: it folds `.` and `..` as string
+// arithmetic and never touches a filesystem, so no working directory is
+// consulted and nothing is resolved. What it buys is that one file has one
+// spelling, which is what a prefix test needs to mean anything.
+//
+// `../outside.md` is the case that shows cleaning is not laundering: it stays
+// `../outside.md`, still refused by every project-relative matcher, because
+// there is nothing lexically above a relative root to fold it into.
+func TestReportable_ARelativePathIsCleanedButNotResolved(t *testing.T) {
 	root := t.TempDir()
-	for _, path := range []string{"memories/a.md", "./memories/a.md", "a.md", "../outside.md"} {
-		assert.Equal(t, path, reportable(path, root),
-			"a relative path is the harness's own spelling and is not re-resolved")
+	for given, want := range map[string]string{
+		"memories/a.md":   "memories/a.md",
+		"./memories/a.md": "memories/a.md",
+		"a.md":            "a.md",
+		"secret/./keys.md": "secret/keys.md",
+		// An escape stays an escape. Folding it into something a matcher would
+		// admit is the one thing cleaning must not do.
+		"../outside.md": "../outside.md",
+	} {
+		assert.Equal(t, want, reportable(given, root),
+			"one file must have one spelling, and an escape must stay one")
 	}
 }
 

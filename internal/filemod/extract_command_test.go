@@ -2,6 +2,7 @@ package filemod
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -126,37 +127,259 @@ func TestExtractCommand_ACommandTouchingNothingProducesNoEvent(t *testing.T) {
 	}
 }
 
-// TestExtractCommand_ACreationIsNotPredicted is the spec decision, held as a
-// test.
+// TestExtractCommand_ACreationIsNotPredictedWhenItsBytesAreUnknowable is what
+// remains of the old blanket rule, narrowed to the cases where it is actually
+// true.
 //
-// A command aimed at a path that does not exist yet is a CREATION, and
-// PreFileCreate requires `content` — the file cannot be read off disk, so the
-// event carries what would be written. A command line does not say what bytes
-// will result.
+// The rule used to be: a command aimed at a path that does not exist produces
+// nothing, because PreFileCreate requires `content` and "a command line does not
+// say what bytes will result". The second half is false for a real subset of
+// commands — `echo`, `touch`, a quoted heredoc, `cp` — and the blanket was using
+// "we cannot know in general" to avoid the cases where we can. Those now predict
+// their content and are pinned by the tests below.
 //
-// Sending `content: ""` would make this indistinguishable from a tool writing a
-// genuinely empty file, and `content == ""` is exactly the rule an author writes
-// to catch that. So nothing is emitted, and the creation is reported after the
-// fact as PostFileCreate off the tree diff.
-//
-// This is a real limit and the test states it as one rather than as a
-// preference. If a later change gives PreFileCreate a way to say "content
-// unknown", this is the test that should change.
-func TestExtractCommand_ACreationIsNotPredicted(t *testing.T) {
+// What is left here is the genuine article: a line whose redirection is real and
+// whose bytes are not. The original argument applies unchanged to these, and it
+// is the reason silence is still right rather than `content: ""` — an empty
+// string would make `unknown-tool > new.md` indistinguishable from `touch
+// new.md`, whose empty content is a FACT. That distinction is the whole point of
+// the change, so preserving it here matters more than emitting one more event.
+func TestExtractCommand_ACreationIsNotPredictedWhenItsBytesAreUnknowable(t *testing.T) {
 	dir := t.TempDir()
 	absent := filepath.Join(dir, "not-there-yet.md")
 
 	for _, command := range []string{
-		"echo x > " + absent,
-		"echo x >> " + absent,
-		"touch " + absent,
+		// A program this engine knows nothing about. The redirection is real,
+		// the bytes are not.
+		"some-unknown-tool > " + absent,
+		"python script.py > " + absent,
+		"make build > " + absent,
+		// tee's bytes come from stdin, which the line does not carry.
 		"tee " + absent,
-		"cp /etc/hosts " + absent,
+		// An UNQUOTED heredoc interpolates against an environment this does
+		// not have. The quoted form is knowable and is tested separately.
+		"cat > " + absent + " <<EOF\nvalue is $HOME\nEOF\n",
+		// echo -e enables escape handling that differs between shells, so the
+		// resulting bytes depend on the interpreter rather than the line.
+		"echo -e 'a\\tb' > " + absent,
+		// A non-literal word: the content is resolved out of an assumed empty
+		// environment, which safeConfig refuses to treat as real.
+		"echo $GREETING > " + absent,
+		// printf with a format this does not model exactly.
+		"printf '%d items' 5 > " + absent,
+		// cp from a source that is not there: the command fails, so nothing is
+		// created and nothing may be claimed.
+		"cp " + filepath.Join(dir, "missing-source.md") + " " + absent,
+		// A copy INTO a directory, where the resulting filename is
+		// `dir/base(src)` — a path this deliberately does not compute.
+		"cp /etc/hosts " + dir,
 	} {
 		events, err := extractFor(t, command)
 		require.NoError(t, err, "command %q", command)
-		assert.Emptyf(t, events, "command %q creates a file, and a creation cannot be predicted with content", command)
+		assert.Emptyf(t, events,
+			"command %q creates a file whose bytes are not derivable, so it must stay silent "+
+				"rather than claim content:\"\"", command)
 	}
+}
+
+// TestExtractCommand_ACreationIsPredictedWhenItsBytesAreDerivable is the
+// widened half: the engine already parses these lines completely, so where the
+// line determines the resulting bytes it says so.
+//
+// Each case is a create — the path does not exist — carrying the exact content
+// the command would leave, trailing newline included. The newline is not a
+// detail: `echo hi` writes "hi\n" and `printf '%s' hi` writes "hi", and a rule
+// fingerprinting the file gets a different answer for each.
+func TestExtractCommand_ACreationIsPredictedWhenItsBytesAreDerivable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		command string
+		want    string
+	}{
+		"echo appends a newline": {
+			command: "echo hello > %s",
+			want:    "hello\n",
+		},
+		"echo -n does not": {
+			command: "echo -n hello > %s",
+			want:    "hello",
+		},
+		"echo joins its words with single spaces": {
+			command: "echo one two three > %s",
+			want:    "one two three\n",
+		},
+		"echo of nothing is just the newline": {
+			command: "echo > %s",
+			want:    "\n",
+		},
+		"a quoted heredoc is verbatim": {
+			command: "cat > %s <<'EOF'\nliteral $HOME stays\nEOF\n",
+			want:    "literal $HOME stays\n",
+		},
+		"printf with no conversions adds no newline": {
+			command: "printf 'no newline' > %s",
+			want:    "no newline",
+		},
+		"printf %s substitutes its argument": {
+			command: "printf '%%s\\n' hello > %s",
+			want:    "hello\n",
+		},
+		"touch creates an empty file, and that empty is REAL": {
+			command: "touch %s",
+			want:    "",
+		},
+		"a truncating redirection of nothing empties it": {
+			command: ": > %s",
+			want:    "",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "created.md")
+
+			events, err := extractFor(t, fmt.Sprintf(tc.command, path))
+			require.NoError(t, err)
+			require.Len(t, events, 1, "a derivable creation is predicted")
+			require.Equal(t, KindPreCreate, events[0].Kind)
+			assert.Equal(t, tc.want, events[0].Fields[FieldContent],
+				"the exact bytes, trailing newline and all")
+		})
+	}
+}
+
+// TestExtractCommand_CopyingAFileCarriesTheSourcesCurrentBytes is the
+// PayloadCopyOf tier, and the one that needs BOTH halves of the seam.
+//
+// commandmod says "the result is whatever a.md holds" without reading anything;
+// filemod reads it. Neither package could answer alone, which is why the
+// payload carries a reference rather than a string.
+func TestExtractCommand_CopyingAFileCarriesTheSourcesCurrentBytes(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source.md")
+	require.NoError(t, os.WriteFile(src, []byte("# Source body\n"), 0o644))
+
+	for name, command := range map[string]string{
+		"cp": "cp " + src + " %s",
+		"mv": "mv " + src + " %s",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dst := filepath.Join(t.TempDir(), "destination.md")
+
+			events, err := extractFor(t, fmt.Sprintf(command, dst))
+			require.NoError(t, err)
+
+			var create event.Event
+			var found bool
+			for _, e := range events {
+				if e.Fields[FieldPath] == dst {
+					create, found = e, true
+				}
+			}
+			require.True(t, found, "the destination must be reported")
+			assert.Equal(t, KindPreCreate, create.Kind)
+			assert.Equal(t, "# Source body\n", create.Fields[FieldContent],
+				"the destination's bytes are the source's current bytes")
+		})
+	}
+}
+
+// TestExtractCommand_AppendingCarriesTheWholeResultingFile is the append tier.
+//
+// `echo x >> log.md` is an UPDATE, not a create, and its result is the file's
+// current bytes plus the new text. That needs the disk (the base) and the line
+// (the tail), so it is the clearest case for the split.
+func TestExtractCommand_AppendingCarriesTheWholeResultingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "log.md")
+	require.NoError(t, os.WriteFile(path, []byte("first line\n"), 0o644))
+
+	events, err := extractFor(t, "echo second line >> "+path)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
+	e := events[0]
+	require.Equal(t, KindPreUpdate, e.Kind, "appending to an existing file is an update")
+	assert.Equal(t, true, e.Fields[FieldResultKnown])
+	assert.Equal(t, "first line\nsecond line\n", e.Fields[FieldResult],
+		"the whole resulting file: what is there now, plus what is being added")
+}
+
+// TestExtractCommand_AppendingToAnAbsentFileCreatesItWithJustTheNewText holds
+// the other side of the append: with no file to append to, `>>` creates one
+// holding only the new bytes.
+func TestExtractCommand_AppendingToAnAbsentFileCreatesItWithJustTheNewText(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new-log.md")
+
+	events, err := extractFor(t, "echo first >> "+path)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, KindPreCreate, events[0].Kind)
+	assert.Equal(t, "first\n", events[0].Fields[FieldContent])
+}
+
+// TestExtractCommand_TruncatingAnExistingFileIsAKnownEmptyResult pins the
+// update side of the truly-empty cases. These are the commands for which an
+// empty result is a FACT rather than a stand-in for ignorance, which is exactly
+// the distinction resultKnown exists to carry.
+func TestExtractCommand_TruncatingAnExistingFileIsAKnownEmptyResult(t *testing.T) {
+	for name, command := range map[string]string{
+		"a bare truncating redirection": ": > %s",
+		"truncate -s 0":                 "truncate -s 0 %s",
+		"truncate -s0":                  "truncate -s0 %s",
+		"truncate --size=0":             "truncate --size=0 %s",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "existing.md")
+			require.NoError(t, os.WriteFile(path, []byte("had content\n"), 0o644))
+
+			events, err := extractFor(t, fmt.Sprintf(command, path))
+			require.NoError(t, err)
+			require.Len(t, events, 1)
+			require.Equal(t, KindPreUpdate, events[0].Kind)
+			assert.Equal(t, true, events[0].Fields[FieldResultKnown],
+				"emptying a file is a known outcome, not an unknown one")
+			assert.Equal(t, "", events[0].Fields[FieldResult])
+		})
+	}
+}
+
+// TestExtractCommand_ATruncateToANonZeroSizeIsNotDerivable is the boundary of
+// the case above. Any size but zero depends on the file's current bytes and
+// length — padding with NULs, or cutting at an offset — so it is declined.
+func TestExtractCommand_ATruncateToANonZeroSizeIsNotDerivable(t *testing.T) {
+	for _, size := range []string{"100", "+10", "-10"} {
+		path := filepath.Join(t.TempDir(), "existing.md")
+		require.NoError(t, os.WriteFile(path, []byte("had content\n"), 0o644))
+
+		events, err := extractFor(t, "truncate -s "+size+" "+path)
+		require.NoError(t, err)
+		require.Len(t, events, 1, "size %q", size)
+		assert.Equal(t, false, events[0].Fields[FieldResultKnown],
+			"size %q depends on the file's current bytes", size)
+	}
+}
+
+// TestExtractCommand_TouchingAnExistingFileDoesNotClaimToEmptyIt is the case
+// that would be a silent disaster if the payload were applied blindly.
+//
+// commandmod reports `touch` as a literal empty payload, because that is what
+// the line determines FOR A CREATE. Against a file that already exists, touch
+// changes only the mtime and leaves every byte alone — so claiming a result of
+// "" would tell a rule the file was being emptied, and a guardrail refusing
+// empty files would fire on `touch existing.md`.
+//
+// The split is what prevents it: commandmod says what the line determines, and
+// filemod decides what the TREE makes of it. This test is that decision.
+func TestExtractCommand_TouchingAnExistingFileDoesNotClaimToEmptyIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "existing.md")
+	require.NoError(t, os.WriteFile(path, []byte("untouched body\n"), 0o644))
+
+	events, err := extractFor(t, "touch "+path)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, KindPreUpdate, events[0].Kind)
+	assert.NotEqual(t, "", events[0].Fields[FieldResult],
+		"touch does not empty a file, and must never be reported as though it does")
+	assert.Equal(t, "untouched body\n", events[0].Fields[FieldResult],
+		"the bytes are unchanged, which is itself a known result")
 }
 
 // TestExtractCommand_RemovingWhatIsNotThereIsNotADeletion pins the other

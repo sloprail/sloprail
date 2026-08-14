@@ -547,6 +547,52 @@ func TestExtractPending_MultiEditWhoseLaterEditCannotApplyProducesNoEvent(t *tes
 		"the call fails as a whole, so the partial result is a state the file never holds")
 }
 
+// TestExtractPending_AnEmptyOldStringIsOnlyAnInsertionIntoANewFile pins the
+// two conditions on the create spelling, and it exists because a mutation
+// relaxing EITHER of them survived the suite.
+//
+// `old_string: ""` means "match nothing, insert this". It is well-defined only
+// as the FIRST edit against a file that is not there. Anywhere else there is no
+// defined insertion point — the tool would have to choose between prepending
+// and appending — so it refuses, and predicting a result would be inventing one.
+//
+// The two subtests are the two halves of `i == 0 && created`, each mutated
+// separately:
+//
+//	dropping `i == 0`     an empty old_string on a LATER edit, after an earlier
+//	                      one already created the file
+//	dropping `created`    an empty old_string against a file already on disk
+func TestExtractPending_AnEmptyOldStringIsOnlyAnInsertionIntoANewFile(t *testing.T) {
+	t.Run("not as a later edit, once the file has been created", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "built.md")
+
+		events, err := New().Extract(module.Input{
+			module.InputPhase: module.PhasePre,
+			module.InputPayload: multiEditPending(path,
+				[2]string{"", "first\n"},
+				// The file exists by now, so this has no insertion point.
+				[2]string{"", "second\n"},
+			),
+		})
+		require.NoError(t, err)
+		assert.Empty(t, events,
+			"an empty old_string past the first edit has no defined insertion point")
+	})
+
+	t.Run("not against a file that already exists", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "existing.md")
+		require.NoError(t, os.WriteFile(path, []byte("already here\n"), 0o644))
+
+		events, err := New().Extract(module.Input{
+			module.InputPhase:   module.PhasePre,
+			module.InputPayload: editPending(path, "", "inserted"),
+		})
+		require.NoError(t, err)
+		assert.Empty(t, events,
+			"the tool refuses rather than choosing between prepending and appending")
+	})
+}
+
 // TestExtractPending_AnEmptyEditsArrayProducesNoEvent holds the degenerate
 // shape. An edits array with nothing in it changes no bytes, so there is no
 // modification to be about.

@@ -250,9 +250,28 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 //
 // Three cases, and the third is the one worth stating.
 //
-// A path already relative is left alone. A harness that sends a
-// workspace-relative path has already produced the spelling a matcher wants,
-// and re-resolving it against the root would mean resolving it twice.
+// A path already relative is CLEANED and left relative. A harness that sends a
+// workspace-relative path has already produced the spelling a matcher wants, so
+// it is not re-resolved against the root — but it is put in canonical form
+// first, and that is not cosmetic.
+//
+// A matcher is a prefix test, so an uncleaned relative path is a way round every
+// narrowed rule in the project. `./secret/keys.md` and `secret/keys.md` name one
+// file; returning the first verbatim means `path startsWith "secret/"` does not
+// admit it, the hook is never asked, and the write lands. Measured end to end
+// before this was cleaned: the guarded write went through unrefused. The same
+// holds for `secret/./keys.md` and for any spelling with a redundant separator.
+//
+// It also gives the revalidation store one key per file. A verdict is recorded
+// against the reported path, so two spellings of one file were two subjects, and
+// a rule that had judged one had not judged the other.
+//
+// Clean does not resolve symlinks and does not touch the filesystem, which is
+// what keeps this the cheap branch. It is purely lexical, so it cannot pull an
+// outside path in: `../x` cleans to `../x` and stays outside. A relative path
+// that climbs out of the workspace is left as it is for the same reason the
+// absolute branch below leaves outside paths alone — no project-relative matcher
+// should admit it.
 //
 // A path inside the workspace becomes relative to it, with forward slashes.
 // This is what makes `path startsWith "memories/"` admit a write Claude Code
@@ -268,7 +287,7 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 // is the honest answer — the write is outside the rule's subject.
 func reportable(path, root string) string {
 	if !filepath.IsAbs(path) {
-		return path
+		return filepath.ToSlash(filepath.Clean(path))
 	}
 	if root == "" {
 		// No workspace was named, so there is nothing to be relative TO.
@@ -474,13 +493,40 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 			// happened.
 			problems = append(problems, err)
 			continue
+		case p == absent && t.Effect == commandmod.Write:
+			// A creation. Historically silent, and the doc comment above gives
+			// the reason: PreFileCreate requires `content`, the file cannot be
+			// read off disk, and a command line "does not say what bytes will
+			// result".
+			//
+			// That is true of most command lines and FALSE of a real subset,
+			// which is what changed. `echo hi > new.md`, `touch new.md`, a
+			// quoted heredoc and `cp a.md new.md` all determine the resulting
+			// bytes exactly, and commandmod now says so through Payload. Where
+			// it does, the create is predicted carrying the content the file
+			// will actually have.
+			//
+			// Where it does NOT — `some-unknown-tool > new.md` — the original
+			// argument stands unchanged and the creation stays silent, because
+			// `content: ""` would make it indistinguishable from `touch`, whose
+			// empty content is a fact. The tree diff reports it afterwards.
+			content, ok := m.resolvePayload(t.Payload, "")
+			if !ok {
+				continue
+			}
+			events = append(events, FileEvent{
+				Path:    t.Path,
+				Content: content,
+				Markers: Scan(content),
+			}.Event(KindPreCreate))
+			continue
 		case p != presentFile:
-			// Absent, or a directory or device. Neither is a file this module's
-			// kinds can honestly be about: absent is the creation case argued
-			// above, and a non-file is what presentNotAFile means on the
-			// tool-write path too. lookAt's error is dropped for the same reason
-			// it is dropped there — it names a producer mistake, and a command
-			// line aimed at a directory is not a producer.
+			// A directory or device, or an absent path being removed. Neither is
+			// a file this module's kinds can honestly be about: a non-file is
+			// what presentNotAFile means on the tool-write path too, and `rm
+			// gone.md` deletes nothing. lookAt's error is dropped for the same
+			// reason it is dropped there — it names a producer mistake, and a
+			// command line aimed at a directory is not a producer.
 			continue
 		}
 
@@ -491,7 +537,29 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 		} else {
 			// An update carries the markers the file has NOW, the same as the
 			// tool-write path. See markersOnDisk on what those actually describe.
-			f.Markers = m.markersOnDisk(t.Path)
+			before := m.contentOnDisk(t.Path)
+			f.Markers = Scan(before)
+			// And, where the line determines them, the bytes it will hold
+			// afterwards. `echo x >> log.md` is the append case: the result is
+			// the current file plus the new text, which needs the disk for the
+			// base and the line for the tail, so neither package could answer
+			// it alone.
+			//
+			// mtimeOnly is the guard that keeps a create-shaped payload from
+			// lying about an existing file, and it is the whole reason this
+			// decision lives HERE rather than in commandmod. `touch` determines
+			// an empty file when it CREATES one and changes nothing at all when
+			// the file is already there — one line, two outcomes, chosen by the
+			// tree. commandmod cannot make that choice without reading the
+			// filesystem, so it states the create case and this branch corrects
+			// it. Applying the payload blindly would report `touch existing.md`
+			// as emptying the file, and a rule refusing empty results would
+			// fire on a command that changes no byte.
+			if t.MTimeOnly {
+				f.Result, f.ResultKnown = before, true
+			} else {
+				f.Result, f.ResultKnown = m.resolvePayload(t.Payload, before)
+			}
 		}
 		events = append(events, f.Event(kind))
 	}
@@ -524,6 +592,53 @@ func (*Module) markersOnDisk(path string) []Marker {
 		return []Marker{}
 	}
 	return Scan(string(b))
+}
+
+// resolvePayload turns what a command LINE determined into the actual bytes,
+// reading the filesystem where the line only referred to it.
+//
+// This is filemod's half of the split payload.go describes. commandmod stays a
+// pure function of a string — it never stats and never reads, which is what
+// lets every case there be tested by handing it a line — and the resolutions
+// that need the tree happen here, where a cwd exists and files are already
+// being read.
+//
+//	PayloadLiteral   the bytes are in hand. Nothing to resolve.
+//	PayloadAppend    the file's current bytes plus the literal tail. `before` is
+//	                 passed in rather than re-read, so the markers and the
+//	                 result describe the same snapshot — re-reading would let
+//	                 the two disagree if the tree moved between them.
+//	PayloadCopyOf    read the source. An unreadable or missing source yields
+//	                 "not known" rather than "", because an empty string would
+//	                 claim `cp missing.md b.md` produces an empty file when in
+//	                 fact the command fails and produces nothing.
+//	PayloadNone      the line determined nothing.
+//
+// The boolean is the honest half. It becomes `resultKnown` on an update, and on
+// a create it decides whether the event is emitted at all — PreFileCreate's
+// `content` is required, so a create that cannot state its bytes is exactly the
+// case the original argument leaves to the tree diff.
+func (m *Module) resolvePayload(p commandmod.Payload, before string) (string, bool) {
+	switch p.Kind {
+	case commandmod.PayloadLiteral:
+		return p.Text, true
+	case commandmod.PayloadAppend:
+		return before + p.Text, true
+	case commandmod.PayloadCopyOf:
+		// The source as the command line spelled it, which is the same spelling
+		// the target's path uses — both come off the line, and neither has been
+		// resolved against a root. lookAt is asked first so a directory or a
+		// missing source is refused rather than read as empty.
+		if src, err := lookAt(p.From, p.From); err != nil || src != presentFile {
+			return "", false
+		}
+		b, err := os.ReadFile(p.From)
+		if err != nil {
+			return "", false
+		}
+		return string(b), true
+	}
+	return "", false
 }
 
 // contentOnDisk reads a file, or yields "" when it cannot be read.

@@ -55,6 +55,22 @@ type FileTarget struct {
 	// because it means reading the filesystem and this package does not. See
 	// payload.go for the whole argument.
 	Payload Payload
+
+	// MTimeOnly marks a write that changes no bytes when the file already
+	// exists — `touch`, and nothing else today.
+	//
+	// It exists because `touch` is the one command whose PAYLOAD depends on
+	// something this package refuses to look at. Creating a file, it determines
+	// an empty one; against a file already there it changes only the timestamp
+	// and every byte survives. One line, two outcomes, chosen by the tree.
+	//
+	// So the line states both halves — the create payload in Payload, and this
+	// flag saying "only if it is a create" — and filemod, which has already
+	// stat'd the path, picks. Without it a caller applying the payload
+	// uniformly would report `touch existing.md` as emptying the file, and a
+	// guardrail refusing empty results would fire on a command that changes
+	// nothing.
+	MTimeOnly bool
 }
 
 // FileTargets finds every path a command line is about to change.
