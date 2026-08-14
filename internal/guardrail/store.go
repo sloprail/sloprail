@@ -97,14 +97,12 @@ func (iv Invalid) Has(kind error) bool {
 // evidence it does not have.
 //
 // What that means for ENFORCEMENT is a separate decision, and not one this
-// function gets to make by staying quiet. "No kinds" must not be read as "no
-// consequence": an enforcement point that scoped by kind and found none would
-// permit every action while a file the project keeps as a guardrail sits
-// unreadable, and — since no channel at PreToolUse delivers text without also
-// refusing — would do it silently. The pre-tool path therefore asks about this
-// case separately and refuses every action; see refuseForUnreadable in
-// services/sr-session, which carries the argument in full. Callers must decide
-// what an empty result means rather than defaulting into permission.
+// function gets to make by staying quiet. The engine's rule is that an invalid
+// guardrail blocks nothing: a declaration that will not load is reported at
+// session start and on every dispatch, and enforces nothing. So an empty result
+// here means the rule is announced rather than obeyed — see reportBrokenAtStop
+// in services/sr-session and the block comment above it, which records why the
+// earlier "refuse every action" answer was reversed.
 func (iv Invalid) AffectedKinds() []string {
 	seen := make(map[string]bool)
 	var kinds []string

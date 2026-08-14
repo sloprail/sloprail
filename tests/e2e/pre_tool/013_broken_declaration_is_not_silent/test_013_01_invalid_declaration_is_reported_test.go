@@ -92,32 +92,26 @@ const refuseScript = "#!/bin/sh\ncat >/dev/null\necho 'guarded/ is off limits' >
 // passed on a permitted write the moment a fixture used such a path. One
 // definition, in the harness, keyed on the harness's own refusal marker.
 
-// T013_01: a matcher naming a field its kind does not carry stops the write it
-// was supposed to guard, and says why.
+// T013_01: a matcher naming a field its kind does not carry does NOT stop the
+// write it was supposed to guard.
 //
-// This is the finding. `LoadWith` returns the invalid declarations and the
-// pre-tool path discarded them with `_`, so the guardrail vanished and the write
-// proceeded with nothing on any channel. The comment three lines above the call
-// claimed the opposite.
+// This test formerly asserted the reverse, and the reversal is the whole of the
+// change it now pins: an invalid guardrail blocks nothing.
 //
-// Note what this asserts, and why merely printing a diagnostic would not satisfy
-// it. No channel out of a PreToolUse hook delivers text to the agent without
-// ALSO refusing the action — measured through this same mock, one channel per
-// run: stdout and stderr at exit 0, stderr at exits 1, 3, 126 and 127,
-// `systemMessage` and `additionalContext` are all swallowed; only stderr at exit
-// 2 and the JSON `permissionDecision: "deny"` arrive, and both refuse.
+// The engine's position used to be that refusing IS the diagnostic's delivery
+// mechanism, since no channel out of a PreToolUse hook reaches the agent without
+// also refusing — measured through this same mock, one channel per run: stdout
+// and stderr at exit 0, stderr at exits 1, 3, 126 and 127, `systemMessage` and
+// `additionalContext` are all swallowed; only stderr at exit 2 and the JSON
+// `permissionDecision: "deny"` arrive, and both refuse.
 //
-// An earlier version of this comment said stderr reaches the agent "when the
-// hook exits non-zero" and claimed to have probed every other channel. Both
-// halves were wrong: it is exit 2 specifically, not any non-zero status, and the
-// unprobed channel was `permissionDecision` — the one the engine itself uses.
-// The conclusion was right anyway, which is exactly why it went unchecked. See
-// refuseForBroken in services/sr-session for the full table.
-//
-// So "warn and proceed" is indistinguishable from the original silence at the
-// only place that matters. The refusal is the diagnostic's delivery mechanism,
-// not a separate decision.
-func TestT013_01_MisspelledMatcherFieldStopsTheWriteItGuarded(t *testing.T) {
+// That table is still accurate, so this change really does trade the agent's
+// awareness away. What it buys is that a typo in somebody's declaration no
+// longer halts a session that had nothing to do with it. The fault belongs to
+// the guardrail author and is reported where the author looks — session start
+// and stderr — rather than to the agent, which did not write the file and often
+// cannot repair it.
+func TestT013_01_MisspelledMatcherFieldDoesNotStopTheWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.Guardrail(proj, "typo", misspelledField, map[string]string{
@@ -128,24 +122,8 @@ func TestT013_01_MisspelledMatcherFieldStopsTheWriteItGuarded(t *testing.T) {
 		Write("w1", "guarded/notes.md", "hello"),
 	))
 
-	if got.Permitted() {
-		t.Fatalf("a guardrail that could not load let through the write it was written to guard:\n%s", got.Output)
-	}
-	if !got.Saw("paht") {
-		t.Errorf("nothing named the misspelled field, so the author cannot find it:\n%s", got.Output)
-	}
-	if !got.Saw("typo") {
-		t.Errorf("the diagnostic does not name the guardrail it came from:\n%s", got.Output)
-	}
-	// Validate's diagnostic lists what the kind does carry, which is the half
-	// that lets an author fix it rather than merely know something is wrong.
-	if !got.Saw("path (string)") {
-		t.Errorf("the diagnostic does not say what the kind carries:\n%s", got.Output)
-	}
-	// A refusal an author cannot clear is a trap. The way out has to travel with
-	// the refusal, since this fires on every action the rule was bound to.
-	if !got.Saw("enabled: false") {
-		t.Errorf("the refusal does not say how to get unstuck:\n%s", got.Output)
+	if !got.Permitted() {
+		t.Fatalf("a guardrail that could not load must not refuse the write:\n%s", got.Output)
 	}
 }
 
@@ -172,14 +150,13 @@ func TestT013_02_TheSameRuleSpelledRightRefuses(t *testing.T) {
 	}
 }
 
-// T013_03: a broken rule stops the events it bound to WHATEVER the path.
+// T013_03: a broken rule stops nothing, on any path.
 //
-// The typo is in a matcher narrowing to `guarded/`, but the rule cannot load, so
-// nothing knows that narrowing was ever intended — the expression that expressed
-// it is the broken part. The honest scope is the KIND it bound to, which is
-// every file creation. Narrower would mean trusting a matcher already known not
-// to compile.
-func TestT013_03_ABrokenRuleStopsEveryEventOfItsKind(t *testing.T) {
+// The old rule scoped the refusal to the KIND the declaration bound to, since a
+// matcher that will not compile cannot be trusted to have narrowed anything. The
+// scoping reasoning was sound; what it scoped is now gone. A rule that cannot
+// load refuses neither the path its matcher named nor any other.
+func TestT013_03_ABrokenRuleStopsNothing(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.Guardrail(proj, "typo", misspelledField, map[string]string{
@@ -192,11 +169,8 @@ func TestT013_03_ABrokenRuleStopsEveryEventOfItsKind(t *testing.T) {
 		Write("w1", "elsewhere/notes.md", "hello"),
 	))
 
-	if got.Permitted() {
-		t.Fatalf("a rule that could not load was treated as narrowing to a path its broken matcher named:\n%s", got.Output)
-	}
-	if !got.Saw("PreFileCreate") {
-		t.Errorf("the refusal does not name the event kind that is unguarded:\n%s", got.Output)
+	if !got.Permitted() {
+		t.Fatalf("a rule that could not load must not refuse anything:\n%s", got.Output)
 	}
 }
 
@@ -246,55 +220,25 @@ func TestT013_05_ABrokenRuleDoesNotBlockAnUnrelatedKind(t *testing.T) {
 	}
 }
 
-// T013_05b: the positive control T013_05 needs, and did not have.
+// T013_05b is DELETED, and this note records why rather than leaving a silent
+// gap between 05 and 06.
 //
-// T013_05 asserts only that something did NOT happen, so it passes on any build
-// where broken declarations stop mattering at all. That is not hypothetical:
-// gutting `Invalid.AffectedKinds` to return nil — which disables the entire
-// kind-scoped refusal, the mechanism T013_05's claim is about — leaves T013_05
-// green. A test whose subject can be deleted while it still passes is not
-// testing its subject.
+// It was the positive control for T013_05: the same fault moved onto the kind
+// the write actually produces, proving the permit in T013_05 came from
+// kind-scoping rather than from broken declarations having stopped mattering
+// altogether. Its own comment made the standard explicit — "a test whose subject
+// can be deleted while it still passes is not testing its subject".
 //
-// This supplies the other half. It is the SAME fault (`paht` for `path`) in the
-// SAME shape, moved onto the kind the write actually produces, so the pair says
-// something neither says alone: the refusal is scoped to the kind, rather than
-// being absent everywhere. T013_05 shows the write survives a broken rule about
-// deletions; this shows that same write does NOT survive a broken rule about
-// creations. Together they locate the boundary.
+// Broken declarations HAVE now stopped mattering altogether, deliberately, so
+// the control can no longer distinguish anything: its assertion was that a
+// broken rule on the write's own kind refuses the write, which is exactly what
+// this change removes. Keeping it inverted would duplicate T013_01, which
+// already pins that a broken rule on PreFileCreate permits a creation.
 //
-// Deliberately not a delete turn. Nothing in this build produces PreFileDelete
-// — the file module declares the kind but no extraction emits it — so a test
-// driving a deletion would assert a permit for the wrong reason, which is the
-// failure this whole suite exists to prevent.
-func TestT013_05b_TheSameFaultOnTheWritesOwnKindDoesBlockIt(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	// brokenOnCreate is brokenOnDelete's fault on the kind this turn produces.
-	e.Guardrail(proj, "create-typo", `---
-hooks:
-  PreFileCreate:
-    - matcher: paht startsWith "guarded/"
-      hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# Refuses writes under guarded/, except it says paht
-`, map[string]string{"refuse.sh": refuseScript})
-
-	got := e.Run(proj, "s-013-05b", "write a note", Turns("done",
-		Write("w1", "any/notes.md", "hello"),
-	))
-
-	if !got.Refused() {
-		t.Fatalf("a broken rule bound to PreFileCreate did not stop a creation — "+
-			"the kind-scoped refusal is not firing at all, which makes T013_05's "+
-			"survival meaningless rather than evidence of scoping:\n%s", got.Output)
-	}
-	if e.Exists(proj, "any/notes.md") {
-		t.Fatal("the refusal was reported but the file landed anyway")
-	}
-}
+// What this costs is worth naming: T013_05 is now a test that only asserts
+// something did NOT happen, in a build where nothing invalid ever refuses, so it
+// no longer locates a boundary. It is kept as a regression guard against a
+// future build that reintroduces refusal without reintroducing scoping.
 
 // T013_06: one broken declaration does not silence a sound one beside it.
 //
@@ -345,25 +289,21 @@ hooks:
 # The closing fence is missing
 `
 
-// T013_07: a declaration that cannot be parsed at all refuses, rather than
-// going silent.
+// T013_07: a declaration that cannot be parsed at all permits, and goes quiet.
 //
-// This is the finding, and it is the round-one failure mode preserved for the
-// case where the file is MOST broken. `AffectedKinds` correctly returns nothing
-// for an unparseable declaration — there are no bindings to read off a file that
-// did not parse — but nothing else reported it either, and the name never
-// reached the stream. Announced once at session start, silent at every action
-// after it.
+// The inversion of what this asserted, and the case that forced the change. An
+// unparseable declaration names no bindings, so the old engine could not scope a
+// refusal and refused EVERYTHING instead — every kind, every action, for the
+// life of the session.
 //
-// "Genuinely a warning" was the framing, and the channel table makes it false:
-// no channel at this hook point delivers text to the agent without also refusing
-// the action, so "warn and proceed" IS "proceed". The more broken the file, the
-// quieter the engine got.
+// The cost of that is not theoretical and was not what the old comment predicted.
+// See T013_08, which used to claim the author kept a way out and has been
+// rewritten to measure whether that was ever true.
 //
-// Note this is deliberately not scoped. There is no evidence of what the file
-// was guarding, and "no evidence of what it guarded" is not "evidence it guarded
-// nothing" — see refuseForUnreadable.
-func TestT013_07_AnUnparseableDeclarationRefusesRatherThanGoingSilent(t *testing.T) {
+// What is knowingly given up: at this hook point the agent is not told. The
+// project is unguarded and quiet about it, and the mitigation lives at session
+// start, where the author who broke the file is looking.
+func TestT013_07_AnUnparseableDeclarationPermits(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		body string
@@ -381,53 +321,54 @@ func TestT013_07_AnUnparseableDeclarationRefusesRatherThanGoingSilent(t *testing
 					Write("w1", "any/notes.md", "hello"),
 				))
 
-			if got.Permitted() {
-				t.Fatalf("a declaration too broken to read was treated as guarding nothing:\n%s", got.Output)
-			}
-			// The name is the whole point: it is what a person needs to find the
-			// file, and it was the thing that never reached the stream.
-			if !got.Saw("unreadable") {
-				t.Errorf("the refusal does not name the declaration that could not be read:\n%s", got.Output)
-			}
-			// A refusal an author cannot clear is a trap, and this one fires on
-			// every action until the file parses.
-			if !got.Saw("remove that folder") {
-				t.Errorf("the refusal does not say how to get unstuck:\n%s", got.Output)
+			if !got.Permitted() {
+				t.Fatalf("a declaration too broken to read must not refuse the action:\n%s", got.Output)
 			}
 		})
 	}
 }
 
-// T013_08: the refusal does not lock the project out of fixing it.
+// T013_08: an unreadable declaration does not lock the session out of REPAIRING
+// it — and this version actually measures that, where the old one asserted it.
 //
-// T013_07 refuses every action, which is the strongest response in this file and
-// the one that would be a trap if the way out were also refused. It is not: the
-// refusal names the file and says to fix or remove it, and both are done outside
-// the session. What must not happen is the engine ALSO failing to explain
-// itself — a blanket refusal carrying no name would leave an author with a
-// project that refuses everything and no idea which folder to look in.
+// The claim it replaces was: "the refusal does not lock the project out of
+// fixing it… editing the broken GUARDRAIL.md is itself a write, and a write is
+// refused by a rule that is bound to it — which this one, being unreadable, is
+// not bound to anything." Every clause of that is true about BINDINGS and the
+// conclusion is still false, because the blanket refusal did not run through
+// bindings at all: it fired before extraction, on every action of every kind.
 //
-// So this asserts the reason travels with the refusal on an unrelated action,
-// which is where a scoped refusal would have said nothing at all.
-func TestT013_08_TheBlanketRefusalAlwaysExplainsItself(t *testing.T) {
+// So the write that repairs the declaration was refused by the declaration's own
+// brokenness, and so was deleting the folder, and so was every unrelated command.
+// The old T013_08 did not catch this despite being the test named for it — it
+// only checked that the refusal EXPLAINED itself, never that a remedy could be
+// carried out.
+//
+// This drives the two remedies the refusal text itself named. Both must be
+// permitted, which under "an invalid guardrail blocks nothing" they trivially
+// are — and that is the point: the property is now structural rather than
+// argued.
+func TestT013_08_TheRemedyIsNotRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.Guardrail(proj, "unreadable", unparseable, nil)
 
-	// A command, not a write: a different module entirely, so nothing about
-	// this action is related to the file that cannot be read.
-	got := e.Run(proj, "s-013-08", "list the files", Turns("done",
+	// Remedy one: overwrite the broken declaration with a valid one. This is the
+	// action the old refusal text asked for and simultaneously refused.
+	got := e.Run(proj, "s-013-08-fix", "fix the declaration", Turns("done",
+		Write("w1", ".sloprail/guardrails/unreadable/GUARDRAIL.md", spelledCorrectly),
+	))
+	if !got.Permitted() {
+		t.Fatalf("the write that REPAIRS the broken declaration was refused, "+
+			"so the refusal's own instruction could not be carried out:\n%s", got.Output)
+	}
+
+	// Remedy two: an unrelated command, which the blanket refusal also stopped.
+	got = e.Run(proj, "s-013-08-cmd", "list the files", Turns("done",
 		Bash("b1", "ls -la"),
 	))
-
-	if got.Permitted() {
-		t.Fatalf("an unreadable declaration was silent on an action of another kind:\n%s", got.Output)
-	}
-	if !got.Saw("unreadable") {
-		t.Errorf("the refusal does not name the file to fix:\n%s", got.Output)
-	}
-	if !got.Saw("could not be read at all") {
-		t.Errorf("the refusal does not say what is wrong:\n%s", got.Output)
+	if !got.Permitted() {
+		t.Fatalf("an unrelated command was refused by a declaration that guards nothing:\n%s", got.Output)
 	}
 }
 

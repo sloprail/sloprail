@@ -64,11 +64,17 @@ hooks:
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 }
 
-// TestPreTool_UnreadableGuardrailStoreRefuses.
+// TestPreTool_UnreadableGuardrailStoreDoesNotRefuse.
 //
-// The project holds a rule bound to PreFileCreate. The folder cannot be listed,
-// so the engine cannot know that — and permitted the write.
-func TestPreTool_UnreadableGuardrailStoreRefuses(t *testing.T) {
+// The project holds a rule bound to PreFileCreate and the folder cannot be
+// listed, so the engine cannot know what was declared. It reports and permits:
+// an invalid guardrail blocks nothing, and a store that will not list is the
+// same failure as a declaration that will not parse, one level up.
+//
+// A directory whose permissions are wrong is not something the agent can put
+// right, so refusing its every action stalls the session without protecting
+// anything.
+func TestPreTool_UnreadableGuardrailStoreDoesNotRefuse(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root lists a 0000 directory, so the store cannot be made unreadable")
 	}
@@ -87,17 +93,22 @@ func TestPreTool_UnreadableGuardrailStoreRefuses(t *testing.T) {
 		`,"content":"hi"}}`)))
 	require.NoError(t, runSessionPreTool(cmd, nil))
 
-	assert.Contains(t, stdout.String(), `"permissionDecision":"deny"`,
-		"the guardrails folder could not be listed, so the engine cannot know what the "+
-			"project declared; permitting reads an unreadable store as approval")
+	assert.NotContains(t, stdout.String(), `"permissionDecision":"deny"`,
+		"an unlistable guardrails folder must not refuse the action")
+	assert.Contains(t, stderr.String(), "NOTHING is being guarded",
+		"the failure must be reported even though it is not enforced")
 }
 
-// TestDispatch_UnreadableGuardrailStoreBlocksTheTurn.
+// TestDispatch_UnreadableGuardrailStoreDoesNotBlockTheTurn.
 //
-// The same at the other hook point. Returning false held the read mark, which
-// is bookkeeping — it blocked nothing and said nothing to the agent, so the
-// turn ended with the cycle unjudged.
-func TestDispatch_UnreadableGuardrailStoreBlocksTheTurn(t *testing.T) {
+// The same at the other hook point, and the same answer. The cycle is unjudged
+// and the turn ends anyway, because holding it asks the agent to fix a
+// directory's permissions — which it cannot do, and which no number of retries
+// will change.
+//
+// The read mark is still held (ran is false), which is bookkeeping rather than
+// enforcement: nothing was judged, so nothing should be recorded as judged.
+func TestDispatch_UnreadableGuardrailStoreDoesNotBlockTheTurn(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root lists a 0000 directory, so the store cannot be made unreadable")
 	}
@@ -113,9 +124,9 @@ func TestDispatch_UnreadableGuardrailStoreBlocksTheTurn(t *testing.T) {
 
 	stdout, ran := dispatchOut(t, proj, store)
 
-	assert.False(t, ran)
-	assert.Contains(t, stdout, `"decision":"block"`,
-		"a cycle whose guardrails could not be listed has judged nothing, and the agent must be told")
+	assert.False(t, ran, "nothing was judged, so the read mark must not advance")
+	assert.NotContains(t, stdout, `"decision":"block"`,
+		"an unlistable guardrails folder must not hold the turn")
 }
 
 // TestPreTool_NoGuardrailDirectoryStillPermits.

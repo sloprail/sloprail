@@ -38,17 +38,28 @@ import (
 // refused when the guardrail loads" — which is true of the loader and was false
 // of the engine.
 //
-// # What this test pins
+// # What this test pins NOW, and why it is the reverse of the above
 //
-// That the cycle is refused. Not the wording, and not which of the two sites is
-// fixed: the claim is that a project keeping a guardrail it cannot load is told
-// so through a channel that reaches the agent, which at the Stop hook means
-// blocking the turn.
+// The engine's rule became "an invalid guardrail blocks nothing", so the cycle
+// ENDS. Everything the finding above describes is still an accurate account of
+// how a TurnEnd rule goes silent; what changed is that the answer is no longer
+// to block the turn.
 //
-// The rule's hook PERMITS, so a refusal cannot come from the rule running. The
-// declaration never loads, so the hook is never asked at all — the only thing
-// that can block this turn is the engine's response to a rule it could not read.
-func TestT026_06_ABrokenTurnEndRuleIsNotSilent(t *testing.T) {
+// The reasoning: blocking hands the turn back to the agent to fix, and a
+// declaration that will not load is not the agent's to fix. Worse, the same
+// engine was refusing the writes that would repair it — see T013_08, which was
+// rewritten after that lockout was measured in a real session. A rule bound only
+// to TurnEnd is the sharpest case, because such a project blocked EVERY cycle
+// and could never end a turn at all.
+//
+// What is given up is real and is stated rather than hidden: a project whose
+// TurnEnd rule will not load now runs the whole session believing completeness
+// is enforced when it is not, and the agent is never told. Session start names
+// the rule; nothing else does.
+//
+// The rule's hook PERMITS, so nothing here can block except the engine's own
+// response to a rule it could not read — which is what makes the assertion sharp.
+func TestT026_06_ABrokenTurnEndRuleDoesNotBlockTheCycle(t *testing.T) {
 	e, proj := project(t)
 	e.Guardrail(proj, "narrowed-cycle", `---
 hooks:
@@ -68,18 +79,18 @@ hooks:
 	))
 
 	// A blocked stop sends the agent round again, so the mock emits its final
-	// result more than once. One result means the cycle ended with the project
-	// believing a rule was enforcing something it was not.
-	if strings.Count(got.Output, `"subtype":"success"`) < 2 {
-		t.Fatalf("a guardrail bound only to TurnEnd failed to load and the cycle ended anyway — "+
-			"the project keeps a rule it believes is guarding completeness and nothing is:\n%s",
-			got.Output)
+	// result more than once. Exactly one result means the cycle ended cleanly,
+	// which is now the required behaviour.
+	if strings.Count(got.Output, `"subtype":"success"`) >= 2 {
+		t.Fatalf("a guardrail that could not load blocked the cycle — an invalid guardrail "+
+			"must block nothing, and a rule bound only to TurnEnd would otherwise make every "+
+			"turn in the session unendable:\n%s", got.Output)
 	}
 
+	// And nothing was delivered to the agent on its behalf.
 	told := strings.Join(e.BlockingErrors(proj, "s-026-06"), "\n")
-	if !strings.Contains(told, "narrowed-cycle") {
-		t.Errorf("the refusal does not name the guardrail that would not load, so the author "+
-			"cannot find the declaration to fix:\n%s", told)
+	if strings.Contains(told, "narrowed-cycle") {
+		t.Errorf("a rule that could not load produced a blocking error:\n%s", told)
 	}
 }
 

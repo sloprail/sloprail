@@ -88,19 +88,21 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 		// it held nothing is the fail-open. A project with no .sloprail
 		// directory never reaches here — that is os.IsNotExist, which LoadWith
 		// answers with (nil, nil, nil).
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
-		if err := block(cmd, fmt.Sprintf(
-			"the guardrails in this project could not be read at all, so there is no way to know what they guard: %v. "+
-				"The turn is held because a store that cannot be listed must not be read as approval — "+
-				"fix the permissions on the guardrails directory, or remove it if the project has no guardrails.",
-			err)); err != nil {
-			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
-		}
+		// Reported and the turn is let go. An invalid guardrail blocks nothing,
+		// and that holds hardest here: a Stop hook that blocks hands the turn
+		// back to the agent to fix, and a store the agent cannot list is not
+		// something the agent can fix. Holding the turn produced a session that
+		// could not end and could not be repaired from inside — which is how
+		// this change came to be written.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"sloprail: the guardrails in this project could not be read at all, so NOTHING was judged this cycle: %v. "+
+				"Fix the permissions on the guardrails directory, or remove it if the project has no guardrails.\n",
+			err)
 		return false
 	}
 
-	// For a person tailing logs. Not how the agent learns of it — see above and
-	// brokenObjections, which is what actually carries these words.
+	// For a person tailing logs, which since an invalid guardrail blocks nothing
+	// is now the ONLY place these words go — see reportBrokenAtStop.
 	reportInvalid(cmd, invalid)
 
 	// Only what something actually binds to. An extractor runs when a binding
@@ -191,11 +193,11 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// it carries no fields are stated in the same place they are declared.
 	events = append(events, cyclemod.Event())
 
-	// A declaration that could not be loaded objects BEFORE any hook is asked,
-	// and it objects to the events it was bound to. Collected alongside the real
-	// verdicts rather than returned early, for the same reason dispatchAll
-	// collects rather than stopping: the agent is told everything at once.
-	objections := brokenObjections(invalid, events)
+	// A declaration that could not be loaded is REPORTED before any hook is
+	// asked, and objects to nothing. An invalid guardrail blocks nothing.
+	reportBrokenAtStop(cmd, invalid, events)
+
+	var objections []objection
 
 	// root, not scope.Workspace: every path in the difference is
 	// repository-relative, and the two agree only when the hook fired at the
@@ -217,76 +219,67 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	return true
 }
 
-// brokenObjections is what the declarations that could not be loaded have to
-// say about this cycle.
+// reportBrokenAtStop says, on stderr, which declarations did not guard this
+// cycle. It produces no objections: an invalid guardrail blocks nothing.
 //
-// # Why a broken rule objects at all
+// # What this replaces
 //
-// The same argument refuseForBroken carries at the pre-tool point, and it is
-// not weakened by the timing. A Post refusal cannot undo the write — true, and
-// beside the point. What it does is stop the TURN from ending, which is the
-// whole mechanism an after-the-fact rule has. Ending the turn because the rule
-// would not load is the engine deciding, on its own account, that an
-// unenforceable rule is a satisfied one.
+// brokenObjections turned every unloadable declaration into a turn-blocking
+// objection, an unparseable one objecting to every cycle unconditionally. The
+// argument was that ending the turn on an unenforceable rule is the engine
+// deciding an unenforceable rule is a satisfied one.
 //
-// # Scoping, in the two shapes the Pre side already distinguishes
+// That is true and it is no longer decisive. A Stop objection's mechanism is to
+// hand the turn back to the agent so it can fix what was found — which only
+// works when the agent is the party who can fix it. For a violated rule it is.
+// For a rule that will not PARSE it is not: the fault is in a file the guardrail
+// author wrote, the agent is told to repair a declaration it may know nothing
+// about, and — measured, in the session that produced this change — the
+// pre-tool half was simultaneously refusing the very writes that repair would
+// need. The result was a turn that could not end and could not be fixed.
 //
-// A declaration that PARSED and then failed validation names its kinds, so it
-// objects to a cycle only when that cycle produced one of them. A typo in a
-// rule about commands must not block a cycle no rule was written about —
-// otherwise the only way out is deleting the rule, which is the mistake
-// guardrail.Fault warns about one door along. Since PreCommandInvoke is never
-// produced here, such a rule is correctly silent at Stop.
+// So the honest accounting is that blocking here never bought enforcement. It
+// bought a stalled session, and the rule stayed unenforced throughout.
 //
-// A declaration that could not be PARSED names nothing, and "no evidence of
-// what it guarded" is not "evidence it guarded nothing". It objects to every
-// cycle. The asymmetry is deliberate and is the same one refuseForUnreadable
-// makes: the cost of refusing too broadly is loud, immediate and cleared by
-// fixing the file, while the cost of permitting is silent.
+// # What is given up
 //
-// TurnEnd is always among the events, so an unreadable declaration always has
-// something to object to and needs no special case.
-func brokenObjections(invalid []guardrail.Invalid, events []event.Event) []objection {
+// A Stop hook's stderr does not reach the agent — it exits 0 and blocks by
+// writing {"decision":"block"} on stdout, so only an objection is delivered.
+// Reporting here therefore tells a log, not the agent. A cycle that went
+// unjudged because a rule would not load now ends quietly.
+//
+// That is the accepted cost of the rule "an invalid guardrail blocks nothing",
+// and it is mitigated where the author IS looking: session start names every
+// invalid declaration, and reportInvalid repeats it each dispatch.
+func reportBrokenAtStop(cmd *cobra.Command, invalid []guardrail.Invalid, events []event.Event) {
 	produced := make(map[string]bool, len(events))
 	for _, e := range events {
 		produced[e.Kind] = true
 	}
 
-	var objections []objection
 	for _, iv := range invalid {
 		if iv.Has(guardrail.ErrMalformed) {
-			objections = append(objections, objection{
-				Guardrail: iv.Name,
-				Reason: fmt.Sprintf(
-					"guardrail %q could not be read at all, so there is no way to know what it was guarding: %s. "+
-						"The turn is held because a file the project keeps as a guardrail must not be read as approval "+
-						"merely for being unreadable — fix the declaration in %s, or remove that folder if it is not a guardrail.",
-					iv.Name, iv.Reason, iv.Name),
-			})
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"sloprail: guardrail %q could not be read at all, so it did NOT guard this cycle: %s. "+
+					"Fix the declaration in %s, or remove that folder if it is not a guardrail.\n",
+				iv.Name, iv.Reason, iv.Name)
 			continue
 		}
 
-		// Scoped: only the kinds this cycle actually produced. Every fault is
-		// named, not the first, so one pass fixes the declaration.
+		// Scoped: only the kinds this cycle actually produced, so a rule about
+		// commands is not reported against a cycle that ran none.
 		for _, k := range iv.AffectedKinds() {
 			if !produced[k] {
 				continue
 			}
-			objections = append(objections, objection{
-				Guardrail: iv.Name,
-				Reason: fmt.Sprintf(
-					"guardrail %q is bound to %s but could not be loaded, so it did not guard this cycle: %s. "+
-						"The turn is held because a guardrail that cannot load must not be read as approval — "+
-						"fix the declaration in %s, or disable it with `enabled: false` if it is not ready.",
-					iv.Name, k, iv.Reason, iv.Name),
-			})
-			// One objection per broken declaration, not one per kind. The fault
-			// is the same fault whichever event surfaced it, and repeating it
-			// per kind would pad the block with the same sentence.
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"sloprail: guardrail %q is bound to %s but could not be loaded, so it did NOT guard this cycle: %s. "+
+					"Fix the declaration in %s, or disable it with `enabled: false` if it is not ready.\n",
+				iv.Name, k, iv.Reason, iv.Name)
+			// One report per broken declaration, not one per kind.
 			break
 		}
 	}
-	return objections
 }
 
 // refusalText is what the agent is told when a cycle is refused.
