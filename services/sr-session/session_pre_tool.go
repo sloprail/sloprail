@@ -119,20 +119,39 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// A declaration that could not be PARSED is decided before any event is
-	// extracted, because it can never be decided after one.
+	// A declaration that could not be PARSED needs no handling of its own here,
+	// and this comment says why rather than leaving the absence to look like an
+	// oversight — because for one revision it was one.
 	//
-	// The kind-scoped refusal below rides on events: a broken rule is noticed
-	// when an event of a kind it bound to occurs. An unparseable file binds
+	// The old refusal had to sit at this point in the function. It could never
+	// ride on events: the kind-scoped path below is reached when an event of a
+	// kind the declaration bound to occurs, and an unparseable file binds
 	// nothing — there are no bindings to read off a file that did not parse — so
 	// it contributes no kinds, no module is asked to extract for it, and the
-	// event loop it would be caught in never runs. Leaving it there made the
-	// most broken declaration in the project the only silent one. See
-	// refuseForBroken for why the answer is to refuse everything rather than to
-	// warn.
-	// A declaration that could not be parsed no longer refuses anything. It is
-	// reported by reportInvalid above and the session proceeds — see
-	// refuseForUnreadable for the argument this reverses and why.
+	// event loop never sees it. That is why refuseForUnreadable existed as a
+	// separate pre-extraction step, and why deleting the refusal left an
+	// apparent hole exactly here.
+	//
+	// The hole is apparent rather than real. reportInvalid above is not scoped to
+	// kinds at all — it walks the whole invalid list and prints every fault on it,
+	// and a malformed declaration is on that list carrying its parse error as its
+	// reason. Verified by running this function against a declaration with no
+	// frontmatter fence: stderr carries `guardrail "unreadable" not loaded:` and
+	// the parse diagnostic beneath it, with no refusal on stdout. The malformed
+	// case is therefore reported on exactly the same channel, in the same words,
+	// and on the same dispatch as every other invalid declaration.
+	//
+	// So nothing is added here, and the omission is the correct code. A
+	// reportUnreadable alongside reportInvalid would print one fault twice per
+	// dispatch — the thing reportInvalid's own comment warns about, one file
+	// over: two reports of one fault is how a person comes to believe they have
+	// two faults.
+	//
+	// What is NOT claimed: that the malformed case is reported as LOUDLY as it
+	// once was. reportBroken below names the action a rule has stopped guarding;
+	// reportInvalid can only name the rule, because a file that did not parse
+	// says nothing about what it would have guarded. That is a property of the
+	// fault, not a gap in the reporting.
 
 	// Only the modules something actually binds to. Producing an event nobody
 	// asked for is work done to be discarded.
@@ -583,7 +602,10 @@ func reportUnresolved(cmd *cobra.Command, unresolved []harness.Unresolved) {
 // whose only broken rule is about commands writes files freely.
 //
 // A declaration that could not be PARSED names no kinds and so never matches
-// here. It is handled before extraction instead — see refuseForUnreadable.
+// here. It is not handled before extraction either, because there is no longer
+// anything to handle: reportInvalid names it once per dispatch, and the comment
+// at the old refuseForUnreadable call site records why that is sufficient.
+//
 // reportBroken announces, on stderr, that a rule bound to this kind is not
 // running. It never refuses: an invalid guardrail blocks nothing.
 //
