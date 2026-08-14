@@ -571,3 +571,68 @@ func TestExtractPending_AWriteAimedAtAFifoProducesNoEventAndDoesNotBlock(t *test
 		t.Fatal("the pre phase blocked on a FIFO — markersOnDisk waits for a writer, so presentNotAFile must never reach it")
 	}
 }
+
+// TestReportable_AnEscapeThroughASymlinkedParentIsRefusedInItsRelativeSpellingToo
+// is the same escape as the test above, named the other way.
+//
+// The absolute branch was made non-lexical precisely so `<root>/escape/id_rsa`,
+// where `escape` links out of the repository, could not come back as a clean
+// repository-relative path. The RELATIVE branch was left purely lexical, and
+// the identical file named as `escape/id_rsa` went straight through it: no
+// `..` to fold, already clean, so Clean returned it untouched and the event
+// carried a clean relative path naming a file outside the repository — which is
+// verbatim what the absolute test calls "the exact string the bug produced".
+//
+// Which spelling the harness happens to use is not a property of the file, so
+// the two branches must not disagree about it. Measured before the fix:
+// absolute was left absolute and refused by every project-relative matcher,
+// while relative came back as `escape/id_rsa`, admitted by `path startsWith
+// "escape/"`, and a hook joining it onto its own root reads the outside file.
+func TestReportable_AnEscapeThroughASymlinkedParentIsRefusedInItsRelativeSpellingToo(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "id_rsa"), []byte("KEY"), 0o600))
+	symlinkOrSkip(t, outside, filepath.Join(root, "escape"))
+
+	got := reportable("escape/id_rsa", root)
+
+	assert.NotEqual(t, "escape/id_rsa", got,
+		"the relative spelling of an escape must not stay a clean repository-relative path — a matcher admits it and a hook joins it onto its own root")
+	assert.True(t, filepath.IsAbs(got),
+		"an outside file is reported absolute, the same answer the absolute branch gives it: got %q", got)
+}
+
+// TestReportable_AWriteThroughASymlinkedParentCarriesNoRepositoryRelativePath
+// is the same defect at the level a rule actually sees, rather than at the
+// helper.
+//
+// A guardrail narrowed on a folder is a prefix test over the event's `path`. So
+// the question that matters is not what reportable returns but what reaches the
+// matcher, and this pins it there: a write the harness announces relatively,
+// through a parent that links out of the repository, must not arrive as a
+// spelling a project-relative rule would admit.
+func TestReportable_AWriteThroughASymlinkedParentCarriesNoRepositoryRelativePath(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "id_rsa"), []byte("KEY"), 0o600))
+	symlinkOrSkip(t, outside, filepath.Join(root, "escape"))
+
+	args, err := json.Marshal(map[string]any{
+		"file_path": "escape/id_rsa",
+		"content":   "REPLACED",
+	})
+	require.NoError(t, err)
+
+	m := &Module{}
+	events, err := m.extractPending(module.Input{
+		module.InputPayload: Pending(fakePending{tool: "Write", args: args, root: root}),
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
+	got, _ := events[0].Fields[FieldPath].(string)
+	assert.NotEqual(t, "escape/id_rsa", got,
+		"the event handed to every matcher must not name an outside file as though the project held it")
+	assert.True(t, filepath.IsAbs(got),
+		"outside is reported absolute, which no project-relative matcher admits: got %q", got)
+}

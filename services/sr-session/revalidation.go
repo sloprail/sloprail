@@ -110,11 +110,17 @@ func (r *revalidation) Close() {
 //     the doomed file on the Pre side would key an exemption on exactly the
 //     content the action exists to remove.
 //
-// The Post branch is written against kinds nothing produces yet — the file
-// module's observed extraction is still a stub. It is here because the rule it
-// follows is the same one the Pre branch follows, not because it has been
-// exercised end to end; when that extraction lands, the case to check is a Post
-// event about a file a later cycle has already changed again.
+// The Post branch was written ahead of the kinds that feed it, when the file
+// module's observed extraction was still a stub. That extraction has since
+// landed — Extract dispatches PhasePost to extractObserved — and this branch is
+// exercised end to end by the change-detection and identity suites
+// (tests/e2e/session/013, 016, 017 and 020). The case that comment named as the
+// one to check when it landed, a Post event about a file a later cycle has
+// changed again, is T020_01's third cycle.
+//
+// Recorded as history rather than deleted because the note read as a live
+// warning that nothing here was covered, and it outlived the condition it
+// described by long enough to be quoted in an audit as a coverage gap.
 //
 // False means the hook runs and its verdict is not recorded. That is the safe
 // direction in every case: work is repeated, never skipped.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/event"
@@ -287,7 +288,66 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 // is the honest answer — the write is outside the rule's subject.
 func reportable(path, root string) string {
 	if !filepath.IsAbs(path) {
-		return filepath.ToSlash(filepath.Clean(path))
+		clean := filepath.ToSlash(filepath.Clean(path))
+		if root == "" {
+			// Nothing to check containment against. The lexical answer is the
+			// whole answer, as it was before a root was ever consulted here.
+			return clean
+		}
+		// Cleaned is NOT the same as contained, and this is the half the
+		// lexical branch was missing.
+		//
+		// Clean is pure string arithmetic, so it settles `./a.md` and
+		// `secret/./keys.md` — the redundant spellings this branch exists to
+		// canonicalise — and it settles a `..` that is VISIBLE in the spelling,
+		// which stays `../x` and is left outside. What it cannot see is a `..`
+		// that is not spelled at all: `escape/id_rsa`, where `escape` is a
+		// symlink to a directory outside the repository, contains no `..`, is
+		// already clean, and names a file the project does not hold.
+		//
+		// That is the identical case the ABSOLUTE branch below stopped being
+		// lexical in order to catch, and the spelling of the input is no reason
+		// for the two to disagree: one harness announces the write as
+		// `<root>/escape/id_rsa` and another as `escape/id_rsa`, and only the
+		// first was refused. Measured before this: the relative spelling was
+		// reported as `escape/id_rsa`, a CLEAN REPOSITORY-RELATIVE PATH NAMING
+		// AN OUTSIDE FILE — so a hook joining it against its own root reads
+		// whatever the link points at, which is what resolve exists to prevent.
+		//
+		// resolve is the same check, reached the same way, so the two branches
+		// cannot drift. It touches the filesystem, which the comment above
+		// rightly calls the expensive part — but only to the depth the absolute
+		// branch already pays for, and only where a root was named.
+		if c, _, err := resolve(root, clean); err == nil {
+			return filepath.ToSlash(c)
+		}
+		// Not contained, or not a path resolve can answer about.
+		//
+		// Reported ABSOLUTE, which is the same answer the absolute branch gives
+		// an outside path and for the same reason: a matcher is a prefix test,
+		// and `escape/id_rsa` is a spelling `path startsWith "escape/"` admits.
+		// Handing back the cleaned relative form would leave the rule judging an
+		// outside file as though the project held it — the hole itself. An
+		// absolute spelling is admitted by no project-relative matcher, which is
+		// the honest answer: the write is outside the rule's subject.
+		//
+		// Anchored against the root rather than the process's working
+		// directory. This function is reached with the workspace in hand
+		// precisely so the answer does not depend on where the hook fired, and
+		// filepath.Abs would reintroduce that dependence.
+		//
+		// A path that climbs out in its own spelling — `../x` — already carries
+		// its own evidence of being outside and keeps it, so nothing that was
+		// already honest is rewritten.
+		// A path that climbs out in its own spelling — `../x` — already carries
+		// its own evidence of being outside and keeps it. So does `.`, which
+		// resolve refuses for naming the root rather than a file in it: both are
+		// already unadmitted by any project-relative matcher, and rewriting
+		// either would change a spelling that was never the hole.
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+			return clean
+		}
+		return filepath.ToSlash(filepath.Join(root, clean))
 	}
 	if root == "" {
 		// No workspace was named, so there is nothing to be relative TO.

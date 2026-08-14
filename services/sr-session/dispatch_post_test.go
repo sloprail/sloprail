@@ -142,6 +142,23 @@ func dispatchIn(t *testing.T, proj string, store sessionstate.Store) (string, bo
 	return stderr.String(), ran
 }
 
+// dispatchBoth is dispatchIn returning BOTH streams.
+//
+// The two carry different things and a claim about the agent needs the right
+// one. A Stop hook exits 0 and blocks by writing {"decision":"block"} on STDOUT,
+// so stderr — where the per-refusal diagnostics go — reaches no agent at all. A
+// test asserting only on stderr can show a refusal was reported to an operator
+// while saying nothing about whether the turn was actually held.
+func dispatchBoth(t *testing.T, proj string, store sessionstate.Store) (stdout, stderr string, ran bool) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&errOut)
+	cmd.SetOut(&out)
+	ran = runPostDispatch(cmd, store, HookPayload{Cwd: proj})
+	return out.String(), errOut.String(), ran
+}
+
 // bindAll is a declaration binding one script to every Post kind and to
 // TurnEnd, so one run records everything that was dispatched.
 const bindAll = `---
@@ -324,23 +341,38 @@ func TestDispatch_UntouchedFileProducesNoEvent(t *testing.T) {
 	assert.Equal(t, []string{filemod.KindPostCreate, "TurnEnd"}, kindsSeen(t, ldir))
 }
 
-// TestDispatch_APostRefusalDoesNotBlock is before_refusable_only.
+// TestDispatch_APostRefusalDemandsCorrectionWithoutUndoingTheWork is
+// before_refusable_only at this hook point.
 //
-// A hook exiting non-zero on a Post event has refused, and the refusal must be
-// reported — but the work it describes has already landed, so nothing may be
-// prevented and nothing may claim to have been.
+// A hook exiting non-zero on a Post event has refused, and refusing AFTER the
+// fact means something different from refusing before it: the write has already
+// landed, so nothing is prevented and nothing may claim to have been. What the
+// refusal does instead is hold the TURN, which is the only mechanism an
+// after-the-fact rule has — the agent goes round again and corrects the work.
 //
-// Three things are asserted together, and each covers a way the other two could
+// THE NAME AND THE DOC BOTH USED TO SAY THE OPPOSITE. This was
+// `APostRefusalDoesNotBlock`, and its second bullet read "the dispatch still
+// reported having run, so the read mark is not held hostage" — while the body
+// below asserted, correctly, `assert.False(t, ran)`. The test was written before
+// Post could block at all and was left describing an engine that no longer
+// exists; a reader auditing before_refusable_only from the unit suite would
+// have concluded a Post refusal cannot hold a turn. Renamed and rewritten to
+// match what it actually asserts, and the stdout assertion below was added
+// because the old version never checked the channel the agent actually reads.
+//
+// Four things are asserted together, and each covers a way the others could
 // pass vacuously:
 //
 //   - the hook RAN (its ledger line exists), or a refusal that never happened
-//     would prove nothing about refusals being survivable;
-//   - the dispatch still reported having run, so the read mark is not held
-//     hostage by a rule objecting to work that already landed;
-//   - TurnEnd still fired AFTERWARDS, which is what distinguishes "the refusal
-//     was reported and the cycle carried on" from "the refusal stopped the
-//     dispatch where it stood".
-func TestDispatch_APostRefusalDoesNotBlock(t *testing.T) {
+//     would prove nothing at all;
+//   - TurnEnd still fired AFTERWARDS, which distinguishes "the refusal was
+//     collected and the dispatch carried on" from "the refusal stopped the
+//     dispatch where it stood";
+//   - the cycle reports it did NOT complete, so the read mark stays put and the
+//     turns needing correction are offered again;
+//   - the FILE IS STILL THERE, because "prevented" is a claim about the tree
+//     rather than about what came back on a stream.
+func TestDispatch_APostRefusalDemandsCorrectionWithoutUndoingTheWork(t *testing.T) {
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("seed"), 0o644))
 	runGit(t, proj, "add", ".")
@@ -371,11 +403,19 @@ hooks:
 	landed := filepath.Join(proj, "unwanted.md")
 	require.NoError(t, os.WriteFile(landed, []byte("already written"), 0o644))
 
-	stderr, ran := dispatchIn(t, proj, store)
+	stdout, stderr, ran := dispatchBoth(t, proj, store)
 
 	// The hook ran and objected.
 	require.Len(t, ledger(t, ldir, "refused.log"), 1,
 		"the refusing hook never ran, so this proves nothing about after-the-fact refusals")
+
+	// The TURN IS HELD, read off the one channel that reaches the agent. The
+	// stderr assertions below show the refusal was reported to whoever is
+	// tailing logs; only this shows the agent was told anything at all.
+	assert.Contains(t, stdout, `"decision":"block"`,
+		"a Post refusal holds the turn, and stdout is the only channel a Stop hook blocks on")
+	assert.Contains(t, stdout, "objects",
+		"the blocking text must name the guardrail that produced the refusal")
 	assert.Contains(t, stderr, "this file should not exist", "the refusal must be reported")
 	assert.Contains(t, stderr, "objects", "a refusal names the guardrail that produced it")
 
@@ -632,6 +672,18 @@ hooks:
 // TestDispatch_DisabledGuardrailContributesNothing is disabled_guardrail_inert
 // at this hook point: turning a rule off is a declaration rather than a
 // deletion, and it must cost nothing at the end of a cycle either.
+//
+// The predicate has TWO clauses — no hook runs, AND no refusals — and this
+// used to exercise only the first. Its hook was `recordEvent`, which exits 0,
+// so nothing here could distinguish a disabled rule from a rule that ran and
+// happened to permit; the second clause held only because no disabled hook was
+// ever in a position to refuse. The hook is now `alwaysRefuse` and stdout is
+// asserted, so both clauses are held by this one test and neither hides behind
+// the other.
+//
+// The refusing hook makes the ledger assertion strictly stronger too: a rule
+// that runs now holds the turn as well as writing its line, so a regression is
+// visible on two channels rather than one.
 func TestDispatch_DisabledGuardrailContributesNothing(t *testing.T) {
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("seed"), 0o644))
@@ -653,13 +705,22 @@ hooks:
 ---
 
 # Switched off
-`, map[string]string{"record.sh": recordEvent})
+`, map[string]string{"record.sh": alwaysRefuse})
 
 	store := openStore(t)
 	baselineAt(t, store, proj)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "new.md"), []byte("x"), 0o644))
 
-	_, ran := dispatchIn(t, proj, store)
-	assert.True(t, ran)
+	stdout, _, ran := dispatchBoth(t, proj, store)
+
 	assert.Empty(t, kindsSeen(t, ldir), "a disabled guardrail contributes no hook runs")
+
+	// The second clause. Were the hook to run it would refuse, so a completed
+	// cycle that says nothing to the agent is the only outcome consistent with
+	// the rule being genuinely off.
+	assert.True(t, ran, "a disabled guardrail contributes no refusals, so the cycle completes")
+	assert.NotContains(t, stdout, `"decision":"block"`,
+		"a disabled guardrail must not hold the turn, whatever its hook would have said")
+	assert.NotContains(t, stdout, "Switched off",
+		"a disabled guardrail must not reach the agent at all")
 }

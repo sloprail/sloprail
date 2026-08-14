@@ -27,26 +27,28 @@ import (
 // They cannot be observed through the harness as it stands, for two reasons
 // measured rather than assumed:
 //
-//   - The engine command the whole feature hangs off is a stub.
-//     `sr-session subagent-stop` (services/sr-session/session_subagent_stop.go)
-//     ends at `return nil // TODO: diff the tree, dispatch the Post events`. It
-//     resolves the identity and then dispatches nothing, so no guardrail hook
-//     ever runs inside a sub-agent and no ledger can record what one saw.
-//   - Nothing a sub-agent does is forwarded at exit zero. Driving a real
-//     dispatch through the harness (Dispatch, shared tree, a guardrail bound to
-//     both Stop and SubagentStop, the project committed so a baseline exists)
-//     leaves the guardrail's ledger empty and the sub-agent's stream absent from
-//     the run's output. Measured during the invariant audit, not inferred.
+// THAT CONDITION HAS SINCE BEEN LIFTED, and this paragraph is kept as history
+// rather than as a live claim, because it read as one long after it stopped
+// being true and was quoted in a later audit as evidence of a coverage gap.
 //
-// So an end-to-end test of these today would assert an absence for the wrong
-// reason and pass against an engine that does nothing — the exact shape this
-// suite exists to refuse. WHAT WOULD BE NEEDED: the dispatch half of
-// subagent-stop implemented, and a harness able to surface a sub-agent's own
-// hook effects (a ledger written inside the sub-agent's tree is enough, since
-// the shared-tree dispatch leaves it where the parent's test can read it).
-// judged_on_its_own_record and subagent_state_is_its_own are then directly
-// observable: run the same guardrail in parent and sub-agent and assert each was
-// handed its own turns and reached its own state.
+// What it used to say: `sr-session subagent-stop` was a stub ending at `return
+// nil // TODO: diff the tree, dispatch the Post events`, so no guardrail hook
+// ever ran inside a sub-agent and no ledger could record what one saw; and
+// nothing a sub-agent did was forwarded at exit zero, so a real dispatch through
+// the harness left the ledger empty. An end-to-end test would have asserted an
+// absence for the wrong reason and passed against an engine that did nothing.
+//
+// What is true now: session_subagent_stop.go dispatches through completeCycle,
+// and the coverage that paragraph described as "what would be needed" exists —
+// tests/e2e/subagent/015_subagent_own_cycle runs the same guardrail in parent
+// and sub-agent and asserts each was handed its own turns and reached its own
+// state, which is judged_on_its_own_record and subagent_state_is_its_own
+// observed end to end rather than argued structurally.
+//
+// These unit tests are kept alongside it. They pin what the e2e cannot: the mock
+// harness reports the sub-agent's path in BOTH transcript_path and
+// agent_transcript_path, so record()'s PREFERENCE between them is a no-op there
+// and only a unit test with the two spelled differently can hold it.
 
 // TestInvariant_the_event_says_which pins: which agent is ending is taken from
 // the event that fired, never derived from the content of a transcript.
