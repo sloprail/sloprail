@@ -5,6 +5,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"mvdan.cc/sh/v3/expand"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // render turns a target list into a stable string, so a case reads as the
@@ -413,6 +416,41 @@ func TestFileTargets_AnUnparseableLineYieldsNothing(t *testing.T) {
 	check(t, "", "(nothing)")
 }
 
+// TestFileTargets_APartiallyParsedLineIsStillUnparseable is the case that
+// makes the error check above load-bearing rather than decorative.
+//
+// mvdan/sh returns a NON-NIL File alongside a parse error — it hands back
+// whatever it managed to build before it gave up. So `if err != nil` is not a
+// nil check in disguise: dropping it walks the partial tree, and a line whose
+// FIRST statement parsed completely reports that statement's files.
+//
+//	rm notes.md ; if true
+//
+// is exactly that shape. The `rm` is a complete, valid statement; the trailing
+// `if` is not, so the line as a whole does not parse. Walking the partial tree
+// reports a removal of notes.md.
+//
+// Reporting it would be wrong, and that is the judgement this pins. A shell
+// given this line runs NOTHING — it is a syntax error, rejected whole, and
+// notes.md is never touched. An event announcing the deletion would put a
+// guardrail's hook to work on a file that was never at risk, and a refusal
+// would block a command that was already going to fail on its own. The engine
+// would be refusing work that does not exist.
+//
+// Found by mutation: relaxing the check to `err != nil && f == nil` left the
+// whole suite green, because every unparseable line covered until now failed
+// early enough that no complete statement survived in the partial tree.
+func TestFileTargets_APartiallyParsedLineIsStillUnparseable(t *testing.T) {
+	// A complete `rm` statement followed by an incomplete `if`.
+	check(t, "rm notes.md ; if true", "(nothing)")
+	// The same shape with a redirection, so both halves of the extraction are
+	// covered rather than only the binary table.
+	check(t, "echo x > out.md ; if true", "(nothing)")
+	// And with the incomplete construct first, which fails earlier — the answer
+	// is the same, and it is the answer the whole line deserves.
+	check(t, "if true ; rm notes.md", "(nothing)")
+}
+
 // TestFileTargets_ACommandSubstitutionIsNotRun pins that finding the files a
 // line touches never executes anything.
 //
@@ -433,6 +471,44 @@ func TestFileTargets_HeredocBodiesAreNotPaths(t *testing.T) {
 	// A heredoc feeding a command that DOES write still reports only the file
 	// the command names.
 	check(t, "tee out.md <<EOF\nhello\nEOF", "write:out.md")
+}
+
+// TestFileTargets_SurvivesAPanickingExpansion exercises the recover, which is
+// otherwise unreachable and therefore unprovable.
+//
+// The ProcSubst handler means no command line can panic from the outside, so a
+// test that only feeds this function text cannot show the recover works —
+// removing it leaves such a suite green, which is exactly what mutation M42
+// demonstrated. This injects a panic from inside expansion instead, through the
+// same `newConfig` seam ExtractCommand's own panic test uses.
+//
+// What it must prove is that a panic becomes an empty result rather than a
+// crash. This runs inside a PreToolUse hook: a panic escaping here exits the
+// guardrail non-zero, and a harness reads a non-zero guardrail as a REFUSAL. So
+// a parser bug would not degrade the rule, it would block the agent's work with
+// a reason nobody declared and nobody can act on.
+func TestFileTargets_SurvivesAPanickingExpansion(t *testing.T) {
+	orig := newConfig
+	newConfig = func() *expand.Config {
+		cfg := orig()
+		cfg.ProcSubst = func(*syntax.ProcSubst) (string, error) {
+			panic("simulated parser bug during expansion")
+		}
+		return cfg
+	}
+	t.Cleanup(func() { newConfig = orig })
+
+	// Reaches the panicking handler. Without the recover this crashes the test
+	// binary rather than failing it.
+	got := FileTargets(`rm <(ls a)`)
+
+	// Whatever was collected before the panic is kept, and nothing incoherent
+	// escapes: half a list still lets a rule fire, where a crash lets nothing.
+	for _, target := range got {
+		if target.Path == "" {
+			t.Errorf("an empty path survived a panic: %+v", got)
+		}
+	}
 }
 
 // TestFileTargets_OneFilePerLineHoweverOftenItIsNamed pins the deduplication.
