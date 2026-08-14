@@ -46,10 +46,21 @@ import (
 // settled before this command does anything, by record() choosing the
 // sub-agent's own transcript and stableID resolving its own identity from it.
 //
-// The tree-diffing and event dispatch are stubbed here exactly as they are in
-// stop, and for the same reason: that machinery is being built on other
-// branches. What is real here is the routing — which session this is, and
-// therefore which state anything it records belongs to.
+// So the cycle is completeCycle's, the same function stop runs, called with the
+// sub-agent's payload. Not a copy of it: a second implementation would be a
+// second set of answers to when the baseline moves, when the mark advances and
+// what a refusal does to both, and the two would drift into a sub-agent being
+// guarded by almost the same rules as a root. Everything that function needs is
+// already keyed by the payload — openEngineState by p.Cwd, and runPostDispatch
+// by p.record() and stableID(p), both of which resolve the SUB-AGENT's own
+// record here — so passing the sub-agent's payload is the whole of what makes
+// it the sub-agent's cycle.
+//
+// This was a stub returning nil, on the stated grounds that stop's own
+// machinery was still being built on other branches. It has since landed, and
+// the note outlived it: routing a cycle correctly and then judging nothing is
+// invisible from outside, which is exactly how a refusal here came to be
+// something no test could observe.
 func newSessionSubagentStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "subagent-stop",
@@ -61,6 +72,16 @@ func newSessionSubagentStopCmd() *cobra.Command {
 				// Already refused once this cycle. Refusing again would be a
 				// loop the sub-agent cannot leave — and a sub-agent has less
 				// recourse than a root, since the person is not watching it.
+				//
+				// Nothing else happens here, not even discarding the read
+				// position the way stop's own interrupted path does. That
+				// asymmetry is deliberate and is pinned by
+				// TestSubagentStopHonoursStopHookActive: discarding means
+				// opening the session's store, and a sub-agent whose record
+				// cannot be opened would then report a failure on a path whose
+				// whole purpose is to do nothing. Adding the discard here was
+				// tried and broke that test, which is the contract stating it —
+				// a cycle already refused once is left alone entirely.
 				return nil
 			}
 
@@ -105,7 +126,13 @@ func newSessionSubagentStopCmd() *cobra.Command {
 				return nil
 			}
 
-			return nil // TODO: diff the tree, dispatch the Post events
+			// The sub-agent's cycle, run by the same function that runs a
+			// root's. Its refusals block this sub-agent's stop, which the
+			// harness reports as a hook_blocking_error against the dispatching
+			// conversation and answers by re-running the sub-agent's turn — so a
+			// rule refusing delegated work now reaches something, which is the
+			// whole point of binding this event.
+			return completeCycle(cmd, p)
 		},
 	}
 }
