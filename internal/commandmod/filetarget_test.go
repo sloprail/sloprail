@@ -240,6 +240,32 @@ func TestFileTargets_AWrapperDoesNotHideTheFile(t *testing.T) {
 	check(t, "/bin/rm notes.md", "remove:notes.md")
 }
 
+// TestFileTargets_AnUncertainWrappedProgramIsNotInvented pins the direction the
+// unwrapping must NOT go: a wrapper whose program word cannot be resolved
+// reports nothing, rather than guessing which program was meant.
+//
+// This is the seam where the file path and the invocation path meet. unwrap
+// takes words carrying certainty; this path throws certainty away and encodes
+// it positionally as "" instead, then asWords re-derives it. The re-derivation
+// is only sound because "" is not a word any resolved literal can be — so the
+// case worth pinning is the one where an uncertain word sits where the wrapped
+// PROGRAM goes.
+//
+// Reported as nothing and not as a refusal: the command may well delete
+// notes.md, but which program does it is unknown, and every effect in the table
+// is a property of the program. Naming an effect here would mean choosing one.
+func TestFileTargets_AnUncertainWrappedProgramIsNotInvented(t *testing.T) {
+	// The wrapped program is a substitution. `sudo` is still certain, but what
+	// it runs is not, so no effect can be attributed.
+	check(t, "sudo $(echo rm) notes.md", "(nothing)")
+	// The same one level deeper, since wrappers stack and the budget travels.
+	check(t, "sudo nohup $(echo rm) notes.md", "(nothing)")
+	// And the control: identical shape, program word certain, effect reported.
+	// Without this line the two above would also pass if unwrapping were
+	// deleted outright.
+	check(t, "sudo nohup rm notes.md", "remove:notes.md")
+}
+
 // TestFileTargets_NestingDoesNotHideTheFile pins that the file is found wherever
 // the shell puts it, which is the same promise the invocation walk makes.
 func TestFileTargets_NestingDoesNotHideTheFile(t *testing.T) {

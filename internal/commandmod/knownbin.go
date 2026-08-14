@@ -437,10 +437,34 @@ func targetsForArgv(argv []string) []FileTarget {
 	if spec, known := knownBins[basename(argv[0])]; known {
 		targets = append(targets, spec(argv)...)
 	}
-	if nested := unwrap(argv); len(nested) > 0 {
+	if nested := unwrap(asWords(argv)); len(nested) > 0 {
 		// Recursive for the same reason fromArgv is: wrappers stack, and
 		// `sudo nohup rm notes.md` is two deep.
-		targets = append(targets, targetsForArgv(nested)...)
+		targets = append(targets, targetsForArgv(values(nested))...)
 	}
 	return targets
+}
+
+// asWords re-attaches the certainty that this path encodes positionally, so an
+// argv can be handed to unwrap.
+//
+// Lossless in THIS direction only, and only here. The vector reaching
+// targetsForArgv has already had every uncertain word replaced by "" by the
+// caller above — that substitution IS the loss, and it happened before this
+// function is reached. What is left is a vector in which "" means "not
+// certain" and anything else means "certain", which is exactly what `literal`
+// records. So the flag is recomputable from the value, which is impossible in
+// general (see word: `sh -c "np${X}m publish"` resolves to a string
+// indistinguishable from the certain one) but decidable here, because the
+// empty string is not a word any resolved literal can be.
+//
+// It is also why unwrap is safe to reach from this path at all: `basename("")`
+// is "", which matches no wrapper, so an uncertain word can never be unwrapped
+// into a program that was only a guess.
+func asWords(argv []string) []word {
+	out := make([]word, 0, len(argv))
+	for _, v := range argv {
+		out = append(out, word{value: v, literal: v != ""})
+	}
+	return out
 }

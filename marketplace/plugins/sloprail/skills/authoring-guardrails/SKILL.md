@@ -248,12 +248,16 @@ nothing.
 `document-strategy`" is decidable. "The code is well designed" is not — unless
 you hand the body to a judge, which is what the prose is for.
 
-**Refusing is the right response.** A `Pre` kind prevents the action. If the
-honest response is "note it and move on," a guardrail is the wrong instrument.
+**Refusing is the right response.** A `Pre` kind prevents the action; a `Post`
+kind reports it after the fact and sends the agent round again. If the honest
+response is neither — "note it and move on" — a guardrail is the wrong
+instrument.
 
-**The event carries what you need.** Check the fields. If the question needs
-something no kind carries, the rule cannot be written yet, and writing it anyway
-produces the silent no-op.
+**The question is answerable from what the hook can reach.** That is more than
+the event's own fields: also `sr-session state` for what earlier cycles
+recorded, `sr-session query` for the transcript, and the tree itself. Check them
+before concluding a rule is unwritable. If the answer genuinely is not reachable
+from any of them, say so — writing it anyway produces the silent no-op.
 
 If a rule fails any of these, say so rather than writing a weaker version.
 
@@ -295,16 +299,43 @@ rediscover both the rule and the argument against it. A disabled one is inert �
 its kinds are not even extracted — so it costs nothing to keep. A disabled
 declaration is also not validated, so it can be parked half-written.
 
-## Do not write these yet
+## Remembering across cycles
 
-- **A rule that remembers across cycles.** `sr-session state get|set|list`
-  resolves its scope from `SLOPRAIL_GUARDRAIL` / `SLOPRAIL_SESSION_ID` /
-  `SLOPRAIL_WORKSPACE`, which the dispatcher does not yet set. From inside a
-  hook it fails with "no guardrail in scope". Such a rule loads, runs, and fails
-  exactly when it needs its memory.
-- **A rule bound to a `Post` kind.** Only the pre-tool hook point dispatches, and
-  only with the pre phase. Post kinds are declared, bind without complaint, and
-  never arrive.
+`sr-session state get|set|list` is a per-guardrail key-value store that survives
+between cycles of one session. It resolves its own scope from `SR_GUARDRAIL`,
+`SR_SESSION_ID` and `SR_WORKSPACE`, all three set by the engine on every hook it
+runs — so a hook calls it with no arguments beyond the key.
 
-Both produce the silent no-op. If a user asks for one, say it is not yet
-supported rather than writing it.
+```sh
+prev=$(sr-session state get seen 2>/dev/null || echo 0)
+sr-session state set seen "$((prev + 1))"
+```
+
+Scoped to the guardrail, so two rules cannot collide on a key name, and to the
+session, so one session's memory is not another's. Outside a hook there is no
+guardrail in scope and it says so rather than guessing.
+
+## Post kinds
+
+`PostFileCreate`, `PostFileUpdate`, `PostFileDelete` and `TurnEnd` are dispatched
+at the end of a cycle, from the `Stop` and `SubagentStop` hook points. They
+arrive with the cycle's actual changes, established by diffing the tree against
+the baseline taken at `SessionStart`.
+
+The difference from a `Pre` kind is what a refusal means. A `Pre` kind runs
+before the action and prevents it. A `Post` kind runs after, so the change is
+already on disk — refusing does not undo it, it tells the agent the cycle is not
+finished and it must fix what it did. That makes `Post` the right kind for a
+rule about the *result* of a turn ("every new file under `memories/` has
+frontmatter") and the wrong one for a rule about permission to act at all.
+
+`TurnEnd` carries no fields. It fires once per cycle regardless of what changed,
+which is what a rule about the turn as a whole wants — but it means such a rule
+has to establish its own subject, usually by asking `sr-session query` about the
+transcript.
+
+A `Post` refusal is reported to the agent as a blocking error on the cycle, and
+the cycle's read mark does not advance — so the next `Stop` judges the same span
+again, and a rule that stays unsatisfied stays reported rather than scrolling
+away. Revalidation keeps this from re-judging content that has not changed: a
+file already judged against the same fingerprint is skipped.
