@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -106,6 +107,31 @@ func baselineAt(t *testing.T, store sessionstate.Store, proj string) {
 
 // dispatchIn runs the Post dispatch over a project and returns what it wrote to
 // stderr, plus whether it reported having run.
+//
+// # The payload names no record, and that is load-bearing for what this file proves
+//
+// HookPayload{Cwd: proj} carries no transcript_path, no session_id and no agent
+// fields, so record() falls through every branch and stableID reports "no
+// transcript path on the hook payload". runPostDispatch prints that to stderr
+// and leaves scope.SessionID empty — which means openRevalidation is never
+// called and `rev` is NIL for every test in this file.
+//
+// The consequence is worth stating because it is invisible at the call sites:
+// with a nil rev, Subject always answers false, `fingerprinted` is always
+// false, and the entire skip-and-record block is never entered. So nothing here
+// exercises revalidation, and no test in this file may count hook invocations
+// across two cycles and read the result as an exemption — it would be measuring
+// the no-store path and would pass whatever the exemption did.
+//
+// That is deliberate rather than an oversight. What this file tests is
+// classification, dispatch order, TurnEnd and refusal collection, and running
+// those without a store keeps them independent of it. The revalidation claims
+// live in dispatch_post_revalidation_test.go, whose postSession seeds a real
+// transcript precisely so that rev is non-nil there.
+//
+// Note also that every run here writes the identity diagnostic to stderr, so an
+// assertion on that stream must name something distinctive rather than merely
+// checking it is non-empty.
 func dispatchIn(t *testing.T, proj string, store sessionstate.Store) (string, bool) {
 	t.Helper()
 	var stderr bytes.Buffer
@@ -450,11 +476,49 @@ func TestDispatch_RenameIsACreateAndADelete(t *testing.T) {
 	_, ran := dispatchIn(t, proj, store)
 	require.True(t, ran)
 
-	lines := strings.Join(ledger(t, ldir, "events.jsonl"), "\n")
-	assert.Contains(t, lines, filemod.KindPostDelete, "the rename's source must arrive as a delete")
-	assert.Contains(t, lines, "dir/old.md")
-	assert.Contains(t, lines, filemod.KindPostCreate, "the rename's destination must arrive as a create")
-	assert.Contains(t, lines, "dir/new.md")
+	// Asserted as PAIRS, one ledger line at a time, rather than by joining every
+	// line and asking whether four substrings appear somewhere in the result.
+	//
+	// The joined form cannot fail on the thing this test is named for. All four
+	// strings are present in the blob whichever way the kinds are attached, so a
+	// classifier that reported the delete against dir/new.md and the create
+	// against dir/old.md — the exact inversion — would pass it. What the test
+	// claims is which path arrived as which kind, and only a per-line check can
+	// say so.
+	assert.Equal(t,
+		map[string]string{"dir/old.md": filemod.KindPostDelete, "dir/new.md": filemod.KindPostCreate},
+		kindByPath(t, ldir),
+		"a rename must arrive as a delete of the source and a create of the destination")
+}
+
+// kindByPath is which event kind each path arrived as, read off the ledger one
+// line at a time.
+//
+// The pairing is the whole claim of a classification test, and it is precisely
+// what is lost by joining the lines: a path and a kind sitting in the same blob
+// say nothing about whether they arrived together.
+//
+// Paths are read from the event, so a kind carrying none — TurnEnd — is left
+// out rather than recorded under "".
+func kindByPath(t *testing.T, ldir string) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	for _, line := range ledger(t, ldir, "events.jsonl") {
+		var rec struct {
+			Event struct {
+				Kind   string `json:"kind"`
+				Fields struct {
+					Path string `json:"path"`
+				} `json:"fields"`
+			} `json:"event"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(line), &rec), "hook payload was not JSON: %s", line)
+		if rec.Event.Fields.Path == "" {
+			continue
+		}
+		got[rec.Event.Fields.Path] = rec.Event.Kind
+	}
+	return got
 }
 
 // TestDispatch_UntrackedFileIsReported.

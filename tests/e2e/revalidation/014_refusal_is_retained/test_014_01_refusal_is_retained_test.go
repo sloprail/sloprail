@@ -27,17 +27,24 @@ import (
 //
 // The RETENTION ITSELF is not observable end to end on this engine, and saying
 // so is more useful than a test that appears to cover it. The only reader of a
-// stored verdict is sessionstate.Skippable:
+// stored verdict in production is sessionstate.Skippable, which looks the row
+// up BY FINGERPRINT and returns what it says:
 //
-//	v, found, err := s.FileCheck(path, guardrail)
-//	if err != nil || !found { return false, err }
-//	return v.Passed && v.Fingerprint == fingerprint, nil
+//	SELECT passed FROM file_checks
+//	WHERE path = ? AND guardrail = ? AND fingerprint = ?
 //
-// A retained refusal answers false because Passed is false. A DISCARDED refusal
-// answers false because the row is not found. The two are indistinguishable
+//	// sql.ErrNoRows -> false, nil
+//
+// A retained refusal answers false because the row says passed=0. A DISCARDED
+// refusal answers false because there is no row. The two are indistinguishable
 // from outside — and they stay indistinguishable however many cycles a test
-// spans, because any later verdict for the same content overwrites the row in
-// both cases.
+// spans, because neither ever licenses a skip.
+//
+// An earlier version of this comment quoted Skippable as reading through
+// FileCheck and comparing the fingerprint in Go. It does not, and has not since
+// the key became per-fingerprint; the conclusion survives but the quoted
+// mechanism was wrong, which matters because the whole coverage argument here
+// is derived from it.
 //
 // This was measured, not assumed. Making Record drop failing verdicts outright
 // leaves every test in this file green, including a flaky-judge sequence built
@@ -277,27 +284,49 @@ func TestT014_04_ARefusalSurvivesAPassForAnotherFile(t *testing.T) {
 // Retaining a refusal and discarding it produce identical behaviour everywhere
 // the engine currently looks: sessionstate.Skippable answers false for a
 // refusal because Passed is false, and false for a missing row because it was
-// not found. Nothing else reads a verdict. So "the record is kept" has, today,
-// no consequence any end-to-end test can observe — verified by making Record
-// drop failing verdicts, which leaves this whole file green.
+// not found. Nothing else in PRODUCTION reads a verdict — FileCheck, the one
+// reader that could tell the two apart, has no non-test caller.
 //
-// The invariant is about what the retained record is FOR: the violation keeps
-// surfacing until the content changes or the hook permits it. Surfacing it is
-// the end-of-cycle check's job, and that check does not exist yet —
-// filemod.extractObserved is a stub returning nil, so no Post event is ever
-// produced and nothing asks "what is still unfixed".
+// # The stated blocker was re-measured, and half of it had gone stale
 //
-// When it lands, this is the shape: a file is refused, the agent stops without
-// fixing it, and the violation is reported again — which can only work by
-// reading a RETAINED refusal, because a discarded one leaves the file looking
-// unjudged rather than unfixed.
+// This skip used to say the end-of-cycle check "does not exist yet" because
+// filemod.extractObserved was "a stub returning nil, so no Post event is ever
+// produced". That is no longer true: extractObserved classifies a real tree
+// difference, runPostDispatch dispatches Post events and a Post refusal now
+// BLOCKS the turn. The reader landed.
+//
+// The invariant is still not observable, and the reason is now a different and
+// more interesting one. What the retained row was supposed to buy is the
+// violation resurfacing next cycle — and it resurfaces either way. With the row
+// retained, Skippable finds a failing verdict and answers false; with the row
+// discarded, it finds nothing and answers false. The hook is asked again, and
+// blocks again, in both worlds. Retention changes no behaviour because the
+// absence of a row is already as strict as a refusal.
+//
+// Re-verified on this branch by making Record drop failing verdicts: every e2e
+// test stays green, and the only failures anywhere are three unit tests that
+// read the stored row directly —
+// sessionstate.TestFileChecks_ARefusalIsNotErasedByALaterPass,
+// TestPreTool_RefusalIsRecordedNotDropped and
+// TestPostDispatch_RefusalIsRecordedNotDropped. The behavioural half of
+// TestPostDispatch_RetainedRefusalReFiresUntilTheContentChanges passes under
+// the mutant too; it catches it only by its direct database read.
+//
+// So this becomes observable when something distinguishes "refused" from
+// "never judged" — a report of what is still unfixed, a verdict surfaced at
+// session end, anything that reads the row rather than only asking whether it
+// licenses a skip. Until then the invariant is real but its consequence is not,
+// and a test asserting it end to end would be asserting on a difference the
+// engine does not make.
 //
 // Left here so the gap is named rather than quietly uncovered, and so the
 // invariant has somewhere to be pinned the moment it becomes observable.
 func TestT014_05_ARetainedRefusalResurfacesTheViolation(t *testing.T) {
-	t.Skip("nothing reads a stored refusal yet, so retaining one and discarding one are " +
-		"indistinguishable end to end (sessionstate.Skippable answers false for both). The " +
-		"reader this needs is the end-of-cycle check that reports what is still unfixed, and " +
-		"filemod.extractObserved is a stub returning nil — no Post event is produced. Verified " +
-		"by making Record drop failing verdicts: every other test in this file stays green.")
+	t.Skip("retaining a stored refusal and discarding one remain indistinguishable end to end: " +
+		"Skippable answers false for a failing row and for a missing row alike, and no production " +
+		"code reads a verdict any other way. Post events DO dispatch now — the earlier claim that " +
+		"filemod.extractObserved is a stub returning nil is stale — but a resurfaced violation " +
+		"resurfaces either way, so the row still buys no observable behaviour. Re-verified by " +
+		"making Record drop failing verdicts: every e2e test stays green and only the three unit " +
+		"tests that read the row directly fail.")
 }

@@ -116,10 +116,24 @@ hooks:
 # Records every file event it is asked about, and permits it.
 `
 
+// It records the SESSION IDENTITY it was handed and whether the payload named
+// an agent, not only the path.
+//
+// The path alone cannot express the measurement this package's coverage rests
+// on. A harness that scoped sub-agents properly would still dispatch the
+// sub-agent's write to a guardrail, and the ledger line would be
+// byte-identical — so an assertion on the path is green under both the measured
+// arrangement and its opposite, which is the one thing it must not be. What
+// separates them is WHOSE session the call was judged as, and that travels in
+// SR_SESSION_ID and in the payload's agent fields.
 const watcherScript = `#!/bin/sh
 payload=$(cat)
 path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
-echo "asked path=[$path]" >> "$PWD/log"
+agent=none
+case "$payload" in
+  *'"agent_id"'*|*'"agent_transcript_path"'*) agent=present ;;
+esac
+echo "asked path=[$path] session=[$SR_SESSION_ID] agent=[$agent]" >> "$PWD/log"
 exit 0
 `
 
@@ -191,6 +205,65 @@ func TestT014_01_ASharedTreeDispatchLeavesTheRootsGuardrailsLive(t *testing.T) {
 			"package's coverage claims rest on — see the note at the top of this file. If that "+
 			"has changed, those claims need re-deriving rather than patching. Ledger: %v", lines)
 	}
+
+	// And the measurement itself, which the path alone cannot express.
+	//
+	// That the sub-agent's write REACHED the guardrail is true under both
+	// arrangements: a harness scoping sub-agents properly would dispatch it too,
+	// and the ledger line would carry the same path. So the assertion above
+	// cannot fail on the condition its own message claims to detect. What
+	// separates the two is whose session the call was judged as — and under the
+	// measured arrangement all three calls, the sub-agent's included, are handed
+	// the ROOT's identity and no agent fields at all.
+	//
+	// Asserted so that a harness which starts presenting sub-agent tool calls as
+	// the sub-agent's own fails HERE. Three invariants are declared unreachable
+	// on the strength of this measurement; it must not be allowed to change
+	// underneath that reasoning while every test stays green.
+	var root string
+	for _, l := range lines {
+		if strings.Contains(l, "path=[before.md]") {
+			root = sessionOf(l)
+		}
+	}
+	if root == "" {
+		t.Fatalf("the root's own write recorded no session id, so there is nothing to compare "+
+			"the sub-agent's against and the measurement below would pass vacuously. Ledger: %v", lines)
+	}
+	for _, l := range lines {
+		if got := sessionOf(l); got != root {
+			t.Fatalf("a call was judged as session %q while the root's own write was judged as %q. "+
+				"This harness dispatches a shared-tree sub-agent's tool calls as the PARENT's, and "+
+				"three invariants in this package are declared unobservable BECAUSE of that. If "+
+				"sub-agents are now scoped separately, those claims need re-deriving rather than "+
+				"patching. Ledger: %v", got, root, lines)
+		}
+		if !strings.Contains(l, "agent=[none]") {
+			t.Fatalf("a PreToolUse payload named an agent (%s). The measurement this package rests "+
+				"on is that it names none — record() prefers agent_transcript_path/agent_id, so a "+
+				"harness supplying them makes sub-agent tool calls separately scoped and the "+
+				"unobservability claims above stop holding. Ledger: %v", l, lines)
+		}
+	}
+}
+
+// sessionOf reads the session identity a ledger line recorded, or "" when the
+// line carries none.
+//
+// The identity is what distinguishes a sub-agent's call judged as its own from
+// one judged as the parent's, and it is the only thing on the line that does.
+func sessionOf(line string) string {
+	const marker = "session=["
+	i := strings.Index(line, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := line[i+len(marker):]
+	j := strings.IndexByte(rest, ']')
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
 }
 
 // T014_02: a dispatch WITH worktree isolation binds a real separate tree, and
