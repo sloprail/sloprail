@@ -62,23 +62,42 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 		return false
 	}
 
-	decls, _, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
+	// The invalid list is KEPT, and that is the correction this line carries.
+	//
+	// It was discarded — `decls, _, err :=` — which made a declaration that could
+	// not be loaded contribute nothing to a cycle: no hook, no objection, and no
+	// word to the agent. That is the defect refuseForBroken closed on the Pre
+	// side, and the argument transfers whole. An author who mistyped a field on a
+	// Post binding believes their cycle is guarded; the engine knows it is not;
+	// letting the turn end tells them they were right.
+	//
+	// The channel argument transfers too, and is why reporting on stderr is not
+	// an answer here either. A Stop hook exits 0 and blocks by writing
+	// {"decision":"block"} on stdout, so its stderr reaches no agent at all —
+	// measured on harness.BlockingErrors. A diagnostic beside a turn that ended
+	// cleanly is the silence, with a line of code that looks like it addressed it.
+	decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		return false
 	}
+
+	// For a person tailing logs. Not how the agent learns of it — see above and
+	// brokenObjections, which is what actually carries these words.
+	reportInvalid(cmd, invalid)
 
 	// Only what something actually binds to. An extractor runs when a binding
 	// names a kind it produces and not otherwise — the same rule the pre-tool
 	// point keeps, for the same reason: comparing trees is not free, and a
 	// project with no rule about files should not pay for the fact that files
 	// can be compared.
-	var bound []string
-	for _, d := range decls {
-		if d.IsEnabled() {
-			bound = append(bound, d.BoundKinds()...)
-		}
-	}
+	//
+	// The broken declarations' kinds are included for the same reason the
+	// pre-tool point includes them: their bindings are exactly what has stopped
+	// being enforced, and the events they named are the ones whose occurrence has
+	// to be noticed in order to say so. Leaving them out would mean the one case
+	// that must be reported is the one case no event is produced for.
+	bound := boundKinds(decls, invalid)
 
 	// Who this session is, resolved ONCE for the whole dispatch and used for
 	// both things that need it: the store of what has already been judged, and
@@ -139,7 +158,13 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// it carries no fields are stated in the same place they are declared.
 	events = append(events, cyclemod.Event())
 
-	objections := dispatchAll(cmd, reg, decls, rev, scope, events)
+	// A declaration that could not be loaded objects BEFORE any hook is asked,
+	// and it objects to the events it was bound to. Collected alongside the real
+	// verdicts rather than returned early, for the same reason dispatchAll
+	// collects rather than stopping: the agent is told everything at once.
+	objections := brokenObjections(invalid, events)
+
+	objections = append(objections, dispatchAll(cmd, reg, decls, rev, scope, events)...)
 	if len(objections) > 0 {
 		// The turn does not end. Reported through the one channel measured to
 		// both block and carry its words — see block().
@@ -152,6 +177,78 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 		return false
 	}
 	return true
+}
+
+// brokenObjections is what the declarations that could not be loaded have to
+// say about this cycle.
+//
+// # Why a broken rule objects at all
+//
+// The same argument refuseForBroken carries at the pre-tool point, and it is
+// not weakened by the timing. A Post refusal cannot undo the write — true, and
+// beside the point. What it does is stop the TURN from ending, which is the
+// whole mechanism an after-the-fact rule has. Ending the turn because the rule
+// would not load is the engine deciding, on its own account, that an
+// unenforceable rule is a satisfied one.
+//
+// # Scoping, in the two shapes the Pre side already distinguishes
+//
+// A declaration that PARSED and then failed validation names its kinds, so it
+// objects to a cycle only when that cycle produced one of them. A typo in a
+// rule about commands must not block a cycle no rule was written about —
+// otherwise the only way out is deleting the rule, which is the mistake
+// guardrail.Fault warns about one door along. Since PreCommandInvoke is never
+// produced here, such a rule is correctly silent at Stop.
+//
+// A declaration that could not be PARSED names nothing, and "no evidence of
+// what it guarded" is not "evidence it guarded nothing". It objects to every
+// cycle. The asymmetry is deliberate and is the same one refuseForUnreadable
+// makes: the cost of refusing too broadly is loud, immediate and cleared by
+// fixing the file, while the cost of permitting is silent.
+//
+// TurnEnd is always among the events, so an unreadable declaration always has
+// something to object to and needs no special case.
+func brokenObjections(invalid []guardrail.Invalid, events []event.Event) []objection {
+	produced := make(map[string]bool, len(events))
+	for _, e := range events {
+		produced[e.Kind] = true
+	}
+
+	var objections []objection
+	for _, iv := range invalid {
+		if iv.Has(guardrail.ErrMalformed) {
+			objections = append(objections, objection{
+				Guardrail: iv.Name,
+				Reason: fmt.Sprintf(
+					"guardrail %q could not be read at all, so there is no way to know what it was guarding: %s. "+
+						"The turn is held because a file the project keeps as a guardrail must not be read as approval "+
+						"merely for being unreadable — fix the declaration in %s, or remove that folder if it is not a guardrail.",
+					iv.Name, iv.Reason, iv.Name),
+			})
+			continue
+		}
+
+		// Scoped: only the kinds this cycle actually produced. Every fault is
+		// named, not the first, so one pass fixes the declaration.
+		for _, k := range iv.AffectedKinds() {
+			if !produced[k] {
+				continue
+			}
+			objections = append(objections, objection{
+				Guardrail: iv.Name,
+				Reason: fmt.Sprintf(
+					"guardrail %q is bound to %s but could not be loaded, so it did not guard this cycle: %s. "+
+						"The turn is held because a guardrail that cannot load must not be read as approval — "+
+						"fix the declaration in %s, or disable it with `enabled: false` if it is not ready.",
+					iv.Name, k, iv.Reason, iv.Name),
+			})
+			// One objection per broken declaration, not one per kind. The fault
+			// is the same fault whichever event surfaced it, and repeating it
+			// per kind would pad the block with the same sentence.
+			break
+		}
+	}
+	return objections
 }
 
 // refusalText is what the agent is told when a cycle is refused.
@@ -316,7 +413,39 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 				continue
 			}
 			for _, b := range d.Hooks[e.Kind] {
-				if !admits(cmd, d, b, e, kindDecl) {
+				admitted, err := admits(d, b, e, kindDecl)
+				if err != nil {
+					// The engine could not ANSWER whether this rule applies —
+					// not the rule being satisfied. Reporting false here made
+					// the two indistinguishable, and did it on a stream no
+					// agent reads.
+					//
+					// Two things reach this. A matcher that will not compile,
+					// which is unreachable for a declaration in `decls` because
+					// the identical compile ran at load and would have made it
+					// Invalid — kept because this is where the compile actually
+					// happens, and a second opinion that disagreed with the
+					// load check must not decide enforcement quietly. And a
+					// matcher that compiles and cannot be EVALUATED on the value
+					// that arrived, which is reachable and is the live one:
+					// `int(path) > 0` type-checks and then meets a path that is
+					// not a number.
+					//
+					// The same rule the Pre side already follows, and the same
+					// family as a hook that cannot run: a guardrail must not
+					// have a path where the machinery breaking reads as consent.
+					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
+					objections = append(objections, objection{
+						Guardrail: d.Name,
+						Reason: fmt.Sprintf(
+							"guardrail %q could not decide whether it applies to this %s: %v. "+
+								"The turn is held because a matcher that cannot be evaluated is not the same as a rule that was satisfied. "+
+								"Fix the matcher, or disable the guardrail with `enabled: false` if it is not ready.",
+							d.Name, e.Kind, err),
+					})
+					continue
+				}
+				if !admitted {
 					continue
 				}
 
@@ -364,11 +493,32 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 
 				v, err := runHooks(d, b, e, scope)
 				if err != nil {
-					// The hook did not reach a verdict, so there is nothing to
-					// record. Writing a pass here would exempt content nobody
-					// judged; writing a refusal would blame the rule for the
-					// machine.
+					// The hook could not be STARTED. Nothing was asked, so
+					// nothing approved — and `continue` made that read as
+					// approval, which is the third member of the same family
+					// and the one whose own comment on the Pre side already
+					// said it is "not something to proceed through either".
+					//
+					// Reachable, and not only by a hook type this engine does
+					// not understand. A NUL byte in the command is a valid
+					// double-quoted YAML scalar that checkExecutable does not
+					// judge, so the declaration loads SOUND and the exec of the
+					// shell itself then fails with "invalid argument" — never an
+					// ExitError, so none of the exit-status handling sees it.
+					//
+					// Nothing is RECORDED, and that half was already right: the
+					// hook reached no verdict, so writing a pass would exempt
+					// content nobody judged and writing a refusal would blame
+					// the rule for the machine. Holding the turn is a statement
+					// about this cycle, not a verdict stored against the file.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
+					objections = append(objections, objection{
+						Guardrail: d.Name,
+						Reason: fmt.Sprintf(
+							"guardrail %q could not run its hook for this %s: %v. "+
+								"The turn is held because a guardrail that cannot run must not be read as approval.",
+							d.Name, e.Kind, err),
+					})
 					continue
 				}
 
@@ -420,26 +570,25 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 	return objections
 }
 
-// admits reports whether a binding's matcher lets this event through.
+// admits reports whether a binding's matcher lets this event through, or an
+// error when it could not be asked.
 //
 // The matcher is compiled against the kind's own declaration, which is what
 // makes a matcher naming a field the kind does not carry a load-time error
 // rather than a rule that silently never fires. On TurnEnd that declaration has
 // no fields at all, so any matcher naming one is refused — see cyclemod.
-func admits(cmd *cobra.Command, d guardrail.Declaration, b guardrail.Binding, e event.Event, kindDecl module.KindDecl) bool {
+//
+// The error is RETURNED rather than reported and swallowed, and that is the
+// whole of the correction. This used to answer false for a matcher it could not
+// evaluate, which the caller could not tell apart from a rule that legitimately
+// did not match — so the binding was skipped, the cycle completed, and the
+// diagnostic went to a stream a Stop hook does not deliver on. "Never matches
+// everything, never matches nothing" was the right instinct and there is a third
+// answer it was missing: could not tell. Only the caller can act on that.
+func admits(d guardrail.Declaration, b guardrail.Binding, e event.Event, kindDecl module.KindDecl) (bool, error) {
 	m, err := guardrail.CompileMatcherFor(b.Matcher, kindDecl)
 	if err != nil {
-		// A matcher that will not compile disables its binding and says so.
-		// Never "matches everything", which would turn a typo into a rule that
-		// objects to every cycle; never "matches nothing", which would turn one
-		// into a rule that quietly went away.
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
-		return false
+		return false, err
 	}
-	admitted, err := m.Match(e)
-	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
-		return false
-	}
-	return admitted
+	return m.Match(e)
 }

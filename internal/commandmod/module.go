@@ -86,7 +86,36 @@ func (*Module) Kinds() []module.KindDecl {
 						Type: module.TypeMap,
 						Fields: []module.FieldDecl{
 							{Name: KeyBin, Type: module.TypeString},
-							{Name: KeyArgv, Type: module.TypeList},
+
+							// argv declares ITS element too, and for the same
+							// reason one level further down. A list whose Elem
+							// is nil has its collection checked and its
+							// predicate body left at types.Any, so
+							// `any(.argv, #.bin == "rm")` — reaching for the
+							// invocation's field from inside a scope whose
+							// elements are strings — compiled, loaded, and
+							// returned false on every command line forever.
+							//
+							// This one CAN be enumerated, which is what makes
+							// declaring it right rather than merely strict:
+							// every entry of an argument vector is a string,
+							// always, so the check refuses only what is
+							// genuinely a mistake.
+							{
+								Name: KeyArgv,
+								Type: module.TypeList,
+								Elem: &module.FieldDecl{Type: module.TypeString},
+							},
+
+							// flags stays OPEN, and the asymmetry with argv is
+							// the design. A flag name belongs to the command
+							// being run, not to this module, so there is no
+							// vocabulary to enumerate — a closed type would
+							// refuse `.flags.access` because the engine has not
+							// heard of npm, which is the checker punishing an
+							// author for our missing knowledge rather than for
+							// their mistake. See fieldType, which leaves an
+							// unenumerated map at types.Any for this reason.
 							{Name: KeyFlags, Type: module.TypeMap},
 						},
 					},
