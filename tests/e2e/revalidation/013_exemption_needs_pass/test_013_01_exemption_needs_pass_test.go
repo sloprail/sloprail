@@ -242,6 +242,13 @@ func TestT013_03_UnchangedPassingContentIsExempt(t *testing.T) {
 // writes, so both of them are updates rather than a create followed by an
 // update. A create carries its content and has never had this bug — running
 // the sequence that way would assert nothing and pass on the buggy build.
+//
+// Which means the SEEDING command must not itself produce a create carrying
+// content. That is a real constraint now rather than a free one: the engine
+// derives a redirection's resulting bytes wherever the line determines them,
+// so `printf 'v1' > notes.md` is a content-carrying create and defeats the
+// setup. See the comment at the Bash turn for the spelling that seeds without
+// one, and why.
 func TestT013_04_TwoPendingPayloadsAgainstAnUnchangedFileAreBothJudged(t *testing.T) {
 	harness.RequireSessionStore(t)
 
@@ -275,10 +282,26 @@ func TestT013_04_TwoPendingPayloadsAgainstAnUnchangedFileAreBothJudged(t *testin
 	// entirely different — that same unchanged disk yields the same subject,
 	// and the pass is read as a licence to skip.
 	//
-	// b0 seeds WITHOUT a file event so both writes are updates. A create
-	// carries its content and has never had this bug.
+	// b0 seeds without producing a PreFileCreate that carries content, so both
+	// writes are updates. A create carries its content and has never had this
+	// bug, so seeding that way would assert nothing and pass on the buggy build.
+	//
+	// The command substitution is load-bearing and is not decoration. The
+	// engine now derives the resulting content of a redirection whenever the
+	// LINE determines it, so the obvious spelling — `printf 'v1' > notes.md` —
+	// produces a create carrying "v1", the hook runs before the file exists,
+	// and the first invocation records `disk=[]` instead of `disk=[v1]`. That
+	// is the engine working as intended; it is this test's premise that has to
+	// move.
+	//
+	// `"$(echo v1)"` is not a literal word, so the content is genuinely
+	// underivable — commandmod declines to resolve it rather than assuming an
+	// environment, which is the same rule that refuses `> $OUT`. Measured:
+	// FileTargets returns PayloadNone for this line and PayloadLiteral for the
+	// bare `printf 'v1'`. The shell still writes exactly `v1`, so what the
+	// writes are held against is unchanged.
 	got := e.Run(proj, "s-013-04", "two payloads against one unchanged file", Turns("done",
-		Bash("b0", "printf 'v1' > notes.md && chmod 444 notes.md"),
+		Bash("b0", `printf '%s' "$(echo v1)" > notes.md && chmod 444 notes.md`),
 		Write("w1", "notes.md", "first pending body"),
 		Write("w2", "notes.md", "second pending body, quite different"),
 	))
