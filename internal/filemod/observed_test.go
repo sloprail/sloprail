@@ -293,6 +293,78 @@ func TestObserved_BaselineIsAskedWithTheCanonicalSpelling(t *testing.T) {
 	assert.Equal(t, KindPostUpdate, events[0].Kind)
 }
 
+// TestObserved_ACanonicalPathIsAskedAboutOnce pins the CALL COUNT, which the
+// sibling test above does not: it asserts which spelling the producer is asked
+// with, and would be satisfied by a module that asked with that spelling twice.
+//
+// The contract states the count in prose — `Observed.ExistedAtBaseline` says
+// "both are asked" only "where a path's raw and canonical spellings differ", and
+// checkBaselineSpelling's doc comment says asking twice "would make the module
+// put two questions to the producer about one file where the contract has
+// exactly one". Until this test, nothing held that.
+//
+// What holds it in the code is one term. checkBaselineSpelling reads:
+//
+//	if path == clean || before || !observed.ExistedAtBaseline(path) {
+//
+// and `path == clean` is the short-circuit: for an already-canonical path — which
+// is every path git reports, so the common case — it returns before asking a
+// second question. Deleting that term survives the whole suite on the VERDICT
+// axis, because the two calls return the same answer for the same string. Only
+// the count changes, and nothing was counting.
+//
+// That was found by mutation testing (mutant F1) rather than by a failing test,
+// and it is the shape this project has been bitten by before: a property
+// asserted in prose, load-bearing, and unmeasured. The sibling mutants on the
+// same condition — dropping `before`, inverting the raw answer — both die by
+// test, so the guard's other two terms were already pinned and this one was not.
+//
+// No bug is being fixed here. Today's only producer is a map read, so a second
+// call costs nothing and cannot disagree with the first. What the test buys is
+// that the doc comment stops being a claim nobody checks, and a future producer
+// for which the count DOES matter — one that is expensive, logged, or
+// non-idempotent — is not silently given two questions.
+func TestObserved_ACanonicalPathIsAskedAboutOnce(t *testing.T) {
+	root := tree(t, "a.md")
+
+	var asked []string
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePost,
+		module.InputPayload: recordingObserved{
+			fakeObserved: fakeObserved{
+				root: root,
+				// Already canonical, which is what git reports and therefore
+				// the path the short-circuit exists for.
+				paths: []string{"a.md"},
+				// NOT at the baseline, and that is what makes this test bite.
+				//
+				// The guard is `path == clean || before || Existed(path)`, and
+				// the caller passes `before` in. With a file that WAS at the
+				// baseline, `before` is true and the second term short-circuits
+				// before the third is ever reached — so the mutant that drops
+				// `path == clean` survives, and an earlier version of this test
+				// did exactly that: it passed against the mutant and pinned
+				// nothing. Measured, not reasoned.
+				//
+				// A file absent at the baseline makes `before` false, so only
+				// `path == clean` stands between the module and a second
+				// question about a path whose two spellings are one string.
+				before: map[string]bool{},
+			},
+			asked: &asked,
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.md"}, asked,
+		"one canonical path is one question: the raw and canonical spellings are "+
+			"the same string, so there is no second spelling to check the producer's "+
+			"keying against")
+	require.Len(t, events, 1)
+	assert.Equal(t, KindPostCreate, events[0].Kind,
+		"absent at the baseline and present now is a create")
+}
+
 func TestObserved_TwoSpellingsOfOneFileClassifyTheSameEitherOrder(t *testing.T) {
 	// Keyed on the raw spelling, whichever of these came first silently won the
 	// slot: {"a.md", "./a.md"} gave an update and the reverse gave a create —
