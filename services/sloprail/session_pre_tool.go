@@ -565,7 +565,7 @@ const (
 // fires first decides what the user sees, and only this one can produce a
 // verdict naming the rule. If the harness killed the engine first, the engine
 // would render no answer at all and the action would proceed unjudged.
-const hookTimeout = 3000 * time.Second
+const hookTimeout = 30 * time.Second
 
 // hookKillGrace caps how long Wait may keep waiting once the process group has
 // been killed. SIGKILL cannot be caught, so this is only reached by a
