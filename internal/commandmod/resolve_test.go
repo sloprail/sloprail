@@ -94,6 +94,26 @@ func TestQuoting_ExpansionsThatCannotBeKnown(t *testing.T) {
 		{"parameter suffix", `npm${X} publish`, []string{}, []string{"npm", "publish"}},
 		{"default value expansion", `${BIN:-npm} publish`, []string{}, []string{"npm", "publish"}},
 
+		// The same three inside DOUBLE QUOTES. Quoting changes nothing about
+		// what is knowable — the parameter is still a parameter and the empty
+		// environment still assumed it was empty — but it is a different AST
+		// shape, so it is a different path through isLiteral: the unquoted
+		// cases above reach the `*syntax.Lit`/default arms, these reach the
+		// `*syntax.DblQuoted` arm and its walk over the inner parts.
+		//
+		// Without these, that walk can be deleted — every word inside double
+		// quotes reported literal — and the whole repository's suite stays
+		// green, because every other double-quote case in this file has a
+		// fully literal payload (`"npm"`, `n""pm`, `n"p"m`) and every
+		// parameter-in-the-program case is unquoted. The mutant reports `npm`
+		// for the first of these and `pre` for the third: a rule firing on a
+		// program name that was inferred from an assumption about the
+		// environment, which is the one outcome resolve.go calls worse than
+		// missing it.
+		{"quoted parameter inside the program word", `"np${X}m" publish`, []string{}, []string{"npm", "publish"}},
+		{"quoted parameter suffix", `"npm${X}" publish`, []string{}, []string{"npm", "publish"}},
+		{"quoted parameter prefix", `"pre$SUF" publish`, []string{}, []string{"pre", "publish"}},
+
 		// A parameter in an ARGUMENT does not disqualify the program. echo is
 		// genuinely about to run; only the unresolvable word is dropped.
 		{"parameter in an argument", `echo $UNSET hi`, []string{"echo"}, nil},
