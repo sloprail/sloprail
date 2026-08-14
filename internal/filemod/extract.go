@@ -340,9 +340,6 @@ func reportable(path, root string) string {
 		// filepath.Abs would reintroduce that dependence.
 		//
 		// A path that climbs out in its own spelling — `../x` — already carries
-		// its own evidence of being outside and keeps it, so nothing that was
-		// already honest is rewritten.
-		// A path that climbs out in its own spelling — `../x` — already carries
 		// its own evidence of being outside and keeps it. So does `.`, which
 		// resolve refuses for naming the root rather than a file in it: both are
 		// already unadmitted by any project-relative matcher, and rewriting
