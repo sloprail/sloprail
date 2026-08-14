@@ -99,7 +99,7 @@ func isLiteral(w *syntax.Word) bool {
 // npm and publish alone. That separation is the whole reason for parsing
 // rather than matching the string — a regex cannot tell an assignment from a
 // program.
-func resolve(cfg *expand.Config, call *syntax.CallExpr) []Invocation {
+func resolve(cfg *expand.Config, call *syntax.CallExpr, depth int) []Invocation {
 	if len(call.Args) == 0 {
 		// A bare assignment — `FOO=1` on its own — parses as a call with no
 		// arguments. It runs no program, so it is not an invocation.
@@ -144,14 +144,19 @@ func resolve(cfg *expand.Config, call *syntax.CallExpr) []Invocation {
 		return nil
 	}
 
-	argv := make([]string, 0, len(fields))
+	argv := make([]word, 0, len(fields))
 	for _, f := range fields {
 		if f.lost {
 			// An unresolvable argument is omitted rather than guessed at or
 			// given a placeholder. The program is known; this one word is not.
 			continue
 		}
-		argv = append(argv, f.value)
+		// literal travels with the value rather than being dropped here. An
+		// interpreter payload is judged on it further down, and by then the
+		// AST is gone: `sh -c "npm publish"` and `sh -c "np${X}m publish"`
+		// both arrive as the string `npm publish`, and only this flag tells
+		// the certain one from the guess.
+		argv = append(argv, word{value: f.value, literal: f.literal})
 	}
 	if len(argv) == 0 {
 		return nil
@@ -163,5 +168,5 @@ func resolve(cfg *expand.Config, call *syntax.CallExpr) []Invocation {
 	// string and for nothing else, so the two conditions are the same one, and
 	// whichever runs first suppresses the case.
 
-	return fromArgv(argv)
+	return fromArgv(argv, depth)
 }

@@ -16,7 +16,23 @@ import (
 // a reason nobody can act on. Whatever was collected before the panic is kept:
 // half a flattened list still lets a rule fire, where none lets it silently
 // pass.
-func walk(raw string) (invs []Invocation) {
+func walk(raw string) []Invocation {
+	return walkAt(raw, 0)
+}
+
+// walkAt is walk at a known interpreter-payload depth.
+//
+// The depth is threaded through the parse rather than kept in a package
+// variable, because two payloads in one line are independent: `sh -c 'a' && sh
+// -c 'b'` is one level deep twice, not two levels deep, and a shared counter
+// would make the second one's budget depend on the first one's.
+//
+// Its own recover, so a panic parsing a PAYLOAD cannot take the outer line's
+// invocations with it. A payload is text an agent chose and this is the one
+// place the module feeds such text back into the parser, so if any input can
+// find a parser bug it is this one — and losing the outer `sh` on top of the
+// payload would turn a partial answer into no answer.
+func walkAt(raw string, depth int) (invs []Invocation) {
 	defer func() {
 		_ = recover()
 	}()
@@ -25,6 +41,10 @@ func walk(raw string) (invs []Invocation) {
 	if err != nil {
 		// An unparseable line yields no invocations rather than a guess. The
 		// raw text still rides on the event, so a rule may still match it.
+		//
+		// A payload reaches this too, and the same answer is right: `sh -c
+		// 'if ['` is a line whose payload is not a shell script, and inventing
+		// programs out of it would be worse than reporting sh alone.
 		return nil
 	}
 
@@ -41,7 +61,7 @@ func walk(raw string) (invs []Invocation) {
 		if !ok {
 			return true
 		}
-		invs = append(invs, resolve(cfg, call)...)
+		invs = append(invs, resolve(cfg, call, depth)...)
 		return true
 	})
 	return invs

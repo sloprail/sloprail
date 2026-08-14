@@ -1,6 +1,7 @@
 package commandmod
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -31,6 +32,29 @@ func assertBins(t *testing.T, src string, want []string) {
 	}
 }
 
+// squote wraps a payload in single quotes, escaping any it already contains, so
+// nesting an interpreter payload inside another stays ONE word. Building the
+// nesting cases by hand is where a depth test quietly stops testing depth —
+// a mis-quoted level parses as several words and the payload is never one
+// string at all.
+func squote(s string) string {
+	return "'" + strings.ReplaceAll(s, `'`, `'\''`) + "'"
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// countOf is how many times a program appears, for the cases where a program
+// running twice is the assertion.
+func countOf(hay []string, needle string) int {
+	n := 0
+	for _, h := range hay {
+		if h == needle {
+			n++
+		}
+	}
+	return n
+}
+
 // TestNesting_ShellOperators: every operator that joins statements. Each one
 // nests a program one level deeper than a string match would look, and none of
 // them may hide it.
@@ -58,8 +82,9 @@ func TestNesting_ShellOperators(t *testing.T) {
 		{"coproc", `coproc npm publish`, []string{"npm"}},
 		// A chain mixing everything. The point is that depth composes: no
 		// combination of wrappers and operators loses a program that any one of
-		// them alone would keep.
-		{"mixed chain", `sudo sh -c 'x' && (time npm publish | tee log)`, []string{"sudo", "sh", "npm", "tee"}},
+		// them alone would keep. `x` is the payload's own program, reported now
+		// that a literal `-c` string is re-parsed.
+		{"mixed chain", `sudo sh -c 'x' && (time npm publish | tee log)`, []string{"sudo", "sh", "x", "npm", "tee"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) { assertBins(t, tc.src, tc.want) })
 	}
@@ -261,78 +286,439 @@ func TestNesting_WrapperArgvIsTheWrappedVector(t *testing.T) {
 	}
 }
 
-// TestNesting_InterpreterPayloadsAreOpaque documents the largest gap in this
-// module, as behaviour rather than as a comment.
+// TestNesting_InterpreterPayloadsAreOpaque is now the FLOOR half of what this
+// test used to cover, and the floor only.
 //
-// `sh -c "npm publish"` runs npm. The string is an argument to sh, and this
-// module does not re-parse it, so a rule matching `.bin == "npm"` does not fire
-// on a line that publishes. The module's own doc calls this the resolution
-// floor for `eval`, where the argument is only decided at runtime; for a
-// literal `-c` string it is not undecidable at all — the text is right there.
+// It used to pin every interpreter payload as unread, with each case carrying a
+// `decided` flag saying whether that was a decision or a gap. The gap cases are
+// closed — see TestNesting_LiteralInterpreterPayloadsAreUnwrapped — and what
+// remains here is the set where not looking is the right answer, because the
+// payload does not exist as text at the moment of the check.
 //
-// This test asserts the CURRENT behaviour so the gap is visible and so closing
-// it is a deliberate change that turns these cases red rather than a silent
-// widening. Owned by the `unwrap-interpreter-payloads` task in the strategy
-// backlog, which argues the literalness line these cases are sorted by.
+// The distinction every case here turns on is LITERALNESS, which is the test
+// resolve.go already applies to the program word. A payload that is exactly
+// what was typed can be re-parsed; one whose value depends on the runtime
+// cannot, and reporting a program read out of it would be a guess about the
+// environment dressed up as a reading of the command.
+//
+// These must stay red-on-change in the OTHER direction: if one of them starts
+// reporting its hidden program, the module has begun guessing, and that is a
+// regression rather than an improvement.
 func TestNesting_InterpreterPayloadsAreOpaque(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		src      string
 		want     []string
-		unseen   string // the program that really runs and is not reported
-		decided  bool   // true when the payload genuinely cannot be known statically
+		unseen   string // the program that really runs and must not be guessed at
 		whyRight string
 	}{
 		{
 			name: "eval", src: `eval "npm publish"`, want: []string{"eval"}, unseen: "npm",
-			decided:  true,
 			whyRight: "eval's argument is re-interpreted at runtime after expansion; re-parsing has no bottom",
 		},
 		{
-			name: "sh -c literal", src: `sh -c "npm publish"`, want: []string{"sh"}, unseen: "npm",
-			decided:  false,
-			whyRight: "the payload is a literal string and is statically readable; not re-parsing it is a gap",
-		},
-		{
-			name: "bash -c literal", src: `bash -c "npm publish"`, want: []string{"bash"}, unseen: "npm",
-			decided: false,
-		},
-		{
-			name: "bash -lc chain", src: `bash -lc 'cd /x && npm publish'`, want: []string{"bash"}, unseen: "npm",
-			decided: false,
-		},
-		{
-			name: "zsh -c literal", src: `zsh -c 'npm publish'`, want: []string{"zsh"}, unseen: "npm",
-			decided: false,
-		},
-		{
-			name: "sh -c behind a wrapper", src: `sudo sh -c 'npm publish'`, want: []string{"sudo", "sh"}, unseen: "npm",
-			decided: false,
-		},
-		{
-			name: "xargs sh -c", src: `xargs sh -c 'npm publish'`, want: []string{"xargs", "sh"}, unseen: "npm",
-			decided: false,
-		},
-		{
 			name: "sh -c from a variable", src: `sh -c "$CMD"`, want: []string{"sh"}, unseen: "npm",
-			decided:  true,
 			whyRight: "the payload is a parameter; its value is not knowable without the runtime environment",
+		},
+		{
+			// The case that makes literalness the right test rather than
+			// provenance or shape. This payload RESOLVES to `npm publish` under
+			// the empty environment and is character-for-character identical to
+			// the literal case once expanded — only isLiteral separates them.
+			name: "sh -c with an interpolation that resolves to a real command",
+			src:  `sh -c "np${X}m publish"`, want: []string{"sh"}, unseen: "npm",
+			whyRight: "it only looks like npm because the empty environment assumed ${X} was empty; at runtime it is anything",
+		},
+		{
+			name: "sh -c with an interpolated argument", src: `sh -c "npm publish --tag $TAG"`,
+			want: []string{"sh"}, unseen: "npm",
+			whyRight: "any non-literal part makes the whole payload uncertain; isLiteral is a property of the word, not of its prefix",
+		},
+		{
+			name: "sh -c from a command substitution", src: `sh -c "$(cat run.sh)"`,
+			want: []string{"sh", "cat"}, unseen: "npm",
+			whyRight: "the payload does not exist until cat runs; cat itself is reported because it genuinely is about to run",
 		},
 		{
 			name: "base64 decoded and piped to sh", src: `echo cm0gLXJmIC8= | base64 -d | sh`,
 			want: []string{"echo", "base64", "sh"}, unseen: "rm",
-			decided:  true,
 			whyRight: "the decoded payload does not exist until base64 runs",
+		},
+		{
+			// A script FILE, not a command string. The contents are on disk,
+			// and reading disk to decide what a command means is what the
+			// module refuses.
+			name: "sh running a script file", src: `sh deploy.sh`, want: []string{"sh"}, unseen: "npm",
+			whyRight: "the payload is a file; its contents are not in the command line",
+		},
+		{
+			// Once a script file is named, the interpreter's own options are
+			// over: a later `-c` is an ARGUMENT passed to that script, not a
+			// flag naming a payload. Scanning past the file reports a program
+			// called `-c` — an argument promoted to a binary.
+			//
+			// Measured: not stopping at the script file changes exactly this
+			// line and `su someuser -c ...`, and nothing else noticed.
+			name: "a -c after a script file is the script's argument",
+			src:  `sh script.sh -c "npm publish"`, want: []string{"sh"}, unseen: "npm",
+			whyRight: "the script file ends sh's options; the -c belongs to the script",
+		},
+		{
+			// A lone `-` is su's login marker and conventionally stdin for a
+			// shell. Either way it is not a flag, and a `-c` after it is not
+			// this interpreter's payload flag.
+			name: "a lone dash stops the scan", src: `sh - -c "npm publish"`,
+			want: []string{"sh"}, unseen: "npm",
+			whyRight: "a lone - is not an option; what follows is not sh's own flag",
+		},
+		{
+			// A KNOWN SHORTFALL, recorded rather than left to be discovered.
+			//
+			// util-linux su accepts `su user -c command`, so this really does
+			// run npm and npm is not reported. BSD/macOS su does not — its
+			// synopsis is `su [-] [-flm] [login [args]]`, where everything
+			// after the login name is an argument to that user's shell, and a
+			// `-c` there is not su's flag at all.
+			//
+			// The two disagree, and which one is installed is not knowable from
+			// the command line. Stopping at the user name is the direction that
+			// cannot fabricate: it costs npm on the util-linux spelling, where
+			// reading on would invent a payload on the BSD one. A miss is the
+			// cheaper error, and it is the same judgement the module makes
+			// everywhere else.
+			//
+			// `su -c "npm publish" someuser` — the flag-first spelling both
+			// accept — IS unwrapped, and is pinned in
+			// TestNesting_PreviouslyUnlistedWrappersAreNowUnwrapped.
+			name: "su with the user before the flag is not unwrapped",
+			src:  `su someuser -c "npm publish"`, want: []string{"su"}, unseen: "npm",
+			whyRight: "util-linux su would run it but BSD su would not; stopping cannot fabricate, reading on could",
+		},
+		{
+			// `-s` reads the script from STDIN and the string becomes $0.
+			// Verified against real sh: `sh -s "echo x"` runs nothing.
+			name: "sh -s does not run its argument", src: `sh -s "npm publish"`, want: []string{"sh"}, unseen: "npm",
+			whyRight: "-s reads the script from stdin; the string is $0, not code",
+		},
+		{
+			// `python -c` is a payload in another language. Re-parsing it as
+			// shell would report `import` and `os.system('npm` as programs —
+			// fabricated names, which the module calls worse than missing one.
+			name: "python -c is not a shell payload", src: `python -c "import os; os.system('npm publish')"`,
+			want: []string{"python"}, unseen: "npm",
+			whyRight: "the payload is Python, and its words are not shell words",
+		},
+
+		// A LONG option is never the command-string flag, and several contain
+		// a `c`. Under a containment test that did not exclude them, `--norc`
+		// and `--rcfile` read as naming a payload and the next word is taken as
+		// code — so `sh --norc npm publish` reports a payload parsed out of
+		// `npm`, which is a program word invented from an option name.
+		//
+		// Measured: removing the long-option exclusion changes exactly these
+		// lines and nothing else in the suite noticed, so they are pinned here.
+		{
+			name: "long option containing c is not the payload flag", src: `sh --norc npm publish`,
+			want: []string{"sh"}, unseen: "npm",
+			whyRight: "--norc is an option, not -c; the bare word after it is a script FILE",
+		},
+
+		// `--` ends the interpreter's options, so a `-c` after it is a
+		// FILENAME rather than a flag and the payload never runs. Verified
+		// against real sh, which answers `sh: -c: No such file or directory`.
+		//
+		// Reporting npm here would be a rule firing on a line that runs
+		// nothing — and `--` is exactly what someone would append to smuggle a
+		// payload past a reader that skipped it. Measured: not honouring `--`
+		// on this path changes only these lines.
+		{
+			name: "double dash makes -c a filename", src: `sh -- -c "npm publish"`,
+			want: []string{"sh"}, unseen: "npm",
+			whyRight: "after -- the -c is a script filename; real sh reports it as a missing file",
+		},
+		{
+			name: "double dash before a cluster", src: `bash -- -lc "npm publish"`,
+			want: []string{"bash"}, unseen: "npm",
+			whyRight: "same — options ended, so the cluster is a filename",
+		},
+		{
+			name: "rcfile takes a value and is not the payload flag", src: `bash --rcfile npm publish`,
+			want: []string{"bash"}, unseen: "npm",
+			whyRight: "--rcfile names a startup file; nothing here is a command string",
+		},
+		{
+			name: "login is not the payload flag", src: `bash --login npm publish`,
+			want: []string{"bash"}, unseen: "npm",
+			whyRight: "--login contains no c at all, and is still not a payload flag",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertBins(t, tc.src, tc.want)
 			if contains(binsOf(tc.src), tc.unseen) {
-				t.Errorf("ExtractCommand(%q) now reports %q — the gap this pins is closed; "+
-					"update the case rather than deleting it", tc.src, tc.unseen)
+				t.Errorf("ExtractCommand(%q) now reports %q — this is the resolution FLOOR, not a gap: "+
+					"%s. Reporting it means the module started guessing.", tc.src, tc.unseen, tc.whyRight)
 			}
 		})
 	}
+}
+
+// TestNesting_LiteralInterpreterPayloadsAreUnwrapped is the gap this work
+// closed, pinned as behaviour.
+//
+// `sh -c "npm publish"` runs npm, and the payload is right there in the text.
+// While it went unread, a rule about npm SILENTLY NEVER FIRED on it — which is
+// the failure the product exists to prevent, because a rule that never fires
+// looks exactly like a rule being satisfied. A harness that wraps everything in
+// `bash -lc` made every command rule cover nothing.
+//
+// The interpreter is still reported in every case. Unwrapping ADDS what the
+// payload runs; a rule about `sh` must not be defeated by the fix to a rule
+// about npm.
+func TestNesting_LiteralInterpreterPayloadsAreUnwrapped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"sh -c", `sh -c "npm publish"`, []string{"sh", "npm"}},
+		{"sh -c single quoted", `sh -c 'npm publish'`, []string{"sh", "npm"}},
+		{"bash -c", `bash -c "npm publish"`, []string{"bash", "npm"}},
+		{"zsh -c", `zsh -c 'npm publish'`, []string{"zsh", "npm"}},
+		{"dash -c", `dash -c 'npm publish'`, []string{"dash", "npm"}},
+		{"ksh -c", `ksh -c 'npm publish'`, []string{"ksh", "npm"}},
+		{"fish -c", `fish -c 'npm publish'`, []string{"fish", "npm"}},
+
+		// The payload is a whole command line, not a single program, so
+		// everything in it is reported.
+		{"bash -lc chain", `bash -lc 'cd /x && npm publish'`, []string{"bash", "cd", "npm"}},
+		{"payload pipeline", `sh -c 'npm pack | tee out'`, []string{"sh", "npm", "tee"}},
+		{"payload with a wrapper inside", `sh -c 'sudo npm publish'`, []string{"sh", "sudo", "npm"}},
+		{"payload with a substitution", `sh -c 'echo $(npm view)'`, []string{"sh", "echo", "npm"}},
+
+		// The clustered spellings, which is how agents usually write it. A
+		// short-flag cluster sets every letter in it.
+		{"bash -lc", `bash -lc "npm publish"`, []string{"bash", "npm"}},
+		{"bash -ec", `bash -ec "npm publish"`, []string{"bash", "npm"}},
+		{"bash -euxc", `bash -euxc "npm publish"`, []string{"bash", "npm"}},
+		{"sh -ic", `sh -ic "npm publish"`, []string{"sh", "npm"}},
+
+		// `c` need not be LAST in the cluster. Verified against real sh:
+		// `sh -cx "echo hello"` and `sh -xc "echo hello"` both run the payload,
+		// so requiring it last would miss a form that really runs.
+		{"sh -cx", `sh -cx "npm publish"`, []string{"sh", "npm"}},
+		{"sh -xc", `sh -xc "npm publish"`, []string{"sh", "npm"}},
+
+		// Separated flags before the payload.
+		{"bash -x -c", `bash -x -c "npm publish"`, []string{"bash", "npm"}},
+		{"bash -o pipefail -c", `bash -o pipefail -c "npm publish"`, []string{"bash", "npm"}},
+
+		// Behind a wrapper, and in front of one. Unwrapping composes with the
+		// wrapper table in both directions.
+		{"sudo sh -c", `sudo sh -c 'npm publish'`, []string{"sudo", "sh", "npm"}},
+		{"xargs sh -c", `xargs sh -c 'npm publish'`, []string{"xargs", "sh", "npm"}},
+		{"env sh -c", `env FOO=1 sh -c 'npm publish'`, []string{"env", "sh", "npm"}},
+		{"timeout sh -c", `timeout 5 sh -c 'npm publish'`, []string{"timeout", "sh", "npm"}},
+		{"sh -c wrapping sudo", `sh -c 'sudo npm publish'`, []string{"sh", "sudo", "npm"}},
+
+		// A path-spelled interpreter is the same interpreter. The basename
+		// reduction that stops `/usr/local/bin/npm` evading a rule about npm
+		// has to apply here too, or `/bin/sh -c` is a hole.
+		{"path spelled interpreter", `/bin/sh -c 'npm publish'`, []string{"sh", "npm"}},
+		{"usr bin env bash", `/usr/bin/env bash -c 'npm publish'`, []string{"env", "bash", "npm"}},
+
+		// The payload sits inside the shell structures the module already
+		// flattens, so the two compose.
+		{"payload in a pipeline", `sh -c 'npm publish' | tee log`, []string{"sh", "npm", "tee"}},
+		{"payload in a subshell", `(sh -c 'npm publish')`, []string{"sh", "npm"}},
+		{"two payloads", `sh -c 'npm pack' && sh -c 'npm publish'`, []string{"sh", "npm", "sh", "npm"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertBins(t, tc.src, tc.want) })
+	}
+}
+
+// TestNesting_InterpreterIsStillReported is the half of the fix that is easiest
+// to lose and hardest to notice.
+//
+// Unwrapping is an ADDITION. An implementation that replaced the interpreter
+// with what it runs would close the npm gap and open a `sh` one — a rule about
+// shelling out would stop firing on every line that shells out, which is the
+// same silent-never-fires failure pointed at a different rule.
+func TestNesting_InterpreterIsStillReported(t *testing.T) {
+	for _, src := range []string{
+		`sh -c "npm publish"`,
+		`bash -lc 'cd /x && npm publish'`,
+		`sudo sh -c 'npm publish'`,
+		`sh -c 'sh -c "npm publish"'`,
+	} {
+		t.Run(src, func(t *testing.T) {
+			got := binsOf(src)
+			// Fatal, not Error. The next assertion indexes got[0], and an
+			// implementation that REPLACED the interpreter with its payload
+			// leaves this empty — so continuing would panic and bury the clear
+			// message under a stack trace. Measured: the mutant that swaps the
+			// append for an assignment produced exactly that, and the panic
+			// masked this diagnosis until the check became fatal.
+			if len(got) == 0 {
+				t.Fatalf("bins is empty for %q — the interpreter itself is no longer "+
+					"reported; unwrapping must ADD to the list, not replace what wraps", src)
+			}
+			if !contains(got, "sh") && !contains(got, "bash") {
+				t.Fatalf("bins = %v — the interpreter itself is no longer reported; "+
+					"unwrapping must add to the list, not replace what wraps", got)
+			}
+			// The interpreter comes FIRST. It is the program the line names,
+			// and the payload's programs are nested inside it.
+			if got[0] != "sh" && got[0] != "bash" && got[0] != "sudo" {
+				t.Errorf("bins = %v, want the interpreter or its wrapper first", got)
+			}
+		})
+	}
+}
+
+// TestNesting_InterpreterPayloadDepthIsBounded pins the recursion bound.
+//
+// A payload can contain another interpreter, and the nesting has no natural
+// end: `sh -c 'sh -c "sh -c ..."'` is a string an agent can write as long as it
+// likes, and each level is a fresh parse of the whole remaining text. The
+// recover in walk catches a panic but not a hang, and a guardrail that hangs is
+// as bad as one that crashes.
+//
+// The bound is maxUnwrapDepth. What matters at the limit is the DIRECTION of
+// the shortfall: every interpreter on the way down is still reported, so a rule
+// about `sh` fires at any depth, and only the innermost payload goes unread.
+// Returning nothing at the limit would be the worse failure — it would make
+// deep nesting a way to hide the outer levels too.
+func TestNesting_InterpreterPayloadDepthIsBounded(t *testing.T) {
+	// The bound is pinned to a LITERAL, not read from the constant.
+	//
+	// Every other assertion here derives its cases from maxUnwrapDepth, which
+	// makes them move with it: changing the constant to 3 or 5 leaves them all
+	// passing, because the boundary they walk slides along too. That was
+	// measured — mutants setting the bound to 3 and to 5 both survived the
+	// suite until this line existed.
+	//
+	// So the chosen depth is asserted directly. The number is a decision with
+	// an argument behind it (see maxUnwrapDepth), and changing it should have
+	// to be deliberate: this is the line that makes someone read that argument
+	// before moving it.
+	if maxUnwrapDepth != 4 {
+		t.Fatalf("maxUnwrapDepth = %d, want 4 — the bound is a decision, not a "+
+			"tuning knob. Read the argument on the constant: one level is the "+
+			"ordinary `bash -lc`, two is a harness wrapping an agent's own `sh -c`, "+
+			"three is slack for a layer nobody planned, four is past every real "+
+			"form. If you are changing it, update that argument too.", maxUnwrapDepth)
+	}
+
+	// nest builds `sh -c 'sh -c ... npm publish'` n interpreters deep, quoting
+	// each level so the payload survives as one word.
+	nest := func(n int) string {
+		src := `npm publish`
+		for i := 0; i < n; i++ {
+			src = `sh -c ` + squote(src)
+		}
+		return src
+	}
+
+	// The boundary at its literal depth, independent of the constant. Four
+	// levels reach npm and five do not — the same two facts the derived cases
+	// below assert, written so they cannot slide.
+	if got := binsOf(nest(4)); !contains(got, "npm") {
+		t.Errorf("bins = %v, want npm reached at exactly 4 interpreters deep", got)
+	}
+	if got := binsOf(nest(5)); contains(got, "npm") {
+		t.Errorf("bins = %v, want npm NOT reached at 5 interpreters deep", got)
+	}
+
+	// Inside the budget every level is read, and npm at the bottom is reported.
+	for n := 1; n <= maxUnwrapDepth; n++ {
+		t.Run("depth "+itoa(n)+" reaches npm", func(t *testing.T) {
+			got := binsOf(nest(n))
+			if !contains(got, "npm") {
+				t.Errorf("bins = %v, want npm found at depth %d (budget is %d)", got, n, maxUnwrapDepth)
+			}
+			if want := n + 1; len(got) != want {
+				t.Errorf("bins = %v (%d), want %d — every sh plus npm", got, len(got), want)
+			}
+		})
+	}
+
+	// One past the budget: the innermost payload is not read, and that is the
+	// bound doing its job rather than a bug.
+	t.Run("past the budget the innermost payload is unread", func(t *testing.T) {
+		got := binsOf(nest(maxUnwrapDepth + 1))
+		if contains(got, "npm") {
+			t.Errorf("bins = %v — npm was reached %d levels deep, past the bound of %d; "+
+				"the recursion is not bounded where it says it is", got, maxUnwrapDepth+1, maxUnwrapDepth)
+		}
+		// The load-bearing half. Every interpreter on the way down is still
+		// there, so a rule about `sh` still fires — the shortfall is the
+		// innermost payload only, not the line.
+		if want := maxUnwrapDepth + 1; len(got) != want {
+			t.Errorf("bins = %v (%d), want %d interpreters — hitting the bound must not "+
+				"discard the levels already walked", got, len(got), want)
+		}
+		for _, b := range got {
+			if b != "sh" {
+				t.Errorf("bins = %v, want every entry to be sh", got)
+				break
+			}
+		}
+	})
+
+	// Depth is spent per PATH, not per line. Two payloads side by side each get
+	// the full budget, or a long line would starve its own later statements.
+	t.Run("sibling payloads each get the full budget", func(t *testing.T) {
+		deep := nest(maxUnwrapDepth)
+		got := binsOf(deep + " && " + deep)
+		if n := countOf(got, "npm"); n != 2 {
+			t.Errorf("bins = %v, want npm twice — each statement gets its own budget, got %d", got, n)
+		}
+	})
+
+	// Wrapper nesting is NOT bounded by the payload budget and must not become
+	// so: it consumes words from a finite vector, so it terminates on its own.
+	// 100 stacked sudos inside a payload still reach npm.
+	t.Run("wrapper depth inside a payload is not charged to the budget", func(t *testing.T) {
+		got := binsOf(`sh -c '` + strings.Repeat("sudo ", 100) + `npm publish'`)
+		if !contains(got, "npm") {
+			t.Errorf("bins has %d entries and no npm; wrapper stacking must not spend the payload budget", len(got))
+		}
+	})
+
+	// The same fact from the other side, and the side that is actually
+	// reachable by hand: wrappers stacked BEFORE the interpreter.
+	//
+	// The case above nests wrappers inside a payload, which spends one payload
+	// level however many wrappers there are — so it passes even if each
+	// wrapper charges the budget. This one does not: five sudos in front of an
+	// `sh -c` would exhaust a budget of four before the interpreter is reached,
+	// and npm would vanish from a line anybody might write.
+	//
+	// Measured: charging wrapper recursion to the payload budget was invisible
+	// to the whole suite until this case existed.
+	t.Run("wrappers before the interpreter do not spend the budget", func(t *testing.T) {
+		for _, n := range []int{1, 4, 5, 20} {
+			src := strings.Repeat("sudo ", n) + `sh -c 'npm publish'`
+			got := binsOf(src)
+			if !contains(got, "npm") {
+				t.Errorf("%d stacked wrappers before sh -c: bins = %v, want npm — a wrapper "+
+					"is not a new parse and must spend none of the payload budget", n, got)
+			}
+			if want := n + 2; len(got) != want {
+				t.Errorf("%d stacked wrappers: bins = %v (%d), want %d — every sudo, sh, npm",
+					n, got, len(got), want)
+			}
+		}
+	})
+
+	// A payload that will not parse yields nothing from the payload rather than
+	// a guess, and does not take the interpreter with it.
+	t.Run("an unparseable payload loses only the payload", func(t *testing.T) {
+		assertBins(t, `sh -c 'if ['`, []string{"sh"})
+		assertBins(t, `sh -c '((('`, []string{"sh"})
+		// And it does not abandon the rest of the line.
+		assertBins(t, `sh -c '((('  ; npm publish`, []string{"sh", "npm"})
+	})
 }
 
 // TestNesting_FindExecIsNotUnwrapped: `find . -exec npm publish \;` runs npm,
@@ -379,26 +765,198 @@ func TestNesting_FindExecIsNotUnwrapped(t *testing.T) {
 // are shell builtins, `su -c` is also an interpreter payload).
 func TestNesting_UnlistedWrappersAreNotUnwrapped(t *testing.T) {
 	for _, src := range []string{
-		`setsid npm publish`,
-		`unbuffer npm publish`,
-		`watch npm publish`,
-		`command npm publish`,
-		`exec npm publish`,
-		`builtin npm publish`,
-		`chroot / npm publish`,
-		`su -c "npm publish"`,
-		`runuser -u x npm publish`,
-		`flock /tmp/l npm publish`,
-		`torify npm publish`,
-		`proxychains npm publish`,
+		// `find -exec` is a vector between the flag and a terminator, which is
+		// a different shape from either table and is owned by the
+		// `unwrap-exec-style-wrappers` task. Its own test covers the spellings;
+		// it stays listed here so the checklist remains the one place to look.
+		`find . -exec npm publish \;`,
+
+		// A program is not a wrapper merely because a program name follows it.
+		// These take one as an ARGUMENT and do not run it, so reporting npm
+		// would be a rule firing on a line that never invokes npm.
+		`which npm`,
+		`type npm`,
+		`whereis npm`,
+		`echo npm publish`,
+
+		// Interpreters whose payload is a program in ANOTHER language.
+		// Re-parsing these as shell fabricates program names out of syntax:
+		// `import` and `os.system('npm` are not programs.
+		`python -c "import os; os.system('npm publish')"`,
+		`node -e "require('child_process').exec('npm publish')"`,
+		`perl -e "system('npm publish')"`,
+		`ruby -e "system('npm publish')"`,
 	} {
 		t.Run(src, func(t *testing.T) {
 			if got := binsOf(src); contains(got, "npm") {
-				t.Errorf("ExtractCommand(%q) bins = %v — %q is now unwrapped; that is an "+
-					"improvement, so move this case to TestNesting_Wrappers", src, got, strings.Fields(src)[0])
+				t.Errorf("ExtractCommand(%q) bins = %v — %q is now unwrapped. If that is "+
+					"deliberate, move this case to the test for the table it joined and say why "+
+					"the program it names is really about to run", src, got, strings.Fields(src)[0])
 			}
 		})
 	}
+}
+
+// TestNesting_PreviouslyUnlistedWrappersAreNowUnwrapped is the other side of
+// the checklist: the entries that moved OUT of it, each with the reason it
+// belongs in a table.
+//
+// Every one of these runs the program named after it, so while it went
+// unlisted a rule about that program silently never fired on the line.
+func TestNesting_PreviouslyUnlistedWrappersAreNowUnwrapped(t *testing.T) {
+	for _, tc := range []struct {
+		src  string
+		want []string
+		why  string
+	}{
+		{`setsid npm publish`, []string{"setsid", "npm"},
+			"runs the program in a new session; what follows is a vector"},
+		{`unbuffer npm publish`, []string{"unbuffer", "npm"},
+			"runs the program under a pty; what follows is a vector"},
+		{`watch npm publish`, []string{"watch", "npm"},
+			"runs the program repeatedly; repetition does not make it less run"},
+		{`watch -n 5 npm publish`, []string{"watch", "npm"},
+			"the interval is watch's own argument, taken behind its flag"},
+		{`torify npm publish`, []string{"torify", "npm"},
+			"runs the program through a proxy; what follows is a vector"},
+		{`proxychains npm publish`, []string{"proxychains", "npm"}, "same as torify"},
+		{`proxychains -f c.conf npm publish`, []string{"proxychains", "npm"},
+			"the config is proxychains's own argument"},
+
+		// A mandatory bare word before the command, the same shape as
+		// timeout's duration. Without the positional count the path would be
+		// reported as a program AND the real one lost — both failure directions
+		// at once, which is what TestNesting_Timeout... settles for timeout.
+		{`chroot / npm publish`, []string{"chroot", "npm"}, "NEWROOT comes before the command"},
+		{`flock /tmp/l npm publish`, []string{"flock", "npm"}, "the lock file comes before the command"},
+
+		// Shell BUILTINS, which the task flagged as a separate judgement. Being
+		// a builtin is not a reason to omit them: what this module reports is
+		// what is about to run, and the word after each of these is a program
+		// the line is trying to run. That the shell resolves them without an
+		// exec is invisible here and changes nothing a rule needs to know.
+		{`exec npm publish`, []string{"exec", "npm"},
+			"exec REPLACES the shell with npm, so npm runs more definitely than under sudo, which can still refuse"},
+		{`exec -a other npm publish`, []string{"exec", "npm"},
+			"-a renames the program; the name is exec's argument, not the program"},
+		{`command npm publish`, []string{"command", "npm"},
+			"runs npm bypassing functions and aliases — precisely the spelling used to get the REAL npm"},
+		{`builtin npm publish`, []string{"builtin", "npm"},
+			"npm is not a builtin so this runs nothing; but whether a program EXISTS is not a question a static reader answers, cf. nice 10 reporting 10"},
+
+		// Both a wrapper-table entry and an interpreter payload, which the task
+		// flagged as belonging to whichever unwrapping task landed second.
+		{`su -c "npm publish"`, []string{"su", "npm"}, "the -c payload is a literal command string"},
+		{`su -c "npm publish" someuser`, []string{"su", "npm"},
+			"the trailing bare word is the USER; only the -c payload is a command"},
+		{`runuser -u x npm publish`, []string{"runuser", "npm"}, "with -u the bare word is the program"},
+		{`runuser -c "npm publish" x`, []string{"runuser", "npm"}, "the -c payload is a command string"},
+		{`flock /tmp/l -c "npm publish"`, []string{"flock", "npm"},
+			"flock's -c payload runs through sh -c, so it is a command string, not a vector"},
+	} {
+		t.Run(tc.src, func(t *testing.T) { assertBins(t, tc.src, tc.want) })
+	}
+}
+
+// TestNesting_NonShellInterpretersDoNotClusterTheirFlags pins the difference
+// between a SHELL's `-c` and a `-c` that merely looks like one.
+//
+// A shell's short flags cluster: `-lc` sets both `l` and `c`, which is why the
+// cluster test exists at all. `su` and `flock` are not shells — their `-c` is a
+// long-style option that happens to be one letter, and neither accepts it
+// packed into a cluster. Reading one out of `-lc` or `-nc` invents a spelling
+// the program rejects.
+//
+// The cost of getting this wrong is not a miss but a FABRICATION, which is the
+// worse direction: with clustering wrongly enabled, `flock /tmp/l -nc "npm
+// publish"` reports a program whose name is the whole string `npm publish` —
+// a binary nothing invokes and a basename no rule can match — and reports npm
+// twice. Measured: nothing else in the suite noticed that.
+func TestNesting_NonShellInterpretersDoNotClusterTheirFlags(t *testing.T) {
+	for _, tc := range []struct {
+		src  string
+		want []string
+		why  string
+	}{
+		// The exact `-c` is the payload flag and works.
+		{`su -c "npm publish"`, []string{"su", "npm"}, "the exact -c is su's command option"},
+		{`flock /tmp/l -c "npm publish"`, []string{"flock", "npm"}, "the exact -c is flock's command option"},
+
+		// A cluster CONTAINING c is not. su has no such grammar, so there is
+		// no command string here and the payload must not be read.
+		{`su -lc "npm publish"`, []string{"su"}, "su does not accept -c packed into a cluster"},
+		{`flock /tmp/l -nc "npm publish"`, []string{"flock"}, "flock does not either"},
+	} {
+		t.Run(tc.src, func(t *testing.T) {
+			assertBins(t, tc.src, tc.want)
+			// The fabrication check. The whole payload string arriving as one
+			// program word is the specific damage clustering would do here.
+			for _, inv := range ExtractCommand(tc.src).Invocations {
+				if strings.Contains(inv.Bin, " ") {
+					t.Errorf("bin %q contains a space — a command STRING was reported as a "+
+						"single program word, which is a binary nothing invokes", inv.Bin)
+				}
+			}
+		})
+	}
+}
+
+// TestNesting_UserNamesAreNotReportedAsPrograms is the failure direction that
+// adding `su` and `runuser` opens, and the reason each carries a rule saying
+// its bare word is not a program.
+//
+// `su someuser` names a USER and starts an interactive shell. A plain wrapper
+// entry reports a binary called someuser — an argument reported as a program,
+// which the module calls the one outcome worse than missing it, and which
+// would be worse here than the gap the entry was added to close.
+func TestNesting_UserNamesAreNotReportedAsPrograms(t *testing.T) {
+	for _, tc := range []struct {
+		src  string
+		want []string
+	}{
+		{`su someuser`, []string{"su"}},
+		{`su - someuser`, []string{"su"}},
+		{`su -l someuser`, []string{"su"}},
+		{`su`, []string{"su"}},
+		// The user trails the payload in su's real synopsis and is still not a
+		// program.
+		{`su -c "npm publish" someuser`, []string{"su", "npm"}},
+
+		// runuser WITHOUT `-u` follows the same synopsis as su: the bare word
+		// is the user. With `-u` the bare word is the program, which is the
+		// other case and is pinned above.
+		{`runuser someuser`, []string{"runuser"}},
+		{`runuser - someuser`, []string{"runuser"}},
+		{`runuser -l someuser`, []string{"runuser"}},
+	} {
+		t.Run(tc.src, func(t *testing.T) {
+			assertBins(t, tc.src, tc.want)
+			if contains(binsOf(tc.src), "someuser") {
+				t.Errorf("ExtractCommand(%q) reports someuser as a program — a user name "+
+					"promoted to a binary is the fabrication the module refuses", tc.src)
+			}
+		})
+	}
+}
+
+// TestNesting_CommandDashVDescribesRatherThanRuns is the other over-reporting
+// case that arrived with the builtins.
+//
+// `command -v npm` prints npm's path and runs nothing — verified against a real
+// shell, where `command -v echo` prints `echo` and echoes nothing. Reporting
+// npm there is a rule firing on a line that does not invoke it, and
+// `command -v` is how nearly every install script probes for a tool, so the
+// wrong answer would fire constantly.
+func TestNesting_CommandDashVDescribesRatherThanRuns(t *testing.T) {
+	for _, src := range []string{
+		`command -v npm`,
+		`command -V npm`,
+	} {
+		t.Run(src, func(t *testing.T) { assertBins(t, src, []string{"command"}) })
+	}
+
+	// Without the flag it really does run, and is reported.
+	assertBins(t, `command npm publish`, []string{"command", "npm"})
 }
 
 // TestNesting_TimeoutConsumesItsDurationNotTheProgram.
