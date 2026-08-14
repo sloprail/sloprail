@@ -126,7 +126,11 @@ func TestExtractCommand_Flattens(t *testing.T) {
 		{"unresolvable argument inside a wrapper", `sudo $(x) npm publish`, []string{"sudo", "npm", "x"}},
 		{"unresolvable argument", `echo $UNSET hi`, []string{"echo"}},
 
-		{"deep nesting", `sudo sh -c 'x' && (time npm publish | tee log)`, []string{"sudo", "sh", "npm", "tee"}},
+		// `x` is the program the payload runs, and it is reported now that a
+		// literal payload is re-parsed. Whether a program called `x` exists is
+		// not a question a static reader answers — the same reason `nice 10`
+		// reports `10`.
+		{"deep nesting", `sudo sh -c 'x' && (time npm publish | tee log)`, []string{"sudo", "sh", "x", "npm", "tee"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := bins(t, tc.src); !equal(got, tc.want) {
@@ -318,9 +322,25 @@ func TestExtractCommand_Undecidable(t *testing.T) {
 			wantSeen: []string{"eval"}, notSeen: []string{"npm"},
 		},
 		{
-			// A nested interpreter keeps its payload opaque, for the same
-			// reason.
-			name: "nested interpreter", src: `bash -c "npm publish"`,
+			// An interpreter payload that is NOT literal stays opaque. The
+			// value is a runtime parameter, so re-parsing it would be a guess
+			// about the environment rather than a reading of the text.
+			//
+			// This case used to be `bash -c "npm publish"`, filed here as
+			// undecidable. It was not: a literal payload is right there in the
+			// text and is now unwrapped — see
+			// TestNesting_LiteralInterpreterPayloadsAreUnwrapped. What belongs
+			// in this list is the form that genuinely cannot be known, which is
+			// this one.
+			name: "nested interpreter from a parameter", src: `bash -c "$CMD"`,
+			wantSeen: []string{"bash"}, notSeen: []string{"npm"},
+		},
+		{
+			// The payload resolves to `npm publish` under the empty
+			// environment, and that resolution is an ASSUMPTION — at runtime
+			// ${X} could be anything. Reported as bash alone rather than as a
+			// program inferred from a variable nobody has read.
+			name: "interpreter payload with an interpolation", src: `bash -c "np${X}m publish"`,
 			wantSeen: []string{"bash"}, notSeen: []string{"npm"},
 		},
 		{
