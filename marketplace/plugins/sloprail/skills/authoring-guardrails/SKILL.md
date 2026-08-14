@@ -8,7 +8,7 @@ description: Use when adding, fixing, or turning off a guardrail in a project th
 ## Get the event vocabulary from the binary
 
 ```
-sloprail guardrail help
+sr-guardrail help
 ```
 
 That prints every event kind THIS BUILD can produce, the fields each carries,
@@ -224,7 +224,7 @@ skill loaded before the write?").
 
 ```bash
 payload="$(cat)"
-printf '%s' "$payload" | sloprail session query --where 'type == "assistant"'
+printf '%s' "$payload" | sr-session query --where 'type == "assistant"'
 ```
 
 It needs the harness payload on its **own** stdin — the same JSON the hook was
@@ -262,7 +262,7 @@ If a rule fails any of these, say so rather than writing a weaker version.
 Loading is not firing.
 
 ```
-sloprail session start < /dev/null
+sr-session start < /dev/null
 ```
 
 is the load check. It reports an unknown event kind, a matcher naming a field
@@ -297,7 +297,7 @@ declaration is also not validated, so it can be parked half-written.
 
 ## Do not write these yet
 
-- **A rule that remembers across cycles.** `sloprail session state get|set|list`
+- **A rule that remembers across cycles.** `sr-session state get|set|list`
   resolves its scope from `SLOPRAIL_GUARDRAIL` / `SLOPRAIL_SESSION_ID` /
   `SLOPRAIL_WORKSPACE`, which the dispatcher does not yet set. From inside a
   hook it fails with "no guardrail in scope". Such a rule loads, runs, and fails

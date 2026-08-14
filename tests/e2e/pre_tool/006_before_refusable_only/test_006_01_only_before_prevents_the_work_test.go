@@ -24,7 +24,7 @@ import (
 // express it at all — writeSettings emits the plugin and nothing else.
 //
 // Through the plugin it cannot be stated today. A guardrail bound to a Post kind
-// is the product's own way to say "after the fact", and `sloprail session stop`
+// is the product's own way to say "after the fact", and `sr-session stop`
 // dispatches nothing: a declaration binding to PostFileCreate loads without
 // complaint, the write lands, and the hook never runs. Verified, not assumed —
 // such a guardrail was driven through the mock and its ledger came back empty.

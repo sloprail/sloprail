@@ -1,11 +1,17 @@
 # Built binaries. Each service compiles to one at the repo root, so a plain
 # `go build ./services/...` leaves them in the working tree.
-/sloprail
+#
+# One entry per directory under services/, and nothing else: an entry for a
+# binary that cannot be built ignores a file that would never appear, and a
+# missing entry lets a real build artefact be committed. Both were true before
+# the split — /sloprail and /sr-command named binaries that no longer exist and
+# never existed, while sr-agent was built and unlisted.
 /sr
-/sr-mark
 /sr-session
+/sr-guardrail
 /sr-file
-/sr-command
+/sr-mark
+/sr-agent
 
 # Where the e2e harness builds the binary it drives. Under the git directory
 # rather than the system temp dir, because macOS reaps /var/folders mid-run —

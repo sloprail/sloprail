@@ -751,12 +751,12 @@ func TestT018_09_GuardrailStateWrittenEarlyIsReadableManyCyclesLater(t *testing.
 // at the first cycle rather than passing with a plausible-looking number.
 const counterScript = `#!/bin/sh
 cat >/dev/null
-prev=$(sloprail session state get count 2>/dev/null || true)
+prev=$(sr-session state get count 2>/dev/null || true)
 case "$prev" in
   ''|*[!0-9]*) prev=0 ;;
 esac
 next=$((prev + 1))
 echo "count=[$next]" >> "$PWD/log"
-sloprail session state set count "$next" >/dev/null 2>&1
+sr-session state set count "$next" >/dev/null 2>&1
 exit 0
 `

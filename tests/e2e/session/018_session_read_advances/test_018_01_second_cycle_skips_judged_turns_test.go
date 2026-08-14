@@ -14,7 +14,7 @@ import (
 // call rather than a function, so re-reading settled work invites a different
 // verdict on a turn the agent can no longer reach to fix."
 //
-// The observation is made through `sloprail session query`, which is the command
+// The observation is made through `sr-session query`, which is the command
 // a hook actually uses to ask what the agent did. A guardrail's hook script runs
 // it and writes the answer to its ledger, so what the hook was GIVEN is what the
 // test reads — not what the store recorded, which is the read mark's own concern
@@ -94,7 +94,7 @@ if [ -z "${SR_TRANSCRIPT:-}" ]; then
   exit 0
 fi
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
-  sloprail session query >> "$PWD/answers" 2>&1
+  sr-session query >> "$PWD/answers" 2>&1
 exit 0
 `
 

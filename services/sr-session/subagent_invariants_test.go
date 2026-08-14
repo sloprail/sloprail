@@ -28,7 +28,7 @@ import (
 // measured rather than assumed:
 //
 //   - The engine command the whole feature hangs off is a stub.
-//     `sloprail session subagent-stop` (services/sloprail/session_subagent_stop.go)
+//     `sr-session subagent-stop` (services/sr-session/session_subagent_stop.go)
 //     ends at `return nil // TODO: diff the tree, dispatch the Post events`. It
 //     resolves the identity and then dispatches nothing, so no guardrail hook
 //     ever runs inside a sub-agent and no ledger can record what one saw.

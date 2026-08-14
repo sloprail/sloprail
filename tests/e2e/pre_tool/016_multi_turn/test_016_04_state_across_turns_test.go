@@ -56,10 +56,10 @@ func TestT016_04_StateWrittenOnTurnOneIsReadOnTurnFive(t *testing.T) {
 	e.Guardrail(proj, "accumulator", everyCreate, map[string]string{
 		"h.sh": `#!/bin/sh
 cat >/dev/null
-prev="$(sloprail session state get n 2>/dev/null)"
+prev="$(sr-session state get n 2>/dev/null)"
 [ -n "$prev" ] || prev=0
 n=$((prev + 1))
-sloprail session state set n "$n" >/dev/null 2>&1
+sr-session state set n "$n" >/dev/null 2>&1
 echo "prev=$prev now=$n" >> "$PWD/log"
 exit 0
 `,
@@ -101,10 +101,10 @@ func TestT016_05_ARuleRefusesOnlyOnceItsBudgetIsSpent(t *testing.T) {
 	e.Guardrail(proj, "budget", everyCreate, map[string]string{
 		"h.sh": `#!/bin/sh
 cat >/dev/null
-prev="$(sloprail session state get n 2>/dev/null)"
+prev="$(sr-session state get n 2>/dev/null)"
 [ -n "$prev" ] || prev=0
 n=$((prev + 1))
-sloprail session state set n "$n" >/dev/null 2>&1
+sr-session state set n "$n" >/dev/null 2>&1
 if [ "$n" -gt 2 ]; then
   echo "this session may create at most two files" >&2
   exit 1

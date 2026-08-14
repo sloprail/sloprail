@@ -196,7 +196,7 @@ func TestHookEnv_CarriesTheRecordsPath(t *testing.T) {
 // Nothing reads this variable except a rule that chose to, and `test -n
 // "$SR_TRANSCRIPT"` is the documented check. Set-but-empty reads as a path in
 // every shell idiom that does not test for emptiness first, so a rule would hand
-// "" to `sloprail session query` and get an error about the file rather than
+// "" to `sr-session query` and get an error about the file rather than
 // about the variable.
 func TestHookEnv_NoRecordLeavesTheVariableUnset(t *testing.T) {
 	env := hookScope{SessionID: "s", Workspace: "/w"}.env("r")

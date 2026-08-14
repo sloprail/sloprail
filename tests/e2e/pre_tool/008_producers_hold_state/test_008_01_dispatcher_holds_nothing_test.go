@@ -106,7 +106,7 @@ func TestT008_01_DispatcherCarriesNothingKindSpecific(t *testing.T) {
 // so what a rule remembers is reachable without the dispatcher holding it.
 //
 // This is the invariant's mechanism. A rule spanning more than one cycle keeps
-// what it knows through `sloprail session state`, and that command deliberately
+// what it knows through `sr-session state`, and that command deliberately
 // takes neither the guardrail nor the session as an argument — a hook able to
 // name either could read a rule it was never told about. They come from the
 // environment the engine sets when it runs the hook, which is precisely how the
@@ -126,8 +126,8 @@ func TestT008_02_HookIsToldItsOwnScope(t *testing.T) {
 		// scope is set, this round-trips; if it is not, the command errors.
 		"record.sh": `#!/bin/sh
 cat >/dev/null
-sloprail session state set seen yes >>"$PWD/seen" 2>&1
-echo "got=$(sloprail session state get seen 2>&1)" >> "$PWD/seen"
+sr-session state set seen yes >>"$PWD/seen" 2>&1
+echo "got=$(sr-session state get seen 2>&1)" >> "$PWD/seen"
 exit 0
 `,
 	})

@@ -8,7 +8,7 @@ import (
 // The agent is a10n-claude-mock with this repo's plugin enabled, so what fires
 // during a test is the wiring a user would get. Nothing here invokes a
 // subcommand: the session begins, the harness fires SessionStart, the plugin
-// reaches `sloprail session start`, and what lands in the session's own record
+// reaches `sr-session start`, and what lands in the session's own record
 // is what a real session would have left.
 var (
 	New   = harness.New

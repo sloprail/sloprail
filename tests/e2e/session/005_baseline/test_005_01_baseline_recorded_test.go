@@ -5,7 +5,7 @@ import "testing"
 // T005_01: a session in a repository records where it begins.
 //
 // Through the real wiring: the session starts, the harness fires SessionStart,
-// the plugin runs `sloprail session start`, and the point lands in the
+// the plugin runs `sr-session start`, and the point lands in the
 // session's own record. A test that invoked the subcommand itself would prove
 // the engine records correctly while proving nothing about whether the session
 // beginning ever asks it to.

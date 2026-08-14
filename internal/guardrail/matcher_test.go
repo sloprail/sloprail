@@ -405,7 +405,7 @@ func TestMatch_NestedCarriedValuesBeatTheZeroValue(t *testing.T) {
 // to write against it.
 //
 // Recorded here so the engine's response to it is a decision rather than an
-// oversight: see refuseForBroken's sibling in services/sloprail, which refuses
+// oversight: see refuseForBroken's sibling in services/sr-session, which refuses
 // rather than skipping the binding.
 func TestMatch_UndeclaredElementShapeCanStillErrorAtRuntime(t *testing.T) {
 	m, err := CompileMatcherFor(`any(items, len(.flags.access) > 0)`, looseKind)

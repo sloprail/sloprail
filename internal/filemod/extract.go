@@ -19,7 +19,7 @@ import (
 //
 // This returns events ALONGSIDE a non-nil error, which module.Module's own
 // documentation requires a caller not to discard, and which the caller at
-// services/sloprail/session_pre_tool.go does discard: it prints the error and
+// services/sr-session/session_pre_tool.go does discard: it prints the error and
 // `continue`s past the events. That is precisely the silence the module is
 // built to prevent — a producer degrading with ninety-nine good classifications
 // dropped for one bad path — and it is unpinned in BOTH directions, since

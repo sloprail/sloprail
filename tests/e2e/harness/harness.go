@@ -36,10 +36,17 @@ const (
 	pluginKey       = pluginName + "@" + marketplaceName
 )
 
+// Services are the directories under services/. Each is named for the binary it
+// builds, so `go install ./services/...` produces binaries that can find each
+// other — Go names an installed binary after its directory, and a directory
+// called `session` would install as `session` while the proxy looked for
+// `sr-session`. Listed once here so a new service is added in one place.
+var Services = []string{"sr", "sr-session", "sr-guardrail", "sr-file", "sr-mark", "sr-agent"}
+
 // Env is one isolated end-to-end environment.
 type Env struct {
 	t         *testing.T
-	binDir    string // the built sloprail binary, prepended to PATH so the plugin finds it
+	binDir    string // holds every built service binary, prepended to PATH so the plugin finds them
 	home      string
 	configDir string // an isolated stand-in for ~/.claude
 	pluginDir string
@@ -126,15 +133,20 @@ func build(t *testing.T) string {
 		// disk — so the path that leaks is the one that runs when leaking is
 		// already the problem.
 		builtDir = dir
-		// Both binaries a session can reach. sr-agent is built too because a
-		// guardrail hook that launches an agent runs it by name off PATH, and a
-		// test driving that arrangement must reach the build under test rather
-		// than whatever is installed on the machine.
-		for _, svc := range []string{"sloprail", "agent"} {
+		// Every binary a session can reach, built into one directory so they
+		// are siblings — which is how the root proxy finds them, and how a
+		// service finds a service it calls (internal/subbin).
+		//
+		// The whole set rather than the ones a given test needs: they are built
+		// once per run behind a sync.Once and shared, so selecting per test
+		// would mean either rebuilding or teaching every test which binaries
+		// its scenario reaches. sr-agent in particular is needed because a
+		// guardrail hook that launches an agent runs it BY NAME off PATH, and a
+		// test driving that must reach the build under test rather than
+		// whatever is installed on the machine — the same now goes for every
+		// service a hook might name.
+		for _, svc := range Services {
 			out := filepath.Join(dir, svc)
-			if svc == "agent" {
-				out = filepath.Join(dir, "sr-agent")
-			}
 			cmd := exec.Command("go", "build", "-o", out, "./services/"+svc)
 			cmd.Dir = root
 			if o, err := cmd.CombinedOutput(); err != nil {
@@ -283,7 +295,7 @@ func (e *Env) writeSettings(dir string) {
 	}
 }
 
-// CLI runs the sloprail binary directly and returns what it produced.
+// CLI runs the root `sr` proxy and returns what it produced.
 //
 // The session subcommands are not tested this way — those are invoked by a
 // harness, and a test that called them itself would prove the engine decides
@@ -293,17 +305,54 @@ func (e *Env) writeSettings(dir string) {
 // This is for the commands an authoring agent types: `guardrail help` and the
 // root help that points at it. Nothing in a session invokes them, so there is
 // no wiring for driving the mock to prove.
+//
+// Through the proxy rather than straight at sr-guardrail, because the proxy is
+// what a person types and so it is the path worth covering. It also means every
+// one of these tests would catch a proxy that mangled output or lost an exit
+// code. CLIDirect drives a service binary without the proxy, for the tests that
+// exist to show the two agree.
 func (e *Env) CLI(dir string, args ...string) Result {
 	e.t.Helper()
-	cmd := exec.Command(filepath.Join(e.binDir, "sloprail"), args...)
+	return e.runBin(dir, "", "sr", args...)
+}
+
+// CLIDirect runs one service binary by name, bypassing the proxy.
+func (e *Env) CLIDirect(dir, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBin(dir, "", binary, args...)
+}
+
+// CLIStdin runs the proxy with a payload on standard input.
+func (e *Env) CLIStdin(dir, stdin string, args ...string) Result {
+	e.t.Helper()
+	return e.runBin(dir, stdin, "sr", args...)
+}
+
+// CLIDirectStdin runs one service binary with a payload on standard input,
+// bypassing the proxy.
+func (e *Env) CLIDirectStdin(dir, stdin, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBin(dir, stdin, binary, args...)
+}
+
+func (e *Env) runBin(dir, stdin, binary string, args ...string) Result {
+	e.t.Helper()
+	cmd := exec.Command(filepath.Join(e.binDir, binary), args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "HOME="+e.home)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	// SLOP_SUBBIN_DIR so the proxy dispatches to the binaries built for this
+	// run. They are already siblings, which subbin finds on its own, but naming
+	// it makes the test independent of that layout rather than quietly relying
+	// on it.
+	cmd.Env = append(os.Environ(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		code = exitErr.ExitCode()
 	} else if err != nil {
-		e.t.Fatalf("harness: run sloprail %v: %v\n%s", args, err, out)
+		e.t.Fatalf("harness: run %s %v: %v\n%s", binary, args, err, out)
 	}
 	return Result{Output: string(out), Code: code}
 }
@@ -344,7 +393,7 @@ func (e *Env) Git(dir string, args ...string) string {
 // test's benefit.
 //
 // Where the database sits is still not guessed. The session's identity is
-// resolved by asking the binary under test — `sloprail session id`, the same
+// resolved by asking the binary under test — `sr-session id`, the same
 // walk every hook uses — so a test cannot pass against a database the engine
 // itself would never have written to.
 //
@@ -374,7 +423,7 @@ func (e *Env) sessionDBPath(projDir, sessionID string) string {
 	payload := fmt.Sprintf(`{"transcript_path":%q,"cwd":%q}`,
 		e.transcriptPath(projDir, sessionID), projDir)
 
-	cmd := exec.Command(filepath.Join(e.binDir, "sloprail"), "session", "id")
+	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "id")
 	cmd.Dir = projDir
 	cmd.Stdin = strings.NewReader(payload)
 	cmd.Env = append(os.Environ(), "HOME="+e.home, "CLAUDE_CONFIG_DIR="+e.configDir)
@@ -625,8 +674,8 @@ hooks:
 
 const ControlScript = `#!/bin/sh
 cat >/dev/null
-echo "before=[$(sloprail session state get seen 2>&1)]" >> "$PWD/log"
-sloprail session state set seen yes >/dev/null 2>&1
+echo "before=[$(sr-session state get seen 2>&1)]" >> "$PWD/log"
+sr-session state set seen yes >/dev/null 2>&1
 exit 0
 `
 
@@ -792,7 +841,7 @@ func (e *Env) SessionIdentity(projDir, sessionID string) string {
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
 	payload := fmt.Sprintf(`{"transcript_path":%q,"cwd":%q}`, transcript, projDir)
 
-	cmd := exec.Command(filepath.Join(e.binDir, "sloprail"), "session", "id")
+	cmd := exec.Command(filepath.Join(e.binDir, "sr-session"), "id")
 	cmd.Dir = projDir
 	cmd.Stdin = strings.NewReader(payload)
 	cmd.Env = append(os.Environ(),
@@ -932,7 +981,7 @@ func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) 
 // Both are listed because a refusal is a refusal whichever channel carried it,
 // and a predicate that knew only the engine's current channel would silently
 // start answering "permitted" the day that changed. See refuseForBroken in
-// services/sloprail for the full measured table, including the channels that
+// services/sr-session for the full measured table, including the channels that
 // deliver nothing.
 var blockedMarkers = []string{
 	"Tool call blocked by a PreToolUse hook",
