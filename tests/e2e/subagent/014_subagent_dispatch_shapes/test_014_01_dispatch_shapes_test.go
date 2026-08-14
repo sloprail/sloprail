@@ -57,42 +57,69 @@ import (
 // prefers the sub-agent's own path, and stableID resolves the sub-agent's own
 // identity from it, on every dispatch these tests make.
 //
-// What is NOT reachable is any ASSERTION about it, and that was measured too.
-// The hook's outcome does not travel:
+// What travels OUT of the hook, corrected. This section previously recorded
+// that a SubagentStop hook's exit status has "NO observable consequence", and
+// that a test asserting a delegated cycle completes cleanly "passes just as well
+// against a subagent-stop that hard-blocks every cycle". That is wrong, and the
+// correction matters because the claim was being used to justify not testing a
+// sub-agent's cycle at all.
 //
-//   - exit 0 with output on either stream: neither stream is forwarded anywhere
-//     the run can see (013's measurement, re-confirmed here);
-//   - a returned error (exit 1): the session completes, with nothing in the
-//     stream naming it;
-//   - exit 2, the block channel: ALSO invisible. The sub-agent's tool result
-//     still reports success, the root still completes, and the harness's own
-//     "SubagentStop still blocked after N" cap is never reached.
+// Re-running the same mutation says the opposite. With `sr-session
+// subagent-stop` mutated to refuse every cycle — tried BOTH ways, exit 2 and an
+// exit-0 {"decision":"block"} frame — T014_06, T014_07 and T014_08 all fail, and
+// the mock's stderr carries the reason verbatim:
 //
-// That last one is worth stating plainly because it makes a whole class of
-// assertion vacuous: under this harness, a SubagentStop hook's exit status has
-// NO observable consequence. Any test asserting that a delegated cycle
-// "completes cleanly with the guardrail live" therefore passes just as well
-// against a subagent-stop that hard-blocks every cycle — verified by mutating
-// it to exit 2, which leaves both this package and 013 entirely green.
+//	claude-mock: SubagentStop blocked (hooks: command blocked: …) — re-running subagent (turn 1)
+//	… turns 2 through 8 …
+//	claude-mock: SubagentStop still blocked after 8 turns (cap) — giving up
 //
-// So this package does not make that claim. Where 013 rests on it, it is
-// resting on something that cannot fail.
+// So the retry loop IS driven and the cap IS reached, both channels work, and
+// the block's own text reaches the captured output. The original measurement was
+// most likely taken against a subagent-stop that could not reach its refusal —
+// at the time it was a stub returning nil before doing anything.
 //
-// # What would close the gap
+// Three limits are real and remain, and the FIRST is the one that decides what
+// this package can test about a sub-agent's own cycle.
 //
-// Named rather than worked around. Two separate things are missing:
+//   - An isolated sub-agent's tool calls are never APPLIED. T014_02 already
+//     records this from the other side; measured again here by dispatching a
+//     sub-agent whose scenario writes from-sub.md and then reading the bound
+//     worktree, which is EMPTY — the file appears in no tree at all. So a
+//     worktree-isolated sub-agent produces no tree difference, its Post cycle
+//     has nothing to judge, and no guardrail can fire in it however correct the
+//     engine is. A test asserting "the sub-agent's own file was judged" is
+//     therefore unwritable here, not merely awkward: one was written against
+//     this and removed rather than weakened into something that passes.
+//     `subagent-stop` taking the baseline and reaching dispatch in the
+//     sub-agent's own store is pinned at unit level instead, in
+//     services/sr-session/session_subagent_stop_test.go, where the mutation to
+//     the old TODO stub fails four tests.
+//   - A hook that exits 0 without blocking is silent: neither stream is
+//     forwarded, so a PASSING cycle cannot be observed from here. Any assertion
+//     has to be shaped around a refusal.
+//   - The block reaches the SUB-AGENT, not the parent. The sub-agent's turn is
+//     re-run with the feedback, which is the right shape; but once its retries
+//     are exhausted the tool result reports success regardless, so the
+//     dispatching session is never told a guardrail refused delegated work.
+//
+// # What would close the remaining gap
+//
+// Named rather than worked around:
 //
 //  1. For the three invariants above: the harness would have to report a
 //     sub-agent's own transcript on the payloads of the TOOL CALLS it makes —
 //     agent_transcript_path or agent_id, the fields record() already prefers —
 //     which is what real Claude Code does and what every unit test in
 //     services/sr-session/subagent_test.go drives directly.
-//  2. For asserting on a sub-agent's cycle at all: a channel out of
-//     SubagentStop that the run can observe. Today there is none, so even a
-//     correct verdict inside a sub-agent is unreportable.
+//  2. For a sub-agent's own CYCLE to be assertable: the mock would have to apply
+//     an isolated sub-agent's tool calls inside the worktree it bound, so that
+//     there is a difference for its Post cycle to judge.
+//  3. For a sub-agent's verdict to reach the session that dispatched it: the
+//     Agent tool result would have to carry it. Today a refused sub-agent and a
+//     clean one are indistinguishable to the parent.
 //
-// Hand-wiring a lifecycle hook to fake either would be arranging wiring no user
-// has, and whatever it then proved would be about the arrangement.
+// Hand-wiring a lifecycle hook to fake any of them would be arranging wiring no
+// user has, and whatever it then proved would be about the arrangement.
 //
 // # What IS observable, and is therefore what this package tests
 //
