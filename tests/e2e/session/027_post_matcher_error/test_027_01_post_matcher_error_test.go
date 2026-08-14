@@ -152,22 +152,27 @@ func TestT027_01_TheSameMatcherErrorRefusesBeforeTheAction(t *testing.T) {
 	}
 }
 
-// T027_02: a guardrail whose matcher errors is skipped at the cycle's hook
-// point, and the cycle ends.
+// T027_02: a guardrail whose matcher errors REFUSES at the cycle's hook point,
+// exactly as it does at the pre-tool point.
 //
-// The asymmetry, pinned. The rule is bound to a Post kind and its matcher cannot
-// be evaluated, so `admits` reports the error to a stream nobody reads and
-// returns false; the binding is not consulted and the turn ends normally.
+// This test used to record the opposite, as a deliberate characterisation of an
+// asymmetry: `admits` reported the error to a stream nobody reads and returned
+// false, so the binding was not consulted and the turn ended normally. Its own
+// failure message said the asymmetry was very likely wrong and asked whoever
+// closed it to update the test rather than revert the engine. That is what
+// happened, and this is the update.
 //
-// The rule's hook REFUSES, which is what makes this observable: if the binding
-// were consulted the cycle would be blocked. It ending is therefore evidence the
-// rule was never asked, not evidence that it passed.
+// The asymmetry was a fail-open. A matcher that cannot be evaluated has not
+// answered "this rule does not apply" — it has not answered at all, and
+// treating the two alike is the same mistake as a hook exiting 0 because it
+// could not run. The refusal names the guardrail, quotes the expression, and
+// says what to do: fix the matcher, or `enabled: false` if it is not ready.
 //
-// This is deliberately a characterisation test. It records the engine's current
-// answer at this hook point so the disagreement with T027_01 is visible in the
-// suite rather than buried in two files; the comment at the top of this package
-// says why the answer is not obviously wrong.
-func TestT027_02_AMatcherErrorAtTheCyclesHookPointSkipsTheRule(t *testing.T) {
+// What still differs between the two hook points is the CHANNEL, not the
+// verdict. The pre-tool point denies the action outright; here the cycle is
+// held and the reason arrives as a blocking error, because a Post event is
+// reported after the change is already on disk.
+func TestT027_02_AMatcherErrorAtTheCyclesHookPointRefuses(t *testing.T) {
 	e, proj := project(t)
 	// Bound to a POST kind, with an expression that compiles and cannot be
 	// evaluated. See postErroringMatcher for why this one and not a shape
@@ -176,25 +181,20 @@ func TestT027_02_AMatcherErrorAtTheCyclesHookPointSkipsTheRule(t *testing.T) {
 		map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'this rule refuses' >&2\nexit 1\n"})
 	commitGuardrails(e, proj)
 
-	got := e.Run(proj, "s-027-02", "write a note", Turns("done",
+	e.Run(proj, "s-027-02", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello\n"),
 	))
 
-	blocked := strings.Count(got.Output, `"subtype":"success"`) >= 2
 	told := strings.Join(e.BlockingErrors(proj, "s-027-02"), "\n")
 
-	if blocked && strings.Contains(told, "post-error") {
-		t.Fatalf("the cycle's hook point now REFUSES a matcher it cannot evaluate, which is the "+
-			"pre-tool point's behaviour and the opposite of what this test recorded. That is "+
-			"very likely the right change — update this test and say so, rather than reverting "+
-			"the engine:\n%s", told)
+	if !strings.Contains(told, "post-error") {
+		t.Fatalf("a matcher that cannot be evaluated must hold the turn and name the guardrail, "+
+			"not be read as a rule that did not apply:\n%s", told)
 	}
-
-	// The rule was not consulted. Its hook refuses, so a consulted binding would
-	// have blocked; an unblocked cycle is the skip.
-	if blocked {
-		t.Fatalf("the cycle was blocked, but not by post-error — this test can no longer tell "+
-			"whether the erroring rule was consulted:\n%s", told)
+	// The reason has to be actionable, or the author is told only that something
+	// went wrong somewhere. The expression itself is what they have to fix.
+	if !strings.Contains(told, "int(path)") {
+		t.Errorf("the refusal does not quote the matcher that could not be evaluated:\n%s", told)
 	}
 }
 
