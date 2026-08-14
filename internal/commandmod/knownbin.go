@@ -236,6 +236,16 @@ func sedlike(argv []string) []FileTarget {
 	ops := nonEmpty(operands(argv))
 	if len(ops) < 2 {
 		// The script and nothing else — no file named.
+		//
+		// EQUIVALENT to `< 1` and kept at `< 2` anyway, so the survivor is read
+		// as an equivalence rather than as an unchecked boundary. On a
+		// one-element slice `ops[1:]` is empty, so the loop below produces
+		// nothing either way and a mutation between the two spellings survives.
+		//
+		// `< 2` is the spelling that states the requirement: sed in place needs
+		// a script AND at least one file, and the number here is that sentence
+		// rather than the smallest value that happens to work. It also stays
+		// correct if the slice expression below ever changes.
 		return nil
 	}
 	// Past the script.

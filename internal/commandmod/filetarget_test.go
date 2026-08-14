@@ -143,6 +143,15 @@ func TestFileTargets_InPlaceEditingIsAWriteAndReadingIsNot(t *testing.T) {
 
 	// perl's -i is the same idiom.
 	check(t, "perl -i -pe s/a/b/ f.md", "write:f.md")
+
+	// An in-place edit naming no file touches none. sed reads stdin here, and
+	// the one operand is the script rather than a path — reporting it would
+	// announce a write to a file named after a substitution expression.
+	check(t, "sed -i s/a/b/", "(nothing)")
+	check(t, "sed -i", "(nothing)")
+	// BSD's empty suffix does not make the next word a file either: `f.md` is
+	// the script in this line, and sed reads stdin.
+	check(t, "sed -i '' f.md", "(nothing)")
 }
 
 // TestFileTargets_TheSedScriptIsNotAFile is a regression pin on a measured bug.
