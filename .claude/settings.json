@@ -1,13 +1,13 @@
 {
+  "enabledPlugins": {
+    "sloprail@sloprail-marketplace": true
+  },
   "extraKnownMarketplaces": {
     "sloprail-marketplace": {
       "source": {
         "source": "directory",
-        "path": "/Users/nsviridenko/ws/sloprail/sloprail"
+        "path": "./"
       }
     }
-  },
-  "enabledPlugins": {
-    "sloprail@sloprail-marketplace": true
   }
 }
