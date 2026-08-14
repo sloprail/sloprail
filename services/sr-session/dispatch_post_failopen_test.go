@@ -55,23 +55,20 @@ echo "refused by the rule" >&2
 exit 1
 `
 
-// TestDispatch_BrokenDeclarationIsNotSilentAtPost.
+// TestDispatch_BrokenDeclarationDoesNotBlockTheTurn.
 //
-// runPostDispatch discarded the invalid list outright — `decls, _, err :=` —
-// so a declaration that could not be loaded contributed nothing at all to the
-// cycle: no hook, no objection, and no word to the agent.
+// An invalid guardrail blocks nothing. This test previously asserted the
+// opposite — that a declaration bound to this cycle's events which could not be
+// loaded must hold the turn — and the reversal is the point of the change it
+// now pins.
 //
-// That is exactly the defect refuseForBroken was written to close on the Pre
-// side, and the argument transfers without modification. An author who wrote
-// `content` on a Post binding believes their cycle is guarded. The engine knows
-// it is not. Ending the turn tells the author they were right.
-//
-// The channel argument transfers too. A Stop hook exits 0 and blocks by writing
-// {"decision":"block"} on stdout, so its STDERR reaches no agent — measured on
-// harness.BlockingErrors. reportInvalid printing to stderr here would therefore
-// be the same silence the Pre side already rejected: a line in a log nobody
-// reads, beside a turn that ended cleanly.
-func TestDispatch_BrokenDeclarationIsNotSilentAtPost(t *testing.T) {
+// The old argument was that ending the turn is the only way the author hears
+// about it, since a Stop hook's stderr reaches no agent. That much is still
+// true and is why this failure is now genuinely quiet. What decided it is that
+// blocking never produced enforcement either: the rule stayed unloaded, nothing
+// was judged, and the party held responsible was the agent, which did not write
+// the declaration and often cannot repair it.
+func TestDispatch_BrokenDeclarationDoesNotBlockTheTurn(t *testing.T) {
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("seed"), 0o644))
 	runGit(t, proj, "add", ".")
@@ -84,19 +81,23 @@ func TestDispatch_BrokenDeclarationIsNotSilentAtPost(t *testing.T) {
 	// A file the broken rule was bound to.
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "fresh.md"), []byte("new"), 0o644))
 
-	_, ran := dispatchIn(t, proj, store)
+	stdout, ran := dispatchOut(t, proj, store)
 
-	assert.False(t, ran,
-		"a cycle whose guardrail could not be loaded must not report itself as completed: "+
-			"the rule bound to PostFileCreate did not run, and the file it was about was created")
+	assert.True(t, ran, "a cycle must complete even though a guardrail bound to it could not be loaded")
+	assert.NotContains(t, stdout, `"decision":"block"`,
+		"an invalid guardrail must not block the turn")
 }
 
-// TestDispatch_BrokenDeclarationBlocksAndNamesItself.
+// TestDispatch_BrokenDeclarationIsReportedOnStderr.
 //
-// The refusal has to reach the agent and has to name the rule, which is
-// refusal_names_guardrail. A block carrying no name leaves the agent unable to
-// find what it broke; a diagnostic on stderr is not delivered at all.
-func TestDispatch_BrokenDeclarationBlocksAndNamesItself(t *testing.T) {
+// Blocking nothing must not mean saying nothing. The rule that did not load is
+// named on stderr with its fault, which is what a person tailing logs — and the
+// session-start report — has to work from.
+//
+// This is deliberately weaker than what it replaces: stderr at a Stop hook does
+// NOT reach the agent, so this is a log line rather than a delivery. That cost
+// is stated in reportBrokenAtStop and accepted.
+func TestDispatch_BrokenDeclarationIsReportedOnStderr(t *testing.T) {
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("seed"), 0o644))
 	runGit(t, proj, "add", ".")
@@ -107,18 +108,16 @@ func TestDispatch_BrokenDeclarationBlocksAndNamesItself(t *testing.T) {
 	baselineAt(t, store, proj)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "fresh.md"), []byte("new"), 0o644))
 
-	stdout, _ := dispatchOut(t, proj, store)
+	stderr, _ := dispatchIn(t, proj, store)
 
-	assert.Contains(t, stdout, `"decision":"block"`,
-		"a broken declaration bound to this cycle's events must block the turn")
-	assert.Contains(t, stdout, "typo",
-		"the block must name the guardrail that could not be loaded")
+	assert.Contains(t, stderr, "typo",
+		"the report must name the guardrail that could not be loaded")
+	assert.Contains(t, stderr, "did NOT guard",
+		"the report must say the rule was not enforcing")
 }
 
 // unreadableDecl has no frontmatter fence at all, so it cannot be parsed and
-// names no bindings. On the Pre side refuseForUnreadable refuses EVERY action
-// for it, because "no evidence of what it guarded" is not "evidence it guarded
-// nothing".
+// names no bindings.
 const unreadableDecl = `hooks:
   PostFileCreate:
     - hooks:
@@ -126,16 +125,21 @@ const unreadableDecl = `hooks:
           command: ./refuse.sh
 `
 
-// TestDispatch_UnreadableDeclarationBlocksTheTurn.
+// TestDispatch_UnreadableDeclarationDoesNotBlockTheTurn.
 //
-// The same argument refuseForUnreadable makes, at the other hook point. A file
-// the project keeps as a guardrail and that the engine cannot read says nothing
-// about what it was guarding — and the engine deciding on its own that it
-// guarded nothing is the fail-open in its purest form.
+// The hardest case for the new rule and the one that produced it. A declaration
+// that did not parse names no bindings, so nothing says what it guarded — and
+// the old engine refused every cycle on exactly that reasoning.
 //
-// It is not scoped to a kind because there is no kind to scope to. A
-// declaration that did not parse has no bindings to read off it.
-func TestDispatch_UnreadableDeclarationBlocksTheTurn(t *testing.T) {
+// The reversal rests on who can act. An unparseable GUARDRAIL.md is the
+// guardrail author's mistake; blocking the turn hands it to the agent, whose
+// only remedies are editing or deleting a file the pre-tool half was refusing to
+// let it touch. That combination was measured in the wild: a session in which
+// every action, including both remedies the refusal text named, was refused.
+//
+// So the turn ends and the fault is reported. The rule is unenforced either
+// way; this way the session is not also unusable.
+func TestDispatch_UnreadableDeclarationDoesNotBlockTheTurn(t *testing.T) {
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("seed"), 0o644))
 	runGit(t, proj, "add", ".")
@@ -147,10 +151,9 @@ func TestDispatch_UnreadableDeclarationBlocksTheTurn(t *testing.T) {
 
 	stdout, ran := dispatchOut(t, proj, store)
 
-	assert.False(t, ran, "a cycle with an unreadable guardrail has not judged what that guardrail was about")
-	assert.Contains(t, stdout, `"decision":"block"`,
-		"an unreadable declaration must block the turn — nothing says what it was guarding")
-	assert.Contains(t, stdout, "unreadable", "the block must name the file that could not be read")
+	assert.True(t, ran, "a cycle must end even though a declaration could not be read")
+	assert.NotContains(t, stdout, `"decision":"block"`,
+		"an unreadable declaration must not block the turn")
 }
 
 // TestDispatch_UnevaluableMatcherDoesNotPermit.
@@ -251,14 +254,13 @@ hooks:
 	assert.Contains(t, stdout, "cannotstart", "the block must name the guardrail whose hook could not be started")
 }
 
-// TestDispatch_UnknownHookTypeDoesNotPermit.
+// TestDispatch_UnknownHookTypeDoesNotBlock.
 //
 // The same branch by the other route. A hook naming a mechanism this engine
-// does not have is caught at LOAD as a declaration fault, so this reaches
-// dispatch only through the invalid list — which makes it a second reading on
-// the same fix rather than a separate one. Kept because the two arrive by
-// different paths and a fix that closed only one would leave the other.
-func TestDispatch_UnknownHookTypeDoesNotPermit(t *testing.T) {
+// does not have is caught at LOAD as a declaration fault, so it reaches dispatch
+// only through the invalid list. It is an invalid guardrail like any other, and
+// so it blocks nothing.
+func TestDispatch_UnknownHookTypeDoesNotBlock(t *testing.T) {
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("seed"), 0o644))
 	runGit(t, proj, "add", ".")
@@ -280,9 +282,8 @@ hooks:
 
 	stdout, ran := dispatchOut(t, proj, store)
 
-	assert.False(t, ran)
-	assert.Contains(t, stdout, `"decision":"block"`)
-	assert.Contains(t, stdout, "badtype")
+	assert.True(t, ran, "a declaration fault must not hold the turn")
+	assert.NotContains(t, stdout, `"decision":"block"`)
 }
 
 // TestDispatch_BrokenDeclarationDoesNotBlockUnrelatedCycles.
