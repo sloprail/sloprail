@@ -36,9 +36,14 @@ exit 0
 
 // T015_05: a forged provenance value DOES switch off the rule it names.
 //
-// This test PINS A LIMITATION, not a defence. It is written to fail the day the
-// guard becomes un-forgeable, which is the point: the behaviour is recorded so
-// it is a known property rather than a discovery.
+// This test PINS A LIMITATION, not a defence. It FAILS the day the guard
+// becomes un-forgeable, which is the point: the behaviour is recorded so it is
+// a known property rather than a discovery, and the day it changes someone is
+// told rather than left to notice.
+//
+// It fails rather than skips there on purpose. A skip on that branch is
+// unobservable — it reports the same green as the limitation still holding, so
+// the one event this test exists to catch would pass in silence.
 //
 // The engine cannot tell a value it set from one a hook exported. Both arrive
 // the same way, and they have to — inheritance across the exec is the mechanism
@@ -83,8 +88,9 @@ func TestT015_05_ForgedProvenanceIsAKnownLimitation(t *testing.T) {
 	}
 
 	if !e.Wrote(proj, "secrets/leak.md") {
-		t.Skip("a forged provenance value no longer disables the rule it names — " +
-			"the guard has become un-forgeable and this limitation test should be replaced by one asserting that")
+		t.Fatalf("a forged provenance value no longer disables the rule it names — "+
+			"the guard has become un-forgeable and this limitation test should be replaced "+
+			"by one asserting that:\n%s", got.Output)
 	}
 	t.Log("known limitation confirmed: a forged SLOPRAIL_LAUNCHED_BY disables the rule it names")
 }

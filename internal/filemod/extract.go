@@ -567,17 +567,22 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 
 // markersOnDisk reads a file and scans it.
 //
-// IMPORTANT — what an update's markers actually describe. PreFileUpdate does not
-// carry the pending content: module.go declares `path` alone for that kind, and
-// the event has no field holding what the write would leave behind. So these are
-// the markers in the bytes the write is about to REPLACE, not the bytes it would
-// leave. On an update, `markers` describes the PRE-WRITE state of the file.
+// IMPORTANT — what an update's markers actually describe. These are the markers
+// in the bytes the write is about to REPLACE, not the bytes it would leave. On
+// an update, `markers` describes the PRE-WRITE state of the file.
 //
-// That is a real limitation, not a design choice: a rule saying "this function
-// must stay marked" would read the marker that is there now and be satisfied by
-// a write that removes it. It is the honest reading available today, and it
-// stops being a limitation when PreFileUpdate carries its pending content — a
-// known defect elsewhere, deliberately not fixed here.
+// This is now a design choice rather than a limitation, and the reason it used
+// to be one has expired. PreFileUpdate carried `path` alone, so there was
+// nowhere else to read a pending body from; it now carries `result` (the
+// post-edit bytes) and `resultKnown`, so a rule that wants to judge the OUTCOME
+// has a field that states it. See KindPreUpdate's declaration in module.go.
+//
+// `markers` stays pointed at the pre-write text deliberately: that is what the
+// field has always meant, and silently repointing it at the result would change
+// the meaning of every existing guardrail without touching one of them. A rule
+// saying "this function must stay marked" is therefore a rule about `result`,
+// not about `markers` — the marker that is there now would be satisfied by a
+// write that removes it.
 //
 // A file that cannot be read yields no markers rather than an error. The write
 // is what this event is reporting; a rule that cannot see the old text should
