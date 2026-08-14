@@ -620,3 +620,93 @@ func TestExtractCommand_ThePostPhaseIgnoresACommand(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, events, "the post phase observes the tree; it does not re-read command lines")
 }
+
+// bashPendingIn is a shell payload that knows which workspace it is running in.
+//
+// bashPending leaves Root empty, which is the "no workspace named" case — and
+// under that case reportable leaves every path exactly as the command spelled
+// it, which is why every test above still asserts absolute paths. A real session
+// always names a root, and that is the case these two cover.
+func bashPendingIn(command, root string) fakePending {
+	p := bashPending(command)
+	p.root = root
+	return p
+}
+
+func extractForIn(t *testing.T, command, root string) ([]event.Event, error) {
+	t.Helper()
+	return New().Extract(module.Input{
+		module.InputPhase:   module.PhasePre,
+		module.InputPayload: bashPendingIn(command, root),
+	})
+}
+
+// TestExtractCommand_AnAbsolutePathInsideTheWorkspaceIsReportedRelative is the
+// hole this pins, and it was a hole rather than an inconsistency.
+//
+// A matcher is a prefix test over the reported path, and the only spelling a
+// rule's author can write is the workspace-relative one — they do not know where
+// the repository will be checked out. The tool-write path has reported that
+// spelling since Root existed. The COMMAND path did not: it reported whatever
+// the command line said.
+//
+// So one write had two answers. `printf x > memories/a.md` was admitted by
+// `path startsWith "memories/"` and refused; `printf x > <root>/memories/a.md`
+// was reported absolute, admitted by nothing, and permitted. Measured end to end
+// against a real project's guardrails before the fix — the same write, refused
+// or permitted according to how one argument was spelled, which is a bypass for
+// every Pre-kind rule narrowed on a folder.
+//
+// Both kinds are asserted because they are two separate constructions in the
+// source and a fix to one leaves the other wrong.
+func TestExtractCommand_AnAbsolutePathInsideTheWorkspaceIsReportedRelative(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "memories", "notes.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(existing), 0o755))
+	require.NoError(t, os.WriteFile(existing, []byte("body\n"), 0o644))
+
+	t.Run("a create", func(t *testing.T) {
+		events, err := extractForIn(t, "printf x > "+filepath.Join(dir, "memories", "new.md"), dir)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, KindPreCreate, events[0].Kind)
+		assert.Equal(t, "memories/new.md", events[0].Fields[FieldPath],
+			"an absolute path inside the workspace must reach a matcher as the project's own spelling")
+	})
+
+	t.Run("an update", func(t *testing.T) {
+		events, err := extractForIn(t, "printf x >> "+existing, dir)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, KindPreUpdate, events[0].Kind)
+		assert.Equal(t, "memories/notes.md", events[0].Fields[FieldPath])
+	})
+
+	t.Run("a delete", func(t *testing.T) {
+		events, err := extractForIn(t, "rm "+existing, dir)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, KindPreDelete, events[0].Kind)
+		assert.Equal(t, "memories/notes.md", events[0].Fields[FieldPath])
+	})
+}
+
+// TestExtractCommand_APathOutsideTheWorkspaceKeepsItsAbsoluteSpelling is the
+// other half, and it is what stops the fix above from becoming its own hole.
+//
+// filepath.Rel would happily answer "../../etc/passwd" for a path outside the
+// tree, and a matcher is a prefix test: a rule written for a folder in the
+// project must never be handed a spelling that could climb into one. Leaving it
+// absolute means no project-relative matcher admits it, which is the honest
+// answer — the write is outside the rule's subject.
+func TestExtractCommand_APathOutsideTheWorkspaceKeepsItsAbsoluteSpelling(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "elsewhere.md")
+	require.NoError(t, os.WriteFile(outside, []byte("body\n"), 0o644))
+
+	events, err := extractForIn(t, "rm "+outside, root)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, outside, events[0].Fields[FieldPath],
+		"a path outside the workspace must not be given a relative spelling a project matcher could admit")
+}

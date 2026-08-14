@@ -480,9 +480,22 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 		}
 		seen[t.Path] = true
 
-		// The pre phase has one spelling and no root, the same as the tool-write
-		// path above: the command names the path as it names it, and both
-		// arguments are that one path.
+		// The two spellings are separated here exactly as extractPending
+		// separates them, and for the same reason: the FILESYSTEM is asked with
+		// the path the command named, because that is the spelling that
+		// resolves; the RULE is shown reportable(), because a matcher is a
+		// prefix test and the only spelling an author can write is the
+		// workspace-relative one.
+		//
+		// This path used to report t.Path raw, and that was a hole rather than
+		// an inconsistency. A command naming an absolute path inside the
+		// workspace — which is what an agent writes whenever it has the repo
+		// root in hand — produced an event whose `path` was absolute, so
+		// `path startsWith "memories/"` did not admit it and every Pre-kind rule
+		// narrowed on a project folder was bypassed by respelling one argument.
+		// Measured before the fix: `printf x > memories/topics/t/A.md` was
+		// refused and `printf x > <root>/memories/topics/t/B.md` was permitted,
+		// the same write either way.
 		p, err := lookAt(t.Path, t.Path)
 		switch {
 		case err != nil && p == unknown:
@@ -513,7 +526,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 				continue
 			}
 			events = append(events, FileEvent{
-				Path:    t.Path,
+				Path:    reportable(t.Path, pending.Root()),
 				Content: content,
 				Markers: Scan(content),
 			}.Event(KindPreCreate))
@@ -528,7 +541,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 			continue
 		}
 
-		f := FileEvent{Path: t.Path}
+		f := FileEvent{Path: reportable(t.Path, pending.Root())}
 		kind := KindPreUpdate
 		if t.Effect == commandmod.Remove {
 			kind = KindPreDelete
