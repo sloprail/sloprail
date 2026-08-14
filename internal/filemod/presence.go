@@ -216,6 +216,38 @@ func lookAt(path, full string) (presence, error) {
 	}
 }
 
+// isDirectory reports whether a path holds a directory right now.
+//
+// A SECOND question, not a second oracle, and the distinction is what keeps
+// TestLookAt_IsTheOnlyPresenceOracle satisfied by it living here rather than
+// being written out at its caller. lookAt answers "can a file event honestly be
+// about this path", and its answer folds a directory, a device and a socket
+// into one value — presentNotAFile — because none of the three can receive a
+// file write, which is all that question needs.
+//
+// A copy needs the difference. `cp a.md target/` writes target/a.md when target
+// is a directory and does something else entirely when target is a socket, so
+// the caller in extract.go must separate exactly the two cases lookAt is right
+// to merge. Asking here, next to the oracle, is what stops that from becoming
+// the second independent stat the enumeration test exists to forbid — and it
+// keeps the Lstat argument below in ONE place, so a change to it cannot leave
+// two callers reading the tree by different rules.
+//
+// Lstat rather than Stat, for the same reason lookAt uses it and one more: a
+// symlink TO a directory is not reported as one. `cp a.md link-to-dir` does
+// follow the link on a real system, but predicting where it lands means
+// resolving a path the command line did not name — a guess about the tree
+// rather than a reading of it, which is what this module refuses everywhere
+// else. The cost is an unclaimed result on a spelling nobody writes.
+//
+// An unreadable path is not a directory. The caller's fallback is to treat the
+// operand as an ordinary destination, which is the honest answer when the tree
+// could not be read: it claims a path rather than inventing several inside one.
+func isDirectory(full string) bool {
+	info, err := os.Lstat(full)
+	return err == nil && info.IsDir()
+}
+
 // isRegular reports whether the object AT a path is one this module's kinds are
 // about, judging the link itself and never what it points at.
 //

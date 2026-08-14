@@ -50,11 +50,18 @@ const (
 	// Payload.Text. `echo hi > f.md`, a quoted heredoc, `touch new.md`.
 	PayloadLiteral
 
-	// PayloadCopyOf means the resulting bytes are whatever another path holds
-	// right now, named in Payload.From. `cp a.md b.md`, `mv a.md b.md`.
+	// PayloadCopyOf means the resulting bytes are whatever other paths hold
+	// right now, named in Payload.From. `cp a.md b.md`, `mv a.md b.md`,
+	// `dd if=a.md of=b.md`, and `cat a.md b.md > c.md`.
 	//
 	// A reference rather than the bytes, because resolving it means reading the
 	// filesystem, which is the caller's half of the split.
+	//
+	// SEVERAL sources rather than one, because `cat` concatenates: the result is
+	// their bytes in order, and a single-source shape could not say that. A copy
+	// is the one-element case of the same statement, so both spellings resolve
+	// through one branch in filemod rather than two that could disagree about
+	// what an unreadable source means.
 	PayloadCopyOf
 
 	// PayloadAppend means the resulting bytes are the target's CURRENT contents
@@ -75,14 +82,28 @@ type Payload struct {
 	// difference between a correct fingerprint and a wrong one.
 	Text string
 
-	// From is the path whose current contents become the result, for
-	// PayloadCopyOf. Spelled as the command line spells it, like FileTarget.Path.
-	From string
+	// From are the paths whose current contents become the result, IN ORDER, for
+	// PayloadCopyOf. Spelled as the command line spells them, like
+	// FileTarget.Path.
+	//
+	// One entry for a copy, several for a concatenation. The order is the
+	// command's own — `cat b.md a.md > c.md` is not the same file as
+	// `cat a.md b.md > c.md`, so a set would be the wrong shape here.
+	From []string
 }
 
 // literalPayload is a Payload for bytes known outright.
 func literalPayload(text string) Payload {
 	return Payload{Kind: PayloadLiteral, Text: text}
+}
+
+// copyPayload is a Payload for bytes that are another path's current bytes.
+//
+// Named rather than written out at each site, because every producer of a copy
+// reference — cp, mv, install, dd — states the same thing, and a helper keeps
+// the single-source case from being spelled four slightly different ways.
+func copyPayload(from string) Payload {
+	return Payload{Kind: PayloadCopyOf, From: []string{from}}
 }
 
 // producedOutput reports what a command's own stdout would be, when the command
@@ -186,11 +207,32 @@ func echoIsKnowable(args []string) bool {
 //	printf 'literal'        a format with no % and no backslash. The output is
 //	                        the format itself, with NO trailing newline — the
 //	                        difference from echo, and a real one.
-//	printf '%s' a           one %s per argument, output is the arguments
-//	                        concatenated in order.
+//	printf '%s' a           %s takes its argument verbatim.
+//	printf '%d' 5           %d takes an argument that is ALREADY a decimal
+//	                        integer, rendered as itself. See printfDecimal for
+//	                        why the subset stops there.
+//	printf '%s %d\n' a 1    several conversions, consumed left to right.
+//	printf '%s\n' a b c     surplus arguments REUSE the format, which is
+//	                        printf's specified loop.
 //	printf '%s\n' a         the commonest spelling in real scripts, so the two
 //	                        escapes that appear in it — \n and \t — are honoured.
 //	anything else           declined.
+//
+// What is still declined, and why each is not an oversight:
+//
+//	%5s, %.2f, %-3d   width and precision. Renderable in principle, and the
+//	                  padding rules (which side, with what, and how a precision
+//	                  interacts with a width) are where an approximation would
+//	                  be silently wrong by whitespace — invisible in a diff.
+//	                  Rare enough in agent-written lines that the boundary is
+//	                  not worth the risk.
+//	%f, %x, %o, %c    numeric conversions whose output depends on a locale, a
+//	                  default precision, or a character encoding.
+//	%b, %q            shell-dependent: %b is a bash extension and %q's quoting
+//	                  style differs between implementations.
+//	\101, \x41        octal and hex escapes. Specified, but whether the format
+//	                  string's `\101` is interpreted at all differs between
+//	                  printf(1) and the shell builtin.
 //
 // Declining is not a failure. It yields PayloadNone, the target still produces
 // its event, and only the content is left unclaimed — which is the honest
@@ -201,35 +243,245 @@ func printfOutput(args []string) (Payload, bool) {
 	}
 	format, rest := args[0], args[1:]
 
+	tmpl, ok := printfEscapes(format)
+	if !ok {
+		return Payload{}, false
+	}
+
+	// Read off the RAW format while printfOnce walks the escaped one, and the
+	// two must agree about where the conversions are or vi indexes the wrong
+	// verb. They do, because printfEscapes maps only `\n`, `\t` and `\\` —
+	// none of which produces or consumes a `%` — and DECLINES every other
+	// escape rather than passing it through. So the `%` positions are the same
+	// in both strings, and a widening of printfEscapes that ever emitted a
+	// percent would have to move this call to `tmpl`.
+	verbs, ok := printfVerbs(format)
+	if !ok {
+		return Payload{}, false
+	}
+
 	// A format carrying no conversions at all: the output is the format, once,
 	// with escapes expanded. No trailing newline is added — printf, unlike
 	// echo, adds nothing it was not told to.
-	if !strings.Contains(format, "%") {
-		text, ok := printfEscapes(format)
-		if !ok || len(rest) > 0 {
-			// Surplus arguments make printf REUSE the format, which is a loop
-			// this does not model. Declined rather than rendered once.
+	//
+	// Surplus arguments would make printf reuse the format, and a format with
+	// no conversions consumes NO arguments — so the loop would never terminate
+	// were it not for printf's own rule that it stops when a pass consumes
+	// nothing. `printf 'x' a b` therefore prints "x" exactly once. That is
+	// specified, but it is a rule about a shape nobody writes deliberately, and
+	// it stays declined rather than modelled.
+	if len(verbs) == 0 {
+		if len(rest) > 0 {
+			return Payload{}, false
+		}
+		// Through printfOnce even so, rather than returning tmpl raw. A format
+		// with no CONVERSIONS can still carry a `%%`, which is a literal
+		// percent that has to be collapsed — `printf '100%%\n'` writes
+		// "100%\n". Returning the template here skipped that collapse and
+		// reported the doubled percent, which is a wrong answer rather than an
+		// absent one. The pass consumes no arguments, so it renders once and
+		// stops.
+		text, _, ok := printfOnce(tmpl, verbs, nil)
+		if !ok {
 			return Payload{}, false
 		}
 		return literalPayload(text), true
 	}
 
-	// The only conversion handled is %s, and only when the format is exactly
-	// one %s plus literal text. Anything richer — %d, widths, several
-	// conversions — is a rendering this would have to guess at.
-	if strings.Count(format, "%") != 1 || !strings.Contains(format, "%s") {
-		return Payload{}, false
+	// With conversions the format is applied repeatedly until the arguments run
+	// out, which is printf's specified behaviour and the reason `printf '%s\n'
+	// a b c` prints three lines. A single pass is the len(rest) <= len(verbs)
+	// case of the same loop.
+	//
+	// With NO arguments the format is still applied once, with every conversion
+	// taking its empty value — `printf '%s\n'` prints one newline. Modelled
+	// because it is the same rule, and because declining it would make an
+	// argument-free format behave differently from an argument-free `%s`.
+	var out strings.Builder
+	for {
+		text, consumed, ok := printfOnce(tmpl, verbs, rest)
+		if !ok {
+			return Payload{}, false
+		}
+		out.WriteString(text)
+		if consumed == 0 {
+			// The pass consumed NOTHING, so another would render the same
+			// bytes forever. printf's own rule is that the format stops
+			// repeating once a pass takes no argument, and this is that rule —
+			// stated as a property of the pass rather than as a count of the
+			// arguments left.
+			//
+			// EQUIVALENT today — measured. Reaching this line needs a format
+			// with at least one verb (the len(verbs)==0 shortcut took the rest)
+			// whose pass still takes no argument, and printfVerbs admits only
+			// `s` and `d`, both of which consume one. So no vector the current
+			// code produces gets here, and removing it leaves the suite green.
+			//
+			// It is kept because the equivalence is exactly the invariant a
+			// widening would break. Every verb this renders happens to consume
+			// an argument TODAY; the next one added — a `%%` miscounted as a
+			// verb, or a conversion that legitimately takes none — makes this
+			// the only thing between a miscount and an infinite loop. Measured,
+			// not hypothetical: a mutation to printfVerbs alone produced that
+			// vector, and the suite HUNG rather than going red, which is the one
+			// failure mode nobody reads. Terminating on the pass rather than on
+			// the argument count is what makes the loop correct by construction
+			// instead of by coincidence.
+			break
+		}
+		rest = rest[consumed:]
+		if len(rest) == 0 {
+			break
+		}
 	}
-	if len(rest) != 1 {
-		// No argument, or several. Several means the format repeats, which is
-		// the loop declined above.
-		return Payload{}, false
+	return literalPayload(out.String()), true
+}
+
+// printfOnce renders one pass of the format, consuming as many arguments as it
+// has conversions and reporting how many it took.
+//
+// An exhausted argument list does not end the pass: printf renders the REST of
+// the format with the missing arguments taken as empty (`%s`) or zero (`%d`),
+// which is why `printf '%s=%s\n' a` prints "a=\n" rather than stopping at the
+// `=`. Modelling that is the difference between a right answer and a truncated
+// one on a line whose argument count is off by one — a real thing to write.
+func printfOnce(tmpl string, verbs []byte, args []string) (string, int, bool) {
+	var b strings.Builder
+	used := 0
+	next := func() string {
+		if used < len(args) {
+			v := args[used]
+			used++
+			return v
+		}
+		used++
+		return ""
 	}
-	tmpl, ok := printfEscapes(format)
-	if !ok {
-		return Payload{}, false
+
+	vi := 0
+	for i := 0; i < len(tmpl); i++ {
+		if tmpl[i] != '%' {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		i++
+		if tmpl[i] == '%' {
+			// A literal percent, which printfVerbs has already agreed is one.
+			b.WriteByte('%')
+			continue
+		}
+		switch verbs[vi] {
+		case 's':
+			b.WriteString(next())
+		case 'd':
+			text, ok := printfDecimal(next())
+			if !ok {
+				return "", 0, false
+			}
+			b.WriteString(text)
+		}
+		vi++
 	}
-	return literalPayload(strings.Replace(tmpl, "%s", rest[0], 1)), true
+	if used > len(args) {
+		// The pass ran past the end of the arguments, so it consumed all of
+		// them and no more.
+		used = len(args)
+	}
+	return b.String(), used, true
+}
+
+// printfVerbs reads the conversion letters out of a format, declining any the
+// renderer does not model exactly.
+//
+// A `%%` is a literal percent and is not a conversion — it consumes no
+// argument, which is why it is recognised here rather than being left to look
+// like an unknown verb.
+//
+// Anything between the `%` and the letter — a width, a precision, a flag — is
+// refused rather than skipped. That is the strict-allowlist direction the sed
+// analysis argues for, applied here: a renderer that IGNORED a width would
+// silently produce unpadded bytes for `%5s`, which is a confidently wrong
+// answer rather than an absent one.
+func printfVerbs(format string) ([]byte, bool) {
+	var verbs []byte
+	for i := 0; i < len(format); i++ {
+		if format[i] != '%' {
+			continue
+		}
+		i++
+		if i >= len(format) {
+			// A trailing lone `%`. Its behaviour is unspecified.
+			return nil, false
+		}
+		switch format[i] {
+		case '%':
+			// A literal percent. No verb, no argument.
+			//
+			// EQUIVALENT today — measured, not assumed. Counting `%%` as a verb
+			// instead leaves the suite green, because printfOnce recognises a
+			// literal percent STRUCTURALLY (it tests tmpl[i] itself and
+			// `continue`s) before ever indexing verbs, and advances vi only on a
+			// real conversion. So a spurious entry is never read.
+			//
+			// Kept because the two are the same only while those two functions
+			// agree about what a `%%` is, in two separate places, by
+			// coincidence. This is the one that states it: a literal percent
+			// consumes no argument, which is what decides how many arguments a
+			// pass takes and therefore where the format-reuse loop stops. The
+			// same mutation used to HANG rather than fail, for exactly that
+			// reason — see TestPayload_PrintfAlwaysTerminates, which is now the
+			// thing standing between a miscount here and an infinite loop.
+		case 's', 'd':
+			verbs = append(verbs, format[i])
+		default:
+			return nil, false
+		}
+	}
+	return verbs, true
+}
+
+// printfDecimal renders a %d argument, and declines anything that is not
+// already exactly a decimal integer.
+//
+// The narrowness is the point. printf accepts far more than this — leading and
+// trailing whitespace, a `0x` prefix, a leading `'` taking a character's
+// numeric value, and an out-of-range value that is a diagnostic on some
+// implementations and a saturated one on others. Rendering those means deciding
+// what each implementation does, and being wrong produces bytes the file never
+// holds.
+//
+// What is accepted is the case where the answer cannot be in doubt: an optional
+// sign followed by digits, with no leading zeros to normalise away, printed as
+// itself. `printf '%d' 007` is declined rather than rendered as "7", because
+// the normalisation is exactly the kind of judgement this is refusing to make.
+func printfDecimal(arg string) (string, bool) {
+	digits := arg
+	if digits == "" {
+		// A missing argument is zero, which is specified and unambiguous.
+		return "0", true
+	}
+	if digits[0] == '+' || digits[0] == '-' {
+		digits = digits[1:]
+	}
+	if digits == "" {
+		return "", false
+	}
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return "", false
+		}
+	}
+	if len(digits) > 1 && digits[0] == '0' {
+		// A leading zero would be normalised away, and normalising is a
+		// judgement rather than a reading.
+		return "", false
+	}
+	if arg[0] == '+' {
+		// printf drops a leading plus. Declined rather than rendered, because
+		// dropping it is the same normalisation refused above.
+		return "", false
+	}
+	return arg, true
 }
 
 // printfEscapes expands the backslash escapes printf's FORMAT is specified to
@@ -403,11 +655,67 @@ func payloadForStmt(cfg *expand.Config, stmt *syntax.Stmt) Payload {
 	if basename(firstOr(argv)) == "echo" && !echoIsKnowable(argv[1:]) {
 		return Payload{}
 	}
+	// `cat a.md b.md > c.md` — the output is the named files' bytes in order,
+	// which is a reference rather than a literal, so it is not producedOutput's
+	// to answer. producedOutput renders bytes from the ARGUMENTS alone and never
+	// refers to the tree; this refers to it, and filemod resolves it.
+	if p, ok := catConcatenation(argv); ok {
+		return p
+	}
 	p, ok := producedOutput(argv)
 	if !ok {
 		return Payload{}
 	}
 	return p
+}
+
+// catConcatenation reads `cat a.md b.md` as a reference to its operands' bytes,
+// in order.
+//
+// The result of a redirection from it is exactly those files concatenated,
+// which is derivable — the one thing needed is READING them, and that is
+// filemod's half of the split. So this returns a PayloadCopyOf naming several
+// sources, the shape Payload.From is a slice for.
+//
+// # What is refused, and why the flag test is an allowlist
+//
+// cat's flags TRANSFORM its output. `-n` numbers the lines, `-b` numbers the
+// non-blank ones, `-s` squeezes repeated blanks, and `-v`/`-e`/`-t`/`-A` render
+// non-printing characters visibly. Every one of them means the output is not
+// the input's bytes, and a version that skipped flags generically would report
+// `cat -n a.md > b.md` as an exact copy of a.md — bytes the file never holds.
+//
+// So NO flag is permitted at all, rather than a list of the harmful ones being
+// excluded: a flag this has not heard of is refused with the rest, which is the
+// same strict-allowlist direction dd's operand test takes and for the same
+// reason.
+//
+// A bare `-` operand means STDIN, whose bytes the line does not carry, so a cat
+// naming one claims nothing even though every other operand is a real file.
+func catConcatenation(argv []string) (Payload, bool) {
+	if len(argv) == 0 || basename(argv[0]) != "cat" {
+		return Payload{}, false
+	}
+	var sources []string
+	for _, a := range argv[1:] {
+		if a == "" || a == "-" || strings.HasPrefix(a, "-") {
+			// A flag, a `-` meaning stdin, or a word the caller could not
+			// resolve. None of them is a file whose bytes are on the line.
+			return Payload{}, false
+		}
+		if hasGlob(a) {
+			// `cat *.md > all.md` names a set of files the shell expands
+			// against a tree this package does not read — the same refusal
+			// targetsFor applies to a path, applied to a source.
+			return Payload{}, false
+		}
+		sources = append(sources, a)
+	}
+	if len(sources) == 0 {
+		// Bare `cat`, which reads stdin. isPassThrough's case, not this one.
+		return Payload{}, false
+	}
+	return Payload{Kind: PayloadCopyOf, From: sources}, true
 }
 
 // isPassThrough reports whether a statement's program copies its stdin to its
