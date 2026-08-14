@@ -163,10 +163,32 @@ func (w wrapper) consumesNextWord(arg string) bool {
 // afterPositionals returns the vector starting past the wrapper's own remaining
 // bare words. Used after a `--`, where options have ended but the wrapper's
 // positional arguments have not.
+//
+// This is the one caller that can ask for an index PAST the end rather than
+// merely at it: `timeout --` is two words, the command begins at index 2, and
+// the owed positional makes that 3. rest's bounds check is what absorbs it.
 func afterPositionals(argv []string, from, positionals int) []string {
 	return rest(argv, from+positionals)
 }
 
+// rest returns the vector from an index onward, or nil when the index is not
+// inside it.
+//
+// The bounds check is load-bearing and its failure would be SILENT, which is
+// why it is worth a sentence. afterPositionals can overshoot the end (see
+// there), and `argv[from:]` panics for from > len — a panic `walk` recovers,
+// keeping only what it had collected before it. So an out-of-range slice here
+// does not crash the guardrail, it truncates the invocation list at the
+// offending statement: `timeout -- ; rm -rf /` would report nothing at all, and
+// a rule about rm would not fire. Pinned by
+// TestNesting_APositionalCountPastTheEndOfTheVectorDoesNotAbandonTheLine, which
+// asserts the SIBLING statements survive rather than just the wrapper.
+//
+// `>=` rather than `>` is deliberate but not observable: at from == len the
+// slice is empty and every caller tests len(...) > 0, so the two spellings agree
+// and a mutation between them survives the suite. Only from > len separates
+// them, and that is the panic the check exists for. Recorded so the survivor is
+// read as an equivalence rather than as this guard being untested.
 func rest(argv []string, from int) []string {
 	if from >= len(argv) {
 		return nil

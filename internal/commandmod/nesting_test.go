@@ -459,6 +459,66 @@ func TestNesting_TimeoutConsumesItsDurationNotTheProgram(t *testing.T) {
 	}
 }
 
+// TestNesting_APositionalCountPastTheEndOfTheVectorDoesNotAbandonTheLine pins
+// the one place the positional count can point past the vector it is counting
+// into, and it is the `--` path that gets it there.
+//
+// `timeout --` is two words. The `--` is at index 1, so the command begins at
+// index 2 — the end — and the wrapper's own positional is still owed, which
+// asks for index 3 of a two-element slice. `rest`'s bounds check is what turns
+// that into "no wrapped program" instead of a slice-out-of-range panic.
+//
+// The panic would not surface as a crash, which is what makes this worth a test
+// of its own rather than trusting the guard's shape. `walk` recovers, KEEPS
+// whatever it collected before the panic, and returns it as a complete answer —
+// so the failure is silent and total for everything after the offending
+// statement. With the guard removed, `timeout -- ; rm -rf /` reports NO
+// invocations at all: not the timeout, and not the rm. A rule about `rm -rf`
+// does not fire, and nothing anywhere says why.
+//
+// That is the exact shape the recover's own comment calls the worse outcome —
+// "half a flattened list still lets a rule fire, where none lets it silently
+// pass" — reached by a route the recover cannot distinguish from a parser bug.
+// So the assertion is on the SIBLING statements surviving, not merely on the
+// wrapper being reported: a guard that returned early without the bounds check
+// would still report `timeout` while losing everything downstream.
+//
+// Every wrapper with a positional count meets this, so the boundary is walked
+// rather than spot-checked: `--` at the end, `--` with fewer words after it
+// than the count owes, and the same under a leading flag.
+func TestNesting_APositionalCountPastTheEndOfTheVectorDoesNotAbandonTheLine(t *testing.T) {
+	// The wrapper alone. It wraps nothing, and that is the whole answer.
+	for _, src := range []string{
+		`timeout --`,
+		`timeout -k 1 --`,
+		`timeout -s KILL --`,
+	} {
+		t.Run(src, func(t *testing.T) {
+			assertBins(t, src, []string{"timeout"})
+		})
+	}
+
+	// The load-bearing half: a statement AFTER the overshoot still gets
+	// reported. This is what a bare `assertBins(t, "timeout --", ...)` cannot
+	// see, because a panic mid-walk leaves the earlier invocations in place and
+	// only silences what had not been reached yet.
+	for _, tc := range []struct {
+		src  string
+		want []string
+	}{
+		{`timeout -- ; rm -rf /tmp/x`, []string{"timeout", "rm"}},
+		{`timeout -- && npm publish`, []string{"timeout", "npm"}},
+		{`timeout -k 1 -- ; npm publish`, []string{"timeout", "npm"}},
+		// The overshoot inside a nested wrapper must not take the outer one's
+		// siblings with it either.
+		{`sudo timeout -- ; npm publish`, []string{"sudo", "timeout", "npm"}},
+	} {
+		t.Run(tc.src, func(t *testing.T) {
+			assertBins(t, tc.src, tc.want)
+		})
+	}
+}
+
 // TestNesting_NiceTakesNoBarePositional is the other half of the same decision,
 // and the reason the vocabulary is a per-wrapper count rather than a rule about
 // number-shaped words.

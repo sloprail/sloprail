@@ -150,16 +150,115 @@ func TestHead_UntrackedFilesDoNotAffectThePosition(t *testing.T) {
 func TestParseBranchHeaders_IgnoresEntryLines(t *testing.T) {
 	// Porcelain v2 interleaves entry lines with the headers, and a path
 	// containing spaces splits like a header would. Only the "# name value"
-	// shape is read.
+	// shape is read, and the `field == "#"` switch is the whole of what enforces
+	// it.
+	//
+	// The data below is chosen so that guard is the ONLY thing standing between
+	// the input and a wrong answer. An earlier version of this test used
+	// `? untracked branch.head evil`, which cannot reach the assertion: the two
+	// Cuts take "?" as the field and "untracked" as the name, so the name is
+	// never "branch.head" and the line is inert whether or not the guard is
+	// there. Deleting the guard — accepting "?" and "1" lines as headers —
+	// passed that version green. The property the test is named for was not
+	// being measured.
+	//
+	// What actually splits like a header is a path whose FIRST word is the
+	// header name, since the status letter takes the field slot and the path
+	// begins immediately after it. `? branch.head evil` is an untracked file
+	// named "branch.head evil", which git emits in exactly this shape.
+	for _, attack := range []struct {
+		name string
+		line string
+	}{
+		// An untracked path whose name begins with the branch header's.
+		{"untracked path named like the branch header", "? branch.head evil"},
+		// The same against the commit, which is the more damaging of the two:
+		// a poisoned oid is a baseline pointing at a commit nothing recorded.
+		{"untracked path named like the oid header", "? branch.oid deadbeef"},
+		// A changed-entry line, which begins with "1" and is otherwise the
+		// same shape.
+		{"changed entry named like the branch header", "1 branch.head evil"},
+		// The original line, kept so the ordinary interleaving stays covered —
+		// it is inert, and now it is inert alongside data that is not.
+		{"ordinary untracked path", "? untracked branch.head evil"},
+		{"ordinary changed entry", "1 .M N... 100644 100644 100644 aaa bbb some file.txt"},
+	} {
+		t.Run(attack.name, func(t *testing.T) {
+			pos, err := parseBranchHeaders(strings.Join([]string{
+				"# branch.oid abc123",
+				"# branch.head main",
+				attack.line,
+			}, "\n"))
+			require.NoError(t, err)
+			assert.Equal(t, "abc123", pos.Commit, "an entry line must not supply the commit")
+			assert.Equal(t, "main", pos.Branch, "an entry line must not supply the branch")
+		})
+	}
+
+	// All of them at once, since a real status carries many entries and the
+	// headers come first — a later line overwriting an earlier header is the
+	// shape that survives a per-line test.
 	pos, err := parseBranchHeaders(strings.Join([]string{
 		"# branch.oid abc123",
 		"# branch.head main",
 		"1 .M N... 100644 100644 100644 aaa bbb some file.txt",
 		"? untracked branch.head evil",
+		"? branch.head evil",
+		"? branch.oid deadbeef",
+		"1 branch.head evil",
 	}, "\n"))
 	require.NoError(t, err)
 	assert.Equal(t, "abc123", pos.Commit)
 	assert.Equal(t, "main", pos.Branch)
+}
+
+// TestParseBranchHeaders_AValuelessHeaderDoesNotEraseTheOneAlreadyRead pins the
+// second Cut's `ok`, which is load-bearing and was not being measured.
+//
+// A header line carrying a NAME and no value — "# branch.oid" on its own —
+// splits to name="branch.oid", v="". Without the `ok` guard the empty string is
+// written straight over a commit that was read correctly a line earlier, and
+// parseBranchHeaders then finds Commit == "" and returns the ABSENT position.
+//
+// That is the silent direction. An absent position is the documented, ordinary
+// answer for a repository with no commit yet, so Head returns it with no error:
+// the caller records no baseline, the session measures nothing, and nothing
+// anywhere says why. It is the same shape as F4 — a fault degrading into the
+// "there is simply nothing here" answer — reached through the parser instead of
+// through the not-a-repository check.
+//
+// Both headers are covered because they fail differently. A wiped branch is
+// recoverable (Contains compares on the commit); a wiped commit is the baseline
+// itself.
+func TestParseBranchHeaders_AValuelessHeaderDoesNotEraseTheOneAlreadyRead(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		truncated string
+	}{
+		{"valueless oid", "# branch.oid"},
+		{"valueless head", "# branch.head"},
+		// A trailing space is the near miss, and it lands on the same guard
+		// rather than around it: the TrimSpace on the way in removes it, so the
+		// line reaches the second Cut as the valueless case above and `ok` is
+		// what stops it. Kept because it is the spelling that looks like it
+		// should slip past — the Cut would succeed with an empty value if the
+		// trim were ever dropped, and then the guard would not be reached at
+		// all.
+		{"oid with a trailing space", "# branch.oid "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pos, err := parseBranchHeaders(strings.Join([]string{
+				"# branch.oid abc123",
+				"# branch.head main",
+				tc.truncated,
+			}, "\n"))
+			require.NoError(t, err)
+			assert.Equal(t, "abc123", pos.Commit,
+				"a valueless header must not erase the commit already read — an empty commit is reported as an absent position, and the session then measures nothing while saying nothing")
+			assert.Equal(t, "main", pos.Branch,
+				"a valueless header must not erase the branch already read")
+		})
+	}
 }
 
 func TestHead_TwoDetachedHeadsAreTellableApart(t *testing.T) {
@@ -390,6 +489,125 @@ func TestHead_ACorruptGitDirIsStillAFaultNotAnAbsence(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrNotARepository,
 		"a repository that cannot be read is a fault to report, not an absence to skip past")
+}
+
+func TestIsGitDirAt_TheThreeWaysAGitNameFailsToBeAGitDir(t *testing.T) {
+	// isGitDirAt's three remaining directions, none of which had a test — every
+	// one of them survived a mutation flipping it. They are reachable from an
+	// ordinary tree, and each is a case the function's own doc comment names, so
+	// the absence was coverage rather than unreachability.
+	//
+	// The direction matters for the same reason as everywhere else in hasGitDir:
+	// answering "present" makes an absence look like a fault (noise on stderr
+	// about a directory with no repository in it), and answering "absent" makes
+	// a fault look like an absence (the session stops measuring and says
+	// nothing). The first two below must be absent and the third present, and
+	// they are asserted together so a function that always answers one way
+	// cannot satisfy them.
+	base := t.TempDir()
+
+	t.Run("a gitdir line naming nothing is absent", func(t *testing.T) {
+		// What a half-finished copy or an interrupted clone leaves behind. The
+		// name is there, the pointer is empty, and there is no repository.
+		path := filepath.Join(base, "empty-pointer", ".git")
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte("gitdir:\n"), 0o644))
+
+		assert.False(t, isGitDirAt(path),
+			"a .git file whose gitdir: line is empty points at no repository")
+	})
+
+	t.Run("a gitdir pointing at a non-directory is absent", func(t *testing.T) {
+		// The pointer resolves, but not to a gitdir. A gitdir is a directory;
+		// anything else at the far end is not a repository however real it is.
+		target := filepath.Join(base, "not-a-directory")
+		require.NoError(t, os.WriteFile(target, []byte("x"), 0o644))
+		path := filepath.Join(base, "points-at-a-file", ".git")
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte("gitdir: "+target+"\n"), 0o644))
+
+		assert.False(t, isGitDirAt(path),
+			"a .git file resolving to a regular file names no gitdir")
+	})
+
+	t.Run("a .git file that cannot be read is present", func(t *testing.T) {
+		// The other direction, and the one that must NOT fold into absence: a
+		// .git file we were refused permission to read is a repository we could
+		// not look at. Called absent, it becomes ErrNotARepository and the
+		// session quietly stops measuring.
+		if os.Geteuid() == 0 {
+			t.Skip("root reads regardless of the permission bits this depends on")
+		}
+		path := filepath.Join(base, "unreadable", ".git")
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte("gitdir: /somewhere\n"), 0o000))
+		t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+		assert.True(t, isGitDirAt(path),
+			"a .git file that cannot be read is unestablished, and unestablished errs towards present")
+	})
+}
+
+func TestIsGitDirContents_AnUnreadableGitDirErrsTowardsPresent(t *testing.T) {
+	// The third way a gitdir can fail to answer, and the only one with no test
+	// on it: not absent, not corrupt, but unreadable. isGitDirContents chooses
+	// "present" for both of its unreadable branches — the Stat of the directory
+	// and the Stat of each marker inside it — and nothing pinned that direction,
+	// so a mutation flipping either to false survived the suite.
+	//
+	// The direction is the whole point of the function. hasGitDir exists to tell
+	// "there is no repository" from "there is one and it is broken", and only
+	// the first is an ordinary state the engine carries on past. Answering false
+	// for a repository it merely could not read collapses the fault into the
+	// absence: run turns it into ErrNotARepository, the caller records no
+	// baseline, and the session measures nothing while printing nothing — the
+	// same silent stop TestHead_ACorruptGitDirIsStillAFaultNotAnAbsence forbids,
+	// reached by permissions instead of by a garbage HEAD.
+	//
+	// Both branches are exercised, because they fail at different depths and a
+	// test on one leaves the other free to flip.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads regardless of the permission bits this depends on")
+	}
+
+	t.Run("the markers inside cannot be stat'd", func(t *testing.T) {
+		// The gitdir resolves and is a directory; only the Stat of HEAD,
+		// objects and refs fails. This is the marker loop's unreadable arm.
+		gitdir := filepath.Join(t.TempDir(), "gitdir")
+		require.NoError(t, os.MkdirAll(filepath.Join(gitdir, "objects"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(gitdir, "refs"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(gitdir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+		require.True(t, isGitDirContents(gitdir), "a healthy gitdir must read as present, or the case below proves nothing")
+
+		require.NoError(t, os.Chmod(gitdir, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(gitdir, 0o755) })
+
+		assert.True(t, isGitDirContents(gitdir),
+			"a gitdir whose markers cannot be read is a repository we could not look at, not one that is absent")
+	})
+
+	t.Run("the gitdir itself cannot be stat'd", func(t *testing.T) {
+		// The parent is unreadable, so the Stat of the gitdir fails with EACCES
+		// rather than ENOENT. This is the `!os.IsNotExist(err)` arm.
+		parent := filepath.Join(t.TempDir(), "parent")
+		gitdir := filepath.Join(parent, "gitdir")
+		require.NoError(t, os.MkdirAll(filepath.Join(gitdir, "objects"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(gitdir, "refs"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(gitdir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+
+		require.NoError(t, os.Chmod(parent, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+
+		assert.True(t, isGitDirContents(gitdir),
+			"a gitdir behind an unreadable parent is unestablished, and unestablished errs towards present")
+	})
+
+	t.Run("a gitdir that is genuinely not there is absent", func(t *testing.T) {
+		// The other direction, so the assertions above cannot be satisfied by a
+		// function that simply always answers true.
+		assert.False(t, isGitDirContents(filepath.Join(t.TempDir(), "nowhere")),
+			"ENOENT is a fact about the tree and must stay distinguishable from a failure to look")
+	})
 }
 
 func TestHead_ALiveLinkedWorktreeIsStillARepository(t *testing.T) {
