@@ -44,16 +44,23 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		// A refusal has already printed its problems in the form a hook forwards
+		// verbatim; anything else is a fault that has not been reported yet.
+		if !errors.Is(err, errRefused) {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
@@ -93,9 +100,18 @@ func newValidateCmd() *cobra.Command {
 			"when the document satisfies the schema and 1 when it does not, so a hook can read it.\n\n" +
 			"Failures name the file, the field, and what was expected, one line per problem, and\n" +
 			"every problem is reported rather than only the first.\n\n" +
+			"BYTES ON STDIN, with '-' as the path, for a hook holding content that is not on disk:\n" +
+			"at a Pre event the write has not happened, so the pending bytes are in the event and\n" +
+			"the file either does not exist or still holds the old ones. --as says how to read them,\n" +
+			"and is required, because a pipe carries no name to take the format from.\n\n" +
+			"--emit prints the validated document as JSON on success, so a caller can take a field\n" +
+			"out of it with jq instead of parsing the same bytes a second time. Nothing is printed\n" +
+			"for a document that failed.\n\n" +
 			"EXAMPLES:\n" +
 			"  sr-file validate memories/note.md --schema .sloprail/schemas/note.cue\n" +
-			"  sr-file validate config.yaml --schema schema.cue --path '#Config'",
+			"  sr-file validate config.yaml --schema schema.cue --path '#Config'\n" +
+			"  jq -r .event.fields.content event.json | sr-file validate - --as .md --schema s.cue\n" +
+			"  sr-file validate DECISION.md --schema s.cue --emit | jq -r .transcript_path",
 		Args:          cobra.ExactArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -104,8 +120,92 @@ func newValidateCmd() *cobra.Command {
 	cmd.Flags().StringP("schema", "s", "", "The CUE schema to check against (required)")
 	cmd.Flags().BoolP("concrete", "c", true, "Require all fields to be concrete — a missing required field fails (cue vet's -c)")
 	cmd.Flags().StringP("path", "d", "", "Schema definition to check against, e.g. '#Config' (cue vet's -d)")
+	cmd.Flags().String("as", "", "How to read bytes on stdin: .md, .yaml or .json. Required with '-', and refused with a path")
+	cmd.Flags().Bool("emit", false, "On success, print the validated document as JSON on stdout")
 	_ = cmd.MarkFlagRequired("schema")
 	return cmd
+}
+
+// stdinArg is the path that means "the bytes are on standard input", spelled the
+// way every other command spells it.
+const stdinArg = "-"
+
+// readInput is the bytes to check and the name to report them under.
+//
+// Two routes that differ in where the bytes come from and in nothing else. A
+// PATH reads the file and takes the format from its extension. STDIN reads the
+// pipe, and the format has to be stated, because bytes arriving through a pipe
+// carry no name to read one off.
+//
+// A hook holding PENDING content is why the second route exists: at a Pre event
+// the write has not happened, so the bytes that matter are in the event and the
+// path on disk either does not exist or still holds the old ones. Without this
+// such a hook has to materialise a tempfile whose name ends in the right
+// extension — and on macOS `mktemp -t x.XXXXXX.md` appends its randomness AFTER
+// the template, so the extension becomes the random suffix and every file is
+// refused on its name, which looks exactly like the schema refusing it.
+func readInput(cmd *cobra.Command, path, as string) (Document, error) {
+	if path != stdinArg {
+		// A named file already says what it is; taking --as here as well would be
+		// two answers to one question, with the flag silently winning over the
+		// name the caller can see.
+		if as != "" {
+			return Document{}, fmt.Errorf("sr-file validate: --as applies to bytes read from stdin ('-'), but a path was given: %s already says what it is", path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return Document{}, fmt.Errorf("sr-file validate: read %s: %w", path, err)
+		}
+		doc, err := ExtractDocument(path, data)
+		if err != nil {
+			return Document{}, fmt.Errorf("sr-file validate: %w", err)
+		}
+		return doc, nil
+	}
+
+	// Refused rather than defaulted to .md. Which bytes are the document is
+	// decided by the format, and guessing one for content whose shape is unknown
+	// produces a complaint about the wrong bytes — the failure document.go
+	// exists to prevent. A default would make that the common case.
+	if as == "" {
+		return Document{}, fmt.Errorf("sr-file validate: reading from stdin needs --as to say how (.md, .yaml or .json) — which bytes are the document is decided by the format, and there is no file name here to read one from")
+	}
+	data, err := io.ReadAll(cmd.InOrStdin())
+	if err != nil {
+		return Document{}, fmt.Errorf("sr-file validate: read stdin: %w", err)
+	}
+	// Named for the reader, since every message carries a file and "-" is what
+	// the caller asked to be called.
+	doc, err := ExtractDocumentAs(stdinArg, as, data)
+	if err != nil {
+		return Document{}, fmt.Errorf("sr-file validate: %w", err)
+	}
+	return doc, nil
+}
+
+// emitDocument prints the validated document as one JSON value.
+//
+// The command has already parsed these bytes in order to check them, so a
+// caller wanting a field out of them — the transcript path, to test that it
+// resolves — would otherwise parse the same document a second time, in a second
+// language, with a second idea of where the frontmatter ends. That second
+// parser is the thing this exists to delete.
+//
+// Only ever on SUCCESS. Emitting a document that failed would let
+// `validate --emit | jq -r .field` read a value out of a file the command just
+// refused, with the exit status the only thing saying otherwise — and a shell
+// pipeline is exactly where an exit status goes missing.
+func emitDocument(cmd *cobra.Command, doc Document) error {
+	var value any
+	if err := yaml.Unmarshal(doc.Data, &value); err != nil {
+		return fmt.Errorf("sr-file validate: --emit: %s: %w", doc.Path, err)
+	}
+	out, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("sr-file validate: --emit: %s: %w", doc.Path, err)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), string(out))
+	return nil
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
@@ -113,6 +213,8 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	schemaPath, _ := cmd.Flags().GetString("schema")
 	concrete, _ := cmd.Flags().GetBool("concrete")
 	defPath, _ := cmd.Flags().GetString("path")
+	as, _ := cmd.Flags().GetString("as")
+	emit, _ := cmd.Flags().GetBool("emit")
 
 	schemaSrc, err := os.ReadFile(schemaPath)
 	if err != nil {
@@ -121,14 +223,9 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("sr-file validate: read schema %s: %w", schemaPath, err)
 	}
 
-	data, err := os.ReadFile(path)
+	doc, err := readInput(cmd, path, as)
 	if err != nil {
-		return fmt.Errorf("sr-file validate: read %s: %w", path, err)
-	}
-
-	doc, err := ExtractDocument(path, data)
-	if err != nil {
-		return fmt.Errorf("sr-file validate: %w", err)
+		return err
 	}
 
 	err = ValidateWith(doc, string(schemaSrc), schemaPath, Options{
@@ -137,6 +234,9 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	})
 	switch {
 	case err == nil:
+		if emit {
+			return emitDocument(cmd, doc)
+		}
 		return nil
 	case errors.Is(err, ErrSchemaCompile):
 		return fmt.Errorf("sr-file validate: %w", err)
@@ -144,8 +244,19 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		// A validation failure is the command working, not the command breaking,
 		// so the problems are printed as they are — no "Error:" prefix wrapping a
 		// report a hook is going to forward verbatim. Exit status still says 1.
+		//
+		// Returned rather than os.Exit'd. The status is identical either way —
+		// main prints nothing extra for this sentinel and exits 1 — but exiting
+		// from inside RunE takes the process down mid-test, so the failing half
+		// of this command's contract could not be exercised at all. A command
+		// whose refusal path is untestable is the half that matters here.
 		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
-		os.Exit(1)
-		return nil
+		return errRefused
 	}
 }
+
+// errRefused marks "the document did not satisfy the schema", already reported.
+//
+// It carries no message of its own: the problems went to stderr in the form a
+// hook forwards verbatim, and main must not print a second line after them.
+var errRefused = errors.New("")

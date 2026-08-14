@@ -64,7 +64,24 @@ func (e *ErrUnknownExtension) Error() string {
 // It does not read the file — the caller does, so that a missing file is
 // reported once, by the code that knows why it was being opened.
 func ExtractDocument(path string, data []byte) (Document, error) {
-	ext := strings.ToLower(filepath.Ext(path))
+	return ExtractDocumentAs(path, strings.ToLower(filepath.Ext(path)), data)
+}
+
+// ExtractDocumentAs is ExtractDocument for bytes that arrive without a usable
+// name — content piped in, where there is no extension to read the format off.
+//
+// The format is spelled the way an extension is (".md", ".yaml", ".json"),
+// because it answers the identical question and one concept should not have two
+// vocabularies. A leading dot is optional: "md" and ".md" are the same answer.
+//
+// path is still carried, since every message names a file and a reader needs
+// something to look at — a caller reading stdin passes the real destination
+// where it knows one, and a placeholder where it does not.
+func ExtractDocumentAs(path, format string, data []byte) (Document, error) {
+	ext := strings.ToLower(format)
+	if ext != "" && !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
 	switch ext {
 	case ".md":
 		front, _, err := guardrail.SplitFrontmatter(data)
