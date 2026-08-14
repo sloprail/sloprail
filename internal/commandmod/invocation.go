@@ -185,6 +185,195 @@ var wrappers = map[string]wrapper{
 	"builtin": {},
 }
 
+// infixWrappers are programs that name a command in the MIDDLE of their own
+// argument vector, delimited by a flag on one side and a terminator on the
+// other.
+//
+// A separate table from `wrappers` because the shape cannot be expressed there
+// at all. Every entry in `wrappers` names its command as a SUFFIX — everything
+// from some index to the end — and the whole of `unwrap` is a scan for that
+// index. `find . -name '*.md' -exec npm publish \; -print` has find's own
+// operands on BOTH sides of the command, so there is no index whose suffix is
+// the command, and no amount of positional counting produces one.
+//
+// Two further differences that a row in `wrappers` could not carry either:
+//
+//   - There can be SEVERAL in one vector. `find . -exec a \; -exec b \;` runs
+//     two programs and both are about to run, so both are reported. `unwrap`
+//     returns one vector by construction; this returns a list.
+//   - Absence of the terminator is a USAGE ERROR rather than a shorter command.
+//     `find . -exec npm publish` is rejected by find, which runs nothing at all
+//     — so the honest answer is to report nothing from it, not to guess that the
+//     rest of the line was meant.
+//
+// The delimiter arrives as a bare `;`. The shell has already eaten the
+// backslash in `\;` by the time this module sees the word, so the match is on
+// `;` — verified by the parse, not assumed.
+type infixWrapper struct {
+	// introducers are the flags after which a command vector begins.
+	introducers map[string]bool
+	// terminators are the words that end it. `;` runs the command once per
+	// match; `+` batches the matches into one run. Which of the two is used
+	// changes how many times the program runs, not WHETHER it runs, and a rule
+	// asks the second question.
+	terminators map[string]bool
+}
+
+var infixWrappers = map[string]infixWrapper{
+	// `find [path...] [expression]`, where `-exec`/`-execdir`/`-ok`/`-okdir`
+	// each introduce a command run against the matched paths.
+	//
+	// All four are in, and the two prompting forms are in for the same reason
+	// the non-prompting ones are. `-ok` asks the user before each run, so it is
+	// nearer `sudo` — which can also refuse — than to `command -v`, which
+	// describes its argument and runs nothing. A guardrail that stayed silent on
+	// `find . -ok npm publish \;` would be silent on a line whose entire purpose
+	// is to run npm, on the theory that a human might say no.
+	//
+	// `-execdir`/`-okdir` differ only in the working directory the command runs
+	// in, which is not something a rule about WHICH program runs can care about.
+	"find": {
+		introducers: map[string]bool{
+			"-exec": true, "-execdir": true, "-ok": true, "-okdir": true,
+		},
+		terminators: map[string]bool{";": true, "+": true},
+	},
+}
+
+// findPlaceholder is find's placeholder for a matched path.
+//
+// Dropped from the reported vector rather than carried, and this is the one
+// judgement in the infix path that is not forced by find's grammar.
+//
+// It is an argument the command genuinely receives, which argues for keeping
+// it. But WHAT it receives is not `{}` — find replaces it, at runtime, with a
+// path chosen by a directory walk. `find . -name '*.md' -exec rm {} \;` deletes
+// whatever the tree happens to hold, and this package must not read the tree:
+// `commandmod` is a pure function of a string, which is precisely what makes it
+// testable and what stops a guardrail's verdict depending on the working
+// directory it ran in.
+//
+// So the choice is between reporting `{}` as written and reporting nothing for
+// that operand, and `hasGlob` already settles the identical question one file
+// over. `rm *.md` survives expansion with the `*` intact and LOOKS literal —
+// isLiteral agrees, a `*` being a plain Lit — yet it names no file, because the
+// shell will expand it against a tree nobody here has looked at. It is dropped.
+// `{}` is the same word in the same position with the same defect: a token
+// standing for a set of paths that only a filesystem walk can name. Reporting
+// it would put a path in a file event that no rule can mean and no file can
+// match — harmless today only because nothing is named `{}`, which is luck.
+//
+// The comparison the task file draws — to a process substitution's
+// `/dev/fd/63`, which IS kept — is the case that does not apply. That path is
+// what the program actually receives and can actually open; the shape of the
+// vector is preserved by a value that is true. `{}` is not what the program
+// receives. Keeping it would preserve the shape with a value that is false.
+//
+// What survives is what is knowable: the INVOCATION. `rm` is about to run, with
+// certainty, and a rule about running rm fires. Which files it runs against is
+// the unknowable tier — stated rather than hidden, and the same answer this
+// package gives for `rm *.md` today.
+const findPlaceholder = "{}"
+
+// stripPlaceholders drops find's `{}` operands from a command vector.
+//
+// Only the whole-word spelling. `-exec sh -c 'rm pre{}post' \;` substitutes
+// inside the word too, but a word merely CONTAINING `{}` is one whose value is
+// partly known, and dropping it would lose more than it saves: the drop exists
+// to stop a path nobody can name being reported AS a path, and `pre{}post` is
+// not going to be read as a path by anything. It is left as written, the same
+// way `rm ./a*.md` keeps its literal prefix.
+func stripPlaceholders(argv []word) []word {
+	out := make([]word, 0, len(argv))
+	for _, w := range argv {
+		if w.value == findPlaceholder {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// unwrapInfix returns every command vector named in the middle of this vector
+// by an infix wrapper, in the order they appear.
+//
+// Nil for everything that is not an infix wrapper, and for an infix wrapper
+// with no COMPLETE clause. A clause is complete only when its terminator is
+// present: `find . -exec npm publish` is a line find REJECTS, so reporting npm
+// off it would be a rule firing on a command line that runs nothing — the
+// over-reporting direction this module calls the worse one.
+//
+// A complete but EMPTY clause is returned as an empty vector rather than
+// skipped, and is declined by the callers — see where it is appended below.
+func unwrapInfix(argv []word) [][]word {
+	in, ok := infixWrappers[basename(argv[0].value)]
+	if !ok {
+		return nil
+	}
+
+	var out [][]word
+	for i := 1; i < len(argv); i++ {
+		if !in.introducers[argv[i].value] {
+			continue
+		}
+		// The clause is the words between the introducer and the FIRST
+		// terminator after it. Scanned forward rather than to the end of the
+		// vector, because find's own operands continue after it.
+		//
+		// First rather than last, and a word that looks like another introducer
+		// in between is simply an argument to this command. Measured against
+		// real find: `find . -exec echo ONE -exec echo TWO \;` prints
+		// `ONE -exec echo TWO` — one run of echo with four arguments, not two
+		// clauses. So the same rule that finds the ordinary case gets this one
+		// right too, and pinning it is what stops a later "smarter" scan
+		// reporting a second program the line never runs.
+		start := i + 1
+		end := -1
+		for j := start; j < len(argv); j++ {
+			if in.terminators[argv[j].value] {
+				end = j
+				break
+			}
+		}
+		if end < 0 {
+			// No terminator anywhere after this introducer. find rejects the
+			// whole expression — verified: `find . -name '*.txt' -exec echo X`
+			// answers `Expected '... ;' or '... {} +'` and runs nothing at all.
+			//
+			// So nothing is reported from it, rather than the rest of the vector
+			// being read as the command.
+			//
+			// `break` rather than `continue`, and the two are EQUIVALENT rather
+			// than one being right — recorded so the survivor is read as an
+			// equivalence and not as this branch being untested. There is no
+			// terminator anywhere after this introducer, so a later introducer's
+			// own forward scan finds none either and re-derives the same
+			// nothing. Measured: replacing this with `continue` leaves the whole
+			// suite green. `break` is kept because it says what is true — the
+			// rest of the vector holds no complete clause — and stops rather
+			// than re-scanning to learn it again.
+			break
+		}
+		// An empty clause — `find . -exec \;`, or `find . -exec {} \;` whose
+		// only word is the dropped placeholder — is appended like any other and
+		// declined one step later. Both consumers reject a vector with no
+		// program on their first line: fromArgv tests `basename(argv[0])` and
+		// targetsForArgv the same, so an empty vector names nothing either way.
+		//
+		// A `len(cmd) > 0` guard was tried here and PROVEN unobservable — the
+		// suite stays green with it removed, including the cases that assert
+		// `find . -exec {} \;` reports find alone and produces no empty bin.
+		// Left out rather than kept as a branch a reader would take as
+		// load-bearing.
+		out = append(out, stripPlaceholders(argv[start:end]))
+		// Resume AT the terminator; the loop's own increment steps past it. A
+		// second clause in the same vector is found by the same scan, which is
+		// what makes `find . -exec a \; -exec b \;` report both.
+		i = end
+	}
+	return out
+}
+
 // word is one resolved argument plus whether it was certain.
 //
 // A plain []string was enough while unwrapping only ever SLICED the vector: a
@@ -531,6 +720,19 @@ func fromArgv(argv []word, depth int) []Invocation {
 		// while missing npm. The depth is passed through unchanged — a wrapper
 		// is not a new parse, so it spends none of the payload budget.
 		invs = append(invs, fromArgv(nested, depth)...)
+	}
+
+	// The infix form, which the suffix scan above cannot see: a command
+	// delimited by `-exec` and `;` with find's own operands on both sides.
+	//
+	// Recursive through fromArgv for the same reason, so the shapes compose in
+	// both directions: `sudo find . -exec npm publish \;` reaches here having
+	// already been unwrapped from the sudo, and `find . -exec sh -c 'npm
+	// publish' \;` hands its clause back through the interpreter path. The depth
+	// is passed unchanged — like a wrapper and unlike a payload, an infix clause
+	// is a slice of a vector already parsed, so it spends none of the budget.
+	for _, cmd := range unwrapInfix(argv) {
+		invs = append(invs, fromArgv(cmd, depth)...)
 	}
 
 	// The interpreter itself has already been appended above and stays
