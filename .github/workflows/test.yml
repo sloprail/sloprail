@@ -76,5 +76,19 @@ jobs:
           git config --global user.email ci@sloprail.invalid
           git config --global user.name  sloprail CI
 
+      # The suite needs a10n-claude-mock — a drop-in `claude` the harness drives.
+      # Without it every package SKIPS and still reports ok: 56 packages
+      # "passing" in 38 seconds, against 30 minutes locally. A green run that
+      # tested nothing is worse than a red one, because it is trusted. So this
+      # fails loudly until the mock is available to CI, rather than letting the
+      # job lie about what it checked.
       - name: e2e
-        run: make test-e2e
+        run: |
+          if ! command -v a10n-claude-mock >/dev/null 2>&1; then
+            echo "a10n-claude-mock is not on PATH."
+            echo
+            echo "Every e2e package would SKIP and report ok — a green suite that"
+            echo "ran nothing. Failing instead."
+            exit 1
+          fi
+          make test-e2e
