@@ -156,10 +156,22 @@ func (inv Invocation) String() string {
 // has no terminal: an interactive session started there would hang holding the
 // whole guardrail open. There is no flag to turn it off because there is no
 // caller who wants it off.
+// A `--` separator goes between the flags and the prompt, and it is not
+// cosmetic. Several of claude's own flags are VARIADIC — `--add-dir
+// <directories...>`, `--allowed-tools <tools...>` — and a variadic flag
+// immediately before a positional swallows it. Measured: `claude -p --model
+// haiku --add-dir /tmp/x "count the lines"` consumed the prompt as a second
+// directory and died with "Input must be provided either through stdin or as a
+// prompt argument". The separator ends flag parsing, so the prompt is a
+// positional no matter which flag precedes it, and it was confirmed to work
+// against claude 2.1.218.
+//
+// This also subsumes the dash-leading-prompt case: after `--`, a prompt reading
+// "--model isn't resolving, why?" is text rather than a flag.
 func BuildInvocation(spec harnessSpec, model string, harnessArgs []string, prompt string) Invocation {
-	args := make([]string, 0, len(harnessArgs)+4)
+	args := make([]string, 0, len(harnessArgs)+5)
 	args = append(args, "-p", "--model", model)
 	args = append(args, harnessArgs...)
-	args = append(args, prompt)
+	args = append(args, "--", prompt)
 	return Invocation{Binary: spec.binary, Args: args}
 }

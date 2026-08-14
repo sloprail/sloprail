@@ -126,6 +126,10 @@ environment naming no known harness is refused rather than guessed at; pass
 		"Run this harness instead of the one the environment names ("+strings.Join(supportedNames(), ", ")+")")
 	cmd.Flags().String("claude-args", "",
 		`Claude Code's own settings as a JSON object, passed through untouched (e.g. '{"permission-mode":"plan"}')`)
+	cmd.Flags().String("verify", "",
+		"A script that decides whether the agent's answer is acceptable; the agent is asked again if not")
+	cmd.Flags().Int("verify-attempts", DefaultVerifyAttempts,
+		"How many times the agent may be asked before --verify reports failure")
 	cmd.Flags().Bool("dry-run", false,
 		"Print the command that would run, and do not run it")
 
@@ -144,6 +148,8 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	harnessFlag, _ := cmd.Flags().GetString("harness")
 	claudeArgs, _ := cmd.Flags().GetString("claude-args")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	verifyFlag, _ := cmd.Flags().GetString("verify")
+	verifyAttempts, _ := cmd.Flags().GetInt("verify-attempts")
 
 	prompt, err := resolvePrompt(args, promptFlag)
 	if err != nil {
@@ -182,6 +188,21 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	// A hook capturing this command's output to feed a rule must not find
 	// advice about model sets mixed into what the agent said.
 	reportResolution(cmd.ErrOrStderr(), spec, resolution)
+
+	// --verify changes the shape of the run: the agent writes to a file, the
+	// caller's script judges the file, and a rejection means asking again with
+	// the script's own complaint quoted back. Handled before the plain path
+	// because it OWNS the prompt — it appends the output path, and on a retry
+	// appends the objection too.
+	if cmd.Flags().Changed("verify") {
+		if verifyAttempts < 1 {
+			return fmt.Errorf(
+				"--verify-attempts must be at least 1, got %d: zero attempts would run no agent at all",
+				verifyAttempts)
+		}
+		return runVerified(cmd, spec, resolution.Model, harnessArgs, prompt,
+			verifyFlag, verifyAttempts, false, dryRun)
+	}
 
 	inv := BuildInvocation(spec, resolution.Model, harnessArgs, prompt)
 

@@ -126,7 +126,7 @@ func TestBuildInvocation_PromptIsLastAndPositional(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "does this uphold the invariant?")
 
 	assert.Equal(t, "claude", inv.Binary)
-	assert.Equal(t, []string{"-p", "--model", "sonnet", "does this uphold the invariant?"}, inv.Args)
+	assert.Equal(t, []string{"-p", "--model", "sonnet", "--", "does this uphold the invariant?"}, inv.Args)
 	assert.Equal(t, "does this uphold the invariant?", inv.Args[len(inv.Args)-1])
 }
 
@@ -139,7 +139,7 @@ func TestBuildInvocation_DashLeadingPromptStaysLast(t *testing.T) {
 	assert.Equal(t, []string{
 		"-p", "--model", "sonnet",
 		"--permission-mode", "plan",
-		"--model is not resolving, why?",
+		"--", "--model is not resolving, why?",
 	}, inv.Args)
 	assert.Equal(t, "--model is not resolving, why?", inv.Args[len(inv.Args)-1])
 }
@@ -159,7 +159,7 @@ func TestBuildInvocation_HarnessArgsPassThrough(t *testing.T) {
 	assert.Equal(t, []string{
 		"-p", "--model", "opus",
 		"--permission-mode", "plan", "--max-budget-usd", "5",
-		"q",
+		"--", "q",
 	}, inv.Args)
 }
 
@@ -178,12 +178,45 @@ func TestBuildInvocation_DoesNotAliasHarnessArgs(t *testing.T) {
 	assert.Equal(t, before, inv.Args)
 }
 
+// A VARIADIC flag immediately before the prompt must not swallow it.
+//
+// This is a measured bug, not a hypothetical: claude's --add-dir takes
+// `<directories...>`, and `claude -p --model haiku --add-dir /tmp/x "count the
+// lines"` consumed the prompt as a second directory, then died with "Input must
+// be provided either through stdin or as a prompt argument". The `--` separator
+// is what makes the prompt a positional regardless of what precedes it.
+func TestBuildInvocation_VariadicFlagCannotSwallowThePrompt(t *testing.T) {
+	inv := BuildInvocation(claudeCodeSpec, "haiku",
+		[]string{"--add-dir", "/tmp/out"}, "count the lines")
+
+	require.Equal(t, []string{
+		"-p", "--model", "haiku",
+		"--add-dir", "/tmp/out",
+		"--", "count the lines",
+	}, inv.Args)
+
+	// The separator must sit between the last flag and the prompt, or it
+	// protects nothing.
+	sep := indexOf(inv.Args, "--")
+	require.NotEqual(t, -1, sep, "a -- separator must be present")
+	assert.Equal(t, len(inv.Args)-2, sep, "-- must be immediately before the prompt")
+}
+
+func indexOf(args []string, want string) int {
+	for i, a := range args {
+		if a == want {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestInvocation_StringQuotesArgumentsWithSpaces(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "does this hold?")
-	assert.Equal(t, `claude -p --model sonnet "does this hold?"`, inv.String())
+	assert.Equal(t, `claude -p --model sonnet -- "does this hold?"`, inv.String())
 }
 
 func TestInvocation_StringLeavesPlainArgumentsUnquoted(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "why")
-	assert.Equal(t, "claude -p --model sonnet why", inv.String())
+	assert.Equal(t, "claude -p --model sonnet -- why", inv.String())
 }
