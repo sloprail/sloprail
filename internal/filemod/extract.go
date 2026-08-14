@@ -526,6 +526,12 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 		return nil, nil
 	}
 
+	// A copy whose destination turns out to be a DIRECTORY writes several files
+	// inside it rather than one file at it, and only a stat can tell. Resolved
+	// before the loop so each resulting file is classified by exactly the same
+	// code every other target is — see expandIntoDirectories.
+	targets = expandIntoDirectories(targets)
+
 	var events []event.Event
 	var problems []error
 	// One command may name a path twice — `rm a.md a.md`, or a redirection onto
@@ -670,6 +676,93 @@ func (*Module) markersOnDisk(path string) []Marker {
 	return Scan(string(b))
 }
 
+// expandIntoDirectories resolves the one ambiguity a copy's last operand
+// carries: whether it is a file being written or a directory being written
+// INTO.
+//
+// `cp a.md b.md target/` produces target/a.md and target/b.md, not a file
+// called target. commandmod states both readings — Path with its Payload for
+// the file case, FileTarget.Into for the directory case — precisely because
+// choosing between them means a stat, and this is the side that stats. See
+// FileTarget.Into for the argument.
+//
+// The rule for the resulting name is base(source), which is cp's and mv's own
+// and is not a tree question. What IS a tree question is whether it applies,
+// and a target whose path is not a directory right now passes through
+// untouched, keeping whatever payload it already had.
+//
+// Each expanded target carries a copy reference to its OWN source, so
+// target/a.md gets a.md's bytes and target/b.md gets b.md's. A single payload
+// spread across both would attach one file's contents to the other's path,
+// which is the confidently-wrong class of answer rather than a missing one.
+//
+// The DIRECTORY itself stops being reported, and dropping it is EQUIVALENT
+// today — measured, not assumed. Kept in this shape anyway, so the survivor is
+// read as an equivalence rather than as an untested line: a directory reaches
+// the loop below as presentNotAFile and is dropped by the `p != presentFile`
+// branch, so keeping it here changes nothing observable. Verified by keeping
+// it: the suite stays green.
+//
+// It is dropped HERE regardless, because the two are the same only by the
+// coincidence that a copy destination is always a real directory when Into is
+// non-empty. What the drop states is that the directory is not one of the paths
+// that CHANGE — which is why it must not sit in the caller's `seen` map. Should
+// a later reading ever expand a target whose own path is also written (a shape
+// `cp` does not have but a future entry could), the surviving directory would
+// claim that path's slot in `seen` and suppress its real event.
+//
+// A source whose basename is `.` or `..` — which no ordinary copy has, but a
+// crafted line could — is skipped rather than joined. filepath.Join collapses
+// them: `target/` + Base("sub/.") is `target` itself, and + Base("sub/..") is
+// the path ABOVE it. Joining either would predict a target for a path the copy
+// does not create, one of them outside the destination entirely.
+//
+// EQUIVALENT today — measured, not assumed. Both collapsed paths are
+// DIRECTORIES, so the loop below drops them at its `p != presentFile` branch
+// before any event is built, and removing this guard leaves the suite green.
+// TestExtractCommand_ACopySourceWithNoBasenameNamesNoFileInside pins the
+// OUTCOME rather than this line, which is the assertion that stays right
+// whichever way the collapse is prevented.
+//
+// Kept because the equivalence rests entirely on the collapsed path happening
+// to be a directory, which is true only because `.` and `..` name one. It says
+// nothing about a future source spelling, and nothing about a caller that
+// classifies before the drop. Refusing to BUILD a path the copy does not create
+// is the statement that cannot rot; relying on a later branch to discard it is
+// a coincidence of two independent decisions.
+func expandIntoDirectories(targets []commandmod.FileTarget) []commandmod.FileTarget {
+	var out []commandmod.FileTarget
+	for _, t := range targets {
+		if len(t.Into) == 0 {
+			out = append(out, t)
+			continue
+		}
+		// isDirectory rather than lookAt, because lookAt's tri-state
+		// deliberately does NOT distinguish a directory from a device or a
+		// socket — they are all presentNotAFile, since none can receive a file
+		// write. Here the difference is the whole question. See isDirectory,
+		// which lives beside the oracle so the tree is still read in one place.
+		if !isDirectory(t.Path) {
+			// Not a directory, so the operand is an ordinary destination and
+			// the payload commandmod already attached is the right reading.
+			out = append(out, t)
+			continue
+		}
+		for _, src := range t.Into {
+			name := filepath.Base(src)
+			if name == "." || name == ".." || name == string(filepath.Separator) {
+				continue
+			}
+			out = append(out, commandmod.FileTarget{
+				Path:    filepath.Join(t.Path, name),
+				Effect:  t.Effect,
+				Payload: commandmod.Payload{Kind: commandmod.PayloadCopyOf, From: []string{src}},
+			})
+		}
+	}
+	return out
+}
+
 // resolvePayload turns what a command LINE determined into the actual bytes,
 // reading the filesystem where the line only referred to it.
 //
@@ -721,14 +814,48 @@ func (m *Module) resolvePayload(p commandmod.Payload, before string) (string, bo
 		// asks "did the read actually work", which covers a permission denial
 		// and a file that vanished between the two calls. Dropping either would
 		// leave the survivor accidentally carrying a case it does not describe.
-		if src, err := lookAt(p.From, p.From); err != nil || src != presentFile {
+		//
+		// SEVERAL sources, concatenated in the order the line names them. A
+		// copy is the one-element case: `cp a.md b.md` and
+		// `cat a.md > b.md` resolve through the same code, so an unreadable
+		// source cannot mean one thing for a copy and another for a
+		// concatenation.
+		//
+		// ANY unreadable source fails the whole payload rather than being
+		// skipped. `cat a.md missing.md > c.md` writes a.md's bytes and then
+		// FAILS, so c.md's final contents are not what a partial concatenation
+		// would report — and reporting the readable prefix would be the
+		// confidently-wrong answer this module exists to avoid.
+		var b strings.Builder
+		for _, from := range p.From {
+			if src, err := lookAt(from, from); err != nil || src != presentFile {
+				return "", false
+			}
+			text, err := os.ReadFile(from)
+			if err != nil {
+				return "", false
+			}
+			b.Write(text)
+		}
+		if len(p.From) == 0 {
+			// A copy naming no source determines nothing.
+			//
+			// EQUIVALENT today and kept anyway, so the survivor is read as an
+			// equivalence rather than as an unreachable guard. commandmod never
+			// builds a PayloadCopyOf with an empty From — copyPayload always
+			// carries one, and catConcatenation refuses a source list that came
+			// out empty — so the loop above cannot fall through with nothing
+			// written. Verified by removing it: the suite stays green.
+			//
+			// Kept because it names the requirement at the point where the
+			// bytes are DECIDED, rather than leaving it as a property of two
+			// constructors in another package. The failure it would guard is
+			// exactly the collision this whole tier exists to prevent: a
+			// zero-source copy resolving to ("", true) is `content: ""` standing
+			// in for "not known", indistinguishable from `touch`.
 			return "", false
 		}
-		b, err := os.ReadFile(p.From)
-		if err != nil {
-			return "", false
-		}
-		return string(b), true
+		return b.String(), true
 	}
 	return "", false
 }

@@ -105,14 +105,14 @@ var knownBins = map[string]binSpec{
 	// replaced).
 	//
 	// The destination is the LAST operand, and only when there are at least two
-	// — `mv a` is a usage error that touches nothing. With three or more the
-	// last is a directory and the rest move into it; the sources still stop
-	// existing at their own paths, which is what a delete rule is about, and the
-	// destination is reported as written because that is what the flag-free
-	// synopsis says even though the resulting path is inside it. Naming the
-	// directory rather than the paths within it is the honest floor: computing
-	// `dir/base(src)` would be this package deciding what the destination
-	// filename is, which depends on whether the directory exists.
+	// — `mv a` is a usage error that touches nothing. The sources still stop
+	// existing at their own paths, which is what a delete rule is about.
+	//
+	// Where the destination is a DIRECTORY the resulting paths are
+	// `dir/base(src)`, and those are now reported — see copyTargets and
+	// FileTarget.Into. This package still does not decide WHETHER it is a
+	// directory, because that is a question about the tree; it states both
+	// readings and filemod picks.
 	"mv": movelike,
 	// cp writes its destination and leaves its sources alone.
 	//
@@ -121,31 +121,76 @@ var knownBins = map[string]binSpec{
 	// bytes themselves are not read here — that is a filesystem access and
 	// belongs to the caller (see payload.go on the split).
 	//
-	// With three or more the last operand is a DIRECTORY and the sources are
-	// copied into it. The resulting file is `dir/base(src)`, a path this
-	// package deliberately does not compute — movelike's comment gives the
-	// reason: it depends on whether the directory exists, which is a question
-	// about the tree. So no payload is claimed there, matching the path half's
-	// existing honesty.
+	// With a DIRECTORY destination the sources land at `dir/base(src)`. Both
+	// readings are stated rather than one being chosen — see copyTargets.
 	"cp": func(argv []string) []FileTarget {
 		ops := operands(argv)
 		if len(ops) < 2 {
 			return nil
 		}
-		dst := targetsFor(ops[len(ops)-1:], Write)
-		if len(ops) == 2 {
-			return withPayload(dst, Payload{Kind: PayloadCopyOf, From: ops[0]})
-		}
-		return dst
+		return copyTargets(ops)
 	},
-	// install is cp with modes and ownership. Same operand shape.
+	// install is cp with modes and ownership. Same operand shape, so the same
+	// two-operand copy analysis applies unchanged: `install a.md b.md` leaves
+	// b.md holding a.md's current bytes, and the mode it sets is not something
+	// a file event carries.
+	//
+	// Two flags change the SHAPE rather than decorating it, and both are
+	// refused outright:
+	//
+	//	-d   `install -d dir` MAKES directories rather than copying, so every
+	//	     operand is a directory and none is a source. No file event can
+	//	     honestly be about the result.
+	//	-t   `install -t DIR a.md b.md` names the destination as a FLAG VALUE,
+	//	     which inverts the reading entirely: every operand is then a source
+	//	     and the destination is not among them. Skipping the value and
+	//	     reading the rest positionally is a MEASURED wrong answer — b.md was
+	//	     reported as the destination carrying a.md's bytes, when the real
+	//	     results are DIR/a.md and DIR/b.md and b.md is only read. It could be
+	//	     modelled (it is the directory case with the directory named
+	//	     elsewhere) but `-t` is vanishingly rare in agent-written lines, and
+	//	     an unclaimed line costs a rule that does not fire where a wrong one
+	//	     costs a rule that fires on the wrong file.
+	//
+	// Its flags that take a separated value — `-m 644`, `-o user`, `-g group` —
+	// are skipped, and getting that wrong would be worse here than for most
+	// binaries: an unskipped `644` slides into operand position and becomes
+	// either a phantom source or, with two real operands beside it, the
+	// DESTINATION. That would attach one file's bytes to a path named after a
+	// permission bit.
 	"install": func(argv []string) []FileTarget {
-		ops := operands(argv)
+		// The two flags that change the operand SHAPE rather than decorate it,
+		// so neither can be handled by skipping a value.
+		for _, a := range argv[1:] {
+			if a == "-d" || a == "--directory" {
+				return nil
+			}
+			if a == "-t" || a == "--target-directory" || strings.HasPrefix(a, "--target-directory=") {
+				return nil
+			}
+		}
+		skip := map[string]bool{
+			"-m": true, "--mode": true,
+			"-o": true, "--owner": true,
+			"-g": true, "--group": true,
+			"-S": true, "--suffix": true,
+		}
+		ops := operandsSkipping(argv, skip)
 		if len(ops) < 2 {
 			return nil
 		}
-		return targetsFor(ops[len(ops)-1:], Write)
+		return copyTargets(ops)
 	},
+
+	// cat is deliberately NOT here, and the omission is the design. It writes no
+	// file: `cat a.md b.md > c.md` names c.md through the REDIRECTION, which
+	// fromRedirs already finds, and a.md and b.md are read rather than written.
+	// An entry here would report them as targets and fire a delete-or-write rule
+	// on files the command only reads.
+	//
+	// What cat determines is the resulting CONTENT of that redirection — its
+	// operands' bytes in order — and that is stated in payloadForStmt, where the
+	// redirection and the command are already paired.
 
 	// touch creates or updates the mtime of every operand.
 	//
@@ -180,6 +225,24 @@ var knownBins = map[string]binSpec{
 	// ln creates a link at its last operand. Lstat sees the link itself, so the
 	// file module treats it as a file — see lookAt on why the link and not its
 	// target.
+	//
+	// # Why no payload, for either kind of link
+	//
+	// A SYMLINK's bytes are its target PATH, not the target's contents — that is
+	// what a symlink is. So `ln -s a.md b.md` does not leave b.md holding a.md's
+	// bytes, and a PayloadCopyOf naming a.md would be the confidently-wrong
+	// class of answer: a rule reading `content` would judge text that is not
+	// there. The bytes that ARE there are the string "a.md", and claiming that
+	// as a file's content would be worse still — it would report a rule a
+	// four-character markdown file that no author means.
+	//
+	// A HARD link is a second name for the same inode, so its contents genuinely
+	// are the target's. It is unclaimed anyway, because it is unclaimed for the
+	// path half too: lookAt cannot tell a hard link from an ordinary file, and
+	// `ln a.md b.md` creating b.md is reported as a create whose bytes filemod
+	// would have to read from a.md — derivable, but for a spelling that
+	// essentially does not appear in agent-written command lines. A shape nobody
+	// writes is maintenance with no reader.
 	"ln": func(argv []string) []FileTarget {
 		ops := operands(argv)
 		if len(ops) < 2 {
@@ -236,15 +299,67 @@ var knownBins = map[string]binSpec{
 	},
 
 	// dd names its output behind `of=`, not positionally.
+	//
+	// With an `if=` and nothing that makes the copy PARTIAL, dd is a copy and
+	// the destination's bytes are the source's — the same statement cp makes,
+	// through a different spelling. See ddIsAWholeCopy for what "partial" covers
+	// and why the test is an allowlist.
 	"dd": func(argv []string) []FileTarget {
 		var paths []string
+		var in string
 		for _, a := range argv[1:] {
 			if v, ok := strings.CutPrefix(a, "of="); ok && v != "" {
 				paths = append(paths, v)
 			}
+			if v, ok := strings.CutPrefix(a, "if="); ok && v != "" {
+				in = v
+			}
 		}
-		return targetsFor(paths, Write)
+		targets := targetsFor(paths, Write)
+		if in != "" && ddIsAWholeCopy(argv) {
+			return withPayload(targets, copyPayload(in))
+		}
+		return targets
 	},
+}
+
+// ddIsAWholeCopy reports whether a dd invocation copies its input file entire,
+// so the output's bytes are the input's bytes.
+//
+// An ALLOWLIST of operands, not a denylist of the dangerous ones, and that
+// choice is the whole safety of this entry. dd has a long and
+// implementation-varying operand vocabulary — `conv=ucase` upper-cases,
+// `conv=swab` swaps byte pairs, `cbs=`/`conv=block` pads records, `iflag=` and
+// `oflag=` change the I/O semantics, and GNU, BSD and busybox do not agree on
+// the full set. A denylist naming `bs`, `count`, `skip` and `seek` would let
+// every one of those through as a whole copy, reporting bytes the file never
+// holds.
+//
+// So only the operands whose presence provably does not change the RESULTING
+// BYTES are permitted:
+//
+//	if=, of=       the files themselves
+//	bs=, ibs=, obs=  the block size. It changes how the bytes are read and
+//	                 written, not which ones — WITHOUT a count= to multiply, a
+//	                 block size copies the whole input either way.
+//	status=        controls dd's own progress output on stderr, not the data.
+//
+// Everything else, known or unknown, means no claim. `count=` bounds the copy,
+// `skip=`/`seek=` offset it, and an operand this has never heard of is exactly
+// the case where guessing is worst.
+func ddIsAWholeCopy(argv []string) bool {
+	permitted := map[string]bool{
+		"if": true, "of": true,
+		"bs": true, "ibs": true, "obs": true,
+		"status": true,
+	}
+	for _, a := range argv[1:] {
+		name, _, ok := strings.Cut(a, "=")
+		if !ok || !permitted[name] {
+			return false
+		}
+	}
+	return true
 }
 
 // movelike is mv: sources removed, destination written.
@@ -260,12 +375,51 @@ func movelike(argv []string) []FileTarget {
 	if len(ops) < 2 {
 		return nil
 	}
-	targets := targetsFor(ops[:len(ops)-1], Remove)
+	return append(targetsFor(ops[:len(ops)-1], Remove), copyTargets(ops)...)
+}
+
+// copyTargets builds the destination of a copy-shaped invocation, stating both
+// readings of the last operand.
+//
+// The three utilities that share cp's operand shape — cp, mv, install — share
+// this, because they share the ambiguity exactly. With TWO operands the
+// destination is a path whose bytes become the source's; with three or more the
+// last is necessarily a directory and each source lands at base(source) inside
+// it. But two operands can ALSO be a copy into a directory (`cp a.md dir/`),
+// and which one it is depends on the tree.
+//
+// So both are stated and neither is chosen: Payload for the file reading, Into
+// for the directory reading, and filemod picks with a stat it has already done.
+// See FileTarget.Into.
+//
+// With three or more operands no Payload is set, because the file reading does
+// not exist there — `cp a.md b.md c.md` with c.md a regular file is an error,
+// not a copy onto it.
+func copyTargets(ops []string) []FileTarget {
+	if len(ops) < 2 {
+		// EQUIVALENT today and kept anyway, so the survivor is read as an
+		// equivalence rather than as an unchecked boundary. Every caller —
+		// cp, install, movelike — applies the same test before calling, so
+		// relaxing it here alone leaves the suite green. Verified by
+		// measurement.
+		//
+		// Kept because it states the requirement where the DESTINATION is
+		// chosen: a copy needs a source and a destination, and `ops[:len-1]`
+		// below is a slice expression that is only meaningful once that holds.
+		// A caller added later without its own guard would otherwise reach the
+		// slice, and a one-element vector would make the single operand both
+		// the source and the destination.
+		return nil
+	}
+	sources := ops[:len(ops)-1]
 	dst := targetsFor(ops[len(ops)-1:], Write)
 	if len(ops) == 2 {
-		dst = withPayload(dst, Payload{Kind: PayloadCopyOf, From: ops[0]})
+		dst = withPayload(dst, copyPayload(sources[0]))
 	}
-	return append(targets, dst...)
+	for i := range dst {
+		dst[i].Into = sources
+	}
+	return dst
 }
 
 // sedlike is the in-place-edit family: the operands are rewritten, but only when
@@ -576,7 +730,19 @@ func targetsForArgv(argv []string, depth int, stdin Payload) []FileTarget {
 	if spec, known := knownBins[basename(argv[0])]; known {
 		own := spec(argv)
 		if stdin.Kind == PayloadLiteral && consumesStdin(basename(argv[0])) {
-			own = withPayload(own, stdin)
+			// Only where the spec claimed NOTHING. `dd if=a.md of=b.md <<'EOF'`
+			// reads its input from a.md and never looks at stdin, so the
+			// heredoc is discarded by the shell — overwriting the copy
+			// reference with it would report bytes that never reach the file.
+			//
+			// The same guard is why this is a loop rather than a withPayload:
+			// withPayload sets every target unconditionally, which is right
+			// where a spec claims nothing and wrong here.
+			for i := range own {
+				if own[i].Payload.Kind == PayloadNone {
+					own[i].Payload = stdin
+				}
+			}
 		}
 		targets = append(targets, own...)
 	}
