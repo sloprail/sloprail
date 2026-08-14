@@ -5,9 +5,11 @@
 # run in parallel, so the wall clock is the e2e job either way.
 name: test
 
+# push only. A pull_request trigger as well would run every job TWICE on any
+# branch that has one open — the same commit, the same result, twice the wall
+# clock and twice the runner minutes.
 on:
   push:
-  pull_request:
 
 # A second push to the same branch cancels the first. The old run is answering a
 # question about code nobody will merge.
