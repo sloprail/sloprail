@@ -1084,6 +1084,15 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 // The canonical answer is passed in rather than asked for again: it is the one
 // the classification uses, and asking twice would make the module put two
 // questions to the producer about one file where the contract has exactly one.
+//
+// `path == clean` is what holds that for the common case — every path git
+// reports is already canonical — and it is MEASURED rather than merely stated:
+// TestObserved_ACanonicalPathIsAskedAboutOnce counts the calls and fails at two.
+// Dropping the term survives every other test in the suite, because both calls
+// return the same answer for the same string and only the COUNT changes; it was
+// found by mutation testing, not by a failing test. The count matters for a
+// producer whose answers are expensive, logged, or non-idempotent — today's is a
+// map read, so this costs nothing and guards against a future one.
 func (*Module) checkBaselineSpelling(observed Observed, path, clean string, before bool) error {
 	if path == clean || before || !observed.ExistedAtBaseline(path) {
 		return nil
