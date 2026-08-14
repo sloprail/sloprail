@@ -15,8 +15,8 @@
 // session has ever run. It is typed by an authoring agent deciding what to bind
 // a rule to. Filing it under the session binary would say that the event
 // vocabulary is a property of a running session, when it is a property of the
-// BUILD — the modules compiled into it. That is the same argument a10n's
-// services/sr-mark/main.go makes for standing apart from a10n-spec: markers are a
+// BUILD — the modules compiled into it. That is the same argument a10n's own
+// services/mark/main.go makes for standing apart from a10n-spec: markers are a
 // general annotation concept, not a spec-specific one, so they are not a
 // subcommand of the thing that happens to use them most.
 //
