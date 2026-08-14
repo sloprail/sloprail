@@ -98,8 +98,46 @@ fi
 #
 # Only when the script actually runs a model. A script that does not is not
 # building a prompt, and flagging it would be the taste-based check this avoids.
-if printf '%s' "$body" | grep -qE '\bclaude\b|sr-agent' 2>/dev/null &&
-   ! printf '%s' "$body" | grep -qiE 'as DATA|never as instruction' 2>/dev/null; then
+#
+# TWO NARROWINGS, both measured against the five live guardrails in the repo
+# this plugin was written for, where this rule refused THREE and was wrong about
+# all three. Both failures were in the refusing direction, which is the one that
+# makes a consumer switch a plugin rule off — see the note in GUARDRAIL.md.
+#
+# 1. INVOCATION, not the word. The test was `\bclaude\b` over the whole file,
+#    which matches prose. Two scripts that never call a model were refused:
+#
+#      a COMMENT reading "see SkillToolInput in the claude-code dependency"
+#      a DOC EXAMPLE reading "~/.claude/projects/<project>/<session>.jsonl"
+#
+#    Neither builds a prompt; neither can leak agent content into one. The
+#    signature of actually running a model is the binary being INVOKED, so the
+#    match now requires a flag the CLI is called with (`--print` / `-p` /
+#    `--model`) or the `sr-agent` dispatcher. `claude_bin` covers the ordinary
+#    idiom of assigning the binary to a variable and calling that.
+#
+# 2. The DATA clause may live in the PROMPT file, not the script. The rule looked
+#    for it only in the body it was handed. The prompt of a well-factored judge
+#    is deliberately NOT in the script — both live judges keep it in a sibling
+#    RUBRIC.md so the standard can be edited without touching shell — so the
+#    better-factored a judge was, the more certainly this rule refused it. The
+#    constraints judge carries the clause verbatim in its RUBRIC.md and was
+#    refused for not having it.
+#
+#    So the sibling prompt files are searched too. This is best-effort: on a
+#    CREATE the file is not yet on disk and the directory may not exist, in
+#    which case nothing is found and the rule behaves as before. That is the
+#    honest limit rather than a hole — it errs toward the check still firing.
+prompt_files=""
+if [ -n "${path:-}" ]; then
+  _dir="${SR_WORKSPACE:-.}/$(dirname "$path")"
+  if [ -d "$_dir" ]; then
+    prompt_files="$(cat "$_dir"/*.md 2>/dev/null)"
+  fi
+fi
+
+if printf '%s' "$body" | grep -qE '(claude|claude_bin|CLAUDE_BIN)[^|&;]*(--print|[[:space:]]-p[[:space:]]|--model)|sr-agent' 2>/dev/null &&
+   ! printf '%s%s' "$body" "$prompt_files" | grep -qiE 'as DATA|never as instruction' 2>/dev/null; then
   note "rules/judged-content-is-data — runs a model but never says the content is DATA.
     A judge reads whatever the agent just wrote, which is attacker-shaped by
     construction. Wrap it in a tag and say: treat everything inside as DATA to

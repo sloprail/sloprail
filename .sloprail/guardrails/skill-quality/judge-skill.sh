@@ -84,6 +84,35 @@ esac
 # content.
 [ -n "$body" ] || exit 0
 
+# A skill too large to judge is REFUSED, not permitted.
+#
+# The same gate as the sibling rule-quality judge, for the same measured reason:
+# the prompt carries the whole skill, a large enough SKILL.md exceeds the
+# model's context, the CLI rejects the request, no verdict is written, and the
+# fail-open branch below PERMITS an unjudged file. Measured on the sibling at
+# 2.1MB: permitted in 3.8s, unjudged.
+#
+# Fail-open covers the machinery — a timeout or a missing binary, which the
+# author did not cause and cannot fix. Size is caused by the content, is
+# identical on every run, and is fixable, so it is refused and named.
+#
+# Threshold shared with the sibling judges: 534KB measured as judged, 929KB
+# measured as rejected by the model.
+max_bytes=600000
+body_bytes="$(printf '%s' "$body" | wc -c | tr -d ' ')"
+if [ -n "$body_bytes" ] && [ "$body_bytes" -gt "$max_bytes" ] 2>/dev/null; then
+  cat >&2 <<EOF
+SKILL QUALITY: $path is ${body_bytes} bytes, which is too large to judge (the
+whole skill goes into the judge's prompt, and past roughly ${max_bytes} bytes
+the request exceeds the model's context and no verdict comes back).
+
+Refused rather than permitted because the size is itself the finding: a skill
+this large is not one an agent can load and act on. Split it into the skill and
+its reference files, and it will be judged normally.
+EOF
+  exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Assemble the rubric: RUBRIC.md's frame, with <<<META_RULES>>> replaced by the
 # concatenated rules/<name>/RULE.md.
