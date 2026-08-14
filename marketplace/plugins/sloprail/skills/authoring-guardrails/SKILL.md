@@ -317,10 +317,12 @@ guardrail in scope and it says so rather than guessing.
 
 ## Post kinds
 
-`PostFileCreate`, `PostFileUpdate`, `PostFileDelete` and `TurnEnd` are dispatched
-at the end of a cycle, from the `Stop` and `SubagentStop` hook points. They
-arrive with the cycle's actual changes, established by diffing the tree against
-the baseline taken at `SessionStart`.
+The kinds whose names begin `Post`, and the one about the cycle itself, are
+dispatched at the end of a cycle from the `Stop` and `SubagentStop` hook points.
+They arrive with the cycle's actual changes, established by diffing the tree
+against the baseline taken at `SessionStart`. `sr-guardrail help` lists them;
+they are not restated here, because a copy of that list is what an author would
+trust after a module is added and it is the copy that goes stale.
 
 The difference from a `Pre` kind is what a refusal means. A `Pre` kind runs
 before the action and prevents it. A `Post` kind runs after, so the change is
@@ -329,10 +331,11 @@ finished and it must fix what it did. That makes `Post` the right kind for a
 rule about the *result* of a turn ("every new file under `memories/` has
 frontmatter") and the wrong one for a rule about permission to act at all.
 
-`TurnEnd` carries no fields. It fires once per cycle regardless of what changed,
-which is what a rule about the turn as a whole wants — but it means such a rule
-has to establish its own subject, usually by asking `sr-session query` about the
-transcript.
+The cycle kind carries no fields at all. It fires once per cycle regardless of
+what changed, which is what a rule about the turn as a whole wants — but it
+means such a rule has to establish its own subject, usually by asking
+`sr-session query` about the transcript, or by having per-file rules record
+what they saw into `sr-session state` for it to read.
 
 A `Post` refusal is reported to the agent as a blocking error on the cycle, and
 the cycle's read mark does not advance — so the next `Stop` judges the same span
