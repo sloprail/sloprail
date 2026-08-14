@@ -87,6 +87,37 @@ esac
 # content.
 [ -n "$body" ] || exit 0
 
+# A rule too large to judge is REFUSED, not permitted.
+#
+# The prompt carries the whole rule plus every meta-rule, so a large enough
+# RULE.md exceeds the model's context and the CLI rejects the request outright
+# ("Prompt is too long · the request is ~N tokens (limit 200000)"). No verdict
+# is written, and the fail-open branch below then PERMITS — measured on this
+# build: a 2.1MB RULE.md was permitted in 3.8s, unjudged.
+#
+# Fail-open is right for the machinery: a timeout or a missing binary is a fact
+# about the moment the hook ran, which the author did not cause and cannot fix
+# by editing anything. Size is the opposite — caused by the content, identical
+# on every run, and fixable — so it is refused, and the refusal names the real
+# problem. A meta-rule this size is not a rule anyone will read.
+#
+# Threshold and reasoning shared with the placement judge in the owner's repo,
+# where it was measured: 534KB judged fine, 929KB was rejected by the model.
+max_bytes=600000
+body_bytes="$(printf '%s' "$body" | wc -c | tr -d ' ')"
+if [ -n "$body_bytes" ] && [ "$body_bytes" -gt "$max_bytes" ] 2>/dev/null; then
+  cat >&2 <<EOF
+RULE QUALITY: $path is ${body_bytes} bytes, which is too large to judge (the
+whole rule goes into the judge's prompt, and past roughly ${max_bytes} bytes the
+request exceeds the model's context and no verdict comes back).
+
+Refused rather than permitted because the size is itself the finding: a meta-rule
+is a short statement of one mistake and its fix. Split it, or cut it down, and it
+will be judged normally.
+EOF
+  exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Assemble the rubric: RUBRIC.md's frame, with <<<META_RULES>>> replaced by the
 # concatenated rules/<name>/RULE.md.
