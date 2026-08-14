@@ -1857,7 +1857,30 @@ func TestLookAt_IsTheOnlyPresenceOracle(t *testing.T) {
 	// So this asserts the shape rather than the behaviour — that no second stat
 	// of a path-for-presence survives in the package. markersOnDisk reads a
 	// file's CONTENT, which is a different question and stays where it is.
-	for _, name := range []string{"presence.go", "extract.go", "module.go", "event.go", "marker.go"} {
+	//
+	// The package is ENUMERATED rather than listed. A hand-written list is a
+	// second thing to keep in step with the package, and it had already fallen
+	// out of step: observed.go was absent from it, so a second oracle added
+	// there was scanned by nothing and this test passed green over it —
+	// verified by planting one. The property is about the package, so the
+	// package is what gets read, and a new file is covered the day it lands
+	// rather than the day somebody remembers this list.
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	var sources []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		sources = append(sources, name)
+	}
+	// The enumeration finding nothing would make every assertion below vacuous,
+	// which is the one way this test can pass without having looked at anything.
+	require.NotEmpty(t, sources, "no package sources were read, so nothing was checked")
+	require.Contains(t, sources, "presence.go", "the oracle's own file must be among what was read")
+
+	for _, name := range sources {
 		src, err := os.ReadFile(name)
 		require.NoError(t, err)
 		body := string(src)

@@ -150,16 +150,115 @@ func TestHead_UntrackedFilesDoNotAffectThePosition(t *testing.T) {
 func TestParseBranchHeaders_IgnoresEntryLines(t *testing.T) {
 	// Porcelain v2 interleaves entry lines with the headers, and a path
 	// containing spaces splits like a header would. Only the "# name value"
-	// shape is read.
+	// shape is read, and the `field == "#"` switch is the whole of what enforces
+	// it.
+	//
+	// The data below is chosen so that guard is the ONLY thing standing between
+	// the input and a wrong answer. An earlier version of this test used
+	// `? untracked branch.head evil`, which cannot reach the assertion: the two
+	// Cuts take "?" as the field and "untracked" as the name, so the name is
+	// never "branch.head" and the line is inert whether or not the guard is
+	// there. Deleting the guard — accepting "?" and "1" lines as headers —
+	// passed that version green. The property the test is named for was not
+	// being measured.
+	//
+	// What actually splits like a header is a path whose FIRST word is the
+	// header name, since the status letter takes the field slot and the path
+	// begins immediately after it. `? branch.head evil` is an untracked file
+	// named "branch.head evil", which git emits in exactly this shape.
+	for _, attack := range []struct {
+		name string
+		line string
+	}{
+		// An untracked path whose name begins with the branch header's.
+		{"untracked path named like the branch header", "? branch.head evil"},
+		// The same against the commit, which is the more damaging of the two:
+		// a poisoned oid is a baseline pointing at a commit nothing recorded.
+		{"untracked path named like the oid header", "? branch.oid deadbeef"},
+		// A changed-entry line, which begins with "1" and is otherwise the
+		// same shape.
+		{"changed entry named like the branch header", "1 branch.head evil"},
+		// The original line, kept so the ordinary interleaving stays covered —
+		// it is inert, and now it is inert alongside data that is not.
+		{"ordinary untracked path", "? untracked branch.head evil"},
+		{"ordinary changed entry", "1 .M N... 100644 100644 100644 aaa bbb some file.txt"},
+	} {
+		t.Run(attack.name, func(t *testing.T) {
+			pos, err := parseBranchHeaders(strings.Join([]string{
+				"# branch.oid abc123",
+				"# branch.head main",
+				attack.line,
+			}, "\n"))
+			require.NoError(t, err)
+			assert.Equal(t, "abc123", pos.Commit, "an entry line must not supply the commit")
+			assert.Equal(t, "main", pos.Branch, "an entry line must not supply the branch")
+		})
+	}
+
+	// All of them at once, since a real status carries many entries and the
+	// headers come first — a later line overwriting an earlier header is the
+	// shape that survives a per-line test.
 	pos, err := parseBranchHeaders(strings.Join([]string{
 		"# branch.oid abc123",
 		"# branch.head main",
 		"1 .M N... 100644 100644 100644 aaa bbb some file.txt",
 		"? untracked branch.head evil",
+		"? branch.head evil",
+		"? branch.oid deadbeef",
+		"1 branch.head evil",
 	}, "\n"))
 	require.NoError(t, err)
 	assert.Equal(t, "abc123", pos.Commit)
 	assert.Equal(t, "main", pos.Branch)
+}
+
+// TestParseBranchHeaders_AValuelessHeaderDoesNotEraseTheOneAlreadyRead pins the
+// second Cut's `ok`, which is load-bearing and was not being measured.
+//
+// A header line carrying a NAME and no value — "# branch.oid" on its own —
+// splits to name="branch.oid", v="". Without the `ok` guard the empty string is
+// written straight over a commit that was read correctly a line earlier, and
+// parseBranchHeaders then finds Commit == "" and returns the ABSENT position.
+//
+// That is the silent direction. An absent position is the documented, ordinary
+// answer for a repository with no commit yet, so Head returns it with no error:
+// the caller records no baseline, the session measures nothing, and nothing
+// anywhere says why. It is the same shape as F4 — a fault degrading into the
+// "there is simply nothing here" answer — reached through the parser instead of
+// through the not-a-repository check.
+//
+// Both headers are covered because they fail differently. A wiped branch is
+// recoverable (Contains compares on the commit); a wiped commit is the baseline
+// itself.
+func TestParseBranchHeaders_AValuelessHeaderDoesNotEraseTheOneAlreadyRead(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		truncated string
+	}{
+		{"valueless oid", "# branch.oid"},
+		{"valueless head", "# branch.head"},
+		// A trailing space is the near miss, and it lands on the same guard
+		// rather than around it: the TrimSpace on the way in removes it, so the
+		// line reaches the second Cut as the valueless case above and `ok` is
+		// what stops it. Kept because it is the spelling that looks like it
+		// should slip past — the Cut would succeed with an empty value if the
+		// trim were ever dropped, and then the guard would not be reached at
+		// all.
+		{"oid with a trailing space", "# branch.oid "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pos, err := parseBranchHeaders(strings.Join([]string{
+				"# branch.oid abc123",
+				"# branch.head main",
+				tc.truncated,
+			}, "\n"))
+			require.NoError(t, err)
+			assert.Equal(t, "abc123", pos.Commit,
+				"a valueless header must not erase the commit already read — an empty commit is reported as an absent position, and the session then measures nothing while saying nothing")
+			assert.Equal(t, "main", pos.Branch,
+				"a valueless header must not erase the branch already read")
+		})
+	}
 }
 
 func TestHead_TwoDetachedHeadsAreTellableApart(t *testing.T) {

@@ -251,14 +251,36 @@ const detachedHead = "(detached)"
 func parseBranchHeaders(out string) (Position, error) {
 	var p Position
 	for _, line := range strings.Split(out, "\n") {
+		// This first `ok` is EQUIVALENT to letting the line through, and is kept
+		// for the reading rather than for the behaviour. A line with no space
+		// cuts to field=<the whole line>, value="" — and the second Cut below
+		// then fails its own `ok` on that empty value, so the line is dropped
+		// either way. A mutation ignoring this one survives the suite; the guard
+		// below is the one that has to be right.
 		field, value, ok := strings.Cut(strings.TrimSpace(line), " ")
 		if !ok {
 			continue
 		}
+		// `field == "#"` is the whole of what keeps an ENTRY line from supplying
+		// a header. It matters because an entry line splits into the same shape:
+		// an untracked path named "branch.head evil" arrives as
+		// `? branch.head evil`, whose second token IS the header name, so
+		// without this the branch would be read off a filename. Pinned by
+		// TestParseBranchHeaders_IgnoresEntryLines, whose data is chosen to
+		// reach this guard rather than merely to look like it does.
 		switch field {
 		case "#":
 			// A header line: "# branch.oid <value>". The switch above matched
 			// the "#" and left the rest to be split again.
+			//
+			// This second `ok` IS load-bearing, and its failure is silent. A
+			// valueless header — "# branch.oid" alone — splits to
+			// name="branch.oid", v="", and without the guard that empty string
+			// overwrites a commit already read correctly. Commit == "" is then
+			// reported as an ABSENT position, which is the ordinary no-commit-yet
+			// answer and carries no error: the baseline goes unrecorded and the
+			// session measures nothing while saying nothing. Pinned by
+			// TestParseBranchHeaders_AValuelessHeaderDoesNotEraseTheOneAlreadyRead.
 			name, v, ok := strings.Cut(value, " ")
 			if !ok {
 				continue
