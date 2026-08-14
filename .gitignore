@@ -28,3 +28,9 @@
 *.db
 *.db-wal
 *.db-shm
+
+# Agent worktrees. Claude Code puts an isolated sub-agent's checkout here, which
+# is a whole second copy of this repository — so a tool that walks the tree
+# (gofmt, go vet, a CI lint step) sees every file twice and reports the copy's
+# path as though it were ours.
+/.claude/worktrees/
