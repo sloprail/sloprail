@@ -982,6 +982,41 @@ func refusalReason(command string, code int, stdout, stderr []byte) string {
 			command, quoted(stderr))
 	}
 
+	// Killed by a signal. Checked BEFORE the prose branches, because on one of
+	// the two ways this is reported the shell's own obituary is sitting in
+	// stderr and would otherwise be read as the rule speaking.
+	//
+	// A hook is run as `sh -c <command>`, so there are two shapes depending on
+	// whether the signal reached the shell itself or only the command it was
+	// waiting on, and the shell in question differs by platform:
+	//
+	//   - The direct child died by signal. Go reports ExitCode() == -1, a
+	//     sentinel for "no exit status" rather than a status any process can
+	//     return. This is what macOS produces, where /bin/sh is bash and bash
+	//     re-raises the signal so the death propagates.
+	//
+	//   - The shell OUTLIVED its child and reported on it. It exits 128+N — 137
+	//     for SIGKILL — and writes a job-control line such as "Killed" to
+	//     stderr. This is what Linux produces, where /bin/sh is dash. Measured
+	//     on ubuntu-24.04: dash gives code=137, stderr="Killed\n", while bash
+	//     on the same machine gives code=-1 and stderr empty.
+	//
+	// Both are the same fact about the world — the hook did not exit, it was
+	// killed — and the author must be told that either way. Reading the second
+	// shape as prose reported "Killed" to the agent as though the rule had
+	// decided it, which is precisely the confusion this branch exists to
+	// prevent, and it made the answer depend on which shell /bin/sh happens to
+	// be rather than on what happened to the hook.
+	//
+	// 128+N is the POSIX convention for "terminated by signal N" and is what
+	// every shell uses, so this is the portable spelling of the same question
+	// rather than a special case for one of them. Only the signals that mean a
+	// violent death are read this way; see killedBySignal.
+	if code < 0 || killedBySignal(code) {
+		return fmt.Sprintf("guardrail hook %q was killed before it answered (no exit status: a crash, an out-of-memory kill, or a signal). The action was refused because a guardrail that did not answer must not be read as approval.%s",
+			command, quoted(stderr))
+	}
+
 	// Plain prose on either stream. Stdout first, because a hook that writes
 	// there is answering; stderr next, because a hook that refuses with
 	// `echo ... >&2; exit 1` is using an ordinary idiom and means it.
@@ -995,18 +1030,36 @@ func refusalReason(command string, code int, stdout, stderr []byte) string {
 		return text
 	}
 
-	// Killed by a signal, having said nothing. Go reports ExitCode() == -1 as a
-	// sentinel for "died by signal" — there is no such exit status, so printing
-	// the number sends the author looking for a bug in an exit path that was
-	// never taken. A crash, an OOM kill, a `kill -9`: the hook did not exit, and
-	// the message has to say so.
-	if code < 0 {
-		return fmt.Sprintf("guardrail hook %q was killed before it answered (no exit status: a crash, an out-of-memory kill, or a signal). The action was refused because a guardrail that did not answer must not be read as approval.", command)
-	}
-
 	// It said nothing usable. Refuse anyway, and say enough that whoever wrote
 	// the hook can find it — the alternative is letting the work through.
 	return fmt.Sprintf("guardrail hook %q refused (exit %d) but gave no reason", command, code)
+}
+
+// killedBySignal reports whether a shell's exit status is its way of saying the
+// command it ran was terminated by a signal.
+//
+// 128+N, the POSIX convention every shell follows. Deliberately NOT every code
+// above 128: that range is a real exit status a script may return on its own
+// account, and reading all of it as a death would relabel a hook's own refusal
+// as a crash — the opposite error, and the more dangerous one, since it would
+// tell an author their rule crashed when it had in fact decided.
+//
+// So only the signals that mean a process was killed rather than that it chose
+// to stop are listed. SIGINT and SIGTERM are included because an operator's
+// ^C or a supervisor's shutdown leaves a hook that did not answer, which is the
+// same fact for the purposes of this message. SIGPIPE (141) is excluded: a hook
+// whose stdout closed early is a plumbing accident this engine causes by
+// capturing streams, and it has usually already said what it meant to say.
+func killedBySignal(code int) bool {
+	switch code {
+	case 128 + 2, // SIGINT
+		128 + 6,  // SIGABRT — an assertion or a panic in a compiled hook
+		128 + 9,  // SIGKILL — a `kill -9`, or the OOM killer
+		128 + 11, // SIGSEGV — a crash
+		128 + 15: // SIGTERM
+		return true
+	}
+	return false
 }
 
 // quoted appends what the shell said, when it said anything, so the underlying
