@@ -124,7 +124,17 @@ var knownBins = map[string]binSpec{
 	// With a DIRECTORY destination the sources land at `dir/base(src)`. Both
 	// readings are stated rather than one being chosen — see copyTargets.
 	"cp": func(argv []string) []FileTarget {
-		ops := operands(argv)
+		// `-t`/`-T` invert the operand reading — see reshapesCopyOperands, which
+		// is the same refusal install has always made, applied to the sibling
+		// that shares its operand shape.
+		if reshapesCopyOperands(argv) {
+			return nil
+		}
+		// `-S SUFFIX` takes a separated value, exactly as it does for install
+		// one entry below. Unskipped, the suffix slides into operand position
+		// and becomes a phantom source: `cp -S .bak a.md b.md` reported `.bak`
+		// among the files copied into b.md.
+		ops := operandsSkipping(argv, map[string]bool{"-S": true, "--suffix": true})
 		if len(ops) < 2 {
 			return nil
 		}
@@ -161,11 +171,25 @@ var knownBins = map[string]binSpec{
 	"install": func(argv []string) []FileTarget {
 		// The two flags that change the operand SHAPE rather than decorate it,
 		// so neither can be handled by skipping a value.
+		// `-t` and `-T` are shared with cp and mv, so the check is too — see
+		// reshapesCopyOperands, which is also what makes it cluster-aware. The
+		// whole-string comparison this replaces was defeated by `install -Dt DIR a`,
+		// which reached copyTargets with source and destination inverted.
+		if reshapesCopyOperands(argv) {
+			return nil
+		}
 		for _, a := range argv[1:] {
-			if a == "-d" || a == "--directory" {
+			if a == "--" {
+				break
+			}
+			if a == "--directory" {
 				return nil
 			}
-			if a == "-t" || a == "--target-directory" || strings.HasPrefix(a, "--target-directory=") {
+			// `-d` clusters too: `install -dv a b` walked past a bare `-d`
+			// comparison and reported b as a copy of a, when the line creates
+			// directories and copies nothing.
+			if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && a != "-" &&
+				strings.ContainsRune(a[1:], 'd') {
 				return nil
 			}
 		}
@@ -207,8 +231,27 @@ var knownBins = map[string]binSpec{
 	// applies it only on the create branch. That is the split doing its job:
 	// this package says what the line determines, and the caller decides what
 	// the tree makes of it.
+	// Its flags that take a SEPARATED value are skipped, for the reason install
+	// gives about its own `-m 644`: an unskipped value slides into operand
+	// position and becomes a phantom file. That was not merely an over-report
+	// here — `touch -r ref.md a.md` produced a PreFileCreate for ref.md, a file
+	// the line only READS as an mtime reference, carrying the literal ""
+	// payload below. A rule guarding creations fired on a file nothing writes.
+	//
+	//	-r/--reference FILE   copy this file's times
+	//	-d/--date STRING      use this time
+	//	-t STAMP              use this timestamp
+	//
+	// `-t` is a value-taking flag here and NOT the destination-directory flag it
+	// is for cp — the same two letters meaning different things one entry apart,
+	// which is why each binary states its own.
 	"touch": func(argv []string) []FileTarget {
-		targets := withPayload(targetsFor(operands(argv), Write), literalPayload(""))
+		skip := map[string]bool{
+			"-r": true, "--reference": true,
+			"-d": true, "--date": true,
+			"-t": true,
+		}
+		targets := withPayload(targetsFor(operandsSkipping(argv, skip), Write), literalPayload(""))
 		for i := range targets {
 			targets[i].MTimeOnly = true
 		}
@@ -220,7 +263,14 @@ var knownBins = map[string]binSpec{
 	// file — presentNotAFile, and no file event can honestly be about it. It is
 	// listed so the intent is visible rather than absent, and so a path that is
 	// currently a FILE and about to be replaced by a directory is not silent.
-	"mkdir": func(argv []string) []FileTarget { return targetsFor(operands(argv), Write) },
+	//
+	// `-m/--mode` takes a separated value, skipped for the same reason install
+	// skips its own: `mkdir -m 755 d` reported `755` as a path being written.
+	// Harmless today only because filemod declines a non-file, which is luck
+	// rather than design — the mode string could name an existing file.
+	"mkdir": func(argv []string) []FileTarget {
+		return targetsFor(operandsSkipping(argv, map[string]bool{"-m": true, "--mode": true}), Write)
+	},
 
 	// ln creates a link at its last operand. Lstat sees the link itself, so the
 	// file module treats it as a file — see lookAt on why the link and not its
@@ -371,11 +421,76 @@ func ddIsAWholeCopy(argv []string) bool {
 // meaningless: a deleted file has no resulting content, and PreFileDelete
 // declares no field for one.
 func movelike(argv []string) []FileTarget {
+	// The same inversion cp and install refuse, and the worst of the three
+	// here: with `-t` unhandled the flag's value sat in the leading operands
+	// and mv reported the DESTINATION DIRECTORY as a Remove — a rule about
+	// deletions firing on a directory the command creates into.
+	if reshapesCopyOperands(argv) {
+		return nil
+	}
 	ops := operands(argv)
 	if len(ops) < 2 {
 		return nil
 	}
 	return append(targetsFor(ops[:len(ops)-1], Remove), copyTargets(ops)...)
+}
+
+// reshapesCopyOperands reports whether a cp-shaped invocation carries a flag
+// that changes WHICH operand is the destination, rather than decorating the
+// copy.
+//
+// # Why these two, and why refusing beats modelling
+//
+// `-t DIR` names the destination as a FLAG VALUE, so every operand becomes a
+// source and the destination is not among them. `-T` asserts the opposite —
+// the destination is never a directory — so the `Into` reading copyTargets
+// states is not merely unknown but false.
+//
+// install refused `-t` from the start, with the argument written out at its
+// entry above: reading the rest positionally is "a MEASURED wrong answer",
+// because b.md is reported as the destination carrying a.md's bytes when the
+// real results are DIR/a.md and DIR/b.md and b.md is only READ. That argument
+// was never applied to cp and mv, which reach the same copyTargets by the same
+// operand shape, so both carried the defect the comment describes. Measured
+// before this:
+//
+//	cp -t target-dir a.md b.md   -> b.md Written, Into [target-dir a.md]
+//	mv -t target-dir a.md b.md   -> target-dir REMOVED, plus b.md Written
+//
+// An unclaimed line costs a rule that does not fire; a wrong one costs a rule
+// that fires on the wrong file, and the second is the failure this package
+// treats as unacceptable. So the line is declined outright rather than modelled.
+//
+// # Why it is cluster-aware
+//
+// install's own guard compared whole strings, which its sibling sedlike right
+// below already knew was not enough — short flags cluster. `install -Dt DIR a`
+// walked straight past `a == "-t"` and inverted source and destination anyway,
+// so the guard that existed did not hold its own case. A clustered short group
+// is any single-dash argument that is not itself a long flag, and a `t` or `T`
+// anywhere in it reshapes the operands.
+func reshapesCopyOperands(argv []string) bool {
+	for _, a := range argv[1:] {
+		if a == "--" {
+			// Everything after is an operand, so no later word is a flag.
+			return false
+		}
+		switch a {
+		case "--target-directory", "--no-target-directory":
+			return true
+		}
+		if strings.HasPrefix(a, "--target-directory=") {
+			return true
+		}
+		if strings.HasPrefix(a, "--") || !strings.HasPrefix(a, "-") || a == "-" {
+			continue
+		}
+		// A clustered short group: `-t`, `-Dt`, `-T`, `-vT`.
+		if strings.ContainsAny(a[1:], "tT") {
+			return true
+		}
+	}
+	return false
 }
 
 // copyTargets builds the destination of a copy-shaped invocation, stating both

@@ -135,7 +135,63 @@ func parseKey(key string) (Plugin, bool) {
 	if at <= 0 || at == len(key)-1 {
 		return Plugin{}, false
 	}
-	return Plugin{Name: key[:at], Marketplace: key[at+1:]}, true
+	p := Plugin{Name: key[:at], Marketplace: key[at+1:]}
+	if !isPathSafe(p.Name) || !isPathSafe(p.Marketplace) {
+		return Plugin{}, false
+	}
+	return p, true
+}
+
+// isPathSafe reports whether a settings-file name may be used as a single path
+// component.
+//
+// # What this stops
+//
+// Both halves of a `<plugin>@<marketplace>` key are joined into filesystem paths
+// — `<cache>/<marketplace>/<plugin>/<version>` and `<mktRoot>/plugins/<plugin>`
+// — and filepath.Join CLEANS its result, so a name containing `..` does not
+// produce a path that fails to exist: it produces a DIFFERENT, existing path
+// outside the root that was meant to bound it. Measured before this check, on
+// both branches:
+//
+//   - `{"enabledPlugins": {"../../elsewhere@m": true}}` resolved a plugin root
+//     to `<home>/elsewhere/0.0.1`, entirely outside the plugin cache.
+//   - a directory-sourced marketplace with the name `../../../003/evil`
+//     resolved to a tree with no relationship to the marketplace at all.
+//
+// Root.Dir is handed straight to guardrail.NewWithPlugins, which reads
+// `<root>/guardrails/<name>/GUARDRAIL.md`. So a settings key could point the
+// engine's rule loading at an arbitrary directory — and the rules it found there
+// would load and enforce looking exactly like the plugin's own.
+//
+// A separator alone is enough to reject, without waiting for a `..`: neither
+// half of the key is a path in Claude Code's own model, and a name that contains
+// one is not a plugin this package can locate whatever it was intending. `.` and
+// `..` are named outright because they traverse without containing a separator.
+//
+// # Why it is unparseable rather than a separate error
+//
+// It comes back through the same door a malformed key does, so it is REPORTED as
+// an unresolvable plugin rather than dropped — the project enabled something and
+// sloprail is not loading it, which is the invariant this whole package holds.
+// The user sees the exact key, and the key is the fault.
+func isPathSafe(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if strings.ContainsRune(name, '/') || strings.ContainsRune(name, os.PathSeparator) {
+		return false
+	}
+	// A NUL cannot appear in a path at all, so a name carrying one is refused
+	// here rather than left to come back as a confusing "invalid argument" from
+	// the first syscall that sees it.
+	//
+	// Deliberately kept although no test can kill it: an os.Stat on such a name
+	// already fails on every platform, so this changes the MESSAGE and not the
+	// outcome, and no directory can be created to make the escape land. It is
+	// one comparison guarding the one input class the two branches above do not
+	// describe.
+	return !strings.ContainsRune(name, 0)
 }
 
 // Unresolved is an enabled plugin whose files could not be found.
@@ -258,12 +314,14 @@ func Resolve(projectDir, home string) (Resolution, error) {
 	for _, key := range enabled {
 		plugin, ok := parseKey(key)
 		if !ok {
-			// A key that is not `<plugin>@<marketplace>`. Reported rather than
-			// skipped, for the reason every unresolvable plugin is: the project
-			// enabled something, and sloprail is not loading it.
+			// A key that is not `<plugin>@<marketplace>`, or one whose halves
+			// are not usable as path components — see isPathSafe. Reported
+			// rather than skipped, for the reason every unresolvable plugin is:
+			// the project enabled something, and sloprail is not loading it.
 			res.Unresolved = append(res.Unresolved, Unresolved{
-				Key:    key,
-				Reason: "the settings key is not in `<plugin>@<marketplace>` form",
+				Key: key,
+				Reason: "the settings key is not in `<plugin>@<marketplace>` form, " +
+					"or one of its halves is not a usable directory name",
 			})
 			continue
 		}

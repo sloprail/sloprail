@@ -278,6 +278,23 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		// dispatch resolves per guardrail for exactly that reason. Subject is a
 		// pure function of the event and the cwd, so it serves either policy;
 		// this file's choice binds only this file.
+		// p.Cwd, where the Post sibling passes the repository ROOT and carries a
+		// long comment saying it must not be the cwd — a hook firing from a
+		// subdirectory would join a repo-relative path onto a directory already
+		// inside the repo.
+		//
+		// The divergence is real and currently inert, and the reason is not
+		// visible from this line: Subject reads its second argument only to
+		// resolve a path it is about to fingerprint FROM DISK, and the only Pre
+		// kind with a subject is PreFileCreate, whose fingerprint comes off the
+		// event's own content. So nothing on this path resolves anything, and
+		// the argument is unused rather than wrong.
+		//
+		// Stated here because the fact that makes it safe lives in another file.
+		// If a Pre kind ever gains a disk-read subject — PreFileUpdate is the
+		// obvious candidate, and it already has a path — this line silently
+		// acquires the exact defect dispatch_post.go documents at length. Pass
+		// the root then, as the Post side does.
 		subj, fingerprinted := rev.Subject(e, p.Cwd)
 
 		for _, d := range decls {

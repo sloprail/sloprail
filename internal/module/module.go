@@ -25,7 +25,11 @@
 // holds that property.
 package module
 
-import "github.com/sloprail/sloprail/internal/event"
+import (
+	"sort"
+
+	"github.com/sloprail/sloprail/internal/event"
+)
 
 // Module is a domain and the events it produces.
 type Module interface {
@@ -112,6 +116,55 @@ const (
 	// hold. A marker's line is the first such field.
 	TypeInt FieldType = "int"
 )
+
+// knownFieldTypes is every FieldType this build understands, and the single
+// place that answers the question.
+//
+// # Why this exists rather than a fourth switch
+//
+// Three separate switches read a FieldType — guardrail.fieldType (what the
+// checker expects), guardrail.fill (what a carried value is held to) and
+// guardrail.zero (what an absent one reads as). Each ends in a `default` that
+// treats an unrecognised type as "unknown, so check nothing": Any, the carried
+// value unchanged, and nil respectively.
+//
+// That default is correct for the switch that has it and catastrophic as a
+// system property, because the three defaults COMBINE into the exact defect
+// TypeInt was. A field declared `"integer"` rather than `"int"` — a plausible
+// misspelling of the newest constant — compiles `line > 10` clean, then returns
+// a carried float64 UNCHANGED so the comparison succeeds on a value the check
+// never described (the fail-open), while an ABSENT one comes back nil so the
+// same rule errors `<nil> > int` and refuses every action while blaming the
+// author's guardrail. Both halves of the round-3 bug, reachable by typo, with
+// nothing anywhere reporting that the type was not recognised.
+//
+// Adding a case to three switches is what the author of a sixth type has to
+// remember; this list is what makes forgetting loud instead of silent. Register
+// a module declaring a type not in here and the registry refuses it by name at
+// startup, which is the one moment a maintainer is looking.
+var knownFieldTypes = map[FieldType]bool{
+	TypeString: true,
+	TypeBool:   true,
+	TypeInt:    true,
+	TypeList:   true,
+	TypeMap:    true,
+}
+
+// KnownFieldType reports whether a declared field type is one this build
+// understands. Exported so the switches that read a FieldType can be tested
+// against the same list they are checked against.
+func KnownFieldType(t FieldType) bool { return knownFieldTypes[t] }
+
+// FieldTypes returns every known field type, in a stable order, for an error
+// that has to name the alternatives.
+func FieldTypes() []FieldType {
+	out := make([]FieldType, 0, len(knownFieldTypes))
+	for t := range knownFieldTypes {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
 
 // Input is what a module is given to extract from.
 //

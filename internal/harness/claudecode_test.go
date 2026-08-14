@@ -448,3 +448,200 @@ func writeManifest(t *testing.T, home, body string) {
 		t.Fatalf("write manifest: %v", err)
 	}
 }
+
+// TestResolve_AKeyWhoseHalvesAreNotDirectoryNamesCannotEscapeItsRoot is the
+// traversal case, on BOTH branches that join a key half into a path.
+//
+// Reproduced before the isPathSafe check existed: `filepath.Join` CLEANS its
+// result, so a `..` in either half does not produce a path that fails to exist —
+// it produces a different, EXISTING path outside the root meant to bound it.
+// Root.Dir is read for `<root>/guardrails/<name>/GUARDRAIL.md`, so either branch
+// pointed rule loading at an arbitrary directory whose rules would then enforce
+// looking exactly like the plugin's own.
+//
+// Each case computes its traversal RELATIVE to the path actually being joined,
+// and creates the target, so a passing test proves the name was refused rather
+// than that the escape happened to miss.
+func TestResolve_AKeyWhoseHalvesAreNotDirectoryNamesCannotEscapeItsRoot(t *testing.T) {
+	// The cache branch: <cache>/<marketplace>/<plugin>/<version>. A plugin name
+	// that climbs out of <cache>/<marketplace> reaches a tree of its own.
+	t.Run("plugin name escapes the cache", func(t *testing.T) {
+		home := t.TempDir()
+		target := filepath.Join(home, "evil")
+		if err := os.MkdirAll(filepath.Join(target, "0.0.1"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cacheMarket := filepath.Join(CacheRoot(home), "m")
+		rel, err := filepath.Rel(cacheMarket, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRefused(t, project(t, map[string]string{"settings.json": enabled(rel+"@m", "true")}),
+			home, rel+"@m")
+	})
+
+	// The same branch through the OTHER half of the key.
+	t.Run("marketplace name escapes the cache", func(t *testing.T) {
+		home := t.TempDir()
+		target := filepath.Join(home, "evil")
+		if err := os.MkdirAll(filepath.Join(target, "p", "0.0.1"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		rel, err := filepath.Rel(CacheRoot(home), target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRefused(t, project(t, map[string]string{"settings.json": enabled("p@"+rel, "true")}),
+			home, "p@"+rel)
+	})
+
+	// The directory-marketplace branch: <mktRoot>/plugins/<plugin> and the
+	// three siblings beside it, any of which a `..` climbs out of.
+	t.Run("plugin name escapes a directory marketplace", func(t *testing.T) {
+		home := t.TempDir()
+		proj := t.TempDir()
+		mkt := filepath.Join(proj, "mkt")
+		if err := os.MkdirAll(filepath.Join(mkt, "plugins"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(proj, "evil")
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		rel, err := filepath.Rel(filepath.Join(mkt, "plugins"), target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := rel + "@local"
+		if err := os.MkdirAll(filepath.Join(proj, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"enabledPlugins":{"` + key + `":true},` +
+			`"extraKnownMarketplaces":{"local":{"source":{"source":"directory","path":"` + mkt + `"}}}}`
+		if err := os.WriteFile(filepath.Join(proj, ".claude", "settings.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		assertRefused(t, proj, home, key)
+	})
+
+	// A separator alone is enough to reject, without any `..` to clean.
+	for _, key := range []string{"a/b@m", "p@m/n"} {
+		t.Run(key, func(t *testing.T) {
+			home := t.TempDir()
+			assertRefused(t, project(t, map[string]string{"settings.json": enabled(key, "true")}), home, key)
+		})
+	}
+
+	// The bare dot names traverse WITHOUT containing a separator, so they are a
+	// distinct branch and not a special case of the one above. Each target is
+	// created, so these fail if the name is honoured rather than passing because
+	// the escape happened to land somewhere empty.
+	t.Run("..@m climbs to the cache root", func(t *testing.T) {
+		// <cache>/m/.. is <cache> itself, whose children are marketplace
+		// directories — so a version directory placed there resolves.
+		home := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(CacheRoot(home), "0.0.1"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		assertRefused(t, project(t, map[string]string{"settings.json": enabled("..@m", "true")}),
+			home, "..@m")
+	})
+
+	t.Run("p@.. climbs out of the cache root", func(t *testing.T) {
+		home := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(filepath.Dir(CacheRoot(home)), "p", "0.0.1"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		assertRefused(t, project(t, map[string]string{"settings.json": enabled("p@..", "true")}),
+			home, "p@..")
+	})
+
+	t.Run(".@local is the marketplace's own plugins dir", func(t *testing.T) {
+		home := t.TempDir()
+		proj := t.TempDir()
+		mkt := filepath.Join(proj, "mkt")
+		if err := os.MkdirAll(filepath.Join(mkt, "plugins"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(proj, ".claude"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"enabledPlugins":{".@local":true},` +
+			`"extraKnownMarketplaces":{"local":{"source":{"source":"directory","path":"` + mkt + `"}}}}`
+		if err := os.WriteFile(filepath.Join(proj, ".claude", "settings.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		assertRefused(t, proj, home, ".@local")
+	})
+}
+
+// assertRefused holds a settings key to the invariant: it resolves to no root,
+// and it is REPORTED rather than dropped, quoting the key the user wrote.
+func assertRefused(t *testing.T, proj, home, key string) {
+	t.Helper()
+	res, err := Resolve(proj, home)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(res.Roots) != 0 {
+		t.Fatalf("key %q resolved to a root and must not have: %+v", key, res.Roots)
+	}
+	// Refused, not dropped: the project enabled something and sloprail is not
+	// loading it, which is the invariant of this whole package.
+	if len(res.Unresolved) != 1 {
+		t.Fatalf("key %q was dropped silently: %+v", key, res)
+	}
+	if !strings.Contains(res.Unresolved[0].Message(), key) {
+		t.Errorf("the report does not quote the key the user wrote: %s", res.Unresolved[0].Message())
+	}
+}
+
+// TestResolve_ADirectoryMarketplaceSourceIsHonouredAsWritten is the boundary of
+// the check above: the marketplace's own `path` is a PATH by declaration, and a
+// project that points one outside its tree meant to. Only the KEY halves are
+// constrained, because only they are names being used as path components.
+func TestResolve_ADirectoryMarketplaceSourceIsHonouredAsWritten(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "p"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	proj := project(t, map[string]string{"settings.json": `{"enabledPlugins":{"p@local":true},
+		"extraKnownMarketplaces":{"local":{"source":{"source":"directory","path":"` + outside + `"}}}}`})
+
+	res, err := Resolve(proj, home)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(res.Roots) != 1 || res.Roots[0].Dir != filepath.Join(outside, "p") {
+		t.Fatalf("a declared marketplace path must be used as written: %+v %+v", res.Roots, res.Unresolved)
+	}
+}
+
+// TestResolve_TheManifestCannotNameAVersionOutsideTheCache. The version half of
+// the path comes from the manifest, which is a third attacker-reachable string.
+// It cannot traverse, because a recorded version is only used when it matches an
+// entry of the real directory listing — asserted here so that property is not
+// refactored away.
+func TestResolve_TheManifestCannotNameAVersionOutsideTheCache(t *testing.T) {
+	home := t.TempDir()
+	installPlugin(t, home, "m", "p", "0.0.1")
+	installPlugin(t, home, "m", "p", "0.0.2")
+	if err := os.MkdirAll(filepath.Join(home, "evil"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeManifest(t, home, `{"version":2,"plugins":{"p@m":[{"version":"../../../evil"}]}}`)
+	proj := project(t, map[string]string{"settings.json": enabled("p@m", "true")})
+
+	res, err := Resolve(proj, home)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(res.Roots) != 1 {
+		t.Fatalf("want one root, got %+v", res.Roots)
+	}
+	want := filepath.Join(home, ".claude", "plugins", "cache", "m", "p", "0.0.2")
+	if res.Roots[0].Dir != want {
+		t.Errorf("a traversing manifest version was honoured: got %s want %s", res.Roots[0].Dir, want)
+	}
+}

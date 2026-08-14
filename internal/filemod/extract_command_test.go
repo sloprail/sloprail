@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -992,6 +993,50 @@ func TestExtractCommand_OneFileIsOneEvent(t *testing.T) {
 	events, err := extractFor(t, "rm "+path+" "+path)
 	require.NoError(t, err)
 	assert.Len(t, events, 1, "one file named twice is one event")
+}
+
+// TestExtractCommand_OneFileIsOneEventAcrossSPELLINGS is the same contract held
+// to the case the test above cannot see.
+//
+// The dedup was keyed on the RAW path while its sibling in extractObserved keyed
+// on the canonical one — the half-fix shape. Two spellings of one file therefore
+// survived as two targets and collapsed into two IDENTICAL events, which is
+// exactly what the loop's own comment forbids: "a rule should be asked once
+// about a file, and asking twice would run a judging hook twice over one
+// decision". A judging hook is a model call, and an author reads one file
+// refused twice for one reason.
+//
+// The test above used the same spelling twice, which the raw key already caught,
+// so the contract read as pinned while three other spellings of it were not.
+func TestExtractCommand_OneFileIsOneEventAcrossSpellings(t *testing.T) {
+	cases := []struct {
+		name string
+		// %s is replaced by the workspace root, so a case can mix an absolute
+		// spelling with a relative one for the same file.
+		command string
+	}{
+		{"bare and dot-slash", "printf x > notes.md; printf y > ./notes.md"},
+		{"bare and absolute", "printf x > notes.md; printf y > %s/notes.md"},
+		{"dot-slash and absolute", "printf x > ./notes.md; printf y > %s/notes.md"},
+		{"touch, bare and dot-slash", "touch notes.md; touch ./notes.md"},
+		{"redundant separators", "touch notes.md; touch .//notes.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			command := tc.command
+			if strings.Contains(command, "%s") {
+				command = fmt.Sprintf(command, dir)
+			}
+
+			events, err := extractForIn(t, command, dir)
+			require.NoError(t, err)
+			require.Len(t, events, 1,
+				"two spellings of one file are one event, not two: %v", kindsByPath(events))
+			assert.Equal(t, "notes.md", events[0].Fields[FieldPath],
+				"and it is reported under the workspace-relative spelling")
+		})
+	}
 }
 
 // TestExtractCommand_AnUpdateCarriesTheMarkersOnDisk pins that a command-derived

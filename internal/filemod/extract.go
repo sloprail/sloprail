@@ -541,10 +541,34 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 	seen := make(map[string]bool, len(targets))
 
 	for _, t := range targets {
-		if seen[t.Path] {
+		// Keyed on the CANONICAL spelling, not the raw one, because "one file"
+		// is a fact about the file and not about how the line spelled it.
+		//
+		// This was keyed on t.Path, and the sibling loop in extractObserved
+		// keys on `clean` — the same dedup, one canonical and one not, which is
+		// the half-fix shape. Two spellings of one path therefore survived as
+		// two targets and then collapsed into two IDENTICAL reported events.
+		// Measured before this:
+		//
+		//	printf x > notes.md; printf y > ./notes.md      -> 2x PreFileCreate "notes.md"
+		//	printf x > notes.md; printf y > <root>/notes.md -> 2x PreFileCreate "notes.md"
+		//	touch notes.md; touch ./notes.md                -> 2x PreFileCreate "notes.md"
+		//
+		// The cost is exactly what the paragraph above forbids: a judging hook
+		// — a model call — runs twice over one decision, and an author reading
+		// the report sees one file refused twice for the same reason. It is
+		// invisible in the ordinary case because the identical spelling twice,
+		// which is what the test pinned, was already caught by the raw key.
+		//
+		// reportable() is the canonical spelling and is what the event carries,
+		// so it is the honest key. The RAW spelling is still what the filesystem
+		// is asked with below — that separation is the point, and this only
+		// decides which target is looked at, never how.
+		key := reportable(t.Path, pending.Root())
+		if seen[key] {
 			continue
 		}
-		seen[t.Path] = true
+		seen[key] = true
 
 		// The two spellings are separated here exactly as extractPending
 		// separates them, and for the same reason: the FILESYSTEM is asked with
@@ -592,7 +616,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 				continue
 			}
 			events = append(events, FileEvent{
-				Path:    reportable(t.Path, pending.Root()),
+				Path:    key,
 				Content: content,
 				Markers: Scan(content),
 			}.Event(KindPreCreate))
@@ -607,7 +631,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 			continue
 		}
 
-		f := FileEvent{Path: reportable(t.Path, pending.Root())}
+		f := FileEvent{Path: key}
 		kind := KindPreUpdate
 		if t.Effect == commandmod.Remove {
 			kind = KindPreDelete
