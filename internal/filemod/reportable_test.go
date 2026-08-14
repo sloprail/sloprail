@@ -198,9 +198,9 @@ func TestReportable_ASymlinkIntoTheRepositoryFromOutsideIsReportedAsInside(t *te
 func TestReportable_ARelativePathIsCleanedButNotResolved(t *testing.T) {
 	root := t.TempDir()
 	for given, want := range map[string]string{
-		"memories/a.md":   "memories/a.md",
-		"./memories/a.md": "memories/a.md",
-		"a.md":            "a.md",
+		"memories/a.md":    "memories/a.md",
+		"./memories/a.md":  "memories/a.md",
+		"a.md":             "a.md",
 		"secret/./keys.md": "secret/keys.md",
 		// An escape stays an escape. Folding it into something a matcher would
 		// admit is the one thing cleaning must not do.

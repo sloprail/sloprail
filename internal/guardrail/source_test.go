@@ -28,7 +28,6 @@ func TestOrigin_AttributionAndQualifiedName(t *testing.T) {
 	}
 }
 
-
 // at builds the plugin origins a store is constructed from, taking each
 // plugin's NAME from its installation path the way the resolver takes it from
 // the settings key that enabled it.
