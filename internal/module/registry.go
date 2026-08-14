@@ -3,6 +3,7 @@ package module
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -109,6 +110,9 @@ func (r *Registry) add(m Module) error {
 			// happened to be asked first.
 			return fmt.Errorf("module %q: kind %q already declared by %q", name, k.Name, prev.Name())
 		}
+		if err := checkFieldTypes(name, k.Name, k.Fields, ""); err != nil {
+			return err
+		}
 		if _, twice := staged[k.Name]; twice {
 			// A module declaring one kind twice was already refused before
 			// staging existed — by the r.owner check above, reading a write
@@ -127,6 +131,63 @@ func (r *Registry) add(m Module) error {
 	}
 	r.byName[name] = m
 	return nil
+}
+
+// checkFieldTypes refuses a kind declaring a field whose type this build does
+// not understand, anywhere in its shape.
+//
+// # Why this is fatal rather than a warning
+//
+// The three switches that read a FieldType — the checker's fieldType, and
+// fill/zero in internal/guardrail — each treat an unrecognised type as "nothing
+// declared, so check nothing". Individually that is the honest answer. Together
+// they are a fail-open and a spurious refusal at once: see knownFieldTypes for
+// the full reproduction. A module is compiled INTO this build, so a bad type
+// here is a maintainer's typo rather than a user's input, and the moment to say
+// so is startup — where it is one loud sentence — rather than at whichever tool
+// call happens to evaluate a rule over that field.
+//
+// # Why it recurses
+//
+// Elem and Fields are read by exactly the same switches, one level down. A list
+// of mistyped elements or a map with one mistyped key produces the identical
+// defect inside a predicate body, which is the harder half to notice — the
+// collection checks clean and the element silently does not. Checking only the
+// top level would leave the nested spelling of this bug alive, which is how the
+// original was missed.
+func checkFieldTypes(module, kind string, fields []FieldDecl, path string) error {
+	for _, f := range fields {
+		where := f.Name
+		if path != "" {
+			where = path + "." + f.Name
+		}
+		if !KnownFieldType(f.Type) {
+			return fmt.Errorf(
+				"module %q: kind %q field %q declares unknown type %q — this build understands %s; "+
+					"an unknown type is checked as Any, so a matcher over it compiles and then compares "+
+					"whatever arrived, which is a rule that reads as enforcing and does not",
+				module, kind, where, f.Type, joinTypes(FieldTypes()))
+		}
+		if f.Elem != nil {
+			// The element declaration carries no name of its own, so it is
+			// described by the list it belongs to.
+			if err := checkFieldTypes(module, kind, []FieldDecl{*f.Elem}, where+"[]"); err != nil {
+				return err
+			}
+		}
+		if err := checkFieldTypes(module, kind, f.Fields, where); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func joinTypes(types []FieldType) string {
+	parts := make([]string, len(types))
+	for i, t := range types {
+		parts[i] = string(t)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // Lookup returns the module that owns a kind, and whether one does. A kind
