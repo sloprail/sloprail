@@ -365,6 +365,30 @@ func TestNesting_InterpreterPayloadsAreOpaque(t *testing.T) {
 			want: []string{"python"}, unseen: "npm",
 			whyRight: "the payload is Python, and its words are not shell words",
 		},
+
+		// A LONG option is never the command-string flag, and several contain
+		// a `c`. Under a containment test that did not exclude them, `--norc`
+		// and `--rcfile` read as naming a payload and the next word is taken as
+		// code — so `sh --norc npm publish` reports a payload parsed out of
+		// `npm`, which is a program word invented from an option name.
+		//
+		// Measured: removing the long-option exclusion changes exactly these
+		// lines and nothing else in the suite noticed, so they are pinned here.
+		{
+			name: "long option containing c is not the payload flag", src: `sh --norc npm publish`,
+			want: []string{"sh"}, unseen: "npm",
+			whyRight: "--norc is an option, not -c; the bare word after it is a script FILE",
+		},
+		{
+			name: "rcfile takes a value and is not the payload flag", src: `bash --rcfile npm publish`,
+			want: []string{"bash"}, unseen: "npm",
+			whyRight: "--rcfile names a startup file; nothing here is a command string",
+		},
+		{
+			name: "login is not the payload flag", src: `bash --login npm publish`,
+			want: []string{"bash"}, unseen: "npm",
+			whyRight: "--login contains no c at all, and is still not a payload flag",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertBins(t, tc.src, tc.want)
@@ -466,8 +490,18 @@ func TestNesting_InterpreterIsStillReported(t *testing.T) {
 	} {
 		t.Run(src, func(t *testing.T) {
 			got := binsOf(src)
+			// Fatal, not Error. The next assertion indexes got[0], and an
+			// implementation that REPLACED the interpreter with its payload
+			// leaves this empty — so continuing would panic and bury the clear
+			// message under a stack trace. Measured: the mutant that swaps the
+			// append for an assignment produced exactly that, and the panic
+			// masked this diagnosis until the check became fatal.
+			if len(got) == 0 {
+				t.Fatalf("bins is empty for %q — the interpreter itself is no longer "+
+					"reported; unwrapping must ADD to the list, not replace what wraps", src)
+			}
 			if !contains(got, "sh") && !contains(got, "bash") {
-				t.Errorf("bins = %v — the interpreter itself is no longer reported; "+
+				t.Fatalf("bins = %v — the interpreter itself is no longer reported; "+
 					"unwrapping must add to the list, not replace what wraps", got)
 			}
 			// The interpreter comes FIRST. It is the program the line names,
@@ -493,6 +527,26 @@ func TestNesting_InterpreterIsStillReported(t *testing.T) {
 // Returning nothing at the limit would be the worse failure — it would make
 // deep nesting a way to hide the outer levels too.
 func TestNesting_InterpreterPayloadDepthIsBounded(t *testing.T) {
+	// The bound is pinned to a LITERAL, not read from the constant.
+	//
+	// Every other assertion here derives its cases from maxUnwrapDepth, which
+	// makes them move with it: changing the constant to 3 or 5 leaves them all
+	// passing, because the boundary they walk slides along too. That was
+	// measured — mutants setting the bound to 3 and to 5 both survived the
+	// suite until this line existed.
+	//
+	// So the chosen depth is asserted directly. The number is a decision with
+	// an argument behind it (see maxUnwrapDepth), and changing it should have
+	// to be deliberate: this is the line that makes someone read that argument
+	// before moving it.
+	if maxUnwrapDepth != 4 {
+		t.Fatalf("maxUnwrapDepth = %d, want 4 — the bound is a decision, not a "+
+			"tuning knob. Read the argument on the constant: one level is the "+
+			"ordinary `bash -lc`, two is a harness wrapping an agent's own `sh -c`, "+
+			"three is slack for a layer nobody planned, four is past every real "+
+			"form. If you are changing it, update that argument too.", maxUnwrapDepth)
+	}
+
 	// nest builds `sh -c 'sh -c ... npm publish'` n interpreters deep, quoting
 	// each level so the payload survives as one word.
 	nest := func(n int) string {
@@ -501,6 +555,16 @@ func TestNesting_InterpreterPayloadDepthIsBounded(t *testing.T) {
 			src = `sh -c ` + squote(src)
 		}
 		return src
+	}
+
+	// The boundary at its literal depth, independent of the constant. Four
+	// levels reach npm and five do not — the same two facts the derived cases
+	// below assert, written so they cannot slide.
+	if got := binsOf(nest(4)); !contains(got, "npm") {
+		t.Errorf("bins = %v, want npm reached at exactly 4 interpreters deep", got)
+	}
+	if got := binsOf(nest(5)); contains(got, "npm") {
+		t.Errorf("bins = %v, want npm NOT reached at 5 interpreters deep", got)
 	}
 
 	// Inside the budget every level is read, and npm at the bottom is reported.
@@ -703,6 +767,49 @@ func TestNesting_PreviouslyUnlistedWrappersAreNowUnwrapped(t *testing.T) {
 			"flock's -c payload runs through sh -c, so it is a command string, not a vector"},
 	} {
 		t.Run(tc.src, func(t *testing.T) { assertBins(t, tc.src, tc.want) })
+	}
+}
+
+// TestNesting_NonShellInterpretersDoNotClusterTheirFlags pins the difference
+// between a SHELL's `-c` and a `-c` that merely looks like one.
+//
+// A shell's short flags cluster: `-lc` sets both `l` and `c`, which is why the
+// cluster test exists at all. `su` and `flock` are not shells — their `-c` is a
+// long-style option that happens to be one letter, and neither accepts it
+// packed into a cluster. Reading one out of `-lc` or `-nc` invents a spelling
+// the program rejects.
+//
+// The cost of getting this wrong is not a miss but a FABRICATION, which is the
+// worse direction: with clustering wrongly enabled, `flock /tmp/l -nc "npm
+// publish"` reports a program whose name is the whole string `npm publish` —
+// a binary nothing invokes and a basename no rule can match — and reports npm
+// twice. Measured: nothing else in the suite noticed that.
+func TestNesting_NonShellInterpretersDoNotClusterTheirFlags(t *testing.T) {
+	for _, tc := range []struct {
+		src  string
+		want []string
+		why  string
+	}{
+		// The exact `-c` is the payload flag and works.
+		{`su -c "npm publish"`, []string{"su", "npm"}, "the exact -c is su's command option"},
+		{`flock /tmp/l -c "npm publish"`, []string{"flock", "npm"}, "the exact -c is flock's command option"},
+
+		// A cluster CONTAINING c is not. su has no such grammar, so there is
+		// no command string here and the payload must not be read.
+		{`su -lc "npm publish"`, []string{"su"}, "su does not accept -c packed into a cluster"},
+		{`flock /tmp/l -nc "npm publish"`, []string{"flock"}, "flock does not either"},
+	} {
+		t.Run(tc.src, func(t *testing.T) {
+			assertBins(t, tc.src, tc.want)
+			// The fabrication check. The whole payload string arriving as one
+			// program word is the specific damage clustering would do here.
+			for _, inv := range ExtractCommand(tc.src).Invocations {
+				if strings.Contains(inv.Bin, " ") {
+					t.Errorf("bin %q contains a space — a command STRING was reported as a "+
+						"single program word, which is a binary nothing invokes", inv.Bin)
+				}
+			}
+		})
 	}
 }
 

@@ -554,6 +554,26 @@ func unwrap(argv []word) []word {
 		if w.requiresFlag[arg] {
 			enabled = true
 		}
+		// A `c` in a short flag, on a wrapper that ALSO takes a `-c` command
+		// string, ends the vector scan.
+		//
+		// flock and runuser are in both tables: they accept either a vector or
+		// a `-c` string, and takesValue enumerates only the exact `-c`. Any
+		// other spelling carrying a c — `flock file -nc "npm publish"` — falls
+		// through to the bare-word branch, and the payload is returned AS the
+		// vector: one invocation whose bin is the whole string `npm publish`,
+		// a binary nothing invokes and a basename no rule can match.
+		//
+		// Stopping is right whichever way the real program reads the spelling.
+		// If it accepts the cluster, the next word is a command STRING and
+		// belongs to the interpreter path, not here. If it rejects it — which
+		// is what flock does — the line runs nothing at all, and reporting the
+		// wrapper alone is the honest answer. Both roads lead away from
+		// inventing a program.
+		if _, alsoInterpreter := interpreters[basename(argv[0].value)]; alsoInterpreter &&
+			!strings.HasPrefix(arg, "--") && strings.Contains(arg[1:], "c") {
+			return nil
+		}
 		if w.suppressedBy[arg] {
 			// The wrapper is describing its argument, not running it —
 			// `command -v npm`. There is no wrapped invocation to report, and
