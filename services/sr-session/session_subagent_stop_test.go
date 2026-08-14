@@ -78,9 +78,21 @@ func TestSubagentStopStandsDownRatherThanActingAsTheParent(t *testing.T) {
 
 // TestSubagentStopHonoursStopHookActive: already refused once this cycle, so
 // refusing again would be a loop the sub-agent cannot leave.
+//
+// What must not happen is a second refusal, and what must not happen is the
+// cycle being judged again — NOT that the command falls silent. This path still
+// discards the read position, exactly as the root's Stop does, because a
+// position is a fact about a cycle's reading and this cycle is over; when the
+// store cannot be opened to clear it, saying so on stderr is the same
+// reported-and-swallowed bookkeeping failure it is everywhere else.
+//
+// An earlier version of this test asserted an empty stderr, which quietly
+// asserted that this path does no bookkeeping at all. It passed only while the
+// command was a stub.
 func TestSubagentStopHonoursStopHookActive(t *testing.T) {
-	_, stderr, err := runSubagentStop(t,
+	stdout, _, err := runSubagentStop(t,
 		`{"transcript_path":"/nowhere/s.jsonl","agent_id":"abc","stop_hook_active":true}`)
-	require.NoError(t, err)
-	assert.Empty(t, stderr, "a cycle already refused once must be left alone entirely")
+	require.NoError(t, err, "a second refusal would be a loop the sub-agent cannot leave")
+	assert.Empty(t, stdout,
+		"nothing may be written to the block channel on a cycle that was already refused once")
 }

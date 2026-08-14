@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+
+	"github.com/sloprail/sloprail/internal/gitrepo"
 )
 
 // AppName is the directory this tool keeps its own data under.
@@ -75,10 +77,50 @@ var nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9]`)
 // macOS reports /var where the filesystem holds /private/var, and the two would
 // otherwise be two different sessions of the same tree.
 func encodeWorkspace(dir string) string {
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = resolved
+	return nonAlnum.ReplaceAllString(workspaceAnchor(dir), "-")
+}
+
+// workspaceAnchor is the tree a directory belongs to: its git root where there
+// is one, and the directory itself where there is not.
+//
+// Taken from a10n, which anchors a session on `git_root` rather than on the
+// directory a hook happened to run in, and says why: a caller matches "by just
+// resolving its OWN cwd's git root the same way, no repo-id translation
+// needed". The anchor has to be a property of the TREE, or two callers who are
+// demonstrably in the same tree disagree about where its state lives.
+//
+// Without it the engine keys on the raw cwd, and a hook invoked from a
+// SUBDIRECTORY keys somewhere else entirely — a different database, an empty
+// baseline, and every verdict the session had recorded suddenly unreachable,
+// silently and mid-session. Nothing about that is specific to sub-agents; it is
+// the plain case of an agent that ran `cd internal && …`, and it is the same
+// class of silent orphaning StableSessionID exists to prevent one level up.
+//
+// It also turns the sub-agent story from an accident into a decision. An
+// isolated sub-agent gets its own state because a linked worktree has its OWN
+// git root — `rev-parse --show-toplevel` answers the worktree, not the main
+// checkout — so it keys elsewhere BECAUSE it is a different tree, which is the
+// reason we wanted. A shared-tree sub-agent resolves to the same anchor as its
+// parent, from any subdirectory either of them runs in, and is separated by the
+// session component alone. Before this, both of those held only as long as
+// nobody ran a hook from a subdirectory.
+//
+// Symlinks are resolved on the fallback because macOS reports /var where the
+// filesystem holds /private/var, and the two would otherwise be two different
+// trees. git's own answer is already resolved, so it is taken as it comes.
+//
+// A directory that is not in a repository is its own anchor. A project without
+// git is one the engine guards with everything except the difference, rather
+// than one it refuses to key state for at all — the same choice ensureBaseline
+// makes about baselineUnavailable.
+func workspaceAnchor(dir string) string {
+	if root, err := gitrepo.Root(dir); err == nil && root != "" {
+		return root
 	}
-	return nonAlnum.ReplaceAllString(dir, "-")
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return dir
 }
 
 // sessionDBPath resolves where one session's state lives:
@@ -110,6 +152,40 @@ func encodeWorkspace(dir string) string {
 //
 //   - Parent's worktree: the same workspace, still a different session. So the
 //     two collide in the workspace component and separate in the session one.
+//     True from any subdirectory either of them runs a hook in, which it was
+//     not before the anchor moved to the git root — see workspaceAnchor.
+//
+// # What this takes from a10n's session_folders, and what it does not
+//
+// a10n keys ONE session against MANY folders: a `session_folders` table on
+// (cwd_hash, provider, session_id, path), each row carrying its own branch,
+// base_ref and head_ref, so a session working across an isolated worktree and a
+// shared tree tracks each independently.
+//
+// The grain is already ours. `{workspace}/{session}` IS that composite key with
+// the folder in it — a session working across two trees has two databases,
+// tracking two baselines, exactly as a10n has two rows. What was genuinely
+// missing was the ANCHOR: a10n keys folders on the git root and we keyed on the
+// raw cwd, which is why an isolated sub-agent got its own state by accident of
+// path spelling rather than because it is a separate tree. That is now
+// workspaceAnchor's job, and it is the one thing taken here.
+//
+// Two things are deliberately NOT taken.
+//
+// A `role` column. a10n needs one because its folders differ in KIND — a spec
+// clone and an impl checkout are governed by different checks, and something
+// has to tell them apart. Ours differ only in which tree they are, which the
+// anchor already says. A role would be a field with one legal value, and a rule
+// able to read it would be a rule able to behave differently for a sub-agent —
+// the special case this design exists to avoid.
+//
+// An enumeration across a session's folders. a10n's ListByGitRoot exists to
+// answer "what is this session working on", for a person and for a dispatcher
+// that drains folders it did not run in. Nothing here asks that: every hook is
+// invoked in one tree and judges that tree, and a query that could reach across
+// folders would be a way for one agent's cycle to read another's — the boundary
+// the paragraphs below are about. Worth revisiting the day something needs to
+// report on a session as a whole; it is not needed to guard one.
 //
 // That second case is the one worth arguing, because sharing the tree is a real
 // argument for sharing the verdicts: the fingerprint exists to avoid re-judging
