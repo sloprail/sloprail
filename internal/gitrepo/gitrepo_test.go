@@ -491,6 +491,125 @@ func TestHead_ACorruptGitDirIsStillAFaultNotAnAbsence(t *testing.T) {
 		"a repository that cannot be read is a fault to report, not an absence to skip past")
 }
 
+func TestIsGitDirAt_TheThreeWaysAGitNameFailsToBeAGitDir(t *testing.T) {
+	// isGitDirAt's three remaining directions, none of which had a test — every
+	// one of them survived a mutation flipping it. They are reachable from an
+	// ordinary tree, and each is a case the function's own doc comment names, so
+	// the absence was coverage rather than unreachability.
+	//
+	// The direction matters for the same reason as everywhere else in hasGitDir:
+	// answering "present" makes an absence look like a fault (noise on stderr
+	// about a directory with no repository in it), and answering "absent" makes
+	// a fault look like an absence (the session stops measuring and says
+	// nothing). The first two below must be absent and the third present, and
+	// they are asserted together so a function that always answers one way
+	// cannot satisfy them.
+	base := t.TempDir()
+
+	t.Run("a gitdir line naming nothing is absent", func(t *testing.T) {
+		// What a half-finished copy or an interrupted clone leaves behind. The
+		// name is there, the pointer is empty, and there is no repository.
+		path := filepath.Join(base, "empty-pointer", ".git")
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte("gitdir:\n"), 0o644))
+
+		assert.False(t, isGitDirAt(path),
+			"a .git file whose gitdir: line is empty points at no repository")
+	})
+
+	t.Run("a gitdir pointing at a non-directory is absent", func(t *testing.T) {
+		// The pointer resolves, but not to a gitdir. A gitdir is a directory;
+		// anything else at the far end is not a repository however real it is.
+		target := filepath.Join(base, "not-a-directory")
+		require.NoError(t, os.WriteFile(target, []byte("x"), 0o644))
+		path := filepath.Join(base, "points-at-a-file", ".git")
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte("gitdir: "+target+"\n"), 0o644))
+
+		assert.False(t, isGitDirAt(path),
+			"a .git file resolving to a regular file names no gitdir")
+	})
+
+	t.Run("a .git file that cannot be read is present", func(t *testing.T) {
+		// The other direction, and the one that must NOT fold into absence: a
+		// .git file we were refused permission to read is a repository we could
+		// not look at. Called absent, it becomes ErrNotARepository and the
+		// session quietly stops measuring.
+		if os.Geteuid() == 0 {
+			t.Skip("root reads regardless of the permission bits this depends on")
+		}
+		path := filepath.Join(base, "unreadable", ".git")
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte("gitdir: /somewhere\n"), 0o000))
+		t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+		assert.True(t, isGitDirAt(path),
+			"a .git file that cannot be read is unestablished, and unestablished errs towards present")
+	})
+}
+
+func TestIsGitDirContents_AnUnreadableGitDirErrsTowardsPresent(t *testing.T) {
+	// The third way a gitdir can fail to answer, and the only one with no test
+	// on it: not absent, not corrupt, but unreadable. isGitDirContents chooses
+	// "present" for both of its unreadable branches — the Stat of the directory
+	// and the Stat of each marker inside it — and nothing pinned that direction,
+	// so a mutation flipping either to false survived the suite.
+	//
+	// The direction is the whole point of the function. hasGitDir exists to tell
+	// "there is no repository" from "there is one and it is broken", and only
+	// the first is an ordinary state the engine carries on past. Answering false
+	// for a repository it merely could not read collapses the fault into the
+	// absence: run turns it into ErrNotARepository, the caller records no
+	// baseline, and the session measures nothing while printing nothing — the
+	// same silent stop TestHead_ACorruptGitDirIsStillAFaultNotAnAbsence forbids,
+	// reached by permissions instead of by a garbage HEAD.
+	//
+	// Both branches are exercised, because they fail at different depths and a
+	// test on one leaves the other free to flip.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads regardless of the permission bits this depends on")
+	}
+
+	t.Run("the markers inside cannot be stat'd", func(t *testing.T) {
+		// The gitdir resolves and is a directory; only the Stat of HEAD,
+		// objects and refs fails. This is the marker loop's unreadable arm.
+		gitdir := filepath.Join(t.TempDir(), "gitdir")
+		require.NoError(t, os.MkdirAll(filepath.Join(gitdir, "objects"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(gitdir, "refs"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(gitdir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+		require.True(t, isGitDirContents(gitdir), "a healthy gitdir must read as present, or the case below proves nothing")
+
+		require.NoError(t, os.Chmod(gitdir, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(gitdir, 0o755) })
+
+		assert.True(t, isGitDirContents(gitdir),
+			"a gitdir whose markers cannot be read is a repository we could not look at, not one that is absent")
+	})
+
+	t.Run("the gitdir itself cannot be stat'd", func(t *testing.T) {
+		// The parent is unreadable, so the Stat of the gitdir fails with EACCES
+		// rather than ENOENT. This is the `!os.IsNotExist(err)` arm.
+		parent := filepath.Join(t.TempDir(), "parent")
+		gitdir := filepath.Join(parent, "gitdir")
+		require.NoError(t, os.MkdirAll(filepath.Join(gitdir, "objects"), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(gitdir, "refs"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(gitdir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+
+		require.NoError(t, os.Chmod(parent, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+
+		assert.True(t, isGitDirContents(gitdir),
+			"a gitdir behind an unreadable parent is unestablished, and unestablished errs towards present")
+	})
+
+	t.Run("a gitdir that is genuinely not there is absent", func(t *testing.T) {
+		// The other direction, so the assertions above cannot be satisfied by a
+		// function that simply always answers true.
+		assert.False(t, isGitDirContents(filepath.Join(t.TempDir(), "nowhere")),
+			"ENOENT is a fact about the tree and must stay distinguishable from a failure to look")
+	})
+}
+
 func TestHead_ALiveLinkedWorktreeIsStillARepository(t *testing.T) {
 	// The fix follows a .git FILE to its target, so the ordinary linked worktree
 	// — where the target is very much there — must keep working.
