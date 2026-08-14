@@ -76,7 +76,27 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// {"decision":"block"} on stdout, so its stderr reaches no agent at all —
 	// measured on harness.BlockingErrors. A diagnostic beside a turn that ended
 	// cleanly is the silence, with a line of code that looks like it addressed it.
-	decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
+	guardrails, unresolved, err := guardrailStore(p.Cwd)
+	if err != nil {
+		// Discovery failed — an unreadable or unparseable settings file, so
+		// which plugins are in force is unknown.
+		//
+		// Reported and the turn is let go, matching the unlistable store below.
+		// Blocking here would hand the turn back to the agent to fix, and
+		// malformed JSON in a settings file is not something the agent caused or
+		// can reliably repair — a held turn would be a session that cannot end
+		// and cannot be mended from inside.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"sloprail: the plugins this project has enabled could not be determined, so NO plugin's "+
+				"guardrails judged this cycle: %v. Fix the JSON in .claude/settings.json or "+
+				".claude/settings.local.json.\n",
+			err)
+		return false
+	}
+	reportUnresolved(cmd, unresolved)
+
+	res, err := guardrails.Resolve(reg)
+	decls, invalid := res.Declarations, res.Invalid
 	if err != nil {
 		// The STORE itself could not be read. Returning false alone held the
 		// read mark — which is bookkeeping — while blocking nothing and telling
@@ -104,6 +124,7 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// For a person tailing logs, which since an invalid guardrail blocks nothing
 	// is now the ONLY place these words go — see reportBrokenAtStop.
 	reportInvalid(cmd, invalid)
+	reportShadowed(cmd, res.Shadowed)
 
 	// Only what something actually binds to. An extractor runs when a binding
 	// names a kind it produces and not otherwise — the same rule the pre-tool
@@ -259,10 +280,15 @@ func reportBrokenAtStop(cmd *cobra.Command, invalid []guardrail.Invalid, events 
 
 	for _, iv := range invalid {
 		if iv.Has(guardrail.ErrMalformed) {
+			// Reported, not blocking — the engine's rule is that an invalid
+			// guardrail enforces nothing. What the plugin work adds here is
+			// only WHOSE rule it is and what the reader can actually do about
+			// it: for a shipped rule the folder named is inside an install
+			// cache, so "fix the declaration" is advice the consumer cannot
+			// take. See remedy.
 			fmt.Fprintf(cmd.ErrOrStderr(),
-				"sloprail: guardrail %q could not be read at all, so it did NOT guard this cycle: %s. "+
-					"Fix the declaration in %s, or remove that folder if it is not a guardrail.\n",
-				iv.Name, iv.Reason, iv.Name)
+				"sloprail: guardrail %s could not be read at all, so it did NOT guard this cycle: %s. %s\n",
+				iv.Attribution(), iv.Reason, remedy(iv))
 			continue
 		}
 
@@ -273,9 +299,8 @@ func reportBrokenAtStop(cmd *cobra.Command, invalid []guardrail.Invalid, events 
 				continue
 			}
 			fmt.Fprintf(cmd.ErrOrStderr(),
-				"sloprail: guardrail %q is bound to %s but could not be loaded, so it did NOT guard this cycle: %s. "+
-					"Fix the declaration in %s, or disable it with `enabled: false` if it is not ready.\n",
-				iv.Name, k, iv.Reason, iv.Name)
+				"sloprail: guardrail %s is bound to %s but could not be loaded, so it did NOT guard this cycle: %s. %s\n",
+				iv.Attribution(), k, iv.Reason, remedy(iv))
 			// One report per broken declaration, not one per kind.
 			break
 		}
@@ -480,12 +505,12 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 					// have a path where the machinery breaking reads as consent.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
 					objections = append(objections, objection{
-						Guardrail: d.Name,
+						Guardrail: d.Attribution(),
 						Reason: fmt.Sprintf(
-							"guardrail %q could not decide whether it applies to this %s: %v. "+
+							"guardrail %s could not decide whether it applies to this %s: %v. "+
 								"The turn is held because a matcher that cannot be evaluated is not the same as a rule that was satisfied. "+
 								"Fix the matcher, or disable the guardrail with `enabled: false` if it is not ready.",
-							d.Name, e.Kind, err),
+							d.Attribution(), e.Kind, err),
 					})
 					continue
 				}
@@ -561,11 +586,11 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 					// about this cycle, not a verdict stored against the file.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
 					objections = append(objections, objection{
-						Guardrail: d.Name,
+						Guardrail: d.Attribution(),
 						Reason: fmt.Sprintf(
-							"guardrail %q could not run its hook for this %s: %v. "+
+							"guardrail %s could not run its hook for this %s: %v. "+
 								"The turn is held because a guardrail that cannot run must not be read as approval.",
-							d.Name, e.Kind, err),
+							d.Attribution(), e.Kind, err),
 					})
 					continue
 				}
@@ -593,7 +618,11 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 					// Collected, not returned. The remaining events still have to
 					// be dispatched, and the agent is told about all of them at
 					// once — see runPostDispatch, which blocks with all of them.
-					objections = append(objections, objection{Guardrail: d.Name, Reason: v.Reason})
+					// Attributed, so a Stop-time refusal from a rule the project
+					// installed rather than wrote points at the plugin instead of
+					// at a .sloprail/guardrails/ folder that does not hold it —
+					// the same reason the pre-tool refusal carries it.
+					objections = append(objections, objection{Guardrail: d.Attribution(), Reason: v.Reason})
 
 					// Also written out one refusal at a time, and this line is
 					// NOT how the agent learns of it.
@@ -610,7 +639,7 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 					// these arrive in dispatch order, interleaved with the other
 					// diagnostics on this stream. Dropping it is invisible to the
 					// agent and costs an operator the order things happened in.
-					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s (%s)\n", v.Reason, d.Name)
+					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s (%s)\n", v.Reason, d.Attribution())
 				}
 			}
 		}

@@ -22,6 +22,83 @@ declaration's shape, the matcher operators, the hook contract — is the
 There is no setup command. `.sloprail/guardrails/` is created by whatever writes
 the first declaration, and a project with none is an ordinary project.
 
+## Guardrails that arrive with a plugin
+
+A guardrail does not have to be written by the project it governs. A plugin ships
+them the way it already ships hooks and skills — a `guardrails/` directory at its
+root — and installing that plugin puts those rules into force without the project
+copying anything. A team's lint conventions, a framework's "do not edit generated
+files", sloprail's own `authoring-slop`: their natural home is the tool, not each
+consumer's repo, because every copy is a fork that drifts.
+
+**The repo is what decides.** The engine reads the project's own
+`.claude/settings.json` and `.claude/settings.local.json`, takes the plugins
+their `enabledPlugins` block turns on, and resolves each to its installation.
+Installing a plugin is a decision the repository made and wrote down, so the
+repository's settings are the truth about it — not which plugins happened to fire
+a hook, which is a smaller set that silently omits any plugin shipping guardrails
+without hooks.
+
+The two settings files layer the way Claude Code layers them, which was measured
+rather than assumed: **`settings.local.json` wins**, in both directions, so the
+gitignored personal layer can switch a plugin off that the committed one turned
+on, and back on again.
+
+All of that knowledge — the filenames, the `enabledPlugins` shape, the
+`<marketplace>/<plugin>/<version>/` cache layout, the `installed_plugins.json`
+schema — lives in exactly one file, `internal/harness/claudecode.go`, named for
+the harness it is about. A second harness gets a second file beside it. The
+precedent is `internal/transcript/claudecode.go`, which has always been the only
+place that names Claude Code's own JSONL spellings.
+
+Because those assumptions can go stale, **an enabled plugin that cannot be
+located is reported, never skipped**:
+
+    sloprail: enabled plugin "acme@acme-marketplace" could not be located, so any
+    guardrails it ships are NOT enforcing: no installation directory. Looked in: …
+
+That line is the difference between this and a silent break. If a cache layout
+moves or the manifest schema is bumped, the user is told which plugin went
+missing on the next tool call — rather than the guardrails quietly ceasing to
+fire while everything looks correct. It warns rather than refuses: sloprail does
+not know whether the missing plugin shipped any guardrails at all, and blocking
+every action over a rule that may not exist is a loud failure that is usually
+wrong. A rule that *exists* and cannot be checked still refuses, unchanged.
+
+Resolution, when both a project and a plugin have a rule of one name:
+
+- **the project wins**, so a project can always override a rule it did not
+  write — and the shadowing is **reported**, because a project that displaced a
+  rule and was never told believes it has two protections and has one;
+- a refusal from a shipped rule **names the plugin** — `("authoring-slop" from
+  plugin "sloprail")` — since the name alone would point at
+  `.sloprail/guardrails/`, where there is nothing;
+- a consumer switches one off from their **own** side, in `.sloprail/config.yaml`,
+  because `enabled: false` lives in a declaration they do not own and an edit
+  inside an install cache is undone by the next reinstall:
+
+      disabled:
+        - sloprail/authoring-slop
+
+  The name is qualified by the plugin, so this cannot also switch off a rule of
+  your own that happens to share it. It works on a shipped rule that will not
+  load, too — otherwise one broken shipped rule wedges every consuming project
+  with no remedy but uninstalling the plugin.
+
+A plugin's guardrail is loaded, validated and dispatched by exactly the same code
+as a project's; it is the same declaration in a different place. Its hook runs
+with its working directory inside the installation, so a shipped
+`./check-rules.sh` resolves to the copy that was installed. A shipped hook must
+not assume anything on the consumer's `$PATH` silently — sloprail's own checks
+for `jq` by name and refuses with a message that says which plugin needs it.
+
+An ordinary install is a frozen **copy** in the plugin cache, so a plugin
+author's edits reach a consumer at reinstall rather than immediately — the rules
+in force are the ones they installed, and do not change under them because an
+author pushed. A marketplace sourced from a local **directory** is the exception,
+loaded straight from that directory: it is how a plugin author works on their own
+rules, and it is resolved first for that reason.
+
 ## The binaries
 
 One binary per high-level command, plus a root that proxies to them. Each
