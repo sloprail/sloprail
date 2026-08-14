@@ -211,6 +211,30 @@ func fill(f module.FieldDecl, carried any) (any, error) {
 		}
 		return b, nil
 
+	case module.TypeInt:
+		// Go's `int` and nothing else, because that is exactly what fieldType
+		// promised the checker: module.TypeInt maps to types.Int, which is
+		// types.TypeOf(0). A float64 is the shape any JSON-decoded producer
+		// carries, and accepting it here would let the vm compare a value the
+		// check did not describe — which is the fail-open, not the lenient
+		// reading. It is refused as a wrong type, the same as a string is.
+		//
+		// This case was MISSING while TypeInt was declared, mapped by fieldType
+		// and used by filemod's markers[].line. Both directions were broken and
+		// in opposite ways, which is why the omission survived: an omitted
+		// `line` fell to the default branch, came back nil, and `.line > 10`
+		// errored `<nil> > int` — a correct rule refusing every action and
+		// blaming the author's guardrail, which is the identical defect the
+		// `content` fill-in was written to close. A `line` carried as float64
+		// was returned UNCHANGED and compared cleanly, which is the fail-open.
+		// Neither table in matcher_test.go had an int row, so the pair of them
+		// enumerated four of the five declared types and read as exhaustive.
+		n, ok := carried.(int)
+		if !ok {
+			return nil, wrongType(f, "int", carried)
+		}
+		return n, nil
+
 	case module.TypeList:
 		items, ok := carried.([]any)
 		if !ok {
@@ -283,6 +307,14 @@ func zero(f module.FieldDecl) any {
 		return ""
 	case module.TypeBool:
 		return false
+	case module.TypeInt:
+		// A Go `int`, matching fieldType's types.Int exactly. Handing back nil —
+		// which the default branch did while this case was missing — puts an
+		// untyped nil where the expression was type-checked against an integer,
+		// so `line > 10` errors `<nil> > int` and the engine refuses on its own
+		// gap. That is the same shape as the empty-`content` defect one type
+		// along.
+		return 0
 	case module.TypeList:
 		// Empty rather than nil: the expression was checked against a list, and
 		// `l == nil` must read false for a field the module declared. An absent

@@ -129,7 +129,7 @@ environment naming no known harness is refused rather than guessed at; pass
 	cmd.Flags().String("verify", "",
 		"A script that decides whether the agent's answer is acceptable; the agent is asked again if not")
 	cmd.Flags().Int("verify-attempts", DefaultVerifyAttempts,
-		"How many times the agent may be asked before --verify reports failure")
+		fmt.Sprintf("How many times the agent may be asked before --verify reports failure (1-%d)", MaxVerifyAttempts))
 	cmd.Flags().Bool("dry-run", false,
 		"Print the command that would run, and do not run it")
 
@@ -150,6 +150,19 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	verifyFlag, _ := cmd.Flags().GetString("verify")
 	verifyAttempts, _ := cmd.Flags().GetInt("verify-attempts")
+
+	// Judged HERE rather than inside the --verify branch below, so the flag has
+	// one meaning whatever else was passed. The check used to sit under
+	// `Changed("verify")`, which made `--verify-attempts 0` an error with
+	// --verify and silently fine without it — one flag, two answers, and the
+	// permissive one reached by leaving a flag off. Where the value is unused
+	// the refusal costs a caller nothing they wanted; being told a number is
+	// nonsense is better than having it quietly ignored.
+	if cmd.Flags().Changed("verify-attempts") {
+		if err := checkVerifyAttempts(verifyAttempts); err != nil {
+			return err
+		}
+	}
 
 	prompt, err := resolvePrompt(args, promptFlag)
 	if err != nil {
@@ -195,11 +208,6 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	// because it OWNS the prompt — it appends the output path, and on a retry
 	// appends the objection too.
 	if cmd.Flags().Changed("verify") {
-		if verifyAttempts < 1 {
-			return fmt.Errorf(
-				"--verify-attempts must be at least 1, got %d: zero attempts would run no agent at all",
-				verifyAttempts)
-		}
 		return runVerified(cmd, spec, resolution.Model, harnessArgs, prompt,
 			verifyFlag, verifyAttempts, false, dryRun)
 	}

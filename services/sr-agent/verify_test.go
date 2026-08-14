@@ -337,6 +337,59 @@ func TestCLI_VerifyAttemptsMustBeAtLeastOne(t *testing.T) {
 	assert.Contains(t, err.Error(), "at least 1")
 }
 
+// The other end of the range, which had no check at all.
+//
+// verify.go's own paragraph said the retry "is not unbounded, because an
+// unbounded retry inside a Stop hook is how a guardrail becomes a bill" — and
+// that described the DEFAULT while reading as a claim about the flag. The lower
+// bound was enforced six lines below it and nothing enforced the upper, so
+// `--verify-attempts 100000` was taken verbatim. It is not a slow no-op either:
+// the loop in verify_run.go is serial, spawns a real `claude` per attempt, has
+// no timeout, and on the REJECTING path never exits early — so it runs every one
+// of them. The comment naming the failure sat directly above the flag allowing
+// it.
+func TestCLI_VerifyAttemptsHasAnUpperBound(t *testing.T) {
+	requireSh(t)
+	_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--verify", "true", "--verify-attempts", "100000", "q")
+	require.Error(t, err, "100000 real agent launches must be refused, not accepted")
+	assert.Contains(t, err.Error(), "at most")
+	assert.Contains(t, err.Error(), "100000", "the refusal must quote what was asked for")
+}
+
+// The bound is a property of the FLAG, not of the --verify path.
+//
+// The check used to sit inside `if cmd.Flags().Changed("verify")`, so the same
+// `--verify-attempts 0` was an error with --verify and silently accepted
+// without it — one flag with two meanings, and the permissive one reached by
+// leaving a different flag off. Nothing downstream read the value there, so this
+// pins the DIAGNOSTIC rather than a behaviour change: a caller who typed a
+// number the tool will not honour is told so instead of having it ignored.
+func TestCLI_VerifyAttemptsIsJudgedWithoutVerify(t *testing.T) {
+	requireSh(t)
+	for _, bad := range []string{"0", "-3", "100000"} {
+		t.Run(bad, func(t *testing.T) {
+			_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+				"--verify-attempts", bad, "q")
+			require.Error(t, err,
+				"--verify-attempts %s is refused under --verify and must not be accepted without it", bad)
+		})
+	}
+}
+
+// An unchanged flag is never judged, so the default cannot be refused by its own
+// bound — and a legitimate override still runs.
+func TestCLI_VerifyAttemptsAcceptsTheRange(t *testing.T) {
+	requireSh(t)
+	for _, ok := range []string{"1", "2", "20"} {
+		t.Run(ok, func(t *testing.T) {
+			_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+				"--verify", "true", "--verify-attempts", ok, "q")
+			require.NoError(t, err, "%s is inside the range and must be accepted", ok)
+		})
+	}
+}
+
 // --dry-run must show BOTH halves: the agent command and the verifier that will
 // judge it. Showing only the agent would hide the mechanism being configured.
 func TestCLI_VerifyDryRunShowsBothCommands(t *testing.T) {

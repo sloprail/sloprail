@@ -71,11 +71,11 @@ the skill owns the part `--help` cannot carry — which command, when, why this
 one, in what order.
 
 The rule deliberately **names no specific command**, and that is not squeamishness
-about examples. The discovery command in this repo is itself in motion — a branch
-not yet merged here deletes the `sr-guardrail` binary outright, on the argument
-that a help command describing a structure rather than a command's behaviour
-belongs in a skill; after it lands, the same vocabulary is reported by
-`internal/guardrail/validate.go` at the moment an author is actually wrong. A
+about examples. The discovery command in this repo has already moved once: the
+`sr-guardrail` binary was deleted outright, on the argument that a help command
+describing a structure rather than a command's behaviour belongs in a skill. Since
+that landed, the same vocabulary is reported by `internal/guardrail/validate.go`
+at the moment an author is actually wrong, and that is now the only path to it. A
 rule citing whichever of those is current would be a rule that goes stale for
 exactly the reason it exists, and it would be sent to a model as standard on
 every judged skill. So the worked example lives here, in prose no model reads,
