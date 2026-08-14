@@ -721,35 +721,459 @@ func TestNesting_InterpreterPayloadDepthIsBounded(t *testing.T) {
 	})
 }
 
-// TestNesting_FindExecIsNotUnwrapped: `find . -exec npm publish \;` runs npm,
-// and only `find` is reported. find is not in the wrapper table.
+// TestNesting_FindExecIsUnwrapped: `find . -exec npm publish \;` runs npm, and
+// npm is reported alongside find.
 //
-// Pinned as current behaviour. Unlike `sh -c`, this one is unambiguous to
-// unwrap — the vector between `-exec` and `;` is the command, spelled out — so
-// it is a gap with a clear fix rather than a resolution floor. Owned by the
-// `unwrap-exec-style-wrappers` task in the strategy backlog.
-func TestNesting_FindExecIsNotUnwrapped(t *testing.T) {
+// This case used to assert the opposite. It was named FindExecIsNotUnwrapped
+// and pinned `[find]` as current behaviour, with a notice saying that reporting
+// the `-exec` program meant the gap was closed and the case should be updated
+// rather than treated as a regression. The `unwrap-exec-style-wrappers` task
+// closed it, so the expectation is turned round here rather than the case being
+// deleted: what it pinned was never a decision, it was a form nobody had
+// implemented, and the difference between those two is exactly what a suite is
+// for.
+//
+// The old test also asserted that the `-exec` words survived in find's OWN
+// argv, offered as the workaround a rule could use until this landed — a
+// substring match on argv. That assertion is kept below, because it is still
+// true and its truth is now load-bearing in a different way: find really does
+// receive those words as its own arguments, so an invocation reporting them and
+// find reporting them are both correct rather than a double count. What is
+// dropped is the CLAIM that the substring match is how a rule must reach npm.
+// It is not, any more — `.bin == "npm"` fires on this line now — and leaving the
+// workaround documented would leave a rule author writing the fragile spelling.
+func TestNesting_FindExecIsUnwrapped(t *testing.T) {
 	for _, src := range []string{
 		`find . -exec npm publish \;`,
 		`find . -exec npm publish {} +`,
 		`find . -execdir npm publish \;`,
 		`find . -ok npm publish \;`,
+		`find . -okdir npm publish \;`,
 	} {
 		t.Run(src, func(t *testing.T) {
-			got := binsOf(src)
-			if !equal(got, []string{"find"}) {
-				t.Errorf("ExtractCommand(%q) bins = %v; want [find] as currently behaves — "+
-					"if this now reports the -exec program the gap is closed, update the case", src, got)
-			}
-			// The words are at least present in find's own argv, so a rule can
-			// reach them with a substring match on argv even though no
-			// invocation names them.
+			assertBins(t, src, []string{"find", "npm"})
+			// find is still reported itself. Unwrapping ADDS what a line runs;
+			// a rule about find must not be defeated by the fix to a rule
+			// about npm.
 			invs := ExtractCommand(src).Invocations
 			if !contains(invs[0].Argv, "npm") {
-				t.Errorf("find argv = %v, want the -exec words carried through", invs[0].Argv)
+				t.Errorf("find argv = %v, want the -exec words carried through as find's own", invs[0].Argv)
 			}
 		})
 	}
+}
+
+// TestNesting_FindExecTerminators pins that BOTH terminators end a clause.
+//
+// `;` runs the command once per matched path and `+` batches every match into
+// one run. The difference is how many times the program runs, not whether it
+// runs, and a rule asks the second question — so both report the same program.
+//
+// `+` is the spelling that would be missed by an implementation that matched
+// only `;` after reading the commoner form, and the miss would be silent: the
+// clause would be read as unterminated and the program dropped entirely.
+func TestNesting_FindExecTerminators(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"semicolon", `find . -exec npm publish \;`, []string{"find", "npm"}},
+		{"plus", `find . -exec npm publish {} +`, []string{"find", "npm"}},
+		// The backslash is the SHELL's escape and is gone by the time this
+		// module sees the word, so an unescaped `;` in quotes is the same word
+		// and must behave identically. This is the assertion that would catch a
+		// match written against the literal `\;`.
+		{"quoted semicolon", `find . -exec npm publish ';'`, []string{"find", "npm"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertBins(t, tc.src, tc.want) })
+	}
+}
+
+// TestNesting_FindWithoutACompleteExecClauseReportsNoProgram is the negative
+// direction, and the one that keeps the infix table from over-reporting.
+//
+// Being an infix wrapper must not make find name a program off a line that
+// names none. Two ways that could happen, and each has a case here:
+//
+//   - find with no `-exec` at all. Its ordinary operands (`-name`, `-type`,
+//     `-print`, `-delete`) look exactly like the words that surround a real
+//     clause, and a scan that fell back to "everything after the first flag"
+//     would report `-print` or `f` as a program.
+//   - `-exec` with no terminator. This is a USAGE ERROR — verified against real
+//     find, which refuses the line with `Expected '... ;' or '... {} +'` and
+//     runs nothing at all. Reporting npm off it would be a rule firing on a
+//     command line that never invokes npm, which the module calls the worse
+//     direction. Guessing that the rest of the vector was meant is precisely
+//     the guess the resolution floor forbids.
+func TestNesting_FindWithoutACompleteExecClauseReportsNoProgram(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		why  string
+	}{
+		{"no exec at all", `find . -name '*.md' -print`,
+			"ordinary operands are not a command"},
+		{"no exec, -delete", `find . -type f -delete`,
+			"-delete is find's own action, not a program it runs"},
+		{"bare find", `find`, "nothing to see"},
+		{"exec with no terminator", `find . -exec npm publish`,
+			"find rejects the line and runs nothing"},
+		{"execdir with no terminator", `find . -execdir npm publish`,
+			"same usage error, same answer"},
+		{"exec with nothing before the terminator", `find . -exec \;`,
+			"an empty clause names no program"},
+		// A clause that is nothing BUT placeholders is empty once they are
+		// dropped, and an empty vector names no program. Without the drop there
+		// WOULD be a word here to promote, and `{}` would be reported as a
+		// binary — which is what makes this the case that keeps the drop honest
+		// rather than merely tidy.
+		{"exec with only a placeholder", `find . -exec {} \;`,
+			"`{}` is not a program name, and after the drop there is no clause left"},
+		{"exec with only placeholders", `find . -exec {} {} +`,
+			"same, with the batching terminator"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertBins(t, tc.src, []string{"find"})
+			// Nothing empty reaches the list either. An invocation with no
+			// program is one a matcher reads as a program no rule can mean, and
+			// an empty Bin is how it would arrive.
+			for _, inv := range ExtractCommand(tc.src).Invocations {
+				if inv.Bin == "" {
+					t.Errorf("ExtractCommand(%q) produced an invocation with an empty bin: %+v",
+						tc.src, inv)
+				}
+			}
+		})
+	}
+}
+
+// TestNesting_FindSeveralExecClauses: `find . -exec a \; -exec b \;` runs two
+// programs and both are about to run, so both are reported.
+//
+// This is the difference the infix table exists for that a `wrappers` row could
+// not carry even in principle. `unwrap` returns ONE vector by construction —
+// its whole shape is "the command is the suffix from index i" — and a suffix
+// cannot be two things. An implementation that stopped at the first clause
+// would silently lose every program after it, and the line would look handled.
+func TestNesting_FindSeveralExecClauses(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"two", `find . -exec npm publish \; -exec git push \;`,
+			[]string{"find", "npm", "git"}},
+		{"three", `find . -exec a \; -exec b \; -exec c \;`,
+			[]string{"find", "a", "b", "c"}},
+		{"mixed terminators", `find . -exec npm publish {} + -execdir git push \;`,
+			[]string{"find", "npm", "git"}},
+		// find's own operands between and after the clauses must not be read as
+		// programs, and must not stop the scan finding the second clause.
+		{"operands interleaved", `find . -name '*.md' -exec npm publish \; -type f -exec git push \; -print`,
+			[]string{"find", "npm", "git"}},
+
+		// A clause runs to the FIRST terminator, and a word that looks like a
+		// second introducer inside it is just an argument to the first command.
+		//
+		// Measured against real find rather than reasoned about: `find . -exec
+		// echo ONE -exec echo TWO \;` prints `ONE -exec echo TWO`, one run of
+		// echo with four arguments. So there is one clause here and one program,
+		// and reporting `b` as a second would be a program off a line that never
+		// runs it. The scan taking the first terminator is what gets this right,
+		// and it gets it right by accident of the same rule that handles the
+		// ordinary case — which is why it is pinned.
+		{"an introducer-shaped word inside a clause is an argument", `find . -exec npm publish -exec b \;`,
+			[]string{"find", "npm"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertBins(t, tc.src, tc.want) })
+	}
+}
+
+// TestNesting_FindPlaceholderIsDroppedRatherThanReported pins the `{}`
+// judgement, which is the one call in the infix path that find's grammar does
+// not force.
+//
+// `{}` is find's placeholder for a matched path, replaced at RUNTIME with a
+// path chosen by a directory walk. This package must not walk a tree — it is a
+// pure function of a string, which is what makes it testable and what stops a
+// verdict depending on the directory it ran in. So the paths are not knowable
+// and the choice is between reporting `{}` as written and reporting nothing for
+// that operand.
+//
+// It is dropped, following `hasGlob`: `rm *.md` survives expansion with the `*`
+// intact, LOOKS literal, and is dropped anyway because it names a set of paths
+// only a filesystem walk can enumerate. `{}` is the same word in the same
+// position with the same defect. Reporting it would put a path in the vector
+// that no rule can mean and no file can match.
+//
+// What survives is what is knowable, and it is the half that matters: the
+// INVOCATION. `rm` is about to run, with certainty, and a rule about running rm
+// fires on this line where before it did not.
+func TestNesting_FindPlaceholderIsDroppedRatherThanReported(t *testing.T) {
+	// The invocation is reported in every position `{}` can take.
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{"trailing", `find . -name '*.md' -exec rm {} \;`},
+		{"trailing with plus", `find . -name '*.md' -exec rm {} +`},
+		{"between flag and end", `find . -exec rm -f {} \;`},
+		{"leading, before other args", `find . -exec cp {} /backup \;`},
+		{"twice", `find . -exec cp {} {} \;`},
+		{"absent entirely", `find . -exec rm \;`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invs := ExtractCommand(tc.src).Invocations
+			if got := binsOf(tc.src); !contains(got, "rm") && !contains(got, "cp") {
+				t.Fatalf("ExtractCommand(%q) bins = %v, want the -exec program reported", tc.src, got)
+			}
+			// The placeholder reaches no reported vector, which is the whole
+			// assertion. A rule reading `.argv` must never see a path that
+			// stands for a set nobody here enumerated.
+			for _, inv := range invs {
+				if inv.Bin == "find" {
+					// find genuinely RECEIVES `{}` as its own argument, so it
+					// stays in find's own vector. The drop is about what the
+					// wrapped command is reported as receiving.
+					continue
+				}
+				if contains(inv.Argv, "{}") {
+					t.Errorf("ExtractCommand(%q): invocation %q argv = %v — `{}` is a path only a "+
+						"directory walk can name, and reporting it as written is a path no rule can "+
+						"mean, cf. hasGlob dropping `*.md`", tc.src, inv.Bin, inv.Argv)
+				}
+			}
+		})
+	}
+
+	// A word merely CONTAINING `{}` keeps it. The drop exists to stop a token
+	// standing for a whole path being read AS a path; `pre{}post` is not going
+	// to be read as one, and dropping it would lose the part that IS known —
+	// the same way `rm ./a*.md` keeps its literal prefix.
+	t.Run("a word containing the placeholder is kept", func(t *testing.T) {
+		invs := ExtractCommand(`find . -exec cp {}.bak /backup \;`).Invocations
+		var cp *Invocation
+		for i := range invs {
+			if invs[i].Bin == "cp" {
+				cp = &invs[i]
+			}
+		}
+		if cp == nil {
+			t.Fatalf("bins = %v, want cp reported", binsOf(`find . -exec cp {}.bak /backup \;`))
+		}
+		if !contains(cp.Argv, "{}.bak") {
+			t.Errorf("cp argv = %v, want the partly-known word kept whole", cp.Argv)
+		}
+	})
+}
+
+// TestNesting_FindExecComposesWithTheOtherShapes: an infix clause is spliced
+// through the same path as every other unwrapping, so the three shapes nest in
+// any order.
+//
+// This is what makes the infix form a real member of the module rather than a
+// special case bolted to the side. If it were handled anywhere but fromArgv,
+// each of these would need its own arrangement and one of them would be missed.
+func TestNesting_FindExecComposesWithTheOtherShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want []string
+	}{
+		// A suffix wrapper OUTSIDE the infix one.
+		{"sudo find", `sudo find . -exec npm publish \;`, []string{"sudo", "find", "npm"}},
+		{"sudo nohup find", `sudo nohup find . -exec npm publish \;`,
+			[]string{"sudo", "nohup", "find", "npm"}},
+		{"timeout find", `timeout 5 find . -exec npm publish \;`,
+			[]string{"timeout", "find", "npm"}},
+		// A suffix wrapper INSIDE it.
+		{"find exec sudo", `find . -exec sudo npm publish \;`, []string{"find", "sudo", "npm"}},
+		// An interpreter payload inside it — the clause is a vector, and one of
+		// its words is a command STRING that the payload path re-parses.
+		{"find exec sh -c", `find . -exec sh -c 'npm publish' \;`, []string{"find", "sh", "npm"}},
+		{"find exec bash -lc", `find . -exec bash -lc 'npm publish' {} \;`,
+			[]string{"find", "bash", "npm"}},
+		// An infix wrapper inside an interpreter payload.
+		{"sh -c find exec", `sh -c 'find . -exec npm publish \;'`, []string{"sh", "find", "npm"}},
+		// Both directions at once.
+		{"sudo sh -c find exec sudo", `sudo sh -c 'find . -exec sudo npm publish \;'`,
+			[]string{"sudo", "sh", "find", "sudo", "npm"}},
+		// And in a pipeline, which is the outermost shape of all.
+		{"in a pipeline", `ls | find . -exec npm publish \;`, []string{"ls", "find", "npm"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertBins(t, tc.src, tc.want) })
+	}
+}
+
+// TestNesting_FindExecSpendsNoneOfThePayloadBudget: an infix clause is a SLICE
+// of a vector already parsed, so like a wrapper and unlike an interpreter
+// payload it costs nothing from maxUnwrapDepth.
+//
+// The distinction is the one maxUnwrapDepth's own comment draws. The bound
+// exists because each payload level is a fresh parse of text an agent chose,
+// and the work per level is not constant. Slicing a vector is neither: the
+// vector has a finite length, every clause consumes words from it, and the
+// recursion terminates on its own.
+//
+// So a find sitting between payload levels still reports its clause, and the
+// budget those payloads spend is unchanged by the find in between. The last
+// subtest checks the bound itself is untouched, which is the regression the
+// cheapest wrong fix would cause.
+func TestNesting_FindExecSpendsNoneOfThePayloadBudget(t *testing.T) {
+	// A find between payload levels must not make the payloads below it cost
+	// more than they would have without it.
+	//
+	// The nesting is built to sit exactly ON the budget, because a shallower one
+	// cannot tell the two answers apart. maxUnwrapDepth payload levels with a
+	// find between the last two: if the clause spent a level, the innermost
+	// payload would be one over and npm would be lost. If it spends none — the
+	// design — every level fits and npm is reported.
+	//
+	// Measured: a version of this test built from stacked `sudo`s inside one
+	// clause could not tell the difference at all, because no payload budget was
+	// in play to spend. This spelling is what makes the depth argument testable
+	// rather than merely asserted.
+	t.Run("a find between payload levels costs nothing", func(t *testing.T) {
+		src := `npm publish`
+		src = `sh -c ` + squote(src)
+		src = `find . -exec ` + src + ` \;`
+		for i := 0; i < maxUnwrapDepth-1; i++ {
+			src = `sh -c ` + squote(src)
+		}
+		got := binsOf(src)
+		if !contains(got, "npm") {
+			t.Errorf("%d payload levels with a find between the last two: bins = %v, want npm "+
+				"— an infix clause is a SLICE of a vector already parsed, not a fresh parse, so "+
+				"it must spend none of the payload budget", maxUnwrapDepth, got)
+		}
+		if !contains(got, "find") {
+			t.Errorf("bins = %v, want find reported on the way down too", got)
+		}
+	})
+
+	// Stacked SUFFIX wrappers inside a clause are not payloads either, so any
+	// number of them compose without touching the budget.
+	//
+	// Finds cannot be stacked directly to make this point, and the reason is
+	// worth recording because the obvious test is wrong: `find . -exec find .
+	// -exec npm publish \; \;` is not a valid command. A clause ends at the
+	// first terminator, so the inner find's clause consumes the first `;` and
+	// the outer one is left unterminated — real find answers `-exec: no
+	// terminating ";" or "+"` and runs nothing. Nesting two finds needs a shell
+	// in between, which legitimately DOES spend payload budget. So the claim
+	// under test is stated with the wrappers that can actually stack.
+	t.Run("stacked wrappers inside a clause are not bounded by the budget", func(t *testing.T) {
+		for _, n := range []int{1, 4, 5, 20} {
+			src := `find . -exec ` + strings.Repeat("sudo ", n) + `npm publish \;`
+			got := binsOf(src)
+			if !contains(got, "npm") {
+				t.Errorf("%d stacked wrappers in a clause: bins = %v, want npm — wrapper and "+
+					"infix unwrapping consume words from a finite vector and are not "+
+					"bounded by maxUnwrapDepth", n, got)
+			}
+			if want := n + 2; len(got) != want {
+				t.Errorf("%d stacked wrappers in a clause: bins = %v (%d), want %d — find, "+
+					"every sudo, npm", n, got, len(got), want)
+			}
+		}
+	})
+
+	// The payload bound itself is unchanged. A regression guard rather than a
+	// find case: the infix work threads `depth` through a new call site, and the
+	// cheapest way to make the test above pass would be to loosen the bound for
+	// everyone. This is what would catch that — no find in it at all, which is
+	// the point.
+	t.Run("the payload bound still bites at the same depth", func(t *testing.T) {
+		// One level past the budget. The innermost payload is unread, while
+		// every interpreter on the way down is still reported.
+		src := `npm publish`
+		for i := 0; i < maxUnwrapDepth+1; i++ {
+			src = `sh -c ` + squote(src)
+		}
+		if got := binsOf(src); contains(got, "npm") {
+			t.Errorf("%d payload levels: bins = %v — npm is past the budget and must not "+
+				"be read; the infix work must not have loosened the payload bound", maxUnwrapDepth+1, got)
+		}
+	})
+}
+
+// TestNesting_FindExecReachesTheFileTargetPath: the two halves of this package
+// must agree about one command line.
+//
+// `find . -exec rm notes.md \;` deletes notes.md. Before the infix table, the
+// invocation side reported only find and the file side reported no target at
+// all — so a rule about running rm did not fire AND a rule about deleting
+// notes.md did not fire. Splicing the clause through targetsForArgv as well as
+// fromArgv is what keeps the two from disagreeing, which is the same gap the
+// interpreter-payload work closed on the file side.
+func TestNesting_FindExecReachesTheFileTargetPath(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		path string
+	}{
+		{"exec rm", `find . -exec rm notes.md \;`, "notes.md"},
+		{"execdir rm", `find . -execdir rm notes.md \;`, "notes.md"},
+		{"through a payload", `find . -exec sh -c 'rm notes.md' \;`, "notes.md"},
+		{"under a wrapper", `sudo find . -exec rm notes.md \;`, "notes.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var found bool
+			for _, target := range FileTargets(tc.src) {
+				if target.Path == tc.path {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("FileTargets(%q) = %v, want a target for %q — the invocation "+
+					"side reports rm, and the two halves must not disagree about one line",
+					tc.src, FileTargets(tc.src), tc.path)
+			}
+		})
+	}
+
+	// A here-document on the outer statement does NOT travel into the clause,
+	// and this is the one place the infix splice deliberately differs from the
+	// wrapper splice beside it.
+	//
+	// A wrapper is transparent to stdin: `sudo tee f.md <<'EOF'` hands the
+	// document straight through, so the file really does end up holding it. find
+	// is not transparent — it gives each `-exec` command its own invocation and
+	// none of the outer statement's stdin — so claiming the document as the
+	// resulting content of out.md would assert content for a file that never
+	// receives it. Reporting the TARGET is right; reporting the PAYLOAD is not.
+	t.Run("a heredoc does not travel into the clause", func(t *testing.T) {
+		src := "find . -exec tee out.md \\; <<'XEOF'\nhello\nXEOF\n"
+		var seen bool
+		for _, target := range FileTargets(src) {
+			if target.Path != "out.md" {
+				continue
+			}
+			seen = true
+			if target.Payload.Kind != PayloadNone {
+				t.Errorf("FileTargets(%q) gave out.md payload %+v — find hands its -exec "+
+					"command none of the outer statement's stdin, so claiming the document "+
+					"as this file's content asserts content it never receives",
+					src, target.Payload)
+			}
+		}
+		if !seen {
+			t.Errorf("FileTargets(%q) = %v, want out.md reported as a target", src, FileTargets(src))
+		}
+	})
+
+	// The placeholder does NOT become a file target, for the same reason it does
+	// not reach argv: it is a path only a directory walk can name.
+	t.Run("the placeholder is not a file target", func(t *testing.T) {
+		src := `find . -name '*.md' -exec rm {} \;`
+		for _, target := range FileTargets(src) {
+			if target.Path == "{}" {
+				t.Errorf("FileTargets(%q) reported %q as a path — it stands for a set "+
+					"only a filesystem walk can enumerate, cf. hasGlob", src, target.Path)
+			}
+		}
+	})
 }
 
 // TestNesting_UnlistedWrappersAreNotUnwrapped pins which programs the wrapper
@@ -765,11 +1189,17 @@ func TestNesting_FindExecIsNotUnwrapped(t *testing.T) {
 // are shell builtins, `su -c` is also an interpreter payload).
 func TestNesting_UnlistedWrappersAreNotUnwrapped(t *testing.T) {
 	for _, src := range []string{
-		// `find -exec` is a vector between the flag and a terminator, which is
-		// a different shape from either table and is owned by the
-		// `unwrap-exec-style-wrappers` task. Its own test covers the spellings;
-		// it stays listed here so the checklist remains the one place to look.
-		`find . -exec npm publish \;`,
+		// `find . -exec npm publish \;` was listed here. It moved to
+		// TestNesting_PreviouslyUnlistedWrappersAreNowUnwrapped when the
+		// `unwrap-exec-style-wrappers` task added the infix table — which is the
+		// move this test's own failure message asks for, and the reason the
+		// checklist is kept as a named list rather than a silent absence.
+		//
+		// Nothing about find replaces it here. The negative direction that
+		// matters for find is not "npm is absent" — it is that find without a
+		// COMPLETE `-exec` clause reports no program at all, which this test's
+		// npm-shaped assertion cannot express. It lives in
+		// TestNesting_FindWithoutACompleteExecClauseReportsNoProgram instead.
 
 		// A program is not a wrapper merely because a program name follows it.
 		// These take one as an ARGUMENT and do not run it, so reporting npm
@@ -853,6 +1283,15 @@ func TestNesting_PreviouslyUnlistedWrappersAreNowUnwrapped(t *testing.T) {
 		{`runuser -c "npm publish" x`, []string{"runuser", "npm"}, "the -c payload is a command string"},
 		{`flock /tmp/l -c "npm publish"`, []string{"flock", "npm"},
 			"flock's -c payload runs through sh -c, so it is a command string, not a vector"},
+
+		// The INFIX form, which is a different table from either of the two
+		// above and the reason a third shape exists at all. It moved out of
+		// TestNesting_UnlistedWrappersAreNotUnwrapped when
+		// `unwrap-exec-style-wrappers` landed. Its own spellings are covered by
+		// TestNesting_FindExecIsUnwrapped and the shape tests below it; it is
+		// listed here so the checklist stays the one place to look.
+		{`find . -exec npm publish \;`, []string{"find", "npm"},
+			"the vector between -exec and its terminator is a command find runs, spelled out in full"},
 	} {
 		t.Run(tc.src, func(t *testing.T) { assertBins(t, tc.src, tc.want) })
 	}
