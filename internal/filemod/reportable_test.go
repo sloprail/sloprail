@@ -636,3 +636,67 @@ func TestReportable_AWriteThroughASymlinkedParentCarriesNoRepositoryRelativePath
 	assert.True(t, filepath.IsAbs(got),
 		"outside is reported absolute, which no project-relative matcher admits: got %q", got)
 }
+
+// TestReportable_ContainmentOnTheRelativeBranchDoesNotStrandTheOrdinaryCases
+// guards the fix above from the direction that would be worse than the hole.
+//
+// Routing the relative branch through resolve() means an outside path is now
+// reported absolute — and the failure mode of any containment check is that it
+// says "outside" about something inside, at which point no project-relative
+// matcher admits it and the rule goes SILENTLY INERT. That is the direction this
+// module treats as worse than a noisy one, so the ordinary cases are pinned here
+// rather than left to follow from the escape test passing.
+//
+// Four cases, each a way the check could over-refuse:
+//
+//   - a file that does not exist yet, which is the ordinary PreFileCreate and
+//     cannot be resolved at all;
+//   - a workspace reached through a symlink, which is every macOS repo under
+//     /tmp, where the root and the path resolve into different-looking trees;
+//   - a link INTO the repository, which names a file the project genuinely
+//     holds and must not be pushed out by the same walk that ejects an escape;
+//   - a dangling link whose target is inside — a directory not generated yet,
+//     which presence.go's containment walk deliberately judges rather than
+//     refuses.
+func TestReportable_ContainmentOnTheRelativeBranchDoesNotStrandTheOrdinaryCases(t *testing.T) {
+	t.Run("a create of a file that is not there yet stays relative", func(t *testing.T) {
+		root := t.TempDir()
+		for _, given := range []string{"new.md", "deep/nested/new.md", "./new.md"} {
+			got := reportable(given, root)
+			assert.False(t, filepath.IsAbs(got),
+				"a create cannot be resolved and must not be ejected for it: %q -> %q", given, got)
+		}
+	})
+
+	t.Run("a symlinked workspace still relativises", func(t *testing.T) {
+		real := t.TempDir()
+		link := filepath.Join(t.TempDir(), "link")
+		symlinkOrSkip(t, real, link)
+		require.NoError(t, os.WriteFile(filepath.Join(real, "a.md"), []byte("x"), 0o644))
+
+		for _, root := range []string{real, link} {
+			assert.Equal(t, "a.md", reportable("a.md", root),
+				"the repo spelled through a link is the same repo, and a rule about a.md must still fire")
+		}
+	})
+
+	t.Run("a link into the repository is reported as inside", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "sub"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "sub", "a.md"), []byte("x"), 0o644))
+		symlinkOrSkip(t, filepath.Join(root, "sub"), filepath.Join(root, "alias"))
+
+		got := reportable("alias/a.md", root)
+		assert.False(t, filepath.IsAbs(got),
+			"the link's target is inside the repository, so refusing it makes a rule about that file inert: %q", got)
+	})
+
+	t.Run("a dangling link whose target is inside is still inside", func(t *testing.T) {
+		root := t.TempDir()
+		symlinkOrSkip(t, filepath.Join(root, "generated"), filepath.Join(root, "pending"))
+
+		got := reportable("pending/out.md", root)
+		assert.False(t, filepath.IsAbs(got),
+			"a link made before the directory it names is the ordinary generated-output case: %q", got)
+	})
+}
