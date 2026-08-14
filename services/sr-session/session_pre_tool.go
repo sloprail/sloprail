@@ -63,12 +63,16 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		// what keeps this from breaking every repository that does not use
 		// sloprail: a missing directory is os.IsNotExist, which LoadWith answers
 		// with (nil, nil, nil) and never reaches here.
-		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
-		return deny(cmd, fmt.Sprintf(
-			"the guardrails in this project could not be read at all, so there is no way to know what they guard: %v. "+
-				"The action was refused because a store that cannot be listed must not be read as approval — "+
-				"fix the permissions on the guardrails directory, or remove it if the project has no guardrails.",
-			err))
+		// Reported and permitted, for the same reason a single unparseable
+		// declaration is: this is the guardrail author's fault, the agent cannot
+		// repair a directory it cannot list, and refusing every action leaves
+		// nobody able to fix anything. A store that will not list is louder than
+		// one broken file, not different in kind.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"sloprail: the guardrails in this project could not be read at all, so NOTHING is being guarded: %v. "+
+				"Fix the permissions on the guardrails directory, or remove it if the project has no guardrails.\n",
+			err)
+		return nil
 	}
 
 	// Written to stderr for a person tailing logs. Note this alone does NOT reach
@@ -96,9 +100,9 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	// most broken declaration in the project the only silent one. See
 	// refuseForBroken for why the answer is to refuse everything rather than to
 	// warn.
-	if reason, broken := refuseForUnreadable(invalid); broken {
-		return deny(cmd, reason)
-	}
+	// A declaration that could not be parsed no longer refuses anything. It is
+	// reported by reportInvalid above and the session proceeds — see
+	// refuseForUnreadable for the argument this reverses and why.
 
 	// Only the modules something actually binds to. Producing an event nobody
 	// asked for is work done to be discarded.
@@ -199,12 +203,12 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 
-		// Before any rule is consulted: if a declaration that WOULD have guarded
-		// this event could not be loaded, this action is one the project believes
-		// is guarded and is not. Say so by refusing it.
-		if reason, broken := refuseForBroken(invalid, e.Kind); broken {
-			return deny(cmd, reason)
-		}
+		// A declaration that WOULD have guarded this event but could not be
+		// loaded is reported, not refused. This action is one the project
+		// believes is guarded and is not — and saying so by halting the agent
+		// punishes the party that did not write the broken file. See the block
+		// comment below refuseForBroken for the full argument.
+		reportBroken(cmd, invalid, e.Kind)
 
 		// What content this event is about, asked once for the event because the
 		// content is the event's fact, not any rule's. Whether it has ALREADY
@@ -493,78 +497,116 @@ func reportInvalid(cmd *cobra.Command, invalid []guardrail.Invalid) {
 //
 // A declaration that could not be PARSED names no kinds and so never matches
 // here. It is handled before extraction instead — see refuseForUnreadable.
-func refuseForBroken(invalid []guardrail.Invalid, kind string) (string, bool) {
+// reportBroken announces, on stderr, that a rule bound to this kind is not
+// running. It never refuses: an invalid guardrail blocks nothing.
+//
+// The refusal this replaces is argued at length above, and the whole of that
+// argument survives except its conclusion. What changed is the weighting of the
+// two failures. Refusing makes a declaration fault everyone's problem
+// immediately; permitting makes it the author's problem eventually. Since the
+// fault is ALWAYS the author's and never the agent's, and since the agent is
+// usually not in a position to repair somebody else's declaration, the second is
+// where the cost belongs.
+//
+// Per event kind, so the message names what has stopped being guarded rather
+// than saying a rule is broken in the abstract.
+func reportBroken(cmd *cobra.Command, invalid []guardrail.Invalid, kind string) {
 	for _, iv := range invalid {
 		for _, k := range iv.AffectedKinds() {
 			if k != kind {
 				continue
 			}
 			// Every fault, not the first — the same reason Validate reports them
-			// together. An author fixing this should need one pass, not one
-			// refused write per mistake.
-			return fmt.Sprintf(
-				"guardrail %q is bound to %s but could not be loaded, so it is not guarding this action: %s. "+
-					"The action was refused because a guardrail that cannot load must not be read as approval — "+
-					"fix the declaration in %s, or disable it with `enabled: false` if it is not ready.",
-				iv.Name, kind, iv.Reason, iv.Name), true
+			// together. An author fixing this should need one pass.
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"sloprail: guardrail %q is bound to %s but could not be loaded, so it is NOT guarding this action: %s. "+
+					"Fix the declaration in %s, or disable it with `enabled: false` if it is not ready.\n",
+				iv.Name, kind, iv.Reason, iv.Name)
 		}
 	}
-	return "", false
 }
 
-// refuseForUnreadable decides what to do about a declaration that could not be
-// parsed at all, and what to say about it. Unlike refuseForBroken this is not
-// scoped to a kind: it refuses every action, and the rest of this comment is why.
+// refuseForUnreadable is GONE, and this comment is kept as the record of what it
+// argued and why that argument was overruled.
 //
-// Such a declaration names no kinds. AffectedKinds reads the bindings off the
-// problems, and a file that failed to parse has no bindings to read — correctly
-// so, and deliberately: it cannot invent a scope it has no evidence for.
+// # The rule now
 //
-// An earlier version of this engine concluded from that it "stops nothing", and
-// called it "the one case where this is genuinely a warning" and "the right one
-// to be lenient about". Given the channel table in refuseForBroken, that was not
-// leniency. It was silence. No warning channel reaches the agent, so a
-// declaration too broken to read was announced once at session start and then
-// said nothing at any action for the rest of the session — exactly the failure
-// mode this file was corrected for, preserved for the case where the file is
-// MOST broken. The more broken the file, the quieter the engine got.
+// An invalid guardrail blocks nothing. Not the unparseable declaration this
+// function was about, and not the kind-scoped faults refuseForBroken handles.
+// A rule that will not load is reported at every opportunity and enforces
+// nothing, and the session proceeds.
 //
-// The scoping argument that justifies narrowing elsewhere does not merely fail
-// to apply here; it inverts:
+// # What the old argument got right
 //
-//   - Elsewhere the scope is EVIDENCE. A rule bound to PreFileDelete tells us it
-//     was about deletions, so refusing writes would block work no rule was ever
-//     written about, and the author keeps a way out that is not deleting their
-//     rule.
-//   - Here there is no evidence, because there is no readable file. "No evidence
-//     of what it guarded" is not "evidence it guarded nothing", and treating the
-//     first as the second is the fail-open in its purest form: the project keeps
-//     a file it believes is a guardrail, and the engine decides on its own that
-//     an unreadable file guards nothing.
+// The measured channel table below is still true, and it is still the strongest
+// point against this change: at exit 0 nothing on either stream reaches the
+// agent, so "warn and proceed" warns a log rather than a reader. That cost is
+// real and is accepted rather than argued away — the diagnostic goes to stderr
+// and to session start, and an agent mid-session is not told.
 //
-// The cost of being wrong runs one way. Refusing too broadly is loud, immediate,
-// names the file, and is cleared by fixing the frontmatter or removing the
-// folder — the refusal says both, because a refusal an author cannot clear is a
-// trap. Permitting too broadly is silent, and is discovered when something that
-// should have been guarded was not.
+// # Why it is overruled anyway
 //
-// Note the agent is not locked out of the fix: editing the broken GUARDRAIL.md
-// is itself a write, and a write is refused by a rule that is bound to it —
-// which this one, being unreadable, is not bound to anything. T013_08 pins that.
-func refuseForUnreadable(invalid []guardrail.Invalid) (string, bool) {
-	for _, iv := range invalid {
-		if !iv.Has(guardrail.ErrMalformed) {
-			continue
-		}
-		return fmt.Sprintf(
-			"guardrail %q could not be read at all, so there is no way to know what it was guarding: %s. "+
-				"Every action is refused while it cannot be parsed, because a file the project keeps as a guardrail "+
-				"must not be read as approval merely for being unreadable — "+
-				"fix the declaration in %s, or remove that folder if it is not a guardrail.",
-			iv.Name, iv.Reason, iv.Name), true
-	}
-	return "", false
-}
+// The old reasoning treated "the engine cannot tell what this file guarded" as
+// equivalent to "this file might have guarded THIS action", and refused
+// everything on the strength of it. Two things are wrong with that.
+//
+// First, the blast radius is not proportional to the evidence. A declaration
+// fault is the GUARDRAIL AUTHOR's mistake, and the party it stops is the agent,
+// which cannot have caused it and frequently cannot fix it. Every action in the
+// session is refused because one file in a directory has a typo. A rule that
+// cannot load has judged nothing; refusing on its behalf is not enforcement, it
+// is an outage wearing enforcement's clothes.
+//
+// Second — and this is what settled it — the claim that the author is left a way
+// out was FALSE, and was measured false in the session that produced this
+// change. T013_08 asserts the refusal "does not lock the project out of fixing
+// it", reasoning that an unreadable rule is bound to nothing and so cannot
+// refuse the write that would repair it. That is not how the refusal was wired:
+// it fired before extraction, on every action of every kind, so writing the
+// missing GUARDRAIL.md was refused, removing the folder was refused, and `echo
+// hello` was refused. The remedies the refusal text itself named were both
+// unreachable from inside the session. A refusal an author cannot clear is a
+// trap, by this file's own standard, and this one was one.
+//
+// The trade is therefore not "silence versus enforcement". It is "a silent
+// unenforced rule" against "a session that cannot do anything at all, including
+// fix the rule". The first fails in the direction of work continuing; the second
+// fails in the direction of nothing continuing, and neither enforces the rule.
+//
+// # What carries the honesty instead
+//
+// Loudness at the moment the author can act. Session start already reports every
+// invalid declaration, which is where a person who just edited one is looking,
+// and reportInvalid repeats it on every dispatch for anyone tailing stderr. The
+// rule that will not load is named every time rather than once.
+//
+// What is NOT claimed: that this is as safe as refusing. A project whose rule
+// silently stopped loading is unguarded and its agent will not be told. That is
+// the accepted cost, and the mitigation is that a guardrail is proven by causing
+// it to fire — see the authoring skill, which says loading is not firing.
+//
+// # The measured channel table, kept because it remains true
+//
+// There is no channel out of a PreToolUse hook that delivers text to the agent
+// without ALSO refusing the action. One channel per run, checking both whether
+// the text reached the agent's stream and whether the action went through:
+//
+//	channel                              reaches agent   refuses
+//	stdout, exit 0                       no              no
+//	stderr, exit 0                       no              no
+//	stderr, exit 1                       no              no
+//	stderr, exit 2                       YES             YES
+//	stderr, exit 3 / 126 / 127           no              no
+//	stdout, exit 2                       no              YES
+//	systemMessage, exit 0                no              no
+//	additionalContext, exit 0            no              no
+//	permissionDecision "deny", exit 0    YES             YES
+//	permissionDecision "ask", exit 0     no              no
+//
+// Both delivering channels refuse. That is why the old code refused: it was the
+// only way to be heard. The answer now is that being heard is not worth halting
+// the session for, when what is being announced is that somebody's rule has a
+// typo in it.
 
 // verdict is what one binding's hooks concluded.
 //
