@@ -62,22 +62,37 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 		return false
 	}
 
-	decls, _, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
+	decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		return false
 	}
+
+	// Said out loud for a person tailing logs, the same wording the pre-tool
+	// point uses. It is not on its own the answer — this command exits 0 and
+	// blocks by writing {"decision":"block"} on stdout, so its stderr reaches no
+	// agent — which is why the objections below are what actually carry it.
+	reportInvalid(cmd, invalid)
 
 	// Only what something actually binds to. An extractor runs when a binding
 	// names a kind it produces and not otherwise — the same rule the pre-tool
 	// point keeps, for the same reason: comparing trees is not free, and a
 	// project with no rule about files should not pay for the fact that files
 	// can be compared.
+	//
+	// The BROKEN declarations are included, exactly as the pre-tool point
+	// includes them. Their bindings are what has stopped being enforced, and the
+	// events they named are the ones whose occurrence has to be noticed in order
+	// to say so — leaving them out would mean the one case that must be reported
+	// is the one case no event is produced for.
 	var bound []string
 	for _, d := range decls {
 		if d.IsEnabled() {
 			bound = append(bound, d.BoundKinds()...)
 		}
+	}
+	for _, iv := range invalid {
+		bound = append(bound, iv.AffectedKinds()...)
 	}
 
 	// Who this session is, resolved ONCE for the whole dispatch and used for
@@ -139,7 +154,7 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// it carries no fields are stated in the same place they are declared.
 	events = append(events, cyclemod.Event())
 
-	objections := dispatchAll(cmd, reg, decls, rev, scope, events)
+	objections := dispatchAll(cmd, reg, decls, invalid, rev, scope, events)
 	if len(objections) > 0 {
 		// The turn does not end. Reported through the one channel measured to
 		// both block and carry its words — see block().
@@ -173,6 +188,25 @@ func refusalText(objections []objection) string {
 		fmt.Fprintf(&b, "\n  - %s (%s)", o.Reason, o.Guardrail)
 	}
 	return b.String()
+}
+
+// brokenName is the guardrail refuseForBroken reported about for this kind.
+//
+// The name is already inside that function's reason text, but an objection
+// carries it separately: refusalText appends "(name)" to every objection so an
+// agent reading a list of them can tell which rule each line belongs to, and a
+// broken rule must not be the one entry in that list with an empty pair of
+// brackets. Asked with the same predicate refuseForBroken matched on, so the two
+// cannot name different rules.
+func brokenName(invalid []guardrail.Invalid, kind string) string {
+	for _, iv := range invalid {
+		for _, k := range iv.AffectedKinds() {
+			if k == kind {
+				return iv.Name
+			}
+		}
+	}
+	return ""
 }
 
 // postEvents turns the cycle's difference into one event per changed file.
@@ -298,7 +332,7 @@ func readdOutstanding(cmd *cobra.Command, store sessionstate.Store, diff *treeDi
 // guardrail silence every other, and the agent would fix them one turn at a
 // time. Everything is dispatched; the objections are answered once, together,
 // by the caller.
-func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Declaration, rev *revalidation, scope hookScope, events []event.Event) []objection {
+func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Declaration, invalid []guardrail.Invalid, rev *revalidation, scope hookScope, events []event.Event) []objection {
 	var objections []objection
 
 	for _, e := range events {
@@ -309,6 +343,34 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 			// dispatched here is declared by a registered module, TurnEnd
 			// included, which is the whole reason cyclemod exists.
 			continue
+		}
+
+		// A declaration that WOULD have guarded this event could not be loaded,
+		// so this cycle is one the project believes is guarded and is not.
+		//
+		// The same rule the pre-tool point keeps, and it has to be kept here too
+		// because the two hook points see different kinds. TurnEnd is produced
+		// ONLY here — it is the cycle's own event — so a rule bound only to
+		// TurnEnd names a kind the pre-tool loop can never see, and its being
+		// broken was reported on a stderr that reaches nobody and refused
+		// nowhere. A completeness rule is exactly the kind an author is most
+		// likely to bind to TurnEnd, and exactly the kind whose violation looks
+		// like nothing having happened.
+		//
+		// Collected as an objection rather than returned, like every other
+		// refusal here: the remaining events still have to be dispatched, and the
+		// agent is told about all of them at once.
+		//
+		// Scoped to the kinds the broken rule actually bound to, which is what
+		// keeps this from becoming the mirror of the bug. A declaration broken on
+		// PostFileCreate is already refused at the write itself; blocking every
+		// cycle for it as well would take away the author's way out, since fixing
+		// the declaration is itself work done inside a cycle.
+		if reason, broken := refuseForBroken(invalid, e.Kind); broken {
+			objections = append(objections, objection{
+				Guardrail: brokenName(invalid, e.Kind),
+				Reason:    reason,
+			})
 		}
 
 		for _, d := range decls {
