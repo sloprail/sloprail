@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -210,6 +211,31 @@ func (p HookPayload) Tool() string { return p.ToolName }
 // Kept raw because what they mean is the tool's business and each module reads
 // only what it recognises.
 func (p HookPayload) Arguments() json.RawMessage { return p.ToolInput }
+
+// Root implements filemod.Pending: the workspace an absolute `file_path` is
+// reported relative to.
+//
+// It is the REPOSITORY root, resolved from the cwd — not the cwd itself — and
+// it must be, because the observed phase resolves its root the same way
+// (newTreeDifference calls gitrepo.Root for the reason its own comment gives).
+// A hook invoked below the top of the tree would otherwise make the two phases
+// report different spellings of one file, and a rule binding PreFileCreate and
+// PostFileCreate with a single matcher would match on one and not the other.
+//
+// An unresolvable root yields "", which filemod reads as "no workspace named"
+// and leaves the path as the harness spelled it. That is the honest answer
+// outside a repository, and it restores exactly the behaviour that existed
+// before a root was consulted at all.
+func (p HookPayload) Root() string {
+	if p.Cwd == "" {
+		return ""
+	}
+	root, err := gitrepo.Root(p.Cwd)
+	if err != nil {
+		return ""
+	}
+	return root
+}
 
 // readPayload reads the hook payload from stdin.
 //

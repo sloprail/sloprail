@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/event"
@@ -68,6 +69,20 @@ type Pending interface {
 	Tool() string
 	// Arguments are the tool's own, as the harness gave them.
 	Arguments() json.RawMessage
+	// Root is the workspace an absolute path is reported relative to, or "" if
+	// the producer does not know one.
+	//
+	// Observed has carried a Root since it existed, because a tree diff has to
+	// say what its paths are relative to. Pending did not, and the omission was
+	// not visible from in here: this module received a path and reported it,
+	// and both spellings look equally like a path.
+	//
+	// It is visible from the matcher. A rule is written `path startsWith
+	// "memories/"` — the only spelling an author can write, since they do not
+	// know where the repo will be checked out — and Claude Code sends
+	// `file_path` absolute. So the pre phase reported a spelling no project
+	// matcher admits, and every Pre-kind rule about a path was inert.
+	Root() string
 }
 
 // extractPending reads a pending action for the files it would touch.
@@ -126,10 +141,22 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		return m.extractCommand(pending)
 	}
 
-	f := FileEvent{Path: w.FilePath}
+	// What the RULE sees, and what the FILESYSTEM is asked about, are two
+	// different spellings of one path, and they are separated here.
+	//
+	// A matcher reads the reported one, so it must be the project's own
+	// spelling — relative to the workspace — because that is the only spelling
+	// an author can write down. The stat below must use the harness's, because
+	// a relative path resolves against this process's working directory, which
+	// is not the workspace.
+	//
+	// Conflating them is what the bug was: one absolute path went to both, the
+	// stat was right and the matcher never matched.
+	f := FileEvent{Path: reportable(w.FilePath, pending.Root())}
 	var kind string
-	// The pre phase has one spelling and no root: a write tool names the path it
-	// is about to write, as it names it. Both arguments are that one path.
+	// The lookup takes the path as the harness named it. Both arguments are
+	// that one path: the pre phase asks about the file the tool is about to
+	// write, and the tool named it in a spelling that resolves.
 	p, _ := lookAt(w.FilePath, w.FilePath)
 	switch p {
 	case absent, unknown:
@@ -168,6 +195,102 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 	}
 	return []event.Event{f.Event(kind)}, nil
 }
+
+// reportable is the spelling a rule sees: relative to the workspace when the
+// path is inside it, and unchanged otherwise.
+//
+// Three cases, and the third is the one worth stating.
+//
+// A path already relative is left alone. A harness that sends a
+// workspace-relative path has already produced the spelling a matcher wants,
+// and re-resolving it against the root would mean resolving it twice.
+//
+// A path inside the workspace becomes relative to it, with forward slashes.
+// This is what makes `path startsWith "memories/"` admit a write Claude Code
+// announced as `/Users/x/repo/memories/...`, and it is the spelling
+// extractObserved has always reported, so the Pre and Post kinds of one rule
+// finally agree.
+//
+// A path OUTSIDE the workspace keeps its absolute spelling rather than being
+// given a relative one. `filepath.Rel` would happily return
+// `../../../etc/passwd`, and a matcher is a prefix test: a rule written for a
+// folder in the project must not be handed a spelling that could climb into
+// one. Leaving it absolute means no project-relative matcher admits it, which
+// is the honest answer — the write is outside the rule's subject.
+func reportable(path, root string) string {
+	if !filepath.IsAbs(path) {
+		return path
+	}
+	if root == "" {
+		// No workspace was named, so there is nothing to be relative TO.
+		// Guessing one would be worse than reporting what the harness said.
+		return filepath.ToSlash(path)
+	}
+	// resolve, not a lexical test, and this is the whole reason the check is not
+	// three lines of filepath.Rel.
+	//
+	// A lexical answer is wrong on the case presence.go calls "the worse of the
+	// two": a repo containing `escape -> /outside`, written to at
+	// `<root>/escape/id_rsa`. Rel returns `escape/id_rsa` with no `..` in it, so
+	// every string check passes and the event carries a CLEAN RELATIVE PATH
+	// NAMING A FILE OUTSIDE THE REPOSITORY. A hook joins it against its own root
+	// and reads the outside file, and nothing anywhere reports a problem.
+	//
+	// Measured, not argued: with the lexical version this returned
+	// "escape/id_rsa" for a file in a different temp directory entirely.
+	//
+	// resolve is the check that already exists for this, it touches the
+	// filesystem precisely because a containment test that does not cannot see
+	// this case, and it also returns the ONE canonical spelling — so `a.md` and
+	// `./a.md` stop producing two events for one file.
+	if rel, err := filepath.Rel(root, path); err == nil {
+		if clean, _, err := resolve(root, rel); err == nil {
+			return filepath.ToSlash(clean)
+		}
+	}
+	// The two may still be one directory spelled differently. filepath.Rel is
+	// string arithmetic and knows nothing about symlinks, so on macOS a repo at
+	// `/private/tmp/x` (as git resolves it) and a path under `/tmp/x` (as the
+	// harness spells it) look like different trees and produce `../../tmp/...`.
+	//
+	// Resolving both and asking again is what tells the two cases apart: a
+	// genuinely-outside path is still outside once resolved, so this cannot
+	// pull one in. It runs only after the plain answer says "outside", which
+	// keeps the filesystem out of the common path.
+	// Both spellings resolved, then asked again THROUGH resolve for the same
+	// reason as above: this branch must not become the lexical hole the first
+	// branch stopped being. A genuinely-outside path is still outside once
+	// resolved, so re-asking cannot pull one in — it only closes the gap
+	// between two spellings of one directory.
+	realRoot, errRoot := filepath.EvalSymlinks(root)
+	realPath, errPath := filepath.EvalSymlinks(path)
+	if errRoot == nil && errPath == nil {
+		if rel, err := filepath.Rel(realRoot, realPath); err == nil {
+			if clean, _, err := resolve(realRoot, rel); err == nil {
+				return filepath.ToSlash(clean)
+			}
+		}
+	}
+	// A path that does not exist yet cannot be resolved — which is the ordinary
+	// case for PreFileCreate. Resolve the deepest parent that does exist and
+	// re-attach the remainder, so a create under a symlinked workspace is
+	// reported the same way an update to an existing file there is.
+	//
+	// resolveAsFarAsItGoes is presence.go's, not a second copy: the same
+	// deepest-existing-parent walk this needs already exists there for the same
+	// reason, and two versions of it are two things to keep in step.
+	if errRoot == nil {
+		partial := resolveAsFarAsItGoes(path)
+		if rel, err := filepath.Rel(realRoot, partial); err == nil {
+			if clean, _, err := resolve(realRoot, rel); err == nil {
+				return filepath.ToSlash(clean)
+			}
+		}
+	}
+	return filepath.ToSlash(path)
+}
+
+
 
 // extractCommand reads a pending shell command for the files it would change.
 //

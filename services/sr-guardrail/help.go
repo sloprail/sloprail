@@ -213,12 +213,26 @@ Bind to a Pre kind, or do not write the rule yet.
 
 // dispatchedPhases is the set of phases some hook point actually extracts with.
 //
-// One entry, and that is the point: session pre-tool passes module.PhasePre and
-// nothing passes module.PhasePost, so this is the honest set rather than the
-// intended one. Adding the Post dispatch means adding PhasePost here, and the
-// warning above disappears on its own.
+// Both entries: session pre-tool passes module.PhasePre
+// (services/sr-session/session_pre_tool.go) and the cycle-end dispatch passes
+// module.PhasePost (services/sr-session/dispatch_post.go), so every declared
+// kind arrives and the stranded list above is empty.
+//
+// This map is maintained by hand and went stale once already, in the direction
+// that costs the most: the Post dispatch landed, this map did not move, and the
+// help went on telling authors that a rule bound to PostFileCreate "loads,
+// validates and never arrives". That is worse than the silent no-op the rest of
+// this output warns about — it is the warning itself being the false thing, so
+// an author who checks is steered away from a rule that works.
+//
+// It stayed stale because the test guarding it (T003_13) expected
+// `!strings.HasPrefix(kind, "Post")` — the same assumption written a second
+// time, which moved in lockstep instead of catching the drift. That test now
+// reads the phases off the dispatch sites, so adding or removing a dispatch is
+// what changes the expectation.
 var dispatchedPhases = map[string]bool{
-	module.PhasePre: true,
+	module.PhasePre:  true,
+	module.PhasePost: true,
 }
 
 // phaseOf reads a kind's timing off its name, which is where it lives — see the

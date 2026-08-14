@@ -15,15 +15,17 @@ import (
 	"github.com/sloprail/sloprail/internal/module"
 )
 
-// fakePending is a harness's pending action, built inline. Only the two
-// methods the module actually reads are needed.
+// fakePending is a harness's pending action, built inline. Only the methods
+// the module actually reads are needed.
 type fakePending struct {
 	tool string
 	args json.RawMessage
+	root string
 }
 
 func (p fakePending) Tool() string               { return p.tool }
 func (p fakePending) Arguments() json.RawMessage { return p.args }
+func (p fakePending) Root() string               { return p.root }
 
 // writePending is the payload for a Write-style tool naming a path.
 func writePending(path, content string) fakePending {
@@ -168,6 +170,200 @@ func TestExtractPending_ShapeAlreadyFiltersToolsWithoutAFilePath(t *testing.T) {
 		require.NoError(t, err, "tool %q", tool)
 		assert.Emptyf(t, events, "tool %q names no file_path and must produce no event", tool)
 	}
+}
+
+// TestExtractPending_AbsoluteFilePathIsReportedRelativeToTheWorkspace is the
+// defect that made every path-matched rule inert against a real harness.
+//
+// A matcher is written `path startsWith "memories/"`, because that is the
+// spelling a project uses for its own folders and the only one an author can
+// write without knowing where the repo is checked out. The observed phase has
+// always reported that spelling — extractObserved takes a root and reports
+// paths relative to it. The pending phase did not: it passed `file_path`
+// through exactly as the harness gave it.
+//
+// Claude Code gives it absolute. Measured, not assumed: every `file_path` in
+// the operator's own session records is a full path from `/Users/...`. So a
+// PreFileCreate arrived carrying
+// `/Users/x/repo/memories/topics/t/TOPIC.md`, no matcher beginning
+// `startsWith "memories/"` admitted it, and the rule sat in the project looking
+// enforced while permitting everything — the exact silent no-op the engine
+// exists to prevent, produced by the engine.
+//
+// It survived because the whole e2e suite drives the harness with RELATIVE
+// `file_path` values (tests/e2e/harness/scenario.go), which is the one spelling
+// real Claude Code never sends. Every Pre-kind test agreed with the bug.
+//
+// The two phases must report one spelling. A rule bound to PreFileCreate and
+// PostFileCreate with the same matcher is one rule, and it cannot be written at
+// all if the two kinds disagree about what a path looks like.
+func TestExtractPending_AbsoluteFilePathIsReportedRelativeToTheWorkspace(t *testing.T) {
+	root := t.TempDir()
+	abs := filepath.Join(root, "memories", "topics", "t", "TOPIC.md")
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePre,
+		module.InputPayload: fakePending{
+			tool: "Write",
+			args: mustArgs(abs, "body"),
+			root: root,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
+	assert.Equal(t, filepath.ToSlash(filepath.Join("memories", "topics", "t", "TOPIC.md")),
+		events[0].Fields["path"],
+		"an absolute file_path must be reported relative to the workspace, as the observed phase already does — otherwise no matcher a project can write will admit it")
+}
+
+// TestExtractPending_PathOutsideTheWorkspaceKeepsItsAbsoluteSpelling: a write
+// aimed outside the repo has no relative spelling that means anything, and
+// inventing one — `../../etc/passwd` — would let it be admitted by a matcher
+// written for a folder inside the project. It stays absolute, so a rule about
+// `memories/` does not match it, which is the correct outcome.
+func TestExtractPending_PathOutsideTheWorkspaceKeepsItsAbsoluteSpelling(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	outside := filepath.Join(t.TempDir(), "elsewhere", "notes.md")
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePre,
+		module.InputPayload: fakePending{
+			tool: "Write",
+			args: mustArgs(outside, "body"),
+			root: root,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, filepath.ToSlash(outside), events[0].Fields["path"],
+		"a path outside the workspace has no meaningful relative spelling and must not be given one")
+}
+
+// TestExtractPending_SymlinkedParentDoesNotProduceACleanRelativePath is the
+// case a lexical containment test cannot see, and the reason reportable calls
+// resolve rather than filepath.Rel.
+//
+// A repository containing `escape -> /somewhere/else`, written to at
+// `<root>/escape/id_rsa`. filepath.Rel answers `escape/id_rsa`, which holds no
+// `..` and passes every string check — so the event would carry a CLEAN
+// RELATIVE PATH NAMING A FILE OUTSIDE THE REPOSITORY. A hook joins it against
+// its own root and reads the outside file, and nothing reports a problem.
+// presence.go calls this "the worse of the two" escapes for exactly that
+// reason: there is no lexical tell.
+//
+// Measured before the fix: this returned "escape/id_rsa" for a file in an
+// unrelated temp directory.
+//
+// The absolute spelling is the right answer, and it is not a half-measure. No
+// project-relative matcher admits it, so the rule declines to speak about a
+// write outside its subject rather than being handed a spelling that resolves
+// somewhere it does not mean.
+func TestExtractPending_SymlinkedParentDoesNotProduceACleanRelativePath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	outside := t.TempDir()
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "escape")))
+
+	through := filepath.Join(root, "escape", "id_rsa")
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePre,
+		module.InputPayload: fakePending{
+			tool: "Write",
+			args: mustArgs(through, "body"),
+			root: root,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
+	assert.NotEqual(t, "escape/id_rsa", events[0].Fields["path"],
+		"a symlinked parent must not yield a clean relative path to a file outside the repository")
+	assert.Equal(t, filepath.ToSlash(through), events[0].Fields["path"],
+		"the honest answer is the absolute spelling, which no project-relative matcher admits")
+}
+
+// TestExtractPending_RelativeFilePathIsLeftAlone: a harness that already sends
+// a workspace-relative path must not have it re-resolved. This is what the e2e
+// suite sends, so breaking it would break every existing Pre-kind test.
+func TestExtractPending_RelativeFilePathIsLeftAlone(t *testing.T) {
+	root := t.TempDir()
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePre,
+		module.InputPayload: fakePending{
+			tool: "Write",
+			args: mustArgs("memories/topics/t/TOPIC.md", "body"),
+			root: root,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "memories/topics/t/TOPIC.md", events[0].Fields["path"])
+}
+
+// TestExtractPending_NoRootLeavesThePathAsGiven: a producer that names no root
+// gets the old behaviour. Relativizing against a guess would be worse than not
+// relativizing at all.
+func TestExtractPending_NoRootLeavesThePathAsGiven(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "memories", "a.md")
+
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePre,
+		module.InputPayload: fakePending{
+			tool: "Write",
+			args: mustArgs(abs, "body"),
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, filepath.ToSlash(abs), events[0].Fields["path"])
+}
+
+// TestExtractPending_SymlinkedWorkspaceStillRelativizes: the root and the path
+// may name one directory through different spellings, and on macOS they
+// routinely do — `/tmp` is a symlink to `/private/tmp`, so a repo made with
+// `mktemp -d` has a git root of `/private/tmp/x` while every path built from
+// `$TMPDIR` reads `/tmp/x`.
+//
+// filepath.Rel is pure string arithmetic. Given those two it answers
+// `../../tmp/x/memories/...`, which is outside-the-workspace by the test above,
+// so the path keeps its absolute spelling and no matcher admits it — the rule
+// goes silently inert again, for a reason that has nothing to do with the rule.
+//
+// Found by running the migrated guardrails in a scratch repo under /tmp, where
+// both rules permitted a write they had just refused when the same repo was
+// named by its resolved path.
+func TestExtractPending_SymlinkedWorkspaceStillRelativizes(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// The root as git resolves it (the real directory), the path as the harness
+	// spells it (through the link) — the arrangement macOS produces by default.
+	events, err := New().Extract(module.Input{
+		module.InputPhase: module.PhasePre,
+		module.InputPayload: fakePending{
+			tool: "Write",
+			args: mustArgs(filepath.Join(link, "memories", "a.md"), "body"),
+			root: real,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "memories/a.md", events[0].Fields["path"],
+		"a workspace reached through a symlink is the same workspace; a rule must not go inert on the spelling")
+}
+
+func mustArgs(path, content string) json.RawMessage {
+	args, err := json.Marshal(map[string]string{"file_path": path, "content": content})
+	if err != nil {
+		panic(err)
+	}
+	return args
 }
 
 // TestExtract_DirectoryIsNotAnExistingFile is defect 2. os.Stat succeeding says
