@@ -187,6 +187,27 @@ looks like a pass while judging nothing.
 `FAIL-OPEN` comments in `judge-rule.sh` to `exit 1`. Do not do this while the
 judge is a single un-retried model call; make it retry first.
 
+## Reading the verdict
+
+The verdict is matched with `{[^{}]*}` — the first brace-delimited run holding
+no further braces — never `{.*}`.
+
+Greedy matching is a hole here, and it was measured rather than reasoned. Given
+two objects on one line, `grep -o '{.*}'` returns the span from the first `{` to
+the last `}`; `jq` then evaluates `.has_issues` against each and prints one line
+per object, so `has_issues` becomes a two-line string. The test below it is
+`[ "$has_issues" != "true" ]`, which any two-line value satisfies — including
+one whose first line is `true`. A verdict that flagged the rule permitted it,
+in both object orders.
+
+The sibling `unit-satisfies-constraints` in the executive-memory repo stays
+GREEDY, and that is not an inconsistency. Its verdict nests
+(`{"violations":[{...}]}`), so the narrow pattern would take the first inner
+object and lose the key naming it, and its test is `[ -z "$lines" ]`, which a
+merged span makes refuse rather than permit. Same pipeline, two verdict shapes,
+and the fragility falls on opposite sides — so the correct pattern is decided by
+the shape, not copied between rules.
+
 ## Timeout
 
 `timeout 25`, not the 60 the sibling judge uses. The engine kills a hook's
