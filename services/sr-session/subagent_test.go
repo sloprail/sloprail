@@ -306,3 +306,103 @@ func TestStableIDRefusesATraversingAgentIDEndToEnd(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, transcript.ErrNotAnAgentID)
 }
+
+// TestWorkspaceAnchorIsTheTreeNotTheDirectory is the a10n lesson, and it is not
+// a sub-agent property at all — it is the plain case of an agent that ran
+// `cd internal && …` before a hook fired.
+//
+// a10n anchors a session on its git root because a caller must be able to match
+// "by just resolving its OWN cwd's git root the same way". Keyed on the raw cwd
+// instead, two hooks demonstrably in the same tree key two different databases:
+// the second finds no baseline, no verdicts, no guardrail memory, silently and
+// mid-session.
+func TestWorkspaceAnchorIsTheTreeNotTheDirectory(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	tree := initRepo(t)
+	commitFile(t, tree, "seed.txt", "seed")
+
+	sub := filepath.Join(tree, "internal", "deep")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+
+	fromRoot, err := sessionDBPath(tree, "an-origin")
+	require.NoError(t, err)
+	fromSub, err := sessionDBPath(sub, "an-origin")
+	require.NoError(t, err)
+
+	assert.Equal(t, fromRoot, fromSub,
+		"a hook fired from a subdirectory keyed a different database — the session's baseline and every verdict it recorded are unreachable from there")
+}
+
+// TestWorkspaceAnchorSeparatesALinkedWorktree is the other direction, and it is
+// what turns the isolated sub-agent's separate state from an accident of path
+// spelling into a consequence of it being a different tree.
+//
+// A linked worktree has its OWN git root — `rev-parse --show-toplevel` answers
+// the worktree, not the main checkout — so it must key elsewhere even though it
+// shares the repository.
+func TestWorkspaceAnchorSeparatesALinkedWorktree(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	tree := initRepo(t)
+	commitFile(t, tree, "seed.txt", "seed")
+
+	linked := filepath.Join(t.TempDir(), "wt")
+	runGit(t, tree, "worktree", "add", "--detach", linked, "HEAD")
+
+	main, err := sessionDBPath(tree, "an-origin")
+	require.NoError(t, err)
+	other, err := sessionDBPath(linked, "an-origin")
+	require.NoError(t, err)
+
+	assert.NotEqual(t, main, other,
+		"an isolated sub-agent's worktree shared the dispatching session's state — it judges different content at the same paths")
+}
+
+// TestWorkspaceAnchorFallsBackOutsideARepository: a project without git is one
+// the engine guards with everything except the difference, rather than one it
+// refuses to key state for. Two directories that are not repositories stay
+// distinct.
+func TestWorkspaceAnchorFallsBackOutsideARepository(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	one, two := t.TempDir(), t.TempDir()
+
+	a, err := sessionDBPath(one, "an-origin")
+	require.NoError(t, err)
+	b, err := sessionDBPath(two, "an-origin")
+	require.NoError(t, err)
+	assert.NotEqual(t, a, b, "two unrelated non-repository trees pooled their state")
+}
+
+// TestIsolatedSubagentKeysApartEvenUnderTheParentsIdentity is the claim
+// session_subagent_stop.go makes about how far the harness's Pre-event gap
+// reaches.
+//
+// Measured on this harness: a shared-tree sub-agent's tool calls arrive at
+// PreToolUse carrying the ROOT's session id and no agent fields, so they are
+// judged as the parent. The comment there asserts an ISOLATED sub-agent does not
+// have that problem, because its events fire in a different TREE and so key a
+// different store whatever session id they carry.
+//
+// That is the workspace half of the key doing the work alone, and it is worth a
+// test precisely because it is the one protection that survives the harness
+// misreporting the session. If it did not hold, an isolated sub-agent could be
+// exempted by — or could exempt — the parent, on content in a different tree.
+func TestIsolatedSubagentKeysApartEvenUnderTheParentsIdentity(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	tree := initRepo(t)
+	commitFile(t, tree, "seed.txt", "seed")
+
+	linked := filepath.Join(t.TempDir(), "wt")
+	runGit(t, tree, "worktree", "add", "--detach", linked, "HEAD")
+
+	// The worst case the gap produces: the SAME session id — the root's — on
+	// both, because the harness never said a sub-agent was involved.
+	const asParent = "parent-origin"
+	rootDB, err := sessionDBPath(tree, asParent)
+	require.NoError(t, err)
+	isolatedDB, err := sessionDBPath(linked, asParent)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, rootDB, isolatedDB,
+		"an isolated sub-agent misreported as the parent still pooled state with it — the tree "+
+			"half of the key is the only protection left when the harness withholds the session")
+}

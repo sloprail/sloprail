@@ -61,6 +61,36 @@ import (
 // the note outlived it: routing a cycle correctly and then judging nothing is
 // invisible from outside, which is exactly how a refusal here came to be
 // something no test could observe.
+// # The asymmetry with a sub-agent's Pre events, stated rather than papered over
+//
+// A shared-tree sub-agent's tool calls DO reach PreToolUse, and under the mock
+// they arrive carrying the ROOT's session id, no agent_id and no
+// agent_transcript_path — so they are judged as the parent, sharing one
+// `session state` scope, while its Post events are judged here as itself. One
+// sub-agent, two different answers to "whose work is this".
+//
+// That is incoherent, and it is worth being exact about whose incoherence it
+// is. Nothing in the engine treats the two points differently: `pre-tool` builds
+// its scope from the same HookPayload, through the same record() and the same
+// stableID this command uses. Hand a Pre payload the agent fields and it scopes
+// to the sub-agent with no change here at all — which is what real Claude Code
+// reports and what the unit tests drive directly. The split exists because the
+// harness populates those fields on SubagentStop and not on the tool calls.
+//
+// So it is not fixed here, and deliberately not worked around here. The two
+// available workarounds are both worse than the gap: inferring a sub-agent from
+// the transcript's isSidechain records re-derives from a mutable file layout
+// something the caller is handed outright (see the top of this comment), and
+// treating a Pre event as a sub-agent's because a delegation is in flight would
+// mean the engine guessing at attribution the harness declined to state.
+//
+// What it costs while it stands: a shared-tree sub-agent's Pre refusals are
+// recorded against the parent's session, so the parent can be exempted by a
+// verdict reached on the sub-agent's turn — the pooling sessionDBPath's
+// reasoning rejects, arriving through the one door the engine does not control.
+// An ISOLATED sub-agent does not have this problem, because its Pre events fire
+// in a different tree and key a different store regardless of which session id
+// they carry.
 func newSessionSubagentStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "subagent-stop",
