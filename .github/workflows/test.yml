@@ -1,0 +1,78 @@
+# Tests on every push and every pull request.
+#
+# Two jobs rather than one, mirroring the Makefile's own split: a failure in the
+# fast half is reported in seconds instead of after the slow half finishes. They
+# run in parallel, so the wall clock is the e2e job either way.
+name: test
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same branch cancels the first. The old run is answering a
+# question about code nobody will merge.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit + services
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      # Reported as its own step: a formatting complaint is not a test failure
+      # and reading it as one wastes the reader's first guess.
+      # `gofmt -l .` walks the tree, and .gitignore does not stop it — an agent
+      # worktree under .claude/ is a second copy of this repository, so every
+      # file would be reported twice with a path that is not ours. Asking git
+      # which files it tracks is the same question with the right answer.
+      - name: gofmt
+        run: |
+          unformatted="$(git ls-files '*.go' | xargs gofmt -l)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: unit
+        run: make test-unit
+
+      - name: services
+        run: make test-services
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    # 45, against the suite's own 30m: the gap absorbs the checkout, the module
+    # download and the per-package binary builds, so a job killed here means the
+    # suite genuinely hung rather than the runner being slow.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # git is the subject of the change-detection half — every baseline, every
+      # tree diff. A runner with no identity fails those with a message about
+      # committing rather than about the engine.
+      - name: git identity
+        run: |
+          git config --global user.email ci@sloprail.invalid
+          git config --global user.name  sloprail CI
+
+      - name: e2e
+        run: make test-e2e
