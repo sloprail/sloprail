@@ -78,6 +78,16 @@ type harnessSpec struct {
 	// settings. Named here so that passing one harness's flag while another is
 	// running can be reported precisely rather than generically.
 	argsFlag string
+
+	// grantWrite returns the arguments that let the agent write into a
+	// directory outside the one it was started in, or nil if the harness needs
+	// no such permission.
+	//
+	// --stop-script puts the agent's output file outside the working tree on
+	// purpose, and a harness that sandboxes writes will refuse it. This is the
+	// seam for saying so per-harness rather than assuming every harness has
+	// Claude Code's permission model.
+	grantWrite func(dir string) []string
 }
 
 // claudeCodeSpec is Claude Code.
@@ -135,6 +145,27 @@ var claudeCodeSpec = harnessSpec{
 			isClaudeFamilyAlias(model)
 	},
 	argsFlag: "--claude-args",
+
+	// Writing the answer file takes BOTH of these, which was measured rather
+	// than guessed and is not obvious from the help text.
+	//
+	// The output file is deliberately outside the working tree, and Claude Code
+	// gates that twice. `--add-dir` grants the PATH: without it the agent reads
+	// what it was asked to read, computes the right answer, and then says "I
+	// need permission to write to that file", leaving the verifier an empty
+	// file — a correct judgement recorded as a failure. `--allowed-tools Write`
+	// grants the TOOL: with --add-dir alone the refusal is identical, which is
+	// what makes this pair easy to get half-right.
+	//
+	// The Write grant is unscoped because a scoped one does not work here.
+	// `Write(<path>)` is rejected outright — claude answers that only Edit
+	// rules are matched by file permission checks — and `Edit(<path>)` was
+	// measured not to cover creating the file, nor writing an already-created
+	// empty one. So the narrowing that IS available is --add-dir, which is what
+	// confines these writes to the one temporary directory sr-agent owns.
+	grantWrite: func(dir string) []string {
+		return []string{"--add-dir", dir, "--allowed-tools", "Write"}
+	},
 }
 
 // isClaudeFamilyAlias reports whether a name is one of claude's own bare family
