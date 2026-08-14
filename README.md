@@ -22,6 +22,57 @@ declaration's shape, the matcher operators, the hook contract — is the
 There is no setup command. `.sloprail/guardrails/` is created by whatever writes
 the first declaration, and a project with none is an ordinary project.
 
+## Guardrails that arrive with a plugin
+
+A guardrail does not have to be written by the project it governs. A plugin ships
+them the way it already ships hooks and skills — a `guardrails/` directory at its
+root — and installing that plugin puts those rules into force without the project
+copying anything. A team's lint conventions, a framework's "do not edit generated
+files", sloprail's own `authoring-slop`: their natural home is the tool, not each
+consumer's repo, because every copy is a fork that drifts.
+
+The engine finds them through one environment variable, `SR_PLUGIN_DIRS`, a
+list of plugin installation directories. It never reads any harness's plugin
+manifest: knowing which plugins are installed is the harness's job, so the
+harness-specific layer — for Claude Code, the plugin's own `hooks.json`, which is
+that harness's format by definition — fills the variable in. A plugin layer for a
+different harness sets the same variable and nothing in the engine changes. See
+`marketplace/plugins/sloprail/README.md` for that side of it.
+
+Resolution, when both a project and a plugin have a rule of one name:
+
+- **the project wins**, so a project can always override a rule it did not
+  write — and the shadowing is **reported**, because a project that displaced a
+  rule and was never told believes it has two protections and has one;
+- a refusal from a shipped rule **names the plugin** — `("authoring-slop" from
+  plugin "sloprail")` — since the name alone would point at
+  `.sloprail/guardrails/`, where there is nothing;
+- a consumer switches one off from their **own** side, in `.sloprail/config.yaml`,
+  because `enabled: false` lives in a declaration they do not own and an edit
+  inside an install cache is undone by the next reinstall:
+
+      disabled:
+        - sloprail/authoring-slop
+
+  The name is qualified by the plugin, so this cannot also switch off a rule of
+  your own that happens to share it. It works on a shipped rule that will not
+  load, too — otherwise one broken shipped rule wedges every consuming project
+  with no remedy but uninstalling the plugin.
+
+A plugin's guardrail is loaded, validated and dispatched by exactly the same code
+as a project's; it is the same declaration in a different place. Its hook runs
+with its working directory inside the installation, so a shipped
+`./check-rules.sh` resolves to the copy that was installed. A shipped hook must
+not assume anything on the consumer's `$PATH` silently — sloprail's own checks
+for `jq` by name and refuses with a message that says which plugin needs it.
+
+The install is a frozen **copy**, not a symlink, so a plugin author's edits reach
+a consumer at reinstall rather than immediately. That is the right default for a
+consumer — the rules in force are the ones they installed, and do not change
+under them because an author pushed — and it is why a plugin author testing a
+rule should run it from a project checkout rather than expecting the cache to
+follow their edits.
+
 ## The binaries
 
 One binary per high-level command, plus a root that proxies to them. Each

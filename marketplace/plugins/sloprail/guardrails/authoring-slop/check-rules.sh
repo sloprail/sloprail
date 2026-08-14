@@ -12,6 +12,35 @@
 set -u
 
 event="$(cat)"
+
+# This hook ships inside a plugin, so it runs on machines its author has never
+# seen and may not use anything it has not declared. `jq` is its one dependency
+# beyond POSIX sh, and it is checked FIRST, by name, before any use of it.
+#
+# Without this check the failure is worse than a missing tool. Every jq call
+# below is `2>/dev/null`-suppressed, so on a machine without jq the path comes
+# back EMPTY — and the very next line reports "the event named no path", which
+# blames the consumer's event for the plugin's undeclared dependency and sends
+# them to debug the engine. Refusing here is not merely tidier; it is the
+# difference between a diagnosable failure and a misleading one.
+#
+# It refuses rather than permitting, per the rule this guardrail is itself about:
+# a hook that could not check has not approved. The consumer is blocked, which is
+# correct and is the plugin's fault, so the message says which plugin and what to
+# install.
+command -v jq >/dev/null 2>&1 || {
+  cat >&2 <<'MISSING'
+authoring-slop (from the sloprail plugin) could not run: it needs `jq`, which is
+not on PATH.
+
+The action was refused because a guardrail that cannot run must not be read as
+approval. This is the plugin's dependency, not your project's mistake: install
+jq, or switch this rule off by adding `disabled: [sloprail/authoring-slop]` to
+.sloprail/config.yaml.
+MISSING
+  exit 1
+}
+
 path="$(printf '%s' "$event" | jq -r '.event.fields.path // empty' 2>/dev/null)"
 [ -n "$path" ] || {
   echo "authoring-slop: the event named no path" >&2

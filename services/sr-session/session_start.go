@@ -5,7 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
@@ -39,7 +38,8 @@ func newSessionStartCmd() *cobra.Command {
 			// ones that need to know which events exist and what they carry.
 			// Session start is where a person is still watching, so it is where
 			// a rule that could never fire should say so.
-			decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
+			res, err := guardrailStore(p.Cwd).Resolve(reg)
+			decls, invalid := res.Declarations, res.Invalid
 			if err != nil {
 				// Reported, not fatal — see above.
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
@@ -49,6 +49,7 @@ func newSessionStartCmd() *cobra.Command {
 			// A fault an author reads here and then meets again at a write should
 			// be recognisably the one fault, in the one wording.
 			reportInvalid(cmd, invalid)
+			reportShadowed(cmd, res.Shadowed)
 
 			// Rules that loaded despite something being wrong with the machine.
 			// Said differently from "not loaded", because the consequence is
@@ -57,8 +58,8 @@ func newSessionStartCmd() *cobra.Command {
 			for _, d := range decls {
 				for _, w := range d.Warnings {
 					fmt.Fprintf(cmd.ErrOrStderr(),
-						"sloprail: guardrail %q will refuse until this is fixed: %s\n",
-						d.Name, w.Message())
+						"sloprail: guardrail %s will refuse until this is fixed: %s\n",
+						d.Attribution(), w.Message())
 				}
 			}
 			return nil

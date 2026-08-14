@@ -28,7 +28,20 @@ type Declaration struct {
 
 	// Dir is the guardrail's own folder, so a hook can read what sits beside
 	// it and so its commands resolve relative to it.
+	//
+	// For a plugin's guardrail this is inside the plugin's installation, which
+	// is what makes a shipped hook script work at all: the script travels with
+	// the declaration, and the engine chdirs here before running it, so
+	// `./check-rules.sh` resolves to the copy that was installed rather than to
+	// something the consumer would have had to copy in.
 	Dir string `yaml:"-"`
+
+	// Origin says whether this rule came from the project or from an installed
+	// plugin, and which. Read off where the file was found, not out of the
+	// frontmatter: a declaration that named its own plugin could lie, or could
+	// simply go stale when the plugin was renamed, and the loader already knows
+	// the truth.
+	Origin Origin `yaml:"-"`
 
 	// Warnings are problems found at load that did not disqualify the rule —
 	// the machine being wrong rather than the declaration. A hook that is not
@@ -63,7 +76,28 @@ const HookCommand = "command"
 
 // IsEnabled reports whether the engine loads this guardrail. Absent means yes:
 // a declaration that says nothing about being switched off is switched on.
+//
+// This answers only what the DECLARATION says. A consumer switching off a
+// plugin's rule cannot edit that declaration, and says so in the project's own
+// config instead — which the loader applies before a declaration ever reaches
+// here. See Config.
 func (d Declaration) IsEnabled() bool { return d.Enabled == nil || *d.Enabled }
+
+// Qualified is how a consumer names this rule to switch it off, and how a
+// refusal identifies it when two plugins ship the same name.
+func (d Declaration) Qualified() string { return d.Origin.Qualified(d.Name) }
+
+// Attribution is the guardrail's name as a refusal should carry it: the name a
+// project author would search for, plus where it came from when that is not
+// this project.
+//
+// A refusal already names the rule. What it could not say before was where the
+// rule LIVES, and for a plugin's rule that is the whole difficulty — the file is
+// in an install cache, the project never wrote it, and a name alone sends the
+// reader looking in .sloprail/guardrails/ where there is nothing to find.
+func (d Declaration) Attribution() string {
+	return quote(d.Name) + d.Origin.Describe()
+}
 
 // BoundKinds returns every event kind this declaration binds to.
 func (d Declaration) BoundKinds() []string {

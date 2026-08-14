@@ -318,6 +318,39 @@ rediscover both the rule and the argument against it. A disabled one is inert �
 its kinds are not even extracted — so it costs nothing to keep. A disabled
 declaration is also not validated, so it can be parked half-written.
 
+### Turning off a rule you did not write
+
+That only works for a rule in **your** `.sloprail/guardrails/`. A guardrail that
+arrived inside an installed plugin is a different case: its declaration lives in
+the plugin's installation, you do not own it, and an edit there is silently
+undone by the next reinstall — so `enabled: false` is the wrong tool and would
+appear to work until an upgrade.
+
+Switch it off from your own side instead, in `.sloprail/config.yaml`:
+
+```yaml
+disabled:
+  - sloprail/authoring-slop
+```
+
+The name is `<plugin>/<guardrail>`, which is exactly what the refusal cites. A
+refusal from a shipped rule reads
+
+    ... ("authoring-slop" from plugin "sloprail")
+
+so the plugin half of the name is the part that tells you the rule is not in
+your tree, and the file to look for is under that plugin's installation rather
+than under `.sloprail/guardrails/`.
+
+The qualification matters: `disabled: [sloprail/authoring-slop]` switches off the
+plugin's rule and leaves a rule of your own called `authoring-slop` in force.
+They are different rules with different authors.
+
+This also works on a shipped rule that will not load. A broken declaration
+refuses every action it was bound to — deliberately, since a rule that cannot be
+checked must not read as approval — and when it is a plugin's you cannot fix the
+file. Naming it here is the way out that does not mean uninstalling the plugin.
+
 ## Remembering across cycles
 
 `sr-session state get|set|list` is a per-guardrail key-value store that survives

@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -106,7 +105,7 @@ func TestT013_01_PluginBindsSubagentStop(t *testing.T) {
 	if len(commands) == 0 {
 		t.Fatalf("the plugin binds nothing to SubagentStop — a sub-agent's cycle ends with no guardrail running")
 	}
-	if !slices.Contains(commands, "sr-session subagent-stop") {
+	if !bindsSubcommand(commands, "sr-session subagent-stop") {
 		t.Fatalf("SubagentStop is bound to %v, not to the command that ends a sub-agent's cycle", commands)
 	}
 
@@ -308,7 +307,7 @@ func TestT013_04_ASharedTreeSubagentCompletesToo(t *testing.T) {
 // still pass.
 func TestT013_05_PluginStillBindsTheRootStop(t *testing.T) {
 	commands := boundCommands(t, "Stop")
-	if !slices.Contains(commands, "sr-session stop") {
+	if !bindsSubcommand(commands, "sr-session stop") {
 		t.Fatalf("Stop is bound to %v, not to the command that ends a root session's cycle", commands)
 	}
 }
@@ -342,6 +341,32 @@ func boundCommands(t *testing.T, event string) []string {
 		}
 	}
 	return commands
+}
+
+// bindsSubcommand reports whether one of the plugin's bound command lines
+// actually INVOKES the given subcommand.
+//
+// A suffix match rather than equality, because a hook command is a shell line
+// and the plugin legitimately prefixes it with environment the engine needs —
+// today `SR_PLUGIN_DIRS="${CLAUDE_PLUGIN_ROOT}..."`, which is how a guardrail
+// shipped inside the plugin is discovered at all. Equality asserted a
+// particular SPELLING of the line; what these tests are actually about is
+// whether the plugin subscribes to the event and runs the right subcommand for
+// it, and that claim survives the prefix.
+//
+// Still strict about the end of the line: the subcommand must be what the shell
+// finally runs, so a binding that merely MENTIONS `sr-session stop` inside a
+// larger command — piping it, echoing it, running something else after it —
+// does not pass. That is the part worth keeping, because a binding naming the
+// wrong subcommand is exactly the defect this file was written to catch.
+func bindsSubcommand(commands []string, subcommand string) bool {
+	for _, c := range commands {
+		trimmed := strings.TrimSpace(c)
+		if trimmed == subcommand || strings.HasSuffix(trimmed, " "+subcommand) {
+			return true
+		}
+	}
+	return false
 }
 
 // agentIDs returns the agent ids the mock announced, in order.
