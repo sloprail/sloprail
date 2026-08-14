@@ -204,6 +204,30 @@ func TestT013_04_ARuleBoundToNothingBlocksNothing(t *testing.T) {
 // refusing so broadly that a typo in one rule blocks every action in the
 // project, leaving no way out but deleting it. A broken rule about file DELETION
 // must not stop a file being written.
+//
+// # What this test can and cannot show, since its positive control is gone
+//
+// It asserts only that something did NOT happen, on a build where nothing
+// invalid ever refuses — so it cannot fail for the reason it names, and it does
+// not locate the scoping boundary. That is stated plainly rather than left for a
+// reader to discover, because a test that looks like it pins a property and does
+// not is worse than no test.
+//
+// It is KEPT rather than deleted, for one thing it still does: it is a
+// regression guard against a future build that reintroduces refusal without
+// reintroducing scoping. Under such a build this fails, and it is the only test
+// in this file that would.
+//
+// The property it used to pin — that the report is per-kind — did not go away
+// with the refusal. reportBroken still walks AffectedKinds and prints only for
+// the kind in hand. It simply stopped being observable HERE: reportBroken writes
+// to stderr at exit 0, and measured through this harness, nothing on that
+// channel reaches Result.Output at all. Re-pointing this test at the report was
+// tried and is not implementable at this layer.
+//
+// So the positive/negative pair lives where the channel can be read: see
+// TestPreTool_ABrokenRuleIsReportedOnlyForItsOwnKind in services/sr-session,
+// which drives this same dispatch with stderr captured and asserts both halves.
 func TestT013_05_ABrokenRuleDoesNotBlockAnUnrelatedKind(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -239,6 +263,31 @@ func TestT013_05_ABrokenRuleDoesNotBlockAnUnrelatedKind(t *testing.T) {
 // something did NOT happen, in a build where nothing invalid ever refuses, so it
 // no longer locates a boundary. It is kept as a regression guard against a
 // future build that reintroduces refusal without reintroducing scoping.
+//
+// # Where the control went instead
+//
+// Leaving it at that was the gap this note now closes. Deleting the control was
+// right; leaving the property it guarded with no control anywhere was not, and
+// for one revision that is what this comment described.
+//
+// The property outlived the refusal. Scoping was never a fact about refusing —
+// it is a fact about which broken rules are announced against which action, and
+// reportBroken still walks AffectedKinds and prints only for the kind in hand.
+// A broken rule on PreFileDelete is silent for a write; a broken rule on
+// PreFileCreate names itself. That is a real positive/negative pair.
+//
+// It is not reinstatable HERE, and this was measured rather than assumed before
+// the control was written elsewhere. reportBroken writes to stderr and the
+// engine exits 0 when it permits; driven through this harness with the fault
+// moved onto PreFileCreate, Result.Output carried neither the rule's name nor
+// any word of the report. The mock does not forward a permitting hook's stderr,
+// which is the measured channel table above holding exactly as it says.
+//
+// So the pair is pinned one layer down, where cmd.SetErr can read what this
+// harness cannot: TestPreTool_ABrokenRuleIsReportedOnlyForItsOwnKind in
+// services/sr-session. It is not an e2e and does not claim to be — but a
+// property observable only on a channel no session delivers cannot be pinned by
+// a session, and the choice is that test or none.
 
 // T013_06: one broken declaration does not silence a sound one beside it.
 //
