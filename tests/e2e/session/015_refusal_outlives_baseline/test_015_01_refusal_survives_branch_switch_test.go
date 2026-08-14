@@ -332,3 +332,104 @@ exit 0
 			countPath(fixed, "subject.md"), countPath(after, "subject.md"), after)
 	}
 }
+
+// T015_04: a refused file that is NO LONGER A DIFFERENCE is still reported.
+//
+// The invariant's real claim, and the one T015_02 above cannot make. There the
+// offending file is re-created after the switch, so it is outstanding work in
+// the tree and arrives in the ordinary difference — the refusal contributes
+// nothing to its arrival, and the test passes identically on an engine that
+// discards refusals outright. Measured: dropping every failing verdict in
+// revalidation.Record leaves T015_01, T015_02 and T015_03 all green.
+//
+// Here the branch the agent switches to ALREADY HOLDS the offending file,
+// committed and identical. After the switch the file is on disk and broken,
+// the measuring point has been re-taken onto that line, and the file is not a
+// difference against it by any reading of the tree. Only the retained refusal
+// still knows. So this fails on an engine that keeps refusals but never reads
+// them, which is what the engine did until readdOutstanding existed.
+func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.Guardrail(proj, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "the guardrail, on every line of history")
+	root := e.Git(proj, "rev-parse", "HEAD")
+
+	// The branch already carries the offending file, so switching to it leaves
+	// the file on disk WITHOUT putting it in the difference.
+	e.Git(proj, "checkout", "-b", "feature", root)
+	writeFile(t, proj, "bad-file.md", "violates\n")
+	e.Git(proj, "add", "bad-file.md")
+	e.Git(proj, "commit", "-m", "the bad file, already on this line")
+	e.Git(proj, "checkout", "main")
+	e.Git(proj, "commit", "--allow-empty", "-m", "on main, after the split")
+
+	const sess = "s-015-04"
+	e.Run(proj, sess, "write a bad file", Turns("done",
+		Write("w1", "bad-file.md", "violates\n"),
+		Bash("b1", "git add bad-file.md && git commit -m 'the bad file'"),
+	))
+	first := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	if countPath(first, "bad-file.md") == 0 {
+		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
+			"nothing was refused, so there is no surviving refusal to test", first)
+	}
+
+	e.Run(proj, sess, "switch branches", Turns("done",
+		Bash("b2", "git checkout feature"),
+		Write("w3", "unrelated.md", "fine\n"),
+	))
+
+	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
+		t.Fatalf("the agent did not actually switch branches (on %q), so the measuring point "+
+			"never moved and this proves nothing", got)
+	}
+	// The premise: the file is genuinely still broken on disk.
+	if !e.Wrote(proj, "bad-file.md") {
+		t.Fatalf("the offending file is not in the tree, so there is nothing left unfixed " +
+			"and its absence from the report would be correct")
+	}
+
+	after := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	if len(after) <= len(first) {
+		t.Fatalf("the second cycle observed nothing at all (%d entries, was %d), so there is "+
+			"no evidence either way: %v", len(after), len(first), after)
+	}
+	// The control: this cycle's ordinary difference did arrive, so the assertion
+	// below is about the refused file rather than about a dead ledger.
+	second := after[len(first):]
+	if !sawPathIn(second, "unrelated.md") {
+		t.Fatalf("the cycle's own work is missing from %v — nothing was dispatched, so the "+
+			"claim below would be vacuous", second)
+	}
+	if countPath(second, "bad-file.md") == 0 {
+		t.Fatalf("an unfixed refusal was dropped once it left the difference: the file is still "+
+			"broken on disk and was not reported after the branch switch (%v) — the refusal was "+
+			"tied to the measuring point after all", second)
+	}
+
+	// And it arrives as an UPDATE, not a create.
+	//
+	// The re-added file is not this cycle's work: it was present at the point
+	// being measured from, which is exactly why the difference is silent about
+	// it. Reporting it as a creation would tell every rule bound to
+	// PostFileCreate about a file the cycle did not create — a rule that only
+	// fires on new files would object to one that has been there all along.
+	//
+	// Asserted because nothing else can catch it. The path is what the earlier
+	// assertion reads, and the kind is chosen by readdOutstanding alone — a
+	// re-add that claimed the file was absent at the baseline produces the same
+	// path in the same ledger, and every other test in this tree stays green.
+	for _, o := range second {
+		if o.Path == "bad-file.md" && o.Kind != "PostFileUpdate" {
+			t.Fatalf("a re-reported unfixed file arrived as %q, want PostFileUpdate — it was "+
+				"present at the point being measured from, so calling it a creation puts it in "+
+				"front of every rule bound to new files", o.Kind)
+		}
+	}
+}
+
+// sawPathIn reports whether a path appears at all, for the control assertions.
+func sawPathIn(got []observed, path string) bool { return countPath(got, path) > 0 }

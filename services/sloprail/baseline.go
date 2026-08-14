@@ -41,10 +41,17 @@ import (
 // history this tree no longer has, and it is taken again.
 //
 // Moving it is safe only because an unfixed refusal does not depend on it. A
-// failing verdict is kept in file_checks in its own right, keyed by path and
-// guardrail, and is reported again on every cycle until a hook passes it —
-// whatever point the difference is measured from. Both halves have to hold
-// together, or a branch switch quietly drops a violation.
+// failing verdict is kept in file_checks in its own right, keyed by path,
+// guardrail and the content it was reached on, and is reported again on every
+// cycle until a hook passes it — whatever point the difference is measured
+// from. Both halves have to hold together, or a branch switch quietly drops a
+// violation.
+//
+// KEEPING the verdict is only half of that, and the quieter half is reading it
+// back: a refusal nothing asks for enforces nothing. Once the point moves, the
+// refused file is no longer a difference and the tree says nothing about it, so
+// the re-reporting comes from the record instead — OutstandingRefusals, read by
+// readdOutstanding at the end of every cycle. See T015_04.
 
 // baselineOutcome says what a call to the baseline did, so a caller can report
 // it and a test can assert on it without reading the store back.
@@ -144,8 +151,10 @@ func ensureBaseline(store sessionstate.Store, dir string) (baselineOutcome, erro
 	// would be the whole delta between the two.
 	//
 	// The unfixed refusals recorded so far are untouched by this: they sit in
-	// file_checks keyed by path and guardrail, not against the point, and keep
-	// surfacing until a hook passes them.
+	// file_checks keyed by path, guardrail and content, not against the point,
+	// and keep surfacing until a hook passes them — readdOutstanding puts them
+	// back into the difference on every cycle, which is what makes that true
+	// once the point has moved past them.
 	//
 	// One exception, and it is the reason Position.Branch still exists. A rebase
 	// walks a detached HEAD through commits that reach nothing recorded, at
