@@ -829,6 +829,32 @@ func (e *Env) SessionIdentity(projDir, sessionID string) string {
 // it — an assertion that cannot fail.
 func (e *Env) BlockingErrors(projDir, sessionID string) []string {
 	e.t.Helper()
+	return e.blockingErrors(projDir, sessionID, "")
+}
+
+// BlockingErrorsFrom returns the text of every blocking hook error recorded for
+// a session AT ONE LIFECYCLE EVENT — "Stop", "SubagentStop".
+//
+// Which hook refused is not a detail when a sub-agent is in play. A sub-agent
+// sharing the dispatching session's tree leaves its work where the ROOT's own
+// Stop will see it too, so a rule bound to created files refuses twice: once at
+// the sub-agent's cycle and once at the root's. A test asserting only that some
+// refusal reached the record therefore passes whether or not the sub-agent's
+// cycle judged anything at all — measured, and the reason this exists: the first
+// version of the sub-agent refusal test passed against an engine whose
+// subagent-stop was a stub returning nil.
+//
+// Everything else is BlockingErrors' behaviour, including the de-duplication;
+// see there for why the record rather than the stream.
+func (e *Env) BlockingErrorsFrom(projDir, sessionID, hookEvent string) []string {
+	e.t.Helper()
+	return e.blockingErrors(projDir, sessionID, hookEvent)
+}
+
+// blockingErrors reads refusals out of the record, optionally narrowed to one
+// lifecycle event. An empty hookEvent means every event.
+func (e *Env) blockingErrors(projDir, sessionID, hookEvent string) []string {
+	e.t.Helper()
 
 	var out []string
 	seen := map[string]bool{}
@@ -839,6 +865,7 @@ func (e *Env) BlockingErrors(projDir, sessionID string) []string {
 		var rec struct {
 			Attachment struct {
 				Type          string `json:"type"`
+				HookEvent     string `json:"hookEvent"`
 				BlockingError struct {
 					BlockingError string `json:"blockingError"`
 				} `json:"blockingError"`
@@ -848,6 +875,9 @@ func (e *Env) BlockingErrors(projDir, sessionID string) []string {
 			continue
 		}
 		if rec.Attachment.Type != "hook_blocking_error" {
+			continue
+		}
+		if hookEvent != "" && rec.Attachment.HookEvent != hookEvent {
 			continue
 		}
 		text := rec.Attachment.BlockingError.BlockingError

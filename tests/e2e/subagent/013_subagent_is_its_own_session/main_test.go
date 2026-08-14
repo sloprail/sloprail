@@ -11,6 +11,7 @@ var (
 	New      = harness.New
 	Turns    = harness.Turns
 	Write    = harness.Write
+	Bash     = harness.Bash
 	Dispatch = harness.Dispatch
 )
 
