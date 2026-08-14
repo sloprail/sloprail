@@ -332,3 +332,93 @@ exit 0
 			countPath(fixed, "subject.md"), countPath(after, "subject.md"), after)
 	}
 }
+
+// T015_04: an unfixed refusal survives the agent COMMITTING the offending file.
+//
+// The ordinary case, and the one an agent reaches by doing the ordinary thing.
+// T015_02 moves the measuring point with a branch switch, which is the dramatic
+// version; this is the everyday one — the agent commits its work and carries on
+// — and it is worth its own test because the reasoning that makes it safe is
+// different.
+//
+// WHY IT HOLDS, stated because the obvious guess is wrong and this test was
+// first written as a defect pin on that guess. Committing does NOT take the
+// file out of the difference: the measuring point is where the SESSION began
+// and ensureBaseline moves it only when the tree leaves the history it sits in,
+// so a commit made during the session keeps the session's own work in view.
+// That is difference_spans_both doing the work, and it is what keeps this file
+// arriving at the rule cycle after cycle.
+//
+// What refusal_outlives_baseline then contributes is the other half: the file
+// arriving is not enough, because a guardrail that had already passed content
+// would be exempted from judging it again. A REFUSED verdict is never a licence
+// to skip — Skippable returns the stored `passed` for the matching fingerprint
+// — so the rule is asked again and refuses again for as long as the content
+// stands. Confirmed by mutation: recording every verdict as a pass turns this
+// test and T015_01 and T015_02 red together.
+//
+// So the two mechanisms are separable and this test needs both. The control
+// below is what keeps it honest about that.
+func TestT015_04_AnUnfixedRefusalSurvivesTheAgentCommittingIt(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.Guardrail(proj, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "the guardrail, before the session")
+
+	const sess = "s-015-04"
+
+	// Cycle one: the offending file is written and refused.
+	e.Run(proj, sess, "write a bad file", Turns("done",
+		Write("w1", "bad-file.md", "violates\n"),
+	))
+	first := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	if countPath(first, "bad-file.md") == 0 {
+		t.Fatalf("the offending file never reached the rule in the first cycle: %v — nothing "+
+			"was refused, so there is no surviving refusal to test", first)
+	}
+
+	// Cycle two: the agent commits the offending file and moves on to other
+	// work. The file is now clean in the tree while being exactly as broken as
+	// before.
+	e.Run(proj, sess, "commit it and move on", Turns("done",
+		Bash("b1", "git add bad-file.md && git commit -m 'the bad file'"),
+		Write("w2", "unrelated.md", "fine\n"),
+	))
+
+	// The premises, both asserted: the file is still there holding the content
+	// the rule objects to, and git considers it settled.
+	if !e.Exists(proj, "bad-file.md") {
+		t.Fatalf("the offending file is gone, so there is nothing left to report and this " +
+			"test is not about what it claims")
+	}
+	if status := e.Git(proj, "status", "--porcelain", "--", "bad-file.md"); status != "" {
+		t.Fatalf("bad-file.md is still outstanding (%q), so the commit did not happen and the "+
+			"case this test is about was never set up", status)
+	}
+
+	all := e.Ledger(proj, "watcher", "seen")
+	if len(all) <= len(first) {
+		t.Fatalf("the second cycle observed nothing at all, so there is no evidence either way")
+	}
+	// Counted over what THIS cycle added, not over the ledger as a whole: a
+	// refusal blocks the turn and the agent is driven round again, so one
+	// unfixed violation writes many lines in a single cycle and a comparison of
+	// totals measures the mock's retries rather than the invariant.
+	second := observedFiles(t, all[len(first):])
+
+	// The control: this cycle reached the rule about something else, so the
+	// assertion below is read against a ledger that is registering this cycle.
+	if countPath(second, "unrelated.md") == 0 {
+		t.Fatalf("the second cycle's own work never reached the rule: %v — nothing was "+
+			"observed, so what it did or did not include proves nothing", second)
+	}
+
+	// The invariant proper.
+	if countPath(second, "bad-file.md") == 0 {
+		t.Fatalf("an unfixed refusal fell silent once the agent committed the file: the second "+
+			"cycle reported %v and never named bad-file.md — the file is still on disk, still "+
+			"holding the content the rule refused, and nothing is left to say so", second)
+	}
+}
