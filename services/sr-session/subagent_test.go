@@ -371,3 +371,38 @@ func TestWorkspaceAnchorFallsBackOutsideARepository(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, a, b, "two unrelated non-repository trees pooled their state")
 }
+
+// TestIsolatedSubagentKeysApartEvenUnderTheParentsIdentity is the claim
+// session_subagent_stop.go makes about how far the harness's Pre-event gap
+// reaches.
+//
+// Measured on this harness: a shared-tree sub-agent's tool calls arrive at
+// PreToolUse carrying the ROOT's session id and no agent fields, so they are
+// judged as the parent. The comment there asserts an ISOLATED sub-agent does not
+// have that problem, because its events fire in a different TREE and so key a
+// different store whatever session id they carry.
+//
+// That is the workspace half of the key doing the work alone, and it is worth a
+// test precisely because it is the one protection that survives the harness
+// misreporting the session. If it did not hold, an isolated sub-agent could be
+// exempted by — or could exempt — the parent, on content in a different tree.
+func TestIsolatedSubagentKeysApartEvenUnderTheParentsIdentity(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	tree := initRepo(t)
+	commitFile(t, tree, "seed.txt", "seed")
+
+	linked := filepath.Join(t.TempDir(), "wt")
+	runGit(t, tree, "worktree", "add", "--detach", linked, "HEAD")
+
+	// The worst case the gap produces: the SAME session id — the root's — on
+	// both, because the harness never said a sub-agent was involved.
+	const asParent = "parent-origin"
+	rootDB, err := sessionDBPath(tree, asParent)
+	require.NoError(t, err)
+	isolatedDB, err := sessionDBPath(linked, asParent)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, rootDB, isolatedDB,
+		"an isolated sub-agent misreported as the parent still pooled state with it — the tree "+
+			"half of the key is the only protection left when the harness withholds the session")
+}
