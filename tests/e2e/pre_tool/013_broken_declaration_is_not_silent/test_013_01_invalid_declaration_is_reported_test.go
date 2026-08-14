@@ -112,7 +112,7 @@ const refuseScript = "#!/bin/sh\ncat >/dev/null\necho 'guarded/ is off limits' >
 // halves were wrong: it is exit 2 specifically, not any non-zero status, and the
 // unprobed channel was `permissionDecision` — the one the engine itself uses.
 // The conclusion was right anyway, which is exactly why it went unchecked. See
-// refuseForBroken in services/sloprail for the full table.
+// refuseForBroken in services/sr-session for the full table.
 //
 // So "warn and proceed" is indistinguishable from the original silence at the
 // only place that matters. The refusal is the diagnostic's delivery mechanism,

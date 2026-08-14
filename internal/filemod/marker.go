@@ -58,7 +58,7 @@ type Marker struct {
 }
 
 // markerPattern is the reader, taken verbatim from the writer's own
-// (services/mark/marker.go on impl/sr-mark), so that what sr-mark writes is
+// (services/sr-mark/marker.go on impl/sr-mark), so that what sr-mark writes is
 // exactly what this reads back. The written form is:
 //
 //	<leader> sr:<kind> <fqn>

@@ -58,13 +58,13 @@ import (
 // The routing itself is covered where it can be covered honestly and where a
 // mutation to it actually fails something:
 //
-//   - services/sloprail/subagent_test.go — record() prefers the sub-agent's own
+//   - services/sr-session/subagent_test.go — record() prefers the sub-agent's own
 //     path, reconstructs one from an agent id, refuses a traversing id, and
 //     resolves a distinct identity end to end on real files in the real nested
 //     layout.
 //   - internal/transcript/subagent_test.go — a sub-agent's identity is its own
 //     origin, survives a fork, and two sub-agents of one parent are distinct.
-//   - services/sloprail/session_subagent_stop_test.go — an unplaceable cycle
+//   - services/sr-session/session_subagent_stop_test.go — an unplaceable cycle
 //     stands down rather than blocking, and never acts as the parent.
 //
 // The gap that would close this properly is in the plugin, and belongs there:

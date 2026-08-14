@@ -86,7 +86,7 @@ import (
 //     sub-agent's own transcript on the payloads of the TOOL CALLS it makes —
 //     agent_transcript_path or agent_id, the fields record() already prefers —
 //     which is what real Claude Code does and what every unit test in
-//     services/sloprail/subagent_test.go drives directly.
+//     services/sr-session/subagent_test.go drives directly.
 //  2. For asserting on a sub-agent's cycle at all: a channel out of
 //     SubagentStop that the run can observe. Today there is none, so even a
 //     correct verdict inside a sub-agent is unreportable.

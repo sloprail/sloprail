@@ -36,20 +36,12 @@ const (
 	pluginKey       = pluginName + "@" + marketplaceName
 )
 
-// Services are the directories under services/, each of which builds to one
-// binary. Listed once here so a new service is added in one place and every
-// test reaches it without knowing it was added.
-var Services = []string{"sr", "session", "guardrail", "file", "mark", "agent"}
-
-// BinaryName is the binary a service directory builds to. The root proxy is
-// `sr`; everything else is `sr-<dir>`, which is the naming the whole CLI uses
-// and the naming internal/subbin resolves against.
-func BinaryName(svc string) string {
-	if svc == "sr" {
-		return "sr"
-	}
-	return "sr-" + svc
-}
+// Services are the directories under services/. Each is named for the binary it
+// builds, so `go install ./services/...` produces binaries that can find each
+// other — Go names an installed binary after its directory, and a directory
+// called `session` would install as `session` while the proxy looked for
+// `sr-session`. Listed once here so a new service is added in one place.
+var Services = []string{"sr", "sr-session", "sr-guardrail", "sr-file", "sr-mark", "sr-agent"}
 
 // Env is one isolated end-to-end environment.
 type Env struct {
@@ -154,7 +146,7 @@ func build(t *testing.T) string {
 		// whatever is installed on the machine — the same now goes for every
 		// service a hook might name.
 		for _, svc := range Services {
-			out := filepath.Join(dir, BinaryName(svc))
+			out := filepath.Join(dir, svc)
 			cmd := exec.Command("go", "build", "-o", out, "./services/"+svc)
 			cmd.Dir = root
 			if o, err := cmd.CombinedOutput(); err != nil {
@@ -943,7 +935,7 @@ func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) 
 // Both are listed because a refusal is a refusal whichever channel carried it,
 // and a predicate that knew only the engine's current channel would silently
 // start answering "permitted" the day that changed. See refuseForBroken in
-// services/sloprail for the full measured table, including the channels that
+// services/sr-session for the full measured table, including the channels that
 // deliver nothing.
 var blockedMarkers = []string{
 	"Tool call blocked by a PreToolUse hook",

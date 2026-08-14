@@ -122,7 +122,7 @@ func (m *Matcher) Match(e event.Event) (bool, error) {
 // is load-bearing and was once missing. The pre-tool path discarded the invalid
 // list, so a typo was announced once at session start and then silently disarmed
 // its rule for every action after it, which made this paragraph false of the
-// thing anyone actually runs. See refuseForBroken in services/sloprail, and
+// thing anyone actually runs. See refuseForBroken in services/sr-session, and
 // tests/e2e/pre_tool/013_broken_declaration_is_not_silent, which fails if that
 // link is removed again.
 //
@@ -183,7 +183,7 @@ func (m *Matcher) env(e event.Event) (map[string]any, error) {
 // unable to ANSWER whether the rule applies: `42 startsWith "guarded/"` has no
 // truth value, and inventing one — in either direction — is the engine deciding
 // enforcement on its own account. So it errors, and joins the same family as a
-// matcher that cannot be evaluated: the caller in services/sloprail refuses the
+// matcher that cannot be evaluated: the caller in services/sr-session refuses the
 // action and says why. See TestMatch_WrongTypedCarriedValueErrors.
 //
 // A carried value of the RIGHT type is never replaced. Completing a structure is

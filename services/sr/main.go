@@ -29,6 +29,36 @@
 // UNKNOWN COMMANDS ARE NOT FORWARDED. Only the commands listed above dispatch.
 // A typo'd `sr sessoin` is an error from cobra naming the real commands, not an
 // attempt to exec `sr-sessoin` and a confusing not-found from the OS.
+//
+// NO SHARED CONFIG LAYER, AND NO VIPER. a10n's proxy reads viper for settings
+// its sub-binaries share (`server.auth.type` and the rest), so the question of
+// copying that came up with the split. It buys sloprail nothing today, and the
+// reason is structural rather than a matter of taste.
+//
+// What passes between these binaries is per-invocation SCOPE, not settings:
+// SR_GUARDRAIL, SR_SESSION_ID, SR_WORKSPACE, SR_TRANSCRIPT. Every one of them
+// differs per hook call, is set by the engine immediately before the exec, and
+// is deliberately NOT something a user may configure — SR_WORKSPACE is appended
+// after the inherited environment precisely so an outer value cannot override
+// the engine's answer (see services/sr-session/hookenv.go). A config file cannot
+// hold values like these, so viper would sit alongside the real mechanism
+// rather than replace it.
+//
+// There is also nothing left for it to hold. `sloprail init` was deleted
+// because a file containing only defaults is a file to keep valid for no
+// return, and the split did not create a setting: the ONE thing a user might
+// point at — where the sibling binaries live — is SLOP_SUBBIN_DIR, which must
+// be an env var because it has to be set by whoever launches the process (a
+// test harness pointing at a temp build), and which is unset in every normal
+// install because sibling resolution already answers.
+//
+// Adding it would cost the thing the split just bought. sr-guardrail links the
+// module registry and nothing else; putting a config layer in the shared path
+// would link a config parser into all six binaries so that none of them could
+// read a setting that does not exist. Revisit if a real user-facing setting
+// ever appears — a default schema path, a global disable — and note that such a
+// setting would belong to `.sloprail/` beside the guardrails, which is
+// project-scoped and already the place this tool looks.
 package main
 
 import (

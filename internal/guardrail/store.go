@@ -103,7 +103,7 @@ func (iv Invalid) Has(kind error) bool {
 // unreadable, and — since no channel at PreToolUse delivers text without also
 // refusing — would do it silently. The pre-tool path therefore asks about this
 // case separately and refuses every action; see refuseForUnreadable in
-// services/sloprail, which carries the argument in full. Callers must decide
+// services/sr-session, which carries the argument in full. Callers must decide
 // what an empty result means rather than defaulting into permission.
 func (iv Invalid) AffectedKinds() []string {
 	seen := make(map[string]bool)
