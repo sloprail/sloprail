@@ -27,18 +27,24 @@ import (
 // So the claims that can be pinned are pinned here. Not the prose — the facts
 // an author would act on and be wrong about.
 
-// skillPath locates the shipped skill from the repo root.
+// skillDir locates the shipped skill's folder from the repo root.
 //
 // The plugin copy is the source; .claude/skills/authoring-guardrails is a
 // symlink to it, so there is one file rather than two that drift.
-func skillPath(t *testing.T) string {
+func skillDir(t *testing.T) string {
 	t.Helper()
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		t.Fatalf("locate repo root: %v", err)
 	}
 	return filepath.Join(strings.TrimSpace(string(out)),
-		"marketplace", "plugins", "sloprail", "skills", "authoring-guardrails", "SKILL.md")
+		"marketplace", "plugins", "sloprail", "skills", "authoring-guardrails")
+}
+
+// skillPath is the skill's entry point — the file loaded whole, every time.
+func skillPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(skillDir(t), "SKILL.md")
 }
 
 func skillText(t *testing.T) string {
@@ -48,6 +54,43 @@ func skillText(t *testing.T) string {
 		t.Fatalf("read skill: %v", err)
 	}
 	return string(body)
+}
+
+// skillCorpusText is SKILL.md plus every reference file beside it.
+//
+// The skill is a folder now: the entry point carries the decision path and the
+// depth lives in linked files. Which half a given claim sits in is an editorial
+// choice that will keep moving, so any check about what the skill SHOWS — an
+// example that has to compile, an invocation that has to be real — reads the
+// whole folder. Otherwise moving a section behind a link silently moves it out
+// of the tests, and the reader still follows it.
+//
+// The checks about what the skill must NOT restate stay on SKILL.md alone. See
+// T003_14, which is about the cost of the file loaded on every task.
+func skillCorpusText(t *testing.T) string {
+	t.Helper()
+	entries, err := os.ReadDir(skillDir(t))
+	if err != nil {
+		t.Fatalf("read skill dir: %v", err)
+	}
+	var b strings.Builder
+	var files int
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(skillDir(t), e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		b.Write(body)
+		b.WriteString("\n")
+		files++
+	}
+	if files == 0 {
+		t.Fatal("the skill folder holds no markdown — this test would prove nothing")
+	}
+	return b.String()
 }
 
 // T003_14: the skill does not restate the event vocabulary the engine derives.
@@ -116,8 +159,15 @@ func TestT003_14_SkillDoesNotRestateTheDerivedVocabulary(t *testing.T) {
 // The expressions are scraped from the skill's own fenced blocks and inline
 // code, so adding an example puts it under this check without anyone
 // remembering to.
+//
+// Scraped from the WHOLE FOLDER, not from SKILL.md alone. The operator tables
+// live in matchers.md now and the per-module pages show expressions of their
+// own; reading only the entry point would have left every one of them
+// unchecked, which is how a documented operator that does not exist gets
+// shipped. The property is about what the skill shows an author, and a linked
+// file shows it just as loudly.
 func TestT003_15_EverySkillMatcherExampleCompiles(t *testing.T) {
-	skill := skillText(t)
+	skill := skillCorpusText(t)
 
 	reg, err := modules.Registry()
 	if err != nil {
