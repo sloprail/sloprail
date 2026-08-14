@@ -23,7 +23,7 @@ the first declaration, and a project with none is an ordinary project.
 
 One binary per high-level command, plus a root that proxies to them. Each
 directory under `services/` is named for the binary it builds, so
-`go install ./services/...` installs the set.
+`go install ./services/...` installs the set — see Installing below.
 
     sr              the root — `sr session start` runs sr-session
     sr-session      the hook points a harness calls, and what a hook asks
@@ -41,6 +41,38 @@ and has no use for discoverability.
 The services find each other as siblings of the running binary, then on `$PATH`;
 `SLOP_SUBBIN_DIR` overrides both and is what the e2e harness sets to point at a
 temporary build. See `internal/subbin`.
+
+## Installing
+
+    go install ./services/...     # the ordinary path
+    make distribute-local         # when a copy is already installed
+
+Both land the six in one directory, which is what sibling resolution needs.
+Prefer `go install` for a first install: it is the Go-standard path and puts
+them in `GOBIN`.
+
+`make distribute-local` exists for the case `go install` handles badly — an
+already-installed copy. It builds into `bin/`, then copies over the existing
+install and re-signs each binary with `codesign --sign -`, without which macOS
+kills a binary copied over a signed one. It installs beside the `sr` already on
+`$PATH`, so an upgrade lands where the last install did rather than wherever
+`GOBIN` currently points.
+
+    make where                    # print the destination, touch nothing
+    make distribute-local PREFIX=~/bin
+
+With no `sr` on `$PATH` and no `PREFIX`, it falls back to `GOBIN` (else
+`GOPATH/bin`) — the directory `go install` would have used. It prints the
+destination before copying, and warns when that directory is not on `$PATH`,
+because a hook that cannot find `sr-session` is the failure this causes.
+
+    make build   the six into bin/
+    make check   build, vet, gofmt
+    make test    unit, then services, then e2e — `-p 1` throughout
+
+`-p 1` is a constraint, not a preference: each e2e package builds the six
+binaries and drives a mock agent, and a parallel `-race ./...` across the 46 of
+them ran the disk out of space.
 
 ## Adding a module
 

@@ -13,6 +13,12 @@
 /sr-mark
 /sr-agent
 
+# Where `make build` puts the same six binaries. The entries above cover a bare
+# `go build ./services/...`, which drops them at the root; the Makefile builds
+# with -o bin/ instead, so both layouts have to be listed or whichever one is
+# not gets committed.
+/bin/
+
 # Where the e2e harness builds the binary it drives. Under the git directory
 # rather than the system temp dir, because macOS reaps /var/folders mid-run —
 # see tests/e2e/harness/harness.go. Listed here for the case where someone
