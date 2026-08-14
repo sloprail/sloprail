@@ -75,6 +75,9 @@ ws=$(printf '%s' "$payload" | sed -n 's|.*"guardrailDir":"\(.*\)/\.sloprail/guar
 echo "asked disk=[$(cat "$ws/$path" 2>/dev/null)]" >> "$PWD/log"
 body=$(printf '%s' "$payload" | grep -o '"content":"[^"]*"' || true)
 if [ -z "$body" ]; then
+  body=$(printf '%s' "$payload" | grep -o '"result":"[^"]*"' || true)
+fi
+if [ -z "$body" ]; then
   body=$(cat "$ws/$path" 2>/dev/null || true)
 fi
 case "$body" in
@@ -201,15 +204,30 @@ func TestT014_02_EditingAwayAndBackDoesNotClearTheRefusal(t *testing.T) {
 // pass at the wrong moments, and any assertion made about it would be
 // measuring the hole rather than the invariant.
 //
-// Written out rather than omitted so the coverage claim is honest: this half of
-// refusal_is_retained is NOT covered today. When PreFileUpdate carries content,
-// delete the t.Skip and this starts asserting.
+// THE SKIP HAS BEEN LIFTED, and what it was waiting for has happened: the kind
+// now declares `result` (the bytes the write would LEAVE) and `resultKnown`
+// alongside `path`, so a hook bound to PreFileUpdate can see the pending payload
+// and no longer has to fall back to the bytes on disk. The judge script below
+// reads `result` when `content` is absent, which is exactly the fallback the
+// skip said did not exist.
+//
+// Measured on the un-skipped test: the sequence judges the PENDING bytes at
+// every offer — refused, permitted, refused — rather than the previous write's,
+// which is what the skip said was impossible on this engine.
+//
+// The count is FOUR, not three. The `printf > notes.md` that stages the file is
+// itself a write this guardrail is bound to and is judged like any other; three
+// was the arithmetic of a test that had never run.
+//
+// WHAT THIS TEST DOES AND DOES NOT PIN, since the distinction is the whole point
+// of this directory's header. It pins that the update path judges pending
+// content and that restored content is refused again. It does NOT pin retention:
+// dropping failing verdicts outright in RecordFileCheck leaves it green, for the
+// same reason it leaves every other test here green — Skippable answers false
+// for a retained refusal and for a missing row alike. Measured, not assumed.
+// Retention proper is pinned by T015_04 in tests/e2e/session/015, which was also
+// measured against that mutation and does turn red.
 func TestT014_03_EditingAwayAndBackOnTheUpdatePath(t *testing.T) {
-	t.Skip("PreFileUpdate declares a path and no content (internal/filemod/module.go:70), so a " +
-		"hook bound to it cannot see the pending payload — it reads the bytes the write would " +
-		"replace. The refuse/fix/restore sequence against an existing file therefore cannot be " +
-		"judged at all on this engine. Delete this line when the kind carries content.")
-
 	harness.RequireSessionStore(t)
 
 	e := New(t)
@@ -224,9 +242,13 @@ func TestT014_03_EditingAwayAndBackOnTheUpdatePath(t *testing.T) {
 		Write("w3", "notes.md", "SECRET=hunter2"),
 	))
 
+	// FOUR, not three: the `printf > notes.md` that stages the file is itself a
+	// write this guardrail is bound to, so it is judged like any other. Counting
+	// three here was the arithmetic of a test that never ran.
 	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 3 {
-		t.Fatalf("the guardrail was asked %d time(s), want 3. Ledger: %v", n, lines)
+	if n := len(lines); n != 4 {
+		t.Fatalf("the guardrail was asked %d time(s), want 4 (the staging write plus three "+
+			"offers). Ledger: %v", n, lines)
 	}
 	if n := strings.Count(got.Output, "content holds a secret"); n != 2 {
 		t.Fatalf("the guardrail refused %d time(s), want 2 — content refused, fixed, and "+
