@@ -78,7 +78,24 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// cleanly is the silence, with a line of code that looks like it addressed it.
 	decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
 	if err != nil {
+		// The STORE itself could not be read. Returning false alone held the
+		// read mark — which is bookkeeping — while blocking nothing and telling
+		// the agent nothing, so the turn ended with the cycle unjudged and the
+		// project's rules unconsulted.
+		//
+		// Blocked for the reason the pre-tool point refuses: a folder that will
+		// not list says nothing about what it held, and deciding on its own that
+		// it held nothing is the fail-open. A project with no .sloprail
+		// directory never reaches here — that is os.IsNotExist, which LoadWith
+		// answers with (nil, nil, nil).
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		if err := block(cmd, fmt.Sprintf(
+			"the guardrails in this project could not be read at all, so there is no way to know what they guard: %v. "+
+				"The turn is held because a store that cannot be listed must not be read as approval — "+
+				"fix the permissions on the guardrails directory, or remove it if the project has no guardrails.",
+			err)); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
 		return false
 	}
 

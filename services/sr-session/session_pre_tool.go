@@ -46,7 +46,29 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	// would be compiled here and quietly admit nothing.
 	decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
 	if err != nil {
+		// The STORE itself could not be read — the folder holding every
+		// declaration would not list. One level above any fault the loader
+		// reports: there is no declaration to call Invalid, because nothing
+		// could be enumerated.
+		//
+		// This used to print and carry on with nothing loaded, which fell into
+		// the "nothing declared, or nothing readable" branch below — and those
+		// are not the same thing. It is refuseForUnreadable's argument one level
+		// up, and it inverts the same way: "no evidence of what was guarded" is
+		// not "evidence nothing was guarded". A project whose .sloprail folder
+		// has bad permissions, or sits on a mount that has gone away, still
+		// holds every file it believes is a guardrail.
+		//
+		// A project that has adopted NO guardrails is untouched, and that is
+		// what keeps this from breaking every repository that does not use
+		// sloprail: a missing directory is os.IsNotExist, which LoadWith answers
+		// with (nil, nil, nil) and never reaches here.
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		return deny(cmd, fmt.Sprintf(
+			"the guardrails in this project could not be read at all, so there is no way to know what they guard: %v. "+
+				"The action was refused because a store that cannot be listed must not be read as approval — "+
+				"fix the permissions on the guardrails directory, or remove it if the project has no guardrails.",
+			err))
 	}
 
 	// Written to stderr for a person tailing logs. Note this alone does NOT reach
