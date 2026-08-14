@@ -41,7 +41,7 @@ const (
 // other — Go names an installed binary after its directory, and a directory
 // called `session` would install as `session` while the proxy looked for
 // `sr-session`. Listed once here so a new service is added in one place.
-var Services = []string{"sr", "sr-session", "sr-guardrail", "sr-file", "sr-mark", "sr-agent"}
+var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent"}
 
 // Env is one isolated end-to-end environment.
 type Env struct {
@@ -302,11 +302,11 @@ func (e *Env) writeSettings(dir string) {
 // correctly while proving nothing about whether anything ever asks it, which is
 // the whole reason Run drives the mock instead.
 //
-// This is for the commands an authoring agent types: `guardrail help` and the
-// root help that points at it. Nothing in a session invokes them, so there is
-// no wiring for driving the mock to prove.
+// This is for the commands a person types rather than a harness: the root help,
+// and the load check an author runs by hand. Nothing in a session invokes them
+// that way, so there is no wiring for driving the mock to prove.
 //
-// Through the proxy rather than straight at sr-guardrail, because the proxy is
+// Through the proxy rather than straight at the service, because the proxy is
 // what a person types and so it is the path worth covering. It also means every
 // one of these tests would catch a proxy that mangled output or lost an exit
 // code. CLIDirect drives a service binary without the proxy, for the tests that

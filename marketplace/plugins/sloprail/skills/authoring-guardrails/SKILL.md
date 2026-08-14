@@ -5,22 +5,41 @@ description: Use when adding, fixing, or turning off a guardrail in a project th
 
 # Authoring Guardrails
 
-## Get the event vocabulary from the binary
+## Get the event vocabulary from the load check
+
+The kinds and their fields are per-build — they come from the modules compiled
+into the engine — so they cannot be guessed and this skill deliberately does not
+list them. A copy here would be the one you trust when the two disagree, and it
+would be the stale one.
+
+Ask the engine. Bind to a kind it does not have, and the load check answers with
+every kind it does:
 
 ```
-sr-guardrail help
+sr-session start < /dev/null
 ```
 
-That prints every event kind THIS BUILD can produce, the fields each carries,
-and the module that declares it. Those are printed from the modules themselves,
-so they are the vocabulary the engine actually has.
+```
+sloprail: guardrail "probe" not loaded:
+  - event "NoSuchKind": no module produces it — this build has PreFileCreate, ...
+```
 
-**Run it before writing, every time.** The kinds and fields are per-build and
-cannot be guessed. This skill deliberately does not list them: a copy here would
-be the one you trust when the two disagree, and it would be the stale one.
+Then bind to the kind you want with a deliberately wrong field name, and it
+names that kind's real fields **with their types**:
 
-Everything else — the format below — is not derivable from the binary, so it
-lives here.
+```
+  - event "PreFileCreate" binding 0: matcher "nope startsWith \"x/\"":
+    unknown name nope (1:1) — PreFileCreate carries content (string), markers (list), path (string)
+```
+
+That is the same registry the engine enforces against, reported by the same
+loader that will judge your rule, so it cannot drift from what the build does.
+
+**Do this before writing, every time.** Two probes give you the kind list and
+the fields of the kind you picked — which is everything a matcher reads.
+
+Everything else — the format below — is not derivable this way, so it lives
+here.
 
 ## The failure this exists to prevent
 
@@ -94,7 +113,7 @@ It reaches the hook byte for byte; nothing normalises it. A hook reads it via
 
 ## Matchers
 
-An expression over the event's **own fields** — the ones `guardrail help` lists
+An expression over the event's **own fields** — the ones the load check names
 for that kind, and nothing else. No filesystem, no environment, no other events.
 It must evaluate to a boolean. Absent means every occurrence.
 
@@ -166,7 +185,7 @@ already done:
  "guardrailDir":"/abs/path/to/.sloprail/guardrails/<name>"}
 ```
 
-The fields are the ones `guardrail help` lists for that kind. Which guardrail
+The fields are the ones the load check names for that kind. Which guardrail
 this is, is not carried — the engine ran the hook and already knows.
 
 **What it writes back** is its exit status, and output explaining it:
@@ -320,9 +339,10 @@ guardrail in scope and it says so rather than guessing.
 The kinds whose names begin `Post`, and the one about the cycle itself, are
 dispatched at the end of a cycle from the `Stop` and `SubagentStop` hook points.
 They arrive with the cycle's actual changes, established by diffing the tree
-against the baseline taken at `SessionStart`. `sr-guardrail help` lists them;
-they are not restated here, because a copy of that list is what an author would
-trust after a module is added and it is the copy that goes stale.
+against the baseline taken at `SessionStart`. The load check names them among
+the kinds this build produces; they are not restated here, because a copy of
+that list is what an author would trust after a module is added and it is the
+copy that goes stale.
 
 The difference from a `Pre` kind is what a refusal means. A `Pre` kind runs
 before the action and prevents it. A `Post` kind runs after, so the change is

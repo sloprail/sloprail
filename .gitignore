@@ -8,12 +8,11 @@
 # never existed, while sr-agent was built and unlisted.
 /sr
 /sr-session
-/sr-guardrail
 /sr-file
 /sr-mark
 /sr-agent
 
-# Where `make build` puts the same six binaries. The entries above cover a bare
+# Where `make build` puts the same binaries. The entries above cover a bare
 # `go build ./services/...`, which drops them at the root; the Makefile builds
 # with -o bin/ instead, so both layouts have to be listed or whichever one is
 # not gets committed.

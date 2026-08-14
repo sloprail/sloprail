@@ -37,8 +37,8 @@ instead, with the tool a hook already reaches for:
   sr-session state get x | jq '.done = true' | sr-session state set x
 
 Which guardrail is asking is never an argument — it comes from ` + GuardrailEnv + `,
-which the engine sets when it runs a hook. See ` + "`sr-guardrail help`" + `
-for whether that is wired on this build.`,
+which the engine sets when it runs a hook. Outside a hook there is no guardrail
+in scope and this says so rather than guessing.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			value, err := setValue(cmd, args)

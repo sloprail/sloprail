@@ -204,7 +204,7 @@ func typeKey(m module.Module) string {
 // TestOnlyModulesPackageBuildsARegistry is the one-module-list property.
 //
 // A hook point that calls module.NewRegistry with a list of its own enforces
-// against a vocabulary `guardrail help` never printed, and no other test can
+// against a vocabulary the load check never reported, and no other test can
 // see it: the help command's registry is the only one observable from outside
 // the binary, so a divergent one anywhere else is silent with the suite green.
 // That reached main twice.
@@ -284,7 +284,7 @@ func TestOnlyModulesPackageBuildsARegistry(t *testing.T) {
 		}
 	}
 
-	assert.Emptyf(t, callers, "module.NewRegistry is called outside %s, so the binary can hold more than one module list — a hook point enforcing against a vocabulary `guardrail help` never prints is invisible to every other test:\n%s",
+	assert.Emptyf(t, callers, "module.NewRegistry is called outside %s, so the binary can hold more than one module list — a hook point enforcing against a vocabulary the load check never reports is invisible to every other test:\n%s",
 		thisPkg, strings.Join(callers, "\n"))
 }
 

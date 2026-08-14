@@ -24,8 +24,8 @@ from "broken", and a hook running under ` + "`set -e`" + ` would abort on the
 ordinary first-time case if this failed.
 
 Which guardrail is asking is never an argument — it comes from ` + GuardrailEnv + `,
-which the engine sets when it runs a hook. See ` + "`sr-guardrail help`" + `
-for whether that is wired on this build.`,
+which the engine sets when it runs a hook. Outside a hook there is no guardrail
+in scope and this says so rather than guessing.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, guardrail, err := openSessionState()

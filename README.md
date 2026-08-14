@@ -6,13 +6,16 @@ A project declares guardrails under `.sloprail/guardrails/`; the harness calls
 the session hook points, and the engine runs whichever guardrails bind to what
 is about to happen.
 
-    sr-guardrail help    the event kinds this build can produce
+    sr-session start < /dev/null    the load check — and the event vocabulary
 
-`guardrail help` is generated from the modules the build registered, so it is
-the vocabulary this binary actually has rather than a document written beside
-it. Read it there rather than here.
+The event kinds a guardrail may bind to are per-build, and the load check is
+what reports them: bind to a kind this build does not produce and it names every
+kind it does; misspell a field and it names that kind's real fields with their
+types. Both come from the same module registry the enforcement runs on, so they
+cannot drift from what the engine does. Ask it rather than trusting a list
+written here.
 
-It prints the vocabulary, not the format. How to write a guardrail — the
+That is the vocabulary, not the format. How to write a guardrail — the
 declaration's shape, the matcher operators, the hook contract — is the
 `authoring-guardrails` skill the plugin ships.
 
@@ -27,7 +30,6 @@ directory under `services/` is named for the binary it builds, so
 
     sr              the root — `sr session start` runs sr-session
     sr-session      the hook points a harness calls, and what a hook asks
-    sr-guardrail    the event kinds this build can produce
     sr-file         check a file against a CUE schema
     sr-mark         write `// sr:<kind>` markers into source files
     sr-agent        run an agent, whichever harness is running
@@ -47,7 +49,7 @@ temporary build. See `internal/subbin`.
     go install ./services/...     # the ordinary path
     make distribute-local         # when a copy is already installed
 
-Both land the six in one directory, which is what sibling resolution needs.
+Both land the whole set in one directory, which is what sibling resolution needs.
 Prefer `go install` for a first install: it is the Go-standard path and puts
 them in `GOBIN`.
 
@@ -66,13 +68,13 @@ With no `sr` on `$PATH` and no `PREFIX`, it falls back to `GOBIN` (else
 destination before copying, and warns when that directory is not on `$PATH`,
 because a hook that cannot find `sr-session` is the failure this causes.
 
-    make build   the six into bin/
+    make build   the whole set into bin/
     make check   build, vet, gofmt
     make test    unit, then services, then e2e — `-p 1` throughout
 
-`-p 1` is a constraint, not a preference: each e2e package builds the six
-binaries and drives a mock agent, and a parallel `-race ./...` across the 46 of
-them ran the disk out of space.
+`-p 1` is a constraint, not a preference: each e2e package builds the binaries
+and drives a mock agent, and a parallel `-race ./...` across the 46 of them ran
+the disk out of space.
 
 ## Adding a module
 
@@ -93,6 +95,6 @@ by matching a file or package name.
 
 There is exactly one module list in a build, and `modules.Registry()` is the
 only registry a hook point should be handed. A hook point that builds its own
-enforces against a vocabulary `guardrail help` never printed — invisible to
+enforces against a vocabulary the load check never reported — invisible to
 every other test, and it has reached main twice. `TestOnlyModulesPackageBuildsARegistry`
 fails if anything outside `internal/module/modules` calls `module.NewRegistry`.

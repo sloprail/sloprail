@@ -27,7 +27,7 @@ type Registry struct {
 //
 // A build has exactly one module list, and it is modules.All. Call
 // modules.Registry rather than this: a hook point that assembles its own list
-// enforces against a vocabulary `guardrail help` never printed, which is a
+// enforces against a vocabulary the load check never reported, which is a
 // divergence no test can see — the help command's registry is the only one
 // observable from outside the binary. That has reached main twice.
 //

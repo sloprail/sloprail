@@ -9,7 +9,7 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// `guardrail help` is typed by an authoring agent rather than invoked by a
+// The load check is typed by an authoring agent rather than invoked by a
 // harness, so it drives the binary directly. Everything a session triggers is
 // tested through the mock instead — see tests/e2e/pre_tool.
 //
