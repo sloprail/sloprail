@@ -16,6 +16,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/guardrail"
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/module/modules"
 )
@@ -44,7 +45,35 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	// LoadWith, so a declaration that cannot do what it says never reaches
 	// enforcement. Without it a matcher naming a field its kind does not carry
 	// would be compiled here and quietly admit nothing.
-	decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
+	store, unresolved, err := guardrailStore(p.Cwd)
+	if err != nil {
+		// Discovery itself failed — a settings file that exists and would not
+		// read or parse, so which plugins are in force is unknown.
+		//
+		// Reported and permitted, matching what the unlistable store below now
+		// does and for the same reason: this is a fault in a file the AGENT did
+		// not write and often cannot repair, and refusing every action would
+		// leave nobody able to fix it — including the person trying to correct
+		// the very JSON at fault. An invalid guardrail blocks nothing, and an
+		// unreadable statement about which guardrails exist is that same case
+		// one level up.
+		//
+		// The honesty is carried by being loud about the actual consequence: not
+		// "something went wrong" but that nothing from any plugin is guarding.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"sloprail: the plugins this project has enabled could not be determined, so NO plugin's "+
+				"guardrails are in force: %v. Fix the JSON in .claude/settings.json or "+
+				".claude/settings.local.json.\n",
+			err)
+		return nil
+	}
+	// Every enabled plugin that could not be found, named. This is what keeps a
+	// moved cache layout or a bumped manifest schema from silently disabling
+	// every shipped guardrail — see harness.Unresolved.
+	reportUnresolved(cmd, unresolved)
+
+	res, err := store.Resolve(reg)
+	decls, invalid := res.Declarations, res.Invalid
 	if err != nil {
 		// The STORE itself could not be read — the folder holding every
 		// declaration would not list. One level above any fault the loader
@@ -81,6 +110,7 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	// action is swallowed. That is why it is not the whole answer — see
 	// refuseForBroken, which documents the measured channel table.
 	reportInvalid(cmd, invalid)
+	reportShadowed(cmd, res.Shadowed)
 
 	if len(decls) == 0 && len(invalid) == 0 {
 		// Nothing declared, or nothing readable. Either way there is no rule to
@@ -276,9 +306,9 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 					// defect this whole file was corrected for.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
 					return deny(cmd, fmt.Sprintf(
-						"guardrail %q has a matcher that will not compile against %s: %v. "+
+						"guardrail %s has a matcher that will not compile against %s: %v. "+
 							"The action was refused because a rule that cannot be checked must not be read as approval.",
-						d.Name, e.Kind, err))
+						d.Attribution(), e.Kind, err))
 				}
 				admitted, err := m.Match(e)
 				if err != nil {
@@ -311,10 +341,10 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 					// halt a write no rule was written about.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
 					return deny(cmd, fmt.Sprintf(
-						"guardrail %q could not decide whether it applies to this %s: %v. "+
+						"guardrail %s could not decide whether it applies to this %s: %v. "+
 							"The action was refused because a matcher that cannot be evaluated is not the same as a rule that was satisfied. "+
 							"Fix the matcher, or disable the guardrail with `enabled: false` if it is not ready.",
-						d.Name, e.Kind, err))
+						d.Attribution(), e.Kind, err))
 				}
 				if !admitted {
 					continue
@@ -389,9 +419,9 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 					// machine.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
 					return deny(cmd, fmt.Sprintf(
-						"guardrail %q could not run its hook for this %s: %v. "+
+						"guardrail %s could not run its hook for this %s: %v. "+
 							"The action was refused because a guardrail that cannot run must not be read as approval.",
-						d.Name, e.Kind, err))
+						d.Attribution(), e.Kind, err))
 				}
 
 				if fingerprinted {
@@ -412,7 +442,19 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 				}
 
 				if v.Refused {
-					return deny(cmd, fmt.Sprintf("%s (%s)", v.Reason, d.Name))
+					// The rule's own words, then which rule said them — and,
+					// when it is not this project's rule, which plugin it came
+					// from.
+					//
+					// The plugin half is not decoration. A refusal names a
+					// guardrail so the reader can go and look at it, and for a
+					// shipped rule the name alone points at
+					// .sloprail/guardrails/<name>, where there is nothing: the
+					// file is inside an install cache the project never wrote to.
+					// Naming the plugin is what turns "a rule I have never heard
+					// of blocked me" into "this came from sloprail, and I can
+					// switch it off or go and read it".
+					return deny(cmd, fmt.Sprintf("%s (%s)", v.Reason, d.Attribution()))
 				}
 			}
 		}
@@ -433,10 +475,55 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 // them together undoes that.
 func reportInvalid(cmd *cobra.Command, invalid []guardrail.Invalid) {
 	for _, iv := range invalid {
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q not loaded:\n", iv.Name)
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %s not loaded:\n", iv.Attribution())
 		for _, reason := range iv.Reasons {
 			fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", reason)
 		}
+	}
+}
+
+// reportShadowed says which plugin rules a project's own rules displaced.
+//
+// Reported at every hook point that loads, for the same reason reportInvalid is:
+// the wording an author meets at a write is the wording they met at session
+// start, and a fact announced once at start is a fact nobody saw.
+//
+// Stderr is a weak channel here — at exit 0 it reaches no agent, per the table
+// in refuseForBroken — and that is accepted for this one case rather than
+// escalated to a refusal. Shadowing is not a broken rule: both declarations are
+// well-formed, the project's is enforcing, and the project deliberately named it.
+// Refusing every action because a project overrode a rule would make overriding
+// impossible, which is the capability this mechanism exists to provide. The
+// warning belongs where a person looking for it will find it, and the load check
+// an author runs by hand prints the same thing.
+func reportShadowed(cmd *cobra.Command, shadowed []guardrail.Shadow) {
+	for _, sh := range shadowed {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s\n", sh.Message())
+	}
+}
+
+// reportUnresolved says which enabled plugins could not be located.
+//
+// This is the loud half of "isolated and loud", and the reason the engine is
+// allowed to read a harness's configuration at all. Every path and schema
+// assumption in internal/harness can go stale; what must not happen is that a
+// stale assumption reads as "this project installed nothing", because that is
+// indistinguishable from the truth and the guardrails just stop firing.
+//
+// So a project that SAYS it enabled a plugin, whose files cannot be found, gets
+// a line naming the plugin and every path that was tried — at every hook point,
+// so it is met on the next tool call rather than only at a session start nobody
+// was watching.
+//
+// It warns rather than refuses, and harness.Unresolved carries the full
+// argument. In short: a plugin that cannot be found is not a guardrail known to
+// have failed — most plugins ship no guardrails at all — so blocking every
+// action over one would usually block work for a rule that does not exist, and
+// the only remedy would be uninstalling the plugin. A rule that EXISTS and
+// cannot be checked still refuses; that is refuseForBroken, and it is unchanged.
+func reportUnresolved(cmd *cobra.Command, unresolved []harness.Unresolved) {
+	for _, u := range unresolved {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s\n", u.Message())
 	}
 }
 
@@ -518,12 +605,70 @@ func reportBroken(cmd *cobra.Command, invalid []guardrail.Invalid, kind string) 
 			}
 			// Every fault, not the first — the same reason Validate reports them
 			// together. An author fixing this should need one pass.
+			//
+			// Attributed and given an origin-appropriate remedy: a shipped rule
+			// is not the consumer's to fix, and telling them to edit a file
+			// inside an install cache sends them to do something the next
+			// reinstall undoes. See remedy.
 			fmt.Fprintf(cmd.ErrOrStderr(),
-				"sloprail: guardrail %q is bound to %s but could not be loaded, so it is NOT guarding this action: %s. "+
-					"Fix the declaration in %s, or disable it with `enabled: false` if it is not ready.\n",
-				iv.Name, kind, iv.Reason, iv.Name)
+				"sloprail: guardrail %s is bound to %s but could not be loaded, so it is NOT guarding this action: %s. %s\n",
+				iv.Attribution(), kind, iv.Reason, remedy(iv))
 		}
 	}
+}
+
+// remedy is what to tell someone whose rule could not load, and it differs by
+// WHO OWNS THE FILE.
+//
+// For a project's own rule the advice has always been "fix the declaration, or
+// disable it" and both halves are actionable: the file is in the tree, the
+// author wrote it, and `enabled: false` is one line away.
+//
+// For a plugin's rule that advice is a trap. The declaration is in an install
+// cache the consumer did not write and must not edit — an edit there is silently
+// undone by the next reinstall, so an author who followed the instruction would
+// fix the refusal, ship, and have it come back on upgrade with no explanation.
+// And `enabled: false` lives inside the very file they should not be editing.
+//
+// So a plugin's rule gets the mechanism that is actually theirs: the disable
+// list in their own config, named with the qualified name, which survives
+// upgrades because it is on their side of the boundary. The message quotes the
+// exact line to write, because advice the reader has to go and look up is advice
+// they will skip.
+//
+// The two forms differ again by WHAT WENT WRONG, and that second axis is not
+// cosmetic. A declaration that merely failed validation is a guardrail with a
+// mistake in it, so the advice is to fix or disable it. A declaration that could
+// not be PARSED might not be a guardrail at all — a stray file, a note someone
+// left in the folder — and for that one "remove that folder if it is not a
+// guardrail" is a real way out that the other case does not have.
+//
+// This text now accompanies a REPORT rather than a refusal: an invalid guardrail
+// blocks nothing. That makes the wording matter more, not less. The only thing
+// standing between a rule that silently stopped enforcing and a person who fixes
+// it is this sentence, so it has to name a remedy the reader can actually
+// perform.
+func remedy(iv guardrail.Invalid) string {
+	unreadable := iv.Has(guardrail.ErrMalformed)
+
+	if !iv.Origin.FromPlugin() {
+		if unreadable {
+			return fmt.Sprintf(
+				"fix the declaration in %s, or remove that folder if it is not a guardrail.", iv.Name)
+		}
+		return fmt.Sprintf(
+			"fix the declaration in %s, or disable it with `enabled: false` if it is not ready.", iv.Name)
+	}
+
+	// A plugin's rule, where neither of the above is available: the consumer
+	// cannot fix the file and must not remove a folder inside an install cache,
+	// since the next reinstall would put it back. The disable list is the one
+	// remedy that is genuinely theirs, so it is the one quoted — for both the
+	// unreadable and the merely-invalid case.
+	return fmt.Sprintf(
+		"this rule is not yours to fix — it ships inside plugin %q, at %s. "+
+			"Report it to that plugin, or switch it off for this project by adding `disabled: [%s]` to %s/%s.",
+		iv.Origin.Plugin, iv.Origin.Root, iv.Qualified(), DotDirName, guardrail.ConfigFile)
 }
 
 // refuseForUnreadable is GONE, and this comment is kept as the record of what it
