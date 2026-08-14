@@ -98,3 +98,47 @@ func TestFileTargets_MoveStillReportsItsRemoval(t *testing.T) {
 	assert.Equal(t, Remove, targets[0].Effect)
 	assert.Equal(t, "b.md", targets[1].Path)
 }
+
+// A flag's VALUE is not a file, for the same reason install has always skipped
+// its own `-m 644`: an unskipped value slides into operand position and becomes
+// a phantom target.
+//
+// The touch case was not merely an over-report. `touch -r ref.md a.md` produced
+// a target for ref.md — a file the line only READS as an mtime reference —
+// carrying touch's literal "" payload, which filemod turned into a
+// PreFileCreate. A rule guarding creations fired on a file nothing writes.
+func TestFileTargets_AFlagValueIsNotAFile(t *testing.T) {
+	cases := []struct {
+		line string
+		want []string
+	}{
+		{"touch -r ref.md a.md", []string{"a.md"}},
+		{"touch --reference ref.md a.md", []string{"a.md"}},
+		{"touch --reference=ref.md a.md", []string{"a.md"}},
+		{"touch -d now a.md", []string{"a.md"}},
+		{"touch --date now a.md", []string{"a.md"}},
+		// -t is a TIMESTAMP for touch and a target directory for cp: the same
+		// two letters meaning different things, which is why each binary states
+		// its own rather than sharing a table.
+		{"touch -t 202601010000 a.md", []string{"a.md"}},
+		{"mkdir -m 755 d", []string{"d"}},
+		{"mkdir --mode 755 d", []string{"d"}},
+
+		// The boundary: flags that take no value still leave their operands
+		// alone, and `--` still protects an operand that looks like a flag.
+		{"touch a.md", []string{"a.md"}},
+		{"touch -c a.md", []string{"a.md"}},
+		{"touch a.md b.md", []string{"a.md", "b.md"}},
+		{"mkdir -p d", []string{"d"}},
+		{"touch -- -r", []string{"-r"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.line, func(t *testing.T) {
+			var got []string
+			for _, tgt := range FileTargets(tc.line) {
+				got = append(got, tgt.Path)
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

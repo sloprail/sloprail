@@ -231,8 +231,27 @@ var knownBins = map[string]binSpec{
 	// applies it only on the create branch. That is the split doing its job:
 	// this package says what the line determines, and the caller decides what
 	// the tree makes of it.
+	// Its flags that take a SEPARATED value are skipped, for the reason install
+	// gives about its own `-m 644`: an unskipped value slides into operand
+	// position and becomes a phantom file. That was not merely an over-report
+	// here — `touch -r ref.md a.md` produced a PreFileCreate for ref.md, a file
+	// the line only READS as an mtime reference, carrying the literal ""
+	// payload below. A rule guarding creations fired on a file nothing writes.
+	//
+	//	-r/--reference FILE   copy this file's times
+	//	-d/--date STRING      use this time
+	//	-t STAMP              use this timestamp
+	//
+	// `-t` is a value-taking flag here and NOT the destination-directory flag it
+	// is for cp — the same two letters meaning different things one entry apart,
+	// which is why each binary states its own.
 	"touch": func(argv []string) []FileTarget {
-		targets := withPayload(targetsFor(operands(argv), Write), literalPayload(""))
+		skip := map[string]bool{
+			"-r": true, "--reference": true,
+			"-d": true, "--date": true,
+			"-t": true,
+		}
+		targets := withPayload(targetsFor(operandsSkipping(argv, skip), Write), literalPayload(""))
 		for i := range targets {
 			targets[i].MTimeOnly = true
 		}
@@ -244,7 +263,14 @@ var knownBins = map[string]binSpec{
 	// file — presentNotAFile, and no file event can honestly be about it. It is
 	// listed so the intent is visible rather than absent, and so a path that is
 	// currently a FILE and about to be replaced by a directory is not silent.
-	"mkdir": func(argv []string) []FileTarget { return targetsFor(operands(argv), Write) },
+	//
+	// `-m/--mode` takes a separated value, skipped for the same reason install
+	// skips its own: `mkdir -m 755 d` reported `755` as a path being written.
+	// Harmless today only because filemod declines a non-file, which is luck
+	// rather than design — the mode string could name an existing file.
+	"mkdir": func(argv []string) []FileTarget {
+		return targetsFor(operandsSkipping(argv, map[string]bool{"-m": true, "--mode": true}), Write)
+	},
 
 	// ln creates a link at its last operand. Lstat sees the link itself, so the
 	// file module treats it as a file — see lookAt on why the link and not its
