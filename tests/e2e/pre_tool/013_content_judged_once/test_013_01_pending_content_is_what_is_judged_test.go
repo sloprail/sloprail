@@ -109,7 +109,18 @@ func TestT013_01_BenignSuccessiveWritesAreNeverRefused(t *testing.T) {
 	))
 
 	assert.False(t, res.Saw("that payload carries a secret"), "nothing here is a secret")
-	assert.NotEmpty(t, e.Ledger(proj, "no-secrets", "ran.log"), "the rule must have been asked")
+	// Exactly twice, not merely "at least once".
+	//
+	// The comment above says a wrongly-fired skip "would show up as a rule that
+	// stopped being asked" — and NotEmpty, which stood here, cannot show that.
+	// Two writes of the same bytes to the same path are two DIFFERENT subjects,
+	// a creation and a change, so both must be judged; an engine that let the
+	// second inherit the first's pass leaves one entry, which NotEmpty accepts.
+	// That inheritance is the exact bug this suite was written for, and it is
+	// what T013_02 catches by asserting 4 rather than "some". The permissive
+	// edge deserves the same sharpness as the violating one.
+	assert.Equal(t, []string{"ran", "ran"}, e.Ledger(proj, "no-secrets", "ran.log"),
+		"both writes must be judged — a skip that fired here would leave one entry")
 	assert.Equal(t, "benign", readOrEmpty(t, proj, "notes.md"), "permitted writes land")
 }
 

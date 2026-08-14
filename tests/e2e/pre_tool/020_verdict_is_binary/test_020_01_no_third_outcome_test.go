@@ -27,6 +27,22 @@
 // not merely disallowed by this engine — it is unreachable through this hook
 // point, and a hook attempting one produces silence. That is the failure the
 // `why` describes, and T020_01 is the test that shows it happening.
+//
+// # On the "no test anywhere" finding above, which was later made twice
+//
+// This package is the test that finding said was missing. A LATER audit reached
+// the same "zero coverage anywhere, by name or by property" conclusion and acted
+// on it, adding a second package — tests/e2e/pre_tool/016_verdict_is_binary —
+// for this same invariant under this same name. It had missed a directory
+// literally called 020_verdict_is_binary.
+//
+// That package is now removed. It was the weaker of the two: none of its tests
+// carried a ledger, so its permit-side cases were satisfied by a guardrail that
+// never loaded, and it never asserted the half that gives this invariant its
+// force — that the objection reaches nobody. Its one case with no counterpart
+// here, an objection combined with a refusal, is T020_05 below.
+//
+// Anything auditing this invariant's coverage should find it here and stop.
 package e2e
 
 import (
@@ -202,4 +218,63 @@ func TestT020_04_BothOutcomesAreReachable(t *testing.T) {
 
 	assert.True(t, refuseRes.Refused(), "a refusing hook refuses")
 	assert.False(t, e.Exists(refuse, "notes.md"), "and the file does not land")
+}
+
+// T020_05: an objection and a refusal on the same event still make exactly one
+// of the two outcomes.
+//
+// The composition case. T020_01 to T020_03 each drive a single rule, so they
+// show that no ONE hook can reach a third outcome. If a third outcome existed
+// anywhere it would more likely appear where verdicts have to be COMBINED — one
+// rule objecting at exit zero, another refusing — since that is the only place
+// the engine holds two answers at once and has to reduce them.
+//
+// The refusal must win outright and the objection must contribute nothing: the
+// work is stopped, and it is stopped for the REFUSING rule's reason. Asserting
+// which reason arrives is what makes this more than "something refused" — an
+// engine that merged the two, or that let the adviser's text stand in for a
+// verdict, would still stop the write and would still look green without it.
+//
+// Both ledgers are asserted because the claim is about two rules. Without the
+// adviser's, this passes on an engine that stopped dispatching after the first
+// refusal it found — which is the very short-circuit that would make the
+// composition untested while the test named for it stayed green.
+func TestT020_05_AnObjectionCombinedWithARefusalIsJustARefusal(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.Guardrail(proj, "adviser", bindEveryCreate, map[string]string{
+		"h.sh": `#!/bin/sh
+cat >/dev/null
+echo asked >> "$PWD/log"
+echo '{"decision":"block","reason":"MARK-adviser-objects"}'
+exit 0
+`,
+	})
+	e.Guardrail(proj, "blocker", bindEveryCreate, map[string]string{
+		"h.sh": `#!/bin/sh
+cat >/dev/null
+echo asked >> "$PWD/log"
+echo 'MARK-blocker-refused' >&2
+exit 1
+`,
+	})
+
+	res := e.Run(proj, "s-020-05", "write a note", Turns("done",
+		Write("w1", "notes.md", "hello"),
+	))
+
+	// Both rules were really asked. Guardrails run in no promised order between
+	// each other, so this says both were reached, not which went first.
+	require.Equal(t, []string{"asked"}, e.Ledger(proj, "adviser", "log"),
+		"the objecting rule must have been asked, or this says nothing about combining")
+	require.Equal(t, []string{"asked"}, e.Ledger(proj, "blocker", "log"),
+		"the refusing rule must have been asked")
+
+	assert.True(t, res.Refused(), "a refusal combined with an objection is a refusal")
+	assert.False(t, e.Exists(proj, "notes.md"),
+		"and the work really is prevented — combining did not produce a third thing")
+	assert.True(t, res.Saw("MARK-blocker-refused"),
+		"the refusing rule's reason is what the agent is told")
+	assert.False(t, res.Saw("MARK-adviser-objects"),
+		"and the objection still reaches nobody — it did not become the reason by riding along")
 }

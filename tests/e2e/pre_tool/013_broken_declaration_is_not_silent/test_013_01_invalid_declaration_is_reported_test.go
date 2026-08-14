@@ -246,6 +246,56 @@ func TestT013_05_ABrokenRuleDoesNotBlockAnUnrelatedKind(t *testing.T) {
 	}
 }
 
+// T013_05b: the positive control T013_05 needs, and did not have.
+//
+// T013_05 asserts only that something did NOT happen, so it passes on any build
+// where broken declarations stop mattering at all. That is not hypothetical:
+// gutting `Invalid.AffectedKinds` to return nil — which disables the entire
+// kind-scoped refusal, the mechanism T013_05's claim is about — leaves T013_05
+// green. A test whose subject can be deleted while it still passes is not
+// testing its subject.
+//
+// This supplies the other half. It is the SAME fault (`paht` for `path`) in the
+// SAME shape, moved onto the kind the write actually produces, so the pair says
+// something neither says alone: the refusal is scoped to the kind, rather than
+// being absent everywhere. T013_05 shows the write survives a broken rule about
+// deletions; this shows that same write does NOT survive a broken rule about
+// creations. Together they locate the boundary.
+//
+// Deliberately not a delete turn. Nothing in this build produces PreFileDelete
+// — the file module declares the kind but no extraction emits it — so a test
+// driving a deletion would assert a permit for the wrong reason, which is the
+// failure this whole suite exists to prevent.
+func TestT013_05b_TheSameFaultOnTheWritesOwnKindDoesBlockIt(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	// brokenOnCreate is brokenOnDelete's fault on the kind this turn produces.
+	e.Guardrail(proj, "create-typo", `---
+hooks:
+  PreFileCreate:
+    - matcher: paht startsWith "guarded/"
+      hooks:
+        - type: command
+          command: ./refuse.sh
+---
+
+# Refuses writes under guarded/, except it says paht
+`, map[string]string{"refuse.sh": refuseScript})
+
+	got := e.Run(proj, "s-013-05b", "write a note", Turns("done",
+		Write("w1", "any/notes.md", "hello"),
+	))
+
+	if !got.Refused() {
+		t.Fatalf("a broken rule bound to PreFileCreate did not stop a creation — "+
+			"the kind-scoped refusal is not firing at all, which makes T013_05's "+
+			"survival meaningless rather than evidence of scoping:\n%s", got.Output)
+	}
+	if e.Exists(proj, "any/notes.md") {
+		t.Fatal("the refusal was reported but the file landed anyway")
+	}
+}
+
 // T013_06: one broken declaration does not silence a sound one beside it.
 //
 // A project usually has several rules. The sound one still refuses on its own
