@@ -11,6 +11,22 @@ name: test
 on:
   push:
 
+# OIDC, to download the published claude-mock from GCP Artifact Registry without
+# a long-lived key in this repo. Mirrors a10n's own test workflow.
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  # Where a10n-cli publishes a10n-claude-mock. Its CI service account can read
+  # it, and the harness resolves the mock from PATH — sloprail builds its own
+  # binaries, so the mock is the only thing that has to be fetched.
+  GCP_PROJECT_ID: horizon-37
+  GCP_REGISTRY_LOCATION: europe-west3
+  GCP_REPOSITORY: h37-agent-factory-dev-a10n-cli
+  WORKLOAD_IDENTITY_PROVIDER: projects/202350853882/locations/global/workloadIdentityPools/h37-agent-factory-dev-gh/providers/gh-oidc
+  SERVICE_ACCOUNT: a10n-cli-ci@horizon-37.iam.gserviceaccount.com
+
 # A second push to the same branch cancels the first. The old run is answering a
 # question about code nobody will merge.
 concurrency:
@@ -76,19 +92,45 @@ jobs:
           git config --global user.email ci@sloprail.invalid
           git config --global user.name  sloprail CI
 
-      # The suite needs a10n-claude-mock — a drop-in `claude` the harness drives.
-      # Without it every package SKIPS and still reports ok: 56 packages
-      # "passing" in 38 seconds, against 30 minutes locally. A green run that
-      # tested nothing is worse than a red one, because it is trusted. So this
-      # fails loudly until the mock is available to CI, rather than letting the
-      # job lie about what it checked.
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # Versions are YYYYMMDD-<shortsha> with no "latest" tag, so the newest is
+      # taken by update time. Copied from a10n's own workflow rather than
+      # reinvented, since it is the same artifact from the same registry.
+      - name: install a10n-claude-mock
+        run: |
+          PKG=a10n-claude-mock
+          VERSION=$(gcloud artifacts versions list \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            --location=${{ env.GCP_REGISTRY_LOCATION }} \
+            --repository=${{ env.GCP_REPOSITORY }} \
+            --package="${PKG}" \
+            --sort-by="~UPDATE_TIME" --limit=1 --format="value(VERSION)")
+          echo "downloading ${PKG} @ ${VERSION}"
+          gcloud artifacts generic download \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            --location=${{ env.GCP_REGISTRY_LOCATION }} \
+            --repository=${{ env.GCP_REPOSITORY }} \
+            --package="${PKG}" --version="${VERSION}" --destination=/tmp/
+          cp "/tmp/${PKG}-linux-amd64/${PKG}-linux-amd64" "/tmp/${PKG}"
+          chmod +x "/tmp/${PKG}"
+          echo "/tmp" >> "${GITHUB_PATH}"
+
+      # The suite SKIPS every package when the mock is absent, and a skipped
+      # package reports ok — 56 packages "passing" in 38 seconds against ~30
+      # minutes locally. A green run that tested nothing is worse than a red one
+      # because it is trusted, so the absence is made loud rather than silent.
       - name: e2e
         run: |
-          if ! command -v a10n-claude-mock >/dev/null 2>&1; then
-            echo "a10n-claude-mock is not on PATH."
-            echo
-            echo "Every e2e package would SKIP and report ok — a green suite that"
-            echo "ran nothing. Failing instead."
+          command -v a10n-claude-mock >/dev/null 2>&1 || {
+            echo "a10n-claude-mock is not on PATH — every e2e package would SKIP"
+            echo "and report ok. Failing instead of running nothing."
             exit 1
-          fi
+          }
           make test-e2e
