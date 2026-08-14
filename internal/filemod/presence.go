@@ -195,12 +195,19 @@ const (
 // file than a directory is, and a check that names only directories leaves the
 // rest reported as files.
 //
-// It is stat'd by its absolute path and reported by its repository-relative
-// one. Every other error this module raises names the relative path, and these
-// are the diagnostics someone debugging a producer reads — a lone absolute path
-// among them, in a module whose whole premise is that paths are relative to a
-// root, reads as a different kind of thing than it is. The underlying
+// It is stat'd by `full` and reported by `path`, so a caller that HAS both
+// spellings reports the repository-relative one: a lone absolute path among
+// these diagnostics, in a module whose whole premise is that paths are relative
+// to a root, reads as a different kind of thing than it is. The underlying
 // *PathError still carries the absolute path for anyone who needs it.
+//
+// Only extractObserved has both and passes them separately. The command and
+// pending callers pass one spelling twice, so on those paths the reported
+// string is whatever the producer wrote — which may be absolute. That is a
+// diagnostic difference and nothing more: these errors reach stderr, never a
+// matcher, and the EVENT's path is canonicalised by reportable() regardless.
+// Said outright because this comment previously claimed every error names the
+// relative path, which was true of one caller out of four.
 func lookAt(path, full string) (presence, error) {
 	info, err := os.Lstat(full)
 	switch {
