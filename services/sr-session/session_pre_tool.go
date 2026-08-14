@@ -46,7 +46,29 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	// would be compiled here and quietly admit nothing.
 	decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
 	if err != nil {
+		// The STORE itself could not be read — the folder holding every
+		// declaration would not list. One level above any fault the loader
+		// reports: there is no declaration to call Invalid, because nothing
+		// could be enumerated.
+		//
+		// This used to print and carry on with nothing loaded, which fell into
+		// the "nothing declared, or nothing readable" branch below — and those
+		// are not the same thing. It is refuseForUnreadable's argument one level
+		// up, and it inverts the same way: "no evidence of what was guarded" is
+		// not "evidence nothing was guarded". A project whose .sloprail folder
+		// has bad permissions, or sits on a mount that has gone away, still
+		// holds every file it believes is a guardrail.
+		//
+		// A project that has adopted NO guardrails is untouched, and that is
+		// what keeps this from breaking every repository that does not use
+		// sloprail: a missing directory is os.IsNotExist, which LoadWith answers
+		// with (nil, nil, nil) and never reaches here.
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		return deny(cmd, fmt.Sprintf(
+			"the guardrails in this project could not be read at all, so there is no way to know what they guard: %v. "+
+				"The action was refused because a store that cannot be listed must not be read as approval — "+
+				"fix the permissions on the guardrails directory, or remove it if the project has no guardrails.",
+			err))
 	}
 
 	// Written to stderr for a person tailing logs. Note this alone does NOT reach
@@ -133,13 +155,35 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	var events []event.Event
 	for _, m := range reg.Needed(bound) {
 		evs, err := m.Extract(in)
-		if err != nil {
-			// One module failing is not the project's rule failing. Say so and
-			// carry on with what the others found.
-			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: module %q: %v\n", m.Name(), err)
-			continue
-		}
+		// The events are taken FIRST, and the error reported after.
+		//
+		// module.Module's contract says a module may return events ALONGSIDE a
+		// non-nil error and that "a caller must not discard" them — and this
+		// caller did: it printed and `continue`d past the whole slice. The Post
+		// side has always been right about this, and postEvents' own comment
+		// contrasts itself against this loop.
+		//
+		// Not a tidiness point. `rm a.md b.md` is ONE tool call producing TWO
+		// targets, and one path that will not stat makes filemod return a
+		// problem for that path together with a perfectly good PreFileDelete for
+		// the other. Dropping the slice meant the rule guarding a.md never ran
+		// and the deletion proceeded — with the only trace on a stream that at
+		// exit 0 reaches no agent. One unreadable path silenced every rule about
+		// every other file the same command touched.
+		//
+		// Reporting the error and keeping the events is not fail-open: nothing
+		// here decides a verdict. The events that WERE produced go on to be
+		// matched and judged exactly as they would have been, and the paths the
+		// module could not classify produce no event because there is nothing
+		// honest to say about them — which is the module's own judgement, made
+		// where the evidence is.
 		events = append(events, evs...)
+		if err != nil {
+			// One input a module could not make sense of is not the project's
+			// rule failing. Say so, and carry on with what it and the others
+			// did find.
+			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: module %q: %v\n", m.Name(), err)
+		}
 	}
 
 	for _, e := range events {
