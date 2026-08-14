@@ -11,17 +11,6 @@ import (
 	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
-// newGuardrailCmd groups what is about the declarations themselves rather than
-// about a running session.
-func newGuardrailCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "guardrail",
-		Short: "The declarations a project holds its agents to",
-	}
-	cmd.AddCommand(newGuardrailHelpCmd())
-	return cmd
-}
-
 // newGuardrailHelpCmd prints the event vocabulary this build can produce.
 //
 // It does NOT teach how to write a guardrail. A help command documents the

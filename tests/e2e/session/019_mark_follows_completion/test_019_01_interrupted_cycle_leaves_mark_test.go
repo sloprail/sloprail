@@ -49,7 +49,7 @@ hooks:
 const askScript = `#!/bin/sh
 cat > /dev/null
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
-  sloprail session query >> "$PWD/answers" 2>&1
+  sr-session query >> "$PWD/answers" 2>&1
 exit 0
 `
 
@@ -63,7 +63,7 @@ exit 0
 const crashingAskScript = `#!/bin/sh
 cat > /dev/null
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
-  sloprail session query >> "$PWD/answers" 2>&1
+  sr-session query >> "$PWD/answers" 2>&1
 echo "this cycle did not finish" >&2
 exit 2
 `

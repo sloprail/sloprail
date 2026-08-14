@@ -106,7 +106,7 @@ in the wrong folder.
 
 ## What it reads the trajectory through: SR_TRANSCRIPT
 
-Reading the trajectory means calling `sloprail session query`, which is told
+Reading the trajectory means calling `sr-session query`, which is told
 which record to read via a `transcript_path` on its stdin payload. The path
 comes from **`SR_TRANSCRIPT`**, set on the hook's environment beside
 `SR_GUARDRAIL`, `SR_SESSION_ID` and `SR_WORKSPACE`.

@@ -16,7 +16,7 @@ import (
 // ---------------------------------------------------------------------------
 // WHAT RUNS TODAY, AND WHAT DOES NOT
 //
-// The example reads the session's trajectory through `sloprail session query`,
+// The example reads the session's trajectory through `sr-session query`,
 // which is told which record to read via a transcript_path on its stdin. A hook
 // is handed {event, guardrailDir} and nothing naming the session's record, so
 // the example takes its cannot-check path and refuses.

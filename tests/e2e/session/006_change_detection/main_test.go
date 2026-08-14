@@ -9,7 +9,7 @@ import (
 
 // The agent is a10n-claude-mock with this repo's plugin enabled, so the Stop
 // hook that ends each scenario is the one a user would get. Nothing here
-// invokes `sloprail session stop`: the cycle ends, the harness fires Stop, the
+// invokes `sr-session stop`: the cycle ends, the harness fires Stop, the
 // plugin reaches the subcommand, and the guardrails bound to what changed run.
 //
 // A test that invoked the subcommand itself would prove the engine dispatches

@@ -35,7 +35,7 @@ reads is what the first wrote.
 // A silent no-op here would make every later assertion vacuous.
 const writerScript = `#!/bin/sh
 cat >/dev/null
-if sloprail session state set shared-key writer-A-value; then
+if sr-session state set shared-key writer-A-value; then
   exit 0
 fi
 echo "WRITER-FAILED" >&2
@@ -46,7 +46,7 @@ exit 1
 // the test.
 const reportScript = `#!/bin/sh
 cat >/dev/null
-got="$(sloprail session state get shared-key)"
+got="$(sr-session state get shared-key)"
 echo "SAME-RULE-SAW:[$got]" >&2
 exit 1
 `
@@ -116,9 +116,9 @@ nothing about anyone else's.
 // that is supposed to.
 const readerScript = `#!/bin/sh
 cat >/dev/null
-sloprail session state set own-key reader-B-value || { echo "READER-CANNOT-WRITE" >&2; exit 1; }
-mine="$(sloprail session state get own-key)"
-got="$(sloprail session state get shared-key)"
+sr-session state set own-key reader-B-value || { echo "READER-CANNOT-WRITE" >&2; exit 1; }
+mine="$(sr-session state get own-key)"
+got="$(sr-session state get shared-key)"
 echo "OTHER-RULE-MINE:[$mine] OTHER-RULE-SAW:[$got]" >&2
 exit 1
 `
@@ -191,8 +191,8 @@ down rather than assumed.
 // this rule never wrote under.
 const impostorScript = `#!/bin/sh
 cat >/dev/null
-mine="$(sloprail session state get shared-key)"
-theirs="$(SR_GUARDRAIL=writer-a sloprail session state get shared-key)"
+mine="$(sr-session state get shared-key)"
+theirs="$(SR_GUARDRAIL=writer-a sr-session state get shared-key)"
 echo "MINE:[$mine] THEIRS:[$theirs]" >&2
 exit 1
 `
@@ -254,7 +254,7 @@ func TestT008_04_NamingAnotherGuardrailIsNotPrevented(t *testing.T) {
 // can WRITE another rule's entry, the boundary is advisory in both directions.
 const impostorOwnWrite = `#!/bin/sh
 cat >/dev/null
-sloprail session state set shared-key impostor-own-value || { echo "WRITER-FAILED" >&2; exit 1; }
-SR_GUARDRAIL=writer-a sloprail session state set shared-key writer-A-value
+sr-session state set shared-key impostor-own-value || { echo "WRITER-FAILED" >&2; exit 1; }
+SR_GUARDRAIL=writer-a sr-session state set shared-key writer-A-value
 exit 0
 `

@@ -31,12 +31,12 @@ everything this guardrail has stored.
 The value is the text that was stored, carried as a JSON string, so reading it
 back means asking for it raw:
 
-  sloprail session state list pending/ | jq -r .value
+  sr-session state list pending/ | jq -r .value
 
 Without -r the value arrives escaped — a stored JSON document comes back as a
 quoted string rather than as an object. To work with each value as JSON:
 
-  sloprail session state list pending/ | jq -r .value | jq .done`,
+  sr-session state list pending/ | jq -r .value | jq .done`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var prefix string

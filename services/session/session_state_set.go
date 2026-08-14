@@ -16,7 +16,7 @@ import (
 // a rule wanting the other answer could not get it. A rule that wants to merge
 // composes, using the tool a hook already reaches for:
 //
-//	sloprail session state get x | jq '.done = true' | sloprail session state set x
+//	sr-session state get x | jq '.done = true' | sr-session state set x
 //
 // which is also why the value may come from standard input: that pipeline
 // depends on it.
@@ -34,10 +34,10 @@ It REPLACES; it does not merge. Every merge policy is a guess about what the
 rule meant, and a rule wanting the other answer could not get it. Compose
 instead, with the tool a hook already reaches for:
 
-  sloprail session state get x | jq '.done = true' | sloprail session state set x
+  sr-session state get x | jq '.done = true' | sr-session state set x
 
 Which guardrail is asking is never an argument — it comes from ` + GuardrailEnv + `,
-which the engine sets when it runs a hook. See ` + "`sloprail guardrail help`" + `
+which the engine sets when it runs a hook. See ` + "`sr-guardrail help`" + `
 for whether that is wired on this build.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -133,7 +133,7 @@ fi
 // The record carries a uuid, keyed off the turn's own id. Without one the line
 // is not merely untidy — `transcript.Read` SKIPS every record that has no uuid,
 // because Claude Code's own preamble and bookkeeping lines carry none. A turn
-// emitted without one therefore never reaches `sloprail session query`, so a
+// emitted without one therefore never reaches `sr-session query`, so a
 // rule reading the trajectory sees an empty session and a test asserting on
 // what the agent did passes or fails for reasons that have nothing to do with
 // the rule.

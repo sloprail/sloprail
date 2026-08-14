@@ -46,7 +46,7 @@ import (
 // asserted on from here
 //
 // SubagentStop does fire in the sub-agent, and it arrives correctly routed —
-// measured, not assumed. A probe writing from inside `sloprail session
+// measured, not assumed. A probe writing from inside `sr-session
 // subagent-stop` recorded, for each dispatch:
 //
 //	agent_id              a real per-sub-agent id

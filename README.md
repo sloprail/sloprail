@@ -6,7 +6,7 @@ A project declares guardrails under `.sloprail/guardrails/`; the harness calls
 the session hook points, and the engine runs whichever guardrails bind to what
 is about to happen.
 
-    sloprail guardrail help    the event kinds this build can produce
+    sr-guardrail help    the event kinds this build can produce
 
 `guardrail help` is generated from the modules the build registered, so it is
 the vocabulary this binary actually has rather than a document written beside

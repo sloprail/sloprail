@@ -90,7 +90,7 @@ func (s hookScope) env(guardrail string) []string {
 //
 // Set-but-empty would be the worse of the two here. It reads as a path in every
 // shell idiom that does not test for emptiness first, so a rule would hand ""
-// to `sloprail session query` and get an error about the file rather than about
+// to `sr-session query` and get an error about the file rather than about
 // the variable.
 //
 // An outer value surviving into the hook is not the risk it is for the other

@@ -85,8 +85,8 @@ func TestT003_14_SkillDoesNotRestateTheDerivedVocabulary(t *testing.T) {
 	}
 
 	// It must point at the command that does carry them.
-	if !strings.Contains(skill, "sloprail guardrail help") {
-		t.Error("the skill never tells the author to run `sloprail guardrail help` — the kinds are per-build and cannot be guessed")
+	if !strings.Contains(skill, "sr-guardrail help") {
+		t.Error("the skill never tells the author to run `sr-guardrail help` — the kinds are per-build and cannot be guessed")
 	}
 }
 
@@ -418,7 +418,7 @@ func TestT003_18_SkillWarnsOffOnlyWhatIsActuallyBroken(t *testing.T) {
 		t.Fatalf("`session state get` succeeded with no scope in the environment — the gap has closed and the skill's warning is now false:\n%s", got.Output)
 	}
 	if !strings.Contains(skill, "session state") {
-		t.Error("the skill never mentions `session state`, which is listed under `sloprail session --help` and looks usable")
+		t.Error("the skill never mentions `session state`, which is listed under `sr-session --help` and looks usable")
 	}
 
 	// Post kinds: declared, bindable, never dispatched. Only session pre-tool

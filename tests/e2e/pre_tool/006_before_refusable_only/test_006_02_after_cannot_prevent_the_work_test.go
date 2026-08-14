@@ -26,7 +26,7 @@ import (
 // project's settings.json — wiring no user has. What it proved was a property of
 // an arrangement the harness had built for itself. It was deleted rather than
 // repaired because the harness could no longer express it at all: writeSettings
-// emits the plugin and nothing else, and `sloprail session stop` dispatched
+// emits the plugin and nothing else, and `sr-session stop` dispatched
 // nothing, so a guardrail bound to a Post kind loaded without complaint, the
 // write landed, and the hook never ran.
 //

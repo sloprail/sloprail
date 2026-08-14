@@ -28,16 +28,16 @@ reach its state cannot reach the refusal at all.
 // given no environment cannot resolve the binary the plugin was invoked as.
 const countScript = `#!/bin/sh
 cat >/dev/null
-seen="$(sloprail session state get writes)"
+seen="$(sr-session state get writes)"
 if [ -n "$seen" ]; then
   echo "already saw a write in this session (count=$seen)" >&2
   exit 1
 fi
-sloprail session state set writes 1 || { echo "state set failed" >&2; exit 1; }
+sr-session state set writes 1 || { echo "state set failed" >&2; exit 1; }
 exit 0
 `
 
-// T008_05: a hook can reach `sloprail session state` at all.
+// T008_05: a hook can reach `sr-session state` at all.
 //
 // The narrowest statement of the bug this closes. The hook writes one entry and
 // exits zero; if the engine handed it no environment, `session state set` exits

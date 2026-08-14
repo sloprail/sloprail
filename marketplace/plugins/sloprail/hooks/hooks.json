@@ -1,18 +1,18 @@
 {
   "hooks": {
     "SessionStart": [
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "sloprail session start" }] }
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "sr-session start" }] }
     ],
     "PreToolUse": [
-      { "matcher": "Write", "hooks": [{ "type": "command", "command": "sloprail session pre-tool" }] },
-      { "matcher": "Edit", "hooks": [{ "type": "command", "command": "sloprail session pre-tool" }] },
-      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "sloprail session pre-tool" }] }
+      { "matcher": "Write", "hooks": [{ "type": "command", "command": "sr-session pre-tool" }] },
+      { "matcher": "Edit", "hooks": [{ "type": "command", "command": "sr-session pre-tool" }] },
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "sr-session pre-tool" }] }
     ],
     "Stop": [
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "sloprail session stop" }] }
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "sr-session stop" }] }
     ],
     "SubagentStop": [
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "sloprail session subagent-stop" }] }
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "sr-session subagent-stop" }] }
     ]
   }
 }
