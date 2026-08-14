@@ -1099,6 +1099,65 @@ func (e *Env) RunFrom(projDir, subRel, sessionID, prompt string, s Scenario) Res
 	return e.run(projDir, workDir, sessionID, prompt, s)
 }
 
+// RunReal drives the operator's ACTUAL `claude` against a project, and is the
+// one thing in this harness that is not sandboxed.
+//
+// It exists for a single property that the mock is definitionally unable to
+// show: that SLOPRAIL_LAUNCHED_BY, set by the engine on an outer hook, survives
+// the exec into a real harness and is loaded by that harness into its own hooks'
+// environment. Everything after the first link in that chain belongs to a
+// program this repo does not own, so a mock asserting it would be asserting its
+// own construction. See test_015_06_real_agent_test.go.
+//
+// # Why HOME is NOT overridden here
+//
+// Every other path in this file replaces HOME and CLAUDE_CONFIG_DIR so a run
+// cannot touch the host's claude data. This one cannot: a real `claude` reads
+// its credentials from the operator's own config, and under the isolated HOME it
+// has none and exits without running. The isolation and the property are
+// mutually exclusive, and the property is the one that was reopened as P1.
+//
+// So the trade is made explicitly rather than by accident: the caller's real
+// environment is inherited, only the PATH is prepended so the plugin's hooks
+// reach the binaries under test, and the caller must opt in through an
+// environment variable because this spends money. No test may call this without
+// that gate.
+//
+// The project's own settings.json still points at THIS repo's marketplace, so
+// what fires inside the session is the plugin under test even though the
+// harness's config directory is not in play.
+func (e *Env) RunReal(projDir, prompt string) Result {
+	e.t.Helper()
+	if os.Getenv("SLOPRAIL_REAL_AGENT") != "1" {
+		e.t.Fatalf("harness: RunReal without SLOPRAIL_REAL_AGENT=1 — it bills the operator")
+	}
+	bin, err := exec.LookPath("claude")
+	if err != nil {
+		e.t.Fatalf("harness: RunReal: no `claude` on PATH: %v", err)
+	}
+	cmd := exec.Command(bin,
+		"-p", "--model", "haiku",
+		// The outer cap. The inner agent carries its own, passed by the
+		// guardrail's script, because that is where a runaway would spend.
+		"--max-budget-usd", "0.20",
+		"--allowed-tools", "Write",
+		"--", prompt,
+	)
+	cmd.Dir = projDir
+	cmd.Env = append(os.Environ(),
+		"PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		e.t.Fatalf("harness: run real claude: %v\n%s", err, out)
+	}
+	e.t.Logf("real claude:\n%s", out)
+	return Result{Output: string(out), Code: code}
+}
+
 // run drives the mock with the transcript's project root and the directory the
 // session reports given separately. They are the same for an ordinary session;
 // RunFrom is what separates them.
