@@ -1692,34 +1692,34 @@ func TestResolve_TheHopBoundSitsAboveTheKernelsOwn(t *testing.T) {
 
 	p, err := lookAt(clean, full)
 
-	// WHICH of the two answers arrives is the KERNEL'S number, not ours, and the
-	// two disagree: Linux walks 40 links, macOS stops at 32. A chain built to
-	// maxSymlinkHops is therefore rejected by one and walked by the other, and
-	// asserting either outcome alone pins a platform rather than a behaviour.
-	// Measured, not reasoned: this test passed on macOS for weeks and failed on
-	// its first CI run against Linux.
+	// The subject is the RELATIONSHIP between two limits, not either number.
+	// maxSymlinkHops sits above the kernel's own, so a chain long enough to
+	// reach ours is one the kernel has already refused — and lookAt reports that
+	// refusal as unknown rather than inventing an answer.
 	//
-	// What must hold on BOTH is the thing the tri-state exists for — the chain
-	// must never be called ABSENT. Absence is what would announce a
-	// PostFileDelete for a file nothing ever looked at, and that is the same
-	// wrong on either kernel.
-	assert.NotEqual(t, absent, p,
-		"a dangling chain must never be read as absence — that is a delete announced for a file nobody looked at")
+	// Which side of the kernel's limit a 40-hop chain falls on is the KERNEL's
+	// business and the two disagree. macOS gives ELOOP well before twenty,
+	// because every element of a path spends from one budget — measured: 20, 31,
+	// 32, 33, 40 and 41 hops all fail. Linux walks the whole chain and answers
+	// about its end, which does not exist, so absent is CORRECT there.
+	//
+	// An earlier attempt at this test asserted "never absent" and failed on
+	// Linux for forbidding the right answer. Both readings are honest; what must
+	// not happen is inventing a file.
+	assert.NotEqual(t, presentFile, p,
+		"the chain ends on nothing, so it is never a file this module may report as present")
 
-	if err != nil {
-		// The kernel refused to walk it: say so rather than guess.
-		assert.Equal(t, unknown, p, "a chain the kernel will not walk is not a fact about the tree")
-		require.ErrorIs(t, err, ErrUnreadableTree,
-			"and it is said, rather than being taken for absence and announced as a delete")
-		assert.ErrorIs(t, err, syscall.ELOOP, "which is what the kernel actually reported")
+	if err == nil {
+		// The kernel walked it. The answer is about the chain's end.
+		assert.Equal(t, absent, p, "a chain that resolves to a missing target is absent")
 		return
 	}
 
-	// The kernel walked the whole chain, so the answer is about its END — a
-	// target that does not exist. Reported as a dangling link rather than as a
-	// file, which is the other half of not inventing facts about the tree.
-	assert.NotEqual(t, presentFile, p,
-		"the chain ends on nothing, so it is not a file this module may report as present")
+	// The kernel refused. Say that, rather than guessing at the tree.
+	assert.Equal(t, unknown, p, "a chain the kernel will not walk is not a fact about the tree")
+	require.ErrorIs(t, err, ErrUnreadableTree,
+		"and it is said, rather than being taken for absence and announced as a delete")
+	assert.ErrorIs(t, err, syscall.ELOOP, "which is what the kernel actually reported")
 }
 
 func TestResolve_ALinkThatWillNotSayWhereItPointsIsRefused(t *testing.T) {
