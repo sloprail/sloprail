@@ -115,12 +115,28 @@ var knownBins = map[string]binSpec{
 	// filename is, which depends on whether the directory exists.
 	"mv": movelike,
 	// cp writes its destination and leaves its sources alone.
+	//
+	// With exactly TWO operands the destination's resulting bytes are the
+	// source's current bytes, which is a PayloadCopyOf naming the source. The
+	// bytes themselves are not read here — that is a filesystem access and
+	// belongs to the caller (see payload.go on the split).
+	//
+	// With three or more the last operand is a DIRECTORY and the sources are
+	// copied into it. The resulting file is `dir/base(src)`, a path this
+	// package deliberately does not compute — movelike's comment gives the
+	// reason: it depends on whether the directory exists, which is a question
+	// about the tree. So no payload is claimed there, matching the path half's
+	// existing honesty.
 	"cp": func(argv []string) []FileTarget {
 		ops := operands(argv)
 		if len(ops) < 2 {
 			return nil
 		}
-		return targetsFor(ops[len(ops)-1:], Write)
+		dst := targetsFor(ops[len(ops)-1:], Write)
+		if len(ops) == 2 {
+			return withPayload(dst, Payload{Kind: PayloadCopyOf, From: ops[0]})
+		}
+		return dst
 	},
 	// install is cp with modes and ownership. Same operand shape.
 	"install": func(argv []string) []FileTarget {
@@ -132,7 +148,23 @@ var knownBins = map[string]binSpec{
 	},
 
 	// touch creates or updates the mtime of every operand.
-	"touch": func(argv []string) []FileTarget { return targetsFor(operands(argv), Write) },
+	//
+	// A touch of a path that does not exist creates an EMPTY file, and this is
+	// the reference case for the whole absent-versus-empty distinction: `touch
+	// new.md` is the one command where `content: ""` is the TRUE answer rather
+	// than a stand-in for not knowing. Before payloads existed it was
+	// indistinguishable from `some-unknown-tool > new.md`, and a rule catching
+	// empty files could not be written honestly.
+	//
+	// A touch of a file that ALREADY exists changes only the mtime, leaving the
+	// bytes alone — so the literal "" would be a lie there. The distinction is
+	// the tree's, not the line's, so the payload is claimed here and filemod
+	// applies it only on the create branch. That is the split doing its job:
+	// this package says what the line determines, and the caller decides what
+	// the tree makes of it.
+	"touch": func(argv []string) []FileTarget {
+		return withPayload(targetsFor(operands(argv), Write), literalPayload(""))
+	},
 
 	// mkdir makes directories. Reported as Write on the path, which the file
 	// module then declines to turn into an event because a directory is not a
@@ -154,8 +186,20 @@ var knownBins = map[string]binSpec{
 
 	// truncate resizes its operands. `-s` takes a separated value, which
 	// operands cannot know about generically, so it is handled here.
+	//
+	// `truncate -s 0` empties the file, which is a resulting content of "" and
+	// is known exactly. Any OTHER size is not: `-s 100` pads with NUL bytes or
+	// cuts at a byte offset, so the result depends on the file's current
+	// contents and length, and `-s +10`/`-s -10` are relative. Only the zero
+	// case is claimed, and it is claimed only when spelled as a size this
+	// recognises — see truncatesToEmpty.
 	"truncate": func(argv []string) []FileTarget {
-		return targetsFor(operandsSkipping(argv, map[string]bool{"-s": true, "--size": true, "-r": true, "--reference": true}), Write)
+		skip := map[string]bool{"-s": true, "--size": true, "-r": true, "--reference": true}
+		targets := targetsFor(operandsSkipping(argv, skip), Write)
+		if truncatesToEmpty(argv) {
+			return withPayload(targets, literalPayload(""))
+		}
+		return targets
 	},
 
 	// sed rewrites its input file ONLY with -i. Without it sed writes to stdout
@@ -172,6 +216,17 @@ var knownBins = map[string]binSpec{
 
 	// tee writes every operand. It also writes stdout, which is not a file this
 	// names.
+	//
+	// No payload, and this one is worth stating because it looks derivable and
+	// is not. tee writes its STDIN to each operand, and stdin comes from
+	// whatever is piped in — `generate | tee f.md`. The line names the file
+	// perfectly and says nothing whatever about the bytes.
+	//
+	// The one spelling that WOULD be knowable is a heredoc into tee
+	// (`tee f.md <<'EOF'`), which is handled by the statement-level heredoc
+	// path in payload.go rather than here, because that path already pairs a
+	// here-document with the statement it hangs off. Claiming it here as well
+	// would be two answers for one line, free to disagree.
 	"tee": func(argv []string) []FileTarget {
 		return targetsFor(operands(argv), Write)
 	},
@@ -189,13 +244,24 @@ var knownBins = map[string]binSpec{
 }
 
 // movelike is mv: sources removed, destination written.
+// The destination's resulting bytes are the source's current bytes, exactly as
+// for cp, and under the same two-operand restriction — with three or more the
+// last is a directory and the resulting paths are not computed here.
+//
+// The source is still reported Remove. A payload on the removal would be
+// meaningless: a deleted file has no resulting content, and PreFileDelete
+// declares no field for one.
 func movelike(argv []string) []FileTarget {
 	ops := operands(argv)
 	if len(ops) < 2 {
 		return nil
 	}
 	targets := targetsFor(ops[:len(ops)-1], Remove)
-	return append(targets, targetsFor(ops[len(ops)-1:], Write)...)
+	dst := targetsFor(ops[len(ops)-1:], Write)
+	if len(ops) == 2 {
+		dst = withPayload(dst, Payload{Kind: PayloadCopyOf, From: ops[0]})
+	}
+	return append(targets, dst...)
 }
 
 // sedlike is the in-place-edit family: the operands are rewritten, but only when
@@ -250,6 +316,41 @@ func sedlike(argv []string) []FileTarget {
 	}
 	// Past the script.
 	return targetsFor(ops[1:], Write)
+}
+
+// truncatesToEmpty reports whether a truncate invocation sets its files to zero
+// length, which is the one size whose resulting content is known.
+//
+// Both spellings of the flag are read — `-s0`, `-s 0`, `--size=0`, `--size 0` —
+// because a rule must not be evadable by a space. Anything else, including a
+// relative size and a `--reference`, is declined: the result then depends on
+// the file's current bytes, which this package does not read.
+func truncatesToEmpty(argv []string) bool {
+	for i := 1; i < len(argv); i++ {
+		a := argv[i]
+		switch {
+		case a == "-s" || a == "--size":
+			// The value is the next word.
+			if i+1 < len(argv) {
+				return isZeroSize(argv[i+1])
+			}
+			return false
+		case strings.HasPrefix(a, "--size="):
+			return isZeroSize(strings.TrimPrefix(a, "--size="))
+		case strings.HasPrefix(a, "-s"):
+			return isZeroSize(strings.TrimPrefix(a, "-s"))
+		}
+	}
+	return false
+}
+
+// isZeroSize reports whether a truncate size argument means "empty".
+//
+// Only an exact, absolute zero. A leading `+` or `-` makes the size relative to
+// the current length, so `-s -0` is not necessarily an empty file and is
+// refused along with everything else this does not model exactly.
+func isZeroSize(s string) bool {
+	return s == "0"
 }
 
 // nonEmpty drops the empty operands, so a position in the list means the same
@@ -334,6 +435,23 @@ func operandsSkipping(argv []string, takesValue map[string]bool) []string {
 // The cost is real and is stated rather than hidden: `rm *.md` produces no
 // event, so a rule protecting notes.md does not fire on it. That is the
 // unknowable tier, and the tree diff at session stop reports it after the fact.
+// withPayload attaches one payload to every target in a list.
+//
+// A helper rather than a parameter on targetsFor, because the overwhelming
+// majority of construction sites know nothing about content and should keep
+// saying so by omission. Adding a parameter would make every one of them state
+// PayloadNone explicitly, which is noise that invites a wrong value to be
+// pasted in.
+func withPayload(targets []FileTarget, p Payload) []FileTarget {
+	if p.Kind == PayloadNone {
+		return targets
+	}
+	for i := range targets {
+		targets[i].Payload = p
+	}
+	return targets
+}
+
 func targetsFor(paths []string, effect Effect) []FileTarget {
 	var targets []FileTarget
 	for _, p := range paths {
@@ -370,7 +488,11 @@ func hasGlob(path string) bool {
 // names no path this can be sure of, and the empty environment would resolve it
 // to nothing at all — reporting a guess would fire a rule on a file the command
 // may never touch.
-func fromCall(cfg *expand.Config, call *syntax.CallExpr, depth int) []FileTarget {
+// stdin is the here-document attached to this call's statement, for the
+// programs that copy stdin into a file they name. It is the zero Payload for
+// the vast majority of lines, and is consulted only by those programs — see
+// targetsForArgv.
+func fromCall(cfg *expand.Config, call *syntax.CallExpr, depth int, stdin Payload) []FileTarget {
 	if len(call.Args) == 0 {
 		return nil
 	}
@@ -423,7 +545,7 @@ func fromCall(cfg *expand.Config, call *syntax.CallExpr, depth int) []FileTarget
 		}
 		argv = append(argv, f.value)
 	}
-	return targetsForArgv(argv, depth)
+	return targetsForArgv(argv, depth, stdin)
 }
 
 // targetsForArgv reads one resolved vector against the table, unwrapping
@@ -434,19 +556,34 @@ func fromCall(cfg *expand.Config, call *syntax.CallExpr, depth int) []FileTarget
 // parse of text an agent chose, so the descent needs the same bound. Wrapper
 // unwrapping does not spend it — that recursion consumes words from a vector of
 // finite length and terminates on its own.
-func targetsForArgv(argv []string, depth int) []FileTarget {
+// stdin is the statement's here-document, applied only to the programs that
+// copy stdin into a file they name. `tee f.md <<'EOF'` and `dd of=f.md <<'EOF'`
+// are the two, and for them the heredoc IS the resulting content.
+//
+// It is applied here rather than inside each binSpec so that a spec stays a
+// pure function of argv — the property that makes the table readable against
+// each utility's own synopsis.
+func targetsForArgv(argv []string, depth int, stdin Payload) []FileTarget {
 	if len(argv) == 0 || basename(argv[0]) == "" {
 		return nil
 	}
 
 	var targets []FileTarget
 	if spec, known := knownBins[basename(argv[0])]; known {
-		targets = append(targets, spec(argv)...)
+		own := spec(argv)
+		if stdin.Kind == PayloadLiteral && consumesStdin(basename(argv[0])) {
+			own = withPayload(own, stdin)
+		}
+		targets = append(targets, own...)
 	}
 	if nested := unwrap(asWords(argv)); len(nested) > 0 {
 		// Recursive for the same reason fromArgv is: wrappers stack, and
 		// `sudo nohup rm notes.md` is two deep.
-		targets = append(targets, targetsForArgv(values(nested), depth)...)
+		//
+		// The heredoc travels with it: `sudo tee f.md <<'EOF'` attaches the
+		// document to the outer statement, and the wrapper is transparent to
+		// what the inner program does with its stdin.
+		targets = append(targets, targetsForArgv(values(nested), depth, stdin)...)
 	}
 	// An interpreter payload names files too, and this was the gap.
 	//

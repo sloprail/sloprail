@@ -43,13 +43,6 @@ func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 	return m.extractPending(in)
 }
 
-// pendingWrite is the shape a write tool's arguments take. Read only to find
-// the path; what else a harness puts there is its business.
-type pendingWrite struct {
-	FilePath string `json:"file_path"`
-	Content  string `json:"content"`
-}
-
 // pendingCommand is the shape a shell tool's arguments take.
 //
 // Declared here rather than imported from commandmod for the reason commandmod
@@ -126,20 +119,27 @@ type Pending interface {
 // only being read. If that becomes a problem worth solving, solve it on shape
 // too. A create whose arguments carry no `content` key at all is not a write,
 // and that is a question about the arguments rather than about the name.
-// Distinguishing an absent `content` from an empty one needs the raw JSON
-// rather than the decoded struct, which is why it is not done here today.
+//
+// The raw-JSON reading that note called for now exists — see pendingshape.go,
+// which distinguishes an absent `content` from an empty one and is what fixed
+// the Edit-create defect. It was NOT used to suppress `Read`'s event, which
+// would be a behaviour change of its own and is pinned by
+// TestExtractPending_AReadIsStillNotAWrite. What it decides is the CONTENT a
+// write carries, not whether a path produces an event.
 func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 	pending, ok := in[module.InputPayload].(Pending)
 	if !ok {
 		return nil, nil
 	}
 
-	var w pendingWrite
-	if err := json.Unmarshal(pending.Arguments(), &w); err != nil || w.FilePath == "" {
-		// No path named outright. A command line may still name one, and that
-		// is the other shape this module reads — see extractCommand.
+	var w pendingArgs
+	if err := json.Unmarshal(pending.Arguments(), &w); err != nil || w.path() == "" {
+		// No path named outright, under either spelling this understands. A
+		// command line may still name one, and that is the other shape this
+		// module reads — see extractCommand.
 		return m.extractCommand(pending)
 	}
+	path := w.path()
 
 	// What the RULE sees, and what the FILESYSTEM is asked about, are two
 	// different spellings of one path, and they are separated here.
@@ -152,12 +152,44 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 	//
 	// Conflating them is what the bug was: one absolute path went to both, the
 	// stat was right and the matcher never matched.
-	f := FileEvent{Path: reportable(w.FilePath, pending.Root())}
+	f := FileEvent{Path: reportable(path, pending.Root())}
 	var kind string
 	// The lookup takes the path as the harness named it. Both arguments are
 	// that one path: the pre phase asks about the file the tool is about to
 	// write, and the tool named it in a spelling that resolves.
-	p, _ := lookAt(w.FilePath, w.FilePath)
+	p, _ := lookAt(path, path)
+
+	// What the file holds now, read ONCE and threaded into the derivation.
+	//
+	// An edit's result is a function of the current bytes, so this is needed
+	// wherever a replacement has to be applied. Reading it here rather than
+	// inside resultFor keeps the tree read on this one path: resultFor is a
+	// pure function of what it is given, which is what makes it testable by
+	// handing it two strings — the same division commandmod draws between
+	// what the line says and what the filesystem answers.
+	//
+	// Only for a file that is actually there. `before` is "" for a create,
+	// which is what an edit inserting into a new file must see.
+	before := ""
+	if p == presentFile {
+		before = m.contentOnDisk(path)
+	}
+	result, derr := resultFor(w, before, p == presentFile)
+	if errors.Is(derr, errWillNotApply) {
+		// The tool is about to refuse this edit, so no bytes change and there
+		// is no file modification to be about. Q2: emitting a create or an
+		// update here would be a false event — a rule firing, and possibly a
+		// judging hook spending a model call, on work that is not going to
+		// happen.
+		//
+		// Silence rather than an error, the same answer the presentNotAFile
+		// branch below gives: the tool's own failure is a real condition it
+		// will report itself, not a guardrail verdict and not a producer
+		// breach.
+		return nil, nil
+	}
+	derivable := derr == nil
+
 	switch p {
 	case absent, unknown:
 		// A stat that cannot answer is treated as "not there" HERE and nowhere
@@ -171,11 +203,28 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		kind = KindPreCreate
 		// The file does not exist yet, so a rule that wants to look at what
 		// would be written has nowhere else to look.
-		f.Content = w.Content
-		f.Markers = Scan(w.Content)
+		//
+		// `result` is what the action would leave behind, which for a create is
+		// the whole body — so it IS the content, and PreFileCreate declares the
+		// one name for it. Where it could not be derived this is "", which is
+		// the pre-existing behaviour for a path named without a stated body
+		// (`Read`) and is pinned as such.
+		f.Content = result
+		f.Markers = Scan(result)
 	case presentFile:
 		kind = KindPreUpdate
-		f.Markers = m.markersOnDisk(w.FilePath)
+		// The post-edit bytes, and whether they are known. Q1: the value alone
+		// cannot say, because Matcher.env fills a declared-but-absent field
+		// with its zero value — so an underivable result would read as "" and
+		// look exactly like a write that empties the file. The boolean is what
+		// makes the gap askable.
+		f.Result = result
+		f.ResultKnown = derivable
+		// Markers still describe the bytes being REPLACED. That is what the
+		// field has always meant and what every rule reading it expects;
+		// silently repointing it at the result would change the meaning of
+		// existing guardrails without touching them. See markersOnDisk.
+		f.Markers = Scan(before)
 	case presentNotAFile:
 		// A directory, a device, a socket. No file write can land here — the
 		// harness's own write will fail — so there is no file modification to
@@ -475,6 +524,26 @@ func (*Module) markersOnDisk(path string) []Marker {
 		return []Marker{}
 	}
 	return Scan(string(b))
+}
+
+// contentOnDisk reads a file, or yields "" when it cannot be read.
+//
+// The empty string is deliberately not distinguished from an unreadable file
+// HERE, and the distinction is not lost: an unreadable file makes every
+// non-empty `old_string` fail to match, so applyEdits returns errWillNotApply
+// and no event claims a result at all. A file that is genuinely empty behaves
+// the same way for the same reason, which is correct — an edit expecting text
+// in an empty file does not apply either.
+//
+// The one case that reaches a result through here is an edit with an empty
+// old_string, which is refused on an existing file regardless. So no derived
+// `result` is ever built on bytes this failed to read.
+func (*Module) contentOnDisk(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // extractObserved turns the difference between the tree and the session's

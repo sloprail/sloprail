@@ -156,12 +156,26 @@ func TestExtractPending_ReadOnlyToolStillProducesAnEvent(t *testing.T) {
 // `file_path`, so argument-shape dispatch drops them before any name is
 // consulted — which is the evidence that shape does most of the filtering an
 // allowlist was proposed to do.
+// NotebookEdit was REMOVED from this table, deliberately, and the reason is
+// worth stating where the table is.
+//
+// It sat here asserting that a notebook write produces no event, and that was
+// not shape-filtering working — it was a measured coverage hole this test
+// pinned. `notebook_path` is a path key like `file_path` is, so a notebook
+// write is a file modification the Pre phase simply could not see, and
+// `reflect-on-edits.sh` — the shell hook this engine replaced — matched
+// NotebookEdit explicitly. The port was strictly narrower than its source until
+// the path key was read.
+//
+// The corrected behaviour is pinned by
+// TestExtractPending_ANotebookWriteIsAFileEventWithNoDerivableResult. What
+// remains in this table is the genuine article: tools that name no path at all
+// under any spelling.
 func TestExtractPending_ShapeAlreadyFiltersToolsWithoutAFilePath(t *testing.T) {
 	for tool, args := range map[string]string{
-		"Grep":         `{"pattern":"foo","path":"/a"}`,
-		"Glob":         `{"pattern":"**/*.go"}`,
-		"WebFetch":     `{"url":"https://example.com","prompt":"p"}`,
-		"NotebookEdit": `{"notebook_path":"/a/n.ipynb","new_source":"x"}`,
+		"Grep":     `{"pattern":"foo","path":"/a"}`,
+		"Glob":     `{"pattern":"**/*.go"}`,
+		"WebFetch": `{"url":"https://example.com","prompt":"p"}`,
 	} {
 		events, err := New().Extract(module.Input{
 			module.InputPhase:   module.PhasePre,

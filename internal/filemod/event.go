@@ -20,6 +20,18 @@ type FileEvent struct {
 	// having it copied through every event.
 	Content string
 
+	// Result is the bytes the file would hold AFTER the pending action, on the
+	// kinds that declare it. Meaningful only alongside ResultKnown.
+	Result string
+
+	// ResultKnown says whether Result was computed or is a zero value standing
+	// in for "the engine could not work it out".
+	//
+	// Carried as its own field rather than inferred from Result being empty,
+	// because an action can legitimately produce an empty file — which is the
+	// same collision, one level up, that this whole change removes.
+	ResultKnown bool
+
 	// Markers are the `sr:` annotations the text carries. Set on the two Pre
 	// kinds that have text to read; see Kinds for why a delete has none.
 	Markers []Marker
@@ -47,6 +59,18 @@ func (f FileEvent) Event(kind string) event.Event {
 	fields := map[string]any{FieldPath: f.Path}
 	if kindDeclares(kind, FieldContent) {
 		fields[FieldContent] = f.Content
+	}
+	// Both driven by the declaration, like every other field, and both
+	// unconditional on the kinds that declare them. A `result` that appeared
+	// only when it was known would be indistinguishable from one that was
+	// known to be empty, since Matcher.env fills an absent declared field with
+	// its zero value — which is the defect this pair exists to avoid, not a
+	// shape to repeat.
+	if kindDeclares(kind, FieldResult) {
+		fields[FieldResult] = f.Result
+	}
+	if kindDeclares(kind, FieldResultKnown) {
+		fields[FieldResultKnown] = f.ResultKnown
 	}
 	if kindDeclares(kind, FieldMarkers) {
 		fields[FieldMarkers] = markerFields(f.Markers)

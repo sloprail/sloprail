@@ -30,6 +30,27 @@ const (
 	FieldContent = "content"
 	FieldMarkers = "markers"
 
+	// FieldResult is the bytes the file will hold AFTER the pending action, on
+	// the kinds where the engine could work them out. See KindPreUpdate's
+	// declaration for why this is a second field rather than `content` growing
+	// a second meaning, and FieldResultKnown for how "could not work them out"
+	// is said.
+	FieldResult = "result"
+
+	// FieldResultKnown says whether FieldResult was computed or defaulted.
+	//
+	// It exists because absence cannot say it. Matcher.env fills a DECLARED
+	// field the event omitted with its type's zero value, deliberately — an
+	// absent declared field used to error, matcher errors refuse, and a rule
+	// failed closed on the engine's gap rather than on the author's mistake. So
+	// an omitted `result` reads as `""`, which is indistinguishable from a
+	// pending action that genuinely empties the file.
+	//
+	// That is the same collision this whole change exists to remove, one field
+	// along. A boolean beside the value is what separates them: `result == ""`
+	// asks about the bytes, and `resultKnown` asks whether the engine knew them.
+	FieldResultKnown = "resultKnown"
+
 	// Keys within one entry of FieldMarkers. Not fields of the kind: a matcher
 	// reads them off an element of the list, and the declaration describes the
 	// list itself.
@@ -62,6 +83,8 @@ func (*Module) Name() string { return Name }
 func (*Module) Kinds() []module.KindDecl {
 	path := module.FieldDecl{Name: FieldPath, Type: module.TypeString}
 	content := module.FieldDecl{Name: FieldContent, Type: module.TypeString}
+	result := module.FieldDecl{Name: FieldResult, Type: module.TypeString}
+	resultKnown := module.FieldDecl{Name: FieldResultKnown, Type: module.TypeBool}
 
 	// markers declares its element's shape, and that is the whole point of the
 	// Elem field. A list whose Elem is nil has its collection checked and its
@@ -97,9 +120,73 @@ func (*Module) Kinds() []module.KindDecl {
 			// Content only here. The file does not exist yet, so a rule that
 			// wants to look at what would be written has nowhere else to look;
 			// on the other kinds it is already on disk.
+			//
+			// A create's content IS its result — there are no prior bytes for a
+			// replacement to be relative to — so `result` is not declared here.
+			// Declaring both would be one fact under two names, free to
+			// disagree, and a rule author would have no way to choose between
+			// them. `resultKnown` is likewise absent: a create is emitted only
+			// when the resulting bytes are known, and a field that is always
+			// true is one a rule can match on and never learn anything from —
+			// the argument KindPreDelete already makes about markers.
 			Fields: []module.FieldDecl{path, content, markers},
 		},
-		{Name: KindPreUpdate, Fields: []module.FieldDecl{path, markers}},
+
+		// PreFileUpdate carries the POST-EDIT bytes, and this is Q1's answer.
+		//
+		// It used to carry none: the file is on disk, so a rule could read it
+		// there. But that is the file BEFORE the write, which is the wrong
+		// question for the rule anyone actually writes. "Will the result still
+		// have frontmatter?" cannot be answered from the bytes about to be
+		// replaced, and markersOnDisk's own comment has recorded this as a
+		// known limitation since it was written.
+		//
+		// # Why a new field rather than `content`
+		//
+		// `content` means "the bytes this action states outright", and on
+		// PreFileCreate it is required and always present. Reusing it here
+		// would make one name mean "the stated body" on one kind and "the
+		// computed outcome" on another, and a rule bound to both kinds — which
+		// is the normal case, since a guardrail about a file usually cares
+		// about creates and updates alike — could not tell which it had.
+		//
+		// # Why the value is paired with a boolean
+		//
+		// This is the constraint that decided the shape, and it is the engine's
+		// own. Matcher.env fills a declared field the event omitted with its
+		// type's zero value. So "we could not compute the result" and "the
+		// result is the empty file" are the SAME OBSERVATION to every matcher —
+		// exactly the collision that made `content: ""` on an Edit-create a
+		// defect worth this whole change.
+		//
+		// Three options were on the table. (a) Leave PreFileUpdate contentless:
+		// rejected, it is the limitation named above and the owner asked for
+		// the opposite. (b) Add `result` alone, present only when computable:
+		// rejected, because absence is not observable — it silently reads as
+		// `""`, so a `sed -i` whose outcome is unknowable would look like a
+		// command that empties the file, and a rule refusing empty results
+		// would fire on it. (c) `result` plus `resultKnown`: taken. The pair
+		// makes the gap VISIBLE and askable, which is the property the other
+		// two cannot give.
+		//
+		// Both are unconditional, so neither is ever filled in by the engine on
+		// this kind, and `resultKnown` is a real question here in a way it is
+		// not on a create: an update genuinely arrives both ways.
+		//
+		// # What a rule author does with it
+		//
+		//	resultKnown && !(result contains "---")   refuse a write that would
+		//	                                          strip the frontmatter, and
+		//	                                          say nothing where the
+		//	                                          engine cannot see
+		//	!resultKnown                              catch the underivable
+		//	                                          cases deliberately
+		//
+		// The first is the shape a correct rule takes: guard on `resultKnown`,
+		// then read `result`. A rule that reads `result` without guarding gets
+		// the empty string on the underivable cases, which is stated here so it
+		// is a choice rather than a surprise.
+		{Name: KindPreUpdate, Fields: []module.FieldDecl{path, result, resultKnown, markers}},
 
 		// No markers on a delete. A deletion has no text to read them out of,
 		// so the field could only ever be empty — and an always-empty field is

@@ -41,6 +41,20 @@ type FileTarget struct {
 
 	// Effect is what is about to happen to it.
 	Effect Effect
+
+	// Payload is what the LINE determines about the resulting bytes, which for
+	// most commands is nothing.
+	//
+	// The zero value is PayloadNone, so a target built without thinking about
+	// content claims none — which is why every construction site in this
+	// package could stay as it was and only the ones that genuinely know
+	// something had to change.
+	//
+	// It is a statement about the line, not the outcome: `cp a.md b.md` yields
+	// PayloadCopyOf naming a.md, and turning that into bytes is filemod's,
+	// because it means reading the filesystem and this package does not. See
+	// payload.go for the whole argument.
+	Payload Payload
 }
 
 // FileTargets finds every path a command line is about to change.
@@ -99,16 +113,51 @@ func fileTargetsAt(raw string, depth int) (targets []FileTarget) {
 	//
 	// Known binaries are read off the CallExpr, which is where the argument
 	// vector is.
+	// The statement currently being walked, so a CallExpr can reach the
+	// here-document that hangs off its parent.
+	//
+	// `tee f.md <<'EOF'` names its file through the known-binary table (a
+	// CallExpr operand) while the bytes are on the Stmt's redirection list, so
+	// neither node can answer alone. Walk visits the Stmt first and every
+	// CallExpr it contains before moving on, so recording it here is enough to
+	// pair them.
+	//
+	// A nested statement — a command substitution, a subshell — overwrites this
+	// and restores nothing, which is deliberate: its own heredoc is the one its
+	// calls should see, and by the time the outer statement's later calls are
+	// visited the walk has already left. The failure mode if that reasoning is
+	// ever wrong is an UNCLAIMED payload rather than a wrong one, because
+	// stmtHdoc is consulted only for a program known to consume stdin.
+	var stmt *syntax.Stmt
 	syntax.Walk(f, func(n syntax.Node) bool {
 		switch node := n.(type) {
 		case *syntax.Stmt:
-			targets = append(targets, fromRedirs(cfg, node.Redirs)...)
+			stmt = node
+			targets = append(targets, fromRedirs(cfg, node)...)
 		case *syntax.CallExpr:
-			targets = append(targets, fromCall(cfg, node, depth)...)
+			targets = append(targets, fromCall(cfg, node, depth, stmtHdoc(stmt))...)
 		}
 		return true
 	})
 	return targets
+}
+
+// stmtHdoc returns the literal here-document attached to a statement, if it has
+// one that is knowable.
+//
+// Used for the programs that write their STDIN to a named file — `tee`, and
+// `dd of=`. For those the heredoc is the resulting content, where for `cat` it
+// is the output of a redirection and is handled by payloadForStmt instead.
+func stmtHdoc(stmt *syntax.Stmt) Payload {
+	if stmt == nil {
+		return Payload{}
+	}
+	for _, r := range stmt.Redirs {
+		if p, ok := hdocPayload(r); ok {
+			return p
+		}
+	}
+	return Payload{}
 }
 
 // fromRedirs reads the file-touching redirections off one statement.
@@ -119,15 +168,49 @@ func fileTargetsAt(raw string, depth int) (targets []FileTarget) {
 // renamed and go silent, this cannot drift at all — the only thing that could
 // change it is the shell grammar itself, and then the parser stops parsing
 // rather than quietly reporting nothing.
-func fromRedirs(cfg *expand.Config, redirs []*syntax.Redirect) []FileTarget {
+// It takes the whole statement rather than its redirection list because the
+// resulting CONTENT is a property of the pair: the redirection says where the
+// bytes go and the command says what produces them. `echo hi > f.md` is one
+// statement holding both, and a function given only the redirects could name
+// the file but never its contents.
+func fromRedirs(cfg *expand.Config, stmt *syntax.Stmt) []FileTarget {
+	if stmt == nil {
+		return nil
+	}
+	// Worked out once for the statement, not once per redirection: the command
+	// producing the bytes is the same whichever file they are sent to.
+	produced := payloadForStmt(cfg, stmt)
+
 	var targets []FileTarget
-	for _, r := range redirs {
+	for _, r := range stmt.Redirs {
 		if !writesAFile(r) {
 			continue
 		}
 		path, ok := literalWord(cfg, r.Word)
 		if !ok {
 			continue
+		}
+		// What the redirection does with those bytes differs by operator, and
+		// the difference is the file's whole prior contents.
+		//
+		//	>   truncates, so the result is exactly the produced bytes
+		//	>>  appends, so the result is the file's current bytes plus them —
+		//	    which only the caller can read, hence PayloadAppend rather than
+		//	    PayloadLiteral
+		//
+		// Every other writing operator — `&>`, `<>`, the noclobber forms —
+		// claims nothing. `<>` does not truncate and writes at an offset, and
+		// the `&>` family merges stderr, whose contents are not knowable from
+		// the line. Claiming the produced bytes for those would be wrong in a
+		// way no test would catch until it refused someone's work.
+		payload := Payload{}
+		switch r.Op {
+		case syntax.RdrOut, syntax.RdrClob:
+			payload = produced
+		case syntax.AppOut, syntax.AppClob:
+			if produced.Kind == PayloadLiteral {
+				payload = Payload{Kind: PayloadAppend, Text: produced.Text}
+			}
 		}
 		// Every writing redirection is Write and none is Remove. `>` truncates
 		// a file rather than unlinking it — the path still exists afterwards,
@@ -138,7 +221,7 @@ func fromRedirs(cfg *expand.Config, redirs []*syntax.Redirect) []FileTarget {
 		// passes the same certainty tests an operand does. The glob check is the
 		// one that matters: `> *.md` is exactly as unknowable as `rm *.md`, and
 		// a second construction site would be a second place to forget that.
-		targets = append(targets, targetsFor([]string{path}, Write)...)
+		targets = append(targets, withPayload(targetsFor([]string{path}, Write), payload)...)
 	}
 	return targets
 }

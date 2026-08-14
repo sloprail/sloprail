@@ -19,6 +19,13 @@ func TestFileEvent_Event_PathOnly(t *testing.T) {
 		// Present and empty. PreFileUpdate declares markers, so it carries
 		// them; this FileEvent simply has none.
 		FieldMarkers: []any{},
+		// Both present, because PreFileUpdate declares both and presence is
+		// decided by the declaration rather than by the value. A bare
+		// FileEvent has derived nothing, so resultKnown is false and result
+		// holds its zero value — which is exactly the pair a rule must consult
+		// together.
+		FieldResult:      "",
+		FieldResultKnown: false,
 	}, e.Fields)
 	assert.NotContains(t, e.Fields, FieldContent,
 		"content is absent, not empty: on every kind but PreFileCreate the file is on disk")
@@ -244,8 +251,11 @@ func TestModule_ContentOnPreCreateAlone(t *testing.T) {
 	} {
 		assert.Equal(t, []string{FieldPath}, fieldsOf[kind], "kind %q", kind)
 	}
-	assert.Equal(t, []string{FieldPath, FieldMarkers}, fieldsOf[KindPreUpdate],
-		"markers but no content — PreFileUpdate has text to read markers from, on disk")
+	assert.Equal(t, []string{FieldPath, FieldResult, FieldResultKnown, FieldMarkers},
+		fieldsOf[KindPreUpdate],
+		"result and resultKnown but still no content: `content` stays the "+
+			"create-only field meaning \"the body this action states outright\", "+
+			"while the post-edit bytes an update computes get their own name")
 }
 
 func TestModule_MarkersOnTheTwoKindsWithText(t *testing.T) {
