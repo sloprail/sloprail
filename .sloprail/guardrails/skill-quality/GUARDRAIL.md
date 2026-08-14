@@ -71,11 +71,11 @@ the skill owns the part `--help` cannot carry — which command, when, why this
 one, in what order.
 
 The rule deliberately **names no specific command**, and that is not squeamishness
-about examples. The discovery command in this repo is itself in motion — a branch
-not yet merged here deletes the `sr-guardrail` binary outright, on the argument
-that a help command describing a structure rather than a command's behaviour
-belongs in a skill; after it lands, the same vocabulary is reported by
-`internal/guardrail/validate.go` at the moment an author is actually wrong. A
+about examples. The discovery command in this repo has already moved once: the
+`sr-guardrail` binary was deleted outright, on the argument that a help command
+describing a structure rather than a command's behaviour belongs in a skill. Since
+that landed, the same vocabulary is reported by `internal/guardrail/validate.go`
+at the moment an author is actually wrong, and that is now the only path to it. A
 rule citing whichever of those is current would be a rule that goes stale for
 exactly the reason it exists, and it would be sent to a model as standard on
 every judged skill. So the worked example lives here, in prose no model reads,
@@ -151,6 +151,28 @@ are not evidence about the file — and under fail-closed one flake wedges a
 session the agent cannot un-wedge by fixing anything.
 
 The VERDICT still fails closed: a skill the judge flags is refused.
+
+## Reading the verdict
+
+The verdict is matched with `{[^{}]*}` — the first brace-delimited run holding
+no further braces — never `{.*}`.
+
+Greedy matching is a hole here, and it was measured rather than reasoned. Given
+two objects on one line, `grep -o '{.*}'` returns the span from the first `{` to
+the last `}`; `jq` then evaluates `.has_issues` against each and prints one line
+per object, so `has_issues` becomes a two-line string. The test below it is
+`[ "$has_issues" != "true" ]`, which any two-line value satisfies — including
+one whose first line is `true`. A verdict that flagged the skill permitted it,
+in both object orders.
+
+The sibling `unit-satisfies-constraints` in the executive-memory repo stays
+GREEDY, and that is not an inconsistency. Its verdict nests
+(`{"violations":[{...}]}`), so the narrow pattern would take the first inner
+object and lose the key naming it, and its test is `[ -z "$lines" ]`, which a
+merged span makes refuse rather than permit. The correct pattern is decided by
+the verdict's shape, not copied between rules.
+
+## Failing open, continued
 
 The exception is an empty `rules/`, which refuses. That is not the machinery
 breaking around a standard; it is the standard being absent, and a judge with no

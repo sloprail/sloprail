@@ -238,8 +238,25 @@ if [ ! -s "$verdict" ]; then
   exit 0
 fi
 
+# The pattern is `{[^{}]*}` — the FIRST brace-delimited run containing no
+# further braces — and NOT `{.*}`.
+#
+# `grep -o '{.*}'` is greedy: given two JSON objects on one line it returns the
+# span from the first `{` to the LAST `}`, both objects and everything between.
+# jq then evaluates `.has_issues` against each and prints one line per object,
+# so `has_issues` becomes a TWO-LINE string — and `[ "$has_issues" != "true" ]`
+# below is satisfied by any two-line value, INCLUDING one whose second line is
+# "true". A verdict that flagged the skill would permit it. Measured through a
+# real dispatch: the flagging verdict permitted, in both object orders.
+#
+# This verdict is FLAT (`{"has_issues":...}`), which is why the narrow pattern
+# is correct here. The sibling unit-satisfies-constraints stays greedy because
+# ITS verdict nests (`{"violations":[{...}]}`) and a narrow pattern would take
+# the first inner object and lose the key naming it — there the narrow pattern
+# is the hole, and its `[ -z "$lines" ]` test makes a merged span refuse rather
+# than permit. Same pipeline, two verdict shapes, opposite safe directions.
 raw="$(tr -d '\r' < "$verdict" 2>/dev/null | sed 's/```json//g; s/```//g')"
-json="$(printf '%s' "$raw" | tr '\n' ' ' | grep -o '{.*}' | head -1)"
+json="$(printf '%s' "$raw" | tr '\n' ' ' | grep -o '{[^{}]*}' | head -1)"
 if [ -z "$json" ]; then
   # FAIL-OPEN: unparseable.
   echo "skill-quality: the judge's verdict for '$path' could not be parsed, so it was NOT judged. PERMITTING (fail-open — see GUARDRAIL.md)." >&2
