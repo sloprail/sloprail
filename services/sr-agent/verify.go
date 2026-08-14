@@ -58,8 +58,53 @@ const AttemptsEnv = "SLOPRAIL_ATTEMPTS"
 //
 // The caller can override with --verify-attempts. It is a default, not a law;
 // what it is not is unbounded, because an unbounded retry inside a Stop hook is
-// how a guardrail becomes a bill.
+// how a guardrail becomes a bill. That last clause was a claim about the
+// DEFAULT for as long as it stood alone, and it was read as one about the flag —
+// see MaxVerifyAttempts, which is the bound it was describing.
 const DefaultVerifyAttempts = 2
+
+// MaxVerifyAttempts is the ceiling the paragraph above was asserting and the
+// flag did not have.
+//
+// "What it is not is unbounded" described the DEFAULT and was read as describing
+// the flag. It was not: the lower bound was checked and nothing checked the
+// other end, so `--verify-attempts 100000` was taken verbatim and became 100000
+// real `claude` launches — the loop in verify_run.go is serial, has no timeout,
+// and on the rejecting path never exits early, so it runs every one of them. The
+// comment naming that exact failure ("how a guardrail becomes a bill") sat six
+// lines above the flag that permitted it.
+//
+// Twenty is chosen to be far above any real use and far below a bill. The
+// paragraph above argues a third attempt is usually the same model making the
+// same mistake at the same price, so the honest ceiling is nearer three — but
+// this is a ceiling on ABSURDITY, not a second opinion about what a good number
+// is. It refuses the typo and the mis-expanded shell variable, which are the
+// ways a large number actually arrives, and leaves every deliberate choice
+// alone.
+//
+// A ceiling rather than a silent clamp. Clamping would run 20 attempts for a
+// caller who asked for 100000 and report success, which is the engine deciding
+// on its own account and hiding that it did; the caller asked for something this
+// will not do, and is told so.
+const MaxVerifyAttempts = 20
+
+// checkVerifyAttempts holds the flag to both ends of its range.
+//
+// One function rather than two inline comparisons, because the two bounds are
+// one question — is this a number of agent launches worth making — and the
+// caller that asked only the lower half is exactly the defect this replaces.
+func checkVerifyAttempts(n int) error {
+	if n < 1 {
+		return fmt.Errorf(
+			"--verify-attempts must be at least 1, got %d: zero attempts would run no agent at all", n)
+	}
+	if n > MaxVerifyAttempts {
+		return fmt.Errorf(
+			"--verify-attempts must be at most %d, got %d: each attempt is a real agent launch, and %d of them is a bill rather than a retry",
+			MaxVerifyAttempts, n, n)
+	}
+	return nil
+}
 
 // outputDirEnv overrides where the agent's output file is created.
 //

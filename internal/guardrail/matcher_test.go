@@ -185,6 +185,7 @@ func TestMatch_ZeroValueMatchesTheDeclaredType(t *testing.T) {
 	kind := module.KindDecl{Name: "Everything", Fields: []module.FieldDecl{
 		{Name: "s", Type: module.TypeString},
 		{Name: "b", Type: module.TypeBool},
+		{Name: "n", Type: module.TypeInt},
 		{Name: "l", Type: module.TypeList},
 		{Name: "mp", Type: module.TypeMap},
 	}}
@@ -198,6 +199,14 @@ func TestMatch_ZeroValueMatchesTheDeclaredType(t *testing.T) {
 		{`s startsWith "x"`, false},
 		{`b == false`, true},
 		{`b`, false},
+		// int. Absent from this table while TypeInt was declared, mapped by
+		// fieldType and used by filemod's markers[].line — so the table read as
+		// one row per type and was one short. zero() had no int case either, so
+		// an omitted `line` came back nil and `.line > 10` errored `<nil> > int`:
+		// a CORRECT rule refusing every action and blaming the author's
+		// guardrail, which is the identical defect the `content` fill-in closed.
+		{`n == 0`, true},
+		{`n > 0`, false},
 		{`len(l) == 0`, true},
 		{`len(mp) == 0`, true},
 	} {
@@ -366,6 +375,59 @@ func TestMatch_ListElementMissingADeclaredField(t *testing.T) {
 	admitted, err = empty.Match(partial)
 	require.NoError(t, err)
 	assert.True(t, admitted)
+}
+
+// The same claim for an INT inside a list element, which is not a synthetic
+// shape: it is exactly what filemod declares for markers[].line, and
+// `any(markers, .line > N)` is the rule an author writes about it.
+//
+// It is separated from the test above rather than folded into enumeratedKind
+// because the two halves fail differently and both had to be seen. An omitted
+// int came back nil and errored `<nil> > int` — the whole rule refusing, not
+// merely declining — while an omitted string came back "" and merely declined.
+// A table keyed on "does the matcher still answer" would have shown only the
+// second.
+//
+// filemod populates `line` on every marker it scans, so nothing in the shipped
+// build sends this today. That is why the gap survived, and it is not a reason
+// to leave it: the fill-in exists precisely so the engine holds the DECLARATION
+// rather than depending on each producer to be complete, and markers[].line is
+// one module away from arriving over JSON as a float64.
+func TestMatch_ListElementMissingADeclaredInt(t *testing.T) {
+	kind := module.KindDecl{Name: "K", Fields: []module.FieldDecl{
+		{Name: "markers", Type: module.TypeList, Elem: &module.FieldDecl{
+			Type: module.TypeMap,
+			Fields: []module.FieldDecl{
+				{Name: "kind", Type: module.TypeString},
+				{Name: "line", Type: module.TypeInt},
+			},
+		}},
+	}}
+
+	m, err := CompileMatcherFor(`any(markers, .line > 10)`, kind)
+	require.NoError(t, err)
+
+	admitted, err := m.Match(event.Event{Kind: "K", Fields: map[string]any{
+		"markers": []any{map[string]any{"kind": "docs"}},
+	}})
+	require.NoError(t, err, "an omitted declared int inside an element must fill in, not error the rule")
+	assert.False(t, admitted, ".line is 0 there, which is not > 10")
+
+	// The zero is a real 0 rather than a nil that merely compares false, which
+	// is the distinction `> 10` alone cannot make.
+	zeroRule, err := CompileMatcherFor(`any(markers, .line == 0)`, kind)
+	require.NoError(t, err)
+	admitted, err = zeroRule.Match(event.Event{Kind: "K", Fields: map[string]any{
+		"markers": []any{map[string]any{"kind": "docs"}},
+	}})
+	require.NoError(t, err)
+	assert.True(t, admitted)
+
+	// And the wrong type inside the element errors rather than being compared.
+	_, err = m.Match(event.Event{Kind: "K", Fields: map[string]any{
+		"markers": []any{map[string]any{"kind": "docs", "line": float64(42)}},
+	}})
+	require.Error(t, err, "a declared int carried as float64 must not be silently compared")
 }
 
 // A carried value inside a nested structure still wins, at every depth. The
@@ -548,6 +610,7 @@ func TestMatch_WrongTypeErrorsForEveryDeclaredType(t *testing.T) {
 	kind := module.KindDecl{Name: "Everything", Fields: []module.FieldDecl{
 		{Name: "s", Type: module.TypeString},
 		{Name: "b", Type: module.TypeBool},
+		{Name: "n", Type: module.TypeInt},
 		{Name: "l", Type: module.TypeList},
 		{Name: "mp", Type: module.TypeMap},
 	}}
@@ -559,6 +622,16 @@ func TestMatch_WrongTypeErrorsForEveryDeclaredType(t *testing.T) {
 	}{
 		{`s == ""`, "s", 42},
 		{`b == false`, "b", "yes"},
+		// float64 rather than a string, because float64 is the shape this
+		// actually arrives in: it is what encoding/json gives every number, so
+		// any producer reaching the engine through JSON carries a declared int
+		// this way. While fill had no int case it fell to the default branch and
+		// was returned UNCHANGED, so `n > 10` compared a float64 the checker had
+		// been told was an int and answered cleanly — admitted=false, err=nil,
+		// indistinguishable from a rule that legitimately did not match. That is
+		// the fail-open half, and it is the one a string in this slot would not
+		// have caught.
+		{`n > 10`, "n", float64(42)},
 		{`len(l) == 0`, "l", "not-a-list"},
 		{`len(mp) == 0`, "mp", []any{"not-a-map"}},
 	} {
