@@ -76,7 +76,8 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// {"decision":"block"} on stdout, so its stderr reaches no agent at all —
 	// measured on harness.BlockingErrors. A diagnostic beside a turn that ended
 	// cleanly is the silence, with a line of code that looks like it addressed it.
-	decls, invalid, err := guardrail.New(dotDir(p.Cwd)).LoadWith(reg)
+	res, err := guardrailStore(p.Cwd).Resolve(reg)
+	decls, invalid := res.Declarations, res.Invalid
 	if err != nil {
 		// The STORE itself could not be read. Returning false alone held the
 		// read mark — which is bookkeeping — while blocking nothing and telling
@@ -102,6 +103,7 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// For a person tailing logs. Not how the agent learns of it — see above and
 	// brokenObjections, which is what actually carries these words.
 	reportInvalid(cmd, invalid)
+	reportShadowed(cmd, res.Shadowed)
 
 	// Only what something actually binds to. An extractor runs when a binding
 	// names a kind it produces and not otherwise — the same rule the pre-tool
@@ -256,12 +258,12 @@ func brokenObjections(invalid []guardrail.Invalid, events []event.Event) []objec
 	for _, iv := range invalid {
 		if iv.Has(guardrail.ErrMalformed) {
 			objections = append(objections, objection{
-				Guardrail: iv.Name,
+				Guardrail: iv.Attribution(),
 				Reason: fmt.Sprintf(
-					"guardrail %q could not be read at all, so there is no way to know what it was guarding: %s. "+
+					"guardrail %s could not be read at all, so there is no way to know what it was guarding: %s. "+
 						"The turn is held because a file the project keeps as a guardrail must not be read as approval "+
-						"merely for being unreadable — fix the declaration in %s, or remove that folder if it is not a guardrail.",
-					iv.Name, iv.Reason, iv.Name),
+						"merely for being unreadable — %s",
+					iv.Attribution(), iv.Reason, remedy(iv)),
 			})
 			continue
 		}
@@ -273,12 +275,11 @@ func brokenObjections(invalid []guardrail.Invalid, events []event.Event) []objec
 				continue
 			}
 			objections = append(objections, objection{
-				Guardrail: iv.Name,
+				Guardrail: iv.Attribution(),
 				Reason: fmt.Sprintf(
-					"guardrail %q is bound to %s but could not be loaded, so it did not guard this cycle: %s. "+
-						"The turn is held because a guardrail that cannot load must not be read as approval — "+
-						"fix the declaration in %s, or disable it with `enabled: false` if it is not ready.",
-					iv.Name, k, iv.Reason, iv.Name),
+					"guardrail %s is bound to %s but could not be loaded, so it did not guard this cycle: %s. "+
+						"The turn is held because a guardrail that cannot load must not be read as approval — %s",
+					iv.Attribution(), k, iv.Reason, remedy(iv)),
 			})
 			// One objection per broken declaration, not one per kind. The fault
 			// is the same fault whichever event surfaced it, and repeating it
@@ -487,12 +488,12 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 					// have a path where the machinery breaking reads as consent.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
 					objections = append(objections, objection{
-						Guardrail: d.Name,
+						Guardrail: d.Attribution(),
 						Reason: fmt.Sprintf(
-							"guardrail %q could not decide whether it applies to this %s: %v. "+
+							"guardrail %s could not decide whether it applies to this %s: %v. "+
 								"The turn is held because a matcher that cannot be evaluated is not the same as a rule that was satisfied. "+
 								"Fix the matcher, or disable the guardrail with `enabled: false` if it is not ready.",
-							d.Name, e.Kind, err),
+							d.Attribution(), e.Kind, err),
 					})
 					continue
 				}
@@ -568,11 +569,11 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 					// about this cycle, not a verdict stored against the file.
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: guardrail %q: %v\n", d.Name, err)
 					objections = append(objections, objection{
-						Guardrail: d.Name,
+						Guardrail: d.Attribution(),
 						Reason: fmt.Sprintf(
-							"guardrail %q could not run its hook for this %s: %v. "+
+							"guardrail %s could not run its hook for this %s: %v. "+
 								"The turn is held because a guardrail that cannot run must not be read as approval.",
-							d.Name, e.Kind, err),
+							d.Attribution(), e.Kind, err),
 					})
 					continue
 				}
@@ -600,7 +601,11 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 					// Collected, not returned. The remaining events still have to
 					// be dispatched, and the agent is told about all of them at
 					// once — see runPostDispatch, which blocks with all of them.
-					objections = append(objections, objection{Guardrail: d.Name, Reason: v.Reason})
+					// Attributed, so a Stop-time refusal from a rule the project
+					// installed rather than wrote points at the plugin instead of
+					// at a .sloprail/guardrails/ folder that does not hold it —
+					// the same reason the pre-tool refusal carries it.
+					objections = append(objections, objection{Guardrail: d.Attribution(), Reason: v.Reason})
 
 					// Also written out one refusal at a time, and this line is
 					// NOT how the agent learns of it.
@@ -617,7 +622,7 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 					// these arrive in dispatch order, interleaved with the other
 					// diagnostics on this stream. Dropping it is invisible to the
 					// agent and costs an operator the order things happened in.
-					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s (%s)\n", v.Reason, d.Name)
+					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s (%s)\n", v.Reason, d.Attribution())
 				}
 			}
 		}

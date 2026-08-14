@@ -566,6 +566,30 @@ func (e *Env) DisableGuardrail(projDir, name, declaration string) {
 	}
 }
 
+// DisablePluginGuardrail switches off a rule the project did not write, the only
+// way a consumer can: from the project's own config, naming the rule
+// `<plugin>/<guardrail>`.
+//
+// Deliberately NOT a variant of DisableGuardrail. That one edits the
+// declaration's frontmatter, which for a shipped rule would mean writing inside
+// the plugin installation — the thing a consumer must never do, since the next
+// reinstall silently undoes it. A test that disabled a plugin's rule that way
+// would be proving a mechanism no user has.
+func (e *Env) DisablePluginGuardrail(projDir string, qualified ...string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
+	}
+	body := "disabled:\n"
+	for _, name := range qualified {
+		body += "  - " + name + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644); err != nil {
+		e.t.Fatalf("harness: write config: %v", err)
+	}
+}
+
 // Ledger returns the lines a guardrail's hooks appended to a file in their own
 // folder, or nothing when the file was never created.
 //

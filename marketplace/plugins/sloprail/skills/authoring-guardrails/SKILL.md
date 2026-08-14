@@ -235,3 +235,81 @@ switch it back on; deleting it makes the next person rediscover both the rule
 and the argument against it. A disabled one is inert — its kinds are not even
 extracted — so it costs nothing to keep, and it is not validated, so it can be
 parked half-written.
+
+### Turning off a rule you did not write
+
+That only works for a rule in **your** `.sloprail/guardrails/`. A guardrail that
+arrived inside an installed plugin is a different case: its declaration lives in
+the plugin's installation, you do not own it, and an edit there is silently
+undone by the next reinstall — so `enabled: false` is the wrong tool and would
+appear to work until an upgrade.
+
+Switch it off from your own side instead, in `.sloprail/config.yaml`:
+
+```yaml
+disabled:
+  - sloprail/authoring-slop
+```
+
+The name is `<plugin>/<guardrail>`, which is exactly what the refusal cites. A
+refusal from a shipped rule reads
+
+    ... ("authoring-slop" from plugin "sloprail")
+
+so the plugin half of the name is the part that tells you the rule is not in
+your tree, and the file to look for is under that plugin's installation rather
+than under `.sloprail/guardrails/`.
+
+The qualification matters: `disabled: [sloprail/authoring-slop]` switches off the
+plugin's rule and leaves a rule of your own called `authoring-slop` in force.
+They are different rules with different authors.
+
+This also works on a shipped rule that will not load. A broken declaration
+refuses every action it was bound to — deliberately, since a rule that cannot be
+checked must not read as approval — and when it is a plugin's you cannot fix the
+file. Naming it here is the way out that does not mean uninstalling the plugin.
+
+## Remembering across cycles
+
+`sr-session state get|set|list` is a per-guardrail key-value store that survives
+between cycles of one session. It resolves its own scope from `SR_GUARDRAIL`,
+`SR_SESSION_ID` and `SR_WORKSPACE`, all three set by the engine on every hook it
+runs — so a hook calls it with no arguments beyond the key.
+
+```sh
+prev=$(sr-session state get seen 2>/dev/null || echo 0)
+sr-session state set seen "$((prev + 1))"
+```
+
+Scoped to the guardrail, so two rules cannot collide on a key name, and to the
+session, so one session's memory is not another's. Outside a hook there is no
+guardrail in scope and it says so rather than guessing.
+
+## Post kinds
+
+The kinds whose names begin `Post`, and the one about the cycle itself, are
+dispatched at the end of a cycle from the `Stop` and `SubagentStop` hook points.
+They arrive with the cycle's actual changes, established by diffing the tree
+against the baseline taken at `SessionStart`. The load check names them among
+the kinds this build produces; they are not restated here, because a copy of
+that list is what an author would trust after a module is added and it is the
+copy that goes stale.
+
+The difference from a `Pre` kind is what a refusal means. A `Pre` kind runs
+before the action and prevents it. A `Post` kind runs after, so the change is
+already on disk — refusing does not undo it, it tells the agent the cycle is not
+finished and it must fix what it did. That makes `Post` the right kind for a
+rule about the *result* of a turn ("every new file under `memories/` has
+frontmatter") and the wrong one for a rule about permission to act at all.
+
+The cycle kind carries no fields at all. It fires once per cycle regardless of
+what changed, which is what a rule about the turn as a whole wants — but it
+means such a rule has to establish its own subject, usually by asking
+`sr-session query` about the transcript, or by having per-file rules record
+what they saw into `sr-session state` for it to read.
+
+A `Post` refusal is reported to the agent as a blocking error on the cycle, and
+the cycle's read mark does not advance — so the next `Stop` judges the same span
+again, and a rule that stays unsatisfied stays reported rather than scrolling
+away. Revalidation keeps this from re-judging content that has not changed: a
+file already judged against the same fingerprint is skipped.
