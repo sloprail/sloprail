@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/event"
@@ -20,22 +21,25 @@ import (
 // different, which is what catches everything the prediction missed.
 //
 // This returns events ALONGSIDE a non-nil error, which module.Module's own
-// documentation requires a caller not to discard, and which the caller at
-// services/sr-session/session_pre_tool.go does discard: it prints the error and
-// `continue`s past the events. That is precisely the silence the module is
-// built to prevent — a producer degrading with ninety-nine good classifications
-// dropped for one bad path — and it is unpinned in BOTH directions, since
-// mutating the caller to HONOR the contract also leaves the suite green.
+// documentation requires a caller not to discard. BOTH callers now honour that:
+// services/sr-session/session_pre_tool.go and dispatch_post.go each append the
+// events first and report the error after.
 //
-// Fixing it is another agent's, but what would pin it is worth stating, because
-// an unpinned contract is how this arrives back here a fourth time. A test in
-// the caller's own package, over a stub module returning one event and one
-// error together, asserting that the event reaches the matching stage. It has
-// to assert the EVENT's arrival and not the error's printing: the error is
-// already visible on stderr, so a test watching only that passes under both
-// behaviours, which is exactly why the mutation survives now. The module side
-// cannot host that test — from in here the return value is correct either way,
-// and what happens to it afterwards is not observable.
+// This comment used to say the Pre caller discarded them and that the contract
+// was "unpinned in BOTH directions", and it outlived both facts. The discard is
+// gone, and the test it asked for exists: TestPreTool_ModuleErrorDoesNotDiscard-
+// ItsEvents, in the caller's own package, over a module returning one event and
+// one error together. It asserts the EVENT's arrival rather than the error's
+// printing, which is the distinction the old note was right about — a test
+// watching stderr alone passes under either behaviour. Verified by mutation:
+// restoring the `continue` turns that test red.
+//
+// Why it mattered, kept because it is the argument for not regressing it:
+// `rm a.md b.md` is ONE tool call producing TWO targets, so one path that will
+// not stat makes this return a problem for that path together with a perfectly
+// good PreFileDelete for the other. Dropping the slice meant the rule guarding
+// the readable file never ran and the deletion proceeded, with the only trace on
+// a stream that at exit 0 reaches no agent.
 func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 	if in[module.InputPhase] == module.PhasePost {
 		return m.extractObserved(in)
@@ -287,7 +291,63 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 // is the honest answer — the write is outside the rule's subject.
 func reportable(path, root string) string {
 	if !filepath.IsAbs(path) {
-		return filepath.ToSlash(filepath.Clean(path))
+		clean := filepath.ToSlash(filepath.Clean(path))
+		if root == "" {
+			// Nothing to check containment against. The lexical answer is the
+			// whole answer, as it was before a root was ever consulted here.
+			return clean
+		}
+		// Cleaned is NOT the same as contained, and this is the half the
+		// lexical branch was missing.
+		//
+		// Clean is pure string arithmetic, so it settles `./a.md` and
+		// `secret/./keys.md` — the redundant spellings this branch exists to
+		// canonicalise — and it settles a `..` that is VISIBLE in the spelling,
+		// which stays `../x` and is left outside. What it cannot see is a `..`
+		// that is not spelled at all: `escape/id_rsa`, where `escape` is a
+		// symlink to a directory outside the repository, contains no `..`, is
+		// already clean, and names a file the project does not hold.
+		//
+		// That is the identical case the ABSOLUTE branch below stopped being
+		// lexical in order to catch, and the spelling of the input is no reason
+		// for the two to disagree: one harness announces the write as
+		// `<root>/escape/id_rsa` and another as `escape/id_rsa`, and only the
+		// first was refused. Measured before this: the relative spelling was
+		// reported as `escape/id_rsa`, a CLEAN REPOSITORY-RELATIVE PATH NAMING
+		// AN OUTSIDE FILE — so a hook joining it against its own root reads
+		// whatever the link points at, which is what resolve exists to prevent.
+		//
+		// resolve is the same check, reached the same way, so the two branches
+		// cannot drift. It touches the filesystem, which the comment above
+		// rightly calls the expensive part — but only to the depth the absolute
+		// branch already pays for, and only where a root was named.
+		if c, _, err := resolve(root, clean); err == nil {
+			return filepath.ToSlash(c)
+		}
+		// Not contained, or not a path resolve can answer about.
+		//
+		// Reported ABSOLUTE, which is the same answer the absolute branch gives
+		// an outside path and for the same reason: a matcher is a prefix test,
+		// and `escape/id_rsa` is a spelling `path startsWith "escape/"` admits.
+		// Handing back the cleaned relative form would leave the rule judging an
+		// outside file as though the project held it — the hole itself. An
+		// absolute spelling is admitted by no project-relative matcher, which is
+		// the honest answer: the write is outside the rule's subject.
+		//
+		// Anchored against the root rather than the process's working
+		// directory. This function is reached with the workspace in hand
+		// precisely so the answer does not depend on where the hook fired, and
+		// filepath.Abs would reintroduce that dependence.
+		//
+		// A path that climbs out in its own spelling — `../x` — already carries
+		// its own evidence of being outside and keeps it. So does `.`, which
+		// resolve refuses for naming the root rather than a file in it: both are
+		// already unadmitted by any project-relative matcher, and rewriting
+		// either would change a spelling that was never the hole.
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+			return clean
+		}
+		return filepath.ToSlash(filepath.Join(root, clean))
 	}
 	if root == "" {
 		// No workspace was named, so there is nothing to be relative TO.

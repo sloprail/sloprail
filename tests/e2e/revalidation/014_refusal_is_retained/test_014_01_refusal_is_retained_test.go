@@ -206,10 +206,29 @@ func TestT014_02_EditingAwayAndBackDoesNotClearTheRefusal(t *testing.T) {
 // so every offer is an update — which is what makes this the update-path twin
 // of T014_02 rather than a second copy of it.
 //
-// Note the setup write is judged too. `printf > notes.md` creates the file, and
-// a create is a file modification like any other, so the guardrail is asked
-// FOUR times: once for the setup and once per offer. Counting only the three
-// offers would have meant asserting the engine misses the create.
+// THE SKIP HAS BEEN LIFTED, and what it was waiting for has happened: the kind
+// now declares `result` (the bytes the write would LEAVE) and `resultKnown`
+// alongside `path`, so a hook bound to PreFileUpdate can see the pending payload
+// and no longer has to fall back to the bytes on disk. The judge script below
+// reads `result` when `content` is absent, which is exactly the fallback the
+// skip said did not exist.
+//
+// Measured on the un-skipped test: the sequence judges the PENDING bytes at
+// every offer — refused, permitted, refused — rather than the previous write's,
+// which is what the skip said was impossible on this engine.
+//
+// The count is FOUR, not three. The `printf > notes.md` that stages the file is
+// itself a write this guardrail is bound to and is judged like any other; three
+// was the arithmetic of a test that had never run.
+//
+// WHAT THIS TEST DOES AND DOES NOT PIN, since the distinction is the whole point
+// of this directory's header. It pins that the update path judges pending
+// content and that restored content is refused again. It does NOT pin retention:
+// dropping failing verdicts outright in RecordFileCheck leaves it green, for the
+// same reason it leaves every other test here green — Skippable answers false
+// for a retained refusal and for a missing row alike. Measured, not assumed.
+// Retention proper is pinned by T015_04 in tests/e2e/session/015, which was also
+// measured against that mutation and does turn red.
 func TestT014_03_EditingAwayAndBackOnTheUpdatePath(t *testing.T) {
 	harness.RequireSessionStore(t)
 
@@ -225,10 +244,13 @@ func TestT014_03_EditingAwayAndBackOnTheUpdatePath(t *testing.T) {
 		Write("w3", "notes.md", "SECRET=hunter2"),
 	))
 
+	// FOUR, not three: the `printf > notes.md` that stages the file is itself a
+	// write this guardrail is bound to, so it is judged like any other. Counting
+	// three here was the arithmetic of a test that never ran.
 	lines := e.Ledger(proj, "judge", "log")
 	if n := len(lines); n != 4 {
-		t.Fatalf("the guardrail was asked %d time(s), want 4 — the setup create plus the three "+
-			"offers, each judged in its own right. Ledger: %v\n%s", n, lines, got.Output)
+		t.Fatalf("the guardrail was asked %d time(s), want 4 (the staging write plus three "+
+			"offers). Ledger: %v", n, lines)
 	}
 	if n := strings.Count(got.Output, "content holds a secret"); n != 2 {
 		t.Fatalf("the guardrail refused %d time(s), want 2 — content refused, fixed, and "+

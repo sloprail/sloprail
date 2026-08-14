@@ -307,6 +307,31 @@ func renderCUE(err error) string {
 	for _, e := range cueerrors.Errors(err) {
 		format, args := e.Msg()
 		msg := fmt.Sprintf(format, args...)
+		if strings.TrimSpace(msg) == "" {
+			// Msg() rendered to nothing, and the complaint is not nothing.
+			//
+			// CUE's scanner reports some faults — "control characters are not
+			// allowed", which is what any binary input hits — as the format "%s"
+			// with a single argument that itself renders empty. Sprintf then
+			// yields "", so this loop produced a part that says nothing while
+			// the error's OWN Error() carries the whole sentence.
+			//
+			// The len(parts)==0 fallback below cannot catch it: there IS a part,
+			// it is merely empty, so the guard passes and the caller formats
+			// "%w: %s" onto nothing. Measured through the shipped binary before
+			// this: `head -c 64 /dev/urandom | sr-file validate - --as .yaml`
+			// printed "-: document does not parse: " with the reason missing —
+			// exit 1, correctly refusing, and no word about why.
+			//
+			// A refusal an author cannot read is the failure this file's whole
+			// reporting half exists to prevent, so the sub-error's own rendering
+			// stands in. It already carries its position, which is why the
+			// position is not prepended again below.
+			if fallback := strings.TrimSpace(e.Error()); fallback != "" {
+				parts = append(parts, fallback)
+				continue
+			}
+		}
 		if pos := e.Position(); pos.IsValid() {
 			msg = fmt.Sprintf("%s: %s", pos.Position(), msg)
 		}

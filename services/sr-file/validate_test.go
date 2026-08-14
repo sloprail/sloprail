@@ -187,6 +187,40 @@ func TestValidate_DocumentThatDoesNotParseIsItsOwnClassOfFault(t *testing.T) {
 	assert.Contains(t, err.Error(), "note.yaml")
 }
 
+// TestValidate_AParseFailureSaysWhy is the half the test above does not cover.
+//
+// That one pins the fault's CLASS — ErrDocumentParse, naming the file — and a
+// refusal that names the file while saying nothing about what is wrong with it
+// satisfies every assertion there. This pins the sentence.
+//
+// The case is any binary content, which is what a hook piping a file it did not
+// choose hands to stdin. CUE's scanner reports it as "control characters are not
+// allowed", but through the error's Msg() it arrives as the format "%s" with an
+// argument that itself renders empty — so Sprintf produced "", renderCUE joined
+// one empty part, and the shipped binary printed:
+//
+//	-: document does not parse:
+//
+// exit 1, correctly refusing, with the reason missing. The len(parts)==0
+// fallback does not catch it, because there IS a part and it is merely empty.
+//
+// Measured through the built binary before the fix, and the reason this asserts
+// on the TEXT rather than on the class: an author handed a bare colon cannot
+// tell a malformed document from a broken tool.
+func TestValidate_AParseFailureSaysWhy(t *testing.T) {
+	doc := mustDoc(t, "note.yaml", "\x00\x01\x02\xff{[bad\n\ttab: 1\n")
+
+	err := Validate(doc, noteSchema, "schema.cue")
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrDocumentParse)
+
+	msg := err.Error()
+	assert.Contains(t, msg, "control characters are not allowed",
+		"the reason CUE gave must survive to the reader; got %q", msg)
+	assert.NotRegexp(t, `does not parse:\s*$`, msg,
+		"a refusal that trails off after the colon tells an author nothing: %q", msg)
+}
+
 func TestValidate_JSONDocument(t *testing.T) {
 	ok := mustDoc(t, "note.json", `{"title":"A note","status":"draft","owner":"nikita"}`)
 	assert.NoError(t, Validate(ok, noteSchema, "schema.cue"))
