@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/module"
 )
@@ -46,6 +47,16 @@ func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 type pendingWrite struct {
 	FilePath string `json:"file_path"`
 	Content  string `json:"content"`
+}
+
+// pendingCommand is the shape a shell tool's arguments take.
+//
+// Declared here rather than imported from commandmod for the reason commandmod
+// gives for declaring its own Pending: two modules reading one payload is not
+// two modules sharing a type. What IS imported is the parsing, which is the part
+// that would otherwise be written twice and disagree.
+type pendingCommand struct {
+	Command string `json:"command"`
 }
 
 // Pending is what a module is given about an action a harness is about to
@@ -110,9 +121,9 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 
 	var w pendingWrite
 	if err := json.Unmarshal(pending.Arguments(), &w); err != nil || w.FilePath == "" {
-		// A tool whose arguments name no file concerns this module not at all,
-		// which is ordinary rather than an error.
-		return nil, nil
+		// No path named outright. A command line may still name one, and that
+		// is the other shape this module reads — see extractCommand.
+		return m.extractCommand(pending)
 	}
 
 	f := FileEvent{Path: w.FilePath}
@@ -156,6 +167,141 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		return nil, nil
 	}
 	return []event.Event{f.Event(kind)}, nil
+}
+
+// extractCommand reads a pending shell command for the files it would change.
+//
+// # Why this is here and not in a module of its own
+//
+// `rm notes.md` deletes a file, so it is a PreFileDelete, so it is this
+// module's: the registry refuses two modules claiming one kind
+// (TestNewRegistry_TwoModulesClaimingOneKindIsRefused), and a third module
+// emitting file kinds would collide with this one at registration. The only
+// way a third module could exist is by declaring kinds of its own, which is the
+// fourth-kind design the spec argues against — see events/main.tsp.
+//
+// It is also what the spec already says. fileExtract's own documentation reads
+// "a write tool names its path outright, a shell command has to be parsed for
+// its redirections", which puts both shapes in one command. This is that
+// sentence being true.
+//
+// What is NOT duplicated is the parsing. Reading a command line means walking
+// shell syntax, undoing quoting and unwrapping `sudo`, and commandmod already
+// does all of it — so this imports commandmod.FileTargets rather than reparsing.
+// Two parses of one line are two answers free to disagree, and the expensive
+// half of `event_derived_once` is exactly this walk.
+//
+// # Why a target's kind is decided here rather than there
+//
+// commandmod returns paths and effects, never events, because what kind an
+// event is depends on what is at the path — and reading the tree is this
+// module's business. A command line cannot say whether `sed -i f.md` updates an
+// existing file or fails on a missing one; only a stat can.
+//
+// # Why a write to a path that is absent produces nothing
+//
+// The three outcomes below are exhaustive and one of them is silence:
+//
+//	Remove, file present   PreFileDelete. The path is named, nothing else is
+//	                       needed, and this is the case the whole defect was
+//	                       about.
+//	Write, file present    PreFileUpdate. Carries no pending content for a tool
+//	                       write either, so a command's inability to name the
+//	                       resulting bytes costs the rule nothing.
+//	anything, absent       Nothing at all.
+//
+// That last row is the honest limit rather than an oversight. A write to a path
+// that does not exist is a CREATION, and PreFileCreate requires `content` — the
+// file cannot be read off disk, so the event carries what would be written. A
+// command line does not say what bytes will result. Sending `content: ""` would
+// make `echo x > new.md` indistinguishable from a tool writing a genuinely empty
+// file, and `content == ""` is precisely the rule an author writes to catch
+// that; omitting the field contradicts the declaration, and a matcher reading a
+// declared-but-absent field errors, which refuses the action and blames the
+// author's rule for this engine's gap. Both are worse than saying nothing.
+//
+// So a command that CREATES a file is not predicted. It is reported after the
+// fact, as PostFileCreate off the tree diff, which sees the file whatever made
+// it. Prevention is offered for what can be predicted honestly; the rest is
+// reported.
+//
+// A removal of a path that is absent is likewise nothing: `rm gone.md` deletes
+// no file, and announcing a deletion of something that is not there would fire
+// a rule on a file that was never at risk.
+//
+// # Errors
+//
+// A stat that cannot answer is reported and produces no event for that path,
+// while the other paths on the same line still do. The asymmetry with the
+// tool-write path above is deliberate and matches extractObserved: there, an
+// unknown decides whether a DELETION is announced, so it is refused rather than
+// folded. Here it decides the same thing, so it is refused the same way. On the
+// tool-write path an unknown chooses between two events over a path the tool
+// named either way, which is why that one folds instead.
+func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
+	var pc pendingCommand
+	if err := json.Unmarshal(pending.Arguments(), &pc); err != nil || pc.Command == "" {
+		// A tool whose arguments carry neither a file path nor a command line
+		// concerns this module not at all, which is ordinary rather than an
+		// error. Note this does not gate on the tool's NAME, for the reason
+		// extractPending argues at length: a harness that renames its shell tool
+		// must not silently stop being watched.
+		return nil, nil
+	}
+
+	targets := commandmod.FileTargets(pc.Command)
+	if len(targets) == 0 {
+		return nil, nil
+	}
+
+	var events []event.Event
+	var problems []error
+	// One command may name a path twice — `rm a.md a.md`, or a redirection onto
+	// a file the same line also touches. One file is one event, and the first
+	// effect named wins: a rule should be asked once about a file, and asking
+	// twice would run a judging hook twice over one decision.
+	seen := make(map[string]bool, len(targets))
+
+	for _, t := range targets {
+		if seen[t.Path] {
+			continue
+		}
+		seen[t.Path] = true
+
+		// The pre phase has one spelling and no root, the same as the tool-write
+		// path above: the command names the path as it names it, and both
+		// arguments are that one path.
+		p, err := lookAt(t.Path, t.Path)
+		switch {
+		case err != nil && p == unknown:
+			// The machine could not answer. Said, and no event built on it —
+			// classifying here would report a difference from a lookup that never
+			// happened.
+			problems = append(problems, err)
+			continue
+		case p != presentFile:
+			// Absent, or a directory or device. Neither is a file this module's
+			// kinds can honestly be about: absent is the creation case argued
+			// above, and a non-file is what presentNotAFile means on the
+			// tool-write path too. lookAt's error is dropped for the same reason
+			// it is dropped there — it names a producer mistake, and a command
+			// line aimed at a directory is not a producer.
+			continue
+		}
+
+		f := FileEvent{Path: t.Path}
+		kind := KindPreUpdate
+		if t.Effect == commandmod.Remove {
+			kind = KindPreUpdate
+		} else {
+			// An update carries the markers the file has NOW, the same as the
+			// tool-write path. See markersOnDisk on what those actually describe.
+			f.Markers = m.markersOnDisk(t.Path)
+		}
+		events = append(events, f.Event(kind))
+	}
+
+	return events, errors.Join(problems...)
 }
 
 // markersOnDisk reads a file and scans it.
