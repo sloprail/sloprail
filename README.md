@@ -19,6 +19,29 @@ declaration's shape, the matcher operators, the hook contract — is the
 There is no setup command. `.sloprail/guardrails/` is created by whatever writes
 the first declaration, and a project with none is an ordinary project.
 
+## The binaries
+
+One binary per high-level command, plus a root that proxies to them. Each
+directory under `services/` is named for the binary it builds, so
+`go install ./services/...` installs the set.
+
+    sr              the root — `sr session start` runs sr-session
+    sr-session      the hook points a harness calls, and what a hook asks
+    sr-guardrail    the event kinds this build can produce
+    sr-file         check a file against a CUE schema
+    sr-mark         write `// sr:<kind>` markers into source files
+    sr-agent        run an agent, whichever harness is running
+
+`sr <command> ...` and `sr-<command> ...` are the same run of the same binary:
+stdin, stdout, stderr, signals and the exit status pass through untouched. The
+proxy exists so there is one name to learn. The hooks a project installs name
+the service binaries directly instead, because a hook fires on every tool call
+and has no use for discoverability.
+
+The services find each other as siblings of the running binary, then on `$PATH`;
+`SLOP_SUBBIN_DIR` overrides both and is what the e2e harness sets to point at a
+temporary build. See `internal/subbin`.
+
 ## Adding a module
 
 A module is a domain the engine understands — files, commands, later markers.

@@ -88,12 +88,21 @@ type service struct {
 // One list so the help and the dispatch cannot disagree: a command shown in the
 // help is by construction a command that dispatches, and adding a service is
 // one line rather than an entry here and a matching case elsewhere.
+//
+// The short lines are COPIES of each service's own, and copies are the thing
+// this repo otherwise refuses. Deriving them is not possible without cost: a
+// cobra root never prints its own Short (--help prints Long, and Short is shown
+// only by a parent listing children), so the only runtime source is exec'ing
+// five binaries to print one help screen. The copy is bounded — one line per
+// service — and it is pinned by TestProxyShortsMatchTheServices, which reads
+// each service's Short from its source and fails on any disagreement. Three of
+// these five had ALREADY drifted when that test was written.
 var services = []service{
 	{"session", "Session lifecycle — the hook points a harness calls"},
 	{"guardrail", "The declarations a project holds its agents to"},
-	{"file", "Check a file against a schema"},
-	{"mark", "Write enforcement markers into source files"},
-	{"agent", "Run an agent without naming the harness that will run it"},
+	{"file", "Checks over a file's contents"},
+	{"mark", "Write // sr:<kind> <fqn> enforcement markers into impl files"},
+	{"agent", "Run an agent, whichever harness is running"},
 }
 
 // binaryName is the binary a service word dispatches to.
