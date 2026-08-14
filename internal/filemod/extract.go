@@ -252,36 +252,41 @@ func reportable(path, root string) string {
 	// string arithmetic and knows nothing about symlinks, so on macOS a repo at
 	// `/private/tmp/x` (as git resolves it) and a path under `/tmp/x` (as the
 	// harness spells it) look like different trees and produce `../../tmp/...`.
+	// The rule then goes silently inert on a spelling nobody chose — measured
+	// against real guardrails, which permitted a write they had just refused
+	// when the same repo was named by its resolved path.
 	//
-	// Resolving both and asking again is what tells the two cases apart: a
-	// genuinely-outside path is still outside once resolved, so this cannot
-	// pull one in. It runs only after the plain answer says "outside", which
-	// keeps the filesystem out of the common path.
-	// Both spellings resolved, then asked again THROUGH resolve for the same
-	// reason as above: this branch must not become the lexical hole the first
-	// branch stopped being. A genuinely-outside path is still outside once
-	// resolved, so re-asking cannot pull one in — it only closes the gap
-	// between two spellings of one directory.
-	realRoot, errRoot := filepath.EvalSymlinks(root)
-	realPath, errPath := filepath.EvalSymlinks(path)
-	if errRoot == nil && errPath == nil {
-		if rel, err := filepath.Rel(realRoot, realPath); err == nil {
-			if clean, _, err := resolve(realRoot, rel); err == nil {
-				return filepath.ToSlash(clean)
-			}
-		}
-	}
-	// A path that does not exist yet cannot be resolved — which is the ordinary
-	// case for PreFileCreate. Resolve the deepest parent that does exist and
-	// re-attach the remainder, so a create under a symlinked workspace is
-	// reported the same way an update to an existing file there is.
+	// Resolving both and asking again is what tells the two cases apart, and the
+	// re-ask goes THROUGH resolve for the same reason the first branch does:
+	// this must not become the lexical hole that branch stopped being. A
+	// genuinely-outside path is still outside once resolved, so re-asking cannot
+	// pull one in — it only closes the gap between two spellings of one
+	// directory. It runs only after the plain answer says "outside", which keeps
+	// the filesystem off the common path.
+	//
+	// The PATH is resolved with resolveAsFarAsItGoes rather than EvalSymlinks,
+	// and that single choice is what lets one branch serve both cases. A path
+	// that does not exist yet cannot be resolved at all — the ordinary
+	// PreFileCreate case — so EvalSymlinks fails on it and an existence-gated
+	// branch would skip a create under a symlinked workspace, reporting it
+	// differently from an update to a file already there. resolveAsFarAsItGoes
+	// resolves the deepest parent that DOES exist and re-attaches the remainder,
+	// which is the same answer for a path that exists (nothing is missing, so
+	// the remainder is empty and it equals EvalSymlinks exactly) and the right
+	// one for a path that does not.
+	//
+	// This was two branches, an EvalSymlinks-both one ahead of this one, and the
+	// first was dead: it could only answer when EvalSymlinks(path) succeeded,
+	// and in exactly that case resolveAsFarAsItGoes returns the identical
+	// string, so every answer it gave this one gives too. Deleting it changed no
+	// test — which is the honest reason it is gone rather than any claim that
+	// one branch is tidier. Recorded so it is not helpfully restored.
 	//
 	// resolveAsFarAsItGoes is presence.go's, not a second copy: the same
 	// deepest-existing-parent walk this needs already exists there for the same
 	// reason, and two versions of it are two things to keep in step.
-	if errRoot == nil {
-		partial := resolveAsFarAsItGoes(path)
-		if rel, err := filepath.Rel(realRoot, partial); err == nil {
+	if realRoot, err := filepath.EvalSymlinks(root); err == nil {
+		if rel, err := filepath.Rel(realRoot, resolveAsFarAsItGoes(path)); err == nil {
 			if clean, _, err := resolve(realRoot, rel); err == nil {
 				return filepath.ToSlash(clean)
 			}

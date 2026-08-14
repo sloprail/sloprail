@@ -41,7 +41,51 @@ func Of(content []byte) string {
 // content to fingerprint, and says so rather than returning a hash of nothing:
 // a caller handed "" for a file it could not read would compare it against the
 // next unreadable file and find them equal.
+//
+// The regular-file check happens TWICE, and the first one is not redundant with
+// the second. It has to precede the open, because for two of the very kinds
+// this function claims to refuse, open() itself is the thing that never
+// returns: a FIFO blocks until some other process opens the write end, and so
+// does a tty-like device. A check placed only after the open is code that runs
+// on every path except the ones it was written for — the guard reads as present
+// and the process hangs on the syscall above it, forever, holding the cycle it
+// was called from. That is worse than the wrong answer it was preventing: a
+// hook that returns nothing at least returns.
+//
+// O_NONBLOCK would be the other way to stop the block, and it is rejected: it
+// changes the semantics of the read for every regular file to buy a property
+// one stat already gives, and a FIFO opened non-blocking still is not something
+// with content to fingerprint.
+//
+// The post-open check is kept because the pre-open one is a TOCTOU claim about
+// a moment that has passed. Between the stat and the open the name can be
+// swapped for a FIFO, and then only the second check sees it — too late to stop
+// the block, but the block is now bounded by whatever the swapper does, and the
+// verdict is still right. The two together mean the ordinary refusals never
+// reach open(), and a race cannot make the ANSWER wrong.
+//
+// One consequence is worth recording so it is not read as a gap: the post-open
+// check is now UNREACHABLE from any static tree, because the pre-open one
+// answers first for every non-regular path that is not being swapped underneath
+// us. It showed as covered before this guard existed — the directory test
+// reached it — and shows as uncovered after, and that is the guard working
+// rather than a test having been dropped. Only a race reaches it, so no test
+// here claims to, and a mutation deleting it survives the suite.
 func OfFile(path string) (string, error) {
+	// Stat, not Lstat, and the difference decides a symlink's answer. What a
+	// caller means by the fingerprint of a link is its TARGET's content — that
+	// is what the open below would read — so the check has to judge the same
+	// object the open will. Lstat would report every symlink as non-regular and
+	// refuse a link to an ordinary file, which is a file with content and a
+	// fingerprint. Following is also what catches the case this guard exists
+	// for: a link whose target is a FIFO blocks exactly as the FIFO does.
+	if info, err := os.Stat(path); err == nil && !info.Mode().IsRegular() {
+		return "", fmt.Errorf("fingerprint: %s is not a regular file", path)
+	}
+	// A Stat that FAILED is not refused here. It is left to the open, which
+	// produces the better message for the ordinary missing-file case and which
+	// is the error every existing caller already distinguishes on.
+
 	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("fingerprint: open %s: %w", path, err)
