@@ -1692,10 +1692,34 @@ func TestResolve_TheHopBoundSitsAboveTheKernelsOwn(t *testing.T) {
 
 	p, err := lookAt(clean, full)
 
-	assert.Equal(t, unknown, p, "a chain the kernel will not walk is not a fact about the tree")
-	require.ErrorIs(t, err, ErrUnreadableTree,
-		"and it is said, rather than being taken for absence and announced as a delete")
-	assert.ErrorIs(t, err, syscall.ELOOP, "which is what the kernel actually reported")
+	// WHICH of the two answers arrives is the KERNEL'S number, not ours, and the
+	// two disagree: Linux walks 40 links, macOS stops at 32. A chain built to
+	// maxSymlinkHops is therefore rejected by one and walked by the other, and
+	// asserting either outcome alone pins a platform rather than a behaviour.
+	// Measured, not reasoned: this test passed on macOS for weeks and failed on
+	// its first CI run against Linux.
+	//
+	// What must hold on BOTH is the thing the tri-state exists for — the chain
+	// must never be called ABSENT. Absence is what would announce a
+	// PostFileDelete for a file nothing ever looked at, and that is the same
+	// wrong on either kernel.
+	assert.NotEqual(t, absent, p,
+		"a dangling chain must never be read as absence — that is a delete announced for a file nobody looked at")
+
+	if err != nil {
+		// The kernel refused to walk it: say so rather than guess.
+		assert.Equal(t, unknown, p, "a chain the kernel will not walk is not a fact about the tree")
+		require.ErrorIs(t, err, ErrUnreadableTree,
+			"and it is said, rather than being taken for absence and announced as a delete")
+		assert.ErrorIs(t, err, syscall.ELOOP, "which is what the kernel actually reported")
+		return
+	}
+
+	// The kernel walked the whole chain, so the answer is about its END — a
+	// target that does not exist. Reported as a dangling link rather than as a
+	// file, which is the other half of not inventing facts about the tree.
+	assert.NotEqual(t, presentFile, p,
+		"the chain ends on nothing, so it is not a file this module may report as present")
 }
 
 func TestResolve_ALinkThatWillNotSayWhereItPointsIsRefused(t *testing.T) {
