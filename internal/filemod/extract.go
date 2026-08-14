@@ -251,6 +251,16 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 
 	targets := commandmod.FileTargets(pc.Command)
 	if len(targets) == 0 {
+		// EQUIVALENT to falling through, and kept anyway so the survivor is read
+		// as an equivalence rather than as this branch being untested. With no
+		// targets the loop below never runs, both slices stay nil, and
+		// errors.Join of nothing is nil — so the final return already produces
+		// exactly (nil, nil). Verified by removing it: the suite stays green.
+		//
+		// Kept because it states the commonest outcome outright. Most commands an
+		// agent runs touch no file, and a reader should not have to prove that
+		// the loop and the Join below degrade correctly to nothing in order to
+		// know what `git status` does here.
 		return nil, nil
 	}
 
