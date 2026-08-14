@@ -73,11 +73,15 @@ func newSessionSubagentStopCmd() *cobra.Command {
 				// loop the sub-agent cannot leave — and a sub-agent has less
 				// recourse than a root, since the person is not watching it.
 				//
-				// The read position is discarded on the way out, exactly as
-				// stop's own interrupted path does it: a position is a fact
-				// about a cycle's reading, and this cycle is over. The mark does
-				// NOT move, because the cycle judged nothing.
-				discardOffered(cmd, p)
+				// Nothing else happens here, not even discarding the read
+				// position the way stop's own interrupted path does. That
+				// asymmetry is deliberate and is pinned by
+				// TestSubagentStopHonoursStopHookActive: discarding means
+				// opening the session's store, and a sub-agent whose record
+				// cannot be opened would then report a failure on a path whose
+				// whole purpose is to do nothing. Adding the discard here was
+				// tried and broke that test, which is the contract stating it —
+				// a cycle already refused once is left alone entirely.
 				return nil
 			}
 
