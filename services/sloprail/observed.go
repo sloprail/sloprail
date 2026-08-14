@@ -96,6 +96,34 @@ func differenceOf(root string, changes []gitrepo.Change) *treeDifference {
 	return d
 }
 
+// include adds a path the difference did not already hold, so a file that is no
+// longer a difference is still put in front of the rules.
+//
+// This is what `refusal_outlives_baseline` needs and what the diff alone cannot
+// supply. A refused file drops out of the difference the moment the measuring
+// point moves past it — a branch switch onto a line that already holds the same
+// content, or the agent committing its own unfixed work — and from then on the
+// tree says nothing about it while the file is still broken on disk.
+//
+// Reported as an EXISTING file rather than a creation. It is not this cycle's
+// work: it was there at the point being measured from, which is precisely why
+// the diff is silent about it, and calling it a create would tell every rule
+// bound to creation about a file the cycle did not create.
+//
+// A path already in the difference is left exactly as the diff classified it.
+// The diff's answer is the better one wherever it has one — it knows whether the
+// file was at the baseline, and a refusal knows only that the file was refused
+// once — so re-adding would at best duplicate the event and at worst relabel a
+// genuine create as an update.
+func (d *treeDifference) include(path string) {
+	clean := filepath.Clean(path)
+	if _, seen := d.baseline[clean]; seen {
+		return
+	}
+	d.baseline[clean] = true
+	d.paths = append(d.paths, clean)
+}
+
 // Root implements filemod.Observed.
 func (d *treeDifference) Root() string { return d.root }
 

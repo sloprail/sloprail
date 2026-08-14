@@ -162,3 +162,68 @@ func TestFileChecks_ARefusalIsNotErasedByALaterPass(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, skippable, "content that was refused must be refused again when it comes back")
 }
+
+// TestOutstandingRefusals_ReportsWhatIsStillUnfixed: the reader that tells a
+// retained refusal from a discarded one.
+//
+// Skippable answers false for both, which is why the retention was
+// unobservable from outside until this existed — see the doc on
+// OutstandingRefusals. What is asserted here is the whole of the distinction:
+// a refusal that stands is reported, and a refusal that has since been passed
+// is not.
+func TestOutstandingRefusals_ReportsWhatIsStillUnfixed(t *testing.T) {
+	s := openTestStore(t)
+
+	// Refused and left alone: outstanding.
+	require.NoError(t, s.RecordFileCheck("broken.go", "no-slop", Verdict{Fingerprint: "fp-bad", Passed: false}))
+	// Refused, then passed at new content: fixed, so no longer outstanding.
+	require.NoError(t, s.RecordFileCheck("fixed.go", "no-slop", Verdict{Fingerprint: "fp-was-bad", Passed: false}))
+	require.NoError(t, s.RecordFileCheck("fixed.go", "no-slop", Verdict{Fingerprint: "fp-good", Passed: true}))
+	// Never refused at all.
+	require.NoError(t, s.RecordFileCheck("clean.go", "no-slop", Verdict{Fingerprint: "fp-clean", Passed: true}))
+
+	got, err := s.OutstandingRefusals()
+	require.NoError(t, err)
+	assert.Equal(t, []Refusal{{Path: "broken.go", Guardrail: "no-slop", Fingerprint: "fp-bad"}}, got,
+		"only the refusal nothing has since passed is still outstanding")
+}
+
+// TestOutstandingRefusals_AFixIsNotUndoneByTheOldRefusalStillSitingThere: the
+// direction that matters most, stated on its own.
+//
+// The refusal row is KEPT after the fix — that is what makes a revert
+// re-refuse. So a reader that filtered on passed = 0 alone would go on
+// reporting a file the agent has already corrected, forever.
+func TestOutstandingRefusals_AFixEndsTheReporting(t *testing.T) {
+	s := openTestStore(t)
+
+	require.NoError(t, s.RecordFileCheck("a.go", "no-slop", Verdict{Fingerprint: "fp-bad", Passed: false}))
+	outstanding, err := s.OutstandingRefusals()
+	require.NoError(t, err)
+	require.Len(t, outstanding, 1, "the refusal must be outstanding before the fix, or the assertion below cannot fail")
+
+	require.NoError(t, s.RecordFileCheck("a.go", "no-slop", Verdict{Fingerprint: "fp-good", Passed: true}))
+
+	outstanding, err = s.OutstandingRefusals()
+	require.NoError(t, err)
+	assert.Empty(t, outstanding,
+		"a file a hook has passed must stop being reported, or every file ever refused accumulates forever")
+	// And the refusal row still exists, so reverting re-refuses.
+	skippable, err := s.Skippable("a.go", "no-slop", "fp-bad")
+	require.NoError(t, err)
+	assert.False(t, skippable, "the kept refusal must still deny the old content")
+}
+
+// TestOutstandingRefusals_PerGuardrailNotPerFile: a file one rule refused is
+// not outstanding for a rule that passed it.
+func TestOutstandingRefusals_PerGuardrailNotPerFile(t *testing.T) {
+	s := openTestStore(t)
+
+	require.NoError(t, s.RecordFileCheck("a.go", "no-slop", Verdict{Fingerprint: "fp1", Passed: false}))
+	require.NoError(t, s.RecordFileCheck("a.go", "no-comments", Verdict{Fingerprint: "fp1", Passed: true}))
+
+	got, err := s.OutstandingRefusals()
+	require.NoError(t, err)
+	assert.Equal(t, []Refusal{{Path: "a.go", Guardrail: "no-slop", Fingerprint: "fp1"}}, got,
+		"the refusal belongs to the rule that reached it, not to the file")
+}

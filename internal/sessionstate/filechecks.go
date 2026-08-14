@@ -87,3 +87,46 @@ func (s *store) Skippable(path, guardrail, fingerprint string) (bool, error) {
 	}
 	return passed, nil
 }
+
+// OutstandingRefusals reports every (path, guardrail) whose most recent verdict
+// is a refusal, with the content that refusal was reached on.
+//
+// "Most recent" is the highest seq for the pair, and the per-pair maximum is
+// what the correlated subquery selects. Reading it any other way gets the rule
+// backwards in one direction or the other: filtering on passed = 0 alone would
+// keep reporting a file that was refused at one content and has since passed at
+// another, so a fix would never end the reporting; taking the global maximum
+// would report only whichever pair was written last.
+//
+// Ordered so the report a cycle produces is stable rather than in whatever order
+// the pages come back — a set of violations that reshuffles between two
+// identical cycles reads as churn.
+func (s *store) OutstandingRefusals() ([]Refusal, error) {
+	db, err := s.conn()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`
+		SELECT path, guardrail, fingerprint FROM file_checks AS c
+		WHERE passed = 0
+		  AND seq = (SELECT MAX(seq) FROM file_checks AS l
+		             WHERE l.path = c.path AND l.guardrail = c.guardrail)
+		ORDER BY path, guardrail`)
+	if err != nil {
+		return nil, fmt.Errorf("sessionstate: read outstanding refusals: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Refusal
+	for rows.Next() {
+		var r Refusal
+		if err := rows.Scan(&r.Path, &r.Guardrail, &r.Fingerprint); err != nil {
+			return nil, fmt.Errorf("sessionstate: read outstanding refusals: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sessionstate: read outstanding refusals: %w", err)
+	}
+	return out, nil
+}

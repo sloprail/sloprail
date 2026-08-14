@@ -25,32 +25,30 @@ import (
 //
 // # What is and is not covered here, and why
 //
-// The RETENTION ITSELF is not observable end to end on this engine, and saying
-// so is more useful than a test that appears to cover it. The only reader of a
-// stored verdict is sessionstate.Skippable:
-//
-//	v, found, err := s.FileCheck(path, guardrail)
-//	if err != nil || !found { return false, err }
-//	return v.Passed && v.Fingerprint == fingerprint, nil
-//
-// A retained refusal answers false because Passed is false. A DISCARDED refusal
-// answers false because the row is not found. The two are indistinguishable
-// from outside — and they stay indistinguishable however many cycles a test
-// spans, because any later verdict for the same content overwrites the row in
-// both cases.
+// The RETENTION ITSELF is not observable through THESE fixtures, and saying so
+// is more useful than a test that appears to cover it. Every test in this
+// directory observes the engine through sessionstate.Skippable, which asks "may
+// this be skipped": it answers false for a retained refusal (passed is false)
+// and false for a discarded one (no row at all). The two are indistinguishable
+// from here however many cycles a test spans.
 //
 // This was measured, not assumed. Making Record drop failing verdicts outright
 // leaves every test in this file green, including a flaky-judge sequence built
 // specifically to make a pass compete with an earlier refusal for one row.
 //
-// So the invariant's consequence needs a reader that tells "refused" from
-// "never judged" — the end-of-cycle check that resurfaces unfixed violations,
-// which is not implemented here (filemod's extractObserved is a stub returning
-// nil). Until it is, what these tests pin is the OBSERVABLE half: a refusal
-// never licenses a skip, on every subsequent offer, for as long as the content
-// stays as it is. That half is real, it can fail, and it is what T013_01
-// exercises from the exemption side. The other half is T014_05, skipped and
-// named.
+// Telling them apart needs a different question — "what is still unfixed" —
+// which is sessionstate.OutstandingRefusals, read at the end of a cycle by
+// readdOutstanding. That reader exists now, and the claim it enables is pinned
+// end to end by T015_04 in tests/e2e/session/015_refusal_outlives_baseline: a
+// refused file that has dropped out of the difference is put in front of its
+// rule again. It lives there rather than here because it needs the Post kinds
+// and a branch switch, neither of which this directory's fixtures have; see
+// T014_05 below.
+//
+// What these tests pin is the OBSERVABLE half from the exemption side: a
+// refusal never licenses a skip, on every subsequent offer, for as long as the
+// content stays as it is. That half is real, it can fail, and it is what
+// T013_01 exercises.
 
 const judgeDecl = `---
 hooks:
@@ -271,33 +269,33 @@ func TestT014_04_ARefusalSurvivesAPassForAnotherFile(t *testing.T) {
 
 // T014_05: a refusal is distinguishable from never having been judged.
 //
-// SKIPPED, and unlike T014_03 the missing piece is not a field but a READER.
+// The half of refusal_is_retained the tests above cannot reach, and it is no
+// longer unreachable. It used to be: the only reader of a stored verdict was
+// sessionstate.Skippable, which answers false for a refusal (Passed is false)
+// and false for a missing row (not found) — so retaining a refusal and
+// discarding one produced identical behaviour everywhere the engine looked.
 //
-// This is the half of refusal_is_retained that the tests above cannot reach.
-// Retaining a refusal and discarding it produce identical behaviour everywhere
-// the engine currently looks: sessionstate.Skippable answers false for a
-// refusal because Passed is false, and false for a missing row because it was
-// not found. Nothing else reads a verdict. So "the record is kept" has, today,
-// no consequence any end-to-end test can observe — verified by making Record
-// drop failing verdicts, which leaves this whole file green.
+// What closed it is sessionstate.OutstandingRefusals, the end-of-cycle reader
+// that asks "what is still unfixed" rather than "may this be skipped". The
+// dispatcher puts every path it names back into the cycle's difference (see
+// readdOutstanding), so a violation the tree has gone quiet about is put in
+// front of its rule again.
 //
-// The invariant is about what the retained record is FOR: the violation keeps
-// surfacing until the content changes or the hook permits it. Surfacing it is
-// the end-of-cycle check's job, and that check does not exist yet —
-// filemod.extractObserved is a stub returning nil, so no Post event is ever
-// produced and nothing asks "what is still unfixed".
+// The ARRANGEMENT is the whole difficulty, and getting it wrong makes this test
+// pass for the wrong reason. Committing the offending file does NOT take it out
+// of the difference: a cycle's difference spans committed and uncommitted work
+// alike (difference_spans_both), so `git diff <baseline>` still reports it and
+// the file arrives with nothing retained. The file only leaves the difference
+// when the BASELINE itself moves off the history holding it — a branch switch
+// onto a line that already carries the same content, which re-takes the
+// measuring point and leaves the tree with nothing to say.
 //
-// When it lands, this is the shape: a file is refused, the agent stops without
-// fixing it, and the violation is reported again — which can only work by
-// reading a RETAINED refusal, because a discarded one leaves the file looking
-// unjudged rather than unfixed.
+// That arrangement is exactly T015_04 in tests/e2e/session/015_refusal_outlives_
+// baseline, which is where this claim is pinned end to end: it fails when
+// readdOutstanding is removed and passes with it. It is not duplicated here,
+// because a second copy of the same scenario in a directory whose fixtures bind
+// the Pre kinds would be a weaker version of a test that already exists.
 //
-// Left here so the gap is named rather than quietly uncovered, and so the
-// invariant has somewhere to be pinned the moment it becomes observable.
-func TestT014_05_ARetainedRefusalResurfacesTheViolation(t *testing.T) {
-	t.Skip("nothing reads a stored refusal yet, so retaining one and discarding one are " +
-		"indistinguishable end to end (sessionstate.Skippable answers false for both). The " +
-		"reader this needs is the end-of-cycle check that reports what is still unfixed, and " +
-		"filemod.extractObserved is a stub returning nil — no Post event is produced. Verified " +
-		"by making Record drop failing verdicts: every other test in this file stays green.")
-}
+// What this directory keeps pinning is the observable half named at the top of
+// the file: a refusal never licenses a skip, on every subsequent offer, for as
+// long as the content stays as it is.

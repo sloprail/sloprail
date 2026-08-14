@@ -71,6 +71,22 @@ type Store interface {
 	// Skippable reports whether a guardrail may skip a file holding the given
 	// content, which is true only of content it has already permitted.
 	Skippable(path, guardrail, fingerprint string) (bool, error)
+	// OutstandingRefusals reports every path this session has refused and not
+	// since passed, with the content each refusal was reached on.
+	//
+	// This is the reader that makes a retained refusal mean something. Without
+	// it a stored refusal and a discarded one are indistinguishable from
+	// outside: Skippable answers false for both, so the difference only shows
+	// where something asks "what is still unfixed" rather than "may this be
+	// skipped".
+	//
+	// A path is outstanding while its most recent verdict — the highest seq for
+	// that path and guardrail — is a refusal. Judged again at new content and
+	// passed, it falls out; judged again and refused, it stays with the new
+	// content named. That is what "until a hook passes it" means, and reading
+	// the LATEST verdict per pair is what makes a fix end the reporting rather
+	// than a single old refusal pinning a file forever.
+	OutstandingRefusals() ([]Refusal, error)
 
 	// State reads what one guardrail stored under one key. A key never written
 	// is "", false: a rule asking whether it has seen something before should
@@ -98,6 +114,23 @@ type Verdict struct {
 	// kept rather than dropped, so the violation resurfaces every cycle until
 	// the content changes or the check passes.
 	Passed bool
+}
+
+// Refusal is one file one guardrail refused and has not since passed.
+//
+// It carries the guardrail as well as the path because re-reporting has to name
+// the rule that objected: the file is put back in front of THAT rule, and an
+// engine that pooled refusals per file would ask every rule about a violation
+// only one of them found.
+//
+// The fingerprint is the content the refusal was reached on, not the content on
+// disk now. The two differ exactly when the agent has edited the file since,
+// which is the case where the refusal must not be re-reported blindly — the
+// caller compares them and lets the changed content be judged afresh.
+type Refusal struct {
+	Path        string
+	Guardrail   string
+	Fingerprint string
 }
 
 // Entry is one guardrail-state row as the rule that wrote it sees it: its own

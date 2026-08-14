@@ -64,9 +64,10 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	// next difference would be the whole delta between the two branches.
 	//
 	// Any refusal recorded during this session survives this: a failing verdict
-	// lives in file_checks in its own right, keyed by path and guardrail, and
-	// is reported again on every cycle until a hook passes it — whatever point
-	// the difference is measured from.
+	// lives in file_checks in its own right, keyed by path, guardrail and the
+	// content it was reached on, and is reported again on every cycle until a
+	// hook passes it — whatever point the difference is measured from. What
+	// reads it back is OutstandingRefusals, via readdOutstanding.
 	if outcome, err := ensureBaseline(store, p.Cwd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: baseline not re-taken:", err)
 	} else if outcome == baselineMoved {
@@ -78,18 +79,19 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	}
 
 	// Diffing the tree and dispatching the Post events belongs here, between the
-	// baseline and the mark, and it does not exist yet.
+	// baseline and the mark.
 	//
 	// The ORDER is the load-bearing part, not the placement. The mark says a
 	// position has been judged, and it is only true once the events for that
-	// position have been dispatched. Advance it before dispatch exists and the
-	// claim is one nothing has earned: the position is recorded as judged by a
-	// cycle that ran no judging at all.
+	// position have been dispatched. Advance it before dispatch and the claim is
+	// one nothing has earned: the position is recorded as judged by a cycle that
+	// ran no judging at all.
 	//
-	// So the mark is held until dispatch is a step that ran. dispatchPostEvents
-	// reports whether it did, and today it reports that it did not, which stops
-	// the mark rather than letting an ordering that is currently vacuous look
-	// correct.
+	// So the mark is held until dispatch is a step that ran AND finished.
+	// dispatchPostEvents reports whether it did: false when the registry or the
+	// rules would not load, and false when a guardrail objected — a refusal
+	// blocks the turn and sends the agent round again over these same turns,
+	// which it cannot do if the cycle has just declared them judged.
 	//
 	// What the mark loses by waiting is a re-read, not a turn. The position is
 	// discarded with the cycle either way, so the next cycle reads from the mark
