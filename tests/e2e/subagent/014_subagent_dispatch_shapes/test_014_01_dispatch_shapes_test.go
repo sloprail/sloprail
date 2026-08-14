@@ -33,14 +33,23 @@ import (
 // So under this harness a sub-agent's tool calls are dispatched AS THE PARENT.
 // There is no sub-agent-scoped PreToolUse to observe, which means:
 //
-//	subagent_state_is_its_own   — cannot be observed here. The state a
-//	                              sub-agent's guardrails write IS the parent's
-//	                              under this harness, because the harness never
-//	                              presents the hook as a sub-agent's.
-//	judged_on_its_own_record    — likewise. Both records are the parent's.
-//	identity_comes_from_the_hook— vacuously true and unfalsifiable here: the
-//	                              hook is told nothing about a sub-agent, so
-//	                              nothing can be read from it either way.
+//	subagent_state_is_its_own   — not observable AT THIS EVENT. A sub-agent's
+//	                              PRE hooks are the parent's under this harness.
+//	                              Its POST cycle is its own, and that is where
+//	                              T015_03, T015_04 and T015_06 observe it.
+//	judged_on_its_own_record    — likewise: the Pre records are the parent's,
+//	                              the Post cycle's is the sub-agent's own.
+//	                              T015_01 and T015_02.
+//	identity_comes_from_the_hook— unfalsifiable at the Pre event, since the hook
+//	                              is told nothing about a sub-agent. At the Post
+//	                              event the hook IS told, and what it is told is
+//	                              what T015_01 asserts.
+//
+// The scope of this list is what changed, not the measurements under it. Every
+// statement above about PreToolUse still holds and is still asserted by T014_01.
+// What was wrong was reading "the Pre event cannot show this" as "an e2e cannot
+// show this", when the sub-agent's own cycle is a second, differently-scoped
+// event this package simply was not looking at.
 //
 // # The event that DOES arrive as a sub-agent, and why it still cannot be
 // asserted on from here
@@ -81,19 +90,26 @@ import (
 // Three limits are real and remain, and the FIRST is the one that decides what
 // this package can test about a sub-agent's own cycle.
 //
-//   - An isolated sub-agent's tool calls are never APPLIED. T014_02 already
-//     records this from the other side; measured again here by dispatching a
-//     sub-agent whose scenario writes from-sub.md and then reading the bound
-//     worktree, which is EMPTY — the file appears in no tree at all. So a
-//     worktree-isolated sub-agent produces no tree difference, its Post cycle
+//   - An isolated sub-agent's WRITE calls are never applied. Measured by
+//     dispatching a sub-agent whose scenario writes from-sub.md and then reading
+//     the bound worktree, which is empty of it.
+//
+//     THE CONCLUSION DRAWN FROM THAT WAS WRONG, and it is corrected in
+//     015_subagent_own_cycle rather than here. This bullet used to continue: "So
+//     a worktree-isolated sub-agent produces no tree difference, its Post cycle
 //     has nothing to judge, and no guardrail can fire in it however correct the
-//     engine is. A test asserting "the sub-agent's own file was judged" is
-//     therefore unwritable here, not merely awkward: one was written against
-//     this and removed rather than weakened into something that passes.
+//     engine is. A test asserting 'the sub-agent's own file was judged' is
+//     therefore unwritable here." The generalisation from Write to all tool
+//     calls is the error. The mock DOES execute Bash, and for an isolated
+//     sub-agent it executes it inside the bound worktree — so there is a real
+//     tree difference, the worktree carries its own checkout of
+//     .sloprail/guardrails, and the rule fires under the sub-agent's OWN
+//     identity. The test called unwritable is T015_01, and the two invariants
+//     called unobservable below are covered by T015_01 through T015_06.
+//
 //     `subagent-stop` taking the baseline and reaching dispatch in the
-//     sub-agent's own store is pinned at unit level instead, in
-//     services/sr-session/session_subagent_stop_test.go, where the mutation to
-//     the old TODO stub fails four tests.
+//     sub-agent's own store is pinned at unit level as well, in
+//     services/sr-session/session_subagent_stop_test.go.
 //   - A hook that exits 0 without blocking is silent: neither stream is
 //     forwarded, so a PASSING cycle cannot be observed from here. Any assertion
 //     has to be shaped around a refusal.
@@ -590,22 +606,27 @@ func TestT014_06_ARefusingSessionStillCompletesItsDelegations(t *testing.T) {
 // T014_07: a dispatch nested inside a sub-agent's own scenario does not break
 // the outer cycle.
 //
-// Nesting is worth a test and worth an honest one. MEASURED: this harness does
-// not recursively execute a sub-agent's own Agent call — a probe whose
-// sub-agent dispatched a third scenario reported exactly one agentId, the
-// outer's, and the inner scenario never ran. So depth-2 delegation is NOT
-// exercised here whatever this test asserts about it.
+// What this pins is that an Agent tool call appearing INSIDE a delegated
+// scenario does not hang or fail the outer dispatch. That is a real shape — a
+// sub-agent asked to delegate further is ordinary in production — and the
+// failure mode is a delegated cycle that never ends.
 //
-// What is left is still worth pinning, because it is the thing that would break
-// first: an Agent tool call appearing INSIDE a delegated scenario must not hang
-// or fail the outer dispatch. That is a real shape — a sub-agent asked to
-// delegate further is ordinary in production — and the failure mode is a
-// delegated cycle that never ends.
+// It does NOT establish anything about nesting, and it used to claim the
+// opposite. The claim was: "MEASURED: this harness does not recursively execute
+// a sub-agent's own Agent call — a probe whose sub-agent dispatched a third
+// scenario reported exactly one agentId, the outer's, and the inner scenario
+// never ran."
 //
-// Stated with its own limit in the assertion, so nobody reads this as coverage
-// of nesting. When the harness executes nested dispatches, the id count here
-// changes and this test fails — which is the right way for a measured
-// limitation to expire.
+// The observation was real; the inference was not. agentIDs reads the OUTER
+// run's stream, and a nested dispatch is announced in the SUB-AGENT'S stream,
+// which the outer run never carries — so the count is 1 whether nesting happens
+// or not, and could never have distinguished the two. Looking where the deeper
+// sub-agent's WORK would land settles it: it runs, in the delegating
+// sub-agent's tree, and is judged at a cycle of its own under a third identity.
+// T015_12 asserts exactly that.
+//
+// The count below is kept, re-labelled as what it actually measures: how many
+// dispatches THIS session announced.
 func TestT014_07_ADispatchInsideASubagentsScenarioDoesNotBreakTheOuterCycle(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -632,17 +653,15 @@ func TestT014_07_ADispatchInsideASubagentsScenarioDoesNotBreakTheOuterCycle(t *t
 		t.Fatalf("a cycle hit the harness's retry cap:\n%s", res.Output)
 	}
 
-	// The measured limit, asserted so it cannot change quietly. This harness
-	// runs the outer sub-agent and does NOT recursively execute the dispatch
-	// inside it: one agent id, not two. If this ever reports two, the harness
-	// has gained real nesting — at which point depth-2 delegation becomes
-	// testable and this file's claim that it is not needs revisiting rather
-	// than this number being bumped.
+	// THIS session announced exactly one dispatch — its own. The nested one is
+	// announced in the sub-agent's stream, which this run does not carry, so
+	// this number says nothing about whether nesting happened. It is asserted
+	// only to catch the outer dispatch silently not happening, or happening
+	// twice.
 	if ids := agentIDs(res.Output); len(ids) != 1 {
-		t.Fatalf("saw %d agent id(s) (%v), want 1. This harness does not recursively execute a "+
-			"sub-agent's own Agent call, which is why this package does not claim to cover "+
-			"nesting. More than one here means it now does, and the coverage note at the top of "+
-			"this file should be re-derived rather than this count adjusted:\n%s",
+		t.Fatalf("the dispatching session announced %d dispatch(es) (%v), want its own one. This "+
+			"count is about THIS session's stream only — a nested dispatch is announced in the "+
+			"sub-agent's own stream. For what nesting actually does, see T015_12:\n%s",
 			len(ids), ids, res.Output)
 	}
 
