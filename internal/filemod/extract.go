@@ -290,8 +290,6 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 // one. Leaving it absolute means no project-relative matcher admits it, which
 // is the honest answer — the write is outside the rule's subject.
 func reportable(path, root string) string {
-	// DELIBERATE BREAK — proving CI can go red. Reverted in the next commit.
-	return path
 	if !filepath.IsAbs(path) {
 		clean := filepath.ToSlash(filepath.Clean(path))
 		if root == "" {
