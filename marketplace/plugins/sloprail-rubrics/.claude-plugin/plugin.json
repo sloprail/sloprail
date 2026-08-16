@@ -1,0 +1,5 @@
+{
+  "name": "sloprail-rubrics",
+  "version": "0.0.1",
+  "description": "Judges a file against a rubric when it matches a configured glob. Config-driven: .sloprail/rubrics/config.yaml maps globs to prompt files. Refusals are recorded and re-reported until fixed."
+}

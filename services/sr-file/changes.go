@@ -10,6 +10,8 @@ import (
 
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
+	"github.com/sloprail/sloprail/internal/fingerprint"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
 )
 
@@ -44,6 +46,11 @@ func newChangesCmd() *cobra.Command {
 			"  {\"kind\":\"PreFileDelete\",\"path\":\"c.md\"}\n\n" +
 			"A payload that describes no file change prints nothing and exits 0 — that is the\n" +
 			"ordinary case, since most of what happens in a session concerns files not at all.\n\n" +
+			"--turn reports what actually differs from HEAD instead — tracked changes, staged or\n" +
+			"not, plus untracked files — for a hook with no payload to read (a Stop hook, run at the\n" +
+			"end of a turn rather than in response to one tool call). Rows there carry the path and\n" +
+			"its current fingerprint, with kind \"Changed\":\n\n" +
+			"  {\"kind\":\"Changed\",\"path\":\"a.md\",\"fingerprint\":\"...\"}\n\n" +
 			"SELECTING IS THE CALLER'S JOB. There is no matcher here on purpose: the rows are\n" +
 			"JSON and jq already does this better than a language invented for it would.\n\n" +
 			"  sr-file changes < payload.json | jq -r 'select(.path | test(\"TASK\\\\.md$\")) | .path'\n\n" +
@@ -54,6 +61,7 @@ func newChangesCmd() *cobra.Command {
 		SilenceErrors: true,
 		RunE:          runChanges,
 	}
+	cmd.Flags().Bool("turn", false, "Report what differs from HEAD instead of reading a payload from stdin")
 	return cmd
 }
 
@@ -88,6 +96,11 @@ type payloadShape struct {
 }
 
 func runChanges(cmd *cobra.Command, _ []string) error {
+	turn, _ := cmd.Flags().GetBool("turn")
+	if turn {
+		return runChangesTurn(cmd)
+	}
+
 	data, err := io.ReadAll(cmd.InOrStdin())
 	if err != nil {
 		return fmt.Errorf("sr-file changes: read stdin: %w", err)
@@ -158,6 +171,59 @@ func runChanges(cmd *cobra.Command, _ []string) error {
 		// them. Exit status stays 0 so a hook is not made to refuse by a problem
 		// with one path among several.
 		fmt.Fprintf(cmd.ErrOrStderr(), "sr-file changes: %v\n", extractErr)
+	}
+	return nil
+}
+
+// runChangesTurn reports what differs from HEAD, for a hook with no payload —
+// a Stop hook, run once at the end of a turn rather than once per tool call.
+//
+// NOT the same question --pre answers, and not a smaller version of it.
+// filemod.Observed needs a session BASELINE — the commit a cycle's difference is
+// measured FROM, which only the engine records (sr-session start). A plugin with
+// no engine underneath it has no baseline to hand over, so this reads against
+// HEAD instead: what is different from the last commit, tracked or not. That is
+// a coarser question — "what does not match history" rather than "what did THIS
+// session change" — and the honest one to ask without session bookkeeping this
+// command has no business owning.
+//
+// A rule that also wants "have I already judged this exact content" layers
+// `sr-file checks skip` on top, which is where that memory actually belongs —
+// see checks.go. This command only ever answers what differs; whether the
+// difference has been seen before is a separate question with a separate owner.
+func runChangesTurn(cmd *cobra.Command) error {
+	root, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("sr-file changes --turn: locate working directory: %w", err)
+	}
+	if ws := os.Getenv("SR_WORKSPACE"); ws != "" {
+		root = ws
+	}
+
+	changes, err := gitrepo.Changed(root, "HEAD")
+	if err != nil {
+		return fmt.Errorf("sr-file changes --turn: %w", err)
+	}
+
+	for _, c := range changes {
+		fp, err := fingerprint.OfFile(root + "/" + c.Path)
+		if err != nil {
+			// A path git reports as changed and this process cannot read —
+			// deleted since the diff was taken, or a permissions problem.
+			// Reported per-path rather than aborting the whole report: the
+			// rest of what git found is still real.
+			fmt.Fprintf(cmd.ErrOrStderr(), "sr-file changes --turn: %s: %v\n", c.Path, err)
+			continue
+		}
+		line, err := json.Marshal(map[string]any{
+			"kind":        "Changed",
+			"path":        c.Path,
+			"fingerprint": fp,
+		})
+		if err != nil {
+			return fmt.Errorf("sr-file changes --turn: encode %s: %w", c.Path, err)
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), string(line))
 	}
 	return nil
 }

@@ -35,6 +35,16 @@
         "name": "sloprail",
         "email": "nikita.sviridenko@voypost.com"
       }
+    },
+    {
+      "name": "sloprail-rubrics",
+      "description": "Judges a file against a rubric when it matches a configured glob. Config-driven: .sloprail/rubrics/config.yaml. Refusals are recorded and re-reported until fixed.",
+      "version": "0.0.1",
+      "source": "./marketplace/plugins/sloprail-rubrics",
+      "author": {
+        "name": "sloprail",
+        "email": "nikita.sviridenko@voypost.com"
+      }
     }
   ]
 }

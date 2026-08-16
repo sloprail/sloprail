@@ -1,0 +1,17 @@
+# .sloprail/rubrics/config.yaml — a project's own copy of this shape.
+#
+# An array, matching sloprail-require-skill's config for the same reason: the
+# key of a map IS the matcher, so a map keyed by glob cannot grow a second field
+# per entry without breaking every one already written.
+rubrics:
+  - match: "**/SKILL.md"
+    prompt: rubrics/skill-quality.md
+
+  - match: "**/RULE.md"
+    prompt: rubrics/rule-quality.md
+
+# `prompt` is a path relative to .sloprail/rubrics/, in the CONSUMER's project —
+# not shipped by this plugin. The standard is the project's own; this plugin is
+# the mechanism that runs it, judges each matching file that changed this turn,
+# and refuses the turn while any judged file is still failing — the refusal
+# survives being re-run, via sr-file checks, until the file is fixed.
