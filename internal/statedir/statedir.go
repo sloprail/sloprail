@@ -1,4 +1,4 @@
-package main
+package statedir
 
 import (
 	"fmt"
@@ -16,10 +16,16 @@ const AppName = "sloprail"
 
 // GuardrailEnv names the guardrail whose hook is running.
 //
-// Which guardrail is asking is never a parameter to `session state`. The engine
-// ran the hook and knows, and it tells the hook by putting it here rather than
-// in the argument vector, where a hook could write a different name and read a
-// rule it was never told about — and then depend on when that rule ran.
+// IT NO LONGER SCOPES STATE. `sr-session state` takes --owner instead, because
+// the scoping this variable provided rested on the engine being the only thing
+// that runs hooks — and a plugin registering its own PreToolUse hook calls the
+// store directly, so whoever exports this is the same party it constrained. A
+// mechanism that looks like a guarantee and is not is worse than none.
+//
+// It is still SET on a dispatched hook, and still worth having, for what it
+// honestly is: a statement of which rule the engine is currently running, for a
+// hook that wants to report itself or key something by it. Nothing reads it to
+// decide access.
 const GuardrailEnv = "SR_GUARDRAIL"
 
 // SessionEnv names the session a hook belongs to, for the same reason.
@@ -79,7 +85,7 @@ const PluginRootEnv = "SR_PLUGIN_ROOT"
 //
 // Deliberately outside the guarded project: state written into the tree would
 // show up in the very diffs the engine reads, and in the user's git status.
-func dataHome() (string, error) {
+func DataHome() (string, error) {
 	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
 		return dir, nil
 	}
@@ -111,8 +117,8 @@ var nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9]`)
 // own state than the shorter name would be. Symlinks are resolved first because
 // macOS reports /var where the filesystem holds /private/var, and the two would
 // otherwise be two different sessions of the same tree.
-func encodeWorkspace(dir string) string {
-	return nonAlnum.ReplaceAllString(workspaceAnchor(dir), "-")
+func EncodeWorkspace(dir string) string {
+	return nonAlnum.ReplaceAllString(WorkspaceAnchor(dir), "-")
 }
 
 // workspaceAnchor is the tree a directory belongs to: its git root where there
@@ -148,7 +154,7 @@ func encodeWorkspace(dir string) string {
 // git is one the engine guards with everything except the difference, rather
 // than one it refuses to key state for at all — the same choice ensureBaseline
 // makes about baselineUnavailable.
-func workspaceAnchor(dir string) string {
+func WorkspaceAnchor(dir string) string {
 	if root, err := gitrepo.Root(dir); err == nil && root != "" {
 		return root
 	}
@@ -243,7 +249,7 @@ func workspaceAnchor(dir string) string {
 // risks exempting a file nothing judged, which loses a violation for good. Where
 // one error is recoverable and the other is not, the recoverable one is the one
 // to take.
-func sessionDBPath(cwd, sessionID string) (string, error) {
+func SessionDBPath(cwd, sessionID string) (string, error) {
 	if sessionID == "" {
 		return "", fmt.Errorf("sloprail: no session id — set %s", SessionEnv)
 	}
@@ -262,16 +268,16 @@ func sessionDBPath(cwd, sessionID string) (string, error) {
 	if strings.ContainsAny(sessionID, `/\`) || sessionID == "." || sessionID == ".." {
 		return "", fmt.Errorf("sloprail: %q is not a session id: it would resolve outside this session's own state", sessionID)
 	}
-	root, err := dataHome()
+	root, err := DataHome()
 	if err != nil {
 		return "", err
 	}
-	if cwd == unresolvedWorkspace {
+	if cwd == UnresolvedWorkspace {
 		// The engine ran this hook but could not say which tree it guards. The
 		// fallback below must not be reached here: a hook's process directory is
 		// the guardrail's own folder, so falling back would key this rule's state
 		// by where its scripts live and hand every rule a private database.
-		return "", errUnresolvedWorkspace()
+		return "", ErrUnresolvedWorkspace()
 	}
 	if cwd == "" {
 		// Reached from a person running the CLI by hand, where the process's own
@@ -281,5 +287,32 @@ func sessionDBPath(cwd, sessionID string) (string, error) {
 			return "", fmt.Errorf("sloprail: locate working directory: %w", err)
 		}
 	}
-	return filepath.Join(root, AppName, "sessions", encodeWorkspace(cwd), sessionID, "state.db"), nil
+	return filepath.Join(root, AppName, "sessions", EncodeWorkspace(cwd), sessionID, "state.db"), nil
 }
+
+
+// unresolvedWorkspace is what SR_WORKSPACE says when the payload named no
+// working directory.
+//
+// Deliberately not a path and deliberately not empty. Empty is the value
+// SessionDBPath reads as "use the process's directory", which is the bug. A NUL
+// byte would be the tidiest impossible value, but exec refuses to start a
+// process whose environment contains one — the hook would fail to run at all,
+// and a hook that cannot run is a refusal, so an unresolvable workspace would
+// block every action instead of reporting itself. This is a value the hook's
+// process really receives, that no filesystem answers to, and that
+// SessionDBPath recognises by name.
+const UnresolvedWorkspace = "!sloprail:workspace-unresolved"
+
+// errUnresolvedWorkspace is what a hook is told when it reaches for state under
+// a workspace the engine could not resolve.
+func ErrUnresolvedWorkspace() error {
+	return fmt.Errorf(
+		"sloprail: %s names no workspace — the hook payload carried no working directory, so there is no tree to key this session's state by",
+		WorkspaceEnv)
+}
+
+// EncodePath is the non-alphanumeric substitution EncodeWorkspace applies, for a
+// caller that already holds a resolved directory and wants the encoded spelling
+// without re-resolving the tree.
+func EncodePath(dir string) string { return nonAlnum.ReplaceAllString(dir, "-") }

@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/sloprail/sloprail/internal/guardrail"
+	"github.com/sloprail/sloprail/internal/statedir"
 )
 
 // hookScope is what a hook needs to find its own corner of the session's state:
@@ -165,28 +165,8 @@ func (s hookScope) transcriptEnv() []string {
 // variable, and the failure is loud instead of being one database per rule.
 func (s hookScope) workspaceEnv() []string {
 	if s.Workspace == "" {
-		return []string{WorkspaceEnv + "=" + unresolvedWorkspace}
+		return []string{WorkspaceEnv + "=" + statedir.UnresolvedWorkspace}
 	}
 	return []string{WorkspaceEnv + "=" + s.Workspace}
 }
 
-// unresolvedWorkspace is what SR_WORKSPACE says when the payload named no
-// working directory.
-//
-// Deliberately not a path and deliberately not empty. Empty is the value
-// sessionDBPath reads as "use the process's directory", which is the bug. A NUL
-// byte would be the tidiest impossible value, but exec refuses to start a
-// process whose environment contains one — the hook would fail to run at all,
-// and a hook that cannot run is a refusal, so an unresolvable workspace would
-// block every action instead of reporting itself. This is a value the hook's
-// process really receives, that no filesystem answers to, and that
-// sessionDBPath recognises by name.
-const unresolvedWorkspace = "!sloprail:workspace-unresolved"
-
-// errUnresolvedWorkspace is what a hook is told when it reaches for state under
-// a workspace the engine could not resolve.
-func errUnresolvedWorkspace() error {
-	return fmt.Errorf(
-		"sloprail: %s names no workspace — the hook payload carried no working directory, so there is no tree to key this session's state by",
-		WorkspaceEnv)
-}

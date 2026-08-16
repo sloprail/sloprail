@@ -68,7 +68,7 @@ func (d *dispatch) seedTranscript(cfg string) {
 	if r, err := filepath.EvalSymlinks(d.proj); err == nil {
 		resolved = r
 	}
-	dir := filepath.Join(cfg, "projects", nonAlnum.ReplaceAllString(resolved, "-"))
+	dir := filepath.Join(cfg, "projects", encodePath(resolved))
 	require.NoError(d.t, os.MkdirAll(dir, 0o755))
 	line := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":"go"}}`+"\n",
 		d.session, d.proj)
@@ -81,7 +81,7 @@ func (d *dispatch) transcript() string {
 		resolved = r
 	}
 	return filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects",
-		nonAlnum.ReplaceAllString(resolved, "-"), d.session+".jsonl")
+		encodePath(resolved), d.session+".jsonl")
 }
 
 // guardrail declares a rule bound to file creations and changes whose hook

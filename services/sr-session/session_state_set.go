@@ -36,9 +36,9 @@ instead, with the tool a hook already reaches for:
 
   sr-session state get x | jq '.done = true' | sr-session state set x
 
-Which guardrail is asking is never an argument — it comes from ` + GuardrailEnv + `,
-which the engine sets when it runs a hook. Outside a hook there is no guardrail
-in scope and this says so rather than guessing.`,
+Which owner is asking comes from --owner, and is required. Nothing stops a
+caller naming another plugin; separate records rest on callers naming themselves
+honestly, not on anything enforcing it.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			value, err := setValue(cmd, args)
@@ -46,13 +46,14 @@ in scope and this says so rather than guessing.`,
 				return err
 			}
 
-			store, guardrail, err := openSessionState()
+			ownerFlag, _ := cmd.Flags().GetString("owner")
+			store, owner, err := openSessionState(ownerFlag)
 			if err != nil {
 				return err
 			}
 			defer store.Close()
 
-			return store.SetState(guardrail, args[0], value)
+			return store.SetState(owner, args[0], value)
 		},
 	}
 }
