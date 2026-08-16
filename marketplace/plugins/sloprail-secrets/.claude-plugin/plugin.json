@@ -1,0 +1,5 @@
+{
+  "name": "sloprail-secrets",
+  "version": "0.0.1",
+  "description": "Refuses a write to a path that looks like a secret. A worked example of a plugin that registers its own PreToolUse hook and learns what the turn is about to do from `sr-file changes`, rather than declaring a guardrail for the engine to dispatch."
+}

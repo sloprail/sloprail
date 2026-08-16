@@ -276,10 +276,37 @@ func (e *Env) Project() string {
 // about the product — the whole point of driving the mock is that what fires is
 // the plugin someone installs. A property that needs a hook point the plugin
 // does not register is a gap in the plugin, and belongs in hooks.json.
-func (e *Env) writeSettings(dir string) {
+// ProjectWith is Project, plus the extra marketplace plugins this project has
+// installed — named as they appear in marketplace.json.
+//
+// It exists because a plugin that registers its OWN hooks is a different subject
+// from one that only ships guardrails: the first reaches a hook point on its own
+// account, without the engine dispatching it, and nothing about that is
+// exercised by enabling the base plugin alone. A test for such a plugin has to
+// install it the way a consumer does, or it is testing a wiring no user has.
+func (e *Env) ProjectWith(plugins ...string) string {
 	e.t.Helper()
+	dir, err := os.MkdirTemp("", "slop-proj-")
+	if err != nil {
+		e.t.Fatalf("harness: temp project: %v", err)
+	}
+	e.t.Cleanup(func() { os.RemoveAll(dir) })
+
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .claude: %v", err)
+	}
+	e.writeSettings(dir, plugins...)
+	return dir
+}
+
+func (e *Env) writeSettings(dir string, extra ...string) {
+	e.t.Helper()
+	enabled := map[string]any{pluginKey: true}
+	for _, name := range extra {
+		enabled[name+"@"+marketplaceName] = true
+	}
 	settings := map[string]any{
-		"enabledPlugins": map[string]any{pluginKey: true},
+		"enabledPlugins": enabled,
 		"extraKnownMarketplaces": map[string]any{
 			marketplaceName: map[string]any{
 				"source": map[string]any{"source": "directory", "path": e.repoRoot},
