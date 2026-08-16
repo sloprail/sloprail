@@ -27,10 +27,10 @@
       }
     },
     {
-      "name": "sloprail-secrets",
-      "description": "Refuses a write to a path that looks like a secret. A worked example of a plugin that registers its own PreToolUse hook and learns what the turn is about to do from `sr-file changes`.",
+      "name": "sloprail-require-skill",
+      "description": "Refuses a write under a configured path prefix unless the matching skill was loaded earlier in this session. Config-driven: .sloprail/require-skill/config.yaml.",
       "version": "0.0.1",
-      "source": "./marketplace/plugins/sloprail-secrets",
+      "source": "./marketplace/plugins/sloprail-require-skill",
       "author": {
         "name": "sloprail",
         "email": "nikita.sviridenko@voypost.com"

@@ -1,9 +1,0 @@
-{
-  "hooks": {
-    "PreToolUse": [
-      { "matcher": "Write", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/refuse-secrets.sh\"" }] },
-      { "matcher": "Edit", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/refuse-secrets.sh\"" }] },
-      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/refuse-secrets.sh\"" }] }
-    ]
-  }
-}

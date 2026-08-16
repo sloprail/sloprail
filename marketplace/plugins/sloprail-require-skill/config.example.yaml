@@ -1,0 +1,17 @@
+# .sloprail/require-skill/config.yaml — a project's own copy of this shape.
+#
+# An array, not a map keyed by path: a map's key IS the matcher, so adding a
+# second thing to say about one prefix — a future field, a second required
+# skill — means breaking the shape for every entry already written. An array
+# entry grows a key; it never has to change what one already means.
+require:
+  - match: "memories/topics/**"
+    skills: [document-topic]
+
+  - match: "memories/decisions/**"
+    skills: [document-decision]
+
+  # skills is a list from the start, not a single string. A path can plausibly
+  # need more than one loaded, and a single-valued field is the harder thing to
+  # widen later — every existing entry would need rewriting the day a second
+  # skill is required somewhere.

@@ -1,0 +1,5 @@
+{
+  "name": "sloprail-require-skill",
+  "version": "0.0.1",
+  "description": "Refuses a write under a configured path prefix unless the matching skill was loaded earlier in this session. Config-driven: .sloprail/require-skill/config.yaml maps path prefixes to skill names."
+}
