@@ -47,13 +47,16 @@ if [ ! -d "$tasks_dir" ]; then
   exit 0
 fi
 
-# The schema ships with this rule. SR_PLUGIN_ROOT is set only for an installed
-# copy and unset for a project's own, so the same line reads the schema that
-# shipped beside this rule when installed and the project's when developed in
-# place. Written as $root/.sloprail unconditionally — as this was while it lived
-# in one repo — the rule would find nothing on any consumer's machine and
-# fail-open on every turn, which for this rule means never refusing at all.
-schema="${SR_PLUGIN_ROOT:-$root/.sloprail}/schemas/task.cue"
+# The schema ships with this rule. SR_PLUGIN_ROOT names the installation when
+# this copy came from a plugin and is unset for a project's own, so the variable
+# chooses the TREE and the rest of the path is the same either way — a plugin
+# lays its sloprail things out exactly as a project does.
+#
+# Written as $root unconditionally — as this was while it lived in one repo — the
+# rule would find nothing on any consumer's machine and fail-open on every turn,
+# which for this rule means never refusing at all. That is the quiet direction:
+# installed, silent, enforcing nothing.
+schema="${SR_PLUGIN_ROOT:-$root}/.sloprail/schemas/task.cue"
 if [ ! -f "$schema" ]; then
   say "no-unfinished-work-at-turn-end: PLUMBING FAIL-OPEN — schema missing at $schema, so no status can be read. Permitting."
   exit 0

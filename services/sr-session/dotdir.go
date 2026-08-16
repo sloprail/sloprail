@@ -9,7 +9,12 @@ import (
 )
 
 // DotDirName is the directory a project keeps its guardrails in.
-const DotDirName = ".sloprail"
+//
+// An alias for guardrail.DotDir rather than a second spelling of the same
+// string: a plugin's installation now uses the identical layout, and the loader
+// that reads both is where the answer belongs. Two independent literals is how
+// the project's path and the plugin's came to differ in the first place.
+const DotDirName = guardrail.DotDir
 
 // dotDir resolves the project's dot-directory. The harness reports the working
 // directory on its payload; when it does not, the process's own is the same

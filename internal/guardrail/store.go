@@ -57,18 +57,47 @@ func NewWithPlugins(root string, plugins []Origin) *Store {
 	return &Store{root: root, plugins: plugins}
 }
 
+// DotDir is the directory sloprail keeps its things in, in whichever tree it is
+// looking at — a project's own, or a plugin's installation.
+//
+// One constant because it is one answer. It was a project-only fact while a
+// plugin used a different layout, and the two spellings sitting apart is what
+// let them differ; naming it here, in the package that resolves both, is what
+// keeps them the same.
+const DotDir = ".sloprail"
+
 // guardrailsDir is where a project's own declarations live.
+//
+// The project's Store is constructed with its dot-directory already joined —
+// dotDir(cwd) in sr-session — so this joins only the leaf. A plugin's root is
+// the installation itself, which is why pluginGuardrailsDir joins both.
 func (s *Store) guardrailsDir() string { return filepath.Join(s.root, "guardrails") }
 
 // pluginGuardrailsDir is where a plugin's declarations live inside its
 // installation.
 //
-// The SAME relative layout a project uses — `guardrails/<name>/GUARDRAIL.md` —
-// so a rule can be developed in a project and shipped in a plugin without being
-// rewritten, and so an author reading either tree finds the same shape. A plugin
-// ships guardrails the way it already ships hooks/ and skills/: a directory at
-// its root named for what is in it.
-func pluginGuardrailsDir(root string) string { return filepath.Join(root, "guardrails") }
+// The SAME layout a project uses, dot-directory and all —
+// `.sloprail/guardrails/<name>/GUARDRAIL.md` — so a rule can be developed in a
+// project and shipped in a plugin by copying the folder, with nothing about its
+// path to rewrite. An author who knows where a rule lives in a project knows
+// where it lives in a plugin, because it is the same answer.
+//
+// This used to be `guardrails/` at the plugin's root, on the argument that a
+// plugin ships guardrails the way it ships hooks/ and skills/: a directory
+// named for what is in it. That reads well and it made the two layouts differ
+// by exactly one path component, which is the kind of difference nobody
+// remembers in the direction that matters — a rule moved from a project into a
+// plugin lands one level too deep, the directory is simply absent, and an
+// absent directory is not an error here (most plugins ship no guardrails at
+// all, so it cannot be). The plugin loads, the rules do not, and nothing says
+// so. Same shape as the schema path this repo has already been bitten by:
+// installed, and enforcing nothing.
+//
+// Sharing the spelling removes the mistake rather than reporting it. `.sloprail`
+// is now simply where sloprail's own things live, whoever owns the tree.
+func pluginGuardrailsDir(root string) string {
+	return filepath.Join(root, DotDir, "guardrails")
+}
 
 // declarationPath returns the path of one guardrail's declaration under a
 // guardrails directory.

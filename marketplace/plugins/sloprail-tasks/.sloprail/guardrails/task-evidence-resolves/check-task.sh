@@ -27,17 +27,16 @@ root="${SR_WORKSPACE:-.}"
 
 # The schema ships with this rule, so it is looked for where the rule landed.
 #
-# SR_PLUGIN_ROOT is set only when this rule came from an installed plugin, and is
-# UNSET for a project's own copy — which is what makes the fallback select the
-# project layout without this line being rewritten. That asymmetry is the point:
-# one script reads the schema that shipped beside it when installed, and the
-# project's own when developed in place.
+# SR_PLUGIN_ROOT is the plugin's installation when this rule came from one, and
+# is UNSET for a project's own copy — so the fallback selects the tree being
+# guarded. Everything after it is identical either way, because a plugin lays
+# its sloprail things out exactly as a project does; the variable chooses the
+# TREE, never the shape of the path inside it.
 #
-# Not $SR_WORKSPACE/.sloprail/schemas/task.cue unconditionally, which is what
-# this said while it lived in one repo: the consumer of a plugin never had that
-# file, so the rule would refuse every TASK.md with "schema not found" the moment
-# it was installed anywhere.
-schema="${SR_PLUGIN_ROOT:-$root/.sloprail}/schemas/task.cue"
+# Not $SR_WORKSPACE/... unconditionally, which is what this said while the rule
+# lived in one repo: a plugin's consumer never had that file, so the rule would
+# refuse every TASK.md with "schema not found" the moment it was installed.
+schema="${SR_PLUGIN_ROOT:-$root}/.sloprail/schemas/task.cue"
 if [ ! -f "$schema" ]; then
   echo "task-evidence-resolves: schema not found at $schema — the rule cannot check anything without it" >&2
   exit 1

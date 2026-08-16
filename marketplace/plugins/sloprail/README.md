@@ -4,7 +4,7 @@ This plugin is the whole of what is Claude-Code-specific about sloprail. It maps
 that harness's lifecycle names onto `sr-session`'s subcommands, so nothing inside
 the engine has to know whose lifecycle it is running under.
 
-It also ships guardrails — see `guardrails/` — and this file records what a
+It also ships guardrails — see `.sloprail/guardrails/` — and this file records what a
 reader of `hooks.json` would otherwise have to guess, since JSON carries no
 comments: how a shipped rule reaches a project, and why that no longer has
 anything to do with the hooks below it.
@@ -16,7 +16,7 @@ Nothing in this file makes it happen, and that is the point.
 The engine reads the PROJECT's `.claude/settings.json` and
 `.claude/settings.local.json`, takes whatever `enabledPlugins` turns on, and
 resolves each plugin to its installation directory itself. A project that has
-enabled `sloprail@sloprail-marketplace` gets `guardrails/authoring-slop/` from
+enabled `sloprail@sloprail-marketplace` gets `.sloprail/guardrails/authoring-slop/` from
 inside this installation, without copying anything and without this plugin
 telling the engine where it lives.
 
