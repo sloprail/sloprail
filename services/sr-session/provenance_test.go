@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sloprail/sloprail/internal/guardrail"
+)
 
 // getenvFrom builds a lookup over a fixed map, so these tests never mutate the
 // process environment — which under -race would race every other test reading
@@ -87,7 +91,7 @@ func TestAppendLaunchedByStartsFromNothing(t *testing.T) {
 // envValue reads the slice the way exec does, so this is a claim about what the
 // hook process actually sees rather than about slice positions.
 func TestHookEnvAppendsAfterTheInheritedBlock(t *testing.T) {
-	env := hookScope{SessionID: "s", Workspace: "/w"}.env("judge-notes")
+	env := hookScope{SessionID: "s", Workspace: "/w"}.env(guardrail.Declaration{Name: "judge-notes"})
 
 	got, ok := envValue(env, LaunchedByEnv)
 	if !ok {
@@ -103,7 +107,7 @@ func TestHookEnvAppendsAfterTheInheritedBlock(t *testing.T) {
 func TestHookEnvExtendsAnInheritedProvenance(t *testing.T) {
 	t.Setenv(LaunchedByEnv, "outer-rule")
 
-	env := hookScope{SessionID: "s", Workspace: "/w"}.env("judge-notes")
+	env := hookScope{SessionID: "s", Workspace: "/w"}.env(guardrail.Declaration{Name: "judge-notes"})
 
 	got, ok := envValue(env, LaunchedByEnv)
 	if !ok {

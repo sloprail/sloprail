@@ -40,6 +40,41 @@ const WorkspaceEnv = "SR_WORKSPACE"
 // given a sentinel instead.
 const TranscriptEnv = "SR_TRANSCRIPT"
 
+// GuardrailDirEnv is the folder the running guardrail was declared in — the same
+// path the hook's payload already carries as `guardrailDir`.
+//
+// Duplicated into the environment because reading it from the payload costs a
+// `jq` invocation to answer "where am I", and a script that must parse something
+// in order to find its own siblings has to find its parser first. The hook's cwd
+// is this same directory, so a rule needing only a sibling can use a relative
+// path; this exists for the rules that hand an ABSOLUTE path to something else —
+// `sr-file validate --schema` above all — where a relative path would resolve
+// against the callee's directory instead of the rule's.
+const GuardrailDirEnv = "SR_GUARDRAIL_DIR"
+
+// PluginRootEnv is the installation directory of the plugin the running
+// guardrail shipped inside, and is UNSET for a guardrail the project wrote.
+//
+// What it is for: a shipped rule's assets — a CUE schema, a prompt, a helper
+// script — travel with the plugin, not with the consumer's tree. A rule naming
+// `$SR_WORKSPACE/.sloprail/schemas/task.cue` works in the repo it was written in
+// and fails everywhere it is installed, because the consumer never had that
+// file. This names where the assets actually landed.
+//
+// Unset rather than empty, so `${SR_PLUGIN_ROOT:-$SR_WORKSPACE/.sloprail}`
+// selects the project's layout by the ordinary shell idiom — see pluginRootEnv,
+// which records what a set-but-empty value would break and what the unset one
+// leaves open.
+//
+// Deliberately NOT Claude Code's CLAUDE_PLUGIN_ROOT. That variable is set only
+// for a hook the plugin itself registered, so a plugin shipping guardrails and
+// registering no hooks would never see it — discovery would become a property of
+// what happened to RUN rather than of what the project INSTALLED. The engine
+// resolves the installation from the project's settings instead, and this is
+// that answer handed on. See marketplace/plugins/sloprail's README, "Why
+// discovery is not done from here".
+const PluginRootEnv = "SR_PLUGIN_ROOT"
+
 // dataHome is the platform's directory for data a program keeps between runs.
 //
 // Deliberately outside the guarded project: state written into the tree would

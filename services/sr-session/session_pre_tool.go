@@ -916,7 +916,7 @@ func runHooks(d guardrail.Declaration, b guardrail.Binding, e event.Event, scope
 		// and that agent's own hooks. That inheritance across the exec is the
 		// entire mechanism: it is what lets the engine one level down know which
 		// rule it is running underneath.
-		c.Env = scope.env(d.Name)
+		c.Env = scope.env(d)
 		c.Stdin = strings.NewReader(string(payload))
 		c.Stdout = &stdout
 		c.Stderr = &stderr

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/sloprail/sloprail/internal/guardrail"
 )
 
 // hookScope is what a hook needs to find its own corner of the session's state:
@@ -64,17 +66,53 @@ type hookScope struct {
 // learns what is missing. The workspace is NOT — see workspaceEnv — and that
 // asymmetry is the whole reason it is built separately rather than appended
 // alongside the others. The transcript is a third case again: see transcriptEnv.
-func (s hookScope) env(guardrail string) []string {
+func (s hookScope) env(d guardrail.Declaration) []string {
 	env := append(os.Environ(),
-		GuardrailEnv+"="+guardrail,
+		GuardrailEnv+"="+d.Name,
 		SessionEnv+"="+s.SessionID,
 		// Which rules this process is running underneath. Inherited across the
 		// exec into a launched agent's own hooks, which is what lets the engine
 		// one level down decline to enforce the rule that launched it.
-		LaunchedByEnv+"="+appendLaunchedBy(os.Getenv, guardrail),
+		LaunchedByEnv+"="+appendLaunchedBy(os.Getenv, d.Name),
+		// Where this rule's own files are. Same value the payload carries as
+		// `guardrailDir`, and the same directory the hook's cwd is set to.
+		GuardrailDirEnv+"="+d.Dir,
 	)
 	env = append(env, s.workspaceEnv()...)
-	return append(env, s.transcriptEnv()...)
+	env = append(env, s.transcriptEnv()...)
+	return append(env, pluginRootEnv(d)...)
+}
+
+// pluginRootEnv is the plugin installation this rule shipped inside, or nothing
+// at all for a rule the project wrote.
+//
+// The empty case is UNSET rather than empty for the reason transcriptEnv is:
+// a set-but-empty value reads as a path in every shell idiom that does not test
+// for emptiness first, so `$SR_PLUGIN_ROOT/schemas/x.cue` would resolve to
+// `/schemas/x.cue` and the failure would name a file at the filesystem root
+// rather than the variable that was missing. Unset, the ordinary
+// `${SR_PLUGIN_ROOT:-$SR_WORKSPACE/.sloprail}` selects the project's own layout,
+// which is exactly what a rule developed in a project and later shipped needs.
+//
+// The inheritance this leaves open, stated rather than glossed: for a PLUGIN's
+// rule the engine's value is appended after os.Environ() and wins, as with the
+// other four. For a PROJECT's rule nothing is appended, so an SR_PLUGIN_ROOT
+// exported by an outer process survives — and a rule that reads it would take
+// assets from a plugin it does not belong to.
+//
+// Accepted, because the alternative is worse in the common case. Blanking it
+// (`SR_PLUGIN_ROOT=`) is what makes `${SR_PLUGIN_ROOT:-fallback}` stop selecting
+// the fallback: the parameter is SET, so the default never applies, and every
+// project rule using that idiom would resolve its schema against the filesystem
+// root. That breaks correct rules on every run; the inheritance breaks an
+// incorrect one only when a stale variable is exported, which is not a state the
+// engine produces — it sets this only for plugin rules, and the hook it sets it
+// for cannot leak it sideways to another rule's exec.
+func pluginRootEnv(d guardrail.Declaration) []string {
+	if d.Origin.Root == "" {
+		return nil
+	}
+	return []string{PluginRootEnv + "=" + d.Origin.Root}
 }
 
 // transcriptEnv is the record's path, or nothing at all.
