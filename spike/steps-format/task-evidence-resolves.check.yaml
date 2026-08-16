@@ -1,0 +1,41 @@
+# THE SIMPLE CASE — the one that decides whether steps are worth it.
+#
+# A judge-shaped rule gets shorter in any format that owns the model call; that
+# proves nothing. The question is whether a rule with NO model call pays for the
+# generality. This is that rule: a schema and a script, nothing else.
+#
+# Today: GUARDRAIL.md with 4 near-identical bindings (23 lines of frontmatter)
+# + check-task.sh (101 code lines). Of those 101, 43 are runtime this format
+# would take — fetching the bytes per event kind, the jq/schema pre-flight, the
+# sr-file call. The other 58 ARE the rule and do not move: whether a citation
+# resolves, whether the cited line exists, whether the entry is a real record.
+#
+# So the honest result on the simple case is a wash. That is the finding, not a
+# disappointment — see FINDINGS.md.
+
+version: "2026-08-16"
+check:
+  id: task-evidence-resolves
+  description: >
+    Every memories/tasks/<group>/<name>/TASK.md satisfies task.cue, and every
+    citation in its frontmatter points at bytes that are actually there.
+
+  matcher:
+    file: 'memories/tasks/(?P<group>[^/]+)/(?P<name>[^/]+)/TASK\.md'
+
+  # One task is one subject. Absent, the check would run once over every matched
+  # task together, and a refusal could not name which one is wrong.
+  group_by: [group, name]
+
+  steps:
+    - id: schema
+      type: schema
+      schema_file: ../../schemas/task.cue
+
+    # Only the questions CUE structurally cannot ask: does the path resolve, does
+    # the cited line exist, is the cited entry a real record. A schema sees a
+    # string matching a regex; it has no filesystem.
+    - id: citations
+      type: bash
+      script_file: check-citations.sh
+      inputs: [schema]

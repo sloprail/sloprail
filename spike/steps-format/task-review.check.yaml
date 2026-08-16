@@ -1,0 +1,69 @@
+# THE HARD CASE — a judge with a deterministic pre-flight.
+#
+# Today: GUARDRAIL.md (232 lines) + review-task.sh (420 lines). Of those 420,
+# roughly 30 are the rule. The rest is runtime, re-typed:
+#
+#   jq present, path present, guardrailDir present          ~25 lines
+#   read RUBRIC.md, strip comment lines, substitute vars     ~40
+#   source the sibling's citations.sh                        ~15
+#   expand cited ranges, bound them, announce truncation     ~50
+#   verdict tempfile that a model will not "tidy up"         ~10
+#   run the model: cd /tmp, timeout under hookTimeout,       ~35
+#     pin the model, empty hooks/mcp/plugins so it cannot recurse
+#   parse the verdict: strip fences, grep the JSON span,     ~30
+#     greedy-vs-narrow (each rule picks wrong differently)
+#   fail-open on machinery, fail-closed on the verdict       ~40
+#
+# Every one of those is the same in every judged rule, and each copy is free to
+# get it wrong differently. The measured case: this file's greedy `{.*}` is
+# correct because its verdict NESTS, while skill-quality's narrow `{[^{}]*}` is
+# correct because its verdict is FLAT — and skill-quality's first version had the
+# greedy one, which permitted a verdict that had flagged the file. Two rules, two
+# spellings, opposite safe directions, one of them shipped broken.
+#
+# In steps that decision is made once, by whoever owns `type: agent`.
+
+version: "2026-08-16"
+check:
+  id: task-review
+  description: >
+    A task whose status is in_review claims the work is finished and that its
+    evidence proves it. This reads the stated outcome, reads the cited
+    observations and artifacts, and asks whether the evidence substantiates the
+    claim.
+
+  matcher:
+    file: 'memories/tasks/(?P<group>[^/]+)/(?P<name>[^/]+)/TASK\.md'
+
+  group_by: [group, name]
+
+  steps:
+    # THE PRE-FLIGHT. Deterministic, and it runs before any model call — cheap
+    # gates expensive. It also produces what the judge is given: a citation that
+    # does not resolve leaves this rule with nothing to show, so this is not a
+    # duplicate of the sibling rule even when both are installed.
+    #
+    # Emits the cited LINES, not the files. A judge handed a 4000-line source
+    # file and asked whether 10-60 substantiates a claim reads the file and
+    # answers about the file.
+    - id: evidence
+      type: bash
+      script_file: expand-evidence.sh
+
+    # Nothing is re-judged while its inputs are unchanged. Today this does not
+    # exist here at all — the engine's own revalidation covers the file's bytes,
+    # but the CITED files can change under a task whose own bytes did not.
+    - id: cache
+      type: cache
+      inputs: [evidence]
+
+    - id: review
+      type: agent
+      inputs: [cache]
+      model: {provider: anthropic, name: claude-haiku-4-5-20251001}
+      messages:
+        - role: system
+          template_file: review/system.md
+        - role: user
+          template_file: review/user.j2
+      validate_file: validate-verdict.sh
