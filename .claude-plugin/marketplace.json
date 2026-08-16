@@ -15,6 +15,16 @@
         "name": "sloprail",
         "email": "nikita.sviridenko@voypost.com"
       }
+    },
+    {
+      "name": "sloprail-tasks",
+      "description": "Guardrails over a task file: its frontmatter satisfies a schema, its citations resolve to real transcript lines, its body stays the human's ask, and an in_review claim is judged against the evidence attached to it.",
+      "version": "0.0.1",
+      "source": "./marketplace/plugins/sloprail-tasks",
+      "author": {
+        "name": "sloprail",
+        "email": "nikita.sviridenko@voypost.com"
+      }
     }
   ]
 }
