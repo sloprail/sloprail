@@ -1,0 +1,3 @@
+match: "**/updates/**" or "**/branding/**"
+checks:
+  - judge: ./fact-lives-in-one-home.md.j2

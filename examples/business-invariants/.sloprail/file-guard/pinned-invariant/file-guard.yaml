@@ -1,0 +1,4 @@
+match: marker.kind == "invariant"
+checks:
+  - script: ./pin-still-matches-head.sh
+  - judge: ./code-upholds-invariant.md.j2
