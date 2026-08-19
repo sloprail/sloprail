@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# The actual depth check, run only while research-run is active. Three
-# things the raw unit names: real page count, an actual clone (not just a
-# README fetch), keywords logged as the agent went. Page count is read off
-# real gh CLI invocations (--limit/--paginate are explicit arguments the
-# agent had to type), not inferred from unrelated WebFetch/Read calls.
+# The actual depth check, run only while research-run is active — real page
+# count and an actual clone (not just a README fetch). Keyword coverage is
+# its own SEPARATE test (unit 10), not duplicated here — see check 3 below.
+# Page count is read off real gh CLI invocations (--limit/--paginate are
+# explicit arguments the agent had to type), not inferred from unrelated
+# WebFetch/Read calls.
 set -uo pipefail
 
 input="$(cat)"
@@ -54,18 +55,15 @@ if [ "${total_pages:-0}" -lt "$MIN_PAGES" ]; then
   block "gh CLI calls this run cover only $total_pages page(s) (via --limit/--paginate), below the minimum of $MIN_PAGES."
 fi
 
-# 3. Were keywords actually logged, not just claimed? The registry lives in
-# sr-session state under the sibling keyword-coverage-registry gate's own
-# name, if that guardrail is installed alongside this one — this only
-# confirms at least one keyword:<term>:<trajectory-id> entry exists for THIS
-# run; whether coverage is ENOUGH, and each term has its own gh search, is
-# that sibling gate's own separate test (unit 10's own words: "a SEPARATE
-# test from raw depth" — not duplicated here).
-logged="$(sr-session state list --owner keyword-coverage-registry 2>/dev/null | jq '[.[] | select(.key | startswith("keyword:"))] | length' 2>/dev/null || echo 0)"
-
-if [ "$logged" -eq 0 ]; then
-  block "No keywords were logged to the registry during this research run — depth claimed but not recorded."
-fi
+# 3. Keyword coverage itself is NOT re-checked here — it is a SEPARATE test
+# (unit 10's own words), owned entirely by the sibling keyword-coverage-
+# registry gate, which derives its table straight off the same kind of `gh`
+# invocations check 2 just read (review, PR #19 review 4974546461: an
+# earlier draft here read an agent-written sr-session state registry that
+# nothing actually enforced — dropped once the sibling gate stopped trusting
+# a write and started deriving coverage from real gh search calls instead).
+# Duplicating that derivation here would be the same check running twice for
+# no reason; install both gates together if a project wants both tests.
 
 # 4. Unit 11 (separate-agent-per-trajectory) folded in here rather than
 # kept as its own gate (his correction, 2026-08-19: "why not part of depth

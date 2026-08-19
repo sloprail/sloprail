@@ -15,8 +15,14 @@
 # shape unit 11 named ("убедиться в том, что каждая такая траектория была
 # отдельным агентом") — so the table is keyword × trajectory, not keyword ×
 # single pointer. The same keyword can legitimately appear under more than
-# one trajectory; completeness is checked per trajectory (every trajectory
-# this run spawned actually logged something), not just "table non-empty".
+# one trajectory.
+#
+# The table is DERIVED, not agent-written (review, PR #19 review 4974546461:
+# "who puts in keywords into registry?" — an earlier draft had the agent
+# call `sr-session state set` directly, an unenforced, unverifiable claim).
+# verify-registry-complete.sh builds it itself off real `gh search` / `gh
+# api search/... -f q=<term>` invocations across every trajectory this run
+# touched — there is no separate write step for an agent to skip or fake.
 on:
   - event: Stop
 checks:
