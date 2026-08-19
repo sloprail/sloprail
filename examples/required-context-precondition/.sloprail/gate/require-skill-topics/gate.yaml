@@ -1,11 +1,9 @@
 # Writing under memories/topics/ is blocked until document-topic was loaded
-# this session. No script: `require` is the whole rule. Two events, one match
-# each, because a topic file arrives as a create or an update — the same reason
-# a file-guard binds both.
+# this session. No checks: `require` is the whole rule. `PreFileWrite` is the
+# alias the engine expands to PreFileCreate + PreFileUpdate — so the same match
+# is written once, not duplicated across two triggers.
 on:
-  - event: PreFileCreate
-    match: path startsWith "memories/topics/"
-  - event: PreFileUpdate
+  - event: PreFileWrite
     match: path startsWith "memories/topics/"
 require:
   - skill: document-topic

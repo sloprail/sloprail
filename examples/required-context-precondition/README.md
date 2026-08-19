@@ -41,9 +41,11 @@ the ~115 lines a consumer never writes.
 
 Two gates, one per guarded prefix:
 
-- **`gate/require-skill-topics/gate.yaml`** — `on` PreFileCreate/PreFileUpdate
-  under `memories/topics/`, `require: [{skill: document-topic}]`. No checks —
-  `require` is the whole rule.
+- **`gate/require-skill-topics/gate.yaml`** — `on: [{event: PreFileWrite,
+  match: path startsWith "memories/topics/"}]`, `require: [{skill:
+  document-topic}]`. No checks — `require` is the whole rule. `PreFileWrite` is
+  the alias the engine expands to PreFileCreate + PreFileUpdate, so the match
+  is written once rather than duplicated across two triggers.
 - **`gate/require-skill-decisions/gate.yaml`** — same shape for
   `memories/decisions/` → `document-strategy`.
 

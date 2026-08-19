@@ -1,12 +1,10 @@
 # Writing under memories/decisions/ is blocked until document-strategy was
 # loaded. A separate gate rather than a second entry in the topics one, because
 # `require` binds to the whole gate — which prefix demands which skill is the
-# structure, not a lookup a single gate's checks would carry. Two gates instead
-# of one script with an internal prefix→skill table.
+# structure, not a lookup a single gate's checks would carry. `PreFileWrite`
+# expands to create + update.
 on:
-  - event: PreFileCreate
-    match: path startsWith "memories/decisions/"
-  - event: PreFileUpdate
+  - event: PreFileWrite
     match: path startsWith "memories/decisions/"
 require:
   - skill: document-strategy
