@@ -1,0 +1,12 @@
+# The inverted "don't stop until target met" verdict lives HERE, not in the
+# context (reversed 2026-08-19, decision slice 7: a context's exit only
+# tracks active/inactive, it does not refuse a Stop — a gate does).
+# depends_on the goal-tracking context via require: this gate only runs once
+# the context is known active this cycle, so it never checks a goal that
+# was never entered.
+on:
+  - event: Stop
+require:
+  - context: goal-tracking
+checks:
+  - script: ./run-verify.sh

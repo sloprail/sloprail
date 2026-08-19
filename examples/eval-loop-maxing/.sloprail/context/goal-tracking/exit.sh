@@ -1,35 +1,19 @@
 #!/usr/bin/env bash
-# exit: is THIS context's goal met? Delegates to the goal's own verify.sh
-# rather than re-implementing the check here — the goal is the thing that
-# knows how to verify itself; this context is only the wiring that calls it
-# on a Stop. This is the inverted verdict unit 14 needs: while unmet, the
-# Stop is refused and the loop must keep going.
+# exit: is this context done? Thin on purpose (2026-08-19, reversing the
+# original build) — this script does NOT run verify itself and does NOT
+# refuse the Stop; it only decides whether the context is still active. It
+# reads the paired gate's own verdict from `gates`, the map symmetric to
+# `context` — the gate ran (or didn't) this same cycle and already decided
+# pass/fail; this just reflects that into active/inactive.
 set -uo pipefail
 
 input="$(cat)"
-goal_name="$(printf '%s' "$input" | jq -r '.currentContext.payload.goal // ""')"
+status="$(printf '%s' "$input" | jq -r '.event.gates["goal-verify"].status // "fail"' 2>/dev/null)"
 
-if [ -z "$goal_name" ]; then
+if [ "$status" = "pass" ]; then
+  # Target met — this context deactivates.
   exit 0
 fi
 
-goal_dir="${SR_WORKSPACE:-.}/.sloprail/goal/$goal_name"
-script_name="$(grep '^script:' "$goal_dir/goal.yaml" | awk '{print $2}')"
-verify_script="$goal_dir/${script_name:-verify.sh}"
-
-if [ ! -x "$verify_script" ]; then
-  cat <<EOF
-{"decision":"block","reason":"goal-tracking is active for '$goal_name' but its verify.sh is missing or not executable at $verify_script."}
-EOF
-  exit 1
-fi
-
-if "$verify_script"; then
-  # Target met — this context deactivates, the Stop proceeds.
-  exit 0
-fi
-
-cat <<EOF
-{"decision":"block","reason":"Goal '$goal_name' target not yet met. Do not stop: keep iterating until verify.sh passes."}
-EOF
+# Not met (or the gate hasn't run yet this cycle) — stay active.
 exit 1

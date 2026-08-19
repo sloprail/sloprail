@@ -4,6 +4,10 @@
 # goal's `enabled` flag only exists once the write has SETTLED (Pre cannot
 # always predict the write at all — see FileGuard.preventive), so this reads
 # the file's final content rather than racing a Pre that may never fire.
+#
+# This context does NOT block the Stop (slice 7 reversal) — it only tracks
+# active/inactive. ../../gate/goal-verify/ is the thing that actually
+# refuses a Stop; this context's own exit just reads that gate's verdict.
 on:
   - event: PostFileWrite
     match: path startsWith "goal/" and path endsWith "goal.yaml"
