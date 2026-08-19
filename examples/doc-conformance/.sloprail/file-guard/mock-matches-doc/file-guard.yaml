@@ -1,0 +1,7 @@
+# A mock/emulator must follow the SAME contracts as the real thing. Code is
+# annotated with an sr:conforms-to-doc marker naming the real doc — same
+# marker grammar as unit 03, different kind. Judge reads the linked doc and
+# verifies the marked code actually conforms to it.
+match: marker.kind == "conforms-to-doc"
+checks:
+  - judge: ./code-conforms-to-linked-doc.md.j2

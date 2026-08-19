@@ -1,0 +1,8 @@
+# require the context so this only runs once we know which people/*.md
+# file actually changed this cycle.
+on:
+  - event: Stop
+require:
+  - context: people-linked
+checks:
+  - script: ./verify-changed-file-linked.sh

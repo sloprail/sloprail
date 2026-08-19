@@ -1,0 +1,9 @@
+# A separate test from raw depth (his own words in the unit): were enough
+# keywords covered, each one traceable to a trajectory? The registry table
+# IS sr-session state — this gate's own name is its SR_GUARDRAIL, so every
+# keyword logged during the turn (by whatever script logs them) lives in
+# `sr-session state list` under this namespace, cross-referenced here.
+on:
+  - event: Stop
+checks:
+  - script: ./verify-registry-complete.sh

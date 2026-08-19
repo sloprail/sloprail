@@ -1,0 +1,15 @@
+# Not a full-repo scan every cycle — incremental. One `enter`, fired on
+# EVERY people/*.md touch this cycle (2026-08-19: reverted from a separate
+# enter/watch split once every real context built turned out to declare the
+# same `on` for both — this file was the one example, and it just repeated
+# the trigger list twice for no gain). `enter` sees `currentContext.payload`
+# each time and grows it, rather than a second phase overwriting nothing.
+# Post, not Pre (his call: "we have to use post because pre doesn't work
+# always").
+on:
+  - event: PostFileCreate
+    match: path startsWith "people/" and path endsWith ".md"
+  - event: PostFileDelete
+    match: path startsWith "people/" and path endsWith ".md"
+enter: ./enter.sh
+exit: ./exit.sh

@@ -1,0 +1,8 @@
+# Only runs the actual check once research-run is known active this cycle —
+# depends_on, same pattern as goal-verify (eval-loop-maxing).
+on:
+  - event: Stop
+require:
+  - context: research-run
+checks:
+  - script: ./verify-depth.sh

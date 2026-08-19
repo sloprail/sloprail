@@ -1,0 +1,9 @@
+# Depth-checking only makes sense if this branch of the trajectory was a
+# research run in the first place. Wakes on PreToolUse (cheap, the
+# trajectory read is what actually decides); enter looks for a #research
+# declaration in the branch's own first message. A context's exit is always
+# checked on a Stop.
+on:
+  - event: PreToolUse
+enter: ./enter.sh
+exit: ./exit.sh
