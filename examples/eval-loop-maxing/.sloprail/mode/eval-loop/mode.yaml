@@ -1,0 +1,8 @@
+# PreToolUse wakes `enter` so a declared loop is spotted. No exit event is
+# listed — a mode's `exit` is always checked on a Stop; here it refuses a
+# premature stop while the metric target is unmet. No per-event `match`: a
+# loop is recognised from the trajectory, not one event's fields.
+on:
+  - event: PreToolUse
+enter: ./enter.sh
+exit: ./exit.sh
