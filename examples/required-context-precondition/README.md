@@ -60,3 +60,25 @@ Both gates bind pre-file events. A gate's whole job is to block before the
 action lands — a Post event is too late, the file would already be written by
 an agent that had not read how to write it. This is the pre-only scope that
 defines the nature.
+
+## structure.yaml: the coarser boundary the live hook never had
+
+The unit's own LIVE PROTOTYPE, `enforce-structure.sh`, hard-coded exactly two
+prefixes (`memories/topics/`, `memories/decisions/`) and said nothing about
+every other path — writing anywhere else was simply never checked. The
+structure-gate primitive (decision 20260818_no-slop-primitives, #08) closes
+that: `file-guard/structure.yaml` is a single, tree-wide allowlist, deny by
+default:
+
+```yaml
+paths:
+  - "memories/**"
+```
+
+Composes with, does not replace, the two gates above: a path being inside
+`memories/**` only means the write is *allowed at all* — it can still be
+blocked by `require-skill-topics`/`require-skill-decisions` firing on it for
+lack of a loaded skill. `structure.yaml` answers "is writing here permitted",
+the gates answer "is the required context loaded first"; a write under, say,
+`src/` is refused by `structure.yaml` alone, before either gate's `require`
+is ever consulted.
