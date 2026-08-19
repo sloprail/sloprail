@@ -1,9 +1,13 @@
-# Depth-checking only makes sense if this branch of the trajectory was a
-# research run in the first place. Wakes on PreToolUse (cheap, the
-# trajectory read is what actually decides); enter looks for a #research
-# declaration in the branch's own first message. A context's exit is always
-# checked on a Stop.
+# Depth-checking only makes sense if this branch of the trajectory was
+# declared as research in the first place. Wakes directly on PostTagWrite
+# (his correction, 2026-08-19: "tag matching should be a new event type —
+# so that we can hook into it") instead of an enter script grepping the
+# trajectory for #research — the engine has already found the tags by the
+# time this fires. `match` filters for #research declaratively (his
+# follow-up: why not `match` here too, same as file path filtering) — enter
+# is not even called on a turn that tagged something else.
 on:
-  - event: PreToolUse
+  - event: PostTagWrite
+    match: any(tags, .label == "research")
 enter: ./enter.sh
 exit: ./exit.sh

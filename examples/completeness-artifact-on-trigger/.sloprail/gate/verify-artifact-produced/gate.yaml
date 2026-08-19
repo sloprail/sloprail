@@ -1,0 +1,11 @@
+# Live prototype in the raw text: the memory hooks' hashtag rule. depends_on
+# the tag-declared context — this only runs once we know a tag or an
+# artifact touch happened this cycle, reading what it accumulated rather
+# than re-deriving it.
+on:
+  - event: Stop
+    match: context["tag-declared"].active
+require:
+  - context: tag-declared
+checks:
+  - script: ./verify-tag-and-artifact.sh

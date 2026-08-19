@@ -64,4 +64,35 @@ if [ "$logged" -eq 0 ]; then
   block "No keywords were logged to the registry during this research run — depth claimed but not recorded."
 fi
 
+# 4. Unit 11 (separate-agent-per-trajectory) folded in here rather than
+# kept as its own gate (his correction, 2026-08-19: "why not part of depth
+# check? in general it's only applicable f/ subagent trajectories:
+# basically happened in subagent AND depth is xyz"). Only meaningful when
+# this research run happened INSIDE a subagent trajectory — a main-line
+# research turn has no sibling trajectories to isolate from. Secondary per
+# the unit's own author ("не так критичен").
+#
+# TODO(sr-session query): `--select meta` / `--select sibling_trajectories`
+# below are not real selectors yet — sub-agent trajectory identification and
+# sibling enumeration are unresolved (his own open question on enter.sh:
+# "unclear that it's a subagent traj" — part of the deferred
+# trajectory-processing action item, decision 20260818_no-slop-primitives
+# Thread 1). This block is the shape the check will take once that lands,
+# not working code today.
+is_subagent="$(sr-session query \
+  --transcript "$transcript_path" \
+  --select meta \
+  | jq -r '.isSubagent // false' 2>/dev/null)"
+
+if [ "$is_subagent" = "true" ]; then
+  sibling_count="$(sr-session query \
+    --transcript "$transcript_path" \
+    --select sibling_trajectories \
+    | jq 'length' 2>/dev/null || echo 0)"
+
+  if [ "${sibling_count:-0}" -gt 0 ]; then
+    block "This research ran in a subagent trajectory alongside ${sibling_count} sibling trajectories — each research trajectory must run as its own separate agent, not share one with others."
+  fi
+fi
+
 exit 0

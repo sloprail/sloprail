@@ -1,7 +1,0 @@
-# Secondary, per his own words ("не так критичен"), but named as a
-# use-case. On Stop, checks that each research trajectory ran as a separate
-# agent — session-query over the trajectory, nothing new needed.
-on:
-  - event: Stop
-checks:
-  - script: ./verify-agent-isolation.sh

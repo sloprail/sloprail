@@ -1,9 +1,0 @@
-# Live prototype in the raw text: the memory hooks' hashtag rule. On Stop,
-# the turn must declare a tag (#update/#decision/#skip) AND, if it declared
-# one that isn't #skip, the artifact that tag demands must actually exist —
-# absence is the violation, not malformed content (that's conformance,
-# a different rule type).
-on:
-  - event: Stop
-checks:
-  - script: ./verify-tag-and-artifact.sh
