@@ -2,6 +2,10 @@
 # prepare: pull the specific human message ASK.md's reference names, out of
 # the session record, so the judge template never has to parse a transcript
 # itself. Receives the same CheckPayload the script above did.
+#
+# Output must nest under additionalContext (2026-08-19, his correction, PR
+# #2 review 4974594141: only that one key is read from prepare's stdout,
+# merged alongside the standard payload — never in place of it).
 set -uo pipefail
 
 input="$(cat)"
@@ -36,4 +40,4 @@ esac
 # A reference that does not resolve is reported as such, not silently empty —
 # the judge template distinguishes "no message found" from "message is empty".
 jq -n --arg m "$message" --arg r "$ref" \
-  '{referenced_message: $m, reference: $r, resolved: ($m != "")}'
+  '{additionalContext: {referenced_message: $m, reference: $r, resolved: ($m != "")}}'

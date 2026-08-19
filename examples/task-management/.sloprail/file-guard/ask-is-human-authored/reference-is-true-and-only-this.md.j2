@@ -11,17 +11,17 @@ is the two questions a string match cannot answer.
 {{ event.newContent }}
 ```
 
-- The human message its reference (`{{ reference }}`) names, resolved by
-  `prepare` from `transcriptPath` rather than parsed here:
+- The human message its reference (`{{ additionalContext.reference }}`)
+  names, resolved by `prepare` from `transcriptPath` rather than parsed here:
 
-{% if resolved %}
+{% if additionalContext.resolved %}
 ```
-{{ referenced_message }}
+{{ additionalContext.referenced_message }}
 ```
 {% else %}
-**The reference did not resolve** — `{{ reference }}` names no message this
-session's record holds. Treat this as a fail: a reference that cannot be
-followed is not a reference.
+**The reference did not resolve** — `{{ additionalContext.reference }}`
+names no message this session's record holds. Treat this as a fail: a
+reference that cannot be followed is not a reference.
 {% endif %}
 
 ## Pass

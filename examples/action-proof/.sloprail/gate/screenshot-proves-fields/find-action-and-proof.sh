@@ -5,6 +5,14 @@
 # facts it needs so the .md.j2 never parses a transcript itself.
 #
 # Receives GateCheckPayload {event: Stop, transcriptPath}.
+#
+# Output must nest under additionalContext (2026-08-19, his correction, PR
+# #2 review 4974594141: "this prepare script can return an object with a
+# key named additionalContext, and everything inside this object will be
+# added to the payload under the key additionalContext. So only this key is
+# supported.") — the template then reads {{ additionalContext.action }}
+# etc, alongside the standard payload fields (event, transcriptPath,
+# context), never in place of them.
 set -uo pipefail
 
 input="$(cat)"
@@ -21,7 +29,7 @@ action="$(sr-session query \
 
 if [ "$action" = "null" ]; then
   # No auditable action this turn — nothing to demand proof of.
-  jq -n '{action_taken: false}'
+  jq -n '{additionalContext: {action_taken: false}}'
   exit 0
 fi
 
@@ -41,4 +49,4 @@ jq -n \
   --arg action "$action_name" \
   --argjson action_input "$action_input" \
   --argjson proof "${proof:-null}" \
-  '{action_taken: $taken, action: $action, action_input: $action_input, proof: $proof}'
+  '{additionalContext: {action_taken: $taken, action: $action, action_input: $action_input, proof: $proof}}'

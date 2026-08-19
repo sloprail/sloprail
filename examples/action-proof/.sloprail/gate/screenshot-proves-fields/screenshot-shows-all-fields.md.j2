@@ -1,4 +1,4 @@
-{% if not action_taken %}
+{% if not additionalContext.action_taken %}
 # No auditable action this turn
 
 No form fill or download happened, so there is nothing to prove. Pass.
@@ -11,18 +11,18 @@ whether the agent *says* it did the action.
 
 ## The action
 
-- Tool: `{{ action }}`
+- Tool: `{{ additionalContext.action }}`
 - Inputs the agent supplied:
 
 ```json
-{{ action_input }}
+{{ additionalContext.action_input }}
 ```
 
 ## The proof supplied
 
-{% if proof %}
+{% if additionalContext.proof %}
 ```
-{{ proof }}
+{{ additionalContext.proof }}
 ```
 {% else %}
 **No proof artifact was found.** The action happened but no screenshot

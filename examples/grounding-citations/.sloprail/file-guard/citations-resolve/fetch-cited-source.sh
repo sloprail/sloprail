@@ -2,13 +2,17 @@
 # prepare: the script already confirmed every citation link resolves — pull
 # the actual cited text out of each source here, once, so the judge template
 # never has to parse a citation link itself.
+#
+# Output must nest under additionalContext (2026-08-19, his correction, PR
+# #2 review 4974594141: only that one key is read from prepare's stdout,
+# merged alongside the standard payload — never in place of it).
 set -uo pipefail
 
 input="$(cat)"
 new="$(printf '%s' "$input" | jq -r 'if .event | has("newContent") then .event.newContent else null end')"
 
 if [ "$new" = "null" ] || [ -z "$new" ]; then
-  jq -n '{citations: []}'
+  jq -n '{additionalContext: {citations: []}}'
   exit 0
 fi
 
@@ -31,4 +35,4 @@ while IFS= read -r m; do
     '. + [{quote: $q, reference: $r, source_text: $s}]')"
 done <<< "$matches"
 
-jq -n --argjson c "$pairs" '{citations: $c}'
+jq -n --argjson c "$pairs" '{additionalContext: {citations: $c}}'
