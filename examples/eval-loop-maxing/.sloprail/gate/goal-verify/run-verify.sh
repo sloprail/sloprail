@@ -10,11 +10,12 @@
 set -uo pipefail
 
 input="$(cat)"
-goal_name="$(printf '%s' "$input" | jq -r '.event.context["goal-tracking"].payload.goal // empty' 2>/dev/null)"
+goal_name="$(printf '%s' "$input" | jq -r '.context["goal-tracking"].payload.goal // empty' 2>/dev/null)"
 
-# GateCheckPayload's own event carries the match-scope context map when this
-# gate's own match/require made it relevant — reading it here rather than
-# re-deriving which goal is active.
+# GateCheckPayload carries `context` at top level (2026-08-19 parity fix —
+# was read as .event.context here, which was never the payload's shape;
+# GateCheckPayload didn't even declare the field until that fix) — reading
+# it here rather than re-deriving which goal is active.
 if [ -z "$goal_name" ]; then
   # goal-tracking is not active — nothing to verify, permit the Stop.
   exit 0
