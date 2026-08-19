@@ -1,0 +1,11 @@
+# On Stop, if the turn filled a form or downloaded an invoice, it must carry
+# proof — a screenshot showing the fields, so an audit can later confirm they
+# were filled correctly. The gate wakes on Stop (the moment "did this turn do
+# the action, and did it prove it?"), `prepare` pulls the relevant tool output
+# out of the trajectory, and the judge rules on whether the proof is real and
+# complete.
+on:
+  - event: Stop
+checks:
+  - prepare: ./find-action-and-proof.sh
+    judge: ./screenshot-shows-all-fields.md.j2
