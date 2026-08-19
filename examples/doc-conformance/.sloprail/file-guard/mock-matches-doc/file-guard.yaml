@@ -1,7 +1,11 @@
 # A mock/emulator must follow the SAME contracts as the real thing. Code is
-# annotated with an sr:conforms-to-doc marker naming the real doc — same
-# marker grammar as unit 03, different kind. Judge reads the linked doc and
-# verifies the marked code actually conforms to it.
+# annotated with an sr:conforms-to-doc marker naming the real doc's URL — same
+# marker grammar as unit 03, different kind. The marker's fqn is a REMOTE URL,
+# not a local path (his correction, 2026-08-19: "that link to a remote source
+# is a URL, so it has to be put into the prompt as it is so that the agent who
+# will be the judge... can go and visit this URL and double-check") — so no
+# `prepare` fetches it ahead of time; the judge template gets the URL itself
+# and visits it directly, the same way a person checking this by hand would.
 match: marker.kind == "conforms-to-doc"
 checks:
   - judge: ./code-conforms-to-linked-doc.md.j2

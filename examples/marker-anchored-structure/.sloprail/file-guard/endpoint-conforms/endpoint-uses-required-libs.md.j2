@@ -1,0 +1,38 @@
+# Does this endpoint use the required libraries?
+
+The script already confirmed the file name follows the endpoint pattern and
+logged this endpoint into the session's declared set. Your job is the
+question a script cannot answer: does the code AT this marker actually use
+the libraries, ORM, and naming conventions this project requires of an
+endpoint?
+
+## Inputs
+
+- The marker's `fqn`, naming this endpoint.
+- The file carrying the marker:
+
+```
+{{ event.newContent or event.oldContent }}
+```
+
+No `prepare` step feeds this template — nothing here needs a transcript
+lookup, so it renders straight from `CheckPayload`'s own `event`.
+
+## Pass
+
+- The endpoint is built with the project's required HTTP framework, not a
+  substitute.
+- Any data access goes through the required ORM, not raw queries or a
+  different library.
+- Field and route naming follow the project's established convention (the
+  same casing and vocabulary other endpoints already use).
+
+## Fail
+
+- The endpoint imports or calls a competing library where the required one
+  belongs (e.g. a raw SQL client where the ORM is mandated).
+- Naming diverges from the convention other endpoints in this project follow.
+- The marker sits on code that is not actually an HTTP handler — a marker
+  placed hopefully rather than accurately.
+
+Name the specific line and the exact requirement it fails.
