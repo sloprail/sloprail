@@ -1,36 +1,64 @@
 #!/usr/bin/env bash
 # The residue pattern (unit 15's own words: same entity as deterministic
 # refactoring, "I don't know how to semantically name it"). Collect every
-# user message this turn, subtract those a task file references, refuse if
-# anything is left.
+# user message this turn, subtract those a task file references AND those
+# the agent has explicitly marked as needing no task, refuse if anything is
+# left — "either linked to tasks, or explicitly linked to nothing, but they
+# have to be somewhere."
+#
+# The "explicitly linked to nothing" half has no tag or context of its own
+# (his correction, 2026-08-19, after an earlier draft invented one: "let the
+# agent just use that sr session state then to set these messages") — the
+# agent itself calls `sr-session state set skip:<ref> <reason>` when a
+# message needs no task, the same registry pattern used everywhere else in
+# this corpus, just written directly rather than through a context's enter.
 set -uo pipefail
 
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
-all_messages="$(sr-session query \
+# Every user message this turn, addressed as /abs/path:start-end — same
+# shape unit 05's grounding citations settled on (2026-08-19: absolute path,
+# not a bare id, because a session can span multiple jsonl files and a bare
+# id says nothing about WHICH transcript it lives in).
+#
+# TODO(sr-session query / a message-locator CLI): resolving a message id to
+# its jsonl line is not yet a real command (his earlier ask, unit 05's
+# discussion: a CLI that finds the jsonl line for a given user message).
+# `--select user_message --where "id == ..."` returns the message but not
+# its line; this reads `.line` speculatively, pending that command existing.
+all_message_refs="$(sr-session query \
   --transcript "$transcript_path" \
   --select user_message \
-  | jq -r '.[] | .id')"
+  | jq -r --arg t "$transcript_path" '.[] | select(.line) | "\($t):\(.line)-\(.line)"')"
 
-if [ -z "$all_messages" ]; then
+if [ -z "$all_message_refs" ]; then
   exit 0
 fi
 
-# Every message a task file's ASK.md references (grep across the tree —
-# this gate's script is an arbitrary executable, not limited to one file).
-referenced="$(grep -rohE 'message_id=[A-Za-z0-9_-]+' tasks/ 2>/dev/null | sed 's/message_id=//' | sort -u)"
+# Every message a task file's ASK.md references — same /abs/path:start-end
+# shape.
+referenced="$(grep -rohE '\(/[^)]+:[0-9]+-[0-9]+\)' tasks/ 2>/dev/null | tr -d '()' | sort -u)"
+
+# Every message the agent has explicitly marked as needing no task — logged
+# directly via `sr-session state set skip:<ref> <reason>`, this gate's own
+# name (verify-intake-complete) is its SR_GUARDRAIL so `state list` reads
+# back everything logged under it this session.
+skipped="$(sr-session state list 2>/dev/null \
+  | jq -r '[.[] | select(.key | startswith("skip:"))] | .[].key | ltrimstr("skip:")')"
+
+accounted_for="$(printf '%s\n%s' "$referenced" "$skipped" | sed '/^$/d' | sort -u)"
 
 residue=""
-while IFS= read -r id; do
-  [ -z "$id" ] && continue
-  if ! grep -qx "$id" <<< "$referenced"; then
-    residue="$residue $id"
+while IFS= read -r ref; do
+  [ -z "$ref" ] && continue
+  if ! grep -qx "$ref" <<< "$accounted_for"; then
+    residue="$residue $ref"
   fi
-done <<< "$all_messages"
+done <<< "$all_message_refs"
 
 if [ -n "$residue" ]; then
-  echo "These user messages are not mapped to any task, and nothing marked them as intentionally skipped:$residue" >&2
+  echo "These user messages are not mapped to any task, and none was marked skip via 'sr-session state set skip:<ref> <reason>':$residue" >&2
   exit 1
 fi
 
