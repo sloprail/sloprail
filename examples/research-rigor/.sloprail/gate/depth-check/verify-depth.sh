@@ -56,9 +56,12 @@ fi
 
 # 3. Were keywords actually logged, not just claimed? The registry lives in
 # sr-session state under the sibling keyword-coverage-registry gate's own
-# name, if that guardrail is installed alongside this one; here we only
-# confirm at least one entry exists for THIS run.
-logged="$(sr-session state list --owner keyword-coverage-registry 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+# name, if that guardrail is installed alongside this one — this only
+# confirms at least one keyword:<term>:<trajectory-id> entry exists for THIS
+# run; whether coverage is ENOUGH, and each term has its own gh search, is
+# that sibling gate's own separate test (unit 10's own words: "a SEPARATE
+# test from raw depth" — not duplicated here).
+logged="$(sr-session state list --owner keyword-coverage-registry 2>/dev/null | jq '[.[] | select(.key | startswith("keyword:"))] | length' 2>/dev/null || echo 0)"
 
 if [ "$logged" -eq 0 ]; then
   block "No keywords were logged to the registry during this research run — depth claimed but not recorded."
