@@ -1,0 +1,11 @@
+# The general pairing every goal needs (decision 20260818_no-slop-primitives,
+# slice 6): the engine does not read goal.yaml on its own and spin up a
+# context — this context IS the wiring. PostFileWrite, not PreFileWrite: a
+# goal's `enabled` flag only exists once the write has SETTLED (Pre cannot
+# always predict the write at all — see FileGuard.preventive), so this reads
+# the file's final content rather than racing a Pre that may never fire.
+on:
+  - event: PostFileWrite
+    match: path startsWith "goal/" and path endsWith "goal.yaml"
+enter: ./enter.sh
+exit: ./exit.sh

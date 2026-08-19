@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# exit: is the declared refactor done? Consulted on a Stop while the mode is
-# active. Done (exit 0) lets the mode deactivate and the Stop proceed; not
-# done (exit 1) keeps the mode active and refuses the Stop, so the agent
-# cannot end a turn having declared a refactor it never completed.
+# exit: is the declared refactor done? Consulted on a Stop while the context
+# is active. Done (exit 0) lets the context deactivate and the Stop proceed;
+# not done (exit 1) keeps it active and refuses the Stop, so the agent cannot
+# end a turn having declared a refactor it never completed.
 #
-# Receives ModeExitPayload on stdin — the Stop event, the transcriptPath, and
-# `currentContext`: this mode's own context, the object enter() produced.
+# Receives ContextExitPayload on stdin — the Stop event, the transcriptPath,
+# and `currentContext`: this context's own {active, payload} entry, where
+# payload is the object enter() produced.
 set -uo pipefail
 
 input="$(cat)"
-declared="$(printf '%s' "$input" | jq -r '.currentContext.declared_markers[]?' 2>/dev/null)"
+declared="$(printf '%s' "$input" | jq -r '.currentContext.payload.declared_markers[]?' 2>/dev/null)"
 
 if [ -z "$declared" ]; then
   # Nothing was declared to reconcile against — treat as done rather than
-  # trapping the agent in a mode with no exit.
+  # trapping the agent in a context with no exit.
   exit 0
 fi
 

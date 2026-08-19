@@ -1,9 +1,9 @@
-# This guard is relevant ONLY while the refactoring mode is active — that is
-# the guard→mode link, expressed as a variable (refactoring) in the match
-# expression, not a flat active_in. A file carrying an sr:moved-from marker is
-# reconciled against its origin, but only inside a declared refactor: the same
-# marker outside the mode is not this guard's business.
-match: refactoring and marker.kind == "moved-from"
+# This guard is relevant ONLY while the refactoring context is active — that
+# is the guard→context link, expressed as a variable (refactoring) in the
+# match expression, not a flat active_in. A file carrying an sr:moved-from
+# marker is reconciled against its origin, but only inside a declared
+# refactor: the same marker outside the context is not this guard's business.
+match: refactoring.active and marker.kind == "moved-from"
 preventive: true
 checks:
   - script: ./reconciles-against-origin.sh

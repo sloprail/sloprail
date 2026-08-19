@@ -34,7 +34,7 @@ fi
 # actually appeared and its content reconciles.
 scope="$(printf '%s' "$decl" | grep -oE 'scope=[^ ]+' | head -1 | cut -d= -f2)"
 
-# Activate: this JSON becomes context[refactoring], readable by any guard
-# whose match expression names this mode.
+# Activate: this JSON becomes context[refactoring].payload, readable by any
+# guard whose match expression names this context.
 jq -n --arg scope "$scope" \
   '{declared_markers: ($scope | split(",")), declared_at: "trajectory"}'

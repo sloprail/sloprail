@@ -4,8 +4,8 @@
 # whitespace) — the reconciliation unit 12 describes. Receives CheckPayload;
 # the marker's fqn carries <path>@<sha>:<start>-<end>.
 #
-# This only runs inside the refactoring mode (the match saw to that), so it can
-# assume it is looking at a declared move, not an incidental marker.
+# This only runs inside the refactoring context (the match saw to that), so it
+# can assume it is looking at a declared move, not an incidental marker.
 set -uo pipefail
 
 input="$(cat)"

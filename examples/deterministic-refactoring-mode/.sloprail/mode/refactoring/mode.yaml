@@ -1,8 +1,0 @@
-# PreToolUse wakes `enter` so a declared refactor is spotted before a write.
-# No exit event is listed — a mode's `exit` is always checked on a Stop; here
-# it refuses ending a turn with the refactor unfinished. No per-event `match`:
-# recognising a refactor needs the trajectory, which is `enter`'s job.
-on:
-  - event: PreToolUse
-enter: ./enter.sh
-exit: ./exit.sh

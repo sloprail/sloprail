@@ -1,0 +1,10 @@
+# Separate from goal-tracking on purpose (his, 2026-08-19): this is about
+# every evaluation run being documented, not about any one target. It can
+# open and close many times a session — each eval invocation re-enters it,
+# and exit checks completeness across ALL runs the trajectory has produced
+# so far, not just the one that just ran.
+on:
+  - event: PreCommandInvoke
+    match: any(invocations, .bin == "eval")
+enter: ./enter.sh
+exit: ./exit.sh
