@@ -4,17 +4,18 @@
 # artifact files actually landed. #skip needs no artifact; any other
 # declared tag must have a matching artifact entry, or absence is the
 # violation this rule exists to catch.
+#
+# Does NOT re-check whether a tag was declared at all — this gate's own
+# `require: [{context: tag-declared}]` already guarantees the context
+# activated (i.e. some tag showed up) before this script ever runs; the
+# sibling tag-required gate is what catches the no-tag-at-all case
+# (chicken-and-egg: tag-declared cannot activate on an absent tag).
 set -uo pipefail
 
 entries="$(sr-session state list --owner tag-declared 2>/dev/null)"
 
 tags="$(printf '%s' "$entries" | jq -r '[.[] | select(.key | startswith("tag:"))] | .[].key | ltrimstr("tag:")')"
 artifacts="$(printf '%s' "$entries" | jq -r '[.[] | select(.key | startswith("artifact:"))] | length')"
-
-if [ -z "$tags" ]; then
-  echo "This turn declared no tag (#update, #decision, or #skip) — declare one and produce the artifact it demands." >&2
-  exit 1
-fi
 
 if echo "$tags" | grep -qx "skip"; then
   exit 0

@@ -1,0 +1,10 @@
+# Unconditional, no `require` on tag-declared — deliberately (his catch,
+# 2026-08-19, "chicken and egg"): tag-declared only activates once a tag
+# has actually been written, so a turn that wrote NO tag at all would leave
+# that context forever inactive, and any gate depending on it would never
+# fire to say so. This gate exists precisely to catch that case — it reads
+# the trajectory itself, not the context's accumulated state.
+on:
+  - event: Stop
+checks:
+  - script: ./verify-tag-present.sh
