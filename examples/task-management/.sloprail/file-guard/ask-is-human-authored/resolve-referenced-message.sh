@@ -27,7 +27,14 @@ case "$ref" in
           def msgtext:
             if type == "string" then .
             elif type == "array" then [.[] | select(.type? == "text") | .text] | join("")
-            elif type == "object" then [(.content // [])[] | select(.type? == "text") | .text] | join("")
+            elif type == "object" then
+              # .content is EITHER a bare string (a plain typed message) OR a
+              # block list. Guard the string case: (.content // [])[] over a
+              # string is a jq "Cannot iterate over string" fatal, which would
+              # make every message_id reference fail to resolve.
+              (.content // "") as $c
+              | if ($c | type) == "string" then $c
+                else [$c[] | select(.type? == "text") | .text] | join("") end
             else "" end;
           [ .[] | select(.type == "user" and .uuid == $id) ][0] // {}
           | .message | msgtext')"
