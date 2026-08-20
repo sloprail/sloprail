@@ -14,7 +14,16 @@ set -uo pipefail
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
-declared="$(sr-session state list --owner scanner-declared 2>/dev/null | jq -c '[.[] | select(.key | startswith("scanner:"))]')"
+# 2026-08-20: read the scanner-declared context's registry via `state list
+# --owner scanner-declared` (the read-only cross-guardrail read merged in
+# b8608c3); the gate's own `require: [{context: scanner-declared}]` guarantees
+# that context entered THIS cycle first, so the entries are current. `state
+# list` emits JSON-LINES, not an array, so it is SLURPED with `jq -s` before
+# being treated as one — an earlier draft's `jq -c '[.[] | ...]'` on the raw
+# lines iterated each object's field values instead of the stream and read
+# nothing. (The trajectory reads below already take absolute --path values, so
+# there is no cwd-relative path here to anchor on $SR_WORKSPACE.)
+declared="$(sr-session state list --owner scanner-declared 2>/dev/null | jq -s -c '[.[] | select(.key | startswith("scanner:"))]')"
 declared_count="$(printf '%s' "${declared:-[]}" | jq 'length' 2>/dev/null || echo 0)"
 
 if [ "$declared_count" -eq 0 ]; then
@@ -46,12 +55,15 @@ while IFS= read -r traj_path; do
   # gh invocations are re-derived as PreCommandInvoke events; flatten every
   # event's invocations[] down to the gh ones (each an object with .bin/.argv/
   # .flags, the same shape the coverage check below reads).
+  # 2026-08-20: invocations sit under each event's `.fields.invocations` (the
+  # normalized event wire form is {kind, fields}); an earlier draft read
+  # `.invocations[]?` off the event and matched no gh call at all.
   calls="$(sr-session trajectory normalize \
     --path "$traj_path" \
     --events PreCommandInvoke \
     --whole-session \
     | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke")
-               | .invocations[]? | select(.bin == "gh") ]' 2>/dev/null)"
+               | .fields.invocations[]? | select(.bin == "gh") ]' 2>/dev/null)"
   [ -z "${calls:-}" ] && continue
   all_gh_calls="$(printf '%s' "$all_gh_calls" | jq -c --argjson c "$calls" '. + $c')"
 done <<< "$trajectory_files"

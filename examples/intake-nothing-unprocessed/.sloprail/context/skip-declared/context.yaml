@@ -1,0 +1,35 @@
+# The "explicitly linked to nothing" half of intake (unit 15). A user message
+# that needs no task is marked with a #skip declared in the agent's own prose,
+# naming the message line(s) it excuses:
+#
+#   #skip 1              — the user message on line 1 needs no task
+#   #skip 1 3            — lines 1 and 3 need no task
+#
+# This context enters on that #skip tag and logs each excused message into its
+# OWN registry (sr-session state, owned by skip-declared) as a
+# skip:<transcript>:<line>-<line> entry — the exact reference shape the intake
+# gate collects for every user message. The gate then reads this registry via
+# `state list --owner skip-declared` and subtracts the excused refs from the
+# residue.
+#
+# 2026-08-20 (the skip-channel redesign, reconciled with the --owner read
+# merged in b8608c3): the earlier design had the AGENT run `sr-session state
+# set skip:<ref>` from its own Bash and had the gate read skip: from its OWN
+# scope. Neither worked — `state set` needs the SR_GUARDRAIL hook environment
+# the agent's shell does not have ("no guardrail in scope"), and the gate's
+# scope is not where the agent could have written. Moving the skip behind a
+# context makes the write happen inside a hook (where state set is in scope),
+# and --owner is the read that lets the gate cross into this context's registry.
+#
+# The intake gate deliberately does NOT `require: [{context: skip-declared}]`
+# (unlike the other --owner gates): it must run on EVERY Stop to check the
+# residue, not only when a skip was declared. Ordering is still sound without
+# the require — at Stop the engine runs context enters BEFORE the Stop gates, so
+# a #skip declared this cycle is logged before the gate reads it; and a skip
+# logged in an earlier cycle persists in the session state, which is exactly the
+# "stays excused" behaviour wanted.
+on:
+  - event: PostTagWrite
+    match: any(event.tags, .label == "skip")
+enter: ./enter.sh
+exit: ./exit.sh
