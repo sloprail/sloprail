@@ -17,6 +17,7 @@ EXPLICITLY off the base (never Agent isolation).
 
 ## DAG (leaves → dispatch → trajectory → usecases → cleanup)
 
+### BATCH 1 — COMPLETE ✅ (all 4 slices merged: markers, match-scopes, traj-describe-cite, events-vocab; base 2d0da95, 20 unit pkgs green)
 ### BATCH 1 — leaves, all independent, fan out together
 Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid conflicts):
 - worktree `events-vocab` (impl/events-vocab): 1a+1b+1c+1d — DONE (61 files, all gate green), IN REVIEW. Notable: 2 NEW modules (tagmod, tooluse); Post events now carry content→feedback-loop caveat handled in fixtures; shipped authoring-slop guardrail updated to newContent; e2e 028_tag_write COLLIDES with 028_trajectory_describe (renumber to 030).
@@ -24,10 +25,10 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - worktree `match-scopes` (impl/match-scopes): 1f — IMPL DONE, rebased, IN REVIEW
 - worktree `traj-describe-cite` (impl/traj-describe-cite): 4b+4c — DONE, rebased, IN REVIEW. NOTE: mock writes EMPTY toolUseId, so parentPath correlation is fixture/unit tested, not mock-e2e. Adds internal/transcript/{cite,describe,line}.go + session_trajectory{,_cite,_describe}.go; leaves normalize slot (030).
 
-- [!] 1a  fix round 3: re-review found 1 more stale-doc consumer (shipped skill) — FIXING [events-vocab]
-- [!] 1b  fix round 3: re-review found 1 more stale-doc consumer (shipped skill) — FIXING [events-vocab]
-- [!] 1c  fix round 3: re-review found 1 more stale-doc consumer (shipped skill) — FIXING [events-vocab]
-- [!] 1d  fix round 3: re-review found 1 more stale-doc consumer (shipped skill) — FIXING [events-vocab]
+- [x] 1a  — MERGED (2d0da95) after 3 fix rounds, grep-clean               [events-vocab ✓]
+- [x] 1b  — MERGED (2d0da95) after 3 fix rounds, grep-clean               [events-vocab ✓]
+- [x] 1c  — MERGED (2d0da95) after 3 fix rounds, grep-clean               [events-vocab ✓]
+- [x] 1d  — MERGED (2d0da95) after 3 fix rounds, grep-clean               [events-vocab ✓]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
 - [x] 1f  per-nature match SCOPES + glob shorthand + internal/natures — MERGED (218de70)   [match-scopes ✓]
 - [x] 4b  session trajectory describe — MERGED (93d0c52)                               [traj-describe-cite ✓]
