@@ -54,7 +54,7 @@ a quoted multi-word fqn, reconcile then.
 ### BATCH 2 — after batch 1
 - [~] 2   .sloprail/{file-guard,gate,context,goal}/*.yaml + structure.yaml loaders — IMPLEMENTING [declaration-loaders]
 - [~] 2b  require/checks/judge/prepare shared types — IMPLEMENTING (same worktree as 2)  [declaration-loaders]
-- [~] 4a  session trajectory normalize — IMPLEMENTING                                [traj-normalize]
+- [~] 4a  session trajectory normalize — DONE (2c446ed, 11 e2e green), REVIEWING     [traj-normalize]
 
   - [~] 2r  RECONCILE example *.yaml match: strings (folded into declaration-loaders slice) to the new spec grammar (found by match-scopes review).
       OLD vocab in examples/**/*.yaml that the spec-faithful scopes REFUSE:
