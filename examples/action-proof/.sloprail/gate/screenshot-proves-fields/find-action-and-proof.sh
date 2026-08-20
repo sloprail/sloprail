@@ -18,14 +18,20 @@ set -uo pipefail
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
+# The whole trajectory as normalized entries, read once. A tool call is not a
+# re-derived event (PreToolUse is deliberately not in the trajectory events) —
+# it is just the entry, visible as a tool_use block on .message.content[]. So
+# tool-name matching reads raw entries, never --events.
+entries="$(sr-session trajectory normalize --path "$transcript_path")"
+
 # Did an auditable action happen this turn? Recognised by the tools that
 # perform one — a form submit, a download. (A real deployment would name its
-# own; this sample keys on a couple of representative tool names.)
-action="$(sr-session query \
-  --transcript "$transcript_path" \
-  --select tool_use \
-  --where 'name == "fill_form" or name == "download_file"' \
-  | jq -c '.[-1] // null')"
+# own; this sample keys on a couple of representative tool names.) The last such
+# tool_use block carries the action's .name and .input.
+action="$(printf '%s' "$entries" | jq -c '
+  [ .[] | (.message | objects | .content // [])[]
+    | select(.type == "tool_use"
+        and (.name == "fill_form" or .name == "download_file")) ][-1] // null')"
 
 if [ "$action" = "null" ]; then
   # No auditable action this turn — nothing to demand proof of.
@@ -33,13 +39,20 @@ if [ "$action" = "null" ]; then
   exit 0
 fi
 
-# The proof: a screenshot tool_use whose output is an image. Pull the most
-# recent one; the judge decides whether it actually shows the action's fields.
-proof="$(sr-session query \
-  --transcript "$transcript_path" \
-  --select tool_use \
-  --where 'name == "screenshot"' \
-  | jq -c '.[-1].output // null')"
+# The proof: the image a screenshot tool produced. The screenshot call is a
+# tool_use block (with an id); what it produced lives in the matching entry's
+# .toolUseResult (entry.go: "where evidence of what an action actually produced
+# lives"), correlated to the call by tool_use id. Pull the most recent one; the
+# judge decides whether it actually shows the action's fields.
+proof="$(printf '%s' "$entries" | jq -c '
+  ([ .[] | (.message | objects | .content // [])[]
+     | select(.type == "tool_use" and .name == "screenshot") | .id ][-1]) as $sid
+  | if $sid == null then null
+    else ([ .[]
+             | select(any((.message | objects | .content // [])[];
+                 .type == "tool_result" and .tool_use_id == $sid))
+             | .toolUseResult ][-1] // null)
+    end')"
 
 action_name="$(printf '%s' "$action" | jq -r '.name')"
 action_input="$(printf '%s' "$action" | jq -c '.input // {}')"

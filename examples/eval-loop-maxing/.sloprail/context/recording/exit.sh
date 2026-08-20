@@ -15,12 +15,19 @@ set -uo pipefail
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
-# Every run path an eval command reported, this session.
-run_paths="$(sr-session query \
-  --transcript "$transcript_path" \
-  --select tool_use \
-  --where 'any(invocations, .bin == "eval")' \
-  | jq -r '.[].output // empty' \
+# Every run path an eval command reported, this session. An eval invocation is
+# an entry carrying a PreCommandInvoke event whose invocation ran `eval`; the
+# run file it produced is named in that same entry's tool output
+# (.toolUseResult, the entry's own stdout — the event only re-derives the
+# invocation, it does not carry the command's output).
+run_paths="$(sr-session trajectory normalize \
+  --path "$transcript_path" \
+  --events PreCommandInvoke \
+  | jq -r '.[]
+      | select(any(.events[]?; .kind == "PreCommandInvoke"
+          and any(.invocations[]?; .bin == "eval")))
+      | (.toolUseResult // empty)
+      | if type == "string" then . else tostring end' \
   | grep -E '^evals/runs/.*\.json$')"
 
 if [ -z "$run_paths" ]; then

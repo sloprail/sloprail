@@ -22,15 +22,12 @@ transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 # not a bare id, because a session can span multiple jsonl files and a bare
 # id says nothing about WHICH transcript it lives in).
 #
-# TODO(sr-session query / a message-locator CLI): resolving a message id to
-# its jsonl line is not yet a real command (his earlier ask, unit 05's
-# discussion: a CLI that finds the jsonl line for a given user message).
-# `--select user_message --where "id == ..."` returns the message but not
-# its line; this reads `.line` speculatively, pending that command existing.
-all_message_refs="$(sr-session query \
-  --transcript "$transcript_path" \
-  --select user_message \
-  | jq -r --arg t "$transcript_path" '.[] | select(.line) | "\($t):\(.line)-\(.line)"')"
+# A user message is an entry with .type == "user"; .line is its real 1-based
+# jsonl position, present on every normalized entry, which is what turns a
+# message into a locatable /abs/path:line-line reference.
+all_message_refs="$(sr-session trajectory normalize \
+  --path "$transcript_path" \
+  | jq -r --arg t "$transcript_path" '.[] | select(.type == "user") | "\($t):\(.line)-\(.line)"')"
 
 if [ -z "$all_message_refs" ]; then
   exit 0

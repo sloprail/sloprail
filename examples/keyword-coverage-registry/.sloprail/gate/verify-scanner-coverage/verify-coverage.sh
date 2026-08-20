@@ -13,7 +13,6 @@ set -uo pipefail
 
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
-transcript_dir="$(dirname "$transcript_path")"
 
 declared="$(sr-session state list --owner scanner-declared 2>/dev/null | jq -c '[.[] | select(.key | startswith("scanner:"))]')"
 declared_count="$(printf '%s' "${declared:-[]}" | jq 'length' 2>/dev/null || echo 0)"
@@ -32,22 +31,27 @@ fi
 # Every gh invocation across every trajectory this run touched, with the
 # search terms/query text each one actually carried.
 #
-# TODO(sr-session query): enumerating this run's sibling trajectories is not
-# a real selector yet (research-rigor's own depth-check flags the same open
-# gap in its check 4 — decision 20260818_no-slop-primitives Thread 1).
-# Globbing the session directory for sibling .jsonl files is a stand-in.
-trajectory_files="$(find "$transcript_dir" -maxdepth 1 -name '*.jsonl' 2>/dev/null)"
-[ -z "$trajectory_files" ] && trajectory_files="$transcript_path"
+# This run's sibling trajectories come from `describe`, which reports the
+# sub-agent trajectory paths spawned off this one; the current trajectory
+# itself is always included.
+trajectory_files="$(
+  { printf '%s\n' "$transcript_path"
+    sr-session trajectory describe --path "$transcript_path" 2>/dev/null \
+      | jq -r '.subagentPaths[]?'
+  } | sort -u)"
 
 all_gh_calls="[]"
 while IFS= read -r traj_path; do
   [ -f "$traj_path" ] || continue
-  calls="$(sr-session query \
-    --transcript "$traj_path" \
-    --select tool_use \
+  # gh invocations are re-derived as PreCommandInvoke events; flatten every
+  # event's invocations[] down to the gh ones (each an object with .bin/.argv/
+  # .flags, the same shape the coverage check below reads).
+  calls="$(sr-session trajectory normalize \
+    --path "$traj_path" \
+    --events PreCommandInvoke \
     --whole-session \
-    --where 'any(invocations, .bin == "gh")' \
-    | jq -c '[.[].invocations[]? | select(.bin == "gh")]' 2>/dev/null)"
+    | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke")
+               | .invocations[]? | select(.bin == "gh") ]' 2>/dev/null)"
   [ -z "${calls:-}" ] && continue
   all_gh_calls="$(printf '%s' "$all_gh_calls" | jq -c --argjson c "$calls" '. + $c')"
 done <<< "$trajectory_files"

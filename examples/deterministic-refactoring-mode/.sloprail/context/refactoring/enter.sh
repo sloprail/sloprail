@@ -15,14 +15,26 @@ input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
 # Has the agent declared a refactor this session, and not yet finished one?
-# The declaration is a single message carrying #refactor plus the marker set
-# it intends to write, e.g.:
+# The declaration is a single message carrying the #refactor tag plus the
+# marker set it intends to write, e.g.:
 #   #refactor scope=sr:moved-from:beta,sr:moved-from:gamma
-decl="$(sr-session query \
-  --transcript "$transcript_path" \
-  --select assistant_message \
-  --where 'text contains "#refactor"' \
-  | jq -r '.[-1].text // ""')"
+# The tag is re-derived as a PostTagWrite event (matched by .label, without the
+# leading #); the scope= list is free text on that same entry's assistant
+# message, so take the LAST entry writing the refactor tag and read its text.
+decl="$(sr-session trajectory normalize \
+  --path "$transcript_path" \
+  --events PostTagWrite \
+  | jq -r '
+      def msgtext:
+        if type == "string" then .
+        elif type == "array" then [.[] | select(.type? == "text") | .text] | join("")
+        elif type == "object" then [(.content // [])[] | select(.type? == "text") | .text] | join("")
+        else "" end;
+      [ .[]
+        | select(any(.events[]?;
+            .kind == "PostTagWrite" and any(.tags[]?; .label == "refactor")))
+      ][-1] // {}
+      | .message | msgtext')"
 
 if [ -z "$decl" ]; then
   # No refactor declared — do not activate.

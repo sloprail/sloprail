@@ -18,11 +18,19 @@ ref="$(printf '%s' "$new" | grep -oE '(transcript_path=\S+|message_id=\S+|jsonl:
 case "$ref" in
   message_id=*)
     msg_id="${ref#message_id=}"
-    message="$(sr-session query \
-      --transcript "$transcript_path" \
-      --select user_message \
-      --where "id == \"$msg_id\"" \
-      | jq -r '.[0].text // ""')"
+    # A user message is an entry with .type == "user"; its id is .uuid and its
+    # text lives in .message (a bare string, or a content list whose text
+    # blocks carry .text). No event is involved, so read raw entries.
+    message="$(sr-session trajectory normalize \
+      --path "$transcript_path" \
+      | jq -r --arg id "$msg_id" '
+          def msgtext:
+            if type == "string" then .
+            elif type == "array" then [.[] | select(.type? == "text") | .text] | join("")
+            elif type == "object" then [(.content // [])[] | select(.type? == "text") | .text] | join("")
+            else "" end;
+          [ .[] | select(.type == "user" and .uuid == $id) ][0] // {}
+          | .message | msgtext')"
     ;;
   jsonl:*)
     range="${ref#jsonl:}"
