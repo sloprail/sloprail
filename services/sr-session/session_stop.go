@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -103,6 +104,20 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 		return nil
 	}
 
+	// The NEW nature-based Stop dispatch runs ALONGSIDE the old Post dispatch —
+	// gates bound to Stop, blocking the turn on a refusal. It runs AFTER the old
+	// one so both are consulted; a refusal here holds the mark the same way an old
+	// Post objection does, because the agent is about to go round again over these
+	// same turns. A gate that blocks records its verdict in the gates[] map for the
+	// next cycle (and a context, next slice) to read.
+	if reason := natureStopDispatch(cmd, p); reason != "" {
+		if err := block(cmd, reason); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
+		discardOffered(cmd, p)
+		return nil
+	}
+
 	// Where this cycle's reading ended, for the next one to resume after, and
 	// then the position is spent. Only on this path: a cycle that was
 	// interrupted may have judged nothing, and moving the mark anyway skips
@@ -111,6 +126,19 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	discardOffered(cmd, p)
 
 	return nil
+}
+
+// natureStopDispatch runs the new-format Stop gate dispatch for a completed cycle,
+// resolving the registry the same way runPostDispatch does. Returns the text to
+// block the turn with, or "" to let it end. A variable so a test can stand it in,
+// the same pattern dispatchPostEvents follows.
+var natureStopDispatch = func(cmd *cobra.Command, p HookPayload) string {
+	reg, err := modules.Registry()
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		return ""
+	}
+	return natureDispatchStop(cmd, p, reg)
 }
 
 // discardOffered forgets how far the record was read out, because the cycle

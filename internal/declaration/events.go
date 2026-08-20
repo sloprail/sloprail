@@ -129,6 +129,26 @@ func expandContextEvent(name string) (kinds []string, known bool) {
 	return nil, false
 }
 
+// ExpandGateEvent is the exported form of the gate `event` expansion, for the
+// dispatch that must turn a loaded gate trigger's `event` into the concrete event
+// kinds it fires on.
+//
+// The loader validates a gate's `on` against this vocabulary but does NOT rewrite
+// the trigger — a Gate.On still carries the `event` string the author wrote,
+// alias and all. So the dispatch resolves it here, against the SAME table the
+// loader validated with, rather than re-implementing the alias mapping and risking
+// the two drifting. A trigger that loaded is always `known` here (the loader would
+// have refused an unknown one); the bool is returned all the same so a caller
+// reaching this with an unvalidated name gets an answer rather than a silent empty.
+func ExpandGateEvent(name string) (kinds []string, known bool) { return expandGateEvent(name) }
+
+// ExpandContextEvent is the exported form of the context `event` expansion, for
+// the context-lifecycle dispatch (the next slice) to turn a loaded context
+// trigger's `event` into concrete kinds. Same reasoning as ExpandGateEvent.
+func ExpandContextEvent(name string) (kinds []string, known bool) {
+	return expandContextEvent(name)
+}
+
 // gateEventNames lists every name a gate's `on` may carry — concrete kinds and
 // aliases together, sorted — for a diagnostic that has to tell an author which
 // kinds a gate admits when theirs is refused.
