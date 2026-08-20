@@ -8,11 +8,20 @@ import (
 
 // State reads what one guardrail stored under one key.
 //
-// The guardrail is a parameter here and never at the command boundary: the
-// engine ran the hook and knows which rule is asking. What it must not become
-// is something a rule can name for itself, because a rule able to name another
-// rule's entries could read state it was never told about and then depend on
-// when that rule ran.
+// The guardrail is a parameter here, and for a read of one key it is never the
+// caller's to name at the command boundary: the engine ran the hook and knows
+// which rule is asking. get and set stay caller-scoped for exactly the reason
+// below — a rule able to name another rule's entries for a get could read state
+// it was never told about and then depend on when that rule ran.
+//
+// The qualification is ListStateOwned, and only that: a caller MAY name another
+// guardrail as the owner of a LIST it wants to read. The worry the isolation
+// guarded against was a rule reading another's state "and then depend[ing] on
+// WHEN that rule ran"; that ordering worry is handled by the separate `require:
+// [{context}]` mechanism (internal/dispatch/require.go checkContext), which
+// guarantees the named context entered this cycle before the reading gate runs.
+// So a cross-guardrail read composes with `require` — the read gets the entries,
+// `require` gets the ordering — and neither get nor set is opened by it.
 func (s *store) State(guardrail, key string) (string, bool, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -65,7 +74,54 @@ func (s *store) SetState(guardrail, key, value string) error {
 // writes each independently and gets the group back by asking for the prefix
 // they share, instead of keeping an index of its own keys. An empty prefix is
 // everything the guardrail stored.
+//
+// The guardrail passed here is the CALLER's own — the CLI supplies it from the
+// engine-set environment, never from an argument. A caller that means to read a
+// DIFFERENT guardrail's list, on purpose, calls ListStateOwned instead; that
+// method is where the cross-guardrail read lives, so this one stays the plain
+// "my own entries" read and its meaning does not shift under a caller.
 func (s *store) ListState(guardrail, prefix string) ([]Entry, error) {
+	return s.listState(guardrail, prefix)
+}
+
+// ListStateOwned returns every entry OWNER stored whose key begins with prefix,
+// ordered by key — the one read where the guardrail named is not the caller's
+// own.
+//
+// It reads exactly what ListState reads, for a guardrail the caller named on
+// purpose, and is a read only: there is no owned counterpart to State or
+// SetState, so this opens no way to read another rule's single key nor to write
+// into another rule's keyspace. That asymmetry is the whole point — a gate that
+// cross-references a sibling context's registry needs to SEE the group that
+// context accumulated, and nothing more.
+//
+// Why naming another guardrail is safe here when get/set forbid it: the
+// isolation's stated worry (see State) was a rule reading another's state "and
+// then depend[ing] on WHEN that rule ran". That correctness-across-time concern
+// is not this method's to solve — it is the caller's, via `require: [{context:
+// <owner>}]` (internal/dispatch/require.go checkContext), which guarantees the
+// owner context entered THIS cycle before the reading gate's check runs. The two
+// compose: `require` establishes the ordering, this read returns the entries the
+// ordering makes meaningful. A gate that reads an owner's registry without also
+// declaring `require` on it is reading a possibly-stale or empty group — a
+// caller mistake this layer cannot and does not police, exactly as it does not
+// police what a rule does with its own list.
+//
+// This is a read WITHIN one session and one workspace. The database is the
+// caller's own — the CLI resolves its path from the engine-set session and
+// workspace, never from any argument — and owner selects only the guardrail
+// column within it. So naming an owner reaches another RULE's rows in the same
+// session's database and can reach nothing in another session's or another
+// workspace's.
+func (s *store) ListStateOwned(owner, prefix string) ([]Entry, error) {
+	return s.listState(owner, prefix)
+}
+
+// listState is the shared read behind ListState and ListStateOwned: every entry
+// the named guardrail stored under prefix, ordered by key. The two public
+// methods differ only in whether the name is the caller's own or one it named
+// on purpose; the row selection is identical, so it lives here once.
+func (s *store) listState(guardrail, prefix string) ([]Entry, error) {
 	db, err := s.conn()
 	if err != nil {
 		return nil, err

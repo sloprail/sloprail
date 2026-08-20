@@ -220,6 +220,110 @@ func TestListState_MatchesHasPrefixOverTheWholeKeyspace(t *testing.T) {
 	}
 }
 
+func TestListStateOwned_ReadsAnotherGuardrailsEntries(t *testing.T) {
+	// The whole point of the owned read: a caller names a DIFFERENT guardrail
+	// and gets that guardrail's entries. This is the cross-guardrail read
+	// ListState deliberately does not do.
+	s := openTestStore(t)
+	require.NoError(t, s.SetState("scanner-declared", "scanner:a", `{"kw":["x"]}`))
+	require.NoError(t, s.SetState("scanner-declared", "scanner:b", `{"kw":["y"]}`))
+	require.NoError(t, s.SetState("gate", "own:thing", "gate-value"))
+
+	entries, err := s.ListStateOwned("scanner-declared", "")
+	require.NoError(t, err)
+	assert.Equal(t, []Entry{
+		{Key: "scanner:a", Value: `{"kw":["x"]}`},
+		{Key: "scanner:b", Value: `{"kw":["y"]}`},
+	}, entries)
+}
+
+func TestListStateOwned_AppliesThePrefixRange(t *testing.T) {
+	// The owned read is the same read as ListState for a named owner: the prefix
+	// is the same byte range, matching the owner's keys under the prefix and no
+	// others. A cross-guardrail read must not quietly become an all-keys read.
+	s := openTestStore(t)
+	for _, k := range []string{"scanner:a", "scanner:b", "other:c", "scanne", "scannes:z"} {
+		require.NoError(t, s.SetState("owner", k, k))
+	}
+
+	entries, err := s.ListStateOwned("owner", "scanner:")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"scanner:a", "scanner:b"}, keysOf(entries))
+}
+
+func TestListStateOwned_MatchesListStateForTheSameGuardrail(t *testing.T) {
+	// Owned and own are one read differing only in whose name is passed: reading
+	// a guardrail's own list through ListStateOwned returns exactly what
+	// ListState returns for it. If the two ever diverge, the split has grown a
+	// second behaviour it was not meant to have.
+	s := openTestStore(t)
+	for _, k := range []string{"p/c", "p/a", "p/b", "q/a"} {
+		require.NoError(t, s.SetState("g", k, k))
+	}
+
+	own, err := s.ListState("g", "p/")
+	require.NoError(t, err)
+	owned, err := s.ListStateOwned("g", "p/")
+	require.NoError(t, err)
+	assert.Equal(t, own, owned)
+}
+
+func TestListStateOwned_OwnerWithNoEntriesIsEmptyNotAnError(t *testing.T) {
+	// A gate may name a context that never wrote anything — the context did not
+	// enter this cycle, or entered and had nothing to log. That is an empty
+	// answer, not a failure: the gate decides what an empty registry means, and
+	// it cannot decide if the read errored instead.
+	s := openTestStore(t)
+	require.NoError(t, s.SetState("someone-else", "k", "v"))
+
+	entries, err := s.ListStateOwned("never-wrote", "")
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+func TestListStateOwned_DoesNotDisturbTheCallersOwnEntries(t *testing.T) {
+	// Reading an owner's list is a read: the caller's own entries are unchanged
+	// after it, and the caller still reads its own — not the owner's — through
+	// its own-scoped methods.
+	s := openTestStore(t)
+	require.NoError(t, s.SetState("owner", "shared", "owner-value"))
+	require.NoError(t, s.SetState("caller", "shared", "caller-value"))
+
+	_, err := s.ListStateOwned("owner", "")
+	require.NoError(t, err)
+
+	// The caller's own read still sees the caller's value, not the owner's.
+	got, found, err := s.State("caller", "shared")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "caller-value", got)
+
+	callerList, err := s.ListState("caller", "")
+	require.NoError(t, err)
+	assert.Equal(t, []Entry{{Key: "shared", Value: "caller-value"}}, callerList)
+}
+
+func TestListStateOwned_IsReadOnly_NoOwnedSetExists(t *testing.T) {
+	// The owned read opens no owned WRITE. There is no ListStateOwned
+	// counterpart for set: a caller can read another guardrail's list, and there
+	// is no method on the store by which it writes into another's keyspace. This
+	// pins that asymmetry — set stays caller-scoped, taking the guardrail the CLI
+	// supplies from the environment.
+	//
+	// The store's only writer is SetState, which writes under the guardrail it is
+	// given. So writing "as owner" would require the CLI to hand SetState the
+	// owner's name, which it never does — there is no --owner on set. Here we
+	// prove the store keeps the two guardrails' keyspaces separate under a write:
+	// a write under one name is invisible to the other's owned read.
+	s := openTestStore(t)
+	require.NoError(t, s.SetState("caller", "k", "caller-wrote-this"))
+
+	// The caller wrote under its own name; the owner's list is untouched by it.
+	ownerList, err := s.ListStateOwned("owner", "")
+	require.NoError(t, err)
+	assert.Empty(t, ownerList, "a write under the caller's name must not appear under the owner")
+}
+
 func TestPrefixUpperBound(t *testing.T) {
 	cases := []struct{ prefix, want string }{
 		{"", ""},
