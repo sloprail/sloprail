@@ -31,7 +31,7 @@ import (
 // write landed, and the hook never ran.
 //
 // Both halves of that reason have expired. The end of a cycle now diffs the tree
-// and dispatches PostFileCreate/Update/Delete and TurnEnd, and the plugin
+// and dispatches PostFileCreate/Update/Delete and Stop, and the plugin
 // already registers Stop — so the invariant is expressible through the product's
 // own binding, which is what should have carried it in the first place. Nothing
 // here touches settings.json.

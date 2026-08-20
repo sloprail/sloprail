@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// T026_06: a guardrail bound ONLY to TurnEnd that will not load is not silent.
+// T026_06: a guardrail bound ONLY to Stop that will not load is not silent.
 //
 // # The finding
 //
@@ -18,15 +18,15 @@ import (
 // go silent, and both were:
 //
 //   - The pre-tool point refuses a broken declaration when an event of a kind it
-//     bound to occurs (refuseForBroken). TurnEnd is never produced there — it is
+//     bound to occurs (refuseForBroken). Stop is never produced there — it is
 //     the cycle's own event, appended by the Stop dispatch — so a rule bound only
-//     to TurnEnd names a kind the pre-tool loop can never see, and is never
+//     to Stop names a kind the pre-tool loop can never see, and is never
 //     reached.
-//   - The Stop dispatch, which IS where TurnEnd fires, discarded the invalid
+//   - The Stop dispatch, which IS where Stop fires, discarded the invalid
 //     list outright: `decls, _, err := guardrail.New(...).LoadWith(reg)`. Nothing
 //     downstream of that line could know a declaration had failed to load.
 //
-// So the author writes `matcher: path endsWith ".md"` on TurnEnd — an ordinary
+// So the author writes `matcher: path endsWith ".md"` on Stop — an ordinary
 // mistake, since every other kind carries a path — the declaration is correctly
 // rejected at load, and the project runs for the rest of the session with a rule
 // it believes is enforcing completeness and which is enforcing nothing. No
@@ -42,28 +42,28 @@ import (
 //
 // The engine's rule became "an invalid guardrail blocks nothing", so the cycle
 // ENDS. Everything the finding above describes is still an accurate account of
-// how a TurnEnd rule goes silent; what changed is that the answer is no longer
+// how a Stop rule goes silent; what changed is that the answer is no longer
 // to block the turn.
 //
 // The reasoning: blocking hands the turn back to the agent to fix, and a
 // declaration that will not load is not the agent's to fix. Worse, the same
 // engine was refusing the writes that would repair it — see T013_08, which was
 // rewritten after that lockout was measured in a real session. A rule bound only
-// to TurnEnd is the sharpest case, because such a project blocked EVERY cycle
+// to Stop is the sharpest case, because such a project blocked EVERY cycle
 // and could never end a turn at all.
 //
 // What is given up is real and is stated rather than hidden: a project whose
-// TurnEnd rule will not load now runs the whole session believing completeness
+// Stop rule will not load now runs the whole session believing completeness
 // is enforced when it is not, and the agent is never told. Session start names
 // the rule; nothing else does.
 //
 // The rule's hook PERMITS, so nothing here can block except the engine's own
 // response to a rule it could not read — which is what makes the assertion sharp.
-func TestT026_06_ABrokenTurnEndRuleDoesNotBlockTheCycle(t *testing.T) {
+func TestT026_06_ABrokenStopRuleDoesNotBlockTheCycle(t *testing.T) {
 	e, proj := project(t)
 	e.Guardrail(proj, "narrowed-cycle", `---
 hooks:
-  TurnEnd:
+  Stop:
     - matcher: path endsWith ".md"
       hooks:
         - type: command
@@ -83,7 +83,7 @@ hooks:
 	// which is now the required behaviour.
 	if strings.Count(got.Output, `"subtype":"success"`) >= 2 {
 		t.Fatalf("a guardrail that could not load blocked the cycle — an invalid guardrail "+
-			"must block nothing, and a rule bound only to TurnEnd would otherwise make every "+
+			"must block nothing, and a rule bound only to Stop would otherwise make every "+
 			"turn in the session unendable:\n%s", got.Output)
 	}
 
@@ -94,19 +94,19 @@ hooks:
 	}
 }
 
-// T026_07: a SOUND TurnEnd rule beside nothing broken still lets the cycle end.
+// T026_07: a SOUND Stop rule beside nothing broken still lets the cycle end.
 //
 // The negative control for T026_06, and it is not optional. Every assertion
 // above is "the turn was blocked", which passes trivially against an engine that
 // blocks every cycle — and a fix that refused whenever any guardrail existed
 // would satisfy T026_06 completely while making the product unusable.
 //
-// Same shape as T026_06: one guardrail, bound to TurnEnd, whose hook permits.
+// Same shape as T026_06: one guardrail, bound to Stop, whose hook permits.
 // The only difference is that its matcher is one the kind can answer — which
-// here means no matcher at all, since TurnEnd carries no fields to narrow on.
-func TestT026_07_ASoundTurnEndRuleLetsTheCycleEnd(t *testing.T) {
+// here means no matcher at all, since Stop carries no fields to narrow on.
+func TestT026_07_ASoundStopRuleLetsTheCycleEnd(t *testing.T) {
 	e, proj := project(t)
-	e.Guardrail(proj, "sound-cycle", boundToTurnEnd, map[string]string{
+	e.Guardrail(proj, "sound-cycle", boundToStop, map[string]string{
 		"record.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n",
 	})
 	commitGuardrails(e, proj)
@@ -116,7 +116,7 @@ func TestT026_07_ASoundTurnEndRuleLetsTheCycleEnd(t *testing.T) {
 	))
 
 	if strings.Count(got.Output, `"subtype":"success"`) >= 2 {
-		t.Fatalf("a sound TurnEnd rule whose hook permitted still blocked the cycle:\n%s", got.Output)
+		t.Fatalf("a sound Stop rule whose hook permitted still blocked the cycle:\n%s", got.Output)
 	}
 }
 

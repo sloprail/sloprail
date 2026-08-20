@@ -268,7 +268,7 @@ func TestDispatch_UnknownHookTypeDoesNotBlock(t *testing.T) {
 
 	const badTypeDecl = `---
 hooks:
-  TurnEnd:
+  Stop:
     - hooks:
         - type: script
           command: ./refuse.sh
@@ -295,7 +295,7 @@ hooks:
 // along.
 //
 // PreCommandInvoke is a Pre kind and no Post dispatch ever produces it, so a
-// declaration broken only there affects no cycle. TurnEnd fires regardless and
+// declaration broken only there affects no cycle. Stop fires regardless and
 // nothing is bound to it here, so this cycle has nothing outstanding.
 func TestDispatch_BrokenDeclarationDoesNotBlockUnrelatedCycles(t *testing.T) {
 	proj := initRepo(t)

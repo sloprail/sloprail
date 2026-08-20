@@ -41,6 +41,24 @@ func Bash(id, command string) Turn {
 	return Turn{jsonl: toolUse(id, "Bash", map[string]string{"command": command})}
 }
 
+// Say returns a turn where the agent writes plain prose — an assistant message
+// carrying a text block rather than a tool call.
+//
+// This is the shape a `#tag` lives in: the agent says something in its own
+// message, and PostTagWrite scans that settled text. A tool_use turn carries no
+// prose, so a scenario that only wrote files could never exercise a tag, which
+// is why this exists alongside Write and Bash.
+//
+// The record is a `type:"assistant"` entry whose content is a one-element block
+// list `[{"type":"text","text":…}]` — the block-list shape Claude Code writes for
+// a turn that has prose in it. It carries a uuid keyed off the turn's id, like
+// every other turn, so transcript.Read does not skip it.
+func Say(id, text string) Turn {
+	return Turn{jsonl: fmt.Sprintf(
+		`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":%s}]}}`,
+		"e2e-turn-"+id, jsonStr(text))}
+}
+
 // Skill returns a turn where the agent loads a skill.
 //
 // The mock does not implement the Skill tool and answers with an error, which

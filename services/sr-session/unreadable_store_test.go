@@ -48,7 +48,7 @@ hooks:
     - hooks:
         - type: command
           command: ./refuse.sh
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./refuse.sh

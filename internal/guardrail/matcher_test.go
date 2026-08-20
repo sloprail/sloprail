@@ -25,7 +25,7 @@ func TestCompileMatcher_EmptyAdmitsEverything(t *testing.T) {
 	for _, e := range []event.Event{
 		fileEvent("memories/a.md"),
 		fileEvent(""),
-		{Kind: "TurnEnd"},
+		{Kind: "Stop"},
 	} {
 		admitted, err := m.Match(e)
 		require.NoError(t, err)
@@ -807,7 +807,7 @@ func TestMatch_NilFieldsMapIsSafe(t *testing.T) {
 	m, err := CompileMatcher(`path == "a"`)
 	require.NoError(t, err)
 
-	admitted, err := m.Match(event.Event{Kind: "TurnEnd"})
+	admitted, err := m.Match(event.Event{Kind: "Stop"})
 	require.NoError(t, err)
 	assert.False(t, admitted)
 }

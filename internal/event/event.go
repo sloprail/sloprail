@@ -33,7 +33,7 @@ type Event struct {
 
 // MarshalJSON writes an event with `fields` always an object.
 //
-// A nil map marshals to null by default, so TurnEnd — which declares no fields
+// A nil map marshals to null by default, so Stop — which declares no fields
 // at all — reached a hook as `"fields":null`. A hook doing the obvious thing
 // with it, `.fields.path` in jq or `payload["event"]["fields"].get("path")` in
 // Python, gets an error on null where it gets a clean miss on `{}`. The hook

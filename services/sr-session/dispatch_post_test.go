@@ -124,7 +124,7 @@ func baselineAt(t *testing.T, store sessionstate.Store, proj string) {
 // the no-store path and would pass whatever the exemption did.
 //
 // That is deliberate rather than an oversight. What this file tests is
-// classification, dispatch order, TurnEnd and refusal collection, and running
+// classification, dispatch order, Stop and refusal collection, and running
 // those without a store keeps them independent of it. The revalidation claims
 // live in dispatch_post_revalidation_test.go, whose postSession seeds a real
 // transcript precisely so that rev is non-nil there.
@@ -160,7 +160,7 @@ func dispatchBoth(t *testing.T, proj string, store sessionstate.Store) (stdout, 
 }
 
 // bindAll is a declaration binding one script to every Post kind and to
-// TurnEnd, so one run records everything that was dispatched.
+// Stop, so one run records everything that was dispatched.
 const bindAll = `---
 hooks:
   PostFileCreate:
@@ -175,7 +175,7 @@ hooks:
     - hooks:
         - type: command
           command: ./record.sh
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./record.sh
@@ -229,14 +229,14 @@ func TestDispatch_ClassifiesCreateUpdateDeleteFromARealTree(t *testing.T) {
 	sorted := append([]string(nil), got...)
 	sort.Strings(sorted)
 	assert.Equal(t, []string{
-		filemod.KindPostCreate, filemod.KindPostDelete, filemod.KindPostUpdate, "TurnEnd",
+		filemod.KindPostCreate, filemod.KindPostDelete, filemod.KindPostUpdate, "Stop",
 	}, sorted)
 }
 
-// TestDispatch_TurnEndFiresOnceAndCarriesNoSubject is turn_end_subjectless.
+// TestDispatch_StopFiresOnceAndCarriesNoSubject is turn_end_subjectless.
 //
 // Two claims, and the second is the one with a wrong answer available. A
-// TurnEnd carrying a path would let a matcher narrow it to one file, and a rule
+// Stop carrying a path would let a matcher narrow it to one file, and a rule
 // about the cycle as a whole — that a required artifact was produced — would
 // then run per file or not at all.
 //
@@ -244,7 +244,7 @@ func TestDispatch_ClassifiesCreateUpdateDeleteFromARealTree(t *testing.T) {
 // file, every completeness rule would run as many times as the cycle touched
 // files, and a rule that refuses when an artifact is missing would refuse that
 // many times over.
-func TestDispatch_TurnEndFiresOnceAndCarriesNoSubject(t *testing.T) {
+func TestDispatch_StopFiresOnceAndCarriesNoSubject(t *testing.T) {
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("seed"), 0o644))
 	runGit(t, proj, "add", ".")
@@ -265,33 +265,33 @@ func TestDispatch_TurnEndFiresOnceAndCarriesNoSubject(t *testing.T) {
 	require.True(t, ran)
 
 	lines := ledger(t, ldir, "events.jsonl")
-	var turnEnds []string
+	var stops []string
 	for _, l := range lines {
-		if strings.Contains(l, `"kind":"TurnEnd"`) {
-			turnEnds = append(turnEnds, l)
+		if strings.Contains(l, `"kind":"Stop"`) {
+			stops = append(stops, l)
 		}
 	}
-	require.Len(t, turnEnds, 1, "a cycle ends once, however many files it touched")
+	require.Len(t, stops, 1, "a cycle ends once, however many files it touched")
 
 	// No subject. Asserted on the payload the hook actually received: the
 	// fields object must be empty, so there is nothing for a matcher to narrow
 	// on.
-	assert.NotContains(t, turnEnds[0], `"path"`, "TurnEnd must carry no file")
-	assert.Regexp(t, `"kind":"TurnEnd"[,}]`, turnEnds[0],
-		"TurnEnd must carry the kind and nothing else about a subject")
+	assert.NotContains(t, stops[0], `"path"`, "Stop must carry no file")
+	assert.Regexp(t, `"kind":"Stop"[,}]`, stops[0],
+		"Stop must carry the kind and nothing else about a subject")
 
 	// And the file events did fire, so the run above was not vacuous.
-	assert.Len(t, kindsSeen(t, ldir), 4, "three files plus one TurnEnd")
+	assert.Len(t, kindsSeen(t, ldir), 4, "three files plus one Stop")
 }
 
-// TestDispatch_TurnEndFiresWhenTheCycleChangedNothing.
+// TestDispatch_StopFiresWhenTheCycleChangedNothing.
 //
 // The case whose absence would be a lie. A cycle that touched no files still
 // ended, and the rules that fire on completeness — a required artifact never
 // produced — are exactly the ones whose violation looks like nothing having
-// happened. Firing TurnEnd only when something changed would make those rules
+// happened. Firing Stop only when something changed would make those rules
 // silent precisely when they should speak.
-func TestDispatch_TurnEndFiresWhenTheCycleChangedNothing(t *testing.T) {
+func TestDispatch_StopFiresWhenTheCycleChangedNothing(t *testing.T) {
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "seed.md"), []byte("seed"), 0o644))
 	runGit(t, proj, "add", ".")
@@ -306,8 +306,8 @@ func TestDispatch_TurnEndFiresWhenTheCycleChangedNothing(t *testing.T) {
 	_, ran := dispatchIn(t, proj, store)
 	require.True(t, ran)
 
-	assert.Equal(t, []string{"TurnEnd"}, kindsSeen(t, ldir),
-		"an unchanged tree produces no file events and one TurnEnd")
+	assert.Equal(t, []string{"Stop"}, kindsSeen(t, ldir),
+		"an unchanged tree produces no file events and one Stop")
 }
 
 // TestDispatch_UntouchedFileProducesNoEvent is untouched_stays_silent.
@@ -338,7 +338,7 @@ func TestDispatch_UntouchedFileProducesNoEvent(t *testing.T) {
 			assert.NotContainsf(t, line, untouched, "a file the cycle never touched was reported")
 		}
 	}
-	assert.Equal(t, []string{filemod.KindPostCreate, "TurnEnd"}, kindsSeen(t, ldir))
+	assert.Equal(t, []string{filemod.KindPostCreate, "Stop"}, kindsSeen(t, ldir))
 }
 
 // TestDispatch_APostRefusalDemandsCorrectionWithoutUndoingTheWork is
@@ -365,7 +365,7 @@ func TestDispatch_UntouchedFileProducesNoEvent(t *testing.T) {
 //
 //   - the hook RAN (its ledger line exists), or a refusal that never happened
 //     would prove nothing at all;
-//   - TurnEnd still fired AFTERWARDS, which distinguishes "the refusal was
+//   - Stop still fired AFTERWARDS, which distinguishes "the refusal was
 //     collected and the dispatch carried on" from "the refusal stopped the
 //     dispatch where it stood";
 //   - the cycle reports it did NOT complete, so the read mark stays put and the
@@ -384,7 +384,7 @@ hooks:
     - hooks:
         - type: command
           command: ./refuse.sh
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./record.sh
@@ -420,10 +420,10 @@ hooks:
 	assert.Contains(t, stderr, "objects", "a refusal names the guardrail that produced it")
 
 	// The dispatch carried on past the refusal rather than returning at it.
-	// Asserted on what actually ran, because that is the property: TurnEnd is
+	// Asserted on what actually ran, because that is the property: Stop is
 	// bound after the refusing rule and still fired.
-	assert.Equal(t, []string{"TurnEnd"}, kindsSeen(t, ldir),
-		"TurnEnd must still fire after a Post hook refused — the dispatch carried on")
+	assert.Equal(t, []string{"Stop"}, kindsSeen(t, ldir),
+		"Stop must still fire after a Post hook refused — the dispatch carried on")
 
 	// The cycle reports that it did NOT complete, and that is deliberate. A
 	// Post refusal blocks the turn, so the agent goes round again in this same
@@ -538,7 +538,7 @@ func TestDispatch_RenameIsACreateAndADelete(t *testing.T) {
 // what is lost by joining the lines: a path and a kind sitting in the same blob
 // say nothing about whether they arrived together.
 //
-// Paths are read from the event, so a kind carrying none — TurnEnd — is left
+// Paths are read from the event, so a kind carrying none — Stop — is left
 // out rather than recorded under "".
 func kindByPath(t *testing.T, ldir string) map[string]string {
 	t.Helper()
@@ -592,7 +592,7 @@ func TestDispatch_UntrackedFileIsReported(t *testing.T) {
 //
 // Written to during the cycle and written back. There is no difference from the
 // baseline, so there is nothing for a rule to be about — only the cycle's own
-// TurnEnd remains.
+// Stop remains.
 func TestDispatch_ChangedAndChangedBackProducesNoFileEvent(t *testing.T) {
 	proj := initRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "flip.md"), []byte("original"), 0o644))
@@ -610,7 +610,7 @@ func TestDispatch_ChangedAndChangedBackProducesNoFileEvent(t *testing.T) {
 	_, ran := dispatchIn(t, proj, store)
 	require.True(t, ran)
 
-	assert.Equal(t, []string{"TurnEnd"}, kindsSeen(t, ldir),
+	assert.Equal(t, []string{"Stop"}, kindsSeen(t, ldir),
 		"a file reverted to its baseline content differs from nothing")
 }
 
@@ -618,7 +618,7 @@ func TestDispatch_ChangedAndChangedBackProducesNoFileEvent(t *testing.T) {
 //
 // No point was ever recorded — a project without git, or one with no commit
 // yet. There is no difference to report, and that is not a failure: the cycle
-// still ended, so TurnEnd still fires and the dispatch still counts as having
+// still ended, so Stop still fires and the dispatch still counts as having
 // run.
 func TestDispatch_WithNoBaselineStillEndsTheCycle(t *testing.T) {
 	proj := initRepo(t)
@@ -630,13 +630,13 @@ func TestDispatch_WithNoBaselineStillEndsTheCycle(t *testing.T) {
 
 	_, ran := dispatchIn(t, proj, store)
 	assert.True(t, ran, "a cycle with no baseline still ended")
-	assert.Equal(t, []string{"TurnEnd"}, kindsSeen(t, ldir))
+	assert.Equal(t, []string{"Stop"}, kindsSeen(t, ldir))
 }
 
 // TestDispatch_UnboundExtractorDoesNotRun is extractor_runs_bound.
 //
 // A project whose only rule is about the cycle as a whole must not pay for the
-// tree comparison. The recorder below binds to TurnEnd alone, so no file kind is
+// tree comparison. The recorder below binds to Stop alone, so no file kind is
 // bound and the file module is never asked — even though the tree really did
 // change.
 func TestDispatch_UnboundExtractorDoesNotRun(t *testing.T) {
@@ -648,7 +648,7 @@ func TestDispatch_UnboundExtractorDoesNotRun(t *testing.T) {
 	ldir := ledgerDir(t)
 	guardrailDir(t, proj, "cycle-only", `---
 hooks:
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./record.sh
@@ -665,7 +665,7 @@ hooks:
 	_, ran := dispatchIn(t, proj, store)
 	require.True(t, ran)
 
-	assert.Equal(t, []string{"TurnEnd"}, kindsSeen(t, ldir),
+	assert.Equal(t, []string{"Stop"}, kindsSeen(t, ldir),
 		"no rule binds to a file kind, so no file event may be produced")
 }
 
@@ -698,7 +698,7 @@ hooks:
     - hooks:
         - type: command
           command: ./record.sh
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./record.sh

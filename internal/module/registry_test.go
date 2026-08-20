@@ -257,7 +257,7 @@ func TestNeeded_OnlyWhatSomeBindingAsksFor(t *testing.T) {
 	// a project with no rule about commands pays nothing for command parsing.
 	file := mod("file", "PreFileCreate", "PostFileCreate")
 	command := mod("command", "PreCommand")
-	marker := mod("marker", "TurnEnd")
+	marker := mod("marker", "Stop")
 
 	r, err := NewRegistryForTest(file, command, marker)
 	require.NoError(t, err)
@@ -266,7 +266,7 @@ func TestNeeded_OnlyWhatSomeBindingAsksFor(t *testing.T) {
 	require.Len(t, needed, 1)
 	assert.Same(t, file, needed[0])
 
-	needed = r.Needed([]string{"PreCommand", "TurnEnd"})
+	needed = r.Needed([]string{"PreCommand", "Stop"})
 	require.Len(t, needed, 2)
 	assert.Equal(t, []string{"command", "marker"}, names(needed))
 }

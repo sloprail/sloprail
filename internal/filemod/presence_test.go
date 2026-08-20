@@ -1879,7 +1879,7 @@ func TestLookAt_IsTheOnlyPresenceOracle(t *testing.T) {
 	// the two phases classify the same tree differently.
 	//
 	// So this asserts the shape rather than the behaviour — that no second stat
-	// of a path-for-presence survives in the package. markersOnDisk reads a
+	// of a path-for-presence survives in the package. contentOnDisk reads a
 	// file's CONTENT, which is a different question and stays where it is.
 	//
 	// The package is ENUMERATED rather than listed. A hand-written list is a
@@ -1948,7 +1948,7 @@ func TestExtractPending_TheUnreadableStatStillCarriesContent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1, "a stat that cannot answer must not silence the pre phase")
 	assert.Equal(t, KindPreCreate, events[0].Kind)
-	assert.Equal(t, "pending text", events[0].Fields[FieldContent],
+	assert.Equal(t, "pending text", events[0].Fields[FieldNewContent],
 		"the rule still gets the text the write would leave")
 }
 

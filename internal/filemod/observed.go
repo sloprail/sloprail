@@ -83,6 +83,28 @@ type Observed interface {
 	// nothing, which Paths says cannot happen. That one case is reported as
 	// ErrNotADifference so a producer degrading this way says so somewhere.
 	ExistedAtBaseline(path string) bool
+
+	// BaselineContent is the file's bytes at the point the cycle's difference is
+	// measured from, and whether they could be read. Asked with the CANONICAL
+	// spelling, the same form Paths reports and the event carries.
+	//
+	// This is the other half of the classification the tree cannot answer, and
+	// the reason it lives on the producer rather than in this module. What a file
+	// holds NOW is a stat and a read away — this module does that itself, off
+	// disk. What it held BEFORE the change is a fact about a commit the tree may
+	// since have left behind, and reading it means reading git — which is the
+	// producer's resource, not this module's. So the Post update and delete
+	// events, which carry `oldContent`, get it from here.
+	//
+	// The boolean is the honest half. A file that was not at the baseline (a
+	// create) has no prior bytes, and a producer that cannot read the blob it
+	// once had answers false rather than "" — because "" is a legitimate prior
+	// content (a file that was empty at the baseline), and a rule about what was
+	// lost must tell the two apart. A create is never asked, since it declares no
+	// oldContent; an update or delete whose baseline read fails carries "" and is
+	// reported honestly rather than dropped, the same way an unreadable file NOW
+	// yields no markers rather than failing the whole extraction.
+	BaselineContent(path string) (string, bool)
 }
 
 // classify decides which Post kind a changed path is, from the two facts that

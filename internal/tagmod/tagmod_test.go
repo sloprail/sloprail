@@ -1,0 +1,210 @@
+package tagmod
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/module"
+)
+
+func labels(tags []Tag) []string {
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		out = append(out, t.Label)
+	}
+	return out
+}
+
+func TestModule_Name(t *testing.T) {
+	assert.Equal(t, Name, New().Name())
+	assert.Equal(t, "tag", Name, "the module name is not a prefix the kinds carry")
+}
+
+func TestModule_DeclaresPostTagWriteWithATagsList(t *testing.T) {
+	kinds := New().Kinds()
+	require.Len(t, kinds, 1)
+	assert.Equal(t, KindPostTagWrite, kinds[0].Name)
+	require.Len(t, kinds[0].Fields, 1)
+
+	tags := kinds[0].Fields[0]
+	assert.Equal(t, FieldTags, tags.Name)
+	assert.Equal(t, module.TypeList, tags.Type)
+	require.NotNil(t, tags.Elem, "a nil Elem leaves a predicate over tags unchecked")
+	assert.Equal(t, module.TypeMap, tags.Elem.Type)
+	require.Len(t, tags.Elem.Fields, 1)
+	assert.Equal(t, KeyTagLabel, tags.Elem.Fields[0].Name)
+	assert.Equal(t, module.TypeString, tags.Elem.Fields[0].Type)
+}
+
+// --- the scanner ------------------------------------------------------------
+
+func TestScan_FindsASingleTag(t *testing.T) {
+	assert.Equal(t, []string{"update"}, labels(scan([]string{"#update"})))
+}
+
+// multiple tags in one message — the bulk case the event exists for.
+func TestScan_MultipleTagsInOneMessage(t *testing.T) {
+	assert.Equal(t, []string{"update", "decision"},
+		labels(scan([]string{"#update #decision"})),
+		"a message commonly carries more than one tag")
+}
+
+// tags mid-sentence, not only at the start of a line.
+func TestScan_TagsMidSentence(t *testing.T) {
+	assert.Equal(t, []string{"refactor"},
+		labels(scan([]string{"I did a #refactor here"})))
+	assert.Equal(t, []string{"a", "b"},
+		labels(scan([]string{"start #a middle #b end"})))
+}
+
+// no tags at all — the scanner returns nothing, and the module still emits an
+// empty event (tested separately).
+func TestScan_NoTags(t *testing.T) {
+	assert.Empty(t, scan([]string{"nothing tagged here", "still nothing"}))
+	assert.Empty(t, scan(nil))
+	assert.Empty(t, scan([]string{""}))
+}
+
+// dedup: the same label twice yields one tag, first-occurrence order kept.
+func TestScan_DedupsByLabelKeepingOrder(t *testing.T) {
+	assert.Equal(t, []string{"update", "decision"},
+		labels(scan([]string{"#update then #decision then #update again"})),
+		"a repeated tag is the same tag; the set is what a context checks membership against")
+}
+
+// dedup spans messages: a tag in message 1 and again in message 3 is one tag.
+func TestScan_DedupAcrossMessages(t *testing.T) {
+	assert.Equal(t, []string{"decision", "update"},
+		labels(scan([]string{"#decision", "untagged", "#update and #decision"})),
+		"order is first-appearance across the whole cycle")
+}
+
+// A markdown heading is `#` followed by a space — punctuation, not a tag.
+func TestScan_MarkdownHeadingIsNotATag(t *testing.T) {
+	assert.Empty(t, scan([]string{"# Heading", "## Subheading", "###"}),
+		"# followed by whitespace is a heading, not a tag")
+}
+
+// A `#` mid-token — `foo#bar`, a URL fragment — is not a tag: the `#` must sit
+// at a word boundary.
+func TestScan_HashMidTokenIsNotATag(t *testing.T) {
+	assert.Empty(t, scan([]string{"see example.com#section"}),
+		"a URL fragment's # is inside a token, not at a word boundary")
+	assert.Empty(t, scan([]string{"path/to/thing#anchor"}),
+		"a # after a non-space character is not a tag")
+
+	// A `#` that IS at a word boundary and starts with a letter matches, even
+	// when it is really a CSS colour — the scanner cannot know one from a tag,
+	// and reading it out of a documentation example is visible (the rule fires
+	// and someone looks) rather than silent. Asserted so the boundary rule is
+	// exact rather than assumed.
+	assert.Equal(t, []string{"ffffff"}, labels(scan([]string{"the color is #ffffff"})))
+}
+
+// A tag may not start with a digit — that tells it from an issue reference.
+func TestScan_IssueReferenceIsNotATag(t *testing.T) {
+	assert.Empty(t, scan([]string{"fixes #42", "see PR #1234"}),
+		"#<digits> is an issue reference, not a tag")
+	// but a tag whose FIRST char is a letter and which contains digits is fine.
+	assert.Equal(t, []string{"v2"}, labels(scan([]string{"ship #v2"})))
+}
+
+// Hyphens and underscores are part of a tag; a trailing period is not.
+func TestScan_TagBodyCharacters(t *testing.T) {
+	assert.Equal(t, []string{"no-slop"}, labels(scan([]string{"the #no-slop rule"})))
+	assert.Equal(t, []string{"no_slop"}, labels(scan([]string{"the #no_slop rule"})))
+	assert.Equal(t, []string{"done"}, labels(scan([]string{"we are #done."})),
+		"a trailing period ends the tag and stays in the prose")
+}
+
+// --- Extract ----------------------------------------------------------------
+
+func postWith(messages []string) module.Input {
+	return module.Input{
+		module.InputPhase:    module.PhasePost,
+		module.InputMessages: messages,
+	}
+}
+
+func TestExtract_OneBulkEventCarryingEveryTag(t *testing.T) {
+	events, err := New().Extract(postWith([]string{"#update #decision", "and #done"}))
+	require.NoError(t, err)
+	require.Len(t, events, 1, "one bulk PostTagWrite per cycle, not one per tag")
+
+	got, err := FromEvent(events[0])
+	require.NoError(t, err)
+	assert.Equal(t, []string{"update", "decision", "done"}, labels(got.Tags))
+}
+
+func TestExtract_EmptyEventWhenNoTags(t *testing.T) {
+	// The event still fires, carrying an empty tags list — a truthful "the agent
+	// wrote nothing tagged this cycle", which a context reacting to the ABSENCE
+	// of its tag depends on.
+	events, err := New().Extract(postWith([]string{"no tags here"}))
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	got, err := FromEvent(events[0])
+	require.NoError(t, err)
+	assert.Empty(t, got.Tags)
+	// present-and-empty on the wire, so `len(tags) == 0` holds rather than errors.
+	assert.Equal(t, []any{}, events[0].Fields[FieldTags])
+}
+
+func TestExtract_NoMessagesOfferedProducesNoEvent(t *testing.T) {
+	// The absence of a message list is the caller saying "I have no settled text
+	// to offer", not "the agent wrote no tags" — distinct from an empty list.
+	events, err := New().Extract(module.Input{module.InputPhase: module.PhasePost})
+	require.NoError(t, err)
+	assert.Empty(t, events, "no InputMessages, no event")
+}
+
+func TestExtract_NothingInThePrePhase(t *testing.T) {
+	// A tag cannot be known before the agent has written anything.
+	events, err := New().Extract(module.Input{
+		module.InputPhase:    module.PhasePre,
+		module.InputMessages: []string{"#update"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, events, "PostTagWrite is a Post fact only")
+}
+
+// --- Event conversion -------------------------------------------------------
+
+func TestEvent_TagsAreAnEmptyListOnTheWireWhenNone(t *testing.T) {
+	e := TagEvent{}.Event()
+	assert.Equal(t, []any{}, e.Fields[FieldTags], "empty, not null")
+}
+
+func TestFromEvent_RoundTrip(t *testing.T) {
+	in := TagEvent{Tags: []Tag{{Label: "update"}, {Label: "decision"}}}
+	got, err := FromEvent(in.Event())
+	require.NoError(t, err)
+	assert.Equal(t, in, got)
+}
+
+func TestFromEvent_WrongKindIsAnError(t *testing.T) {
+	_, err := FromEvent(event.Event{Kind: "PostFileCreate", Fields: map[string]any{}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not a "+KindPostTagWrite)
+}
+
+func TestFromEvent_MalformedEntriesAreSkipped(t *testing.T) {
+	// A read of events this module produced, so a malformed entry is skipped
+	// rather than failing the whole read.
+	got, err := FromEvent(event.Event{
+		Kind: KindPostTagWrite,
+		Fields: map[string]any{
+			FieldTags: []any{
+				map[string]any{KeyTagLabel: "good"},
+				"not a map",
+				map[string]any{KeyTagLabel: 42}, // label not a string
+				map[string]any{"other": "no label key"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"good"}, labels(got.Tags))
+}

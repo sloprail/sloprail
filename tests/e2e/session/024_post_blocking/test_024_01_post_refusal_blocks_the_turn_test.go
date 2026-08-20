@@ -206,7 +206,7 @@ func TestT024_02_SeveralRefusalsAreAllReportedAndBlockOnce(t *testing.T) {
 // tell an engine that dispatches everything from one that abandons the cycle the
 // moment a hook objects — the file survives either way, and so does the block.
 //
-// The passing rule is bound to TurnEnd, which is dispatched last and
+// The passing rule is bound to Stop, which is dispatched last and
 // unconditionally, so it is the one a "stop at the first refusal" engine would
 // lose.
 func TestT024_03_ARefusalDoesNotSilenceThePassingRuleAfterIt(t *testing.T) {
@@ -216,7 +216,7 @@ func TestT024_03_ARefusalDoesNotSilenceThePassingRuleAfterIt(t *testing.T) {
 	afterLog := filepath.Join(t.TempDir(), "after.log")
 	e.Guardrail(proj, "afterwards", `---
 hooks:
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./record.sh

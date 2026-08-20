@@ -12,6 +12,7 @@ import (
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/sessionstate"
+	"github.com/sloprail/sloprail/internal/tagmod"
 )
 
 // objection is one guardrail's refusal of one event, kept until the cycle has
@@ -192,12 +193,19 @@ func runPostDispatch(cmd *cobra.Command, store sessionstate.Store, p HookPayload
 	// FromASubdirectory, which failed before this was threaded through.
 	events, root := postEvents(cmd, store, p, reg, bound)
 	if root == "" {
-		// No difference was established, so nothing names a root. Only TurnEnd
+		// No difference was established, so nothing names a root. Only Stop
 		// follows, which carries no path and asks for no subject.
 		root = p.Cwd
 	}
 
-	// TurnEnd last, and unconditionally.
+	// PostTagWrite next, gathered from the record rather than the tree — and so
+	// NOT gated on the file difference the way postEvents is. A cycle that wrote
+	// `#decision` in prose and changed no file has a tag to report and an empty
+	// diff, so folding this into postEvents would lose exactly the case the event
+	// exists for. It carries no path, so it needs no root.
+	events = append(events, tagEvents(cmd, store, p, reg, bound)...)
+
+	// Stop last, and unconditionally.
 	//
 	// Last because a rule about the cycle as a whole — that every entity of a
 	// kind is linked from somewhere, that a required artifact was produced — is
@@ -350,7 +358,7 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 	}
 	if !ok || commit == "" {
 		// No point to measure from — a project without git, or one with no
-		// commit yet. The cycle still ends and TurnEnd still fires; there is
+		// commit yet. The cycle still ends and Stop still fires; there is
 		// simply no difference to report.
 		return nil, ""
 	}
@@ -417,6 +425,60 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 	return events, diff.Root()
 }
 
+// tagEvents runs the tag module over this cycle's agent messages, when something
+// binds to PostTagWrite.
+//
+// Separate from postEvents because its input is the RECORD, not the tree
+// difference, and its event must fire even when the difference is empty — a
+// cycle that wrote a tag in prose and touched no file. Folding it into postEvents
+// would gate it on the diff and lose exactly that case.
+//
+// Gated on the bound kinds, the same discipline reg.Needed enforces for every
+// other module: reading the whole transcript and scanning it for tokens is not
+// free, and a project with no rule bound to PostTagWrite should pay nothing for
+// the fact that tags can be scanned. The scan is skipped entirely when nothing
+// asks — so the transcript is not even read.
+//
+// The messages are gathered and handed to the module through module.InputMessages;
+// the module does the scanning. Errors gathering the messages are reported and
+// swallowed inside cycleAgentMessages, which yields an empty list rather than
+// failing — a truthful "no tags seen" for a cycle whose text could not be read.
+func tagEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg *module.Registry, bound []string) []event.Event {
+	m, ok := reg.Lookup(tagmod.KindPostTagWrite)
+	if !ok {
+		// No module owns the kind — an impossible state in this build, since
+		// tagmod is registered, but handled rather than assumed.
+		return nil
+	}
+	if !boundTo(bound, tagmod.KindPostTagWrite) {
+		// Nothing binds to it, so the scan is work done to be discarded — and its
+		// cost is a whole-transcript read. Skip it, transcript included.
+		return nil
+	}
+
+	in := module.Input{
+		module.InputPhase:    module.PhasePost,
+		module.InputMessages: cycleAgentMessages(cmd, store, p),
+	}
+	evs, err := m.Extract(in)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: module %q: %v\n", m.Name(), err)
+	}
+	return evs
+}
+
+// boundTo reports whether a kind is among those something in this project binds
+// to. A small helper so the tag scan can be gated on its own kind the way
+// reg.Needed gates the extractors it runs.
+func boundTo(bound []string, kind string) bool {
+	for _, k := range bound {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // readdOutstanding puts every still-unfixed file back into the difference.
 //
 // The reader `refusal_outlives_baseline` turns on. Retention alone does not
@@ -472,7 +534,7 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 		if !known {
 			// An event from a kind the registry does not own cannot be matched
 			// against anything. Unreachable in this build — every kind
-			// dispatched here is declared by a registered module, TurnEnd
+			// dispatched here is declared by a registered module, Stop
 			// included, which is the whole reason cyclemod exists.
 			continue
 		}
@@ -652,7 +714,7 @@ func dispatchAll(cmd *cobra.Command, reg *module.Registry, decls []guardrail.Dec
 //
 // The matcher is compiled against the kind's own declaration, which is what
 // makes a matcher naming a field the kind does not carry a load-time error
-// rather than a rule that silently never fires. On TurnEnd that declaration has
+// rather than a rule that silently never fires. On Stop that declaration has
 // no fields at all, so any matcher naming one is refused — see cyclemod.
 //
 // The error is RETURNED rather than reported and swallowed, and that is the

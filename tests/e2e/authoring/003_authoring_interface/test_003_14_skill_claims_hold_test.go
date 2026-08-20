@@ -123,8 +123,31 @@ func TestT003_14_SkillDoesNotRestateTheDerivedVocabulary(t *testing.T) {
 	// keyed by SOMETHING, and an example with a placeholder teaches the shape
 	// less well than one with a real key. Two or more is a vocabulary list
 	// forming.
+	//
+	// Some event-kind names coincide with a harness HOOK-POINT name, and the
+	// skill must be free to reference the hook point without that reading as a
+	// vocabulary restatement. `Stop` is the clearest case: the spec renamed the
+	// cycle kind from `TurnEnd` to `Stop` precisely because the harness's own
+	// `Stop` hook already covers the end of a cycle, so the skill explaining
+	// where Post events are dispatched from ("the `Stop` and `SubagentStop` hook
+	// points") names a hook, not the kind. `PreToolUse` is the same — a harness
+	// hook point whose name a later module borrowed for an event kind. These are
+	// the harness's own hook points, a fixed set the skill documents as plumbing;
+	// counting them as vocabulary would forbid the skill from naming the hooks it
+	// runs on. So they are excluded from the count — the check is still that the
+	// KIND LIST is not restated, which is what an author trusts after a module is
+	// added.
+	harnessHookPoints := map[string]bool{
+		"SessionStart": true,
+		"PreToolUse":   true,
+		"Stop":         true,
+		"SubagentStop": true,
+	}
 	var named []string
 	for _, kind := range kinds {
+		if harnessHookPoints[kind] {
+			continue
+		}
 		if strings.Contains(skill, kind) {
 			named = append(named, kind)
 		}
