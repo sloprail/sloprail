@@ -65,15 +65,15 @@ a quoted multi-word fqn, reconcile then.
       This belongs with declaration-loading/dispatch (whoever wires match against real declarations).
 
 ### BATCH 3 — IN PROGRESS (base 9342d8b). SEQUENTIAL (natures build on core's check-runner + gates map):
-- worktree `dispatch-core` (impl/dispatch-core): shared CHECK-RUNNER + gate (3a) + structure-gate (3s) — IMPLEMENTING
+- worktree `dispatch-core` (impl/dispatch-core): CHECK-RUNNER + gate (3a) + structure (3s) — DONE (~4832 lines), IN REVIEW. Delivers internal/dispatch pkg with Runner.Run(Request)→Verdict API (the natures slice imports this), Jinja2-subset renderer (all 8 example .md.j2), judge-via-sr-agent, gates[] map in sessionstate under reserved !sloprail:gates keyspace. Caught+fixed a real jq `.pass // empty` fail-open bug.
 - worktree `dispatch-natures` (later): file-guard (3c) + context (3b) + goal (3d) — WAITS for dispatch-core merge
   (grouped this way because all natures share the dispatch entry points session_pre_tool/session_stop.go +
    the check-runner; parallel worktrees would conflict heavily on those. gate+structure first because gate
    establishes the gates[] map context needs, and both are the simplest natures to prove the runner e2e.)
 ### BATCH 3 — dispatch engine (after batch 2)
-- [~] 3a  gate dispatch (on→require→checks, pass/fail, one-shot) — IMPLEMENTING      [dispatch-core]
+- [~] 3a  gate dispatch — DONE (ab3d918), REVIEWING                                 [dispatch-core]
 - [ ] 3c  file-guard dispatch (match file state, preventive, re-fires) — WAITS       [dispatch-natures]
-- [~] 3s  structure-gate path-allowlist check — IMPLEMENTING                        [dispatch-core]
+- [~] 3s  structure-gate path-allowlist check — DONE, REVIEWING                     [dispatch-core]
 - [ ] 3b  context lifecycle (on/enter/exit, context[] & gates[] maps) — WAITS on 3a  [dispatch-natures]
 - [ ] 3d  goal = context+goal.yaml pairing (composite) — WAITS on 3b                 [dispatch-natures]
 
