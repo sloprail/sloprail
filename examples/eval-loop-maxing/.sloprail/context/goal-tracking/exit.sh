@@ -8,7 +8,7 @@
 set -uo pipefail
 
 input="$(cat)"
-status="$(printf '%s' "$input" | jq -r '.event.gates["goal-verify"].status // "fail"' 2>/dev/null)"
+status="$(printf '%s' "$input" | jq -r '.gates["goal-verify"].status // "fail"' 2>/dev/null)"
 
 if [ "$status" = "pass" ]; then
   # Target met — this context deactivates.

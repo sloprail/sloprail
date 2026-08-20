@@ -14,7 +14,7 @@ import (
 
 // This file is the pre-tool half of the new nature dispatch: gates on pre-action
 // events, and the structure gate on file-write paths. It is called from
-// runSessionPreTool AFTER the old-format dispatch, so both run and a refusal from
+// runSessionPreTool BEFORE the old-format dispatch, so both run and a refusal from
 // either blocks the tool call.
 //
 // The return convention matches the old path: it returns an error to end the hook
