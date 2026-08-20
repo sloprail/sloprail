@@ -167,36 +167,25 @@ func TestT050_01_ShippedExampleDrivesTheLoop(t *testing.T) {
 	}
 }
 
-// requireUnmet is the fragment the engine's require-check refuses with when a
-// gate's required context is not active (internal/dispatch/require.go,
-// checkContext). Distinct from keepIterating on purpose: the two are different
-// verdicts about completely different things, and a control that only asked
-// "was the Stop blocked" could not tell them apart.
-const requireUnmet = `requires the "goal-tracking" context to be active first`
-
-// T050_02: the control — a Stop with NO active goal is still blocked, but by a
-// DIFFERENT cause than an unmet target, and NOT by verify.sh's "keep iterating".
+// T050_02: the control — a Stop with NO active goal is PERMITTED, not frozen.
 //
 // This is the control for T050_01: it proves cycle 1's block there came from
 // verify.sh FAILING (the goal was declared but unmet), not from the gate refusing
-// every Stop for the same reason regardless of the goal. Here no goal.yaml is ever
-// written, so the tracking context never enters, and the block that lands is the
-// require-unmet refusal — a different sentence, telling the two causes apart.
+// every Stop regardless of the goal. Here no goal.yaml is ever written, so the
+// tracking context never enters — and the shipped gate's
+// `match: context["goal-tracking"].active` makes it SKIP entirely, admitting the
+// Stop. A session with no goal has nothing to iterate toward, so its Stop must be
+// left alone; that the gate refuses ONLY when a goal is genuinely active-and-unmet
+// (T050_01) and not otherwise is exactly what distinguishes the loop from a gate
+// that blocks unconditionally.
 //
-// EXAMPLE BUG (noted, not fixed — examples are truth): the shipped example does
-// NOT leave a goal-free Stop alone. The gate's require:[{context: goal-tracking}]
-// is UNMET whenever no goal was declared, and the engine BLOCKS an unmet require
-// (internal/dispatch/require.go checkContext; pinned by
-// tests/e2e/context/035_context_dispatch T035_04) — it does not run the check. So
-// run-verify.sh's own "context not active — permit the Stop" path (its `if [ -z
-// "$goal_name" ]` branch) is DEAD CODE: the engine refuses before the check ever
-// runs. The README's model of require as "a dependency that no-ops when unmet"
-// does not match the engine, where an unmet require refuses. As shipped, installing
-// eval-loop-maxing blocks EVERY Stop in any session that never authored a
-// goal/<name>/goal.yaml. The gate's verdict is recorded fail in that case (a
-// refusal is a fail), which this test also pins so a future example fix that makes
-// a goal-free Stop pass will flip this assertion and force this note to be revisited.
-func TestT050_02_NoActiveGoalControl(t *testing.T) {
+// (The example was fixed on 2026-08-20 after this suite first surfaced that a bare
+// `require:[{context}]` BLOCKS an unmet dependency — the engine refuses an unmet
+// require, internal/dispatch/require.go checkContext — which would freeze every
+// goal-free Stop and never run the check. Adding the same match-skip the sibling
+// keyword-coverage-registry gate already uses realizes run-verify.sh's own
+// "context not active — permit the Stop" intent, which was previously unreachable.)
+func TestT050_02_NoActiveGoalIsPermitted(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -207,21 +196,21 @@ func TestT050_02_NoActiveGoalControl(t *testing.T) {
 		Write("w1", "notes.txt", "no goal declared here"),
 	))
 
+	// The gate skips (its match reads goal-tracking inactive), so the Stop is not
+	// refused at all — nothing blocks.
+	if res.Refused() {
+		t.Fatalf("a goal-free Stop was refused, but the gate must skip when no goal is active:\n%s", res.Output)
+	}
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("expected the shipped gate to block a goal-free Stop via its unmet require, but nothing blocked:\n%s", res.Output)
+	if len(blocks) != 0 {
+		t.Fatalf("a goal-free Stop produced blocking errors, but the gate must skip when no goal is active:\n%v", blocks)
 	}
-	// The block is the require-unmet cause, NOT verify.sh's "keep iterating" —
-	// which is the whole point of the control: cycle 1's block in T050_01 was
-	// verify.sh failing on a declared-but-unmet goal, a distinct verdict from this.
-	if !containsAny(blocks, requireUnmet) {
-		t.Fatalf("a goal-free Stop was blocked, but not by the require-unmet cause:\n%v", blocks)
-	}
+	// In particular verify.sh must never run when no goal was declared — its "keep
+	// iterating" sentence must be absent.
 	if containsAny(blocks, keepIterating) {
-		t.Fatalf("a goal-free Stop was blocked by verify.sh's 'keep iterating' — verify.sh must not run when the required context never entered:\n%v", blocks)
+		t.Fatalf("a goal-free Stop hit verify.sh's 'keep iterating' — the gate must skip, not run the check:\n%v", blocks)
 	}
-	// The tracking context never activated, since no goal.yaml was written — so the
-	// block above is genuinely the require-unmet path, not a mis-tracked goal.
+	// The tracking context never activated, since no goal.yaml was written.
 	if active, _ := e.ContextState(proj, sess, "goal-tracking"); active {
 		t.Fatalf("the goal-tracking context is active though no goal.yaml was ever written")
 	}
