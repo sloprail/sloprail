@@ -20,6 +20,12 @@ set -uo pipefail
 input="$(cat)"
 path="$(printf '%s' "$input" | jq -r '.event.path')"
 old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
+# The trajectory to ground the quote against — the CheckPayload carries it, the
+# same field task-management's resolve-referenced-message.sh reads. cite MUST be
+# given it explicitly: with no --path cite fails closed (it cannot rule out a
+# sub-agent context from a tool call's environment), so a bare `cite "$quote"`
+# would refuse EVERY removal, grounded or not. Pass the payload's path.
+transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
 # Absent newContent (not empty — absent) means the result is unknowable.
 if ! printf '%s' "$input" | jq -e '.event | has("newContent")' >/dev/null 2>&1; then
@@ -52,7 +58,7 @@ fi
 # Ground the quote: it must be the user's own words in this trajectory. cite
 # exits 0 for a single resolving match, 2 for several, 1 for none — each a
 # DIFFERENT fix for the agent, so the codes are branched, not merged.
-sr-session trajectory cite "$quote" >/dev/null 2>&1
+sr-session trajectory cite --path "$transcript_path" "$quote" >/dev/null 2>&1
 cite_rc=$?
 
 case "$cite_rc" in

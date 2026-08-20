@@ -28,8 +28,14 @@ entries="$(sr-session trajectory normalize --path "$transcript_path")"
 # perform one — a form submit, a download. (A real deployment would name its
 # own; this sample keys on a couple of representative tool names.) The last such
 # tool_use block carries the action's .name and .input.
+# .content is an ARRAY of blocks on a tool-bearing turn, but a plain text
+# message (a typed user prompt, and every session's first turn) carries
+# .content as a STRING — iterating that with [] is a jq "Cannot iterate over
+# string" fatal. Guard to arrays so a string turn contributes no blocks rather
+# than crashing the whole prepare (which fails the check closed before the
+# model is ever asked).
 action="$(printf '%s' "$entries" | jq -c '
-  [ .[] | (.message | objects | .content // [])[]
+  [ .[] | (.message | objects | .content // [] | if type == "array" then .[] else empty end)
     | select(.type == "tool_use"
         and (.name == "fill_form" or .name == "download_file")) ][-1] // null')"
 
@@ -45,11 +51,11 @@ fi
 # lives"), correlated to the call by tool_use id. Pull the most recent one; the
 # judge decides whether it actually shows the action's fields.
 proof="$(printf '%s' "$entries" | jq -c '
-  ([ .[] | (.message | objects | .content // [])[]
+  ([ .[] | (.message | objects | .content // [] | if type == "array" then .[] else empty end)
      | select(.type == "tool_use" and .name == "screenshot") | .id ][-1]) as $sid
   | if $sid == null then null
     else ([ .[]
-             | select(any((.message | objects | .content // [])[];
+             | select(any((.message | objects | .content // [] | if type == "array" then .[] else empty end);
                  .type == "tool_result" and .tool_use_id == $sid))
              | .toolUseResult ][-1] // null)
     end')"
