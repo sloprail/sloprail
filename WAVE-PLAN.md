@@ -30,8 +30,8 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - [ ] 1d  Post-file events carry old/newMarkers + old/newContent; naming     [events-vocab]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
 - [x] 1f  per-nature match SCOPES + glob shorthand + internal/natures — MERGED (218de70)   [match-scopes ✓]
-- [~] 4b  session trajectory describe — passed; slice RE-REVIEWING cite fix           [traj-describe-cite]
-- [~] 4c  session trajectory cite — multi-Q parse FIXED (corpus-grounded), RE-REVIEWING [traj-describe-cite]
+- [x] 4b  session trajectory describe — MERGED (93d0c52)                               [traj-describe-cite ✓]
+- [x] 4c  session trajectory cite — MERGED (93d0c52), re-reviewed zero (40 adversarial+20k fuzz) [traj-describe-cite ✓]
 
 NOTE (from markers agent, follow-up not blocker): services/sr-mark/marker.go WriteMarker emits
 fqns UNQUOTED — fine today (examples hand-write quoted frontmatter), but if sr-mark must ever WRITE
@@ -68,6 +68,13 @@ a quoted multi-word fqn, reconcile then.
 
 ### WAVE 2 (GOAL.md) — per-use-case e2e tests (after all dispatch)
 - [ ] one e2e suite per example in examples/, multi-scenario (pass + violation paths), via claude-mock harness.
+
+KNOWN PRE-EXISTING RED (base branch, NOT a regression — deferred to Wave 3 deletion):
+  tests/e2e/examples/013_required_context_precondition + deterministic_refactoring are OLD-FORMAT
+  (GUARDRAIL.md/hooks, expect examples/guardrails/... path layout that no longer exists post-migration).
+  New-format equivalents already built: examples/required-context-precondition,
+  examples/deterministic-refactoring-mode. Per GOAL.md these superseded old e2e are DELETED in Wave 3
+  (kept now as reference). They make `go test ./...` red today; that is expected, not caused by any slice.
 
 ### WAVE 3 (GOAL.md) — cleanup, SEPARATE PRs, at the very end
 - [ ] delete old GUARDRAIL.md format + old dispatch + cyclemod TurnEnd + session query + old/duplicated e2e.
