@@ -55,10 +55,13 @@ func (r Runner) runScriptCheck(req Request, c declaration.Check) (Verdict, error
 		return Verdict{}, err
 	}
 	res, err := r.runScript(scriptCall{
-		Dir:       req.Dir,
-		Script:    c.Script,
-		Stdin:     payload,
-		GuardName: req.GuardName,
+		Dir:            req.Dir,
+		Script:         c.Script,
+		Stdin:          payload,
+		GuardName:      req.GuardName,
+		Workspace:      req.Workspace,
+		SessionID:      req.SessionID,
+		TranscriptPath: req.TranscriptPath,
 	})
 	if err != nil {
 		return Verdict{}, err
@@ -117,10 +120,13 @@ func (r Runner) runPrepare(req Request, prepare string) (declaration.PreparedCon
 		return nil, Verdict{}, err
 	}
 	res, err := r.runScript(scriptCall{
-		Dir:       req.Dir,
-		Script:    prepare,
-		Stdin:     payload,
-		GuardName: req.GuardName,
+		Dir:            req.Dir,
+		Script:         prepare,
+		Stdin:          payload,
+		GuardName:      req.GuardName,
+		Workspace:      req.Workspace,
+		SessionID:      req.SessionID,
+		TranscriptPath: req.TranscriptPath,
 	})
 	if err != nil {
 		return nil, Verdict{}, err
