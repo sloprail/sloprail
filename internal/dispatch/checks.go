@@ -154,13 +154,13 @@ func (r Runner) checkPayloadJSON(req Request) ([]byte, error) {
 	switch req.Nature {
 	case NatureGate:
 		return json.Marshal(declaration.GateCheckPayload{
-			Event:          req.Event,
+			Event:          declaration.FlatEvent(req.Event),
 			TranscriptPath: req.TranscriptPath,
 			Context:        req.contextMap(),
 		})
 	default:
 		return json.Marshal(declaration.CheckPayload{
-			Event:          req.Event,
+			Event:          declaration.FlatEvent(req.Event),
 			TranscriptPath: req.TranscriptPath,
 			Context:        req.contextMap(),
 		})
@@ -180,7 +180,7 @@ func (r Runner) judgeInputJSON(req Request, additional declaration.PreparedConte
 	case NatureGate:
 		return json.Marshal(declaration.GateJudgeInput{
 			GateCheckPayload: declaration.GateCheckPayload{
-				Event:          req.Event,
+				Event:          declaration.FlatEvent(req.Event),
 				TranscriptPath: req.TranscriptPath,
 				Context:        req.contextMap(),
 			},
@@ -189,7 +189,7 @@ func (r Runner) judgeInputJSON(req Request, additional declaration.PreparedConte
 	default:
 		return json.Marshal(declaration.FileJudgeInput{
 			CheckPayload: declaration.CheckPayload{
-				Event:          req.Event,
+				Event:          declaration.FlatEvent(req.Event),
 				TranscriptPath: req.TranscriptPath,
 				Context:        req.contextMap(),
 			},

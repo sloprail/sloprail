@@ -1,9 +1,94 @@
 package declaration
 
 import (
+	"encoding/json"
+	"fmt"
+
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/natures"
 )
+
+// FlatEvent is an event.Event serialized FLAT — the on-the-wire shape a check's
+// script and a judge's template read `event` as (dot-dir-file-store/main.tsp).
+//
+// # Why flat, and why a distinct type
+//
+// The engine's event.Event marshals through its own envelope as
+// `{"kind":…, "fields":{…}}` — the shape the OLD-format hooks read (`.event.fields.path`).
+// The NEW declaration formats read the event FLAT: the spec's judge templates say
+// `{{ event.newContent }}` and `{{ event.path }}` (main.tsp ~338), its CheckPayload
+// doc names `event.newMarkers`/`event.oldMarkers` (~299), and every shipped example
+// script and template reads `.event.newContent` / `.event.path` / `.event.kind` /
+// `.event.newMarkers` directly — never under a `fields` sub-object. So the payloads
+// these declarations receive must carry the event's own fields DIRECTLY under
+// `event`, with `kind` alongside them: `{"kind":"PreFileUpdate","path":"…","newContent":"…","newMarkers":[…]}`.
+//
+// A distinct type rather than a marshal option on the payload structs, because the
+// flatness is a property of the EVENT's wire form specifically — `transcriptPath`,
+// `context` and `gates` are already flat as ordinary fields, and only `event` needs
+// its envelope opened up. Making it a type means every payload that carries an event
+// gets the same flat shape by construction (its field is a FlatEvent), and a caller
+// cannot accidentally reintroduce the nested envelope by marshaling a bare
+// event.Event into an `event` key. The underlying struct is event.Event's, so a
+// caller converts with FlatEvent(e) at no cost.
+type FlatEvent event.Event
+
+// eventKindKey is the discriminator key a flat event carries alongside its fields.
+// The event's own field names must not collide with it — no module declares a field
+// named `kind`, and MarshalJSON writes `kind` LAST so the event's kind always wins
+// over a stray field of that name rather than being shadowed by it.
+const eventKindKey = "kind"
+
+// MarshalJSON writes the event flat: its declared fields spread at the top level,
+// with `kind` alongside them.
+//
+// A nil Fields map is an event that carries nothing but its kind (a Stop), which
+// marshals to `{"kind":"Stop"}` — an object, never a null, so a script indexing
+// `.event.<anything>` gets a clean miss rather than an error, the same "always an
+// object" discipline the event envelope keeps.
+func (e FlatEvent) MarshalJSON() ([]byte, error) {
+	out := make(map[string]any, len(e.Fields)+1)
+	for k, v := range e.Fields {
+		out[k] = v
+	}
+	// Kind last, so the discriminator cannot be shadowed by a field named `kind`.
+	out[eventKindKey] = e.Kind
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON reads a flat event back into {Kind, Fields}: `kind` becomes Kind and
+// every other key becomes a field. The inverse of MarshalJSON, so a payload written
+// by this package round-trips — which is what a test asserting on an assembled
+// payload, and any Go consumer reading one back, relies on.
+func (e *FlatEvent) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var ev FlatEvent
+	if kindRaw, ok := raw[eventKindKey]; ok {
+		if err := json.Unmarshal(kindRaw, &ev.Kind); err != nil {
+			return fmt.Errorf("flat event: kind: %w", err)
+		}
+		delete(raw, eventKindKey)
+	}
+	if len(raw) > 0 {
+		ev.Fields = make(map[string]any, len(raw))
+		for k, v := range raw {
+			var val any
+			if err := json.Unmarshal(v, &val); err != nil {
+				return fmt.Errorf("flat event: field %q: %w", k, err)
+			}
+			ev.Fields[k] = val
+		}
+	}
+	*e = ev
+	return nil
+}
+
+// Event returns the flat event as an ordinary event.Event, for a Go consumer that
+// wants the envelope form back after reading a payload.
+func (e FlatEvent) Event() event.Event { return event.Event(e) }
 
 // This file is the WIRE/TYPE contract for what a rule's script, prepare and
 // judge receive — the payload and judge-input shapes the spec names explicitly
@@ -41,10 +126,11 @@ import (
 // by name, at parity with the file-guard's match scope.
 type CheckPayload struct {
 	// Event is the file event — a FileEvent variant (a Pre* only when the guard
-	// is preventive, otherwise a Post*). Carried as the envelope every boundary
-	// in sloprail uses, so its `kind` and fields are read the same way a matcher
-	// reads them.
-	Event event.Event `json:"event"`
+	// is preventive, otherwise a Post*). A FlatEvent, so its `kind` and fields are
+	// read FLAT under `event` (`.event.path`, `.event.newContent`,
+	// `.event.newMarkers`) the way the spec models it and every example reads it —
+	// not through the nested `{kind, fields}` envelope the old format used.
+	Event FlatEvent `json:"event"`
 
 	// TranscriptPath names the session record a check reads for what the event
 	// does not carry.
@@ -61,8 +147,10 @@ type CheckPayload struct {
 // level, at parity with the gate's match scope, so a gate's own checks can read
 // what an upstream context left behind rather than reconstruct it.
 type GateCheckPayload struct {
-	// Event is the fired pre-action event — a GateEventKind variant.
-	Event event.Event `json:"event"`
+	// Event is the fired pre-action event — a GateEventKind variant. A FlatEvent,
+	// read FLAT under `event` (`.event.path`, `.event.invocations`) the way the
+	// spec models it — see CheckPayload.Event.
+	Event FlatEvent `json:"event"`
 
 	// TranscriptPath names the session record for the trajectory-reading a gate's
 	// checks usually do.
@@ -118,8 +206,10 @@ type GateJudgeInput struct {
 // last `{active, payload}`, so the script sees what was there before deciding
 // whether to grow it, replace it, or leave it alone.
 type ContextEnterPayload struct {
-	// Event is the trigger that fired — a ContextEventKind variant.
-	Event event.Event `json:"event"`
+	// Event is the trigger that fired — a ContextEventKind variant. A FlatEvent,
+	// read FLAT under `event` (`.event.newContent`, `.event.path`, `.event.kind`,
+	// `.event.tags`) the way the context example scripts read it.
+	Event FlatEvent `json:"event"`
 
 	// TranscriptPath names the session record enter reads.
 	TranscriptPath string `json:"transcriptPath"`
@@ -140,8 +230,10 @@ type ContextEnterPayload struct {
 // the paired context reads a gate's own verdict back to decide its own
 // active/inactive.
 type ContextExitPayload struct {
-	// Event is always the Stop that triggered the exit check.
-	Event event.Event `json:"event"`
+	// Event is always the Stop that triggered the exit check. A FlatEvent, read
+	// FLAT under `event` — a Stop carries only `.event.kind`, but the shape is the
+	// same flat one every other payload uses so a script reads it uniformly.
+	Event FlatEvent `json:"event"`
 
 	// TranscriptPath names the session record exit reads.
 	TranscriptPath string `json:"transcriptPath"`

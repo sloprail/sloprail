@@ -232,9 +232,12 @@ func TestScriptPayload_GateShape(t *testing.T) {
 	assert.Contains(t, payload, "transcriptPath")
 	assert.Contains(t, payload, "context")
 	assert.Equal(t, "/rec.jsonl", payload["transcriptPath"])
-	// event carries the fired event's kind and fields.
+	// event carries the fired event's kind AND its fields FLAT — a gate script reads
+	// `.event.kind` and `.event.path`, never `.event.fields.path`.
 	ev := payload["event"].(map[string]any)
 	assert.Equal(t, "PreFileCreate", ev["kind"])
+	assert.Equal(t, "memories/topics/x.md", ev["path"], ".event.path must be flat")
+	assert.NotContains(t, ev, "fields", "the event must be flat, not the nested {kind, fields} envelope")
 	// context is the state map by name, carrying {active, payload}.
 	ctx := payload["context"].(map[string]any)
 	rr := ctx["research-run"].(map[string]any)
@@ -284,10 +287,14 @@ func TestScriptPayload_FileGuardShape(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(captured, &payload))
+	// A file-guard's script reads the event FLAT: `.event.newContent`, `.event.path`,
+	// `.event.kind` — the shape every file-guard example script reads, NOT
+	// `.event.fields.newContent`.
 	ev := payload["event"].(map[string]any)
 	assert.Equal(t, "PostFileUpdate", ev["kind"])
-	fields := ev["fields"].(map[string]any)
-	assert.Equal(t, "hi", fields["newContent"])
+	assert.Equal(t, "hi", ev["newContent"], ".event.newContent must be reachable flat")
+	assert.Equal(t, "a.md", ev["path"], ".event.path must be reachable flat")
+	assert.NotContains(t, ev, "fields", "the event must be flat, not nested under `fields`")
 }
 
 // assertAnError is a stand-in error for the fail-closed transcript test.

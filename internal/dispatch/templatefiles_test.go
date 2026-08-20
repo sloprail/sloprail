@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sloprail/sloprail/internal/event"
 )
 
 // Every .md.j2 template the spec's examples ship must render through this engine
@@ -28,32 +30,15 @@ func TestRealExampleTemplatesRender(t *testing.T) {
 	templates := findTemplates(t, root)
 	require.NotEmpty(t, templates, "no .md.j2 templates found under %s — the walk or the path is wrong", root)
 
-	// A permissive variable world: the payload fields the templates read, with
-	// additionalContext carrying the keys the prepare-fed ones use. Missing keys
-	// are undefined (nil), which the templates' own guards handle.
-	vars := map[string]any{
-		"event": map[string]any{
-			"path":       "some/file.md",
-			"newContent": "the new content",
-			"oldContent": "the old content",
-			"newMarkers": []any{map[string]any{"kind": "conforms-to-doc", "fqn": "F", "line": float64(3)}},
-			"oldMarkers": []any{},
-		},
-		"transcriptPath": "/rec.jsonl",
-		"context":        map[string]any{},
-		"additionalContext": map[string]any{
-			"action_taken": true,
-			"action":       "fill_form",
-			"action_input": "{}",
-			"proof":        "a screenshot",
-			"resolved":     true,
-			"citations": []any{
-				map[string]any{"quote": "q", "source_excerpt": "s", "resolves": true},
-			},
-			"doc_text":  "doc",
-			"code_text": "code",
-		},
-	}
+	// The variable world is built through the REAL judge-input assembly, NOT
+	// hand-crafted — so this test would FAIL if the event were serialized nested.
+	// A file event with the fields the templates read is assembled into a
+	// FileJudgeInput exactly as the runner does, then decoded into the map the
+	// renderer receives. If `event` were the nested `{kind, fields}` envelope,
+	// `event.newContent` would sit at `event.fields.newContent` and every template
+	// reading `{{ event.newContent }}` would render empty — which the positive
+	// assertions below catch.
+	vars := assembledJudgeVars(t)
 
 	for _, path := range templates {
 		t.Run(filepath.Base(filepath.Dir(path))+"/"+filepath.Base(path), func(t *testing.T) {
@@ -64,6 +49,71 @@ func TestRealExampleTemplatesRender(t *testing.T) {
 			assert.NotEmpty(t, out, "a rendered judge prompt should not be empty")
 		})
 	}
+}
+
+// assembledJudgeVars builds the judge-input variable map through the actual
+// assembly path — a real event.Event assembled into a FileJudgeInput via the
+// runner's own judgeInputJSON, then decoded. This is what de-masks the flat-event
+// requirement: the vars a template renders against are the vars the runner really
+// produces, so a nested-event regression here fails the render assertions rather
+// than passing on a hand-crafted flat map that never existed at runtime.
+func assembledJudgeVars(t *testing.T) map[string]any {
+	t.Helper()
+	r := Runner{}
+	req := Request{
+		Nature: NatureFileGuard,
+		Event: eventEvent("PostFileUpdate", map[string]any{
+			"path":       "some/file.md",
+			"newContent": "the new content",
+			"oldContent": "the old content",
+			"newMarkers": []any{map[string]any{"kind": "conforms-to-doc", "fqn": "F", "line": float64(3)}},
+			"oldMarkers": []any{},
+		}),
+		TranscriptPath: "/rec.jsonl",
+	}
+	additional := map[string]any{
+		"action_taken": true,
+		"action":       "fill_form",
+		"action_input": "{}",
+		"proof":        "a screenshot",
+		"resolved":     true,
+		"citations": []any{
+			map[string]any{"quote": "q", "source_excerpt": "s", "resolves": true},
+		},
+		"doc_text":  "doc",
+		"code_text": "code",
+	}
+	inputJSON, err := r.judgeInputJSON(req, additional)
+	require.NoError(t, err)
+	vars, err := decodeJudgeVars(inputJSON)
+	require.NoError(t, err)
+
+	// The load-bearing check: the assembled event is FLAT, so a template reading
+	// `{{ event.newContent }}` resolves. If this fails, the templates below would
+	// render empty and this whole test would be vacuous.
+	ev, ok := vars["event"].(map[string]any)
+	require.True(t, ok, "the assembled payload must carry `event`")
+	require.Equal(t, "the new content", ev["newContent"],
+		"the assembled event must be FLAT — .event.newContent must resolve, not .event.fields.newContent")
+	require.NotContains(t, ev, "fields", "the assembled event must not be the nested envelope")
+	return vars
+}
+
+// eventEvent builds an event.Event for the assembly under test. A tiny helper so
+// the test reads the kind and fields at the call site.
+func eventEvent(kind string, fields map[string]any) event.Event {
+	return event.Event{Kind: kind, Fields: fields}
+}
+
+// A template reading {{ event.newContent }} renders the CONTENT when fed a real
+// assembled judge input — the end-to-end proof that the flat serialization reaches
+// a template variable, not just that the JSON key exists.
+func TestTemplate_EventNewContentRendersFromAssembledInput(t *testing.T) {
+	vars := assembledJudgeVars(t)
+	out, err := renderTemplate("The change: {{ event.newContent }} at {{ event.path }}", vars)
+	require.NoError(t, err)
+	assert.Equal(t, "The change: the new content at some/file.md", out,
+		"{{ event.newContent }} and {{ event.path }} must render the flat event's values")
 }
 
 // repoTemplatesRoot finds the examples directory holding the .md.j2 templates.
