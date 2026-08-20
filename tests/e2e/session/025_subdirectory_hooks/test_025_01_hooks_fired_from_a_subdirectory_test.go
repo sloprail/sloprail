@@ -362,6 +362,14 @@ func TestT025_04_AVerdictRecordedEarlierHoldsForASubdirectoryCycle(t *testing.T)
 // can put it in front of the rule again.
 func TestT025_05_ARefusalStillRefusesInASubdirectoryCycle(t *testing.T) {
 	e := New(t)
+	// This test's Stop block is PERMANENT: the retained refusal for bad-file.md
+	// never clears across the two cycles, so the mock re-runs the agent to its
+	// blocked-Stop cap every time, and each re-run re-fires the (subdirectory,
+	// tree-diffing) Stop hook — with the default cap of 8 that is ~56s of wasted
+	// retries for a fact one re-run already establishes. The assertions read the
+	// RETAINED refusal out of the store (BlockingErrors), not the count of
+	// re-prompts, so one re-run is enough. Cap it at 1.
+	e.SetStopBlockCap(1)
 	proj := e.Project()
 	e.GitInit(proj)
 	sub := filepath.Join(proj, "sub", "deep")
