@@ -18,14 +18,24 @@ EXPLICITLY off the base (never Agent isolation).
 ## DAG (leaves → dispatch → trajectory → usecases → cleanup)
 
 ### BATCH 1 — leaves, all independent, fan out together
-- [ ] 1a  TurnEnd→Stop rename (cyclemod + refs; e2e dir 026 renamed)
-- [ ] 1b  PostTagWrite event + #tag scanner (new module/kind)
-- [ ] 1c  PreToolUse semantic event (bindable kind)
-- [ ] 1d  Post-file events carry old/newMarkers + old/newContent; PreFileUpdate → newContent/oldContent naming
-- [ ] 1e  marker: frontmatter-comment + QUOTED fqn (`# sr:asked "multi word"`)
-- [ ] 1f  per-nature match SCOPES (File/Gate/Context MatchScope env builders) + GlobPattern shorthand
-- [ ] 4b  session trajectory describe (needs transcript only — independent of dispatch)
-- [ ] 4c  session trajectory cite (needs transcript + AskUserQuestion answer extraction — independent)
+Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid conflicts):
+- worktree `events-vocab` (branch impl/events-vocab): 1a+1b+1c+1d — IMPLEMENTING
+- worktree `markers` (impl/markers): 1e — IMPL DONE (commit 5852a1b), IN REVIEW
+- worktree `match-scopes` (impl/match-scopes): 1f — IMPLEMENTING
+- worktree `traj-describe-cite` (impl/traj-describe-cite): 4b+4c — IMPLEMENTING
+
+- [ ] 1a  TurnEnd→Stop rename (cyclemod + refs; e2e dir 026 renamed)         [events-vocab]
+- [ ] 1b  PostTagWrite event + #tag scanner (new module/kind)                [events-vocab]
+- [ ] 1c  PreToolUse semantic event (bindable kind)                          [events-vocab]
+- [ ] 1d  Post-file events carry old/newMarkers + old/newContent; naming     [events-vocab]
+- [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
+- [ ] 1f  per-nature match SCOPES + GlobPattern shorthand                    [match-scopes]
+- [ ] 4b  session trajectory describe                                        [traj-describe-cite]
+- [ ] 4c  session trajectory cite (+ AskUserQuestion answer extraction)      [traj-describe-cite]
+
+NOTE (from markers agent, follow-up not blocker): services/sr-mark/marker.go WriteMarker emits
+fqns UNQUOTED — fine today (examples hand-write quoted frontmatter), but if sr-mark must ever WRITE
+a quoted multi-word fqn, reconcile then.
 
 ### BATCH 2 — after batch 1
 - [ ] 2   .sloprail/{file-guard,gate,context,goal}/*.yaml + structure.yaml loaders (needs 1b/1c/1f)

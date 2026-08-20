@@ -47,8 +47,20 @@ the agent the ready path:
 3. Agent implements + tests there, commits to `impl/<slice>`.
 4. Reviewer agent (same worktree). Loop fix→review until ZERO issues + green
    tests + green build.
-5. Merge `impl/<slice>` → `draft/fileguard-format` (fast-forward or PR-merge),
-   then `git worktree remove` the slice.
+5. Merge `impl/<slice>` → `draft/fileguard-format`, then `git worktree remove`
+   the slice + `git branch -D impl/<slice>`.
+
+   **MERGE MECHANICS (learned the hard way):** `draft/fileguard-format` is
+   checked out in the `wt/fileguard-format` worktree, so you CANNOT
+   `git checkout draft/fileguard-format` from the main repo — it errors and
+   leaves HEAD on `main`, and a following `git merge` lands on `main` by
+   accident. ALWAYS run the merge from INSIDE `/Users/nsviridenko/ws/sloprail/wt/fileguard-format`
+   (that worktree already has the base branch checked out):
+     `cd /Users/nsviridenko/ws/sloprail/wt/fileguard-format && git merge --no-ff impl/<slice> -m "..."`
+   Then build+test there, `git push`, then from the main repo
+   `git worktree remove wt/<slice>` and `git branch -D impl/<slice>` (use -D:
+   git measures "merged" against `main`, not the base branch, so -d refuses a
+   branch that IS merged into draft/fileguard-format).
 
 ## The waves
 
