@@ -98,15 +98,27 @@ eval-loop-maxing require→match; task-management message_id jq; interlinking/ke
 --owner+jq-s+SR_WORKSPACE; research-rigor clone-from-invocation + .fields wire-form; intake skip-context.
 Spec additions pushed to PR #2: Check model?/timeout?, PreFileCreate.newContent optional, state list --owner.
 
-### CRITICAL CI FIX (181773e) — the whole judge e2e suite was RED in CI, GREEN locally
-sr-agent detects its harness from CLAUDECODE/CLAUDE_CODE_ENTRYPOINT (services/sr-agent/harness.go); a
-judge (sr-agent --verify) REFUSES with ErrNoHarness when neither is set. The mock + e2e harness did NOT
-set them — the suite only passed because a DEV runs it inside Claude Code (CLAUDECODE=1 ambient). CI has
-no ambient value → every judge e2e (032/034/042-049) failed "no supported harness detected". FIX: the
-harness `run` helper now sets CLAUDECODE=1 + CLAUDE_CODE_ENTRYPOINT=cli on the mock env (it stands in
-for Claude Code). LESSON (persist): re-run any sloprail e2e with `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT
-go test …` before trusting it — that reproduces CI. Proper long-term fix: the a10n-claude-mock ITSELF
-should set CLAUDECODE (a future mock PR).
+### CI GREEN CAMPAIGN (2026-08-20) — the e2e job had NOT passed in 30+ runs (any branch). FIVE distinct
+### bugs, root-caused + fixed in sequence. Re-run ANY sloprail e2e under `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT`
+### to reproduce CI locally. All shards validated green locally before each merge.
+1. **CLAUDECODE not set** (181773e) — sr-agent detects its harness from CLAUDECODE/CLAUDE_CODE_ENTRYPOINT
+   (services/sr-agent/harness.go); a judge (sr-agent --verify) REFUSES ErrNoHarness without them. The mock +
+   harness never set them; the suite only passed because a DEV runs inside Claude Code (CLAUDECODE=1 ambient).
+   CI → every judge e2e (032/034/042-049) failed "no supported harness detected". FIX: harness `run` sets
+   CLAUDECODE=1 + CLAUDE_CODE_ENTRYPOINT=cli on the mock env. (Long-term: the mock itself should set it.)
+2. **e2e suite too slow for the runner** (804f5f5) — `go test -p 1` (serial; a DISK constraint) grew past the
+   runner's ~8min wall-clock → SIGTERM/143. FIX: 4-way matrix shard (session/pre_tool/examples/rest), each -p 1,
+   union = go list ./tests/... . (Makefile test-e2e-shard + workflow matrix in lockstep.)
+3. **T028_03 real failure** (8cccaf7) — mock #470 now threads a sub-agent toolUseId so describe derives a
+   parent; T028_02→real mock, T028_03→empty-toolUseId fixture. (D4 work.)
+4. **session shard split** (8cccaf7) — isolate the heavy 025 + trajectory tests into session2.
+5. **session/025 was a 56s outlier** — the mock re-runs a blocked Stop up to CLAUDE_CODE_STOP_HOOK_BLOCK_CAP
+   (default 8); T025_05's block is PERMANENT (retained refusal), so 8 retries × a slow subdirectory Stop = 56s,
+   timing out session2. First tried a GLOBAL cap=1 (a7bcc4c) — but that BROKE the Post-refusal suite
+   (session/024, session/006, pre_tool/006), which read ">=2 result frames" as "the mock re-prompted" and need
+   the default cap. CORRECT FIX (0e55989): a per-Env knob e.SetStopBlockCap(n) — default 8 for all, ONLY
+   T025_05 sets 1. LESSON: an anomalously-slow e2e package usually = a blocked-Stop retry hitting the cap ×
+   the per-re-fire hook cost; profile with `go test -v` and cap that ONE test, never globally.
 
 ### D3/D4 (review comments) — NOW UNBLOCKED (mock #470 merged + INSTALLED). REFINED SCOPE:
 Investigation changed the picture — much of what looked like "real claude / stub" is NOT:
