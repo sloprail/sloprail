@@ -64,12 +64,18 @@ a quoted multi-word fqn, reconcile then.
       PostTagWrite.tags); glob-`or`-glob `"**/a" or "**/b"` (neither bare glob nor valid expr).
       This belongs with declaration-loading/dispatch (whoever wires match against real declarations).
 
+### BATCH 3 — IN PROGRESS (base 9342d8b). SEQUENTIAL (natures build on core's check-runner + gates map):
+- worktree `dispatch-core` (impl/dispatch-core): shared CHECK-RUNNER + gate (3a) + structure-gate (3s) — IMPLEMENTING
+- worktree `dispatch-natures` (later): file-guard (3c) + context (3b) + goal (3d) — WAITS for dispatch-core merge
+  (grouped this way because all natures share the dispatch entry points session_pre_tool/session_stop.go +
+   the check-runner; parallel worktrees would conflict heavily on those. gate+structure first because gate
+   establishes the gates[] map context needs, and both are the simplest natures to prove the runner e2e.)
 ### BATCH 3 — dispatch engine (after batch 2)
-- [ ] 3a  gate dispatch (on→require→checks, pass/fail, one-shot) — needs 1f,2,2b
-- [ ] 3c  file-guard dispatch (match file state, preventive, re-fires) — needs 1d,2,2b
-- [ ] 3s  structure-gate path-allowlist check — needs 2 only (land with 3c)
-- [ ] 3b  context lifecycle (on/enter/exit, context[] & gates[] maps) — needs 1b,2,2b,3a
-- [ ] 3d  goal = context+goal.yaml pairing (composite, no engine wiring) — needs 3b
+- [~] 3a  gate dispatch (on→require→checks, pass/fail, one-shot) — IMPLEMENTING      [dispatch-core]
+- [ ] 3c  file-guard dispatch (match file state, preventive, re-fires) — WAITS       [dispatch-natures]
+- [~] 3s  structure-gate path-allowlist check — IMPLEMENTING                        [dispatch-core]
+- [ ] 3b  context lifecycle (on/enter/exit, context[] & gates[] maps) — WAITS on 3a  [dispatch-natures]
+- [ ] 3d  goal = context+goal.yaml pairing (composite) — WAITS on 3b                 [dispatch-natures]
 
 ### WAVE 2 (GOAL.md) — per-use-case e2e tests (after all dispatch)
 - [ ] one e2e suite per example in examples/, multi-scenario (pass + violation paths), via claude-mock harness.
