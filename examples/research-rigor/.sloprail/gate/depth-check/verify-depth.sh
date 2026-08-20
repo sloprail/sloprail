@@ -15,21 +15,30 @@ block() {
   exit 1
 }
 
-# 1. Did a real clone happen — not just a README/single-file fetch? A repo
-# clone leaves multiple files/dirs; a README fetch leaves one. A clone is an
-# entry carrying a PreCommandInvoke event whose invocation ran `git clone`; its
-# output is that same entry's .toolUseResult.
-clone_cmd="$(sr-session trajectory normalize \
+# 1. Did a real clone happen — not just a README/single-file fetch? A clone is
+# recognised by the COMMAND the agent actually ran: a `git clone` invocation,
+# re-derived from the trajectory as a PreCommandInvoke event whose invocation is
+# `git` with `clone` in its argv. A README/single-file fetch is a different
+# command (curl/WebFetch/gh api on one path), so it does not match — the
+# invocation itself is what distinguishes depth from a peek.
+#
+# 2026-08-20: this counts the git-clone INVOCATIONS rather than reading the
+# clone's captured output. An earlier version read the clone entry's
+# `.toolUseResult` to prove the clone produced files, but that field lives on
+# the tool_RESULT record, not on the assistant tool_use record the
+# PreCommandInvoke event rides — so the extraction was always empty and this
+# check refused even a real clone. The command's own presence is the honest,
+# re-derivable signal (and the only one a trajectory normalize exposes: the
+# result records carry no uuid and are not re-emitted as normalized entries).
+clone_count="$(sr-session trajectory normalize \
   --path "$transcript_path" \
   --events PreCommandInvoke \
-  | jq -r '[ .[]
+  | jq '[ .[]
       | select(any(.events[]?; .kind == "PreCommandInvoke"
-          and any(.invocations[]?; .bin == "git" and any(.argv[]?; . == "clone"))))
-    ][-1] // {}
-    | (.toolUseResult // "")
-    | if type == "string" then . else tostring end')"
+          and any(.fields.invocations[]?; .bin == "git" and any(.argv[]?; . == "clone"))))
+    ] | length')"
 
-if [ -z "$clone_cmd" ]; then
+if [ "${clone_count:-0}" -eq 0 ]; then
   block "No git clone found in this research run's trajectory — a README fetch alone does not establish depth."
 fi
 
@@ -37,21 +46,37 @@ fi
 # tally — a `gh` command carries its own page count as an argument
 # (--limit N, --paginate), so this reads what the agent actually asked for
 # rather than inferring depth from unrelated tool calls.
+#
+# 2026-08-20: the invocations sit under each event's `.fields.invocations`
+# (the normalized event wire form is {kind, fields}), not `.invocations` — an
+# earlier draft read `.invocations[]?` off the event and matched nothing. And a
+# `--limit N` written as two words captures the flag with an EMPTY value (the
+# command parser records `--flag=value` but leaves a space-separated value as a
+# separate positional in argv), so the page count reads the number out of argv
+# when the flag value is empty, and treats `--paginate` as unbounded.
 gh_invocations="$(sr-session trajectory normalize \
   --path "$transcript_path" \
   --events PreCommandInvoke \
   | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke")
-             | .invocations[]? | select(.bin == "gh") ]')"
+             | .fields.invocations[]? | select(.bin == "gh") ]')"
 
 if [ "$(printf '%s' "$gh_invocations" | jq 'length')" -eq 0 ]; then
   block "No gh CLI calls found in this research run — nothing establishes how many pages were actually covered."
 fi
 
 total_pages="$(printf '%s' "$gh_invocations" | jq '
+  # The page count one gh call asks for: --paginate is unbounded; --limit N
+  # is N (read from the flag value, or from the argv token right after
+  # --limit/-L when the value was space-separated and so landed in argv); a
+  # bare call with no explicit limit is one page.
+  def limit_from_argv:
+    (.argv // []) as $a
+    | ( [ range(0; ($a | length)) | select($a[.] == "--limit" or $a[.] == "-L") | $a[.+1] ] | .[0] // "" );
   [ .[]
-    | if (.flags.paginate != null) then 999999          # --paginate: unbounded, counts as satisfying any minimum
-      elif (.flags.limit != null) then (.flags.limit | tonumber)
-      else 1                                              # a bare gh call with no explicit limit = one page
+    | if (.flags.paginate != null) then 999999
+      elif ((.flags.limit // "") | test("^[0-9]+$")) then (.flags.limit | tonumber)
+      elif (limit_from_argv | test("^[0-9]+$")) then (limit_from_argv | tonumber)
+      else 1
       end
   ] | add
 ')"

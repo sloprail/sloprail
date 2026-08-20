@@ -309,3 +309,59 @@ func jsonStr(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`)
 	return `"` + r.Replace(s) + `"`
 }
+
+// SayWrite returns ONE assistant turn carrying BOTH a text block (which
+// PostTagWrite scans for a #tag) AND a Write tool_use — a tag and a file write
+// landing atomically in the same turn.
+//
+// This exists because a pure-text Say turn is TERMINAL in a10n-claude-mock: an
+// assistant message with no tool_use gives the mock nothing to get a result for,
+// so it ends the stream, and any turn after a Say never fires. Measured on this
+// harness — a scenario `Say(...), Write(...)` emits only the Say. So a rule that
+// must see a tag DECLARED BEFORE a subsequent action (a PreToolUse context whose
+// enter reads the trajectory for `#refactor`, then a marked write it guards)
+// cannot be driven with Say followed by Write. Carrying the tag's prose in the
+// SAME block-list message as the tool_use gets the tag into the trajectory
+// atomically with the action, and — because the entry has a tool_use id — the
+// turn fires once (and is not terminal, there is a result to wait for) exactly
+// like any other tool turn.
+//
+// The record is a `type:"assistant"` block-list message `[{text},{tool_use}]`,
+// the shape Claude Code writes for a turn that both says something and calls a
+// tool. transcript.AssistantText reads the text block (so PostTagWrite sees the
+// tag) and transcript.ToolCalls reads the tool_use (so the file event fires).
+func SayWrite(id, prose, path, content string) Turn {
+	return Turn{jsonl: sayWithTool(id, prose, "Write", map[string]string{
+		"file_path": path,
+		"content":   content,
+	})}
+}
+
+// SayBash is SayWrite's Bash sibling: one assistant turn carrying a text block
+// (scanned for a #tag) and a Bash tool_use, for a tag declared atomically with a
+// shell command — needed for the same terminal-Say reason SayWrite documents.
+func SayBash(id, prose, command string) Turn {
+	return Turn{jsonl: sayWithTool(id, prose, "Bash", map[string]string{"command": command})}
+}
+
+// sayWithTool renders one assistant turn whose content is a two-block list: a
+// text block, then a tool_use. The tool_use carries the turn's id (so the mock's
+// marker machinery fires it once) and the entry a uuid (so transcript.Read does
+// not skip it), the same invariants toolUse and Say each keep for their single
+// block.
+func sayWithTool(id, prose, name string, input map[string]string) string {
+	var ib strings.Builder
+	ib.WriteByte('{')
+	first := true
+	for k, v := range input {
+		if !first {
+			ib.WriteByte(',')
+		}
+		first = false
+		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
+	}
+	ib.WriteByte('}')
+	return fmt.Sprintf(
+		`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":%s},{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
+		"e2e-turn-"+id, jsonStr(prose), id, name, ib.String())
+}
