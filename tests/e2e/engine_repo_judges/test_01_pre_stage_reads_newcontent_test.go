@@ -6,7 +6,7 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// The PRE stage reads the PENDING body, and reads it from the right field.
+// INVARIANT: the PRE stage reads the PENDING body, from the right field.
 //
 // Both engine-repo judges bind PreFileCreate/PreFileUpdate as well as the Post
 // kinds, and the Pre binding is the one that PREVENTS a bad SKILL.md/RULE.md
@@ -24,21 +24,23 @@ import (
 // correctly — the exact regression the rename could have left behind, and did
 // until judge-skill.sh/judge-rule.sh were brought to `newContent`.
 //
-// Distinct from R3_01/02, whose subject is the greedy verdict PARSE: those also
-// happen to exercise the Pre stage, but their name and their failure mode are
-// about the parse, so a reader hunting a dead Pre binding would not find the
-// guarantee there. This states it as its own claim.
+// The whole path runs through the mock: the harness drives a10n-claude-mock to
+// attempt the write, the real plugin fires this repo's real guardrail, and the
+// only substitution is the judge's own model verdict (stubJudge). Distinct from
+// the verdict-PARSE invariant, whose subject is the greedy span rather than the
+// stage — those also exercise the Pre stage but are about a different failure.
 
-// TestR3_08_SkillQualityPreStageRefusesAFlaggedWrite: a Write creating a flagged
-// SKILL.md is refused BEFORE it lands.
-func TestR3_08_SkillQualityPreStageRefusesAFlaggedWrite(t *testing.T) {
+// TestPreStageRefusesAFlaggedSkillWrite: a Write creating a flagged SKILL.md is
+// refused BEFORE it lands, which is only possible if judge-skill.sh read the
+// pending bytes out of newContent.
+func TestPreStageRefusesAFlaggedSkillWrite(t *testing.T) {
 	t.Setenv("A10N_CLAUDE_BIN", stubJudge(t,
 		`{"has_issues": true, "reasoning": "flagged at the Pre stage"}`))
 
 	e := New(t)
 	proj := project(t, e, "skill-quality")
 
-	got := e.Run(proj, "s-r3-08", "write a bad skill with a tool", Turns("done",
+	got := e.Run(proj, "s-erj-pre-skill", "write a bad skill with a tool", Turns("done",
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\nA body the judge flags.\n"),
 	))
 
@@ -52,17 +54,17 @@ func TestR3_08_SkillQualityPreStageRefusesAFlaggedWrite(t *testing.T) {
 	}
 }
 
-// TestR3_09_RuleQualityPreStageRefusesAFlaggedWrite: the same for the sibling.
-// Its own test because the two judges are separate files and a rename fixed in
-// one and missed in the other is exactly the half-migration this round hunts.
-func TestR3_09_RuleQualityPreStageRefusesAFlaggedWrite(t *testing.T) {
+// TestPreStageRefusesAFlaggedRuleWrite: the same for the sibling. Its own test
+// because the two judges are separate files and a rename fixed in one and missed
+// in the other is exactly the half-migration this invariant guards against.
+func TestPreStageRefusesAFlaggedRuleWrite(t *testing.T) {
 	t.Setenv("A10N_CLAUDE_BIN", stubJudge(t,
 		`{"has_issues": true, "reasoning": "flagged at the Pre stage"}`))
 
 	e := New(t)
 	proj := project(t, e, "rule-quality")
 
-	got := e.Run(proj, "s-r3-09", "write a bad rule with a tool", Turns("done",
+	got := e.Run(proj, "s-erj-pre-rule", "write a bad rule with a tool", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA body the judge flags.\n"),
 	))
 
@@ -72,16 +74,16 @@ func TestR3_09_RuleQualityPreStageRefusesAFlaggedWrite(t *testing.T) {
 	}
 }
 
-// TestR3_10_SkillQualityPreStageStillPermitsACleanWrite is the other-direction
-// control: a clean SKILL.md written by a tool must NOT be refused, so the tests
-// above cannot pass by an engine that refuses every Pre write.
-func TestR3_10_SkillQualityPreStageStillPermitsACleanWrite(t *testing.T) {
+// TestPreStagePermitsACleanSkillWrite is the other-direction control: a clean
+// SKILL.md written by a tool must NOT be refused, so the refusal tests above
+// cannot pass by an engine that refuses every Pre write.
+func TestPreStagePermitsACleanSkillWrite(t *testing.T) {
 	t.Setenv("A10N_CLAUDE_BIN", stubJudge(t, `{"has_issues": false, "reasoning": ""}`))
 
 	e := New(t)
 	proj := project(t, e, "skill-quality")
 
-	got := e.Run(proj, "s-r3-10", "write a clean skill with a tool", Turns("done",
+	got := e.Run(proj, "s-erj-pre-clean", "write a clean skill with a tool", Turns("done",
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\nA clean body.\n"),
 	))
 

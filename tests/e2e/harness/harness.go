@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -250,6 +251,31 @@ func (e *Env) InstallClaudeShim(projDir string) {
 // InstallClaudeShim (a test uses one or the other), which run() already places
 // first. The verdict is the JSON object the judge's verify script reads, e.g.
 // `{"pass": false, "reasoning": "…"}`.
+//
+// # Why this is a bespoke shim rather than the a10n-claude-mock
+//
+// It is a fair question — the rest of the e2e drives the mock, and the mock DOES
+// execute a Write tool call, so a scenario that wrote the verdict to sr-agent's
+// output file could in principle stand in for the model here. It was tried and it
+// does not work, for a reason that is about the INVOCATION, not the verdict.
+//
+// sr-agent builds the harness command line itself (services/sr-agent, Build-
+// Invocation) as `claude -p --model <model> <harness-args> -- <prompt>`, and a
+// judge check adds more claude flags on top — the gate/skill judges pass
+// `--allowedTools "Write"` and `--settings '{…}'`. The mock accepts only the small
+// flag set a harness-driven run uses (--script, --session-id, --output-format,
+// --project-dir, --config-dir, --add-dir, …); it has NO --model, --allowedTools or
+// --settings, and REFUSES an unknown flag with exit 1 rather than ignoring it.
+// Measured against a10n-claude-mock: `--model`, `--allowedTools` and `--settings`
+// each exit 1. So a mock invoked as sr-agent's `claude` dies on `--model` before it
+// ever reads a scenario, and never writes a verdict.
+//
+// Fixing that would mean either teaching the mock sr-agent's whole claude-flag
+// surface (a change in a different repo, the a10n-cli one) or changing how sr-agent
+// invokes the harness (the production judge path, out of a test's remit). This shim
+// sidesteps both: it tolerates whatever argv sr-agent builds and needs only the one
+// fact sr-agent puts in the prompt — the output path — which is the minimal, honest
+// stand-in for a judge verdict until the mock grows that flag surface.
 func (e *Env) InstallJudgeClaude(verdict string) {
 	e.t.Helper()
 	// The prompt arrives as the LAST argument (sr-agent passes it positionally
@@ -491,6 +517,59 @@ func (e *Env) sessionDBPath(projDir, sessionID string) string {
 func (e *Env) transcriptPath(projDir, sessionID string) string {
 	return filepath.Join(e.configDir, "projects",
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
+}
+
+// TranscriptPath is where the mock wrote a session's root transcript on disk,
+// for a test that runs a `trajectory` command against a mock-PRODUCED record
+// rather than a hand-authored one.
+//
+// This is the mechanism the trajectory tests use to keep their fixtures the
+// mock's: drive a scenario with Run, then hand this path to `trajectory
+// describe/cite/normalize --path`. What the command reads is then a transcript
+// the mock streamed, deterministic and centralised, not a shape re-derived by
+// hand in each test — the only shapes that stay hand-authored are the ones the
+// mock provably cannot emit (an AskUserQuestion answer envelope, a sub-agent
+// meta naming its dispatching tool_use), each kept with a note saying so.
+//
+// The file must already exist — Run seeds it and the mock appends to it — so a
+// path returned for a session that never ran is a test asking to read a record
+// that was never written, and the caller's own read will say so.
+func (e *Env) TranscriptPath(projDir, sessionID string) string {
+	e.t.Helper()
+	return e.transcriptPath(projDir, sessionID)
+}
+
+// SubagentRecordPaths lists the sub-agent transcript files the mock wrote for a
+// session, as a plain directory listing of <session>/subagents/agent-*.jsonl.
+//
+// Deliberately a filesystem glob rather than a call to transcript.SubagentPaths:
+// a test asserting that `describe` enumerates the sub-agents must compare its
+// output against something derived WITHOUT the code under test, or a bug shared
+// by both would hide. This is that independent witness — the records the mock
+// actually left on disk, sorted for a stable comparison.
+//
+// Empty when the session dispatched no sub-agent (there is no subagents
+// directory), which is a plain "none" rather than a fault.
+func (e *Env) SubagentRecordPaths(projDir, sessionID string) []string {
+	e.t.Helper()
+	dir := filepath.Join(strings.TrimSuffix(e.transcriptPath(projDir, sessionID), ".jsonl"), "subagents")
+	ents, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read sub-agent records %s: %v", dir, err)
+	}
+	var paths []string
+	for _, ent := range ents {
+		name := ent.Name()
+		if ent.IsDir() || !strings.HasPrefix(name, "agent-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // dataHome mirrors the engine's own platform data directory, for the sandboxed

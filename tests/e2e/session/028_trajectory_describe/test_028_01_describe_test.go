@@ -7,24 +7,32 @@ import (
 // T028_01: describe on a ROOT trajectory — not a sub-agent, and it names the
 // sub-agents it spawned.
 //
-// The root case the spec calls for: isSubagent false, subagentPaths populated. A
-// root dispatches one sub-agent, whose record sits in <session>/subagents; describe
-// on the root must report itself as the main line and enumerate that record.
+// The root case the spec calls for: isSubagent false, subagentPaths populated. The
+// mock is driven to dispatch one sub-agent, which writes its record under
+// <session>/subagents; describe on the mock's own root transcript must report
+// itself as the main line and enumerate that record. The expected sub-agent path
+// is read from disk with the harness's own directory glob — NOT from the command
+// under test — so a bug shared by both could not hide.
 func TestT028_01_DescribeRootHasSubagentPaths(t *testing.T) {
 	e := New(t)
-	tr := newTraj(t)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	const dispatchID = "toolu_01dispatch"
-	rootPath := tr.root("s-root",
-		rootLine("root-origin"),
-		dispatchLine("root-dispatch", "root-origin", dispatchID),
-	)
-	subPath := tr.subagent("s-root", "agentone", sidechainRootLine("sub-origin", "agentone"))
-	tr.meta("s-root", "agentone", map[string]any{
-		"agentType": "general-purpose", "description": "delegated", "toolUseId": dispatchID, "spawnDepth": 1,
-	})
+	sub := writeScenario(t, proj, Turns("sub done",
+		Bash("s1", "echo delegated > from-sub.md"),
+	))
+	e.Run(proj, "s-028-01", "start the work", Turns("root done",
+		Bash("b0", "echo root > root.md"),
+		Dispatch("d1", "delegated prompt", sub, ""),
+	))
 
-	res := e.CLIDirect(tr.dir, "sr-session", "trajectory", "describe", "--path", rootPath)
+	rootPath := e.TranscriptPath(proj, "s-028-01")
+	recs := e.SubagentRecordPaths(proj, "s-028-01")
+	if len(recs) != 1 {
+		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
+	}
+
+	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", rootPath)
 	if res.Code != 0 {
 		t.Fatalf("describe on a root exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -40,8 +48,8 @@ func TestT028_01_DescribeRootHasSubagentPaths(t *testing.T) {
 	if !ok || len(subs) != 1 {
 		t.Fatalf("subagentPaths=%v, want exactly the one sub-agent record:\n%s", got["subagentPaths"], res.Output)
 	}
-	if subs[0] != subPath {
-		t.Fatalf("subagentPaths[0]=%v, want %s", subs[0], subPath)
+	if subs[0] != recs[0] {
+		t.Fatalf("subagentPaths[0]=%v, want the record the mock wrote %s", subs[0], recs[0])
 	}
 }
 
@@ -51,25 +59,19 @@ func TestT028_01_DescribeRootHasSubagentPaths(t *testing.T) {
 // The sub-agent case the spec calls for: isSubagent true, parentPath set. The
 // link is DERIVED — the sub-agent's meta names the toolUseId that dispatched it,
 // and describe finds the trajectory holding a tool_use with that id. This is the
-// case the mock cannot reach (it writes an empty toolUseId), so it runs here
-// against a fixture carrying the id Claude Code actually writes.
+// case the mock cannot reach: it writes an EMPTY toolUseId for every sub-agent it
+// seeds (see the package note), so no mock-produced record could ever set
+// parentPath. It runs here against the one hand-authored fixture in this package,
+// carrying the id Claude Code actually writes.
 func TestT028_02_DescribeSubagentHasParentPath(t *testing.T) {
 	e := New(t)
-	tr := newTraj(t)
+	f := newFixtureParent(t)
 
 	const dispatchID = "toolu_01parentdispatch"
-	rootPath := tr.root("s-root",
-		rootLine("root-origin"),
-		dispatchLine("root-dispatch", "root-origin", dispatchID),
-	)
-	subPath := tr.subagent("s-root", "agentone",
-		sidechainRootLine("sub-origin", "agentone"),
-	)
-	tr.meta("s-root", "agentone", map[string]any{
-		"agentType": "Explore", "description": "look into X", "toolUseId": dispatchID, "spawnDepth": 1,
-	})
+	rootPath := f.root("s-root", dispatchID)
+	subPath := f.subagent("s-root", "agentone", dispatchID)
 
-	res := e.CLIDirect(tr.dir, "sr-session", "trajectory", "describe", "--path", subPath)
+	res := e.CLIDirect(f.dir, "sr-session", "trajectory", "describe", "--path", subPath)
 	if res.Code != 0 {
 		t.Fatalf("describe on a sub-agent exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -89,26 +91,34 @@ func TestT028_02_DescribeSubagentHasParentPath(t *testing.T) {
 	}
 }
 
-// T028_03: a sub-agent whose meta records no toolUseId — the mock's shape, and
-// some harnesses' — is still reported as a sub-agent, but with no parentPath
-// rather than a guessed one.
+// T028_03: a sub-agent whose meta records no toolUseId is still reported as a
+// sub-agent, but with no parentPath rather than a guessed one.
 //
 // This is the honest degradation the spec's "absent when ... cannot be located"
-// describes, and it is exactly what a mock-produced sub-agent looks like: the
-// isSubagent fact still holds (the meta companion is present, and the record is a
-// sidechain), while the parent cannot be derived and is left out.
+// describes, and it is exactly what a MOCK-produced sub-agent looks like: the mock
+// seeds the record with an isSidechain origin and a meta companion carrying an
+// empty toolUseId, so the isSubagent fact holds while the parent cannot be derived.
+// Driven through the mock rather than hand-authored, because the mock's shape IS
+// the subject — a fixture claiming to be "the mock's shape" could drift from it,
+// and this asserts against the real thing.
 func TestT028_03_SubagentWithoutToolUseIDHasNoParent(t *testing.T) {
 	e := New(t)
-	tr := newTraj(t)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	tr.root("s-root", rootLine("root-origin"), dispatchLine("root-dispatch", "root-origin", "toolu_x"))
-	subPath := tr.subagent("s-root", "agentone", sidechainRootLine("sub-origin", "agentone"))
-	// The mock's meta shape: an empty toolUseId.
-	tr.meta("s-root", "agentone", map[string]any{
-		"agentType": "general-purpose", "description": "", "toolUseId": "", "worktreePath": "",
-	})
+	sub := writeScenario(t, proj, Turns("sub done",
+		Bash("s1", "echo delegated > from-sub.md"),
+	))
+	e.Run(proj, "s-028-03", "start the work", Turns("root done",
+		Dispatch("d1", "delegated prompt", sub, ""),
+	))
 
-	res := e.CLIDirect(tr.dir, "sr-session", "trajectory", "describe", "--path", subPath)
+	recs := e.SubagentRecordPaths(proj, "s-028-03")
+	if len(recs) != 1 {
+		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
+	}
+
+	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", recs[0])
 	if res.Code != 0 {
 		t.Fatalf("describe exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -129,15 +139,19 @@ func TestT028_03_SubagentWithoutToolUseIDHasNoParent(t *testing.T) {
 //
 // The common case for a hook: no --path, the trajectory named on the payload's
 // transcript_path. This proves the default resolution is wired, not only the
-// explicit flag.
+// explicit flag — read against a mock-produced root transcript.
 func TestT028_04_DescribeDefaultsToPayloadTranscript(t *testing.T) {
 	e := New(t)
-	tr := newTraj(t)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	rootPath := tr.root("s-root", rootLine("root-origin"))
+	e.Run(proj, "s-028-04", "start the work", Turns("root done",
+		Bash("b0", "echo root > root.md"),
+	))
+	rootPath := e.TranscriptPath(proj, "s-028-04")
 
-	payload := `{"transcript_path":"` + rootPath + `","cwd":"` + tr.dir + `"}`
-	res := e.CLIDirectStdin(tr.dir, payload, "sr-session", "trajectory", "describe")
+	payload := `{"transcript_path":"` + rootPath + `","cwd":"` + proj + `"}`
+	res := e.CLIDirectStdin(proj, payload, "sr-session", "trajectory", "describe")
 	if res.Code != 0 {
 		t.Fatalf("describe from a payload exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -152,12 +166,12 @@ func TestT028_04_DescribeDefaultsToPayloadTranscript(t *testing.T) {
 //
 // "No trajectory to read" is a refusal, exit non-zero — not an empty description
 // that a script might read as "a root with no sub-agents". The message names the
-// two ways to supply one.
+// two ways to supply one. No transcript is needed to exercise the refusal.
 func TestT028_05_DescribeWithNoTrajectoryRefuses(t *testing.T) {
 	e := New(t)
-	tr := newTraj(t)
+	proj := e.Project()
 
-	res := e.CLIDirectStdin(tr.dir, `{}`, "sr-session", "trajectory", "describe")
+	res := e.CLIDirectStdin(proj, `{}`, "sr-session", "trajectory", "describe")
 	if res.Code == 0 {
 		t.Fatalf("describe with no trajectory exited 0, want non-zero:\n%s", res.Output)
 	}

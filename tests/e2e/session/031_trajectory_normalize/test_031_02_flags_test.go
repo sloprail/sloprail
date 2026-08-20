@@ -15,6 +15,12 @@ import (
 // tree to tell a create from an update and to fill oldContent. A file present on
 // disk becomes an update carrying its current bytes; an absent one becomes a
 // create carrying the content the write would leave behind.
+//
+// A FIXTURE, not the mock: this derivation stat-s the LIVE tree, and a mock run
+// APPLIES its writes before normalize reads it — so a create reads back as an
+// update, and an update's oldContent reads back as the content already written
+// (measured). Only a hand-staged tree holds the files in the pre-write state the
+// create-vs-update distinction is about (see the package note).
 func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -65,6 +71,10 @@ func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 // only the command comes back; asked for PostTagWrite alone, only the tag. The
 // other kind is not merely filtered from the output — the module that would
 // produce it is not even run.
+//
+// A FIXTURE, not the mock: the subject is ONE entry holding both a text block and
+// a tool_use, and the scenario API emits one tool call per assistant turn, so that
+// single multi-block entry is not a shape the mock writes (see the package note).
 func TestT031_07_EventsFlagNarrows(t *testing.T) {
 	e := New(t)
 	path := writeTranscript(t,
@@ -103,10 +113,18 @@ func TestT031_07_EventsFlagNarrows(t *testing.T) {
 // is better than an empty answer that reads as "the agent did none of that".
 func TestT031_08_ARefusableKindIsRefused(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t, userMsg("u1", "anything"))
+	proj := e.Project()
+	e.GitInit(proj)
+
+	// The kind is refused when the flag is PARSED, before any entry is read, so any
+	// resolvable trajectory will do — a mock-produced one here.
+	e.Run(proj, "s-031-08", "anything", Turns("done",
+		Bash("a1", "true"),
+	))
+	path := e.TranscriptPath(proj, "s-031-08")
 
 	for _, bad := range []string{"PostFileCreate", "PreToolUse", "Stop", "MadeUpKind"} {
-		res := normalize(e, dirOf(path), path, "--events", bad)
+		res := normalize(e, proj, path, "--events", bad)
 		if res.Code == 0 {
 			t.Fatalf("--events %s exited 0, want non-zero — a kind normalize cannot re-derive must be refused:\n%s", bad, res.Output)
 		}
@@ -117,7 +135,7 @@ func TestT031_08_ARefusableKindIsRefused(t *testing.T) {
 
 	// A valid kind mixed with an invalid one is still refused — the whole flag is
 	// typed, not just filtered to the valid part.
-	res := normalize(e, dirOf(path), path, "--events", "PreCommandInvoke,Stop")
+	res := normalize(e, proj, path, "--events", "PreCommandInvoke,Stop")
 	if res.Code == 0 {
 		t.Fatalf("a mix of a valid and an invalid kind should be refused:\n%s", res.Output)
 	}
@@ -147,24 +165,27 @@ func TestT031_10_NoTrajectoryIsRefused(t *testing.T) {
 // reading the hooked-in trajectory.
 //
 // The default-resolution wiring, proven by a payload carrying a transcript_path:
-// the same record resolves and its entries come back, with no --path given.
+// the same record resolves and its entries come back, with no --path given. Read
+// against a mock-produced transcript — the Bash turn is the entry whose
+// PreCommandInvoke confirms the record really resolved.
 func TestT031_11_DefaultsToThePayloadTranscript(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t,
-		userMsg("u1", "a hooked-in read"),
-		assistantBash("a1", "u1", "npm test"),
-	)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	payload := `{"transcript_path":"` + path + `","cwd":"` + dirOf(path) + `"}`
-	res := e.CLIDirectStdin(dirOf(path), payload, "sr-session", "trajectory", "normalize", "--whole-session")
+	e.Run(proj, "s-031-11", "a hooked-in read", Turns("done",
+		Bash("a1", "npm test"),
+	))
+	path := e.TranscriptPath(proj, "s-031-11")
+
+	payload := `{"transcript_path":"` + path + `","cwd":"` + proj + `"}`
+	res := e.CLIDirectStdin(proj, payload, "sr-session", "trajectory", "normalize", "--whole-session")
 	if res.Code != 0 {
 		t.Fatalf("normalize from a payload exited %d, want 0:\n%s", res.Code, res.Output)
 	}
 	entries := decodeEntries(t, res.Output)
-	if len(entries) != 2 {
-		t.Fatalf("the hooked-in read should return both entries, got %d:\n%s", len(entries), res.Output)
-	}
-	if got := eventsOf(entries[1]); len(got) != 1 || got[0] != "PreCommandInvoke" {
+	a := bashEntry(t, entries)
+	if got := eventsOf(a); len(got) != 1 || got[0] != "PreCommandInvoke" {
 		t.Fatalf("the Bash entry should carry a PreCommandInvoke, got %v", got)
 	}
 }
