@@ -608,6 +608,22 @@ func (e *Env) WriteFile(projDir, rel, body string) {
 	}
 }
 
+// WriteExecutable writes a file into a project with the executable bit set — for
+// a script a rule will run that lives in the tree rather than beside a rule's own
+// declaration (a goal's verify.sh under goal/<name>/, which a gate's check execs).
+// WriteFile writes 0644, which a check trying to run the file would refuse; this
+// is the same helper for the case where the file IS a program.
+func (e *Env) WriteExecutable(projDir, rel, body string) {
+	e.t.Helper()
+	full := filepath.Join(projDir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o755); err != nil {
+		e.t.Fatalf("harness: write executable %s: %v", rel, err)
+	}
+}
+
 // Exists reports whether a path is present in a project.
 //
 // How a test asks what actually happened to the tree, as opposed to what came
@@ -719,6 +735,89 @@ func (e *Env) GateState(projDir, sessionID, gateName string) string {
 		e.t.Fatalf("harness: decode gate state %s: %v", gateName, err)
 	}
 	return st.Status
+}
+
+// FileGuard writes a NEW-FORMAT file-guard declaration and its check
+// scripts/templates into a project, at `.sloprail/file-guard/<name>/file-guard.yaml`.
+//
+// A file-guard is bound to a FILE'S STATE (its `match` over path/markers/context),
+// checked after a write settles and — when `preventive: true` — before it lands.
+// Scripts (a check's `./verify.sh`, a `prepare`, a judge template) are written as
+// siblings of file-guard.yaml, executable, where the guard's own relative paths
+// resolve them. It shares the file-guard/ directory with the structure singleton.
+func (e *Env) FileGuard(projDir, name, guardYAML string, files map[string]string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail", "file-guard", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir file-guard: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "file-guard.yaml"), []byte(guardYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write file-guard.yaml: %v", err)
+	}
+	for file, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write file-guard file %s: %v", file, err)
+		}
+	}
+}
+
+// Context writes a NEW-FORMAT context declaration and its enter/exit (and any
+// require/check) scripts into a project, at `.sloprail/context/<name>/context.yaml`.
+//
+// A context is an activatable scope: its `enter` runs on every matching `on`
+// trigger and its stdout replaces the context's payload; its `exit` runs at Stop
+// and flips active/inactive (never blocking the Stop). enter.sh / exit.sh and any
+// other scripts are written executable as siblings of context.yaml.
+func (e *Env) Context(projDir, name, contextYAML string, files map[string]string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail", "context", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir context: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "context.yaml"), []byte(contextYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write context.yaml: %v", err)
+	}
+	for file, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write context file %s: %v", file, err)
+		}
+	}
+}
+
+// ContextState reads one context's recorded {active, payload} from the session
+// store — how a test observes that a context ENTERED or EXITED, and what payload
+// its enter left. Returns active and the payload map; active is false and the
+// payload nil when the context has no recorded state.
+//
+// Read directly from the store the same way GateState reads the gates[] map, from
+// the reserved `!sloprail:contexts` keyspace the engine's context dispatch writes:
+// one `context:<name>` key per context, value `{"active":…,"payload":{…}}`. The
+// store is located by asking the binary for the conversation identity, so a test
+// cannot pass against a store the engine would never have written to.
+func (e *Env) ContextState(projDir, sessionID, contextName string) (bool, map[string]any) {
+	e.t.Helper()
+
+	db, err := sessionstate.Open(e.sessionDBPath(projDir, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+
+	value, ok, err := db.State("!sloprail:contexts", "context:"+contextName)
+	if err != nil {
+		e.t.Fatalf("harness: read context state %s: %v", contextName, err)
+	}
+	if !ok {
+		return false, nil
+	}
+	var st struct {
+		Active  bool           `json:"active"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(value), &st); err != nil {
+		e.t.Fatalf("harness: decode context state %s: %v", contextName, err)
+	}
+	return st.Active, st.Payload
 }
 
 // RemoveGuardrail takes a guardrail out of a project mid-session, the way a

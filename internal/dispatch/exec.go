@@ -48,13 +48,27 @@ const (
 )
 
 // scriptCall is one script/prepare execution: the guard's folder, the script's
-// path (relative to it), the payload for stdin, and the guard's name for the
-// environment.
+// path (relative to it), the payload for stdin, and the session facts a script
+// needs in its environment (the guard's name, the workspace, the session id, the
+// transcript path).
 type scriptCall struct {
 	Dir       string
 	Script    string
 	Stdin     []byte
 	GuardName string
+
+	// Workspace, SessionID and TranscriptPath are the session facts a check may
+	// need beyond the payload: SR_WORKSPACE to resolve a project-relative path (a
+	// goal's verify.sh under <workspace>/goal/…) and to key its own `sr-session
+	// state`, SR_SESSION_ID for that same keying, SR_TRANSCRIPT for a check that
+	// reads the trajectory itself. They mirror what the old-format hook env sets
+	// (services/sr-session hookScope.env), so a new-format check reaches its
+	// workspace and state the same way an old-format hook does. Empty values are
+	// left unset (the same "unset is diagnosable" stance), except Workspace, which
+	// the caller must supply resolved.
+	Workspace      string
+	SessionID      string
+	TranscriptPath string
 }
 
 // scriptResult is what a script/prepare execution produced.
@@ -138,6 +152,20 @@ func (s scriptCall) env() []string {
 	}
 	if s.Dir != "" {
 		env = append(env, "SR_GUARDRAIL_DIR="+s.Dir)
+	}
+	// The session facts, mirroring the old-format hook env so a new-format check
+	// reaches its workspace and state the same way. Appended AFTER os.Environ() so
+	// the engine's answer wins over any stale value an outer process exported — the
+	// same append-ordering the old hookScope.env relies on. Left unset when empty,
+	// the documented "unset is diagnosable" stance a rule tests for.
+	if s.Workspace != "" {
+		env = append(env, "SR_WORKSPACE="+s.Workspace)
+	}
+	if s.SessionID != "" {
+		env = append(env, "SR_SESSION_ID="+s.SessionID)
+	}
+	if s.TranscriptPath != "" {
+		env = append(env, "SR_TRANSCRIPT="+s.TranscriptPath)
 	}
 	return env
 }

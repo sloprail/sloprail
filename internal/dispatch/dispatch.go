@@ -120,6 +120,18 @@ type Request struct {
 	// GuardName is the rule's name, used only for diagnostics and for the judge's
 	// isolation. Not load-bearing for the verdict.
 	GuardName string
+
+	// Workspace is the tree being guarded, passed into a check's environment as
+	// SR_WORKSPACE so a script can resolve a workspace-relative path (a goal's
+	// verify.sh under <workspace>/goal/…) and key its own `sr-session state`. The
+	// caller resolves it (the payload's cwd, git-rooted); the runner only forwards
+	// it. Empty leaves SR_WORKSPACE unset.
+	Workspace string
+
+	// SessionID is the conversation's identity, passed as SR_SESSION_ID so a
+	// check's own `sr-session state` lands in this session's keyspace. Empty leaves
+	// it unset (diagnosable). Not load-bearing for the verdict.
+	SessionID string
 }
 
 // Verdict is what the check-runner concluded about one fired event.

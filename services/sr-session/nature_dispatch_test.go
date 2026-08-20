@@ -75,18 +75,18 @@ func TestFirstMatchingEvent(t *testing.T) {
 
 	// A create under memories/ matches (the alias covers create).
 	match := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{"path": "memories/a.md"}}
-	fired, ok := firstMatchingEvent(discard(), reg, g, []event.Event{match})
+	fired, ok := firstMatchingEvent(discard(), reg, g, []event.Event{match}, nil)
 	assert.True(t, ok, "a create under memories/ wakes a PreFileWrite gate narrowed to memories/")
 	assert.Equal(t, match.Kind, fired.Kind)
 
 	// A create OUTSIDE memories/ does not match (the trigger's match narrows it).
 	outside := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{"path": "src/a.go"}}
-	_, ok = firstMatchingEvent(discard(), reg, g, []event.Event{outside})
+	_, ok = firstMatchingEvent(discard(), reg, g, []event.Event{outside}, nil)
 	assert.False(t, ok, "a write outside the match does not wake the gate")
 
 	// A Stop event does not match a PreFileWrite gate at all (wrong kind).
 	stop := event.Event{Kind: declaration.KindStop, Fields: map[string]any{}}
-	_, ok = firstMatchingEvent(discard(), reg, g, []event.Event{stop})
+	_, ok = firstMatchingEvent(discard(), reg, g, []event.Event{stop}, nil)
 	assert.False(t, ok, "a Stop does not wake a PreFileWrite gate")
 }
 
@@ -97,7 +97,7 @@ func TestFirstMatchingEvent_NoMatchWakesAlways(t *testing.T) {
 
 	g := declaration.Gate{Name: "g", On: []declaration.GateTrigger{{Event: declaration.KindStop}}}
 	stop := event.Event{Kind: declaration.KindStop, Fields: map[string]any{}}
-	_, ok := firstMatchingEvent(discard(), reg, g, []event.Event{stop})
+	_, ok := firstMatchingEvent(discard(), reg, g, []event.Event{stop}, nil)
 	assert.True(t, ok, "a Stop gate with no match wakes on a Stop")
 }
 
@@ -159,7 +159,7 @@ func TestLoadGatesMap_Empty(t *testing.T) {
 // matcher reads — proven by a compiled gate match reading event.path through it.
 func TestGateMatchEvent_NestsUnderEvent(t *testing.T) {
 	e := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{"path": "memories/a.md"}}
-	nested := gateMatchEvent(e)
+	nested := gateMatchEvent(e, nil)
 	inner, ok := nested.Fields["event"].(map[string]any)
 	require.True(t, ok, "the fired event's fields are nested under `event`")
 	assert.Equal(t, "memories/a.md", inner["path"])

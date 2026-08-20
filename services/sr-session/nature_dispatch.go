@@ -208,22 +208,23 @@ func runGatesForEvents(
 	events []event.Event,
 	scope hookScope,
 	store sessionstate.Store,
+	contextMap map[string]natures.ContextState,
+	gatesMap map[string]natures.GateState,
 ) []gateResult {
 	if len(gates) == 0 {
 		return nil
 	}
 
-	// The state maps the runner reads and records into. Loaded once for the whole
-	// dispatch so several gates see a consistent world; contexts are read-only here
-	// (populated next slice), gates are read and then written back per verdict.
-	contextMap := loadContextMap(cmd, store)
-	gatesMap := loadGatesMap(cmd, store)
-
+	// The state maps are LOADED BY THE CALLER and threaded in, so contexts,
+	// gates and file-guards in one dispatch all read one consistent world — a
+	// context that entered on a Post event this cycle is visible to a gate's
+	// `require: [{context}]` here, because the orchestrator ran the enters first
+	// and passes the populated map. gatesMap is read and written back per verdict.
 	runner := dispatchcore.Runner{}
 	var results []gateResult
 
 	for _, g := range gates {
-		fired, ok := firstMatchingEvent(cmd, reg, g, events)
+		fired, ok := firstMatchingEvent(cmd, reg, g, events, contextMap)
 		if !ok {
 			continue
 		}
@@ -249,6 +250,8 @@ func runGatesForEvents(
 			Gates:          gatesMap,
 			Dir:            g.Dir,
 			GuardName:      g.Name,
+			Workspace:      scope.Workspace,
+			SessionID:      scope.SessionID,
 		})
 		if err != nil {
 			// The runner itself could not decide (a programming error, not a check
@@ -291,7 +294,7 @@ func runGatesForEvents(
 // loaded gate, whose triggers the loader already compiled) or an evaluation error
 // is reported and treated as non-matching for that trigger, so a gate does not
 // wake on a match it could not actually confirm.
-func firstMatchingEvent(cmd *cobra.Command, reg *module.Registry, g declaration.Gate, events []event.Event) (event.Event, bool) {
+func firstMatchingEvent(cmd *cobra.Command, reg *module.Registry, g declaration.Gate, events []event.Event, contextMap map[string]natures.ContextState) (event.Event, bool) {
 	for _, trig := range g.On {
 		// The trigger's `event` may be the PreFileWrite alias; expand it to the
 		// concrete kinds it fires on, the same table the loader validated it
@@ -310,7 +313,7 @@ func firstMatchingEvent(cmd *cobra.Command, reg *module.Registry, g declaration.
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: gate %q trigger on %s: %v\n", g.Name, trig.Event, err)
 				continue
 			}
-			ok, err := m.Match(gateMatchEvent(e))
+			ok, err := m.Match(gateMatchEvent(e, contextMap))
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: gate %q trigger on %s: %v\n", g.Name, trig.Event, err)
 				continue
@@ -335,17 +338,21 @@ func containsKind(kinds []string, kind string) bool {
 }
 
 // gateMatchEvent wraps a fired event in the NESTED shape a gate matcher reads: the
-// event's own fields under `event`, so `event.path` / `event.invocations` resolve.
+// event's own fields under `event`, so `event.path` / `event.invocations` resolve,
+// and the context[] map (wire form) under `context`, so a gate trigger MAY narrow
+// on `context[<name>]` the way its GateMatchScope declares.
 //
 // This is the runtime env shape CompileGateMatch documents — a gate scope nests
-// where a file scope is flat. The context map is deliberately NOT included here:
-// for this slice no gate trigger's `match` reads `context` in the examples, and
-// threading the context state into the matcher env is a refinement the context
-// slice makes when it populates that state. A trigger that does read `context`
-// would see it absent (undefined), which its own `require: [{context}]` — always
-// present alongside such a match in the examples — then refuses on.
-func gateMatchEvent(e event.Event) event.Event {
-	return event.Event{Kind: e.Kind, Fields: map[string]any{"event": e.Fields}}
+// where a file scope is flat. The context map is now threaded (the context slice
+// populates it), in the wire form an expression indexes (contextMatchValue), so a
+// trigger reading `context["x"].active` evaluates against the real state rather
+// than an undefined value. Every declared context is present in the map (seeded
+// inactive), so an inactive one reads false rather than erroring on an absent key.
+func gateMatchEvent(e event.Event, contextMap map[string]natures.ContextState) event.Event {
+	return event.Event{Kind: e.Kind, Fields: map[string]any{
+		"event":   e.Fields,
+		"context": contextMatchValue(contextMap),
+	}}
 }
 
 // -- the gates[] map persistence --
@@ -402,18 +409,6 @@ func recordGateVerdict(cmd *cobra.Command, store sessionstate.Store, gatesMap ma
 	}
 }
 
-// loadContextMap reads the context[] state map for the runner and a gate trigger's
-// `match`.
-//
-// For THIS slice it is whatever context state exists — empty until the context
-// slice writes it. It is loaded through the same store the gates map is, so when
-// that slice lands the source changes here in one place and the gate dispatch
-// reads populated contexts without further change. Returns an empty (non-nil) map
-// so a `{context}` prerequisite reads a defined-but-inactive world rather than a
-// nil.
-func loadContextMap(_ *cobra.Command, _ sessionstate.Store) map[string]natures.ContextState {
-	// The context lifecycle (enter/exit writing this map) is the next slice. Until
-	// then there is no context state to read, so this is empty — which a
-	// `{context}` prerequisite correctly reads as "the context has not entered".
-	return map[string]natures.ContextState{}
-}
+// loadContextMap now lives in nature_context.go, where the context lifecycle that
+// writes the map also reads it — seeded so every declared context is present
+// (inactive by default) rather than the empty stub this slice replaced.
