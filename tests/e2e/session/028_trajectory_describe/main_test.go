@@ -26,17 +26,19 @@ import (
 //
 // # The one shape the mock cannot produce, and why a fixture stays
 //
-// The parent correlation (T028_02) is the exception, and it is a MEASURED limit
-// of the mock rather than a preference. describe derives a sub-agent's parentPath
-// from the toolUseId its meta file records — the id of the dispatching tool_use in
-// the parent — and the mock writes that field EMPTY for every sub-agent it seeds
-// (verified in a10n-cli's claude-mock: seedSubagentTranscript hardcodes
-// `"toolUseId": ""`, and the engine names the mock explicitly in
-// internal/transcript/describe.go's ParentPath). A mock-driven sub-agent is
-// therefore exactly the T028_03 shape — isSubagent true, no parent derivable — and
-// the ONLY way to exercise a derivable parent is a record carrying the toolUseId
-// Claude Code actually writes. That is the single hand-authored fixture below;
-// everything else reads a mock-produced transcript.
+// describe derives a sub-agent's parentPath from the toolUseId its meta file
+// records — the id of the dispatching tool_use in the parent. a10n-claude-mock
+// now threads the dispatching Agent tool_use's id into that meta
+// (seedSubagentTranscript's toolUseId), so a mock-driven sub-agent carries a REAL
+// toolUseId and its parent IS derivable — the derivable-parent case (T028_02)
+// runs against the mock, not a fixture. (This reverses an earlier limit, when the
+// mock hardcoded an empty toolUseId; that is why the note used to say the opposite.)
+//
+// The one shape the mock no longer produces is the NEGATIVE: a sub-agent whose
+// meta names an EMPTY toolUseId, the "no parent derivable" degradation (T028_03).
+// Since every mock-seeded sub-agent now carries an id, that case is constructed
+// with the single hand-authored fixture below; everything else reads a
+// mock-produced transcript.
 
 type Env = harness.Env
 
@@ -85,19 +87,6 @@ func newFixtureParent(t *testing.T) *fixtureParent {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	return &fixtureParent{t: t, dir: dir}
-}
-
-// root writes the root transcript at <dir>/<session>.jsonl: a parentless origin and
-// an assistant turn dispatching a sub-agent by toolUseID — the id the sub-agent's
-// meta points back at.
-func (f *fixtureParent) root(session, toolUseID string) string {
-	f.t.Helper()
-	origin := `{"type":"user","uuid":"root-origin","parentUuid":null,"isSidechain":false,` +
-		`"message":{"role":"user","content":"start the work"}}`
-	dispatch := `{"type":"assistant","uuid":"root-dispatch","parentUuid":"root-origin","isSidechain":false,` +
-		`"message":{"role":"assistant","content":[{"type":"text","text":"delegating"},` +
-		`{"type":"tool_use","id":"` + toolUseID + `","name":"Agent","input":{"description":"go"}}]}}`
-	return writeLines(f.t, filepath.Join(f.dir, session+".jsonl"), origin, dispatch)
 }
 
 // subagent writes a sub-agent record and its meta companion under

@@ -58,20 +58,34 @@ func TestT028_01_DescribeRootHasSubagentPaths(t *testing.T) {
 //
 // The sub-agent case the spec calls for: isSubagent true, parentPath set. The
 // link is DERIVED — the sub-agent's meta names the toolUseId that dispatched it,
-// and describe finds the trajectory holding a tool_use with that id. This is the
-// case the mock cannot reach: it writes an EMPTY toolUseId for every sub-agent it
-// seeds (see the package note), so no mock-produced record could ever set
-// parentPath. It runs here against the one hand-authored fixture in this package,
-// carrying the id Claude Code actually writes.
+// and describe finds the trajectory holding a tool_use with that id. Driven
+// through the MOCK: as of a10n-claude-mock threading the dispatching Agent
+// tool_use's id into the sub-agent's meta (seedSubagentTranscript's toolUseId),
+// a mock-produced sub-agent now carries a real toolUseId, so describe correlates
+// it back to the dispatching root — the same derivation Claude Code's own records
+// drive. (This case previously needed a hand-authored fixture "because the mock
+// wrote an empty toolUseId"; the mock upgrade made that fixture unnecessary, so
+// this asserts against the real mock shape rather than a stand-in that could
+// drift from it.)
 func TestT028_02_DescribeSubagentHasParentPath(t *testing.T) {
 	e := New(t)
-	f := newFixtureParent(t)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	const dispatchID = "toolu_01parentdispatch"
-	rootPath := f.root("s-root", dispatchID)
-	subPath := f.subagent("s-root", "agentone", dispatchID)
+	sub := writeScenario(t, proj, Turns("sub done",
+		Bash("s1", "echo delegated > from-sub.md"),
+	))
+	e.Run(proj, "s-028-02", "start the work", Turns("root done",
+		Dispatch("d1", "delegated prompt", sub, ""),
+	))
 
-	res := e.CLIDirect(f.dir, "sr-session", "trajectory", "describe", "--path", subPath)
+	rootPath := e.TranscriptPath(proj, "s-028-02")
+	recs := e.SubagentRecordPaths(proj, "s-028-02")
+	if len(recs) != 1 {
+		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
+	}
+
+	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", recs[0])
 	if res.Code != 0 {
 		t.Fatalf("describe on a sub-agent exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -95,30 +109,23 @@ func TestT028_02_DescribeSubagentHasParentPath(t *testing.T) {
 // sub-agent, but with no parentPath rather than a guessed one.
 //
 // This is the honest degradation the spec's "absent when ... cannot be located"
-// describes, and it is exactly what a MOCK-produced sub-agent looks like: the mock
-// seeds the record with an isSidechain origin and a meta companion carrying an
-// empty toolUseId, so the isSubagent fact holds while the parent cannot be derived.
-// Driven through the mock rather than hand-authored, because the mock's shape IS
-// the subject — a fixture claiming to be "the mock's shape" could drift from it,
-// and this asserts against the real thing.
+// describes: the isSidechain origin and the meta companion mark it a sub-agent,
+// but with an EMPTY toolUseId there is no dispatching tool_use to correlate to,
+// so parentPath must be absent rather than guessed. This runs against a
+// hand-authored fixture carrying an empty toolUseId, because the mock no longer
+// produces that shape — as of threading the dispatching id into the meta, every
+// mock-seeded sub-agent carries a REAL toolUseId (see T028_02), so the
+// no-toolUseId case has to be constructed explicitly to be exercised at all.
 func TestT028_03_SubagentWithoutToolUseIDHasNoParent(t *testing.T) {
 	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
+	f := newFixtureParent(t)
 
-	sub := writeScenario(t, proj, Turns("sub done",
-		Bash("s1", "echo delegated > from-sub.md"),
-	))
-	e.Run(proj, "s-028-03", "start the work", Turns("root done",
-		Dispatch("d1", "delegated prompt", sub, ""),
-	))
+	// A sub-agent record whose meta names an EMPTY toolUseId — the shape describe
+	// must not derive a parent from. No root is needed: with no id to correlate,
+	// there is nothing for describe to look for.
+	subPath := f.subagent("s-root", "agentone", "")
 
-	recs := e.SubagentRecordPaths(proj, "s-028-03")
-	if len(recs) != 1 {
-		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
-	}
-
-	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", recs[0])
+	res := e.CLIDirect(f.dir, "sr-session", "trajectory", "describe", "--path", subPath)
 	if res.Code != 0 {
 		t.Fatalf("describe exited %d, want 0:\n%s", res.Code, res.Output)
 	}
