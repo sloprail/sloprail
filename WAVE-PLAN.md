@@ -48,12 +48,13 @@ a quoted multi-word fqn, reconcile then.
   * Gate/Context matcher: NESTED — {event: {<kind fields>}, context: {...}} (context top-level, no gates).
 - Marker structural shape used by scopes: {kind, fqn, line(int)} — mirror of filemod.Marker.
 
-### BATCH 2 — IN PROGRESS (base 90ca13a). 2 parallel worktrees:
+### BATCH 2 — COMPLETE ✅ (both slices merged: declaration-loaders, traj-normalize; base 4d7d9cf)
+### BATCH 2 — was (base 90ca13a). 2 parallel worktrees:
 - worktree `declaration-loaders` (impl/declaration-loaders): 2+2b (loaders + shared check/require/judge types + example-yaml reconciliation) — IMPLEMENTING
 - worktree `traj-normalize` (impl/traj-normalize): 4a (trajectory normalize subcommand) — IMPLEMENTING
 ### BATCH 2 — after batch 1
 - [~] 2   loaders (new internal/declaration pkg, 76 unit cases) — review ZERO BLOCKERS, fixing 2 MINORs      [declaration-loaders]
-- [~] 2b  shared types (Prerequisite/Check/*CheckPayload/*JudgeInput/PreparedContext) — review ZERO BLOCKERS, fixing 2 MINORs [declaration-loaders]
+- [x] 2b  shared types — MERGED (4d7d9cf)                                                [declaration-loaders ✓]
 - [x] 4a  session trajectory normalize — MERGED, reviewed zero issues              [traj-normalize ✓]
 
   - [~] 2r  RECONCILED 13 example yamls to spec grammar (marker.kind→any(markers), refactoring.active→context[..], path→event.path, glob-or→path contains) — review confirmed `contains` IS a real op; fixing 2 MINORs (content-de-layering root-dir equivalence, Goal.Enabled required) to the new spec grammar (found by match-scopes review).
@@ -91,6 +92,12 @@ KNOWN PRE-EXISTING RED (base branch, NOT a regression — deferred to Wave 3 del
   This hid two live guardrails (judge-skill.sh, judge-rule.sh) from the events-vocab field rename.
 - Every reviewer must grep the WHOLE repo (grep -rn) for old names when a field/API is renamed,
   including .sloprail/guardrails/*, marketplace/, examples/.
+
+- Example-loading tests (examples_test) can trip on UNTRACKED stray empty dirs in the worktree
+  (e.g. an empty gate/verify-all-linked/ with no gate.yaml) — git ignores empty dirs so they're
+  invisible to `git status` but the loader flags them as incomplete declarations. When such a
+  test fails post-merge, check `git ls-files`/`git ls-tree` — if the dir is untracked cruft, rmdir it
+  (CI on a clean checkout never sees it). Removed one for interlinking during the batch-2 merge.
 
 ## FOLLOW-UP TASKS (later, not blockers)
 - Author-facing guidance: a guardrail that writes an in-repo ledger AND binds Post events feeds its
