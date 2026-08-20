@@ -1706,6 +1706,21 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 		// os.Environ inheritance) so the two environments behave identically.
 		"CLAUDECODE=1",
 		"CLAUDE_CODE_ENTRYPOINT=cli",
+		// Cap the mock's blocked-Stop retry loop at ONE re-run. Real Claude Code
+		// re-runs the agent when a Stop hook blocks, up to CLAUDE_CODE_STOP_HOOK_BLOCK_CAP
+		// (default 8), so it can self-correct; the mock faithfully does the same. But
+		// a test whose Stop block is PERMANENT by construction — a retained refusal
+		// that cannot clear on a re-run (e.g. session/025's subdirectory retained
+		// refusal) — retries all 8 times, and each re-run re-fires the Stop hook
+		// (sr-session doing real tree-diff work), which turned one such test into a
+		// ~56s outlier that timed the CI shard out. One re-run is enough for every
+		// test here: those that CAN self-correct do so on the first re-fire (the
+		// re-fired Stop carries stop_hook_active and returns without re-judging), and
+		// those that cannot only need to be observed blocking once. No test asserts
+		// the cap is REACHED — every hitRetryCap check asserts it is NOT — so lowering
+		// it changes no verdict, only the wasted retries. (Verified: the subagent
+		// retry-shape suite passes unchanged, and 025 drops from ~56s to ~3s.)
+		"CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=1",
 		// The plugin invokes `sloprail`; this is how the hook subprocess finds
 		// the build under test rather than whatever happens to be installed.
 		//
