@@ -88,9 +88,27 @@ KNOWN PRE-EXISTING RED (base branch, NOT a regression — deferred to Wave 3 del
   examples/deterministic-refactoring-mode. Per GOAL.md these superseded old e2e are DELETED in Wave 3
   (kept now as reference). They make `go test ./...` red today; that is expected, not caused by any slice.
 
+### WAVE 2 (GOAL.md) — per-use-case e2e — COMPLETE ✅ (base a78978e)
+All 16 use cases e2e'd (036-051), 0 FAILs. Engine slices merged: judge-config (gonja+model/timeout+
+preventive-create, dba20b5), --owner cross-guardrail state read (b8608c3). E2e batches: B1 036-041
+(7736651), B2 042-045 (9a3b011), B3 046-049 (5dfcab5), B4 050-051 (3f4c26d). Superseded old-dup
+deterministic_refactoring e2e + internal/declaration/examples_test.go deleted (a78978e). See WAVE2-PLAN.md.
+Shipped-example bugs found+fixed by the effort: 14 non-exec scripts; cite --path; action-proof jq;
+eval-loop-maxing require→match; task-management message_id jq; interlinking/keyword/completeness
+--owner+jq-s+SR_WORKSPACE; research-rigor clone-from-invocation + .fields wire-form; intake skip-context.
+Spec additions pushed to PR #2: Check model?/timeout?, PreFileCreate.newContent optional, state list --owner.
+
+### D3/D4 (folds into remaining review comments) — NOW UNBLOCKED (mock #470 merged + installed)
+- [ ] Rework trajectory + judge e2e to drive the upgraded a10n-claude-mock, dropping InstallJudgeClaude
+      stub + hand-crafted jsonl + the real-claude e2e (tests/e2e/engine_repo_judges, pre_tool/015_06_real_agent,
+      session/021_02_nested, + the Wave-2 TODO(D3) markers). Candidate mock feature: synthesize toolUseResult
+      for a registered tool (B2's ToolUseWithResult currently relies on the installed mock passing a scenario
+      one through). Reviewer gate.
+
 ### WAVE 3 (GOAL.md) — cleanup, SEPARATE PRs, at the very end
 - [ ] delete old GUARDRAIL.md format + old dispatch + cyclemod TurnEnd + session query + old/duplicated e2e.
-      KEEP matcher.go/matcherenv.go. Migrate examples.
+      KEEP matcher.go/matcherenv.go. Migrate examples. (The two smallest superseded-e2e deletions already
+      done as Wave-2 finalization; the big old-format/dispatch removal is Wave 3.)
 - [ ] spec cleanup in PR #2 (remove superseded), AFTER impl cleanup.
 
 ## LESSONS (persist across compaction)
