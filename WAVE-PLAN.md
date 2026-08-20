@@ -19,15 +19,15 @@ EXPLICITLY off the base (never Agent isolation).
 
 ### BATCH 1 — leaves, all independent, fan out together
 Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid conflicts):
-- worktree `events-vocab` (impl/events-vocab): 1a+1b+1c+1d — RESUMED after API-error (was ~80% done, builds; finishing tests)
+- worktree `events-vocab` (impl/events-vocab): 1a+1b+1c+1d — DONE (61 files, all gate green), IN REVIEW. Notable: 2 NEW modules (tagmod, tooluse); Post events now carry content→feedback-loop caveat handled in fixtures; shipped authoring-slop guardrail updated to newContent; e2e 028_tag_write COLLIDES with 028_trajectory_describe (renumber to 030).
 - worktree `markers` (impl/markers): 1e — IMPL DONE (commit 5852a1b), IN REVIEW
 - worktree `match-scopes` (impl/match-scopes): 1f — IMPL DONE, rebased, IN REVIEW
 - worktree `traj-describe-cite` (impl/traj-describe-cite): 4b+4c — DONE, rebased, IN REVIEW. NOTE: mock writes EMPTY toolUseId, so parentPath correlation is fixture/unit tested, not mock-e2e. Adds internal/transcript/{cite,describe,line}.go + session_trajectory{,_cite,_describe}.go; leaves normalize slot (030).
 
-- [ ] 1a  TurnEnd→Stop rename (cyclemod + refs; e2e dir 026 renamed)         [events-vocab]
-- [ ] 1b  PostTagWrite event + #tag scanner (new module/kind)                [events-vocab]
-- [ ] 1c  PreToolUse semantic event (bindable kind)                          [events-vocab]
-- [ ] 1d  Post-file events carry old/newMarkers + old/newContent; naming     [events-vocab]
+- [~] 1a  DONE (in impl/events-vocab, 3 commits, green) — REVIEWING          [events-vocab]
+- [~] 1b  DONE (in impl/events-vocab, 3 commits, green) — REVIEWING          [events-vocab]
+- [~] 1c  DONE (in impl/events-vocab, 3 commits, green) — REVIEWING          [events-vocab]
+- [~] 1d  DONE (in impl/events-vocab, 3 commits, green) — REVIEWING          [events-vocab]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
 - [x] 1f  per-nature match SCOPES + glob shorthand + internal/natures — MERGED (218de70)   [match-scopes ✓]
 - [x] 4b  session trajectory describe — MERGED (93d0c52)                               [traj-describe-cite ✓]
