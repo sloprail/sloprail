@@ -12,7 +12,7 @@ text requires?
 - The file carrying the marker:
 
 ```
-{{ event.newContent or event.oldContent }}
+{{ event.newContent if event.newContent else event.oldContent }}
 ```
 
 No `prepare` step feeds this template — nothing here needs a transcript

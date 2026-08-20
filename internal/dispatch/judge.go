@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // This file runs a judge check's model call. A judge is a rendered prompt plus a
@@ -42,15 +43,19 @@ import (
 // A judge that wants to fail OPEN on model flakiness does so inside a script check
 // of its own; this runner's default for the judge substrate is closed.
 
-// judgeModel is the model-set preference handed to sr-agent for a judge.
+// defaultJudgeModel is the model-set preference handed to sr-agent for a judge
+// that names none of its own.
 //
 // A SIZE ALIAS, not a concrete model, so it resolves under whichever harness is
 // running — the whole reason sr-agent takes a set. size-md is the middle rung: a
 // judge is a real reasoning task, not a formatting one, so the smallest alias
 // would under-serve it, and the largest is a cost a per-action check should not
-// default to. An author who wants a specific model can carry it in the rule later;
-// the engine's default is a portable size.
-const judgeModel = "size-md"
+// default to.
+//
+// A judge check MAY override this with its own `model` (dot-dir-file-store/
+// main.tsp Check.model), in the same modelset format — judgeCall carries it and
+// judgeCommand substitutes it; this is the fallback when the check named none.
+const defaultJudgeModel = "size-md"
 
 // judgeCall is one judge invocation: the guard's folder, the template file
 // (relative to it), the rendered-against input, and the guard's name.
@@ -65,6 +70,18 @@ type judgeCall struct {
 	Template  string
 	InputJSON []byte // the FileJudgeInput/GateJudgeInput as JSON, for rendering
 	GuardName string
+
+	// Model is the check's own modelset for this judge, in sr-agent's --model
+	// format. Empty means the engine default (defaultJudgeModel); judgeCommand
+	// resolves it. Carried per-call rather than read from a const so a rule can
+	// choose the model its judgement deserves (dot-dir-file-store Check.model).
+	Model string
+
+	// Timeout is the check's own bound for this judge, already parsed from the
+	// declaration's duration string. Zero means the engine default
+	// (defaultCheckTimeout); runShell resolves it. A judge that exceeds this is
+	// still a refusal — fail-closed at the per-check bound (Check.timeout).
+	Timeout time.Duration
 }
 
 // runJudgeAgent is the production runJudge: render the template, run sr-agent with
@@ -173,9 +190,10 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// which is what makes carrying the prompt this way safe.
 	stdout, stderr, code, expired, startErr := runShell(
 		j.Dir,
-		judgeCommand(verifier),
+		judgeCommand(verifier, j.model()),
 		nil,
 		judgeEnv(j, prompt),
+		j.Timeout,
 	)
 	if startErr != nil {
 		return refuse(fmt.Sprintf(
@@ -202,11 +220,28 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 // The prompt is read from an environment variable rather than the argv, so a
 // prompt of any size or shape (a leading dash, embedded quotes) cannot break the
 // command line — `--prompt "$VAR"` is one argument to sr-agent whatever the value
-// holds. The verifier path is single-quoted as its own argument.
-func judgeCommand(verifier string) string {
+// holds. The verifier path and the model are single-quoted as their own
+// arguments — the model is author-supplied (a rule's `model`), so quoting it
+// keeps a stray character in a concrete name from breaking the command line, the
+// same discipline the verifier path gets.
+//
+// The model is the check's resolved modelset (its own `model`, or the default) —
+// sr-agent's --model takes exactly this comma-separated preference format, so the
+// check's value passes straight through.
+func judgeCommand(verifier, model string) string {
 	return fmt.Sprintf(
 		`sr-agent --model %s --verify %s --prompt "$%s"`,
-		judgeModel, shSingleQuote(verifier), judgePromptEnv)
+		shSingleQuote(model), shSingleQuote(verifier), judgePromptEnv)
+}
+
+// model resolves the modelset to hand sr-agent: the check's own `model` when it
+// set one, else the engine default. Kept a method so the default lives in one
+// place and judgeCommand is handed a value that is never empty.
+func (j judgeCall) model() string {
+	if j.Model != "" {
+		return j.Model
+	}
+	return defaultJudgeModel
 }
 
 // judgePromptEnv carries the rendered prompt into the sr-agent invocation off the

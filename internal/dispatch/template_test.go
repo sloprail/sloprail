@@ -2,19 +2,23 @@ package dispatch
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// The judge-template renderer is exercised here against both the constructs the
-// grammar promises and the ACTUAL templates the spec's examples ship — the gate
-// one this slice owns and the file-guard ones the next slice will, since the next
-// slice renders them through this same code. A template beyond the supported
-// subset must return an error (which the caller turns into a fail-closed refusal),
-// not a silent blank.
+// The judge-template renderer is gonja (a real Jinja2), so these tests pin the
+// constructs the shipped templates actually use — interpolation, `if`/`elif`/
+// `else`, a `for` with an inline filter, the value-fallback ternary, the two
+// registered filters — and, crucially, the FAIL-CLOSED contract: a template gonja
+// cannot parse or cannot resolve returns an ERROR from renderTemplate, which the
+// caller (judge.go) turns into a refusal, never a silent blank prompt.
+//
+// The per-construct cases here are the unit half; templatefiles_test.go renders
+// the REAL example templates against the REAL assembled JudgeInput, which is what
+// proves the flat-event contract end to end.
 
 func render(t *testing.T, src string, varsJSON string) string {
 	t.Helper()
@@ -30,13 +34,6 @@ func TestTemplate_Interpolation(t *testing.T) {
 	// A subscript by string reads the same key.
 	assert.Equal(t, "active", render(t, `{% if context["r"].active %}active{% endif %}`,
 		`{"context":{"r":{"active":true}}}`))
-}
-
-// An undefined variable interpolates to nothing and is falsy — Jinja2's undefined,
-// which the templates' `if` guards rely on.
-func TestTemplate_UndefinedIsEmptyAndFalsy(t *testing.T) {
-	assert.Equal(t, "[]", render(t, "[{{ missing.field }}]", `{}`))
-	assert.Equal(t, "no", render(t, "{% if missing %}yes{% else %}no{% endif %}", `{}`))
 }
 
 func TestTemplate_IfElifElse(t *testing.T) {
@@ -59,103 +56,86 @@ func TestTemplate_Equality(t *testing.T) {
 		`{"m":{"kind":"conforms-to-doc"}}`))
 }
 
-// A for-loop iterates a list, binding the loop variable; the inline `if` filter
-// keeps only matching elements.
-func TestTemplate_ForLoop(t *testing.T) {
-	out := render(t, `{% for c in cites %}[{{ c.quote }}]{% endfor %}`,
-		`{"cites":[{"quote":"one"},{"quote":"two"}]}`)
-	assert.Equal(t, "[one][two]", out)
+// The value-fallback ternary — `X if X else Y` — is the gonja-correct way the
+// templates render "newContent, or oldContent when it is empty". (gonja's `or` is
+// a boolean operator, not Jinja2's value-returning `or`, so the templates use the
+// ternary; this pins that the ternary returns the VALUE, not a bool.)
+func TestTemplate_ValueFallbackTernary(t *testing.T) {
+	src := `{{ event.newContent if event.newContent else event.oldContent }}`
+	assert.Equal(t, "NEW", render(t, src, `{"event":{"newContent":"NEW","oldContent":"OLD"}}`))
+	assert.Equal(t, "OLD", render(t, src, `{"event":{"newContent":"","oldContent":"OLD"}}`))
+}
 
-	// Inline filter.
+// A for-loop iterates a list, binding the loop variable; the inline `if` filter
+// keeps only matching elements; loop.index is 1-based.
+func TestTemplate_ForLoop(t *testing.T) {
+	out := render(t, `{% for c in cites %}#{{ loop.index }}:{{ c.quote }} {% endfor %}`,
+		`{"cites":[{"quote":"one"},{"quote":"two"}]}`)
+	assert.Equal(t, "#1:one #2:two ", out)
+
+	// Inline filter over a real list.
 	out = render(t, `{% for m in markers if m.kind == "x" %}({{ m.fqn }}){% endfor %}`,
 		`{"markers":[{"kind":"x","fqn":"a"},{"kind":"y","fqn":"b"},{"kind":"x","fqn":"c"}]}`)
 	assert.Equal(t, "(a)(c)", out)
+
+	// An empty list yields no iterations without erroring.
+	assert.Equal(t, "DONE", render(t, `{% for m in markers if m.kind == "x" %}({{ m.fqn }}){% endfor %}DONE`,
+		`{"markers":[]}`))
 }
 
-// The `or []` fallback: a missing or empty collection yields no iterations without
-// erroring, which the doc-conformance template relies on.
-func TestTemplate_ForLoopOrFallback(t *testing.T) {
-	out := render(t, `{% for m in (a or b or []) %}x{% endfor %}`, `{}`)
-	assert.Equal(t, "", out)
-
-	out = render(t, `{% for m in (a or b or []) %}[{{ m }}]{% endfor %}`,
-		`{"a":null,"b":["p","q"]}`)
-	assert.Equal(t, "[p][q]", out)
+// The two filters this renderer registers (matching a10n's set) work.
+func TestTemplate_RegisteredFilters(t *testing.T) {
+	assert.Equal(t, "a/b", render(t, `{{ p | dirname }}`, `{"p":"a/b/c.md"}`))
+	assert.Equal(t, "TestFoo", render(t, `{{ s | funcname }}`, `{"s":"e2e.TestFoo"}`))
 }
 
-// A construct outside the supported subset is an error, not a silent blank — the
-// fail-closed contract the caller depends on.
-func TestTemplate_UnsupportedConstructErrors(t *testing.T) {
+// FAIL-CLOSED: a template gonja cannot PARSE (a malformed or unclosed tag) is an
+// error, not a silent blank — the caller refuses on it. These are the malformed
+// shapes gonja rejects promptly with a parse error; the one it instead HANGS on
+// (an unterminated `{{`) is covered by the watchdog test below.
+func TestTemplate_ParseErrorFailsClosed(t *testing.T) {
 	for _, src := range []string{
-		`{{ event.path | upper }}`,    // filter pipe
-		`{% set x = 1 %}`,             // set
 		`{% if event.path %}unclosed`, // missing endif
-		`{{ event.path`,               // unterminated interpolation
 		`{% for x in y %}no end`,      // missing endfor
+		`{% if %}empty{% endif %}`,    // no condition
 	} {
-		_, err := renderTemplate(src, map[string]any{})
-		assert.Errorf(t, err, "%q must be refused, not rendered blank", src)
+		_, err := renderTemplate(src, map[string]any{"event": map[string]any{"path": "a"}, "y": []any{}})
+		assert.Errorf(t, err, "%q must be refused (parse error), not rendered blank", src)
 	}
 }
 
-// The ACTUAL gate judge template this slice owns renders both branches.
-func TestTemplate_ActionProofTemplate(t *testing.T) {
-	// The proof-present branch: an action with a screenshot.
-	present := render(t, actionProofTemplate,
-		`{"additionalContext":{"action_taken":true,"action":"fill_form","action_input":"{}","proof":"a screenshot"}}`)
-	assert.Contains(t, present, "Does the proof actually show")
-	assert.Contains(t, present, "fill_form")
-	assert.Contains(t, present, "a screenshot")
+// FAIL-CLOSED against a gonja HANG: this fork's lexer loops forever on an
+// unterminated `{{` rather than returning a parse error, and that render runs
+// before the sr-agent shell timeout — so without the watchdog it would wedge the
+// hook. The watchdog turns "did not finish in time" into an error (→ refusal).
+// renderTimeout is lowered here so the proof is fast; production keeps the
+// generous bound.
+func TestTemplate_HangingTemplateFailsClosedViaWatchdog(t *testing.T) {
+	orig := renderTimeout
+	renderTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { renderTimeout = orig })
 
-	// The no-action branch: nothing to prove, passes.
-	none := render(t, actionProofTemplate, `{"additionalContext":{"action_taken":false}}`)
-	assert.Contains(t, none, "No auditable action this turn")
-	assert.NotContains(t, none, "Does the proof actually show")
-
-	// The action-without-proof branch names the missing proof.
-	noProof := render(t, actionProofTemplate,
-		`{"additionalContext":{"action_taken":true,"action":"download","action_input":"{}"}}`)
-	assert.Contains(t, noProof, "No proof artifact was found")
+	start := time.Now()
+	_, err := renderTemplate(`{{ event.path`, map[string]any{"event": map[string]any{"path": "a"}})
+	require.Error(t, err, "an unterminated {{ hangs gonja's lexer; the watchdog must refuse rather than wedge")
+	assert.Contains(t, err.Error(), "did not finish")
+	assert.Less(t, time.Since(start), 2*time.Second, "the watchdog must fire near its bound, not run unbounded")
 }
 
-// A representative file-guard template (the next slice's) with a real for-loop
-// renders — proving the shared renderer serves that slice too.
-func TestTemplate_CitationsForLoopTemplate(t *testing.T) {
-	out := render(t, citationsTemplate,
-		`{"additionalContext":{"citations":[{"quote":"q1","source_excerpt":"s1"},{"quote":"q2","source_excerpt":"s2"}]}}`)
-	assert.Contains(t, out, "q1")
-	assert.Contains(t, out, "s1")
-	assert.Contains(t, out, "q2")
-	// Whole-word `in` inside quoted content must not be treated as a keyword.
-	assert.NotContains(t, strings.ToLower(out), "template:")
+// FAIL-CLOSED: under gonja's default strict-undefined, reading an attribute off a
+// variable that is not in scope is a RENDER error — a template that references a
+// field the JudgeInput does not carry refuses rather than asking the model a
+// prompt with a hole where that field should be.
+func TestTemplate_MissingReferenceFailsClosed(t *testing.T) {
+	// `additionalContext` absent (no prepare ran) but the template reads a key off
+	// it: an error, so a template written for a prepare-backed judge cannot be
+	// rendered blank when no prepare fed it.
+	_, err := renderTemplate(`{% if additionalContext.proof %}x{% endif %}`, map[string]any{
+		"event": map[string]any{"path": "a"},
+	})
+	assert.Error(t, err, "reading additionalContext.* when additionalContext is absent must fail closed")
+
+	// Reading a nested attribute off a missing top-level name likewise errors.
+	_, err = renderTemplate(`{{ missing.deep }}`, map[string]any{})
+	assert.Error(t, err, "a nested access off a missing variable must fail closed")
 }
-
-// actionProofTemplate is the gate judge template from
-// examples/action-proof, trimmed to the branch structure under test.
-const actionProofTemplate = `{% if not additionalContext.action_taken %}
-# No auditable action this turn
-
-No form fill or download happened, so there is nothing to prove. Pass.
-{% else %}
-# Does the proof actually show the action was done correctly?
-
-## The action
-
-- Tool: {{ additionalContext.action }}
-- Inputs: {{ additionalContext.action_input }}
-
-## The proof supplied
-
-{% if additionalContext.proof %}
-{{ additionalContext.proof }}
-{% else %}
-**No proof artifact was found.**
-{% endif %}
-{% endif %}`
-
-// citationsTemplate is a for-loop template of the shape a file-guard uses.
-const citationsTemplate = `Check each citation resolves:
-{% for c in additionalContext.citations %}
-- Quote: {{ c.quote }}
-  Source: {{ c.source_excerpt }}
-{% endfor %}`

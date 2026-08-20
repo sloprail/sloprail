@@ -24,14 +24,21 @@ import (
 // Everything that is not a clean exit is a refusal — the mechanism failing must
 // not read as approval.
 
-// checkTimeout bounds how long one script/prepare/judge may take before it is
-// killed and read as a refusal.
+// defaultCheckTimeout bounds how long one script/prepare/judge may take before
+// it is killed and read as a refusal, when the check names no timeout of its
+// own.
 //
 // Generous because a judge is a model call. It is the same 30s the old dispatch
 // uses for one hook, and it sits under the harness's own deadline for the same
 // reason: whichever bound fires first decides what the user sees, and only this
 // one can name the rule.
-const checkTimeout = 30 * time.Second
+//
+// A judge check may OVERRIDE this with its own `timeout` (dot-dir-file-store/
+// main.tsp Check.timeout) — a hard invariant-checking rubric can legitimately
+// take longer than a quick one, so the bound is per-judge. runShell takes the
+// resolved timeout as a parameter and falls back to this when it is zero; a
+// script/prepare has no `timeout` field and always runs under this default.
+const defaultCheckTimeout = 30 * time.Second
 
 // checkKillGrace caps how long Wait may block after the process group is killed.
 // SIGKILL cannot be caught, so this is only reached by a descendant wedged in an
@@ -98,7 +105,11 @@ type scriptResult struct {
 // `./verify.sh` and it runs from the guard's directory, so a bare relative path
 // finds the sibling script.
 func runScriptExec(s scriptCall) (scriptResult, error) {
-	stdout, stderr, code, expired, startErr := runShell(s.Dir, s.command(), s.Stdin, s.env())
+	// A script/prepare has no per-check timeout — its runtime is the author's to
+	// bound (spec: model/timeout are judge-only) — so it always runs under the
+	// default. Passing 0 would work too (runShell falls back), but naming the
+	// default here keeps the expired message's duration honest.
+	stdout, stderr, code, expired, startErr := runShell(s.Dir, s.command(), s.Stdin, s.env(), defaultCheckTimeout)
 	if startErr != nil {
 		// Could not be started at all — a NUL byte in the command, a Dir that went
 		// away. Not the rule's decision, but a mechanism failure, and a mechanism
@@ -118,7 +129,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 			Passed: false,
 			Reason: fmt.Sprintf(
 				"the check %q was killed after %s without answering, and the action was refused because a check that did not answer must not be read as approval.%s",
-				s.Script, checkTimeout, quoted(stderr)),
+				s.Script, defaultCheckTimeout, quoted(stderr)),
 		}, nil
 	}
 	if code == 0 {
@@ -170,7 +181,7 @@ func (s scriptCall) env() []string {
 	return env
 }
 
-// runShell runs one shell command from dir, with stdin, under the check timeout,
+// runShell runs one shell command from dir, with stdin, under the given timeout,
 // in its own process group, and reports what happened.
 //
 // The single primitive both a script and the judge substrate go through. It
@@ -179,15 +190,25 @@ func (s scriptCall) env() []string {
 // interpretation to the caller, which differs slightly between a script (exit code
 // is the verdict) and a judge (a verify script inside sr-agent decides).
 //
+// The timeout is a PER-RUN parameter rather than the const it once was, so a
+// judge check can carry its own (dot-dir-file-store/main.tsp Check.timeout). A
+// zero or negative value falls back to defaultCheckTimeout — the script path and
+// any judge without an override run under the same 30s as before. Whatever bound
+// applies, an expiry is still a refusal at the call site: fail-closed is
+// preserved at the per-check bound exactly as it was at the const one.
+//
 // The process GROUP is killed on timeout, not just the shell: a check that spawns
 // sr-agent, which spawns a model call, leaves children that outlive a kill aimed
 // at the shell and hold the pipes open — so Setpgid gives the shell its own group
 // and one signal to the negated pgid ends the tree. This is the old runHooks'
 // mechanism, unchanged, because the failure it prevents (a leaked model-calling
 // subprocess per guarded action, and an unbounded hang) is identical here.
-func runShell(dir, command string, stdin []byte, env []string) (stdout, stderr []byte, code int, expired bool, startErr error) {
+func runShell(dir, command string, stdin []byte, env []string, timeout time.Duration) (stdout, stderr []byte, code int, expired bool, startErr error) {
+	if timeout <= 0 {
+		timeout = defaultCheckTimeout
+	}
 	var outBuf, errBuf bytes.Buffer
-	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	c := exec.CommandContext(ctx, "sh", "-c", command)

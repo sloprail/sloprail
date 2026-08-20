@@ -122,6 +122,33 @@ func TestExtractPending_EditCreateIsDistinguishableFromAGenuinelyEmptyFile(t *te
 	}
 }
 
+// TestExtractPending_GenuineEmptyCreateIsResultKnown is the positive side of the
+// underivable-create distinction: a create whose empty body was STATED (a Write
+// of "", an Edit to "") is derivable, so resultKnown is TRUE — the empty file is
+// KNOWN, and a preventive file-guard may legitimately judge it. This is what a
+// notebook create (resultKnown false, its cell source not the document) must be
+// tellable from; the two share `newContent: ""` and differ only in this boolean.
+func TestExtractPending_GenuineEmptyCreateIsResultKnown(t *testing.T) {
+	dir := t.TempDir()
+	for name, payload := range map[string]fakePending{
+		"a Write of an empty body": writePending(filepath.Join(dir, "written-empty.md"), ""),
+		"an Edit to an empty body": editPending(filepath.Join(dir, "edited-empty.md"), "", ""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			events, err := New().Extract(module.Input{
+				module.InputPhase:   module.PhasePre,
+				module.InputPayload: payload,
+			})
+			require.NoError(t, err)
+			require.Len(t, events, 1)
+			require.Equal(t, KindPreCreate, events[0].Kind)
+			assert.Equal(t, "", events[0].Fields[FieldNewContent])
+			assert.Equal(t, true, events[0].Fields[FieldResultKnown],
+				"a STATED empty body is a known empty file — resultKnown true, unlike an underivable notebook create")
+		})
+	}
+}
+
 // TestExtractPending_EditCreateCarriesMarkersFromTheResultingBody holds that
 // the markers follow the content rather than being computed separately. A
 // create's markers come from the bytes the write would leave, and for an Edit
@@ -725,6 +752,11 @@ func TestExtractPending_ANotebookNeverReportsCellSourceAsFileContent(t *testing.
 		"one cell's source is not the notebook document, and must never be passed off as it")
 	assert.NotEqual(t, "print(1)", events[0].Fields[FieldNewContent],
 		"the tempting wrong fix, named so it cannot be introduced quietly")
+	// The empty newContent here is UNDERIVABLE, not a genuinely-empty file, and
+	// resultKnown is what says so — the signal a preventive file-guard reads to
+	// fail closed rather than judging "" as if it were the file's bytes.
+	assert.Equal(t, false, events[0].Fields[FieldResultKnown],
+		"a notebook create's bytes are not derivable, so resultKnown must be false — not the empty-file case")
 }
 
 // TestExtractPending_TheNotebookPathKeyIsReadWhateverTheToolIsCalled applies the

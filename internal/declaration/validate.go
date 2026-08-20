@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
@@ -302,8 +303,80 @@ func validateChecks(checks []Check) []Problem {
 			problems = append(problems, prob(ErrStrayPrepare, where,
 				"sets prepare without a judge — prepare adds to a judge's prompt, and a script check has nothing to prepare for"))
 		}
+		problems = append(problems, validateJudgeModelTimeout(c, where)...)
 	}
 	return problems
+}
+
+// validateJudgeModelTimeout checks a check's `model`/`timeout`: they are
+// meaningful ONLY on a judge (a script makes no model call and bounds its own
+// runtime), and when present on a judge the model is a well-formed modelset and
+// the timeout parses to a positive duration.
+//
+// The stray-on-script rule mirrors ErrStrayPrepare exactly — model/timeout on a
+// script-only check can only be a mistake, and is refused rather than ignored so
+// the author learns the field does nothing. The format checks are done here too
+// so a set or duration that would fail at the judge is caught at load, the same
+// place a bad match or a bad glob is.
+func validateJudgeModelTimeout(c Check, where string) []Problem {
+	var problems []Problem
+
+	// Stray on a script check: refuse, one sentinel for the pair.
+	if (c.hasModel() || c.hasTimeout()) && !c.isJudge() {
+		problems = append(problems, prob(ErrStrayModel, where,
+			"sets model/timeout without a judge — both tune a model call, and a script check makes none (its runtime is the author's to bound)"))
+		// Do not also format-check the values: on a script check they are the
+		// author's misplacement to fix, not a malformed judge config, and one
+		// clear complaint beats two about the same stray field.
+		return problems
+	}
+
+	if c.hasModel() {
+		if err := validateModelSet(c.Model); err != nil {
+			problems = append(problems, prob(ErrBadModel, where,
+				"model %q is not a well-formed modelset: %s", c.Model, err.Error()))
+		}
+	}
+	if c.hasTimeout() {
+		if err := validateTimeout(c.Timeout); err != nil {
+			problems = append(problems, prob(ErrBadTimeout, where,
+				"timeout %q %s", c.Timeout, err.Error()))
+		}
+	}
+	return problems
+}
+
+// validateModelSet checks a judge model is a well-formed modelset, mirroring
+// what sr-agent's ParseModelSet refuses: a non-empty set whose every
+// comma-separated entry is non-empty. Classification (alias vs concrete) is not
+// checked because a concrete entry is any non-empty token — the harness decides
+// whether it has such a model, exactly as sr-agent leaves it. Kept as its own
+// small function rather than importing sr-agent (a main package) so the loader
+// has no dependency on the binary, only on its documented format.
+func validateModelSet(set string) error {
+	if strings.TrimSpace(set) == "" {
+		return fmt.Errorf("it is empty — a modelset needs at least one entry (a size alias like size-md, or a model name)")
+	}
+	for i, part := range strings.Split(set, ",") {
+		if strings.TrimSpace(part) == "" {
+			return fmt.Errorf("entry %d is empty (a stray or trailing comma)", i+1)
+		}
+	}
+	return nil
+}
+
+// validateTimeout checks a judge timeout parses as a Go duration and is > 0.
+// Returns the trailing half of the complaint sentence so the caller can prefix
+// it with the offending value.
+func validateTimeout(timeout string) error {
+	d, err := time.ParseDuration(strings.TrimSpace(timeout))
+	if err != nil {
+		return fmt.Errorf("is not a Go duration string (e.g. 45s, 2m, 1m30s)")
+	}
+	if d <= 0 {
+		return fmt.Errorf("must be greater than zero — a timeout that never fires is not a timeout")
+	}
+	return nil
 }
 
 // validateStructureEntry checks one allow/deny entry: exactly one of glob/regex,

@@ -222,6 +222,81 @@ func TestRunFileGuardsPreventive_KnownResultRunsCheck(t *testing.T) {
 	assert.Empty(t, reason, "a known-result update with a passing check is admitted")
 }
 
+// A preventive guard on a PreFileCreate whose result the engine could NOT derive
+// — a NotebookEdit creating a fresh .ipynb, whose cell source is not the document
+// (resultKnown false) — fails CLOSED, exactly as the underivable-update case does.
+// This is the hole this fix closes: before it, only the update case failed closed,
+// so an underivable create false-passed and the write landed transiently. The
+// guard's check would PASS if it ran, so the refusal is the fail-closed shortcut.
+func TestRunFileGuardsPreventive_UnderivableCreateFailsClosed(t *testing.T) {
+	guard := declaration.FileGuard{
+		Name:       "always-fine",
+		Match:      "notebooks/**",
+		Preventive: true,
+		Checks:     []declaration.Check{{Script: "./ok.sh"}},
+		Dir:        t.TempDir(),
+	}
+	// PreFileCreate under notebooks/ with an empty newContent and resultKnown
+	// FALSE → the notebook create whose bytes are not derivable.
+	e := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{
+		filemod.FieldPath:        "notebooks/fresh.ipynb",
+		filemod.FieldNewContent:  "",
+		filemod.FieldResultKnown: false,
+	}}
+
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{})
+	require.NotEmpty(t, reason, "a preventive guard that cannot verify an underivable create must refuse (not pass)")
+	assert.Contains(t, reason, "always-fine")
+	assert.Contains(t, reason, "could not")
+	assert.Contains(t, reason, "create", "the refusal names the create it could not verify")
+}
+
+// A preventive guard on a DERIVABLE create — a stated body, including a
+// genuinely-empty one (resultKnown true) — runs its check normally rather than
+// failing closed, so a passing check admits. This is the control that keeps the
+// underivable-create refusal from swallowing every empty create: an empty file
+// whose emptiness is KNOWN is a real result the guard may legitimately judge.
+func TestRunFileGuardsPreventive_GenuineEmptyCreateRunsCheck(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, dir, "ok.sh", "#!/bin/sh\ncat >/dev/null\nexit 0\n")
+	guard := declaration.FileGuard{
+		Name:       "always-fine",
+		Match:      "notebooks/**",
+		Preventive: true,
+		Checks:     []declaration.Check{{Script: "./ok.sh"}},
+		Dir:        dir,
+	}
+	// A genuinely-empty create: newContent "" but resultKnown TRUE (a stated
+	// empty body). The result is known, so the guard verifies normally.
+	e := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{
+		filemod.FieldPath:        "notebooks/empty.md",
+		filemod.FieldNewContent:  "",
+		filemod.FieldResultKnown: true,
+	}}
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{})
+	assert.Empty(t, reason, "a known-result (genuinely-empty) create with a passing check is admitted, not refused")
+}
+
+// isUnderivablePreWrite fires only on a create or update whose result is unknown,
+// and never on a delete (which has no result to be unknown about).
+func TestIsUnderivablePreWrite(t *testing.T) {
+	mk := func(kind string, fields map[string]any) event.Event {
+		return event.Event{Kind: kind, Fields: fields}
+	}
+	// Create/update with resultKnown false → underivable.
+	assert.True(t, isUnderivablePreWrite(mk(declaration.KindPreFileCreate, map[string]any{filemod.FieldResultKnown: false})))
+	assert.True(t, isUnderivablePreWrite(mk(declaration.KindPreFileUpdate, map[string]any{filemod.FieldResultKnown: false})))
+	// resultKnown absent also reads as underivable (fail-closed).
+	assert.True(t, isUnderivablePreWrite(mk(declaration.KindPreFileCreate, map[string]any{})))
+	// resultKnown true → derivable, not underivable.
+	assert.False(t, isUnderivablePreWrite(mk(declaration.KindPreFileCreate, map[string]any{filemod.FieldResultKnown: true})))
+	assert.False(t, isUnderivablePreWrite(mk(declaration.KindPreFileUpdate, map[string]any{filemod.FieldResultKnown: true})))
+	// A delete has no result — never underivable, even though it carries no
+	// resultKnown field.
+	assert.False(t, isUnderivablePreWrite(mk(declaration.KindPreFileDelete, map[string]any{})),
+		"a delete carries no result and must not be treated as an unverifiable write")
+}
+
 // writeExecutable writes an executable script into dir for a test check.
 func writeExecutable(t *testing.T, dir, name, body string) {
 	t.Helper()

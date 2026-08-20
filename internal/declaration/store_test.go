@@ -301,6 +301,110 @@ checks:
 	assert.True(t, c.hasPrepare())
 }
 
+// model/timeout are judge-only. On a script-only check each can only be a
+// mistake and is refused, the same way a stray prepare is — so the author learns
+// the field does nothing rather than having it silently ignored.
+func TestLoad_Check_StrayModelOnScript(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/straymodel/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    model: size-md
+`,
+	})
+	assert.True(t, hasKind(iv, ErrStrayModel), "model on a script-only check is refused: %v", iv.Reason)
+}
+
+func TestLoad_Check_StrayTimeoutOnScript(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/straytimeout/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    timeout: 45s
+`,
+	})
+	assert.True(t, hasKind(iv, ErrStrayModel), "timeout on a script-only check is refused: %v", iv.Reason)
+}
+
+// A judge carrying a well-formed model and timeout is the sanctioned shape and
+// loads, with the values preserved on the parsed Check.
+func TestLoad_Check_JudgeWithModelAndTimeout(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/judgecfg/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    model: size-xl
+    timeout: 1m30s
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	c := loaded.FileGuards[0].Checks[0]
+	assert.True(t, c.isJudge())
+	assert.Equal(t, "size-xl", c.Model)
+	assert.Equal(t, "1m30s", c.Timeout)
+}
+
+// A comma-separated modelset (a preference list, sr-agent's own --model format)
+// loads on a judge — the loader validates the shape without consulting a
+// catalogue, exactly as sr-agent classifies entries lexically.
+func TestLoad_Check_JudgeWithModelSetList(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/modelset/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    model: claude-opus-5,size-md
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	assert.Equal(t, "claude-opus-5,size-md", loaded.FileGuards[0].Checks[0].Model)
+}
+
+// A malformed modelset — a stray/trailing comma leaving an empty entry — is
+// refused at load, mirroring what sr-agent's own --model parsing refuses, so a
+// set that would fail at the judge is caught here instead.
+func TestLoad_Check_BadModelSet(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/badmodel/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    model: "size-md,"
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadModel), "a modelset with an empty entry is refused: %v", iv.Reason)
+}
+
+// A timeout that does not parse as a Go duration is refused at load.
+func TestLoad_Check_BadTimeoutFormat(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/badtimeout/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    timeout: "half a minute"
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadTimeout), "a non-duration timeout is refused: %v", iv.Reason)
+}
+
+// A non-positive timeout is refused — a timeout that never fires is not a
+// timeout.
+func TestLoad_Check_NonPositiveTimeout(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/zerotimeout/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    timeout: 0s
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadTimeout), "a zero timeout is refused: %v", iv.Reason)
+}
+
 // ---------------------------------------------------------------------------
 // Gate: valid + at-least-one + on-kinds
 // ---------------------------------------------------------------------------

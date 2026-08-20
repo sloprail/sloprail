@@ -305,6 +305,47 @@ exit 0
 	}
 }
 
+// InstallJudgeClaudeRecordingArgv is InstallJudgeClaude plus a recording of the
+// argv the harness (`claude`) was invoked with, written one-argument-per-line to
+// argvFile. It exists to let a test assert the judge's own `model` reached the
+// harness invocation: sr-agent builds `claude -p --model <resolved> …`, so the
+// resolved model (an alias's harness-native name) appears in this argv. The
+// verdict is still written exactly as InstallJudgeClaude does, so the judge path
+// runs to a real verdict; the recording is a side effect for the assertion.
+//
+// The file is truncated and rewritten on each invocation, so after a run it holds
+// the LAST `claude` call's argv — a single judge run makes exactly one.
+func (e *Env) InstallJudgeClaudeRecordingArgv(argvFile, verdict string) {
+	e.t.Helper()
+	script := `#!/bin/sh
+# Record the argv this harness was invoked with, one argument per line, so a test
+# can assert the judge's --model reached here.
+: > ` + shellQuote(argvFile) + `
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> ` + shellQuote(argvFile) + `
+done
+# Then behave as the ordinary judge shim: write the verdict to the file sr-agent
+# named in the prompt.
+out=""
+for arg in "$@"; do
+  case "$arg" in
+    *"Write your answer to the file "*)
+      out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | head -1)"
+      ;;
+  esac
+done
+if [ -n "$out" ]; then
+  cat > "$out" <<'JUDGE_VERDICT_EOF'
+` + verdict + `
+JUDGE_VERDICT_EOF
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write recording judge claude shim: %v", err)
+	}
+}
+
 // InnerScenario is what the agent a hook LAUNCHES does once it is running.
 //
 // Written beside the project rather than passed as an argument because the shim

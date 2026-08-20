@@ -213,8 +213,22 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		// one name for it. Where it could not be derived this is "", which is
 		// the pre-existing behaviour for a path named without a stated body
 		// (`Read`) and is pinned as such.
+		//
+		// resultKnown is the boolean that tells that underivable "" apart from
+		// a genuinely-empty create, exactly as on an update. A notebook create
+		// is the case that matters: it names a real file with a real pending
+		// write whose bytes are not derivable, so it reaches here with
+		// derivable=false and newContent="", and a preventive file-guard reads
+		// resultKnown=false to fail closed rather than judging the empty string
+		// as the file. A stated empty body (`Write content:""`) is
+		// derivable=true, so the same "" is a KNOWN empty file the guard may
+		// legitimately judge. newMarkers are scanned only when the result is
+		// real — an underivable "" has none.
 		f.NewContent = result
-		f.NewMarkers = Scan(result)
+		f.ResultKnown = derivable
+		if derivable {
+			f.NewMarkers = Scan(result)
+		}
 	case presentFile:
 		kind = KindPreUpdate
 		// The bytes before and after. oldContent is the file on disk; newContent

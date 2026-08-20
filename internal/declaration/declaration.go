@@ -273,7 +273,31 @@ type Check struct {
 	// alongside a Judge; a Prepare set on a script-only check is a mistake the
 	// validator refuses, since a script check has nothing to prepare for.
 	Prepare string `yaml:"prepare"`
+
+	// Model is which model a Judge asks, in the same modelset format sr-agent's
+	// `--model` takes (a `size-xs`..`size-xxl` alias, a concrete harness model
+	// name, or a comma-separated preference list). Empty means the engine's
+	// default (size-md). Only meaningful alongside a Judge — a script has no
+	// model to choose — so Model set on a script-only check is a load error the
+	// validator refuses, mirroring the stray-prepare rule. See
+	// dot-dir-file-store/main.tsp Check.model.
+	Model string `yaml:"model"`
+
+	// Timeout is how long a Judge may take before it is killed and read as a
+	// refusal, overriding the engine's default (30s). A Go duration string
+	// (`45s`, `2m`, `1m30s`) parsed with time.ParseDuration; the validator
+	// refuses one that does not parse or is <= 0. Only meaningful alongside a
+	// Judge — a script's own runtime is the author's to bound — so Timeout set
+	// on a script-only check is a load error. See
+	// dot-dir-file-store/main.tsp Check.timeout.
+	Timeout string `yaml:"timeout"`
 }
+
+// hasModel reports whether this check sets a judge model override.
+func (c Check) hasModel() bool { return c.Model != "" }
+
+// hasTimeout reports whether this check sets a judge timeout override.
+func (c Check) hasTimeout() bool { return c.Timeout != "" }
 
 // isScript reports whether this check is the script half of the union.
 func (c Check) isScript() bool { return c.Script != "" }
