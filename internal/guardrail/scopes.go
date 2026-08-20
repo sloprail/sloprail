@@ -43,13 +43,16 @@ const scopeEventKey = "event"
 // FileMatchExpression: EITHER a bare GlobPattern (the common "this path" case)
 // OR a full MatchExprString over FileMatchScope.
 //
-// The two halves are told apart by looksLikeExpression: a glob is a plain path
-// pattern and references no scope variable, so anything that reads `path`,
-// `markers` or `context`, or uses an operator, is the full expression and is
-// compiled as one; everything else is a glob and is compiled to a path match.
-// This is the union's discriminator made concrete — a reader of the rule sees
-// `"memories/**/*.md"` and a reader of this code sees the same two named things,
-// even though both erase to a string on the wire.
+// The two halves are told apart by looksLikeGlob: a glob is a single path
+// pattern with no whitespace and no quote, whereas every expression in the
+// grammar carries at least one (a space around each operator and after a
+// quantifier comma, a quote around each compared literal). So a whitespace-and-
+// quote-free string compiles as a glob (path patterns like `commands/one.md` or
+// `any/*.md` route here even though a segment spells an operator word), and
+// everything else routes to the expression parser. This is the union's
+// discriminator made concrete — a reader of the rule sees `"memories/**/*.md"`
+// and a reader of this code sees the same two named things, even though both
+// erase to a string on the wire.
 //
 // An empty match means every file, the same "no narrowing" an empty matcher
 // means everywhere else — it is neither a glob nor an expression, and compile
