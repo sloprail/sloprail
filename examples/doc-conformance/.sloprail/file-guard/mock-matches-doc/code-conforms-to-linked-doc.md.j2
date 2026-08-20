@@ -8,7 +8,7 @@ yourself and check the marked code against what it actually says.
 
 - The doc URL this code claims to conform to:
 
-{% for m in (event.newMarkers or event.oldMarkers or []) if m.kind == "conforms-to-doc" %}
+{% for m in event.newMarkers if m.kind == "conforms-to-doc" %}
 ```
 {{ m.fqn }}
 ```
@@ -17,7 +17,7 @@ yourself and check the marked code against what it actually says.
 - The file carrying the marker:
 
 ```
-{{ event.newContent or event.oldContent }}
+{{ event.newContent if event.newContent else event.oldContent }}
 ```
 
 ## What to do

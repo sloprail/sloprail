@@ -71,17 +71,31 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 		}),
 		TranscriptPath: "/rec.jsonl",
 	}
+	// A PERMISSIVE superset of every `additionalContext.*` key the shipped
+	// templates read — the whole point is that a template renders, not that a
+	// particular branch does, so every key a prepare could feed is present here.
+	// Under gonja's default strict-undefined, a key a template reads but this map
+	// omits would be a render ERROR (fail-closed), which would fail this test
+	// loudly — so this map must stay a superset of the templates' references.
+	// Nested loop items carry the exact keys the loop bodies read (`citations`
+	// items -> c.reference/c.quote/c.source_text).
 	additional := map[string]any{
+		// action-proof (gate)
 		"action_taken": true,
 		"action":       "fill_form",
 		"action_input": "{}",
 		"proof":        "a screenshot",
-		"resolved":     true,
+		// grounding-citations
 		"citations": []any{
-			map[string]any{"quote": "q", "source_excerpt": "s", "resolves": true},
+			map[string]any{"reference": "r#1", "quote": "q", "source_text": "s"},
 		},
-		"doc_text":  "doc",
-		"code_text": "code",
+		// task-management
+		"resolved":           true,
+		"reference":          "msg-3",
+		"referenced_message": "the human's actual words",
+		// no-unasked-deletion
+		"asked_quote": "please remove the stray import",
+		"change_diff": "-import x\n+",
 	}
 	inputJSON, err := r.judgeInputJSON(req, additional)
 	require.NoError(t, err)

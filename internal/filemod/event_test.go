@@ -33,13 +33,14 @@ func TestFileEvent_Event_PathOnly(t *testing.T) {
 }
 
 func TestFileEvent_Event_WithContent(t *testing.T) {
-	e := FileEvent{Path: "memories/a.md", NewContent: "# Notes\n"}.Event(KindPreCreate)
+	e := FileEvent{Path: "memories/a.md", NewContent: "# Notes\n", ResultKnown: true}.Event(KindPreCreate)
 
 	assert.Equal(t, KindPreCreate, e.Kind)
 	assert.Equal(t, map[string]any{
-		FieldPath:       "memories/a.md",
-		FieldNewContent: "# Notes\n",
-		FieldNewMarkers: []any{},
+		FieldPath:        "memories/a.md",
+		FieldNewContent:  "# Notes\n",
+		FieldResultKnown: true,
+		FieldNewMarkers:  []any{},
 	}, e.Fields)
 	assert.NotContains(t, e.Fields, FieldOldContent,
 		"a create has no oldContent: nothing preceded it")
@@ -56,13 +57,16 @@ func TestFileEvent_Event_WithContent(t *testing.T) {
 // the value decides only what is held. `len(newMarkers) == 0` and `newContent
 // == ""` are both real questions an author asks, and neither may error.
 func TestFileEvent_Event_EmptyContentIsCarried(t *testing.T) {
-	e := FileEvent{Path: "empty.md", NewContent: ""}.Event(KindPreCreate)
+	e := FileEvent{Path: "empty.md", NewContent: "", ResultKnown: true}.Event(KindPreCreate)
 
 	require.Contains(t, e.Fields, FieldNewContent)
 	assert.Equal(t, "", e.Fields[FieldNewContent])
-	// path, newContent and newMarkers — every field PreFileCreate declares.
-	assert.Len(t, e.Fields, 3)
+	// path, newContent, resultKnown and newMarkers — every field PreFileCreate
+	// declares. resultKnown is carried too now, so an underivable empty result is
+	// tellable from this genuinely-empty (resultKnown true) one.
+	assert.Len(t, e.Fields, 4)
 	assert.Contains(t, e.Fields, FieldNewMarkers)
+	assert.Equal(t, true, e.Fields[FieldResultKnown])
 }
 
 func TestFileEvent_Event_KindIsPassedThroughUnchecked(t *testing.T) {
@@ -271,9 +275,9 @@ func TestModule_FieldsPerKind(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldNewMarkers},
+	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldResultKnown, FieldNewMarkers},
 		fieldsOf[KindPreCreate],
-		"a create has no prior bytes — only newContent and its newMarkers")
+		"a create has no prior bytes — newContent, its newMarkers, and resultKnown (a notebook create's bytes are not derivable, so the empty result must be tellable from a genuinely-empty one)")
 	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldResultKnown, FieldOldMarkers, FieldNewMarkers},
 		fieldsOf[KindPreUpdate],
 		"an update carries both contents; resultKnown makes an uncomputable newContent askable")
@@ -292,10 +296,12 @@ func TestModule_FieldsPerKind(t *testing.T) {
 		"a Post delete mirrors PreFileDelete")
 }
 
-// TestModule_ResultKnownOnPreUpdateAlone: the companion boolean exists to make
-// the one optional field's absence askable, and PreFileUpdate is the one kind
-// whose newContent genuinely arrives both ways.
-func TestModule_ResultKnownOnPreUpdateAlone(t *testing.T) {
+// TestModule_ResultKnownOnPreCreateAndUpdate: the companion boolean exists to
+// make an uncomputable result's empty value tellable from a genuinely-empty one,
+// and the two PRE kinds whose result can arrive either way are PreFileUpdate (a
+// command-derived update) and PreFileCreate (a notebook create). A delete has no
+// result, and the Post kinds are settled — none of those carry it.
+func TestModule_ResultKnownOnPreCreateAndUpdate(t *testing.T) {
 	declares := map[string]bool{}
 	for _, k := range New().Kinds() {
 		for _, f := range k.Fields {
@@ -304,7 +310,7 @@ func TestModule_ResultKnownOnPreUpdateAlone(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, map[string]bool{KindPreUpdate: true}, declares)
+	assert.Equal(t, map[string]bool{KindPreCreate: true, KindPreUpdate: true}, declares)
 }
 
 // TestModule_NewMarkersOnCreateAndUpdate / OldMarkersOnUpdateAndDelete: markers

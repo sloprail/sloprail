@@ -121,19 +121,32 @@ func runFileGuardsPreventive(
 				continue
 			}
 
-			// A preventive guard on a Pre UPDATE whose result the engine could not
-			// compute cannot verify the file will be fine — newContent is absent
-			// (ResultKnown false), so the checks would judge a file whose future
-			// content is unknown. Fail CLOSED: refuse the write, because a
-			// preventive guard exists precisely to keep the file always-fine and a
-			// write it cannot verify must not be admitted. (spec: preventive is
-			// best-effort, and PreFileUpdate marks the unknown result absent; a
+			// A preventive guard on a Pre write whose result the engine could NOT
+			// compute cannot verify the file will be fine — newContent is empty with
+			// ResultKnown false, so the checks would judge a file whose settled
+			// content is unknown. Fail CLOSED: refuse the write, because a preventive
+			// guard exists precisely to keep the file always-fine and a write it
+			// cannot verify must not be admitted. (spec: preventive is best-effort; a
 			// guard that must prevent cannot treat "unknown" as "fine".)
-			if e.Kind == declaration.KindPreFileUpdate && !resultKnown(e) {
+			//
+			// BOTH the update and the create case, not update alone. A command-derived
+			// PreFileUpdate marks its result unknown — the case this originally
+			// covered. But a NotebookEdit creating a fresh .ipynb emits a
+			// PreFileCreate with an empty newContent whose bytes are NOT derivable
+			// (its cell source is not the document); resultKnown is now carried on the
+			// create kind for exactly this reason, and false there means the same
+			// "unknown result" it means on an update. Checking only the update let that
+			// create through — the preventive guard false-passed and the write landed
+			// transiently (the Stop after-check still caught it, but the preventive
+			// GUARANTEE was silently lost). A derivable create (a stated body,
+			// including a genuinely-empty one) has resultKnown true and is judged
+			// normally, so this refuses only the truly-underivable write.
+			if isUnderivablePreWrite(e) {
 				return fmt.Sprintf(
-					"the %q file-guard is preventive and could not verify this update before it lands: the engine could not compute the result of this write "+
-						"(a command-derived change whose outcome is not known ahead of time), so whether the file would still be fine is unknown. "+
-						"Refusing: a preventive guard must not admit a write it cannot verify. (file-guard %s)", g.Name, g.Name)
+					"the %q file-guard is preventive and could not verify this write before it lands: the engine could not compute the result of this %s "+
+						"(a change whose settled bytes are not known ahead of time — a command-derived edit, or a notebook create whose cell source is not the document), "+
+						"so whether the file would still be fine is unknown. "+
+						"Refusing: a preventive guard must not admit a write it cannot verify. (file-guard %s)", g.Name, underivableKindNoun(e.Kind), g.Name)
 			}
 
 			verdict, err := runner.Run(dispatchcore.Request{
@@ -345,13 +358,48 @@ func fileMarkers(e event.Event) []any {
 	return []any{}
 }
 
-// resultKnown reports whether a PreFileUpdate event's result was computable — the
-// `resultKnown` field filemod carries on that kind. Absent or false means the
-// engine could not compute the write's outcome (a command-derived update), which
-// a preventive guard treats as unverifiable and fails closed on.
+// resultKnown reports whether a Pre write event's result was computable — the
+// `resultKnown` field filemod carries on the two Pre kinds whose result can
+// arrive either way (PreFileUpdate and, since the notebook-create fix,
+// PreFileCreate). Absent or false means the engine could not compute the write's
+// outcome (a command-derived update, or a notebook create whose cell source is
+// not the document), which a preventive guard treats as unverifiable and fails
+// closed on. On a kind that does not carry the field, the value is absent and
+// this returns false — which is why isUnderivablePreWrite gates on the kind
+// first, so a delete (no result, no field) is not mistaken for an unknown one.
 func resultKnown(e event.Event) bool {
 	v, ok := e.Fields[filemod.FieldResultKnown].(bool)
 	return ok && v
+}
+
+// isUnderivablePreWrite reports whether a Pre event is a create or update whose
+// result the engine could NOT derive — the case a preventive guard must fail
+// closed on, because it cannot verify a file whose settled bytes are unknown.
+//
+// Gated on the kind so it fires ONLY where resultKnown is a meaningful signal: a
+// create or an update. A delete carries no result and no `resultKnown` field, so
+// it is never "underivable" in this sense — a preventive guard on a deletion
+// judges the bytes about to be lost, which are known. Both the create and the
+// update case are covered (the create was the silently-lost one: a NotebookEdit
+// fresh-.ipynb PreFileCreate marks resultKnown false, and checking only the
+// update let it false-pass).
+func isUnderivablePreWrite(e event.Event) bool {
+	switch e.Kind {
+	case declaration.KindPreFileCreate, declaration.KindPreFileUpdate:
+		return !resultKnown(e)
+	default:
+		return false
+	}
+}
+
+// underivableKindNoun is the word for what an underivable Pre write is, for the
+// refusal message — "create" or "update", so the agent hears which write could
+// not be verified rather than a generic "write".
+func underivableKindNoun(kind string) string {
+	if kind == declaration.KindPreFileCreate {
+		return "create"
+	}
+	return "update"
 }
 
 // fileGuardRevKey namespaces a file-guard's revalidation key so it cannot collide

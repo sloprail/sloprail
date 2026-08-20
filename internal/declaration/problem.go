@@ -112,6 +112,25 @@ var (
 	// what a judge's prompt sees, so a script-only check has nothing to prepare
 	// for — the field can only be a mistake. Declaration fault.
 	ErrStrayPrepare = errors.New("declaration: prepare set on a check with no judge")
+
+	// ErrStrayModel: a check sets `model` or `timeout` without a `judge`. Both
+	// tune a model call, so a script-only check — which makes no model call and
+	// bounds its own runtime — has nothing to apply them to. The field can only
+	// be a mistake, refused rather than ignored so the author learns it does
+	// nothing. Declaration fault. (One sentinel for both, the same way
+	// ErrStrayPrepare covers the single stray-on-script case.)
+	ErrStrayModel = errors.New("declaration: model/timeout set on a check with no judge")
+
+	// ErrBadModel: a check's `model` is not a well-formed modelset — an empty
+	// set, or an entry that is empty (a stray or trailing comma). Mirrors what
+	// sr-agent's own --model parsing refuses, so a set that would fail at the
+	// judge is caught at load instead. Declaration fault.
+	ErrBadModel = errors.New("declaration: judge model is not a well-formed modelset")
+
+	// ErrBadTimeout: a check's `timeout` does not parse as a Go duration string,
+	// or is <= 0 — a timeout that never fires is not a timeout. Declaration
+	// fault.
+	ErrBadTimeout = errors.New("declaration: judge timeout is not a positive duration")
 )
 
 // Disabling reports whether these problems stop the rule loading. Environment

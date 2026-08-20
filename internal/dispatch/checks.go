@@ -3,6 +3,8 @@ package dispatch
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/natures"
@@ -98,12 +100,38 @@ func (r Runner) runJudgeCheck(req Request, c declaration.Check) (Verdict, error)
 	if err != nil {
 		return Verdict{}, err
 	}
+
+	// The check's own timeout, parsed from its duration string. The loader
+	// already validated it parses to a positive duration, so a loaded rule never
+	// fails here; a malformed value that somehow reached this point is treated as
+	// fail-closed (refuse) rather than silently falling back to the default — a
+	// judge's timeout is a safety bound, and running one the author's config did
+	// not actually specify is the wrong direction to guess.
+	timeout, err := checkTimeout(c)
+	if err != nil {
+		return refuse(fmt.Sprintf(
+			"the judge's timeout %q could not be read (%v); refusing rather than judging under a timeout the rule did not specify", c.Timeout, err)), nil
+	}
+
 	return r.runJudge(judgeCall{
 		Dir:       req.Dir,
 		Template:  c.Judge,
 		InputJSON: input,
 		GuardName: req.GuardName,
+		Model:     c.Model,
+		Timeout:   timeout,
 	})
+}
+
+// checkTimeout parses a check's `timeout` duration string, or returns 0 (meaning
+// "the engine default") when the check names none. A non-empty value that does
+// not parse is an error the caller turns into a fail-closed refusal — but the
+// loader validates this field, so that path is defensive.
+func checkTimeout(c declaration.Check) (time.Duration, error) {
+	if c.Timeout == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(strings.TrimSpace(c.Timeout))
 }
 
 // runPrepare runs a prepare script and returns the additionalContext it produced.

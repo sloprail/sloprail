@@ -75,8 +75,11 @@ const (
 	// genuinely empties the file — which is the rule an author writes to catch
 	// exactly that. A boolean beside the value is what separates them:
 	// `newContent == ""` asks about the bytes, `resultKnown` asks whether the
-	// engine knew them. It is declared only on PreFileUpdate, the one kind whose
-	// result genuinely arrives both ways.
+	// engine knew them. It is declared on the two PRE kinds whose result can
+	// arrive both ways — PreFileUpdate (a command-derived update) and
+	// PreFileCreate (a notebook create, whose one-cell `new_source` is not the
+	// document's bytes) — and nowhere else: a delete has no result, and the Post
+	// kinds are settled, their bytes read off disk.
 	FieldResultKnown = "resultKnown"
 
 	// Keys within one entry of a markers list. Not fields of the kind: a matcher
@@ -154,16 +157,26 @@ func (*Module) Kinds() []module.KindDecl {
 		// it is about to do. Refusing one prevents the work.
 		{
 			Name: KindPreCreate,
-			// newContent and its newMarkers only. The file does not exist yet,
-			// so a rule that wants to look at what would be written has nowhere
-			// else to look; on the other kinds it is already on disk. There is
-			// no oldContent or oldMarkers on a creation — nothing preceded it —
-			// and no resultKnown: a create is emitted only when the resulting
-			// bytes are known (a command line that cannot state them produces no
-			// PreFileCreate at all — see extractCommand), so a field that is
-			// always true is one a rule can match on and never learn anything
-			// from, the argument KindPreDelete makes about markers.
-			Fields: []module.FieldDecl{path, newContent, newMarkers},
+			// newContent and its newMarkers, PLUS resultKnown. The file does not
+			// exist yet, so a rule that wants to look at what would be written has
+			// nowhere else to look; on the other kinds it is already on disk. There
+			// is no oldContent or oldMarkers on a creation — nothing preceded it.
+			//
+			// resultKnown was ONCE argued unnecessary here on the premise that "a
+			// create is emitted only when the resulting bytes are known" — but that
+			// premise is FALSE for a write tool whose result is not derivable. A
+			// NotebookEdit creating a fresh .ipynb names a real file with a real
+			// pending write, but `new_source` is one cell, not the JSON document, so
+			// the resulting bytes are NOT derivable (see resultFor's notebook case).
+			// That create is emitted with `newContent: ""` — indistinguishable, on
+			// the value alone, from a write that genuinely creates an empty file,
+			// because Matcher.env fills an absent declared field with its zero value.
+			// resultKnown is the boolean beside the value that tells the two apart,
+			// exactly as it does on PreFileUpdate: `newContent == ""` asks about the
+			// bytes, `resultKnown` asks whether the engine knew them. Without it a
+			// preventive file-guard could not fail closed on an underivable create —
+			// it would judge the empty string as if it were the file and false-pass.
+			Fields: []module.FieldDecl{path, newContent, resultKnown, newMarkers},
 		},
 
 		// PreFileUpdate carries the bytes before AND after the change: the file
