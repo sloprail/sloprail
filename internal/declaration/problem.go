@@ -99,8 +99,7 @@ var (
 	ErrAtLeastOne = errors.New("declaration: at least one of require/checks must be present")
 
 	// ErrMissingField: a required field is absent or empty — a file-guard's
-	// `match`, a context's `enter`/`exit`, a goal's `script`, a trigger's
-	// `event`. Declaration fault.
+	// `match`, a context's `enter`/`exit`, a trigger's `event`. Declaration fault.
 	ErrMissingField = errors.New("declaration: required field is missing")
 
 	// ErrUnknownContext: a `require: [{context: X}]` names a context X that no

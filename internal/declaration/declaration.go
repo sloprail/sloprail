@@ -4,14 +4,19 @@
 // It is the NEW-format counterpart to internal/guardrail's old-format loader.
 // Where internal/guardrail reads one `guardrails/<name>/GUARDRAIL.md` per rule —
 // frontmatter keyed by raw event kind, prose folded into a judge's rubric — this
-// package reads the five declaration formats the current spec defines
-// (dot-dir-file-store/main.tsp):
+// package reads the declaration formats the current spec defines that the engine
+// actually loads and dispatches on (dot-dir-file-store/main.tsp):
 //
 //   - file-guard/<name>/file-guard.yaml  → FileGuard      (a rule on a file's state)
 //   - gate/<name>/gate.yaml              → Gate           (a checkpoint on an event)
 //   - context/<name>/context.yaml        → Context        (an activatable scope)
-//   - goal/<name>/goal.yaml              → Goal           (a versioned target)
 //   - file-guard/structure.yaml          → StructureGate  (one tree-wide allowlist)
+//
+// A GOAL is deliberately NOT among them. A goal is a higher-level COMPOSITE — a
+// project-level `goal/<name>/goal.yaml` (a sibling of `.sloprail/`, maintained by
+// the user) paired with an ordinary Context whose `enter` reads it. The engine
+// neither loads nor dispatches on the goal file; it is not a sloprail primitive,
+// so it has no type, no Nature, and no place in the loader here.
 //
 // # What this slice does and does not do
 //
@@ -49,10 +54,9 @@ package declaration
 
 // Nature names which of the rule natures a declaration is, so a loaded
 // declaration says what it is without a caller having to type-switch on the
-// concrete struct. The four file-backed natures plus the structure primitive
-// each have one; a goal is a higher-level primitive rather than a low-level
-// nature, but it is loaded from disk the same way and carries a Nature too so
-// one code path can describe every loaded thing.
+// concrete struct. The three file-backed natures plus the structure primitive
+// each have one. A goal has none: it is a composite realised on the user's side
+// (see the package doc), not a thing this loader reads.
 type Nature string
 
 const (
@@ -64,11 +68,6 @@ const (
 
 	// NatureContext is an activatable scope with a lifecycle.
 	NatureContext Nature = "context"
-
-	// NatureGoal is a versioned target — a higher-level primitive realised by
-	// pairing a Goal with a Context, not a low-level nature the engine dispatches
-	// on. Loaded here because it is a `.sloprail/` declaration like the rest.
-	NatureGoal Nature = "goal"
 
 	// NatureStructure is the tree-wide structure gate — one path allowlist for
 	// the whole project, deny by default. A primitive, not a fourth nature; it
@@ -190,42 +189,6 @@ type Context struct {
 	Exit string `yaml:"exit"`
 
 	// Dir is the context's own folder. Not a YAML field.
-	Dir string `yaml:"-"`
-}
-
-// Goal is a goal declaration: a versioned, independently-switchable target
-// (dot-dir-file-store/main.tsp GoalDeclaration). A goal is NOT wired into the
-// engine directly — nothing reads goal.yaml and spins up a context on its own.
-// It is realised by pairing this declaration with an ordinary Context whose
-// `enter` reads it. Loaded here because it is a `.sloprail/` declaration.
-//
-// Stored at `goal/<name>/goal.yaml`, with its verify script a sibling.
-type Goal struct {
-	// Name is the goal's name and its folder's name. Not a YAML field.
-	Name string `yaml:"-"`
-
-	// Enabled is whether this goal is currently in force. A goal can be authored
-	// and left disabled, or switched off without deleting it — versioning what was
-	// aimed for over time. The paired context reads this in `enter` and only
-	// activates when true.
-	//
-	// A *bool, not a bool, so ABSENCE is distinguishable from `false`. The spec
-	// models `enabled: boolean` as REQUIRED (non-optional), and a plain bool
-	// cannot tell "the author wrote `enabled: false`" from "the author forgot to
-	// write it at all" — both unmarshal to false. Making it a pointer lets the
-	// validator refuse the second while accepting the first: `enabled: true` and
-	// `enabled: false` both load (the pointer is non-nil), and an absent `enabled`
-	// is a missing-field fault (the pointer is nil). Enforcing presence is the
-	// spec-faithful reading; see ValidateGoal.
-	Enabled *bool `yaml:"enabled"`
-
-	// Script is the verify script's file name, resolved relative to this goal's
-	// own folder. What the goal aims for is read from the script itself, not from
-	// a free-text target here — the condition lives in one place. Required and
-	// non-empty.
-	Script string `yaml:"script"`
-
-	// Dir is the goal's own folder. Not a YAML field.
 	Dir string `yaml:"-"`
 }
 

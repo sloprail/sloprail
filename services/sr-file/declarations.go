@@ -19,8 +19,8 @@ import (
 // against these declarations and runs their checks is a later batch. What this
 // gives now is a way to point sloprail at a `.sloprail` tree from the shell and
 // see, before any dispatch exists, that every declaration parses and validates:
-// which file-guards, gates, contexts, goals and structure gate loaded, and for
-// any that did not, the exact faults by name.
+// which file-guards, gates, contexts and structure gate loaded, and for any that
+// did not, the exact faults by name.
 //
 // It lives on sr-file because sr-file is "checks over a file's contents", and
 // checking that a project's declaration files are well-formed is the same family
@@ -46,7 +46,7 @@ func newDeclarationsCmd() *cobra.Command {
 		Use:   "declarations <dir>",
 		Short: "Load and validate the .sloprail declarations under a directory",
 		Long: "Load and validate the new-format declarations a project keeps under its\n" +
-			".sloprail directory — file-guards, gates, contexts, goals, and the structure\n" +
+			".sloprail directory — file-guards, gates, contexts, and the structure\n" +
 			"gate — reporting what loaded and, for anything that did not, the faults by name.\n\n" +
 			"This is an inspection surface over the declaration loader, not part of the live\n" +
 			"hook dispatch: it proves a project's declaration files parse and validate before\n" +
@@ -109,7 +109,6 @@ func runDeclarations(cmd *cobra.Command, args []string) error {
 	printNature(out, "file-guards", fileGuardNames(loaded))
 	printNature(out, "gates", gateNames(loaded))
 	printNature(out, "contexts", contextNames(loaded))
-	printNature(out, "goals", goalNames(loaded))
 	if loaded.Structure != nil {
 		fmt.Fprintf(out, "  structure gate: present (%d allow, %d deny)\n",
 			len(loaded.Structure.Allow), len(loaded.Structure.Deny))
@@ -171,14 +170,6 @@ func contextNames(l declaration.Loaded) []string {
 	names := make([]string, 0, len(l.Contexts))
 	for _, c := range l.Contexts {
 		names = append(names, c.Name)
-	}
-	return names
-}
-
-func goalNames(l declaration.Loaded) []string {
-	names := make([]string, 0, len(l.Goals))
-	for _, g := range l.Goals {
-		names = append(names, g.Name)
 	}
 	return names
 }

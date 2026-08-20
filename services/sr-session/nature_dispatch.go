@@ -25,9 +25,9 @@ import (
 //
 // This slice implements the two SIMPLEST natures end to end — the gate (3a) and
 // the structure gate (3s) — on top of the shared check-runner in internal/dispatch.
-// The file-guard, context and goal natures build on the same runner in the next
-// slice; their loaders already exist, so this dispatch loads them (a malformed one
-// is reported), but does not yet dispatch them.
+// The file-guard and context natures build on the same runner in the next slice;
+// their loaders already exist, so this dispatch loads them (a malformed one is
+// reported), but does not yet dispatch them.
 //
 // # Where it hooks in
 //

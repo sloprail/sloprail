@@ -19,7 +19,8 @@ import (
 // rooted at a directory, a Load that returns the sound declarations AND the ones
 // that could not be loaded (rather than failing on the first bad one), and an
 // Invalid carrying every fault so one typo cannot disarm a project — but reads
-// the FIVE new formats rather than the old one-folder-per-guardrail GUARDRAIL.md.
+// the new declaration formats (file-guard, gate, context, and the structure
+// singleton) rather than the old one-folder-per-guardrail GUARDRAIL.md.
 //
 // The YAML library is gopkg.in/yaml.v3, the same the old loader and the rest of
 // the repo use (see go.mod and internal/guardrail/store.go). The declarations are
@@ -47,7 +48,6 @@ const (
 	dirFileGuard = "file-guard"
 	dirGate      = "gate"
 	dirContext   = "context"
-	dirGoal      = "goal"
 )
 
 // File names within a per-name folder, and the structure singleton. Named
@@ -56,7 +56,6 @@ const (
 	fileFileGuard = "file-guard.yaml"
 	fileGate      = "gate.yaml"
 	fileContext   = "context.yaml"
-	fileGoal      = "goal.yaml"
 	fileStructure = "structure.yaml"
 )
 
@@ -79,9 +78,6 @@ type Loaded struct {
 	// Contexts are the loaded context declarations, sorted by name.
 	Contexts []Context
 
-	// Goals are the loaded goal declarations, sorted by name.
-	Goals []Goal
-
 	// Structure is the tree-wide structure gate, or nil when the project declares
 	// none. A pointer rather than a value with a "present" flag, so "no structure
 	// gate" and "an empty structure gate" are distinct — the first is nil, the
@@ -100,7 +96,7 @@ type Loaded struct {
 // an author fixing a declaration sees all of it at once rather than one reload per
 // mistake.
 type Invalid struct {
-	// Nature says which of the five formats this was — so a diagnostic can say
+	// Nature says which of the formats this was — so a diagnostic can say
 	// "gate X" rather than a bare name that collides across natures (a gate and a
 	// context may both be named `people-linked`).
 	Nature Nature
@@ -182,10 +178,6 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 	if err != nil {
 		return Loaded{}, err
 	}
-	goals, goalInvalid, err := s.parseGoals()
-	if err != nil {
-		return Loaded{}, err
-	}
 	structure, structInvalid, err := s.parseStructure()
 	if err != nil {
 		return Loaded{}, err
@@ -205,7 +197,6 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 	out.Invalid = append(out.Invalid, fgInvalid...)
 	out.Invalid = append(out.Invalid, gateInvalid...)
 	out.Invalid = append(out.Invalid, ctxInvalid...)
-	out.Invalid = append(out.Invalid, goalInvalid...)
 	out.Invalid = append(out.Invalid, structInvalid...)
 
 	// Phase two: validate each parsed declaration against the environment. A
@@ -232,13 +223,6 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 		}
 		out.Contexts = append(out.Contexts, c)
 	}
-	for _, g := range goals {
-		if problems := ValidateGoal(g, env); Disabling(problems) {
-			out.Invalid = append(out.Invalid, newInvalid(NatureGoal, g.Name, s.goalPath(g.Name), problems...))
-			continue
-		}
-		out.Goals = append(out.Goals, g)
-	}
 	if structure != nil {
 		if problems := ValidateStructureGate(*structure, env); Disabling(problems) {
 			out.Invalid = append(out.Invalid, newInvalid(NatureStructure, "", s.structurePath(), problems...))
@@ -261,8 +245,7 @@ func (s *Store) gatePath(name string) string { return filepath.Join(s.root, dirG
 func (s *Store) contextPath(name string) string {
 	return filepath.Join(s.root, dirContext, name, fileContext)
 }
-func (s *Store) goalPath(name string) string { return filepath.Join(s.root, dirGoal, name, fileGoal) }
-func (s *Store) structurePath() string       { return filepath.Join(s.root, dirFileGuard, fileStructure) }
+func (s *Store) structurePath() string { return filepath.Join(s.root, dirFileGuard, fileStructure) }
 
 // -- per-nature parsing --
 //
@@ -337,29 +320,6 @@ func (s *Store) parseContexts() ([]Context, []Invalid, error) {
 		c.Name = name
 		c.Dir = filepath.Join(s.root, dirContext, name)
 		decls = append(decls, c)
-	}
-	return decls, invalid, nil
-}
-
-func (s *Store) parseGoals() ([]Goal, []Invalid, error) {
-	names, err := s.natureNames(dirGoal)
-	if err != nil {
-		return nil, nil, err
-	}
-	var (
-		decls   []Goal
-		invalid []Invalid
-	)
-	for _, name := range names {
-		path := s.goalPath(name)
-		var g Goal
-		if problems := parseYAMLFile(path, &g); problems != nil {
-			invalid = append(invalid, newInvalid(NatureGoal, name, path, problems...))
-			continue
-		}
-		g.Name = name
-		g.Dir = filepath.Join(s.root, dirGoal, name)
-		decls = append(decls, g)
 	}
 	return decls, invalid, nil
 }
@@ -444,6 +404,5 @@ func sortLoaded(l *Loaded) {
 	sort.Slice(l.FileGuards, func(i, j int) bool { return l.FileGuards[i].Name < l.FileGuards[j].Name })
 	sort.Slice(l.Gates, func(i, j int) bool { return l.Gates[i].Name < l.Gates[j].Name })
 	sort.Slice(l.Contexts, func(i, j int) bool { return l.Contexts[i].Name < l.Contexts[j].Name })
-	sort.Slice(l.Goals, func(i, j int) bool { return l.Goals[i].Name < l.Goals[j].Name })
 	sort.Slice(l.Invalid, func(i, j int) bool { return l.Invalid[i].Qualified() < l.Invalid[j].Qualified() })
 }
