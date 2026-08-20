@@ -346,6 +346,87 @@ exit 0
 	}
 }
 
+// InstallJudgeClaudeCapturing is InstallJudgeClaude that ALSO records the prompt
+// the judge was asked, so a test can assert what the template actually rendered.
+//
+// # Why a capturing variant exists
+//
+// The model verdict is a stub either way — that is what lets a test drive the
+// pass/fail path. But a stubbed verdict alone cannot show that a check's PREPARE
+// step reached the judge TEMPLATE: the renderer treats an undefined variable as
+// empty rather than an error (internal/dispatch, TestTemplate_UndefinedIsEmptyAndFalsy),
+// so a template that reads `additionalContext.foo` renders fine whether prepare
+// produced `foo` or produced nothing at all. A test that only flipped the stub
+// would pass against an engine that never ran prepare and never rendered its
+// output into the prompt.
+//
+// So this shim tees the rendered prompt to a file the test names. sr-agent passes
+// that prompt as the LAST argument (positionally, after `--`), so it is the
+// longest argument and the one carrying the "Write your answer to the file" line;
+// the shim writes exactly that argument out. A test then reads it back with
+// JudgePrompt and asserts the PREPARED FACT'S VALUE appears in it — a value that
+// is present only if prepare extracted it from the trajectory AND the template
+// interpolated it. That is the prepare -> template wiring, proven directly rather
+// than inferred from a verdict the stub decided.
+//
+// Everything else matches InstallJudgeClaude: the same output-path recovery and
+// the same verdict write, so the verdict path is identical and only the prompt
+// capture is added. relPromptFile is written under the project dir (JudgePrompt
+// reads it from there).
+func (e *Env) InstallJudgeClaudeCapturing(projDir, relPromptFile, verdict string) {
+	e.t.Helper()
+	promptPath := filepath.Join(projDir, relPromptFile)
+	// The prompt argument is the one sr-agent appends its answer-file line to and
+	// is the whole rendered template; the shim picks that argument and writes it
+	// out verbatim, then recovers the output path from it and writes the verdict —
+	// exactly as InstallJudgeClaude does.
+	script := `#!/bin/sh
+out=""
+for arg in "$@"; do
+  case "$arg" in
+    *"Write your answer to the file "*)
+      # tail -1, not head -1: if sr-agent retried, the argument carries several
+      # "Write your answer to the file <path>" lines (the accumulated attempts),
+      # and the CURRENT attempt's path is the LAST one. Writing the verdict to the
+      # last path means the current output file is satisfied on the first try, so
+      # a well-formed verdict is honored without a retry storm and the captured
+      # prompt is a single clean render.
+      out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | tail -1)"
+      printf '%s' "$arg" > ` + shellQuote(promptPath) + `
+      ;;
+  esac
+done
+if [ -n "$out" ]; then
+  cat > "$out" <<'JUDGE_VERDICT_EOF'
+` + verdict + `
+JUDGE_VERDICT_EOF
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write capturing judge claude shim: %v", err)
+	}
+}
+
+// JudgePrompt returns the rendered judge prompt a capturing shim recorded, or ""
+// when no judge ran (the file was never written).
+//
+// This is how a test reads back what the template rendered — see
+// InstallJudgeClaudeCapturing. An empty string means the judge check never
+// reached the shim (no matching action, a script tier refused first, the guard
+// did not fire), which is itself an answer a test may assert on.
+func (e *Env) JudgePrompt(projDir, relPromptFile string) string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, relPromptFile))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read judge prompt %s: %v", relPromptFile, err)
+	}
+	return string(body)
+}
+
 // InnerScenario is what the agent a hook LAUNCHES does once it is running.
 //
 // Written beside the project rather than passed as an argument because the shim
@@ -1015,6 +1096,20 @@ func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		e.t.Fatalf("harness: seed transcript: %v", err)
 	}
+}
+
+// RootMessageID is the uuid seedTranscript gives a session's root user message —
+// the human prompt every Run starts from — so a test can REFERENCE that message by
+// id without hardcoding the seeding scheme.
+//
+// This is what a task's ASK.md cites when it names the authorising human message by
+// `message_id=<uuid>` (task-management). The reference has to sit in the ASK.md
+// content the agent writes, which is authored before the run, so the id must be
+// known up front — this exposes it as the one fact a test would otherwise have to
+// duplicate from the harness internals. The message's TEXT is the `prompt` passed to
+// Run, and the two together are what the guard's prepare resolves and the judge reads.
+func (e *Env) RootMessageID(sessionID string) string {
+	return "e2e-root-" + sessionID
 }
 
 // ControlDecl and ControlScript are the positive control every revalidation

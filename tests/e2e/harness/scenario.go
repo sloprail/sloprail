@@ -59,6 +59,95 @@ func Say(id, text string) Turn {
 		"e2e-turn-"+id, jsonStr(text))}
 }
 
+// ToolUse returns a turn where the agent invokes an ARBITRARY tool by name.
+//
+// Write/Bash/Say cover the tools with special harness handling; this is for a
+// trajectory that must carry a tool the mock does not implement — a `fill_form`,
+// a `download_file`, a `screenshot` — because a rule reads those tool_use blocks
+// out of the record (action-proof's prepare scans `.message.content[]` for a
+// `fill_form`/`screenshot` by name). The mock passes the tool_use block through
+// into the transcript verbatim (its `.name` and `.input`) and answers the call
+// with a not-implemented tool_result; the block itself is what the rule reads,
+// which is all a trajectory-reading check needs. The tool_result the mock returns
+// carries no `toolUseResult` field, so a check pulling an artifact OUT of the
+// result (a screenshot image) sees none — which is the honest "no proof present"
+// state, exactly the violation such a rule catches.
+//
+// input values are strings, which is what these representative tools take; a
+// check reading the input as JSON (`.input.email`) reads them as such.
+//
+// The mock's own synthesised result for the tool carries no `toolUseResult`, so a
+// tool WITH a produced artifact a check reads back — a screenshot whose image an
+// audit inspects — uses ToolUseWithResult instead, which supplies that field.
+func ToolUse(id, name string, input map[string]string) Turn {
+	return Turn{jsonl: toolUse(id, name, input)}
+}
+
+// ToolUseWithResult returns the TWO turns that model a tool call which produced an
+// artifact a grounding check reads back: the tool_use, and a following record
+// carrying its `toolUseResult`.
+//
+// # Why a produced artifact needs this
+//
+// A tool call's real output — what a screenshot actually captured, the bytes a
+// download produced — lives on the transcript entry's top-level `toolUseResult`
+// field (transcript.Entry: "where evidence of what an action actually produced
+// lives"), and a grounding check reads it there (action-proof's prepare pulls the
+// screenshot's `toolUseResult` to judge whether the proof shows the filled form).
+// The mock cannot supply it: for an unimplemented tool (`screenshot`) it synthesises
+// an ERROR tool_result whose block carries no `toolUseResult`, and its tool executor
+// (toolexec.Result) is only {Output, IsError} with no structured artifact channel.
+// So a trajectory that must carry a produced artifact emits the entry itself.
+//
+// # Why two turns
+//
+// The mock breaks its read loop at a tool_use to execute the tool and re-invoke the
+// script, so any line after the tool_use in the same turn is never read. The
+// tool_use is therefore one turn (the mock answers it with its own error result),
+// and the artifact record is the next: a user record that ALSO carries a
+// `tool_result` block for the same id. Being the LAST tool_result for that id, its
+// entry is the one the prepare's `[-1]` selects, and its `toolUseResult` is what the
+// check reads.
+//
+// # Why the ids are shaped this way
+//
+// The turn-firing marker is injected into the FIRST `"id":"…"` of a turn's record.
+// Left to the tool_use block's own `id`, the screenshot's id in the transcript
+// would become `<id>-slop-turn-N-<id>` — and the artifact record's `tool_use_id`,
+// which is NOT marked, would then fail to correlate. So BOTH records carry a
+// throwaway top-level `id` (`<id>#u` / `<id>#r`) for the marker to bind to, which
+// keeps the tool_use's own `id` and the block's `tool_use_id` CLEAN and equal to
+// `id` — so they correlate. The artifact block carries no `name`, so the mock does
+// not treat it as one of its own results.
+//
+// toolUseResultJSON is a raw JSON value (an object, a string — whatever the artifact
+// is), placed verbatim under `toolUseResult`.
+func ToolUseWithResult(id, name string, input map[string]string, toolUseResultJSON string) (Turn, Turn) {
+	// The tool_use, with a top-level `id` as the marker anchor so the block's own
+	// `id` stays clean and equal to `id`.
+	var ib strings.Builder
+	ib.WriteByte('{')
+	first := true
+	for k, v := range input {
+		if !first {
+			ib.WriteByte(',')
+		}
+		first = false
+		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
+	}
+	ib.WriteByte('}')
+	use := Turn{jsonl: fmt.Sprintf(
+		`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
+		id+"#u", "e2e-turn-"+id+"u", id, name, ib.String())}
+	// The artifact record: a user tool_result for the same id, carrying the
+	// `toolUseResult`. Its top-level `id` is the marker anchor; `tool_use_id` stays
+	// clean and equal to `id` so it correlates to the tool_use above.
+	res := Turn{jsonl: fmt.Sprintf(
+		`{"type":"user","id":%q,"uuid":%q,"toolUseResult":%s,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":"the tool produced its result"}]}}`,
+		id+"#r", "e2e-turn-"+id+"r", toolUseResultJSON, id)}
+	return use, res
+}
+
 // Skill returns a turn where the agent loads a skill.
 //
 // The mock does not implement the Skill tool and answers with an error, which
