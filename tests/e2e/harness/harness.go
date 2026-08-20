@@ -1692,6 +1692,20 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 		"CLAUDE_CONFIG_DIR="+e.configDir,
 		"CLAUDE_CODE_SESSION_ID="+sessionID,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
+		// The mock STANDS IN FOR Claude Code, so it must present the environment
+		// Claude Code presents — including the two variables that name the running
+		// harness. Real Claude Code sets CLAUDECODE=1 on every session (and
+		// CLAUDE_CODE_ENTRYPOINT names how it launched); sr-agent reads exactly
+		// these to detect its harness (services/sr-agent/harness.go: "CLAUDECODE is
+		// what Claude Code sets on every session"), and a judge's `sr-agent
+		// --model … --verify` REFUSES with ErrNoHarness when neither is set. A
+		// developer running the suite inside Claude Code inherits CLAUDECODE from
+		// their own session and never sees this; CI does not, so a judge test that
+		// passed locally failed in CI with "no supported harness detected" until
+		// the mock's env carried these explicitly. Set here (not left to
+		// os.Environ inheritance) so the two environments behave identically.
+		"CLAUDECODE=1",
+		"CLAUDE_CODE_ENTRYPOINT=cli",
 		// The plugin invokes `sloprail`; this is how the hook subprocess finds
 		// the build under test rather than whatever happens to be installed.
 		//
