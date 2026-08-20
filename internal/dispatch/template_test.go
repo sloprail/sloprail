@@ -122,10 +122,11 @@ func TestTemplate_HangingTemplateFailsClosedViaWatchdog(t *testing.T) {
 	assert.Less(t, time.Since(start), 2*time.Second, "the watchdog must fire near its bound, not run unbounded")
 }
 
-// FAIL-CLOSED: under gonja's default strict-undefined, reading an attribute off a
-// variable that is not in scope is a RENDER error — a template that references a
-// field the JudgeInput does not carry refuses rather than asking the model a
-// prompt with a hole where that field should be.
+// FAIL-CLOSED: reading a key off an ABSENT parent — and using it in a condition —
+// is a gonja RENDER error (its undefined resolution is not uniformly strict, but a
+// missing-parent access and an `{% if %}` on an undefined both throw). So a template
+// written for a prepare-backed judge that references `additionalContext.<x>` when no
+// prepare ran refuses, rather than asking the model a prompt with a hole in it.
 func TestTemplate_MissingReferenceFailsClosed(t *testing.T) {
 	// `additionalContext` absent (no prepare ran) but the template reads a key off
 	// it: an error, so a template written for a prepare-backed judge cannot be

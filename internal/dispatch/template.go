@@ -35,11 +35,19 @@ import (
 //
 // The whole point of rendering here is that a prompt the engine cannot assemble
 // must REFUSE, never render blank or partial and ask the model a different
-// question than the author wrote. gonja mostly serves that well: it PARSES
-// strictly (most malformed tags are a parse error) and, under its default
-// undefined behaviour, RESOLVES strictly (reading an attribute off a variable not
-// in scope is a render error, not a silent empty string). Those errors come back
-// from Render and runJudgeAgent turns them into a fail-closed refusal (judge.go).
+// question than the author wrote. gonja PARSES strictly (most malformed tags are
+// a parse error). Its undefined RESOLUTION is mixed, not uniformly strict: under
+// the default UndefinedValue a bare `{{ missing }}` or a present-parent/absent-key
+// access (`{{ event.absentKey }}`) renders EMPTY with no error, while a condition
+// (`{% if missing %}`), an access off an ABSENT parent (`{{ nope.deep }}`), and
+// iterating a `null` all THROW. Any error comes back from Render and runJudgeAgent
+// turns it into a fail-closed refusal (judge.go). So fail-closed for the SHIPPED
+// templates rests not on strict-undefined but on their inputs always being present:
+// every bare interpolation reads a field off a parent (`event`, `additionalContext`,
+// `context`) the assembler always supplies, and the fields read (`event.newContent`,
+// `event.path`) are declared+present for the kinds a judge fires on. Non-strict is
+// also the RIGHT choice here — a genuinely-empty file's `{{ event.newContent }}`
+// should render empty, not throw.
 //
 // But this gonja fork has a sharp edge: some malformed inputs — an UNTERMINATED
 // `{{` with no closing `}}` among them — send its lexer into an INFINITE LOOP
