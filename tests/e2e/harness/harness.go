@@ -906,6 +906,42 @@ func (e *Env) Context(projDir, name, contextYAML string, files map[string]string
 	}
 }
 
+// GuardrailState reads the raw key/value entries a NAMED guardrail stored under a
+// prefix — the same `sr-session state list` a hook running as that guardrail would
+// get, but reached from a test so it can assert what a rule's own enter/check
+// actually recorded.
+//
+// This is how a test observes the registry a CONTEXT writes with `sr-session state
+// set` (keyed on the context's own name), independently of whether some sibling
+// gate can read it. A composite whose gate reads the wrong scope still has a
+// context that logged real entries; this reads those entries under the guardrail
+// that wrote them, so "the context logged both people this turn" is checkable even
+// when the gate that should consume them cannot.
+//
+// Located the same way GateState/ContextState locate the store — by asking the
+// binary under test for the conversation identity — so a test cannot pass against
+// a store the engine would never have written to. An empty map means the guardrail
+// stored nothing under that prefix (or never ran).
+func (e *Env) GuardrailState(projDir, sessionID, guardrail, prefix string) map[string]string {
+	e.t.Helper()
+
+	db, err := sessionstate.Open(e.sessionDBPath(projDir, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+
+	entries, err := db.ListState(guardrail, prefix)
+	if err != nil {
+		e.t.Fatalf("harness: list state for %q: %v", guardrail, err)
+	}
+	out := make(map[string]string, len(entries))
+	for _, ent := range entries {
+		out[ent.Key] = ent.Value
+	}
+	return out
+}
+
 // ContextState reads one context's recorded {active, payload} from the session
 // store — how a test observes that a context ENTERED or EXITED, and what payload
 // its enter left. Returns active and the payload map; active is false and the
