@@ -98,6 +98,16 @@ eval-loop-maxing require→match; task-management message_id jq; interlinking/ke
 --owner+jq-s+SR_WORKSPACE; research-rigor clone-from-invocation + .fields wire-form; intake skip-context.
 Spec additions pushed to PR #2: Check model?/timeout?, PreFileCreate.newContent optional, state list --owner.
 
+### CRITICAL CI FIX (181773e) — the whole judge e2e suite was RED in CI, GREEN locally
+sr-agent detects its harness from CLAUDECODE/CLAUDE_CODE_ENTRYPOINT (services/sr-agent/harness.go); a
+judge (sr-agent --verify) REFUSES with ErrNoHarness when neither is set. The mock + e2e harness did NOT
+set them — the suite only passed because a DEV runs it inside Claude Code (CLAUDECODE=1 ambient). CI has
+no ambient value → every judge e2e (032/034/042-049) failed "no supported harness detected". FIX: the
+harness `run` helper now sets CLAUDECODE=1 + CLAUDE_CODE_ENTRYPOINT=cli on the mock env (it stands in
+for Claude Code). LESSON (persist): re-run any sloprail e2e with `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT
+go test …` before trusting it — that reproduces CI. Proper long-term fix: the a10n-claude-mock ITSELF
+should set CLAUDECODE (a future mock PR).
+
 ### D3/D4 (review comments) — NOW UNBLOCKED (mock #470 merged + INSTALLED). REFINED SCOPE:
 Investigation changed the picture — much of what looked like "real claude / stub" is NOT:
 - engine_repo_judges ALREADY drives the MOCK (its own comment); it uses a MODEL-VERDICT stub, which is
