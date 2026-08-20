@@ -12,45 +12,26 @@ import (
 // `screenshot` output), and hands the judge {action_taken, action, action_input,
 // proof}; screenshot-shows-all-fields.md.j2 rules on whether the proof is real.
 //
-// ---------------------------------------------------------------------------
-// AN EXAMPLE BUG BLOCKS THE JUDGE PATH — see T042_03 for the pin and the proof.
+// The judge's model verdict is the fixed stub (InstallJudgeClaude), the same
+// substitution the template tests T032_08/09 make — pass:false blocks the Stop,
+// pass:true admits. What is NOT stubbed is the prepare: a real `sr-session
+// trajectory normalize` reads the trajectory the mock streamed, so the ACTION the
+// agent took drives the additionalContext the template renders. The mock does not
+// implement `screenshot`, so a screenshot turn yields no artifact and prepare
+// reports proof:null — the honest "the audit has nothing to check" state, which is
+// the violation the rule exists to catch; a turn that takes no action reports
+// action_taken:false and the judge passes trivially.
 //
-// The prepare's jq iterates a message's content as an array:
-//
-//	[ .[] | (.message | objects | .content // [])[] | select(...) ]
-//
-// The `| objects` guard protects a non-object `.message`, but NOT a string
-// `.content`. A user message whose content is a plain string — `{"role":"user",
-// "content":"do the thing"}`, the ordinary shape of a typed prompt and the shape
-// every Claude Code session's first user turn takes — makes `[]` fail with
-// "Cannot iterate over string". The prepare then exits non-zero, and the gate's
-// check refuses FAIL-CLOSED with the jq error before the model is ever asked.
-//
-// This is not a harness artifact: real transcripts carry string-content user
-// messages (internal/transcript fixtures show `"content":"please refactor the
-// parser"` alongside array-content turns), so the prepare breaks against real
-// sessions the same way. The harness merely surfaces it, because it seeds a
-// string-content root user entry the way a real session's first prompt is.
-//
-// The consequence for THIS use case: the intended judge pass path, the judge-fail
-// path, and the prepare -> template wiring are all UNREACHABLE through the
-// example as it ships — the prepare never yields clean additionalContext, so the
-// template is never rendered and the stub verdict is never consulted. What CAN be
-// proven, and is below, is the gate's binding (it wakes on Stop and runs the
-// check) and its fail-closed discipline (a check whose prepare cannot run refuses
-// rather than admitting). The judge-path scenarios are named and skipped, so the
-// coverage they are waiting on is visible rather than silently absent.
-//
-// TODO(D3): drive the verdict via a10n-claude-mock once a10n-cli#470 lands and the
-// new mock binary is on PATH; today the proven InstallJudgeClaude stub supplies
-// the model verdict. Independently, once the example prepare guards its content
-// iteration (see the spawned task) the SKIPPED judge-path scenarios below become
-// runnable — the happy admit, the no-proof fail with reasoning reaching the agent,
-// and the prepare -> template wiring via the captured prompt.
-// ---------------------------------------------------------------------------
+// The scenarios prove: an action the auditor accepts ADMITS (happy); an action
+// with no proof BLOCKS at Stop and the judge's reasoning reaches the agent
+// (violation); a turn that took no auditable action ADMITS (the gate does not
+// demand proof of nothing); and the ACTION the agent took reaches the rendered
+// template, captured and asserted to change with the action (prepare -> template
+// wiring).
 
 // aFillForm is a turn that fills a contact form — an auditable action the prepare
-// recognises by tool name.
+// recognises by tool name. Its input is what an audit would later check field by
+// field.
 func aFillForm(id string) harness.Turn {
 	return harness.ToolUse(id, "fill_form", map[string]string{
 		"name":  "Ada Lovelace",
@@ -58,125 +39,190 @@ func aFillForm(id string) harness.Turn {
 	})
 }
 
+// aDownloadInvoice is a turn that downloads an invoice — the other auditable
+// action. A distinct action name and input, so a test can tell which one the
+// prepare pulled into the template.
+func aDownloadInvoice(id string) harness.Turn {
+	return harness.ToolUse(id, "download_file", map[string]string{
+		"url": "https://vendor.example/invoice-42.pdf",
+	})
+}
+
 // aScreenshot is a turn that takes a screenshot — the proof artifact. The mock
-// answers it with a not-implemented tool_result carrying no toolUseResult, so even
-// once the prepare runs cleanly the screenshot yields no artifact and proof stays
-// null (the honest "the audit has nothing to check" state).
+// answers it with a not-implemented tool_result carrying no toolUseResult, so the
+// prepare finds the screenshot CALL but no artifact to show; proof stays null and
+// the judge (the stub) is what decides whether the proof suffices.
 func aScreenshot(id string) harness.Turn {
 	return harness.ToolUse(id, "screenshot", map[string]string{"target": "contact-form"})
 }
 
-// T042_01: the action-proof gate wakes on Stop and RUNS its check — the binding.
+// T042_01: a turn that took an auditable action the auditor ACCEPTS admits — the
+// happy path.
 //
-// The agent takes an auditable action and stops. The gate fires at Stop; its check
-// runs. Because of the example's prepare bug the check refuses fail-closed with
-// the prepare's own error rather than reaching the judge — so this asserts the
-// gate blocked at Stop and recorded a fail, which is the binding plus the
-// fail-closed discipline. It deliberately does NOT assert a judge reasoning, which
-// today's example cannot produce; that is T042_04's skipped concern.
-func TestT042_01_GateFiresOnStopAndRunsCheck(t *testing.T) {
+// The turn fills a form and screenshots it; the prepare reports action_taken:true
+// and the template renders the action for judging; the stub returns pass:true (the
+// auditor confirmed the proof), the verify script accepts, sr-agent exits 0, and
+// the Stop gate admits. This is the control every block below rests on: without it
+// a gate that blocked every action would pass the violation tests while being
+// broken.
+func TestT042_01_AcceptedActionAdmits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
-	e.Run(proj, "s-042-01", "fill the form and screenshot it", Turns("done",
+	e.Run(proj, "s-042-01", "fill the form and prove it", Turns("done",
 		aFillForm("w1"),
 		aScreenshot("w2"),
 	))
 
-	blocks := e.BlockingErrorsFrom(proj, "s-042-01", "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("the action-proof gate did not fire/block at Stop on a turn that took an auditable action")
+	if blocks := e.BlockingErrorsFrom(proj, "s-042-01", "Stop"); len(blocks) != 0 {
+		t.Fatalf("an accepted-proof action was blocked anyway:\n%v", blocks)
 	}
-	if s := e.GateState(proj, "s-042-01", "screenshot-proves-fields"); s != "fail" {
-		t.Errorf("the action-proof gate recorded verdict %q at Stop, want \"fail\" (fail-closed)", s)
+	if s := e.GateState(proj, "s-042-01", "screenshot-proves-fields"); s != "pass" {
+		t.Errorf("an admitted action-proof gate recorded verdict %q, want \"pass\"", s)
 	}
 }
 
-// T042_02: the check that could not run FAILS CLOSED — the refusal reaches the
-// agent and names the check's own failure, never a silent admit.
+// T042_02: an auditable action with no proof BLOCKS at Stop, and the judge's
+// reasoning reaches the agent — the violation this rule exists to catch.
 //
-// A gate whose check cannot be evaluated must refuse: "a check that could not be
-// checked is not a check that passed." Here the prepare crashes on the string
-// content of the session's first user message, and the engine surfaces the
-// prepare's failure to the agent rather than letting the stop through. The stub is
-// set to pass:true precisely so that a bug which let the gate ADMIT on a prepare
-// error would be caught here — the admit would win and this would fail.
-func TestT042_02_PrepareFailureFailsClosed(t *testing.T) {
+// The turn downloads an invoice and stops with NO screenshot; the prepare reports
+// action_taken:true, proof:null and the template takes its "No proof artifact was
+// found. Fail" branch. The stub returns pass:false with the reasoning the rule
+// would give; the verify script refuses, sr-agent exits non-zero, the Stop gate
+// blocks and the words reach the agent.
+func TestT042_02_ActionWithoutProofBlocks(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj)
-	// A passing verdict — so if the engine ever reached the (unreachable) judge, or
-	// if it wrongly admitted on a prepare error, the turn would NOT block. It does
-	// block, which is the fail-closed property.
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+	e.InstallJudgeClaude(`{"pass": false, "reasoning": "the download has no screenshot proving the invoice fields were captured"}`)
 
-	e.Run(proj, "s-042-02", "fill the form", Turns("done",
-		aFillForm("w1"),
+	e.Run(proj, "s-042-02", "download the invoice then stop", Turns("done",
+		aDownloadInvoice("w1"),
 	))
 
 	blocks := e.BlockingErrorsFrom(proj, "s-042-02", "Stop")
 	if len(blocks) == 0 {
-		t.Fatalf("a gate whose prepare could not run admitted the stop — it must fail closed")
+		t.Fatalf("an auditable action with no proof did not block the Stop gate")
 	}
 	joined := ""
 	for _, b := range blocks {
 		joined += b + "\n"
 	}
-	// The refusal names that it was the PREPARE step that could not run, so the
-	// failure is diagnosable rather than a bare block.
-	if !containsStr(joined, "prepare") {
-		t.Errorf("the fail-closed refusal did not name the prepare step as the cause:\n%s", joined)
+	if !containsStr(joined, "no screenshot proving") {
+		t.Errorf("the judge's reasoning did not reach the agent:\n%s", joined)
+	}
+	if s := e.GateState(proj, "s-042-02", "screenshot-proves-fields"); s != "fail" {
+		t.Errorf("the blocking action-proof gate recorded verdict %q, want \"fail\"", s)
 	}
 }
 
-// T042_03: PIN — the example's prepare bug is exactly the string-content-message
-// crash, surfaced verbatim to the agent.
+// T042_03: a turn that took NO auditable action admits — the gate does not demand
+// proof of nothing.
 //
-// This is the evidence for the block above: it asserts the refusal carries the
-// jq "Cannot iterate over string" error, proving the fail-closed refusal is the
-// prepare crashing on a plain-string user message — the specific example bug — and
-// not some unrelated refusal. When the example is fixed this test will start
-// failing (the crash text will be gone), which is the correct signal to switch the
-// skipped judge-path scenarios on.
-func TestT042_03_PreparePinsTheStringContentBug(t *testing.T) {
+// The does-not-fire-on-nothing control for a Stop gate: the gate always runs at
+// Stop, but its prepare reports action_taken:false (the agent only ran a Bash), so
+// the template's "No auditable action this turn ... Pass" branch renders and the
+// judge passes trivially. The stub is set to pass:true — the verdict that branch
+// calls for — and the turn admits. Proven to be the no-action path (not merely an
+// admit) via the captured prompt: the template took its no-action branch, which
+// renders only when prepare reported no action.
+func TestT042_03_NoActionAdmits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
-	e.Run(proj, "s-042-03", "download the invoice", Turns("done",
-		harness.ToolUse("w1", "download_file", map[string]string{"url": "https://vendor.example/invoice-42.pdf"}),
+	e.Run(proj, "s-042-03", "just run a command", Turns("done",
+		harness.Bash("b1", "echo hello"),
 	))
 
-	joined := ""
-	for _, b := range e.BlockingErrorsFrom(proj, "s-042-03", "Stop") {
-		joined += b + "\n"
+	if blocks := e.BlockingErrorsFrom(proj, "s-042-03", "Stop"); len(blocks) != 0 {
+		t.Errorf("a turn with no auditable action was blocked by the proof gate:\n%v", blocks)
 	}
-	if !containsStr(joined, "Cannot iterate over string") {
-		t.Fatalf("expected the prepare to crash on the string-content user message (the example bug); "+
-			"if this text is gone the example was fixed and the skipped judge-path scenarios should be enabled:\n%s", joined)
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if prompt == "" {
+		t.Fatalf("the judge never ran, so the no-action branch was not exercised")
+	}
+	if !containsStr(prompt, "No auditable action this turn") {
+		t.Errorf("the template did not render its no-action branch — prepare's action_taken:false did not reach it:\n%s", prompt)
+	}
+	// And it must NOT have rendered the proof-demanding branch.
+	if containsStr(prompt, "must carry proof an audit can check") {
+		t.Errorf("the template demanded proof on a turn that took no action:\n%s", prompt)
+	}
+	if s := e.GateState(proj, "s-042-03", "screenshot-proves-fields"); s != "pass" {
+		t.Errorf("a no-action Stop recorded gate verdict %q, want \"pass\"", s)
 	}
 }
 
-// T042_04: SKIPPED until the example prepare is fixed — the JUDGE-PATH coverage.
+// T042_04: the ACTION the agent took reaches the rendered template — the
+// prepare -> template wiring, proven directly and shown to change with the action.
 //
-// These are the scenarios a working action-proof needs, spelled out so the gap is
-// visible: (happy) an action whose proof the auditor accepts ADMITS; (violation)
-// an action with no proof BLOCKS and the judge's reasoning reaches the agent;
-// (wiring) the trajectory's own action name and input reach the rendered template,
-// captured via InstallJudgeClaudeCapturing and asserted to change with the action.
-// All are blocked on the prepare producing clean additionalContext, which it
-// cannot while it crashes on string-content messages (T042_03). Named and skipped
-// rather than omitted, so the coverage this use case is waiting on is not silent.
-func TestT042_04_JudgePathBlockedOnExampleBug(t *testing.T) {
-	t.Skip("action-proof's judge path is unreachable until examples/action-proof's prepare guards its " +
-		"content iteration against string-content user messages (see T042_03 and the spawned fix task). " +
-		"Once fixed, exercise: happy admit (stub pass:true), no-proof fail with the judge reasoning reaching " +
-		"the agent (stub pass:false), and prepare->template wiring via JudgePrompt showing the trajectory's " +
-		"action name/input — with a fresh-session control proving the render follows the action, not a fixed string.")
+// A stubbed verdict cannot show this: the renderer treats an undefined variable as
+// empty, so the template renders whether prepare produced the action or produced
+// nothing. So the capturing shim records the prompt, and the test asserts the
+// trajectory's OWN action name and input appear in it — a download_file of
+// invoice-42.pdf renders "download_file" and the invoice URL and takes the
+// no-proof branch; a fill_form of ada@example.com renders "fill_form" and that
+// email; neither leaks the other. The value is present only if prepare read it off
+// the trajectory AND the template interpolated it.
+func TestT042_04_PreparedActionReachesTemplate(t *testing.T) {
+	// Case 1: a download_file action, no screenshot.
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installExampleTree(t, proj)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": false, "reasoning": "no proof"}`)
+
+	e.Run(proj, "s-042-04a", "download the invoice", Turns("done",
+		aDownloadInvoice("w1"),
+	))
+
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if prompt == "" {
+		t.Fatalf("the judge never ran for the download action")
+	}
+	if !containsStr(prompt, "download_file") {
+		t.Errorf("the action name the agent took (download_file) did not reach the template:\n%s", prompt)
+	}
+	if !containsStr(prompt, "invoice-42.pdf") {
+		t.Errorf("the action INPUT from the trajectory did not reach the template:\n%s", prompt)
+	}
+	// proof is null (no screenshot), so the no-proof branch renders — proving the
+	// prepare's proof field reached the template too, not just the action.
+	if !containsStr(prompt, "No proof artifact was found") {
+		t.Errorf("the template did not take the no-proof branch for an action with no artifact:\n%s", prompt)
+	}
+	// The other action's fingerprint must not appear — this render is about THIS
+	// trajectory, not a fixed string.
+	if containsStr(prompt, "fill_form") || containsStr(prompt, "ada@example.com") {
+		t.Errorf("the template leaked an action the agent did not take:\n%s", prompt)
+	}
+
+	// Case 2: a DIFFERENT action, a fresh session — the template must follow it.
+	e2 := New(t)
+	proj2 := e2.Project()
+	e2.GitInit(proj2)
+	installExampleTree(t, proj2)
+	e2.InstallJudgeClaudeCapturing(proj2, "judge-prompt.txt", `{"pass": false, "reasoning": "no proof"}`)
+
+	e2.Run(proj2, "s-042-04b", "fill the form", Turns("done",
+		aFillForm("w1"),
+	))
+
+	prompt2 := e2.JudgePrompt(proj2, "judge-prompt.txt")
+	if prompt2 == "" {
+		t.Fatalf("the judge never ran for the fill_form action")
+	}
+	if !containsStr(prompt2, "fill_form") || !containsStr(prompt2, "ada@example.com") {
+		t.Errorf("the fill_form action and its input did not reach the template:\n%s", prompt2)
+	}
+	if containsStr(prompt2, "download_file") || containsStr(prompt2, "invoice-42.pdf") {
+		t.Errorf("the template still carried the previous run's action — the render is not following the trajectory:\n%s", prompt2)
+	}
 }

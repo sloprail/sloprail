@@ -83,7 +83,7 @@ func installExampleTree(t *testing.T, projDir string) {
 			return err
 		}
 		copied++
-		return os.WriteFile(target, body, installMode(path, body, fi.Mode().Perm()))
+		return os.WriteFile(target, body, fi.Mode().Perm())
 	})
 	if err != nil {
 		t.Fatalf("install example tree: %v", err)
@@ -100,32 +100,6 @@ func repoRoot(t *testing.T) string {
 		t.Fatalf("locate repo root: %v", err)
 	}
 	return strings.TrimSpace(string(out))
-}
-
-// installMode is the mode a copied example file is written with. It carries the
-// source mode over UNCHANGED, with one exception: a `.sh` file that begins with a
-// shebang is made executable even when the tracked source is not.
-//
-// # Why the exception, and why it is not "fixing the example"
-//
-// This example's two hook scripts ship git-tracked as mode 100644 (non-executable)
-// while carrying `#!/usr/bin/env bash` shebangs — they are meant to run, and the
-// sibling action-proof example ships its script 100755. The engine refuses a
-// non-executable check as unrunnable ("the check could not be run: it is not
-// executable ... chmod +x it"), so lifting these verbatim makes EVERY ASK.md write
-// fail closed on the missing bit before the script logic or the judge is ever
-// reached — which is a property already pinned elsewhere (pre_tool/004), not this
-// use case. Setting the bit is exactly the `chmod +x` the engine's own message
-// prescribes and what any correct install does; it is an INSTALL step, not an edit
-// to examples/** (which is untouched). The missing bit is a real example-packaging
-// bug and is flagged in the report; here the install does what a deployment must so
-// the use case's actual two-tier judge logic is exercised. The mode is otherwise
-// carried over, so a file the author DID mark executable is unchanged.
-func installMode(path string, body []byte, srcMode fs.FileMode) fs.FileMode {
-	if strings.HasSuffix(path, ".sh") && strings.HasPrefix(string(body), "#!") {
-		return srcMode | 0o755
-	}
-	return srcMode
 }
 
 func containsStr(haystack, needle string) bool { return strings.Contains(haystack, needle) }
