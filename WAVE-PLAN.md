@@ -29,7 +29,7 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - [ ] 1c  PreToolUse semantic event (bindable kind)                          [events-vocab]
 - [ ] 1d  Post-file events carry old/newMarkers + old/newContent; naming     [events-vocab]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
-- [!] 1f  per-nature match SCOPES + GlobPattern — review found 1 MAJOR (glob misclass), FIXING [match-scopes]
+- [~] 1f  per-nature match SCOPES — glob-misclass FIXED (positive looksLikeGlob), RE-REVIEWING [match-scopes]
 - [!] 4b  session trajectory describe — review PASSED describe; slice FIXING cite bug   [traj-describe-cite]
 - [!] 4c  session trajectory cite — review found 1 MAJOR (multi-Q answer parse), FIXING [traj-describe-cite]
 
