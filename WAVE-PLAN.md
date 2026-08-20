@@ -54,7 +54,7 @@ a quoted multi-word fqn, reconcile then.
 ### BATCH 2 — after batch 1
 - [~] 2   loaders (new internal/declaration pkg, 76 unit cases) — DONE, REVIEWING      [declaration-loaders]
 - [~] 2b  shared types (Prerequisite/Check/*CheckPayload/*JudgeInput/PreparedContext) — DONE, REVIEWING [declaration-loaders]
-- [~] 4a  session trajectory normalize — DONE (2c446ed, 11 e2e green), REVIEWING     [traj-normalize]
+- [x] 4a  session trajectory normalize — MERGED, reviewed zero issues              [traj-normalize ✓]
 
   - [~] 2r  RECONCILED 13 example yamls to spec grammar (marker.kind→any(markers), refactoring.active→context[..], path→event.path, glob-or→path contains) — REVIEWING; NOTE reviewer must confirm `contains` is a real op to the new spec grammar (found by match-scopes review).
       OLD vocab in examples/**/*.yaml that the spec-faithful scopes REFUSE:
