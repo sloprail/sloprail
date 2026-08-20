@@ -5,6 +5,6 @@
 # expands to create + update.
 on:
   - event: PreFileWrite
-    match: path startsWith "memories/decisions/"
+    match: event.path startsWith "memories/decisions/"
 require:
   - skill: document-strategy

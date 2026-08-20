@@ -3,7 +3,7 @@
 # that the declared marker set (5 endpoints + 1 agent + 1 db-table,
 # per-session) all actually appeared; judge confirms the marked code uses
 # the required libs / ORM / naming.
-match: marker.kind == "endpoint"
+match: any(markers, .kind == "endpoint")
 checks:
   - script: ./file-name-matches-pattern.sh
   - judge: ./endpoint-uses-required-libs.md.j2

@@ -75,6 +75,7 @@ func newRoot() *cobra.Command {
 		SilenceErrors: true,
 	}
 	cmd.AddCommand(newValidateCmd())
+	cmd.AddCommand(newDeclarationsCmd())
 	return cmd
 }
 

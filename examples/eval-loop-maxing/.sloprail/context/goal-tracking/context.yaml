@@ -10,6 +10,6 @@
 # refuses a Stop; this context's own exit just reads that gate's verdict.
 on:
   - event: PostFileWrite
-    match: path startsWith "goal/" and path endsWith "goal.yaml"
+    match: event.path startsWith "goal/" and event.path endsWith "goal.yaml"
 enter: ./enter.sh
 exit: ./exit.sh

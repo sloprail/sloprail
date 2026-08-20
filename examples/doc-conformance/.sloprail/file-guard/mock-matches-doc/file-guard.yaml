@@ -6,6 +6,6 @@
 # will be the judge... can go and visit this URL and double-check") — so no
 # `prepare` fetches it ahead of time; the judge template gets the URL itself
 # and visits it directly, the same way a person checking this by hand would.
-match: marker.kind == "conforms-to-doc"
+match: any(markers, .kind == "conforms-to-doc")
 checks:
   - judge: ./code-conforms-to-linked-doc.md.j2

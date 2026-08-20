@@ -1,4 +1,7 @@
-match: marker.kind == "invariant"
+# A file-guard's scope exposes the file's markers as a LIST (`markers`), so a
+# marker test is a quantifier over it — `any(markers, .kind == "invariant")` —
+# not a singular `marker.kind`.
+match: any(markers, .kind == "invariant")
 checks:
   - script: ./pin-still-matches-head.sh
   - judge: ./code-upholds-invariant.md.j2

@@ -5,6 +5,6 @@
 # so far, not just the one that just ran.
 on:
   - event: PreCommandInvoke
-    match: any(invocations, .bin == "eval")
+    match: any(event.invocations, .bin == "eval")
 enter: ./enter.sh
 exit: ./exit.sh
