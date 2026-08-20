@@ -4,6 +4,10 @@ import (
 	"testing"
 )
 
+// TODO(D3): drive the verdict via a10n-claude-mock once a10n-cli#470's mock grows
+// sr-agent's claude-flag surface for this path; today the proven InstallJudgeClaude
+// stub supplies the model verdict.
+//
 // task-management is a PREVENTIVE file-guard over `**/tasks/*/*/ASK.md` with two
 // checks in order: a cheap script (must carry a reference to a human message at
 // all) and, only once a reference exists, a prepare + judge (resolve the referenced
@@ -20,12 +24,12 @@ import (
 // write the match does not select (a RESULT.md, or a non-ASK path) is never judged;
 // and the preventive guard keeps a not-fine write OFF DISK.
 //
-// The reference form used for the resolvable cases is `jsonl:1-1` — line 1 of the
-// session record is the human's own prompt (the seeded root), which the prepare
-// resolves via `sed`+`jq` cleanly. (The `message_id=<uuid>` form the example also
-// supports crashes the prepare on a plain-string user message — the same
-// string-content jq fragility action-proof hit — so these tests use the jsonl form
-// that resolves; see the report.)
+// The example advertises three reference forms (transcript_path, message_id,
+// jsonl:); the resolvable cases here exercise BOTH forms that resolve to a real
+// message — `jsonl:1-1` (line 1 of the record is the seeded human prompt, resolved
+// via sed+jq) and `message_id=<uuid>` (the root user message's uuid, resolved via
+// `sr-session trajectory normalize` — see T045_07/08, which the base fix a1dd86e
+// made work by guarding the string-.content case msgtext used to crash on).
 
 const askPath = "memories/tasks/auth/001/ASK.md"
 
@@ -233,5 +237,88 @@ func TestT045_06_NonAskWritesAreNeverJudged(t *testing.T) {
 	}
 	if !e.Exists(proj, "memories/tasks/auth/001/RESULT.md") || !e.Exists(proj, "memories/notes/scratch.md") {
 		t.Errorf("the non-ASK writes did not land at all")
+	}
+}
+
+// T045_07: an ASK.md that cites the human message by `message_id=<uuid>` resolves
+// end-to-end and ADMITS — the second advertised reference form, working after the
+// base fix a1dd86e.
+//
+// The uuid is the session's own root user message (the human prompt every Run
+// starts from), read via RootMessageID so the test does not hardcode the seeding
+// scheme. The script tier passes (a message_id reference is present); the prepare's
+// message_id branch resolves it through `sr-session trajectory normalize` — the path
+// that used to crash on a plain-string user message and now, guarded, returns the
+// message text; the judge (stub pass:true) accepts, and the preventive guard admits
+// the write, which lands.
+//
+// This is the form the earlier revision left untested (it only used jsonl:), so it
+// closes the "one of three advertised forms is silently untested" gap.
+func TestT045_07_MessageIDReferenceResolvesAndAdmits(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installExampleTree(t, proj)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
+
+	sess := "s-045-07"
+	ref := "message_id=" + e.RootMessageID(sess)
+	res := e.Run(proj, sess, authPrompt, Turns("done",
+		Write("w1", askPath, ref+"\n"+authPrompt),
+	))
+
+	if res.Refused() {
+		t.Fatalf("a faithful ASK.md citing the human message by message_id was refused:\n%s", res.Output)
+	}
+	if !e.Exists(proj, askPath) {
+		t.Errorf("an admitted message_id-referenced ASK.md write did not land on disk")
+	}
+	// The message_id genuinely resolved: the resolved human message reached the
+	// template (not the "reference did not resolve" branch), proving the
+	// normalize-based message_id path worked end-to-end.
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if prompt == "" {
+		t.Fatalf("the judge never ran, so message_id resolution was not exercised")
+	}
+	if !containsStr(prompt, "migrate the auth module to the new token format") {
+		t.Errorf("the message_id reference did not resolve to the human message in the template:\n%s", prompt)
+	}
+	if containsStr(prompt, "reference did not resolve") {
+		t.Errorf("the message_id reference was treated as unresolvable despite naming a real message:\n%s", prompt)
+	}
+}
+
+// T045_08: a `message_id=<uuid>` naming NO message this record holds is refused
+// with the template's unresolved-reference branch.
+//
+// The script tier passes (a message_id reference is syntactically present), the
+// prepare resolves nothing (resolved:false), and the template takes its "The
+// reference did not resolve — treat this as a fail" branch; the judge (stub
+// pass:false) refuses at pre-tool. This is the message_id counterpart to T045_03's
+// unresolvable jsonl range, and it proves the prepare's resolved:false for a
+// message_id reaches the template rather than silently passing.
+func TestT045_08_UnknownMessageIDBlocks(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installExampleTree(t, proj)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": false, "reasoning": "the message_id names no message in the record"}`)
+
+	res := e.Run(proj, "s-045-08", authPrompt, Turns("done",
+		Write("w1", askPath, "message_id=no-such-message-uuid\nMigrate the auth module."),
+	))
+
+	if !res.Refused() {
+		t.Fatalf("an ASK.md whose message_id resolves to nothing was not refused:\n%s", res.Output)
+	}
+	if e.Exists(proj, askPath) {
+		t.Errorf("the preventive guard let an unresolvable-message_id ASK.md land on disk")
+	}
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if prompt == "" {
+		t.Fatalf("the judge never ran, so the unresolved-message_id branch was not exercised")
+	}
+	if !containsStr(prompt, "reference did not resolve") {
+		t.Errorf("the template did not render its unresolved-reference branch on an unknown message_id:\n%s", prompt)
 	}
 }

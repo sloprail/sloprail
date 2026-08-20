@@ -4,6 +4,10 @@ import (
 	"testing"
 )
 
+// TODO(D3): drive the verdict via a10n-claude-mock once a10n-cli#470's mock grows
+// sr-agent's claude-flag surface for this path; today the proven InstallJudgeClaude
+// stub supplies the model verdict (the same substitution T034_09/10 make).
+//
 // doc-conformance is a file-guard matched by an `sr:conforms-to-doc` marker whose
 // fqn is a remote doc URL. Its one check is a judge (no prepare, no script tier):
 // the model visits the URL and rules on whether the marked code conforms. The

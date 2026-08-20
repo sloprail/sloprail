@@ -6,28 +6,33 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
+// TODO(D3): drive the verdict via a10n-claude-mock once a10n-cli#470's mock grows
+// sr-agent's claude-flag surface for this path; today the proven InstallJudgeClaude
+// stub supplies the model verdict (the same substitution T032_08/09 make).
+//
 // The action-proof gate wakes on Stop. Its one check is prepare + judge:
 // find-action-and-proof.sh reads the turn's trajectory for an auditable action (a
 // `fill_form`/`download_file` tool_use) and the proof that should accompany it (a
-// `screenshot` output), and hands the judge {action_taken, action, action_input,
-// proof}; screenshot-shows-all-fields.md.j2 rules on whether the proof is real.
+// `screenshot` whose `toolUseResult` an audit reads back), and hands the judge
+// {action_taken, action, action_input, proof}; screenshot-shows-all-fields.md.j2
+// rules on whether the proof is real.
 //
-// The judge's model verdict is the fixed stub (InstallJudgeClaude), the same
-// substitution the template tests T032_08/09 make — pass:false blocks the Stop,
-// pass:true admits. What is NOT stubbed is the prepare: a real `sr-session
-// trajectory normalize` reads the trajectory the mock streamed, so the ACTION the
-// agent took drives the additionalContext the template renders. The mock does not
-// implement `screenshot`, so a screenshot turn yields no artifact and prepare
-// reports proof:null — the honest "the audit has nothing to check" state, which is
-// the violation the rule exists to catch; a turn that takes no action reports
-// action_taken:false and the judge passes trivially.
+// The judge's model verdict is the fixed stub (InstallJudgeClaude) — pass:false
+// blocks the Stop, pass:true admits. What is NOT stubbed is the prepare: a real
+// `sr-session trajectory normalize` reads the trajectory the mock streamed, so the
+// ACTION the agent took and whether a proof artifact accompanies it drive the
+// additionalContext the template renders. The proof artifact is a screenshot's
+// `toolUseResult`, supplied via the ToolUseWithResult builder (the mock's own
+// synthesised result carries none); a turn that takes an action with NO such
+// artifact makes the prepare report proof:null and the template render its
+// "No proof artifact was found. Fail" branch — the genuine violation.
 //
-// The scenarios prove: an action the auditor accepts ADMITS (happy); an action
-// with no proof BLOCKS at Stop and the judge's reasoning reaches the agent
-// (violation); a turn that took no auditable action ADMITS (the gate does not
-// demand proof of nothing); and the ACTION the agent took reaches the rendered
-// template, captured and asserted to change with the action (prepare -> template
-// wiring).
+// The scenarios prove, each non-vacuously: an action WITH a real proof artifact
+// ADMITS and the template rendered the proof-PRESENT branch (not the no-proof one)
+// — so admit is earned by the proof, not merely by the stub; an action with NO
+// proof BLOCKS and the template rendered the no-proof branch and the judge's
+// reasoning reached the agent; a turn that took no auditable action ADMITS; and the
+// ACTION reaches the rendered template and changes with the trajectory.
 
 // aFillForm is a turn that fills a contact form — an auditable action the prepare
 // recognises by tool name. Its input is what an audit would later check field by
@@ -48,57 +53,78 @@ func aDownloadInvoice(id string) harness.Turn {
 	})
 }
 
-// aScreenshot is a turn that takes a screenshot — the proof artifact. The mock
-// answers it with a not-implemented tool_result carrying no toolUseResult, so the
-// prepare finds the screenshot CALL but no artifact to show; proof stays null and
-// the judge (the stub) is what decides whether the proof suffices.
-func aScreenshot(id string) harness.Turn {
-	return harness.ToolUse(id, "screenshot", map[string]string{"target": "contact-form"})
+// screenshotProof is the artifact a screenshot produced — a description an auditor
+// reads plus the image bytes. Distinctive text so a test can find it in the
+// rendered prompt (proving the prepare pulled the toolUseResult into the template).
+const screenshotProof = `{"description":"screenshot of the filled contact form showing name=Ada Lovelace and email=ada@example.com, every field visible","image":"data:image/png;base64,PROOFPIXELS"}`
+
+// aScreenshotWithProof is the pair of turns for a screenshot that PRODUCED a proof
+// artifact: the tool_use and the record carrying its toolUseResult. The prepare
+// correlates them by tool-use id and reports proof non-null.
+func aScreenshotWithProof(id string) (harness.Turn, harness.Turn) {
+	return harness.ToolUseWithResult(id, "screenshot", map[string]string{"target": "contact-form"}, screenshotProof)
 }
 
-// T042_01: a turn that took an auditable action the auditor ACCEPTS admits — the
-// happy path.
+// T042_01: an action WITH a real proof artifact ADMITS, and the template rendered
+// the proof-PRESENT branch — so the admit is earned by the proof, not the stub.
 //
-// The turn fills a form and screenshots it; the prepare reports action_taken:true
-// and the template renders the action for judging; the stub returns pass:true (the
-// auditor confirmed the proof), the verify script accepts, sr-agent exits 0, and
-// the Stop gate admits. This is the control every block below rests on: without it
-// a gate that blocked every action would pass the violation tests while being
-// broken.
-func TestT042_01_AcceptedActionAdmits(t *testing.T) {
+// The turn fills a form and takes a screenshot whose toolUseResult carries the
+// proof; the prepare reports proof non-null and the template renders the
+// proof-present material (NOT the "No proof artifact was found" branch). The stub
+// returns pass:true (the auditor confirmed the proof), so the gate admits. The
+// capturing shim proves the proof reached the prompt AND the no-proof branch did
+// not render — which is what makes this distinct from "stub pass:true ⇒ admit":
+// the proof-present path is genuinely exercised.
+func TestT042_01_ProvenActionAdmits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
-	e.Run(proj, "s-042-01", "fill the form and prove it", Turns("done",
+	shotUse, shotRes := aScreenshotWithProof("w2")
+	e.Run(proj, "s-042-01", "fill the form and prove it with a screenshot", Turns("done",
 		aFillForm("w1"),
-		aScreenshot("w2"),
+		shotUse,
+		shotRes,
 	))
 
 	if blocks := e.BlockingErrorsFrom(proj, "s-042-01", "Stop"); len(blocks) != 0 {
-		t.Fatalf("an accepted-proof action was blocked anyway:\n%v", blocks)
+		t.Fatalf("a proven action was blocked anyway:\n%v", blocks)
 	}
 	if s := e.GateState(proj, "s-042-01", "screenshot-proves-fields"); s != "pass" {
 		t.Errorf("an admitted action-proof gate recorded verdict %q, want \"pass\"", s)
 	}
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if prompt == "" {
+		t.Fatalf("the judge never ran, so the proof-present path was not exercised")
+	}
+	// The proof artifact reached the template — the prepare pulled the screenshot's
+	// toolUseResult in.
+	if !containsStr(prompt, "screenshot of the filled contact form") {
+		t.Errorf("the proof artifact did not reach the template — proof was not carried through:\n%s", prompt)
+	}
+	// And the no-proof branch did NOT render — this is the proof-PRESENT path, the
+	// branch a null-proof trajectory can never reach.
+	if containsStr(prompt, "No proof artifact was found") {
+		t.Errorf("the template rendered the no-proof branch despite a proof artifact being present:\n%s", prompt)
+	}
 }
 
-// T042_02: an auditable action with no proof BLOCKS at Stop, and the judge's
-// reasoning reaches the agent — the violation this rule exists to catch.
+// T042_02: an auditable action with no proof BLOCKS at Stop, the template rendered
+// the no-proof branch, and the judge's reasoning reaches the agent — the violation.
 //
 // The turn downloads an invoice and stops with NO screenshot; the prepare reports
 // action_taken:true, proof:null and the template takes its "No proof artifact was
 // found. Fail" branch. The stub returns pass:false with the reasoning the rule
-// would give; the verify script refuses, sr-agent exits non-zero, the Stop gate
-// blocks and the words reach the agent.
+// would give; the gate blocks and the words reach the agent. The captured prompt
+// proves the no-proof branch genuinely rendered (not merely that the stub failed).
 func TestT042_02_ActionWithoutProofBlocks(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj)
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "the download has no screenshot proving the invoice fields were captured"}`)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": false, "reasoning": "the download has no screenshot proving the invoice fields were captured"}`)
 
 	e.Run(proj, "s-042-02", "download the invoice then stop", Turns("done",
 		aDownloadInvoice("w1"),
@@ -118,6 +144,15 @@ func TestT042_02_ActionWithoutProofBlocks(t *testing.T) {
 	if s := e.GateState(proj, "s-042-02", "screenshot-proves-fields"); s != "fail" {
 		t.Errorf("the blocking action-proof gate recorded verdict %q, want \"fail\"", s)
 	}
+	// The template genuinely rendered the no-proof branch — the proof:null the
+	// prepare produced reached it.
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if prompt == "" {
+		t.Fatalf("the judge never ran, so the no-proof branch was not exercised")
+	}
+	if !containsStr(prompt, "No proof artifact was found") {
+		t.Errorf("the template did not render the no-proof branch on an action with no proof:\n%s", prompt)
+	}
 }
 
 // T042_03: a turn that took NO auditable action admits — the gate does not demand
@@ -128,8 +163,7 @@ func TestT042_02_ActionWithoutProofBlocks(t *testing.T) {
 // the template's "No auditable action this turn ... Pass" branch renders and the
 // judge passes trivially. The stub is set to pass:true — the verdict that branch
 // calls for — and the turn admits. Proven to be the no-action path (not merely an
-// admit) via the captured prompt: the template took its no-action branch, which
-// renders only when prepare reported no action.
+// admit) via the captured prompt.
 func TestT042_03_NoActionAdmits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -151,7 +185,6 @@ func TestT042_03_NoActionAdmits(t *testing.T) {
 	if !containsStr(prompt, "No auditable action this turn") {
 		t.Errorf("the template did not render its no-action branch — prepare's action_taken:false did not reach it:\n%s", prompt)
 	}
-	// And it must NOT have rendered the proof-demanding branch.
 	if containsStr(prompt, "must carry proof an audit can check") {
 		t.Errorf("the template demanded proof on a turn that took no action:\n%s", prompt)
 	}
@@ -193,13 +226,9 @@ func TestT042_04_PreparedActionReachesTemplate(t *testing.T) {
 	if !containsStr(prompt, "invoice-42.pdf") {
 		t.Errorf("the action INPUT from the trajectory did not reach the template:\n%s", prompt)
 	}
-	// proof is null (no screenshot), so the no-proof branch renders — proving the
-	// prepare's proof field reached the template too, not just the action.
 	if !containsStr(prompt, "No proof artifact was found") {
 		t.Errorf("the template did not take the no-proof branch for an action with no artifact:\n%s", prompt)
 	}
-	// The other action's fingerprint must not appear — this render is about THIS
-	// trajectory, not a fixed string.
 	if containsStr(prompt, "fill_form") || containsStr(prompt, "ada@example.com") {
 		t.Errorf("the template leaked an action the agent did not take:\n%s", prompt)
 	}

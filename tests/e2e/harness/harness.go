@@ -1098,6 +1098,20 @@ func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
 	}
 }
 
+// RootMessageID is the uuid seedTranscript gives a session's root user message —
+// the human prompt every Run starts from — so a test can REFERENCE that message by
+// id without hardcoding the seeding scheme.
+//
+// This is what a task's ASK.md cites when it names the authorising human message by
+// `message_id=<uuid>` (task-management). The reference has to sit in the ASK.md
+// content the agent writes, which is authored before the run, so the id must be
+// known up front — this exposes it as the one fact a test would otherwise have to
+// duplicate from the harness internals. The message's TEXT is the `prompt` passed to
+// Run, and the two together are what the guard's prepare resolves and the judge reads.
+func (e *Env) RootMessageID(sessionID string) string {
+	return "e2e-root-" + sessionID
+}
+
 // ControlDecl and ControlScript are the positive control every revalidation
 // test rests on: a hook that stores something under its own scope and reads it
 // back on its next invocation.

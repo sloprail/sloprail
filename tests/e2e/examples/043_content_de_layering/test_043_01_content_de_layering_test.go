@@ -6,6 +6,10 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
+// TODO(D3): drive the verdict via a10n-claude-mock once a10n-cli#470's mock grows
+// sr-agent's claude-flag surface for this path; today the proven InstallJudgeClaude
+// stub supplies the model verdict (the same substitution T034_09/10 make).
+//
 // content-de-layering is a file-guard over files under updates/ or branding/. Its
 // one check is a judge (no prepare, no script tier). The judge renders the settled
 // file's own content and rules on whether it restates a fact that lives elsewhere.
