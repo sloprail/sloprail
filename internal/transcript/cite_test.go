@@ -13,40 +13,121 @@ import (
 // user's words is a judgement about a shape, and a test naming the shape catches
 // a regression a "did it match" test would let through.
 
-// TestExtractAnswerPullsOnlyTheAnswer: from `The user answered:
+// TestExtractAnswersPullsOnlyTheAnswer: from `The user answered:
 // "<question>"="<answer>". ...`, only the <answer> is the user's word — the
 // question is the agent's and the trailing sentence is the harness's.
-func TestExtractAnswerPullsOnlyTheAnswer(t *testing.T) {
+func TestExtractAnswersPullsOnlyTheAnswer(t *testing.T) {
 	// Verbatim shape from a real transcript.
 	envelope := `The user answered: "Which invariant should get an emoji, and what's the intent?"="#1 - but name of invariant owning this probably wrongly described". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`
 
-	answer, ok := extractAnswer(envelope)
-	require.True(t, ok, "this is an answer envelope")
-	assert.Equal(t, "#1 - but name of invariant owning this probably wrongly described", answer)
-	assert.NotContains(t, answer, "Which invariant", "the question is not the user's words")
-	assert.NotContains(t, answer, "Read the answers", "the harness's instruction is not the user's words")
+	got := extractAnswers(envelope)
+	require.Equal(t, []string{"#1 - but name of invariant owning this probably wrongly described"}, got)
+	assert.NotContains(t, got[0], "Which invariant", "the question is not the user's words")
+	assert.NotContains(t, got[0], "Read the answers", "the harness's instruction is not the user's words")
 }
 
-// TestExtractAnswerNotAnEnvelope: an ordinary tool_result body — a command's
-// output that merely mentions the phrase — is not an answer envelope and reports
-// false, so its text is never searched as the user's words.
-func TestExtractAnswerNotAnEnvelope(t *testing.T) {
-	_, ok := extractAnswer("total 42\n-rw-r--r-- 1 user staff file.go")
-	assert.False(t, ok, "a plain tool result is not an answer envelope")
+// TestExtractAnswersMultiQuestion is the regression the reviewer caught: one
+// AskUserQuestion call routinely asks SEVERAL questions, and the harness writes
+// every Q/A pair into ONE string. Each ANSWER must be extracted separately, and
+// NO question text may survive — the old first-join-to-last-quote parse returned
+// a single blob carrying the SECOND question, making the agent's own words
+// citable.
+func TestExtractAnswersMultiQuestion(t *testing.T) {
+	// A real two-question envelope shape (decoded — literal quotes).
+	two := `The user answered: "How should the a10n-evals work land relative to the existing PR #5?"="Close 5 and link to newly opened from main", "The a10n changes are on claude/spec-application-system-scope, 8 commits, unpushed. Open a PR there too?"="Yes, push and open PR". Read the answers carefully — they may request clarification.`
 
-	_, ok = extractAnswer("The user answered without the join shape")
-	assert.False(t, ok, "the prefix alone, without the \"=\" join, is not an envelope")
+	got := extractAnswers(two)
+	require.Equal(t, []string{
+		"Close 5 and link to newly opened from main",
+		"Yes, push and open PR",
+	}, got, "each answer is extracted separately, and no question text leaks")
+	// The agent's question text must appear in NONE of the extracted words.
+	for _, a := range got {
+		assert.NotContains(t, a, "How should the a10n-evals", "a question leaked into an answer")
+		assert.NotContains(t, a, "Open a PR there too", "the second question leaked — the exact regression")
+		assert.NotContains(t, a, "Read the answers", "the trailer leaked")
+	}
+
+	// Three questions, to prove it is not a two-only fix.
+	three := `The user answered: "Q1 pick one?"="alpha", "Q2 which colour?"="green", "Q3 proceed?"="yes go ahead". Read the answers carefully — x.`
+	assert.Equal(t, []string{"alpha", "green", "yes go ahead"}, extractAnswers(three))
 }
 
-// TestExtractAnswerKeepsQuotesInsideTheAnswer: an answer that itself contains a
-// quoted phrase is kept whole — the close is the last quote before the trailing
-// sentence, so an inner quote does not truncate the user's words.
-func TestExtractAnswerKeepsQuotesInsideTheAnswer(t *testing.T) {
-	envelope := `The user answered: "what should it say?"="call it \"draft\" mode". Read the answers carefully.`
-	answer, ok := extractAnswer(envelope)
-	require.True(t, ok)
-	assert.Contains(t, answer, `draft`, "an inner quoted phrase is kept")
-	assert.Contains(t, answer, "call it", "the answer is not truncated at the first inner quote")
+// TestExtractAnswersNotAnEnvelope: an ordinary tool_result body — a command's
+// output that merely mentions the phrase — is not an answer envelope and yields
+// nothing, so its text is never searched as the user's words.
+func TestExtractAnswersNotAnEnvelope(t *testing.T) {
+	assert.Empty(t, extractAnswers("total 42\n-rw-r--r-- 1 user staff file.go"),
+		"a plain tool result is not an answer envelope")
+	assert.Empty(t, extractAnswers("The user answered without the join shape"),
+		"the prefix alone, without the \"=\" join, is not an envelope")
+}
+
+// TestExtractAnswersKeepsQuotesInsideTheAnswer: an answer that itself contains a
+// quoted phrase is kept whole — an inner quote is not a pair boundary, because
+// what follows it is not a `"="`-terminated question, so it does not truncate the
+// user's words.
+func TestExtractAnswersKeepsQuotesInsideTheAnswer(t *testing.T) {
+	// Decoded shape: the inner quotes around draft are literal.
+	envelope := `The user answered: "what should it say?"="call it "draft" mode". Read the answers carefully.`
+	got := extractAnswers(envelope)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], `draft`, "an inner quoted phrase is kept")
+	assert.Contains(t, got[0], "call it", "the answer is not truncated at the first inner quote")
+	assert.Contains(t, got[0], "mode", "the answer is not truncated after the inner quote either")
+}
+
+// TestExtractAnswersHandlesInnerCommaQuoteAndTruncation covers the brittle bits
+// the reviewer flagged: an answer containing the literal `", "` sequence (which
+// is NOT a pair boundary because no `"="`-terminated question follows it), and a
+// truncated envelope with no trailer and no closing quote (the answer runs to the
+// end of what was recorded).
+func TestExtractAnswersHandlesInnerCommaQuoteAndTruncation(t *testing.T) {
+	// The answer literally contains `", "` — but there is only one pair, so it is
+	// all one answer, not split into a phantom second.
+	inner := `The user answered: "which items?"="apples", "oranges" and pears". Read the answers carefully.`
+	got := extractAnswers(inner)
+	require.Len(t, got, 1, "a `\", \"` inside the only answer must not fabricate a second answer")
+	assert.Contains(t, got[0], "apples")
+	assert.Contains(t, got[0], "oranges")
+	assert.Contains(t, got[0], "pears")
+
+	// Truncated: no trailer, no closing quote. The answer is what was recorded.
+	trunc := `The user answered: "Q1?"="A1 got cut off mid`
+	assert.Equal(t, []string{"A1 got cut off mid"}, extractAnswers(trunc))
+
+	// A question that itself contains quotes (real corpus shape) must still be
+	// skipped, and only the answer kept.
+	qquotes := `The user answered: "There's no entity describing "Entity" itself. What now?"="#2; backfill entities". Read the answers carefully — and`
+	assert.Equal(t, []string{"#2; backfill entities"}, extractAnswers(qquotes),
+		"inner quotes in the QUESTION must not derail the parse or leak")
+}
+
+// TestExtractAnswersNeverLeaksQuestionEvenWhenAnswerHasCommaQuote pins the SAFETY
+// guarantee for the one genuinely-ambiguous shape: an answer that contains the
+// literal `", "` sequence AND is followed by another pair. This does not occur in
+// the measured corpus (0 of 53 multi-question envelopes), and it cannot be
+// disambiguated from a flat string — the parser errs toward TRUNCATING the answer
+// rather than toward keeping the following question, because a false citation of
+// the agent's own words is the harm to avoid.
+//
+// The property asserted is therefore one-directional: whatever the parser keeps,
+// it must contain NO question text. The answer may be truncated; a question must
+// never appear.
+func TestExtractAnswersNeverLeaksQuestionEvenWhenAnswerHasCommaQuote(t *testing.T) {
+	// Answer 1 contains `", "`; a real second pair follows with a distinctive
+	// question token QUESTIONWORD that must never be citable.
+	envelope := `The user answered: "first q?"="a list: "one", "two" done", "the QUESTIONWORD second?"="clean answer". Read the answers carefully.`
+	got := extractAnswers(envelope)
+	require.NotEmpty(t, got)
+	for _, a := range got {
+		assert.NotContains(t, a, "QUESTIONWORD",
+			"question text leaked into an answer — the exact harm the parser must never cause: %q", a)
+		assert.NotContains(t, a, "second?",
+			"the second question leaked: %q", a)
+	}
+	// The clean second answer is still recovered whole.
+	assert.Contains(t, got, "clean answer", "the following answer must still be extracted")
 }
 
 // TestUserWordsPlainStringMessage: the ordinary typed message — content as a bare

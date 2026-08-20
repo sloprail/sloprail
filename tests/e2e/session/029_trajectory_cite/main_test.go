@@ -88,8 +88,27 @@ func assistantText(uuid, parent, text string) string {
 // which is what turns those quotes into the `\"` a JSON string carries. Building
 // them pre-escaped would double-escape once jsonStr ran over them.
 func answerEnvelope(uuid, parent, question, answer string) string {
-	content := `The user answered: "` + question + `"="` + answer + `".` +
-		` Read the answers carefully — they may request clarification, changes, or that you not proceed.`
+	return multiAnswerEnvelope(uuid, parent, [][2]string{{question, answer}})
+}
+
+// multiAnswerEnvelope is the MULTI-question shape: one AskUserQuestion call asks
+// several questions and the harness writes every Q/A pair into ONE tool_result
+// string, joined by `, ` and closed with the `. Read the answers ...` trailer.
+// This is the common real shape (44% of measured envelopes ask more than one),
+// and the case the first-join-to-last-quote parser mangled — so the e2e cases
+// that prove no question text leaks are built from it.
+//
+// Each qa is {question, answer}. The content is assembled as a plain string with
+// literal quotes and serialized once by jsonStr.
+func multiAnswerEnvelope(uuid, parent string, qa [][2]string) string {
+	content := `The user answered: `
+	for i, p := range qa {
+		if i > 0 {
+			content += `, `
+		}
+		content += `"` + p[0] + `"="` + p[1] + `"`
+	}
+	content += `. Read the answers carefully — they may request clarification, changes, or that you not proceed.`
 	return `{"type":"user","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
 		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":` +
 		jsonStr(content) + `}]}}`
