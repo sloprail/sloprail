@@ -22,7 +22,7 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - worktree `events-vocab` (impl/events-vocab): 1a+1b+1c+1d — RESUMED after API-error (was ~80% done, builds; finishing tests)
 - worktree `markers` (impl/markers): 1e — IMPL DONE (commit 5852a1b), IN REVIEW
 - worktree `match-scopes` (impl/match-scopes): 1f — IMPL DONE, rebased, IN REVIEW
-- worktree `traj-describe-cite` (impl/traj-describe-cite): 4b+4c — IMPLEMENTING
+- worktree `traj-describe-cite` (impl/traj-describe-cite): 4b+4c — DONE, rebased, IN REVIEW. NOTE: mock writes EMPTY toolUseId, so parentPath correlation is fixture/unit tested, not mock-e2e. Adds internal/transcript/{cite,describe,line}.go + session_trajectory{,_cite,_describe}.go; leaves normalize slot (030).
 
 - [ ] 1a  TurnEnd→Stop rename (cyclemod + refs; e2e dir 026 renamed)         [events-vocab]
 - [ ] 1b  PostTagWrite event + #tag scanner (new module/kind)                [events-vocab]
@@ -30,8 +30,8 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - [ ] 1d  Post-file events carry old/newMarkers + old/newContent; naming     [events-vocab]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
 - [~] 1f  per-nature match SCOPES + GlobPattern shorthand — done, reviewing     [match-scopes]
-- [ ] 4b  session trajectory describe                                        [traj-describe-cite]
-- [ ] 4c  session trajectory cite (+ AskUserQuestion answer extraction)      [traj-describe-cite]
+- [~] 4b  session trajectory describe — done, rebased, reviewing               [traj-describe-cite]
+- [~] 4c  session trajectory cite — done, rebased, reviewing                   [traj-describe-cite]
 
 NOTE (from markers agent, follow-up not blocker): services/sr-mark/marker.go WriteMarker emits
 fqns UNQUOTED — fine today (examples hand-write quoted frontmatter), but if sr-mark must ever WRITE
