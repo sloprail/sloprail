@@ -29,7 +29,7 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - [ ] 1c  PreToolUse semantic event (bindable kind)                          [events-vocab]
 - [ ] 1d  Post-file events carry old/newMarkers + old/newContent; naming     [events-vocab]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
-- [~] 1f  per-nature match SCOPES + GlobPattern shorthand — done, reviewing     [match-scopes]
+- [!] 1f  per-nature match SCOPES + GlobPattern — review found 1 MAJOR (glob misclass), FIXING [match-scopes]
 - [~] 4b  session trajectory describe — done, rebased, reviewing               [traj-describe-cite]
 - [~] 4c  session trajectory cite — done, rebased, reviewing                   [traj-describe-cite]
 
@@ -51,6 +51,13 @@ a quoted multi-word fqn, reconcile then.
 - [ ] 2   .sloprail/{file-guard,gate,context,goal}/*.yaml + structure.yaml loaders (needs 1b/1c/1f)
 - [ ] 2b  require/checks/judge/prepare shared types (Prerequisite, Check, *CheckPayload, *JudgeInput) (needs 2)
 - [ ] 4a  session trajectory normalize (needs extractors-per-entry: 1b + command + file)
+
+  - [ ] 2r  RECONCILE example *.yaml match: strings to the new spec grammar (found by match-scopes review).
+      OLD vocab in examples/**/*.yaml that the spec-faithful scopes REFUSE:
+      `marker.kind` singular → spec `any(markers, .kind == ...)`; bare `refactoring.active` →
+      `context["refactoring"].active`; undeclared `tags` (needs the trigger's own event scope, e.g.
+      PostTagWrite.tags); glob-`or`-glob `"**/a" or "**/b"` (neither bare glob nor valid expr).
+      This belongs with declaration-loading/dispatch (whoever wires match against real declarations).
 
 ### BATCH 3 — dispatch engine (after batch 2)
 - [ ] 3a  gate dispatch (on→require→checks, pass/fail, one-shot) — needs 1f,2,2b
