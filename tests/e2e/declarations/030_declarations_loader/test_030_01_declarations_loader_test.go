@@ -51,10 +51,6 @@ match: any(markers, .kind == "invariant")
 checks:
   - script: ./check.sh
 `,
-		".sloprail/goal/accuracy/goal.yaml": `
-enabled: true
-script: verify.sh
-`,
 		".sloprail/file-guard/structure.yaml": `
 allow:
   - glob: "memories/*.md"
@@ -65,8 +61,10 @@ allow:
 	if res.Code != 0 {
 		t.Fatalf("expected exit 0 for sound declarations, got %d:\n%s", res.Code, res.Output)
 	}
-	// The report names each nature's loaded declarations.
-	for _, want := range []string{"require-skill", "refactoring", "pinned", "accuracy", "structure gate: present"} {
+	// The report names each nature's loaded declarations. (A goal is NOT a loaded
+	// nature — it is a project-level composite the engine does not read — so no
+	// goal appears here.)
+	for _, want := range []string{"require-skill", "refactoring", "pinned", "structure gate: present"} {
 		if !strings.Contains(res.Output, want) {
 			t.Errorf("expected the report to mention %q:\n%s", want, res.Output)
 		}
@@ -145,7 +143,7 @@ func TestT030_04_AcceptsProjectRootOrDotDir(t *testing.T) {
 	e := New(t)
 	proj := t.TempDir()
 	writeTree(t, proj, map[string]string{
-		".sloprail/goal/accuracy/goal.yaml": "enabled: true\nscript: verify.sh\n",
+		".sloprail/gate/stop-check/gate.yaml": "on:\n  - event: Stop\nchecks:\n  - script: ./s.sh\n",
 	})
 
 	viaRoot := e.CLIDirect(proj, "sr-file", "declarations", proj)
@@ -154,8 +152,8 @@ func TestT030_04_AcceptsProjectRootOrDotDir(t *testing.T) {
 	if viaRoot.Code != 0 || viaDotDir.Code != 0 {
 		t.Fatalf("both spellings should exit 0: root=%d dotdir=%d", viaRoot.Code, viaDotDir.Code)
 	}
-	if !strings.Contains(viaRoot.Output, "accuracy") || !strings.Contains(viaDotDir.Output, "accuracy") {
-		t.Errorf("both spellings should load the goal:\n--- root ---\n%s\n--- dotdir ---\n%s", viaRoot.Output, viaDotDir.Output)
+	if !strings.Contains(viaRoot.Output, "stop-check") || !strings.Contains(viaDotDir.Output, "stop-check") {
+		t.Errorf("both spellings should load the same tree:\n--- root ---\n%s\n--- dotdir ---\n%s", viaRoot.Output, viaDotDir.Output)
 	}
 }
 

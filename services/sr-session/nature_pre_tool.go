@@ -45,10 +45,10 @@ type natureVerdict struct {
 func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
 	if len(loaded.Gates) == 0 && loaded.Structure == nil {
-		// Nothing new-format to enforce at pre-tool. (File-guards, contexts and
-		// goals are loaded but not dispatched by this slice, and none of them
-		// blocks a pre-tool call anyway — a file-guard's own check is the next
-		// slice's, and a context does not block.)
+		// Nothing new-format to enforce at pre-tool. (File-guards and contexts
+		// are loaded but not dispatched by this slice, and neither blocks a
+		// pre-tool call anyway — a file-guard's own check is the next slice's,
+		// and a context does not block.)
 		return natureVerdict{}
 	}
 

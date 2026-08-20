@@ -21,7 +21,7 @@ if [ -z "$goal_name" ]; then
   exit 0
 fi
 
-goal_dir="${SR_WORKSPACE:-.}/.sloprail/goal/$goal_name"
+goal_dir="${SR_WORKSPACE:-.}/goal/$goal_name"
 script_name="$(grep '^script:' "$goal_dir/goal.yaml" | awk '{print $2}')"
 verify_script="$goal_dir/${script_name:-verify.sh}"
 

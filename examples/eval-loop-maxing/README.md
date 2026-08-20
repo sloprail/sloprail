@@ -15,8 +15,10 @@ the target is unmet.
 The original build treated this as one context. Two re-reads later it's
 three pieces, each with one job:
 
-1. **The goal** (`goal/accuracy-target/`) — what "achieved" means. A
-   composite primitive, not engine-wired.
+1. **The goal** (`goal/accuracy-target/`, a project-level sibling of
+   `.sloprail/` — NOT under it) — what "achieved" means. A composite
+   primitive the user maintains; the engine neither loads nor dispatches on
+   `goal.yaml`. It is realised entirely through the context + gate below.
 2. **A tracking context** (`context/goal-tracking/`) — is a goal currently
    active. Pure lifecycle, `{active, payload}`. Does **not** block anything.
 3. **A verify gate** (`gate/goal-verify/`) — the thing that actually refuses
@@ -27,6 +29,11 @@ Separately, **recording** (`context/recording/`) is a fourth, independent
 piece: every eval run must be documented, regardless of any goal.
 
 ## Part 1 — the goal, a composite primitive
+
+Lives at project-level **`goal/`** — a sibling of `.sloprail/`, not inside
+it. The engine never reads it: `goal` is not a sloprail primitive, so the
+declaration loader does not scan for it. Only the context and gate below
+touch it, by path, at `${SR_WORKSPACE}/goal/<name>/`.
 
 - **`goal/accuracy-target/goal.yaml`** — `enabled: true`, `script: verify.sh`.
   **Not authored ahead of time.** Written BY THE AGENT during the trajectory,
