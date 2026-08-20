@@ -90,13 +90,24 @@ type Store interface {
 
 	// State reads what one guardrail stored under one key. A key never written
 	// is "", false: a rule asking whether it has seen something before should
-	// not have to tell "no" apart from "broken".
+	// not have to tell "no" apart from "broken". The guardrail is the caller's
+	// own — reading another rule's single key is deliberately not offered.
 	State(guardrail, key string) (string, bool, error)
-	// SetState stores a value under a key, replacing rather than merging.
+	// SetState stores a value under a key, replacing rather than merging. The
+	// guardrail is the caller's own — writing into another rule's keyspace is
+	// deliberately not offered.
 	SetState(guardrail, key, value string) error
 	// ListState returns every entry this guardrail stored whose key begins
 	// with prefix, ordered by key. An empty prefix is everything it stored.
+	// The guardrail is the caller's own.
 	ListState(guardrail, prefix string) ([]Entry, error)
+	// ListStateOwned returns every entry OWNER stored whose key begins with
+	// prefix, ordered by key — the one cross-guardrail read, offered for list
+	// alone. It reads exactly what ListState reads for a named owner and is
+	// read-only; correctness-across-time is the caller's, via `require:
+	// [{context}]` on that owner. Same session and workspace as the caller:
+	// owner selects only the guardrail, never another session's database.
+	ListStateOwned(owner, prefix string) ([]Entry, error)
 
 	// Close releases the database.
 	Close() error
