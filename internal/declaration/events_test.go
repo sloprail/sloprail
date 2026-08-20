@@ -127,6 +127,25 @@ func TestExpandContextEvent_PostFileWriteAlias(t *testing.T) {
 	assert.Equal(t, []string{KindPostFileCreate, KindPostFileUpdate}, kinds)
 }
 
+// The EXPORTED wrappers are what the dispatch (services/sr-session) turns a loaded
+// trigger's `event` into concrete kinds with — a public contract the gate dispatch
+// depends on, so it is pinned to agree with the unexported form it wraps.
+func TestExportedExpandersMatchUnexported(t *testing.T) {
+	for _, name := range []string{
+		AliasPreFileWrite, KindPreCommandInvoke, KindStop, KindPostFileCreate, "bogus",
+	} {
+		gk, gok := ExpandGateEvent(name)
+		wk, wok := expandGateEvent(name)
+		assert.Equal(t, wok, gok, "ExpandGateEvent(%q) known", name)
+		assert.Equal(t, wk, gk, "ExpandGateEvent(%q) kinds", name)
+
+		ck, cok := ExpandContextEvent(name)
+		xk, xok := expandContextEvent(name)
+		assert.Equal(t, xok, cok, "ExpandContextEvent(%q) known", name)
+		assert.Equal(t, xk, ck, "ExpandContextEvent(%q) kinds", name)
+	}
+}
+
 // A context does not enter on Stop even though a gate does.
 func TestExpandContextEvent_StopRejected(t *testing.T) {
 	_, known := expandContextEvent(KindStop)

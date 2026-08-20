@@ -232,6 +232,53 @@ func (e *Env) InstallClaudeShim(projDir string) {
 	}
 }
 
+// InstallJudgeClaude puts a `claude` on PATH that stands in for the model a JUDGE
+// check invokes through sr-agent, writing a fixed verdict to the output file
+// sr-agent named.
+//
+// A gate's judge check runs `sr-agent --verify … --prompt …`, and sr-agent tells
+// the agent (in the prompt) which file to write its answer to — the same two-route
+// path the real thing uses. This shim reads that prompt, recovers the output path
+// from it (the "Write your answer to the file <path>" line sr-agent appends), and
+// writes the verdict there, exactly as a model that followed the instruction would.
+// So the whole judge path is exercised — the template rendered, sr-agent invoked,
+// the verify script run, the verdict parsed — with only the model's own text
+// replaced by a fixed answer, the same substitution the old-format judge tests make
+// through A10N_CLAUDE_BIN.
+//
+// The shim must sit ahead of the real `claude` on PATH; it shares shimDir with
+// InstallClaudeShim (a test uses one or the other), which run() already places
+// first. The verdict is the JSON object the judge's verify script reads, e.g.
+// `{"pass": false, "reasoning": "…"}`.
+func (e *Env) InstallJudgeClaude(verdict string) {
+	e.t.Helper()
+	// The prompt arrives as the LAST argument (sr-agent passes it positionally
+	// after `--`). The shim scans every argument for sr-agent's own
+	// "Write your answer to the file <path>" line and writes the verdict there.
+	// A here-doc keeps the verdict body intact regardless of its punctuation.
+	script := `#!/bin/sh
+# Recover the output path sr-agent told the agent to write, from the prompt in
+# the arguments. sr-agent appends "Write your answer to the file <path>."
+out=""
+for arg in "$@"; do
+  case "$arg" in
+    *"Write your answer to the file "*)
+      out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | head -1)"
+      ;;
+  esac
+done
+if [ -n "$out" ]; then
+  cat > "$out" <<'JUDGE_VERDICT_EOF'
+` + verdict + `
+JUDGE_VERDICT_EOF
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write judge claude shim: %v", err)
+	}
+}
+
 // InnerScenario is what the agent a hook LAUNCHES does once it is running.
 //
 // Written beside the project rather than passed as an argument because the shim
@@ -514,6 +561,85 @@ func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]st
 			e.t.Fatalf("harness: write script %s: %v", file, err)
 		}
 	}
+}
+
+// Gate writes a NEW-FORMAT gate declaration and its check scripts/templates into
+// a project, at `.sloprail/gate/<name>/gate.yaml`.
+//
+// The gate and the structure gate are the new nature-based dispatch, distinct from
+// Guardrail's old GUARDRAIL.md format — the two run alongside each other, so a test
+// may use either. Scripts (a check's `./verify.sh`, a `prepare`, a judge template)
+// are written as siblings of gate.yaml, executable, exactly where the gate's own
+// relative paths resolve them.
+func (e *Env) Gate(projDir, name, gateYAML string, files map[string]string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail", "gate", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir gate: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gate.yaml"), []byte(gateYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write gate.yaml: %v", err)
+	}
+	for file, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write gate file %s: %v", file, err)
+		}
+	}
+}
+
+// StructureGate writes the NEW-FORMAT structure gate — one tree-wide path
+// allowlist — at `.sloprail/file-guard/structure.yaml`.
+//
+// A singleton for the whole project (there is at most one structure.yaml), so this
+// takes only the yaml. It sits beside the per-guard subfolders in file-guard/,
+// where the loader reads it.
+func (e *Env) StructureGate(projDir, structureYAML string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail", "file-guard")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir file-guard: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "structure.yaml"), []byte(structureYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write structure.yaml: %v", err)
+	}
+}
+
+// GateState reads one gate's recorded verdict from the session store — pass or
+// fail, or "" if the gate never ran.
+//
+// How a test observes that a gate's verdict LANDED in the gates[] map, which a
+// context will read next slice. Read directly from the store, because there is no
+// command that prints it (the map is engine-owned, like the baseline meta the Meta
+// helper reads). The store is located the same way Meta locates it — by asking the
+// binary under test for the conversation identity — so a test cannot pass against a
+// store the engine would never have written to.
+//
+// The keyspace and value shape mirror the engine's own (services/sr-session's
+// nature dispatch): per-guardrail state under the reserved `!sloprail:gates` name,
+// one `gate:<name>` key per gate, value `{"status":"pass|fail"}`.
+func (e *Env) GateState(projDir, sessionID, gateName string) string {
+	e.t.Helper()
+
+	db, err := sessionstate.Open(e.sessionDBPath(projDir, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+
+	value, ok, err := db.State("!sloprail:gates", "gate:"+gateName)
+	if err != nil {
+		e.t.Fatalf("harness: read gate state %s: %v", gateName, err)
+	}
+	if !ok {
+		return ""
+	}
+	var st struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(value), &st); err != nil {
+		e.t.Fatalf("harness: decode gate state %s: %v", gateName, err)
+	}
+	return st.Status
 }
 
 // RemoveGuardrail takes a guardrail out of a project mid-session, the way a

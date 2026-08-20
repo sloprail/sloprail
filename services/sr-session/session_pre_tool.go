@@ -42,6 +42,16 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// The NEW nature-based dispatch runs ALONGSIDE the old one, and FIRST — before
+	// the old format's plugin resolution and its own early returns, so a project
+	// with only new-format rules (no GUARDRAIL.md at all) is still gated. It reads
+	// the project's own `.sloprail/gate/*` and `.sloprail/file-guard/structure.yaml`
+	// and blocks the tool call on a refusal, via the same deny() the old path uses.
+	// A permit here falls through to the old dispatch below; both run.
+	if reason := natureDispatchPreTool(cmd, p, reg); reason != "" {
+		return deny(cmd, reason)
+	}
+
 	// LoadWith, so a declaration that cannot do what it says never reaches
 	// enforcement. Without it a matcher naming a field its kind does not carry
 	// would be compiled here and quietly admit nothing.
