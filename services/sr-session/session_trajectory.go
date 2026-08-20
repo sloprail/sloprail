@@ -48,6 +48,7 @@ to read another — the parent or a sibling that describe named.`,
 	cmd.AddCommand(
 		newSessionTrajectoryDescribeCmd(),
 		newSessionTrajectoryCiteCmd(),
+		newSessionTrajectoryNormalizeCmd(),
 	)
 	return cmd
 }
