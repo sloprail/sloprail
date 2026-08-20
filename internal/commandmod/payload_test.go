@@ -239,7 +239,7 @@ func TestPayload_PrintfAlwaysTerminates(t *testing.T) {
 // FACT rather than a stand-in for ignorance.
 //
 // This is the distinction the whole change turns on. `: > f.md` genuinely
-// empties the file, and a rule written `content == ""` should fire on it — as
+// empties the file, and a rule written `newContent == ""` should fire on it — as
 // opposed to `unknown-tool > f.md`, where the same empty string would be a lie.
 func TestPayload_TruncatingCommandsProduceARealEmpty(t *testing.T) {
 	for _, line := range []string{

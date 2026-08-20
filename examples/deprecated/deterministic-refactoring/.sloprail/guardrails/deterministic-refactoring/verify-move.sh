@@ -38,15 +38,16 @@ command -v jq > /dev/null 2>&1 ||
 TARGET=$(printf '%s' "$PAYLOAD" | jq -r '.event.fields.path // empty' 2> /dev/null)
 [ -n "$TARGET" ] || refuse "This write carries no path, so the move it declares cannot be checked."
 
-CONTENT=$(printf '%s' "$PAYLOAD" | jq -r '.event.fields.content // empty' 2> /dev/null)
+CONTENT=$(printf '%s' "$PAYLOAD" | jq -r '.event.fields.newContent // empty' 2> /dev/null)
 [ -n "$CONTENT" ] || refuse "This write carries no content, so the move it declares cannot be checked."
 
-# The origin markers, one fqn per line. Read off the event's `markers` field
-# rather than scanned out of the text again: the engine already did that scan,
-# and a second reader here would be a second grammar to keep in step with the
-# first — the exact drift the markers abstraction exists to remove.
+# The origin markers, one fqn per line. Read off the event's `newMarkers` field
+# — the markers the written result carries — rather than scanned out of the text
+# again: the engine already did that scan, and a second reader here would be a
+# second grammar to keep in step with the first — the exact drift the markers
+# abstraction exists to remove.
 ORIGINS=$(printf '%s' "$PAYLOAD" | jq -r '
-	[ .event.fields.markers // [] | .[] | select(.kind == "moved-from") | .fqn ] | .[]
+	[ .event.fields.newMarkers // [] | .[] | select(.kind == "moved-from") | .fqn ] | .[]
 ' 2> /dev/null)
 
 COUNT=$(printf '%s' "$ORIGINS" | grep -c . || true)
@@ -59,14 +60,14 @@ ORIGIN=$(printf '%s' "$ORIGINS" | sed -n '1p')
 # a rename is a marker too, so both halves of the declaration come off the
 # event and neither is parsed out of the text.
 RENAMES=$(printf '%s' "$PAYLOAD" | jq -r '
-	[ .event.fields.markers // [] | .[] | select(.kind == "moved-rename") | .fqn ] | .[]
+	[ .event.fields.newMarkers // [] | .[] | select(.kind == "moved-rename") | .fqn ] | .[]
 ' 2> /dev/null)
 
 # The marker lines themselves are not part of what is compared. Which lines
 # those are is on the event — `.line`, 1-based — so they are deleted by number
 # rather than by re-matching the marker grammar here.
 DROP=$(printf '%s' "$PAYLOAD" | jq -r '
-	[ .event.fields.markers // []
+	[ .event.fields.newMarkers // []
 	  | .[]
 	  | select(.kind == "moved-from" or .kind == "moved-rename")
 	  | .line

@@ -45,9 +45,9 @@ hooks:
 # Records the tags the agent wrote this cycle
 `
 
-// T028_01: the tags the agent wrote in its messages reach a rule bound to
+// T030_01: the tags the agent wrote in its messages reach a rule bound to
 // PostTagWrite, as one bulk event.
-func TestT028_01_TagsTheAgentWroteReachTheRule(t *testing.T) {
+func TestT030_01_TagsTheAgentWroteReachTheRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -55,7 +55,7 @@ func TestT028_01_TagsTheAgentWroteReachTheRule(t *testing.T) {
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 
-	e.Run(proj, "s-028-01", "do some tagged work", Turns("done",
+	e.Run(proj, "s-030-01", "do some tagged work", Turns("done",
 		Say("m1", "Recording this as #update and #decision for later."),
 	))
 
@@ -81,13 +81,13 @@ func TestT028_01_TagsTheAgentWroteReachTheRule(t *testing.T) {
 	}
 }
 
-// T028_02: a cycle in which the agent wrote no tag still dispatches a
+// T030_02: a cycle in which the agent wrote no tag still dispatches a
 // PostTagWrite, carrying an empty tags list.
 //
 // The absence is a real answer a context reacting to a missing tag depends on,
 // and folding it away would make "the agent wrote no tag" indistinguishable from
 // "the event never fired".
-func TestT028_02_AnEmptyCycleStillDispatchesPostTagWrite(t *testing.T) {
+func TestT030_02_AnEmptyCycleStillDispatchesPostTagWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -95,7 +95,7 @@ func TestT028_02_AnEmptyCycleStillDispatchesPostTagWrite(t *testing.T) {
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 
-	e.Run(proj, "s-028-02", "say something untagged", Turns("done",
+	e.Run(proj, "s-030-02", "say something untagged", Turns("done",
 		Say("m1", "Nothing tagged in this message at all."),
 	))
 

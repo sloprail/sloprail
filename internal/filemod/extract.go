@@ -470,13 +470,13 @@ func reportable(path, root string) string {
 //	anything, absent       Nothing at all.
 //
 // That last row is the honest limit rather than an oversight. A write to a path
-// that does not exist is a CREATION, and PreFileCreate requires `content` — the
-// file cannot be read off disk, so the event carries what would be written. A
-// command line does not say what bytes will result. Sending `content: ""` would
-// make `echo x > new.md` indistinguishable from a tool writing a genuinely empty
-// file, and `content == ""` is precisely the rule an author writes to catch
-// that; omitting the field contradicts the declaration, and a matcher reading a
-// declared-but-absent field errors, which refuses the action and blames the
+// that does not exist is a CREATION, and PreFileCreate requires `newContent` —
+// the file cannot be read off disk, so the event carries what would be written.
+// A command line does not say what bytes will result. Sending `newContent: ""`
+// would make `echo x > new.md` indistinguishable from a tool writing a genuinely
+// empty file, and `newContent == ""` is precisely the rule an author writes to
+// catch that; omitting the field contradicts the declaration, and a matcher
+// reading a declared-but-absent field errors, which refuses the action and blames the
 // author's rule for this engine's gap. Both are worse than saying nothing.
 //
 // So a command that CREATES a file is not predicted. It is reported after the

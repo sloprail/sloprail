@@ -14,7 +14,7 @@ func TestMatcherEnv_CarriesEveryDeclaredField(t *testing.T) {
 
 	assert.Len(t, env, 2)
 	assert.Contains(t, env, "path")
-	assert.Contains(t, env, "content")
+	assert.Contains(t, env, "newContent")
 }
 
 // An undeclared name must be absent, since absence is what makes the checker
@@ -22,7 +22,7 @@ func TestMatcherEnv_CarriesEveryDeclaredField(t *testing.T) {
 func TestMatcherEnv_OmitsWhatWasNotDeclared(t *testing.T) {
 	k := module.KindDecl{Name: "PreFileUpdate", Fields: []module.FieldDecl{{Name: "path", Type: module.TypeString}}}
 
-	assert.NotContains(t, matcherEnv(k), "content")
+	assert.NotContains(t, matcherEnv(k), "newContent")
 }
 
 func TestMatcherEnv_KindWithNoFields(t *testing.T) {

@@ -22,9 +22,13 @@ import (
 // scope rather than shared.
 // ---------------------------------------------------------------------------
 
-// fileScopeEvent is what a file module produces for a file carrying markers,
-// built inline so a test says what it matches against. path plus a markers list
-// whose elements are the wire form of a scanned sr: marker.
+// fileScopeEvent is the runtime shape a file-guard's `match` reads — the spec's
+// FileMatchScope, which the (unwired) file-guard dispatch will assemble by
+// scanning the settled file. NOT a file module EVENT: those carry
+// oldMarkers/newMarkers to describe a change, whereas a file-guard reasons about
+// the file's own state and sees a single `markers` list. Built inline so a test
+// says what it matches against: path plus a markers list whose elements are the
+// wire form of a scanned sr: marker.
 func fileScopeEvent(path string, markers ...map[string]any) event.Event {
 	ms := make([]any, 0, len(markers))
 	for _, m := range markers {
@@ -443,7 +447,7 @@ var preFileCreateKind = module.KindDecl{
 	Name: "PreFileCreate",
 	Fields: []module.FieldDecl{
 		{Name: "path", Type: module.TypeString},
-		{Name: "content", Type: module.TypeString},
+		{Name: "newContent", Type: module.TypeString},
 	},
 }
 
@@ -642,7 +646,7 @@ func TestEventMatchScope_ExposesEventFieldsAndContext(t *testing.T) {
 	env := eventMatchScope(preFileCreateKind)
 
 	assert.Len(t, env, 2, "event and context and nothing else")
-	assert.Equal(t, types.Map{"path": types.String, "content": types.String}, env["event"])
+	assert.Equal(t, types.Map{"path": types.String, "newContent": types.String}, env["event"])
 	assert.Contains(t, env, "context")
 
 	// No markers (a file's fact) and no gates (the spec gives these scopes

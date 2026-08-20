@@ -46,17 +46,18 @@ fi
 # not off disk — the disk still holds the pre-edit content, and judging that
 # would pass a bloated rewrite of a clean file.
 #
-# PreFileCreate carries `content`. PreFileUpdate carries `result` plus
-# `resultKnown`; the flag is consulted rather than reading an absent result as
-# "". When the result is not derivable, this rule cannot judge it and defers to
-# the Post kind, which this guardrail also binds.
+# PreFileCreate carries the created body as `newContent`. PreFileUpdate carries
+# the post-edit bytes as `newContent` too, alongside `resultKnown`; the flag is
+# consulted rather than reading an absent newContent as "". When the result is
+# not derivable, this rule cannot judge it and defers to the Post kind, which
+# this guardrail also binds.
 # ---------------------------------------------------------------------------
 kind="$(printf '%s' "$event" | jq -r '.event.kind // empty' 2>/dev/null)"
 
 body=""
 case "$kind" in
   PreFileCreate)
-    body="$(printf '%s' "$event" | jq -r '.event.fields.content // ""' 2>/dev/null)"
+    body="$(printf '%s' "$event" | jq -r '.event.fields.newContent // ""' 2>/dev/null)"
     ;;
   PreFileUpdate)
     known="$(printf '%s' "$event" | jq -r '.event.fields.resultKnown // false' 2>/dev/null)"
@@ -65,11 +66,12 @@ case "$kind" in
       # what actually landed. Silent, because this is the designed path.
       exit 0
     fi
-    body="$(printf '%s' "$event" | jq -r '.event.fields.result // ""' 2>/dev/null)"
+    body="$(printf '%s' "$event" | jq -r '.event.fields.newContent // ""' 2>/dev/null)"
     ;;
   PostFileCreate|PostFileUpdate)
-    # Post kinds carry only the path; the bytes on disk ARE what the cycle
-    # produced, so the disk is correct here.
+    # Post kinds carry newContent too now, but the disk is read here on purpose:
+    # the bytes on disk ARE what the cycle produced, and reading them keeps this
+    # branch identical whatever a Post event happens to carry.
     abs="${SR_WORKSPACE:-.}/$path"
     [ -f "$abs" ] || exit 0
     body="$(cat "$abs" 2>/dev/null)"
