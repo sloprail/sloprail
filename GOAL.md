@@ -32,6 +32,24 @@ already spec'd.
 - **PR #2** (`sloprail/spec`) absorbs all SPEC changes — including the final
   cleanup of superseded spec once the implementation cleanup lands.
 
+### Worktree procedure (MANDATORY — do NOT use the Agent tool's `isolation:worktree`)
+
+This session's own branch differs from the base branch. If a sub-agent creates
+its own isolation worktree it branches from the WRONG base. So the ORCHESTRATOR
+(me) creates each worktree EXPLICITLY, off `draft/fileguard-format`, and hands
+the agent the ready path:
+
+1. `git worktree add /Users/nsviridenko/ws/sloprail/wt/<slice> -b impl/<slice> draft/fileguard-format`
+   (run from `/Users/nsviridenko/ws/sloprail/sloprail`). Worktree convention:
+   `/Users/nsviridenko/ws/sloprail/wt/<slice>` on branch `impl/<slice>`.
+2. Spawn the implementing agent with **`cwd` = that path**, and **NO
+   `isolation` flag** — the worktree already exists on the correct base.
+3. Agent implements + tests there, commits to `impl/<slice>`.
+4. Reviewer agent (same worktree). Loop fix→review until ZERO issues + green
+   tests + green build.
+5. Merge `impl/<slice>` → `draft/fileguard-format` (fast-forward or PR-merge),
+   then `git worktree remove` the slice.
+
 ## The waves
 
 ### Wave 1 — implement the missing engine functionality (may be multi-stage)
