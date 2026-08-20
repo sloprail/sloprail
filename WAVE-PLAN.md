@@ -24,10 +24,10 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - worktree `match-scopes` (impl/match-scopes): 1f — IMPL DONE, rebased, IN REVIEW
 - worktree `traj-describe-cite` (impl/traj-describe-cite): 4b+4c — DONE, rebased, IN REVIEW. NOTE: mock writes EMPTY toolUseId, so parentPath correlation is fixture/unit tested, not mock-e2e. Adds internal/transcript/{cite,describe,line}.go + session_trajectory{,_cite,_describe}.go; leaves normalize slot (030).
 
-- [~] 1a  DONE (in impl/events-vocab, 3 commits, green) — REVIEWING          [events-vocab]
-- [~] 1b  DONE (in impl/events-vocab, 3 commits, green) — REVIEWING          [events-vocab]
-- [~] 1c  DONE (in impl/events-vocab, 3 commits, green) — REVIEWING          [events-vocab]
-- [~] 1d  DONE (in impl/events-vocab, 3 commits, green) — REVIEWING          [events-vocab]
+- [!] 1a  done; review found 2 MAJOR (missed field-rename consumers) — FIXING     [events-vocab]
+- [!] 1b  done; review found 2 MAJOR (missed field-rename consumers) — FIXING     [events-vocab]
+- [!] 1c  done; review found 2 MAJOR (missed field-rename consumers) — FIXING     [events-vocab]
+- [!] 1d  done; review found 2 MAJOR (missed field-rename consumers) — FIXING     [events-vocab]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
 - [x] 1f  per-nature match SCOPES + glob shorthand + internal/natures — MERGED (218de70)   [match-scopes ✓]
 - [x] 4b  session trajectory describe — MERGED (93d0c52)                               [traj-describe-cite ✓]
@@ -80,6 +80,20 @@ KNOWN PRE-EXISTING RED (base branch, NOT a regression — deferred to Wave 3 del
 - [ ] delete old GUARDRAIL.md format + old dispatch + cyclemod TurnEnd + session query + old/duplicated e2e.
       KEEP matcher.go/matcherenv.go. Migrate examples.
 - [ ] spec cleanup in PR #2 (remove superseded), AFTER impl cleanup.
+
+## LESSONS (persist across compaction)
+- `rg`/ripgrep IGNORES dot-dirs (.sloprail/) and hidden files BY DEFAULT. When searching for
+  consumers of renamed fields / removed APIs, ALWAYS use `grep -rn` or `rg --no-ignore --hidden`.
+  This hid two live guardrails (judge-skill.sh, judge-rule.sh) from the events-vocab field rename.
+- Every reviewer must grep the WHOLE repo (grep -rn) for old names when a field/API is renamed,
+  including .sloprail/guardrails/*, marketplace/, examples/.
+
+## FOLLOW-UP TASKS (later, not blockers)
+- Author-facing guidance: a guardrail that writes an in-repo ledger AND binds Post events feeds its
+  own growing content back as newContent (Post newContent is spec-mandated non-optional). The blessed
+  record pattern dodges this via out-of-tree sr-session state. Add a warning to authoring skill docs
+  (state-management.md / file-event-hooks.md). Surfaced by events-vocab review; only documented in
+  session/015 test comments today.
 
 ## Gate for every slice
 green reviewer (loop fix→review until ZERO issues) + `make test-unit test-services` (+ relevant e2e via
