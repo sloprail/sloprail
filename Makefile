@@ -127,7 +127,12 @@ test-e2e:
 #   make test-e2e-shard SHARD=session
 test-e2e-shard:
 	@case "$(SHARD)" in \
-	  session)  go test -p 1 -count=1 -timeout 30m ./tests/e2e/session/... ;; \
+	  session)  go test -p 1 -count=1 -timeout 30m $$(go list ./tests/e2e/session/... | grep -vE '/session/(025_subdirectory_hooks|028_trajectory_describe|029_trajectory_cite|031_trajectory_normalize)$$') ;; \
+	  session2) go test -p 1 -count=1 -timeout 30m \
+	              ./tests/e2e/session/025_subdirectory_hooks/... \
+	              ./tests/e2e/session/028_trajectory_describe/... \
+	              ./tests/e2e/session/029_trajectory_cite/... \
+	              ./tests/e2e/session/031_trajectory_normalize/... ;; \
 	  pre_tool) go test -p 1 -count=1 -timeout 30m ./tests/e2e/pre_tool/... ;; \
 	  examples) go test -p 1 -count=1 -timeout 30m ./tests/e2e/examples/... ;; \
 	  rest)     go test -p 1 -count=1 -timeout 30m \
@@ -142,7 +147,7 @@ test-e2e-shard:
 	              ./tests/e2e/declarations/... \
 	              ./tests/e2e/authoring/... \
 	              ./tests/e2e/harness/... ;; \
-	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|pre_tool|examples|rest)" >&2; exit 2 ;; \
+	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|rest)" >&2; exit 2 ;; \
 	esac
 
 tidy:
