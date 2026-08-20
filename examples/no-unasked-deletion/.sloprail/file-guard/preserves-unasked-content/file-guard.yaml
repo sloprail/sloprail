@@ -1,30 +1,31 @@
 # An edit must not silently drop content nobody asked to remove (unit 17, his
 # 2026-08-14: "a crazy rewrite that silently drops content nobody asked to
 # remove is a violation, regardless of whether the new text is good"). The
-# load-bearing word is UNASKED — the rule is about the relationship between a
-# removal and the human's own trajectory messages, not about removal itself.
+# load-bearing word is UNASKED — the relationship between a removal and the
+# user's own words, not removal itself.
 #
 # Bound to the file's state, PreFileUpdate, preventive:true — the content that
 # would be lost is still on disk at Pre time, so the diff is computed BEFORE
-# the loss. A Post check could only report a deletion already done, and the
-# remedy (restore from git) is gone if the file was never committed — the
-# strongest pre-vs-post case in the topic.
+# the loss. A Post check is too late, and git-restore is gone if the file was
+# never committed — the strongest pre-vs-post case in the topic.
 #
-# Scoped to the memory tree, where the real incident happened (a 27-line
-# TOPIC.md overwritten wholesale, its provenance link and his scope wording
-# destroyed) and where preserving content is load-bearing. Only certain paths,
-# his point — not every file; a project wanting it elsewhere widens the glob.
+# "Asked" is DETERMINISTIC, not a keyword grep (his correction, 2026-08-20,
+# after a first build grepped human messages for deletion words — itself the
+# fluent-guess disease this unit is about): the agent writes the QUOTE of what
+# the user asked as a marker in the file's frontmatter (`# sr:asked "<quote>"`,
+# a YAML comment the marker extractor reads), and the check grounds it with
+# `sr-session trajectory cite` — the quote must resolve to the user's own words
+# in the trajectory (a message, or an AskUserQuestion answer). A quote that
+# resolves nowhere is a fabricated ask.
 #
-# Two checks, cheap-gates-expensive (same shape as unit 16). The script is a
-# line-by-line diff: pure additions (append, zero removed lines) always pass —
-# that IS "append instead of rewriting". A removal with no deletion-intent
-# anywhere in this turn's human messages is refused outright, deterministically
-# (this is what would have caught the incident). Only a removal whose ask was
-# phrased loosely ("clean this up", "rewrite it properly") falls through to the
-# judge, which is the sole thing a model is needed for.
-match: "memories/**/*.md"
+# Two checks, cheap-gates-expensive. The script: pure additions (append) pass;
+# a removal with no valid grounded quote-marker is refused deterministically;
+# a removal WITH a grounded quote passes to the judge. The judge rules the two
+# properties only a model can: the change is clean & targeted (only what the
+# quote asked), and stated absolutely, not as a from-Y-to-X delta narrative.
+match: 'path startsWith "memories/" and path endsWith ".md"'
 preventive: true
 checks:
-  - script: ./removed-lines-were-asked-for.sh
-  - judge: ./loose-ask-covers-removal.md.j2
-    prepare: ./collect-removed-and-asks.sh
+  - script: ./removal-has-a-grounded-ask.sh
+  - judge: ./change-is-clean-and-absolute.md.j2
+    prepare: ./collect-quote-and-diff.sh

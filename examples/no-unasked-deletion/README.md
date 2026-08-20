@@ -30,31 +30,54 @@ absent: a write whose result cannot be shown to preserve content is refused,
 not waved through — the same fail-open/fail-closed logic the incident came from
 (a check that could not run has established nothing).
 
+## "Asked" is a grounded quote-marker, not a keyword grep
+
+A first build grepped this turn's human messages for deletion words
+(`delete|remove|rewrite|clean up`). That was rejected as itself heuristic — the
+same fluent-guess disease this unit is about (it misses asks worded differently,
+false-passes on the word appearing unrelated). The reworked mechanism makes
+"asked" **deterministic and grounded**, and needs no registry file:
+
+- The agent writes the **quote** of what the user asked as a marker in the
+  file's frontmatter — a YAML comment the marker extractor reads:
+
+  ```md
+  ---
+  # sr:asked "keep the original transcript_path, just add the new section"
+  ---
+  ```
+
+  (Comment-only frontmatter is valid YAML — comments parse to an empty document
+  — so the marker rides there even before the file has real frontmatter fields.)
+
+- The check **grounds the quote with `sr-session trajectory cite`**: it must
+  resolve to the user's own words in the trajectory — a message OR an
+  AskUserQuestion answer. A quote that resolves nowhere is a fabricated ask.
+
 ## The parts — cheap gates expensive (same shape as unit 16)
 
-- **`removed-lines-were-asked-for.sh`** (script) — the deterministic half,
-  "worth shipping before the judge." A line-by-line diff of old vs new:
+- **`removal-has-a-grounded-ask.sh`** (script) — the deterministic half. A
+  line-by-line diff of old vs new:
   - `newContent` absent → **block** (fail-closed).
-  - no removed lines → **pass**: pure additions is "append, not rewrite",
-    always fine.
-  - removed lines, and no deletion/rewrite intent in this turn's human messages
-    → **block outright** — an unasked removal, decided deterministically (this
-    is what would have caught the incident).
-  - removed lines, but a human *did* voice a deletion/rewrite → **pass to the
-    judge**: whether that (often loose) ask covers *these* lines is the one
-    question a model is for.
+  - no removed lines → **pass**: pure additions is "append, not rewrite".
+  - removed lines, no `sr:asked` marker → **block** (unasked removal — the
+    incident).
+  - removed lines, marker present but its quote does not resolve via `cite` →
+    **block** (fabricated / paraphrased ask, not the user's words).
+  - removed lines, marker quote **resolves** → **pass to the judge**.
 
-  The "did anyone ask" check reads the human messages off the normalized
-  trajectory (`sr-session trajectory normalize`, `type == "user"`) — the same
-  ground-truth move as unit 16, and the first rule-side use of user-message
-  search that Thread 1's commands make clean.
+- **`collect-quote-and-diff.sh`** (prepare) + **`change-is-clean-and-absolute.md.j2`**
+  (judge) — reached only when a real removal has a grounded ask. The judge rules
+  the two things only a model can: (1) the change is **clean and targeted** —
+  only what the quote asked, nothing else dropped alongside it; and (2) it is
+  **absolute, not a delta** — the content states the final truth, it does not
+  narrate "the user meant X, not Y" or keep the old value as commentary (the
+  diff's job is to show the change, not the file's).
 
-- **`collect-removed-and-asks.sh`** (prepare) + **`loose-ask-covers-removal.md.j2`**
-  (judge) — reached only for the residue. `prepare` hands the judge exactly the
-  removed lines and the human messages (under `additionalContext`); the judge
-  rules whether a loose ask ("clean this up", "rewrite it properly") authorized
-  dropping *this specific* content, and refuses when a general improvement
-  request is being used to justify destroying provenance, a decision, or a fact.
+This is the first rule-side use of user-word search that Thread 1's `cite`
+makes clean — and the minimal core of the larger end-to-end-proof direction the
+unit now drafts (invariant ← quote ← test-case ← run-result ← tool-call,
+composed by a CLI into a deterministic, reference-only report).
 
 ## In tension with unit 07, by design
 
