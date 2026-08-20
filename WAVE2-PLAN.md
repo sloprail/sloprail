@@ -70,5 +70,30 @@ Continue from 035: examples/036_… upward, one dir per use case. Keep the `NNN_
 Reviewer checks ALL critical AND non-critical edge paths are tested. Loop reviewer→zero; all tests
 green; CI green. Merge each into draft/fileguard-format; remove worktree.
 
+## Findings during Wave 2
+- **eval-loop-maxing EXAMPLE BUG (fixed on base d9f175c):** the goal-verify gate had a bare
+  `require:[{context: goal-tracking}]`, which BLOCKS an unmet require → froze EVERY goal-free Stop
+  (the loop could never end in a session with no goal). Fixed by adding `match: context["goal-tracking"].active`
+  (the same match-skip the sibling keyword-coverage-registry gate uses), realizing run-verify.sh's
+  own "not active → permit" intent (previously dead code). Found by B4; B4's T050_02 updated to assert
+  the goal-free Stop is now PERMITTED.
+- **`tests/e2e/examples/deterministic_refactoring/` is a pre-existing RED OLD-FORMAT DUPLICATE**
+  (reads `examples/deterministic-refactoring/.sloprail/guardrails/…` — a path that no longer exists;
+  the example is now `deterministic-refactoring-mode/` new-format; last touched by 2af83b4, not a Wave-2
+  branch). It is the "duplicated old e2e of a superseded use case" GOAL.md Wave 3 deletes. B1 builds the
+  NEW replacement (dir 041 deterministic-refactoring-mode). → DELETE this old dir right after B1's 041
+  lands green (do NOT leave to Wave 3 — it's already broken and blocks `./tests/e2e/examples/...` green;
+  but delete only once the replacement exists, so coverage never drops).
+
 ## Status
-- [ ] B1 · [ ] B2 · [ ] B3 · [ ] B4
+- [ ] B1 (036-041 lifecycle) — RUNNING
+- [ ] B2 (042-045 judge) — RUNNING
+- [ ] B3 (046-049 judge+marker) — RUNNING
+- [x] B4 (050-051 composite, 013 deleted) — DONE, green, rebased on base; T050_02 corrected for the
+      example fix. AWAITING reviewer-to-zero gate, then merge.
+
+## a10n-cli#470 (unblocks D3/D4) — MERGEABLE ✅ (rebased onto main 8a2bce5e0; #469+#470 both preserved;
+  all claude-mock tests green; force-pushed). NEEDS USER: review+merge #470, then build the new
+  a10n-claude-mock binary onto PATH. THEN D3/D4 can run (drop InstallJudgeClaude + hand-crafted jsonl +
+  real-claude e2e → drive the upgraded mock; includes the Wave-2 judge e2e TODO(D3) markers and the
+  engine_repo_judges/015_06_real_agent/021_02_nested real-claude tests).
