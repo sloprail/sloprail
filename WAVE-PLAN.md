@@ -19,9 +19,9 @@ EXPLICITLY off the base (never Agent isolation).
 
 ### BATCH 1 — leaves, all independent, fan out together
 Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid conflicts):
-- worktree `events-vocab` (branch impl/events-vocab): 1a+1b+1c+1d — IMPLEMENTING
+- worktree `events-vocab` (impl/events-vocab): 1a+1b+1c+1d — RESUMED after API-error (was ~80% done, builds; finishing tests)
 - worktree `markers` (impl/markers): 1e — IMPL DONE (commit 5852a1b), IN REVIEW
-- worktree `match-scopes` (impl/match-scopes): 1f — IMPLEMENTING
+- worktree `match-scopes` (impl/match-scopes): 1f — IMPL DONE, rebased, IN REVIEW
 - worktree `traj-describe-cite` (impl/traj-describe-cite): 4b+4c — IMPLEMENTING
 
 - [ ] 1a  TurnEnd→Stop rename (cyclemod + refs; e2e dir 026 renamed)         [events-vocab]
@@ -29,13 +29,23 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - [ ] 1c  PreToolUse semantic event (bindable kind)                          [events-vocab]
 - [ ] 1d  Post-file events carry old/newMarkers + old/newContent; naming     [events-vocab]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
-- [ ] 1f  per-nature match SCOPES + GlobPattern shorthand                    [match-scopes]
+- [~] 1f  per-nature match SCOPES + GlobPattern shorthand — done, reviewing     [match-scopes]
 - [ ] 4b  session trajectory describe                                        [traj-describe-cite]
 - [ ] 4c  session trajectory cite (+ AskUserQuestion answer extraction)      [traj-describe-cite]
 
 NOTE (from markers agent, follow-up not blocker): services/sr-mark/marker.go WriteMarker emits
 fqns UNQUOTED — fine today (examples hand-write quoted frontmatter), but if sr-mark must ever WRITE
 a quoted multi-word fqn, reconcile then.
+
+
+### CROSS-SLICE CONTRACTS (from match-scopes agent — Batch 2/3 must honor)
+- `ContextState{Active bool, Payload map}`, `GateState{Status GateStatus}`, `GateStatus`(pass|fail)
+  now live in NEW package `internal/natures` (json tags active/payload/status). Batch-2 declaration
+  loading imports these from internal/natures.
+- Runtime env shape the dispatch slices (Batch 3) must assemble:
+  * File matcher: event Fields are FLAT — {path, markers, context}.
+  * Gate/Context matcher: NESTED — {event: {<kind fields>}, context: {...}} (context top-level, no gates).
+- Marker structural shape used by scopes: {kind, fqn, line(int)} — mirror of filemod.Marker.
 
 ### BATCH 2 — after batch 1
 - [ ] 2   .sloprail/{file-guard,gate,context,goal}/*.yaml + structure.yaml loaders (needs 1b/1c/1f)

@@ -47,6 +47,13 @@ the agent the ready path:
 3. Agent implements + tests there, commits to `impl/<slice>`.
 4. Reviewer agent (same worktree). Loop fix→review until ZERO issues + green
    tests + green build.
+   **REBASE FIRST (learned the hard way):** every slice branch was cut off an
+   EARLIER base commit, but the base advances with each merge. Before reviewing
+   or merging a slice, rebase it onto the current base so its diff shows ONLY
+   its own new work (not sibling slices as spurious deletions):
+     `cd <slice-worktree> && git rebase draft/fileguard-format`
+   then build+test, THEN review, THEN merge. Skipping this makes the merge
+   clobber already-merged slices.
 5. Merge `impl/<slice>` → `draft/fileguard-format`, then `git worktree remove`
    the slice + `git branch -D impl/<slice>`.
 
