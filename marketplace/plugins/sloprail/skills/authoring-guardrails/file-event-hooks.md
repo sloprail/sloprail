@@ -27,7 +27,8 @@ reported rather than scrolling away.
 Revalidation keeps this from re-judging content that has not changed: a file
 already judged against the same fingerprint is skipped.
 
-The Post kinds carry the same path field as their Pre counterparts, so one hook
+Each Post kind mirrors its Pre counterpart's shape — the same `path`,
+`oldContent`/`newContent` and `oldMarkers`/`newMarkers` fields — so one hook
 bound to both costs one script rather than two kept in step.
 
 A Post hook is also where a cycle-wide rule does its **recording** — the engine
@@ -40,48 +41,62 @@ what it was told and lets a cycle-bound hook judge:
 Create and update differ in how they answer "what will this file hold
 afterwards", and the difference decides which field a rule reads.
 
-A **create** carries the content outright. The file does not exist yet, so a
-rule that wants to look at what would be written has nowhere else to look; on
-the other kinds it is already on disk. A create's content is its result — there
-are no prior bytes for a replacement to be relative to.
+A **create** carries the pending body in `newContent`. The file does not exist
+yet, so a rule that wants to look at what would be written has nowhere else to
+look; on the other kinds it is already on disk. A create's `newContent` is its
+whole result — there are no prior bytes for a replacement to be relative to, so
+a create has no `oldContent`.
 
-An **update** carries the post-edit bytes as a separate field, paired with a
-boolean saying whether the engine could work them out. The pair exists because
-absence cannot say it: a declared field the event omits is filled with its
-type's zero value, so an uncomputable result and a genuinely emptied file would
-be the same observation. A `sed -i` whose outcome is unknowable would look like
-a command that empties the file.
+An **update** carries the file's current bytes in `oldContent` and the post-edit
+bytes in `newContent`, paired with a `resultKnown` boolean saying whether the
+engine could work `newContent` out. The pair exists because absence cannot say
+it: a declared field the event omits is filled with its type's zero value, so an
+uncomputable `newContent` and a genuinely emptied file would be the same
+observation. A `sed -i` whose outcome is unknowable would look like a command
+that empties the file.
 
-So guard on the boolean, then read the value:
+So guard on the boolean, then read the value (a PreFileUpdate matcher):
 
 ```
-resultKnown && !(result contains "---")   refuse a write that would strip the
-                                          frontmatter, and say nothing where
-                                          the engine cannot see
-!resultKnown                              catch the underivable cases
-                                          deliberately
+resultKnown && !(newContent contains "---")   refuse a write that would strip
+                                              the frontmatter, and say nothing
+                                              where the engine cannot see
+!resultKnown                                  catch the underivable cases
+                                              deliberately
 ```
 
-A rule that reads the result without guarding gets the empty string on the
-underivable cases. That is stated here so it is a choice rather than a surprise.
+A rule that reads `newContent` without guarding on `resultKnown` gets the empty
+string on the underivable cases. That is stated here so it is a choice rather
+than a surprise.
 
-A judge hook bound to an update should defer when the result is not known and
-let the Post binding judge what actually landed. Neither kind alone covers the
-ground.
+A judge hook bound to an update should defer when `newContent` is not known
+(`!resultKnown`) and let the Post binding judge what actually landed. Neither
+kind alone covers the ground.
 
-**A delete carries the path and nothing else.** There is no text to read markers
-out of, and an always-empty field is one a rule can match on and never learn
-anything from.
+**A delete carries `oldContent` and `oldMarkers` — the bytes about to be lost
+and their markers — but no `newContent` or `newMarkers`.** Nothing remains, so
+there is no result to read and no new text to scan markers out of.
 
 ## Markers
 
-Create and update carry the `// sr:<kind>` markers found in the file, as a list
-whose elements have a declared shape — so a mistyped key inside the predicate is
-refused at load rather than evaluating false forever.
+A file event carries the `// sr:<kind>` markers as a list whose elements have a
+declared shape — so a mistyped key inside the predicate is refused at load rather
+than evaluating false forever. The field name says which text the markers were
+scanned from:
+
+- `newMarkers` — the markers the written result would carry. On a **create** it
+  is the only markers field (there is no prior file); on an **update** it is the
+  markers of `newContent`. `any(newMarkers, .kind == "decision")` asks whether
+  the result would carry a marker; `len(newMarkers) == 0` whether it carries
+  none.
+- `oldMarkers` — the markers the file carries NOW, before the change. On an
+  **update** and a **delete**; a create has none. `any(oldMarkers, .kind ==
+  "asked")` asks whether the file already carries a marker.
 
 ```
-any(markers, .kind == "decision")
-len(markers) == 0
+any(newMarkers, .kind == "decision")
+len(newMarkers) == 0
+any(oldMarkers, .kind == "asked")
 ```
 
 Write markers with `sr-mark`; see its `--help`.

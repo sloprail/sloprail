@@ -32,7 +32,7 @@ len(invocations) > 1
 Check the type printed beside each field — the two groups are not
 interchangeable.
 
-A field of type `bool` is used directly: `resultKnown && result contains "---"`.
+A field of type `bool` is used directly: `resultKnown && newContent contains "---"`.
 
 **The inside of a list is checked only where its element is declared.** A module
 that declares the element's shape gets a mistyped key refused at load, with the

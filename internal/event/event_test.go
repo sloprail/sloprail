@@ -25,7 +25,7 @@ func TestEvent_RoundTrip(t *testing.T) {
 	cases := map[string]Event{
 		"file event": {
 			Kind:   "PreFileCreate",
-			Fields: map[string]any{"path": "a.md", "content": "# Notes\n"},
+			Fields: map[string]any{"path": "a.md", "newContent": "# Notes\n"},
 		},
 		"subjectless": {
 			Kind:   "Stop",
@@ -42,7 +42,7 @@ func TestEvent_RoundTrip(t *testing.T) {
 		},
 		"unicode": {
 			Kind:   "PreFileCreate",
-			Fields: map[string]any{"path": "памʼять/файл.md", "content": "Правило ✅\n"},
+			Fields: map[string]any{"path": "памʼять/файл.md", "newContent": "Правило ✅\n"},
 		},
 	}
 

@@ -7,13 +7,13 @@
 # no model: the claimed origin is a commit, the claimed result is in hand, and
 # the comparison between them is a diff.
 #
-# The origin is read from a MARKER, not parsed out of the text. `markers` is an
-# engine field: the scanner finds every `sr:<kind> <fqn>` line, and the matcher
-# in GUARDRAIL.md selects on `any(markers, .kind == "moved-from")` — an
-# expression the engine type-checks when the guardrail loads, so a typo inside
-# the predicate is refused there rather than silently never firing. What this
-# script keeps is the part markers do not do: reading the source out of git and
-# comparing bytes.
+# The origin is read from a MARKER, not parsed out of the text. `newMarkers` is
+# an engine field: the scanner finds every `sr:<kind> <fqn>` line in the written
+# result, and the matcher in GUARDRAIL.md selects on `any(newMarkers, .kind ==
+# "moved-from")` — an expression the engine type-checks when the guardrail loads,
+# so a typo inside the predicate is refused there rather than silently never
+# firing. What this script keeps is the part markers do not do: reading the
+# source out of git and comparing bytes.
 #
 # Refuses on anything it cannot verify. A marker it cannot parse, a commit it
 # cannot reach, a line range outside the file at that commit — each is a refusal

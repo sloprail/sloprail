@@ -1,7 +1,7 @@
 ---
 hooks:
   PreFileCreate:
-    - matcher: any(markers, .kind == "moved-from")
+    - matcher: any(newMarkers, .kind == "moved-from")
       hooks:
         - type: command
           command: ./verify-move.sh
@@ -42,14 +42,14 @@ them by the line numbers the event reports before diffing.
 
 Markers are the engine's abstraction for "this piece of text says something
 about itself". The scanner reads every `sr:<kind> <fqn>` line out of the pending
-content, and the event carries them as a list of `{kind, fqn, line}`. That buys
-three things this rule would otherwise have had to build:
+`newContent`, and the event carries them as a list of `{kind, fqn, line}` under
+`newMarkers`. That buys three things this rule would otherwise have had to build:
 
-- **The matcher can select on them.** `any(markers, .kind == "moved-from")` is
-  type-checked when the guardrail loads — a typo inside the predicate is refused
-  there, rather than compiling into a rule that quietly never fires. The old
-  `content contains "sloprail:moved-from"` matched a substring anywhere in the
-  file, including inside a string literal or a comment about the rule.
+- **The matcher can select on them.** `any(newMarkers, .kind == "moved-from")`
+  is type-checked when the guardrail loads — a typo inside the predicate is
+  refused there, rather than compiling into a rule that quietly never fires. The
+  old `newContent contains "sloprail:moved-from"` matched a substring anywhere in
+  the file, including inside a string literal or a comment about the rule.
 - **The hook reads a field, not text.** The origin arrives parsed. There is no
   second grammar in the shell script to keep in step with the writer's.
 - **`sr-mark` writes them.** One tool, one written form, the right comment
@@ -138,11 +138,12 @@ appears in a string literal, the check expects it renamed there too.
 Read this part before relying on the rule.
 
 **It only sees files being created.** A move that lands by editing a file that
-already exists is not checked at all — the engine's create event is the only one
-carrying the content to compare, so appending moved code to an existing file
-passes unexamined. `PreFileUpdate` does carry `markers`, but they are the
-markers in the bytes the write is about to REPLACE, not the bytes it would
-leave, so binding this rule there would check the wrong text.
+already exists is not checked at all — this rule binds `PreFileCreate` alone, so
+appending moved code to an existing file passes unexamined. `PreFileUpdate` does
+carry markers, split into `oldMarkers` (the bytes the write is about to REPLACE)
+and `newMarkers` (the result), and it carries the result in `newContent` — so a
+future version could bind there and read `newMarkers`/`newContent`. This one does
+not, which is the stated limit rather than an oversight.
 
 **It only fires on files that carry a marker.** A new file with no
 `sr:moved-from` marker is not examined. An agent that moves code and simply

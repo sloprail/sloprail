@@ -209,9 +209,9 @@ func TestLookup_KindNobodyOwns(t *testing.T) {
 
 func TestKindDeclFor(t *testing.T) {
 	path := FieldDecl{Name: "path", Type: TypeString}
-	content := FieldDecl{Name: "content", Type: TypeString}
+	newContent := FieldDecl{Name: "newContent", Type: TypeString}
 	file := &fakeModule{name: "file", kinds: []KindDecl{
-		{Name: "PreFileCreate", Fields: []FieldDecl{path, content}},
+		{Name: "PreFileCreate", Fields: []FieldDecl{path, newContent}},
 		{Name: "PreFileUpdate", Fields: []FieldDecl{path}},
 	}}
 
@@ -221,13 +221,13 @@ func TestKindDeclFor(t *testing.T) {
 	decl, ok := r.KindDeclFor("PreFileCreate")
 	require.True(t, ok)
 	assert.Equal(t, "PreFileCreate", decl.Name)
-	assert.Equal(t, []FieldDecl{path, content}, decl.Fields,
+	assert.Equal(t, []FieldDecl{path, newContent}, decl.Fields,
 		"the fields a matcher may be checked against")
 
 	decl, ok = r.KindDeclFor("PreFileUpdate")
 	require.True(t, ok)
 	assert.Equal(t, []FieldDecl{path}, decl.Fields,
-		"content is carried by PreFileCreate alone")
+		"newContent is carried by PreFileCreate alone")
 }
 
 func TestKindDeclFor_KindNobodyOwns(t *testing.T) {

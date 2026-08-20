@@ -29,7 +29,7 @@ names that kind's real fields **with their types**:
 
 ```
   - event "PreFileCreate" binding 0: matcher "nope startsWith \"x/\"":
-    unknown name nope (1:1) — PreFileCreate carries content (string), markers (list), path (string)
+    unknown name nope (1:1) — PreFileCreate carries newContent (string), newMarkers (list), path (string)
 ```
 
 That is the same registry the engine enforces against, reported by the same
@@ -132,7 +132,7 @@ because deciding which of a batch a rule applied to is the matcher's work,
 already done:
 
 ```json
-{"event":{"kind":"PreFileCreate","fields":{"path":"x/a.md","content":"hi"}},
+{"event":{"kind":"PreFileCreate","fields":{"path":"x/a.md","newContent":"hi","newMarkers":[]}},
  "guardrailDir":"/abs/path/to/.sloprail/guardrails/<name>"}
 ```
 
