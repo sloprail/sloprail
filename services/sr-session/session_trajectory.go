@@ -83,24 +83,31 @@ to read another — the parent or a sibling that describe named.`,
 // # Why not resolve the current session from CLAUDE_SESSION_ID when --path is absent
 //
 // The reviewer asked whether cite with no --path should resolve the current
-// session from CLAUDE_SESSION_ID rather than from a piped payload. It cannot,
-// because that variable is not there to read: Claude Code does not export
-// CLAUDE_SESSION_ID into the environment of an agent's own Bash tool calls (it
-// resolves in a skill prompt's string substitution, but reads back empty in a tool
-// call — an open request on the harness, not a shipped guarantee). Wiring cite to
-// it would mean keying the whole agent-facing path on a variable that is empty in
-// exactly the context cite runs in, which resolves nothing and hides the failure.
+// session from CLAUDE_SESSION_ID rather than from a piped payload. It cannot, and
+// the reason is documented in the Claude Code docs rather than guessed:
 //
-// So the two resolutions cite already has are the whole of it, and they cover the
-// two ways it is actually invoked. An agent at a terminal names the trajectory with
-// --path — the explicit override, and the case the lazy-stdin note above exists for.
-// A hook script pipes the payload it was handed, and record() reads the transcript
-// off it. There is no third invocation that has neither a --path nor a payload yet
-// knows which session it is, so there is nothing for an env-var branch to serve;
-// the honest resolution is the payload the harness already provides, keyed the same
-// way `id` and `query` key theirs. Were the harness to start exporting a session id
-// to tool calls, the place to add it is here, as a branch below --path and above the
-// payload read — but not before it exists.
+//   - There is no CLAUDE_SESSION_ID in a tool call's environment. The session id
+//     reaches a script only as the `session_id` field of a HOOK's JSON stdin (or via
+//     `claude -p --output-format json`); transcripts are stored at
+//     ~/.claude/projects/<project>/<session-id>.jsonl with the id in the PATH, not
+//     the environment. [code.claude.com/docs/en/sessions.md;
+//     code.claude.com/docs/en/hooks.md, "Common input fields"]
+//   - Even a session id, however obtained, does not distinguish a sub-agent from the
+//     root: it names the root's file either way. The fields that DO mark a sub-agent
+//     (agent_id / agent_type) are delivered only on a hook payload, never to a tool
+//     call. [code.claude.com/docs/en/hooks.md]
+//
+// So an env-var branch would key the agent-facing path on a variable that is empty
+// in exactly the context cite runs in, and even a non-empty one would resolve the
+// root while a sub-agent was asking — the very citation cite must not mint. The two
+// resolutions cite already has are the whole of it: an explicit --path (the agent
+// at a terminal), and a hook payload record() reads (the hook script). What the
+// reviewer's concern demands is not a third resolution but a REFUSAL: cite's own
+// RunE fails closed when the only thing that could resolve the trajectory is a
+// session id, precisely because that names the root and cannot exclude a sub-agent
+// caller — see failClosedNoPath in session_trajectory_cite.go. Were the harness to
+// start exporting a session id to tool calls, it still would not belong here as a
+// silent resolution, because it could not tell whose session it named.
 func resolveTrajectory(cmd *cobra.Command) (string, HookPayload, error) {
 	if flag, _ := cmd.Flags().GetString("path"); flag != "" {
 		return flag, HookPayload{}, nil

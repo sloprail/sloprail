@@ -27,48 +27,23 @@ import (
 // CitationMatch is one resolved citation: the user's own words the quote landed
 // on, and where they sit. Rendered on stdout as `<path>:<line>`, carried as a
 // value so the path and line are named rather than left for a reader to split.
+//
+// It is `<path>:<line>` and nothing more, deliberately. cite's whole job is to
+// turn a remembered quote into a resolvable location; what SITS at that location
+// — the whole AskUserQuestion envelope a judge might want to read, question and
+// answer both — is a separate concern with a separate home. A change grounded in
+// an answer wants the question beside it before a judge can weigh it, but that
+// fetch belongs in the judge-prepare piece, which is handed a citation's path and
+// line and reads the envelope back with EnvelopeAt — not in the citation itself.
+// Keeping the match to its two fields is what keeps cite's stdout a stable
+// `<path>:<line>` contract and the envelope-fetch a reusable transcript helper
+// any consumer can call, rather than a payload cite must always assemble.
 type CitationMatch struct {
 	// Path is the absolute path of the trajectory file the match sits in.
 	Path string
 
 	// Line is the 1-based physical line of the matched entry in that file.
 	Line int
-
-	// Grounding is the WHOLE AskUserQuestion tool_result envelope(s) carried on the
-	// matched entry — the full `The user answered: "<q>"="<a>". ...` string, question
-	// and answer both — rather than only the extracted answer.
-	//
-	// Empty when the match landed on a plain typed message: there is no envelope to
-	// carry, and the message text is already the whole of what the user said. Present
-	// only for an answer-grounded match, where the answer ALONE is unclear — a judge
-	// evaluating a change grounded in "the second option" cannot tell what was asked,
-	// nor which of several sibling answers the user meant, without the question beside
-	// it. One entry may carry several envelopes (several AskUserQuestion results on one
-	// user turn), so this is a list, in the order they sit on the entry.
-	//
-	// # Why this is on the match rather than on cite's stdout
-	//
-	// This is the cite-side half of the decision that a change's JUDGE sees the whole
-	// tool-call result, not the answer alone (PR review #4). The split is deliberate:
-	//
-	//   - cite's CLI stays exactly what an agent scripts against — `<path>:<line>` on
-	//     stdout, the outcome in the exit code. Emitting the envelope there would
-	//     pollute a contract other tooling parses positionally, so the CLI does NOT
-	//     grow a grounding flag; this field is a Go-level surface, not a stdout one.
-	//   - the CONSUMER is a judge-input assembly, which is Go (internal/dispatch),
-	//     already imports this package, and already grounds a change by calling Cite.
-	//     So it reads match.Grounding directly and spreads it into the judge input's
-	//     additionalContext — one call yields both the location and the whole result,
-	//     with no second "read the entry at that line" round-trip.
-	//
-	// The consuming wiring itself is NOT here and is not yet built: the judge-input
-	// assembly today carries `event` + `transcriptPath` + `context` + a prepare's
-	// `additionalContext` (see internal/declaration FileJudgeInput and dispatch's
-	// judgeInputJSON), with no grounding path. The slice that adds unit 17's
-	// no-unasked-deletion grounding is where a grounded change's judge input starts
-	// carrying this — by calling Cite for the citation and putting match.Grounding in
-	// front of the judge. This field is the enabling primitive that slice consumes.
-	Grounding []string
 }
 
 // Cite finds where quote sits in the user's own words within the trajectory at
@@ -105,15 +80,7 @@ func Cite(path, quote string) ([]CitationMatch, error) {
 			continue
 		}
 		if userWordsContain(e.Entry, quote) {
-			matches = append(matches, CitationMatch{
-				Path: path,
-				Line: e.Line,
-				// The whole envelope(s) for the answer case, so a judge-input
-				// assembly reading this match sees question+answer, not the answer
-				// alone. Nil for a plain-message match: there is no tool-call result
-				// to carry, only the message the line already names.
-				Grounding: answerEnvelopes(e.Message),
-			})
+			matches = append(matches, CitationMatch{Path: path, Line: e.Line})
 		}
 	}
 	return matches, nil
@@ -254,54 +221,6 @@ func answerText(raw json.RawMessage) []string {
 		}
 		for _, envelope := range toolResultStrings(b.Content) {
 			out = append(out, extractAnswers(envelope)...)
-		}
-	}
-	return out
-}
-
-// answerEnvelopes returns the WHOLE AskUserQuestion answer envelope(s) recorded on
-// a user entry — the full `The user answered: "<q>"="<a>". ...` string, question
-// text and trailing instruction included — rather than the extracted answers.
-//
-// This is the counterpart to answerText, and the two differ in exactly the field
-// the difference is about. answerText pulls only each <answer> because that is what
-// the user SAID, and a quote must never resolve to the agent's question — see its
-// note. This returns the envelope UNCUT because its consumer is not the citation
-// search but a JUDGE-INPUT assembly, which needs the question to make the answer
-// mean anything: "the second option" is not a rule a judge can check without the
-// question it answered, nor without the sibling answers the user may have referred
-// to. The two live side by side deliberately — cite still searches answerText's
-// answer-only view, and only a match's Grounding carries this whole-envelope view.
-//
-// Only genuine answer envelopes are returned: a tool_result whose content does not
-// open with the answer prefix is an ordinary tool's output and is skipped, the same
-// line answerText draws — so a match on a plain typed message, or on a user turn
-// carrying only ordinary tool results, yields nothing here and Grounding stays nil.
-func answerEnvelopes(raw json.RawMessage) []string {
-	if len(raw) == 0 {
-		return nil
-	}
-	var msg userMessage
-	if json.Unmarshal(raw, &msg) != nil || len(msg.Content) == 0 {
-		return nil
-	}
-	var blocks []userContentBlock
-	if json.Unmarshal(msg.Content, &blocks) != nil {
-		return nil
-	}
-	var out []string
-	for _, b := range blocks {
-		if b.Type != "tool_result" || len(b.Content) == 0 {
-			continue
-		}
-		for _, envelope := range toolResultStrings(b.Content) {
-			// The same "is this an answer envelope" test extractAnswers makes: the
-			// answer prefix present means it is the user's prompted answer and the
-			// whole string is worth carrying; absent means it is a tool's output and
-			// is not.
-			if strings.Contains(envelope, answerPrefix) {
-				out = append(out, envelope)
-			}
 		}
 	}
 	return out
