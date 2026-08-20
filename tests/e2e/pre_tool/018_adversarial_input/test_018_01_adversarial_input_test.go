@@ -56,6 +56,10 @@ exit 0
 `
 
 // handed reads the paths and contents a hook was given, in order.
+//
+// The created body is read from `newContent`, the spec's name for what a write
+// would leave behind (a create states it there; the old `content` field was
+// renamed). See events/main.tsp.
 func handed(t *testing.T, lines []string) []struct{ Path, Content string } {
 	t.Helper()
 	var out []struct{ Path, Content string }
@@ -64,7 +68,7 @@ func handed(t *testing.T, lines []string) []struct{ Path, Content string } {
 			Event struct {
 				Fields struct {
 					Path    string `json:"path"`
-					Content string `json:"content"`
+					Content string `json:"newContent"`
 				} `json:"fields"`
 			} `json:"event"`
 		}
