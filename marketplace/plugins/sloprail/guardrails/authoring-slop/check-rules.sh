@@ -49,12 +49,12 @@ path="$(printf '%s' "$event" | jq -r '.event.fields.path // empty' 2>/dev/null)"
 
 # The bytes to judge.
 #
-# On a create the event carries them, because the file is not on disk yet. On an
-# update it does not — `result` is only present when derivable — so the disk is
-# the source, and it holds the pre-edit content. That is the honest limit and it
-# is rule 2 applying to this rule: what cannot be predicted is read after the
+# On a create the event carries them as `newContent`, because the file is not on
+# disk yet. On an update `newContent` is only present when derivable, so the disk
+# is the source and it holds the pre-edit content. That is the honest limit and
+# it is rule 2 applying to this rule: what cannot be predicted is read after the
 # fact, and a hook edited into slop is caught on the next create or by review.
-body="$(printf '%s' "$event" | jq -r '.event.fields.content // empty' 2>/dev/null)"
+body="$(printf '%s' "$event" | jq -r '.event.fields.newContent // empty' 2>/dev/null)"
 if [ -z "$body" ]; then
   abs="${SR_WORKSPACE:-.}/$path"
   [ -f "$abs" ] || exit 0
@@ -84,14 +84,21 @@ fi
 
 # --- Rule 2: no strategy for unresolvable content ---------------------------
 #
-# Reading `result` without consulting `resultKnown` reads an absent field as the
-# empty string, which is indistinguishable from a write that empties the file.
-if printf '%s' "$body" | grep -q 'fields\.result' 2>/dev/null &&
+# On PreFileUpdate `newContent` is OPTIONAL — a command-derived update leaves it
+# absent — and an absent field reads as the empty string, which is
+# indistinguishable from a write that empties the file. `resultKnown` is the
+# companion that tells the two apart. Reading `newContent` without consulting it
+# is the slop this catches. (On PreFileCreate `newContent` is always present, so
+# a create-only hook needs no resultKnown; the heuristic cannot tell the two
+# kinds apart by grep and errs toward flagging, which the guidance below owns.)
+if printf '%s' "$body" | grep -q 'fields\.newContent' 2>/dev/null &&
    ! printf '%s' "$body" | grep -q 'resultKnown' 2>/dev/null; then
-  note "rules/content-may-be-unresolvable — reads .event.fields.result without .resultKnown.
-    An absent result reads as \"\", which is indistinguishable from a write that
-    empties the file. Check resultKnown first, and say in the body what the rule
-    does when the result cannot be derived — usually: defer to the Post kind."
+  note "rules/content-may-be-unresolvable — reads .event.fields.newContent without .resultKnown.
+    On a PreFileUpdate an absent newContent reads as \"\", which is
+    indistinguishable from a write that empties the file. Check resultKnown
+    first, and say in the body what the rule does when the result cannot be
+    derived — usually: defer to the Post kind. (A rule bound only to
+    PreFileCreate, where newContent is always present, can ignore this.)"
 fi
 
 # --- Rule 6: content interpolated into a prompt without a DATA clause -------

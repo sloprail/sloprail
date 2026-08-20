@@ -119,12 +119,22 @@ func CompileContextMatch(src string, kind module.KindDecl) (*Matcher, error) {
 //	markers []Marker                the sr: markers the file carries
 //	context map[string]ContextState every declared context, by name
 //
-// markers is typed all the way into its element's fields, the same way
-// filemod's own `markers` field is, so `any(markers, .kind == "asked")` has its
-// predicate body checked and a typo inside it — `.knid` — is refused at load
-// rather than silently never firing. The element shape is kept in step with
-// filemod.Kinds by construction: both describe the same three keys, and
-// markerElem is the single place this side states them.
+// `markers` is the spec's own FileMatchScope field (singular), NOT an event
+// field. This is the seam a file-guard's scope is split for: a file-guard
+// reasons about a FILE'S SETTLED STATE, so it sees the one set of markers the
+// file carries — whereas the EVENTS describe a CHANGE and therefore carry a
+// before/after pair (`oldMarkers`/`newMarkers` on filemod's file kinds). The two
+// are deliberately different shapes, which is why this scope is not built from
+// filemod.Kinds and must not be: the file-guard dispatch (a later slice) will
+// populate this `markers` by scanning the settled file, the same scan filemod
+// runs, exposed under the single name the spec's FileMatchScope declares.
+//
+// It is typed all the way into its element's fields, so `any(markers, .kind ==
+// "asked")` has its predicate body checked and a typo inside it — `.knid` — is
+// refused at load rather than silently never firing. The element shape is the
+// Marker model's three keys (kind/fqn/line), and markerElem is the single place
+// this side states them — kept faithful to the spec's Marker by the test that
+// pins the shape, not by a shared symbol with filemod.
 //
 // context is left open (types.Any), NOT a closed map, and that is deliberate.
 // The keys are project-defined context NAMES not known when the scope is built

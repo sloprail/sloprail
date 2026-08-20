@@ -25,10 +25,10 @@ func TestEvent_RoundTrip(t *testing.T) {
 	cases := map[string]Event{
 		"file event": {
 			Kind:   "PreFileCreate",
-			Fields: map[string]any{"path": "a.md", "content": "# Notes\n"},
+			Fields: map[string]any{"path": "a.md", "newContent": "# Notes\n"},
 		},
 		"subjectless": {
-			Kind:   "TurnEnd",
+			Kind:   "Stop",
 			Fields: map[string]any{},
 		},
 		"nested fields": {
@@ -42,7 +42,7 @@ func TestEvent_RoundTrip(t *testing.T) {
 		},
 		"unicode": {
 			Kind:   "PreFileCreate",
-			Fields: map[string]any{"path": "памʼять/файл.md", "content": "Правило ✅\n"},
+			Fields: map[string]any{"path": "памʼять/файл.md", "newContent": "Правило ✅\n"},
 		},
 	}
 
@@ -65,12 +65,12 @@ func TestEvent_FieldsIsAlwaysAnObjectOnTheWire(t *testing.T) {
 	// indexing .fields cannot read. The key is always present and always an
 	// object, so a hook needs no special case for the events carrying nothing.
 	for _, e := range []Event{
-		{Kind: "TurnEnd"}, // nil map
-		{Kind: "TurnEnd", Fields: map[string]any{}}, // empty map
+		{Kind: "Stop"},                           // nil map
+		{Kind: "Stop", Fields: map[string]any{}}, // empty map
 	} {
 		out, err := json.Marshal(e)
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"kind":"TurnEnd","fields":{}}`, string(out))
+		assert.JSONEq(t, `{"kind":"Stop","fields":{}}`, string(out))
 		assert.NotContains(t, string(out), "null")
 	}
 }
@@ -79,7 +79,7 @@ func TestEvent_MarshalDoesNotMutateTheEvent(t *testing.T) {
 	// MarshalJSON fills in the empty map on its own copy. An event whose
 	// Fields turned from nil into {} by being serialised would be a value that
 	// changes when it is looked at.
-	e := Event{Kind: "TurnEnd"}
+	e := Event{Kind: "Stop"}
 	_, err := json.Marshal(e)
 	require.NoError(t, err)
 	assert.Nil(t, e.Fields, "serialising an event must not change it")
@@ -89,16 +89,16 @@ func TestEvent_NestedMarshalAlsoGetsAnObject(t *testing.T) {
 	// How a hook actually receives one: nested under a payload, which is what
 	// session_pre_tool marshals. A method on the value type is reached here
 	// only because the event is stored as a value, so this is worth pinning.
-	out, err := json.Marshal(map[string]any{"event": Event{Kind: "TurnEnd"}})
+	out, err := json.Marshal(map[string]any{"event": Event{Kind: "Stop"}})
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"event":{"kind":"TurnEnd","fields":{}}}`, string(out))
+	assert.JSONEq(t, `{"event":{"kind":"Stop","fields":{}}}`, string(out))
 }
 
 func TestEvent_NullFieldsStillUnmarshals(t *testing.T) {
 	// Reading is unchanged: an event recorded before this, or written by hand,
 	// still parses. Only what we emit is constrained.
 	var back Event
-	require.NoError(t, json.Unmarshal([]byte(`{"kind":"TurnEnd","fields":null}`), &back))
+	require.NoError(t, json.Unmarshal([]byte(`{"kind":"Stop","fields":null}`), &back))
 	assert.Nil(t, back.Fields)
 }
 

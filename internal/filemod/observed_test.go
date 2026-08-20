@@ -13,19 +13,36 @@ import (
 )
 
 // fakeObserved is a difference already established against the baseline, built
-// inline. Only the three methods the module reads are needed.
+// inline. Only the four methods the module reads are needed.
 type fakeObserved struct {
 	root  string
 	paths []string
 	// before is the set of paths that were present at the baseline. A path
 	// absent from the map was not there.
 	before map[string]bool
+	// baselineContent is the bytes each path held at the baseline. Optional: a
+	// path present at the baseline but absent here reads back as an empty,
+	// readable blob, which is all most tests need — they assert Kind and Path,
+	// not what the prior bytes were. A test that cares about oldContent supplies
+	// the value here.
+	baselineContent map[string]string
 }
 
 func (o fakeObserved) Root() string    { return o.root }
 func (o fakeObserved) Paths() []string { return o.paths }
 func (o fakeObserved) ExistedAtBaseline(path string) bool {
 	return o.before[path]
+}
+
+// BaselineContent returns the file's bytes at the baseline, and whether they
+// could be read. A create is never asked (it declares no oldContent); an update
+// or delete gets its supplied content, or an empty-but-readable blob when the
+// baseline held the path but the test named no bytes for it.
+func (o fakeObserved) BaselineContent(path string) (string, bool) {
+	if c, ok := o.baselineContent[path]; ok {
+		return c, true
+	}
+	return "", o.before[path]
 }
 
 // tree lays out a root with the named files present on disk, and returns it.
@@ -142,20 +159,31 @@ func TestClassify_EveryCombination(t *testing.T) {
 
 // --- what a delete carries ---------------------------------------------------
 
-func TestObserved_DeleteCarriesPathAndNothingElse(t *testing.T) {
-	// There is no content to read for a deleted file, and the spec declares
-	// PostFileDelete with a path and no more. A field the spec does not declare
-	// is one no matcher can compile against.
+func TestObserved_DeleteCarriesTheBytesAboutToBeLost(t *testing.T) {
+	// There is nothing on disk to read for a deleted file, so newContent and
+	// newMarkers are not declared — but the spec declares PostFileDelete with
+	// oldContent and oldMarkers, the bytes about to be lost and their markers,
+	// which come from the session baseline the producer still holds.
 	root := tree(t)
 
 	events := observe(t, fakeObserved{
-		root:   root,
-		paths:  []string{"gone.md"},
-		before: map[string]bool{"gone.md": true},
+		root:            root,
+		paths:           []string{"gone.md"},
+		before:          map[string]bool{"gone.md": true},
+		baselineContent: map[string]string{"gone.md": "# sr:doc gone.thing\nbody\n"},
 	})
 
 	require.Len(t, events, 1)
-	assert.Equal(t, map[string]any{FieldPath: "gone.md"}, events[0].Fields)
+	assert.Equal(t, map[string]any{
+		FieldPath:       "gone.md",
+		FieldOldContent: "# sr:doc gone.thing\nbody\n",
+		FieldOldMarkers: []any{
+			map[string]any{KeyMarkerKind: "doc", KeyMarkerFQN: "gone.thing", KeyMarkerLine: 1},
+		},
+	}, events[0].Fields,
+		"a delete carries the baseline bytes and their markers, and no result fields")
+	assert.NotContains(t, events[0].Fields, FieldNewContent, "a delete leaves no result")
+	assert.NotContains(t, events[0].Fields, FieldNewMarkers, "a delete leaves nothing to scan")
 }
 
 func TestObserved_DeleteOfAFileWhoseParentIsAlsoGone(t *testing.T) {
@@ -174,24 +202,50 @@ func TestObserved_DeleteOfAFileWhoseParentIsAlsoGone(t *testing.T) {
 	assert.Equal(t, "pkg/deep/nested.go", events[0].Fields[FieldPath])
 }
 
-// --- no Post kind carries content -------------------------------------------
+// --- each Post kind carries the contents its declaration names --------------
 
-func TestObserved_NoKindCarriesContent(t *testing.T) {
-	// Including the create. Unlike PreFileCreate the file is on disk by the
-	// time this runs, so a hook reads it there rather than having it copied
-	// through every event — and the spec declares no content on any Post kind.
+func TestObserved_EachKindCarriesItsDeclaredContents(t *testing.T) {
+	// A create has only newContent (read from disk, where the file now sits); a
+	// delete has only oldContent (the baseline bytes, no longer on disk); an
+	// update has both. The old model carried content on no Post kind; the new one
+	// carries it exactly where the declaration says, so a create never asks the
+	// baseline and a delete never reads the disk.
 	root := tree(t, "created.md", "updated.md")
 
 	events := observe(t, fakeObserved{
 		root:   root,
 		paths:  []string{"created.md", "updated.md", "deleted.md"},
 		before: map[string]bool{"updated.md": true, "deleted.md": true},
+		baselineContent: map[string]string{
+			"updated.md": "old updated body\n",
+			"deleted.md": "old deleted body\n",
+		},
 	})
 
 	require.Len(t, events, 3)
+	byPath := map[string]event.Event{}
 	for _, e := range events {
-		assert.NotContains(t, e.Fields, FieldContent, "kind %s", e.Kind)
+		byPath[e.Fields[FieldPath].(string)] = e
 	}
+
+	create := byPath["created.md"]
+	assert.Equal(t, KindPostCreate, create.Kind)
+	assert.Equal(t, "content of created.md\n", create.Fields[FieldNewContent],
+		"a create's newContent is read from disk as it now sits")
+	assert.NotContains(t, create.Fields, FieldOldContent, "a create has no prior bytes")
+
+	update := byPath["updated.md"]
+	assert.Equal(t, KindPostUpdate, update.Kind)
+	assert.Equal(t, "old updated body\n", update.Fields[FieldOldContent],
+		"an update's oldContent is the session baseline's")
+	assert.Equal(t, "content of updated.md\n", update.Fields[FieldNewContent],
+		"and its newContent is what is on disk now")
+
+	del := byPath["deleted.md"]
+	assert.Equal(t, KindPostDelete, del.Kind)
+	assert.Equal(t, "old deleted body\n", del.Fields[FieldOldContent],
+		"a delete's oldContent is the baseline bytes about to be lost")
+	assert.NotContains(t, del.Fields, FieldNewContent, "a delete leaves no result")
 }
 
 // --- one event per file, in the order given ---------------------------------
@@ -207,9 +261,23 @@ func TestObserved_OneEventPerFile(t *testing.T) {
 
 	require.Len(t, events, 3)
 	assert.Equal(t, []event.Event{
-		{Kind: KindPostCreate, Fields: map[string]any{FieldPath: "a.md"}},
-		{Kind: KindPostUpdate, Fields: map[string]any{FieldPath: "b.md"}},
-		{Kind: KindPostDelete, Fields: map[string]any{FieldPath: "c.md"}},
+		{Kind: KindPostCreate, Fields: map[string]any{
+			FieldPath:       "a.md",
+			FieldNewContent: "content of a.md\n",
+			FieldNewMarkers: []any{},
+		}},
+		{Kind: KindPostUpdate, Fields: map[string]any{
+			FieldPath:       "b.md",
+			FieldOldContent: "", // no baseline content supplied
+			FieldNewContent: "content of b.md\n",
+			FieldOldMarkers: []any{},
+			FieldNewMarkers: []any{},
+		}},
+		{Kind: KindPostDelete, Fields: map[string]any{
+			FieldPath:       "c.md",
+			FieldOldContent: "",
+			FieldOldMarkers: []any{},
+		}},
 	}, events)
 }
 
@@ -500,12 +568,20 @@ func TestObserved_EventsRoundTripThroughFromEvent(t *testing.T) {
 	})
 	require.Len(t, events, 2)
 
+	byPath := map[string]FileEvent{}
 	for _, e := range events {
 		f, err := FromEvent(e)
 		require.NoError(t, err, "kind %s", e.Kind)
 		assert.NotEmpty(t, f.Path)
-		assert.Empty(t, f.Content, "kind %s carries no content", e.Kind)
+		byPath[f.Path] = f
 	}
+
+	// The create carries newContent (read from disk) and no oldContent; the
+	// delete carries oldContent (the baseline, empty here) and no newContent.
+	assert.Equal(t, "content of a.md\n", byPath["a.md"].NewContent,
+		"a create round-trips its newContent")
+	assert.Empty(t, byPath["a.md"].OldContent, "a create carries no oldContent")
+	assert.Empty(t, byPath["gone.md"].NewContent, "a delete carries no newContent")
 }
 
 // --- every kind produced is one the module declared --------------------------

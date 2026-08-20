@@ -410,7 +410,7 @@ hooks:
     - hooks:
         - type: command
           command: ./a.sh
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./b.sh
@@ -420,7 +420,7 @@ body
 	decls, _, err := New(root).Load()
 	require.NoError(t, err)
 	require.Len(t, decls, 1)
-	assert.ElementsMatch(t, []string{"PreFileCreate", "TurnEnd"}, decls[0].BoundKinds())
+	assert.ElementsMatch(t, []string{"PreFileCreate", "Stop"}, decls[0].BoundKinds())
 }
 
 func TestBoundKinds_NoHooks(t *testing.T) {
@@ -433,7 +433,7 @@ func TestLoad_AbsentMatcherIsEmptyString(t *testing.T) {
 	root := t.TempDir()
 	writeGuardrail(t, root, "unnarrowed", `---
 hooks:
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./a.sh
@@ -444,7 +444,7 @@ body
 	require.NoError(t, err)
 	require.Len(t, decls, 1)
 
-	b := decls[0].Hooks["TurnEnd"][0]
+	b := decls[0].Hooks["Stop"][0]
 	assert.Empty(t, b.Matcher)
 
 	m, err := CompileMatcher(b.Matcher)

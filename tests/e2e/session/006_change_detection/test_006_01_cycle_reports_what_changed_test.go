@@ -8,7 +8,7 @@ import (
 )
 
 // change_is_observed, difference_spans_both, untouched_stays_silent and
-// turn_end_subjectless, through the wiring a user gets.
+// stop_subjectless, through the wiring a user gets.
 //
 // What makes these end-to-end rather than unit tests is the question they
 // answer: not "does the dispatcher classify correctly" but "does the end of a
@@ -30,7 +30,7 @@ printf '\n' >> events.jsonl
 `
 
 // bindEverything binds one recording script to all three Post kinds and to
-// TurnEnd, so a single run records everything the cycle dispatched.
+// Stop, so a single run records everything the cycle dispatched.
 const bindEverything = `---
 hooks:
   PostFileCreate:
@@ -45,7 +45,7 @@ hooks:
     - hooks:
         - type: command
           command: ./record.sh
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./record.sh
@@ -142,16 +142,16 @@ func TestT006_02_CommittedAndUncommittedWorkBothCount(t *testing.T) {
 	}
 }
 
-// T006_03: TurnEnd fires once, at the end, carrying no subject.
+// T006_03: Stop fires once, at the end, carrying no subject.
 //
-// turn_end_subjectless — the invariant with no coverage at all before this hook
+// stop_subjectless — the invariant with no coverage at all before this hook
 // point existed, because nothing had ever dispatched the event.
 //
 // Three claims: it arrives, exactly one of it arrives however many files the
 // cycle touched, and it names no file. The last is the one with a wrong answer
-// available: a TurnEnd carrying a path would let a matcher narrow it to one
+// available: a Stop carrying a path would let a matcher narrow it to one
 // file, and a rule about the cycle as a whole would then run per file.
-func TestT006_03_TurnEndFiresOnceWithNoSubject(t *testing.T) {
+func TestT006_03_StopFiresOnceWithNoSubject(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -167,23 +167,23 @@ func TestT006_03_TurnEndFiresOnceWithNoSubject(t *testing.T) {
 
 	lines := e.Ledger(proj, "records", "events.jsonl")
 
-	var turnEnds []string
+	var stops []string
 	for _, l := range lines {
-		if strings.Contains(l, `"kind":"TurnEnd"`) {
-			turnEnds = append(turnEnds, l)
+		if strings.Contains(l, `"kind":"Stop"`) {
+			stops = append(stops, l)
 		}
 	}
 
-	if len(turnEnds) == 0 {
-		t.Fatalf("TurnEnd never fired — the end of a cycle was never reported:\n%s", strings.Join(lines, "\n"))
+	if len(stops) == 0 {
+		t.Fatalf("Stop never fired — the end of a cycle was never reported:\n%s", strings.Join(lines, "\n"))
 	}
-	if len(turnEnds) != 1 {
-		t.Fatalf("TurnEnd fired %d times; a cycle ends once, however many files it touched:\n%s",
-			len(turnEnds), strings.Join(turnEnds, "\n"))
+	if len(stops) != 1 {
+		t.Fatalf("Stop fired %d times; a cycle ends once, however many files it touched:\n%s",
+			len(stops), strings.Join(stops, "\n"))
 	}
 	// No subject. Read off the payload the hook actually received.
-	if strings.Contains(turnEnds[0], `"path"`) {
-		t.Errorf("TurnEnd carried a file — it is about the cycle, not about one file:\n%s", turnEnds[0])
+	if strings.Contains(stops[0], `"path"`) {
+		t.Errorf("Stop carried a file — it is about the cycle, not about one file:\n%s", stops[0])
 	}
 
 	// And the file events did fire, so "fired once" is a real constraint here
@@ -261,7 +261,7 @@ hooks:
 	afterLog := filepath.Join(t.TempDir(), "after.log")
 	e.Guardrail(proj, "after", `---
 hooks:
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./record.sh

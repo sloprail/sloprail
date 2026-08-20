@@ -40,7 +40,7 @@ func TestDispatch_HooksRunInDeclaredOrderAtPost(t *testing.T) {
 	ldir := ledgerDir(t)
 	const ordered = `---
 hooks:
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: MARK=first ./mark.sh
@@ -81,7 +81,7 @@ func TestDispatch_HooksAfterARefusalDoNotRunAtPost(t *testing.T) {
 	ldir := ledgerDir(t)
 	const refuseThenMark = `---
 hooks:
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: MARK=before ./mark.sh
@@ -122,9 +122,9 @@ func TestDispatch_EveryGuardrailIsHeardBeforeTheTurnIsHeld(t *testing.T) {
 	runGit(t, proj, "add", ".")
 	runGit(t, proj, "commit", "-m", "base")
 
-	const refuseTurnEnd = `---
+	const refuseStop = `---
 hooks:
-  TurnEnd:
+  Stop:
     - hooks:
         - type: command
           command: ./refuse.sh
@@ -132,8 +132,8 @@ hooks:
 
 # Refuses the cycle
 `
-	guardrailDir(t, proj, "alpha", refuseTurnEnd, map[string]string{"refuse.sh": alwaysRefuse})
-	guardrailDir(t, proj, "omega", refuseTurnEnd, map[string]string{"refuse.sh": alwaysRefuse})
+	guardrailDir(t, proj, "alpha", refuseStop, map[string]string{"refuse.sh": alwaysRefuse})
+	guardrailDir(t, proj, "omega", refuseStop, map[string]string{"refuse.sh": alwaysRefuse})
 	store := openStore(t)
 	baselineAt(t, store, proj)
 

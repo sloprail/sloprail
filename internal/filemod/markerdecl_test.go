@@ -12,6 +12,7 @@ package filemod_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,18 +23,31 @@ import (
 	"github.com/sloprail/sloprail/internal/module"
 )
 
-// markerKinds returns the real declarations that carry markers.
-func markerKinds(t *testing.T) map[string]module.KindDecl {
+// markerField pairs a kind's declaration with one of the marker fields it
+// declares. Both oldMarkers and newMarkers share the same closed element shape,
+// so the checks below run against every (kind, field) pair — a typo inside a
+// predicate over either must be refused identically.
+type markerField struct {
+	kind  string
+	field string
+	decl  module.KindDecl
+}
+
+// markerKinds returns every declaration/field pair that carries a markers list,
+// keyed by a "<kind>/<field>" label so a failing subtest names both.
+func markerKinds(t *testing.T) map[string]markerField {
 	t.Helper()
-	out := map[string]module.KindDecl{}
+	out := map[string]markerField{}
 	for _, k := range filemod.New().Kinds() {
 		for _, f := range k.Fields {
-			if f.Name == filemod.FieldMarkers {
-				out[k.Name] = k
+			if f.Name == filemod.FieldOldMarkers || f.Name == filemod.FieldNewMarkers {
+				out[k.Name+"/"+f.Name] = markerField{kind: k.Name, field: f.Name, decl: k}
 			}
 		}
 	}
-	require.Len(t, out, 2, "PreFileCreate and PreFileUpdate")
+	// oldMarkers on PreUpdate, PreDelete, PostUpdate, PostDelete; newMarkers on
+	// PreCreate, PreUpdate, PostCreate, PostUpdate — eight pairs in all.
+	require.Len(t, out, 8, "every kind with prior text or a result carries a markers list")
 	return out
 }
 
@@ -41,9 +55,10 @@ func TestMarkersDecl_TypoInsidePredicateIsRefused(t *testing.T) {
 	// The bug this exists to prevent, written out: `.knid` for `.kind`, inside
 	// the predicate. With a nil Elem this compiles, loads, and returns
 	// admitted=false forever — a rule that looks satisfied.
-	for kind, decl := range markerKinds(t) {
-		t.Run(kind, func(t *testing.T) {
-			_, err := guardrail.CompileMatcherFor(`any(markers, .knid == "docs")`, decl)
+	for label, mf := range markerKinds(t) {
+		t.Run(label, func(t *testing.T) {
+			_, err := guardrail.CompileMatcherFor(
+				fmt.Sprintf(`any(%s, .knid == "docs")`, mf.field), mf.decl)
 			require.Error(t, err, "a typo inside the predicate must be refused at load")
 			assert.Contains(t, err.Error(), "knid", "the message names what was wrong")
 		})
@@ -53,20 +68,21 @@ func TestMarkersDecl_TypoInsidePredicateIsRefused(t *testing.T) {
 func TestMarkersDecl_CorrectPredicateStillCompiles(t *testing.T) {
 	// The other half. A refusal that refused everything would also pass the
 	// test above, and would be a worse bug than the one it fixed.
-	for kind, decl := range markerKinds(t) {
-		t.Run(kind, func(t *testing.T) {
-			for _, src := range []string{
-				`any(markers, .kind == "docs")`,
-				`any(markers, .fqn startsWith "pkg.")`,
-				`any(markers, .line > 10)`,
-				`all(markers, .kind != "banned")`,
-				`none(markers, .fqn == "pkg.Thing")`,
-				`one(markers, .kind == "blueprint")`,
-				`len(markers) == 0`,
-				`markers[0].kind == "blueprint"`,
-				`any(markers, .kind == "docs" && .line < 100)`,
+	for label, mf := range markerKinds(t) {
+		t.Run(label, func(t *testing.T) {
+			for _, form := range []string{
+				`any(%[1]s, .kind == "docs")`,
+				`any(%[1]s, .fqn startsWith "pkg.")`,
+				`any(%[1]s, .line > 10)`,
+				`all(%[1]s, .kind != "banned")`,
+				`none(%[1]s, .fqn == "pkg.Thing")`,
+				`one(%[1]s, .kind == "blueprint")`,
+				`len(%[1]s) == 0`,
+				`%[1]s[0].kind == "blueprint"`,
+				`any(%[1]s, .kind == "docs" && .line < 100)`,
 			} {
-				_, err := guardrail.CompileMatcherFor(src, decl)
+				src := fmt.Sprintf(form, mf.field)
+				_, err := guardrail.CompileMatcherFor(src, mf.decl)
 				assert.NoErrorf(t, err, "%q reads only declared fields", src)
 			}
 		})
@@ -76,17 +92,19 @@ func TestMarkersDecl_CorrectPredicateStillCompiles(t *testing.T) {
 func TestMarkersDecl_EveryElementFieldNameIsCheckedAndNoOther(t *testing.T) {
 	// Each declared name compiles; a near-miss of each is refused. A checker
 	// that accepted everything, or that hard-coded one name, fails one half.
-	for kind, decl := range markerKinds(t) {
-		t.Run(kind, func(t *testing.T) {
+	for label, mf := range markerKinds(t) {
+		t.Run(label, func(t *testing.T) {
 			for good, bad := range map[string]string{
 				"kind": "kinds",
 				"fqn":  "fqns",
 				"line": "lines",
 			} {
-				_, err := guardrail.CompileMatcherFor(`any(markers, .`+good+` != nil)`, decl)
+				_, err := guardrail.CompileMatcherFor(
+					fmt.Sprintf(`any(%s, .%s != nil)`, mf.field, good), mf.decl)
 				assert.NoErrorf(t, err, ".%s is declared", good)
 
-				_, err = guardrail.CompileMatcherFor(`any(markers, .`+bad+` != nil)`, decl)
+				_, err = guardrail.CompileMatcherFor(
+					fmt.Sprintf(`any(%s, .%s != nil)`, mf.field, bad), mf.decl)
 				assert.Errorf(t, err, ".%s is not declared and must be refused", bad)
 			}
 		})
@@ -97,12 +115,14 @@ func TestMarkersDecl_LineIsAnIntegerNotAString(t *testing.T) {
 	// TypeInt, not TypeString. Declared as a string, `.line > 10` — a correct
 	// rule — would be refused; declared as nothing, `.line == "3"` — a
 	// comparison that can never hold — would load.
-	for kind, decl := range markerKinds(t) {
-		t.Run(kind, func(t *testing.T) {
-			_, err := guardrail.CompileMatcherFor(`any(markers, .line > 10)`, decl)
+	for label, mf := range markerKinds(t) {
+		t.Run(label, func(t *testing.T) {
+			_, err := guardrail.CompileMatcherFor(
+				fmt.Sprintf(`any(%s, .line > 10)`, mf.field), mf.decl)
 			require.NoError(t, err, "an integer comparison must be allowed")
 
-			_, err = guardrail.CompileMatcherFor(`any(markers, .line == "3")`, decl)
+			_, err = guardrail.CompileMatcherFor(
+				fmt.Sprintf(`any(%s, .line == "3")`, mf.field), mf.decl)
 			require.Error(t, err, "comparing a line against a string must be refused")
 		})
 	}
@@ -111,8 +131,10 @@ func TestMarkersDecl_LineIsAnIntegerNotAString(t *testing.T) {
 func TestMarkersDecl_RefusalNamesTheAvailableFields(t *testing.T) {
 	// Validate's message is what an author reads. A refusal that did not say
 	// what the fields ARE leaves them guessing at the spelling.
-	decl := markerKinds(t)[filemod.KindPreCreate]
-	_, err := guardrail.CompileMatcherFor(`any(markers, .knid == "docs")`, decl)
+	//
+	// PreFileCreate declares newMarkers, so the predicate reads it.
+	decl := markerKinds(t)[filemod.KindPreCreate+"/"+filemod.FieldNewMarkers]
+	_, err := guardrail.CompileMatcherFor(`any(newMarkers, .knid == "docs")`, decl.decl)
 	require.Error(t, err)
 
 	// The compile error names the offending name; Validate wraps it with the
@@ -126,7 +148,7 @@ func TestMarkersDecl_RefusalNamesTheAvailableFields(t *testing.T) {
 		Dir:  t.TempDir(),
 		Hooks: map[string][]guardrail.Binding{
 			filemod.KindPreCreate: {{
-				Matcher: `any(markers, .knid == "docs")`,
+				Matcher: `any(newMarkers, .knid == "docs")`,
 				Hooks:   []guardrail.Hook{{Type: guardrail.HookCommand, Command: "true"}},
 			}},
 		},
@@ -142,14 +164,16 @@ func TestMarkersDecl_RefusalNamesTheAvailableFields(t *testing.T) {
 	}
 	require.NotEmpty(t, msg, "the fault must be reported as a bad matcher")
 	assert.Contains(t, msg, "knid")
-	for _, field := range []string{filemod.FieldPath, filemod.FieldContent, filemod.FieldMarkers} {
+	for _, field := range []string{filemod.FieldPath, filemod.FieldNewContent, filemod.FieldNewMarkers} {
 		assert.Containsf(t, msg, field, "the message should name %q as available", field)
 	}
 }
 
-func TestMarkersDecl_DeleteHasNoMarkersToBindTo(t *testing.T) {
-	// A rule that tried to read markers off a deletion must be refused, not
-	// silently handed an empty list forever.
+func TestMarkersDecl_DeleteHasNoNewMarkersToBindTo(t *testing.T) {
+	// A rule that tried to read newMarkers off a deletion must be refused, not
+	// silently handed an empty list forever. A delete declares oldMarkers — the
+	// bytes about to be lost — but no newMarkers, because nothing remains to scan
+	// for a result.
 	var del module.KindDecl
 	for _, k := range filemod.New().Kinds() {
 		if k.Name == filemod.KindPreDelete {
@@ -158,7 +182,11 @@ func TestMarkersDecl_DeleteHasNoMarkersToBindTo(t *testing.T) {
 	}
 	require.Equal(t, filemod.KindPreDelete, del.Name)
 
-	_, err := guardrail.CompileMatcherFor(`len(markers) == 0`, del)
-	require.Error(t, err, "a deletion declares no markers, so reading them is an author error")
-	assert.Contains(t, err.Error(), "markers")
+	_, err := guardrail.CompileMatcherFor(`len(newMarkers) == 0`, del)
+	require.Error(t, err, "a deletion declares no newMarkers, so reading them is an author error")
+	assert.Contains(t, err.Error(), "newMarkers")
+
+	// oldMarkers, on the other hand, is exactly what a delete carries.
+	_, err = guardrail.CompileMatcherFor(`len(oldMarkers) == 0`, del)
+	require.NoError(t, err, "a deletion declares oldMarkers — the annotations of the bytes about to be lost")
 }

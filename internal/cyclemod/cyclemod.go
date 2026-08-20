@@ -3,7 +3,7 @@
 // A module rather than a constant in the dispatcher, because everything the
 // engine does with an event kind works from a module's declaration. A kind no
 // module declares cannot be bound to at all — the loader rejects the binding
-// with "no module produces it" — so a dispatcher emitting TurnEnd without one
+// with "no module produces it" — so a dispatcher emitting Stop without one
 // would fire an event no guardrail in the project is permitted to name. That is
 // not a theoretical gap: it is the state this package was added to fix, and it
 // is invisible from the dispatcher, which happily emits an event nothing can
@@ -18,8 +18,12 @@ import (
 // Name identifies this module.
 const Name = "cycle"
 
-// KindTurnEnd says a work cycle ended.
-const KindTurnEnd = "TurnEnd"
+// KindStop says a work cycle ended — the harness-native Stop moment.
+//
+// Named `Stop`, not `TurnEnd`: the harness's own Stop hook already covers the
+// end of a cycle, so there is no separate semantic end-of-cycle event to
+// maintain alongside it. See events/main.tsp, EventKind.Stop.
+const KindStop = "Stop"
 
 // Module produces the cycle's own events.
 type Module struct{}
@@ -43,7 +47,7 @@ func (*Module) Name() string { return Name }
 // guardrail loads, with the same message a misspelled field on any other kind
 // gets — instead of loading, evaluating against nothing, and never firing.
 func (*Module) Kinds() []module.KindDecl {
-	return []module.KindDecl{{Name: KindTurnEnd}}
+	return []module.KindDecl{{Name: KindStop}}
 }
 
 // Extract implements module.Module.
@@ -55,7 +59,7 @@ func (*Module) Kinds() []module.KindDecl {
 // what it carries, and therefore that a guardrail may bind to it.
 //
 // Which is why returning nothing is not this module being unfinished. The
-// alternative — a module manufacturing a TurnEnd whenever it was asked — would
+// alternative — a module manufacturing a Stop whenever it was asked — would
 // emit one at the pre-tool point too, where no cycle has ended.
 func (*Module) Extract(module.Input) ([]event.Event, error) { return nil, nil }
 
@@ -67,5 +71,5 @@ func (*Module) Extract(module.Input) ([]event.Event, error) { return nil, nil }
 // catch that: the matcher is compiled against the declaration, so an extra
 // field would simply be unreadable and unmentioned.
 func Event() event.Event {
-	return event.Event{Kind: KindTurnEnd, Fields: map[string]any{}}
+	return event.Event{Kind: KindStop, Fields: map[string]any{}}
 }

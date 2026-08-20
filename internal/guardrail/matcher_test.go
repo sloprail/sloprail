@@ -25,7 +25,7 @@ func TestCompileMatcher_EmptyAdmitsEverything(t *testing.T) {
 	for _, e := range []event.Event{
 		fileEvent("memories/a.md"),
 		fileEvent(""),
-		{Kind: "TurnEnd"},
+		{Kind: "Stop"},
 	} {
 		admitted, err := m.Match(e)
 		require.NoError(t, err)
@@ -144,20 +144,20 @@ func TestMatch_NonBooleanAtRuntimeIsAnError(t *testing.T) {
 }
 
 // preFileCreate is the kind as the file module declares it, and as the spec
-// defines it: path and content, both strings, both required.
+// defines it: path and newContent, both strings, both required.
 func preFileCreate() module.KindDecl {
 	return module.KindDecl{Name: "PreFileCreate", Fields: []module.FieldDecl{
 		{Name: "path", Type: module.TypeString},
-		{Name: "content", Type: module.TypeString},
+		{Name: "newContent", Type: module.TypeString},
 	}}
 }
 
 // TestMatch_DeclaredFieldOmittedByTheProducerIsItsZeroValue is the invariant
 // behind a defect that made a rule fail open on the only file it was about.
 //
-// The file module omits `content` from a PreFileCreate when it is empty, so a
+// The file module omits `newContent` from a PreFileCreate when it is empty, so a
 // genuinely empty file produced an event missing a field its kind declares. The
-// matcher had been type-checked against that declaration, so `content == ""`
+// matcher had been type-checked against that declaration, so `newContent == ""`
 // compiled — then evaluated nil against a string, errored, and the engine skips
 // a binding whose matcher errors. The rule for empty files let empty files
 // through.
@@ -165,17 +165,17 @@ func preFileCreate() module.KindDecl {
 // A declared field the event omits is now supplied at its type's zero value, so
 // the expression sees the shape it was compiled against.
 func TestMatch_DeclaredFieldOmittedByTheProducerIsItsZeroValue(t *testing.T) {
-	// Exactly what filemod emits for an empty file: content omitted.
+	// Exactly what filemod emits for an empty file: newContent omitted.
 	empty := event.Event{Kind: "PreFileCreate", Fields: map[string]any{"path": "empty.txt"}}
 
-	m, err := CompileMatcherFor(`content == ""`, preFileCreate())
+	m, err := CompileMatcherFor(`newContent == ""`, preFileCreate())
 	require.NoError(t, err)
 
 	admitted, err := m.Match(empty)
 	require.NoError(t, err,
 		"a declared field the producer omitted must not error the matcher")
 	assert.True(t, admitted,
-		`content == "" is the rule for an empty file and must fire on one`)
+		`newContent == "" is the rule for an empty file and must fire on one`)
 }
 
 func TestMatch_ZeroValueMatchesTheDeclaredType(t *testing.T) {
@@ -204,7 +204,7 @@ func TestMatch_ZeroValueMatchesTheDeclaredType(t *testing.T) {
 		// one row per type and was one short. zero() had no int case either, so
 		// an omitted `line` came back nil and `.line > 10` errored `<nil> > int`:
 		// a CORRECT rule refusing every action and blaming the author's
-		// guardrail, which is the identical defect the `content` fill-in closed.
+		// guardrail, which is the identical defect the `newContent` fill-in closed.
 		{`n == 0`, true},
 		{`n > 0`, false},
 		{`len(l) == 0`, true},
@@ -302,17 +302,17 @@ var enumeratedKind = module.KindDecl{
 // PRESENT, so the absence check skipped it and the expression met a nil.
 func TestMatch_ExplicitNullIsTheZeroValueNotAnError(t *testing.T) {
 	nulled := event.Event{Kind: "PreFileCreate", Fields: map[string]any{
-		"path": "a.txt", "content": nil,
+		"path": "a.txt", "newContent": nil,
 	}}
 
-	m, err := CompileMatcherFor(`content == ""`, preFileCreate())
+	m, err := CompileMatcherFor(`newContent == ""`, preFileCreate())
 	require.NoError(t, err)
 
 	admitted, err := m.Match(nulled)
 	require.NoError(t, err,
 		"a declared field carried as null must not error the matcher")
 	assert.True(t, admitted,
-		`content == "" is the rule for an empty file and must fire on one sent as null`)
+		`newContent == "" is the rule for an empty file and must fire on one sent as null`)
 }
 
 // An enumerated map the producer omitted entirely. zeroOf returned a flat
@@ -688,15 +688,15 @@ func TestMatch_AbsenceStillFillsInAfterTheWrongTypeCheck(t *testing.T) {
 		fields map[string]any
 	}{
 		{"omitted entirely", map[string]any{"path": "a.txt"}},
-		{"carried as an explicit null", map[string]any{"path": "a.txt", "content": nil}},
+		{"carried as an explicit null", map[string]any{"path": "a.txt", "newContent": nil}},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
-			m, err := CompileMatcherFor(`content == ""`, preFileCreate())
+			m, err := CompileMatcherFor(`newContent == ""`, preFileCreate())
 			require.NoError(t, err)
 
 			admitted, err := m.Match(event.Event{Kind: "PreFileCreate", Fields: tc.fields})
 			require.NoError(t, err, "absence is not a type disagreement")
-			assert.True(t, admitted, `content == "" is the rule for an empty file`)
+			assert.True(t, admitted, `newContent == "" is the rule for an empty file`)
 		})
 	}
 
@@ -712,11 +712,11 @@ func TestMatch_AbsenceStillFillsInAfterTheWrongTypeCheck(t *testing.T) {
 func TestMatch_CarriedValueBeatsTheZeroValue(t *testing.T) {
 	// The fill-in must never shadow what the producer actually sent — including
 	// a field explicitly carried as its zero value.
-	m, err := CompileMatcherFor(`content == "x"`, preFileCreate())
+	m, err := CompileMatcherFor(`newContent == "x"`, preFileCreate())
 	require.NoError(t, err)
 
 	admitted, err := m.Match(event.Event{Kind: "PreFileCreate", Fields: map[string]any{
-		"path": "a.txt", "content": "x",
+		"path": "a.txt", "newContent": "x",
 	}})
 	require.NoError(t, err)
 	assert.True(t, admitted, "a carried value is what the expression reads")
@@ -753,9 +753,9 @@ func TestMatch_UnknownFieldIsNilNotAnError(t *testing.T) {
 }
 
 func TestMatch_FieldDeclaredOnAnotherKind(t *testing.T) {
-	// content is carried by PreFileCreate alone. Read on an event that omits
-	// it, it is nil — again false rather than an error.
-	m, err := CompileMatcher(`content contains "TODO"`)
+	// newContent is carried by the file create/update kinds. Read on an event
+	// that omits it, it is nil — again false rather than an error.
+	m, err := CompileMatcher(`newContent contains "TODO"`)
 	require.NoError(t, err)
 
 	admitted, err := m.Match(event.Event{
@@ -807,7 +807,7 @@ func TestMatch_NilFieldsMapIsSafe(t *testing.T) {
 	m, err := CompileMatcher(`path == "a"`)
 	require.NoError(t, err)
 
-	admitted, err := m.Match(event.Event{Kind: "TurnEnd"})
+	admitted, err := m.Match(event.Event{Kind: "Stop"})
 	require.NoError(t, err)
 	assert.False(t, admitted)
 }
@@ -869,12 +869,12 @@ func TestMatch_DoesNotMutateTheEvent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // fileKind mirrors what the file module declares for a pending create: a path
-// and the content that would be written.
+// and the newContent that would be written.
 var fileKind = module.KindDecl{
 	Name: "PreFileCreate",
 	Fields: []module.FieldDecl{
 		{Name: "path", Type: module.TypeString},
-		{Name: "content", Type: module.TypeString},
+		{Name: "newContent", Type: module.TypeString},
 	},
 }
 
@@ -943,19 +943,22 @@ func TestCompileMatcherFor_AcceptsEveryDeclaredField(t *testing.T) {
 }
 
 // A field one kind carries and another does not is the case a shared
-// environment would miss. content exists on PreFileCreate alone.
+// environment would miss. This synthetic PreFileUpdate carries only `path`, so
+// `newContent` (declared on the create fixture) is unknown against it — the real
+// PreFileUpdate declares newContent too, but the property under test is that a
+// field of one kind is refused on a kind that does not declare it.
 func TestCompileMatcherFor_FieldOfAnotherKindIsUnknown(t *testing.T) {
 	preUpdate := module.KindDecl{
 		Name:   "PreFileUpdate",
 		Fields: []module.FieldDecl{{Name: "path", Type: module.TypeString}},
 	}
 
-	_, err := CompileMatcherFor(`content != ""`, fileKind)
-	require.NoError(t, err, "content is declared on PreFileCreate")
+	_, err := CompileMatcherFor(`newContent != ""`, fileKind)
+	require.NoError(t, err, "newContent is declared on the create fixture")
 
-	_, err = CompileMatcherFor(`content != ""`, preUpdate)
-	require.Error(t, err, "content is not declared on PreFileUpdate")
-	assert.Contains(t, err.Error(), "content")
+	_, err = CompileMatcherFor(`newContent != ""`, preUpdate)
+	require.Error(t, err, "newContent is not declared on this path-only kind")
+	assert.Contains(t, err.Error(), "newContent")
 }
 
 func TestCompileMatcherFor_RefusesNonBoolean(t *testing.T) {

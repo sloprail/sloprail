@@ -26,6 +26,8 @@ import (
 	"github.com/sloprail/sloprail/internal/cyclemod"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/tagmod"
+	"github.com/sloprail/sloprail/internal/tooluse"
 )
 
 // All returns the modules this build knows about, in registration order.
@@ -37,11 +39,19 @@ func All() []module.Module {
 	return []module.Module{
 		filemod.New(),
 		commandmod.New(),
+		// The tool call itself, before any file or command meaning is derived
+		// from it. It DECLARES PreToolUse, the harness-native pre-action moment a
+		// gate or context binds to when neither a file nor a command event fits.
+		tooluse.New(),
+		// Tags. It DECLARES PostTagWrite, the one bulk event carrying every
+		// `#tag` the agent wrote this cycle, so a context can bind a tag directly
+		// instead of re-grepping the trajectory in its own enter script.
+		tagmod.New(),
 		// The cycle itself. It extracts nothing — a cycle ending is the hook
 		// point rather than anything a harness reports — but it is what
-		// DECLARES TurnEnd, and a kind no module declares cannot be bound to:
+		// DECLARES Stop, and a kind no module declares cannot be bound to:
 		// the loader rejects the binding outright. Without this entry the
-		// dispatcher fires TurnEnd into a build where no guardrail is permitted
+		// dispatcher fires Stop into a build where no guardrail is permitted
 		// to name it.
 		cyclemod.New(),
 	}

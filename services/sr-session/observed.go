@@ -16,6 +16,12 @@ import (
 type treeDifference struct {
 	root string
 
+	// commit is the point the difference is measured from, kept so BaselineContent
+	// can read a file's prior bytes out of it. The diff needs it too, but that is
+	// computed in the constructor; this field is what survives for the per-path
+	// content reads a Post update or delete asks for.
+	commit string
+
 	// paths in the order they will be reported, already cleaned.
 	paths []string
 
@@ -66,7 +72,13 @@ func newTreeDifference(dir, commit string) (*treeDifference, error) {
 	if changes == nil && unclassified != nil {
 		return nil, unclassified
 	}
-	return differenceOf(root, changes), unclassified
+	d := differenceOf(root, changes)
+	// The commit is the point BaselineContent reads a file's prior bytes from.
+	// Set here rather than in differenceOf so that helper stays a pure function of
+	// (root, changes) — the shape its own comment relies on for checking the
+	// cleaning against spellings git does not produce.
+	d.commit = commit
+	return d, unclassified
 }
 
 // differenceOf builds the difference from changes already established.
@@ -141,9 +153,26 @@ func (d *treeDifference) ExistedAtBaseline(path string) bool {
 	return d.baseline[path]
 }
 
+// BaselineContent implements filemod.Observed.
+//
+// The file's bytes at the commit the difference is measured from, read straight
+// out of git — this side's resource, which is the whole reason the method lives
+// on the producer rather than in the module. Asked with the canonical spelling,
+// the same one Paths reports and ExistedAtBaseline is keyed on, because that is
+// what git resolves against the commit's tree.
+//
+// Read from the repository ROOT rather than the hook's cwd: the path is
+// repository-relative, so git must be asked from the top of the tree for the
+// `<commit>:<path>` form to resolve. A read that fails — the path was not in the
+// commit, which is the ordinary case for a create — comes back false, and the
+// module carries "" honestly rather than dropping the event.
+func (d *treeDifference) BaselineContent(path string) (string, bool) {
+	return gitrepo.ContentAt(d.root, d.commit, path)
+}
+
 // empty reports whether the cycle changed nothing that needs judging.
 //
 // Worth asking before the difference is turned into events: a cycle that
-// touched no files still ends, and TurnEnd still fires, but there is no reason
+// touched no files still ends, and Stop still fires, but there is no reason
 // to run an extractor over an empty list.
 func (d *treeDifference) empty() bool { return len(d.paths) == 0 }

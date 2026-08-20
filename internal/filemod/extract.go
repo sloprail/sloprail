@@ -200,7 +200,7 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		// else, and the asymmetry with extractObserved is the point. The two
 		// outcomes here are PreFileCreate and PreFileUpdate over a path the tool
 		// named either way — no event appears or disappears on the choice, so the
-		// lesser wrong is the one that still carries `content`, which a rule can
+		// lesser wrong is the one that still carries `newContent`, which a rule can
 		// read when the file on disk is unreadable. In the observed phase the same
 		// lookup alone decides whether a DELETION is announced, so there the
 		// unknown is refused rather than folded.
@@ -209,26 +209,31 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		// would be written has nowhere else to look.
 		//
 		// `result` is what the action would leave behind, which for a create is
-		// the whole body — so it IS the content, and PreFileCreate declares the
+		// the whole body — so it IS newContent, and PreFileCreate declares that
 		// one name for it. Where it could not be derived this is "", which is
 		// the pre-existing behaviour for a path named without a stated body
 		// (`Read`) and is pinned as such.
-		f.Content = result
-		f.Markers = Scan(result)
+		f.NewContent = result
+		f.NewMarkers = Scan(result)
 	case presentFile:
 		kind = KindPreUpdate
-		// The post-edit bytes, and whether they are known. Q1: the value alone
-		// cannot say, because Matcher.env fills a declared-but-absent field
-		// with its zero value — so an underivable result would read as "" and
-		// look exactly like a write that empties the file. The boolean is what
-		// makes the gap askable.
-		f.Result = result
+		// The bytes before and after. oldContent is the file on disk; newContent
+		// is the post-edit bytes, and resultKnown says whether they could be
+		// worked out — the value alone cannot, because Matcher.env fills a
+		// declared-but-absent field with its zero value, so an underivable result
+		// would read as "" and look exactly like a write that empties the file.
+		// The boolean is what makes the gap askable.
+		f.OldContent = before
+		f.NewContent = result
 		f.ResultKnown = derivable
-		// Markers still describe the bytes being REPLACED. That is what the
-		// field has always meant and what every rule reading it expects;
-		// silently repointing it at the result would change the meaning of
-		// existing guardrails without touching them. See markersOnDisk.
-		f.Markers = Scan(before)
+		// oldMarkers describe the bytes being REPLACED — the file as it stands
+		// now — and newMarkers describe the result. newMarkers is empty when the
+		// result could not be derived (there is no text to scan), which resultKnown
+		// tells apart from a result that genuinely carries no markers.
+		f.OldMarkers = Scan(before)
+		if derivable {
+			f.NewMarkers = Scan(result)
+		}
 	case presentNotAFile:
 		// A directory, a device, a socket. No file write can land here — the
 		// harness's own write will fail — so there is no file modification to
@@ -465,13 +470,13 @@ func reportable(path, root string) string {
 //	anything, absent       Nothing at all.
 //
 // That last row is the honest limit rather than an oversight. A write to a path
-// that does not exist is a CREATION, and PreFileCreate requires `content` — the
-// file cannot be read off disk, so the event carries what would be written. A
-// command line does not say what bytes will result. Sending `content: ""` would
-// make `echo x > new.md` indistinguishable from a tool writing a genuinely empty
-// file, and `content == ""` is precisely the rule an author writes to catch
-// that; omitting the field contradicts the declaration, and a matcher reading a
-// declared-but-absent field errors, which refuses the action and blames the
+// that does not exist is a CREATION, and PreFileCreate requires `newContent` —
+// the file cannot be read off disk, so the event carries what would be written.
+// A command line does not say what bytes will result. Sending `newContent: ""`
+// would make `echo x > new.md` indistinguishable from a tool writing a genuinely
+// empty file, and `newContent == ""` is precisely the rule an author writes to
+// catch that; omitting the field contradicts the declaration, and a matcher
+// reading a declared-but-absent field errors, which refuses the action and blames the
 // author's rule for this engine's gap. Both are worse than saying nothing.
 //
 // So a command that CREATES a file is not predicted. It is reported after the
@@ -616,9 +621,9 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 				continue
 			}
 			events = append(events, FileEvent{
-				Path:    key,
-				Content: content,
-				Markers: Scan(content),
+				Path:       key,
+				NewContent: content,
+				NewMarkers: Scan(content),
 			}.Event(KindPreCreate))
 			continue
 		case p != presentFile:
@@ -635,11 +640,18 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 		kind := KindPreUpdate
 		if t.Effect == commandmod.Remove {
 			kind = KindPreDelete
-		} else {
-			// An update carries the markers the file has NOW, the same as the
-			// tool-write path. See markersOnDisk on what those actually describe.
+			// A delete carries the bytes about to be lost and the markers that go
+			// with them — the same oldContent/oldMarkers the tool-write delete
+			// path would carry, read off the file the command names.
 			before := m.contentOnDisk(t.Path)
-			f.Markers = Scan(before)
+			f.OldContent = before
+			f.OldMarkers = Scan(before)
+		} else {
+			// An update carries oldContent — the file NOW — and its oldMarkers,
+			// the same as the tool-write path.
+			before := m.contentOnDisk(t.Path)
+			f.OldContent = before
+			f.OldMarkers = Scan(before)
 			// And, where the line determines them, the bytes it will hold
 			// afterwards. `echo x >> log.md` is the append case: the result is
 			// the current file plus the new text, which needs the disk for the
@@ -657,47 +669,19 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 			// as emptying the file, and a rule refusing empty results would
 			// fire on a command that changes no byte.
 			if t.MTimeOnly {
-				f.Result, f.ResultKnown = before, true
+				f.NewContent, f.ResultKnown = before, true
 			} else {
-				f.Result, f.ResultKnown = m.resolvePayload(t.Payload, before)
+				f.NewContent, f.ResultKnown = m.resolvePayload(t.Payload, before)
+			}
+			// newMarkers describe the result, present only when it was derivable.
+			if f.ResultKnown {
+				f.NewMarkers = Scan(f.NewContent)
 			}
 		}
 		events = append(events, f.Event(kind))
 	}
 
 	return events, errors.Join(problems...)
-}
-
-// markersOnDisk reads a file and scans it.
-//
-// IMPORTANT — what an update's markers actually describe. These are the markers
-// in the bytes the write is about to REPLACE, not the bytes it would leave. On
-// an update, `markers` describes the PRE-WRITE state of the file.
-//
-// This is now a design choice rather than a limitation, and the reason it used
-// to be one has expired. PreFileUpdate carried `path` alone, so there was
-// nowhere else to read a pending body from; it now carries `result` (the
-// post-edit bytes) and `resultKnown`, so a rule that wants to judge the OUTCOME
-// has a field that states it. See KindPreUpdate's declaration in module.go.
-//
-// `markers` stays pointed at the pre-write text deliberately: that is what the
-// field has always meant, and silently repointing it at the result would change
-// the meaning of every existing guardrail without touching one of them. A rule
-// saying "this function must stay marked" is therefore a rule about `result`,
-// not about `markers` — the marker that is there now would be satisfied by a
-// write that removes it.
-//
-// A file that cannot be read yields no markers rather than an error. The write
-// is what this event is reporting; a rule that cannot see the old text should
-// still see the path, and failing the whole extraction would drop the event
-// entirely — a file event that never fires is the silence this engine exists to
-// prevent.
-func (*Module) markersOnDisk(path string) []Marker {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return []Marker{}
-	}
-	return Scan(string(b))
 }
 
 // expandIntoDirectories resolves the one ambiguity a copy's last operand
@@ -1070,13 +1054,35 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 			continue
 		}
 
-		// No content on any of them, including the create. Unlike PreFileCreate
-		// the file is on disk by now and a hook can read it there; and for the
-		// delete there is nothing left to read at all. Carrying content on one
-		// kind and not the others would make the delete the odd case a hook has
-		// to special-case, which is exactly the shape the Post kinds are
-		// declared flat to avoid.
-		events = append(events, FileEvent{Path: clean}.Event(kind))
+		// Content and markers, per what the kind carries. Unlike the Pre events,
+		// both sides have settled: newContent is the file as it now sits on disk,
+		// and oldContent is the session baseline's — no longer on disk, which is
+		// why it comes from the producer rather than a read here.
+		//
+		// A create has only newContent; a delete has only oldContent; an update
+		// has both. Each is read only where the kind declares it, so a delete
+		// never reads the disk (there is nothing there) and a create never asks
+		// the baseline (nothing preceded it). Event() carries only the declared
+		// fields regardless, but reading only what is needed keeps a delete from
+		// a pointless disk read and a create from a pointless baseline lookup.
+		f := FileEvent{Path: clean}
+		switch kind {
+		case KindPostCreate:
+			f.NewContent = m.contentOnDisk(full)
+			f.NewMarkers = Scan(f.NewContent)
+		case KindPostDelete:
+			// The baseline bytes, about to be gone. A read that fails yields "",
+			// reported honestly rather than dropped — the same discipline a file
+			// that cannot be read NOW gets.
+			f.OldContent, _ = observed.BaselineContent(clean)
+			f.OldMarkers = Scan(f.OldContent)
+		case KindPostUpdate:
+			f.OldContent, _ = observed.BaselineContent(clean)
+			f.OldMarkers = Scan(f.OldContent)
+			f.NewContent = m.contentOnDisk(full)
+			f.NewMarkers = Scan(f.NewContent)
+		}
+		events = append(events, f.Event(kind))
 	}
 
 	err := errors.Join(problems...)

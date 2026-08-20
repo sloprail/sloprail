@@ -93,7 +93,7 @@ hooks:
 // reachable through a value the type checker could not describe, and the Post
 // kinds are the best-typed events in the build: PostFileCreate, PostFileUpdate
 // and PostFileDelete each carry `path` and nothing else, declared TypeString,
-// and TurnEnd carries no fields whatever. So every shape borrowed from 014 fails
+// and Stop carries no fields whatever. So every shape borrowed from 014 fails
 // to COMPILE here rather than failing to evaluate — measured, not assumed:
 //
 //	any(path, # > 0)        builtin any takes only array (got string)
