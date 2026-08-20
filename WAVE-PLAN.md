@@ -64,7 +64,8 @@ a quoted multi-word fqn, reconcile then.
       PostTagWrite.tags); glob-`or`-glob `"**/a" or "**/b"` (neither bare glob nor valid expr).
       This belongs with declaration-loading/dispatch (whoever wires match against real declarations).
 
-### BATCH 3 — IN PROGRESS (base 9342d8b). SEQUENTIAL (natures build on core's check-runner + gates map):
+### BATCH 3 — COMPLETE ✅ (gate+structure+file-guard+context all enforce; base abde4df). DISPATCH ENGINE DONE.
+### BATCH 3 — was (base 9342d8b). SEQUENTIAL (natures build on core's check-runner + gates map):
 - worktree `dispatch-core` (impl/dispatch-core): CHECK-RUNNER + gate (3a) + structure (3s) — DONE (~4832 lines), IN REVIEW. Delivers internal/dispatch pkg with Runner.Run(Request)→Verdict API (the natures slice imports this), Jinja2-subset renderer (all 8 example .md.j2), judge-via-sr-agent, gates[] map in sessionstate under reserved !sloprail:gates keyspace. Caught+fixed a real jq `.pass // empty` fail-open bug.
 - worktree `dispatch-natures` (impl/dispatch-natures): file-guard (3c) + context (3b) — IMPLEMENTING (goal REMOVED per PR#19). On sessionstate KV (SQLite deferred per PR#19 #3).
   (grouped this way because all natures share the dispatch entry points session_pre_tool/session_stop.go +
@@ -72,9 +73,9 @@ a quoted multi-word fqn, reconcile then.
    establishes the gates[] map context needs, and both are the simplest natures to prove the runner e2e.)
 ### BATCH 3 — dispatch engine (after batch 2)
 - [x] 3a  gate dispatch — MERGED (19bd373), reviewed, flat-event fixed                [dispatch-core ✓]
-- [~] 3c  file-guard dispatch — DONE (fdb0b76, reuses old revalidation for re-fire), REVIEWING [dispatch-natures]
+- [x] 3c  file-guard dispatch — MERGED (abde4df), reviewed no-blockers                [dispatch-natures ✓]
 - [x] 3s  structure-gate — MERGED (19bd373)                                            [dispatch-core ✓]
-- [~] 3b  context lifecycle (enter every-occurrence, exit=lifecycle-only per reversal) — DONE, REVIEWING [dispatch-natures]
+- [x] 3b  context lifecycle — MERGED (abde4df) — DISPATCH ENGINE COMPLETE ✅          [dispatch-natures ✓]
 - [x] 3d  goal — REMOVED (PR#19: not a primitive; user-side composite via /goal + context). No engine dispatch.
 
 ### WAVE 2 (GOAL.md) — per-use-case e2e tests (after all dispatch)
@@ -114,6 +115,16 @@ KNOWN PRE-EXISTING RED (base branch, NOT a regression — deferred to Wave 3 del
   (CI on a clean checkout never sees it). Removed one for interlinking during the batch-2 merge.
 
 ## FOLLOW-UP TASKS (later, not blockers)
+- [dispatch-natures review #1] preventive file-guard fails-closed on underivable UPDATE but NOT CREATE
+  (nature_fileguard.go:132 checks KindPreFileUpdate+!resultKnown; a NotebookEdit-created new .ipynb emits
+  PreFileCreate w/ empty newContent → preventive check false-passes → write lands transiently. After-check
+  at Stop still catches it (no permanent bypass), so preventive degrades to non-preventive for that case.
+  FIX: also refuse an underivable-empty preventive CREATE, or narrow the doc claim to updates.
+- [dispatch-natures review #2 latent] at Stop, file-guards run BEFORE context enters, so a file-guard gated on
+  a POST-entering context sees stale state (enters→file-guards→gates→exits would be the natural order).
+  Unreachable via shipped examples (only context-gated file-guard enters on PreToolUse=persisted). Reorder if
+  a Post-entering + file-guard-gated case ever appears.
+- [dispatch-natures review #4 nit] nature_pre_tool.go:15-18 comment says new dispatch runs AFTER old; it runs FIRST. Fix comment.
 - FIX example bug (flagged by dispatch-natures): examples/eval-loop-maxing/.sloprail/context/goal-tracking/
   exit.sh reads stale `.event.gates[...]` but the spec made gates a SIBLING of event → should be `.gates[...]`
   (same fix run-verify.sh already got). Pre-existing; composite e2e passes despite it. Trivial follow-up.
