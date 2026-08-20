@@ -127,11 +127,12 @@ green; CI green. Merge each into draft/fileguard-format; remove worktree.
 - [~] B1 example-fix (impl/w2-b1-lifecycle): fix 4 broken examples using --owner (+ jq -s + SR_WORKSPACE),
       research-rigor toolUseResult jq, interlinking match, intake skip-channel redesign (tag/marker + a
       skip-context read via --owner); then flip 036-041 bug-pins → real assertions; simplify installExampleTree.
-- [~] B2-v2 (impl/w2-b2-judge): close reviewer gaps — action-proof toolUseResult happy-path (needs mock
-      toolUseResult or a builder), message_id test (example fixed a1dd86e), TODO(D3) header placement.
-- [~] B3-v2 (impl/w2-b3-judgemark): close reviewer gaps — prepare→template wiring proofs (047/049 via
-      capturing shim), 047 re-fire, 049 cite-rc2 branch, doc nits. (Adds InstallJudgeClaudeCapturing to
-      harness.go — SAME as B2 adds; resolve the overlap at merge.)
+      >>> THE LAST Wave-2 work item. When it lands: merge → then delete deterministic_refactoring old-dup →
+          then delete internal/declaration/examples_test.go (superseded) → D3/D4 → Wave 3.
+
+## MERGED (verified: all 10 dirs 042-051 pass, 0 FAILs on base 5dfcab5)
+- [x] B2 (9a3b011) — 042-045. [x] B3 (5dfcab5) — 046-049. [x] B4 (3f4c26d) — 050-051 + 013 deleted.
+      Plus engine: judge-config (dba20b5), --owner (b8608c3).
 
 ## Example bugs FIXED on base by the Wave-2 effort (running tally)
 8bd1f77 14 non-exec scripts · 4baaa00 cite --path + action-proof jq · d9f175c eval-loop-maxing require→match
