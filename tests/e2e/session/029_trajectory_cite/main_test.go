@@ -11,24 +11,42 @@ import (
 
 // trajectory cite — turn a substring of the user's own words into a resolvable
 // <path>:<line> citation. These tests exercise the COMPILED sr-session binary as
-// a subprocess against a real-layout fixture trajectory, and the assertions that
-// matter most are on the EXIT CODE: an agent scripts against it and branches
-// without parsing stdout.
+// a subprocess, and the assertions that matter most are on the EXIT CODE: an agent
+// scripts against it and branches without parsing stdout.
 //
 //	exactly one match   the resolvable <path>:<line> on stdout, exit 0
 //	several matches     every candidate <path>:<line>, one per line, exit 2
 //	no match            nothing on stdout, exit 1
 //
-// Fixtures rather than the mock, for the same reason describe uses them: cite is
-// run by an agent with a path, not fired at a hook pause, so the honest e2e is
-// the binary against a fixture. The fixture shapes are taken from real ~/.claude
-// transcripts — a plain user message with string content, an assistant text turn
-// (whose words must NEVER be citable), and the AskUserQuestion answer envelope a
-// prompted answer lands in.
+// # Where the trajectories come from
+//
+// The cases the mock can produce read a mock-generated transcript: the harness
+// drives a10n-claude-mock, whose seeded prompt IS the user's own words a citable
+// message carries, and whose `Say` turn is the agent's own prose that cite must
+// NEVER treat as citable. Handing `cite --path` the record the mock wrote keeps the
+// trajectory deterministic and centralised in the mock rather than re-typed here.
+//
+// # The two shapes the mock cannot produce, and why fixtures stay
+//
+// The mock's session model has exactly ONE human turn — the prompt — so a
+// transcript with SEVERAL distinct user messages (the ambiguous case, T029_02) is
+// outside what it emits. And an AskUserQuestion ANSWER lands as a user record whose
+// content is a `tool_result` block, which the mock REJECTS outright: its scenario
+// validator refuses any script-emitted user record containing a tool_result
+// ("that is synthesised by the mock after it executes a tool, not by the agent
+// script"), verified against a10n-cli's claude-mock. So the answer-envelope cases
+// (T029_04/05/07/08) cannot be driven through it either. Those, and the
+// several-messages case, keep the minimal hand-authored fixtures below — the exact
+// shapes real ~/.claude transcripts carry — with this note saying why.
 
 type Env = harness.Env
 
-var New = harness.New
+var (
+	New   = harness.New
+	Turns = harness.Turns
+	Bash  = harness.Bash
+	Say   = harness.Say
+)
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -37,8 +55,9 @@ func TestMain(m *testing.M) {
 }
 
 // writeTranscript writes a transcript of the given lines into a temp project and
-// returns its path. cite is handed the path directly, so no particular directory
-// layout is required.
+// returns its path — for the fixture cases the mock cannot produce (several user
+// messages, and AskUserQuestion answer envelopes). cite is handed the path
+// directly, so no particular directory layout is required.
 func writeTranscript(t *testing.T, lines ...string) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "cite-")
@@ -133,6 +152,7 @@ func writeSubagentWithMeta(t *testing.T, agentID string, lines ...string) string
 }
 
 // --- fixture record shapes ---
+// --- fixture record shapes, for the cases the mock cannot emit ---
 
 // userMsg is a plain typed user message with string content.
 func userMsg(uuid, content string) string {

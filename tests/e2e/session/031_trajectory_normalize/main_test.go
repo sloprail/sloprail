@@ -14,24 +14,40 @@ import (
 // with the events re-derived from it. These tests exercise the COMPILED
 // sr-session binary as a subprocess.
 //
-// Two styles, for two questions:
+// # Where the trajectories come from
 //
-//   - The DERIVATION (what events an entry yields, line numbers, --events
-//     narrowing) is proven against fixture trajectories handed to the binary with
-//     --path, the same way `cite` proves itself: normalize is a read run with a
-//     path, so the honest e2e is the binary against a real-layout file. The
-//     fixture shapes are the ones Claude Code writes — a user message, an
-//     assistant turn carrying tool_use blocks, an assistant text turn carrying a
-//     tag.
-//   - The SLICE (--whole-session versus the part not yet judged) needs a real
-//     session whose read mark has advanced, which only a running session produces.
-//     That one test drives the mock harness across two cycles — see
-//     test_031_09.
+// The cases the mock can produce read a mock-generated transcript: the harness
+// drives a10n-claude-mock, and `normalize --path` reads the record it wrote — a
+// Bash turn for a PreCommandInvoke, a `Say` turn carrying a #tag for a
+// PostTagWrite. Keeping the trajectory the mock's makes it deterministic and
+// centralised rather than a Claude Code record shape re-typed in this file.
 //
-// CombinedOutput merges stdout and stderr, so a fixture read that printed a
-// diagnostic would corrupt the JSON. normalize's --path path is deliberately
-// silent on stderr (it consults no session state), so res.Output is pure JSON —
-// which the assertions here rely on.
+// # The shapes the mock cannot produce, and why fixtures stay
+//
+// Three derivations need a shape the mock's session model does not reach, so they
+// keep the minimal hand-authored fixtures below:
+//
+//   - FILE EVENTS (T031_03). normalize derives create-vs-update by stat-ing the
+//     LIVE tree, and a mock run APPLIES its writes before normalize sees it — so
+//     a create reads back as an update, and an update's oldContent reads back as
+//     the new bytes. Measured: a mock Write to an absent path yields PreFileUpdate
+//     with oldContent already equal to the written content. The fixture stages the
+//     tree in the pre-write state the derivation is about.
+//   - MULTI-BLOCK TURNS (T031_05, T031_07). The scenario API emits one tool call
+//     per assistant turn, so three tool calls in ONE entry, or a text block and a
+//     tool_use in one entry, are shapes the mock does not write. The spread-yield
+//     and per-entry --events narrowing are about exactly that one entry.
+//   - PREAMBLE LINES (T031_06). The physical-line count rests on records that carry
+//     no uuid (Claude Code's own preamble), which the mock does not emit.
+//
+// The SLICE (--whole-session versus the part not yet judged, T031_09) is the other
+// mock-driven case: it needs a real session whose read mark has advanced, which
+// only a running session produces, so it drives the harness across two cycles.
+//
+// CombinedOutput merges stdout and stderr, so a read that printed a diagnostic
+// would corrupt the JSON. normalize's --path path is deliberately silent on stderr
+// (it consults no session state), so res.Output is pure JSON — which the assertions
+// here rely on.
 
 type Env = harness.Env
 
@@ -132,21 +148,6 @@ func assistantBash(uuid, parent, command string) string {
 func assistantWrite(uuid, parent, path, content string) string {
 	return assistantBlocks(uuid, parent, false,
 		`{"type":"tool_use","id":"`+uuid+`-t","name":"Write","input":{"file_path":`+jsonStr(path)+`,"content":`+jsonStr(content)+`}}`)
-}
-
-// assistantText is an assistant turn whose one block is text — the prose a tag
-// lives in.
-func assistantText(uuid, parent, text string) string {
-	return assistantBlocks(uuid, parent, false,
-		`{"type":"text","text":`+jsonStr(text)+`}`)
-}
-
-// assistantReply is an assistant turn whose content is a bare string — the
-// plain-reply shape, carrying neither a tool call nor (unless it holds a #tag)
-// anything to derive.
-func assistantReply(uuid, parent, text string) string {
-	return `{"type":"assistant","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
-		`"message":{"role":"assistant","content":` + jsonStr(text) + `}}`
 }
 
 // assistantBlocks is an assistant entry carrying the given raw content blocks,
