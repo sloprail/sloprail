@@ -71,9 +71,9 @@ a quoted multi-word fqn, reconcile then.
    the check-runner; parallel worktrees would conflict heavily on those. gate+structure first because gate
    establishes the gates[] map context needs, and both are the simplest natures to prove the runner e2e.)
 ### BATCH 3 — dispatch engine (after batch 2)
-- [~] 3a  gate dispatch — DONE (ab3d918), REVIEWING                                 [dispatch-core]
+- [~] 3a  gate dispatch — review PASSED (fail-closed verified); slice FIXING flat-event payload [dispatch-core]
 - [ ] 3c  file-guard dispatch (match file state, preventive, re-fires) — WAITS       [dispatch-natures]
-- [~] 3s  structure-gate path-allowlist check — DONE, REVIEWING                     [dispatch-core]
+- [~] 3s  structure-gate — review PASSED; slice FIXING flat-event payload (shared w/ 3a)  [dispatch-core]
 - [ ] 3b  context lifecycle (on/enter/exit, context[] & gates[] maps) — WAITS on 3a  [dispatch-natures]
 - [ ] 3d  goal = context+goal.yaml pairing (composite) — WAITS on 3b                 [dispatch-natures]
 
@@ -99,6 +99,14 @@ KNOWN PRE-EXISTING RED (base branch, NOT a regression — deferred to Wave 3 del
 - Every reviewer must grep the WHOLE repo (grep -rn) for old names when a field/API is renamed,
   including .sloprail/guardrails/*, marketplace/, examples/.
 
+- PAYLOAD `event` MUST serialize FLAT: `.event.newContent`/`.event.path`, NOT `.event.fields.*`.
+  event.Event.MarshalJSON writes nested {kind,fields} — the assembler must flatten it. The spec
+  (`{{ event.newContent }}`) and all example scripts/templates read flat. dispatch-core fixed this in
+  checks.go/payload.go + ContextEnter/ExitPayload; dispatch-natures MUST rely on the flat shape.
+- TEST-MASKING lesson: a test that hand-crafts an input that doesn't match the REAL runtime
+  serialization HIDES a serialization bug. Tests must assert against the payload the actual assembler
+  produces (build through the real code path), not a convenient hand-built map. (Nearly shipped a
+  nested-event payload that would have broken the file-guard/context slice.)
 - Example-loading tests (examples_test) can trip on UNTRACKED stray empty dirs in the worktree
   (e.g. an empty gate/verify-all-linked/ with no gate.yaml) — git ignores empty dirs so they're
   invisible to `git status` but the loader flags them as incomplete declarations. When such a
