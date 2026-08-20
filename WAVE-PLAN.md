@@ -24,10 +24,10 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - worktree `match-scopes` (impl/match-scopes): 1f — IMPL DONE, rebased, IN REVIEW
 - worktree `traj-describe-cite` (impl/traj-describe-cite): 4b+4c — DONE, rebased, IN REVIEW. NOTE: mock writes EMPTY toolUseId, so parentPath correlation is fixture/unit tested, not mock-e2e. Adds internal/transcript/{cite,describe,line}.go + session_trajectory{,_cite,_describe}.go; leaves normalize slot (030).
 
-- [!] 1a  done; review found 2 MAJOR (missed field-rename consumers) — FIXING     [events-vocab]
-- [!] 1b  done; review found 2 MAJOR (missed field-rename consumers) — FIXING     [events-vocab]
-- [!] 1c  done; review found 2 MAJOR (missed field-rename consumers) — FIXING     [events-vocab]
-- [!] 1d  done; review found 2 MAJOR (missed field-rename consumers) — FIXING     [events-vocab]
+- [~] 1a  fixes done (found 4 missed consumers vs 2 named; fileMatchScope decided) — RE-REVIEWING [events-vocab]
+- [~] 1b  fixes done (found 4 missed consumers vs 2 named; fileMatchScope decided) — RE-REVIEWING [events-vocab]
+- [~] 1c  fixes done (found 4 missed consumers vs 2 named; fileMatchScope decided) — RE-REVIEWING [events-vocab]
+- [~] 1d  fixes done (found 4 missed consumers vs 2 named; fileMatchScope decided) — RE-REVIEWING [events-vocab]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
 - [x] 1f  per-nature match SCOPES + glob shorthand + internal/natures — MERGED (218de70)   [match-scopes ✓]
 - [x] 4b  session trajectory describe — MERGED (93d0c52)                               [traj-describe-cite ✓]
