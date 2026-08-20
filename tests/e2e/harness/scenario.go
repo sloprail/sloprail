@@ -59,6 +59,26 @@ func Say(id, text string) Turn {
 		"e2e-turn-"+id, jsonStr(text))}
 }
 
+// ToolUse returns a turn where the agent invokes an ARBITRARY tool by name.
+//
+// Write/Bash/Say cover the tools with special harness handling; this is for a
+// trajectory that must carry a tool the mock does not implement — a `fill_form`,
+// a `download_file`, a `screenshot` — because a rule reads those tool_use blocks
+// out of the record (action-proof's prepare scans `.message.content[]` for a
+// `fill_form`/`screenshot` by name). The mock passes the tool_use block through
+// into the transcript verbatim (its `.name` and `.input`) and answers the call
+// with a not-implemented tool_result; the block itself is what the rule reads,
+// which is all a trajectory-reading check needs. The tool_result the mock returns
+// carries no `toolUseResult` field, so a check pulling an artifact OUT of the
+// result (a screenshot image) sees none — which is the honest "no proof present"
+// state, exactly the violation such a rule catches.
+//
+// input values are strings, which is what these representative tools take; a
+// check reading the input as JSON (`.input.email`) reads them as such.
+func ToolUse(id, name string, input map[string]string) Turn {
+	return Turn{jsonl: toolUse(id, name, input)}
+}
+
 // Skill returns a turn where the agent loads a skill.
 //
 // The mock does not implement the Skill tool and answers with an error, which
