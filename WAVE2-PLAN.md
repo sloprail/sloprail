@@ -116,6 +116,12 @@ green; CI green. Merge each into draft/fileguard-format; remove worktree.
 - [x] B4 (3f4c26d) — 050 eval-loop-maxing + 051 required-context-precondition e2e; 013 deleted.
       (B4's automated reviewer got stuck chasing a harness snapshot rabbit-hole — killed it; merged on
       my own review: 050/051 cover happy/violation/re-fire/controls non-vacuously.)
+- [x] B2 (9a3b011) — 042-045 judge e2e. Reviewer's 3 gaps all closed (action-proof proof-present via
+      ToolUseWithResult; message_id test; TODO(D3) placement). 22 tests, 0 skips. Harness gained
+      InstallJudgeClaudeCapturing/JudgePrompt/ToolUseWithResult/RootMessageID (now on base — B3 must not
+      re-add). NOTE for D3: ToolUseWithResult relies on the installed mock passing a scenario-supplied
+      toolUseResult through (mock can't synthesize one); if a future mock build enforces validateRecord
+      it fails LOUDLY — candidate for a mock feature (synthesize toolUseResult for a registered tool).
 
 ## STILL IN FLIGHT
 - [~] B1 example-fix (impl/w2-b1-lifecycle): fix 4 broken examples using --owner (+ jq -s + SR_WORKSPACE),
