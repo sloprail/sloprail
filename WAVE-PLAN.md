@@ -52,11 +52,11 @@ a quoted multi-word fqn, reconcile then.
 - worktree `declaration-loaders` (impl/declaration-loaders): 2+2b (loaders + shared check/require/judge types + example-yaml reconciliation) — IMPLEMENTING
 - worktree `traj-normalize` (impl/traj-normalize): 4a (trajectory normalize subcommand) — IMPLEMENTING
 ### BATCH 2 — after batch 1
-- [~] 2   loaders (new internal/declaration pkg, 76 unit cases) — DONE, REVIEWING      [declaration-loaders]
-- [~] 2b  shared types (Prerequisite/Check/*CheckPayload/*JudgeInput/PreparedContext) — DONE, REVIEWING [declaration-loaders]
+- [~] 2   loaders (new internal/declaration pkg, 76 unit cases) — review ZERO BLOCKERS, fixing 2 MINORs      [declaration-loaders]
+- [~] 2b  shared types (Prerequisite/Check/*CheckPayload/*JudgeInput/PreparedContext) — review ZERO BLOCKERS, fixing 2 MINORs [declaration-loaders]
 - [x] 4a  session trajectory normalize — MERGED, reviewed zero issues              [traj-normalize ✓]
 
-  - [~] 2r  RECONCILED 13 example yamls to spec grammar (marker.kind→any(markers), refactoring.active→context[..], path→event.path, glob-or→path contains) — REVIEWING; NOTE reviewer must confirm `contains` is a real op to the new spec grammar (found by match-scopes review).
+  - [~] 2r  RECONCILED 13 example yamls to spec grammar (marker.kind→any(markers), refactoring.active→context[..], path→event.path, glob-or→path contains) — review confirmed `contains` IS a real op; fixing 2 MINORs (content-de-layering root-dir equivalence, Goal.Enabled required) to the new spec grammar (found by match-scopes review).
       OLD vocab in examples/**/*.yaml that the spec-faithful scopes REFUSE:
       `marker.kind` singular → spec `any(markers, .kind == ...)`; bare `refactoring.active` →
       `context["refactoring"].active`; undeclared `tags` (needs the trigger's own event scope, e.g.
