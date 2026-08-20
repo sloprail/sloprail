@@ -114,6 +114,10 @@ KNOWN PRE-EXISTING RED (base branch, NOT a regression — deferred to Wave 3 del
   (CI on a clean checkout never sees it). Removed one for interlinking during the batch-2 merge.
 
 ## FOLLOW-UP TASKS (later, not blockers)
+- WAVE-2 unit-17 (no-unasked-deletion) judge: consume cite's CitationMatch.Grounding (the WHOLE
+  AskUserQuestion envelope, question+answer) into the judge's additionalContext — so an answer-grounded
+  change's judge sees the question, not just the extracted answer (PR#19 #4 decision). The enabling
+  primitive (Grounding field) is merged; the dispatch-side consumption is unbuilt.
 - Author-facing guidance: a guardrail that writes an in-repo ledger AND binds Post events feeds its
   own growing content back as newContent (Post newContent is spec-mandated non-optional). The blessed
   record pattern dodges this via out-of-tree sr-session state. Add a warning to authoring skill docs
