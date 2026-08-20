@@ -64,6 +64,74 @@ func cite(e *Env, dir, path, quote string) harness.Result {
 	return e.CLIDirect(dir, "sr-session", "trajectory", "cite", "--path", path, quote)
 }
 
+// writeSubagentTranscript writes a SUB-AGENT's transcript — one whose own origin
+// record carries isSidechain, exactly as Claude Code writes a sub-agent's file —
+// laid out at <session>/subagents/agent-<id>.jsonl the way the harness nests it,
+// and returns its path. This is a trajectory cite must REFUSE: its "user" messages
+// are the parent's dispatch, not the end user's words.
+func writeSubagentTranscript(t *testing.T, agentID string, lines ...string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "cite-sub-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	subDir := filepath.Join(dir, "s-parent", "subagents")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir subagents: %v", err)
+	}
+	path := filepath.Join(subDir, "agent-"+agentID+".jsonl")
+	body := ""
+	for _, l := range lines {
+		body += l + "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write subagent transcript: %v", err)
+	}
+	return path
+}
+
+// sidechainUserMsg is a sub-agent's user record — the shape a sub-agent's own
+// transcript carries: a parentless origin with isSidechain true, its content the
+// PARENT agent's dispatch prompt rather than anything the end user typed. It is
+// precisely what cite must not let a claim be grounded in.
+func sidechainUserMsg(uuid, agentID, content string) string {
+	return `{"type":"user","uuid":"` + uuid + `","parentUuid":null,"isSidechain":true,` +
+		`"agentId":"` + agentID + `","message":{"role":"user","content":` + jsonStr(content) + `}}`
+}
+
+// writeSubagentWithMeta writes a sub-agent transcript recognised by its META
+// COMPANION rather than by isSidechain — the primary mark Claude Code leaves: an
+// agent-<id>.meta.json beside agent-<id>.jsonl. The record's own lines are written
+// as given (here with isSidechain false, to prove the meta file alone settles it),
+// and the path to the record is returned.
+func writeSubagentWithMeta(t *testing.T, agentID string, lines ...string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "cite-meta-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	subDir := filepath.Join(dir, "s-parent", "subagents")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir subagents: %v", err)
+	}
+	path := filepath.Join(subDir, "agent-"+agentID+".jsonl")
+	body := ""
+	for _, l := range lines {
+		body += l + "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write subagent transcript: %v", err)
+	}
+	meta := `{"agentType":"general-purpose","description":"delegated task","toolUseId":"tool-1","spawnDepth":1}`
+	metaPath := filepath.Join(subDir, "agent-"+agentID+".meta.json")
+	if err := os.WriteFile(metaPath, []byte(meta), 0o644); err != nil {
+		t.Fatalf("write subagent meta: %v", err)
+	}
+	return path
+}
+
 // --- fixture record shapes ---
 
 // userMsg is a plain typed user message with string content.

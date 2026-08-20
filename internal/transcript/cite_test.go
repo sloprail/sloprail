@@ -237,6 +237,78 @@ func TestCiteMatchesAnAnswer(t *testing.T) {
 	assert.Equal(t, 3, matches[0].Line, "it resolves to the line the answer envelope sits on")
 }
 
+// TestCiteAnswerMatchCarriesWholeEnvelope: a match landing on an AskUserQuestion
+// answer carries the WHOLE tool_result envelope on Grounding — question, answer,
+// and trailer — not merely the extracted answer.
+//
+// This is the enabling half of the judge-input decision (PR comment #4): cite's
+// stdout is still `<path>:<line>` for an agent to write, but a judge-input assembly
+// reading this match gets the full tool-call result, so the judge sees WHAT WAS
+// ASKED beside what was answered. The answer alone ("the second option") is not a
+// rule a judge can check.
+func TestCiteAnswerMatchCarriesWholeEnvelope(t *testing.T) {
+	p := newProject(t)
+	envelope := `The user answered: "which approach for the auth rewrite?"="go with the second option please". Read carefully.`
+	path := p.write("a-session",
+		userMsg("u1", "here is the task"),
+		record("a1", "u1"),
+		`{"type":"user","uuid":"u2","parentUuid":"a1","isSidechain":false,"message":{"role":"user","content":[`+
+			`{"type":"tool_result","tool_use_id":"t1","content":`+jsonQuote(envelope)+`}]}}`,
+	)
+
+	matches, err := Cite(path, "second option")
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	require.Len(t, matches[0].Grounding, 1, "the answer match carries its envelope")
+	whole := matches[0].Grounding[0]
+	assert.Equal(t, envelope, whole, "the WHOLE envelope is carried, uncut")
+	// The question — which the citation search itself never lets a quote match — is
+	// present in the grounding, because a judge needs it to read the answer.
+	assert.Contains(t, whole, "which approach for the auth rewrite?",
+		"the question is in the grounding so the judge sees what was asked")
+	assert.Contains(t, whole, "go with the second option please", "the answer is there too")
+}
+
+// TestCitePlainMessageMatchHasNoGrounding: a match on a plain typed message carries
+// NO grounding envelope — there is no tool-call result to surface, and the message
+// text the line names is already the whole of what the user said.
+func TestCitePlainMessageMatchHasNoGrounding(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session", userMsg("u1", "please refactor the auth module"))
+
+	matches, err := Cite(path, "auth module")
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Empty(t, matches[0].Grounding,
+		"a plain-message match has no envelope to carry")
+}
+
+// TestAnswerEnvelopesReturnsWholeMultiQuestionEnvelope: answerEnvelopes returns the
+// WHOLE envelope for a multi-question answer — every question and answer — which is
+// the opposite of answerText's answer-only view, and deliberately so: the judge-input
+// consumer needs the questions and the sibling answers the user may refer to.
+func TestAnswerEnvelopesReturnsWholeMultiQuestionEnvelope(t *testing.T) {
+	envelope := `The user answered: "which store?"="the dotdir one", "required or optional?"="make it required". Read the answers carefully.`
+	msg := json.RawMessage(`{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"t1","content":` + jsonQuote(envelope) + `}]}`)
+
+	got := answerEnvelopes(msg)
+	require.Equal(t, []string{envelope}, got, "the whole multi-question envelope is returned uncut")
+	// Both the questions (which answerText drops) and both answers are present.
+	assert.Contains(t, got[0], "which store?")
+	assert.Contains(t, got[0], "required or optional?")
+	assert.Contains(t, got[0], "make it required")
+}
+
+// TestAnswerEnvelopesSkipsOrdinaryToolResult: a tool_result that is not an answer
+// envelope — an ordinary command's output — contributes no grounding, the same line
+// answerText draws between the user's prompted answer and a tool's body.
+func TestAnswerEnvelopesSkipsOrdinaryToolResult(t *testing.T) {
+	msg := json.RawMessage(`{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"t1","content":"total 42\n-rw-r--r-- 1 u staff file.go"}]}`)
+	assert.Empty(t, answerEnvelopes(msg), "an ordinary tool result is not a grounding envelope")
+}
+
 // TestCiteEmptyQuoteMatchesNothing: an empty quote resolves nowhere rather than
 // everywhere — a citation of "" is a mistake, not a request for every user line.
 func TestCiteEmptyQuoteMatchesNothing(t *testing.T) {

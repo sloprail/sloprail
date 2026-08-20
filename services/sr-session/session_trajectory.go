@@ -79,6 +79,28 @@ to read another — the parent or a sibling that describe named.`,
 // Cwd is empty, which searchDirFor handles by deriving the directory from the
 // path itself. Without --path the command is the hook-invoked one, a payload is
 // on stdin, and it is read as query and id read it.
+//
+// # Why not resolve the current session from CLAUDE_SESSION_ID when --path is absent
+//
+// The reviewer asked whether cite with no --path should resolve the current
+// session from CLAUDE_SESSION_ID rather than from a piped payload. It cannot,
+// because that variable is not there to read: Claude Code does not export
+// CLAUDE_SESSION_ID into the environment of an agent's own Bash tool calls (it
+// resolves in a skill prompt's string substitution, but reads back empty in a tool
+// call — an open request on the harness, not a shipped guarantee). Wiring cite to
+// it would mean keying the whole agent-facing path on a variable that is empty in
+// exactly the context cite runs in, which resolves nothing and hides the failure.
+//
+// So the two resolutions cite already has are the whole of it, and they cover the
+// two ways it is actually invoked. An agent at a terminal names the trajectory with
+// --path — the explicit override, and the case the lazy-stdin note above exists for.
+// A hook script pipes the payload it was handed, and record() reads the transcript
+// off it. There is no third invocation that has neither a --path nor a payload yet
+// knows which session it is, so there is nothing for an env-var branch to serve;
+// the honest resolution is the payload the harness already provides, keyed the same
+// way `id` and `query` key theirs. Were the harness to start exporting a session id
+// to tool calls, the place to add it is here, as a branch below --path and above the
+// payload read — but not before it exists.
 func resolveTrajectory(cmd *cobra.Command) (string, HookPayload, error) {
 	if flag, _ := cmd.Flags().GetString("path"); flag != "" {
 		return flag, HookPayload{}, nil
