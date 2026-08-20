@@ -48,12 +48,15 @@ a quoted multi-word fqn, reconcile then.
   * Gate/Context matcher: NESTED — {event: {<kind fields>}, context: {...}} (context top-level, no gates).
 - Marker structural shape used by scopes: {kind, fqn, line(int)} — mirror of filemod.Marker.
 
+### BATCH 2 — IN PROGRESS (base 90ca13a). 2 parallel worktrees:
+- worktree `declaration-loaders` (impl/declaration-loaders): 2+2b (loaders + shared check/require/judge types + example-yaml reconciliation) — IMPLEMENTING
+- worktree `traj-normalize` (impl/traj-normalize): 4a (trajectory normalize subcommand) — IMPLEMENTING
 ### BATCH 2 — after batch 1
-- [ ] 2   .sloprail/{file-guard,gate,context,goal}/*.yaml + structure.yaml loaders (needs 1b/1c/1f)
-- [ ] 2b  require/checks/judge/prepare shared types (Prerequisite, Check, *CheckPayload, *JudgeInput) (needs 2)
-- [ ] 4a  session trajectory normalize (needs extractors-per-entry: 1b + command + file)
+- [~] 2   .sloprail/{file-guard,gate,context,goal}/*.yaml + structure.yaml loaders — IMPLEMENTING [declaration-loaders]
+- [~] 2b  require/checks/judge/prepare shared types — IMPLEMENTING (same worktree as 2)  [declaration-loaders]
+- [~] 4a  session trajectory normalize — IMPLEMENTING                                [traj-normalize]
 
-  - [ ] 2r  RECONCILE example *.yaml match: strings to the new spec grammar (found by match-scopes review).
+  - [~] 2r  RECONCILE example *.yaml match: strings (folded into declaration-loaders slice) to the new spec grammar (found by match-scopes review).
       OLD vocab in examples/**/*.yaml that the spec-faithful scopes REFUSE:
       `marker.kind` singular → spec `any(markers, .kind == ...)`; bare `refactoring.active` →
       `context["refactoring"].active`; undeclared `tags` (needs the trigger's own event scope, e.g.
