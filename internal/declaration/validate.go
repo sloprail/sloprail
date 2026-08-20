@@ -141,12 +141,23 @@ func ValidateContext(c Context, env Env) []Problem {
 // ValidateGoal reports everything wrong with a goal.
 //
 // A goal has no `on`, no `match`, no checks — it is a higher-level primitive, not
-// a dispatched nature. Its only rule is that it names a verify `script` (the
-// condition lives there, not as prose here). `enabled` is a plain boolean whose
-// absence YAML reads as false, which is a legitimate value (a goal authored and
-// left off), so it is not a missing-field fault.
+// a dispatched nature. Its rules are two required fields: a verify `script` (the
+// condition it aims for lives there, not as prose here) and an `enabled` flag.
+//
+// `enabled` is REQUIRED, matching the spec's non-optional `enabled: boolean`, and
+// its PRESENCE is what is enforced — not its value. Both `enabled: true` and
+// `enabled: false` are legitimate (a goal in force, or one authored and parked),
+// so the check is on the pointer being nil, not on the bool being false. An absent
+// `enabled` is a missing-field fault: a plain bool would read the omission as
+// `false` and silently accept a goal the author never finished, which is the quiet
+// acceptance this engine refuses everywhere else. See Goal.Enabled for why it is a
+// *bool.
 func ValidateGoal(g Goal, _ Env) []Problem {
 	var problems []Problem
+	if g.Enabled == nil {
+		problems = append(problems, prob(ErrMissingField, "enabled",
+			"a goal must say whether it is enabled — write `enabled: true` or `enabled: false`; an absent flag is not read as false"))
+	}
 	if strings.TrimSpace(g.Script) == "" {
 		problems = append(problems, prob(ErrMissingField, "script",
 			"a goal must name its verify script — the condition it aims for lives in the script, not as prose in the declaration"))

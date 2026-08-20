@@ -207,10 +207,17 @@ type Goal struct {
 	// Enabled is whether this goal is currently in force. A goal can be authored
 	// and left disabled, or switched off without deleting it — versioning what was
 	// aimed for over time. The paired context reads this in `enter` and only
-	// activates when true. Required: unlike a guard's `enabled`, the spec models
-	// this as a plain non-optional boolean the pairing reads, so its absence is a
-	// malformed goal rather than a default.
-	Enabled bool `yaml:"enabled"`
+	// activates when true.
+	//
+	// A *bool, not a bool, so ABSENCE is distinguishable from `false`. The spec
+	// models `enabled: boolean` as REQUIRED (non-optional), and a plain bool
+	// cannot tell "the author wrote `enabled: false`" from "the author forgot to
+	// write it at all" — both unmarshal to false. Making it a pointer lets the
+	// validator refuse the second while accepting the first: `enabled: true` and
+	// `enabled: false` both load (the pointer is non-nil), and an absent `enabled`
+	// is a missing-field fault (the pointer is nil). Enforcing presence is the
+	// spec-faithful reading; see ValidateGoal.
+	Enabled *bool `yaml:"enabled"`
 
 	// Script is the verify script's file name, resolved relative to this goal's
 	// own folder. What the goal aims for is read from the script itself, not from

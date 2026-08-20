@@ -701,12 +701,13 @@ script: verify.sh
 	})
 	require.Len(t, loaded.Goals, 1)
 	assert.Equal(t, "accuracy", loaded.Goals[0].Name)
-	assert.True(t, loaded.Goals[0].Enabled)
+	require.NotNil(t, loaded.Goals[0].Enabled, "an explicit enabled: is present")
+	assert.True(t, *loaded.Goals[0].Enabled)
 	assert.Equal(t, "verify.sh", loaded.Goals[0].Script)
 }
 
 // A goal authored and left disabled is legitimate — enabled:false is a value, not
-// a missing field.
+// a missing field. The pointer is non-nil (present), pointing at false.
 func TestLoad_Goal_DisabledIsValid(t *testing.T) {
 	loaded := loadOK(t, map[string]string{
 		"goal/parked/goal.yaml": `
@@ -715,7 +716,24 @@ script: verify.sh
 `,
 	})
 	require.Len(t, loaded.Goals, 1)
-	assert.False(t, loaded.Goals[0].Enabled)
+	require.NotNil(t, loaded.Goals[0].Enabled, "an explicit enabled: false is present, not absent")
+	assert.False(t, *loaded.Goals[0].Enabled)
+}
+
+// `enabled` is REQUIRED (spec: non-optional boolean), and its PRESENCE is
+// enforced. A goal.yaml with only `script:` — no `enabled:` — is refused rather
+// than read as `enabled: false`, so a half-written goal cannot silently load as
+// parked. This is the case a plain bool could not tell apart from an explicit
+// false; the *bool is what makes it refusable.
+func TestLoad_Goal_MissingEnabledRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"goal/noenabled/goal.yaml": `
+script: verify.sh
+`,
+	})
+	assert.Equal(t, NatureGoal, iv.Nature)
+	assert.True(t, hasKind(iv, ErrMissingField), "a goal with no enabled flag is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "enabled", "the refusal names the missing field")
 }
 
 func TestLoad_Goal_MissingScript(t *testing.T) {

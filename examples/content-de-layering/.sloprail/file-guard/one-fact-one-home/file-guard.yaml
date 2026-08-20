@@ -1,8 +1,14 @@
 # A file-guard's `match` is either a BARE glob or a full expression — a
 # glob-or-glob (`"**/updates/**" or "**/branding/**"`) is neither, so it is
 # written as an expression over the file's `path`. `**/updates/**` means "the
-# path contains an `updates/` segment at any depth", which is `path contains
-# "/updates/"`; the two alternatives compose with `or`.
-match: path contains "/updates/" or path contains "/branding/"
+# path has an `updates/` SEGMENT at any depth, root-level included" — since
+# `**/` matches zero or more leading segments, `updates/a.md` matches as much
+# as `x/updates/a.md` does. That is two cases, not one: `path contains
+# "/updates/"` catches a nested segment, and `path startsWith "updates/"`
+# catches the root-level one the leading slash would otherwise miss. The two
+# alternatives compose with `or`. (Faithful over every path a glob would test,
+# including the near-misses `myupdates/a.md` and `updatesx/a.md`, which neither
+# clause matches — as neither does the glob.)
+match: path contains "/updates/" or path startsWith "updates/" or path contains "/branding/" or path startsWith "branding/"
 checks:
   - judge: ./fact-lives-in-one-home.md.j2
