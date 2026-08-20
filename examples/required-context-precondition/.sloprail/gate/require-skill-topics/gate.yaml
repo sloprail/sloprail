@@ -4,6 +4,6 @@
 # is written once, not duplicated across two triggers.
 on:
   - event: PreFileWrite
-    match: path startsWith "memories/topics/"
+    match: event.path startsWith "memories/topics/"
 require:
   - skill: document-topic

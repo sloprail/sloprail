@@ -8,8 +8,8 @@
 # always").
 on:
   - event: PostFileCreate
-    match: path startsWith "people/" and path endsWith ".md"
+    match: event.path startsWith "people/" and event.path endsWith ".md"
   - event: PostFileDelete
-    match: path startsWith "people/" and path endsWith ".md"
+    match: event.path startsWith "people/" and event.path endsWith ".md"
 enter: ./enter.sh
 exit: ./exit.sh

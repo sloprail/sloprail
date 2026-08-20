@@ -11,10 +11,10 @@
 # artifact files actually landed.
 on:
   - event: PostTagWrite
-    match: any(tags, .label == "update" or .label == "decision" or .label == "skip")
+    match: any(event.tags, .label == "update" or .label == "decision" or .label == "skip")
   - event: PostFileCreate
-    match: path startsWith "memories/updates/" or path startsWith "memories/decisions/"
+    match: event.path startsWith "memories/updates/" or event.path startsWith "memories/decisions/"
   - event: PostFileUpdate
-    match: path startsWith "memories/updates/" or path startsWith "memories/decisions/"
+    match: event.path startsWith "memories/updates/" or event.path startsWith "memories/decisions/"
 enter: ./enter.sh
 exit: ./exit.sh

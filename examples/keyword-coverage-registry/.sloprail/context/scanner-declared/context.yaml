@@ -14,8 +14,8 @@
 # (unit 11's shape), though nothing here enforces that pairing.
 on:
   - event: PostFileCreate
-    match: path startsWith "scanners/" and path endsWith "/scanner.yaml"
+    match: event.path startsWith "scanners/" and event.path endsWith "/scanner.yaml"
   - event: PostFileUpdate
-    match: path startsWith "scanners/" and path endsWith "/scanner.yaml"
+    match: event.path startsWith "scanners/" and event.path endsWith "/scanner.yaml"
 enter: ./enter.sh
 exit: ./exit.sh
