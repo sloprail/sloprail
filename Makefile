@@ -116,6 +116,35 @@ test-services:
 test-e2e:
 	go test -p 1 -count=1 -timeout 30m ./tests/...
 
+# Sharded e2e for CI. The whole suite run with -p 1 (the disk constraint above)
+# grew past the CI runner's per-job wall-clock as the corpus of use-case e2e
+# expanded, so CI runs it as a matrix: several jobs, each -p 1 (disk stays low),
+# each a disjoint slice of ./tests/... . SHARD names the slice; the union of the
+# slices below is exactly `go list ./tests/...`, so nothing is dropped. Keep this
+# list and the workflow matrix in lockstep — a package matching no slice would
+# silently never run in CI.
+#
+#   make test-e2e-shard SHARD=session
+test-e2e-shard:
+	@case "$(SHARD)" in \
+	  session)  go test -p 1 -count=1 -timeout 30m ./tests/e2e/session/... ;; \
+	  pre_tool) go test -p 1 -count=1 -timeout 30m ./tests/e2e/pre_tool/... ;; \
+	  examples) go test -p 1 -count=1 -timeout 30m ./tests/e2e/examples/... ;; \
+	  rest)     go test -p 1 -count=1 -timeout 30m \
+	              ./tests/e2e/revalidation/... \
+	              ./tests/e2e/subagent/... \
+	              ./tests/e2e/gate/... \
+	              ./tests/e2e/context/... \
+	              ./tests/e2e/fileguard/... \
+	              ./tests/e2e/structure/... \
+	              ./tests/e2e/proxy/... \
+	              ./tests/e2e/engine_repo_judges/... \
+	              ./tests/e2e/declarations/... \
+	              ./tests/e2e/authoring/... \
+	              ./tests/e2e/harness/... ;; \
+	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|pre_tool|examples|rest)" >&2; exit 2 ;; \
+	esac
+
 tidy:
 	go mod tidy
 
