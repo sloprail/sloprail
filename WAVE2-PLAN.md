@@ -85,12 +85,30 @@ green; CI green. Merge each into draft/fileguard-format; remove worktree.
   lands green (do NOT leave to Wave 3 — it's already broken and blocks `./tests/e2e/examples/...` green;
   but delete only once the replacement exists, so coverage never drops).
 
-## Status
-- [ ] B1 (036-041 lifecycle) — RUNNING
-- [ ] B2 (042-045 judge) — RUNNING
-- [ ] B3 (046-049 judge+marker) — RUNNING
-- [x] B4 (050-051 composite, 013 deleted) — DONE, green, rebased on base; T050_02 corrected for the
-      example fix. AWAITING reviewer-to-zero gate, then merge.
+## Status (updated 2026-08-20, later)
+- [x] JUDGE-CONFIG MERGED (dba20b5): gonja renderer + per-judge model/timeout + preventive-create
+      fail-closed. Reviewer: ZERO major, 2 minor (doc, fixed). Spec pushed to PR #2 (7b34f87).
+- [~] B1 (036-041 lifecycle) — DONE but found 4 BROKEN examples needing engine `--owner` + fixes:
+      * interlinking/keyword-coverage/completeness gates read a sibling context via nonexistent
+        `state list --owner <ctx>` → silently disabled. USER DECIDED: build `--owner`. Slice
+        impl/owner-and-b1fix RUNNING (engine+spec+tests only).
+      * mechanical example fixes still to do (in a follow-up after --owner): SR_WORKSPACE-anchor
+        relative greps (intake tasks/, interlinking updates/ decisions/, keyword scanners/);
+        research-rigor .toolUseResult jq on wrong entry; interlinking gate needs match:context[].active
+        (require-blocks bug, same as eval-loop-maxing); intake skip channel redesign (user: decide with
+        --owner — likely a tag/marker the gate reads, or a readable namespace).
+      * THEN B1's e2e (036-041) flips its bug-pin tests → real assertions. B1 branch impl/w2-b1-lifecycle
+        holds the e2e (with bug-pins); rebase on --owner+fixes, flip, review, merge.
+- [x] B2 (042-045 judge) — DONE, reconciled (installExampleTree verbatim; 042 skips→real; 20 tests 0 skip),
+      rebased on merged base (harness.go conflict with judge-config's recording shim RESOLVED — kept both
+      helpers), green. Under B2+B3 reviewer.
+- [x] B3 (046-049 judge+marker) — DONE, reconciled (removed exec-bit/cite bug-pins→tripwires; verbatim NUD
+      paths), rebased, green (26 tests). Under B2+B3 reviewer.
+- [x] B4 (050-051 composite, 013 deleted) — DONE, green, rebased; T050_02 corrected. Under B4 reviewer.
+
+## Merge order (once reviewers green): B2, B3, B4 (independent e2e-only) → then --owner slice →
+   then B1 fixes+e2e (depends on --owner) → then delete old-dup deterministic_refactoring after 041 →
+   then delete internal/declaration/examples_test.go (superseded by Wave-2 e2e) → then D3/D4 → Wave 3.
 
 ## a10n-cli#470 — MERGED ✅ (2026-08-20, squash 6614d1062, user-approved). New a10n-claude-mock BUILT +
   installed to /Users/nsviridenko/.local/bin/a10n-claude-mock (codesigned) — verified it accepts
