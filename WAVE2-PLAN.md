@@ -92,8 +92,19 @@ green; CI green. Merge each into draft/fileguard-format; remove worktree.
 - [x] B4 (050-051 composite, 013 deleted) — DONE, green, rebased on base; T050_02 corrected for the
       example fix. AWAITING reviewer-to-zero gate, then merge.
 
-## a10n-cli#470 (unblocks D3/D4) — MERGEABLE ✅ (rebased onto main 8a2bce5e0; #469+#470 both preserved;
-  all claude-mock tests green; force-pushed). NEEDS USER: review+merge #470, then build the new
-  a10n-claude-mock binary onto PATH. THEN D3/D4 can run (drop InstallJudgeClaude + hand-crafted jsonl +
-  real-claude e2e → drive the upgraded mock; includes the Wave-2 judge e2e TODO(D3) markers and the
-  engine_repo_judges/015_06_real_agent/021_02_nested real-claude tests).
+## a10n-cli#470 — MERGED ✅ (2026-08-20, squash 6614d1062, user-approved). New a10n-claude-mock BUILT +
+  installed to /Users/nsviridenko/.local/bin/a10n-claude-mock (codesigned) — verified it accepts
+  sr-agent's flags (--model/--allowed-tools/--permission-mode/--settings/--append-system-prompt, all
+  "accepted for CLI compatibility"), no longer cobra-rejects them. **D3/D4 UNBLOCKED.**
+
+## MORE SHIPPED-EXAMPLE BUGS found by Wave-2 (all FIXED on base — hallucinated impl details vs intent)
+- **14 non-executable hook scripts** (mode 100644 despite shebangs) → engine refuses unrunnable checks →
+  6 examples never ran. FIXED (8bd1f77): git update-index --chmod=+x all 14.
+- **no-unasked-deletion cite --path** (4baaa00): removal-has-a-grounded-ask.sh called `cite` with no
+  --path → fails closed → refused EVERY removal. Now passes the CheckPayload transcriptPath.
+- **action-proof jq string-content crash** (4baaa00): find-action-and-proof.sh iterated .content with []
+  (crashes on a string-content message = every first turn) → prepare failed closed → judge unreachable.
+  Now guards `if type=="array"`.
+- Wave-2 e2e agents (B2/B3) worked AROUND these with install-time chmod + t.Skip bug-pins; those e2e
+  tests should now be simplified to drop the workarounds + flip the skips to real assertions (fold into
+  each batch's reviewer pass, OR a small follow-up once the batches merge on the fixed base).
