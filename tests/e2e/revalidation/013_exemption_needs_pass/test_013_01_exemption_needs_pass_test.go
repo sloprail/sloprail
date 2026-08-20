@@ -70,7 +70,7 @@ payload=$(cat)
 path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
 ws=$(printf '%s' "$payload" | sed -n 's|.*"guardrailDir":"\(.*\)/\.sloprail/guardrails/.*|\1|p')
 echo "asked disk=[$(cat "$ws/$path" 2>/dev/null)]" >> "$PWD/log"
-body=$(printf '%s' "$payload" | grep -o '"content":"[^"]*"' || true)
+body=$(printf '%s' "$payload" | grep -o '"newContent":"[^"]*"' || true)
 if [ -z "$body" ]; then
   body=$(cat "$ws/$path" 2>/dev/null || true)
 fi

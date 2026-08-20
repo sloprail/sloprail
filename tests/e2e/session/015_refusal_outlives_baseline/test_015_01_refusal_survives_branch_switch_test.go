@@ -50,13 +50,29 @@ hooks:
 // judgeScript records the payload, then refuses when the path contains "bad".
 //
 // Exit 2 is the refusal channel. The path is read out of the payload with a
-// grep rather than a JSON parser because a hook is an ordinary shell script and
+// sed rather than a JSON parser because a hook is an ordinary shell script and
 // this keeps the fixture free of dependencies.
+//
+// The guardrail's OWN files are skipped BEFORE anything else, and that skip is
+// load-bearing now that Post events carry `newContent`. This hook records every
+// payload into its own `seen` ledger under .sloprail/, so a cycle later it is
+// handed a Post event FOR that ledger — whose newContent is the whole ledger,
+// which already holds the ledger from the cycle before. Recording that back
+// doubles the ledger every cycle, and the payload the hook must read grows with
+// it: an exponential blowup that stalls the session rather than a clean refusal.
+// Skipping .sloprail/ paths keeps the ledger to the agent's own files, which is
+// also exactly what the assertions count. It is why the refusal is keyed on the
+// event's path rather than on "bad" appearing anywhere in the (now content-
+// bearing) payload.
 const judgeScript = `#!/bin/sh
 payload="$(cat)"
+path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+case "$path" in
+  .sloprail/*) exit 0 ;;
+esac
 printf '%s\n' "$payload" >> "$PWD/seen"
-case "$payload" in
-  *bad*) echo "this file is not acceptable" >&2; exit 2 ;;
+case "$path" in
+  bad*) echo "this file is not acceptable" >&2; exit 2 ;;
 esac
 exit 0
 `
@@ -275,10 +291,22 @@ hooks:
 	// rule would refuse nothing, and this test would pass while testing
 	// nothing. The refusal ledger checked below is what makes that failure
 	// visible instead.
+	//
+	// The guardrail's OWN files are skipped, and that skip is load-bearing now
+	// that Post events carry newContent. This hook records every payload into its
+	// own seen ledger, so once it has seen a payload carrying "FORBIDDEN content"
+	// the seen file itself holds the forbidden word — and the seen file is a file
+	// under .sloprail/, so a cycle later this hook is handed a PostFileCreate for
+	// it, greps it, and refuses its own bookkeeping forever. The rule is about the
+	// agent's files, not the engine's own, so anything under .sloprail/ is not a
+	// subject to judge.
 	const judgeContentScript = `#!/bin/sh
 payload="$(cat)"
-printf '%s\n' "$payload" >> "$PWD/seen"
 path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+case "$path" in
+  .sloprail/*) exit 0 ;;
+esac
+printf '%s\n' "$payload" >> "$PWD/seen"
 gdir="$(printf '%s' "$payload" | sed -n 's/.*"guardrailDir":"\([^"]*\)".*/\1/p')"
 root="${gdir%/.sloprail/guardrails/*}"
 if [ -n "$path" ] && [ -f "$root/$path" ] && grep -q FORBIDDEN "$root/$path"; then

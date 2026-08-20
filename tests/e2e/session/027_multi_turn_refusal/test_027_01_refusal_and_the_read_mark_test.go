@@ -79,6 +79,17 @@ hooks:
 //
 // The answer is bracketed so one cycle's span can be told from the next's even
 // when a cycle is driven round more than once by a block.
+//
+// The refusal keys on the event's own `"path"` field, NOT on "bad" appearing
+// anywhere in the payload. That distinction became load-bearing when Post events
+// began carrying `newContent`: this hook writes its query answers to its own
+// `answers` ledger, which quotes the offending file's name, so that ledger's
+// PostFileCreate now carries `newContent` mentioning "bad-file.md". A bare
+// `*bad*` match then refused the hook's OWN bookkeeping file every cycle, so a
+// recovering cycle could never complete and the mark never advanced. Matching
+// the top-level `"path":"bad` — the event's own subject, whose quotes are
+// literal — sidesteps the escaped `\"file_path\":\"bad-file.md\"` that rides
+// inside newContent.
 const askScript = `#!/bin/sh
 payload="$(cat)"
 if [ -z "${SR_TRANSCRIPT:-}" ]; then
@@ -92,7 +103,7 @@ fi
   printf '>>>\n'
 } >> "$PWD/answers"
 case "$payload" in
-  *bad*) echo "this file is not acceptable" >&2; exit 2 ;;
+  *'"path":"bad'*) echo "this file is not acceptable" >&2; exit 2 ;;
 esac
 exit 0
 `

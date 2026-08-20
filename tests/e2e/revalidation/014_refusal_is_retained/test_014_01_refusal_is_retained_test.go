@@ -69,22 +69,19 @@ hooks:
 // saw so a test can tell an invocation that judged the pending bytes from one
 // that judged whatever happened to be on disk.
 //
-// The pending bytes live under a different field name per kind, and reading the
-// right one is the whole point. PreFileCreate states them as `content`;
-// PreFileUpdate states them as `result` — the POST-edit bytes — alongside
-// `resultKnown`. Falling back to the file on disk would read the bytes the
-// write is about to REPLACE, which is one write behind and judges the wrong
-// content: it passes the offer that should be refused and refuses the next one.
+// The pending bytes the write would leave behind are `newContent` on both kinds
+// — the created body on PreFileCreate, the POST-edit bytes on PreFileUpdate —
+// so reading that one field is what judges the right content. Falling back to
+// the file on disk would read the bytes the write is about to REPLACE, which is
+// one write behind: it passes the offer that should be refused and refuses the
+// next one.
 const judgeScript = `#!/bin/sh
 payload=$(cat)
 path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
 ws=$(printf '%s' "$payload" | sed -n 's|.*"guardrailDir":"\(.*\)/\.sloprail/guardrails/.*|\1|p')
 echo "asked disk=[$(cat "$ws/$path" 2>/dev/null)]" >> "$PWD/log"
-# A create states its body as content; an update states its outcome as result.
-body=$(printf '%s' "$payload" | grep -o '"content":"[^"]*"' || true)
-if [ -z "$body" ]; then
-  body=$(printf '%s' "$payload" | grep -o '"result":"[^"]*"' || true)
-fi
+# Both a create's body and an update's outcome are stated as newContent.
+body=$(printf '%s' "$payload" | grep -o '"newContent":"[^"]*"' || true)
 case "$body" in
   *SECRET*) echo "content holds a secret" >&2; exit 2 ;;
 esac
