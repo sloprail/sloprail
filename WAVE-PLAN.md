@@ -98,12 +98,28 @@ eval-loop-maxing require→match; task-management message_id jq; interlinking/ke
 --owner+jq-s+SR_WORKSPACE; research-rigor clone-from-invocation + .fields wire-form; intake skip-context.
 Spec additions pushed to PR #2: Check model?/timeout?, PreFileCreate.newContent optional, state list --owner.
 
-### D3/D4 (folds into remaining review comments) — NOW UNBLOCKED (mock #470 merged + installed)
-- [ ] Rework trajectory + judge e2e to drive the upgraded a10n-claude-mock, dropping InstallJudgeClaude
-      stub + hand-crafted jsonl + the real-claude e2e (tests/e2e/engine_repo_judges, pre_tool/015_06_real_agent,
-      session/021_02_nested, + the Wave-2 TODO(D3) markers). Candidate mock feature: synthesize toolUseResult
-      for a registered tool (B2's ToolUseWithResult currently relies on the installed mock passing a scenario
-      one through). Reviewer gate.
+### D3/D4 (review comments) — NOW UNBLOCKED (mock #470 merged + INSTALLED). REFINED SCOPE:
+Investigation changed the picture — much of what looked like "real claude / stub" is NOT:
+- engine_repo_judges ALREADY drives the MOCK (its own comment); it uses a MODEL-VERDICT stub, which is
+  the CORRECT deterministic way to test SCRIPT behavior (not a race against a model) — NOT a deficiency.
+  The judge VERDICT stub (InstallJudgeClaude) across the whole judge suite is likewise the deterministic
+  verdict-injection mechanism; swapping it for the mock is NOT an improvement (you'd still inject the
+  verdict). → The TODO(D3) markers should be RECLASSIFIED as "the stub is the deterministic verdict
+  channel", not "migrate to mock". Do NOT churn the judge suite onto the mock for verdicts.
+- RunReal (ACTUAL real claude) is used by exactly ONE test: pre_tool/015_06_real_agent, GATED behind
+  SLOPRAIL_REAL_AGENT=1 (skipped in CI, bills operator). It's an opt-in smoke — leave or delete; not a
+  CI concern.
+- THE REAL D4 WORK = the trajectory tests (session/028_describe, 029_cite, 031_normalize) keep MINIMAL
+  hand-authored jsonl fixtures for shapes the OLD mock couldn't produce. #470 (now INSTALLED, built from
+  wt-470-rebase) threads a non-empty toolUseId (seedSubagentTranscript takes toolUseID → meta toolUseId)
+  and accepts tool_result-in-user records. So 028's sub-agent-parentPath fixture and 029's answer-envelope
+  (tool_result) fixtures are likely NOW producible by the mock → migrate them, drop the fixtures. STILL
+  possibly impossible (verify empirically against the INSTALLED mock): 029 multi-human-turn (mock has one
+  human turn), 031 write-before-read (mock applies writes before normalize), 031 multi-block/preamble-no-uuid.
+  → A D4 slice: empirically test the INSTALLED mock per kept fixture; migrate the now-producible ones;
+  keep only the genuinely-impossible with UPDATED measured comments; if a remaining gap is worth closing,
+  it's another a10n-cli mock PR (e.g. multi-human-turn, or synthesize toolUseResult for a registered tool
+  — the latter also unblocks B2's ToolUseWithResult from relying on a passed-through scenario record).
 
 ### WAVE 3 (GOAL.md) — cleanup, SEPARATE PRs, at the very end
 - [ ] delete old GUARDRAIL.md format + old dispatch + cyclemod TurnEnd + session query + old/duplicated e2e.
