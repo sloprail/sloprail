@@ -132,10 +132,23 @@ Investigation changed the picture — much of what looked like "real claude / st
   — the latter also unblocks B2's ToolUseWithResult from relying on a passed-through scenario record).
 
 ### WAVE 3 (GOAL.md) — cleanup, SEPARATE PRs, at the very end
-- [ ] delete old GUARDRAIL.md format + old dispatch + cyclemod TurnEnd + session query + old/duplicated e2e.
-      KEEP matcher.go/matcherenv.go. Migrate examples. (The two smallest superseded-e2e deletions already
-      done as Wave-2 finalization; the big old-format/dispatch removal is Wave 3.)
-- [ ] spec cleanup in PR #2 (remove superseded), AFTER impl cleanup.
+READINESS ASSESSMENT (2026-08-20): the old format is NOT deletable as-is — it still has live consumers:
+1. **The repo's OWN guardrails** `.sloprail/guardrails/{rule-quality,skill-quality}/GUARDRAIL.md` are still
+   OLD format — LIVE, enforcing this repo's own rules/skills, tested by tests/e2e/engine_repo_judges. These
+   must be MIGRATED old→new (.sloprail/{file-guard,gate,context}) BEFORE the old loader is deleted, and
+   engine_repo_judges retargeted. (Real behavioral change to the repo's own enforcement.)
+2. `examples/deprecated/` (deterministic-refactoring + required-context-precondition, OLD GUARDRAIL.md) —
+   already superseded by new-format examples/deterministic-refactoring-mode + examples/required-context-
+   precondition (both have merged Wave-2 e2e). → DELETE (not migrate).
+3. THEN delete the old-format loader `internal/guardrail/{config,declaration,store,hook,source,validate,
+   duplicates,problem}.go` (KEEP matcher.go/matcherenv.go/scopes.go — the new format reuses them), the old
+   dispatch path in services/sr-session (session_pre_tool.go runs new-dispatch FIRST then old; remove old),
+   cyclemod TurnEnd, session query, old/duplicated e2e.
+4. spec cleanup in PR #2 (remove superseded), AFTER impl cleanup.
+SEQUENCING/RISK: this removes the format PRODUCTION currently uses (new + old run side-by-side today). It's
+large + high-blast-radius. GOAL.md frames it as separate PRs at the very end "only once everything works".
+→ Do AFTER CI is green on the Wave-2 base. Given the repo-guardrail MIGRATION (#1) is a real behavioral
+  change, CHECKPOINT scope with the user before executing Wave 3 (or at least before #1).
 
 ## LESSONS (persist across compaction)
 - `rg`/ripgrep IGNORES dot-dirs (.sloprail/) and hidden files BY DEFAULT. When searching for
