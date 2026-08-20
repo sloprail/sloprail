@@ -30,8 +30,8 @@ Grouped into 4 non-overlapping worktrees (file-ownership boundaries to avoid con
 - [ ] 1d  Post-file events carry old/newMarkers + old/newContent; naming     [events-vocab]
 - [x] 1e  marker: quoted + frontmatter fqn — MERGED (b26d2ee), reviewed zero issues     [markers ✓]
 - [!] 1f  per-nature match SCOPES + GlobPattern — review found 1 MAJOR (glob misclass), FIXING [match-scopes]
-- [~] 4b  session trajectory describe — done, rebased, reviewing               [traj-describe-cite]
-- [~] 4c  session trajectory cite — done, rebased, reviewing                   [traj-describe-cite]
+- [!] 4b  session trajectory describe — review PASSED describe; slice FIXING cite bug   [traj-describe-cite]
+- [!] 4c  session trajectory cite — review found 1 MAJOR (multi-Q answer parse), FIXING [traj-describe-cite]
 
 NOTE (from markers agent, follow-up not blocker): services/sr-mark/marker.go WriteMarker emits
 fqns UNQUOTED — fine today (examples hand-write quoted frontmatter), but if sr-mark must ever WRITE
