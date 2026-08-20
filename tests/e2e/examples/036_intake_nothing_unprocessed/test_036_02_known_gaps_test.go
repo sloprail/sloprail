@@ -5,77 +5,62 @@ import (
 	"testing"
 )
 
-// This file PINS two shipped-example bugs in intake-nothing-unprocessed with
-// tests that assert the CURRENT behavior and name the defect, so the suite is
-// truthful about what the lifted file does rather than asserting an intended
-// behavior the file does not deliver. Neither is an engine bug — the known-good
-// eval-loop-maxing example demonstrates the correct patterns (paths anchored on
-// $SR_WORKSPACE; a gate reading a context via .context[name].payload) that these
-// example scripts do not use. See the package report.
+// This file drives the intake SKIP channel that the fixed example now delivers:
+// an explicit #skip excuses a message (via the skip-declared context the gate
+// reads with --owner), and a skip persists across cycles. The task-mapping admit
+// is covered by T036_02.
 
-// T036_04: the SHIPPED "map to a task" path does NOT admit, because the gate
-// greps tasks/ relative to its own working directory (the guardrail folder),
-// while the example expects the agent to write tasks/ at the REPOSITORY ROOT.
+// T036_04: an explicit #skip excuses the user message, so the gate ADMITS.
 //
-// This is the cwd bug: the engine runs a check with cwd = the guardrail's folder
-// (.sloprail/gate/verify-intake-complete/), and verify-no-residue.sh's
-// `grep -r tasks/` / `grep -r updates/ decisions/` are cwd-relative. A task file
-// written at the repo root — where a user following the example would put it —
-// is never seen, so the residue never empties and the gate refuses a session the
-// author intended to pass. The fix the example needs is `$SR_WORKSPACE/tasks/`,
-// exactly what eval-loop-maxing does for its own paths.
-//
-// The test asserts the CURRENT (buggy) outcome: a repo-root task file does NOT
-// prevent the refusal. If the example is later fixed to anchor on $SR_WORKSPACE,
-// THIS test flips (the write would then admit) and should be updated to the
-// admit assertion — the failure will point here.
-func TestT036_04_RepoRootTaskFileDoesNotAdmit_ExampleBug(t *testing.T) {
+// The redesigned skip channel: the agent declares `#skip <line>` in its prose,
+// naming the message line(s) that need no task. The skip-declared context enters
+// on that tag (inside a hook, where `sr-session state set` is in scope), logs
+// skip:<transcript>:<line>-<line> to its own registry, and the intake gate reads
+// it via `state list --owner skip-declared` and subtracts the excused ref. The one
+// user message (line 1) is excused, the residue empties, and the Stop is admitted.
+func TestT036_04_ExplicitSkipAdmits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "install")
 
 	sess := "s-036-04"
-	ref := e.TranscriptPath(proj, sess) + ":1-1"
-	// A task file at the REPOSITORY ROOT (where the example tells the agent to put
-	// it), referencing the message ref correctly.
-	e.WriteFile(proj, "tasks/task-a/ASK.md", "# Task A\n\nUser request ("+ref+").\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install + repo-root task")
-
-	res := e.Run(proj, sess, "please handle request A", Turns("done",
-		Say("m1", "Recorded it as task-a at the repo root."),
+	// The one user message is at transcript line 1; #skip 1 excuses it.
+	res := e.Run(proj, sess, "just saying hi, no task needed", Turns("done",
+		Say("m1", "This is a greeting that needs no task. #skip 1"),
 	))
 
-	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("EXPECTED the shipped example to still refuse (cwd bug: the gate greps tasks/ "+
-			"relative to the guardrail folder, so a repo-root task file is invisible). It did NOT "+
-			"refuse — the example may have been fixed to anchor on $SR_WORKSPACE; if so, update this "+
-			"test to assert admit.\n%s", res.Output)
+	// The skip context logged the excused message under its own name — the exact
+	// ref shape the gate collects, so this is a real skip and not an empty turn.
+	reg := e.GuardrailState(proj, sess, "skip-declared", "skip:")
+	if len(reg) == 0 {
+		t.Fatalf("precondition: the skip-declared context logged no skip; registry=%v", reg)
 	}
-	if !strings.Contains(strings.Join(blocks, "\n"), residueReason) {
-		t.Errorf("refused, but not with the residue reason — a different failure than the cwd bug:\n%v", blocks)
+	if !anyKeyHasSuffix(reg, ":1-1") {
+		t.Fatalf("the skip context did not log the line-1 message ref; registry keys=%v", keysOf(reg))
+	}
+
+	// With the message excused, the gate admits.
+	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
+		t.Errorf("the gate refused a session whose only message was explicitly skipped:\n%v", blocks)
+	}
+	if res.Refused() {
+		t.Errorf("unexpected refusal:\n%s", res.Output)
 	}
 }
 
-// T036_05: the SHIPPED "explicit skip" path does NOT work, because the agent
-// cannot run `sr-session state set skip:<ref> <reason>` from its own shell — that
-// command requires the SR_GUARDRAIL hook environment the engine sets only when it
-// runs a HOOK, and the agent's Bash turn has none.
+// T036_05: a #skip that names a DIFFERENT line does NOT excuse the actual message
+// — the gate still refuses, and only the named line is excused.
 //
-// The example's own comment (verify-no-residue.sh) says the agent "just uses that
-// sr-session state" to mark a message needing no task. But `state set` calls
-// openSessionState(), which refuses with "no guardrail in scope — SR_GUARDRAIL is
-// set by the engine when it runs a hook" whenever SR_GUARDRAIL is unset. So the
-// skip is never recorded, the message stays unaccounted, and the gate refuses a
-// session the author intended to pass with an explicit skip.
-//
-// This test asserts the CURRENT behavior: the agent's `state set skip:` errors,
-// and the gate still refuses. It is a real defect in the example's DESIGN (the
-// skip channel is incompatible with the engine's per-hook state scoping), not a
-// mock limitation — the same `state set` fails identically outside the mock.
-func TestT036_05_AgentSkipCannotBeRecorded_ExampleBug(t *testing.T) {
+// The control that proves the skip is per-ref, not a blanket "any skip clears
+// everything": the one user message is at line 1, but the agent skips line 9 (a
+// line that is not the user message). The skip context logs skip:...:9-9, which
+// does not match the residue's :1-1, so the message stays unaccounted and the gate
+// refuses. Without this, a skip test could pass merely because SOME skip was
+// present, regardless of whether it named the right message.
+func TestT036_05_SkipOfWrongLineStillRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -84,22 +69,41 @@ func TestT036_05_AgentSkipCannotBeRecorded_ExampleBug(t *testing.T) {
 	e.Git(proj, "commit", "-m", "install")
 
 	sess := "s-036-05"
-	ref := e.TranscriptPath(proj, sess) + ":1-1"
-	res := e.Run(proj, sess, "just saying hi, no task needed", Turns("done",
-		Bash("b1", "sr-session state set 'skip:"+ref+"' 'a greeting, no task needed'"),
+	res := e.Run(proj, sess, "please handle a real task", Turns("done",
+		Say("m1", "Marking an unrelated line. #skip 9"),
 	))
 
-	// The agent's own state set failed for lack of a guardrail scope — the reason
-	// travels back in the tool result the agent sees.
-	if !res.Saw("no guardrail in scope") {
-		t.Errorf("expected the agent's `sr-session state set skip:` to fail with "+
-			"'no guardrail in scope' (it runs without the SR_GUARDRAIL hook env), but that "+
-			"error did not appear — the skip channel may now work; if so, update this test:\n%s", res.Output)
+	// A skip WAS logged (for line 9), so the context ran — but it does not match
+	// the line-1 message.
+	reg := e.GuardrailState(proj, sess, "skip-declared", "skip:")
+	if !anyKeyHasSuffix(reg, ":9-9") {
+		t.Fatalf("precondition: the line-9 skip was not logged; registry keys=%v", keysOf(reg))
 	}
-	// And because the skip was never recorded, the message is still unaccounted and
-	// the gate refuses.
+
+	// The line-1 message is still unaccounted → the gate refuses.
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
-	if len(blocks) == 0 || !strings.Contains(strings.Join(blocks, "\n"), residueReason) {
-		t.Errorf("expected the gate to still refuse (the skip did not land), got blocks: %v", blocks)
+	if len(blocks) == 0 {
+		t.Fatalf("the gate admitted despite the actual message being unaccounted (only a wrong-line "+
+			"skip was declared):\n%s", res.Output)
 	}
+	if !strings.Contains(strings.Join(blocks, "\n"), residueReason) {
+		t.Errorf("refused, but not with the residue reason:\n%v", blocks)
+	}
+}
+
+func anyKeyHasSuffix(m map[string]string, suffix string) bool {
+	for k := range m {
+		if strings.HasSuffix(k, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

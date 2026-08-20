@@ -65,25 +65,16 @@ func TestT036_01_UnaccountedMessageRefused(t *testing.T) {
 	}
 }
 
-// T036_02: the gate ADMITS once the message IS accounted for — the control that
-// proves T036_01's refusal is CONDITIONAL, not a gate that blocks every Stop.
+// T036_02: the gate ADMITS once the message IS accounted for by a task — the
+// control that proves T036_01's refusal is CONDITIONAL, not a gate that blocks
+// every Stop.
 //
 // The gate collects the message refs, subtracts those a task file references, and
 // refuses only on what is left. This drives the subtract-to-empty path: a task
-// file that references the one user message's ref makes the residue empty, so the
-// gate admits.
-//
-// # Why the task file sits where it does
-//
-// The gate greps `tasks/` RELATIVE TO ITS OWN WORKING DIRECTORY, which the engine
-// sets to the guardrail's folder (.sloprail/gate/verify-intake-complete/) — not
-// the repository root (measured; see the note on T036_04). So the reference that
-// the gate can actually find is one under THAT folder's tasks/. Placing it there
-// is what makes this a real exercise of the accounting logic — the grep runs, the
-// ref matches, the residue empties — rather than a test that would pass only
-// because the gate never found anything to complain about. That the SHIPPED
-// example expects the agent to write tasks/ at the repo root instead (where this
-// gate will not look) is the example bug T036_04 pins.
+// file under tasks/ at the repository root references the one user message's ref,
+// so the residue empties and the gate admits. The gate's grep is anchored on
+// $SR_WORKSPACE, so the repo-root tasks/ (where a user following the example puts
+// it) is exactly where the gate looks.
 func TestT036_02_AccountedMessageAdmits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -92,9 +83,9 @@ func TestT036_02_AccountedMessageAdmits(t *testing.T) {
 
 	sess := "s-036-02"
 	ref := e.TranscriptPath(proj, sess) + ":1-1"
-	// A task file the gate's own grep will find, referencing the message ref in
-	// the parenthesized markdown-link form the gate matches: (/abs/path:N-N).
-	e.WriteFile(proj, ".sloprail/gate/verify-intake-complete/tasks/task-a/ASK.md",
+	// A task file at the repository root, referencing the message ref in the
+	// parenthesized markdown-link form the gate matches: (/abs/path:N-N).
+	e.WriteFile(proj, "tasks/task-a/ASK.md",
 		"# Task A\n\nRaised by the user request ("+ref+").\n")
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "install + task")
@@ -127,7 +118,7 @@ func TestT036_03_DoesNotFireOnFileWrite(t *testing.T) {
 	// question "did the WRITE trigger a refusal" from "did Stop refuse".
 	sess := "s-036-03"
 	ref := e.TranscriptPath(proj, sess) + ":1-1"
-	e.WriteFile(proj, ".sloprail/gate/verify-intake-complete/tasks/t/ASK.md", "("+ref+")\n")
+	e.WriteFile(proj, "tasks/t/ASK.md", "("+ref+")\n")
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "install + task")
 

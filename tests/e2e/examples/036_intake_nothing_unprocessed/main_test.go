@@ -12,22 +12,36 @@ import (
 
 // This package is the end-to-end for the intake-nothing-unprocessed USE CASE
 // (strategy unit 15): a gate bound to Stop that refuses when a user message this
-// session is neither mapped to a task under tasks/ nor explicitly skipped via
-// `sr-session state set skip:<ref> <reason>`. The whole thing runs through
-// a10n-claude-mock against the SHIPPED example lifted verbatim off disk, so what
-// fires is the plugin's own dispatch reaching the shipped gate.yaml + its check.
+// session is neither mapped to a task under tasks/ nor explicitly skipped. The
+// whole thing runs through a10n-claude-mock against the SHIPPED example lifted
+// verbatim off disk, so what fires is the plugin's own dispatch reaching the
+// shipped gate.yaml + its check.
 //
-// Unlike the other five use cases in this wave, this one's registry read and
-// write live in the SAME guardrail (the gate itself both reads skip: state and
-// is the scope the agent's own `state set skip:` writes under), so it does not
-// depend on the cross-guardrail `state list --owner` mechanism the sibling
-// examples (interlinking, keyword-coverage, completeness) reach for and which the
-// engine does not provide — see those packages' notes.
+// Two accounting paths, both now delivered by the fixed example:
+//   - a TASK: the gate greps tasks/ (anchored on $SR_WORKSPACE — a check's cwd is
+//     the guardrail folder, not the repo root) for a reference to the message.
+//   - a SKIP: the agent declares `#skip <line>` in prose; the sibling
+//     skip-declared context enters on that tag (inside a hook, where `state set`
+//     is in scope), logs skip:<transcript>:<line>-<line> to its own registry, and
+//     the gate reads it with `state list --owner skip-declared`. The redesign is
+//     what makes the skip work at all — the agent cannot run `state set` from its
+//     own shell (no SR_GUARDRAIL), so the write had to move behind a context.
+//
+// The gate stays on EVERY Stop and does NOT require the skip context (it must
+// check the residue whether or not a skip was declared); the Stop dispatch order
+// (context enters before Stop gates) keeps a this-cycle #skip visible to it.
+//
+// # Harness note
+//
+// The mock yields exactly ONE normalized type:"user" entry per session (the
+// prompt); its tool_result records carry no uuid and are dropped by transcript
+// reading. So each scenario has one accountable user message (line 1), which is
+// enough to exercise refuse / task-admit / skip-admit / wrong-line-skip. A residue
+// of several distinct user messages cannot be presented through this mock.
 var (
 	New   = harness.New
 	Turns = harness.Turns
 	Write = harness.Write
-	Bash  = harness.Bash
 	Say   = harness.Say
 )
 
@@ -49,19 +63,12 @@ const exampleName = "intake-nothing-unprocessed"
 // and the two would drift the first time either was edited alone. This is the
 // "lift the real shipped file" install the task calls for.
 //
-// # The one deviation from verbatim: the execute bit
-//
-// A hook script is a program; the engine refuses a check it cannot run, and a
-// refusal for un-runnability would make every refusal assertion pass for the
-// wrong reason (or a pass assertion pass on a guard that never fired). Some
-// shipped example scripts carry the execute bit and some do NOT (measured:
-// intake/keyword-coverage/deterministic ship +x; interlinking/research-rigor/
-// completeness ship 0644) — an inconsistency in the example packaging, noted in
-// the report. Because the execute bit is filesystem metadata git may or may not
-// preserve, and the LOGIC under test is the file's CONTENT, this forces every
-// copied `.sh` to 0755 — exactly what the harness's own e.Gate/e.Context/
-// e.FileGuard helpers do when they write a script. The YAML and any other files
-// keep their shipped mode.
+// The copy is VERBATIM, mode included — every shipped example script now carries
+// the execute bit in git (100755), so preserving fi.Mode().Perm() lands a
+// runnable hook without the copy having to force it. (An earlier revision
+// force-chmod'd .sh to 0755 to paper over some scripts that shipped 0644; that
+// packaging inconsistency has since been fixed at the source, so the deviation
+// is gone and the install is a plain verbatim copy.)
 func installExampleTree(t *testing.T, projDir, name string) {
 	t.Helper()
 	src := filepath.Join(repoRoot(t), "examples", name, ".sloprail")
@@ -93,11 +100,7 @@ func copyExampleTree(t *testing.T, src, dst string) {
 		if err != nil {
 			t.Fatalf("install example: stat %s: %v", s, err)
 		}
-		perm := info.Mode().Perm()
-		if strings.HasSuffix(ent.Name(), ".sh") {
-			perm = 0o755 // a hook script is a program; force it runnable
-		}
-		if err := os.WriteFile(d, body, perm); err != nil {
+		if err := os.WriteFile(d, body, info.Mode().Perm()); err != nil {
 			t.Fatalf("install example: write %s: %v", d, err)
 		}
 	}

@@ -49,9 +49,9 @@ func TestMain(m *testing.M) {
 const exampleName = "deterministic-refactoring-mode"
 
 // installExampleTree copies the shipped `examples/<name>/.sloprail` tree into the
-// project verbatim (forcing the execute bit on .sh, since a hook script must be
-// runnable and that is filesystem metadata, not the logic under test). See the
-// 036 package's copy for the full rationale.
+// project VERBATIM, mode included — every shipped example script now carries the
+// execute bit in git, so preserving fi.Mode().Perm() lands a runnable hook. See
+// the 036 package's copy for the full rationale.
 func installExampleTree(t *testing.T, projDir, name string) {
 	t.Helper()
 	src := filepath.Join(repoRoot(t), "examples", name, ".sloprail")
@@ -83,11 +83,7 @@ func copyExampleTree(t *testing.T, src, dst string) {
 		if err != nil {
 			t.Fatalf("install example: stat %s: %v", s, err)
 		}
-		perm := info.Mode().Perm()
-		if strings.HasSuffix(ent.Name(), ".sh") {
-			perm = 0o755
-		}
-		if err := os.WriteFile(d, body, perm); err != nil {
+		if err := os.WriteFile(d, body, info.Mode().Perm()); err != nil {
 			t.Fatalf("install example: write %s: %v", d, err)
 		}
 	}

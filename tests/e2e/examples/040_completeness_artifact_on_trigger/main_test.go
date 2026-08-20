@@ -21,17 +21,19 @@ import (
 //     refuses when NO tag was declared. NO script-registry read; its match IS the
 //     "no tag" fact. This gate WORKS (no --owner).
 //   - gate `verify-artifact-produced` (Stop, `match: context["tag-declared"].active`,
-//     require context) — meant to refuse a tag with no artifact. Its check reads
-//     `sr-session state list --owner tag-declared`, and `--owner` is not a real
-//     flag, so it reads an empty registry and passes: the "tag but no artifact"
-//     violation is a silent no-op (the same cross-guardrail-state bug as
-//     interlinking/keyword-coverage; the sanctioned channel is the context payload).
+//     require context) — refuses a tag with no artifact. Its check reads the
+//     registry with `sr-session state list --owner tag-declared` (the read-only
+//     cross-guardrail read the engine gained), slurping the JSON-lines with `jq
+//     -s`; #skip early-exits (needs no artifact).
 //   - file-guard `structure.yaml` — a path allowlist (an update is memories/
 //     updates/*.md; a decision is memories/decisions/<YYYYMMDD_slug>/*.md).
 //
-// So these tests prove the WORKING pieces — the no-tag refusal (with its own
-// words), the #skip admit, the context accumulation of tags and artifacts, the
-// structure allowlist — and PIN the no-op: a tag with no artifact is NOT refused.
+// The composite now enforces end to end against the fixed example. These tests
+// prove: a no-tag turn is REFUSED (tag-required, whose match reads the context's
+// absence — no registry needed); the context accumulates tag: and artifact:
+// entries; the structure allowlist admits in-list / refuses out-of-list writes; a
+// #update+artifact turn and a #skip turn ADMIT; and a #update with NO artifact is
+// REFUSED with the gate's own words.
 var (
 	New   = harness.New
 	Turns = harness.Turns
@@ -81,11 +83,7 @@ func copyExampleTree(t *testing.T, src, dst string) {
 		if err != nil {
 			t.Fatalf("install example: stat %s: %v", s, err)
 		}
-		perm := info.Mode().Perm()
-		if strings.HasSuffix(ent.Name(), ".sh") {
-			perm = 0o755
-		}
-		if err := os.WriteFile(d, body, perm); err != nil {
+		if err := os.WriteFile(d, body, info.Mode().Perm()); err != nil {
 			t.Fatalf("install example: write %s: %v", d, err)
 		}
 	}

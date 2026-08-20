@@ -18,23 +18,23 @@ import (
 // context: research-run`) runs the depth checks and blocks the Stop on a
 // shortfall.
 //
-// # What is exercisable, and the one blocking example bug
-//
-// The gate reads the context via `context["research-run"].active` (the sanctioned
-// channel — no `state list --owner`), so the context→gate wiring works. The
-// FIRST depth check — "did a git clone happen" — is however unsatisfiable as
-// shipped: it looks for the clone entry's `.toolUseResult`, but that field lives
-// on the tool_RESULT record, while the entry carrying the clone's PreCommandInvoke
-// event is the assistant tool_use record, which has no toolUseResult. So the clone
-// is never detected and check 1 refuses even when a `git clone` really ran — which
-// makes the depth gate's PASS path, and every later check (pages, sub-agent),
-// unreachable. This is a defect in verify-depth.sh (it reads the field off the
-// wrong entry), not a mock limitation: the same jq reads null in a real session.
+// The depth gate now enforces end to end against the fixed verify-depth.sh:
+//   - check 1 detects the clone from the `git clone` INVOCATION (re-derived as a
+//     PreCommandInvoke event, read from the entry's `.fields.invocations`), rather
+//     than from an unreachable `.toolUseResult` — the tool_RESULT record carries
+//     no uuid and is not re-emitted as a normalized entry, so the invocation is
+//     the only re-derivable clone signal (and the honest one: a README fetch is a
+//     different command).
+//   - check 2 reads the gh invocations the same `.fields.invocations` way, and
+//     counts pages from `--paginate` (unbounded) or `--limit N` (reading N from
+//     the flag value, or from argv when the value was space-separated).
 //
 // So these tests exercise: the context activates on #research (and NOT on other
-// tags); the depth gate refuses a shallow run with its own words (check 1); the
-// gate does NOT run outside a research turn; and — pinned as a bug — even a run
-// WITH a real clone + gh is refused because check 1 cannot see the clone.
+// tags); a shallow run (no clone) is refused (check 1); a deep run (clone +
+// paginated gh) ADMITS and the gate records a pass; a clone with no gh call is
+// refused (check 2); and a clone + gh covering too few pages is refused with the
+// page shortfall (page count). The gate reads the context via
+// `context["research-run"].active` — no cross-guardrail state read here.
 var (
 	New     = harness.New
 	Turns   = harness.Turns
@@ -82,11 +82,7 @@ func copyExampleTree(t *testing.T, src, dst string) {
 		if err != nil {
 			t.Fatalf("install example: stat %s: %v", s, err)
 		}
-		perm := info.Mode().Perm()
-		if strings.HasSuffix(ent.Name(), ".sh") {
-			perm = 0o755
-		}
-		if err := os.WriteFile(d, body, perm); err != nil {
+		if err := os.WriteFile(d, body, info.Mode().Perm()); err != nil {
 			t.Fatalf("install example: write %s: %v", d, err)
 		}
 	}

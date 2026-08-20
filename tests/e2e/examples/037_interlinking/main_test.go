@@ -14,36 +14,26 @@ import (
 // 06): every person file must be linked from an update/decision, and a deleted
 // person must leave no dangling links. A context (`people-linked`) logs each
 // touched people/*.md into a per-cycle registry; a gate (`verify-linked`, Stop,
-// `require: context: people-linked`) is meant to check each logged path — a
-// created person must be found under updates/decisions, a deleted one must not.
+// `match: context["people-linked"].active`, `require: context: people-linked`)
+// reads that registry and checks each logged path — a created person must be
+// found under updates/decisions, a deleted one must not.
 //
-// # The blocking example bug: the gate cannot read the context's registry
+// The composite now enforces end to end against the fixed example. The gate reads
+// the context's registry with `sr-session state list --owner people-linked` (the
+// read-only cross-guardrail read the engine gained), slurping the JSON-lines with
+// `jq -s`; its link greps are anchored on $SR_WORKSPACE (a check's cwd is the
+// guardrail folder, not the repo root); and its `match: context[...].active` makes
+// it SKIP turns that touched no person rather than blocking them (an unmet
+// `require: {context}` refuses, so the match is what scopes the gate — the require
+// stays only to order the context's enter before this read).
 //
-// The gate's check runs `sr-session state list --owner people-linked`, but
-// `state list` has NO `--owner` flag — the state store is scoped to the CALLING
-// guardrail (SR_GUARDRAIL, set by the engine per hook) by deliberate design, and
-// there is no flag to name another rule's scope. Cobra rejects `--owner` (exit 1),
-// the script swallows it (2>/dev/null), reads an EMPTY registry, and passes. So
-// the enforcement is a silent no-op: neither the "created-but-unlinked" nor the
-// "deleted-but-still-referenced" violation is caught.
-//
-// This is an EXAMPLE bug, not an engine bug: the sanctioned way for a gate to read
-// a context's data is the context's PAYLOAD, which the gate's check payload carries
-// as `.context["people-linked"].payload` — exactly what the known-good
-// eval-loop-maxing example does (`.context["goal-tracking"].payload.goal`). The
-// interlinking gate would need to carry each touched path in the context payload
-// and read it there, not reach for cross-guardrail state via a flag the engine
-// does not provide. (There is a second latent bug behind it: the gate's own greps
-// `grep -r ... updates/ decisions/` are cwd-relative, and a check runs with cwd =
-// the guardrail folder, so even a readable registry would look under the wrong
-// tree; eval-loop-maxing anchors such paths on $SR_WORKSPACE.)
-//
-// So these tests prove what IS real — the context activates on a people/*.md touch
-// (create AND delete), logs each touched path to its OWN registry (distinctly for
-// two people in one turn), narrows to people/*.md, and the gate's require wiring
-// runs it — and PIN the no-op: a clear created-but-unlinked violation is NOT
-// refused, with the `--owner` cause named. The registry a test reads via
-// GuardrailState is the SAME per-guardrail state the gate fails to reach.
+// So these tests prove: the context activates on a people/*.md touch (create AND
+// delete) and logs each path to its registry (distinctly for two people in one
+// turn) [test_037_01]; a created-but-unlinked person and a deleted-but-referenced
+// person are REFUSED with the gate's own words, while a linked person and an
+// unreferenced delete ADMIT, and an unrelated turn is not blocked
+// [test_037_02]. The registry a test reads via GuardrailState is the same
+// per-guardrail state the gate reads via --owner.
 var (
 	New   = harness.New
 	Turns = harness.Turns
@@ -90,11 +80,7 @@ func copyExampleTree(t *testing.T, src, dst string) {
 		if err != nil {
 			t.Fatalf("install example: stat %s: %v", s, err)
 		}
-		perm := info.Mode().Perm()
-		if strings.HasSuffix(ent.Name(), ".sh") {
-			perm = 0o755
-		}
-		if err := os.WriteFile(d, body, perm); err != nil {
+		if err := os.WriteFile(d, body, info.Mode().Perm()); err != nil {
 			t.Fatalf("install example: write %s: %v", d, err)
 		}
 	}

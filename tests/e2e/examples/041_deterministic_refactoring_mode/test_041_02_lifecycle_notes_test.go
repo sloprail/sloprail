@@ -46,27 +46,29 @@ func TestT041_06_ContextActivatesWithoutRefactorDeclaration(t *testing.T) {
 }
 
 // T041_07: the context's exit.sh "declared markers were never written"
-// completeness refusal does NOT fire at Stop through this harness.
+// completeness refusal does NOT fire — a GENUINELY SEPARATE gap, deliberately
+// still pinned, distinct from the --owner cross-guardrail slice that fixed the
+// other composites. deterministic-refactoring's LOAD-BEARING check is the
+// preventive file-guard (T041_01..05), which enforces correctly; this exit.sh
+// completeness check is a secondary "did every declared move actually land" pass
+// with three independent problems, none of which the --owner work touches:
 //
-// exit.sh blocks a Stop when a marker named in the declared `scope=` set is absent
-// from the tree. Driving it needs the context to reach Stop ACTIVE and carrying
-// `declared_markers` in its payload. Two things prevent that here:
-//
-//  1. enter.sh reads the #refactor scope out of the trajectory via `normalize`
-//     (not --whole-session) AT THE PreToolUse for the in-flight turn; the mock has
-//     not yet made that turn's assistant message readable to the enter at that
-//     moment, so the scope comes back empty and the persisted payload carries no
-//     declared_markers. (Measured: the context reaches Stop with an empty payload.)
-//  2. exit.sh's own grep is `grep -r "sr:$marker"`, and $marker is already
-//     `sr:moved-from:beta` (the scope list splits on commas, each element keeps its
-//     `sr:` prefix), so it searches for `sr:sr:moved-from:beta` — a double prefix
-//     that matches nothing a real move writes. So even a populated declared set
-//     would report itself missing.
+//  1. enter.sh matches the #refactor tag with `any(.tags[]?; ...)` on the
+//     normalized event, but tags live under `.fields.tags` — so the scope is never
+//     read and the payload carries no declared_markers (the same wire-shape bug the
+//     depth/coverage gates had; here it is in a context enter this slice did not
+//     cover).
+//  2. exit.sh greps `grep -r "sr:$marker"`, but $marker already begins `sr:`
+//     (the scope list keeps each element's prefix), so it searches for
+//     `sr:sr:moved-from:...` — a double prefix nothing matches.
+//  3. the declared scope token (`sr:moved-from:beta`, a logical name) has no
+//     defined correspondence to the file marker syntax a move actually writes
+//     (`sr:moved-from <path>@<sha>:<lines>`), so even a de-doubled grep would not
+//     know what to look for. This is a DESIGN gap in the example, not a one-line
+//     fix, which is why it is left pinned rather than patched here.
 //
 // This test documents the current outcome: a declared-but-unwritten scope produces
-// NO Stop block. It is a real gap in the example's completeness half (the file-
-// guard's per-move reconciliation, T041_01..05, is unaffected and is the load-
-// bearing check). If the example/harness interaction changes so exit.sh fires,
+// NO Stop block. If the example's completeness half is redesigned so exit.sh fires,
 // this test's expectation flips and should be updated to assert the block.
 func TestT041_07_ExitCompletenessDoesNotFire_Gap(t *testing.T) {
 	env, _ := setupOrigin(t)
