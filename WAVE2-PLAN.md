@@ -110,6 +110,28 @@ green; CI green. Merge each into draft/fileguard-format; remove worktree.
    then B1 fixes+e2e (depends on --owner) → then delete old-dup deterministic_refactoring after 041 →
    then delete internal/declaration/examples_test.go (superseded by Wave-2 e2e) → then D3/D4 → Wave 3.
 
+## MERGED so far (base draft/fileguard-format)
+- [x] judge-config (dba20b5) — gonja + model/timeout + preventive-create.
+- [x] --owner (b8608c3) — cross-guardrail state read. Reviewer: zero issues, isolation mutation-verified.
+- [x] B4 (3f4c26d) — 050 eval-loop-maxing + 051 required-context-precondition e2e; 013 deleted.
+      (B4's automated reviewer got stuck chasing a harness snapshot rabbit-hole — killed it; merged on
+      my own review: 050/051 cover happy/violation/re-fire/controls non-vacuously.)
+
+## STILL IN FLIGHT
+- [~] B1 example-fix (impl/w2-b1-lifecycle): fix 4 broken examples using --owner (+ jq -s + SR_WORKSPACE),
+      research-rigor toolUseResult jq, interlinking match, intake skip-channel redesign (tag/marker + a
+      skip-context read via --owner); then flip 036-041 bug-pins → real assertions; simplify installExampleTree.
+- [~] B2-v2 (impl/w2-b2-judge): close reviewer gaps — action-proof toolUseResult happy-path (needs mock
+      toolUseResult or a builder), message_id test (example fixed a1dd86e), TODO(D3) header placement.
+- [~] B3-v2 (impl/w2-b3-judgemark): close reviewer gaps — prepare→template wiring proofs (047/049 via
+      capturing shim), 047 re-fire, 049 cite-rc2 branch, doc nits. (Adds InstallJudgeClaudeCapturing to
+      harness.go — SAME as B2 adds; resolve the overlap at merge.)
+
+## Example bugs FIXED on base by the Wave-2 effort (running tally)
+8bd1f77 14 non-exec scripts · 4baaa00 cite --path + action-proof jq · d9f175c eval-loop-maxing require→match
+· a1dd86e task-management message_id string-content jq. (B1 slice adds: interlinking/keyword/completeness
+--owner+jq-s+SR_WORKSPACE, research-rigor toolUseResult, intake skip.)
+
 ## a10n-cli#470 — MERGED ✅ (2026-08-20, squash 6614d1062, user-approved). New a10n-claude-mock BUILT +
   installed to /Users/nsviridenko/.local/bin/a10n-claude-mock (codesigned) — verified it accepts
   sr-agent's flags (--model/--allowed-tools/--permission-mode/--settings/--append-system-prompt, all
