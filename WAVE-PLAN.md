@@ -72,9 +72,9 @@ a quoted multi-word fqn, reconcile then.
    establishes the gates[] map context needs, and both are the simplest natures to prove the runner e2e.)
 ### BATCH 3 — dispatch engine (after batch 2)
 - [x] 3a  gate dispatch — MERGED (19bd373), reviewed, flat-event fixed                [dispatch-core ✓]
-- [~] 3c  file-guard dispatch (match file state, preventive, re-fires) — IMPLEMENTING  [dispatch-natures]
+- [~] 3c  file-guard dispatch — DONE (fdb0b76, reuses old revalidation for re-fire), REVIEWING [dispatch-natures]
 - [x] 3s  structure-gate — MERGED (19bd373)                                            [dispatch-core ✓]
-- [~] 3b  context lifecycle (on/enter/exit, context[]/gates[] maps) — IMPLEMENTING    [dispatch-natures]
+- [~] 3b  context lifecycle (enter every-occurrence, exit=lifecycle-only per reversal) — DONE, REVIEWING [dispatch-natures]
 - [x] 3d  goal — REMOVED (PR#19: not a primitive; user-side composite via /goal + context). No engine dispatch.
 
 ### WAVE 2 (GOAL.md) — per-use-case e2e tests (after all dispatch)
@@ -114,6 +114,9 @@ KNOWN PRE-EXISTING RED (base branch, NOT a regression — deferred to Wave 3 del
   (CI on a clean checkout never sees it). Removed one for interlinking during the batch-2 merge.
 
 ## FOLLOW-UP TASKS (later, not blockers)
+- FIX example bug (flagged by dispatch-natures): examples/eval-loop-maxing/.sloprail/context/goal-tracking/
+  exit.sh reads stale `.event.gates[...]` but the spec made gates a SIBLING of event → should be `.gates[...]`
+  (same fix run-verify.sh already got). Pre-existing; composite e2e passes despite it. Trivial follow-up.
 - WAVE-2 unit-17 (no-unasked-deletion) judge: consume cite's CitationMatch.Grounding (the WHOLE
   AskUserQuestion envelope, question+answer) into the judge's additionalContext — so an answer-grounded
   change's judge sees the question, not just the extracted answer (PR#19 #4 decision). The enabling
