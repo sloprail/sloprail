@@ -58,10 +58,10 @@ func CompileFileMatch(src string) (*Matcher, error) {
 	if src == "" {
 		return compile(src)
 	}
-	if looksLikeExpression(src, fileScopeVars) {
-		return compile(src, expr.Env(fileMatchScope()))
+	if looksLikeGlob(src) {
+		return compileGlob(src)
 	}
-	return compileGlob(src)
+	return compile(src, expr.Env(fileMatchScope()))
 }
 
 // CompileGateMatch compiles a gate trigger's `match` against GateMatchScope: the
@@ -245,62 +245,50 @@ func compileGlob(pattern string) (*Matcher, error) {
 	return m, nil
 }
 
-// fileScopeVars are the variable names a full FileMatchExpression may read.
-// Their presence as a whole word is one of the two signals looksLikeExpression
-// uses to tell a full expression from a bare glob.
-var fileScopeVars = []string{"path", "markers", scopeContextKey}
-
-// exprOperatorPattern matches the tokens only a full expression carries: the
-// string/collection operators, the boolean connectives, membership, and the
-// symbolic forms. A bare glob — a path pattern of literals, `*`, `?`, `/` and
-// character/brace classes — contains none of them.
-//
-// Word-bounded for the keyword operators so a path segment that merely contains
-// the letters "and" (a directory literally named `android/`) is not mistaken
-// for the connective. The symbolic ones (`==`, `&&`, `||`) cannot occur in a
-// glob at all, so they need no boundary.
-var exprOperatorPattern = regexp.MustCompile(
-	`(\bstartsWith\b|\bendsWith\b|\band\b|\bor\b|\bnot\b|\bin\b|\bany\b|\ball\b|\bone\b|\bnone\b|==|!=|&&|\|\||>=|<=|>|<)`,
-)
-
-// looksLikeExpression decides whether a FileMatchExpression is the full-grammar
-// half of the union rather than a bare glob.
+// looksLikeGlob decides whether a FileMatchExpression is the bare-glob half of
+// the union rather than a full expression.
 //
 // The union has no marker on the wire — both sides are strings — so the shape
-// itself must discriminate, and the spec's own description of a glob is the
-// discriminator: "no and/or, no field access beyond the implicit path match". A
-// glob therefore names no scope variable and uses no operator; an expression
-// does at least one. Two independent signals, either sufficient:
+// itself must discriminate. The earlier attempt did this the wrong way round: a
+// NEGATIVE test that read a string as an expression when it contained an
+// operator token or a scope-variable word, and as a glob otherwise. That is
+// inherently leaky, because a glob's own path can spell those tokens — a segment
+// that IS a keyword (`commands/one.md`, `any/*.md`, `in/data.md`) is a whole
+// word to a `\b` boundary, and `<`/`>` are legal filename characters an
+// operator scan reads as comparisons. Every such glob was refused at load with a
+// cryptic expr error the author never wrote — the exact failure the union exists
+// to avoid.
 //
-//   - it references a scope variable as a whole word (`path startsWith …`,
-//     `any(markers, …)`, `context["x"].active`), or
-//   - it contains an operator token (the keywords, or `==`/`&&`/`||`/…).
+// So this is a POSITIVE test for "is this a well-formed glob", and
+// CompileFileMatch treats everything else as an expression. The discriminator is
+// what a glob CANNOT contain: the two characters no path holds and every real
+// expression does.
 //
-// A whole-word match on the variable is what keeps a glob whose path happens to
-// contain those letters — `contextual/notes.md`, `pathological/*.go` — on the
-// glob side: `context` inside `contextual` is not a whole word, and a glob has
-// no `[` -delimited index or trailing operator to make it one. The pairing is
-// deliberately generous toward "expression": a string that reads as one is
-// safer compiled as one (where a bad name is refused at load) than as a glob
-// (where it would silently match nothing sensible).
-func looksLikeExpression(src string, scopeVars []string) bool {
-	if exprOperatorPattern.MatchString(src) {
-		return true
-	}
-	for _, v := range scopeVars {
-		if wordPattern(v).MatchString(src) {
-			return true
-		}
-	}
-	return false
-}
-
-// wordPattern matches a scope variable name as a whole word — bounded so the
-// name is the identifier and not a substring of a path segment. Compiled per
-// call from a small fixed set; the set is three names, so this is not a hot
-// path worth caching.
-func wordPattern(word string) *regexp.Regexp {
-	return regexp.MustCompile(`\b` + regexp.QuoteMeta(word) + `\b`)
+//   - WHITESPACE. A glob is a single path pattern with no spaces; the grammar
+//     puts a space around every operator (`path startsWith "x"`, `a and b`) and
+//     after the comma in a quantifier (`any(markers, …)`). One space is enough
+//     to be an expression.
+//   - QUOTES, single or double. Every literal an expression compares against is
+//     quoted (`startsWith "memories/"`, `context["x"]`); a glob names paths
+//     directly and quotes nothing.
+//
+// Either present ⇒ not a glob ⇒ compiled as an expression, where a genuine
+// mistake is refused at load with a diagnostic naming the field. A glob has
+// neither, so `commands/one.md`, `any/*.md`, `in/data.md`, `a<b>.md`,
+// `file[<>].md` and `memories/**/*.md` all read as globs and are compiled to a
+// path match — while `path startsWith "x"`, `any(markers, .kind == "asked")`,
+// `context["x"].active` and `not context["x"].active` all carry a space or a
+// quote and read as expressions.
+//
+// An empty string is neither, and never reaches here — CompileFileMatch handles
+// it as "every file" before the split.
+//
+// The final authority on whether a glob is WELL-FORMED is globRegexp, which
+// compileGlob runs at load: a string that passes this surface test but is a
+// malformed glob (an unterminated `[`) is still refused there, by its own error
+// rather than an expression parser's.
+func looksLikeGlob(src string) bool {
+	return !strings.ContainsAny(src, " \t\n\"'")
 }
 
 // globRegexp translates a GlobPattern into an anchored regexp over a path.

@@ -139,10 +139,18 @@ func TestCompileFileMatch_RefusesOutOfScopeVariable(t *testing.T) {
 // The boolean-or-refuse contract, in the file scope: an expression that yields a
 // value expr can see is not a boolean is refused at load, not left to fire
 // never.
+//
+// The inputs carry a quote, so they route to the expression half of the union
+// rather than the glob half — a bare `path`, which the old version used here, is
+// now a glob (a file literally named `path`), so it would compile as a path
+// match rather than be refused. A string-valued expression is the same "not a
+// boolean" fact with a shape the discriminator cannot read as a path.
 func TestCompileFileMatch_RefusesNonBoolean(t *testing.T) {
-	_, err := CompileFileMatch(`path`)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bool")
+	for _, src := range []string{`"a string"`, `"memories/" + path`} {
+		_, err := CompileFileMatch(src)
+		require.Errorf(t, err, "%q is not a boolean and must be refused", src)
+		assert.Contains(t, err.Error(), "bool")
+	}
 }
 
 // An empty match is "every file", the same no-narrowing an empty matcher is
@@ -305,10 +313,19 @@ func TestCompileFileMatch_GlobErrorNamesTheAuthoredPattern(t *testing.T) {
 // The glob / expression discriminator
 // ---------------------------------------------------------------------------
 
-// The union has no wire marker, so the shape decides. These pin the two signals
-// looksLikeExpression uses, at the boundary cases that would send a string down
-// the wrong path.
-func TestLooksLikeExpression_Discriminates(t *testing.T) {
+// The union has no wire marker, so the shape decides. looksLikeGlob is the
+// positive test — a glob has no whitespace and no quote — and these pin it at
+// the boundary cases that would send a string down the wrong path.
+//
+// The blind spot the earlier negative test had, and the reason it was replaced:
+// it read a glob as an expression whenever a path SEGMENT spelled an operator
+// keyword or contained `<`/`>`. So the failing cases below — a segment that IS a
+// keyword (`commands/one.md`, `any/*.md`, `in/data.md`) and a path with the
+// legal filename characters `<`/`>` (`a<b>.md`, `file[<>].md`) — are the ones
+// that must now read as globs, and they anchor this test where the old one only
+// ever used a keyword as a SUBSTRING (`android/`, `contextual/`).
+func TestLooksLikeGlob_Discriminates(t *testing.T) {
+	// Every real expression carries a space or a quote, so none is a glob.
 	expressions := []string{
 		`path startsWith "x"`,
 		`path == "x"`,
@@ -316,10 +333,10 @@ func TestLooksLikeExpression_Discriminates(t *testing.T) {
 		`context["x"].active`,
 		`not context["x"].active`,
 		`path startsWith "a" and path endsWith "b"`,
-		`markers`,
+		`any(markers, .kind == "moved-from" and .line > 10)`,
 	}
 	for _, src := range expressions {
-		assert.Truef(t, looksLikeExpression(src, fileScopeVars), "%q is a full expression", src)
+		assert.Falsef(t, looksLikeGlob(src), "%q is a full expression, not a glob", src)
 	}
 
 	globs := []string{
@@ -329,22 +346,65 @@ func TestLooksLikeExpression_Discriminates(t *testing.T) {
 		`file-?.md`,
 		`log[0-9].txt`,
 		`notes.md`,
-		// A path whose SEGMENTS merely contain operator or variable letters must
-		// still read as a glob: the check is whole-word, and a glob has no
-		// boundary to make `context`/`and` a standalone token.
+		// A path whose SEGMENTS merely contain operator or variable letters as a
+		// SUBSTRING stays a glob — the case the old negative test already got
+		// right.
 		`contextual/notes.md`,
 		`pathology/*.go`,
 		`commands/*.md`,
 		`android/build.gradle`,
+		// The reviewer's cases: a path SEGMENT that is EXACTLY a keyword. These
+		// are what the `\b`-word negative test refused at load.
+		`commands/one.md`,
+		`one/*.md`,
+		`all/*.md`,
+		`any/*.md`,
+		`none/*.md`,
+		`not/*.md`,
+		`in/data.md`,
+		`or/data.md`,
+		// `<` and `>` are legal filename characters, not comparisons.
+		`a<b>.md`,
+		`file[<>].md`,
 	}
 	for _, src := range globs {
-		assert.Falsef(t, looksLikeExpression(src, fileScopeVars), "%q is a bare glob", src)
+		assert.Truef(t, looksLikeGlob(src), "%q is a bare glob", src)
 	}
 }
 
-// The discriminator is not merely a unit on looksLikeExpression: a path segment
-// containing `context` or `and` must actually COMPILE as a glob and match as a
-// path, end to end.
+// The discriminator is not merely a unit on looksLikeGlob: each of the reviewer's
+// cases must actually COMPILE as a glob and MATCH as a path, end to end — the
+// blind spot was that these were refused at load, so the fix is proven by them
+// loading and firing.
+func TestCompileFileMatch_KeywordSegmentGlobsCompileAndMatch(t *testing.T) {
+	for _, tc := range []struct {
+		glob string
+		path string
+	}{
+		{`commands/one.md`, `commands/one.md`},
+		{`one/*.md`, `one/notes.md`},
+		{`all/*.md`, `all/notes.md`},
+		{`any/*.md`, `any/notes.md`},
+		{`none/*.md`, `none/notes.md`},
+		{`not/*.md`, `not/notes.md`},
+		{`in/data.md`, `in/data.md`},
+		{`or/data.md`, `or/data.md`},
+		{`a<b>.md`, `a<b>.md`},
+		{`file[<>].md`, `file<.md`}, // the class [<>] matches a single < or >
+	} {
+		t.Run(tc.glob, func(t *testing.T) {
+			m, err := CompileFileMatch(tc.glob)
+			require.NoError(t, err, "a valid glob must not be refused at load")
+
+			admitted, err := m.Match(event.Event{Kind: "PreFileCreate", Fields: map[string]any{"path": tc.path}})
+			require.NoError(t, err)
+			assert.Truef(t, admitted, "glob %q must match %q", tc.glob, tc.path)
+		})
+	}
+}
+
+// A path segment containing a variable name as a substring must actually COMPILE
+// as a glob and match as a path, end to end.
 func TestCompileFileMatch_PathLikeAVariableNameStaysAGlob(t *testing.T) {
 	m, err := CompileFileMatch(`contextual/*.md`)
 	require.NoError(t, err)
