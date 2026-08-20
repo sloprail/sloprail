@@ -66,16 +66,16 @@ a quoted multi-word fqn, reconcile then.
 
 ### BATCH 3 — IN PROGRESS (base 9342d8b). SEQUENTIAL (natures build on core's check-runner + gates map):
 - worktree `dispatch-core` (impl/dispatch-core): CHECK-RUNNER + gate (3a) + structure (3s) — DONE (~4832 lines), IN REVIEW. Delivers internal/dispatch pkg with Runner.Run(Request)→Verdict API (the natures slice imports this), Jinja2-subset renderer (all 8 example .md.j2), judge-via-sr-agent, gates[] map in sessionstate under reserved !sloprail:gates keyspace. Caught+fixed a real jq `.pass // empty` fail-open bug.
-- worktree `dispatch-natures` (later): file-guard (3c) + context (3b) + goal (3d) — WAITS for dispatch-core merge
+- worktree `dispatch-natures` (impl/dispatch-natures): file-guard (3c) + context (3b) — IMPLEMENTING (goal REMOVED per PR#19). On sessionstate KV (SQLite deferred per PR#19 #3).
   (grouped this way because all natures share the dispatch entry points session_pre_tool/session_stop.go +
    the check-runner; parallel worktrees would conflict heavily on those. gate+structure first because gate
    establishes the gates[] map context needs, and both are the simplest natures to prove the runner e2e.)
 ### BATCH 3 — dispatch engine (after batch 2)
 - [x] 3a  gate dispatch — MERGED (19bd373), reviewed, flat-event fixed                [dispatch-core ✓]
-- [ ] 3c  file-guard dispatch (match file state, preventive, re-fires) — WAITS       [dispatch-natures]
+- [~] 3c  file-guard dispatch (match file state, preventive, re-fires) — IMPLEMENTING  [dispatch-natures]
 - [x] 3s  structure-gate — MERGED (19bd373)                                            [dispatch-core ✓]
-- [ ] 3b  context lifecycle (on/enter/exit, context[] & gates[] maps) — WAITS on 3a  [dispatch-natures]
-- [ ] 3d  goal = context+goal.yaml pairing (composite) — WAITS on 3b                 [dispatch-natures]
+- [~] 3b  context lifecycle (on/enter/exit, context[]/gates[] maps) — IMPLEMENTING    [dispatch-natures]
+- [x] 3d  goal — REMOVED (PR#19: not a primitive; user-side composite via /goal + context). No engine dispatch.
 
 ### WAVE 2 (GOAL.md) — per-use-case e2e tests (after all dispatch)
 - [ ] one e2e suite per example in examples/, multi-scenario (pass + violation paths), via claude-mock harness.
