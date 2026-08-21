@@ -26,43 +26,40 @@ import (
 // it reconstructs the payload from SR_TRANSCRIPT/SR_WORKSPACE the way the shipped
 // examples do — the same idiom 018's askScript uses.
 
-// sliceWatch binds to a Post kind so it runs at a cycle's end, and records both a
-// default and a whole-session normalize read of the session.
-const sliceWatch = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./slice.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./slice.sh
----
-
-# Reads the session both ways and records the command lines each returned
+// sliceWatch is a NEW-FORMAT file-guard, after-check (re-vehicled from the old
+// GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md), so it runs at a cycle's
+// end and records both a default and a whole-session normalize read of the session.
+// `match: "**/*.md"` fires on whichever Post kind each cycle's write produced. The
+// check reaches the session's record and read mark through SR_TRANSCRIPT /
+// SR_WORKSPACE, which the new dispatch sets on a file-guard check exactly as the
+// old-format hook env did. The `scoped`/`whole` ledgers have no `.md` suffix, so
+// the guard is never handed its own bookkeeping.
+const sliceWatch = `match: "**/*.md"
+checks:
+  - script: ./slice.sh
 `
 
 // sliceScript advances the mark through `query`, then records what `normalize`
 // returns by default and with --whole-session. The `raw` command line of each
 // PreCommandInvoke is the distinctive token the assertions look for — a cheap way
-// to ask "did this read include cycle N's Bash turn".
+// to ask "did this read include cycle N's Bash turn". The ledgers are under
+// $SR_GUARDRAIL_DIR, the folder the engine sets for the check.
 const sliceScript = `#!/bin/sh
 cat > /dev/null
 if [ -z "${SR_TRANSCRIPT:-}" ]; then
-  echo "SR_TRANSCRIPT unset" >> "$PWD/whole"
-  echo "SR_TRANSCRIPT unset" >> "$PWD/scoped"
+  echo "SR_TRANSCRIPT unset" >> "$SR_GUARDRAIL_DIR/whole"
+  echo "SR_TRANSCRIPT unset" >> "$SR_GUARDRAIL_DIR/scoped"
   exit 0
 fi
 payload='{"transcript_path":"'"$SR_TRANSCRIPT"'","cwd":"'"$SR_WORKSPACE"'"}'
 # Advance the mark as the cycle's primary read does.
 printf '%s' "$payload" | sr-session query > /dev/null 2>&1
 # The default read — the part not yet judged.
-printf '%s' "$payload" | sr-session trajectory normalize >> "$PWD/scoped" 2>&1
-printf '\n===CYCLE===\n' >> "$PWD/scoped"
+printf '%s' "$payload" | sr-session trajectory normalize >> "$SR_GUARDRAIL_DIR/scoped" 2>&1
+printf '\n===CYCLE===\n' >> "$SR_GUARDRAIL_DIR/scoped"
 # The whole record.
-printf '%s' "$payload" | sr-session trajectory normalize --whole-session >> "$PWD/whole" 2>&1
-printf '\n===CYCLE===\n' >> "$PWD/whole"
+printf '%s' "$payload" | sr-session trajectory normalize --whole-session >> "$SR_GUARDRAIL_DIR/whole" 2>&1
+printf '\n===CYCLE===\n' >> "$SR_GUARDRAIL_DIR/whole"
 exit 0
 `
 
@@ -72,7 +69,7 @@ func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T
 	// A repository, so the cycle has a baseline and its Post file event fires the
 	// hook — the same setup 018 needs.
 	e.GitInit(proj)
-	e.Guardrail(proj, "slicer", sliceWatch, map[string]string{"slice.sh": sliceScript})
+	e.FileGuard(proj, "slicer", sliceWatch, map[string]string{"slice.sh": sliceScript})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "before the session")
 
@@ -89,8 +86,8 @@ func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T
 		Write("w2", "two.md", "second\n"),
 	))
 
-	scoped := strings.Join(e.Ledger(proj, "slicer", "scoped"), "\n")
-	whole := strings.Join(e.Ledger(proj, "slicer", "whole"), "\n")
+	scoped := strings.Join(e.FileGuardLedgerLines(proj, "slicer", "scoped"), "\n")
+	whole := strings.Join(e.FileGuardLedgerLines(proj, "slicer", "whole"), "\n")
 	if scoped == "" || whole == "" {
 		t.Fatalf("the hook never recorded a read, so nothing here can be observed\nscoped:\n%s\nwhole:\n%s", scoped, whole)
 	}
