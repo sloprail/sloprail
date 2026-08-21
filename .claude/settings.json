@@ -1,4 +1,5 @@
 {
+  "autoMemoryEnabled": false,
   "enabledPlugins": {
     "sloprail@sloprail-marketplace": true
   },
