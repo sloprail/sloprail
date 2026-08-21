@@ -37,32 +37,26 @@ change_diff="$(diff -u <(printf '%s' "$old") <(printf '%s' "$new") | tail -n +3 
 
 # The whole answer envelope behind the ask, when there is one.
 #
-# Re-resolve the quote to its <path>:<line> with cite (the SCRIPT already proved
-# it resolves to exactly one line; here we want that line, so we read cite's
-# stdout rather than only its exit code) and fetch the envelope sitting there. A
-# grounded quote that is a plain user message resolves fine but names no answer
-# envelope, so `envelope` prints nothing — asked_envelope stays empty, which the
-# template renders as "no envelope", not an error.
+# ONE call: `cite --include-envelope` resolves the quote to its <path>:<line> AND
+# prints the answer envelope sitting at that line, separated from the citation by
+# a blank line — so this does not cite and then resolve the same line a second
+# time with `envelope`. The first output line is the <path>:<line> citation; the
+# rest (after the blank line) is the envelope. A grounded quote that is a plain
+# user message resolves fine but names no answer envelope, so nothing follows the
+# citation — asked_envelope stays empty, which the template renders as "no
+# envelope", not an error.
 #
-# Kept BEST-EFFORT: this is extra context for the judge, not a gate. If cite or
-# envelope cannot resolve here (a citation the script grounded but this second
-# lookup cannot, an unreadable trajectory), the judge still runs against the quote
-# and the diff — the deterministic grounding already happened in the script, and a
+# Kept BEST-EFFORT: this is extra context for the judge, not a gate. If cite
+# cannot resolve here (a citation the script grounded but this second lookup
+# cannot, an unreadable trajectory), the judge still runs against the quote and
+# the diff — the deterministic grounding already happened in the script, and a
 # missing envelope must not turn a passed removal into a refusal.
 asked_envelope=""
 if [ -n "$quote" ] && [ -n "$transcript_path" ]; then
-  # cite prints <path>:<line> for a single match. Take the first line (the script
-  # guaranteed a single match; first is that match) and split off the trailing
-  # :<line> — the path itself carries no colon in a ~/.claude/... transcript path,
-  # but splitting on the LAST colon is correct regardless.
-  citation="$(sr-session trajectory cite --path "$transcript_path" "$quote" 2>/dev/null | head -1)"
-  if [ -n "$citation" ]; then
-    cite_line="${citation##*:}"
-    cite_path="${citation%:*}"
-    if [ -n "$cite_line" ] && [ -n "$cite_path" ]; then
-      asked_envelope="$(sr-session trajectory envelope --path "$cite_path" --line "$cite_line" 2>/dev/null || true)"
-    fi
-  fi
+  cite_out="$(sr-session trajectory cite --include-envelope --path "$transcript_path" "$quote" 2>/dev/null || true)"
+  # Drop the first line (the <path>:<line> citation) and the blank line after it;
+  # what remains is the envelope, empty for a message-grounded quote.
+  asked_envelope="$(printf '%s\n' "$cite_out" | tail -n +3)"
 fi
 
 jq -n \

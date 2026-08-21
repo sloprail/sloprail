@@ -86,6 +86,11 @@ The trajectory is auto-detected from the environment — the common case takes n
 	}
 	cmd.Flags().String("path", "",
 		"Which trajectory to search; defaults to the current one from the environment")
+	cmd.Flags().Bool("include-envelope", false,
+		"On a single match, also print the whole answer envelope at the resolved line "+
+			"(the AskUserQuestion question + its answers), separated from the <path>:<line> "+
+			"by a blank line. Lets a caller ground a quote AND read the question it answered in "+
+			"ONE call instead of a cite followed by a separate `envelope --line`.")
 	return cmd
 }
 
@@ -157,6 +162,29 @@ func runSessionTrajectoryCite(cmd *cobra.Command, args []string) error {
 		os.Exit(citeNoMatch)
 	case 1:
 		fmt.Fprintf(cmd.OutOrStdout(), "%s:%d\n", matches[0].Path, matches[0].Line)
+		// --include-envelope folds the follow-up `envelope --line` into this one
+		// call: after the citation, print the whole answer envelope sitting at the
+		// resolved line (the question the user answered, plus the answers), so a
+		// grounding prepare reads a quote AND the question in a single invocation
+		// rather than citing and then resolving the same line again. The envelope
+		// is the SAME shape `envelope` emits — each on its own, blank-line
+		// separated, after a blank line that separates it from the citation. A
+		// message-grounded quote has no envelope, which prints nothing (exit still
+		// 0): the addition never turns a valid citation into a failure.
+		if include, _ := cmd.Flags().GetBool("include-envelope"); include {
+			envelopes, err := transcript.EnvelopeAt(matches[0].Path, matches[0].Line)
+			if err != nil {
+				// The citation stands; only the envelope add-on could not be read.
+				// Report it (non-zero via the root) so a caller that asked for the
+				// envelope hears it was not delivered, rather than silently getting
+				// a citation with no envelope it cannot tell from "no envelope here".
+				return err
+			}
+			for _, envelope := range envelopes {
+				fmt.Fprintln(cmd.OutOrStdout())
+				fmt.Fprintln(cmd.OutOrStdout(), envelope)
+			}
+		}
 		// Exit 0 is the default return; nil takes the ordinary path.
 		return nil
 	default:
