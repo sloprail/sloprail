@@ -54,6 +54,7 @@ func TestT035_01_ContextEntersOnTrigger(t *testing.T) {
 		"enter.sh": enterRecordScope,
 		"exit.sh":  exitDoneWhenMarker,
 	})
+	commitGuards(t, proj) // keep the context's own scripts out of the cycle diff
 
 	sess := "s-035-01"
 	res := e.Run(proj, sess, "touch a source file", Turns("done",
@@ -96,6 +97,7 @@ func TestT035_02_ContextExitDoesNotBlockAndFlipsActive(t *testing.T) {
 		"enter.sh": enterRecordScope,
 		"exit.sh":  exitDoneWhenMarker,
 	})
+	commitGuards(t, proj) // keep the context's own scripts out of the cycle diff
 
 	sess := "s-035-02"
 

@@ -19,6 +19,7 @@ func TestT034_07_GuardDoesNotFireOutsidePathMatch(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret})
+	commitGuards(t, proj) // keep the guard's own check.sh out of the cycle diff
 
 	// A file OUTSIDE memories/ holding the very content the guard refuses.
 	e.Run(proj, "s-034-07", "write a secret outside the guarded area", Turns("done",
@@ -65,6 +66,7 @@ func TestT034_08_GuardMatchesByMarker(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "invariant-done", markerGuard, map[string]string{"check.sh": checkInvariantDone})
+	commitGuards(t, proj) // keep the guard's own check.sh out of the cycle diff
 
 	// A file carrying an sr:invariant marker AND a TODO — selected by the match,
 	// refused by the check.
@@ -81,6 +83,7 @@ func TestT034_08_GuardMatchesByMarker(t *testing.T) {
 	proj2 := e2.Project()
 	e2.GitInit(proj2)
 	e2.FileGuard(proj2, "invariant-done", markerGuard, map[string]string{"check.sh": checkInvariantDone})
+	commitGuards(t, proj2) // keep the guard's own check.sh out of the cycle diff
 	e2.Run(proj2, "s-034-08b", "write ordinary code with a TODO", Turns("done",
 		Write("w1", "src/other.go", "// TODO later\npackage other"),
 	))

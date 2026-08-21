@@ -81,6 +81,7 @@ func TestT034_01_NotFineFileBlocksTurn(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret})
+	commitGuards(t, proj) // keep the guard's own check.sh out of the cycle diff
 
 	e.Run(proj, "s-034-01", "write a memory with a secret", Turns("done",
 		Write("w1", "memories/note.md", "the password is SECRET"),
@@ -111,6 +112,7 @@ func TestT034_02_FineFileAdmits(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret})
+	commitGuards(t, proj) // keep the guard's own check.sh out of the cycle diff
 
 	e.Run(proj, "s-034-02", "write a clean memory", Turns("done",
 		Write("w1", "memories/note.md", "a perfectly ordinary note"),
@@ -143,6 +145,7 @@ func TestT034_03_NotFineFileReFiresUntilFixed(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret})
+	commitGuards(t, proj) // keep the guard's own check.sh out of the cycle diff
 
 	sess := "s-034-03"
 

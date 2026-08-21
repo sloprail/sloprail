@@ -97,6 +97,35 @@ func installExampleTree(t *testing.T, proj string) {
 	if copied == 0 {
 		t.Fatalf("install example tree: %s held no files", src)
 	}
+
+	// Commit the installed tree so it is in history BEFORE any cycle runs. The
+	// sloprail plugin ships authoring-slop, a preventive file-guard whose Stop
+	// after-check judges a guardrail's own `.sh`/`.md.j2` machinery. The example's
+	// own `.sloprail/**` scripts would otherwise read as files THIS cycle created
+	// (the baseline is the GitInit commit, taken before this install), so that
+	// after-check would judge them — and with no model in the e2e, fail closed,
+	// adding spurious blocking errors. In production the example is installed
+	// before the session, so it is part of the baseline and never in the cycle
+	// diff; committing here reproduces that. No-op when the project is not a git
+	// repo (some tests install before GitInit, whose own commit then covers it).
+	commitInstalledTree(t, proj)
+}
+
+// commitInstalledTree stages and commits everything in proj, so a freshly
+// installed guardrail tree is part of the session baseline rather than the first
+// cycle's diff. A no-op when proj is not a git repository.
+func commitInstalledTree(t *testing.T, proj string) {
+	t.Helper()
+	if err := exec.Command("git", "-C", proj, "rev-parse", "--is-inside-work-tree").Run(); err != nil {
+		return // not a repo yet; GitInit's own commit will baseline the tree
+	}
+	if out, err := exec.Command("git", "-C", proj, "add", "-A").CombinedOutput(); err != nil {
+		t.Fatalf("commitInstalledTree: git add: %v\n%s", err, out)
+	}
+	// --allow-empty so a re-install that changed nothing still succeeds.
+	if out, err := exec.Command("git", "-C", proj, "commit", "--allow-empty", "-m", "install example tree").CombinedOutput(); err != nil {
+		t.Fatalf("commitInstalledTree: git commit: %v\n%s", err, out)
+	}
 }
 
 func repoRoot(t *testing.T) string {

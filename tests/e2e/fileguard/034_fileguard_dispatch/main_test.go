@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -31,6 +32,26 @@ var (
 	Write = harness.Write
 	Bash  = harness.Bash
 )
+
+// commitGuards commits the project's `.sloprail` tree so a guard's own check.sh /
+// judge.md.j2 — installed after the baseline — is part of it, not the first
+// cycle's diff. The sloprail plugin ships authoring-slop, a preventive file-guard
+// whose Stop after-check judges a guardrail's own `.sh`/`.md.j2`; an uncommitted
+// one reads as this cycle's write and is judged (failing closed with no model in
+// the e2e, adding a spurious block to a test that expected a clean Stop).
+// Production installs guards before the session (baseline), so committing keeps
+// them out of the cycle diff. Scoped to `.sloprail` so it never sweeps in the
+// memories/, docs/ files these tests write. Requires the project be a git repo
+// (every test here GitInits before installing).
+func commitGuards(t *testing.T, proj string) {
+	t.Helper()
+	if out, err := exec.Command("git", "-C", proj, "add", ".sloprail").CombinedOutput(); err != nil {
+		t.Fatalf("commitGuards: git add .sloprail: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", proj, "commit", "-m", "baseline .sloprail").CombinedOutput(); err != nil {
+		t.Fatalf("commitGuards: git commit: %v\n%s", err, out)
+	}
+}
 
 // containsStr is a tiny local substring helper, so a test can assert on refusal
 // text without importing strings in every file.

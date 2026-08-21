@@ -142,6 +142,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 	// bound to one would never run.
 	e.GitInit(proj)
 	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	commitGuards(t, proj) // keep ask.sh out of the cycle diff (authoring-slop judges guard .sh at Stop)
 
 	const sess = "s-018-01"
 	const firstMarker = "MARKERALPHA"
@@ -218,6 +219,7 @@ func TestT018_02_TurnsNothingJudgedAreStillGivenToTheNextCycle(t *testing.T) {
 
 	// Now a rule appears, and the next cycle asks what the session has done.
 	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	commitGuards(t, proj) // keep ask.sh out of the cycle diff (authoring-slop judges guard .sh at Stop)
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "judged cycle\n"),
 	))

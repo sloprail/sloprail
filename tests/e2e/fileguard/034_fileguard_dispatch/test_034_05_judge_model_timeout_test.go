@@ -35,6 +35,7 @@ func TestT034_11_JudgeModelAndTimeoutReachTheInvocation(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "substantive-memory", judgeGuardModelTimeout, map[string]string{"judge.md.j2": judgeGuardTemplate})
+	commitGuards(t, proj) // keep the guard's own judge.md.j2 out of the cycle diff
 
 	// A recording shim: writes the failing verdict AND records the claude argv, so
 	// the test can assert the check's model reached the harness invocation.

@@ -178,6 +178,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 	// bound to one would never run.
 	e.GitInit(proj)
 	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	commitGuards(t, proj) // keep ask.sh out of the cycle diff (authoring-slop judges guard .sh at Stop)
 
 	const sess = "s-019-02"
 	const firstMarker = "MARKERETA"

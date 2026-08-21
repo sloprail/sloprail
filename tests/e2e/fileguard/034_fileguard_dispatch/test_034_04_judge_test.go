@@ -37,6 +37,7 @@ func TestT034_09_JudgeGuardBlocks(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "substantive-memory", judgeGuard, map[string]string{"judge.md.j2": judgeGuardTemplate})
+	commitGuards(t, proj) // keep the guard's own judge.md.j2 out of the cycle diff
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "this memory is one word, not substantive"}`)
 
 	e.Run(proj, "s-034-09", "write a thin memory", Turns("done",
@@ -63,6 +64,7 @@ func TestT034_10_JudgeGuardAdmits(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "substantive-memory", judgeGuard, map[string]string{"judge.md.j2": judgeGuardTemplate})
+	commitGuards(t, proj) // keep the guard's own judge.md.j2 out of the cycle diff
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	e.Run(proj, "s-034-10", "write a real memory", Turns("done",

@@ -79,6 +79,7 @@ func TestT035_03_GateReadsContextActiveAndPayload(t *testing.T) {
 		"exit.sh":  exitStayActive,
 	})
 	e.Gate(proj, "deterministic-only", deterministicGate, map[string]string{"check.sh": checkReadsContextPayload})
+	commitGuards(t, proj) // keep the context/gate scripts out of the cycle diff
 
 	sess := "s-035-03"
 	res := e.Run(proj, sess, "declare a refactor", Turns("done",
@@ -203,6 +204,7 @@ func TestT035_06_FileGuardDoesNotFireOutsideContext(t *testing.T) {
 		"exit.sh":  exitStayActive,
 	})
 	e.FileGuard(proj, "no-debug-in-refactor", contextGatedFileGuard, map[string]string{"check.sh": checkNoDebugPrint})
+	commitGuards(t, proj) // keep the context/file-guard scripts out of the cycle diff
 
 	sess := "s-035-06"
 	// No refactor-start — the context is inactive, so the guard's match excludes

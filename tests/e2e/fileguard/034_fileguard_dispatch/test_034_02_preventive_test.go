@@ -38,6 +38,7 @@ func TestT034_04_PreventiveBlocksPreWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "no-plaintext-keys", preventiveGuard, map[string]string{"check.sh": checkNoPlaintextKey})
+	commitGuards(t, proj) // keep the guard's own check.sh out of the cycle diff
 
 	res := e.Run(proj, "s-034-04", "write a secret with a plaintext key", Turns("done",
 		Write("w1", "secrets/prod.env", "KEY=hunter2"),
@@ -62,6 +63,7 @@ func TestT034_05_PreventiveAdmitsFineWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "no-plaintext-keys", preventiveGuard, map[string]string{"check.sh": checkNoPlaintextKey})
+	commitGuards(t, proj) // keep the guard's own check.sh out of the cycle diff
 
 	res := e.Run(proj, "s-034-05", "write a clean secret reference", Turns("done",
 		Write("w1", "secrets/prod.env", "KEY_REF=vault://prod"),
@@ -91,6 +93,7 @@ checks:
   - script: ./check.sh
 `
 	e.FileGuard(proj, "no-plaintext-keys", nonPreventive, map[string]string{"check.sh": checkNoPlaintextKey})
+	commitGuards(t, proj) // keep the guard's own check.sh out of the cycle diff
 
 	res := e.Run(proj, "s-034-06", "write a secret with a plaintext key", Turns("done",
 		Write("w1", "secrets/prod.env", "KEY=hunter2"),
