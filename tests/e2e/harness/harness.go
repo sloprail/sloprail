@@ -72,6 +72,16 @@ type Env struct {
 	// settings so the sloprail plugin's own dispatch discovers it. See
 	// EnablePluginShippingFileGuard.
 	extraPlugins []extraPlugin
+
+	// preambleLines are no-uuid preamble records seeded at the HEAD of the session
+	// transcript, BEFORE the root prompt record — the custom-title / ai-title / mode
+	// / queue-operation / last-prompt lines a real session file opens with, which a
+	// transcript reader counts as physical lines but skips as entries. Set by
+	// SeedPreamble. Seeding happens in the harness (not via the mock's --preamble-file)
+	// because the harness pre-seeds the transcript's root record itself — for the
+	// parentless-root the identity walk needs — so the preamble has to be written
+	// ahead of that same record, in the same place. Empty for the ordinary session.
+	preambleLines []string
 }
 
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent
@@ -1349,15 +1359,44 @@ func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatalf("harness: seed transcript: %v", err)
 	}
-	line := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
-		"e2e-root-"+sessionID, cwd, prompt)
+	// Any no-uuid preamble records go FIRST, so they occupy the transcript's opening
+	// physical lines exactly where a real session file has them — the root prompt
+	// record follows. SeedPreamble sets these; empty for the ordinary session.
+	var body strings.Builder
+	for _, p := range e.preambleLines {
+		body.WriteString(p)
+		body.WriteByte('\n')
+	}
+	body.WriteString(fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
+		"e2e-root-"+sessionID, cwd, prompt))
 	path := filepath.Join(dir, sessionID+".jsonl")
 	if _, err := os.Stat(path); err == nil {
 		return // already seeded, or the mock has started writing — never overwrite
 	}
-	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body.String()), 0o644); err != nil {
 		e.t.Fatalf("harness: seed transcript: %v", err)
 	}
+}
+
+// SeedPreamble makes the next Run seed the given no-uuid preamble records at the HEAD
+// of the transcript, before the root prompt — the custom-title / ai-title / mode /
+// queue-operation / last-prompt lines a real session file opens with. A transcript
+// reader counts them as physical lines but skips them as entries (they carry no uuid),
+// which is what a line-number derivation rests on. Each line must be one JSON record.
+//
+// Seeded by the harness rather than the mock's --preamble-file because the harness
+// pre-seeds the transcript's own parentless root record (the identity walk needs it),
+// and the preamble must sit ahead of that same record; the mock's flag writes only
+// into a still-empty transcript, which the harness's pre-seed has already filled.
+func (e *Env) SeedPreamble(lines ...string) {
+	e.preambleLines = lines
+}
+
+// PreambleTitle is a no-uuid `custom-title` preamble record — one of the record
+// types a real Claude Code session file opens with, carrying no uuid so a transcript
+// reader counts its line but skips it as an entry. For SeedPreamble.
+func PreambleTitle(title string) string {
+	return fmt.Sprintf(`{"type":"custom-title","customTitle":%q,"sessionId":"s"}`, title)
 }
 
 // RootMessageID is the uuid seedTranscript gives a session's root user message —
@@ -1912,22 +1951,20 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	cmd.Env = append(os.Environ(),
 		"HOME="+e.home,
 		"CLAUDE_CONFIG_DIR="+e.configDir,
-		"CLAUDE_CODE_SESSION_ID="+sessionID,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
-		// The mock STANDS IN FOR Claude Code, so it must present the environment
-		// Claude Code presents — including the two variables that name the running
-		// harness. Real Claude Code sets CLAUDECODE=1 on every session (and
-		// CLAUDE_CODE_ENTRYPOINT names how it launched); sr-agent reads exactly
-		// these to detect its harness (services/sr-agent/harness.go: "CLAUDECODE is
-		// what Claude Code sets on every session"), and a judge's `sr-agent
-		// --model … --verify` REFUSES with ErrNoHarness when neither is set. A
-		// developer running the suite inside Claude Code inherits CLAUDECODE from
-		// their own session and never sees this; CI does not, so a judge test that
-		// passed locally failed in CI with "no supported harness detected" until
-		// the mock's env carried these explicitly. Set here (not left to
-		// os.Environ inheritance) so the two environments behave identically.
-		"CLAUDECODE=1",
-		"CLAUDE_CODE_ENTRYPOINT=cli",
+		// The session-identifying and harness-naming variables are the MOCK's to
+		// present, not the harness's: the mock takes --session-id (above) and sets
+		// CLAUDE_CODE_SESSION_ID on every hook/script env from it, and sets
+		// CLAUDECODE=1 + CLAUDE_CODE_ENTRYPOINT=cli on every hook env unconditionally
+		// (a10n-claude-mock internal/hooks/invoker.go) — because the mock stands in
+		// for Claude Code and must present the environment it presents. sr-agent's
+		// harness detection reads CLAUDECODE/CLAUDE_CODE_ENTRYPOINT and REFUSES with
+		// ErrNoHarness when neither is set; the mock now supplies them itself, so the
+		// harness no longer sets any of the three here. (This used to be a CI-vs-local
+		// gotcha: a developer inside Claude Code inherited CLAUDECODE and never saw the
+		// gap, CI did not, and a judge test failed in CI with "no supported harness
+		// detected" — now moot, the value is the mock's whatever the outer environment.)
+		//
 		// The plugin invokes `sloprail`; this is how the hook subprocess finds
 		// the build under test rather than whatever happens to be installed.
 		//

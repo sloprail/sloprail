@@ -24,29 +24,29 @@ import (
 // So the shapes describe classifies are the mock's, deterministic and centralised,
 // not a Claude Code record shape re-typed by hand in this file.
 //
-// # The one shape the mock cannot produce, and why a fixture stays
+// # Both parent cases are mock-driven — no fixtures
 //
 // describe derives a sub-agent's parentPath from the toolUseId its meta file
 // records — the id of the dispatching tool_use in the parent. a10n-claude-mock
-// now threads the dispatching Agent tool_use's id into that meta
-// (seedSubagentTranscript's toolUseId), so a mock-driven sub-agent carries a REAL
-// toolUseId and its parent IS derivable — the derivable-parent case (T028_02)
-// runs against the mock, not a fixture. (This reverses an earlier limit, when the
-// mock hardcoded an empty toolUseId; that is why the note used to say the opposite.)
+// threads the dispatching Agent tool_use's id into that meta
+// (seedSubagentTranscript's toolUseId), so:
 //
-// The one shape the mock no longer produces is the NEGATIVE: a sub-agent whose
-// meta names an EMPTY toolUseId, the "no parent derivable" degradation (T028_03).
-// Since every mock-seeded sub-agent now carries an id, that case is constructed
-// with the single hand-authored fixture below; everything else reads a
-// mock-produced transcript.
+//   - Dispatch gives the tool_use a real id → the meta names it → the parent IS
+//     derivable (T028_02), read against a mock-produced record.
+//   - DispatchNoParent gives the tool_use an EMPTY id → the meta names an empty
+//     toolUseId → the parent is NOT derivable, the honest degradation (T028_03),
+//     also read against a mock-produced record.
+//
+// Both cases the mock now produces, so this file hand-authors no transcript.
 
 type Env = harness.Env
 
 var (
-	New      = harness.New
-	Turns    = harness.Turns
-	Bash     = harness.Bash
-	Dispatch = harness.Dispatch
+	New              = harness.New
+	Turns            = harness.Turns
+	Bash             = harness.Bash
+	Dispatch         = harness.Dispatch
+	DispatchNoParent = harness.DispatchNoParent
 )
 
 // TestMain removes the binary build dir when this package's tests finish.
@@ -63,65 +63,6 @@ func writeScenario(t *testing.T, proj string, s harness.Scenario) string {
 	path := filepath.Join(proj, "sub.sh")
 	if err := s.Script(path); err != nil {
 		t.Fatalf("write sub-agent scenario: %v", err)
-	}
-	return path
-}
-
-// --- the one hand-authored fixture: a sub-agent whose meta names its dispatching
-// tool_use, which the mock cannot write (see the package note). ---
-
-// fixtureParent is a project directory holding a hand-authored root transcript and
-// a sub-agent record whose meta carries a real toolUseId — the parent correlation
-// the mock leaves underivable. Kept minimal: only the two records the correlation
-// walks, and only the fields it reads.
-type fixtureParent struct {
-	t   *testing.T
-	dir string
-}
-
-func newFixtureParent(t *testing.T) *fixtureParent {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "traj-parent-")
-	if err != nil {
-		t.Fatalf("temp project: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	return &fixtureParent{t: t, dir: dir}
-}
-
-// subagent writes a sub-agent record and its meta companion under
-// <dir>/<session>/subagents/, the meta naming toolUseID so the parent is derivable.
-func (f *fixtureParent) subagent(session, agentID, toolUseID string) string {
-	f.t.Helper()
-	dir := filepath.Join(f.dir, session, "subagents")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		f.t.Fatalf("mkdir subagents: %v", err)
-	}
-	origin := `{"type":"user","uuid":"sub-origin","parentUuid":null,"isSidechain":true,` +
-		`"agentId":"` + agentID + `","message":{"role":"user","content":"do the delegated thing"}}`
-	path := writeLines(f.t, filepath.Join(dir, "agent-"+agentID+".jsonl"), origin)
-
-	meta := map[string]any{
-		"agentType": "Explore", "description": "look into X", "toolUseId": toolUseID, "spawnDepth": 1,
-	}
-	b, err := json.Marshal(meta)
-	if err != nil {
-		f.t.Fatalf("marshal meta: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "agent-"+agentID+".meta.json"), b, 0o644); err != nil {
-		f.t.Fatalf("write meta: %v", err)
-	}
-	return path
-}
-
-func writeLines(t *testing.T, path string, lines ...string) string {
-	t.Helper()
-	body := ""
-	for _, l := range lines {
-		body += l + "\n"
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
 	}
 	return path
 }

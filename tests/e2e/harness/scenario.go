@@ -252,6 +252,57 @@ func Dispatch(id, prompt, scriptPath, isolation string) Turn {
 	return Turn{jsonl: toolUse(id, "Agent", input)}
 }
 
+// DispatchNoParent is Dispatch with an EMPTY dispatching tool_use id — the shape a
+// sub-agent whose parent is NOT derivable comes from.
+//
+// # Why the empty id, and what it produces
+//
+// A sub-agent's meta records the id of the Agent tool_use that dispatched it, and a
+// reader derives the immediate parent by finding the trajectory holding a tool_use
+// with that id. a10n-claude-mock threads the dispatching tool_use's own id into the
+// meta (seedSubagentTranscript's toolUseId), so a normal Dispatch yields a DERIVABLE
+// parent. When the tool_use carries NO id, the meta's toolUseId is empty and there is
+// nothing to correlate — the honest "parent not derivable" degradation `describe`
+// reports as isSubagent=true with parentPath absent. This is the negative case
+// T028_03 exercises, and the one shape a normal Dispatch (which always has an id)
+// cannot produce.
+//
+// # Why the id is shaped this way
+//
+// The turn-firing marker is injected into the FIRST `"id":"…"` of a turn's record
+// (script()/injectMarker). If the tool_use block's own `id` were the only one and it
+// were empty, the marker would find no `"id":"` to bind to and the turn could not tell
+// it had already fired. So the record carries a throwaway TOP-LEVEL `id` (`<id>#np`)
+// for the marker to bind to — exactly as ToolUseWithResult/AnswerQuestion do — which
+// keeps the tool_use block's own `id` CLEAN and empty. extractFirstToolUseWithID reads
+// the BLOCK's id (empty), so the mock threads an empty toolUseId into the meta, while
+// the marker rides the top-level anchor. The entry carries a uuid so transcript.Read
+// does not skip it.
+func DispatchNoParent(id, prompt, scriptPath string) Turn {
+	input := map[string]string{
+		"description":   "delegated work",
+		"prompt":        prompt,
+		"subagent_type": "general-purpose",
+		"script":        scriptPath,
+	}
+	var ib strings.Builder
+	ib.WriteByte('{')
+	first := true
+	for k, v := range input {
+		if !first {
+			ib.WriteByte(',')
+		}
+		first = false
+		fmt.Fprintf(&ib, "%q:%s", k, jsonStr(v))
+	}
+	ib.WriteByte('}')
+	// Top-level `id` is the marker anchor; the tool_use block's own `id` is empty so
+	// the mock records an empty toolUseId and the parent stays underivable.
+	return Turn{jsonl: fmt.Sprintf(
+		`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":"","name":"Agent","input":%s}]}}`,
+		id+"#np", "e2e-turn-"+id, ib.String())}
+}
+
 // Script writes a scenario as a standalone script file and returns its path, for
 // handing to Dispatch as what the sub-agent runs.
 func (s Scenario) Script(path string) error {
@@ -398,6 +449,44 @@ func SayWrite(id, prose, path, content string) Turn {
 // shell command — needed for the same terminal-Say reason SayWrite documents.
 func SayBash(id, prose, command string) Turn {
 	return Turn{jsonl: sayWithTool(id, prose, "Bash", map[string]string{"command": command})}
+}
+
+// SayThenHuman emits, in ONE turn, an assistant text record FOLLOWED BY a second
+// HUMAN user record — the multi-human-turn shape a transcript with several distinct
+// human messages carries, where an assistant turn sits between them.
+//
+// # Why one turn emits two records
+//
+// a10n-claude-mock seeds only the FIRST human turn (the -p prompt, the transcript's
+// line 1). A SECOND human message is a plain `type:"user"` record the mock forwards
+// verbatim, but the mock only ADVANCES the scenario after a tool_use: a lone non-tool
+// record (a bare assistant text, or a bare human turn) is terminal — the mock forwards
+// it, reaches EOF, and ends the turn, so a turn AFTER it never fires (measured; the
+// same terminal-Say reason SayWrite documents). So the assistant text and the second
+// human turn cannot be two sequential turns — the human turn would never fire. Emitting
+// BOTH records in one turn's script run lands them consecutively: after the seeded
+// prompt on line 1, the assistant text on line 2 and the second human message on line 3.
+// The file layout is exactly what a real session's [human, assistant, human] stretch
+// has — which is all cite reads — even though the delivery is one emission.
+//
+// # The records
+//
+// The assistant record is a `type:"assistant"` text-block entry (the agent's own
+// prose, which cite must never treat as citable); the second is a plain `type:"user"`
+// human message (a citable candidate, the same as the seeded prompt). Both carry a
+// uuid keyed off id so transcript.Read does not skip either. The turn is gated on the
+// FIRST record's id-marker (script() injects it into the first `"id":"…"`), so it fires
+// once; being a NON-tool turn it is terminal, which is correct as the scenario's last
+// turn (the result frame after it is unreachable and unnecessary — EOF is the end).
+func SayThenHuman(id, prose, humanText string) Turn {
+	assistant := fmt.Sprintf(
+		`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":%s}]}}`,
+		id+"#s", "e2e-turn-"+id+"s", jsonStr(prose))
+	human := fmt.Sprintf(
+		`{"type":"user","uuid":%q,"message":{"role":"user","content":%s}}`,
+		"e2e-turn-"+id+"h", jsonStr(humanText))
+	// Two JSONL records in one turn, newline-joined; the mock forwards both.
+	return Turn{jsonl: assistant + "\n" + human}
 }
 
 // BashBatch returns ONE assistant turn whose content is SEVERAL Bash tool_use

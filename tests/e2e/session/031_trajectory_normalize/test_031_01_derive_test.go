@@ -187,29 +187,36 @@ func TestT031_05_ThreeToolCallsYieldThreeEvents(t *testing.T) {
 // T031_06: line numbers are the physical lines of the file, counting the preamble
 // lines transcript reading skips — the one field jq cannot recompute downstream.
 //
-// A FIXTURE, not the mock: the count rests on Claude Code's own preamble records —
-// `custom-title`, `ai-title`, `mode`, `queue-operation`, `last-prompt` — which carry
-// no uuid and which transcript reading counts-but-skips. The mock's scenario
-// validator REJECTS every one of those as an unknown record type (its knownTypes is
-// only system/assistant/user/result plus control records; measured — a `custom-title`
-// line fails with "unknown record type"), so it cannot emit the preamble this rests
-// on. a10n-cli#470 did not change that. (A uuid-less `system` record IS accepted and
-// would exercise the same count-but-skip path, but standing a non-preamble record in
-// for the preamble the field is about is less faithful than the hand-authored line —
-// and would need co-emitting with a following tool_use to dodge the mock's
-// EOF-is-end-of-turn on a lone non-tool record.) Teaching the mock to emit the
-// no-uuid preamble types is a FUTURE a10n-cli mock change; until then this stages the
-// preamble by hand.
+// Driven through the MOCK: the count rests on Claude Code's own no-uuid preamble
+// records — custom-title / ai-title / mode / queue-operation / last-prompt — which a
+// transcript reader counts-but-skips. The harness seeds two of them at the transcript
+// HEAD via SeedPreamble (the mock's own --preamble-file writes only into a still-empty
+// transcript, and the harness pre-seeds the parentless root record itself, so the
+// preamble is written ahead of that same record by the harness), then the session's
+// own records follow: the seeded prompt on line 3, an assistant turn on line 4. So the
+// physical-line count is checked against a mock-produced transcript whose opening lines
+// are real preamble records, not a fully hand-authored fixture.
+//
+// A `Say` turn is the assistant entry because it produces a single assistant record
+// with NO synthesised tool_result after it (a tool turn would add a tool_result entry,
+// making a third entry on a later line); the two entries are then exactly the prompt
+// and the assistant turn, on lines 3 and 4.
 func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t,
-		preambleLine(),                          // line 1 — no uuid, skipped as an entry
-		preambleLine(),                          // line 2 — no uuid, skipped as an entry
-		userMsg("u1", "start"),                  // line 3
-		assistantBash("a1", "u1", "make build"), // line 4
-	)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	res := normalize(e, dirOf(path), path)
+	// Two no-uuid preamble records occupy physical lines 1 and 2, ahead of the prompt.
+	e.SeedPreamble(
+		PreambleTitle("a conversation"),
+		PreambleTitle("still a conversation"),
+	)
+	e.Run(proj, "s-031-06", "start", Turns("done",
+		Say("m1", "on it"),
+	))
+	path := e.TranscriptPath(proj, "s-031-06")
+
+	res := normalize(e, proj, path)
 	if res.Code != 0 {
 		t.Fatalf("normalize exited %d, want 0:\n%s", res.Code, res.Output)
 	}
@@ -217,11 +224,15 @@ func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("only the two uuid-carrying lines are entries, got %d:\n%s", len(entries), res.Output)
 	}
-	if entries[0].UUID != "u1" || entries[0].Line != 3 {
-		t.Fatalf("the user entry sits on physical line 3, got line %d", entries[0].Line)
+	// The seeded prompt is the user entry on physical line 3 (after the two preamble
+	// lines); the assistant Say turn is the entry on line 4.
+	if entries[0].Type != "user" || entries[0].Line != 3 {
+		t.Fatalf("the user entry sits on physical line 3, got type %q line %d:\n%s",
+			entries[0].Type, entries[0].Line, res.Output)
 	}
-	if entries[1].UUID != "a1" || entries[1].Line != 4 {
-		t.Fatalf("the assistant entry sits on physical line 4, got line %d", entries[1].Line)
+	if entries[1].Type != "assistant" || entries[1].Line != 4 {
+		t.Fatalf("the assistant entry sits on physical line 4, got type %q line %d:\n%s",
+			entries[1].Type, entries[1].Line, res.Output)
 	}
 }
 

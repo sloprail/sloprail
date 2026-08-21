@@ -111,21 +111,30 @@ func TestT028_02_DescribeSubagentHasParentPath(t *testing.T) {
 // This is the honest degradation the spec's "absent when ... cannot be located"
 // describes: the isSidechain origin and the meta companion mark it a sub-agent,
 // but with an EMPTY toolUseId there is no dispatching tool_use to correlate to,
-// so parentPath must be absent rather than guessed. This runs against a
-// hand-authored fixture carrying an empty toolUseId, because the mock no longer
-// produces that shape — as of threading the dispatching id into the meta, every
-// mock-seeded sub-agent carries a REAL toolUseId (see T028_02), so the
-// no-toolUseId case has to be constructed explicitly to be exercised at all.
+// so parentPath must be absent rather than guessed. Driven through the MOCK via
+// DispatchNoParent — an Agent tool_use carrying an EMPTY id, so a10n-claude-mock
+// threads an empty toolUseId into the sub-agent's meta (the same path a normal
+// Dispatch threads a real id through for T028_02). So this reads a mock-produced
+// sub-agent record whose meta genuinely has no dispatching id, rather than a
+// hand-authored stand-in that could drift from the mock's shape.
 func TestT028_03_SubagentWithoutToolUseIDHasNoParent(t *testing.T) {
 	e := New(t)
-	f := newFixtureParent(t)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	// A sub-agent record whose meta names an EMPTY toolUseId — the shape describe
-	// must not derive a parent from. No root is needed: with no id to correlate,
-	// there is nothing for describe to look for.
-	subPath := f.subagent("s-root", "agentone", "")
+	sub := writeScenario(t, proj, Turns("sub done",
+		Bash("s1", "echo delegated > from-sub.md"),
+	))
+	e.Run(proj, "s-028-03", "start the work", Turns("root done",
+		DispatchNoParent("d1", "delegated prompt", sub),
+	))
 
-	res := e.CLIDirect(f.dir, "sr-session", "trajectory", "describe", "--path", subPath)
+	recs := e.SubagentRecordPaths(proj, "s-028-03")
+	if len(recs) != 1 {
+		t.Fatalf("the mock should have written exactly one sub-agent record, wrote %d (%v)", len(recs), recs)
+	}
+
+	res := e.CLIDirect(proj, "sr-session", "trajectory", "describe", "--path", recs[0])
 	if res.Code != 0 {
 		t.Fatalf("describe exited %d, want 0:\n%s", res.Code, res.Output)
 	}
