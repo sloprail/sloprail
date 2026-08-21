@@ -26,28 +26,23 @@ import (
 // failures — an engine could re-take the point and still diff against the wrong
 // thing, or take it correctly and dispatch from a stale cache.
 
-const bindPostFileEvents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records every after-the-fact file event it is handed
+// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
+// file event it is handed and permits unconditionally. `match: "**/*.md"` selects
+// every markdown file at any depth — the faithful stand-in for the old binding to
+// all three after-the-fact kinds, which a single file-guard now covers because it
+// fires on whichever Post kind the change produced. The ledger (`seen`, no `.md`)
+// is not matched, so the guard cannot re-observe its own bookkeeping. Re-vehicled
+// from the old GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md so this
+// coverage of the shared baseline/tree-diff machinery survives the old dispatch's
+// deletion, observed through the new flat CheckPayload.
+const recordEverything = `match: "**/*.md"
+checks:
+  - script: ./record.sh
 `
 
 const recordScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
+cat >> "$SR_GUARDRAIL_DIR/seen"
+echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
@@ -56,21 +51,23 @@ type observed struct {
 	Path string
 }
 
+// observedFiles decodes what a file-guard's check was handed — the FLAT event,
+// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
+// the old nested `event.fields` envelope.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -100,7 +97,7 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 
 	// The guardrail is committed to the ROOT, before either branch diverges, so
 	// it exists on both lines of history.
@@ -131,7 +128,7 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 
 	// The premise this test rests on: the rule survived the round trip and is
 	// present on the branch the session will switch to.
-	if e.Git(proj, "cat-file", "-t", "feature:.sloprail/guardrails/watcher/GUARDRAIL.md") != "blob" {
+	if e.Git(proj, "cat-file", "-t", "feature:.sloprail/file-guard/watcher/file-guard.yaml") != "blob" {
 		t.Fatalf("the guardrail is not present on the branch the agent switches to, so the " +
 			"rule cannot fire there and an empty ledger would prove nothing")
 	}
@@ -145,7 +142,7 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 		t.Fatalf("the agent did not actually switch branches (on %q), so this proves nothing", got)
 	}
 
-	got := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	// The control. The session's own file must be reported, or the two absences
 	// below are just an engine that dispatched nothing.
 	if !sawPath(got, "my-own-work.md") {
@@ -181,7 +178,7 @@ func TestT014_02_ANewBranchOffOwnWorkKeepsItInTheDifference(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-014-02", "commit then branch", Turns("done",
 		Write("w1", "session-work.md", "written by this session\n"),
@@ -192,7 +189,7 @@ func TestT014_02_ANewBranchOffOwnWorkKeepsItInTheDifference(t *testing.T) {
 		t.Fatalf("the agent is on %q, not the new branch, so this proves nothing", got)
 	}
 
-	got := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if !sawPath(got, "session-work.md") {
 		t.Fatalf("the session's own committed work vanished from the difference after `checkout -b`: %v — "+
 			"a new branch moves no history, so re-measuring here drops the cycle's work through the branch door", got)
