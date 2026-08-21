@@ -5,9 +5,45 @@
 set -uo pipefail
 
 input="$(cat)"
-new="$(printf '%s' "$input" | jq -r 'if .event | has("newContent") then .event.newContent else null end')"
 
-if [ "$new" = "null" ]; then
+# Where the bytes to check come from, chosen by event kind — the honest
+# three-case handling of `newContent`, not the two-case `has("newContent")`
+# short-cut that reads an absent field as "".
+#
+# This guard is an AFTER-check (its file-guard.yaml declares no `preventive:`),
+# so at runtime it only ever fires on the settled POST event, where the content
+# is always present. The Pre branches below are not reached in this guard's
+# binding — they are here so the script is correct for whatever kind it is
+# handed, and so `resultKnown` is consulted rather than an absent `newContent`
+# being mistaken for an emptied file. `.event.resultKnown` is the flag that
+# tells "the update empties the file" from "the result was not derivable"; on an
+# underivable PreFileUpdate the honest move is to DEFER to the Post kind (which
+# fires at Stop on the settled file) rather than guess. See the sibling
+# .sloprail/file-guard/skill-quality/judge-skill.sh for the same idiom, and the
+# authoring-slop rule content-may-be-unresolvable for why.
+kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
+case "$kind" in
+  PreFileCreate|PostFileCreate|PostFileUpdate)
+    # Create carries the new body; Post carries the settled body. Always present.
+    new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
+    ;;
+  PreFileUpdate)
+    known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
+    if [ "$known" != "true" ]; then
+      # Result not derivable ahead of the write: defer to the Post kind, which
+      # judges what actually landed. Not a permit-by-ignorance — the settled
+      # content is checked at Stop.
+      exit 0
+    fi
+    new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
+    ;;
+  *)
+    # No kind, or a kind this guard is not about (e.g. a delete): nothing to check.
+    exit 0
+    ;;
+esac
+
+if [ -z "$new" ]; then
   exit 0
 fi
 
