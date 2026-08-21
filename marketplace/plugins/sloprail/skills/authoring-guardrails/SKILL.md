@@ -98,7 +98,12 @@ binds to the file lifecycle by nature.
 ## The flat event model
 
 Every check and every match reads the event **flat**. A script gets, on stdin, a
-`CheckPayload`:
+check payload whose event's own fields are **direct under `.event`** —
+`.event.path`, `.event.newContent`, `.event.kind`, `.event.resultKnown`,
+`.event.invocations`, `.event.tags`. There is **no** `.event.fields.*` nesting.
+Alongside the event: `.transcriptPath` (the session record, for reading what the
+event does not carry) and `.context` (every declared context by name,
+`{active, payload}`).
 
 ```json
 {"event":{"kind":"PreFileCreate","path":"memories/a.md","newContent":"…","newMarkers":[]},
@@ -106,11 +111,9 @@ Every check and every match reads the event **flat**. A script gets, on stdin, a
  "context":{"some-context":{"active":true,"payload":{…}}}}
 ```
 
-The event's own fields are **direct under `.event`** — `.event.path`,
-`.event.newContent`, `.event.kind`, `.event.resultKnown`, `.event.invocations`,
-`.event.tags`. There is **no** `.event.fields.*` nesting. Alongside the event:
-`.transcriptPath` (the session record, for reading what the event does not
-carry) and `.context` (every declared context by name, `{active, payload}`).
+The full field set for every event kind, the per-kind tables, the payload
+envelopes, and the flat-vs-nested distinction are in **[events.md](events.md)** —
+the single reference the nature and check docs point to rather than re-listing.
 
 A **match expression** reads the same facts, but the three scopes differ in
 shape — this is the one asymmetry to keep straight:
@@ -136,16 +139,21 @@ checks:
     judge: ./is-it-good.md.j2
     model: size-md                       # optional; a size alias or model name
     timeout: 45s                         # optional; default 30s
+    allowed_tools: [Read, WebFetch]      # optional; judge-only, tools its agent may use
 ```
 
-- A **script** is the deterministic half: the `CheckPayload` on stdin, and its
+- A **script** is the deterministic half: the check payload on stdin, and its
   **exit code is the verdict** — `0` permits, non-zero refuses.
+  → [script-checks.md](script-checks.md)
 - A **judge** is the model half: a Jinja2 prompt template rendered against the
   payload (and any `additionalContext` a `prepare` script assembled), asked for a
-  `{"pass": true|false, "reasoning": "…"}` verdict.
+  `{"pass": true|false, "reasoning": "…"}` verdict via `sr-agent`.
+  → [judge-checks.md](judge-checks.md)
 
-The refusal contract, the script skeleton, the judge substrate, and the
-fail-closed default: [check-scripts.md](check-scripts.md).
+The two check kinds are documented separately because their contracts differ — a
+script's `reason`/exit-code verdict and fail-closed-on-cannot-run, versus a
+judge's `reasoning` verdict, `prepare` + `.md.j2` + `model`/`timeout`/`allowed_tools`,
+and the fail-open-via-a-script escape hatch.
 
 ## The refusal contract
 
@@ -162,7 +170,9 @@ at all** — missing, not executable, an internal error, a timeout — is a
 **refusal**, deliberately: a rule that could not be checked must not read as
 approval. This is fail-closed, and it is the safe direction. Write a reason
 addressed to the agent whose action was blocked, saying what to do instead; the
-engine appends the rule's name.
+engine appends the rule's name. (A judge check's verdict key is `reasoning`, not
+`reason` — the per-kind contracts are in [script-checks.md](script-checks.md) and
+[judge-checks.md](judge-checks.md).)
 
 ## The failure this skill exists to prevent
 
@@ -251,11 +261,19 @@ file. Naming it here is the way out that does not mean uninstalling the plugin.
 
 ## The cross-cutting references
 
+- [events.md](events.md) — every event kind and its flat fields, the per-kind
+  tables, and the payload envelopes a check and a judge template read.
+- [environment.md](environment.md) — the `SR_*` variables every guardrail script
+  receives (`SR_GUARDRAIL`, `SR_WORKSPACE`, `SR_TRANSCRIPT`, …) and the
+  `SLOPRAIL_LAUNCHED_BY` re-entry provenance.
 - [matchers.md](matchers.md) — the `match:` expression language, the three
   scopes, the glob shorthand, and the fail-closed rule.
+- [script-checks.md](script-checks.md) — the deterministic check: the skeleton,
+  reading the flat event off stdin, the exit-code verdict, and fail-closed-on-
+  cannot-run.
+- [judge-checks.md](judge-checks.md) — the model check: `prepare` + the `.md.j2`
+  template + `additionalContext`, the `sr-agent` substrate, `model`/`timeout`/
+  `allowed_tools`, and the fail-open escape hatch.
 - [state-management.md](state-management.md) — `sr-session state` across cycles,
   the `--owner` cross-guardrail read a gate uses to read a context's registry,
   and the turn-scoping trap.
-- [check-scripts.md](check-scripts.md) — the shell-level detail of a check: the
-  skeleton, reading the flat event off stdin, script vs judge, and the
-  fail-closed default.
