@@ -14,11 +14,15 @@ import (
 //
 // The discriminator is the RESOLVED TRAJECTORY, not the environment: cite is an
 // ordinary tool call the agent makes mid-work, with no Stop/SubagentStop invocation
-// to carry whose cycle it is, and Claude Code exposes no env var to a tool call that
-// tells a sub-agent apart from a root (CLAUDECODE / CLAUDE_CODE_ENTRYPOINT are
-// identical in both; CLAUDE_SESSION_ID is not exported to tool calls). So the fact
-// is read from the file itself — a sub-agent's record carries isSidechain / a meta
-// companion — which is exactly what `describe` reports as isSubagent.
+// to carry whose cycle it is, and no env var tells a sub-agent apart from a root
+// (the fields that name a sub-agent, agent_id / agent_type, arrive only on a HOOK's
+// JSON stdin, never to a tool call; CLAUDE_CODE_SESSION_ID names the session but not
+// whether a sub-agent is asking). So the fact is read from the file itself — a
+// sub-agent's record carries isSidechain / a meta companion — which is exactly what
+// `describe` reports as isSubagent. cite's environment fallback resolves the CURRENT
+// session (the root, which holds the user's words) from CLAUDE_CODE_SESSION_ID; if a
+// sub-agent's own transcript is ever what resolves, this same file-based guard
+// catches it.
 
 // T029_09: cite refuses inside a sub-agent — the default no-path case, where the
 // resolved trajectory is the sub-agent's own record. Exit 3, distinct from the
