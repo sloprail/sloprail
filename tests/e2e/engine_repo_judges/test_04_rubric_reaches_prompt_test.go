@@ -9,23 +9,25 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// INVARIANT: the ASSEMBLED RUBRIC reaches the judge's prompt.
+// INVARIANT: the LOADED meta-rules reach the judge's prompt.
 //
-// The migration split the old script into a prepare.sh (which assembles the
-// rubric from the guard's rules/ directory) and a judge template (which renders
-// that rubric plus the file content). A stubbed verdict alone cannot prove the
-// prepare's output reached the template: the renderer treats an undefined variable
-// as empty, so `{{ additionalContext.rubric }}` renders fine whether prepare
-// produced it or nothing (internal/dispatch, TestTemplate_UndefinedIsEmptyAndFalsy).
+// The migration split the old script into a prepare.sh (which loads the guard's
+// enforced meta-rules from its rules/ directory as an array under
+// additionalContext.meta_rules) and a judge template (which holds the rubric frame
+// and renders that array plus the file content with a {% for %} loop). A stubbed
+// verdict alone cannot prove the prepare's output reached the template: the
+// renderer treats a present-parent/absent-key access as empty, so a template that
+// iterates additionalContext.meta_rules renders its frame fine whether prepare
+// produced the array or not (internal/dispatch, TestTemplate_UndefinedIsEmptyAndFalsy).
 // A test that only flipped the verdict would pass against an engine that never ran
-// prepare and never spliced the meta-rules in.
+// prepare and never rendered the meta-rules in.
 //
 // So these capture the rendered prompt and assert two things a rubric that was
 // really assembled must carry: the ENFORCED meta-rule's own text (proving prepare
-// read rules/ and the template interpolated it), AND the file's own content
-// (proving event.newContent reached the same prompt). Both present means the whole
-// prepare -> template wiring is live — the exact thing the judge-check migration
-// could have broken.
+// read rules/, emitted the array, and the template's {% for %} rendered it), AND
+// the file's own content (proving event.newContent reached the same prompt). Both
+// present means the whole prepare -> template wiring is live — the exact thing the
+// judge-check migration and the rules-as-array restructure could have broken.
 //
 // The assertion targets a phrase from the shipped enforced meta-rule BODY rather
 // than restating it, so it tracks whatever the guard actually enforces. A passing
@@ -33,10 +35,11 @@ import (
 
 // distinctivePhraseHighSignal is a phrase from the BODY of the high-signal
 // meta-rule — the enforced one both guards ship ("A rule/skill is the shortest
-// text that still carries its meaning") — and it appears nowhere in the RUBRIC
-// frame or the test's own file content, so finding it in the prompt can only mean
-// the enforced meta-rule's body was spliced in. The shared tail is what both
-// guards' high-signal rules have in common, so one const covers both.
+// text that still carries its meaning") — and it appears nowhere in the rubric
+// frame (now in the template) or the test's own file content, so finding it in the
+// prompt can only mean the enforced meta-rule's body was rendered from the
+// meta_rules array. The shared tail is what both guards' high-signal rules have in
+// common, so one const covers both.
 const distinctivePhraseHighSignal = "shortest text that still carries its meaning"
 
 // TestRubricReachesRuleJudgePrompt: for rule-quality, the assembled rubric (the
@@ -60,8 +63,8 @@ func TestRubricReachesRuleJudgePrompt(t *testing.T) {
 		t.Fatalf("the rule's own content did not reach the judge prompt — event.newContent wiring is broken:\n%s", prompt)
 	}
 	// The assembled rubric: present only if prepare read rules/ AND the template
-	// rendered additionalContext.rubric. The enforced meta-rule's own phrase is the
-	// proof it was spliced in, not just the frame.
+	// rendered additionalContext.meta_rules. The enforced meta-rule's own phrase is
+	// the proof its body was rendered from the array, not just the frame.
 	if !strings.Contains(prompt, distinctivePhraseHighSignal) {
 		t.Fatalf("the assembled rubric (the enforced meta-rule) did not reach the judge prompt — prepare/template wiring is broken:\n%s", prompt)
 	}
