@@ -123,6 +123,14 @@ func TestT026_02_APluginRuleStillPermitsWhatItDoesNotObjectTo(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 
+	// A clean `.sh` passes the grep (check-rules.sh) and so reaches the second
+	// check — the judge — which now runs on `.sh` hooks too. "Clean" therefore
+	// means passing BOTH the grep AND the judge, so a passing judge verdict is
+	// stubbed here (the same InstallJudgeClaude every judge e2e uses). Without it
+	// the judge would fail closed on a missing model and this control would refuse
+	// for machinery reasons rather than pass on the content.
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
 	got := e.Run(proj, "s-026-02", "write a clean guardrail hook", Turns("done",
 		Write("w1", newFormatGuardHook, cleanHook),
 	))
