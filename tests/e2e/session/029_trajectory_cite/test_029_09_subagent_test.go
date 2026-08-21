@@ -57,10 +57,16 @@ func TestT029_09_CiteRefusesInSubagent(t *testing.T) {
 // quote that yields exit 3 in a sub-agent yields exit 0 in a root.
 func TestT029_10_SubagentRefusalIsDistinctFromNoMatch(t *testing.T) {
 	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	// Root: the quote is the end user's own words, one line — exit 0.
-	rootPath := writeTranscript(t, userMsg("u1", "please tidy the SHARED helper"))
-	root := cite(e, dirOf(rootPath), rootPath, "SHARED helper")
+	// Root: the quote is the end user's own words (the seeded prompt), one line —
+	// exit 0. Driven through the mock, whose prompt IS the user's words.
+	e.Run(proj, "s-029-10", "please tidy the SHARED helper", Turns("done",
+		Bash("b1", "echo ok > ok.md"),
+	))
+	rootPath := e.TranscriptPath(proj, "s-029-10")
+	root := cite(e, proj, rootPath, "SHARED helper")
 	if root.Code != 0 {
 		t.Fatalf("cite in a root exited %d, want 0:\n%s", root.Code, root.Output)
 	}

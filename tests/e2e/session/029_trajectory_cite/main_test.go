@@ -61,6 +61,7 @@ var (
 	Turns          = harness.Turns
 	Bash           = harness.Bash
 	Say            = harness.Say
+	SayThenHuman   = harness.SayThenHuman
 	AnswerQuestion = harness.AnswerQuestion
 )
 
@@ -68,28 +69,6 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	harness.Cleanup()
 	os.Exit(code)
-}
-
-// writeTranscript writes a transcript of the given lines into a temp project and
-// returns its path — for the fixture cases the mock cannot produce (several user
-// messages, and AskUserQuestion answer envelopes). cite is handed the path
-// directly, so no particular directory layout is required.
-func writeTranscript(t *testing.T, lines ...string) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "cite-")
-	if err != nil {
-		t.Fatalf("temp dir: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	path := filepath.Join(dir, "s-cite.jsonl")
-	body := ""
-	for _, l := range lines {
-		body += l + "\n"
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write transcript: %v", err)
-	}
-	return path
 }
 
 // cite runs the compiled binary's cite against a path and returns stdout+exit.
@@ -167,28 +146,21 @@ func writeSubagentWithMeta(t *testing.T, agentID string, lines ...string) string
 	return path
 }
 
-// --- fixture record shapes, for the cases the mock cannot emit ---
+// --- fixture record shapes, for the sub-agent cite-refusal cases ---
 //
-// The answer-envelope shapes (answerEnvelope / multiAnswerEnvelope) used to live
-// here for T029_04/05/07/08; a10n-cli#470 made the mock forward a tool_result-in-user
-// record, so those tests now drive the mock via harness.AnswerQuestion and the
-// hand-authored envelope builders were removed. What remains is the several-messages
-// case (T029_02, the one shape the mock still cannot produce — see the package note)
-// and the sub-agent cite-refusal fixtures.
+// The answer-envelope shapes used to live here for T029_04/05/07/08; a10n-cli#470
+// made the mock forward a tool_result-in-user record, so those tests drive the mock
+// via harness.AnswerQuestion. The several-messages case (T029_02) used to keep a
+// fixture too; the mock now forwards a plain second user record, so it drives the
+// mock via harness.SayThenHuman. What remains is only the sub-agent cite-refusal
+// fixtures below — and userMsg, which one of them (the meta-companion case, T029_12)
+// still needs because it requires a record with isSidechain FALSE while the mock's
+// sub-agent origin is always isSidechain true (see T029_12's note).
 
 // userMsg is a plain typed user message with string content.
 func userMsg(uuid, content string) string {
 	return `{"type":"user","uuid":"` + uuid + `","parentUuid":null,"isSidechain":false,` +
 		`"message":{"role":"user","content":` + jsonStr(content) + `}}`
-}
-
-// assistantText is an assistant turn whose content is a text block — the agent's
-// own words, which cite must never treat as citable. Used by the several-messages
-// fixture (T029_02) to put an assistant turn between two user messages, proving the
-// assistant's words are not among the candidates.
-func assistantText(uuid, parent, text string) string {
-	return `{"type":"assistant","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
-		`"message":{"role":"assistant","content":[{"type":"text","text":` + jsonStr(text) + `}]}}`
 }
 
 // jsonStr renders s as a JSON string literal (with surrounding quotes) for

@@ -35,7 +35,7 @@ func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "before the session")
 
-	path := writeTranscriptIn(t, proj,
+	path := stageFileEventTree(t, proj,
 		userMsg("u1", "write some files"),
 		assistantWrite("a1", "u1", "brand-new.md", "# Brand New\n"),    // absent -> create
 		assistantWrite("a2", "a1", "existing.md", "a wholly new body"), // present -> update

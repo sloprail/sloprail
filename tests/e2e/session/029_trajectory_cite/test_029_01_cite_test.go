@@ -51,22 +51,35 @@ func TestT029_01_CiteUniqueMatchExitsZero(t *testing.T) {
 // same substring is NOT among the candidates: cite searches the user's words, not
 // the agent's.
 //
-// A FIXTURE, not the mock: the mock's session has exactly one human turn (its `-p`
-// prompt), so a transcript with SEVERAL distinct user messages is outside what it
-// emits. a10n-cli#470 did NOT add multi-human-turn — it added acceptance of a
-// tool_result-in-user record (the answer envelope the other cases now drive), not a
-// second human prompt — so this remains the one genuinely-unproducible shape and
-// keeps its fixture (see the package note). The shape is the real one — plain user
-// messages with an assistant turn between them.
+// Driven through the MOCK via SayThenHuman: the seeded prompt is the FIRST human
+// turn (line 1, a candidate); SayThenHuman emits the assistant's prose (line 2, NOT
+// a candidate) and a SECOND human message (line 3, a candidate) in one turn — the
+// multi-human-turn shape the mock now produces (a10n-claude-mock forwards a plain
+// second user record; the two records are co-emitted because a lone non-tool record
+// is terminal). So this reads a mock-produced transcript with two distinct human
+// turns and an assistant turn between them, not a hand-authored fixture.
 func TestT029_02_CiteAmbiguousExitsTwo(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t,
-		userMsg("u1", "the WIDGET needs work"),                    // line 1 — candidate
-		assistantText("a1", "u1", "I will change the WIDGET now"), // line 2 — must NOT be a candidate
-		userMsg("u2", "yes the WIDGET again"),                     // line 3 — candidate
-	)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	res := cite(e, dirOf(path), path, "WIDGET")
+	e.Run(proj, "s-029-02", "the WIDGET needs work", Turns("done",
+		SayThenHuman("t1", "I will change the WIDGET now", "yes the WIDGET again"),
+	))
+	path := e.TranscriptPath(proj, "s-029-02")
+
+	// The three records' layout, checked against the file the mock wrote so the
+	// candidate lines below rest on the real transcript rather than a guess: the
+	// prompt on line 1, the assistant prose on line 2 (not citable), the second
+	// human turn on line 3.
+	if got := physicalLine(t, path, "the WIDGET needs work"); got != 1 {
+		t.Fatalf("the mock did not write the prompt on line 1 (found line %d)", got)
+	}
+	if got := physicalLine(t, path, "yes the WIDGET again"); got != 3 {
+		t.Fatalf("the mock did not write the second human turn on line 3 (found line %d)", got)
+	}
+
+	res := cite(e, proj, path, "WIDGET")
 	if res.Code != 2 {
 		t.Fatalf("an ambiguous match exited %d, want 2:\n%s", res.Code, res.Output)
 	}
