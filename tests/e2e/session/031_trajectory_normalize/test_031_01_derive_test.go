@@ -137,27 +137,34 @@ func TestT031_04_AnEntryWithNothingCarriesAnEmptyArray(t *testing.T) {
 // T031_05: an assistant turn with three tool calls yields three events, one per
 // call — the spread-yield the spec names.
 //
-// A FIXTURE, not the mock: the spread-yield is about ONE entry carrying three
-// tool_use blocks, and the scenario API emits one tool call per assistant turn —
-// three `Bash` turns would be three separate entries with one event each, not the
-// one entry with three this asserts (see the package note on multi-block turns).
+// Driven through the MOCK: a10n-claude-mock forwards a multi-tool_use assistant
+// entry VERBATIM — it breaks the turn loop at the FIRST tool_use to execute it, but
+// the entry it persisted still carries all three blocks (measured), so normalize
+// re-derives three PreCommandInvoke from the one entry. The `BashBatch` builder
+// emits exactly that: one assistant entry carrying several Bash tool_use blocks,
+// which the ordinary one-tool-per-turn scenario API could not (three `Bash` turns
+// would be three separate entries with one event each, not the one entry with three
+// this asserts).
 func TestT031_05_ThreeToolCallsYieldThreeEvents(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t,
-		userMsg("u1", "do a few things"),
-		assistantBlocks("a1", "u1", false,
-			`{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"ls"}}`,
-			`{"type":"tool_use","id":"c2","name":"Bash","input":{"command":"pwd"}}`,
-			`{"type":"tool_use","id":"c3","name":"Bash","input":{"command":"whoami"}}`,
-		),
-	)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	res := normalize(e, dirOf(path), path)
+	e.Run(proj, "s-031-05", "do a few things", Turns("done",
+		BashBatch("c1", "ls", "pwd", "whoami"),
+	))
+	path := e.TranscriptPath(proj, "s-031-05")
+
+	res := normalize(e, proj, path, "--whole-session")
 	if res.Code != 0 {
 		t.Fatalf("normalize exited %d, want 0:\n%s", res.Code, res.Output)
 	}
 	entries := decodeEntries(t, res.Output)
-	a := entries[1]
+	// The one assistant entry carrying the batch — found by its PreCommandInvoke
+	// events rather than a fixed index, since the mock's own tool_result records sit
+	// around it. It is the only entry carrying any (theEntryWith fails if not exactly
+	// one), and it must carry all three.
+	a := bashEntry(t, entries)
 	if got := eventsOf(a); len(got) != 3 {
 		t.Fatalf("three tool calls should yield three events, got %v", got)
 	}
@@ -166,14 +173,33 @@ func TestT031_05_ThreeToolCallsYieldThreeEvents(t *testing.T) {
 			t.Fatalf("each of the three events should be a PreCommandInvoke, got %s", ev.Kind)
 		}
 	}
+	// The three raw command lines are the three the batch carried, in order — proof
+	// it is the multi-block entry and not three separate ones collapsed.
+	var raws []string
+	for _, ev := range a.Events {
+		raws = append(raws, ev.Fields["raw"].(string))
+	}
+	if len(raws) != 3 || raws[0] != "ls" || raws[1] != "pwd" || raws[2] != "whoami" {
+		t.Fatalf("the three events should carry ls, pwd, whoami in order, got %v", raws)
+	}
 }
 
 // T031_06: line numbers are the physical lines of the file, counting the preamble
 // lines transcript reading skips — the one field jq cannot recompute downstream.
 //
-// A FIXTURE, not the mock: the count rests on records that carry no uuid (Claude
-// Code's own preamble), which the mock does not emit — so staging a preamble ahead
-// of the real entries is only possible by hand (see the package note).
+// A FIXTURE, not the mock: the count rests on Claude Code's own preamble records —
+// `custom-title`, `ai-title`, `mode`, `queue-operation`, `last-prompt` — which carry
+// no uuid and which transcript reading counts-but-skips. The mock's scenario
+// validator REJECTS every one of those as an unknown record type (its knownTypes is
+// only system/assistant/user/result plus control records; measured — a `custom-title`
+// line fails with "unknown record type"), so it cannot emit the preamble this rests
+// on. a10n-cli#470 did not change that. (A uuid-less `system` record IS accepted and
+// would exercise the same count-but-skip path, but standing a non-preamble record in
+// for the preamble the field is about is less faithful than the hand-authored line —
+// and would need co-emitting with a following tool_use to dodge the mock's
+// EOF-is-end-of-turn on a lone non-tool record.) Teaching the mock to emit the
+// no-uuid preamble types is a FUTURE a10n-cli mock change; until then this stages the
+// preamble by hand.
 func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 	e := New(t)
 	path := writeTranscript(t,
@@ -231,4 +257,18 @@ func theEntryWith(t *testing.T, entries []normalized, kind string) normalized {
 		t.Fatalf("want exactly one entry carrying a %s, found %d", kind, len(found))
 	}
 	return found[0]
+}
+
+// anyKind reports whether any entry among entries carries an event of the given
+// kind — for asserting a kind is ABSENT everywhere (the module that would produce it
+// was not run), which is stronger than checking one entry's events.
+func anyKind(entries []normalized, kind string) bool {
+	for _, ent := range entries {
+		for _, ev := range ent.Events {
+			if ev.Kind == kind {
+				return true
+			}
+		}
+	}
+	return false
 }
