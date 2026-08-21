@@ -47,10 +47,10 @@ preventive: true
 
 checks:
   # prepare loads the meta-rules; the judge renders them against the file and asks
-  # the model for a verdict. model is pinned to haiku (the old script's exact pin,
-  # claude-haiku-4-5-20251001) — an unpinned model resolves larger and this rule
-  # can fire several times per turn. timeout 25s is the old script's bound, under
-  # the engine's own 30s check timeout so the judge's own limit fires first.
+  # the model for a verdict. model is size-md — the engine's default judge
+  # modelset, so the tier is the engine's to choose (the old script pinned
+  # claude-haiku-4-5-20251001 directly). timeout 25s is the old script's bound,
+  # under the engine's own 30s check timeout so the judge's own limit fires first.
   #
   # allowed_tools: [Read] is ADDITIVE, not the judge's whole tool set — it does
   # NOT disallow Write. The engine's judge substrate ALWAYS grants Write for the
@@ -65,6 +65,6 @@ checks:
   # TestJudgeConfigReachesTheHarness e2e in tests/e2e/engine_repo_judges/.)
   - prepare: ./prepare.sh
     judge: ./judge-rule.md.j2
-    model: claude-haiku-4-5-20251001
+    model: size-md
     timeout: 25s
     allowed_tools: [Read]

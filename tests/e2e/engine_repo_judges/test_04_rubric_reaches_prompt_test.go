@@ -118,9 +118,12 @@ func TestJudgeConfigReachesTheHarness(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(string(argv)), "\n")
 
-	// The pinned haiku model reached the harness as `--model claude-haiku-4-5-20251001`.
-	if !hasAdjacent(lines, "--model", "claude-haiku-4-5-20251001") {
-		t.Errorf("the guardrail's model pin did not reach the harness as `--model claude-haiku-4-5-20251001`; argv:\n%s", string(argv))
+	// The guardrail's model is size-md — the engine's default judge modelset. sr-agent
+	// RESOLVES that size alias to a concrete harness model before invoking claude, so
+	// the argv carries the resolved model, not the alias: for the Claude Code harness,
+	// size-md resolves to `sonnet`.
+	if !hasAdjacent(lines, "--model", "sonnet") {
+		t.Errorf("the guardrail's model (size-md) did not resolve to `--model sonnet` at the harness; argv:\n%s", string(argv))
 	}
 	// allowed_tools: [Read] merged with the answer-file Write into one
 	// `--allowed-tools "Write Read"` argument.

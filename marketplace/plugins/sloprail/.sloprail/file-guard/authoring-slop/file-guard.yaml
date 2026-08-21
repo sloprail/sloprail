@@ -70,7 +70,7 @@ checks:
   # place per kind, a ledger written to $PWD, an sr-agent spawn dropping
   # SLOPRAIL_LAUNCHED_BY.
   #
-  # model pinned to haiku (the sibling judges' exact pin) — an unpinned model
+  # model is size-md; the sibling judges' exact pin) — an unpinned model
   # resolves larger and this can fire several times per turn. timeout 25s sits
   # under the engine's 30s check bound so the judge's own limit fires first.
   # allowed_tools: [Read] — the rules and the file content are both IN the prompt,
@@ -80,6 +80,6 @@ checks:
   # Fail-CLOSED on machinery failure is the engine's judge default.
   - prepare: ./prepare.sh
     judge: ./judge.md.j2
-    model: claude-haiku-4-5-20251001
+    model: size-md
     timeout: 25s
     allowed_tools: [Read]
