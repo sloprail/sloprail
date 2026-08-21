@@ -40,24 +40,31 @@ import (
 // reads the DELTA a cycle added to the ledger rather than a total. A total
 // cannot tell "cycle two asked again" from "cycle one asked twice", which is
 // exactly the confusion these tests exist to resolve.
+//
+// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+//
+// The revalidation POST path is EXACTLY the file-guard's after-check: a
+// non-preventive file-guard fires on the settled POST file event and records its
+// verdict into the same revalidation store this directory measures — the same
+// rev.Subject / rev.Skip / rev.Record the old Post dispatch drove (see
+// services/sr-session/nature_fileguard.go's runFileGuardsPost). So the disk-read
+// Subject branch, the (path, guardrail, fingerprint) skip key, and the
+// judge-the-other-path rule are all reached identically; only the vehicle that
+// installs the rule and the wire form its check reads have changed. The exact
+// mechanical transformation is in tests/e2e/REVEHICLE-PATTERN.md.
+//
+// The three old Post kinds collapse into one after-check file-guard, which fires
+// on whichever Post kind the change produced. `match: "**/*.md"` selects the same
+// `.md` files the old per-kind bindings saw at any depth (the `**/` leading dir is
+// optional) and — crucially — never matches the guard's own `seen` ledger (no
+// `.md` suffix), so no self-observation doubles the ledger. The check records the
+// FLAT CheckPayload the new format hands it (`.event.kind`, `.event.path`), never
+// the old nested `.event.fields.*`, and its ledger is read with
+// e.FileGuardLedgerLines from `.sloprail/file-guard/judge/seen`.
 
-const bindPostFileEvents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./judge.sh
----
-
-# Records every after-the-fact file event, and permits everything
+const bindPostFileEvents = `match: "**/*.md"
+checks:
+  - script: ./judge.sh
 `
 
 // judgeScript records and permits.
@@ -65,9 +72,14 @@ hooks:
 // Permitting is load-bearing: the exemption only applies to content a guardrail
 // has judged AND passed, so a refusing fixture would keep every file eligible
 // for re-judging and make every assertion below meaningless.
+//
+// The ledger is written to $SR_GUARDRAIL_DIR/seen — the folder the engine sets
+// for a file-guard check (`.sloprail/file-guard/judge/`) — rather than the old
+// hook's $PWD. Exit 0 permits, the same permit the old fixture gave; there is no
+// refusal here, so nothing about the exit contract had to change.
 const judgeScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
+cat >> "$SR_GUARDRAIL_DIR/seen"
+echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
@@ -76,21 +88,24 @@ type observed struct {
 	Path string
 }
 
+// observedFiles parses the FLAT CheckPayload lines the check recorded. The
+// event's own fields are spread directly under `event` (`.event.kind`,
+// `.event.path`), NOT nested under an `event.fields` envelope the way the old
+// format wrote them — so this reads Event.Kind and Event.Path directly.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
 			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -114,7 +129,7 @@ func project(t *testing.T) (*harness.Env, string) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "judge", bindPostFileEvents, map[string]string{"judge.sh": judgeScript})
+	e.FileGuard(proj, "judge", bindPostFileEvents, map[string]string{"judge.sh": judgeScript})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 	return e, proj
@@ -128,7 +143,7 @@ func cycles(t *testing.T, e *harness.Env, proj, sess string, scenarios ...harnes
 	seen := 0
 	for i, s := range scenarios {
 		e.Run(proj, sess, "cycle", s)
-		lines := e.Ledger(proj, "judge", "seen")
+		lines := e.FileGuardLedgerLines(proj, "judge", "seen")
 		if len(lines) < seen {
 			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
 		}

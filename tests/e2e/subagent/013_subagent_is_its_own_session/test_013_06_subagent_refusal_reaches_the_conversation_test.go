@@ -65,9 +65,9 @@ func TestT013_06_ASubagentRefusalReachesTheConversation(t *testing.T) {
 	proj := e.Project()
 
 	ranLog := filepath.Join(t.TempDir(), "refused.log")
-	e.Guardrail(proj, "nosubwork", refuseCreatedFiles, map[string]string{
+	e.FileGuard(proj, "nosubwork", refuseCreatedFiles, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\n" +
-			"echo 'the sub-agent should not have created this' >&2\nexit 1\n",
+			"echo '{\"reason\":\"the sub-agent should not have created this\"}'\nexit 1\n",
 	})
 	initRepo(t, proj)
 
@@ -134,7 +134,7 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 	// rule at all, the dispatch would have nothing bound and the cycle would
 	// prove only that nothing ran.
 	ranLog := filepath.Join(t.TempDir(), "allowed.log")
-	e.Guardrail(proj, "permitsubwork", refuseCreatedFiles, map[string]string{
+	e.FileGuard(proj, "permitsubwork", refuseCreatedFiles, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\nexit 0\n",
 	})
 	initRepo(t, proj)
@@ -161,15 +161,17 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 	}
 }
 
-// refuseCreatedFiles binds a rule to every file created, after the fact — the
-// event a sub-agent's own Post dispatch raises for the work it did.
-const refuseCreatedFiles = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# Objects to every file created, after the fact
+// refuseCreatedFiles is a file-guard whose after-check objects to every `.md`
+// file created — the settled Post event a sub-agent's own cycle raises for the
+// work it did.
+//
+// RE-VEHICLED onto the new file-guard nature (was old GUARDRAIL.md PostFileCreate
+// hooks). A sub-agent's own cycle is a Post cycle, which is exactly the
+// file-guard's after-check; it fires at the sub-agent's SubagentStop and a refusal
+// blocks that stop, read with e.BlockingErrorsFrom(…, "SubagentStop") — the same
+// format-neutral channel this test already used. `match: "**/*.md"` selects the
+// delegated `.md` work the sub-agent's Bash creates.
+const refuseCreatedFiles = `match: "**/*.md"
+checks:
+  - script: ./refuse.sh
 `

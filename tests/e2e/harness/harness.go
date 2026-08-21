@@ -1223,6 +1223,66 @@ func (e *Env) DisableGuardrail(projDir, name, declaration string) {
 	}
 }
 
+// RemoveFileGuard takes a NEW-FORMAT file-guard out of a project mid-session, the
+// way a user removes one: the whole `.sloprail/file-guard/<name>/` folder goes.
+//
+// The file-guard analogue of RemoveGuardrail. It returns the guard's ledger lines
+// as they stood at removal, read from the guard's own folder via
+// FileGuardLedgerLines, because that folder is about to be deleted along with the
+// ledger inside it. A test asking whether a removed guard kept firing compares this
+// against what it finds afterwards: with the folder gone, a guard that somehow
+// still ran would recreate the file, and an absent file is the answer that nothing
+// did.
+func (e *Env) RemoveFileGuard(projDir, name, ledgerFile string) []string {
+	e.t.Helper()
+	before := e.FileGuardLedgerLines(projDir, name, ledgerFile)
+	dir := filepath.Join(projDir, ".sloprail", "file-guard", name)
+	if err := os.RemoveAll(dir); err != nil {
+		e.t.Fatalf("harness: remove file-guard %s: %v", name, err)
+	}
+	return before
+}
+
+// DisableFileGuard turns a NEW-FORMAT file-guard off the way a consumer does: from
+// the project's own `.sloprail/config.yaml` `disabled:` list, naming the guard by
+// its qualified key `file-guard/<name>`.
+//
+// A distinct mechanism from removal rather than a synonym for it — the folder, the
+// scripts and the ledger all remain, so a disabled guard that kept firing appends a
+// line to a file that is still there, which removal cannot observe. This is the
+// file-guard analogue of DisableGuardrail, but it disables from config rather than
+// editing frontmatter: a file-guard.yaml has no `---` frontmatter to add an
+// `enabled: false` to, and the new format's OFF switch is the project config
+// `disabled:` key the loader honours (internal/declaration/store.go filters a
+// disabled declaration out entirely).
+//
+// It merges into any existing `.sloprail/config.yaml` disabled list rather than
+// overwriting it, so a test disabling two guards in turn does not silently re-enable
+// the first.
+func (e *Env) DisableFileGuard(projDir string, names ...string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	body := ""
+	if existing, err := os.ReadFile(path); err == nil {
+		body = string(existing)
+	} else if !os.IsNotExist(err) {
+		e.t.Fatalf("harness: read config: %v", err)
+	}
+	if !strings.Contains(body, "disabled:") {
+		body += "disabled:\n"
+	}
+	for _, name := range names {
+		body += "  - file-guard/" + name + "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		e.t.Fatalf("harness: write config: %v", err)
+	}
+}
+
 // DisablePluginGuardrail switches off a rule the project did not write, the only
 // way a consumer can: from the project's own config, naming the rule
 // `<plugin>/<guardrail>`.

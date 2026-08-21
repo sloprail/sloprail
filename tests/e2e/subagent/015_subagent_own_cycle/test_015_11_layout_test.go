@@ -26,7 +26,7 @@ import (
 func TestT015_11_ASubagentInASubdirectoryIsJudgedOnTreeRelativePaths(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
 	sub := subScenario(t, harness.Turns("sub done",
@@ -104,7 +104,7 @@ func TestT015_11_ASubagentInASubdirectoryIsJudgedOnTreeRelativePaths(t *testing.
 func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
 	// What the inner dispatch would run, if the harness executed it.
@@ -182,7 +182,7 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 	}
 
 	// The root is a third identity again, so all three are distinct.
-	for _, l := range e.Ledger(proj, "recorder", "log") {
+	for _, l := range e.FileGuardLedgerLines(proj, "recorder", "log") {
 		if id := sessionOf(l); id == innerID || id == middleID {
 			t.Fatalf("the dispatching session judged something under a sub-agent's identity "+
 				"(%s) — three sessions are in play here and each must keep its own. Line: %s", id, l)
