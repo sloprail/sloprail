@@ -132,6 +132,22 @@ type Request struct {
 	// check's own `sr-session state` lands in this session's keyspace. Empty leaves
 	// it unset (diagnosable). Not load-bearing for the verdict.
 	SessionID string
+
+	// LaunchedBy is the re-entry provenance — the colon-separated list of guards
+	// whose checks are on the current call stack — passed into every check's
+	// environment as SLOPRAIL_LAUNCHED_BY. A check that spawns sr-agent (a judge,
+	// or a script that shells it) carries this across the exec into the launched
+	// agent, whose own hooks read it and decline to re-fire THOSE guards on the
+	// agent's writes. Without it a judging guard re-fires on itself and recurses.
+	//
+	// The caller computes it with services/sr-session's appendLaunchedBy (this
+	// guard appended to any inherited value, deduped) because this package sits
+	// below that one and cannot import its provenance logic. The runner only
+	// forwards it onto the scriptCall / judgeCall. Empty leaves the variable unset
+	// — correct for a check that cannot launch an agent, harmless for one whose own
+	// name is the only entry. Not load-bearing for THIS request's verdict; it
+	// governs the verdict of the dispatch one exec down.
+	LaunchedBy string
 }
 
 // Verdict is what the check-runner concluded about one fired event.

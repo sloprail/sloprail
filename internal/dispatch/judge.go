@@ -82,6 +82,16 @@ type judgeCall struct {
 	// (defaultCheckTimeout); runShell resolves it. A judge that exceeds this is
 	// still a refusal — fail-closed at the per-check bound (Check.timeout).
 	Timeout time.Duration
+
+	// LaunchedBy is the colon-separated list of guards whose checks are on the
+	// current call stack, emitted as SLOPRAIL_LAUNCHED_BY. THE judge is the reason
+	// this exists: it runs sr-agent, whose own first Write fires PreToolUse, which
+	// runs this same guard's dispatch — so without this the judging guard re-fires
+	// on itself and recurses. The caller (services/sr-session) computes it with
+	// appendLaunchedBy and threads it through the Request; judgeEnv forwards it
+	// across the exec into the launched agent, where the dispatch reads it and
+	// declines to re-fire these guards. See scriptCall.LaunchedBy.
+	LaunchedBy string
 }
 
 // runJudgeAgent is the production runJudge: render the template, run sr-agent with
@@ -188,7 +198,12 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// shape (a leading dash, embedded quotes, a huge rubric) cannot break the
 	// command line. `--prompt "$VAR"` expands to exactly one argument under `sh -c`,
 	// which is what makes carrying the prompt this way safe.
-	stdout, stderr, code, expired, startErr := runShell(
+	// The signal return is discarded here: a judge that dies by signal still lands
+	// on the non-zero refusal below (judgeRefusalReason), whose "no readable
+	// reasoning" fallback already covers a killed substrate. The killed-by-signal
+	// diagnosis is a script-check concern (scriptRefusalReason), where the bare
+	// "exit -1" it replaces was the regression.
+	stdout, stderr, code, expired, _, startErr := runShell(
 		j.Dir,
 		judgeCommand(verifier, j.model()),
 		nil,
@@ -249,11 +264,23 @@ func (j judgeCall) model() string {
 const judgePromptEnv = "SLOPRAIL_JUDGE_PROMPT"
 
 // judgeEnv is the environment the judge's sr-agent runs in: the parent's, plus
-// the guard name (so anything it spawns can key its own state) and the prompt.
+// the guard name (so anything it spawns can key its own state), the re-entry
+// provenance, and the prompt.
+//
+// SLOPRAIL_LAUNCHED_BY is the load-bearing one here. sr-agent's own first Write
+// fires PreToolUse, which re-runs this guard's dispatch; carrying the launched-by
+// list across this exec is exactly what lets that dispatch recognise it is
+// running underneath this guard and decline to re-fire it (the re-entry guard).
+// The value is the caller's appendLaunchedBy result, threaded through as
+// j.LaunchedBy. Appended AFTER os.Environ() so the engine's own answer wins over
+// any stale outer value — the same ordering scriptCall.env and hookScope.env use.
 func judgeEnv(j judgeCall, prompt string) []string {
 	env := os.Environ()
 	if j.GuardName != "" {
 		env = append(env, "SR_GUARDRAIL="+j.GuardName)
+	}
+	if j.LaunchedBy != "" {
+		env = append(env, launchedByEnv+"="+j.LaunchedBy)
 	}
 	env = append(env, judgePromptEnv+"="+prompt)
 	return env

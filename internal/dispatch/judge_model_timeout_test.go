@@ -111,7 +111,7 @@ func TestJudgeCall_ModelDefaultsToSizeMD(t *testing.T) {
 // call site).
 func TestRunShell_CustomTimeoutKillsLongRun(t *testing.T) {
 	start := time.Now()
-	_, _, _, expired, startErr := runShell("", "sleep 10", nil, nil, 200*time.Millisecond)
+	_, _, _, expired, _, startErr := runShell("", "sleep 10", nil, nil, 200*time.Millisecond)
 	elapsed := time.Since(start)
 
 	require.NoError(t, startErr, "the command started; it is the timeout under test")
@@ -122,7 +122,7 @@ func TestRunShell_CustomTimeoutKillsLongRun(t *testing.T) {
 // runShell with a zero timeout falls back to the default bound rather than
 // running unbounded — a quick command still completes normally under it.
 func TestRunShell_ZeroTimeoutUsesDefault(t *testing.T) {
-	_, _, code, expired, startErr := runShell("", "printf ok", nil, nil, 0)
+	_, _, code, expired, _, startErr := runShell("", "printf ok", nil, nil, 0)
 	require.NoError(t, startErr)
 	assert.False(t, expired, "a quick command does not hit the default bound")
 	assert.Equal(t, 0, code)

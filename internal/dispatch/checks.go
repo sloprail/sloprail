@@ -64,6 +64,7 @@ func (r Runner) runScriptCheck(req Request, c declaration.Check) (Verdict, error
 		Workspace:      req.Workspace,
 		SessionID:      req.SessionID,
 		TranscriptPath: req.TranscriptPath,
+		LaunchedBy:     req.LaunchedBy,
 	})
 	if err != nil {
 		return Verdict{}, err
@@ -114,12 +115,13 @@ func (r Runner) runJudgeCheck(req Request, c declaration.Check) (Verdict, error)
 	}
 
 	return r.runJudge(judgeCall{
-		Dir:       req.Dir,
-		Template:  c.Judge,
-		InputJSON: input,
-		GuardName: req.GuardName,
-		Model:     c.Model,
-		Timeout:   timeout,
+		Dir:        req.Dir,
+		Template:   c.Judge,
+		InputJSON:  input,
+		GuardName:  req.GuardName,
+		Model:      c.Model,
+		Timeout:    timeout,
+		LaunchedBy: req.LaunchedBy,
 	})
 }
 
@@ -155,6 +157,7 @@ func (r Runner) runPrepare(req Request, prepare string) (declaration.PreparedCon
 		Workspace:      req.Workspace,
 		SessionID:      req.SessionID,
 		TranscriptPath: req.TranscriptPath,
+		LaunchedBy:     req.LaunchedBy,
 	})
 	if err != nil {
 		return nil, Verdict{}, err

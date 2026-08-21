@@ -376,6 +376,13 @@ func runGatesForEvents(
 			GuardName:      g.Name,
 			Workspace:      scope.Workspace,
 			SessionID:      scope.SessionID,
+			// The re-entry provenance to hand a check that spawns sr-agent: this
+			// gate appended to whatever launched checks are already on the stack.
+			// So a judge check's own agent, whose Write re-fires this dispatch,
+			// finds this gate in SLOPRAIL_LAUNCHED_BY and is not re-enforced by it
+			// (isLaunchedBy above, one exec down). appendLaunchedBy dedups and keeps
+			// any outer entry, so a nested launch carries the whole chain.
+			LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
 		})
 		if err != nil {
 			// The runner itself could not decide (a programming error, not a check

@@ -76,6 +76,20 @@ type scriptCall struct {
 	Workspace      string
 	SessionID      string
 	TranscriptPath string
+
+	// LaunchedBy is the colon-separated list of guards whose checks are on the
+	// current call stack, emitted as SLOPRAIL_LAUNCHED_BY so a check that spawns
+	// sr-agent marks provenance and the dispatch one level down declines to
+	// re-fire THIS guard on its own launched agent's writes (the re-entry guard).
+	//
+	// The CALLER computes it — appendLaunchedBy(os.Getenv, guardName) in
+	// services/sr-session, which appends this guard to any value inherited from an
+	// outer launched check — because this package cannot import that one (the
+	// append+dedup logic and the SLOPRAIL_LAUNCHED_BY constant are the source of
+	// truth in services/sr-session/provenance.go). env() only forwards it. Empty
+	// leaves the variable unset, which is correct for a check that cannot spawn an
+	// agent and harmless for one whose own name is the only entry.
+	LaunchedBy string
 }
 
 // scriptResult is what a script/prepare execution produced.
@@ -109,7 +123,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 	// bound (spec: model/timeout are judge-only) — so it always runs under the
 	// default. Passing 0 would work too (runShell falls back), but naming the
 	// default here keeps the expired message's duration honest.
-	stdout, stderr, code, expired, startErr := runShell(s.Dir, s.command(), s.Stdin, s.env(), defaultCheckTimeout)
+	stdout, stderr, code, expired, signal, startErr := runShell(s.Dir, s.command(), s.Stdin, s.env(), defaultCheckTimeout)
 	if startErr != nil {
 		// Could not be started at all — a NUL byte in the command, a Dir that went
 		// away. Not the rule's decision, but a mechanism failure, and a mechanism
@@ -137,7 +151,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 	}
 	return scriptResult{
 		Passed: false,
-		Reason: scriptRefusalReason(s.Script, code, stdout, stderr),
+		Reason: scriptRefusalReason(s.Script, code, signal, stdout, stderr),
 		Stdout: stdout,
 	}, nil
 }
@@ -178,17 +192,53 @@ func (s scriptCall) env() []string {
 	if s.TranscriptPath != "" {
 		env = append(env, "SR_TRANSCRIPT="+s.TranscriptPath)
 	}
+	// The re-entry provenance: which guards' checks are on this call stack. Set so
+	// a check that spawns sr-agent carries it across the exec into the launched
+	// agent's own hooks, where the dispatch reads it and declines to re-fire those
+	// guards on the agent's writes. The caller already appended THIS guard (and
+	// deduped) via appendLaunchedBy; this only forwards the computed value.
+	// Appended AFTER os.Environ() so the engine's answer wins over any stale outer
+	// value — the same append-ordering the other vars use and the old
+	// hookScope.env relies on. Empty is left unset (a check that cannot launch an
+	// agent needs no provenance). The variable name mirrors provenance.go's
+	// LaunchedByEnv, which is the source of truth for it.
+	if s.LaunchedBy != "" {
+		env = append(env, launchedByEnv+"="+s.LaunchedBy)
+	}
 	return env
 }
+
+// launchedByEnv is the environment variable naming which guards' checks are on
+// the current call stack — the re-entry provenance a check that spawns sr-agent
+// must carry so the launched agent's own hooks decline to re-fire those guards.
+//
+// A LITERAL copy of services/sr-session/provenance.go's LaunchedByEnv, which is
+// the source of truth: this package sits BELOW services/sr-session in the
+// dependency graph and cannot import it, and the value is computed there
+// (appendLaunchedBy) and threaded in as scriptCall.LaunchedBy / judgeCall.LaunchedBy.
+// If the name ever changes, it changes in provenance.go and here together.
+const launchedByEnv = "SLOPRAIL_LAUNCHED_BY"
 
 // runShell runs one shell command from dir, with stdin, under the given timeout,
 // in its own process group, and reports what happened.
 //
 // The single primitive both a script and the judge substrate go through. It
-// returns the two streams, the exit code, whether the deadline expired, and a
-// start error (the process could not be launched at all) — leaving the fail-closed
+// returns the two streams, the exit code, whether the deadline expired, the
+// signal that killed the process (0 when it exited on its own), and a start error
+// (the process could not be launched at all) — leaving the fail-closed
 // interpretation to the caller, which differs slightly between a script (exit code
 // is the verdict) and a judge (a verify script inside sr-agent decides).
+//
+// The signal is returned separately because exitErr.ExitCode() FLATTENS a
+// signalled death to -1, losing which signal it was — so a check the OS killed
+// (a segfault, an outer `kill`, an OOM) is indistinguishable from any other
+// non-clean exit by the code alone. Recovering the signal here lets the caller's
+// refusal reason say the check was KILLED rather than report a bare "exit -1, no
+// reason" (which the old dispatch did not). It is 0 for a clean or ordinary
+// non-zero exit, and set only when WaitStatus.Signaled(). A TIMEOUT is also a
+// signalled death (the process-group SIGKILL), but expired is reported first and
+// the caller special-cases it before ever consulting the signal, so the timeout
+// keeps its own "did not answer in time" wording.
 //
 // The timeout is a PER-RUN parameter rather than the const it once was, so a
 // judge check can carry its own (dot-dir-file-store/main.tsp Check.timeout). A
@@ -203,7 +253,7 @@ func (s scriptCall) env() []string {
 // and one signal to the negated pgid ends the tree. This is the old runHooks'
 // mechanism, unchanged, because the failure it prevents (a leaked model-calling
 // subprocess per guarded action, and an unbounded hang) is identical here.
-func runShell(dir, command string, stdin []byte, env []string, timeout time.Duration) (stdout, stderr []byte, code int, expired bool, startErr error) {
+func runShell(dir, command string, stdin []byte, env []string, timeout time.Duration) (stdout, stderr []byte, code int, expired bool, signal syscall.Signal, startErr error) {
 	if timeout <= 0 {
 		timeout = defaultCheckTimeout
 	}
@@ -234,20 +284,29 @@ func runShell(dir, command string, stdin []byte, env []string, timeout time.Dura
 	stdout, stderr = outBuf.Bytes(), errBuf.Bytes()
 
 	if err == nil {
-		return stdout, stderr, 0, false, nil
+		return stdout, stderr, 0, false, 0, nil
 	}
 	if expired {
 		// The deadline fired. Report it as expired regardless of the exit shape;
-		// the caller refuses on it before reading the code, which for a signalled
-		// death would otherwise be Go's -1 sentinel.
-		return stdout, stderr, -1, true, nil
+		// the caller refuses on it before reading the code or the signal, which for
+		// a signalled death (the process-group SIGKILL) would otherwise read as a
+		// bare "killed" and lose the "did not answer in time" wording.
+		return stdout, stderr, -1, true, 0, nil
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return stdout, stderr, exitErr.ExitCode(), false, nil
+		// A non-clean exit that was not the deadline. Recover the signal if the OS
+		// killed the process (a crash, an outer `kill`, an OOM): ExitCode() reports
+		// -1 for a signalled death and drops which signal it was, so the caller
+		// could otherwise only say "exit -1, no reason". WaitStatus.Signal() gives
+		// the actual signal; it is left 0 for an ordinary non-zero exit.
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			signal = ws.Signal()
+		}
+		return stdout, stderr, exitErr.ExitCode(), false, signal, nil
 	}
 	// Not an ExitError: the process could not be started at all.
-	return stdout, stderr, -1, false, err
+	return stdout, stderr, -1, false, 0, err
 }
 
 // scriptRefusalReason works out what to tell the agent about a script that exited
@@ -255,14 +314,36 @@ func runShell(dir, command string, stdin []byte, env []string, timeout time.Dura
 //
 // The script's own words win where it gave any (stdout first — a script that
 // writes there is answering; then stderr — `echo … >&2; exit 1` is an ordinary
-// refusal idiom). The two could-not-run statuses get a diagnosis naming the fix,
-// since the shell's own message is accurate and useless. Failing everything, the
-// exit status itself is reported. This is a trimmed form of the old dispatch's
-// refusalReason, which had been tuned against real hooks.
-func scriptRefusalReason(script string, code int, stdout, stderr []byte) string {
-	// A structured {"reason": "..."} on stdout is the script speaking; prefer it.
+// refusal idiom). A process the OS KILLED gets a "killed by signal" diagnosis
+// rather than the bare "exit -1" the code alone would yield (see below). The two
+// could-not-run statuses get a diagnosis naming the fix, since the shell's own
+// message is accurate and useless. Failing everything, the exit status itself is
+// reported. This is a trimmed form of the old dispatch's refusalReason, which had
+// been tuned against real hooks.
+//
+// signal is the signal that killed the process (0 when it exited on its own),
+// recovered by runShell because ExitCode() flattens a signalled death to -1. A
+// TIMEOUT is also a signalled death, but runScriptExec/askJudge report expiry
+// FIRST and never reach this with a timeout, so the signal branch here only ever
+// describes a NON-timeout kill (a crash, an outer `kill`, an OOM) — the old
+// dispatch called that "killed", and this restores that word in place of the
+// regressed "exit -1 … no reason".
+func scriptRefusalReason(script string, code int, signal syscall.Signal, stdout, stderr []byte) string {
+	// A structured {"reason": "..."} on stdout is the script speaking; prefer it
+	// even over a signal — a script that managed to author a verdict said something
+	// the agent should hear.
 	if reason := structuredReason(stdout); reason != "" {
 		return reason
+	}
+
+	// The OS killed the process (not the timeout — that was reported before this).
+	// Say so, in the "killed" family the timeout message uses, rather than letting
+	// the -1 sentinel fall through to "exit -1 … no reason". Any dying words on
+	// stderr are quoted, the same as the timeout and could-not-run paths.
+	if signal != 0 {
+		return fmt.Sprintf(
+			"the check %q was killed by signal %d (%s), and the action was refused because a check the OS killed must not be read as approval.%s",
+			script, int(signal), signal, quoted(stderr))
 	}
 
 	switch code {

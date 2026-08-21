@@ -186,6 +186,11 @@ func runFileGuardsPreventive(
 				GuardName:      g.Name,
 				Workspace:      scope.Workspace,
 				SessionID:      scope.SessionID,
+				// Re-entry provenance for a preventive check that spawns sr-agent:
+				// this guard appended to any launched checks already on the stack, so
+				// the launched agent's own Write does not re-fire this guard on itself
+				// (isLaunchedBy above, one exec down). See the gate dispatch.
+				LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
 			})
 			if err != nil {
 				// The runner itself could not decide. Fail-closed: refuse, naming
@@ -331,6 +336,11 @@ func runFileGuardsPost(
 				GuardName:      g.Name,
 				Workspace:      scope.Workspace,
 				SessionID:      scope.SessionID,
+				// Re-entry provenance for an after-check that spawns sr-agent: this
+				// guard appended to any launched checks already on the stack, so the
+				// launched agent's own Write does not re-fire this guard on itself
+				// (isLaunchedBy above, one exec down). See the gate dispatch.
+				LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
 			})
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %s: %v\n", g.Attribution(), err)

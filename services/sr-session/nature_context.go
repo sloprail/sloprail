@@ -196,6 +196,10 @@ func runContextEnters(
 					GuardName:      c.Name,
 					Workspace:      scope.Workspace,
 					SessionID:      scope.SessionID,
+					// Re-entry provenance, in case a `{skill}`-style require ever runs a
+					// check that spawns sr-agent: this context appended to the stack, so
+					// its own launched agent is not re-entered by it (isLaunchedBy above).
+					LaunchedBy: appendLaunchedBy(os.Getenv, c.Name),
 				})
 				if err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q require: %v\n", c.Name, err)
@@ -220,6 +224,10 @@ func runContextEnters(
 				Name:           c.Name,
 				Workspace:      scope.Workspace,
 				SessionID:      scope.SessionID,
+				// Re-entry provenance for an enter that spawns sr-agent: this context
+				// appended to the stack, so its own launched agent is not re-entered
+				// by it (isLaunchedBy above, one exec down). See the gate dispatch.
+				LaunchedBy: appendLaunchedBy(os.Getenv, c.Name),
 			})
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q enter: %v\n", c.Name, err)
@@ -286,6 +294,10 @@ func runContextExits(
 			Name:           c.Name,
 			Workspace:      scope.Workspace,
 			SessionID:      scope.SessionID,
+			// Re-entry provenance for an exit that spawns sr-agent: this context
+			// appended to the stack, so its own launched agent is not re-entered by
+			// it (isLaunchedBy above, one exec down). See the gate dispatch.
+			LaunchedBy: appendLaunchedBy(os.Getenv, c.Name),
 		})
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q exit: %v\n", c.Name, err)
