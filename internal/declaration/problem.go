@@ -94,8 +94,9 @@ var (
 	// Prerequisite's skill/context. Declaration fault.
 	ErrExactlyOne = errors.New("declaration: exactly one of a pair must be set")
 
-	// ErrAtLeastOne: a gate carries neither `require` nor `checks`, so it would
-	// wake on an event and do nothing. Declaration fault.
+	// ErrAtLeastOne: a gate or file-guard carries neither `require` nor `checks`,
+	// so it would select its subject — a gate waking on an event, a file-guard
+	// matching a file — and have nothing to say about it. Declaration fault.
 	ErrAtLeastOne = errors.New("declaration: at least one of require/checks must be present")
 
 	// ErrMissingField: a required field is absent or empty — a file-guard's

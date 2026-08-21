@@ -243,13 +243,35 @@ checks:
 	assert.True(t, hasKind(iv, ErrBadMatch), "an expression reading a bare out-of-scope variable is refused: %v", iv.Reason)
 }
 
-func TestLoad_FileGuard_NoChecks(t *testing.T) {
+// A file-guard whose whole enforcement is a `require:` precondition is meaningful
+// without any checks — the engine evaluates `require` before any check and refuses
+// the write when it is unmet — so an absent `checks` LOADS as long as `require` is
+// present, the same at-least-one rule a gate carries.
+func TestLoad_FileGuard_PureRequire(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/require-topic/file-guard.yaml": `
+match: "memories/topics/**/*.md"
+require:
+  - skill: document-topic
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	g := loaded.FileGuards[0]
+	assert.Empty(t, g.Checks)
+	assert.Len(t, g.Require, 1)
+	assert.Equal(t, "document-topic", g.Require[0].Skill)
+}
+
+// A file-guard with neither require nor checks would select a file and decide
+// nothing — refused, the same at-least-one rule the gate has (ErrAtLeastOne, not a
+// per-field missing-field fault).
+func TestLoad_FileGuard_NeitherRequireNorChecks(t *testing.T) {
 	iv := loadOneInvalid(t, map[string]string{
 		"file-guard/nochecks/file-guard.yaml": `
 match: "**/*.md"
 `,
 	})
-	assert.True(t, hasKind(iv, ErrMissingField), "a file-guard with no checks is refused: %v", iv.Reason)
+	assert.True(t, hasKind(iv, ErrAtLeastOne), "a file-guard with neither require nor checks is refused: %v", iv.Reason)
 }
 
 // ---------------------------------------------------------------------------

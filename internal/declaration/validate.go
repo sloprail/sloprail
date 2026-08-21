@@ -52,9 +52,13 @@ type Env struct {
 // The order mirrors the struct: the required `match` compiles against the file
 // scope, each prerequisite is exactly-one-of and resolves, each check is
 // exactly-one-of with a well-placed prepare. A file-guard has no `on` list (it
-// binds to a file's state, not to events) and no at-least-one rule (a guard with
-// no checks is not meaningful, but the spec models `checks` as required, so its
-// absence is a missing-field fault, handled below).
+// binds to a file's state, not to events). It carries the SAME at-least-one rule
+// a gate does — `require` and `checks` are each optional individually, but a
+// guard with NEITHER would select a file and decide nothing, so that is refused
+// (a file-guard whose whole enforcement is a `require:` precondition is
+// meaningful without any checks — the engine evaluates `require` before any check
+// and refuses the write when it is unmet — so forcing it to carry a pass-through
+// check solely to satisfy the validator was pure boilerplate).
 func ValidateFileGuard(g FileGuard, env Env) []Problem {
 	var problems []Problem
 
@@ -67,12 +71,15 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 	}
 
 	problems = append(problems, validatePrerequisites(g.Require, env)...)
-
-	if len(g.Checks) == 0 {
-		problems = append(problems, prob(ErrMissingField, "checks",
-			"a file-guard must carry at least one check"))
-	}
 	problems = append(problems, validateChecks(g.Checks)...)
+
+	// The at-least-one rule, identical to the gate's. Both are optional
+	// individually; a guard with neither require nor checks is refused — it would
+	// match a file and have nothing to say about it.
+	if len(g.Require) == 0 && len(g.Checks) == 0 {
+		problems = append(problems, prob(ErrAtLeastOne, "",
+			"a file-guard must carry at least one of require or checks — one with neither would select a file and decide nothing"))
+	}
 
 	return problems
 }
