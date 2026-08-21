@@ -24,21 +24,34 @@ import (
 //
 // # The shapes the mock cannot produce, and why fixtures stay
 //
-// Three derivations need a shape the mock's session model does not reach, so they
-// keep the minimal hand-authored fixtures below:
+// Two derivations need a shape the mock's session model does not reach, so they keep
+// the minimal hand-authored fixtures below:
 //
 //   - FILE EVENTS (T031_03). normalize derives create-vs-update by stat-ing the
-//     LIVE tree, and a mock run APPLIES its writes before normalize sees it — so
-//     a create reads back as an update, and an update's oldContent reads back as
-//     the new bytes. Measured: a mock Write to an absent path yields PreFileUpdate
-//     with oldContent already equal to the written content. The fixture stages the
-//     tree in the pre-write state the derivation is about.
-//   - MULTI-BLOCK TURNS (T031_05, T031_07). The scenario API emits one tool call
-//     per assistant turn, so three tool calls in ONE entry, or a text block and a
-//     tool_use in one entry, are shapes the mock does not write. The spread-yield
-//     and per-entry --events narrowing are about exactly that one entry.
-//   - PREAMBLE LINES (T031_06). The physical-line count rests on records that carry
-//     no uuid (Claude Code's own preamble), which the mock does not emit.
+//     LIVE tree, and a mock run APPLIES its writes before normalize sees it — the
+//     mock executes a Write against the working directory — so a create reads back
+//     as an update, and an update's oldContent reads back as the new bytes.
+//     Measured: a mock Write to an absent path yields PreFileUpdate with oldContent
+//     already equal to the written content. The fixture stages the tree in the
+//     pre-write state the derivation is about.
+//   - PREAMBLE LINES (T031_06). The physical-line count rests on Claude Code's own
+//     no-uuid preamble records — custom-title, ai-title, mode, queue-operation,
+//     last-prompt — and the mock's validator REJECTS every one as an unknown record
+//     type (measured), so it cannot emit them. (A uuid-less `system` record is
+//     accepted and would exercise the same count-but-skip path, but standing a
+//     non-preamble record in for the preamble is less faithful than the hand line.)
+//
+// # What a10n-cli#470 MADE producible: multi-block assistant turns
+//
+// The MULTI-BLOCK cases (T031_05's three-tool-call spread-yield, T031_07's text +
+// tool_use in one entry) used to keep fixtures "because the scenario API emits one
+// tool call per assistant turn." That was about the harness's turn builders, not the
+// mock: the mock forwards a multi-block assistant entry VERBATIM (it executes only
+// the first tool_use for its synthesised result, but persists the whole entry). So
+// the builders grew to match — BashBatch emits N tool_use blocks in one entry,
+// SayBash emits a text block and a tool_use in one — and both cases now drive the
+// mock (measured: normalize re-derives three PreCommandInvoke from the one BashBatch
+// entry, and a PreCommandInvoke + a PostTagWrite from the one SayBash entry).
 //
 // The SLICE (--whole-session versus the part not yet judged, T031_09) is the other
 // mock-driven case: it needs a real session whose read mark has advanced, which
@@ -52,11 +65,13 @@ import (
 type Env = harness.Env
 
 var (
-	New   = harness.New
-	Turns = harness.Turns
-	Write = harness.Write
-	Bash  = harness.Bash
-	Say   = harness.Say
+	New       = harness.New
+	Turns     = harness.Turns
+	Write     = harness.Write
+	Bash      = harness.Bash
+	Say       = harness.Say
+	SayBash   = harness.SayBash
+	BashBatch = harness.BashBatch
 )
 
 func TestMain(m *testing.M) {

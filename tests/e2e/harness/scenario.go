@@ -148,6 +148,62 @@ func ToolUseWithResult(id, name string, input map[string]string, toolUseResultJS
 	return use, res
 }
 
+// AnswerQuestion returns ONE turn carrying an AskUserQuestion ANSWER — the shape a
+// person's prompted answer lands as in a real trajectory: a `user` record whose
+// content is a `tool_result` block reading
+// `The user answered: "<q1>"="<a1>", "<q2>"="<a2>". Read the answers carefully ...`.
+//
+// # Why this is a real Claude Code shape the mock now emits
+//
+// An AskUserQuestion answer does NOT arrive as a plain typed message. It re-enters
+// the conversation the way EVERY tool result does — as a user-role message carrying
+// a tool_result block — and that block's content is the answer envelope, not a
+// tool the mock executes locally. a10n-cli#470 taught the mock's scenario validator
+// to accept exactly this: a scenario-authored `user` record carrying a tool_result
+// WITH a `tool_use_id` is a genuine CC shape and is forwarded + persisted into the
+// transcript (record.go validateRecord: "the motivating case is an AskUserQuestion
+// answer envelope"). A tool_result with NO tool_use_id stays rejected — that is the
+// malformed footgun the old blanket rejection guarded against, and the only thing
+// still refused. So a mock-driven run can now carry the answer envelope that used to
+// need a hand-authored fixture.
+//
+// # The record's shape, and why the ids are shaped this way
+//
+// The turn-firing marker is injected into the FIRST `"id":"…"` of a turn's record
+// (see script()/injectMarker). A tool_result-in-user record's own `tool_use_id` is
+// NOT written as `"id":"…"`, so without a top-level anchor the marker would find no
+// `"id":"` and never be injected — the turn could not tell it had already fired and
+// would re-emit every re-run. So the record carries a throwaway top-level `id`
+// (`<id>#a`) for the marker to bind to, exactly as ToolUseWithResult does, which
+// keeps the block's own `tool_use_id` CLEAN and equal to `id`. The record also
+// carries a uuid (keyed off id) so transcript.Read does not skip it as an entry.
+//
+// # The envelope content
+//
+// Each qa is {question, answer}. The content is assembled as a PLAIN string with
+// literal quotes around each question and answer — that is the envelope's own text —
+// joined by `, ` and closed with the `. Read the answers ...` trailer cite's parser
+// keys on, then serialized ONCE by jsonStr (which is what turns those quotes into
+// the `\"` a JSON string carries). This is byte-for-byte the string the old
+// hand-authored multiAnswerEnvelope built; only its delivery moved into the mock.
+//
+// The turn is NOT terminal and needs no following turn: it is a user record (not a
+// tool_use), so the mock forwards it and reaches EOF as end-of-turn — the answer
+// envelope lands as the transcript's next record after the seeded prompt.
+func AnswerQuestion(id string, qa ...[2]string) Turn {
+	content := `The user answered: `
+	for i, p := range qa {
+		if i > 0 {
+			content += `, `
+		}
+		content += `"` + p[0] + `"="` + p[1] + `"`
+	}
+	content += `. Read the answers carefully — they may request clarification, changes, or that you not proceed.`
+	return Turn{jsonl: fmt.Sprintf(
+		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s}]}}`,
+		id+"#a", "e2e-turn-"+id, id, jsonStr(content))}
+}
+
 // Skill returns a turn where the agent loads a skill.
 //
 // The mock does not implement the Skill tool and answers with an error, which
@@ -342,6 +398,41 @@ func SayWrite(id, prose, path, content string) Turn {
 // shell command — needed for the same terminal-Say reason SayWrite documents.
 func SayBash(id, prose, command string) Turn {
 	return Turn{jsonl: sayWithTool(id, prose, "Bash", map[string]string{"command": command})}
+}
+
+// BashBatch returns ONE assistant turn whose content is SEVERAL Bash tool_use
+// blocks — the multi-tool-call-in-one-entry shape a spread-yield rests on, where a
+// single assistant entry carries more than one tool call and a per-entry derivation
+// must yield one event per call.
+//
+// Real Claude Code emits several tool calls in a single assistant message, and the
+// mock forwards that entry VERBATIM: scanLines breaks the turn loop at the FIRST
+// tool_use to execute it and synthesise its result, but the entry it forwarded and
+// persisted still carries ALL the blocks (measured — a three-Bash entry reads back
+// as one entry yielding three PreCommandInvoke). That is why the ordinary scenario
+// API — one tool call per Turn — could not build this: three Bash turns are three
+// separate entries with one event each, not the one entry with three this is for.
+//
+// The FIRST block carries the turn's id, which is where the marker binds (script()
+// injects it into the first `"id":"…"`), so the turn fires once; the remaining
+// blocks carry `<id>-N` ids, clean and distinct. The entry carries a uuid keyed off
+// id so transcript.Read does not skip it. Only the first tool_use is executed by the
+// mock (its synthesised result correlates by the first id); the later blocks are
+// trajectory records the derivation reads, which is all a spread-yield needs.
+func BashBatch(id string, commands ...string) Turn {
+	blocks := make([]string, 0, len(commands))
+	for i, cmd := range commands {
+		blockID := id
+		if i > 0 {
+			blockID = fmt.Sprintf("%s-%d", id, i)
+		}
+		blocks = append(blocks, fmt.Sprintf(
+			`{"type":"tool_use","id":%q,"name":"Bash","input":{"command":%s}}`,
+			blockID, jsonStr(cmd)))
+	}
+	return Turn{jsonl: fmt.Sprintf(
+		`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[%s]}}`,
+		"e2e-turn-"+id, strings.Join(blocks, ","))}
 }
 
 // sayWithTool renders one assistant turn whose content is a two-block list: a

@@ -51,10 +51,13 @@ func TestT029_01_CiteUniqueMatchExitsZero(t *testing.T) {
 // same substring is NOT among the candidates: cite searches the user's words, not
 // the agent's.
 //
-// A FIXTURE, not the mock: the mock's session has exactly one human turn (its
+// A FIXTURE, not the mock: the mock's session has exactly one human turn (its `-p`
 // prompt), so a transcript with SEVERAL distinct user messages is outside what it
-// emits (see the package note). The shape is the real one — plain user messages
-// with an assistant turn between them.
+// emits. a10n-cli#470 did NOT add multi-human-turn — it added acceptance of a
+// tool_result-in-user record (the answer envelope the other cases now drive), not a
+// second human prompt — so this remains the one genuinely-unproducible shape and
+// keeps its fixture (see the package note). The shape is the real one — plain user
+// messages with an assistant turn between them.
 func TestT029_02_CiteAmbiguousExitsTwo(t *testing.T) {
 	e := New(t)
 	path := writeTranscript(t,
@@ -113,23 +116,39 @@ func TestT029_03_CiteNoMatchExitsOneAndIsSilent(t *testing.T) {
 // "<question>"="<answer>". ...`; the answer text is extracted from that envelope
 // and searched. A quote from the answer resolves to the line the envelope sits on.
 //
-// A FIXTURE, not the mock: the envelope is a tool_result inside a user record,
-// which the mock refuses to emit from a scenario (see the package note), so this
-// shape can only be hand-authored.
+// Driven through the MOCK: a10n-cli#470 taught the mock's scenario validator to
+// accept a scenario-authored `user` record carrying a tool_result WITH a
+// tool_use_id — the exact envelope an answer lands as — and forward+persist it into
+// the transcript (see AnswerQuestion). So the answer envelope is now a mock-produced
+// record, not a hand-authored fixture. The prompt is the record on line 1, the
+// answer envelope the record AnswerQuestion emits on line 2; a quote from the answer
+// resolves to that line. The prompt is chosen NOT to contain the answer substring,
+// so the match is unique to the envelope.
 func TestT029_04_CiteMatchesAnAskUserQuestionAnswer(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t,
-		userMsg("u1", "here is the task"),       // line 1
-		assistantText("a1", "u1", "let me ask"), // line 2
-		// line 3: the answer envelope. The user CHOSE "go with the second option".
-		answerEnvelope("u2", "a1", "which approach?", "go with the second option"),
-	)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	res := cite(e, dirOf(path), path, "second option")
+	// The agent asked a question; the person CHOSE "go with the second option",
+	// which the mock writes as the answer envelope after the seeded prompt.
+	e.Run(proj, "s-029-04", "here is the task", Turns("done",
+		AnswerQuestion("q1", [2]string{"which approach?", "go with the second option"}),
+	))
+	path := e.TranscriptPath(proj, "s-029-04")
+
+	// The envelope is the record on physical line 2 — verified against the file the
+	// mock wrote, so the citation below rests on the record's real layout rather than
+	// a hard-coded guess.
+	if got := physicalLine(t, path, "go with the second option"); got != 2 {
+		t.Fatalf("the mock did not write the answer envelope on line 2 (found line %d); the "+
+			"citation assertion below rests on that layout", got)
+	}
+
+	res := cite(e, proj, path, "second option")
 	if res.Code != 0 {
 		t.Fatalf("citing a prompted answer exited %d, want 0:\n%s", res.Code, res.Output)
 	}
-	want := fmt.Sprintf("%s:3", path)
+	want := fmt.Sprintf("%s:2", path)
 	if strings.TrimSpace(res.Output) != want {
 		t.Fatalf("stdout = %q, want %q (the line the answer envelope sits on)", strings.TrimSpace(res.Output), want)
 	}
@@ -147,22 +166,39 @@ func TestT029_04_CiteMatchesAnAskUserQuestionAnswer(t *testing.T) {
 // words. Both questions must be non-citable; a single-question fixture would not
 // exercise that path at all.
 //
-// A FIXTURE for the same reason as T029_04: the answer envelope's tool_result
-// shape is not one the mock will emit.
+// Driven through the MOCK, like T029_04: the multi-question answer envelope is the
+// record AnswerQuestion emits, now that #470 lets the mock forward a tool_result
+// user record. The prompt is chosen NOT to contain either question's distinctive
+// token, so the only place FROBNICATE/BAZQUX appear is inside the (mock-written)
+// question text — which must stay non-citable.
 func TestT029_05_CiteDoesNotMatchAnyQuestion(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t,
-		userMsg("u1", "here is the task"),
-		multiAnswerEnvelope("u2", "u1", [][2]string{
-			{"should I use the FROBNICATE strategy?", "no, keep it simple"},
-			{"and which BAZQUX mode?", "the fast one"},
-		}),
-	)
+	proj := e.Project()
+	e.GitInit(proj)
+
+	e.Run(proj, "s-029-05", "here is the task", Turns("done",
+		AnswerQuestion("q1",
+			[2]string{"should I use the FROBNICATE strategy?", "no, keep it simple"},
+			[2]string{"and which BAZQUX mode?", "the fast one"},
+		),
+	))
+	path := e.TranscriptPath(proj, "s-029-05")
+
+	// Positive control: an ANSWER from the envelope resolves to the line the envelope
+	// sits on (line 2, after the seeded prompt). Without this the question-negatives
+	// below could pass vacuously — a run where the mock never wrote the envelope would
+	// also make every question "not found". This proves the envelope IS there and its
+	// answers ARE citable, so the negatives are about the parse, not an empty file.
+	if res := cite(e, proj, path, "keep it simple"); res.Code != 0 ||
+		strings.TrimSpace(res.Output) != fmt.Sprintf("%s:2", path) {
+		t.Fatalf("the answer envelope's own answer did not resolve to line 2 (code %d, out %q) — "+
+			"the question-negatives below would be vacuous", res.Code, strings.TrimSpace(res.Output))
+	}
 
 	// FROBNICATE is only in the FIRST question; BAZQUX only in the SECOND. Neither
 	// is the user's words — and the SECOND is the one the old parser leaked.
 	for _, q := range []string{"FROBNICATE", "BAZQUX"} {
-		res := cite(e, dirOf(path), path, q)
+		res := cite(e, proj, path, q)
 		if res.Code != 1 {
 			t.Fatalf("citing question text %q exited %d, want 1 (a question is not the user's words):\n%s",
 				q, res.Code, res.Output)
@@ -179,29 +215,36 @@ func TestT029_05_CiteDoesNotMatchAnyQuestion(t *testing.T) {
 // The positive half of the multi-question fix: both the first and the second
 // answer resolve (exit 0) to the envelope's line. Paired with T029_05's negative
 // half — no question resolves — this pins the pair-by-pair parse from both sides,
-// which is the regression the reviewer flagged. A FIXTURE, like the other answer
-// cases.
+// which is the regression the reviewer flagged. Driven through the MOCK, like the
+// other answer cases now that #470 forwards the tool_result envelope.
 func TestT029_07_CiteMatchesEachAnswerInAMultiQuestion(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t,
-		userMsg("u1", "kick it off"),                            // line 1
-		assistantText("a1", "u1", "let me ask a couple things"), // line 2
-		// line 3: a three-question envelope.
-		multiAnswerEnvelope("u2", "a1", [][2]string{
-			{"where should it live?", "under the dotdir store"},
-			{"required or optional?", "make it required"},
-			{"backfill existing?", "yes backfill everything"},
-		}),
-	)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	// Each answer resolves to line 3; no answer is ambiguous, since one envelope
+	// A three-question envelope, written by the mock after the seeded prompt.
+	e.Run(proj, "s-029-07", "kick it off", Turns("done",
+		AnswerQuestion("q1",
+			[2]string{"where should it live?", "under the dotdir store"},
+			[2]string{"required or optional?", "make it required"},
+			[2]string{"backfill existing?", "yes backfill everything"},
+		),
+	))
+	path := e.TranscriptPath(proj, "s-029-07")
+
+	// The envelope sits on physical line 2 — checked against the file the mock wrote.
+	if got := physicalLine(t, path, "under the dotdir store"); got != 2 {
+		t.Fatalf("the mock did not write the answer envelope on line 2 (found line %d)", got)
+	}
+
+	// Each answer resolves to line 2; no answer is ambiguous, since one envelope
 	// is one line however many pairs it carries.
 	for _, a := range []string{"under the dotdir store", "make it required", "yes backfill everything"} {
-		res := cite(e, dirOf(path), path, a)
+		res := cite(e, proj, path, a)
 		if res.Code != 0 {
 			t.Fatalf("citing answer %q exited %d, want 0:\n%s", a, res.Code, res.Output)
 		}
-		want := fmt.Sprintf("%s:3", path)
+		want := fmt.Sprintf("%s:2", path)
 		if strings.TrimSpace(res.Output) != want {
 			t.Fatalf("citing answer %q gave %q, want %q", a, strings.TrimSpace(res.Output), want)
 		}
@@ -214,21 +257,30 @@ func TestT029_07_CiteMatchesEachAnswerInAMultiQuestion(t *testing.T) {
 // The brittle bit the reviewer named: an answer may contain a `"`, and the parse
 // must not truncate at it. Here the SECOND answer carries a quoted word; a quote
 // spanning that inner quote must still resolve, proving the inner quote did not
-// end the answer early — while the question, as ever, stays non-citable. A
-// FIXTURE, like the other answer cases.
+// end the answer early — while the question, as ever, stays non-citable. Driven
+// through the MOCK, like the other answer cases now that #470 forwards the envelope
+// (and the inner `"` survives jsonStr's escaping into the transcript intact).
 func TestT029_08_CiteAnswerWithInnerQuoteInMultiQuestion(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t,
-		userMsg("u1", "start"),
-		multiAnswerEnvelope("u2", "u1", [][2]string{
-			{"first thing?", "keep it plain"},
-			{"what label?", `call it "draft" for now`},
-		}),
-	)
+	proj := e.Project()
+	e.GitInit(proj)
+
+	e.Run(proj, "s-029-08", "start", Turns("done",
+		AnswerQuestion("q1",
+			[2]string{"first thing?", "keep it plain"},
+			[2]string{"what label?", `call it "draft" for now`},
+		),
+	))
+	path := e.TranscriptPath(proj, "s-029-08")
+
+	// The envelope sits on physical line 2 — checked against the file the mock wrote.
+	if got := physicalLine(t, path, `keep it plain`); got != 2 {
+		t.Fatalf("the mock did not write the answer envelope on line 2 (found line %d)", got)
+	}
 
 	// A substring spanning the inner-quoted word: only resolvable if the whole
 	// answer, inner quote and all, was kept.
-	res := cite(e, dirOf(path), path, `call it "draft" for now`)
+	res := cite(e, proj, path, `call it "draft" for now`)
 	if res.Code != 0 {
 		t.Fatalf("citing an answer with an inner quote exited %d, want 0:\n%s", res.Code, res.Output)
 	}

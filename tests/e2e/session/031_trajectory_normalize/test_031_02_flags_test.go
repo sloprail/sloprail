@@ -17,9 +17,13 @@ import (
 // create carrying the content the write would leave behind.
 //
 // A FIXTURE, not the mock: this derivation stat-s the LIVE tree, and a mock run
-// APPLIES its writes before normalize reads it — so a create reads back as an
-// update, and an update's oldContent reads back as the content already written
-// (measured). Only a hand-staged tree holds the files in the pre-write state the
+// APPLIES its writes before normalize reads it — the mock executes a Write tool call
+// against the working directory, so by the time normalize reads the tree the file is
+// already there. Measured against the installed mock: a Write to an ABSENT path reads
+// back as a PreFileUpdate whose oldContent already equals the written content, not the
+// PreFileCreate the pre-write tree would yield. a10n-cli#470 (which added tool_result
+// forwarding) did not change this — the write-before-read is inherent to the mock
+// running the tool. Only a hand-staged tree holds the files in the pre-write state the
 // create-vs-update distinction is about (see the package note).
 func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 	e := New(t)
@@ -72,35 +76,54 @@ func TestT031_03_WriteYieldsPreFileEvents(t *testing.T) {
 // other kind is not merely filtered from the output — the module that would
 // produce it is not even run.
 //
-// A FIXTURE, not the mock: the subject is ONE entry holding both a text block and
-// a tool_use, and the scenario API emits one tool call per assistant turn, so that
-// single multi-block entry is not a shape the mock writes (see the package note).
+// Driven through the MOCK: the subject is ONE entry holding both a text block and a
+// tool_use, which the `SayBash` builder emits as a single `[{text},{tool_use}]`
+// assistant message — the block-list shape Claude Code writes for a turn that both
+// says something (the #tag) and calls a tool. The mock forwards that entry intact,
+// so normalize re-derives both the PreCommandInvoke (from the Bash block) and the
+// PostTagWrite (from the #refactor in the text block) on the one entry, which the
+// ordinary one-tool-per-turn API could not carry together.
 func TestT031_07_EventsFlagNarrows(t *testing.T) {
 	e := New(t)
-	path := writeTranscript(t,
-		userMsg("u1", "do it"),
-		assistantBlocks("a1", "u1", false,
-			`{"type":"text","text":"Doing this as #refactor."}`,
-			`{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"gofmt -w ."}}`,
-		),
-	)
+	proj := e.Project()
+	e.GitInit(proj)
 
-	// Unfiltered: both the command and the tag.
-	all := decodeEntries(t, mustRun(t, normalize(e, dirOf(path), path)))
-	if got := eventsOf(all[1]); len(got) != 2 {
+	e.Run(proj, "s-031-07", "do it", Turns("done",
+		SayBash("a1", "Doing this as #refactor.", "gofmt -w ."),
+	))
+	path := e.TranscriptPath(proj, "s-031-07")
+
+	// Unfiltered: the one entry carries both the command and the tag. Found by its
+	// events rather than a fixed index — the mock's tool_result record sits after it.
+	all := decodeEntries(t, mustRun(t, normalize(e, proj, path, "--whole-session")))
+	both := theEntryWith(t, all, "PreCommandInvoke")
+	if got := eventsOf(both); len(got) != 2 {
 		t.Fatalf("unfiltered, the entry should carry both a command and a tag, got %v", got)
 	}
-
-	// Only PreCommandInvoke.
-	onlyCmd := decodeEntries(t, mustRun(t, normalize(e, dirOf(path), path, "--events", "PreCommandInvoke")))
-	if got := eventsOf(onlyCmd[1]); len(got) != 1 || got[0] != "PreCommandInvoke" {
-		t.Fatalf("--events PreCommandInvoke should keep only the command, got %v", got)
+	if bothTag := theEntryWith(t, all, "PostTagWrite"); bothTag.UUID != both.UUID {
+		t.Fatalf("the command and the tag should be on the SAME entry (%s vs %s)", both.UUID, bothTag.UUID)
 	}
 
-	// Only PostTagWrite.
-	onlyTags := decodeEntries(t, mustRun(t, normalize(e, dirOf(path), path, "--events", "PostTagWrite")))
-	if got := eventsOf(onlyTags[1]); len(got) != 1 || got[0] != "PostTagWrite" {
+	// Only PreCommandInvoke: the tag module is not run, so that entry carries just
+	// the command and no PostTagWrite appears anywhere.
+	onlyCmd := decodeEntries(t, mustRun(t, normalize(e, proj, path, "--whole-session", "--events", "PreCommandInvoke")))
+	cmdEntry := theEntryWith(t, onlyCmd, "PreCommandInvoke")
+	if got := eventsOf(cmdEntry); len(got) != 1 || got[0] != "PreCommandInvoke" {
+		t.Fatalf("--events PreCommandInvoke should keep only the command, got %v", got)
+	}
+	if anyKind(onlyCmd, "PostTagWrite") {
+		t.Fatalf("--events PreCommandInvoke should not run the tag module at all, but a PostTagWrite appeared:\n%s",
+			mustRun(t, normalize(e, proj, path, "--whole-session", "--events", "PreCommandInvoke")))
+	}
+
+	// Only PostTagWrite: symmetrically, only the tag.
+	onlyTags := decodeEntries(t, mustRun(t, normalize(e, proj, path, "--whole-session", "--events", "PostTagWrite")))
+	tagEntry := theEntryWith(t, onlyTags, "PostTagWrite")
+	if got := eventsOf(tagEntry); len(got) != 1 || got[0] != "PostTagWrite" {
 		t.Fatalf("--events PostTagWrite should keep only the tag, got %v", got)
+	}
+	if anyKind(onlyTags, "PreCommandInvoke") {
+		t.Fatalf("--events PostTagWrite should not run the command module, but a PreCommandInvoke appeared")
 	}
 }
 
