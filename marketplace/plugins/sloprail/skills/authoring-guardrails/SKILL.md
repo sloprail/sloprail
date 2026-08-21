@@ -248,21 +248,23 @@ Switch it off from your own side instead, in `.sloprail/config.yaml`:
 
 ```yaml
 disabled:
-  - sloprail/authoring-slop
+  - sloprail/file-guard/authoring-slop
 ```
 
-The name is `<plugin>/<guardrail>`, which is exactly what the refusal cites. A
+The name is `<plugin>/<nature>/<name>`, which is exactly what the refusal cites. A
 refusal from a shipped rule reads
 
     ... ("authoring-slop" from plugin "sloprail")
 
-so the plugin half of the name is the part that tells you the rule is not in
-your tree, and the file to look for is under that plugin's installation rather
-than under `.sloprail/guardrails/`.
+so the plugin part of the name is what tells you the rule is not in your tree,
+and the file to look for is under that plugin's installation (its own
+`.sloprail/file-guard/authoring-slop/`) rather than under your project's
+`.sloprail/`.
 
-The qualification matters: `disabled: [sloprail/authoring-slop]` switches off the
-plugin's rule and leaves a rule of your own called `authoring-slop` in force.
-They are different rules with different authors.
+The qualification matters: `disabled: [sloprail/file-guard/authoring-slop]`
+switches off the plugin's rule and leaves a file-guard of your own called
+`authoring-slop` in force. They are different rules with different authors, and
+the nature is part of the key because a gate and a context may share a name.
 
 This also works on a shipped rule that will not load. A broken declaration
 refuses every action it was bound to — deliberately, since a rule that cannot be

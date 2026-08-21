@@ -40,8 +40,9 @@ unknowable tier, and a rule's body should say which tier it relies on.
 
 ## How the check detects it
 
-Reading `.event.fields.newContent` without mentioning `resultKnown` anywhere. On
-a `PreFileUpdate` an absent `newContent` reads as `""`, which is
+Reading `newContent` (in the new format, `.event.newContent`; the old envelope
+spelled it `.event.fields.newContent`) without mentioning `resultKnown` anywhere.
+On a `PreFileUpdate` an absent `newContent` reads as `""`, which is
 indistinguishable from a write that empties the file. (On `PreFileCreate`
 `newContent` is always present, so a rule bound only to creates needs no
 `resultKnown`.)
