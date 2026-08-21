@@ -84,13 +84,27 @@ func TestJudgeCheck_MalformedTimeoutFailsClosed(t *testing.T) {
 
 // judgeCommand carries the check's model to sr-agent as `--model <that>`, quoted.
 func TestJudgeCommand_CarriesCustomModel(t *testing.T) {
-	cmd := judgeCommand("/tmp/verify.sh", "size-xxl")
+	cmd := judgeCommand("/tmp/verify.sh", "size-xxl", nil)
 	assert.Contains(t, cmd, "--model 'size-xxl'",
 		"the check's model must be the --model sr-agent is invoked with")
 	// A concrete, comma-separated set passes straight through (sr-agent's --model
 	// takes exactly this format).
-	cmd = judgeCommand("/tmp/verify.sh", "claude-opus-5,size-md")
+	cmd = judgeCommand("/tmp/verify.sh", "claude-opus-5,size-md", nil)
 	assert.Contains(t, cmd, "--model 'claude-opus-5,size-md'")
+}
+
+// judgeCommand carries the check's allowed_tools to sr-agent as `--allowed-tools`,
+// space-joined and quoted; a check that named none omits the flag so sr-agent
+// grants only the Write its own verdict file needs.
+func TestJudgeCommand_CarriesAllowedTools(t *testing.T) {
+	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Read", "WebFetch"})
+	assert.Contains(t, cmd, "--allowed-tools 'Read WebFetch'",
+		"the check's allowed_tools must reach sr-agent's --allowed-tools")
+
+	// None named: the flag is absent entirely.
+	bare := judgeCommand("/tmp/verify.sh", "size-md", nil)
+	assert.NotContains(t, bare, "--allowed-tools",
+		"a judge that named no tools must not pass an empty --allowed-tools")
 }
 
 // judgeCall.model() resolves the default when the check named none, so
@@ -101,7 +115,7 @@ func TestJudgeCall_ModelDefaultsToSizeMD(t *testing.T) {
 	assert.Equal(t, "size-lg", judgeCall{Model: "size-lg"}.model(), "a set model wins over the default")
 
 	// And the default reaches the command line when the check set no model.
-	cmd := judgeCommand("/tmp/verify.sh", judgeCall{}.model())
+	cmd := judgeCommand("/tmp/verify.sh", judgeCall{}.model(), nil)
 	assert.Contains(t, cmd, "--model 'size-md'")
 }
 

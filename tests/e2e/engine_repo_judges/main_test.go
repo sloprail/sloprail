@@ -5,11 +5,23 @@
 // the claude-MOCK exactly as the rest of the e2e is: the harness runs
 // a10n-claude-mock, whose tool calls fire this repo's real plugin, which reaches
 // the real file-guard files out of .sloprail/file-guard/. Only the MODEL the
-// judge itself invokes is replaced — by stubJudge, which writes a fixed verdict to
-// the path the judge's prompt names — because a check whose whole subject is the
-// SCRIPT's behaviour (which field it reads, how it parses the verdict, which stage
-// it fires at) must be a deterministic reproduction, not a race against a model's
-// output.
+// judge itself invokes is replaced — by InstallJudgeClaude, which puts a `claude`
+// on PATH that reads the prompt sr-agent hands it and writes a fixed verdict to
+// the output file sr-agent named — because a check whose whole subject is the
+// judge's behaviour (which field the prompt carries, how the verdict is read,
+// which stage it fires at) must be a deterministic reproduction, not a race
+// against a model's output.
+//
+// # These are JUDGE checks now
+//
+// The two guardrails were SCRIPT checks that called `claude` directly, stubbed
+// through A10N_CLAUDE_BIN. They are JUDGE checks now (prepare.sh assembles the
+// rubric; the engine, via sr-agent, runs the model and constrains the verdict).
+// So the stub is InstallJudgeClaude, the same mechanism every other judge e2e in
+// this repo uses, and the verdict shape is the engine's `{"pass": ..., "reasoning": ...}`
+// rather than the old `{"has_issues": ...}` — a FAILING verdict is now
+// `pass: false`, where it was `has_issues: true`. The invariants are unchanged;
+// only the substrate the verdict travels through is.
 //
 // Nothing here restates a declaration or a check: a test carrying its own copy
 // would prove the copy works and say nothing about the files that are actually
@@ -20,11 +32,11 @@
 // judges — the tests formerly under tests/e2e/review3. They are ordinary e2e now,
 // named for the invariant each proves rather than for the review that found it.
 // The judges were migrated from the deprecated GUARDRAIL.md hooks format to the
-// file-guard nature in Wave-3; these tests were retargeted to install and drive
-// the new .sloprail/file-guard/<name> form, proving the SAME invariants against
-// it: the Pre stage reads the pending body from the flat event, the narrow
-// verdict parse refuses a flagged verdict carrying two objects, and the Post
-// after-check judges a create the engine could not derive.)
+// file-guard nature in Wave-3, and from a hand-rolled script check to a judge:
+// check in the PR-19 review; these tests were retargeted each time, proving the
+// SAME invariants: the Pre stage reads the pending body from the flat event, the
+// narrow verdict parse refuses a flagged verdict carrying two objects, and the
+// Post after-check judges a create the engine could not derive.)
 package e2e
 
 import (
@@ -129,35 +141,6 @@ func project(t *testing.T, e *harness.Env, guardrail string) string {
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "install "+guardrail)
 	return proj
-}
-
-// stubJudge writes a fixed verdict body to the path the prompt names, standing
-// in for `claude` via A10N_CLAUDE_BIN.
-//
-// It reads the prompt on stdin and recovers the verdict path from it, exactly
-// as the real judge does — so the isolation flags, the /tmp cwd and the path
-// the script chose are all still exercised. Only the model's judgement is
-// replaced.
-func stubJudge(t *testing.T, body string) string {
-	t.Helper()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "claude")
-	script := `#!/bin/sh
-# Consume the prompt and recover the verdict path from it: the last /tmp/*.json
-# token the prompt names. The real judge is told the path the same way.
-prompt="$(cat)"
-verdict="$(printf '%s' "$prompt" | tr ' ' '\n' | grep '^/tmp/.*\.json$' | tail -1)"
-[ -n "$verdict" ] || exit 1
-cat > "$verdict" <<'VERDICT_EOF'
-` + body + `
-VERDICT_EOF
-exit 0
-`
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("stubJudge: write: %v", err)
-	}
-	return path
 }
 
 // sawRefusal reports whether any recorded refusal carries the given text.

@@ -92,6 +92,14 @@ type judgeCall struct {
 	// across the exec into the launched agent, where the dispatch reads it and
 	// declines to re-fire these guards. See scriptCall.LaunchedBy.
 	LaunchedBy string
+
+	// AllowedTools are the check's own `allowed_tools` (dot-dir-file-store
+	// Check.allowed_tools) — the tools this judge's agent may use, passed through
+	// to sr-agent's `--allowed-tools`. Empty grants only what the judge substrate
+	// itself needs (the Write for the verdict file, which sr-agent adds). Carried
+	// per-call so a rule that must Read the file it judges, or WebFetch a URL,
+	// names those and no rule that does not is handed them.
+	AllowedTools []string
 }
 
 // runJudgeAgent is the production runJudge: render the template, run sr-agent with
@@ -205,7 +213,7 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// "exit -1" it replaces was the regression.
 	stdout, stderr, code, expired, _, startErr := runShell(
 		j.Dir,
-		judgeCommand(verifier, j.model()),
+		judgeCommand(verifier, j.model(), j.AllowedTools),
 		nil,
 		judgeEnv(j, prompt),
 		j.Timeout,
@@ -235,18 +243,26 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 // The prompt is read from an environment variable rather than the argv, so a
 // prompt of any size or shape (a leading dash, embedded quotes) cannot break the
 // command line — `--prompt "$VAR"` is one argument to sr-agent whatever the value
-// holds. The verifier path and the model are single-quoted as their own
-// arguments — the model is author-supplied (a rule's `model`), so quoting it
-// keeps a stray character in a concrete name from breaking the command line, the
-// same discipline the verifier path gets.
+// holds. The verifier path, the model and the allowed-tools are single-quoted as
+// their own arguments — each is author-supplied (a rule's `model`,
+// `allowed_tools`), so quoting keeps a stray character in one from breaking the
+// command line, the same discipline the verifier path gets.
 //
 // The model is the check's resolved modelset (its own `model`, or the default) —
 // sr-agent's --model takes exactly this comma-separated preference format, so the
-// check's value passes straight through.
-func judgeCommand(verifier, model string) string {
-	return fmt.Sprintf(
-		`sr-agent --model %s --verify %s --prompt "$%s"`,
-		shSingleQuote(model), shSingleQuote(verifier), judgePromptEnv)
+// check's value passes straight through. allowed_tools, when the check named any,
+// is joined with spaces into sr-agent's `--allowed-tools` (which takes the same
+// space/comma-separated form); a check that named none omits the flag entirely, so
+// sr-agent grants only the Write its own verdict file needs.
+func judgeCommand(verifier, model string, allowedTools []string) string {
+	cmd := fmt.Sprintf(
+		`sr-agent --model %s --verify %s`,
+		shSingleQuote(model), shSingleQuote(verifier))
+	if len(allowedTools) > 0 {
+		cmd += " --allowed-tools " + shSingleQuote(strings.Join(allowedTools, " "))
+	}
+	cmd += fmt.Sprintf(` --prompt "$%s"`, judgePromptEnv)
+	return cmd
 }
 
 // model resolves the modelset to hand sr-agent: the check's own `model` when it

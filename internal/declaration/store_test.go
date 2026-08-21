@@ -405,6 +405,52 @@ checks:
 	assert.True(t, hasKind(iv, ErrBadTimeout), "a zero timeout is refused: %v", iv.Reason)
 }
 
+// allowed_tools on a SCRIPT-only check is a load error, mirroring the stray
+// prepare/model rule — the field grants tools to a judge's agent, and a script
+// has no agent to grant them to.
+func TestLoad_Check_StrayAllowedToolsOnScript(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/straytools/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    allowed_tools: [Read]
+`,
+	})
+	assert.True(t, hasKind(iv, ErrStrayAllowedTools), "allowed_tools on a script-only check is refused: %v", iv.Reason)
+}
+
+// A judge carrying allowed_tools is the sanctioned shape and loads, with the list
+// preserved on the parsed Check.
+func TestLoad_Check_JudgeWithAllowedTools(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/judgetools/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    allowed_tools: [Read, WebFetch]
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	c := loaded.FileGuards[0].Checks[0]
+	assert.True(t, c.isJudge())
+	assert.Equal(t, []string{"Read", "WebFetch"}, c.AllowedTools)
+}
+
+// An allowed_tools list carrying an empty entry is refused at load — a blank tool
+// name grants nothing, mirroring the empty-modelset-entry refusal.
+func TestLoad_Check_BadAllowedTools(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/badtools/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    allowed_tools: ["Read", ""]
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadAllowedTools), "an allowed_tools list with an empty entry is refused: %v", iv.Reason)
+}
+
 // ---------------------------------------------------------------------------
 // Gate: valid + at-least-one + on-kinds
 // ---------------------------------------------------------------------------

@@ -79,15 +79,26 @@ type harnessSpec struct {
 	// running can be reported precisely rather than generically.
 	argsFlag string
 
+	// baseArgs are harness-specific arguments sr-agent ALWAYS passes this harness,
+	// ahead of any caller-supplied ones — the settings a run needs whatever the
+	// caller asked, so a caller (a judge check, most of all) does not have to know
+	// them. For Claude Code this is the isolation `--settings` that keeps the
+	// launched agent from re-triggering the very hooks/plugins/mcp servers that
+	// launched it; a rule firing on RULE.md whose judge is itself an agent would
+	// otherwise recurse. nil when the harness needs none.
+	baseArgs []string
+
 	// grantWrite returns the arguments that let the agent write into a
 	// directory outside the one it was started in, or nil if the harness needs
-	// no such permission.
+	// no such permission. `extraTools` are the caller's own requested tools (a
+	// judge's `allowed_tools`), which the harness MERGES with the tool grant the
+	// write itself needs, so the two do not arrive as two competing flags.
 	//
 	// --stop-script puts the agent's output file outside the working tree on
 	// purpose, and a harness that sandboxes writes will refuse it. This is the
 	// seam for saying so per-harness rather than assuming every harness has
 	// Claude Code's permission model.
-	grantWrite func(dir string) []string
+	grantWrite func(dir string, extraTools []string) []string
 }
 
 // claudeCodeSpec is Claude Code.
@@ -146,6 +157,17 @@ var claudeCodeSpec = harnessSpec{
 	},
 	argsFlag: "--claude-args",
 
+	// The isolation settings sr-agent ALWAYS gives Claude Code. Empty
+	// hooks/mcpServers/enabledPlugins means the launched agent carries none of the
+	// caller's session wiring: no sloprail hooks fire inside it, no plugins load,
+	// no MCP servers connect. This is what the hand-rolled judge scripts passed as
+	// `--settings '{"hooks":{},"mcpServers":{},"enabledPlugins":{}}'` before the
+	// judge-check migration — lifted here so a judge check gets the isolation for
+	// free rather than every rule restating it. Without it a judge that is itself
+	// an agent (a rule-quality judge firing on RULE.md) would re-trigger the guard
+	// on its own child's writes and recurse.
+	baseArgs: []string{"--settings", `{"hooks":{},"mcpServers":{},"enabledPlugins":{}}`},
+
 	// Writing the answer file takes BOTH of these, which was measured rather
 	// than guessed and is not obvious from the help text.
 	//
@@ -163,8 +185,16 @@ var claudeCodeSpec = harnessSpec{
 	// measured not to cover creating the file, nor writing an already-created
 	// empty one. So the narrowing that IS available is --add-dir, which is what
 	// confines these writes to the one temporary directory sr-agent owns.
-	grantWrite: func(dir string) []string {
-		return []string{"--add-dir", dir, "--allowed-tools", "Write"}
+	//
+	// The caller's extra tools (a judge's `allowed_tools`, e.g. Read) are unioned
+	// into the SAME `--allowed-tools` argument as the Write the answer file needs.
+	// claude's `--allowed-tools` is comma/space-separated, so one argument carrying
+	// `Write Read` grants both; passing two `--allowed-tools` flags would make one
+	// variadic group swallow the other's values. Write goes first so the grant the
+	// mechanism requires is never dropped by a caller that named only its own tools.
+	grantWrite: func(dir string, extraTools []string) []string {
+		tools := append([]string{"Write"}, extraTools...)
+		return []string{"--add-dir", dir, "--allowed-tools", strings.Join(tools, " ")}
 	},
 }
 

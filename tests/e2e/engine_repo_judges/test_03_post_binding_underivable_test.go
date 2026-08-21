@@ -20,7 +20,9 @@ import (
 // the mock runs a Bash command whose output bytes the engine will not predict, so
 // no Pre event is emitted for the file it creates, and the Post after-check is the
 // only thing that can still judge it. Only the judge's own model verdict is
-// stubbed.
+// stubbed (InstallJudgeClaude), and the Post event carries the settled bytes in
+// event.newContent (read off the tree diff), which the judge template reads the
+// same way it reads a Pre write's.
 
 // TestPostBindingJudgesAnUnderivableRuleCreate — the underivable-create case for
 // rule-quality.
@@ -29,11 +31,9 @@ import (
 // preventive Pre run never fires. The Post after-check must still judge it and
 // refuse.
 func TestPostBindingJudgesAnUnderivableRuleCreate(t *testing.T) {
-	t.Setenv("A10N_CLAUDE_BIN", stubJudge(t,
-		`{"has_issues": true, "reasoning": "flagged via the Post binding"}`))
-
 	e := New(t)
 	proj := project(t, e, "rule-quality")
+	e.InstallJudgeClaude(`{"pass": false, "reasoning": "RULE QUALITY: flagged via the Post binding"}`)
 
 	e.Run(proj, "s-erj-post-rule", "make a rule the hard way", Turns("done",
 		underivableWrite("RULE.md", "# A rule made by a command"),
@@ -52,11 +52,9 @@ func TestPostBindingJudgesAnUnderivableRuleCreate(t *testing.T) {
 
 // TestPostBindingJudgesAnUnderivableSkillCreate — the same for the sibling.
 func TestPostBindingJudgesAnUnderivableSkillCreate(t *testing.T) {
-	t.Setenv("A10N_CLAUDE_BIN", stubJudge(t,
-		`{"has_issues": true, "reasoning": "flagged via the Post binding"}`))
-
 	e := New(t)
 	proj := project(t, e, "skill-quality")
+	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SKILL QUALITY: flagged via the Post binding"}`)
 
 	e.Run(proj, "s-erj-post-skill", "make a skill the hard way", Turns("done",
 		underivableWrite("SKILL.md", "# A skill made by a command"),

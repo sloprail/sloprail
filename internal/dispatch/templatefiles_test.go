@@ -93,9 +93,14 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 		"resolved":           true,
 		"reference":          "msg-3",
 		"referenced_message": "the human's actual words",
-		// no-unasked-deletion
-		"asked_quote": "please remove the stray import",
-		"change_diff": "-import x\n+",
+		// no-unasked-deletion. asked_envelope is the whole AskUserQuestion envelope
+		// (question + answers) the prepare fetches via EnvelopeAt when the ask was an
+		// answer; it is ALWAYS emitted by the prepare (empty when the ask was a plain
+		// message), so it is always a present key — included here as a non-empty value
+		// so the template's `{% if additionalContext.asked_envelope %}` branch renders.
+		"asked_quote":    "please remove the stray import",
+		"change_diff":    "-import x\n+",
+		"asked_envelope": `The user answered: "which import?"="the stray one". Read the answers carefully.`,
 	}
 	inputJSON, err := r.judgeInputJSON(req, additional)
 	require.NoError(t, err)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -36,6 +37,7 @@ func runVerified(
 	spec harnessSpec,
 	model string,
 	harnessArgs []string,
+	allowedTools []string,
 	prompt string,
 	verifier string,
 	attempts int,
@@ -67,8 +69,15 @@ func runVerified(
 	// out the right answer, and then says it needs permission, leaving the
 	// verifier to judge an empty file. A correct judgement is reported as a
 	// failed one.
+	//
+	// The caller's allowed-tools are handed to grantWrite so they are MERGED into
+	// the same tool grant as the answer-file Write — one `--allowed-tools`
+	// argument, never two competing variadic groups. A harness with no grantWrite
+	// gets the tools as their own flag instead, appended below.
 	if spec.grantWrite != nil {
-		harnessArgs = append(harnessArgs, spec.grantWrite(filepath.Dir(outputPath))...)
+		harnessArgs = append(harnessArgs, spec.grantWrite(filepath.Dir(outputPath), allowedTools)...)
+	} else if len(allowedTools) > 0 {
+		harnessArgs = append(harnessArgs, "--allowed-tools", strings.Join(allowedTools, " "))
 	}
 
 	// The path is appended to the caller's prompt rather than replacing it: the

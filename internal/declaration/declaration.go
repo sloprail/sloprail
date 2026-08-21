@@ -350,6 +350,17 @@ type Check struct {
 	// on a script-only check is a load error. See
 	// dot-dir-file-store/main.tsp Check.timeout.
 	Timeout string `yaml:"timeout"`
+
+	// AllowedTools are the tools a Judge's agent is permitted to use, threaded to
+	// sr-agent's `--allowed-tools` (which maps to claude's own `--allowed-tools`).
+	// A judge that must Read the file it judges, or WebFetch a URL it verifies
+	// against, names those here; the engine's judge substrate already grants the
+	// Write the verdict file needs, so this is only the tools the RUBRIC's own
+	// work requires. Only meaningful alongside a Judge — a script names its own
+	// tools by being an executable — so AllowedTools set on a script-only check is
+	// a load error, mirroring the stray-model/timeout rule. See
+	// dot-dir-file-store/main.tsp Check.allowed_tools.
+	AllowedTools []string `yaml:"allowed_tools"`
 }
 
 // hasModel reports whether this check sets a judge model override.
@@ -357,6 +368,9 @@ func (c Check) hasModel() bool { return c.Model != "" }
 
 // hasTimeout reports whether this check sets a judge timeout override.
 func (c Check) hasTimeout() bool { return c.Timeout != "" }
+
+// hasAllowedTools reports whether this check sets a judge allowed-tools list.
+func (c Check) hasAllowedTools() bool { return len(c.AllowedTools) > 0 }
 
 // isScript reports whether this check is the script half of the union.
 func (c Check) isScript() bool { return c.Script != "" }
