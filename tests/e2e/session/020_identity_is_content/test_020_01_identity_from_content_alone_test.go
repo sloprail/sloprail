@@ -28,33 +28,30 @@ import (
 // passes the second's letter and fails its spirit; one keying on modification
 // time fails both.
 
-const bindPostFileEvents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./judge.sh
----
-
-# Records every after-the-fact file event, and passes everything
+// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
+// file event it is handed and passes everything (re-vehicled from the old
+// GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md). `match: "**/*.md"` fires
+// on whichever Post kind each change produced, the same three kinds the old hooks
+// bound. The content-identity SKIP this directory is about is the file-guard's own
+// revalidation record — a guard that judged AND passed a fingerprint of content
+// skips that content when it recurs, keyed per guard (rev.Skip/rev.Record in the
+// post dispatch) — the exact mechanism the old dispatch used, so the same
+// behavior is observed through the new one. The ledger (`seen`, no `.md`) is not
+// matched, so the guard cannot re-observe its own bookkeeping.
+const recordEverything = `match: "**/*.md"
+checks:
+  - script: ./judge.sh
 `
 
 // judgeScript records and permits.
 //
 // Permitting matters here: the skip this directory is about only applies to
 // content a guardrail has judged AND passed, so a refusing fixture would keep
-// every file eligible for re-judging and make the assertions meaningless.
+// every file eligible for re-judging and make the assertions meaningless. The
+// ledger is $SR_GUARDRAIL_DIR/seen, the folder the engine sets for the check.
 const judgeScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
+cat >> "$SR_GUARDRAIL_DIR/seen"
+echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
@@ -63,21 +60,23 @@ type observed struct {
 	Path string
 }
 
+// observedFiles decodes what a file-guard's check was handed — the FLAT event,
+// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
+// the old nested `event.fields` envelope.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -111,7 +110,7 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"judge.sh": judgeScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": judgeScript})
 
 	const sess = "s-020-01"
 	const original = "the original content\n"
@@ -119,7 +118,7 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	e.Run(proj, sess, "write it", Turns("done",
 		Write("w1", "subject.md", original),
 	))
-	afterFirst := countPath(observedFiles(t, e.Ledger(proj, "watcher", "seen")), "subject.md")
+	afterFirst := countPath(observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen")), "subject.md")
 	if afterFirst == 0 {
 		t.Fatalf("the file was never judged at all, so nothing below can be a skip")
 	}
@@ -127,7 +126,7 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	e.Run(proj, sess, "change it", Turns("done",
 		Write("w2", "subject.md", "different content\n"),
 	))
-	afterSecond := countPath(observedFiles(t, e.Ledger(proj, "watcher", "seen")), "subject.md")
+	afterSecond := countPath(observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen")), "subject.md")
 	// The control: genuinely new content IS judged. Without this, the assertion
 	// below passes for an engine that judges nothing after the first cycle.
 	if afterSecond <= afterFirst {
@@ -140,7 +139,7 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	e.Run(proj, sess, "put it back", Turns("done",
 		Write("w3", "subject.md", original),
 	))
-	afterRevert := countPath(observedFiles(t, e.Ledger(proj, "watcher", "seen")), "subject.md")
+	afterRevert := countPath(observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen")), "subject.md")
 	if afterRevert != afterSecond {
 		t.Fatalf("content already judged and passed was judged again after being restored "+
 			"(%d then %d) — identity is being derived from when the file was written rather than "+
@@ -163,7 +162,7 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"judge.sh": judgeScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": judgeScript})
 
 	const sess = "s-020-02"
 	const content = "content that will move\n"
@@ -171,7 +170,7 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 	e.Run(proj, sess, "write it", Turns("done",
 		Write("w1", "origin.md", content),
 	))
-	if countPath(observedFiles(t, e.Ledger(proj, "watcher", "seen")), "origin.md") == 0 {
+	if countPath(observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen")), "origin.md") == 0 {
 		t.Fatalf("the file was never judged at its original path, so the move below proves nothing")
 	}
 
@@ -179,7 +178,7 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 		Bash("b1", "mv origin.md moved.md"),
 	))
 
-	got := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(got, "moved.md") == 0 {
 		t.Fatalf("content that moved to a new path was never judged there: %v — the verdict was "+
 			"recorded for the old path, so identity keyed on content alone lets a file arrive "+
