@@ -14,7 +14,7 @@
 # So adding a meta-rule is adding a directory. It is never editing this file.
 #
 # The marker line is replaced by the assembled meta-rules. It must appear
-# exactly once; judge-rule.sh refuses to run if it does not.
+# exactly once; prepare.sh refuses to assemble the rubric if it does not.
 
 
 You are judging ONE `RULE.md` file — a rule in a guardrail's `rules/` directory,

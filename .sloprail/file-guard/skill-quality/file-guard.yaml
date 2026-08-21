@@ -1,26 +1,54 @@
 # The skills must themselves be high-signal — judges ONE SKILL.md against a
 # rubric ASSEMBLED from this guard's rules/ directory (one meta-rule per
 # rules/<name>/RULE.md), spliced into RUBRIC.md's frame. Adding a meta-rule is
-# adding a directory; no prompt is edited. The full rationale — fail-open on
-# machinery failure, EMPTY-rules-is-refusal, the {[^{}]*} verdict pattern, the
-# 25s timeout, why the judge may not run commands — lives in judge-skill.sh's own
-# comments, migrated verbatim from the old GUARDRAIL.md.
+# adding a directory; no prompt is edited.
 #
-# match: every SKILL.md in the repo, path-anchored on the file's own name — the
-# faithful translation of the old `matcher: path endsWith "SKILL.md"`. A
+# A JUDGE check now, migrated from the old hand-rolled SCRIPT check that called
+# `claude` itself. The reviewer asked for this: the engine, via sr-agent, owns
+# the model, the timeout, the isolation settings and the verdict shape — a judge:
+# check no longer hand-rolls any of that. What is genuinely this guard's — the
+# rubric assembly (the enforced-only selection, the RUBRIC.md frame + splice) —
+# lives in prepare.sh; the judge template renders that rubric against the file's
+# own content (event.newContent, read flat off the event).
+#
+# FAIL-OPEN RECONCILIATION (flagged, not hidden). The old script failed OPEN —
+# permitted, unjudged — when its OWN machinery failed (no claude, a timeout, an
+# unparseable verdict). A judge: check cannot reproduce that: the model call is
+# now the engine's, and the engine's judge path fails CLOSED on machinery failure
+# by deliberate design (internal/dispatch/judge.go). So those cases now REFUSE
+# rather than permit. The rubric-assembly fail-open (missing RUBRIC.md / lost
+# marker) likewise becomes a refusal in prepare.sh — the guard's own committed
+# files, so refusing loudly is the safe direction. See prepare.sh's header for
+# the full reconciliation. EMPTY rules/ is still a refusal (the deliberate
+# asymmetry), preserved exactly.
+#
+# match: every SKILL.md in the repo, path-anchored on the file's own name. A
 # file-guard matches a FILE'S STATE (FileMatchScope: flat `path`, `markers`,
-# `context`), so the expression reads `path`, NOT `event.path` (that is a gate's
-# nested scope).
+# `context`), so the expression reads `path`, NOT `event.path`.
 match: path endsWith "SKILL.md"
 
-# preventive: true reproduces the old format's Pre+Post binding exactly. A
-# preventive file-guard fires on the PRE write to REFUSE a padded SKILL.md before
-# it lands (the old PreFileCreate/PreFileUpdate binding), AND, like every guard,
-# fires the after-check at Stop on the SETTLED file (the old
-# PostFileCreate/PostFileUpdate binding — the backstop for a write whose result
-# the engine could not derive, which a preventive guard fails CLOSED on at Pre
-# and re-judges at Stop). Dropping preventive would lose the Pre-prevention.
+# preventive: true reproduces the old Pre+Post binding exactly. A preventive
+# file-guard fires on the PRE write to REFUSE a padded SKILL.md before it lands,
+# AND, like every guard, fires the after-check at Stop on the SETTLED file — the
+# backstop for a write whose result the engine could not derive, which a
+# preventive guard fails CLOSED on at Pre (the engine, not the check) and re-judges
+# at Stop, where event.newContent carries the settled bytes off the tree diff.
+# Dropping preventive would lose the Pre-prevention.
 preventive: true
 
 checks:
-  - script: ./judge-skill.sh
+  # prepare assembles the rubric; the judge renders it against the file and asks
+  # the model for a verdict. model is pinned to haiku (the old script's exact pin,
+  # claude-haiku-4-5-20251001) — an unpinned model resolves larger and this rule
+  # can fire several times per turn. timeout 25s is the old script's bound, under
+  # the engine's own 30s check timeout so the judge's own limit fires first.
+  # allowed_tools: [Read] — the rubric and the file content are both IN the prompt,
+  # so the judge needs no tools to reason; Read is the one conservative grant that
+  # lets it corroborate the file on disk if it chooses, and nothing broader. The
+  # Write the verdict file needs is granted by the engine's judge substrate, not
+  # named here.
+  - prepare: ./prepare.sh
+    judge: ./judge-skill.md.j2
+    model: claude-haiku-4-5-20251001
+    timeout: 25s
+    allowed_tools: [Read]
