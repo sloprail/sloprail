@@ -153,13 +153,27 @@ READINESS ASSESSMENT (2026-08-20): the old format is NOT deletable as-is — it 
    payload field); documented semantics preserved (fail-open, empty-rules refusal, `{[^{}]*}` verdict, 25s
    timeout). engine_repo_judges retargeted to install from `.sloprail/file-guard/<name>` and proves the same
    invariants. The old-format DELETION (#3 below) can now proceed.
+1.5. **PLUGIN-LOADING GAP (discovered 2026-08-21, BLOCKS the deletion).** The NEW nature loader loads ONLY
+   a project's own `.sloprail/` — `internal/declaration/store.go` `New(root)` takes ONE root; its own comment:
+   "Plugin-shipped declarations are out of scope for this slice — the old loader's plugin resolution stays
+   where it is." But the MARKETPLACE PLUGIN ships its OWN guardrail `authoring-slop` (marketplace/plugins/
+   sloprail/guardrails/authoring-slop, OLD format, tested by pre_tool/026), loaded ONLY via the old
+   guardrailStore→harness.Resolve→guardrail.NewWithPlugins path. So deleting the old format would break the
+   shipped plugin. USER DIRECTIVE: "plugin loading should be supported — we only changed format, all
+   surrounding features stay." → PR1b (branch wave3/new-format-plugin-loading, RUNNING): port plugin discovery
+   to the new format — declaration.NewWithPlugins mirroring guardrail.NewWithPlugins, reuse internal/harness.
+   Resolve (harness-generic enabled-plugin discovery from .claude/settings.json), wire into newNatureDeclarations
+   at pre+Stop, preserve settings-resolution/unresolved-reporting/disable/precedence. Then PR1c migrates
+   authoring-slop old→new + retargets its matcher (.sloprail/guardrails/*.sh → new-format guardrail script
+   paths) + updates 026.
 2. `examples/deprecated/` (deterministic-refactoring + required-context-precondition, OLD GUARDRAIL.md) —
    already superseded by new-format examples/deterministic-refactoring-mode + examples/required-context-
    precondition (both have merged Wave-2 e2e). → DELETE (not migrate).
 3. THEN delete the old-format loader `internal/guardrail/{config,declaration,store,hook,source,validate,
    duplicates,problem}.go` (KEEP matcher.go/matcherenv.go/scopes.go — the new format reuses them), the old
-   dispatch path in services/sr-session (session_pre_tool.go runs new-dispatch FIRST then old; remove old),
-   cyclemod TurnEnd, session query, old/duplicated e2e.
+   dispatch path in services/sr-session (session_pre_tool.go runs new-dispatch FIRST then old; remove old;
+   CARE: file-guard re-fire REUSES dispatch_post revalidation machinery — do not delete what the new format
+   still calls), cyclemod TurnEnd, session query, old/duplicated e2e. ONLY after PR1b + PR1c land.
 4. spec cleanup in PR #2 (remove superseded), AFTER impl cleanup.
 SEQUENCING/RISK: this removes the format PRODUCTION currently uses (new + old run side-by-side today). It's
 large + high-blast-radius. GOAL.md frames it as separate PRs at the very end "only once everything works".
