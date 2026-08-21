@@ -12,8 +12,8 @@ import (
 // AskUserQuestion answer, not just the extracted answer.
 //
 // The shipped prepare (collect-quote-and-diff.sh) now, having a grounded quote,
-// re-resolves it with `cite` and fetches the envelope at that line with
-// `sr-session trajectory envelope` (which wraps internal/transcript EnvelopeAt).
+// resolves it and fetches the envelope at that line in one call with
+// `cite --include-envelope` (which wraps internal/transcript EnvelopeAt).
 // A judge grounded on an answer-quote needs the QUESTION to weigh the answer — an
 // answer of "the second option" authorizes only what that option, in the
 // question's own terms, covers (PR-19 review, cite.go:251). The stubbed verdict

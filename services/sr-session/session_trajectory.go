@@ -36,15 +36,17 @@ const SessionIDEnv = "CLAUDE_CODE_SESSION_ID"
 //	sr-session trajectory describe    facts ABOUT a trajectory (is it a
 //	                                  sub-agent's, what spawned it, what it spawned)
 //	sr-session trajectory cite        turn a remembered quote into <path>:<line>
-//	sr-session trajectory envelope    the whole AskUserQuestion answer envelope at
-//	                                  a citation's line (question + all answers)
+//	                                  (--include-envelope also prints the whole
+//	                                  AskUserQuestion answer envelope at that line)
 //	sr-session trajectory normalize   the trajectory as normalized entries + events
 //
 // describe and cite are settled by a trajectory's path and the session's own
-// records; envelope reads back the entry a cite citation resolved to; normalize
-// walks the entries. Grouping them is what lets a hook or an agent reach all four
-// under one noun, and keeps `describe`'s output — other trajectories' paths —
-// flowing straight into `normalize --path`, `cite --path` and `envelope --path`.
+// records; normalize walks the entries. The answer envelope behind a citation is
+// read by `cite --include-envelope` in the same call that mints the citation (it
+// was once its own `envelope` subcommand — folded into cite so a grounding hook
+// makes one call, not two). Grouping them is what lets a hook or an agent reach
+// all three under one noun, and keeps `describe`'s output — other trajectories'
+// paths — flowing straight into `normalize --path` and `cite --path`.
 func newSessionTrajectoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trajectory",
@@ -55,13 +57,13 @@ func newSessionTrajectoryCmd() *cobra.Command {
                                     sub-agent's, its parent, the sub-agents it spawned
   sr-session trajectory cite        turn a substring of the user's own words into
                                     a resolvable <path>:<line> citation
-  sr-session trajectory envelope    the whole AskUserQuestion answer envelope at a
-                                    citation's line — the question and all answers
+                                    (--include-envelope also prints the whole
+                                    AskUserQuestion answer envelope at that line)
 
-describe answers "what IS this file"; cite mints a citation an agent can write;
-envelope reads back the entry a cite citation resolved to, question included. All
-default to the trajectory the hook was invoked for, and all accept --path to read
-another — the parent or a sibling that describe named.`,
+describe answers "what IS this file"; cite mints a citation an agent can write,
+and with --include-envelope reads back the question+answers at that citation's
+line in the same call. All default to the trajectory the hook was invoked for,
+and all accept --path to read another — the parent or a sibling that describe named.`,
 		Args: cobra.NoArgs,
 		// A bare `trajectory` with no subcommand is a usage error, not a no-op:
 		// print help and say so, the same as cobra's own default for a group.
@@ -72,7 +74,6 @@ another — the parent or a sibling that describe named.`,
 	cmd.AddCommand(
 		newSessionTrajectoryDescribeCmd(),
 		newSessionTrajectoryCiteCmd(),
-		newSessionTrajectoryEnvelopeCmd(),
 		newSessionTrajectoryNormalizeCmd(),
 	)
 	return cmd
