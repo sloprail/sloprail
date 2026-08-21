@@ -55,6 +55,20 @@ path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
   exit 1
 }
 
+# This SCRIPT grep is scoped to `.sh` hooks only. The guard's `match` widened to
+# ALSO catch `.md.j2` prompt files, so the sibling JUDGE can reason about prompt
+# quality — but a file-guard has no per-check match, so this grep is dispatched on
+# a `.md.j2` too, and its signatures (`newContent` present, a `Write|Edit`
+# alternation, a model-invocation flag) would FALSE-POSITIVE on a template, which
+# legitimately contains `{{ event.newContent }}` and names tools in prose. A
+# template is the judge's business, not this grep's, so a non-`.sh` path permits
+# here and leaves it to the judge. The judge's own prepare/template read the same
+# path and DO handle `.md.j2`.
+case "$path" in
+  *.sh) ;;
+  *) exit 0 ;;
+esac
+
 # The bytes to judge.
 #
 # This file-guard is `preventive: true`, so it fires at BOTH moments the old
@@ -62,18 +76,20 @@ path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
 # land) and the after-check at Stop (on the settled file). The event's kind tells
 # them apart, and `newContent`/disk is chosen accordingly.
 #
-# On a create the event carries the bytes as `newContent`, because the file is
-# not on disk yet. On an update `newContent` is present only when the result is
-# derivable — `resultKnown` is the flag that says so — and an underivable
-# PreFileUpdate never reaches this script anyway: for a preventive guard the
-# engine ALREADY fails CLOSED on it before the check runs (see
-# services/sr-session/nature_fileguard.go isUnderivablePreWrite) and re-judges
-# the settled file at Stop. At Stop the bytes ARE on disk, so a Post kind reads
-# there. The "newContent, else disk" fallback below covers all three: Pre with
-# derivable content reads newContent; Post reads disk; and the honest limit of
-# rule 2 — what cannot be predicted is read after the fact — is preserved, a hook
-# edited into slop by an underivable write being caught at Stop or on the next
-# create.
+# On EITHER Pre kind `newContent` is present only when the result is derivable —
+# `resultKnown` is the flag that says so. This is symmetric across create and
+# update: an underivable PreFileUpdate (a command-derived edit) and an underivable
+# PreFileCreate (a NotebookEdit fresh-.ipynb, whose cell source is not the JSON
+# document) BOTH carry newContent "" with resultKnown false, and NEITHER reaches
+# this script — for a preventive guard the engine ALREADY fails CLOSED on both
+# before the check runs (see services/sr-session/nature_fileguard.go
+# isUnderivablePreWrite, which gates PreFileCreate AND PreFileUpdate on
+# !resultKnown) and re-judges the settled file at Stop. At Stop the bytes ARE on
+# disk, so a Post kind reads there. The "newContent, else disk" fallback below
+# covers all three: a DERIVABLE Pre write (create or update) reads newContent;
+# Post reads disk; and the honest limit of rule 2 — what cannot be predicted is
+# read after the fact — is preserved, a hook edited into slop by an underivable
+# write being caught at Stop or on the next derivable write.
 #
 # All fields read FLAT under `.event`, the new CheckPayload shape — not
 # `.event.fields.*`.
@@ -107,13 +123,23 @@ fi
 
 # --- Rule 2: no strategy for unresolvable content ---------------------------
 #
-# On PreFileUpdate `newContent` is OPTIONAL — a command-derived update leaves it
-# absent — and an absent field reads as the empty string, which is
+# On BOTH Pre kinds — PreFileUpdate AND PreFileCreate — `newContent` can be
+# absent, and an absent field reads as the empty string, which is
 # indistinguishable from a write that empties the file. `resultKnown` is the
 # companion that tells the two apart. Reading `newContent` without consulting it
-# is the slop this catches. (On PreFileCreate `newContent` is always present, so
-# a create-only hook needs no resultKnown; the heuristic cannot tell the two
-# kinds apart by grep and errs toward flagging, which the guidance below owns.)
+# is the slop this catches, and it is slop on a create just as on an update: a
+# NotebookEdit creating a fresh .ipynb emits a PreFileCreate with newContent ""
+# and resultKnown false (the cell source is not the JSON document, so the bytes
+# are not derivable — see internal/filemod/module.go Kinds() and
+# services/sr-session/nature_fileguard.go isUnderivablePreWrite, which gates BOTH
+# kinds on !resultKnown). So there is NO create exemption: the grep below fires on
+# a create-only hook too, which is correct.
+#
+# What this grep CANNOT catch is a script that DOES name `resultKnown` but still
+# reads `newContent` in a branch that assumes the create is derivable — the word
+# is present, so the grep stays silent. That subtler shape is the judge's job
+# (rules/pre-kinds-consult-resultknown reasons about WHEN newContent may be read
+# per kind); this grep is the cheap floor that catches the field named nowhere.
 #
 # The SIGNATURE tracks the format of the scripts this guard now covers. The
 # scripts under `.sloprail/{file-guard,gate,context}/` are NEW format and read
@@ -125,11 +151,12 @@ fi
 if printf '%s' "$body" | grep -q 'newContent' 2>/dev/null &&
    ! printf '%s' "$body" | grep -q 'resultKnown' 2>/dev/null; then
   note "rules/content-may-be-unresolvable — reads .event.newContent without .resultKnown.
-    On a PreFileUpdate an absent newContent reads as \"\", which is
-    indistinguishable from a write that empties the file. Check resultKnown
-    first, and say in the body what the rule does when the result cannot be
-    derived — usually: defer to the Post kind. (A rule bound only to
-    PreFileCreate, where newContent is always present, can ignore this.)"
+    On EITHER Pre kind (create as well as update) an absent newContent reads as
+    \"\", which is indistinguishable from a write that empties the file — a
+    NotebookEdit fresh-.ipynb create carries resultKnown false and a non-derivable
+    newContent. Check resultKnown first on BOTH Pre kinds, and say in the body
+    what the rule does when the result cannot be derived — usually: defer to the
+    Post kind."
 fi
 
 # --- Rule 6: content interpolated into a prompt without a DATA clause -------
