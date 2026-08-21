@@ -195,6 +195,16 @@ checks:
 	})
 	assert.True(t, hasKind(iv, ErrBadMatch), "singular marker.kind is not in the file scope: %v", iv.Reason)
 	assert.Contains(t, iv.Reason, "marker")
+
+	// The refusal must also NAME the fields the file scope DOES carry, or an
+	// author who mistyped one is left guessing at the spelling. The offending
+	// name is in front of them; the available names have to be too. (The old
+	// GUARDRAIL.md validator proved this via guardrail.Validate's field list; the
+	// new file-guard validator carries the same courtesy in its match message.)
+	for _, field := range []string{"path", "markers", "context"} {
+		assert.Containsf(t, iv.Reason, field,
+			"the refusal should name %q as an available field on the file scope", field)
+	}
 }
 
 // The bare `refactoring.active` the older example vocabulary used does NOT read

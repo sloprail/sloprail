@@ -7,17 +7,19 @@ package declaration
 //
 // # Why mirror rather than import guardrail.Origin
 //
-// This package already imports internal/guardrail — but only for the match
+// This package still imports internal/guardrail — but only for the match
 // COMPILERS (CompileFileMatch and friends), an implementation detail of
 // validation. Its PUBLIC types are its own: Invalid, Problem, Nature are all
 // defined here rather than borrowed, precisely because internal/declaration is
-// the format that OUTLIVES internal/guardrail. The old format is deleted in a
-// later wave; a NewWithPlugins whose signature named guardrail.Origin would take
-// that deletion down with it, and the loader that is meant to be the survivor
-// would depend on the corpse. So Origin joins Invalid/Problem/Nature as a type
-// this package owns, and the caller in services/sr-session builds a
-// declaration.Origin from the harness resolution the same way it builds a
-// guardrail.Origin — one translation at the boundary, no shared type across it.
+// the format that OUTLIVED internal/guardrail's old types. Those old types
+// (guardrail.Origin/Declaration/Invalid/Config/Problem) have since been deleted;
+// a NewWithPlugins whose signature had named guardrail.Origin would have taken
+// that deletion down with it, and the loader that was meant to be the survivor
+// would have depended on the corpse. So Origin joins Invalid/Problem/Nature as a
+// type this package owns, and the caller in services/sr-session builds a
+// declaration.Origin from the harness resolution directly — one construction at
+// the boundary, no shared type across it. The match compilers survive in
+// internal/guardrail (matcher.go/scopes.go), which is all this import now reaches.
 
 // Origin says where a declaration was found, which is the difference between a
 // rule the project wrote and a rule it installed.

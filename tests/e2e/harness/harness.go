@@ -949,31 +949,12 @@ func (e *Env) Exists(projDir, rel string) bool {
 	return false
 }
 
-// Guardrail writes a declaration and its hook scripts into a project.
-func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]string) {
-	e.t.Helper()
-	dir := filepath.Join(projDir, ".sloprail", "guardrails", name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		e.t.Fatalf("harness: mkdir guardrail: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "GUARDRAIL.md"), []byte(declaration), 0o644); err != nil {
-		e.t.Fatalf("harness: write declaration: %v", err)
-	}
-	for file, body := range scripts {
-		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
-			e.t.Fatalf("harness: write script %s: %v", file, err)
-		}
-	}
-}
-
-// Gate writes a NEW-FORMAT gate declaration and its check scripts/templates into
-// a project, at `.sloprail/gate/<name>/gate.yaml`.
+// Gate writes a gate declaration and its check scripts/templates into a project,
+// at `.sloprail/gate/<name>/gate.yaml`.
 //
-// The gate and the structure gate are the new nature-based dispatch, distinct from
-// Guardrail's old GUARDRAIL.md format — the two run alongside each other, so a test
-// may use either. Scripts (a check's `./verify.sh`, a `prepare`, a judge template)
-// are written as siblings of gate.yaml, executable, exactly where the gate's own
-// relative paths resolve them.
+// The gate and the structure gate are the nature-based dispatch. Scripts (a
+// check's `./verify.sh`, a `prepare`, a judge template) are written as siblings of
+// gate.yaml, executable, exactly where the gate's own relative paths resolve them.
 func (e *Env) Gate(projDir, name, gateYAML string, files map[string]string) {
 	e.t.Helper()
 	dir := filepath.Join(projDir, ".sloprail", "gate", name)
@@ -1245,56 +1226,6 @@ func (e *Env) ContextState(projDir, sessionID, contextName string) (bool, map[st
 	return st.Active, st.Payload
 }
 
-// RemoveGuardrail takes a guardrail out of a project mid-session, the way a
-// user removes a rule: the whole folder goes.
-//
-// The WHOLE folder, and that is not a convenience. Deleting only GUARDRAIL.md
-// leaves a folder the project still keeps as a guardrail and which can no
-// longer be read — and the engine refuses every action while a declaration
-// cannot be parsed, deliberately, because an unreadable rule must not be read
-// as approval merely for being unreadable. So a half-removal does not remove a
-// rule; it disarms the session. That behaviour is pinned by
-// pre_tool/013_broken_declaration_is_not_silent, and this helper exists to keep
-// tests about REMOVAL from accidentally exercising it.
-//
-// It returns the rule's ledger lines as they stood at removal, because the
-// ledger lives inside the folder that is about to go. A test asking whether a
-// removed rule kept firing compares this against what it finds afterwards: with
-// the folder gone, a rule that somehow still ran would recreate the file, and an
-// absent file is the answer that nothing did.
-func (e *Env) RemoveGuardrail(projDir, name, ledgerFile string) []string {
-	e.t.Helper()
-	before := e.Ledger(projDir, name, ledgerFile)
-	dir := filepath.Join(projDir, ".sloprail", "guardrails", name)
-	if err := os.RemoveAll(dir); err != nil {
-		e.t.Fatalf("harness: remove guardrail %s: %v", name, err)
-	}
-	return before
-}
-
-// DisableGuardrail turns a rule off the other way a user can: the declaration
-// stays and says so.
-//
-// A distinct mechanism from removal rather than a synonym for it — the folder,
-// the scripts and the LEDGER all remain, so a disabled rule that kept firing
-// appends a line to a file that is still there, which removal cannot observe.
-// Written by replacing the declaration wholesale, because the frontmatter is
-// what the engine parses and a test that patched a line would be asserting
-// something about yaml editing.
-func (e *Env) DisableGuardrail(projDir, name, declaration string) {
-	e.t.Helper()
-	disabled := strings.Replace(declaration, "---\n", "---\nenabled: false\n", 1)
-	if disabled == declaration {
-		e.t.Fatalf("harness: disable guardrail %s: the declaration has no frontmatter to add "+
-			"`enabled: false` to, so nothing was turned off and a test resting on this would "+
-			"pass against a rule that is still live", name)
-	}
-	path := filepath.Join(projDir, ".sloprail", "guardrails", name, "GUARDRAIL.md")
-	if err := os.WriteFile(path, []byte(disabled), 0o644); err != nil {
-		e.t.Fatalf("harness: disable guardrail %s: %v", name, err)
-	}
-}
-
 // RemoveFileGuard takes a NEW-FORMAT file-guard out of a project mid-session, the
 // way a user removes one: the whole `.sloprail/file-guard/<name>/` folder goes.
 //
@@ -1379,38 +1310,6 @@ func (e *Env) DisablePluginGuardrail(projDir string, qualified ...string) {
 	}
 }
 
-// Ledger returns the lines a guardrail's hooks appended to a file in their own
-// folder, or nothing when the file was never created.
-//
-// This is how a test observes what DID NOT happen. A refusal travels back
-// through the tool result and can be read off the stream, but "this hook never
-// ran", "this extractor produced nothing" and "these two hooks ran in this
-// order" leave no trace there — a hook that stays silent and a hook that never
-// ran look identical from outside.
-//
-// So the hooks write. A hook is an ordinary shell script run with its working
-// directory set to the guardrail's folder, so appending a line to a file there
-// is the one channel that records a run without the engine's cooperation and
-// without a test reaching inside the binary. An absent file is a real answer:
-// nothing ran.
-func (e *Env) Ledger(projDir, guardrail, file string) []string {
-	e.t.Helper()
-	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "guardrails", guardrail, file))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		e.t.Fatalf("harness: read ledger %s/%s: %v", guardrail, file, err)
-	}
-	var lines []string
-	for _, l := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return lines
-}
-
 // Wrote reports whether a path exists in the project tree.
 //
 // How a test observes an INNER session's outcome. A refusal delivered to the
@@ -1475,33 +1374,29 @@ func (e *Env) RootMessageID(sessionID string) string {
 	return "e2e-root-" + sessionID
 }
 
-// ControlDecl and ControlScript are the positive control every revalidation
-// test rests on: a hook that stores something under its own scope and reads it
-// back on its next invocation.
+// ControlGuard and ControlScript are the positive control every revalidation
+// test rests on: a file-guard whose check stores something under its own scope
+// and reads it back on its next invocation.
 //
-// Here rather than in one scenario package because every scenario needs it and
-// a Go test package cannot import another's helpers. Exported so the scenario
-// that reports the control as a test of its own runs the SAME rule this package
-// gates on — two copies could drift, and the copy the gate used would be the
-// one nobody was reading. See RequireSessionStore.
-const ControlDecl = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./probe.sh
-  PreFileUpdate:
-    - hooks:
-        - type: command
-          command: ./probe.sh
----
-
-# Reads its own state back, and says what it found.
+// A NEW-format file-guard on every markdown write. Its default after-check fires
+// once per Post file event at Stop, so two writes in one cycle give two separate
+// check processes — the second is the one that must read back what the first
+// stored. It logs to $SR_GUARDRAIL_DIR/log (the guard's own folder), the same
+// idiom the scenario controls use, read back with FileGuardLedgerLines.
+//
+// Here rather than in one scenario package because every scenario needs it and a
+// Go test package cannot import another's helpers. Exported so a scenario that
+// reports the control as a test of its own runs the SAME rule this package gates
+// on — two copies could drift, and the copy the gate used would be the one nobody
+// was reading. See RequireSessionStore.
+const ControlGuard = `match: "**/*.md"
+checks:
+  - script: ./probe.sh
 `
 
 const ControlScript = `#!/bin/sh
 cat >/dev/null
-echo "before=[$(sr-session state get seen 2>&1)]" >> "$PWD/log"
+echo "before=[$(sr-session state get seen 2>&1)]" >> "$SR_GUARDRAIL_DIR/log"
 sr-session state set seen yes >/dev/null 2>&1
 exit 0
 `
@@ -1535,7 +1430,7 @@ func (e *Env) SessionStoreOpens() (bool, string) {
 	e.t.Helper()
 
 	proj := e.Project()
-	e.Guardrail(proj, "control", ControlDecl, map[string]string{"probe.sh": ControlScript})
+	e.FileGuard(proj, "control", ControlGuard, map[string]string{"probe.sh": ControlScript})
 
 	// Two DIFFERENT paths, so neither invocation can be exempted by the other.
 	// The control must not be silenced by the very mechanism it exists to make
@@ -1547,7 +1442,7 @@ func (e *Env) SessionStoreOpens() (bool, string) {
 		Write("c2", "two.md", "second"),
 	))
 
-	lines := e.Ledger(proj, "control", "log")
+	lines := e.FileGuardLedgerLines(proj, "control", "log")
 	if len(lines) != 2 {
 		return false, "the control guardrail's hook did not run twice (got " +
 			strings.Join(lines, " | ") + ") — nothing about session state can be concluded"
