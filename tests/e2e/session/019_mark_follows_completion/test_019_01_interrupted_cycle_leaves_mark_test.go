@@ -24,48 +24,46 @@ import (
 // is NOT covered there is the consequence for a cycle that judged SOME of its
 // turns and was then cut short, which is what this directory adds.
 
-const askWhatHappened = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./ask.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./ask.sh
----
-
-# Asks the engine what the session has done, and records the answer
+// askWhatHappened is a NEW-FORMAT file-guard (re-vehicled from the old
+// GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md), after-check so it runs
+// at a cycle's end. `match: "**/*.md"` fires on whichever Post kind each cycle's
+// write produced — the same two kinds the old hooks bound. The check reaches the
+// session's record through SR_TRANSCRIPT / SR_WORKSPACE, which the new dispatch
+// sets on a file-guard check exactly as the old-format hook env did.
+const askWhatHappened = `match: "**/*.md"
+checks:
+  - script: ./ask.sh
 `
 
-// The event payload is discarded and the record is named explicitly. A
-// guardrail hook is handed `{event, guardrailDir}` rather than the harness
-// payload, so it has no transcript_path to forward; piping that in makes the
-// command answer "no transcript path on the hook payload" every time — an
-// answer in which every
-// marker below reads as absent, which is indistinguishable from correct
-// narrowing. See answered() for the guard that keeps that from passing.
+// The check's own stdin is discarded and the record is named explicitly from the
+// environment. A file-guard check is handed the flat CheckPayload rather than the
+// harness payload; piping that in makes the command answer "no transcript path on
+// the hook payload" every time — an answer in which every marker below reads as
+// absent, indistinguishable from correct narrowing. See answered() for the guard
+// that keeps that from passing. The ledger is $SR_GUARDRAIL_DIR/answers, the
+// folder the engine sets for the check.
 const askScript = `#!/bin/sh
 cat > /dev/null
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
-  sr-session query >> "$PWD/answers" 2>&1
+  sr-session query >> "$SR_GUARDRAIL_DIR/answers" 2>&1
 exit 0
 `
 
-// crashingAsk asks the same question and then fails.
+// crashingAsk asks the same question and then refuses.
 //
 // A non-zero exit at an after-the-fact point is a refusal, not a crash of the
 // engine — but from the mark's point of view what matters is that the cycle did
 // not finish cleanly. This is the closest a test can get to an interrupted cycle
 // through the real wiring, because a cycle killed outright leaves no hook to
-// observe from.
+// observe from. New-format refusal contract: exit non-zero refuses and a
+// `{"reason":…}` on stdout is the reason the agent is told — the replacement for
+// the old exit-2-with-stderr channel.
 const crashingAskScript = `#!/bin/sh
 cat > /dev/null
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
-  sr-session query >> "$PWD/answers" 2>&1
-echo "this cycle did not finish" >&2
-exit 2
+  sr-session query >> "$SR_GUARDRAIL_DIR/answers" 2>&1
+echo '{"reason":"this cycle did not finish"}'
+exit 1
 `
 
 // answered fails the test when the engine reported an error instead of entries.
@@ -113,7 +111,7 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 	const secondMarker = "MARKERZETA"
 
 	// A cycle whose judging is cut short.
-	e.Guardrail(proj, "asker", askWhatHappened, map[string]string{"ask.sh": crashingAskScript})
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": crashingAskScript})
 	first := e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "interrupted cycle\n"),
 	))
@@ -130,19 +128,19 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 		t.Fatalf("the first cycle completed normally, so there is no interrupted cycle here:\n%s\nblocking: %v",
 			first.Output, blocking)
 	}
-	if len(e.Ledger(proj, "asker", "answers")) == 0 {
+	if len(e.FileGuardLedgerLines(proj, "asker", "answers")) == 0 {
 		t.Fatalf("the interrupted cycle never reached the hook at all, so this proves nothing")
 	}
-	before := len(e.Ledger(proj, "asker", "answers"))
+	before := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
 
 	// The next cycle finishes cleanly, and must still be offered the turns the
 	// interrupted one never settled.
-	e.Guardrail(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "completed cycle\n"),
 	))
 
-	answers := e.Ledger(proj, "asker", "answers")
+	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= before {
 		t.Fatalf("the second cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), before)
@@ -179,7 +177,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 	// from. Without one there is no diff and no PostFile* event, and a rule
 	// bound to one would never run.
 	e.GitInit(proj)
-	e.Guardrail(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
 
 	const sess = "s-019-02"
 	const firstMarker = "MARKERETA"
@@ -188,7 +186,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 	e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "first cycle\n"),
 	))
-	before := len(e.Ledger(proj, "asker", "answers"))
+	before := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
 	if before == 0 {
 		t.Fatalf("the first cycle never reached the hook, so this proves nothing")
 	}
@@ -196,7 +194,7 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "second cycle\n"),
 	))
-	answers := e.Ledger(proj, "asker", "answers")
+	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= before {
 		t.Fatalf("the second cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), before)
