@@ -107,12 +107,18 @@ func runFileGuardsPreventive(
 
 		match, err := guardrail.CompileFileMatch(g.Match)
 		if err != nil {
-			// Unreachable for a loaded guard (the loader compiled the same match),
-			// but a compile that disagrees with load must surface loudly, not decide
-			// enforcement silently. Reported and treated as not-matching, the same
-			// "an unloadable rule blocks nothing" the rest of the dispatch keeps.
+			// Unreachable for a loaded guard (the loader compiled the same match), but
+			// on the off chance the compile disagrees with load it must fail CLOSED,
+			// not decide enforcement silently: a preventive guard whose match the engine
+			// cannot even build has not established the write is fine, and admitting it
+			// would read the engine's own gap as approval. Refuse, naming the guard and
+			// quoting the expression — the same fail-closed direction matcher.go:121
+			// takes for a rule that could not be prepared.
 			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q match: %v\n", g.Name, err)
-			continue
+			return fmt.Sprintf(
+				"the file-guard %q could not be evaluated: its match %q could not be compiled (%v); "+
+					"refusing because a guard that could not decide must not be read as approval (file-guard %s)",
+				g.Name, g.Match, err, g.Attribution())
 		}
 
 		for _, e := range events {
@@ -121,8 +127,21 @@ func runFileGuardsPreventive(
 			}
 			selected, err := fileGuardSelects(match, e, contextMap)
 			if err != nil {
+				// The match COMPILED at load but could not be EVALUATED against this
+				// event (e.g. `int(path) > 0` on path "notes.md", or `len(.flags.access)`
+				// where the accessor is nil). That is not the guard cleanly declining —
+				// it is the engine unable to ANSWER whether this write is fine. Fail
+				// CLOSED: refuse the write, the same direction the old dispatch takes
+				// (internal/guardrail/matcher.go:121 — the pre-tool path refuses the
+				// events the broken rule was bound to) and the sibling runner-error
+				// branch below. A preventive guard exists precisely to keep the file
+				// always-fine, and a match it cannot evaluate must not be read as
+				// approval. The raw expression is quoted so an author can find and fix it.
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q match on %s: %v\n", g.Name, e.Kind, err)
-				continue
+				return fmt.Sprintf(
+					"the file-guard %q could not be evaluated: its match %q could not be evaluated against this %s (%v); "+
+						"refusing because a guard that could not decide must not be read as approval (file-guard %s)",
+					g.Name, g.Match, e.Kind, err, g.Attribution())
 			}
 			if !selected {
 				continue
@@ -233,7 +252,21 @@ func runFileGuardsPost(
 
 		match, err := guardrail.CompileFileMatch(g.Match)
 		if err != nil {
+			// Unreachable for a loaded guard (the loader compiled the same match), but
+			// on the off chance the compile disagrees with load it must fail CLOSED
+			// rather than skip the guard silently: a match the engine cannot build has
+			// not decided the file is fine. Collect a refusal that holds the turn
+			// (matcher.go:186), naming the guard and quoting the expression.
 			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q match: %v\n", g.Name, err)
+			results = append(results, fileGuardResult{
+				Name:        g.Name,
+				Attribution: g.Attribution(),
+				Refused:     true,
+				Reason: fmt.Sprintf(
+					"the file-guard %q could not be evaluated: its match %q could not be compiled (%v); "+
+						"refusing because a guard that could not decide must not be read as approval",
+					g.Name, g.Match, err),
+			})
 			continue
 		}
 
@@ -243,7 +276,27 @@ func runFileGuardsPost(
 			}
 			selected, err := fileGuardSelects(match, e, contextMap)
 			if err != nil {
+				// The match COMPILED at load but could not be EVALUATED against this
+				// settled file. As at the preventive path and in the old dispatch
+				// (matcher.go:186 — the caller refuses the action and says why), a match
+				// the engine cannot answer is NOT a rule that cleanly did not match: it
+				// is the engine unable to decide, which must not be read as approval.
+				// This path COLLECTS refusals (it does not return early), so append a
+				// refusal that holds the turn — mirroring the runner-error branch below.
+				// A verdict is deliberately NOT recorded: writing a pass would exempt a
+				// file nobody judged, a refusal would blame the rule for the machine; the
+				// turn is held and the file re-enters the diff next cycle by the ordinary
+				// difference. The raw expression is quoted so an author can fix it.
 				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q match on %s: %v\n", g.Name, e.Kind, err)
+				results = append(results, fileGuardResult{
+					Name:        g.Name,
+					Attribution: g.Attribution(),
+					Refused:     true,
+					Reason: fmt.Sprintf(
+						"the file-guard %q could not be evaluated: its match %q could not be evaluated against this %s (%v); "+
+							"refusing because a guard that could not decide must not be read as approval",
+						g.Name, g.Match, e.Kind, err),
+				})
 				continue
 			}
 			if !selected {

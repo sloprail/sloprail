@@ -75,18 +75,21 @@ func TestFirstMatchingEvent(t *testing.T) {
 
 	// A create under memories/ matches (the alias covers create).
 	match := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{"path": "memories/a.md"}}
-	fired, ok := firstMatchingEvent(discard(), reg, g, []event.Event{match}, nil)
+	fired, ok, err := firstMatchingEvent(discard(), reg, g, []event.Event{match}, nil)
+	require.NoError(t, err)
 	assert.True(t, ok, "a create under memories/ wakes a PreFileWrite gate narrowed to memories/")
 	assert.Equal(t, match.Kind, fired.Kind)
 
 	// A create OUTSIDE memories/ does not match (the trigger's match narrows it).
 	outside := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{"path": "src/a.go"}}
-	_, ok = firstMatchingEvent(discard(), reg, g, []event.Event{outside}, nil)
+	_, ok, err = firstMatchingEvent(discard(), reg, g, []event.Event{outside}, nil)
+	require.NoError(t, err)
 	assert.False(t, ok, "a write outside the match does not wake the gate")
 
 	// A Stop event does not match a PreFileWrite gate at all (wrong kind).
 	stop := event.Event{Kind: declaration.KindStop, Fields: map[string]any{}}
-	_, ok = firstMatchingEvent(discard(), reg, g, []event.Event{stop}, nil)
+	_, ok, err = firstMatchingEvent(discard(), reg, g, []event.Event{stop}, nil)
+	require.NoError(t, err)
 	assert.False(t, ok, "a Stop does not wake a PreFileWrite gate")
 }
 
@@ -97,7 +100,8 @@ func TestFirstMatchingEvent_NoMatchWakesAlways(t *testing.T) {
 
 	g := declaration.Gate{Name: "g", On: []declaration.GateTrigger{{Event: declaration.KindStop}}}
 	stop := event.Event{Kind: declaration.KindStop, Fields: map[string]any{}}
-	_, ok := firstMatchingEvent(discard(), reg, g, []event.Event{stop}, nil)
+	_, ok, err := firstMatchingEvent(discard(), reg, g, []event.Event{stop}, nil)
+	require.NoError(t, err)
 	assert.True(t, ok, "a Stop gate with no match wakes on a Stop")
 }
 

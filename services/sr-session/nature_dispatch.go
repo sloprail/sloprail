@@ -329,7 +329,26 @@ func runGatesForEvents(
 	var results []gateResult
 
 	for _, g := range gates {
-		fired, ok := firstMatchingEvent(cmd, reg, g, events, contextMap)
+		fired, ok, err := firstMatchingEvent(cmd, reg, g, events, contextMap)
+		if err != nil {
+			// A trigger's match could not be COMPILED or EVALUATED. That is not the
+			// gate cleanly not waking — it is the engine unable to answer whether the
+			// trigger applies, and treating it as a non-wake would silently DISABLE the
+			// gate on a match it could not confirm (the fail-open this regressed to).
+			// Fail CLOSED: refuse, naming the gate and quoting the trigger match, the
+			// same direction the runner-error branch below and the old dispatch
+			// (matcher.go:121/186) take. A gate whose trigger cannot be evaluated must
+			// not be read as approval of the event it was bound to.
+			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: gate %s: %v\n", g.Attribution(), err)
+			results = append(results, gateResult{
+				Name:        g.Name,
+				Attribution: g.Attribution(),
+				Refused:     true,
+				Reason:      fmt.Sprintf("the gate %s could not be evaluated (%v); refusing because a gate that could not decide must not be read as approval", g.Attribution(), err),
+			})
+			recordGateVerdict(cmd, store, gatesMap, g.Name, natures.GateStatusFail)
+			continue
+		}
 		if !ok {
 			continue
 		}
@@ -387,7 +406,7 @@ func runGatesForEvents(
 }
 
 // firstMatchingEvent returns the first fired event a gate's `on` triggers match,
-// and whether any did.
+// whether any did, and an error when a trigger's match could not be decided.
 //
 // A gate wakes when one of its triggers names an event kind that fired AND that
 // trigger's `match` (compiled against the gate scope for the kind) evaluates true.
@@ -396,11 +415,27 @@ func runGatesForEvents(
 //
 // A trigger's match is compiled here rather than at load because the KIND the
 // event carries is needed to build the scope — the same reason the old dispatch
-// compiles a matcher at the hook point. A compile that fails (unreachable for a
-// loaded gate, whose triggers the loader already compiled) or an evaluation error
-// is reported and treated as non-matching for that trigger, so a gate does not
-// wake on a match it could not actually confirm.
-func firstMatchingEvent(cmd *cobra.Command, reg *module.Registry, g declaration.Gate, events []event.Event, contextMap map[string]natures.ContextState) (event.Event, bool) {
+// compiles a matcher at the hook point.
+//
+// # A match that cannot be decided FAILS CLOSED
+//
+// A compile failure (unreachable for a loaded gate, whose triggers the loader
+// already compiled) or an EVALUATION error (a trigger whose `match` compiled but
+// erred on the event handed to it — e.g. `len(.flags.access)` where the accessor
+// is nil) is NOT treated as "this trigger did not match". Doing so would let a
+// broken or adversarial trigger silently DISABLE the gate: the engine could not
+// confirm the match, and reading that as a non-wake reads it as approval of the
+// event the gate was bound to. Instead the error is returned to the caller, which
+// turns it into a REFUSAL naming the gate — the same fail-closed direction the old
+// dispatch keeps (internal/guardrail/matcher.go:121 refuses the events a broken
+// rule was bound to; :186 the caller refuses and says why). The (trigger, kind)
+// that could not be decided is named in the error so the refusal can quote it.
+//
+// The FIRST such failure short-circuits: a gate that cannot decide one of its
+// triggers cannot be said to have cleanly not matched, so it refuses rather than
+// hunting for a later trigger that might wake it — a broken trigger is a fault to
+// surface, not a condition to route around.
+func firstMatchingEvent(cmd *cobra.Command, reg *module.Registry, g declaration.Gate, events []event.Event, contextMap map[string]natures.ContextState) (event.Event, bool, error) {
 	for _, trig := range g.On {
 		// The trigger's `event` may be the PreFileWrite alias; expand it to the
 		// concrete kinds it fires on, the same table the loader validated it
@@ -416,20 +451,23 @@ func firstMatchingEvent(cmd *cobra.Command, reg *module.Registry, g declaration.
 			}
 			m, err := guardrail.CompileGateMatch(trig.Match, kindDecl)
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: gate %q trigger on %s: %v\n", g.Name, trig.Event, err)
-				continue
+				// Compile disagreeing with load: fail closed. The trigger match is
+				// quoted in the error so the refusal an author sees points at the
+				// expression to fix.
+				return event.Event{}, false, fmt.Errorf("its trigger match %q on %s could not be compiled (%w)", trig.Match, trig.Event, err)
 			}
 			ok, err := m.Match(gateMatchEvent(e, contextMap))
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: gate %q trigger on %s: %v\n", g.Name, trig.Event, err)
-				continue
+				// The match compiled but could not be EVALUATED against this event.
+				// Fail closed, quoting the trigger match.
+				return event.Event{}, false, fmt.Errorf("its trigger match %q on %s could not be evaluated (%w)", trig.Match, trig.Event, err)
 			}
 			if ok {
-				return e, true
+				return e, true, nil
 			}
 		}
 	}
-	return event.Event{}, false
+	return event.Event{}, false, nil
 }
 
 // containsKind reports whether kind is one of the concrete kinds a trigger

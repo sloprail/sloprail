@@ -314,9 +314,36 @@ func runContextExits(
 // A context wakes on an event when one of its triggers names a kind that fired
 // AND that trigger's `match` (compiled against the context scope for the kind)
 // holds. The same (trigger, event) pair may appear once; duplicate events for the
-// same kind each fire enter, which is the "every occurrence" the spec names. A
-// compile or evaluation error is reported and that trigger treated as
-// non-matching, so a context does not enter on a match it could not confirm.
+// same kind each fire enter, which is the "every occurrence" the spec names.
+//
+// # Why a match error here does NOT refuse (and how it still fails safe)
+//
+// A file-guard and a gate fail CLOSED on a match the engine cannot evaluate: they
+// have an action to refuse (a write, a tool call), so a match they cannot decide
+// becomes a refusal rather than being read as approval (matcher.go:121/186). A
+// CONTEXT has no such channel. It takes no action at match time — it only decides
+// whether to ACTIVATE a scope — so there is nothing to "refuse" here, and turning a
+// context match error into a turn block would invent a refusal no context declared
+// (a context's own exit is defined never to block the turn; its match cannot be
+// louder than its lifecycle).
+//
+// The fail-safe direction for a context is therefore "the scope does not open": a
+// trigger whose match cannot be evaluated does NOT count as a match, so the context
+// does not enter on that occurrence. This is the conservative reading in the sense
+// that matters for a context — a context match error cannot be assumed TRUE, so the
+// engine must not activate a scope it could not confirm the trigger for. (The
+// opposite risk — a PROTECTIVE context that fails to open because its own trigger
+// erred — is real, but it is not fixable here: staying out of a protective scope is
+// unsafe, yet a match the engine cannot answer cannot be assumed true either, and a
+// context has no third "refuse" answer a file-guard/gate can fall back to. A rule
+// that must HARD-fail on such an error belongs in a gate, which has the channel.)
+//
+// So the error is REPORTED loudly (stderr, every dispatch) and the trigger treated
+// as non-matching — deliberately, for the reason above, NOT as the silent
+// no-op the file-guard/gate paths were wrongly doing before this fix. A context
+// whose match keeps erring shows up as a scope that never opens, which is visible
+// on its own; none of the suites here exercise a context match-eval error, and this
+// is documented rather than left as a bare `continue`.
 func contextMatchingEvents(cmd *cobra.Command, reg *module.Registry, c declaration.Context, events []event.Event, contextMap map[string]natures.ContextState) []event.Event {
 	var matched []event.Event
 	seen := map[int]bool{}
@@ -335,12 +362,20 @@ func contextMatchingEvents(cmd *cobra.Command, reg *module.Registry, c declarati
 			}
 			m, err := guardrail.CompileContextMatch(trig.Match, kindDecl)
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q trigger on %s: %v\n", c.Name, trig.Event, err)
+				// Compile disagreeing with load (unreachable for a loaded context). A
+				// context has no refusal channel (see the doc comment above), so the
+				// fail-safe is "the scope does not open": report loudly and do not enter
+				// on this occurrence.
+				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q trigger on %s could not be compiled, so the context does not enter on it: %v\n", c.Name, trig.Event, err)
 				continue
 			}
 			ok, err := m.Match(contextMatchEvent(e, contextMap))
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q trigger on %s: %v\n", c.Name, trig.Event, err)
+				// The match compiled but could not be evaluated. As above, a context
+				// has no action to refuse, so the fail-safe direction is that the scope
+				// does not open: report loudly and treat as non-matching (NOT the silent
+				// no-op the file-guard/gate paths were wrongly doing before this fix).
+				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: context %q trigger on %s could not be evaluated, so the context does not enter on it: %v\n", c.Name, trig.Event, err)
 				continue
 			}
 			if ok {
