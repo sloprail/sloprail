@@ -1,45 +1,97 @@
 # State across cycles
 
-`sr-session state get|set|list` is a key-value store a guardrail can write in
-one cycle and read in another. It is what a rule uses when the thing it must
-check is not visible in the event in front of it — a trigger seen in one cycle
-and answered in the next, or a fact assembled from several per-file events and
-judged once at the end.
+`sr-session state get|set|list` is a key-value store a rule can write in one
+cycle and read in another. It is what a rule uses when the thing it must check is
+not visible in the event in front of it — a trigger seen in one cycle and
+answered in the next, or a fact assembled from several events and judged once at
+the end.
 
 ```sh
 prev=$(sr-session state get seen 2>/dev/null || echo 0)
 sr-session state set seen "$((prev + 1))"
 ```
 
-Neither the guardrail nor the session is an argument. Both come from the
-environment the engine sets on every hook it runs — `SR_GUARDRAIL`,
-`SR_SESSION_ID`, `SR_WORKSPACE` — so a hook calls it with nothing but a key, and
-a hook cannot read a rule it was never told about or reach into another session.
-Outside a hook there is no guardrail in scope and it says so rather than
-guessing. Run `sr-session state --help` for the subcommands.
+## The check environment
 
-## The two-halves pattern
+Neither the guardrail nor the session is an argument to `sr-session state`. Both
+come from the environment the engine sets on **every check, prepare, enter and
+exit script** it runs:
 
-A cycle-wide rule has no subject: the cycle kind carries no fields, so a hook
-bound to it knows only that a cycle ended. State is how it gets one.
+| var | what it is |
+|---|---|
+| `SR_GUARDRAIL` | the rule's name — the keyspace `state` reads and writes under |
+| `SR_GUARDRAIL_DIR` | the rule's own folder (absolute) — where `RUBRIC.md`, `rules/` resolve |
+| `SR_WORKSPACE` | the repository root — prepend it to a `.event.path` to reach the file on disk |
+| `SR_SESSION_ID` | the session, so one session's memory is not another's |
+| `SR_TRANSCRIPT` | the session record |
 
-**Per-file hooks RECORD; a cycle hook JUDGES.** The file events are where the
-engine has already decided that a path really changed — it parsed the tool call,
-resolved the shell command and diffed the tree — so the recording half writes
-down what it was told and reaches no verdict. The cycle half reads what was
-recorded and decides.
+So a script calls `state` with nothing but a key, and it cannot read a rule it
+was never told about or reach into another session. Outside a hook there is no
+guardrail in scope and it says so rather than guessing. Run `sr-session state
+--help` for the subcommands.
 
-The ordering this depends on is guaranteed rather than hoped for: the cycle
-event is dispatched last and unconditionally, after the per-file events, so a
-hook reading what one of them wrote finds the write already made. Unconditional
-matters too — a cycle that changed no files still ends, and that is exactly the
-cycle a rule of this shape usually has to refuse.
+(The old format handed a script the guard's directory as a `guardrailDir` field
+on stdin. It is now the `SR_GUARDRAIL_DIR` environment variable — read it from
+the env, not the payload.)
 
-The recording half should exit 0 on every path, including its own failures. It
-reaches no verdict, and the write it is being told about has already happened,
-so there is nothing left to block. When it cannot record, it says so on stderr
-and the cycle loses that evidence — the judge then refuses a claim it cannot
+## The two-halves pattern: a context records, a Stop gate judges
+
+A Stop gate has no subject of its own — `Stop` carries no fields, so a check
+bound to it knows only that a cycle ended. State is how it gets one, and the
+shape is two rules sharing a keyspace:
+
+**A context RECORDS; a Stop gate JUDGES.** The events a context wakes on are
+where the engine has already decided that something real happened — a tag was
+written, a file landed — so the recording half (`enter`) writes down what it was
+told and reaches no verdict. The judging half (the gate's Stop check) reads the
+registry back and decides.
+
+The recording half's `enter` should activate (or exit 0) on every path, including
+its own failures — it reaches no verdict, and the thing it is recording has
+already happened, so there is nothing to block. When it cannot record, it says so
+and the registry loses that evidence; the judge then refuses a claim it cannot
 corroborate, which is the fail-closed direction and the right one.
+
+### Reading the other rule's registry: `--owner`
+
+The judging gate reads a **different** guardrail's entries — the context's. That
+is the one read that crosses the per-guardrail boundary, and it exists only for
+`list`, only to read (`get` and `set` stay the caller's own):
+
+```sh
+# The context wrote each subject under its own name; the gate reads the group.
+sr-session state list --owner tag-declared
+```
+
+Two things make this safe rather than a reopened isolation hole:
+
+1. **`require` supplies the ordering.** The gate declares `require: [{context:
+   tag-declared}]`, which holds its check until that context has **entered this
+   cycle**. So the entries `--owner` returns are current, not a prior cycle's. A
+   gate that reads `--owner` **without** the matching `require` reads stale state
+   — the footgun to avoid. The read supplies the entries; `require` supplies the
+   ordering.
+2. **`--owner` reads across guardrails only** — never across sessions or
+   workspaces. The database is the calling session's own; `--owner` selects only
+   which guardrail's rows within it are returned. It does not open `get` or `set`,
+   so a rule still cannot read another's single key nor write into its keyspace.
+
+### `state list` emits JSON-LINES — slurp with `jq -s`
+
+`list` prints **one `{"key":…,"value":…}` object per line**, not a JSON array, so
+a large group need not be held whole and a script can pipe it through
+line-oriented tools. To treat the stream as one structure in `jq`, **slurp it**:
+
+```sh
+entries="$(sr-session state list --owner tag-declared 2>/dev/null)"
+tags="$(printf '%s' "$entries" | jq -s -r '[.[] | select(.key | startswith("tag:"))] | .[].key | ltrimstr("tag:")')"
+```
+
+Forgetting `-s` is a real, measured bug: `jq '[.[] | …]'` on the raw lines
+iterates **each object's field values**, not the stream, comes back empty, and
+false-refuses every legitimate turn. The value is stored as a JSON **string**, so
+read it raw with `jq -r .value`, and parse JSON stored inside it with a second
+`| jq`.
 
 ## Scoping the evidence to the cycle
 
@@ -66,12 +118,12 @@ type alone takes the last tool result as the boundary, which moves several times
 within one turn.
 
 The uuid alone is not enough, and this was measured rather than reasoned. Across
-8,570 transcripts holding 14,638 real user messages, one file carries a
-duplicate real-user-message uuid — a stop-hook feedback re-injection, a refusal
-handed back to the agent as a user message, written twice with the same uuid,
-the same parent and the same timestamp. A cycle-refusing rule is one of the
-things that produces those. With the uuid alone, two turns wearing one uuid are
-one turn to the rule, and the second is permitted having written nothing.
+8,570 transcripts holding 14,638 real user messages, one file carries a duplicate
+real-user-message uuid — a stop-hook feedback re-injection, a refusal handed back
+to the agent as a user message, written twice with the same uuid, parent and
+timestamp. A cycle-refusing rule is one of the things that produces those. With
+the uuid alone, two turns wearing one uuid are one turn to the rule, and the
+second is permitted having written nothing.
 
 The count fixes it without depending on the harness minting anything unique: the
 record only grows, so the number of real user messages is strictly increasing
@@ -79,17 +131,16 @@ across turns and constant within one. The uuid is kept alongside it because the
 count alone would make two different sessions' turn 7 the same string.
 
 Compute it in **one sourced helper** that both halves call, never as two copies
-of a pipeline. If the recorder and the judge ever disagreed about what the
-current turn is, every claim would fail to find its evidence — or find someone
-else's.
+of a pipeline. If the recorder and the judge ever disagreed about what the current
+turn is, every claim would fail to find its evidence — or find someone else's.
 
 ### Key on the subject, not on the turn
 
 A key per turn accumulates one entry per subject per turn for the life of the
-session, and nothing ever collects them. Keying on the subject bounds the
-keyspace at one entry per subject, each carrying the last turn that touched it,
-and the only transition that ever has to happen is an older turn's value being
-overwritten by a newer one.
+session, and nothing ever collects them. Keying on the subject bounds the keyspace
+at one entry per subject, each carrying the last turn that touched it, and the
+only transition that ever has to happen is an older turn's value being overwritten
+by a newer one.
 
 ## Do not clear state as you judge
 
@@ -97,15 +148,14 @@ The obvious alternative — the judge deleting the keys once it has read them �
 wrong, and the reason is the refusal path.
 
 A refusal does not advance the read mark. The engine re-judges the same span on
-the next cycle, deliberately, so the agent can fix what was refused. A judge
-that cleared as it went would bring a cycle refused for some *other* reason back
-round with its recorded evidence already erased, and refuse it a second time for
-a write it genuinely made. The agent is then told to write a file it has already
-written.
+the next cycle, deliberately, so the agent can fix what was refused. A judge that
+cleared as it went would bring a cycle refused for some *other* reason back round
+with its recorded evidence already erased, and refuse it a second time for a write
+it genuinely made. The agent is then told to write a file it has already written.
 
-Stamping has no such path. A stale entry is inert, because it names a turn that
-is no longer current — nothing has to run for the evidence to expire, which
-means nothing can fail to run.
+Stamping has no such path. A stale entry is inert, because it names a turn that is
+no longer current — nothing has to run for the evidence to expire, which means
+nothing can fail to run.
 
 ## Revalidation is why the stamp is not redundant
 
@@ -114,18 +164,18 @@ turn-scoped, and drop the stamp. They mostly are: a quiet cycle reports no event
 for a file an earlier cycle wrote, and an unrelated write does not re-report it
 either.
 
-The case that decides it is revalidation, which is keyed on **content**. If a
-later cycle rewrites a file with bytes identical to what an earlier one left
-there, **no event fires at all**. Without the stamp, the earlier cycle's
-evidence is still sitting in state and satisfies the later cycle's claim.
+The case that decides it is **revalidation**, which is keyed on **content**. If a
+later cycle rewrites a file with bytes identical to what an earlier one left there,
+**no event fires at all**. Without the stamp, the earlier cycle's evidence is
+still sitting in state and satisfies the later cycle's claim.
 
 Refusing there is the strict answer and the right one: a rewrite that changes
 nothing has recorded nothing, and a claim asserts something was recorded.
 
 ## Fail closed on the logic, open on the plumbing
 
-A rule bound to the cycle runs on every cycle, so it can wedge a session
-wholesale rather than for one file. Split the two directions deliberately.
+A Stop gate runs on every cycle, so it can wedge a session wholesale rather than
+for one file. Split the two directions deliberately.
 
 The **logic** fails closed: a claim with no matching evidence is a refusal. That
 is the whole rule.
