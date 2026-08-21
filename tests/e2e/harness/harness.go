@@ -969,6 +969,36 @@ func (e *Env) FileGuardLedger(projDir, name, ledgerFile string) int {
 	return n
 }
 
+// FileGuardLedgerLines returns the LINES a project's own file-guard check appended
+// to a file in the guard's folder (`.sloprail/file-guard/<name>/<file>`), or
+// nothing when the file was never created.
+//
+// The new-format analogue of Ledger. Ledger reads the OLD path
+// (`.sloprail/guardrails/<name>/<file>`, where an old-format hook's $PWD sat);
+// this reads the NEW path a file-guard check writes to via $SR_GUARDRAIL_DIR
+// (`.sloprail/file-guard/<name>/`). FileGuardLedger above answers "how many times
+// did the check run" with a count; this answers "what did each run record" with
+// the raw lines, which a re-vehicled test parses back into the flat CheckPayload
+// (`.event.path`) it observed arrival through — the same shape refusal-survival is
+// proven on. An absent file is a real answer: nothing ran.
+func (e *Env) FileGuardLedgerLines(projDir, name, file string) []string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "file-guard", name, file))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read file-guard ledger %s/%s: %v", name, file, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
 // StructureGate writes the NEW-FORMAT structure gate — one tree-wide path
 // allowlist — at `.sloprail/file-guard/structure.yaml`.
 //
