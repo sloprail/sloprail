@@ -26,22 +26,19 @@ import (
 // NEVER treat as citable. Handing `cite --path` the record the mock wrote keeps the
 // trajectory deterministic and centralised in the mock rather than re-typed here.
 //
-// # The one shape the mock cannot produce, and why a fixture stays
+// # A genuine multi-human-turn transcript: two same-session-id runs
 //
-// The mock's session model has exactly ONE human turn — the `-p` prompt, seeded as
-// the transcript's first record. Nothing in it injects a SECOND distinct
-// `type:"user"` HUMAN message: the scenario stream speaks for the ASSISTANT, and the
-// mock's resume / Stop-block re-prompt loops re-run the SCRIPT rather than deliver a
-// new human turn. a10n-cli#470 did NOT change that — it added acceptance of a
-// tool_result-in-user record (an AskUserQuestion answer envelope; see below), not a
-// second human prompt. So the ambiguous case (T029_02), which needs several distinct
-// user messages with an assistant turn between them, remains the one genuinely
-// unproducible shape and keeps its minimal hand-authored fixture below. (A raw
-// second `type:"user"` plain-text record could be smuggled through the mock's
-// indiscriminate forwarding, but that is the assistant script fabricating human input
-// the session model does not model — not a supported capability, and the harness
-// exposes no turn builder for it. Adding a genuine multi-human-turn is a FUTURE
-// a10n-cli mock change.)
+// A real second human turn is simply a new prompt on the SAME session. The mock now
+// models exactly that: a fresh run (--session-id) seeds the `-p` prompt as the
+// transcript's parentless ROOT, and a RESUME run (--resume, the same session id)
+// APPENDS its prompt as a continuation human record — its own uuid and a non-null
+// parentUuid, after the prior cycle's records. The harness drives a repeat Run on one
+// session id as that resume automatically, so `e.Run(proj, id, p1, …)` followed by
+// `e.Run(proj, id, p2, …)` builds a two-human-turn transcript with the agent's own
+// turns in between — precisely the shape the ambiguous case (T029_02) needs. This
+// replaced the earlier synthetic single-turn workaround (a builder that co-emitted an
+// assistant record and a second human record in one cycle); a real second run is the
+// honest shape and needs no hand-authored fixture.
 //
 // # The shape #470 MADE producible: the AskUserQuestion answer envelope
 //
@@ -61,7 +58,6 @@ var (
 	Turns          = harness.Turns
 	Bash           = harness.Bash
 	Say            = harness.Say
-	SayThenHuman   = harness.SayThenHuman
 	AnswerQuestion = harness.AnswerQuestion
 )
 
@@ -151,11 +147,12 @@ func writeSubagentWithMeta(t *testing.T, agentID string, lines ...string) string
 // The answer-envelope shapes used to live here for T029_04/05/07/08; a10n-cli#470
 // made the mock forward a tool_result-in-user record, so those tests drive the mock
 // via harness.AnswerQuestion. The several-messages case (T029_02) used to keep a
-// fixture too; the mock now forwards a plain second user record, so it drives the
-// mock via harness.SayThenHuman. What remains is only the sub-agent cite-refusal
-// fixtures below — and userMsg, which one of them (the meta-companion case, T029_12)
-// still needs because it requires a record with isSidechain FALSE while the mock's
-// sub-agent origin is always isSidechain true (see T029_12's note).
+// fixture too; the mock now appends a resume's prompt as a continuation human turn,
+// so it drives the mock with TWO same-session-id runs (see the package doc). What
+// remains is only the sub-agent cite-refusal fixtures below — and userMsg, which one
+// of them (the meta-companion case, T029_12) still needs because it requires a record
+// with isSidechain FALSE while the mock's sub-agent origin is always isSidechain true
+// (see T029_12's note).
 
 // userMsg is a plain typed user message with string content.
 func userMsg(uuid, content string) string {

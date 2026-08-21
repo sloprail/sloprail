@@ -451,44 +451,6 @@ func SayBash(id, prose, command string) Turn {
 	return Turn{jsonl: sayWithTool(id, prose, "Bash", map[string]string{"command": command})}
 }
 
-// SayThenHuman emits, in ONE turn, an assistant text record FOLLOWED BY a second
-// HUMAN user record — the multi-human-turn shape a transcript with several distinct
-// human messages carries, where an assistant turn sits between them.
-//
-// # Why one turn emits two records
-//
-// a10n-claude-mock seeds only the FIRST human turn (the -p prompt, the transcript's
-// line 1). A SECOND human message is a plain `type:"user"` record the mock forwards
-// verbatim, but the mock only ADVANCES the scenario after a tool_use: a lone non-tool
-// record (a bare assistant text, or a bare human turn) is terminal — the mock forwards
-// it, reaches EOF, and ends the turn, so a turn AFTER it never fires (measured; the
-// same terminal-Say reason SayWrite documents). So the assistant text and the second
-// human turn cannot be two sequential turns — the human turn would never fire. Emitting
-// BOTH records in one turn's script run lands them consecutively: after the seeded
-// prompt on line 1, the assistant text on line 2 and the second human message on line 3.
-// The file layout is exactly what a real session's [human, assistant, human] stretch
-// has — which is all cite reads — even though the delivery is one emission.
-//
-// # The records
-//
-// The assistant record is a `type:"assistant"` text-block entry (the agent's own
-// prose, which cite must never treat as citable); the second is a plain `type:"user"`
-// human message (a citable candidate, the same as the seeded prompt). Both carry a
-// uuid keyed off id so transcript.Read does not skip either. The turn is gated on the
-// FIRST record's id-marker (script() injects it into the first `"id":"…"`), so it fires
-// once; being a NON-tool turn it is terminal, which is correct as the scenario's last
-// turn (the result frame after it is unreachable and unnecessary — EOF is the end).
-func SayThenHuman(id, prose, humanText string) Turn {
-	assistant := fmt.Sprintf(
-		`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":%s}]}}`,
-		id+"#s", "e2e-turn-"+id+"s", jsonStr(prose))
-	human := fmt.Sprintf(
-		`{"type":"user","uuid":%q,"message":{"role":"user","content":%s}}`,
-		"e2e-turn-"+id+"h", jsonStr(humanText))
-	// Two JSONL records in one turn, newline-joined; the mock forwards both.
-	return Turn{jsonl: assistant + "\n" + human}
-}
-
 // BashBatch returns ONE assistant turn whose content is SEVERAL Bash tool_use
 // blocks — the multi-tool-call-in-one-entry shape a spread-yield rests on, where a
 // single assistant entry carries more than one tool call and a per-entry derivation

@@ -51,32 +51,52 @@ func TestT029_01_CiteUniqueMatchExitsZero(t *testing.T) {
 // same substring is NOT among the candidates: cite searches the user's words, not
 // the agent's.
 //
-// Driven through the MOCK via SayThenHuman: the seeded prompt is the FIRST human
-// turn (line 1, a candidate); SayThenHuman emits the assistant's prose (line 2, NOT
-// a candidate) and a SECOND human message (line 3, a candidate) in one turn — the
-// multi-human-turn shape the mock now produces (a10n-claude-mock forwards a plain
-// second user record; the two records are co-emitted because a lone non-tool record
-// is terminal). So this reads a mock-produced transcript with two distinct human
-// turns and an assistant turn between them, not a hand-authored fixture.
+// Driven through the MOCK with TWO same-session-id runs — a genuine multi-human-turn
+// transcript. A real second human turn IS a new prompt on the same session, and the
+// mock now appends it on resume: the harness drives the FIRST Run with --session-id
+// (seeding the prompt as the transcript's parentless root, line 1) and the SECOND Run
+// with --resume (the mock appends its prompt as a continuation human record, its own
+// uuid and a non-null parentUuid, after the first cycle's records). Both prompts —
+// "the WIDGET needs work" and "yes the WIDGET again" — are citable candidates. Run 1's
+// `Say` turn puts the agent's own prose ("I will change the WIDGET now") into the
+// transcript as a cite-VISIBLE assistant record (it carries a uuid, so a transcript
+// reader keeps it), which cite must NEVER cite — that is the "cite skips the agent's
+// words" half this case proves. The candidate lines are derived from the file the mock
+// wrote (physicalLine), not hardcoded, since the two runs interleave result records
+// whose positions this test does not fix.
 func TestT029_02_CiteAmbiguousExitsTwo(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 
+	// Run 1 (fresh, --session-id): the prompt is the root human turn; the Say turn is
+	// the agent's own WIDGET-carrying prose, persisted as an assistant record cite skips.
 	e.Run(proj, "s-029-02", "the WIDGET needs work", Turns("done",
-		SayThenHuman("t1", "I will change the WIDGET now", "yes the WIDGET again"),
+		Say("m1", "I will change the WIDGET now"),
 	))
+	// Run 2 (repeat id → --resume): the mock appends this prompt as a second human turn.
+	e.Run(proj, "s-029-02", "yes the WIDGET again", Turns("done"))
 	path := e.TranscriptPath(proj, "s-029-02")
 
-	// The three records' layout, checked against the file the mock wrote so the
-	// candidate lines below rest on the real transcript rather than a guess: the
-	// prompt on line 1, the assistant prose on line 2 (not citable), the second
-	// human turn on line 3.
-	if got := physicalLine(t, path, "the WIDGET needs work"); got != 1 {
-		t.Fatalf("the mock did not write the prompt on line 1 (found line %d)", got)
+	// The two HUMAN lines, derived from the file the mock wrote so the candidate
+	// assertions rest on the real transcript rather than a guess. The assistant's
+	// WIDGET prose sits on its own line between them and must NOT be a candidate.
+	firstHuman := physicalLine(t, path, "the WIDGET needs work")
+	secondHuman := physicalLine(t, path, "yes the WIDGET again")
+	if firstHuman == 0 || secondHuman == 0 {
+		t.Fatalf("the mock did not write both human turns (first=%d second=%d)\n%s",
+			firstHuman, secondHuman, readFile(t, path))
 	}
-	if got := physicalLine(t, path, "yes the WIDGET again"); got != 3 {
-		t.Fatalf("the mock did not write the second human turn on line 3 (found line %d)", got)
+	// The agent's prose must be present as a cite-visible assistant record (a distinct
+	// physical line), or this case would not actually exercise "cite skips the agent".
+	assistantLine := physicalLine(t, path, "I will change the WIDGET now")
+	if assistantLine == 0 {
+		t.Fatalf("run 1's Say prose is not in the transcript — the 'cite skips the assistant' "+
+			"assertion would be vacuous\n%s", readFile(t, path))
+	}
+	if assistantLine == firstHuman || assistantLine == secondHuman {
+		t.Fatalf("the assistant prose shares a line with a human turn (assistant=%d first=%d second=%d)",
+			assistantLine, firstHuman, secondHuman)
 	}
 
 	res := cite(e, proj, path, "WIDGET")
@@ -85,11 +105,22 @@ func TestT029_02_CiteAmbiguousExitsTwo(t *testing.T) {
 	}
 	lines := nonEmptyLines(res.Output)
 	if len(lines) != 2 {
-		t.Fatalf("want two candidate lines, got %d:\n%s", len(lines), res.Output)
+		t.Fatalf("want two candidate lines (the two human turns, not the assistant), got %d:\n%s",
+			len(lines), res.Output)
 	}
-	if lines[0] != fmt.Sprintf("%s:1", path) || lines[1] != fmt.Sprintf("%s:3", path) {
-		t.Fatalf("candidates = %v, want the two user lines %s:1 and %s:3 (not the assistant line 2)",
-			lines, path, path)
+	// The candidates are exactly the two HUMAN lines, in file order, and the assistant
+	// line is absent — cite returned the user's words and skipped the agent's.
+	wantA := fmt.Sprintf("%s:%d", path, min(firstHuman, secondHuman))
+	wantB := fmt.Sprintf("%s:%d", path, max(firstHuman, secondHuman))
+	if lines[0] != wantA || lines[1] != wantB {
+		t.Fatalf("candidates = %v, want the two human lines %s and %s (never the assistant line %d)",
+			lines, wantA, wantB, assistantLine)
+	}
+	for _, l := range lines {
+		if l == fmt.Sprintf("%s:%d", path, assistantLine) {
+			t.Fatalf("cite returned the assistant's line %d — it must search the user's words, not the agent's:\n%s",
+				assistantLine, res.Output)
+		}
 	}
 }
 
@@ -368,6 +399,17 @@ func nonEmptyLines(s string) []string {
 		}
 	}
 	return out
+}
+
+// readFile returns the file at path as a string, for including the transcript in a
+// failure message when a line-derivation did not find what it expected.
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("(could not read %s: %v)", path, err)
+	}
+	return string(b)
 }
 
 // physicalLine returns the 1-based physical line of the first record in the file
