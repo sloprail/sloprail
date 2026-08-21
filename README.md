@@ -71,14 +71,14 @@ Resolution, when both a project and a plugin have a rule of one name:
   write — and the shadowing is **reported**, because a project that displaced a
   rule and was never told believes it has two protections and has one;
 - a refusal from a shipped rule **names the plugin** — `("authoring-slop" from
-  plugin "sloprail")` — since the name alone would point at
-  `.sloprail/guardrails/`, where there is nothing;
+  plugin "sloprail")` — since the name alone would point at the project's own
+  `.sloprail/`, where there is nothing;
 - a consumer switches one off from their **own** side, in `.sloprail/config.yaml`,
   because `enabled: false` lives in a declaration they do not own and an edit
   inside an install cache is undone by the next reinstall:
 
       disabled:
-        - sloprail/authoring-slop
+        - sloprail/file-guard/authoring-slop
 
   The name is qualified by the plugin, so this cannot also switch off a rule of
   your own that happens to share it. It works on a shipped rule that will not
