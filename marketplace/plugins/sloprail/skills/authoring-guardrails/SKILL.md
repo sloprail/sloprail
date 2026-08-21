@@ -1,44 +1,170 @@
 ---
 name: authoring-guardrails
-description: Use when adding, fixing, or turning off a guardrail in a project that has sloprail installed — a rule under .sloprail/guardrails/ that refuses an agent's action. Covers the GUARDRAIL.md format, the hook contract, and how to prove a rule actually fires.
+description: Use when adding, fixing, or turning off a guardrail in a project that has sloprail installed — a rule under .sloprail/ that refuses an agent's action. Covers the three natures (file-guard, gate, context), their YAML, the flat event model, the check contract, and how to prove a rule actually fires.
 ---
 
 # Authoring Guardrails
 
-## Get the event vocabulary from the load check
+## A guardrail is one of three natures
 
-The kinds and their fields are per-build — they come from the modules compiled
-into the engine — so they cannot be guessed and this skill deliberately does not
-list them. A copy here would be the one you trust when the two disagree, and it
-would be the stale one.
+A rule is not "a hook on an event". It is one of three **natures**, and the
+first decision is which one — because the nature fixes the directory, the YAML
+keys, what is in scope for its match, and when it fires.
 
-Ask the engine. Bind to a kind it does not have, and the load check answers with
-every kind it does:
+- **file-guard** — judges a **file's state**. "Every file under `memories/`
+  carries frontmatter." It fires on the file, re-fires until the file is fine,
+  and by default judges the *settled* result at the end of a turn. Optionally
+  `preventive`, to also refuse the write before it lands.
+  → [file-guard.md](file-guard.md)
+
+- **gate** — a **checkpoint on an event**. "Block a write under
+  `memories/decisions/` unless `document-strategy` was loaded." "On Stop, the
+  turn must have produced the artifact it promised." It fires once on the event,
+  blocks, and is done.
+  → [gate.md](gate.md)
+
+- **context** — an **activatable scope**. "A refactor was declared; stay in
+  refactoring mode until it is finished." It activates and deactivates on
+  triggers, accumulates what it sees, and other rules `require` it or read its
+  `active`/`payload` in a match.
+  → [context.md](context.md)
+
+Pick by the shape of the question. Is it about **what a file holds** →
+file-guard. Is it about **whether an event may happen / whether a turn is done**
+→ gate. Is it a **mode that other rules depend on** → context.
+
+## Where each nature lives
+
+```
+.sloprail/file-guard/<name>/file-guard.yaml
+.sloprail/gate/<name>/gate.yaml
+.sloprail/context/<name>/context.yaml
+```
+
+One folder per rule, under the directory named for its nature. **The folder name
+IS the rule's name** — it is not repeated in a `name:` field, because a name
+recorded twice can disagree with itself. The engine appends it to every refusal,
+so it is what a user sees when the rule fires. Pick something that reads well
+there; use kebab-case.
+
+Check scripts, judge templates (`.md.j2`), prompt frames (`RUBRIC.md`) and any
+`rules/` the rule assembles sit **beside** the YAML in the same folder. A
+script's command is resolved relative to that folder, and it runs with the
+folder as its working directory. Nothing scaffolds this — create the directories
+yourself.
+
+The nature is part of a rule's fully-qualified name, `<plugin>/<nature>/<name>`,
+because a gate and a context may share a bare name. That qualified form is what a
+refusal cites and what `.sloprail/config.yaml`'s `disabled:` list names.
+
+## The event vocabulary is the engine's, not this skill's
+
+The event kinds and their fields are per-build — they come from the modules
+compiled into the engine — so this skill deliberately does not list them. A copy
+here is the one you would trust when the two disagree, and it is the one that
+goes stale.
+
+Ask the engine. The load check reports an unknown kind by naming every kind this
+build has:
 
 ```
 sr-session start < /dev/null
 ```
 
+Bind to a kind with a deliberately wrong field name and it names that kind's real
+fields, **with their types** — which is everything a match reads. Do this before
+writing, every time.
+
+What you will find (names confirmed against this build, shapes are the engine's):
+
+- **File events** — `PreFileCreate` / `PreFileUpdate` / `PreFileDelete` and
+  their `PostFile*` counterparts, about one file. `PreFileWrite` is an **alias**
+  the engine expands to `PreFileCreate` + `PreFileUpdate` (and `PostFileWrite`
+  to the two Post kinds), so one trigger covers both. Fields: `path`,
+  `newContent`, `oldContent`, `newMarkers`, `oldMarkers`, `resultKnown` — see
+  [file-guard.md](file-guard.md).
+- **`PreCommandInvoke`** — a shell command line about to run, carrying the
+  flattened `invocations` it parsed out. See [gate.md](gate.md).
+- **`PreToolUse`** — a tool call about to run.
+- **`PostTagWrite`** — `#`-tags the agent wrote this turn, carrying `tags`.
+- **`Stop`** — a work cycle ended; carries no fields.
+
+A **gate** may trigger on any pre-action kind **plus `Stop`**; a **context** may
+trigger on any pre-action kind **plus the `PostFile*` / `PostTagWrite`** kinds,
+but **not `Stop`** (a context's `exit` is always checked on Stop anyway — see
+[context.md](context.md)). A **file-guard** does not name a kind at all — it
+binds to the file lifecycle by nature.
+
+## The flat event model
+
+Every check and every match reads the event **flat**. A script gets, on stdin, a
+`CheckPayload`:
+
+```json
+{"event":{"kind":"PreFileCreate","path":"memories/a.md","newContent":"…","newMarkers":[]},
+ "transcriptPath":"/abs/…session.jsonl",
+ "context":{"some-context":{"active":true,"payload":{…}}}}
 ```
-sloprail: guardrail "probe" not loaded:
-  - event "NoSuchKind": no module produces it — this build has PreFileCreate, ...
+
+The event's own fields are **direct under `.event`** — `.event.path`,
+`.event.newContent`, `.event.kind`, `.event.resultKnown`, `.event.invocations`,
+`.event.tags`. There is **no** `.event.fields.*` nesting. Alongside the event:
+`.transcriptPath` (the session record, for reading what the event does not
+carry) and `.context` (every declared context by name, `{active, payload}`).
+
+A **match expression** reads the same facts, but the three scopes differ in
+shape — this is the one asymmetry to keep straight:
+
+- A **file-guard**'s match sees the file's own facts **bare**: `path`,
+  `markers`, `context`. `path endsWith "SKILL.md"`.
+- A **gate**'s and a **context**'s match **nest** the event under `event`:
+  `event.path`, `event.invocations`, `event.tags`, plus `context`.
+  `event.path startsWith "memories/decisions/"`.
+
+Full treatment, operators, the glob shorthand (file-guard only), and the
+fail-closed rule: [matchers.md](matchers.md).
+
+## Checks: what a rule runs to reach a verdict
+
+Under `checks:` a rule lists **checks**, run in declared order, first refusal
+ending it. A check is a **script** or a **judge**, never both:
+
+```yaml
+checks:
+  - script: ./deterministic-check.sh
+  - prepare: ./assemble-context.sh      # optional, feeds the judge
+    judge: ./is-it-good.md.j2
+    model: size-md                       # optional; a size alias or model name
+    timeout: 45s                         # optional; default 30s
 ```
 
-Then bind to the kind you want with a deliberately wrong field name, and it
-names that kind's real fields **with their types**:
+- A **script** is the deterministic half: the `CheckPayload` on stdin, and its
+  **exit code is the verdict** — `0` permits, non-zero refuses.
+- A **judge** is the model half: a Jinja2 prompt template rendered against the
+  payload (and any `additionalContext` a `prepare` script assembled), asked for a
+  `{"pass": true|false, "reasoning": "…"}` verdict.
 
-```
-  - event "PreFileCreate" binding 0: matcher "nope startsWith \"x/\"":
-    unknown name nope (1:1) — PreFileCreate carries newContent (string), newMarkers (list), path (string)
-```
+The refusal contract, the script skeleton, the judge substrate, and the
+fail-closed default: [check-scripts.md](check-scripts.md).
 
-That is the same registry the engine enforces against, reported by the same
-loader that will judge your rule, so it cannot drift from what the build does.
+## The refusal contract
 
-**Do this before writing, every time.** Two probes give you the kind list and
-the fields of the kind you picked — which is everything a matcher reads.
+A check **refuses by exiting non-zero**, and the engine finds the reason to show
+the agent in this order:
 
-## The failure this exists to prevent
+1. `{"reason":"…"}` as JSON on stdout — the preferred form
+2. plain text on stdout
+3. plain text on stderr — `echo "…" >&2; exit 1` is an ordinary refusal
+4. failing all that, a message naming the check and its exit status
+
+`exit 0` permits; print nothing, silence is consent. A check that **cannot run
+at all** — missing, not executable, an internal error, a timeout — is a
+**refusal**, deliberately: a rule that could not be checked must not read as
+approval. This is fail-closed, and it is the safe direction. Write a reason
+addressed to the agent whose action was blocked, saying what to do instead; the
+engine appends the rule's name.
+
+## The failure this skill exists to prevent
 
 A guardrail that never fires is worse than no guardrail. No guardrail is an
 absence someone can notice. A rule that loads cleanly, sits in the project
@@ -48,128 +174,6 @@ protected while it is not.
 The work is not "write a plausible declaration" — it is "write one, then prove
 it refused something."
 
-## Where a guardrail lives
-
-```
-.sloprail/guardrails/<name>/GUARDRAIL.md
-```
-
-One folder per guardrail. **The folder name IS the guardrail's name** — it is not
-repeated in the frontmatter, because a name recorded twice can disagree with
-itself. The engine appends it to every refusal, so it is what a user sees when
-the rule fires. Pick something that reads well there.
-
-No naming rule is enforced; any directory name loads. Use kebab-case anyway, for
-the reader.
-
-Hook scripts sit **beside** the declaration in the same folder. A hook's command
-is resolved relative to that folder, and the hook runs with it as its working
-directory.
-
-A judge hook's standard belongs in `RUBRIC.md` beside the declaration, which the
-hook reads via `guardrailDir`. `GUARDRAIL.md`'s body is prose about the rule —
-why it exists, what it decided — and nothing sends it to a model.
-
-Nothing scaffolds this. Create the directories yourself.
-
-## The declaration
-
-YAML frontmatter, then a Markdown body. Both halves matter.
-
-```markdown
----
-enabled: true            # optional, defaults to true
-hooks:                   # keyed by event kind
-  PreFileCreate:
-    - matcher: path startsWith "memories/"   # optional; absent means every occurrence
-      hooks:
-        - type: command
-          command: ./check.sh
----
-
-# Prose body: what the rule is and why it was written.
-```
-
-`hooks` is a map from **event kind** to a **list of bindings**. Each binding
-narrows the event with an optional matcher and names the hooks to run when it is
-admitted.
-
-Two rules under one kind are two entries in that list. Writing a binding as a
-bare mapping instead of a list item is refused at load —
-`cannot unmarshal !!map into []guardrail.Binding` — so this mistake is loud
-rather than silent. So is repeating a key: duplicates are reported by path and
-line, at any depth, and the declaration does not load.
-
-One guardrail may bind to several kinds and reuse one script across them.
-
-A matcher is an expression over the event's **own fields**, and absent means
-every occurrence. The operators, the two type groups, and why there is no glob:
-[matchers.md](matchers.md).
-
-Which kinds exist and what each one is for, per module — files
-([file-event-hooks.md](file-event-hooks.md)), commands
-([command-event-hooks.md](command-event-hooks.md)), the cycle itself
-([cycle-event-hooks.md](cycle-event-hooks.md)). Read the one your rule is about.
-
-A rule whose question spans more than one cycle — anything that records in one
-place and judges in another — keeps what it knows in per-guardrail state, and
-the scoping there is where such rules fail permissively:
-[state-management.md](state-management.md).
-
-## The hook contract
-
-```yaml
-hooks:
-  - type: command
-    command: ./check.sh some-argument
-```
-
-`type: command` is the only mechanism. The command runs through a shell, with
-the guardrail's folder as its working directory.
-
-**On stdin** the hook receives exactly one event as JSON — one, not a batch,
-because deciding which of a batch a rule applied to is the matcher's work,
-already done:
-
-```json
-{"event":{"kind":"PreFileCreate","fields":{"path":"x/a.md","newContent":"hi","newMarkers":[]}},
- "guardrailDir":"/abs/path/to/.sloprail/guardrails/<name>"}
-```
-
-The fields are the ones the load check names for that kind. Which guardrail
-this is, is not carried — the engine ran the hook and already knows.
-
-**What it writes back** is its exit status, and output explaining it:
-
-- `exit 0` — permitted. Print nothing; silence is consent.
-- non-zero — refused, whatever the hook wrote and whether or not it ran at all.
-  An internal error is therefore a refusal, which is the safe direction: a
-  broken script blocks rather than waves things through.
-
-On a refusal the engine looks for the reason in this order:
-
-1. `reason` from JSON on stdout — `{"decision":"block","reason":"..."}`
-2. plain text on stdout
-3. plain text on stderr — `echo "..." >&2; exit 1` is an ordinary way to refuse
-   and is read as one
-4. failing all that, a message naming the hook and its exit status
-
-Write a reason anyway: only the hook knows what the agent should do instead.
-Address it to the agent whose action was blocked, and say what to do rather than
-what went wrong. The engine appends the guardrail's name, so the reason itself
-is about the fix.
-
-Hooks under one binding run in **declared order**, and the first refusal stops
-the rest.
-
-**`chmod +x` the script.** One that is not executable refuses every event it is
-bound to, with a message saying so — loud rather than silent, but the rule is
-not running until it is fixed. Session start warns about this at load.
-
-Writing the script itself — the bash skeleton, why `set -e` is wrong here,
-reading stdin once, asking about the transcript, and what a judge hook does
-differently: [writing-a-hook-script.md](writing-a-hook-script.md).
-
 ## Is this rule worth writing
 
 A guardrail earns its place when all of these hold.
@@ -178,23 +182,23 @@ A guardrail earns its place when all of these hold.
 named it. A rule against something nobody does costs every session and catches
 nothing.
 
-**A machine can tell.** "Writes under `memories/decisions/` without having loaded
-`document-strategy`" is decidable. "The code is well designed" is not — unless
-you hand a rubric to a judge hook, which is what `RUBRIC.md` is for.
+**A machine can tell.** "Writes under `memories/decisions/` without having
+loaded `document-strategy`" is decidable by a script. "The change is clean and
+targeted" is not — unless you hand it to a judge, which is what a `judge` check
+and its `RUBRIC.md` are for.
 
-**Refusing is the right response.** A `Pre` kind prevents the action; a `Post`
-kind reports it after the fact and sends the agent round again. If the honest
-response is neither — "note it and move on" — a guardrail is the wrong
-instrument.
+**Refusing is the right response.** A gate, or a `preventive` file-guard,
+prevents the action. A default (after-check) file-guard, or a Stop gate, reports
+after the fact and sends the agent round again. If the honest response is neither
+— "note it and move on" — a guardrail is the wrong instrument.
 
-**The question is answerable from what the hook can reach.** That is more than
-the event's own fields: also `sr-session state` for what earlier cycles recorded
-([state-management.md](state-management.md)), `sr-session query` for the
-transcript, and the tree itself. Both resolve their scope from the environment
-the engine sets on a hook, so they answer inside one and decline outside it.
-Check them before concluding a rule is unwritable. If the answer genuinely is
-not reachable from any of them, say so — writing it anyway produces the silent
-no-op.
+**The question is answerable from what a check can reach.** That is more than the
+event's own fields: also `sr-session state` for what earlier cycles recorded
+([state-management.md](state-management.md)), `sr-session trajectory` /
+`sr-session query` for the transcript (via `.transcriptPath`), and the tree
+itself. Check them before concluding a rule is unwritable. If the answer
+genuinely is not reachable from any of them, say so — writing it anyway produces
+the silent no-op.
 
 If a rule fails any of these, say so rather than writing a weaker version.
 
@@ -206,112 +210,52 @@ Loading is not firing.
 sr-session start < /dev/null
 ```
 
-is the load check. It reports an unknown event kind, a matcher naming a field
-the kind does not carry, a binding with no hooks, a duplicate key, and a hook
-that cannot be run.
+is the load check. It reports an unknown event kind, a match naming a field the
+kind does not carry, a check that names neither a script nor a judge, a duplicate
+key, and a check script that cannot be run.
 
 What survives it and still never fires:
 
-- a matcher that is valid but true of nothing real
-- a mistyped key **inside** a list element
-- a hook whose logic permits where it meant to refuse
+- a match that is valid but true of nothing real
+- a mistyped key **inside** a list element, or a flag read off an open map
+- a check whose logic permits where it meant to refuse
 
 So cause the action the rule guards and see the refusal. If you cannot make it
 refuse, you have not written a working guardrail — you have written a file.
 
 ## Turning one off
 
-```yaml
----
-enabled: false
-hooks:
-  ...
----
-```
-
-Set `enabled: false`, and keep the folder. The body holds the reasoning that
+Keep the folder; the YAML body and the sibling prose hold the reasoning that
 produced the rule, which is exactly what someone needs when deciding whether to
-switch it back on; deleting it makes the next person rediscover both the rule
-and the argument against it. A disabled one is inert — its kinds are not even
-extracted — so it costs nothing to keep, and it is not validated, so it can be
-parked half-written.
+switch it back on.
 
-### Turning off a rule you did not write
-
-That only works for a rule in **your** `.sloprail/guardrails/`. A guardrail that
-arrived inside an installed plugin is a different case: its declaration lives in
-the plugin's installation, you do not own it, and an edit there is silently
-undone by the next reinstall — so `enabled: false` is the wrong tool and would
-appear to work until an upgrade.
-
-Switch it off from your own side instead, in `.sloprail/config.yaml`:
+For a rule in **your own** `.sloprail/`, disable it at its source — see each
+nature's doc for the exact key. For a rule that **arrived inside an installed
+plugin**, editing the plugin's copy is undone by the next reinstall; switch it
+off from your side instead, in `.sloprail/config.yaml`:
 
 ```yaml
 disabled:
   - sloprail/file-guard/authoring-slop
 ```
 
-The name is `<plugin>/<nature>/<name>`, which is exactly what the refusal cites. A
-refusal from a shipped rule reads
+The name is `<plugin>/<nature>/<name>`, exactly what the refusal cites. The
+nature is part of the key because a gate and a context may share a name:
+`disabled: [sloprail/file-guard/authoring-slop]` switches off the plugin's
+file-guard and leaves a file-guard of your own called `authoring-slop` in force.
 
-    ... ("authoring-slop" from plugin "sloprail")
-
-so the plugin part of the name is what tells you the rule is not in your tree,
-and the file to look for is under that plugin's installation (its own
-`.sloprail/file-guard/authoring-slop/`) rather than under your project's
-`.sloprail/`.
-
-The qualification matters: `disabled: [sloprail/file-guard/authoring-slop]`
-switches off the plugin's rule and leaves a file-guard of your own called
-`authoring-slop` in force. They are different rules with different authors, and
-the nature is part of the key because a gate and a context may share a name.
-
-This also works on a shipped rule that will not load. A broken declaration
+This also works on a shipped rule that will not **load**. A broken declaration
 refuses every action it was bound to — deliberately, since a rule that cannot be
 checked must not read as approval — and when it is a plugin's you cannot fix the
 file. Naming it here is the way out that does not mean uninstalling the plugin.
 
-## Remembering across cycles
+## The cross-cutting references
 
-`sr-session state get|set|list` is a per-guardrail key-value store that survives
-between cycles of one session. It resolves its own scope from `SR_GUARDRAIL`,
-`SR_SESSION_ID` and `SR_WORKSPACE`, all three set by the engine on every hook it
-runs — so a hook calls it with no arguments beyond the key.
-
-```sh
-prev=$(sr-session state get seen 2>/dev/null || echo 0)
-sr-session state set seen "$((prev + 1))"
-```
-
-Scoped to the guardrail, so two rules cannot collide on a key name, and to the
-session, so one session's memory is not another's. Outside a hook there is no
-guardrail in scope and it says so rather than guessing.
-
-## Post kinds
-
-The kinds whose names begin `Post`, and the one about the cycle itself, are
-dispatched at the end of a cycle from the `Stop` and `SubagentStop` hook points.
-They arrive with the cycle's actual changes, established by diffing the tree
-against the baseline taken at `SessionStart`. The load check names them among
-the kinds this build produces; they are not restated here, because a copy of
-that list is what an author would trust after a module is added and it is the
-copy that goes stale.
-
-The difference from a `Pre` kind is what a refusal means. A `Pre` kind runs
-before the action and prevents it. A `Post` kind runs after, so the change is
-already on disk — refusing does not undo it, it tells the agent the cycle is not
-finished and it must fix what it did. That makes `Post` the right kind for a
-rule about the *result* of a turn ("every new file under `memories/` has
-frontmatter") and the wrong one for a rule about permission to act at all.
-
-The cycle kind carries no fields at all. It fires once per cycle regardless of
-what changed, which is what a rule about the turn as a whole wants — but it
-means such a rule has to establish its own subject, usually by asking
-`sr-session query` about the transcript, or by having per-file rules record
-what they saw into `sr-session state` for it to read.
-
-A `Post` refusal is reported to the agent as a blocking error on the cycle, and
-the cycle's read mark does not advance — so the next `Stop` judges the same span
-again, and a rule that stays unsatisfied stays reported rather than scrolling
-away. Revalidation keeps this from re-judging content that has not changed: a
-file already judged against the same fingerprint is skipped.
+- [matchers.md](matchers.md) — the `match:` expression language, the three
+  scopes, the glob shorthand, and the fail-closed rule.
+- [state-management.md](state-management.md) — `sr-session state` across cycles,
+  the `--owner` cross-guardrail read a gate uses to read a context's registry,
+  and the turn-scoping trap.
+- [check-scripts.md](check-scripts.md) — the shell-level detail of a check: the
+  skeleton, reading the flat event off stdin, script vs judge, and the
+  fail-closed default.
