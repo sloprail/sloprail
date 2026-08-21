@@ -947,6 +947,28 @@ func (e *Env) Gate(projDir, name, gateYAML string, files map[string]string) {
 	}
 }
 
+// FileGuardLedger reads the ledger a project's own file-guard check appended to,
+// inside the guard's folder under the project (`.sloprail/file-guard/<name>/`),
+// counting how many times the check was asked. Absent means it never ran. The
+// project-side analogue of PluginFileGuardLedger.
+func (e *Env) FileGuardLedger(projDir, name, ledgerFile string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "file-guard", name, ledgerFile))
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read file-guard ledger %s: %v", name, err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
+}
+
 // StructureGate writes the NEW-FORMAT structure gate — one tree-wide path
 // allowlist — at `.sloprail/file-guard/structure.yaml`.
 //

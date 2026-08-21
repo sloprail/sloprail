@@ -1,0 +1,45 @@
+# No slop in the guardrails themselves — refuses a guardrail HOOK SCRIPT that
+# carries a shape measured to make a rule silently inert. It loads, it validates,
+# it sits in the project looking enforced, and it admits everything: the sharpest
+# version of the problem sloprail exists to catch, applied to sloprail's own
+# artifacts. The full argument — why a matcher and not a judge, the four shapes it
+# refuses, why each was found by measurement rather than review — lives in the
+# sibling README.md, migrated from the old GUARDRAIL.md prose, and in check-rules.sh's
+# own comments. The four shapes are one rules/<name>/RULE.md each.
+#
+# match: a NEW-FORMAT guardrail's hook script, retargeted from the old
+# `path contains ".sloprail/guardrails/" && path endsWith ".sh"`. A new-format
+# guardrail's script no longer lives under `.sloprail/guardrails/` — that path is
+# the OLD format's, which a later PR deletes. Each new-format nature keeps its
+# scripts under `.sloprail/<nature>/<name>/<script>.sh`, so the three nature
+# directories are the retarget of the single old prefix. A file-guard matches a
+# FILE'S STATE (FileMatchScope: flat `path`, `markers`, `context`), so the
+# expression reads `path`, NOT `event.path` (that nested form is a gate's scope).
+# The `contains`/`or`/`endsWith` operators are expr-lang builtins the file-guard
+# matcher already compiles (see internal/guardrail/matcher.go; `newContent contains`
+# and `path endsWith` are both exercised in matcher_test.go). Whitespace and quotes
+# route this to the expression parser, not the glob shorthand (CompileFileMatch's
+# looksLikeGlob).
+#
+# Scoped to `.sh` under the three nature dirs, and ONLY those: it judges how a
+# guardrail's hook is written, never the rules a project writes. A prompt file
+# (RUBRIC.md) or a RULE.md under those same dirs is not a `.sh` and is not this
+# guard's business — what a guardrail should enforce is the project's, whether the
+# enforcement can fire at all is sloprail's.
+match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and path endsWith ".sh"
+
+# preventive: true reproduces the old format's binding, which was Pre-only
+# (PreFileCreate + PreFileUpdate) — block a slop hook BEFORE it lands, "the useful
+# moment". A preventive file-guard fires on the PRE write to refuse there, AND,
+# like every guard, fires the after-check at Stop on the SETTLED file. Keeping the
+# Pre-prevention is the whole point of the old rule; the Stop after-check is a
+# free backstop the old Pre-only binding lacked — a command/sed/git edit whose
+# result the engine cannot derive reaches the Pre stage unverifiable, where a
+# preventive guard fails CLOSED engine-side (before this script runs) and the
+# settled file is judged at Stop instead. check-rules.sh handles both moments:
+# it dispatches on `.event.kind`, reading the PENDING bytes from the event on a
+# Pre kind and the SETTLED bytes from disk on a Post kind.
+preventive: true
+
+checks:
+  - script: ./check-rules.sh

@@ -1,11 +1,14 @@
 #!/bin/sh
-# Refuses a guardrail hook script that carries a shape measured to make a rule
-# silently inert.
+# Refuses a guardrail HOOK SCRIPT that carries a shape measured to make a rule
+# silently inert. This is a file-guard's check (new format): it receives a
+# CheckPayload on stdin and its cwd is the guard's own folder, so rules/ and the
+# RULE.md files resolve beside it.
 #
-# Only the rules marked `enforced: true` in rules/<name>/RULE.md are checked
-# here. A rule
-# that needs judgement is documented and not enforced — a check that fires on
-# taste gets switched off, and then the decidable ones go with it.
+# Only the shapes recorded as `enforced: true` in rules/<name>/RULE.md are
+# checked here — each is one deterministic grep below. A rule that needs
+# judgement is documented and left un-enforced (its RULE.md carries no grep): a
+# check that fires on taste gets switched off, and then the decidable ones go
+# with it.
 #
 # Exit 0 permits, non-zero refuses.
 
@@ -35,13 +38,18 @@ not on PATH.
 
 The action was refused because a guardrail that cannot run must not be read as
 approval. This is the plugin's dependency, not your project's mistake: install
-jq, or switch this rule off by adding `disabled: [sloprail/authoring-slop]` to
-.sloprail/config.yaml.
+jq, or switch this rule off by adding `disabled: [sloprail/file-guard/authoring-slop]`
+to .sloprail/config.yaml.
 MISSING
   exit 1
 }
 
-path="$(printf '%s' "$event" | jq -r '.event.fields.path // empty' 2>/dev/null)"
+# The new-format CheckPayload carries the event FLAT under `event`: the file's
+# own facts are direct fields (`.event.path`, `.event.newContent`, `.event.kind`,
+# `.event.resultKnown`), NOT nested under `.event.fields.*` the way the old
+# {kind, fields} envelope was. See internal/declaration/payload.go (FlatEvent)
+# and internal/dispatch/checks.go (checkPayloadJSON).
+path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
 [ -n "$path" ] || {
   echo "authoring-slop: the event named no path" >&2
   exit 1
@@ -49,12 +57,27 @@ path="$(printf '%s' "$event" | jq -r '.event.fields.path // empty' 2>/dev/null)"
 
 # The bytes to judge.
 #
-# On a create the event carries them as `newContent`, because the file is not on
-# disk yet. On an update `newContent` is only present when derivable, so the disk
-# is the source and it holds the pre-edit content. That is the honest limit and
-# it is rule 2 applying to this rule: what cannot be predicted is read after the
-# fact, and a hook edited into slop is caught on the next create or by review.
-body="$(printf '%s' "$event" | jq -r '.event.fields.newContent // empty' 2>/dev/null)"
+# This file-guard is `preventive: true`, so it fires at BOTH moments the old
+# Pre-only binding did not span alone: the PRE write (to refuse before the bytes
+# land) and the after-check at Stop (on the settled file). The event's kind tells
+# them apart, and `newContent`/disk is chosen accordingly.
+#
+# On a create the event carries the bytes as `newContent`, because the file is
+# not on disk yet. On an update `newContent` is present only when the result is
+# derivable — `resultKnown` is the flag that says so — and an underivable
+# PreFileUpdate never reaches this script anyway: for a preventive guard the
+# engine ALREADY fails CLOSED on it before the check runs (see
+# services/sr-session/nature_fileguard.go isUnderivablePreWrite) and re-judges
+# the settled file at Stop. At Stop the bytes ARE on disk, so a Post kind reads
+# there. The "newContent, else disk" fallback below covers all three: Pre with
+# derivable content reads newContent; Post reads disk; and the honest limit of
+# rule 2 — what cannot be predicted is read after the fact — is preserved, a hook
+# edited into slop by an underivable write being caught at Stop or on the next
+# create.
+#
+# All fields read FLAT under `.event`, the new CheckPayload shape — not
+# `.event.fields.*`.
+body="$(printf '%s' "$event" | jq -r '.event.newContent // empty' 2>/dev/null)"
 if [ -z "$body" ]; then
   abs="${SR_WORKSPACE:-.}/$path"
   [ -f "$abs" ] || exit 0
@@ -91,9 +114,17 @@ fi
 # is the slop this catches. (On PreFileCreate `newContent` is always present, so
 # a create-only hook needs no resultKnown; the heuristic cannot tell the two
 # kinds apart by grep and errs toward flagging, which the guidance below owns.)
-if printf '%s' "$body" | grep -q 'fields\.newContent' 2>/dev/null &&
+#
+# The SIGNATURE tracks the format of the scripts this guard now covers. The
+# scripts under `.sloprail/{file-guard,gate,context}/` are NEW format and read
+# the field FLAT as `.event.newContent` (the old `.event.fields.newContent` was
+# the OLD envelope's form). So the match is on `newContent` — the field name that
+# survives both spellings — rather than the old literal `fields.newContent`,
+# which a new-format script never contains and which would let exactly this slop
+# through untouched.
+if printf '%s' "$body" | grep -q 'newContent' 2>/dev/null &&
    ! printf '%s' "$body" | grep -q 'resultKnown' 2>/dev/null; then
-  note "rules/content-may-be-unresolvable — reads .event.fields.newContent without .resultKnown.
+  note "rules/content-may-be-unresolvable — reads .event.newContent without .resultKnown.
     On a PreFileUpdate an absent newContent reads as \"\", which is
     indistinguishable from a write that empties the file. Check resultKnown
     first, and say in the body what the rule does when the result cannot be
@@ -109,7 +140,7 @@ fi
 # TWO NARROWINGS, both measured against the five live guardrails in the repo
 # this plugin was written for, where this rule refused THREE and was wrong about
 # all three. Both failures were in the refusing direction, which is the one that
-# makes a consumer switch a plugin rule off — see the note in GUARDRAIL.md.
+# makes a consumer switch a plugin rule off — see the note in README.md.
 #
 # 1. INVOCATION, not the word. The test was `\bclaude\b` over the whole file,
 #    which matches prose. Two scripts that never call a model were refused:
@@ -160,8 +191,9 @@ inert — it would load, validate, and admit everything.
 $findings
 Each names the rule file beside this hook that explains it and records the
 measurement behind it.
-Fix the shape, or if this one is a deliberate exception, say so in the rule's
-own GUARDRAIL.md body — a documented override is a decision; an undocumented
-one is the slop this rule exists to catch.
+Fix the shape, or if this one is a deliberate exception, say so in the judged
+guardrail's own prose (its README.md, or a comment in its file-guard.yaml) — a
+documented override is a decision; an undocumented one is the slop this rule
+exists to catch.
 EOF
 exit 1
