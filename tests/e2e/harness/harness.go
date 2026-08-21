@@ -82,6 +82,15 @@ type Env struct {
 	// parentless-root the identity walk needs — so the preamble has to be written
 	// ahead of that same record, in the same place. Empty for the ordinary session.
 	preambleLines []string
+
+	// seenSessions records which session ids this Env has already driven a Run for, so
+	// a REPEAT Run on the same id is driven as a --resume rather than a second fresh
+	// --session-id. The mock treats --session-id as a NEW session and drops the prompt
+	// when the transcript is already non-empty (which a repeat Run's is); --resume makes
+	// it APPEND the prompt as a continuation human turn instead. This is what lets a test
+	// build a genuine multi-human-turn transcript by Running the same session id twice.
+	// Keyed by sessionID; the value is unused (presence is the fact).
+	seenSessions map[string]bool
 }
 
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent
@@ -211,13 +220,14 @@ func New(t *testing.T) *Env {
 	t.Cleanup(func() { os.RemoveAll(root) })
 
 	e := &Env{
-		t:         t,
-		binDir:    build(t),
-		home:      filepath.Join(root, "home"),
-		configDir: filepath.Join(root, "claude-cfg"),
-		pluginDir: filepath.Join(root, "plugins"),
-		repoRoot:  repoRoot(t),
-		mock:      mock,
+		t:            t,
+		binDir:       build(t),
+		home:         filepath.Join(root, "home"),
+		configDir:    filepath.Join(root, "claude-cfg"),
+		pluginDir:    filepath.Join(root, "plugins"),
+		repoRoot:     repoRoot(t),
+		mock:         mock,
+		seenSessions: map[string]bool{},
 	}
 	for _, d := range []string{e.home, e.configDir, e.pluginDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -1925,17 +1935,36 @@ func (e *Env) RunReal(projDir, prompt string) Result {
 func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result {
 	e.t.Helper()
 
-	// Seeded where the MOCK will write it, which is keyed on the directory the
-	// session reports rather than on the repository root. See RunFrom: seeding
-	// elsewhere leaves the mock's own record without a parentless root, and the
-	// identity walk then keys the session on a tool_use uuid.
-	e.seedTranscript(workDir, sessionID, prompt)
+	// A REPEAT Run on the same session id is a CONTINUATION: the transcript already
+	// exists, so the mock must be driven as a --resume (which APPENDS this prompt as a
+	// new human turn) rather than a second --session-id (which the mock treats as a new
+	// session and, against a non-empty transcript, drops the prompt). The first Run for a
+	// session id seeds the transcript and uses --session-id as before; a subsequent Run
+	// re-seeds nothing (the mock appends the prompt itself) and uses --resume. This is
+	// what lets a test build a genuine multi-human-turn transcript by Running twice.
+	resume := e.seenSessions[sessionID]
+	if !resume {
+		// Seeded where the MOCK will write it, which is keyed on the directory the
+		// session reports rather than on the repository root. See RunFrom: seeding
+		// elsewhere leaves the mock's own record without a parentless root, and the
+		// identity walk then keys the session on a tool_use uuid.
+		e.seedTranscript(workDir, sessionID, prompt)
+		e.seenSessions[sessionID] = true
+	}
 
 	scriptPath := filepath.Join(projDir, ".scenario.sh")
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
 		e.t.Fatalf("harness: write scenario: %v", err)
 	}
 
+	// The session flag differs by whether this id has been Run before: --session-id for
+	// the first (new session), --resume for a repeat (continuation). Everything else —
+	// --script, --project-dir, --config-dir, --plugin-cache-dir, the prompt, the env — is
+	// identical between the two.
+	sessionFlag := "--session-id"
+	if resume {
+		sessionFlag = "--resume"
+	}
 	cmd := exec.Command(e.mock,
 		"-p", "--output-format", "stream-json",
 		"--script", scriptPath,
@@ -1944,7 +1973,7 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 		"--project-dir", workDir,
 		"--config-dir", e.configDir,
 		"--plugin-cache-dir", e.pluginDir,
-		"--session-id", sessionID,
+		sessionFlag, sessionID,
 		prompt,
 	)
 	cmd.Dir = workDir
