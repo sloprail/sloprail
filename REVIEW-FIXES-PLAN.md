@@ -64,3 +64,23 @@ Base: draft/fileguard-format @ dce258f. All grounded in EMPIRICAL checks + curre
 - Q "routed through claude mock binary not dummy .sh?": YES = item C.
 - Q "how EnvelopeAt works now?": built (envelope.go:72) but UNCONSUMED; pr-judge-check wires it into
   no-unasked-deletion's judge prepare.
+
+## SAFETY REGRESSION — new dispatch fails OPEN on a match-EVAL error (found via re-vehicling session/027; agent ac8be7ca fixing)
+
+VERIFIED in code, not a test artifact. A match expr that COMPILES at load but ERRORS at EVALUATION
+must fail CLOSED (refuse the events the rule was bound to). OLD behavior: guardrail/matcher.go:121
+("pre-tool path REFUSES") + :186 ("caller REFUSES"). Spec: entries.tsp:54 "quietly fail to match, it
+fails." NEW nature dispatch regressed to fail OPEN (Fprintf stderr + continue = silently SKIP guard).
+A broken/adversarial match silently DISABLES a guardrail. Four fail-open sites, all being fixed:
+  1. nature_fileguard.go ~122-126 (preventive/pre): fileGuardSelects err -> continue. FIX: return refusal.
+  2. nature_fileguard.go ~244-248 (after/post): same -> continue. FIX: append fileGuardResult refusal (blocking err at Stop).
+  3. nature_dispatch.go firstMatchingEvent ~417-426 (gate): m.Match err -> continue. FIX: thread err out (helper returns (event,bool) — must add error), caller -> gate refusal.
+  4. nature_context.go contextMatchingEvents ~341-345: m.Match err -> continue. Context has NO refusal channel; documented decision (does not activate), not silent.
+Also FIX the misleading comments that justify the fail-open (e.g. the firstMatchingEvent block comment).
+The two suites that PIN this are OLD-format and being re-vehicled by the same agent:
+  - pre_tool/014_matcher_error_never_fails_open (T014_01..08): pre path = GATE; T014_01 uses
+    any(invocations, len(.flags.access)>0) (errors: commandmod invocations = TypeList nil Elem).
+  - session/027_post_matcher_error (T027_01..04): T027_02's comment IS the ruling — Post side must now
+    REFUSE (blocking err names guard + quotes int(path)). Post file event = FILE-GUARD after-check.
+Recorded as Task #8. (The earlier attempt to append this via bash heredoc failed on an unescaped paren
+`int(event.path)>0` — "parse error near ')'"; this Edit is the durable record.)
