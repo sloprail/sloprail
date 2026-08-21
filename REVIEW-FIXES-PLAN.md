@@ -84,3 +84,25 @@ The two suites that PIN this are OLD-format and being re-vehicled by the same ag
     REFUSE (blocking err names guard + quotes int(path)). Post file event = FILE-GUARD after-check.
 Recorded as Task #8. (The earlier attempt to append this via bash heredoc failed on an unescaped paren
 `int(event.path)>0` — "parse error near ')'"; this Edit is the durable record.)
+
+## TWO MORE ENGINE GAPS found by pre_tool B (Tasks #10, #11) — also block deleting old dispatch
+
+#10 SLOPRAIL_LAUNCHED_BY: the NEW check-runner (internal/dispatch/exec.go) NEVER sets LaunchedByEnv on
+the check's child env — only the OLD hook path does (services/sr-session/hookenv.go appendLaunchedBy). New
+dispatch only READS it (isLaunchedBy). So a new-format guard whose check spawns sr-agent RE-ENTERS itself
+(runaway to depth 8 — the exact recursion pre_tool/015_no_reentry pins). FIX: new exec sets
+SLOPRAIL_LAUNCHED_BY=<guard-name> on the child env. THEN re-vehicle pre_tool/015 (5 files).
+#11 killedBySignal (narrow): internal/dispatch/exec.go scriptRefusalReason has no killed-by-signal branch —
+a signal-crashed check says "exit -1, no reason" instead of "killed". STILL refuses (safe); only the message
+regresses. Just 019 T019_09e left un-re-vehicled. #10 and #11 are BOTH in exec.go → one combined slice
+(after matcher-fix agent ac8be7ca, which may also read exec.go, finishes).
+
+## RE-VEHICLE STATUS (all 4 cluster agents DONE + independently verified green under CI env)
+session 17/18, pre_tool A 13/13, pre_tool B 8 (016-021,028,029), revalidation+subagent 9/10. Branch
+wave3/revehicle-shared-e2e builds+vets clean as a union; sampled dirs from each pass env -u CLAUDECODE.
+AUTHORITATIVE remaining old-format callers (12 files/6 dirs): 014+027 (matcher-fix, in flight) ·
+015 5 files (#10 blocks) · subagent/014 (un-migratable → DELETE) · authoring/003 2 files + pre_tool/008
+T008_03b + session/006 test_006_01 (unassigned stragglers → agent a193fe68 in flight).
+CITE-MERGE NOTE: branch already has an EARLIER cite-cleanup 6d4a58b (D1 Grounding->EnvelopeAt, D2 subagent
+no-path fail-closed via IsSubagentTranscript). The NEW cite auto-resolve (c50da94) REMOVED failClosedNoPath
+but the report says the IsSubagentTranscript subagent guard is preserved — verify they COMPOSE at merge.
