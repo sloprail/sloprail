@@ -23,11 +23,15 @@ input="$(cat)"
 # authoring-slop rule content-may-be-unresolvable for why.
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
 case "$kind" in
-  PreFileCreate|PostFileCreate|PostFileUpdate)
-    # Create carries the new body; Post carries the settled body. Always present.
+  PostFileCreate|PostFileUpdate)
+    # Post carries the settled body — always present and derivable.
     new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
-  PreFileUpdate)
+  PreFileCreate|PreFileUpdate)
+    # resultKnown can be false on a create AS WELL AS an update — a NotebookEdit
+    # creating a fresh .ipynb emits a PreFileCreate whose bytes are NOT derivable
+    # (its cell source is not the document), and a command-derived edit does the
+    # same on update. So an absent newContent here must not be read as "empty".
     known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
     if [ "$known" != "true" ]; then
       # Result not derivable ahead of the write: defer to the Post kind, which

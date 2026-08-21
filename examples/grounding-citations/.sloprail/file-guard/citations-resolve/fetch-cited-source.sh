@@ -27,10 +27,12 @@ input="$(cat)"
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
 new=""
 case "$kind" in
-  PreFileCreate|PostFileCreate|PostFileUpdate)
+  PostFileCreate|PostFileUpdate)
     new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
-  PreFileUpdate)
+  PreFileCreate|PreFileUpdate)
+    # resultKnown can be false on a create AS WELL AS an update (a NotebookEdit
+    # fresh .ipynb PreFileCreate, or a command-derived edit) — so gate BOTH on it.
     known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
     if [ "$known" = "true" ]; then
       new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
