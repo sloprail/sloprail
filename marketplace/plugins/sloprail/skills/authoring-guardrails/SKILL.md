@@ -98,12 +98,12 @@ binds to the file lifecycle by nature.
 ## The flat event model
 
 Every check and every match reads the event **flat**. A script gets, on stdin, a
-check payload whose event's own fields are **direct under `.event`** —
+`CheckPayload` whose event's own fields are **direct under `.event`** —
 `.event.path`, `.event.newContent`, `.event.kind`, `.event.resultKnown`,
-`.event.invocations`, `.event.tags`. There is **no** `.event.fields.*` nesting.
-Alongside the event: `.transcriptPath` (the session record, for reading what the
-event does not carry) and `.context` (every declared context by name,
-`{active, payload}`).
+`.event.invocations`, `.event.tags`. There is **no** `.event.fields.*` nesting,
+and no `guardrailDir` field. Alongside the event, the `CheckPayload` carries
+`.transcriptPath` (the session record, for reading what the event does not carry)
+and `.context` (every declared context by name, `{active, payload}`).
 
 ```json
 {"event":{"kind":"PreFileCreate","path":"memories/a.md","newContent":"…","newMarkers":[]},

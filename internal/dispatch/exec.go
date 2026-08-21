@@ -54,6 +54,12 @@ const (
 	exitNotFound      = 127
 )
 
+// maxSignalNumber bounds the 128+signum exit-code convention a shell uses to
+// report a signalled child: an exit code in (128, 128+maxSignalNumber] names the
+// signal that killed the work. 64 spans the POSIX signals and Linux real-time
+// signals, without a platform-specific SIGRTMAX (which darwin does not define).
+const maxSignalNumber = 64
+
 // scriptCall is one script/prepare execution: the guard's folder, the script's
 // path (relative to it), the payload for stdin, and the session facts a script
 // needs in its environment (the guard's name, the workspace, the session id, the
@@ -300,10 +306,29 @@ func runShell(dir, command string, stdin []byte, env []string, timeout time.Dura
 		// -1 for a signalled death and drops which signal it was, so the caller
 		// could otherwise only say "exit -1, no reason". WaitStatus.Signal() gives
 		// the actual signal; it is left 0 for an ordinary non-zero exit.
+		//
+		// TWO shapes, because a signal can reach the direct child OR a shell's own
+		// grandchild:
+		//  1. THE SHELL ITSELF was signalled (`Signaled()` true) — macOS `sh -c`
+		//     execs the single command, so `kill -9 $$` kills the process Wait
+		//     watches. Read the signal straight off the wait status.
+		//  2. THE SHELL EXITED CLEANLY reporting a signalled child (code >= 128) —
+		//     Linux `sh -c "./x"` FORKS `./x`, so `kill -9 $$` in the script kills
+		//     the FORKED child; the outer shell then exits NORMALLY with 128+signum
+		//     (the POSIX convention). `Signaled()` is false, but the exit code still
+		//     names the signal that killed the work. Without this the caller falls
+		//     back to the shell's bare "Killed" stderr and loses the signal number —
+		//     exactly the macOS/Linux split T036 catches.
+		code := exitErr.ExitCode()
 		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 			signal = ws.Signal()
+		} else if code > 128 && code <= 128+maxSignalNumber {
+			// The 128+signum convention: the low bits above 128 are the signal that
+			// killed the work. 64 covers POSIX signals plus Linux real-time signals
+			// without depending on a platform-specific SIGRTMAX (absent on darwin).
+			signal = syscall.Signal(code - 128)
 		}
-		return stdout, stderr, exitErr.ExitCode(), false, signal, nil
+		return stdout, stderr, code, false, signal, nil
 	}
 	// Not an ExitError: the process could not be started at all.
 	return stdout, stderr, -1, false, 0, err

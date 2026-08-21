@@ -154,6 +154,9 @@ func messageText(raw json.RawMessage) []string {
 	// content as a bare string: the ordinary typed message.
 	var s string
 	if json.Unmarshal(msg.Content, &s) == nil {
+		if harnessInjected(s) {
+			return nil
+		}
 		return []string{s}
 	}
 	// content as a list of blocks: keep the text of the text blocks, and the
@@ -166,18 +169,51 @@ func messageText(raw json.RawMessage) []string {
 	for _, b := range blocks {
 		var bs string
 		if json.Unmarshal(b, &bs) == nil {
-			out = append(out, bs)
+			if !harnessInjected(bs) {
+				out = append(out, bs)
+			}
 			continue
 		}
 		var blk userContentBlock
 		if json.Unmarshal(b, &blk) != nil {
 			continue
 		}
-		if blk.Type == "text" && blk.Text != "" {
+		if blk.Type == "text" && blk.Text != "" && !harnessInjected(blk.Text) {
 			out = append(out, blk.Text)
 		}
 	}
 	return out
+}
+
+// harnessInjected reports whether a user-role message's text was written by the
+// HARNESS, not typed by the person — so it must never be cited as the user's own
+// words. These arrive on `user` entries with plain string content, the same shape
+// a real typed message has, which is why cite has to tell them apart by content.
+//
+// Claude Code injects several such messages: a background <task-notification>
+// (and its "[SYSTEM NOTIFICATION - NOT USER INPUT]" preamble), a <system-reminder>,
+// and the slash-command envelope a <command-name>/<command-message>/<command-args>
+// or <local-command...> carries. A written claim grounded on any of these is
+// grounded on something the user never said — the exact false citation cite
+// exists not to mint (it already excludes tool_result output for the same reason).
+// The AskUserQuestion answer envelope is NOT here: that is genuinely the user's
+// selected words and is searched via answerText.
+func harnessInjected(text string) bool {
+	t := strings.TrimSpace(text)
+	for _, marker := range []string{
+		"<task-notification>",
+		"[SYSTEM NOTIFICATION - NOT USER INPUT]",
+		"<system-reminder>",
+		"<local-command",
+		"<command-name>",
+		"<command-message>",
+		"<command-args>",
+	} {
+		if strings.HasPrefix(t, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // answerPrefix is what a harness writes at the head of an AskUserQuestion answer

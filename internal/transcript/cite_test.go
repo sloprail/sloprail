@@ -219,6 +219,29 @@ func TestCiteNoMatch(t *testing.T) {
 	assert.Empty(t, matches, "a quote only in the agent's own output is not citable")
 }
 
+// TestCiteExcludesHarnessInjectedUserMessages: a quote that appears only in a
+// harness-injected user-role message — a <task-notification>, a <system-reminder>,
+// or a slash-command envelope — is NOT citable. These arrive as `user` entries
+// with plain string content (the same shape a typed message has) but are not the
+// person's own words, so grounding a claim on them would be a false citation, the
+// same as citing the agent's own output.
+func TestCiteExcludesHarnessInjectedUserMessages(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "<system-reminder>\nremember to POLICYWORD before ending\n</system-reminder>"),
+		userMsg("u2", "[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>POLICYWORD done</task-notification>"),
+		userMsg("u3", "<command-name>/POLICYWORD</command-name>"),
+		userMsg("u4", "please handle the POLICYWORD task"), // the ONLY genuine user line
+	)
+
+	matches, err := Cite(path, "POLICYWORD")
+	require.NoError(t, err)
+	// Only the real typed message (u4, physical line 4) is a candidate — the three
+	// harness-injected messages carrying the same word are excluded.
+	require.Len(t, matches, 1, "only the genuinely typed user message is citable")
+	assert.Equal(t, 4, matches[0].Line)
+}
+
 // TestCiteMatchesAnAnswer: a quote landing on an AskUserQuestion answer resolves
 // to the user entry carrying that answer envelope.
 func TestCiteMatchesAnAnswer(t *testing.T) {
