@@ -168,17 +168,25 @@ func TestT028_04_DescribeDefaultsToPayloadTranscript(t *testing.T) {
 	}
 }
 
-// T028_05: with neither --path nor a transcript on the payload, describe refuses
-// rather than answering about nothing.
+// T028_05: with no --path, no transcript on the payload, and no session id in the
+// environment, describe refuses rather than answering about nothing.
 //
 // "No trajectory to read" is a refusal, exit non-zero — not an empty description
 // that a script might read as "a root with no sub-agents". The message names the
-// two ways to supply one. No transcript is needed to exercise the refusal.
+// ways to supply one. No transcript is needed to exercise the refusal.
+//
+// CLAUDE_CODE_SESSION_ID is cleared because describe shares cite's environment
+// fallback (resolveTrajectory): a session id in the environment would resolve the
+// current session, so "no trajectory" means no --path, no payload AND no session id.
+// A developer runs this suite inside a real session whose own CLAUDE_CODE_SESSION_ID
+// is on os.Environ(), so the empty assignment wins over it and the test means the
+// same thing locally and in CI.
 func TestT028_05_DescribeWithNoTrajectoryRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 
-	res := e.CLIDirectStdin(proj, `{}`, "sr-session", "trajectory", "describe")
+	res := e.CLIDirectStdinEnv(proj, `{}`, []string{"CLAUDE_CODE_SESSION_ID="},
+		"sr-session", "trajectory", "describe")
 	if res.Code == 0 {
 		t.Fatalf("describe with no trajectory exited 0, want non-zero:\n%s", res.Output)
 	}

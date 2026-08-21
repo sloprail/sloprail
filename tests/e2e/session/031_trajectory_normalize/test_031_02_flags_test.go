@@ -164,18 +164,26 @@ func TestT031_08_ARefusableKindIsRefused(t *testing.T) {
 	}
 }
 
-// T031_10: normalize refuses when no trajectory can be resolved — no --path and no
-// transcript on the payload.
+// T031_10: normalize refuses when no trajectory can be resolved — no --path, no
+// transcript on the payload, and no session id in the environment.
 //
 // A resolvable trajectory that is simply empty is a different thing (it prints
 // []); this is the case where there is nothing to read at all, which is a refusal
 // on stderr rather than an empty success.
+//
+// CLAUDE_CODE_SESSION_ID is cleared because normalize shares cite's environment
+// fallback (resolveTrajectory): a session id in the environment would resolve the
+// current session, so "no trajectory" means no --path, no payload AND no session id.
+// A developer runs this suite inside a real session whose own CLAUDE_CODE_SESSION_ID
+// is on os.Environ(), so the empty assignment wins over it and the test holds locally
+// and in CI alike.
 func TestT031_10_NoTrajectoryIsRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 
-	// No path, no payload record.
-	res := e.CLIDirectStdin(proj, `{}`, "sr-session", "trajectory", "normalize")
+	// No path, no payload record, no session id.
+	res := e.CLIDirectStdinEnv(proj, `{}`, []string{"CLAUDE_CODE_SESSION_ID="},
+		"sr-session", "trajectory", "normalize")
 	if res.Code == 0 {
 		t.Fatalf("normalize with no trajectory exited 0, want non-zero:\n%s", res.Output)
 	}

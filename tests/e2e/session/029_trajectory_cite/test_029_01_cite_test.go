@@ -289,14 +289,21 @@ func TestT029_08_CiteAnswerWithInnerQuoteInMultiQuestion(t *testing.T) {
 	}
 }
 
-// T029_06: cite defaults to the payload's transcript when --path is absent, and
-// with no path and no payload it refuses.
+// T029_06: cite defaults to the payload's transcript_path when --path is absent,
+// and with no path, no payload and no session id it refuses.
 //
-// The default-resolution wiring, and the refusal when there is nothing to search.
-// A resolved-but-empty search is exit 1 (no match); a trajectory that could not
-// be resolved at all is a refusal on stderr, a different failure a script must
-// not read as "the quote is not there". The default half reads a mock-produced
+// The default-resolution wiring, and the refusal when there is nothing to search
+// at all. A resolved-but-empty search is exit 1 (no match); a trajectory that could
+// not be resolved by any source is a refusal on stderr, a different failure a script
+// must not read as "the quote is not there". The default half reads a mock-produced
 // transcript; the refusal half needs none.
+//
+// The refusal half clears CLAUDE_CODE_SESSION_ID: cite's environment fallback would
+// otherwise resolve the current session from it, which is exactly the T029_15
+// behavior — so "nothing to resolve" means an empty payload AND no session id in the
+// environment. A developer runs this suite inside a real session whose own
+// CLAUDE_CODE_SESSION_ID is on os.Environ(), so the empty assignment wins over it and
+// the test means the same thing locally and in CI.
 func TestT029_06_CiteDefaultAndNoTrajectory(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -307,7 +314,7 @@ func TestT029_06_CiteDefaultAndNoTrajectory(t *testing.T) {
 	))
 	path := e.TranscriptPath(proj, "s-029-06")
 
-	// Default: no --path, transcript on the payload.
+	// Default: no --path, transcript_path on the payload.
 	payload := `{"transcript_path":"` + path + `","cwd":"` + proj + `"}`
 	res := e.CLIDirectStdin(proj, payload, "sr-session", "trajectory", "cite", "exact phrase")
 	if res.Code != 0 {
@@ -317,8 +324,9 @@ func TestT029_06_CiteDefaultAndNoTrajectory(t *testing.T) {
 		t.Fatalf("cite from a payload did not resolve to the right line:\n%s", res.Output)
 	}
 
-	// No path, no payload: a refusal, not a no-match.
-	res = e.CLIDirectStdin(proj, `{}`, "sr-session", "trajectory", "cite", "anything")
+	// No path, no payload, no session id: a refusal, not a no-match.
+	res = e.CLIDirectStdinEnv(proj, `{}`, []string{"CLAUDE_CODE_SESSION_ID="},
+		"sr-session", "trajectory", "cite", "anything")
 	if res.Code == 0 {
 		t.Fatalf("cite with no trajectory exited 0, want non-zero:\n%s", res.Output)
 	}

@@ -660,6 +660,21 @@ func (e *Env) CLIDirect(dir, binary string, args ...string) Result {
 	return e.runBin(dir, "", binary, args...)
 }
 
+// CLIDirectEnv runs one service binary by name with extra environment variables
+// set, and no stdin — for the agent-facing commands that read the environment
+// rather than a hook payload.
+//
+// cite auto-detects "the trajectory we are running in right now" from
+// CLAUDE_CODE_SESSION_ID and CLAUDE_CONFIG_DIR when it is handed no --path and no
+// piped payload. runBin does not set those (an ordinary CLIDirect has no session),
+// so a test exercising that path passes them here. env is a flat list of
+// "KEY=value" strings appended after the harness's own, so it wins over any
+// ambient value.
+func (e *Env) CLIDirectEnv(dir string, env []string, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBinEnv(dir, "", env, binary, args...)
+}
+
 // CLIStdin runs the proxy with a payload on standard input.
 func (e *Env) CLIStdin(dir, stdin string, args ...string) Result {
 	e.t.Helper()
@@ -673,7 +688,22 @@ func (e *Env) CLIDirectStdin(dir, stdin, binary string, args ...string) Result {
 	return e.runBin(dir, stdin, binary, args...)
 }
 
+// CLIDirectStdinEnv runs one service binary with a payload on standard input AND
+// extra environment variables — for a hook-shaped call whose resolution also reads
+// the environment (e.g. a payload naming only a session id, which record() joins
+// against the config dir named by CLAUDE_CONFIG_DIR). env entries are appended
+// last so they win over any ambient value.
+func (e *Env) CLIDirectStdinEnv(dir, stdin string, env []string, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBinEnv(dir, stdin, env, binary, args...)
+}
+
 func (e *Env) runBin(dir, stdin, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBinEnv(dir, stdin, nil, binary, args...)
+}
+
+func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, args ...string) Result {
 	e.t.Helper()
 	cmd := exec.Command(filepath.Join(e.binDir, binary), args...)
 	cmd.Dir = dir
@@ -685,6 +715,10 @@ func (e *Env) runBin(dir, stdin, binary string, args ...string) Result {
 	// it makes the test independent of that layout rather than quietly relying
 	// on it.
 	cmd.Env = append(os.Environ(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
+	// extraEnv is appended LAST so a caller-supplied variable wins over any
+	// ambient one — a test exercising cite's environment fallback sets
+	// CLAUDE_CODE_SESSION_ID and CLAUDE_CONFIG_DIR this way.
+	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if exitErr, ok := err.(*exec.ExitError); ok {
@@ -802,6 +836,15 @@ func (e *Env) transcriptPath(projDir, sessionID string) string {
 func (e *Env) TranscriptPath(projDir, sessionID string) string {
 	e.t.Helper()
 	return e.transcriptPath(projDir, sessionID)
+}
+
+// ConfigDir is the isolated stand-in for ~/.claude the mock wrote this run's
+// transcripts under. A test that drives a `trajectory` command through cite's
+// ENVIRONMENT fallback (no --path, no payload) hands this to the binary as
+// CLAUDE_CONFIG_DIR, so transcript.ConfigDir() resolves to the same place the mock
+// filed the record rather than to the sandbox HOME's own .claude.
+func (e *Env) ConfigDir() string {
+	return e.configDir
 }
 
 // SubagentRecordPaths lists the sub-agent transcript files the mock wrote for a
