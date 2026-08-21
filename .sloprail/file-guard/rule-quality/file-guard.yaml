@@ -1,0 +1,31 @@
+# The rules must themselves be high-signal — judges ONE RULE.md against a rubric
+# ASSEMBLED from this guard's rules/ directory (one meta-rule per
+# rules/<name>/RULE.md), spliced into RUBRIC.md's frame. Adding a meta-rule is
+# adding a directory; no prompt is edited. The full rationale — fail-open on
+# machinery failure, EMPTY-rules-is-refusal, the {[^{}]*} verdict pattern, the
+# 25s timeout, the recursion-terminates-by-isolation argument — lives in
+# judge-rule.sh's own comments, migrated verbatim from the old GUARDRAIL.md.
+#
+# match: every RULE.md in the repo, path-anchored on the file's own name — the
+# faithful translation of the old `matcher: path endsWith "RULE.md"`. A
+# file-guard matches a FILE'S STATE (FileMatchScope: flat `path`, `markers`,
+# `context`), so the expression reads `path`, NOT `event.path` (that is a gate's
+# nested scope). No directory prefix, so a rule written anywhere is caught, not
+# only the ones under a guard's rules/ today — a prefix matcher would go stale,
+# silently, the first time a guardrail is added somewhere new.
+match: path endsWith "RULE.md"
+
+# preventive: true reproduces the old format's Pre+Post binding exactly. A
+# preventive file-guard fires on the PRE write to REFUSE a bloated RULE.md before
+# it lands (the old PreFileCreate/PreFileUpdate binding — "the useful moment"),
+# AND, like every guard, fires the after-check at Stop on the SETTLED file (the
+# old PostFileCreate/PostFileUpdate binding). The Post after-check is the
+# backstop no unusual writer slips past: a command/sed/git edit whose result the
+# engine cannot derive reaches the Pre stage unverifiable, where a preventive
+# guard fails CLOSED (engine-side, before the script runs) and the settled file
+# is judged at Stop instead. Dropping preventive would lose the Pre-prevention
+# the old rule was built around.
+preventive: true
+
+checks:
+  - script: ./judge-rule.sh

@@ -1,0 +1,26 @@
+# The skills must themselves be high-signal — judges ONE SKILL.md against a
+# rubric ASSEMBLED from this guard's rules/ directory (one meta-rule per
+# rules/<name>/RULE.md), spliced into RUBRIC.md's frame. Adding a meta-rule is
+# adding a directory; no prompt is edited. The full rationale — fail-open on
+# machinery failure, EMPTY-rules-is-refusal, the {[^{}]*} verdict pattern, the
+# 25s timeout, why the judge may not run commands — lives in judge-skill.sh's own
+# comments, migrated verbatim from the old GUARDRAIL.md.
+#
+# match: every SKILL.md in the repo, path-anchored on the file's own name — the
+# faithful translation of the old `matcher: path endsWith "SKILL.md"`. A
+# file-guard matches a FILE'S STATE (FileMatchScope: flat `path`, `markers`,
+# `context`), so the expression reads `path`, NOT `event.path` (that is a gate's
+# nested scope).
+match: path endsWith "SKILL.md"
+
+# preventive: true reproduces the old format's Pre+Post binding exactly. A
+# preventive file-guard fires on the PRE write to REFUSE a padded SKILL.md before
+# it lands (the old PreFileCreate/PreFileUpdate binding), AND, like every guard,
+# fires the after-check at Stop on the SETTLED file (the old
+# PostFileCreate/PostFileUpdate binding — the backstop for a write whose result
+# the engine could not derive, which a preventive guard fails CLOSED on at Pre
+# and re-judges at Stop). Dropping preventive would lose the Pre-prevention.
+preventive: true
+
+checks:
+  - script: ./judge-skill.sh
