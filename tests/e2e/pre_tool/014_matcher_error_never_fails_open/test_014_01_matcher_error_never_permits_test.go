@@ -1,127 +1,124 @@
 // Package e2e covers the matcher half of "a mechanism that fails must not read
-// as approval".
+// as approval", in the NEW nature format. It is the re-vehicled 014: the pre-tool
+// command path is a GATE (a command event is a gate trigger, not a file-guard
+// match), so an erroring trigger `match` here is a gate that cannot decide whether
+// it should wake — and a gate that cannot decide must REFUSE, not silently fail to
+// wake.
 //
-// 004 establishes it for hooks: a hook that exits non-zero, that cannot be run,
-// or that says nothing at all still refuses. The matcher side had no equivalent.
-// A matcher erroring at run time skipped its binding — the rule was not asked,
-// the hook never ran, and the action proceeded with the reason on a stderr
-// channel that reaches nobody at this hook point.
+// 004 establishes the same property for a check: a check that exits non-zero, that
+// cannot be run, or that says nothing at all still refuses. The matcher side had
+// no equivalent, and the NEW dispatch regressed it: a gate trigger's `match`
+// erroring at run time was reported to a stderr channel that reaches nobody at the
+// pre-tool hook point, and the gate was treated as simply not waking — so the rule
+// was not consulted, nothing refused, and nothing said so. The command runs and
+// the project believes it was checked.
 //
-// A matcher that cannot be evaluated is the engine being unable to ANSWER
-// whether the rule applies. That is not the rule being satisfied, and the two
-// were indistinguishable from outside.
+// A matcher that cannot be evaluated is the engine being unable to ANSWER whether
+// the rule applies. That is not the rule being satisfied, and the two were
+// indistinguishable from outside. The fix (services/sr-session/nature_dispatch.go,
+// firstMatchingEvent → runGatesForEvents) turns a trigger match error into a gate
+// refusal that names the gate and quotes the expression.
 //
 // # Why an error is still possible after the zero-value fill-in
 //
 // The fill-in supplies a declared field the producer omitted, at the shape the
 // declaration promised, all the way down. It closes every gap the declaration
-// knows about. It cannot close the ones it does not: a list whose element shape
-// a module did not declare leaves its predicate body unchecked, so an expression
-// reaching inside an element is checked against nothing at load and meets
-// whatever actually arrives.
+// knows about. It cannot close the ones it does not: a MAP whose keys a module did
+// not enumerate types as Any, so an accessor reaching inside it is checked against
+// nothing at load and meets whatever actually arrives.
 //
-// commandmod declares `invocations` as TypeList with a nil Elem
-// (internal/commandmod/module.go), so this is not a contrived case — it is the
-// one field shape in the shipped build where an authored rule can still error.
+// commandmod declares an invocation's `flags` as a TypeMap with no enumerated keys
+// (internal/commandmod/module.go) — deliberately, because a flag name belongs to
+// the command being run, not to the module, so there is no vocabulary to close it
+// over. That is the one field shape in the shipped build where an authored rule
+// bound to a command can still error: `.flags.access` is nil on any command that
+// did not pass the flag, and `len` of nil errors. `event.invocations` is the gate
+// scope's nesting of the kind's `invocations` field (CompileGateMatch nests the
+// event under `event`); verified compile-clean-but-eval-error against the real
+// commandmod KindDecl before this suite was written.
 //
-// # The half of that gap this suite does NOT close
+// # What this suite does NOT reach
 //
-// An unchecked predicate body does not merely permit errors; it permits SILENCE,
-// and the two split on which operator the typo lands under:
-//
-//	any(invocations, len(.flags.access) > 0)   // accessor: errors → refused
-//	any(invocations, .bni == "npm")            // bare ==: compiles, loads,
-//	                                           // admitted=false, err=nil
-//
-// The first is what T014_01 covers. The second is the silent never-fires that
-// CompileMatcherFor exists to prevent, fully present one level down: `.bni` is a
-// typo for `.bin`, nothing rejects it at load because there is no element shape
-// to check it against, and at run time it reads nil, compares unequal, and the
-// rule quietly does not fire. An author gets no error and no refusal — exactly
-// the failure mode a misspelled TOP-LEVEL field is caught for.
-//
-// This suite cannot close that from here, and neither can the engine: the fix is
-// for commandmod to declare its Elem, at which point the existing load check
-// catches `.bni` the same way it catches `paht`. The element's fields are
-// already known — Bin string, Argv list of string, Flags map — so declaring them
-// is a statement of fact rather than a new decision. That is
-// internal/commandmod's to make, and is reported rather than reached into.
-//
-// Recorded here because the gap is otherwise invisible: every test below passes
-// with it wide open.
+// The SILENT never-fires one level down — `any(event.invocations, .bni == "npm")`,
+// a `.bin` typo that compiles because there is no element shape to check `.bni`
+// against and then reads nil, compares unequal, and quietly does not fire — is not
+// closed here and cannot be from here. commandmod now DECLARES its invocation
+// element shape (bin/argv/flags), so `.bni` is caught at load the same way a
+// top-level `paht` is; only the open `flags` map remains a place an accessor
+// reaches unchecked, which is what T014_01 rides. Recorded so the boundary is
+// explicit.
 package e2e
 
 import "testing"
 
-// A rule about `npm publish --access <value>`: does the invocation carry an
-// access flag with a value? `invocations` is declared a list with no element
-// shape, so the predicate body compiles unchecked, and `.flags.access` is nil
-// on any command that did not pass the flag — which `len` then refuses.
+// A gate about `npm publish --access <value>`: does the invocation carry an access
+// flag with a value? `event.invocations` is the command's flattened invocations,
+// and `.flags` is an open map, so the predicate body compiles unchecked and
+// `.flags.access` is nil on any command that did not pass the flag — which `len`
+// then refuses at EVALUATION.
 //
-// An ordinary rule to write, phrased the ordinary way. Nothing about it warns
-// the author it will error on the commands it is meant to let past.
-const matcherErrorsAtRuntime = `---
-hooks:
-  PreCommandInvoke:
-    - matcher: any(invocations, len(.flags.access) > 0)
-      hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# Refuses an npm publish that names an access level
+// An ordinary rule to write, phrased the ordinary way. Nothing about it warns the
+// author it will error on the commands it is meant to let past. The check PERMITS,
+// so the only thing that can refuse the command is the engine's answer to the
+// matcher error.
+const gateMatcherErrorsAtRuntime = `on:
+  - event: PreCommandInvoke
+    match: any(event.invocations, len(.flags.access) > 0)
+checks:
+  - script: ./check.sh
 `
 
-// The same guardrail with a matcher that evaluates cleanly. The control: it
-// shows the binding does fire and refuse when the matcher can be answered, so a
-// refusal in the test above is the error path rather than this rule matching.
-const matcherEvaluatesCleanly = `---
-hooks:
-  PreCommandInvoke:
-    - matcher: any(invocations, .bin == "npm")
-      hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# Refuses any npm invocation
+// The same gate with a trigger match that evaluates cleanly. The control: it shows
+// the gate does fire and refuse when the matcher can be answered, so a refusal in
+// the erroring test is the error path rather than this rule matching.
+const gateMatcherEvaluatesCleanly = `on:
+  - event: PreCommandInvoke
+    match: any(event.invocations, .bin == "npm")
+checks:
+  - script: ./check.sh
 `
 
-// A guardrail bound to writes, used to show an erroring matcher on one event
-// does not spill onto another.
-const bindEveryWrite = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# Refuses whatever it is shown
+// A gate bound to writes, used to show an erroring command matcher on one event
+// does not spill onto another, and that a sound rule keeps its own voice.
+const gateBindEveryWrite = `on:
+  - event: PreFileWrite
+checks:
+  - script: ./check.sh
 `
 
-const refuseScript = "#!/bin/sh\ncat >/dev/null\necho 'the hook refused' >&2\nexit 1\n"
-const permitScript = "#!/bin/sh\ncat >/dev/null\nexit 0\n"
+// refuseCheck refuses whatever it is shown, with its own reason on stdout so the
+// refusal carries the rule's own words.
+const refuseCheck = `#!/bin/sh
+cat >/dev/null
+echo '{"reason":"the check refused"}'
+exit 1
+`
 
-// Whether the action went through is asked of the Result — see harness.Refused.
-// The word-scanning copy that lived here, and its twin in 013, reported a
-// permitted write to a path containing "deny" as refused.
+// permitCheck permits whatever it is shown.
+const permitCheck = `#!/bin/sh
+cat >/dev/null
+exit 0
+`
 
-// T014_01: a matcher that errors at run time refuses the action.
+// Whether the action went through is asked of the Result — see harness.Refused,
+// which reads the harness's own refusal marker rather than scanning the stream for
+// words (a path containing "deny" is not a refusal).
+
+// T014_01: a gate trigger match that errors at run time refuses the action.
 //
-// The finding. `session_pre_tool.go` printed the error to stderr and skipped the
-// binding, and at this hook point stderr beside a permitted action reaches
-// neither the agent nor the transcript — so the rule was not consulted, nothing
-// refused, and nothing said so. The command runs and the project believes it was
-// checked.
+// The finding, re-vehicled. The new dispatch printed the error to stderr and
+// treated the gate as not waking, and at this hook point stderr beside a permitted
+// action reaches neither the agent nor the transcript — so the gate was not
+// consulted, nothing refused, and nothing said so. The command runs and the
+// project believes it was checked.
 //
-// The hook here PERMITS, so a refusal cannot come from it: the only thing that
+// The check here PERMITS, so a refusal cannot come from it: the only thing that
 // can refuse this command is the engine's response to the matcher error.
 func TestT014_01_MatcherErrorRefusesTheAction(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "npm-access", matcherErrorsAtRuntime, map[string]string{
-		"refuse.sh": permitScript,
+	e.Gate(proj, "npm-access", gateMatcherErrorsAtRuntime, map[string]string{
+		"check.sh": permitCheck,
 	})
 
 	got := e.Run(proj, "s-014-01", "publish the package", Turns("done",
@@ -132,25 +129,25 @@ func TestT014_01_MatcherErrorRefusesTheAction(t *testing.T) {
 		t.Fatalf("a matcher that could not be evaluated permitted the command:\n%s", got.Output)
 	}
 	if !got.Saw("npm-access") {
-		t.Errorf("the refusal does not name the guardrail whose matcher failed:\n%s", got.Output)
+		t.Errorf("the refusal does not name the gate whose matcher failed:\n%s", got.Output)
 	}
-	// The author has to be able to find the expression that failed, or the
-	// refusal is a wall with no door in it.
+	// The author has to be able to find the expression that failed, or the refusal
+	// is a wall with no door in it.
 	if !got.Saw("flags.access") {
 		t.Errorf("the refusal does not quote the matcher that could not be evaluated:\n%s", got.Output)
 	}
 }
 
-// T014_02: the control. The same guardrail with an answerable matcher refuses
-// through its hook, in the hook's own words.
+// T014_02: the control. The same gate with an answerable matcher refuses through
+// its check, in the check's own words.
 //
 // Without this, T014_01 passes for an engine that refuses every command, and the
 // two cannot be told apart.
-func TestT014_02_AnAnswerableMatcherStillRefusesThroughItsHook(t *testing.T) {
+func TestT014_02_AnAnswerableMatcherStillRefusesThroughItsCheck(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "npm-any", matcherEvaluatesCleanly, map[string]string{
-		"refuse.sh": refuseScript,
+	e.Gate(proj, "npm-any", gateMatcherEvaluatesCleanly, map[string]string{
+		"check.sh": refuseCheck,
 	})
 
 	got := e.Run(proj, "s-014-02", "publish the package", Turns("done",
@@ -158,10 +155,10 @@ func TestT014_02_AnAnswerableMatcherStillRefusesThroughItsHook(t *testing.T) {
 	))
 
 	if got.Permitted() {
-		t.Fatalf("a matcher that evaluates cleanly did not reach its hook:\n%s", got.Output)
+		t.Fatalf("a matcher that evaluates cleanly did not reach its check:\n%s", got.Output)
 	}
-	if !got.Saw("the hook refused") {
-		t.Errorf("the hook's own reason did not reach the agent:\n%s", got.Output)
+	if !got.Saw("the check refused") {
+		t.Errorf("the check's own reason did not reach the agent:\n%s", got.Output)
 	}
 }
 
@@ -173,8 +170,8 @@ func TestT014_02_AnAnswerableMatcherStillRefusesThroughItsHook(t *testing.T) {
 func TestT014_03_AMatcherThatDeclinesStillPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "npm-any", matcherEvaluatesCleanly, map[string]string{
-		"refuse.sh": refuseScript,
+	e.Gate(proj, "npm-any", gateMatcherEvaluatesCleanly, map[string]string{
+		"check.sh": refuseCheck,
 	})
 
 	got := e.Run(proj, "s-014-03", "list the files", Turns("done",
@@ -186,17 +183,19 @@ func TestT014_03_AMatcherThatDeclinesStillPermits(t *testing.T) {
 	}
 }
 
-// T014_04: an erroring matcher on one event does not refuse a different one.
+// T014_04: an erroring command matcher does not refuse a different event.
 //
-// The scope of the refusal is the binding that could not be evaluated. A rule
-// about commands whose matcher errors must not start blocking file writes — that
-// would turn one unanswerable expression into a project-wide halt, which is the
-// mirror of the bug rather than a fix for it.
+// The scope of the refusal is the binding that could not be evaluated. A gate
+// about commands whose trigger match errors must not start blocking file writes —
+// that would turn one unanswerable expression into a project-wide halt, which is
+// the mirror of the bug rather than a fix for it. The gate's trigger is on
+// PreCommandInvoke only, so a PreFileCreate never reaches the erroring match at
+// all: the engine fix must not over-broaden past the binding that failed.
 func TestT014_04_AnErroringMatcherDoesNotBlockAnotherEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "npm-access", matcherErrorsAtRuntime, map[string]string{
-		"refuse.sh": permitScript,
+	e.Gate(proj, "npm-access", gateMatcherErrorsAtRuntime, map[string]string{
+		"check.sh": permitCheck,
 	})
 
 	got := e.Run(proj, "s-014-04", "write a note", Turns("done",
@@ -204,23 +203,24 @@ func TestT014_04_AnErroringMatcherDoesNotBlockAnotherEvent(t *testing.T) {
 	))
 
 	if got.Refused() {
-		t.Fatalf("a command rule's matcher error blocked a write it was never about:\n%s", got.Output)
+		t.Fatalf("a command gate's matcher error blocked a write it was never about:\n%s", got.Output)
 	}
 }
 
 // T014_05: a sound rule beside an erroring one still speaks in its own voice.
 //
-// The erroring matcher refuses, but a guardrail that CAN answer and does refuse
-// must still produce its own hook's reason rather than being replaced by the
-// engine's diagnostic. Both are refusals; they are not the same refusal.
+// The erroring gate is bound to commands and stays dormant on a write; the sound
+// write-gate is the only one that fires, and it must produce its OWN check's reason
+// rather than the engine's diagnostic leaking onto it. Having a broken command-rule
+// loaded must not poison an unrelated sound write-rule.
 func TestT014_05_ASoundRuleKeepsItsOwnReason(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "npm-access", matcherErrorsAtRuntime, map[string]string{
-		"refuse.sh": permitScript,
+	e.Gate(proj, "npm-access", gateMatcherErrorsAtRuntime, map[string]string{
+		"check.sh": permitCheck,
 	})
-	e.Guardrail(proj, "writes", bindEveryWrite, map[string]string{
-		"refuse.sh": refuseScript,
+	e.Gate(proj, "writes", gateBindEveryWrite, map[string]string{
+		"check.sh": refuseCheck,
 	})
 
 	got := e.Run(proj, "s-014-05", "write a note", Turns("done",
@@ -230,68 +230,60 @@ func TestT014_05_ASoundRuleKeepsItsOwnReason(t *testing.T) {
 	if got.Permitted() {
 		t.Fatalf("the sound rule did not refuse:\n%s", got.Output)
 	}
-	if !got.Saw("the hook refused") {
+	if !got.Saw("the check refused") {
 		t.Errorf("the sound rule's own reason was replaced:\n%s", got.Output)
 	}
 }
 
-// A declaration whose command carries a NUL byte.
+// A gate whose CHECK carries a NUL byte in its script command.
 //
-// `\x00` is a valid escape in a double-quoted YAML scalar, so this parses, and
-// `checkExecutable` does not judge it because `echo` is not a path reference —
-// the declaration loads SOUND, with no problems at all. The failure comes later,
-// at exec: the argument cannot be passed to the kernel, and `sh` never starts.
+// `\x00` is a valid escape in a double-quoted YAML scalar, so this parses, and the
+// script is not a path reference the loader judges — the gate loads SOUND, with no
+// problems at all. The failure comes later, at exec: `sh -c "echo hi\x00there"`
+// cannot be passed to the kernel, and `sh` never starts. This is the check analogue
+// of 004's unrunnable-hook case and of the old suite's NUL-byte hook command.
 //
-// The Go literal below has to carry a BACKSLASH-x-0-0 so the file on disk does,
-// and yaml unescapes it into a real NUL. A literal NUL in the Go source would
-// not compile, and a raw NUL written into the file would make the YAML invalid —
-// which would test the parser instead of this branch.
-const commandWithNulByte = "---\n" +
-	"hooks:\n" +
-	"  PreFileCreate:\n" +
-	"    - hooks:\n" +
-	"        - type: command\n" +
-	"          command: \"echo hi\\x00there\"\n" +
-	"---\n" +
-	"\n" +
-	"# A command the OS will not launch\n"
+// The Go literal carries a BACKSLASH-x-0-0 so the file on disk does, and yaml
+// unescapes it into a real NUL. A literal NUL in the Go source would not compile,
+// and a raw NUL in the file would make the YAML invalid — which would test the
+// parser instead of this branch.
+const gateCheckWithNulByte = "on:\n" +
+	"  - event: PreFileWrite\n" +
+	"checks:\n" +
+	"  - script: \"echo hi\\x00there\"\n"
 
-// T014_06: a hook the OS refuses to launch refuses the action.
+// T014_06: a check the OS refuses to launch refuses the action.
 //
-// The third member of the family 004 and T014_01 establish: a hook that exits
-// non-zero refuses, a matcher that cannot be evaluated refuses, and a hook that
-// cannot be STARTED must refuse too. `runHooks` returns an error for it and the
-// caller turns that into a refusal.
+// The third member of the family 004 and T014_01 establish: a check that exits
+// non-zero refuses, a matcher that cannot be evaluated refuses, and a check that
+// cannot be STARTED must refuse too. The check runner (internal/dispatch/exec.go,
+// runScriptExec) turns a start error into a refusal (fail-closed) rather than
+// erroring up to a caller who would decide again.
 //
-// This test exists because the comment on that branch asserted it was
-// unreachable — "no e2e reaches it, and `sh -c` starts even when the command
-// inside it does not". That reasoning covers the command inside the shell
-// failing and misses the exec of the shell ITSELF failing, which is what a NUL
-// byte in the argument causes: `fork/exec /bin/sh: invalid argument`, an
-// *fs.PathError rather than an *exec.ExitError.
-//
-// The claim was load-bearing in the worst way. Mutating that branch to PERMIT
-// instead of refuse survived the entire suite, so the one branch excused from
-// coverage on the strength of a false claim was the one branch with none.
-func TestT014_06_AHookTheOSWillNotLaunchRefuses(t *testing.T) {
+// Re-vehicled from the old NUL-byte HOOK COMMAND to a NUL-byte CHECK COMMAND — the
+// new format's check runner is the mechanism that must fail closed on an
+// unlaunchable process. The refusal wording is the new runner's ("could not be
+// run", not the old "could not run its hook"); the invariant is identical: a check
+// that cannot be launched refuses, names the rule, and carries the OS's own error.
+func TestT014_06_ACheckTheOSWillNotLaunchRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	// No scripts: the command is not a path reference, so there is nothing to
+	// No script file: the command is not a path reference, so there is nothing to
 	// put on disk and nothing for the load check to judge.
-	e.Guardrail(proj, "unlaunchable", commandWithNulByte, nil)
+	e.Gate(proj, "unlaunchable", gateCheckWithNulByte, nil)
 
 	got := e.Run(proj, "s-014-06", "write a note", Turns("done",
 		Write("w1", "any/notes.md", "hello"),
 	))
 
 	if got.Permitted() {
-		t.Fatalf("a hook the OS would not launch was read as approval:\n%s", got.Output)
+		t.Fatalf("a check the OS would not launch was read as approval:\n%s", got.Output)
 	}
 	if !got.Saw("unlaunchable") {
-		t.Errorf("the refusal does not name the guardrail that could not run:\n%s", got.Output)
+		t.Errorf("the refusal does not name the gate that could not run:\n%s", got.Output)
 	}
-	if !got.Saw("could not run its hook") {
-		t.Errorf("the refusal does not say the hook could not be run:\n%s", got.Output)
+	if !got.Saw("could not be run") {
+		t.Errorf("the refusal does not say the check could not be run:\n%s", got.Output)
 	}
 	// The OS's own message travels with it. Without it an author sees a refusal
 	// naming a command that looks perfectly fine, and has nothing to go on.
@@ -300,50 +292,45 @@ func TestT014_06_AHookTheOSWillNotLaunchRefuses(t *testing.T) {
 	}
 }
 
-// A rule about a declared string field, on a kind whose producer sends it as a
-// string on every ordinary path. Sound, ordinary, and the one under test in
-// T014_07 — where the matcher is fine and the VALUE is not.
-const ruleOnADeclaredString = `---
-hooks:
-  PreCommandInvoke:
-    - matcher: raw startsWith "npm"
-      hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# Refuses npm invocations, by reading raw
+// A gate about a declared string field on the command kind, read the ordinary way.
+// Sound, ordinary, and the one under test in T014_07 — the control that keeps
+// T014_01 and T014_06 from being satisfied by an engine that refuses everything at
+// this hook point.
+const gateOnDeclaredString = `on:
+  - event: PreCommandInvoke
+    match: event.raw startsWith "npm"
+checks:
+  - script: ./check.sh
 `
 
-// T014_07: the engine still refuses when a matcher CAN be compiled and the rule
-// declines — the control that keeps T014_01 and T014_06 from being satisfied by
-// an engine that refuses everything at this hook point.
+// T014_07: the engine still decides cleanly when a matcher CAN be compiled and
+// answered in both directions.
 //
-// Deliberately paired with the wrong-typed-value unit tests in
-// internal/guardrail rather than duplicating them here. A wrong-typed carried
-// value cannot be provoked through the real producers — commandmod always sends
-// `raw` as a string — so the e2e level can only assert that the ordinary path
-// stays open, and internal/guardrail's TestMatch_WrongTypedCarriedValueErrors
-// pins that a wrong-typed value errors rather than silently answering false.
+// Deliberately paired with the wrong-typed-value unit tests in internal/guardrail
+// rather than duplicating them here. A wrong-typed carried value cannot be provoked
+// through the real producers — commandmod always sends `raw` as a string — so the
+// e2e level can only assert that the ordinary path stays open in both directions,
+// and internal/guardrail's TestMatch_WrongTypedCarriedValueErrors pins that a
+// wrong-typed value errors rather than silently answering false.
 //
 // That split is the honest one. Reaching for a fake producer here would test a
 // module this build does not have.
 func TestT014_07_AStringRuleOnARealProducerStillDecides(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "raw-rule", ruleOnADeclaredString, map[string]string{
-		"refuse.sh": refuseScript,
+	e.Gate(proj, "raw-rule", gateOnDeclaredString, map[string]string{
+		"check.sh": refuseCheck,
 	})
 
-	// Matches: refuses, through the hook, in the hook's own words.
+	// Matches: refuses, through the check, in the check's own words.
 	got := e.Run(proj, "s-014-07a", "publish", Turns("done",
 		Bash("b1", "npm publish"),
 	))
 	if got.Permitted() {
 		t.Fatalf("a rule reading a declared string did not fire on a matching command:\n%s", got.Output)
 	}
-	if !got.Saw("the hook refused") {
-		t.Errorf("the hook's own reason did not reach the agent:\n%s", got.Output)
+	if !got.Saw("the check refused") {
+		t.Errorf("the check's own reason did not reach the agent:\n%s", got.Output)
 	}
 
 	// Does not match: permits. A declared string carried as a string answers
@@ -357,36 +344,28 @@ func TestT014_07_AStringRuleOnARealProducerStillDecides(t *testing.T) {
 	}
 }
 
-// A guardrail that permits everything it is shown.
-const permitEveryWrite = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./permit.sh
----
-
-# Permits whatever it is shown
+// A gate that permits every write it is shown.
+const gatePermitEveryWrite = `on:
+  - event: PreFileWrite
+checks:
+  - script: ./check.sh
 `
 
 // T014_08: a permitted write to a path containing a refusal word is PERMITTED.
 //
 // This is the finding about the test helper rather than about the engine, and it
-// belongs in the suite because the helper is what every other assertion here
-// rests on. The predicate that shipped in this file and in 013 substring-scanned
-// the whole mock stream for "deny"/"denied"/"block"/"blocked" — and the stream
-// carries the agent's own tool input, so this exact scenario, a guardrail
-// permitting everything and a write to `deny/notes.md`, produced "File written
-// successfully" and a helper that answered "refused".
-//
-// Every `!permitted(...)` assertion in both files would therefore have passed on
-// a fully permitted write as soon as a fixture used such a path. They were
-// non-vacuous only by the accident of clean paths.
+// belongs in the suite because the helper is what every other assertion here rests
+// on. A predicate that substring-scanned the whole mock stream for
+// "deny"/"denied"/"block"/"blocked" would answer "refused" for this exact scenario
+// — a gate permitting everything and a write to `deny/notes.md` — because the
+// stream carries the agent's own tool input. harness.Refused reads the harness's
+// own refusal marker instead, so a permitted write to such a path reads as
+// permitted.
 func TestT014_08_APermittedWriteToAPathNamedDenyIsPermitted(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "open", permitEveryWrite, map[string]string{
-		"permit.sh": permitScript,
+	e.Gate(proj, "open", gatePermitEveryWrite, map[string]string{
+		"check.sh": permitCheck,
 	})
 
 	got := e.Run(proj, "s-014-08", "write a note", Turns("done",
