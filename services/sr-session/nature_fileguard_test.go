@@ -107,6 +107,32 @@ func TestFileGuardSelects_NotContextActive(t *testing.T) {
 	assert.False(t, ok, "not-active does not match while the context is active")
 }
 
+// A file-guard match that COMPILES but cannot be EVALUATED against the file
+// surfaces the error rather than answering false — the fail-closed seam behind
+// tests/e2e/session/027 (post_matcher_error), pinned at the dispatch level.
+//
+// The distinction is the whole point: a match returning (false, nil) says "this
+// file does not concern me"; a match returning (_, err) says the engine could not
+// DECIDE. fileGuardSelects must not flatten the second into the first — its caller
+// (runFileGuardsPost / runFileGuardsPreventive) turns a non-nil error into a
+// REFUSAL, because a guard that could not decide must not be read as approval. The
+// e2e proves the refusal end to end through the Stop channel; this proves the
+// error is produced (not swallowed) at the seam, cheaply and without the mock.
+//
+// `int(path) > 0` is the shape that reaches the evaluation branch on the flat file
+// scope: `int` of a string COMPILES (the checker accepts the conversion), and the
+// vm then errors converting "notes.md" at run time. Every well-typed shape
+// (`path endsWith ".md"`) answers cleanly instead — this is the one narrow edge,
+// the same expression 027 rides.
+func TestFileGuardSelects_UnevaluableMatchErrorsNotFalse(t *testing.T) {
+	m, err := guardrail.CompileFileMatch("int(path) > 0")
+	require.NoError(t, err, "int(path) must COMPILE — the eval-error branch is only reachable past a clean compile")
+
+	_, err = fileGuardSelects(m, postCreate("notes.md", nil), nil)
+	require.Error(t, err,
+		"a match that cannot be evaluated must surface the error (fail-closed), not answer false — false would read as 'this file does not concern me'")
+}
+
 // fileMatchScopeEvent builds a FLAT scope — path, markers, context at the top
 // level, not the event nested under `event` a gate reads.
 func TestFileMatchScopeEvent_Flat(t *testing.T) {

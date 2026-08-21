@@ -17,8 +17,10 @@ import (
 // and one naming a new-format declaration is a no-op there, each ignoring keys
 // that are not its own.
 
-// configFile is the project's own settings, beside its declarations. The same
-// filename guardrail.ConfigFile names, deliberately shared.
+// configFile is the project's own settings, beside its declarations — the one
+// file a project writes to disable a declaration it did not author (a plugin's,
+// or its own not-ready one). Named here and quoted by the load-failure remedies
+// (Invalid.Remedy, Shadow.Message), single-sourced so those agree.
 const configFile = "config.yaml"
 
 // config is what a project says about declarations it did not write.

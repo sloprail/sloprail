@@ -86,3 +86,38 @@ func TestRunScriptExec_SignalledCheckRefusesWithKilled(t *testing.T) {
 	assert.True(t, strings.Contains(res.Reason, "killed"), "the reason must say killed: %q", res.Reason)
 	assert.False(t, strings.Contains(res.Reason, "exit -1"), "the reason must not report exit -1: %q", res.Reason)
 }
+
+// A check that cannot even be STARTED is reported by runShell as a start error,
+// distinct from every could-not-run status a shell that DID start would report by
+// exit code (126/127). A NUL byte in the command makes fork/exec reject the argv
+// before the shell runs — the stand-in for any launch failure (a Dir that went
+// away, an unloadable interpreter). This is the seam runScriptExec's fail-closed
+// start-error branch stands on, and no test reached it before.
+func TestRunShell_CannotStartReturnsStartErr(t *testing.T) {
+	_, _, code, expired, signal, startErr := runShell("", "echo hi\x00rest", nil, nil, 0)
+
+	require.Error(t, startErr, "a command that cannot be launched must surface a start error, not a clean run")
+	assert.False(t, expired, "a launch failure is not a timeout — the timeout path must not claim it")
+	assert.Equal(t, -1, code, "a process that never started has no exit code")
+	assert.Equal(t, syscall.Signal(0), signal, "a process that never started was not signalled")
+}
+
+// runScriptExec, end to end: a check that cannot START refuses (fail-closed), and
+// folds the launch failure into the Verdict rather than erroring up to the caller
+// — the exec.go:127 property the Wave-3 audit names, that a check which cannot run
+// must not be read as approval. The error return is nil BECAUSE the refusal is the
+// answer: the old dispatch returned an error here and refused at the call site;
+// this keeps every script outcome one shape (a Verdict), so no caller re-decides.
+func TestRunScriptExec_CannotStartRefuses(t *testing.T) {
+	res, err := runScriptExec(scriptCall{
+		Dir:    t.TempDir(),
+		Script: "echo hi\x00rest", // a NUL byte: fork/exec rejects the argv before the shell runs.
+	})
+	require.NoError(t, err, "a launch failure must be folded into a refusal, not raised to the caller")
+
+	assert.False(t, res.Passed, "a check that cannot start must refuse (fail-closed)")
+	assert.Contains(t, res.Reason, "could not be run",
+		"the refusal must say the check could not be run")
+	assert.Contains(t, res.Reason, "refused because a check that cannot run must not be read as approval",
+		"the refusal must state why a check that cannot run is not approval")
+}

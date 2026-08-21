@@ -64,6 +64,16 @@ checks:
 	assert.Contains(t, stderr, "typo",
 		"the report must name which declaration did not load, or nobody can find it")
 
+	// And it carries the way out — the origin-aware remedy (D1). This is a
+	// PROJECT's own rule, so the remedy is theirs to fix; it must NOT tell them the
+	// rule is not theirs or send them to disable a plugin they do not have. The
+	// remedy wording matrix itself is pinned in internal/declaration/remedy_test.go;
+	// here we only prove the report actually carries it on this channel.
+	assert.Contains(t, stderr, "fix the file-guard \"typo\"",
+		"the report must offer the project author a way to fix their own broken rule")
+	assert.NotContains(t, stderr, "not yours to fix",
+		"a project's own rule must not be reported as a plugin's rule to disable")
+
 	// And it did not deny — a rule that could not load blocks nothing.
 	assert.NotContains(t, stdout, `"permissionDecision":"deny"`,
 		"a file-guard that could not load must not refuse the action")

@@ -240,18 +240,27 @@ func natureDeclarationStore(cmd *cobra.Command, cwd string) (*declaration.Store,
 }
 
 // reportNatureInvalid names every new-format declaration that could not be loaded,
-// one line per fault — the same shape reportInvalid uses for the old format.
+// one line per fault, then how to get unstuck — the same shape reportInvalid uses
+// for the old format.
 //
 // Reported rather than fatal: a broken declaration blocks nothing (it dispatches
 // nothing below), but is named every time so an author fixing it sees all of it.
 // The channel is stderr, which reaches a person tailing logs; a refusal is not
 // raised for a rule that could not load, matching the old format's settled rule.
+//
+// Each report ends with iv.Remedy() — origin-aware repair guidance restored from
+// the old format's remedy. A project's own broken rule is theirs to fix or
+// disable; a PLUGIN's rule is not (its file is in an install cache the next
+// reinstall overwrites), so its remedy is the `disabled: [<qualified>]` line in
+// the project's own config — the same mechanism the sibling shadow report quotes,
+// worded once on the Invalid so the two diagnostics agree.
 func reportNatureInvalid(cmd *cobra.Command, invalid []declaration.Invalid) {
 	for _, iv := range invalid {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: declaration %s not loaded:\n", iv.Attribution())
 		for _, reason := range iv.Reasons {
 			fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", reason)
 		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", iv.Remedy())
 	}
 }
 

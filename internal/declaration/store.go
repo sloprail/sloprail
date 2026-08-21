@@ -300,6 +300,86 @@ func (iv Invalid) Attribution() string {
 	return quoteName(iv.Name) + iv.Origin.Describe()
 }
 
+// describeName renders this broken declaration's (nature, name) for a message —
+// "gate \"x\"" for a named nature, bare "structure" for the singleton — the same
+// shape Shadow.describeName uses, so the invalid and shadow reports name a rule
+// the one way.
+func (iv Invalid) describeName() string {
+	if iv.Name == "" {
+		return string(iv.Nature)
+	}
+	return string(iv.Nature) + " " + quoteName(iv.Name)
+}
+
+// has reports whether any of this declaration's problems is of the given kind —
+// the errors.Is form of the store_test hasKind helper, used by Remedy to branch
+// on whether the file could be PARSED at all.
+func (iv Invalid) has(kind error) bool {
+	for _, p := range iv.Problems {
+		if p.Is(kind) {
+			return true
+		}
+	}
+	return false
+}
+
+// Remedy is what to tell someone whose declaration could not load, and it differs
+// by WHO OWNS THE FILE — the origin-aware repair guidance the old format carried
+// on session_pre_tool.go's remedy, restored here beside Shadow.Message so the two
+// diagnostics point at the same `disabled: [...]` mechanism with one wording.
+//
+// # Why it varies by owner
+//
+// For a project's own rule the advice has always been "fix the declaration, or
+// disable it" and both halves are actionable: the file is in the tree, the author
+// wrote it, and switching it off is one edit away.
+//
+// For a plugin's rule that advice is a trap. The declaration sits in an install
+// cache the consumer did not write and must not edit — an edit there is silently
+// undone by the next reinstall, so an author who followed it would fix the report,
+// upgrade, and have the fault come back with no explanation. So a plugin's rule
+// gets the mechanism that is genuinely theirs: `disabled: [<qualified>]` in their
+// own config, the same key and file Shadow.Message quotes for a shipped rule they
+// meant to switch off. The exact line is quoted, because advice the reader has to
+// go and look up is advice they skip.
+//
+// # Why it varies again by whether it PARSED
+//
+// A project's declaration that merely failed validation is a rule with a mistake
+// in it, so the advice is to fix or disable it. One that could not be PARSED might
+// not be a declaration at all — a stray file, a note left in the folder — so
+// "remove that folder if it is not a declaration" is a real way out the
+// merely-invalid case does not have. A plugin's rule collapses both: the consumer
+// can neither edit nor remove a file inside an install cache, so the disable list
+// is the one remedy either way.
+//
+// This text accompanies a REPORT, not a refusal — an invalid declaration blocks
+// nothing. That makes the wording matter more, not less: it is the only thing
+// between a rule that silently stopped enforcing and a person who fixes it, so it
+// has to name a remedy the reader can actually perform.
+func (iv Invalid) Remedy() string {
+	if !iv.Origin.FromPlugin() {
+		if iv.has(ErrMalformed) {
+			return fmt.Sprintf(
+				"fix the %s in %s, or remove that folder if it is not a declaration.",
+				iv.describeName(), dotDirName)
+		}
+		return fmt.Sprintf(
+			"fix the %s in %s, or disable it with `disabled: [%s]` in %s if it is not ready.",
+			iv.describeName(), dotDirName, iv.Qualified(), configFile)
+	}
+
+	// A plugin's rule, where neither editing the file nor removing its folder is
+	// available: the consumer owns none of it and a reinstall would restore
+	// anything they deleted. The disable list on their side of the boundary is the
+	// one remedy that survives, quoted for both the unparseable and the
+	// merely-invalid case — the same key and config file Shadow.Message names.
+	return fmt.Sprintf(
+		"this rule is not yours to fix — it ships inside plugin %q, at %s. "+
+			"Report it to that plugin, or switch it off for this project with `disabled: [%s]` in %s.",
+		iv.Origin.Plugin, iv.Origin.Root, iv.Qualified(), configFile)
+}
+
 // Load reads every declaration in force — the project's own and the plugins' —
 // validating each against the event vocabulary the given registry declares, and
 // resolving precedence and the project's disable list.
