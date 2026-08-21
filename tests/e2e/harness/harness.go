@@ -66,6 +66,12 @@ type Env struct {
 	// suite, which reads ">= 2 result frames" as "the turn was sent round again" —
 	// must NOT lower it, so it is per-Env rather than a global default.
 	stopBlockCap int
+
+	// extraPlugins are synthetic plugins a test installed alongside sloprail — each
+	// ships new-format DECLARATIONS (not hooks) and is enabled in the project's
+	// settings so the sloprail plugin's own dispatch discovers it. See
+	// EnablePluginShippingFileGuard.
+	extraPlugins []extraPlugin
 }
 
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent
@@ -478,8 +484,8 @@ func (e *Env) Project() string {
 	return dir
 }
 
-// writeSettings writes the project's settings: the plugin as a user would
-// install it, and nothing else.
+// writeSettings writes the project's settings: THIS repo's plugin as a user would
+// install it, plus any extra plugins a test enabled (see EnablePluginShippingFileGuard).
 //
 // There is deliberately no way to add a lifecycle hook from here. A test that
 // hand-wired one into settings.json would be arranging wiring no user has, and
@@ -487,15 +493,35 @@ func (e *Env) Project() string {
 // about the product — the whole point of driving the mock is that what fires is
 // the plugin someone installs. A property that needs a hook point the plugin
 // does not register is a gap in the plugin, and belongs in hooks.json.
+//
+// The EXTRA plugins are a different matter and are allowed: they ship no hooks —
+// they ship DECLARATIONS, discovered by the already-installed sloprail plugin's
+// own dispatch reading the project's enabledPlugins. That is exactly how a real
+// plugin ships a guardrail (026 does the same for the old format via the shipped
+// authoring-slop), so enabling one here arranges no wiring a user lacks; it
+// installs a second plugin the way a user installs any plugin.
 func (e *Env) writeSettings(dir string) {
 	e.t.Helper()
-	settings := map[string]any{
-		"enabledPlugins": map[string]any{pluginKey: true},
-		"extraKnownMarketplaces": map[string]any{
-			marketplaceName: map[string]any{
-				"source": map[string]any{"source": "directory", "path": e.repoRoot},
-			},
+
+	enabled := map[string]any{pluginKey: true}
+	marketplaces := map[string]any{
+		marketplaceName: map[string]any{
+			"source": map[string]any{"source": "directory", "path": e.repoRoot},
 		},
+	}
+	// Extra plugins a test enabled — each a directory-sourced marketplace pointing
+	// at the plugin's own install root, exactly as a locally-developed plugin is
+	// resolved (internal/harness's directory-source branch).
+	for _, p := range e.extraPlugins {
+		enabled[p.name+"@"+p.marketplace] = true
+		marketplaces[p.marketplace] = map[string]any{
+			"source": map[string]any{"source": "directory", "path": p.root},
+		}
+	}
+
+	settings := map[string]any{
+		"enabledPlugins":         enabled,
+		"extraKnownMarketplaces": marketplaces,
 	}
 	body, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -504,6 +530,107 @@ func (e *Env) writeSettings(dir string) {
 	if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), body, 0o644); err != nil {
 		e.t.Fatalf("harness: write settings: %v", err)
 	}
+}
+
+// extraPlugin is one synthetic plugin a test installed alongside sloprail — its
+// enabled key and where its install root sits, so writeSettings can enable it.
+type extraPlugin struct {
+	name        string
+	marketplace string
+	root        string
+}
+
+// EnablePluginShippingFileGuard installs a synthetic plugin that ships a
+// NEW-FORMAT file-guard, enables it in the project alongside sloprail, and returns
+// the plugin's install root (so a test can read the guard's ledger).
+//
+// This is the new-format analogue of what 026 relies on for the OLD format: a
+// guardrail that lives INSIDE an installed plugin and is never copied into the
+// project. 026 uses the real shipped authoring-slop; this ships a purpose-built
+// file-guard in a throwaway plugin instead, because the new-format migration of
+// authoring-slop is a LATER PR — the mechanism under test here is the LOADING, and
+// a synthetic plugin proves it without depending on that migration.
+//
+// The plugin's `.sloprail/file-guard/<name>/` holds the guard exactly where a
+// project's own would sit, one directory up: `<root>/.sloprail/...`. The sloprail
+// plugin's already-firing hooks run the nature dispatch, which resolves this
+// plugin from the project's enabledPlugins (internal/harness) and loads its
+// file-guard (declaration.NewWithPlugins). Nothing is copied into the project, so
+// "the guard fired" and "it was discovered inside the plugin" are the same fact.
+//
+// name is the guard's folder name; pluginName is what the user enables it by (and
+// what a refusal must attribute it to). guardYAML is the file-guard.yaml body;
+// files are its sibling scripts (a check's ./check.sh), written executable. Must
+// be called BEFORE Run/RunFrom so the settings are in place when the session
+// starts. Reusable: a test may call it once per plugin it wants installed.
+func (e *Env) EnablePluginShippingFileGuard(projDir, pluginName, name, guardYAML string, files map[string]string) string {
+	e.t.Helper()
+
+	root, err := os.MkdirTemp("", "slop-plugin-")
+	if err != nil {
+		e.t.Fatalf("harness: temp plugin: %v", err)
+	}
+	e.t.Cleanup(func() { os.RemoveAll(root) })
+
+	// The guard under the plugin's own `.sloprail`, the SAME relative layout a
+	// project uses — <root>/.sloprail/file-guard/<name>/file-guard.yaml.
+	dir := filepath.Join(root, ".sloprail", "file-guard", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir plugin file-guard: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "file-guard.yaml"), []byte(guardYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write plugin file-guard.yaml: %v", err)
+	}
+	for file, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write plugin file-guard file %s: %v", file, err)
+		}
+	}
+
+	// A `.claude-plugin/plugin.json` so the plugin is a well-formed one a
+	// directory-sourced marketplace can load, named as the user enables it.
+	pluginMeta := filepath.Join(root, ".claude-plugin")
+	if err := os.MkdirAll(pluginMeta, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir plugin meta: %v", err)
+	}
+	meta := fmt.Sprintf(`{"name":%q,"version":"0.0.1","description":"e2e synthetic plugin shipping a new-format file-guard"}`, pluginName)
+	if err := os.WriteFile(filepath.Join(pluginMeta, "plugin.json"), []byte(meta), 0o644); err != nil {
+		e.t.Fatalf("harness: write plugin.json: %v", err)
+	}
+
+	// Its own marketplace, distinct from sloprail's, sourced from this directory.
+	e.extraPlugins = append(e.extraPlugins, extraPlugin{
+		name:        pluginName,
+		marketplace: pluginName + "-marketplace",
+		root:        root,
+	})
+	// Re-write the project's settings so the new plugin is enabled. Project() has
+	// already written them once; this rewrites with the extra plugin appended.
+	// writeSettings takes the project root and joins `.claude/settings.json` itself.
+	e.writeSettings(projDir)
+	return root
+}
+
+// PluginFileGuardLedger reads the ledger a plugin-shipped file-guard's check
+// appended to, inside the PLUGIN's own folder (not the project's), counting how
+// many times the check was asked. Absent means it never ran. The pluginRoot is
+// what EnablePluginShippingFileGuard returned.
+func (e *Env) PluginFileGuardLedger(pluginRoot, name, ledgerFile string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(pluginRoot, ".sloprail", "file-guard", name, ledgerFile))
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read plugin file-guard ledger %s: %v", name, err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // CLI runs the root `sr` proxy and returns what it produced.

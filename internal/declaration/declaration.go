@@ -120,7 +120,24 @@ type FileGuard struct {
 	// relative to it. Not a YAML field — the loader fills it from where the file
 	// was found.
 	Dir string `yaml:"-"`
+
+	// Origin is where this guard was found — the project's own `.sloprail`, or a
+	// plugin that ships it. Not a YAML field; the loader fills it from which root it
+	// read the guard from, so a refusal can name the plugin a shipped guard came
+	// from (see Origin). The zero value is a project's own guard.
+	Origin Origin `yaml:"-"`
 }
+
+// Attribution is this guard's name as a refusal should carry it — the bare name
+// for a project's own, and the name plus " from plugin X" for a shipped one, so
+// the agent hears where a rule it cannot find in its tree actually lives. Mirrors
+// guardrail.Declaration.Attribution.
+func (g FileGuard) Attribution() string { return quoteName(g.Name) + g.Origin.Describe() }
+
+// Qualified is this guard's disable key, `<plugin>/file-guard/<name>` for a
+// shipped guard and `file-guard/<name>` for a project's own — what a consumer
+// writes in `disabled:` to switch it off.
+func (g FileGuard) Qualified() string { return g.Origin.Qualified(NatureFileGuard, g.Name) }
 
 // Gate is a gate declaration: a checkpoint on an event
 // (dot-dir-file-store/main.tsp GateDeclaration). It wakes on a pre-action event,
@@ -152,7 +169,20 @@ type Gate struct {
 
 	// Dir is the gate's own folder. Not a YAML field.
 	Dir string `yaml:"-"`
+
+	// Origin is where this gate was found — the project's own `.sloprail`, or a
+	// plugin that ships it. Not a YAML field; the loader fills it. The zero value
+	// is a project's own gate.
+	Origin Origin `yaml:"-"`
 }
+
+// Attribution is this gate's name as a refusal should carry it — bare for a
+// project's own, "…" plus " from plugin X" for a shipped one.
+func (g Gate) Attribution() string { return quoteName(g.Name) + g.Origin.Describe() }
+
+// Qualified is this gate's disable key, `<plugin>/gate/<name>` for a shipped gate
+// and `gate/<name>` for a project's own.
+func (g Gate) Qualified() string { return g.Origin.Qualified(NatureGate, g.Name) }
 
 // Context is a context declaration: an activatable scope with a lifecycle, the
 // third rule nature (dot-dir-file-store/main.tsp ContextDeclaration). Where a
@@ -190,7 +220,20 @@ type Context struct {
 
 	// Dir is the context's own folder. Not a YAML field.
 	Dir string `yaml:"-"`
+
+	// Origin is where this context was found — the project's own `.sloprail`, or a
+	// plugin that ships it. Not a YAML field; the loader fills it. The zero value
+	// is a project's own context.
+	Origin Origin `yaml:"-"`
 }
+
+// Attribution is this context's name as a diagnostic should carry it — bare for a
+// project's own, "…" plus " from plugin X" for a shipped one.
+func (c Context) Attribution() string { return quoteName(c.Name) + c.Origin.Describe() }
+
+// Qualified is this context's disable key, `<plugin>/context/<name>` for a shipped
+// context and `context/<name>` for a project's own.
+func (c Context) Qualified() string { return c.Origin.Qualified(NatureContext, c.Name) }
 
 // StructureGate is the tree-wide structure gate (dot-dir-file-store/main.tsp
 // StructureGateDeclaration): an allowlist of paths a project may write under,
@@ -209,7 +252,23 @@ type StructureGate struct {
 	// Dir is the folder the structure.yaml sits in — `.sloprail/file-guard`. Not
 	// a YAML field.
 	Dir string `yaml:"-"`
+
+	// Origin is where this structure gate was found — the project's own
+	// `.sloprail`, or a plugin that ships it. Not a YAML field; the loader fills it.
+	// The zero value is a project's own structure gate. See the loader for why a
+	// project's own structure gate wins over a plugin's (the singleton is claimed
+	// project-first, like every other name).
+	Origin Origin `yaml:"-"`
 }
+
+// Attribution is the structure gate's provenance as a refusal should carry it —
+// empty for a project's own, " from plugin X" for a shipped one. The structure
+// gate has no per-name folder, so there is no name to quote; only the origin.
+func (sg StructureGate) Attribution() string { return sg.Origin.Describe() }
+
+// Qualified is the structure gate's disable key, `<plugin>/structure` for a
+// shipped one and `structure` for a project's own.
+func (sg StructureGate) Qualified() string { return sg.Origin.Qualified(NatureStructure, "") }
 
 // Prerequisite is a precondition that must hold before a rule's own check runs
 // (dot-dir-file-store/main.tsp Prerequisite). A single list carrying two kinds,

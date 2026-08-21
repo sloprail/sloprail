@@ -53,12 +53,19 @@ import (
 // diff next cycle, so a not-fine file produces a Post event again), which this
 // file records into via the same revalidation.Record the old dispatch uses.
 
-// fileGuardResult is one file-guard's outcome on one file: the guard's name,
-// whether it refused, and the reason to relay.
+// fileGuardResult is one file-guard's outcome on one file: the guard's name, how a
+// refusal should attribute it, whether it refused, and the reason to relay.
+//
+// Attribution carries the plugin-aware name (bare for a project's guard, plus
+// " from plugin X" for a shipped one), so a Stop refusal names where a guard the
+// project never wrote lives — the same reason the old format attributes by Origin.
+// Name stays for the diagnostics keyed on the bare folder name (the re-entry
+// guard, the revalidation key).
 type fileGuardResult struct {
-	Name    string
-	Refused bool
-	Reason  string
+	Name        string
+	Attribution string
+	Refused     bool
+	Reason      string
 }
 
 // runFileGuardsPreventive runs the PREVENTIVE file-guards against a cycle's PRE
@@ -146,7 +153,7 @@ func runFileGuardsPreventive(
 					"the %q file-guard is preventive and could not verify this write before it lands: the engine could not compute the result of this %s "+
 						"(a change whose settled bytes are not known ahead of time — a command-derived edit, or a notebook create whose cell source is not the document), "+
 						"so whether the file would still be fine is unknown. "+
-						"Refusing: a preventive guard must not admit a write it cannot verify. (file-guard %s)", g.Name, underivableKindNoun(e.Kind), g.Name)
+						"Refusing: a preventive guard must not admit a write it cannot verify. (file-guard %s)", g.Name, underivableKindNoun(e.Kind), g.Attribution())
 			}
 
 			verdict, err := runner.Run(dispatchcore.Request{
@@ -164,13 +171,13 @@ func runFileGuardsPreventive(
 			if err != nil {
 				// The runner itself could not decide. Fail-closed: refuse, naming
 				// the guard, the same as the gate dispatch.
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q: %v\n", g.Name, err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %s: %v\n", g.Attribution(), err)
 				return fmt.Sprintf(
 					"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval (file-guard %s)",
-					g.Name, err, g.Name)
+					g.Name, err, g.Attribution())
 			}
 			if verdict.Refused {
-				return fmt.Sprintf("%s (file-guard %s)", verdict.Reason, g.Name)
+				return fmt.Sprintf("%s (file-guard %s)", verdict.Reason, g.Attribution())
 			}
 			// This guard passed this file; it does not fire again on another Pre
 			// event this dispatch — a preventive guard decides the write in front of
@@ -273,10 +280,11 @@ func runFileGuardsPost(
 				SessionID:      scope.SessionID,
 			})
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q: %v\n", g.Name, err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %s: %v\n", g.Attribution(), err)
 				results = append(results, fileGuardResult{
-					Name:    g.Name,
-					Refused: true,
+					Name:        g.Name,
+					Attribution: g.Attribution(),
+					Refused:     true,
 					Reason: fmt.Sprintf(
 						"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval",
 						g.Name, err),
@@ -299,7 +307,7 @@ func runFileGuardsPost(
 			}
 
 			if verdict.Refused {
-				results = append(results, fileGuardResult{Name: g.Name, Refused: true, Reason: verdict.Reason})
+				results = append(results, fileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: verdict.Reason})
 				// One refusal per (guard, file); keep judging the remaining files so
 				// the agent hears every not-fine one at once.
 			}
