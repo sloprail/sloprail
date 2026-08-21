@@ -131,6 +131,18 @@ var (
 	// or is <= 0 — a timeout that never fires is not a timeout. Declaration
 	// fault.
 	ErrBadTimeout = errors.New("declaration: judge timeout is not a positive duration")
+
+	// ErrStrayAllowedTools: a check sets `allowed_tools` without a `judge`. It
+	// grants tools to a judge's agent, so a script-only check — which names its own
+	// tools by being an executable — has nothing to apply them to. Its own sentinel
+	// rather than folded into ErrStrayModel because the fix names a different field.
+	// Declaration fault.
+	ErrStrayAllowedTools = errors.New("declaration: allowed_tools set on a check with no judge")
+
+	// ErrBadAllowedTools: a check's `allowed_tools` carries an empty entry — a
+	// blank tool name grants nothing and can only be a stray or trailing list
+	// item. Mirrors ErrBadModel's empty-entry refusal. Declaration fault.
+	ErrBadAllowedTools = errors.New("declaration: judge allowed_tools has an empty entry")
 )
 
 // Disabling reports whether these problems stop the rule loading. Environment

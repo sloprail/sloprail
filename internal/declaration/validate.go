@@ -303,31 +303,39 @@ func validateChecks(checks []Check) []Problem {
 			problems = append(problems, prob(ErrStrayPrepare, where,
 				"sets prepare without a judge — prepare adds to a judge's prompt, and a script check has nothing to prepare for"))
 		}
-		problems = append(problems, validateJudgeModelTimeout(c, where)...)
+		problems = append(problems, validateJudgeTuning(c, where)...)
 	}
 	return problems
 }
 
-// validateJudgeModelTimeout checks a check's `model`/`timeout`: they are
-// meaningful ONLY on a judge (a script makes no model call and bounds its own
-// runtime), and when present on a judge the model is a well-formed modelset and
-// the timeout parses to a positive duration.
+// validateJudgeTuning checks a check's judge-only tuning fields — `model`,
+// `timeout` and `allowed_tools`: they are meaningful ONLY on a judge (a script
+// makes no model call, bounds its own runtime, and names its own tools by being
+// an executable), and when present on a judge the model is a well-formed modelset,
+// the timeout parses to a positive duration, and every allowed-tools entry is
+// non-empty.
 //
-// The stray-on-script rule mirrors ErrStrayPrepare exactly — model/timeout on a
-// script-only check can only be a mistake, and is refused rather than ignored so
-// the author learns the field does nothing. The format checks are done here too
-// so a set or duration that would fail at the judge is caught at load, the same
-// place a bad match or a bad glob is.
-func validateJudgeModelTimeout(c Check, where string) []Problem {
+// The stray-on-script rules mirror ErrStrayPrepare exactly — a judge-only field on
+// a script-only check can only be a mistake, and is refused rather than ignored so
+// the author learns the field does nothing. The format checks are done here too so
+// a value that would fail at the judge is caught at load, the same place a bad
+// match or a bad glob is.
+func validateJudgeTuning(c Check, where string) []Problem {
 	var problems []Problem
 
-	// Stray on a script check: refuse, one sentinel for the pair.
+	// Stray on a script check: refuse. model/timeout share one sentinel (they are
+	// the one "tunes a model call" idea); allowed_tools gets its own, because its
+	// fix names a different field. As with the model/timeout pair, a stray field is
+	// not also format-checked — its misplacement is the finding, not its shape.
 	if (c.hasModel() || c.hasTimeout()) && !c.isJudge() {
 		problems = append(problems, prob(ErrStrayModel, where,
 			"sets model/timeout without a judge — both tune a model call, and a script check makes none (its runtime is the author's to bound)"))
-		// Do not also format-check the values: on a script check they are the
-		// author's misplacement to fix, not a malformed judge config, and one
-		// clear complaint beats two about the same stray field.
+	}
+	if c.hasAllowedTools() && !c.isJudge() {
+		problems = append(problems, prob(ErrStrayAllowedTools, where,
+			"sets allowed_tools without a judge — it grants tools to a judge's agent, and a script check names its own tools by being an executable"))
+	}
+	if !c.isJudge() {
 		return problems
 	}
 
@@ -343,7 +351,26 @@ func validateJudgeModelTimeout(c Check, where string) []Problem {
 				"timeout %q %s", c.Timeout, err.Error()))
 		}
 	}
+	if c.hasAllowedTools() {
+		if err := validateAllowedTools(c.AllowedTools); err != nil {
+			problems = append(problems, prob(ErrBadAllowedTools, where,
+				"allowed_tools %s", err.Error()))
+		}
+	}
 	return problems
+}
+
+// validateAllowedTools checks a judge's allowed-tools list carries no empty
+// entry — a blank tool name would reach sr-agent as an empty `--allowed-tools`
+// argument, which names no tool and can only be a stray or trailing list item.
+// Mirrors validateModelSet's empty-entry refusal.
+func validateAllowedTools(tools []string) error {
+	for i, t := range tools {
+		if strings.TrimSpace(t) == "" {
+			return fmt.Errorf("entry %d is empty (a blank tool name grants nothing)", i+1)
+		}
+	}
+	return nil
 }
 
 // validateModelSet checks a judge model is a well-formed modelset, mirroring
