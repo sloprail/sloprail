@@ -18,23 +18,24 @@ import (
 // module.Module's contract says outright that this happens and that "a caller
 // must not discard" the events: one input a module could not make sense of is
 // not a reason to drop the events it did produce from the rest. filemod's own
-// Extract repeats the requirement and then names the caller that breaks it —
-// session_pre_tool.go printed the error and `continue`d past the whole slice.
+// Extract repeats the requirement.
 //
-// The Post side already gets this right: postEvents takes the events FIRST and
-// reports the error after, with a comment contrasting itself against the
-// pre-tool point. So the two hook points disagreed about the same contract, and
-// only one of them was correct.
+// The new nature pre-tool dispatch takes the events FIRST and reports the error
+// after — extractPreEvents appends every module's events before ever consulting
+// its error (nature_pre_tool.go), the same discipline postEvents follows at
+// Stop. This test drives that dispatch (runSessionPreTool) and pins the contract
+// at the point where it can actually be observed: a refusal that does or does not
+// arrive.
 //
 // Why it is a guardrail hole and not a tidiness complaint. `rm a.md b.md` is
 // ONE tool call producing TWO file targets. If b.md cannot be stat'ed, the
 // module reports a problem for b.md and a perfectly good PreFileDelete for
-// a.md — and the caller threw away the event for a.md. The rule guarding a.md
-// never ran, the deletion proceeded, and the only trace was a line on stderr
-// that at exit 0 reaches no agent at all.
+// a.md — and a caller that threw away the event for a.md would let the deletion
+// of a.md through with only a line on stderr that at exit 0 reaches no agent at
+// all.
 //
-// One unreadable path silences every rule about every other file the same
-// command touches.
+// One unreadable path must not silence every rule about every other file the
+// same command touches.
 
 // preToolIn runs the pre-tool hook over a project with a pending tool call,
 // returning stdout (where a denial is written) and stderr.
@@ -63,7 +64,17 @@ func jsonString(s string) string {
 	return string(b)
 }
 
+// alwaysRefuse is a check that refuses every invocation, whatever it is handed on
+// stdin — the control that turns "a refusal arrived" into proof the event reached
+// the check.
+const alwaysRefuse = "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"nothing is deleted\"}'\nexit 1\n"
+
 // TestPreTool_ModuleErrorDoesNotDiscardItsEvents.
+//
+// RE-VEHICLED onto the new nature format (was an old GUARDRAIL.md bound to
+// PreFileDelete). The invariant is format-agnostic — it is a property of the
+// pre-tool EXTRACT loop, not of any rule format — and the new dispatch's loop is
+// exactly the one under test.
 //
 // The reproduction is a single `rm` naming two files: one ordinary, one inside
 // a directory the process cannot traverse. lookAt returns `unknown` with an
@@ -72,9 +83,10 @@ func jsonString(s string) string {
 //
 // The assertion is on the DENIAL, not on stderr. The error was always printed;
 // what a test watching stderr cannot see is whether the event survived, and
-// that is precisely why the defect went unnoticed. A rule bound to
-// PreFileDelete refuses, so a denial on stdout is proof the event reached the
-// matching stage.
+// that is precisely why the defect went unnoticed. A preventive file-guard whose
+// match selects guarded.md refuses the deletion of the bytes about to be lost, so
+// a denial on stdout is proof the good PreFileDelete event reached the matching
+// stage rather than being dropped alongside the errored one.
 func TestPreTool_ModuleErrorDoesNotDiscardItsEvents(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root traverses a 0000 directory, so the unreadable path cannot be staged")
@@ -86,6 +98,16 @@ func TestPreTool_ModuleErrorDoesNotDiscardItsEvents(t *testing.T) {
 	proj := initRepo(t)
 	// The file the rule is actually about.
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "guarded.md"), []byte("x"), 0o644))
+
+	// A preventive file-guard that refuses every markdown write or deletion. A
+	// preventive guard fires on PreFileDelete (it may refuse an unasked deletion —
+	// nature_fileguard.go isPreFileEvent), so the `rm` of guarded.md is exactly
+	// the event it must receive.
+	writeFileGuardYAML(t, proj, "nodelete", `match: "**/*.md"
+preventive: true
+checks:
+  - script: ./refuse.sh
+`, map[string]string{"refuse.sh": alwaysRefuse})
 
 	// A path whose PARENT cannot be traversed, so lstat fails with EACCES rather
 	// than ENOENT — which is what produces `unknown` instead of `absent`.
@@ -106,23 +128,11 @@ func TestPreTool_ModuleErrorDoesNotDiscardItsEvents(t *testing.T) {
 	// be asserting nothing at all.
 	t.Chdir(proj)
 
-	const refuseDeletes = `---
-hooks:
-  PreFileDelete:
-    - hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# Nothing is deleted
-`
-	guardrailDir(t, proj, "nodelete", refuseDeletes, map[string]string{"refuse.sh": alwaysRefuse})
-
 	stdout, _ := preToolIn(t, proj, "Bash",
 		`{"command":"rm guarded.md locked/other.md"}`)
 
 	assert.Contains(t, stdout, `"permissionDecision":"deny"`,
 		"the module produced a PreFileDelete for guarded.md alongside an error about the "+
 			"unreadable path; discarding the slice let the guarded deletion through")
-	assert.Contains(t, stdout, "nodelete", "the refusal must name the guardrail")
+	assert.Contains(t, stdout, "nodelete", "the refusal must name the file-guard")
 }

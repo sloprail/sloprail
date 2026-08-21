@@ -138,17 +138,15 @@ const gateStatePrefix = "gate:"
 // project has enabled. Any that could not be loaded are reported on the same
 // channel the old format uses, as are unresolved plugins and shadowed declarations.
 //
-// # Plugin resolution mirrors the old path exactly
+// # Plugin resolution
 //
-// The enabled-plugin set is resolved the SAME way guardrailStore (dotdir.go)
-// resolves it for the old format: internal/harness reads the project's own
-// `.claude/settings.json` and `settings.local.json`, locates each enabled plugin's
-// installation, and returns its root. Those roots become declaration.Origins, and
-// declaration.NewWithPlugins reads each plugin's own `.sloprail` alongside the
-// project's. This is deliberately not a second discovery mechanism — harness.Resolve
-// is harness-generic plugin discovery, not old-format-specific, so both formats
-// find the same plugins the same way and cannot come to disagree about which are
-// installed.
+// The enabled-plugin set is resolved through internal/harness: it reads the
+// project's own `.claude/settings.json` and `settings.local.json`, locates each
+// enabled plugin's installation, and returns its root. Those roots become
+// declaration.Origins, and declaration.NewWithPlugins reads each plugin's own
+// `.sloprail` alongside the project's. harness.Resolve is harness-generic plugin
+// discovery, so a plugin's new-format rules are found the same way the harness
+// finds everything else a plugin ships.
 //
 // # Fail-open parity with the old dispatch
 //
@@ -203,7 +201,7 @@ func newNatureDeclarations(cmd *cobra.Command, cwd string, reg *module.Registry)
 }
 
 // natureDeclarationStore builds the plugin-aware declaration store for a session,
-// resolving the enabled plugins the same way guardrailStore does, and returns the
+// resolving the enabled plugins through internal/harness, and returns the
 // unresolved plugins alongside so the caller can report them.
 //
 // On any resolution failure it returns a PROJECT-ONLY store (the project's own
@@ -226,9 +224,9 @@ func natureDeclarationStore(cmd *cobra.Command, cwd string) (*declaration.Store,
 	res, err := harness.Resolve(projectDir(cwd), home)
 	if err != nil {
 		// A settings file that exists and cannot be read or parsed. Reported, and
-		// the load proceeds project-only. The old format refuses the action here;
-		// the new dispatch keeps the project's own new-format rules live rather than
-		// disarming them over a settings file the old format is reading from too.
+		// the load proceeds project-only: the dispatch keeps the project's own
+		// new-format rules live rather than disarming them over a settings file it
+		// could not read to discover plugins.
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"sloprail: plugin-shipped new-format declarations not loaded (the project's plugin settings could not be read): %v\n", err)
 		return declaration.New(dotDir(cwd)), nil

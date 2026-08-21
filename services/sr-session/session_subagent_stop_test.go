@@ -207,17 +207,17 @@ func TestSubagentStopDispatchesThePostEvents(t *testing.T) {
 	tree := initRepo(t)
 	commitFile(t, tree, "seed.txt", "seed")
 
-	original := dispatchPostEvents
-	t.Cleanup(func() { dispatchPostEvents = original })
+	original := natureStopDispatch
+	t.Cleanup(func() { natureStopDispatch = original })
 
 	var dispatched bool
 	var gotSession string
-	dispatchPostEvents = func(cmd *cobra.Command, store sessionstate.Store, p HookPayload) bool {
+	natureStopDispatch = func(cmd *cobra.Command, p HookPayload) string {
 		dispatched = true
 		if id, err := stableID(p); err == nil {
 			gotSession = id
 		}
-		return true
+		return ""
 	}
 
 	p := subagentSession(t, tree)
@@ -242,13 +242,12 @@ func TestSubagentStopBlocksWhenAGuardrailRefuses(t *testing.T) {
 	tree := initRepo(t)
 	commitFile(t, tree, "seed.txt", "seed")
 
-	original := dispatchPostEvents
-	t.Cleanup(func() { dispatchPostEvents = original })
-	dispatchPostEvents = func(cmd *cobra.Command, store sessionstate.Store, p HookPayload) bool {
-		// What runPostDispatch does when a guardrail objects: writes the block
-		// and reports that the cycle did not complete.
-		require.NoError(t, block(cmd, "a rule refused"))
-		return false
+	original := natureStopDispatch
+	t.Cleanup(func() { natureStopDispatch = original })
+	natureStopDispatch = func(cmd *cobra.Command, p HookPayload) string {
+		// What the Stop dispatch returns when a rule refuses: the block text.
+		// completeCycle writes it to the block channel and holds the mark.
+		return "a rule refused"
 	}
 
 	p := subagentSession(t, tree)
@@ -284,9 +283,9 @@ func TestSubagentStopAdvancesTheMarkOnACompletedCycle(t *testing.T) {
 	require.NoError(t, seed.SetMeta(sessionstate.MetaTranscriptOffered, "some-turn"))
 	require.NoError(t, seed.Close())
 
-	original := dispatchPostEvents
-	t.Cleanup(func() { dispatchPostEvents = original })
-	dispatchPostEvents = func(*cobra.Command, sessionstate.Store, HookPayload) bool { return true }
+	original := natureStopDispatch
+	t.Cleanup(func() { natureStopDispatch = original })
+	natureStopDispatch = func(*cobra.Command, HookPayload) string { return "" }
 
 	_, _, err = runSubagentStopWith(t, p)
 	require.NoError(t, err)
@@ -326,9 +325,9 @@ func TestSubagentStopHoldsTheMarkWhenDispatchDidNotFinish(t *testing.T) {
 	require.NoError(t, seed.SetMeta(sessionstate.MetaTranscriptOffered, "some-turn"))
 	require.NoError(t, seed.Close())
 
-	original := dispatchPostEvents
-	t.Cleanup(func() { dispatchPostEvents = original })
-	dispatchPostEvents = func(*cobra.Command, sessionstate.Store, HookPayload) bool { return false }
+	original := natureStopDispatch
+	t.Cleanup(func() { natureStopDispatch = original })
+	natureStopDispatch = func(*cobra.Command, HookPayload) string { return "a rule refused" }
 
 	_, _, err = runSubagentStopWith(t, p)
 	require.NoError(t, err)
@@ -340,5 +339,5 @@ func TestSubagentStopHoldsTheMarkWhenDispatchDidNotFinish(t *testing.T) {
 	_, ok, err := store.Meta(sessionstate.MetaTranscriptRead)
 	require.NoError(t, err)
 	assert.False(t, ok,
-		"the mark advanced on a cycle that never finished dispatching — those turns are now behind it")
+		"the mark advanced on a cycle a Stop refusal blocked — those turns are now behind it")
 }

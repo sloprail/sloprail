@@ -11,7 +11,6 @@
 package filemod_test
 
 import (
-	"errors"
 	"fmt"
 	"testing"
 
@@ -128,45 +127,24 @@ func TestMarkersDecl_LineIsAnIntegerNotAString(t *testing.T) {
 	}
 }
 
-func TestMarkersDecl_RefusalNamesTheAvailableFields(t *testing.T) {
-	// Validate's message is what an author reads. A refusal that did not say
-	// what the fields ARE leaves them guessing at the spelling.
+func TestMarkersDecl_RefusalNamesTheOffendingField(t *testing.T) {
+	// The compile error an author reads must name the offending name, or they are
+	// left guessing at the spelling.
 	//
-	// PreFileCreate declares newMarkers, so the predicate reads it.
+	// PreFileCreate declares newMarkers, so the predicate reads it. A typo inside
+	// the predicate (`.knid` for `.kind`) fails to compile against the closed
+	// element shape, and the error names `knid`.
+	//
+	// This checks the shared matcher machinery (guardrail.CompileMatcherFor). The
+	// COMPLEMENTARY half — that a rule's validator wraps this compile error with
+	// the fields the scope DOES carry so the author sees the available spelling —
+	// now lives with the new-format validator that produces it:
+	// internal/declaration TestLoad_FileGuard_SingularMarkerRefused asserts a
+	// file-guard's bad-match refusal names path/markers/context.
 	decl := markerKinds(t)[filemod.KindPreCreate+"/"+filemod.FieldNewMarkers]
 	_, err := guardrail.CompileMatcherFor(`any(newMarkers, .knid == "docs")`, decl.decl)
 	require.Error(t, err)
-
-	// The compile error names the offending name; Validate wraps it with the
-	// kind's field list. Both halves are checked, since a caller reads the
-	// wrapped form.
-	reg, err := module.NewRegistryForTest(filemod.New())
-	require.NoError(t, err)
-
-	d := guardrail.Declaration{
-		Name: "marker-rule",
-		Dir:  t.TempDir(),
-		Hooks: map[string][]guardrail.Binding{
-			filemod.KindPreCreate: {{
-				Matcher: `any(newMarkers, .knid == "docs")`,
-				Hooks:   []guardrail.Hook{{Type: guardrail.HookCommand, Command: "true"}},
-			}},
-		},
-	}
-	problems := guardrail.Validate(d, reg)
-	require.NotEmpty(t, problems)
-
-	var msg string
-	for _, p := range problems {
-		if errors.Is(p, guardrail.ErrBadMatcher) {
-			msg = p.Message()
-		}
-	}
-	require.NotEmpty(t, msg, "the fault must be reported as a bad matcher")
-	assert.Contains(t, msg, "knid")
-	for _, field := range []string{filemod.FieldPath, filemod.FieldNewContent, filemod.FieldNewMarkers} {
-		assert.Containsf(t, msg, field, "the message should name %q as available", field)
-	}
+	assert.Contains(t, err.Error(), "knid", "the compile error must name the offending field")
 }
 
 func TestMarkersDecl_DeleteHasNoNewMarkersToBindTo(t *testing.T) {

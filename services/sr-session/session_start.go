@@ -4,76 +4,31 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
 // newSessionStartCmd is the hook point that fires when a session begins.
 //
-// It loads the declarations once, so a malformed one surfaces while the person
-// is still watching rather than at the moment it would have blocked something.
-// It never refuses: a session that cannot start because of a guardrail is worse
-// than a session with none.
+// Its one job is to record where this session measures from — the baseline
+// commit and branch. It never refuses: a session that cannot start because of a
+// guardrail is worse than a session with none.
+//
+// It does NOT load and report the project's declarations. The new nature
+// dispatch reports a malformed declaration on EVERY pre-tool and Stop dispatch
+// (newNatureDeclarations → reportNatureInvalid / reportNatureShadowed /
+// reportUnresolved), so a fault surfaces the first time the agent does anything —
+// rather than only at a session start nobody was watching. Reporting here as
+// well would print each fault twice for no gain.
 func newSessionStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
-		Short: "Session start: load and report the project's declarations",
+		Short: "Session start: record the baseline this session measures from",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p := readPayload(cmd)
 
-			// Where this session measures from. Recorded before the
-			// declarations are touched: a malformed guardrail is a reason to
-			// print something, never a reason for the session to have no point
-			// to diff against.
+			// Where this session measures from. The one thing session start is
+			// for: without it the first cycle has no point to diff against.
 			recordBaseline(cmd, p)
-
-			reg, err := modules.Registry()
-			if err != nil {
-				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
-				return nil
-			}
-
-			// LoadWith rather than Load: the checks worth running here are the
-			// ones that need to know which events exist and what they carry.
-			// Session start is where a person is still watching, so it is where
-			// a rule that could never fire should say so.
-			store, unresolved, err := guardrailStore(p.Cwd)
-			if err != nil {
-				// Reported, not fatal — see above. Session start refuses
-				// nothing by design; the enforcing points do.
-				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
-				return nil
-			}
-			// Named here as well as at every enforcing point. This is the one
-			// place a person is reliably watching, so a plugin whose guardrails
-			// have silently gone missing should say so before any work starts.
-			reportUnresolved(cmd, unresolved)
-
-			res, err := store.Resolve(reg)
-			decls, invalid := res.Declarations, res.Invalid
-			if err != nil {
-				// Reported, not fatal — see above.
-				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
-				return nil
-			}
-			// The same reporting the pre-tool path does, from the same function.
-			// A fault an author reads here and then meets again at a write should
-			// be recognisably the one fault, in the one wording.
-			reportInvalid(cmd, invalid)
-			reportShadowed(cmd, res.Shadowed)
-
-			// Rules that loaded despite something being wrong with the machine.
-			// Said differently from "not loaded", because the consequence is
-			// different: this rule is in force and will refuse the work it
-			// guards until the hook can run.
-			for _, d := range decls {
-				for _, w := range d.Warnings {
-					fmt.Fprintf(cmd.ErrOrStderr(),
-						"sloprail: guardrail %s will refuse until this is fixed: %s\n",
-						d.Attribution(), w.Message())
-				}
-			}
 			return nil
 		},
 	}

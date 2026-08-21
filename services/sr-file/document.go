@@ -17,8 +17,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-
-	"github.com/sloprail/sloprail/internal/guardrail"
 )
 
 // Document is the bytes a schema is checked against, plus what a reader needs to
@@ -84,7 +82,7 @@ func ExtractDocumentAs(path, format string, data []byte) (Document, error) {
 	}
 	switch ext {
 	case ".md":
-		front, _, err := guardrail.SplitFrontmatter(data)
+		front, _, err := splitFrontmatter(data)
 		if err != nil {
 			// The split's own message says what is wrong with the fences; the
 			// file name is prepended because that message does not carry it and
