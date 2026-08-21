@@ -32,14 +32,13 @@ import (
 // plugins that ship them.
 //
 // The two are read the same way and validated by the same code, deliberately —
-// the exact stance internal/guardrail.Store takes for the old format. A plugin's
-// declaration is not a second kind of thing with its own rules; it is the same
-// declaration in a different place, and the moment the two paths diverge is the
-// moment a rule can behave one way for its author and another for the project that
-// installed it.
+// the exact stance the old format's now-deleted internal/guardrail.Store took. A
+// plugin's declaration is not a second kind of thing with its own rules; it is the
+// same declaration in a different place, and the moment the two paths diverge is
+// the moment a rule can behave one way for its author and another for the project
+// that installed it.
 //
-// Rooted at the `.sloprail` dir itself (not the project root), matching how
-// internal/guardrail.Store is rooted at the dot-directory: the store owns every
+// Rooted at the `.sloprail` dir itself (not the project root): the store owns every
 // path beneath it, and a caller passes typed identifiers (a nature, a name), never
 // a built path. A plugin's own `.sloprail` sits at `<pluginRoot>/.sloprail`, the
 // same relative layout a project uses, so a rule can be developed in a project and
