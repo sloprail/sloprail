@@ -147,8 +147,24 @@ test-e2e-shard:
 	              ./tests/e2e/declarations/... \
 	              ./tests/e2e/authoring/... \
 	              ./tests/e2e/harness/... ;; \
-	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|rest)" >&2; exit 2 ;; \
+	  plugins)  $(MAKE) test-plugins-e2e ;; \
+	  *) echo "test-e2e-shard: unknown SHARD='$(SHARD)' (want: session|session2|pre_tool|examples|rest|plugins)" >&2; exit 2 ;; \
 	esac
+
+# Plugin-local e2e modules. Each marketplace plugin that ships its own tests/ Go
+# module (its own go.mod, importing the shared harness via a replace) is a
+# SELF-CONTAINED suite — the "each plugin self-tests" model. They are NOT part of
+# `go list ./tests/...` (a separate module), so they are run explicitly here, one
+# `go test` per module dir. Add a plugin's tests dir to PLUGIN_TEST_DIRS when it
+# grows one.
+PLUGIN_TEST_DIRS := marketplace/plugins/sloprail-tasks/tests
+
+.PHONY: test-plugins-e2e
+test-plugins-e2e:
+	@set -e; for d in $(PLUGIN_TEST_DIRS); do \
+	  echo "== plugin e2e: $$d =="; \
+	  ( cd "$$d" && go test -p 1 -count=1 -timeout 30m ./... ); \
+	done
 
 tidy:
 	go mod tidy
