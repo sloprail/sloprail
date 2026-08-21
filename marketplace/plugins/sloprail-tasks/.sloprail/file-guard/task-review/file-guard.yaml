@@ -67,11 +67,11 @@ checks:
   - script: ./review-preflight.sh
 
   # The judge, reached only for an in_review task whose citations all resolve.
-  # model pinned to haiku; timeout 25s under the engine's 30s bound;
+  # model is size-md (engine default judge modelset); timeout 25s under the engine's 30s bound;
   # allowed_tools: [Read] adds Read on top of the engine-granted Write for the
   # verdict file (the evidence is already expanded INTO the prompt).
   - prepare: ./expand-evidence.sh
     judge: ./review-task.md.j2
-    model: claude-haiku-4-5-20251001
+    model: size-md
     timeout: 25s
     allowed_tools: [Read]

@@ -61,7 +61,7 @@ checks:
   # stdout, exit non-zero.
   - script: ./has-body-citation.sh
 
-  # Stage 2 — the judge, reached only because stage 1 passed. model pinned to haiku
+  # Stage 2 — the judge, reached only because stage 1 passed. model is size-md (engine default judge modelset)
   # (an unpinned model resolves larger and this can fire several times per turn);
   # timeout 25s sits under the engine's 30s check bound so the judge's own limit
   # fires first. allowed_tools: [Read] ADDS Read on top of the Write the engine's
@@ -70,6 +70,6 @@ checks:
   # body are both already IN the prompt.
   - prepare: ./resolve-cited-messages.sh
     judge: ./judge-body.md.j2
-    model: claude-haiku-4-5-20251001
+    model: size-md
     timeout: 25s
     allowed_tools: [Read]
