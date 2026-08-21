@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -86,6 +88,57 @@ func TestRubricReachesSkillJudgePrompt(t *testing.T) {
 	if !strings.Contains(prompt, distinctivePhraseHighSignal) {
 		t.Fatalf("the assembled rubric (the enforced meta-rule) did not reach the judge prompt — prepare/template wiring is broken:\n%s", prompt)
 	}
+}
+
+// TestJudgeConfigReachesTheHarness pins that the migrated guardrail's own judge
+// config — the haiku model PIN and the allowed_tools: [Read] — reaches the real
+// sr-agent -> claude invocation. sr-agent builds `claude -p --model <resolved>
+// --settings <isolation> --add-dir <dir> --allowed-tools "Write Read" -- <prompt>`,
+// so the recorded argv carries both the pinned model and the merged tool grant.
+// This is the D.1/D.2 config threaded end to end through the real binaries, not
+// just the unit-level judgeCommand.
+func TestJudgeConfigReachesTheHarness(t *testing.T) {
+	e := New(t)
+	proj := project(t, e, "rule-quality")
+
+	// A recording shim: writes a passing verdict AND records the claude argv.
+	argvFile := filepath.Join(proj, "claude-argv.txt")
+	e.InstallJudgeClaudeRecordingArgv(argvFile, `{"pass": true, "reasoning": ""}`)
+
+	e.Run(proj, "s-erj-config", "write a rule", Turns("done",
+		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA clean body.\n"),
+	))
+
+	argv, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatalf("the recording shim captured no claude argv (was the judge invoked?): %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(argv)), "\n")
+
+	// The pinned haiku model reached the harness as `--model claude-haiku-4-5-20251001`.
+	if !hasAdjacent(lines, "--model", "claude-haiku-4-5-20251001") {
+		t.Errorf("the guardrail's model pin did not reach the harness as `--model claude-haiku-4-5-20251001`; argv:\n%s", string(argv))
+	}
+	// allowed_tools: [Read] merged with the answer-file Write into one
+	// `--allowed-tools "Write Read"` argument.
+	if !hasAdjacent(lines, "--allowed-tools", "Write Read") {
+		t.Errorf("the guardrail's allowed_tools ([Read]) did not reach the harness merged with Write as `--allowed-tools \"Write Read\"`; argv:\n%s", string(argv))
+	}
+	// The isolation --settings the old script hand-rolled is now sr-agent's baseArgs.
+	if !hasAdjacent(lines, "--settings", `{"hooks":{},"mcpServers":{},"enabledPlugins":{}}`) {
+		t.Errorf("the isolation --settings did not reach the harness; argv:\n%s", string(argv))
+	}
+}
+
+// hasAdjacent reports whether flag is immediately followed by value in the argv
+// lines — how sr-agent passes a flag and its value as two consecutive arguments.
+func hasAdjacent(lines []string, flag, value string) bool {
+	for i := 0; i+1 < len(lines); i++ {
+		if lines[i] == flag && lines[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 // TestEmptyRulesIsRefusalNotFailOpen pins the PRESERVED asymmetry: a guard whose
