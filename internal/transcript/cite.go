@@ -23,6 +23,85 @@ import (
 // so a quote landing on either resolves. Nothing else does — not the agent's own
 // prior output, and not the text of an ordinary tool_result that merely happens
 // to contain the substring.
+//
+// # Two searchable pools, selected by SourceType
+//
+// That last exclusion is the DEFAULT, not the only mode. There is a second,
+// distinct thing a caller may legitimately want to ground: the RESULT a tool
+// produced — a test that came back green, a build whose output IS the evidence.
+// That is not the user's words, and grounding a task's ASK in it would be the
+// exact false citation this command exists to refuse; but grounding a task's
+// DELIVERY claim in it is precisely right, and nothing else in the record proves
+// a command ran and what it returned. The two live in two different pools of the
+// SAME user entry, which a harness writes as: the person's typed text (and the
+// AskUserQuestion answer) in `message.content` text/string, and a tool's result
+// in a `message.content` block of `type: "tool_result"`.
+//
+// SourceType names which pool(s) a quote is resolved against, in ONE walk:
+//
+//   - SourceUser        the user's own words — the default, and the only thing
+//                       task-body-is-human-authored ever cites. messageText plus
+//                       the answer envelope, with the harness-injected filter.
+//   - SourceToolResult  the raw body of a tool_result block — the tool's output,
+//                       which SourceUser deliberately excludes. This is what a
+//                       delivery OBSERVATION cites: proof the work happened.
+//
+// A caller passing both accepts a match in either. The mirror is exact: the same
+// tool_result block that SourceUser reads ONLY for an answer envelope (the user's
+// selected words), SourceToolResult reads as the tool's output — so a quote of a
+// command's result grounds under SourceToolResult and is refused under SourceUser,
+// and a quote of the user's ask grounds under SourceUser and is refused under
+// SourceToolResult.
+
+// SourceType is one pool of text within a user entry that a quote may be resolved
+// against. It is a string so an unknown value travels under its own name rather
+// than being silently coerced, the same reasoning as EntryType.
+type SourceType string
+
+const (
+	// SourceUser is the user's own words: the typed message text, and the answer
+	// selected to an AskUserQuestion. Harness-injected user-role messages
+	// (<system-reminder>, <task-notification>, a slash-command envelope) are
+	// excluded, and an ordinary tool_result's body is not searched — grounding a
+	// claim on either would be a false citation of the person.
+	SourceUser SourceType = "user"
+
+	// SourceToolResult is the raw text a tool_result block carries — the output an
+	// action produced. This is the pool SourceUser refuses: a delivery observation
+	// grounds a "the work happened" claim here (a green test, a command's result),
+	// where the user's own words could never prove a command ran.
+	SourceToolResult SourceType = "tool_result"
+)
+
+// ParseSourceType maps a source-type name to its SourceType, reporting whether it
+// is one this package knows. The `cite` command parses its --source-types flag
+// through here so an unknown name is refused with the value the caller wrote,
+// rather than silently searching nothing.
+func ParseSourceType(name string) (SourceType, bool) {
+	switch SourceType(name) {
+	case SourceUser:
+		return SourceUser, true
+	case SourceToolResult:
+		return SourceToolResult, true
+	default:
+		return "", false
+	}
+}
+
+// wants reports whether sources names s. An empty set is treated as SourceUser
+// only, so a caller (or a back-compat path) that passes nothing gets today's
+// behaviour rather than a search that matches nothing.
+func wants(sources []SourceType, s SourceType) bool {
+	if len(sources) == 0 {
+		return s == SourceUser
+	}
+	for _, want := range sources {
+		if want == s {
+			return true
+		}
+	}
+	return false
+}
 
 // CitationMatch is one resolved citation: the user's own words the quote landed
 // on, and where they sit. Rendered on stdout as `<path>:<line>`, carried as a
@@ -47,26 +126,47 @@ type CitationMatch struct {
 }
 
 // Cite finds where quote sits in the user's own words within the trajectory at
-// path, returning one match per entry whose user-words contain the substring.
-//
-// The search is over USER entries only, and within each over the text that is
-// genuinely the user's: the message content, and any AskUserQuestion answer
-// carried in a tool_result envelope on that entry. An assistant turn is never
-// searched — grounding a claim in the agent's own prior output is precisely what
-// this must not let happen — and an ordinary tool_result that is not an answer
-// envelope contributes nothing even if the substring appears inside it.
-//
-// A match is per ENTRY, not per occurrence: an entry whose user-words contain
-// the substring twice is one candidate, because the citation resolves to the
-// line, and the line is the same both times. The caller decides what one, many,
-// or no matches mean — this only finds them, in file order, so the rendered
-// candidates read top-to-bottom.
-//
-// An empty quote is treated as matching nothing rather than everything: a
-// citation of "" resolves nowhere useful, and returning every user line for it
-// would turn a mistake into an ambiguous flood. The path having no readable
-// record is the caller's error to surface; here a read failure propagates.
+// path — the SourceUser pool alone. It is CiteWithSources pinned to today's
+// default, kept so every existing caller (and every caller that only ever wants
+// the person's words) reads the same one-argument shape it always did.
 func Cite(path, quote string) ([]CitationMatch, error) {
+	return CiteWithSources(path, quote, []SourceType{SourceUser})
+}
+
+// CiteWithSources finds where quote sits within the trajectory at path, searching
+// the pools named in sources and returning one match per ENTRY that contains the
+// substring in any requested pool.
+//
+// The search is over USER entries only — a tool_result is written on a user entry,
+// and the user's own words are on a user entry, so no other entry type carries
+// either pool. An assistant turn is never searched: grounding a claim in the
+// agent's own prior output is precisely what this must not let happen, whichever
+// pools are requested. Within each user entry, sources selects what is read:
+//
+//   - SourceUser        the message text and any AskUserQuestion answer envelope,
+//     with harness-injected user-role messages excluded. An
+//     ordinary tool_result's body contributes nothing here.
+//   - SourceToolResult  the raw body of each tool_result block that is a GENUINE
+//     tool output — the tool's own result. An answer envelope
+//     is a tool_result block too, but its body is the user's
+//     selected words, so it belongs to SourceUser and is
+//     EXCLUDED here (genuineToolResultText drops it): the two
+//     pools are disjoint, and under this pool the caller is
+//     asking about tool output, not the person.
+//
+// A match is per ENTRY, not per occurrence or per pool: an entry whose text
+// contains the substring — twice, or in both pools — is one candidate, because
+// the citation resolves to the line, and the line is the same every time. The
+// caller decides what one, many, or no matches mean; this only finds them, in
+// file order, so the rendered candidates read top-to-bottom.
+//
+// An empty quote is treated as matching nothing rather than everything: a citation
+// of "" resolves nowhere useful, and returning every line for it would turn a
+// mistake into an ambiguous flood. An empty sources is treated as SourceUser only,
+// so a nil or unset selection is today's behaviour, not a search that matches
+// nothing. The path having no readable record is the caller's error to surface;
+// here a read failure propagates.
+func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch, error) {
 	if quote == "" {
 		return nil, nil
 	}
@@ -79,11 +179,25 @@ func Cite(path, quote string) ([]CitationMatch, error) {
 		if e.Type != EntryUser {
 			continue
 		}
-		if userWordsContain(e.Entry, quote) {
+		if entryContains(e.Entry, quote, sources) {
 			matches = append(matches, CitationMatch{Path: path, Line: e.Line})
 		}
 	}
 	return matches, nil
+}
+
+// entryContains reports whether quote appears in any of the requested pools on a
+// user entry. The pools are consulted in order and the walk short-circuits on the
+// first hit — a match is per entry, so which pool found it does not change the
+// resolved line.
+func entryContains(e Entry, quote string, sources []SourceType) bool {
+	if wants(sources, SourceUser) && userWordsContain(e, quote) {
+		return true
+	}
+	if wants(sources, SourceToolResult) && toolResultContain(e, quote) {
+		return true
+	}
+	return false
 }
 
 // userWordsContain reports whether quote appears in the user's own words on a
@@ -280,6 +394,158 @@ func toolResultStrings(raw json.RawMessage) []string {
 	for _, b := range blocks {
 		if b.Text != "" {
 			out = append(out, b.Text)
+		}
+	}
+	return out
+}
+
+// toolResultContain reports whether quote appears in the raw body of any
+// tool_result block on a user entry — the SourceToolResult pool.
+//
+// This is the mirror of userWordsContain: where that reads a tool_result ONLY for
+// an answer envelope (extracting the user's selected words and nothing else), this
+// reads the WHOLE body — the tool's actual output, which is what a delivery
+// observation cites. The two never overlap in intent: a quote of a command's
+// result grounds here and is refused by userWordsContain; a quote of the user's
+// ask grounds there and is refused here, because a tool's output is not the user's
+// words and this pool holds nothing but tool output.
+func toolResultContain(e Entry, quote string) bool {
+	// genuineToolResultText, not toolResultText: an AskUserQuestion answer envelope
+	// is a tool_result block whose body is the user's own answer, and it belongs to
+	// the SourceUser pool (userWordsContain reads it), not here. Searching it under
+	// SourceToolResult too would let a quote of the user's answer ground as "the
+	// tool's output" — the same substitution ToolResultAt guards against on the
+	// line-based path. Excluding answer envelopes keeps the two pools disjoint and
+	// SourceToolResult meaning exactly "the tool's output", as its doc says.
+	for _, text := range genuineToolResultText(e.Message) {
+		if strings.Contains(text, quote) {
+			return true
+		}
+	}
+	return false
+}
+
+// toolResultText returns the raw text of every tool_result block on a user entry's
+// message — the output a tool produced, whichever shape the block's content takes.
+//
+// It is deliberately the UNFILTERED body: unlike answerText, which reaches into a
+// tool_result only to pull the <answer> out of an AskUserQuestion envelope, this
+// keeps the block's content verbatim, because the thing a delivery observation
+// grounds on IS that content — the lines a test printed, the status a build
+// returned. An entry with no tool_result block contributes nothing, which is the
+// honest answer for a plain typed message: there is no tool output on it to cite.
+//
+// The top-level `toolUseResult` field an entry may also carry (transcript.Entry:
+// "where evidence of what an action actually produced lives") is NOT read here.
+// That field is a structured artifact payload a different consumer reads whole
+// (see envelope.go / the action-proof prepare); a cite is a substring search for
+// a line a person remembers, and what they remember seeing is the tool_result
+// block's rendered content, which is where this looks.
+func toolResultText(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var msg userMessage
+	if json.Unmarshal(raw, &msg) != nil || len(msg.Content) == 0 {
+		return nil
+	}
+	var blocks []userContentBlock
+	if json.Unmarshal(msg.Content, &blocks) != nil {
+		return nil
+	}
+	var out []string
+	for _, b := range blocks {
+		if b.Type != "tool_result" || len(b.Content) == 0 {
+			continue
+		}
+		out = append(out, toolResultStrings(b.Content)...)
+	}
+	return out
+}
+
+// ToolResultAt reports whether the entry at physical line of the transcript at path
+// is a tool_result the session produced, and returns that result's text.
+//
+// This is the LINE-oriented counterpart to the SourceToolResult pool: a delivery
+// OBSERVATION is a `<abs-jsonl>:<ranges>` citation into the transcript, so what the
+// deterministic check asks is not "does a quote resolve" but "is the entry at THIS
+// LINE a tool_result" — the exact gap the old guardrail named (its
+// cite_check_user_message could refuse a user message, but had no "this line is a
+// real tool-call result" check). It is built on the SAME toolResultText pool cite
+// searches, so "is a tool_result" means precisely what the tool_result source type
+// means — one authority, not a second hand-rolled entry-type test.
+//
+// isToolResult is true iff the entry at that line is a user entry carrying at least
+// one tool_result block (toolResultText non-empty); text is that block content
+// joined by newlines, the bytes a reviewer sees as the result. A line that is a
+// user message, an assistant turn, an answer envelope with no ordinary result, or
+// no entry at all is NOT a tool_result — returning false, so the caller refuses an
+// observation that points at the agent's prose rather than a produced result.
+//
+// A line past the end, or one that is not an entry (a preamble line, an unparseable
+// one), yields ("", false, nil): "not a tool_result" is the honest answer, not an
+// error, so the caller can name the citation rather than crash on a bad range.
+func ToolResultAt(path string, line int) (text string, isToolResult bool, err error) {
+	entries, err := ReadLines(path)
+	if err != nil {
+		return "", false, err
+	}
+	for _, e := range entries {
+		if e.Line != line {
+			continue
+		}
+		if e.Type != EntryUser {
+			return "", false, nil
+		}
+		// A GENUINE produced result, not an AskUserQuestion answer envelope. An
+		// answer re-enters the transcript as a tool_result block too (its body is
+		// `The user answered: ...`), so toolResultText alone would classify the
+		// user's own answer as a delivery observation — the exact substitution this
+		// check exists to refuse (the user's words standing in for proof of work).
+		// genuineToolResultText drops the answer-envelope blocks, so a line that
+		// carries ONLY an answer envelope is not a tool_result, matching this
+		// function's contract above.
+		results := genuineToolResultText(e.Message)
+		if len(results) == 0 {
+			return "", false, nil
+		}
+		return strings.Join(results, "\n"), true, nil
+	}
+	return "", false, nil
+}
+
+// genuineToolResultText is toolResultText minus the AskUserQuestion answer
+// envelopes: the bodies of a user entry's tool_result blocks EXCEPT those that are
+// an answer envelope (a body extractAnswers can read a `The user answered:` pair
+// out of). A block that is an answer envelope carries the user's words, not a
+// tool's output, so it is not delivery evidence — the same line answerText draws
+// between the user's answer and a command's result, applied here to the whole
+// block. A line carrying both a real result and an answer envelope keeps the real
+// result only; a line carrying only an answer envelope yields nothing.
+func genuineToolResultText(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var msg userMessage
+	if json.Unmarshal(raw, &msg) != nil || len(msg.Content) == 0 {
+		return nil
+	}
+	var blocks []userContentBlock
+	if json.Unmarshal(msg.Content, &blocks) != nil {
+		return nil
+	}
+	var out []string
+	for _, b := range blocks {
+		if b.Type != "tool_result" || len(b.Content) == 0 {
+			continue
+		}
+		for _, body := range toolResultStrings(b.Content) {
+			// An answer envelope contributes nothing: its body is the user's
+			// selected answer, not a produced result.
+			if len(extractAnswers(body)) > 0 {
+				continue
+			}
+			out = append(out, body)
 		}
 	}
 	return out

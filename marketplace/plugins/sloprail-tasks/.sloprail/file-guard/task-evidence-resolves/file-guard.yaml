@@ -1,22 +1,30 @@
-# A task's frontmatter is valid and its evidence citations resolve — the
+# A task's frontmatter is valid and its DELIVERY-evidence citations resolve — the
 # DETERMINISTIC floor of task management. It spends no model call and answers only
-# questions a string comparison, a schema check, or `cite` can settle: every
-# memories/tasks/<category>/<name>/TASK.md must satisfy .sloprail/schemas/task.cue,
-# and every `[quote](jsonl-path)` evidence link in it must ground to the user's own
-# words. The full argument lives in the plugin's README, migrated from the
-# old-format rule doc.
+# questions a schema check, a transcript lookup, or a filesystem lookup can settle:
+# every memories/tasks/<category>/<name>/TASK.md must satisfy
+# .sloprail/schemas/task.cue, and every observation/artifact citation in its
+# frontmatter must resolve to the thing its KIND promises. The full argument lives
+# in the plugin's README, migrated from the old-format rule doc.
+#
+# TWO CITATION KINDS, DIFFERENT PATH BASES (2026-08-21). The delivery evidence is
+# structured FRONTMATTER, not body links (the body's ask is task-body-is-human-
+# authored's subject). The two kinds resolve differently:
+#   - an OBSERVATION `<abs-jsonl>:<ranges>` — every cited line must be a tool_result
+#     the session produced, confirmed by `sr-session trajectory tool-result --line`
+#     (the same tool_result classification cite's --source-types tool_result uses).
+#   - an ARTIFACT `<repo-relative-file>:<ranges>` — the file exists under the repo
+#     and every cited line exists, the file-citation checker task.cue cannot make.
+# The path base ROUTES each: an observation is absolute and a transcript, an artifact
+# is repo-relative and a tree file, and one wearing the other's shape is refused.
+#
+# THIS IS THE STRUCTURAL HALF ONLY. It answers "do the citations resolve", never
+# "does the evidence substantiate the claim" — that is task-review's model call,
+# gated behind this. The split is crisp and deliberate; see the README.
 #
 # A SCRIPT check, migrated from the old-format Pre+Post command hook (check-task.sh).
-# The detection logic is deterministic — `sr-file validate` for the schema,
-# `sr-session trajectory cite` for the grounding — so it stays a script; no model,
-# so no judge: to convert to.
-#
-# CITE IS THE SINGLE VALIDATOR (2026-08-21). The old rule hand-rolled a citations.sh
-# that walked the transcript itself and filtered harness-injected user messages
-# (<system-reminder>/<task-notification>/…) by prefix. That logic moved into cite
-# (internal/transcript/cite.go), which now excludes exactly those AND tool results,
-# so the guard just greps the `[quote](jsonl-path)` links and trusts cite's verdict.
-# No transcript-walking or tag-filtering lives here any more.
+# The detection logic is deterministic — `sr-file validate` for the schema, the
+# transcript reader and the tree checker for the two citation kinds — so it stays a
+# script; no model, so no judge: to convert to.
 #
 # match: the task file, TWO directory levels deep —
 # `memories/tasks/<category>/<name>/TASK.md`, the old regex

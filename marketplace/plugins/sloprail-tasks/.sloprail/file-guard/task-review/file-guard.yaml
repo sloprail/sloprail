@@ -1,10 +1,23 @@
 # `in_review` is a claim; this guard is what judges it. A task whose status is
 # `in_review` asserts the work is finished and that the evidence it carries proves
-# it. This guard reads the stated outcome, reads the cited observations and
-# artifacts, and asks a model whether the evidence actually substantiates the
-# claim. Without it, `in_review` is a status an agent can write about its own work
-# and nothing ever tests. The full argument lives in README.md, migrated from the
-# old-format rule doc.
+# it. This guard reads the stated outcome, reads the FRONTMATTER observations and
+# artifacts — the DELIVERY evidence — and asks a model whether that evidence
+# actually substantiates the claim. Without it, `in_review` is a status an agent
+# can write about its own work and nothing ever tests. The full argument lives in
+# README.md, migrated from the old-format rule doc.
+#
+# THIS PROVES DELIVERY, NOT THE ASK. An earlier cut of this guard re-cited the
+# USER's own words — a duplicate of task-body-is-human-authored, and conceptually
+# wrong: a review proves the work was DONE. The evidence it weighs is the delivery
+# evidence in the task's frontmatter, recovered from the old-format RUBRIC.md:
+#   - OBSERVATIONS — <abs-jsonl>:<ranges>, each cited line a tool_result the session
+#     produced (a test that came back green). Grounded against the `tool_result`
+#     pool via `sr-session trajectory tool-result --line`.
+#   - ARTIFACTS — <repo-relative-file>:<ranges>, the produced files at the lines
+#     that changed, resolved against the working tree.
+# The judge weighs these against the claim: a task claiming X with evidence showing
+# X happening is APPROVED even if X was a poor idea; it checks the gap between what
+# the task says was done and what the evidence shows.
 #
 # NO preventive — this is an AFTER-CHECK, the migration of the old-format Post-only
 # binding (PostFileCreate + PostFileUpdate). A file-guard with no `preventive:` key
@@ -26,14 +39,15 @@
 #
 #   1. SCRIPT (review-preflight.sh): the GATE and the pre-flight. Only `in_review`
 #      is reviewed (most task writes are to_do/in_progress and must cost nothing),
-#      and every `[quote](jsonl)` evidence link must GROUND via cite before a judge
-#      is shown anything — an ungrounded citation leaves nothing real to review, so
-#      it is refused here without a model call, naming the quote. task-evidence-
-#      resolves normally refuses these first; this handles the case it was bypassed.
-#   2. PREPARE + JUDGE: prepare (expand-evidence.sh) assembles the grounded quotes
-#      (the user's own words about the work, plus any AskUserQuestion envelope) as
-#      the evidence; review-task.md.j2 asks the model whether it substantiates the
-#      claim the task makes.
+#      and every delivery citation must RESOLVE before a judge is shown anything —
+#      each observation line must be a tool_result, each artifact must exist in the
+#      tree. Evidence that does not resolve leaves nothing real to review, so it is
+#      refused here without a model call. task-evidence-resolves normally refuses
+#      these first; this handles the case it was bypassed.
+#   2. PREPARE + JUDGE: prepare (expand-evidence.sh) expands the frontmatter evidence
+#      to the bytes — each observation to the tool_result content at its cited line,
+#      each artifact to the cited tree lines; review-task.md.j2 asks the model
+#      whether that delivered evidence substantiates the claim the task makes.
 #
 # THE APPROVE/REJECT MAPPING — the one behaviour the binary judge model changes,
 # flagged not hidden. The old rule NEVER permitted an in_review task: REJECTED

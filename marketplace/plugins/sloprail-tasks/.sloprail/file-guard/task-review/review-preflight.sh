@@ -6,24 +6,28 @@
 #      in_progress and must cost nothing, so this is asked first and cheaply. A
 #      non-in_review task (or a malformed one — task-evidence-resolves owns that,
 #      with a better message) permits here without a model.
-#   2. PRE-FLIGHT: every `[quote](jsonl)` evidence link must GROUND via cite. An
-#      ungrounded citation leaves nothing real to put in front of a judge, so it is
-#      refused here, naming the quote — cheap gates expensive.
+#   2. PRE-FLIGHT: the DELIVERY evidence must resolve — every observation must
+#      ground against the tool_result pool, and every artifact must exist in the
+#      tree. Evidence that does not resolve leaves NOTHING REAL to put in front of a
+#      judge, so it is refused here, naming what failed — cheap gates expensive.
+#      task-evidence-resolves normally refuses these first; this handles the case it
+#      was bypassed, so an in_review task never reaches the judge with broken
+#      evidence.
 #
 # This is an AFTER-CHECK (the guard is not preventive), so it only ever fires on a
 # settled Post event: the bytes on disk ARE the answer.
 #
 # THE REFUSAL CONTRACT: exit 0 permits; non-zero refuses with `{"reason": "..."}`
-# on stdout. Fails closed on the deterministic logic; the schema-read path stays
-# out of the way for a malformed task (which the sibling rule already refuses).
+# on stdout. Fails closed on the deterministic logic; the schema-read path stays out
+# of the way for a malformed task (which the sibling rule already refuses).
 set -uo pipefail
 
 # refuse emits `{"reason": ...}` and exits non-zero, in the CURRENT shell — never
 # behind a pipe (a piped refuse runs in a subshell and its exit would not stop the
 # script, silently PERMITTING). Callers build the reason into a variable first: a
 # STATIC tail via a QUOTED heredoc joined to a dynamic head in a double-quoted
-# string, whose `$var` expansion is not recursive, so a `$(...)` in a body or quote
-# is inert data.
+# string, whose `$var` expansion is not recursive, so a `$(...)` in evidence text is
+# inert data.
 refuse() {
   jq -n --arg reason "$1" '{reason: $reason}'
   exit 1
@@ -48,73 +52,81 @@ abs="$root/$path"
 # ---------------------------------------------------------------- the gate ---
 #
 # Only `in_review` is reviewed. The status comes from the product's own command,
-# validated against the schema, never a hand-rolled frontmatter read that would be
-# a second opinion about where frontmatter ends. --emit prints the validated
-# frontmatter as JSON on success and NOTHING on failure — so a malformed task
-# comes back with an empty status and this rule stays out of the way (correct:
+# validated against the schema, never a hand-rolled frontmatter read that would be a
+# second opinion about where frontmatter ends. --emit prints the validated
+# frontmatter as JSON on success and NOTHING on failure — so a malformed task comes
+# back with an empty status and this rule stays out of the way (correct:
 # task-evidence-resolves is already refusing that write with a better message).
 schema="$root/.sloprail/schemas/task.cue"
 if [ ! -f "$schema" ]; then
-  # Without the schema the status cannot be read. This is the guard's own
-  # dependency missing, not a model flake — refuse, naming the fix.
+  # Without the schema the status cannot be read. This is the guard's own dependency
+  # missing, not a model flake — refuse, naming the fix.
   refuse "task-review: schema not found at $schema, so the task's status cannot be read. Install the plugin's task.cue under the project's .sloprail/schemas/."
 fi
 
-status="$(sr-file validate "$abs" --schema "$schema" --emit 2>/dev/null | jq -r '.status // empty' 2>/dev/null)"
+doc="$(sr-file validate "$abs" --schema "$schema" --emit 2>/dev/null)"
+status="$(printf '%s' "$doc" | jq -r '.status // empty' 2>/dev/null)"
 [ "$status" = "in_review" ] || exit 0
 
 # ------------------------------------------------------- the pre-flight gate ---
 lib="$gdir/../task-evidence-resolves/cite-links.sh"
 if [ ! -f "$lib" ]; then
-  refuse "task-review: cite-links.sh not found at $lib, so no citation could be grounded for review"
+  refuse "task-review: cite-links.sh not found at $lib, so no delivery evidence could be resolved for review"
 fi
 # shellcheck source=../task-evidence-resolves/cite-links.sh
 . "$lib"
 
-content="$(cat "$abs" 2>/dev/null)"
+obs_lines="$(printf '%s' "$doc" | jq -r '(.observations // [])[]' 2>/dev/null)"
+art_lines="$(printf '%s' "$doc" | jq -r '(.artifacts // [])[]' 2>/dev/null)"
+n_obs="$(printf '%s' "$doc" | jq -r '(.observations // []) | length' 2>/dev/null)"
+n_art="$(printf '%s' "$doc" | jq -r '(.artifacts // []) | length' 2>/dev/null)"
 
 problems=""
-n_links=0
-while IFS="$(printf '\t')" read -r href quote; do
-  [ -n "$href" ] || continue
-  n_links=$((n_links + 1))
-  cpath="$(cite_link_href_path "$href")"
-  case "$cpath" in
-    /*) : ;;
-    *)  cpath="$root/$cpath" ;;
-  esac
-  if reason="$(cite_ground "$cpath" "$quote")"; then :; else
-    problems="${problems}  ${reason}
+
+i=0
+while IFS= read -r obs; do
+  [ -n "$obs" ] || continue
+  if reason="$(observation_resolve "$obs" "$root")"; then :; else
+    problems="${problems}  observations[$i] ${reason}
 "
   fi
+  i=$((i + 1))
 done <<EOF
-$(cite_links_extract "$content")
+$obs_lines
 EOF
 
-if [ "$n_links" -eq 0 ]; then
-  IFS= read -r -d '' tail <<'EOF' || true
-
-An in_review task claims the work is finished. There is nothing to review until it
-grounds that claim in the user's own words about what was asked and what proves it
-done, as markdown links:
-
-    [the user's exact words](/abs/session.jsonl:120)
-
-Each link's quote must resolve — via cite — to a real user message. The status
-stays in_review; attach the evidence and write the task again.
+i=0
+while IFS= read -r art; do
+  [ -n "$art" ] || continue
+  if reason="$(artifact_resolve "$art" "$root")"; then :; else
+    problems="${problems}  artifacts[$i] ${reason}
+"
+  fi
+  i=$((i + 1))
+done <<EOF
+$art_lines
 EOF
-  refuse "REVIEW CANNOT RUN: $path is in_review but carries no citation of the work.
-$tail"
+
+# BOTH kinds are mandatory in in_review, and the pre-flight names the missing one
+# rather than letting the judge see half the evidence and guess.
+if [ "${n_obs:-0}" -eq 0 ]; then
+  problems="${problems}  observations — an in_review task must cite proof the work happened (a tool-call result)
+"
+fi
+if [ "${n_art:-0}" -eq 0 ]; then
+  problems="${problems}  artifacts — an in_review task must cite where the produced result is (tree files)
+"
 fi
 
 if [ -n "$problems" ]; then
   IFS= read -r -d '' tail <<'EOF' || true
-There is nothing to review until every citation resolves to the user's own words.
-A citation is [<quote>](<jsonl-path>), the quote verbatim and the href the
-transcript. Fix the quotes or the paths. The status stays in_review; correct the
-evidence and write the task again.
+There is nothing to review until every citation resolves to bytes a reviewer can
+open. An OBSERVATION is <absolute-session.jsonl>:<ranges> whose every cited line is a
+tool-call result; an ARTIFACT is <repo-relative-file>:<ranges> pointing at the
+produced files in the tree. Fix the paths or the ranges. The status stays in_review;
+correct the evidence and write the task again.
 EOF
-  refuse "REVIEW CANNOT RUN: $path is in_review but its evidence does not ground.
+  refuse "REVIEW CANNOT RUN: $path is in_review but its delivery evidence does not resolve.
 
 $problems
 $tail"

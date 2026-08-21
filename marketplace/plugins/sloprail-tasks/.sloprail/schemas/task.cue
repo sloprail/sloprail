@@ -49,27 +49,70 @@ status!: "backlog" | "to_do" | "in_progress" | "in_review" | "blocked"
 // WHAT GETS DONE NEXT.
 priority!: "P0" | "P1" | "P2" | "P3"
 
-// THE EVIDENCE, REQUIRED ONLY IN `in_review`.
+// THE DELIVERY EVIDENCE, REQUIRED ONLY IN `in_review`. Two lists, two kinds, and
+// the split is the whole point of the review lifecycle — it is NOT the body's
+// citation of the ASK.
 //
-// Both are lists of `<path>:<ranges>` citations, and both are OPTIONAL here
-// while being MANDATORY in in_review (enforced by task-evidence-resolves, not
-// the schema). That split is deliberate: CUE can express the conditional, but
-// it cannot express what actually matters — that the path resolves, that the
-// line range exists, that the cited JSONL line is a real record rather than the
-// agent's own prose. Those are filesystem questions, and a schema sees a string.
+// The BODY of a TASK.md cites the user's own words for what was asked, inline as
+// `[quote](jsonl)` markdown links (guarded by task-body-is-human-authored). These
+// two FRONTMATTER lists are the opposite end of the lifecycle: they cite what the
+// agent DELIVERED, as structured citation strings, so a reviewer can weigh the
+// delivery against the claim. Conflating the two — grounding a delivery claim in
+// the user's ask — proves only that the work was requested, never that it was
+// done. So the delivery evidence is structured frontmatter, distinct from the
+// body's inline ask.
 //
-// So the shape is pinned here and the substance is checked in the hook. The
-// regex demands a leading `/` — an absolute path — then a colon, then at least
-// one range. A range is `N` or `N-M`, several comma-separated.
-// Defined at the top level, outside the closed struct: a definition is a schema
-// construct rather than a field, and one written inside close() would be read as
-// a key the document is not allowed to carry.
-_citation: =~"^/[^:]+:[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$"
+// Both are OPTIONAL in the schema while being MANDATORY in in_review (enforced by
+// task-evidence-resolves, not the schema). CUE can express the conditional, but it
+// cannot express what actually matters — that an observation's cited line is a
+// real tool_result, and that an artifact's cited lines exist in the tree. Those
+// are transcript and filesystem questions, and a schema sees a string. So the
+// SHAPE is pinned here and the SUBSTANCE is checked in the hook.
+//
+// The two citation kinds have DIFFERENT PATH BASES, and that difference is
+// load-bearing — it is what tells the resolver which mechanism to use:
+//
+//   OBSERVATION  /abs/session.jsonl:120     ABSOLUTE .jsonl transcript path,
+//                                            resolved by confirming the cited LINE
+//                                            is a tool_result the session produced.
+//   ARTIFACT     src/foo.go:10-60           REPO-RELATIVE tree path, resolved by
+//                                            confirming the file exists under the
+//                                            repo and the cited lines exist.
+//
+// An observation's path is the transcript, opened by absolute path (a reviewer's
+// working directory is nobody's business); an artifact's path is a produced file,
+// named RELATIVE to the repo root so it reads the same for anyone with the tree
+// checked out. This is a DELIBERATE divergence from the old schema, which demanded
+// an absolute `/` for both: artifacts are repo-relative now. So the two types are
+// SEPARATE definitions, not one shared citation — an observation wearing a
+// repo-relative path, or an artifact wearing an absolute .jsonl, is a mis-filed
+// citation the regex refuses at load time.
 
-// PROOF THAT THE WORK HAPPENED — cited into the session record.
-observations?: [..._citation]
+// _observation — an ABSOLUTE `.jsonl` transcript citation `<path>:<ranges>`.
+//
+// A leading `/` (absolute), then a `.jsonl`, a colon, and at least one range. A
+// range is `N` or `N-M`, several comma-separated. The `.jsonl` is REQUIRED in the
+// shape: an observation is proof cited into the session record, and a path that is
+// not a transcript cannot carry a tool_result. task-evidence-resolves then confirms
+// each cited line IS a tool_result (not the agent's prose), the substance the regex
+// cannot see. Defined at the top level, outside close(): a definition is a schema
+// construct, and one written inside close() would be read as a forbidden key.
+_observation: =~"^/[^:]+\\.jsonl:[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$"
 
-// WHERE THE RESULT OF THE WORK IS — cited into the tree.
-artifacts?: [..._citation]
+// _artifact — a REPO-RELATIVE tree citation `<path>:<ranges>`.
+//
+// NO leading `/` (`[^/:]` first byte forbids it, and forbids a bare `:` too), a
+// path, a colon, and at least one range. Repo-relative so the citation is
+// reviewable from any checkout; task-evidence-resolves resolves it under the repo
+// root and confirms every cited line exists. An absolute path is refused here — an
+// absolute path is an observation's transcript, and an absolute artifact would not
+// survive a different checkout.
+_artifact: =~"^[^/:][^:]*:[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$"
+
+// PROOF THAT THE WORK HAPPENED — cited into the session transcript.
+observations?: [..._observation]
+
+// WHERE THE RESULT OF THE WORK IS — cited into the tree, repo-relative.
+artifacts?: [..._artifact]
 
 })

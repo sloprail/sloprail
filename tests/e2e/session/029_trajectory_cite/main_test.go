@@ -59,6 +59,7 @@ var (
 	Bash           = harness.Bash
 	Say            = harness.Say
 	AnswerQuestion = harness.AnswerQuestion
+	ToolResult     = harness.ToolResult
 )
 
 func TestMain(m *testing.M) {

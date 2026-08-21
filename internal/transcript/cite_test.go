@@ -297,10 +297,265 @@ func TestCiteEmptyQuoteMatchesNothing(t *testing.T) {
 	assert.Empty(t, matches, "an empty quote matches nothing")
 }
 
+// --- SourceToolResult: grounding a delivery OBSERVATION in a tool's output ---
+//
+// The mirror of the user-pool tests above. A tool_result is written on a `user`
+// entry as a `type:"tool_result"` content block; its body is the tool's output —
+// a test that came back green, a command's result. cite --source-types tool_result
+// resolves a quote against THAT body (the pool the default refuses), and refuses a
+// quote that is only the user's words. These are the two halves of the mirror.
+
+// TestCiteToolResultResolvesToolOutput: a quote of a command's RESULT resolves
+// under SourceToolResult to the user entry carrying the tool_result — and does NOT
+// resolve under the default SourceUser, which is the pool a delivery observation
+// needs and the default deliberately excludes.
+func TestCiteToolResultResolvesToolOutput(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "run the tests"),                             // line 1 — the user's words
+		toolUseMsg("a1", "u1", "Bash", "go test ./..."),            // line 2 — the agent's call
+		toolResultMsg("u2", "a1", "ok  sloprail/auth  0.4s\nPASS"), // line 3 — the RESULT
+	)
+
+	// tool_result pool: the green result resolves to its line.
+	got, err := CiteWithSources(path, "PASS", []SourceType{SourceToolResult})
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the tool result is citable under the tool_result pool")
+	assert.Equal(t, 3, got[0].Line, "it resolves to the line the tool_result sits on")
+
+	// user pool (the default): the SAME quote must NOT resolve — a tool's output is
+	// not the user's words, which is exactly why observations need the other pool.
+	none, err := Cite(path, "PASS")
+	require.NoError(t, err)
+	assert.Empty(t, none, "the default user pool refuses a tool result — the gap observations fill")
+}
+
+// TestCiteToolResultRefusesUserWords is the other half of the mirror: a quote that
+// is only in a USER message does not resolve under SourceToolResult. An
+// "observation" citing the user's ask instead of a tool result is a mis-citation,
+// and the tool_result pool refuses it so the deterministic guard can catch it.
+func TestCiteToolResultRefusesUserWords(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "please migrate the AUTHMODULE"),             // line 1 — user only
+		toolResultMsg("u2", "u1", "migrated 3 files successfully"), // line 2 — tool output
+	)
+
+	got, err := CiteWithSources(path, "AUTHMODULE", []SourceType{SourceToolResult})
+	require.NoError(t, err)
+	assert.Empty(t, got, "the user's ask is not a tool result — it must not resolve in the tool_result pool")
+
+	// And it DOES resolve in the user pool, proving the quote is real and only the
+	// pool selection kept it out above.
+	inUser, err := Cite(path, "AUTHMODULE")
+	require.NoError(t, err)
+	require.Len(t, inUser, 1, "the same quote resolves as the user's words")
+	assert.Equal(t, 1, inUser[0].Line)
+}
+
+// TestCiteBothPoolsResolveEither: --source-types user,tool_result accepts a match
+// in either pool. A quote of the user's ask and a quote of a tool's result both
+// resolve, each to its own line.
+func TestCiteBothPoolsResolveEither(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "run the BUILD and report"),              // line 1 — user
+		toolResultMsg("u2", "u1", "BUILD succeeded: 0 errors"), // line 2 — tool result
+	)
+	both := []SourceType{SourceUser, SourceToolResult}
+
+	// The user's word resolves (it is in the user pool).
+	fromUser, err := CiteWithSources(path, "report", both)
+	require.NoError(t, err)
+	require.Len(t, fromUser, 1)
+	assert.Equal(t, 1, fromUser[0].Line, "the user's ask resolves under the combined selection")
+
+	// The tool's result resolves (it is in the tool_result pool). "BUILD" appears in
+	// BOTH lines, so it is the per-line disambiguation that proves both pools are
+	// searched: quoting the result-only phrase lands on the result line.
+	fromResult, err := CiteWithSources(path, "0 errors", both)
+	require.NoError(t, err)
+	require.Len(t, fromResult, 1)
+	assert.Equal(t, 2, fromResult[0].Line, "the tool result resolves under the combined selection")
+}
+
+// TestCiteToolResultExcludesAssistantAndHarnessNoise: the tool_result pool is still
+// a search over tool_result blocks ONLY. A quote that appears in an assistant turn
+// (the agent narrating that it ran something) does not resolve — narration is not a
+// result — and a harness-injected user message contributes no tool_result body, so
+// its noise is not citable as output either.
+func TestCiteToolResultExcludesAssistantAndHarnessNoise(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		assistantText("a1", "u0", "I ran the suite and it PASSED, trust me"),            // narration — not a result
+		userMsg("u1", "<system-reminder>\nPASSED is a policy word\n</system-reminder>"), // injected noise
+		toolResultMsg("u2", "a1", "--- FAIL: TestFoo (0.01s)"),                          // a real result, different word
+	)
+
+	// The agent's narration of a pass is not a tool result.
+	got, err := CiteWithSources(path, "PASSED", []SourceType{SourceToolResult})
+	require.NoError(t, err)
+	assert.Empty(t, got, "assistant narration and injected noise carry no tool_result body to cite")
+
+	// A genuine result body IS citable, confirming the pool is live.
+	real, err := CiteWithSources(path, "FAIL: TestFoo", []SourceType{SourceToolResult})
+	require.NoError(t, err)
+	require.Len(t, real, 1, "a real tool_result body resolves")
+	assert.Equal(t, 3, real[0].Line)
+}
+
+// TestToolResultTextReadsBodyNotAnswer pins the unit that separates the two pools:
+// toolResultText returns the WHOLE tool_result body (what an observation cites),
+// where answerText returns only the <answer> of an AskUserQuestion envelope (the
+// user's words). On an ordinary result, answerText is empty and toolResultText has
+// the output; on an answer envelope, both see text but read it for different ends.
+func TestToolResultTextReadsBodyNotAnswer(t *testing.T) {
+	// An ordinary tool result: body present for the tool_result pool, nothing for
+	// the user pool.
+	plain := rawMessage(`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1",` +
+		`"content":"ok  sloprail/auth  0.4s\nPASS"}]}`)
+	require.Equal(t, []string{"ok  sloprail/auth  0.4s\nPASS"}, toolResultText(plain),
+		"the whole result body is the tool_result pool's text")
+	assert.Empty(t, answerText(plain), "an ordinary result carries no answer envelope")
+
+	// A tool_result content list: each text block's body is kept.
+	listBody := rawMessage(`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2",` +
+		`"content":[{"type":"text","text":"line one"},{"type":"text","text":"line two"}]}]}`)
+	assert.Equal(t, []string{"line one", "line two"}, toolResultText(listBody))
+
+	// A plain typed message has no tool_result block, so the tool_result pool is
+	// empty on it — a delivery observation cannot be grounded in the user's typing.
+	typed := rawMessage(`{"role":"user","content":"please refactor the parser"}`)
+	assert.Empty(t, toolResultText(typed), "a typed message has no tool_result body")
+}
+
+// --- ToolResultAt: the LINE-oriented tool_result classifier ---
+//
+// A delivery OBSERVATION is a `<abs-jsonl>:<ranges>` citation, so the deterministic
+// check is "is the entry at THIS LINE a tool_result", not "does a quote resolve".
+// ToolResultAt answers it on the same pool cite searches, so the two agree on what
+// a tool_result is.
+
+// TestToolResultAtResolvesToolResultLine: the cited line of a tool_result returns
+// its content and isToolResult true; a line that is the user's ask or the agent's
+// turn returns false — an observation pointing there is pointing at prose.
+func TestToolResultAtResolvesToolResultLine(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "run the tests"),                             // line 1 — user
+		toolUseMsg("a1", "u1", "Bash", "go test ./..."),            // line 2 — assistant
+		toolResultMsg("u2", "a1", "ok  sloprail/auth  0.4s\nPASS"), // line 3 — tool_result
+	)
+
+	// Line 3 IS a tool_result: content returned, flag true.
+	text, ok, err := ToolResultAt(path, 3)
+	require.NoError(t, err)
+	require.True(t, ok, "line 3 is a tool_result")
+	assert.Contains(t, text, "PASS", "the result content is returned")
+
+	// Line 1 is the user's ask — NOT a tool_result.
+	_, ok, err = ToolResultAt(path, 1)
+	require.NoError(t, err)
+	assert.False(t, ok, "a user message is not a tool_result")
+
+	// Line 2 is the agent's tool_use turn — NOT a tool_result either.
+	_, ok, err = ToolResultAt(path, 2)
+	require.NoError(t, err)
+	assert.False(t, ok, "an assistant turn is not a tool_result")
+}
+
+// TestToolResultAtAnswerEnvelopeIsNotAResult: an AskUserQuestion answer envelope is
+// a tool_result BLOCK, but its body is the user's selected words, not a produced
+// result — so ToolResultAt must report it as NOT a tool_result. Classifying it as
+// one would let an agent cite the user's own answer as a delivery observation
+// (proof the work happened), the exact user-words-as-delivery substitution the
+// evidence floor exists to refuse. genuineToolResultText drops the answer-envelope
+// block, so the classifier answers false. A genuine produced result on a later line
+// still answers true, so the exclusion does not over-reject. (A plain typed message,
+// by contrast, is not a tool_result at all.)
+func TestToolResultAtAnswerEnvelopeIsNotAResult(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "just a typed message"), // line 1 — no tool_result block
+		`{"type":"user","uuid":"u2","parentUuid":"u1","isSidechain":false,"message":{"role":"user","content":[`+
+			`{"type":"tool_result","tool_use_id":"t1","content":"The user answered: \"pick one\"=\"option B\". Read carefully."}]}}`, // line 2 — answer envelope
+		`{"type":"user","uuid":"u3","parentUuid":"u2","isSidechain":false,"message":{"role":"user","content":[`+
+			`{"type":"tool_result","tool_use_id":"t2","content":"PASS: TestFoo (0.01s)\nok  pkg/foo"}]}}`, // line 3 — a real produced result
+	)
+
+	// A plain typed message is not a tool_result.
+	_, ok, err := ToolResultAt(path, 1)
+	require.NoError(t, err)
+	assert.False(t, ok, "a typed message carries no tool_result block")
+
+	// An AskUserQuestion answer re-enters the transcript as a tool_result block, but
+	// its body is the USER's own answer, not a produced result — so it is NOT a
+	// delivery observation. Classifying it as one would let an agent cite the user's
+	// "yes, proceed" as proof the work happened, the exact substitution this check
+	// exists to refuse. It must be false, matching ToolResultAt's own contract.
+	_, ok, err = ToolResultAt(path, 2)
+	require.NoError(t, err)
+	assert.False(t, ok, "an answer envelope is the user's words, not a produced result — not a tool_result observation")
+
+	// A genuine tool-call result IS a tool_result observation, and its body is
+	// returned — the fix rejects the answer envelope without over-rejecting real
+	// results.
+	text, ok, err := ToolResultAt(path, 3)
+	require.NoError(t, err)
+	assert.True(t, ok, "a real produced result is a tool_result observation")
+	assert.Contains(t, text, "PASS: TestFoo", "the produced result's body is returned")
+}
+
+// TestToolResultAtMissingLine: a line past the end, or one that is not an entry, is
+// "not a tool_result" (false, no error) rather than a crash — so a bad observation
+// range is named by the caller, not fatal.
+func TestToolResultAtMissingLine(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session", userMsg("u1", "only one line"))
+
+	_, ok, err := ToolResultAt(path, 99)
+	require.NoError(t, err)
+	assert.False(t, ok, "a line past the end is not a tool_result")
+}
+
+// TestParseSourceType maps names to pools and rejects the unknown — the empirical
+// spellings are `user` and `tool_result`, and an entry type that is not a citable
+// pool (`assistant`) or a typo is refused rather than silently searching nothing.
+func TestParseSourceType(t *testing.T) {
+	for _, name := range []string{"user", "tool_result"} {
+		s, ok := ParseSourceType(name)
+		require.True(t, ok, "%q is a known pool", name)
+		assert.Equal(t, SourceType(name), s)
+	}
+	for _, name := range []string{"assistant", "system", "toolresult", "USER", ""} {
+		_, ok := ParseSourceType(name)
+		assert.False(t, ok, "%q is not a citable pool", name)
+	}
+}
+
 // userMsg is a plain user message with string content on one line.
 func userMsg(uuid, content string) string {
 	return `{"type":"user","uuid":"` + uuid + `","parentUuid":null,"isSidechain":false,` +
 		`"message":{"role":"user","content":` + jsonQuote(content) + `}}`
+}
+
+// toolResultMsg is a user entry carrying a tool_result block — the shape Claude
+// Code writes a tool's output in: a `type:"user"` record whose content is a
+// `type:"tool_result"` block whose `content` is the result text. This is the
+// SourceToolResult pool's fixture, the mirror of userMsg.
+func toolResultMsg(uuid, parent, result string) string {
+	return `{"type":"user","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t-` + uuid + `","content":` +
+		jsonQuote(result) + `}]}}`
+}
+
+// toolUseMsg is an assistant turn invoking a tool by name — the call whose result
+// a following toolResultMsg carries. It exists so a fixture reads as a real
+// call-then-result pair; cite never searches it (an assistant turn is not a pool).
+func toolUseMsg(uuid, parent, name, input string) string {
+	return `{"type":"assistant","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
+		`"message":{"role":"assistant","content":[{"type":"tool_use","id":"t-` + uuid + `","name":` +
+		jsonQuote(name) + `,"input":{"command":` + jsonQuote(input) + `}}]}}`
 }
 
 // assistantText is an assistant turn whose content is a text block — the agent's

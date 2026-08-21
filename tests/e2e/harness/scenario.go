@@ -204,6 +204,47 @@ func AnswerQuestion(id string, qa ...[2]string) Turn {
 		id+"#a", "e2e-turn-"+id, id, jsonStr(content))}
 }
 
+// ToolResult returns ONE turn carrying a tool's RESULT with arbitrary content — the
+// shape a command's output lands as in a real trajectory, and the fixture a
+// DELIVERY OBSERVATION is cited against: a `user` record whose content is a
+// `tool_result` block whose `content` is the given result text (a test that came
+// back green, a build's output).
+//
+// # Why this is a real Claude Code shape the mock emits
+//
+// This is the sibling of AnswerQuestion and rests on the exact same mock capability:
+// a10n-cli#470 taught the scenario validator that a `user` record carrying a
+// tool_result WITH a `tool_use_id` is a genuine CC shape, forwarded and persisted
+// into the transcript (record.go validateRecord). AnswerQuestion uses that to carry
+// an answer envelope; ToolResult uses it to carry a plain result body. A tool_result
+// with NO tool_use_id stays rejected as malformed — the only thing still refused.
+//
+// The distinction from ToolUseWithResult is the CHANNEL the evidence sits in.
+// ToolUseWithResult supplies the entry's top-level `toolUseResult` field — the
+// STRUCTURED artifact payload an action-proof check reads whole — and its
+// tool_result block content is a fixed placeholder. A delivery OBSERVATION is cited
+// with `cite --source-types tool_result`, a SUBSTRING search over the tool_result
+// BLOCK body, so the body is exactly what must be controllable here. So this builder
+// puts the result text in the block content, which is where cite looks.
+//
+// # The record's shape, and why the id is shaped this way
+//
+// Identical to AnswerQuestion's reasoning: the turn-firing marker is injected into
+// the FIRST `"id":"…"` of a turn's record, and a tool_result-in-user record's own
+// `tool_use_id` is not written as `"id":"…"`. So the record carries a throwaway
+// top-level `id` (`<id>#r`) for the marker to bind to, which keeps the block's own
+// `tool_use_id` CLEAN and equal to `id`. A uuid (keyed off id) is carried so
+// transcript.Read does not skip it as an entry.
+//
+// The turn is NOT terminal and needs no following turn: it is a user record (not a
+// tool_use), so the mock forwards it and reaches EOF as end-of-turn — the result
+// lands as the transcript's next record after whatever preceded it.
+func ToolResult(id, result string) Turn {
+	return Turn{jsonl: fmt.Sprintf(
+		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s}]}}`,
+		id+"#r", "e2e-turn-"+id, id, jsonStr(result))}
+}
+
 // Skill returns a turn where the agent loads a skill.
 //
 // The mock does not implement the Skill tool and answers with an error, which

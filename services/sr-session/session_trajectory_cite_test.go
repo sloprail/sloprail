@@ -8,6 +8,74 @@ import (
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
+// parseSourceTypes is the command-domain half of --source-types: it turns the flag
+// string into the pools transcript.CiteWithSources searches, and it is where a
+// typo or an empty selection is refused BEFORE any file work — so a bad flag reads
+// as the caller's error rather than as exit 1 ("the quote was not found"). These
+// pin the default (preserving today's behaviour), the two pools, both, and the two
+// refusals.
+
+// TestParseSourceTypes_DefaultIsUserOnly: the flag's own default value resolves to
+// SourceUser alone, so a cite with no --source-types behaves exactly as before.
+func TestParseSourceTypes_DefaultIsUserOnly(t *testing.T) {
+	got, err := parseSourceTypes(string(transcript.SourceUser))
+	if err != nil {
+		t.Fatalf("default flag value must parse: %v", err)
+	}
+	if len(got) != 1 || got[0] != transcript.SourceUser {
+		t.Fatalf("default must be [user]; got %v", got)
+	}
+}
+
+// TestParseSourceTypes_KnownPools: each pool name, alone and combined, resolves to
+// exactly that selection. The combined form is order-preserving and both members
+// are present.
+func TestParseSourceTypes_KnownPools(t *testing.T) {
+	cases := map[string][]transcript.SourceType{
+		"user":                 {transcript.SourceUser},
+		"tool_result":          {transcript.SourceToolResult},
+		"user,tool_result":     {transcript.SourceUser, transcript.SourceToolResult},
+		" user , tool_result ": {transcript.SourceUser, transcript.SourceToolResult}, // whitespace tolerated
+	}
+	for flag, want := range cases {
+		got, err := parseSourceTypes(flag)
+		if err != nil {
+			t.Fatalf("parseSourceTypes(%q): unexpected error %v", flag, err)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("parseSourceTypes(%q) = %v, want %v", flag, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("parseSourceTypes(%q)[%d] = %q, want %q", flag, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+// TestParseSourceTypes_RefusesUnknown: a name that is not a citable pool — an entry
+// type like `assistant`, or a typo — is refused, not silently dropped. Silently
+// dropping it could leave an empty selection that matches nothing and reads as "not
+// found", hiding the mistake.
+func TestParseSourceTypes_RefusesUnknown(t *testing.T) {
+	for _, bad := range []string{"assistant", "system", "toolresult", "user,assistant"} {
+		if _, err := parseSourceTypes(bad); err == nil {
+			t.Fatalf("parseSourceTypes(%q) must refuse an unknown pool, got nil error", bad)
+		}
+	}
+}
+
+// TestParseSourceTypes_RefusesEmpty: a flag that trims down to nothing (empty, or
+// only commas/spaces) names no pool and is refused — a search against no pool would
+// exit 1 and be misread as "the user did not say that".
+func TestParseSourceTypes_RefusesEmpty(t *testing.T) {
+	for _, empty := range []string{"", ",", "  ", " , , "} {
+		if _, err := parseSourceTypes(empty); err == nil {
+			t.Fatalf("parseSourceTypes(%q) must refuse an empty selection, got nil error", empty)
+		}
+	}
+}
+
 // currentSessionTranscript is the environment fallback resolveTrajectory uses when
 // no --path was given and no hook payload named a record: it derives the CURRENT
 // session's own transcript from CLAUDE_CODE_SESSION_ID and the working directory.

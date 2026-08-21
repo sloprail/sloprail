@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -62,9 +63,28 @@ func newSessionTrajectoryCiteCmd() *cobra.Command {
 
 Given a substring of the user's own words — a plain message, or the answer the
 user selected to an AskUserQuestion — find the single line it sits on in the
-current trajectory and print it as <path>:<line>. The user's words only: not the
-agent's prior output, and not an ordinary tool result that merely contains the
-substring.
+current trajectory and print it as <path>:<line>. The user's words only, by
+default: not the agent's prior output, and not an ordinary tool result that
+merely contains the substring.
+
+--source-types selects WHICH pool(s) of a trajectory the quote is resolved
+against, comma-separated:
+
+  user          the user's own words (the default): a typed message, or an
+                AskUserQuestion answer. Harness-injected user-role messages
+                (<system-reminder>, <task-notification>, a slash-command
+                envelope) are excluded, and a tool result's body is not
+                searched. This is what a task's ASK is cited against.
+  tool_result   the body a tool_result produced — a command's output, a test
+                that came back green. This is the pool the default REFUSES, and
+                what a delivery OBSERVATION is cited against: proof the work
+                happened. A quote of the user's words will NOT resolve here.
+  user,tool_result   either is acceptable.
+
+The default is "user" alone, so a call with no --source-types behaves exactly as
+before. The two pools are mirror images: a quote of a command's result grounds
+under tool_result and is refused under user; a quote of the user's ask grounds
+under user and is refused under tool_result.
 
 The exit code carries the outcome, so a script branches on it without parsing
 stdout:
@@ -77,7 +97,8 @@ stdout:
 cite is not available inside a sub-agent: there the "user" messages are the
 PARENT agent's dispatch prompt, not the end user's own words, so a citation into
 them would ground a claim in something the user never said. It refuses with exit
-3 rather than mint that false citation.
+3 rather than mint that false citation. This holds whatever --source-types names
+— a sub-agent's records are the parent's dispatch in every pool.
 
 The trajectory is auto-detected from the environment — the common case takes no
 --path. Pass --path to cite into a sibling or the parent that ` + "`describe`" + ` named.`,
@@ -86,16 +107,35 @@ The trajectory is auto-detected from the environment — the common case takes n
 	}
 	cmd.Flags().String("path", "",
 		"Which trajectory to search; defaults to the current one from the environment")
+	cmd.Flags().String("source-types", string(transcript.SourceUser),
+		"Comma-separated pool(s) to resolve the quote against: `user` (the user's own "+
+			"words — the default), `tool_result` (a tool's output, proof the work happened), "+
+			"or `user,tool_result` for either. Defaults to user alone, today's behaviour.")
 	cmd.Flags().Bool("include-envelope", false,
 		"On a single match, also print the whole answer envelope at the resolved line "+
 			"(the AskUserQuestion question + its answers), separated from the <path>:<line> "+
 			"by a blank line. Lets a caller ground a quote AND read the question it answered in "+
-			"ONE call instead of a cite followed by a separate `envelope --line`.")
+			"ONE call instead of a cite followed by a separate `envelope --line`. Orthogonal to "+
+			"--source-types: it reads the answer envelope at whatever line resolved, so it is "+
+			"only ever non-empty for an answer-grounded (user-pool) match and prints nothing "+
+			"for a tool_result-grounded one.")
 	return cmd
 }
 
 func runSessionTrajectoryCite(cmd *cobra.Command, args []string) error {
 	quote := args[0]
+
+	// --source-types names the pool(s) to resolve against. Parsed BEFORE the
+	// trajectory is resolved so an unknown name is refused before any file work —
+	// a typo in the flag is the caller's mistake, reported as itself rather than
+	// mistaken for a quote that did not match. An empty selection (all names
+	// trimmed away) is refused too: a search against no pool would exit 1 (no
+	// match) and read as "the user did not say that", which is not what happened.
+	sourcesFlag, _ := cmd.Flags().GetString("source-types")
+	sources, err := parseSourceTypes(sourcesFlag)
+	if err != nil {
+		return err
+	}
 
 	path, _, err := resolveTrajectory(cmd)
 	if err != nil {
@@ -146,7 +186,7 @@ func runSessionTrajectoryCite(cmd *cobra.Command, args []string) error {
 		os.Exit(citeInSubagent)
 	}
 
-	matches, err := transcript.Cite(path, quote)
+	matches, err := transcript.CiteWithSources(path, quote, sources)
 	if err != nil {
 		// The trajectory could not be read at all — a broken environment, not an
 		// absence of the quote. Surfaced as an error rather than as exit 1, so a
@@ -196,4 +236,34 @@ func runSessionTrajectoryCite(cmd *cobra.Command, args []string) error {
 		os.Exit(citeAmbiguous)
 	}
 	return nil
+}
+
+// parseSourceTypes turns the --source-types flag into the SourceType slice Cite
+// searches. It splits on commas, trims each name, and validates it against the
+// pools transcript knows — an unknown name (a typo, an entry type like `assistant`
+// that is not a citable pool) is refused with the value the caller wrote, and a
+// selection that trims down to nothing is refused too. Both are the caller's
+// mistake, and reporting them as errors (which exit non-zero through the root)
+// keeps them distinct from exit 1, "the quote was not found in the chosen pool".
+func parseSourceTypes(flag string) ([]transcript.SourceType, error) {
+	var sources []transcript.SourceType
+	for _, name := range strings.Split(flag, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		s, ok := transcript.ParseSourceType(name)
+		if !ok {
+			return nil, fmt.Errorf(
+				"sloprail: unknown --source-types value %q: the pools are %q and %q (or both, comma-separated)",
+				name, transcript.SourceUser, transcript.SourceToolResult)
+		}
+		sources = append(sources, s)
+	}
+	if len(sources) == 0 {
+		return nil, fmt.Errorf(
+			"sloprail: --source-types named no pool; give %q, %q, or both comma-separated",
+			transcript.SourceUser, transcript.SourceToolResult)
+	}
+	return sources, nil
 }

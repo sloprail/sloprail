@@ -59,10 +59,11 @@ func TestUnfinished_OpenTaskBlocksAtStop(t *testing.T) {
 
 // TestUnfinished_AllRestingPermits: a turn whose only task is at a RESTING status
 // (in_review — the agent is done and has attached evidence, and the review guard
-// owns it now) permits at Stop. The judge stub is PASS so both the task-body Pre
-// judge and the task-review Stop judge accept, leaving the gate as the only thing
-// that could block the Stop — and it must not, because in_review is allowed to
-// rest. This is the control for the block test above.
+// owns it now) permits at Stop. The in_review write carries REAL delivery evidence
+// (a tool_result observation + a repo-relative artifact, produced in run 1) so
+// task-evidence lets it land and task-review's judge (stubbed PASS) accepts, leaving
+// the gate as the only thing that could block the Stop — and it must not, because
+// in_review is allowed to rest. This is the control for the block test above.
 func TestUnfinished_AllRestingPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -71,11 +72,16 @@ func TestUnfinished_AllRestingPermits(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-unfinished-resting"
+	artifactRel := "src/auth.go"
+	line := prepareDelivery(t, e, proj, sess, "PASS", artifactRel)
 	tp := e.TranscriptPath(proj, sess)
+
 	body := "Done. The user asked to " + cite("migrate the auth module", tp, 1) + "."
+	obs := []string{tp + ":" + itoa(line)}
+	art := []string{artifactRel + ":3-5"}
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w1", taskPath, task("in_review", "P1", body)),
+		Write("w1", taskPath, taskWithEvidence("in_review", "P1", body, obs, art)),
 	))
 
 	if res.Refused() {

@@ -1,28 +1,40 @@
 #!/usr/bin/env bash
-# prepare for task-review: hand the judge the task's stated outcome and the
-# grounded evidence, so review-task.md.j2 never has to parse a transcript itself.
-# Receives the SAME CheckPayload the pre-flight did.
+# prepare for task-review: hand the judge the task's stated CLAIM and the DELIVERY
+# evidence, EXPANDED to the actual bytes, so review-task.md.j2 never has to parse a
+# transcript or open a file itself. Receives the SAME CheckPayload the pre-flight
+# did, and is reached only once review-preflight.sh passed — so the task is
+# in_review, every observation line is a tool_result, and every artifact resolves.
 #
-# Reached only once review-preflight.sh passed — so the task is in_review and every
-# `[quote](jsonl)` evidence link is known to GROUND via cite. This prepare's job is
-# to assemble those grounded quotes (the user's own words about the work, plus any
-# AskUserQuestion envelope) as the evidence the model weighs against the claim.
+# THIS IS ABOUT DELIVERY, NOT THE ASK. The evidence assembled here is proof the work
+# was DONE, weighed against the claim the task makes — it is NOT a re-citation of the
+# user's request (that is task-body-is-human-authored's subject). Both kinds are
+# FRONTMATTER citation strings, exactly the old-format review's $observations and
+# $artifacts, and they differ in PATH BASE and expansion:
 #
-# WHY THE QUOTES ARE THE EVIDENCE. Under the citation-link model the link TEXT is
-# the user's own words, already verbatim, and cite has confirmed each resolves to a
-# real user message — so the quote IS the evidence, and there is no 4000-line file
-# to slice down and no transcript to re-read. `cite --include-envelope` adds the
-# question behind an AskUserQuestion answer, which the answer alone does not carry.
+#   OBSERVATIONS — proof the work happened. Each is `<abs-jsonl>:<ranges>` into the
+#   session transcript. For each cited LINE, `sr-session trajectory tool-result
+#   --line` returns the tool_result's content — the test that came back green, the
+#   command whose output is the evidence. Showing the tool_result content (and only
+#   a line that IS one) is what lets the judge tell a real result from a narration.
+#
+#   ARTIFACTS — where the result is. Each is `<repo-relative-file>:<ranges>` into the
+#   TREE; the cited lines are read straight off disk under the repo root, so the
+#   judge reviews the produced result at the lines that changed.
 #
 # Output nests under `additionalContext` — the one key the engine reads. Emits
-# .task_body (the whole task, the stated claim), .evidence (the grounded quotes)
-# and .evidence_ok (whether any resolved). Both task_body and evidence are agent-
-# and user-shaped text and are framed as DATA in the template.
+# .task_body (the whole task, the stated claim), .observations and .artifacts (the
+# expanded evidence), and .evidence_ok (whether any evidence was assembled). All are
+# agent- and tool-shaped text and are framed as DATA in the template.
 #
 # THE PREPARE CONTRACT: exit 0 with additionalContext proceeds to the judge; a
-# non-zero exit fails the check closed. The old rule failed OPEN on an evidence-
-# read failure; a prepare cannot permit-without-judging, so it reports
-# evidence_ok=false to the template, which treats absent evidence as a fail.
+# non-zero exit fails the check closed. A prepare cannot permit-without-judging, so
+# an evidence-read failure reports evidence_ok=false, which the template treats as a
+# fail rather than guessing at what it contained.
+#
+# Bounded like the old review: one task citing a 10,000-line range must not build an
+# unbounded prompt. Truncation is ANNOUNCED inline so a judge looking at part of a
+# slice knows it and can say the evidence was not legible (the template's legibility
+# criterion reads that marker), rather than inventing a verdict about unseen bytes.
 set -uo pipefail
 
 event="$(cat)"
@@ -40,42 +52,130 @@ fi
 # shellcheck source=../task-evidence-resolves/cite-links.sh
 . "$lib"
 
-# Post kind only — the pre-flight already established the file is present and
-# in_review, so the bytes on disk are the answer.
-task_body="$(cat "$abs" 2>/dev/null || true)"
+schema="$root/.sloprail/schemas/task.cue"
 
-# THE EVIDENCE, from the grounded quotes. Best-effort per link: the pre-flight
-# already GROUNDED every quote, so an empty result here is this prepare's own
-# second lookup failing, not evidence about the task.
-evidence=""
-while IFS="$(printf '\t')" read -r href quote; do
-  [ -n "$href" ] || continue
-  cpath="$(cite_link_href_path "$href")"
-  case "$cpath" in
-    /*) : ;;
-    *)  cpath="$root/$cpath" ;;
-  esac
-  envelope=""
-  if [ -f "$cpath" ]; then
-    cite_out="$(sr-session trajectory cite --include-envelope --path "$cpath" "$quote" 2>/dev/null || true)"
-    envelope="$(printf '%s\n' "$cite_out" | tail -n +3)"
+# Post kind only — the pre-flight already established the file is present and
+# in_review, so the bytes on disk are the answer, and the validated frontmatter is
+# where the two evidence lists are read.
+task_body="$(cat "$abs" 2>/dev/null || true)"
+doc="$(sr-file validate "$abs" --schema "$schema" --emit 2>/dev/null)"
+obs_lines="$(printf '%s' "$doc" | jq -r '(.observations // [])[]' 2>/dev/null)"
+art_lines="$(printf '%s' "$doc" | jq -r '(.artifacts // [])[]' 2>/dev/null)"
+
+# The same bounds the old review carried, for the same reason.
+MAX_LINES_PER_CITATION=120
+MAX_CHARS_PER_LINE=600
+MAX_TOTAL_CHARS=60000
+total_chars=0
+
+# clip "<text>" -> the text truncated to the per-line cap, with the running total
+# advanced. Sets clip_out and returns 1 once the total budget is spent, NOT via
+# command substitution — $total_chars must accumulate across every line of every
+# citation in this one process, and a subshell would reset it and let an unbounded
+# prompt through.
+clip_out=""
+clip() {
+  if [ "$total_chars" -ge "$MAX_TOTAL_CHARS" ]; then
+    clip_out=""
+    return 1
   fi
-  evidence="${evidence}--- the user said (cited ${href}):
-${quote}
+  clip_out="$(printf '%s' "$1" | cut -c "1-$MAX_CHARS_PER_LINE")"
+  total_chars=$((total_chars + ${#clip_out} + 8))
+  return 0
+}
+
+# ------------------------------------------------- expand the OBSERVATIONS ----
+#
+# Each observation's cited LINES are the tool_result content the session produced.
+# tool-result --line returns that content for a line that IS a tool_result; the
+# pre-flight already confirmed each line is one, so a miss here is this prepare's own
+# re-read failing, reported inline rather than silently dropped.
+observations=""
+idx=0
+while IFS= read -r obs; do
+  [ -n "$obs" ] || continue
+  opath="$(citation_path "$obs")"
+  oranges="$(citation_ranges "$obs")"
+  observations="${observations}### observations[$idx] ${obs}
 "
-  if [ -n "$envelope" ]; then
-    evidence="${evidence}(this was an answer to a question; the full exchange was:)
-${envelope}
+  shown=0
+  for n in $(citation_lines "$oranges"); do
+    if [ "$shown" -ge "$MAX_LINES_PER_CITATION" ]; then
+      observations="${observations}[TRUNCATED: this citation names more lines than were shown]
 "
-  fi
-  evidence="${evidence}
+      break
+    fi
+    result="$(sr-session trajectory tool-result --path "$opath" --line "$n" 2>/dev/null)"
+    if [ -z "$result" ]; then
+      observations="${observations}${n}: [line grounded in pre-flight but its tool_result content could not be re-read here]
 "
+      shown=$((shown + 1))
+      continue
+    fi
+    if clip "$result"; then
+      observations="${observations}${n}: ${clip_out}
+"
+    else
+      observations="${observations}[TRUNCATED: the evidence exceeded the size this reviewer can show]
+"
+      break
+    fi
+    shown=$((shown + 1))
+  done
+  observations="${observations}
+"
+  idx=$((idx + 1))
 done <<EOF
-$(cite_links_extract "$task_body")
+$obs_lines
+EOF
+
+# ---------------------------------------------------- expand the ARTIFACTS ----
+#
+# Each artifact's cited tree lines are read straight off disk under the repo root —
+# the produced result at the lines that changed.
+artifacts=""
+idx=0
+while IFS= read -r art; do
+  [ -n "$art" ] || continue
+  apath="$(citation_path "$art")"
+  aranges="$(citation_ranges "$art")"
+  case "$apath" in
+    /*) : ;;
+    *)  apath="$root/$apath" ;;
+  esac
+  artifacts="${artifacts}### artifacts[$idx] ${art}
+"
+  shown=0
+  for n in $(citation_lines "$aranges"); do
+    if [ "$shown" -ge "$MAX_LINES_PER_CITATION" ]; then
+      artifacts="${artifacts}[TRUNCATED: this citation names more lines than were shown]
+"
+      break
+    fi
+    body="$(sed -n "${n}p" "$apath" 2>/dev/null)"
+    if clip "$body"; then
+      artifacts="${artifacts}${n}: ${clip_out}
+"
+    else
+      artifacts="${artifacts}[TRUNCATED: the evidence exceeded the size this reviewer can show]
+"
+      break
+    fi
+    shown=$((shown + 1))
+  done
+  artifacts="${artifacts}
+"
+  idx=$((idx + 1))
+done <<EOF
+$art_lines
 EOF
 
 evidence_ok=false
-[ -n "$evidence" ] && evidence_ok=true
+{ [ -n "$observations" ] || [ -n "$artifacts" ]; } && evidence_ok=true
 
-jq -n --arg body "$task_body" --arg ev "$evidence" --argjson ok "$evidence_ok" \
-  '{additionalContext: {task_body: $body, evidence: $ev, evidence_ok: $ok}}'
+jq -n \
+  --arg body "$task_body" \
+  --arg obs "$observations" \
+  --arg art "$artifacts" \
+  --argjson ok "$evidence_ok" \
+  '{additionalContext: {task_body: $body, observations: $obs, artifacts: $art, evidence_ok: $ok}}'

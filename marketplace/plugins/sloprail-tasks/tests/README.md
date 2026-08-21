@@ -62,16 +62,31 @@ env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT go test ./... -count=1
 
 ## Citations are grounded, not stubbed
 
-The guardrails ground a claim in the user's own words by resolving a
-`[quote](jsonl-path)` markdown link with `sr-session trajectory cite`. The tests
-do **not** stub that: the harness seeds the session's transcript with the run's
-prompt as the line-1 user message, and a test that cites a substring of that
-prompt (`cite("migrate the auth module", transcriptPath, 1)`) has the guardrail
-resolve it for real against the streamed transcript. A test that cites a
-fabricated string exercises cite's real "no match" path — including cite's own
-exclusion of tool results and harness-injected user-role messages
-(`<system-reminder>` / `<task-notification>` / …), which is what makes the
-evidence links safe.
+Three citation kinds are resolved for real (never stubbed), each against the thing
+its kind names:
+
+- **the ask** — a `[quote](jsonl)` body link, grounded via `sr-session trajectory
+  cite --source-types user`. The harness seeds the run's prompt as the transcript's
+  line-1 user message, and `cite("migrate the auth module", transcriptPath, 1)`
+  resolves against it for real. A fabricated quote exercises cite's real "no match"
+  path — including its exclusion of tool results and harness-injected user-role
+  messages (`<system-reminder>` / `<task-notification>` / …).
+- **an observation** — a frontmatter `<abs-jsonl>:<ranges>` citation, resolved via
+  `sr-session trajectory tool-result --line` against the transcript. The tests
+  **produce a real tool_result** (via `harness.ToolResult`, persisted as a genuine
+  tool_result record) in a first run, read its physical line, and cite that line —
+  so the "is this line a tool_result" check runs for real. Citing a line that is
+  the user's prompt (not a tool_result) exercises the refusal.
+- **an artifact** — a frontmatter `<repo-relative-file>:<ranges>` citation, resolved
+  against the working **tree**. The tests **write a real file** into the tree in the
+  first run and cite it repo-relative; an absent file, or an absolute/`.jsonl` path,
+  exercises the refusals.
+
+**The two-run shape.** Delivery evidence must exist *before* the `in_review` task
+claims it, so a first run produces the tool_result and the artifact file, and a
+second run on the same session (a resume) writes the task citing them. This is the
+honest ordering — the work happens, then the task records it — and mirrors the cite
+suite's same-session-resume for a genuine multi-turn transcript.
 
 ## What is stubbed, and why
 
@@ -98,19 +113,23 @@ stubbed verdict is the one under test. This is noted in each such test.
   reconciliation branches (a judge-machinery failure now fails closed, which is the
   engine's behaviour, not this guard's to re-prove).
 
-**task-evidence-resolves** (file-guard, preventive; script)
-- ✓ grounded citation permits and lands
-- ✓ fabricated citation refused (cite finds no match), naming the quote
+**task-evidence-resolves** (file-guard, preventive; script) — the deterministic half
+- ✓ resolving delivery evidence (real tool_result observation + real repo-relative
+  artifact) permits and lands
+- ✓ observation citing a line that is NOT a tool_result (the user's prompt) refused
+- ✓ artifact absent from the tree refused; artifact with an ABSOLUTE path refused by
+  the schema (path-base convention: artifacts are repo-relative)
 - ✓ invalid frontmatter (`status: done`) refused by the schema
-- ✓ in_review with no citation refused for missing evidence
+- ✓ in_review missing a kind of evidence (observation without artifact) refused
 - *not covered:* multi-citation tasks where some resolve and some do not; the
-  underivable-Pre defer path (unit-tested behaviour of the kind dispatch, exercised
-  indirectly).
+  underivable-Pre defer path (unit-tested behaviour of the kind dispatch).
 
-**task-review** (file-guard, after-check; script + judge)
-- ✓ substantiated in_review task permits — review runs at the Post/Stop after-check
-- ✓ unsubstantiated in_review task blocked at Stop, rejection reaches the agent
-- ✓ ungrounded in_review evidence refused deterministically (pre-flight / Pre)
+**task-review** (file-guard, after-check; script + judge) — the judged half, DELIVERY
+- ✓ substantiated in_review task (real tool_result observation + real artifact,
+  judge PASS) permits — review runs at the Post/Stop after-check
+- ✓ unsubstantiated in_review task blocked at Stop (judge FAIL), rejection reaches
+  the agent — the evidence resolves but does not show the claimed thing
+- ✓ observation that is not a tool_result refused deterministically (pre-flight / Pre)
 - *not covered:* the re-fire-every-cycle loop across multiple cycles (the block is
   shown once); the approve-path's "delete the folder" instruction (that is agent
   workflow, and the binary judge's PASS is a permit — see the guard's file-guard.yaml

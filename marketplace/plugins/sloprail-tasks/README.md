@@ -15,20 +15,43 @@ verdict is the engine's `{"pass", "reasoning"}`).
 
 ## The citation model
 
-Evidence and the body's ask are grounded in the user's **own words**, as markdown
-links `[<quote>](<jsonl-path>)`: the link text is the quote, the href is the
-transcript it was said in. A guardrail validates each link with **one command** —
-`sr-session trajectory cite --path <jsonl-path> "<quote>"` — which resolves the
-quote to a real user message or refuses it. `cite` is the single validator: it
-excludes the agent's own output, tool results, and harness-injected user-role
-messages (`<system-reminder>`, `<task-notification>`, `<local-command>`, …), so a
-quote that is not the person's own typing fails to ground. The guardrails
-themselves walk no transcript and filter no tags — they grep the links and trust
-`cite`.
+There are **three** citation kinds, and keeping them apart is the point of the
+whole review lifecycle. Two live in the frontmatter and one in the body, and they
+resolve against different things:
+
+| kind | where | shape | path base | resolves by |
+|------|-------|-------|-----------|-------------|
+| the **ask** | body | `[quote](jsonl)` link | absolute `.jsonl` | `cite --source-types user` — the quote is the user's own words |
+| an **observation** | frontmatter `observations:` | `<jsonl>:<ranges>` string | **absolute** `.jsonl` | `trajectory tool-result --line` — every cited line is a tool_result |
+| an **artifact** | frontmatter `artifacts:` | `<file>:<ranges>` string | **repo-relative** tree file | the file-citation checker — the file exists under the repo, the lines exist |
+
+The **body** cites the human's *ask* as inline `[quote](jsonl)` markdown links,
+grounded against the `user` pool: `cite --source-types user` resolves the quote to
+a real user message and refuses the agent's own output, a tool result, or a
+harness-injected user-role message (`<system-reminder>`, `<task-notification>`,
+`<local-command>`, …). This is task-body-is-human-authored's subject, and nothing
+else's.
+
+The **frontmatter** carries the *delivery evidence* as two typed citation lists —
+proof the work was **done**, weighed against the `in_review` claim. An
+**observation** is proof the work happened, cited into the session transcript by
+**absolute** `.jsonl` path; each cited line must be a **tool_result** the session
+produced (a test that came back green), confirmed by `sr-session trajectory
+tool-result --line`. An **artifact** is where the result is, cited **repo-relative**
+into the working tree; the file must exist under the repo and the cited lines must
+exist. The two path bases are load-bearing: an observation is absolute and a
+transcript, an artifact is repo-relative and a tree file, and one wearing the
+other's shape is a mis-filed citation the schema or the checker refuses.
+
+Why grounding a delivery claim in the user's ask is the bug this fixes: it proves
+only that the work was *requested*, never that it was *done*. The `--source-types`
+mirror is what separates them — a tool-output quote grounds under `tool_result` and
+is refused under `user`, and vice versa.
 
 The frontmatter shape is pinned by `.sloprail/schemas/task.cue` (installed under
 the consumer's project), which the deterministic guards read with `sr-file
-validate`.
+validate`; its `observations` and `artifacts` are two **separate** citation types
+(absolute `.jsonl`; repo-relative tree path), required only in `in_review`.
 
 ## The four guardrails
 
@@ -43,8 +66,10 @@ rewritten to match the work.
 
 Two checks, cheap first:
 1. **Script** — the body must carry a `[quote](jsonl)` link whose quote grounds via
-   `cite` to a real user message. No citation, or one that does not ground, is
-   refused deterministically before the model.
+   `cite --source-types user` to a real user message. No citation, or one that does
+   not ground, is refused deterministically before the model. (This is the **ask**,
+   the `user` pool — distinct from the delivery evidence in the frontmatter, which
+   task-review grounds against the `tool_result` pool and the tree.)
 2. **Judge** — the body must correspond to the cited words and hold that **and
    nothing else**. A valid citation wrapped in agent-authored elaboration —
    inferred requirements, a suggested approach, invented rationale — is slop around
@@ -57,26 +82,44 @@ backstops writes the engine cannot derive at Pre.
 
 ### task-evidence-resolves — file-guard, preventive
 
-The deterministic floor. Every `TASK.md` must satisfy the schema, and every
-`[quote](jsonl)` evidence link must ground. It spends no model call. An `in_review`
-task must additionally carry at least one grounded citation — a claim of finished
-work with no evidence is refused. The schema is closed and has no `done`; a task
-written into `done` is refused at the point of writing.
+The **deterministic floor** — the `in_review` split's structural half, no model.
+Every `TASK.md` must satisfy the schema, and every delivery-evidence citation in
+its frontmatter must **resolve to the thing its kind promises**:
+
+- an **observation** `<abs-jsonl>:<ranges>` — every cited transcript line is a
+  **tool_result** the session produced (via `trajectory tool-result --line`);
+- an **artifact** `<repo-relative-file>:<ranges>` — the file exists under the repo
+  and every cited line exists.
+
+It spends no model call and makes **no judgement** about whether the evidence
+*substantiates* the claim — that is task-review's. It also does **not** check the
+body's citation of the ask — that is task-body-is-human-authored's. An `in_review`
+task must additionally carry **both** kinds (proof it happened *and* where the
+result is) — a claim of finished work missing either is refused. The schema is
+closed and has no `done`; a task written into `done` is refused at the point of
+writing.
 
 ### task-review — file-guard, after-check
 
-`in_review` is a **claim**; this guard judges it. Bound as an after-check (Post /
+`in_review` is a **claim**; this guard judges it — the split's **judged** half. It
+proves **delivery**, not the ask (it used to re-cite the user, a duplicate of
+task-body — that conflation is the bug this fixes). Bound as an after-check (Post /
 Stop only, never Pre — a judged rule evadable by writing the file a different way
-would be worse than none), it reads the task's stated outcome and its grounded
-evidence and asks a model whether the evidence **substantiates** the claim.
+would be worse than none), it reads the task's stated outcome and its **delivery
+evidence** and asks a model whether the evidence **substantiates** the claim.
 
 - A **script pre-flight** gates on `in_review` (most task writes cost nothing) and
-  refuses deterministically if a citation does not ground — there is nothing to
-  review until the evidence resolves.
-- The **judge** decides substantiation. Not substantiated → the turn is refused
-  (the task stays `in_review`; a Post refusal does not advance the read mark, so it
-  is re-judged next cycle until fixed). Substantiated → the write is permitted, and
-  the accepted task is deleted by the agent in a commit of its own.
+  refuses deterministically if an observation is not a tool_result or an artifact
+  does not resolve — there is nothing to review until the evidence resolves.
+- The **prepare** expands the frontmatter evidence to the bytes: each observation to
+  the **tool_result content** at its cited line, each artifact to the **cited tree
+  lines**. The **judge** weighs that delivered evidence against the claim — a task
+  claiming X with evidence showing X *happening* is approved even if X was a poor
+  idea; the judge checks the gap between what the task says was done and what the
+  evidence shows. Not substantiated → the turn is refused (the task stays
+  `in_review`; a Post refusal does not advance the read mark, so it is re-judged next
+  cycle until fixed). Substantiated → the write is permitted, and the accepted task
+  is deleted by the agent in a commit of its own.
 
   *Migration note:* the old-format rule refused **both** verdicts — REJECTED to fix
   the evidence, and APPROVED with an instruction to delete the folder. The engine's
@@ -84,6 +127,13 @@ evidence and asks a model whether the evidence **substantiates** the claim.
   does not survive the judge-check migration: a PASS is a permit. Deleting an
   approved task is the agent's own next step, as it always was (the old hook ran no
   git either).
+
+**task-evidence-resolves vs task-review — the crisp split.** Both look at the same
+two frontmatter lists, but ask different questions. task-evidence-resolves is
+**structural**: do the citations *resolve* — is the observation line a tool_result,
+does the artifact file+lines exist. task-review is **judged**: given they resolve,
+does the delivered evidence *substantiate* the `in_review` claim. The first is a
+script; the second is a model call gated behind it.
 
 ### no-unfinished-work-at-turn-end — gate, Stop
 

@@ -38,6 +38,9 @@ const SessionIDEnv = "CLAUDE_CODE_SESSION_ID"
 //	sr-session trajectory cite        turn a remembered quote into <path>:<line>
 //	                                  (--include-envelope also prints the whole
 //	                                  AskUserQuestion answer envelope at that line)
+//	sr-session trajectory tool-result is a cited LINE a tool_result, and its content
+//	                                  (the line-oriented sibling of cite, for a
+//	                                  delivery observation that names a line already)
 //	sr-session trajectory normalize   the trajectory as normalized entries + events
 //
 // describe and cite are settled by a trajectory's path and the session's own
@@ -59,11 +62,15 @@ func newSessionTrajectoryCmd() *cobra.Command {
                                     a resolvable <path>:<line> citation
                                     (--include-envelope also prints the whole
                                     AskUserQuestion answer envelope at that line)
+  sr-session trajectory tool-result whether a cited --line is a tool_result, and
+                                    its content — for a delivery observation that
+                                    names a transcript line as proof of work
 
 describe answers "what IS this file"; cite mints a citation an agent can write,
 and with --include-envelope reads back the question+answers at that citation's
-line in the same call. All default to the trajectory the hook was invoked for,
-and all accept --path to read another — the parent or a sibling that describe named.`,
+line in the same call; tool-result confirms a line an observation names is a real
+tool-call result. All default to the trajectory the hook was invoked for, and all
+accept --path to read another — the parent or a sibling that describe named.`,
 		Args: cobra.NoArgs,
 		// A bare `trajectory` with no subcommand is a usage error, not a no-op:
 		// print help and say so, the same as cobra's own default for a group.
@@ -74,6 +81,7 @@ and all accept --path to read another — the parent or a sibling that describe 
 	cmd.AddCommand(
 		newSessionTrajectoryDescribeCmd(),
 		newSessionTrajectoryCiteCmd(),
+		newSessionTrajectoryToolResultCmd(),
 		newSessionTrajectoryNormalizeCmd(),
 	)
 	return cmd

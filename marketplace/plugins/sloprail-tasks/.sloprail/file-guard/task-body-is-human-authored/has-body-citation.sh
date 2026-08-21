@@ -112,7 +112,10 @@ while IFS="$(printf '\t')" read -r href quote; do
     /*) : ;;
     *)  cpath="$root/$cpath" ;;
   esac
-  if reason="$(cite_ground "$cpath" "$quote")"; then
+  # The body cites the ASK, so it grounds against the `user` pool — the human's own
+  # words. A quote that is really a tool result fails here (it is not the ask), the
+  # exact mirror of an observation, which grounds against `tool_result`.
+  if reason="$(cite_ground user "$cpath" "$quote")"; then
     n_ok=$((n_ok + 1))
   else
     problems="${problems}  ${reason}
