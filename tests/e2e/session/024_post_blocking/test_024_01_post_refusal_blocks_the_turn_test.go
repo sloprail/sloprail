@@ -34,41 +34,48 @@ import (
 // the refusal does not use and passes or fails for unrelated reasons; that is
 // how a premise check in 019 failed against a working engine.
 
-// refuseCreates refuses every file created, after the fact.
-const refuseCreates = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# Objects to every file created, after the fact
+// refuseCreates is a NEW-FORMAT file-guard, after-check (preventive omitted),
+// that objects to every markdown file the cycle produces (re-vehicled from the old
+// GUARDRAIL.md PostFileCreate hook per tests/e2e/REVEHICLE-PATTERN.md). An
+// after-check refusal is exactly this directory's subject: it does not undo the
+// write (the file is on disk), it holds the TURN, and it re-fires next cycle —
+// which is the whole mechanism a Post refusal enforces a correction with. `match:
+// "**/*.md"` fires on whichever Post kind each write produced; every file this
+// directory writes is `.md`.
+const refuseCreates = `match: "**/*.md"
+checks:
+  - script: ./refuse.sh
 `
 
 // blocked reports whether the turn was stopped rather than allowed to end.
 //
 // A blocked stop makes the agent continue past its own end, so the mock is
 // driven round again and emits its final result more than once. One result
-// means the turn simply ended.
+// means the turn simply ended. Format-neutral — it reads the mock's stream, not
+// the dispatch.
 func blocked(r harness.Result) bool {
 	return strings.Count(r.Output, `"subtype":"success"`) >= 2
 }
 
-// refusingGuardrail writes a rule that logs OUTSIDE the project and then
-// refuses.
+// refusingGuardrail writes a file-guard whose check logs OUTSIDE the project and
+// then refuses.
 //
-// Outside deliberately. A hook's working directory is its guardrail's folder,
-// which sits INSIDE the tree being compared — so a hook logging there creates an
+// Outside deliberately. A check's working directory is its guard's folder, which
+// sits INSIDE the tree being compared — so a check logging there creates an
 // untracked file, which the same cycle reports and this same rule then refuses.
 // One rule objecting to one file quietly becomes two objections, which takes the
 // multi-refusal path and leaves the single-refusal wording untested.
+//
+// The refusal is the NEW-FORMAT contract: exit non-zero refuses, and the reason is
+// a `{"reason":…}` object on stdout (scriptRefusalReason prefers structured
+// stdout). This is what carries the message to the agent, as a blocking error, in
+// place of the old exit-with-stderr channel.
 func refusingGuardrail(t *testing.T, e *harness.Env, proj, name, message string) string {
 	t.Helper()
 	log := filepath.Join(t.TempDir(), name+".log")
-	e.Guardrail(proj, name, refuseCreates, map[string]string{
+	e.FileGuard(proj, name, refuseCreates, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + log + "\n" +
-			"echo " + shq(message) + " >&2\nexit 1\n",
+			"echo " + shq(`{"reason":"`+message+`"}`) + "\nexit 1\n",
 	})
 	return log
 }
@@ -199,30 +206,27 @@ func TestT024_02_SeveralRefusalsAreAllReportedAndBlockOnce(t *testing.T) {
 	}
 }
 
-// T024_03: a refusal does not silence the rules bound after it.
+// T024_03: a refusal does not silence the other rules in the same cycle.
 //
 // The dispatcher collects objections rather than returning at the first, so a
-// rule bound to a LATER event still runs. Without this case the suite cannot
+// second rule still runs after one has refused. Without this case the suite cannot
 // tell an engine that dispatches everything from one that abandons the cycle the
 // moment a hook objects — the file survives either way, and so does the block.
 //
-// The passing rule is bound to Stop, which is dispatched last and
-// unconditionally, so it is the one a "stop at the first refusal" engine would
-// lose.
+// Under the new dispatch the "runs after the refuser" rule is a SECOND file-guard:
+// runFileGuardsPost iterates EVERY file-guard against the cycle's Post events and
+// keeps going past a refusal (it appends the objection and continues judging the
+// rest), so a passing guard is asked even when a sibling refused the same write.
+// That is the same "collect, do not abandon" property the old Stop-bound rule
+// proved — a "stop at the first refusal" engine still loses the passer here.
 func TestT024_03_ARefusalDoesNotSilenceThePassingRuleAfterIt(t *testing.T) {
 	e, proj := project(t)
 	ranLog := refusingGuardrail(t, e, proj, "objector", "this one refuses")
 
 	afterLog := filepath.Join(t.TempDir(), "after.log")
-	e.Guardrail(proj, "afterwards", `---
-hooks:
-  Stop:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Runs at the end of the cycle, after the objection
+	e.FileGuard(proj, "afterwards", `match: "**/*.md"
+checks:
+  - script: ./record.sh
 `, map[string]string{"record.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + afterLog + "\nexit 0\n"})
 	commitGuardrails(e, proj)
 
@@ -312,7 +316,7 @@ func TestT024_04_ARefusingSessionStillTerminates(t *testing.T) {
 func TestT024_05_APassingRuleDoesNotBlockTheTurn(t *testing.T) {
 	e, proj := project(t)
 	ranLog := filepath.Join(t.TempDir(), "passer.log")
-	e.Guardrail(proj, "passer", refuseCreates, map[string]string{
+	e.FileGuard(proj, "passer", refuseCreates, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\nexit 0\n",
 	})
 	commitGuardrails(e, proj)
@@ -351,7 +355,7 @@ func TestT024_06_ARefusalAndAPassNameOnlyTheRefuser(t *testing.T) {
 	refuserLog := refusingGuardrail(t, e, proj, "zzrefuser", "this is the objection")
 
 	passerLog := filepath.Join(t.TempDir(), "passer.log")
-	e.Guardrail(proj, "zzpermitter", refuseCreates, map[string]string{
+	e.FileGuard(proj, "zzpermitter", refuseCreates, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + passerLog + "\nexit 0\n",
 	})
 	commitGuardrails(e, proj)
