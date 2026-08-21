@@ -160,13 +160,76 @@ type GateCheckPayload struct {
 	Context map[string]natures.ContextState `json:"context"`
 }
 
-// PreparedContext is what a prepare script's stdout carries under its one
-// supported key, `additionalContext` (dot-dir-file-store/main.tsp
-// PreparedContext): a freeform, flat JSON object with no fixed shape. Named
-// explicitly rather than left as prose, so a prepare script's contract is a real
-// type. Only this one key is read from a prepare's stdout; everything else it
-// prints is not part of the contract.
+// PreparedContext is the freeform context a prepare script's stdout carries under
+// `additionalContext` (dot-dir-file-store/main.tsp PreparedContext): a flat JSON
+// object with no fixed shape, folded into the judge's input under the same key.
+// Named explicitly rather than left as prose, so a prepare script's contract is a
+// real type. It is PURELY template context — it carries no control signal. The
+// judge-or-skip decision travels on a SEPARATE, typed channel (`skip`, read off
+// the same envelope; see PreparedOutcome and dispatch.parsePreparedContext), so
+// that a freeform key an author happens to name cannot be mistaken for a control
+// instruction and the skip decision stays explicit.
 type PreparedContext map[string]any
+
+// PreparedOutcome is the parsed control channel of a prepare script's stdout
+// envelope — the sibling of `additionalContext`, decoded as a dedicated typed
+// signal rather than smuggled through the freeform map.
+//
+// # The prepare contract has FOUR outcomes
+//
+// A JUDGE check may carry a prepare step that runs first. Its stdout envelope is
+// `{"additionalContext": {...}, "skip": <bool>}`, both keys optional, and it
+// resolves to one of four outcomes:
+//
+//  1. prepare exits NON-ZERO -> the check FAILS CLOSED (refuse), carrying
+//     prepare's own words. (Unchanged; decided by exit code, not this envelope.)
+//  2. prepare exits ZERO, stdout MALFORMED (present but not this shape) -> the
+//     check FAILS CLOSED (refuse). An envelope the engine cannot read must never
+//     read as a skip or a half-prepared prompt. (Unchanged.)
+//  3. prepare exits ZERO, `skip` absent or false -> the judge RUNS, with any
+//     `additionalContext` folded into its input. Empty stdout is this case: a
+//     prepare that ran, added nothing, and printed nothing still lets the judge
+//     run. (Unchanged.)
+//  4. prepare exits ZERO and `skip` is true -> the judge is NOT invoked and this
+//     check ABSTAINS — it reaches NO verdict of its own. It does not refuse and
+//     it does not affirmatively pass; it DROPS OUT of the check chain, and the
+//     guard's outcome is decided by the OTHER checks. A check listed after it
+//     still runs and can still refuse; if no check refuses, the write is permitted
+//     by default (the same result reaching the end of the chain with no refusal
+//     gives). This is the outcome for a guard whose prepare inspects the subject
+//     and finds the judge would be meaningless (e.g. a task-review guard on a task
+//     that is not in_review): don't spend a model call, and don't force a verdict
+//     — let whatever else the guard says (or the default permit) stand.
+//     `additionalContext` is moot when skipping (there is no prompt to fold it
+//     into) and is ignored.
+//
+// ABSTAIN, not permit — the distinction is deliberate and load-bearing. A skip
+// that forced a pass would MASK a later check that would have refused; abstaining
+// means first-refusal still wins across the remaining checks. Skip defaults to
+// false, so the key's ABSENCE preserves outcome (3) exactly — every prepare
+// written before this signal existed keeps letting the judge run. Skip is opt-in
+// and abstain is its only effect, which keeps it a deliberate act rather than an
+// accident of a malformed envelope: outcome (2) above still refuses. Empty stdout
+// is NOT a skip either — it is outcome (3).
+//
+// SPEC-CHANGE NOTE: `skip` is a NEW addition to the prepare/judge contract. The
+// authoritative spec (dot-dir-file-store/main.tsp PreparedContext) records only
+// the judge-runs / prepare-fails form; this typed ABSTAIN outcome is added here
+// first (the Go type + engine is the source of truth for this change) and the
+// spec's main.tsp must be extended to record the `skip` sibling key and the
+// abstain semantics above — the spec wording must say skip means "this check
+// reaches no verdict; other checks decide", NOT that skip permits or passes.
+type PreparedOutcome struct {
+	// AdditionalContext is the freeform template context, present only when the
+	// prepare emitted one AND the judge is going to run. Ignored when Skip.
+	AdditionalContext PreparedContext `json:"additionalContext"`
+
+	// Skip, when true, is prepare asking this judge check to ABSTAIN: the judge is
+	// not invoked and the check reaches no verdict of its own — other checks decide
+	// (see the four-outcome contract above). Absent/false is the unchanged "run the
+	// judge" default.
+	Skip bool `json:"skip"`
+}
 
 // FileJudgeInput is the wire/type contract for what a file-guard's judge receives
 // (dot-dir-file-store/main.tsp FileJudgeInput): the standard CheckPayload spread

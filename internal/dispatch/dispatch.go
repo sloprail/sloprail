@@ -156,6 +156,14 @@ type Request struct {
 // old dispatch's verdict uses and for the same reason: encoding "refused" as
 // "said something" is what let a refusal with nothing to say read as consent. A
 // clean pass is the zero value.
+//
+// Abstained is a THIRD state, distinct from both — a check that reached no verdict
+// of its own (a judge whose prepare emitted `skip`; see runJudgeCheck). It is
+// meaningful only WITHIN the check loop: an abstaining check neither refuses nor
+// counts as an affirmative pass, so the loop continues to the next check rather
+// than ending. It is an internal signal — Run itself never returns an Abstained
+// verdict to a caller (it collapses to the clean pass when the whole chain reached
+// no refusal), so every consumer still reads only Refused/Reason exactly as before.
 type Verdict struct {
 	// Refused reports whether the action must not proceed. When true, Reason is
 	// non-empty.
@@ -164,6 +172,13 @@ type Verdict struct {
 	// Reason is what to tell the agent on a refusal — the prerequisite's remedy,
 	// or the check's own words. Never empty when Refused.
 	Reason string
+
+	// Abstained reports that this ONE check reached no verdict and drops out of the
+	// chain — the other checks decide. Never true together with Refused. Set only by
+	// a judge check whose prepare asked to skip; the loop treats it as "continue,
+	// count nothing", and Run never surfaces it (an all-abstain chain permits, the
+	// same as reaching the end with no refusal).
+	Abstained bool
 }
 
 // pass is the clean verdict.
@@ -171,6 +186,12 @@ func pass() Verdict { return Verdict{} }
 
 // refuse is a refusal carrying its reason.
 func refuse(reason string) Verdict { return Verdict{Refused: true, Reason: reason} }
+
+// abstain is the no-verdict outcome of a single check — it neither refuses nor
+// passes affirmatively, so the check loop skips past it to let the remaining
+// checks decide (and permits by default if none refuse). Used by a judge check
+// whose prepare emitted `skip`.
+func abstain() Verdict { return Verdict{Abstained: true} }
 
 // Runner runs a Request's require + checks and returns a verdict.
 //
@@ -218,6 +239,15 @@ func (r Runner) Run(req Request) (Verdict, error) {
 	// Then the checks, in order. The first that refuses ends it; a check that
 	// could not be RUN is itself a refusal (fail-closed), returned here rather
 	// than as an error so the caller renders one refusal shape for every outcome.
+	//
+	// A check that ABSTAINED (a judge whose prepare emitted `skip`) reaches no
+	// verdict: it is not a refusal, so it does not end the loop, and it is not an
+	// affirmative pass that could stand in for a later check — the loop simply
+	// continues to the next check, which still runs and can still refuse. So
+	// first-refusal-still-wins across the checks that DID decide, and an abstain
+	// only drops out. Reaching the end with no refusal — every check passed, or
+	// abstained, or any mix — is the clean pass; the Abstained flag never leaves
+	// this loop.
 	for i := range req.Checks {
 		v, err := r.runCheck(req, req.Checks[i])
 		if err != nil {
