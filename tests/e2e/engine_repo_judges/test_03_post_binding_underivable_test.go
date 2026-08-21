@@ -4,26 +4,30 @@ import (
 	"testing"
 )
 
-// INVARIANT: the POST binding judges a create the engine could not derive.
+// INVARIANT: the POST after-check judges a create the engine could not derive.
 //
-// A guardrail that bound only the Pre kinds would miss a creation the engine
+// A guard that only prevented at the Pre kinds would miss a creation the engine
 // cannot predict the bytes of — the engine emits a create only when the resulting
 // bytes are known (internal/filemod/module.go, KindPreCreate), so a write whose
-// output the engine will not guess reaches NO Pre kind at all. Both engine-repo
-// judges DECLARE all four kinds; that is the fix's shape, but a declaration is not
-// the behaviour. What matters is whether the Post binding actually judges the file
+// output the engine will not guess reaches NO Pre kind at all. A file-guard's
+// after-check covers exactly this: EVERY file-guard (preventive or not) fires on
+// the settled POST file event at Stop, so a create the preventive Pre run never
+// saw is still judged. That is the file-guard's shape, but the shape is not the
+// behaviour — what matters is whether the after-check actually judges the file
 // when the Pre kind never fired.
 //
-// Asserted through a real underivable write rather than read off the frontmatter:
+// Asserted through a real underivable write rather than read off the declaration:
 // the mock runs a Bash command whose output bytes the engine will not predict, so
-// no Pre event is emitted for the file it creates, and the Post binding is the only
-// thing that can still judge it. Only the judge's own model verdict is stubbed.
+// no Pre event is emitted for the file it creates, and the Post after-check is the
+// only thing that can still judge it. Only the judge's own model verdict is
+// stubbed.
 
 // TestPostBindingJudgesAnUnderivableRuleCreate — the underivable-create case for
 // rule-quality.
 //
 // The rule is created by a command the engine cannot derive bytes for, so the
-// Pre kind never fires. The Post binding must still judge it and refuse.
+// preventive Pre run never fires. The Post after-check must still judge it and
+// refuse.
 func TestPostBindingJudgesAnUnderivableRuleCreate(t *testing.T) {
 	t.Setenv("A10N_CLAUDE_BIN", stubJudge(t,
 		`{"has_issues": true, "reasoning": "flagged via the Post binding"}`))

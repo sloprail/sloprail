@@ -11,17 +11,29 @@
 # about the file, and one flake under fail-closed wedges a session the agent
 # cannot un-wedge by fixing anything. The VERDICT still fails closed. The
 # fail-open exits are marked FAIL-OPEN below; changing those `exit 0` lines to
-# `exit 1` restores the engine default. See GUARDRAIL.md, "Failing open".
+# `exit 1` restores the engine default. See file-guard.yaml and the "Failing
+# open" reasoning in the comments below.
 #
 # EMPTY rules/ IS NOT FAIL-OPEN. It is a refusal — see "Nothing to judge
 # against" below. That asymmetry is the whole point of composing the rubric.
 
 set -uo pipefail
 
+# The new-format CheckPayload carries the event FLAT under `event`: the file's
+# own facts are direct fields (`.event.path`, `.event.newContent`,
+# `.event.kind`, `.event.resultKnown`), NOT nested under `.event.fields.*` the
+# way the old {kind, fields} envelope was. See internal/declaration/payload.go
+# (FlatEvent) and internal/dispatch/checks.go (checkPayloadJSON).
 event="$(cat)"
 
-path="$(printf '%s' "$event" | jq -r '.event.fields.path // empty' 2>/dev/null)"
-guardrail_dir="$(printf '%s' "$event" | jq -r '.guardrailDir // empty' 2>/dev/null)"
+path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
+
+# The guard's own directory is provided by the engine as the SR_GUARDRAIL_DIR
+# environment variable (internal/dispatch/exec.go sets it on every check's env),
+# NOT as a `.guardrailDir` payload field the old format used. It is set to the
+# guard's folder (<root>/.sloprail/file-guard/rule-quality), so RUBRIC.md and
+# rules/ resolve under it.
+guardrail_dir="${SR_GUARDRAIL_DIR:-}"
 
 if [ -z "$path" ]; then
   # A declaration/script disagreement, not a model failure — NOT covered by the
@@ -30,18 +42,24 @@ if [ -z "$path" ]; then
   exit 1
 fi
 
-# guardrailDir is injected by the engine on every dispatch. Its absence means
-# the payload did not come from the engine — a hand-made test payload, most
-# often. Without it the rules/ directory cannot be found, and a judge that
+# SR_GUARDRAIL_DIR is injected by the engine on every check dispatch. Its absence
+# means the payload did not come from the engine — a hand-made test invocation,
+# most often. Without it the rules/ directory cannot be found, and a judge that
 # silently permits in that case is exactly the "looks like a pass" failure this
-# project has been burned by. Refuse loudly instead.
+# project has been burned by. Refuse loudly instead. (Same intent as the old
+# "no guardrailDir" refusal, now keyed on the env var that replaced that field.)
 if [ -z "$guardrail_dir" ]; then
-  echo "rule-quality: the payload carried no guardrailDir, so rules/ could not be located. REFUSING — this is a malformed payload, not a model failure." >&2
+  echo "rule-quality: SR_GUARDRAIL_DIR is unset, so rules/ could not be located. REFUSING — this means the check was not dispatched by the engine, not a model failure." >&2
   exit 1
 fi
 
 # ---------------------------------------------------------------------------
 # The content to judge.
+#
+# This file-guard is `preventive: true`, so it fires at BOTH moments the old
+# Pre+Post binding covered: the PRE write (to refuse before the bytes land) and
+# the after-check at Stop (on the settled file). The event's kind tells the two
+# apart.
 #
 # Pre kinds, so the bytes are the PENDING ones and must come out of the event,
 # not off disk — the disk still holds the pre-edit content, and judging that
@@ -51,36 +69,43 @@ fi
 # the post-edit bytes as `newContent` too, alongside `resultKnown`, and per
 # rules/content-may-be-unresolvable the flag is consulted rather than reading an
 # absent newContent as "". When the result is not derivable the honest answer is
-# that this rule cannot judge it, so it defers to the Post kind, which this
-# guardrail also binds.
+# that this rule cannot judge it, so it defers to the Post kind, which fires at
+# Stop. (Belt-and-suspenders: for a preventive guard the engine ALREADY fails
+# CLOSED on an underivable Pre write before this script runs — see
+# services/sr-session/nature_fileguard.go isUnderivablePreWrite — and re-judges
+# the settled file at Stop. This defer branch keeps the script correct even so.)
+#
+# All fields read FLAT under `.event` (`.event.newContent`, `.event.resultKnown`,
+# `.event.kind`), the new CheckPayload shape — not `.event.fields.*`.
 # ---------------------------------------------------------------------------
 kind="$(printf '%s' "$event" | jq -r '.event.kind // empty' 2>/dev/null)"
 
 body=""
 case "$kind" in
   PreFileCreate)
-    body="$(printf '%s' "$event" | jq -r '.event.fields.newContent // ""' 2>/dev/null)"
+    body="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PreFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.fields.resultKnown // false' 2>/dev/null)"
+    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
     if [ "$known" != "true" ]; then
-      # Not a failure and not a permit-by-ignorance: the Post binding below
+      # Not a failure and not a permit-by-ignorance: the Post binding (at Stop)
       # judges what actually landed. Silent, because this is the designed path
       # and not an anomaly.
       exit 0
     fi
-    body="$(printf '%s' "$event" | jq -r '.event.fields.newContent // ""' 2>/dev/null)"
+    body="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PostFileCreate|PostFileUpdate)
     # Post kinds carry newContent too now, but the disk is read here on purpose:
     # the bytes on disk ARE what the cycle produced, and reading them keeps this
-    # branch identical whatever a Post event happens to carry.
+    # branch identical whatever a Post event happens to carry. SR_WORKSPACE is
+    # set on the check's env by the engine (internal/dispatch/exec.go).
     abs="${SR_WORKSPACE:-.}/$path"
     [ -f "$abs" ] || exit 0
     body="$(cat "$abs" 2>/dev/null)"
     ;;
   *)
-    echo "rule-quality: kind '$kind' is not one this hook is bound to" >&2
+    echo "rule-quality: kind '$kind' is not one this guard is bound to" >&2
     exit 1
     ;;
 esac
@@ -138,7 +163,7 @@ fi
 
 if [ -z "$frame" ]; then
   # FAIL-OPEN: without the frame the judge would invent its own standard.
-  echo "rule-quality: could not read RUBRIC.md, so '$path' was NOT judged. PERMITTING (fail-open — see GUARDRAIL.md)." >&2
+  echo "rule-quality: could not read RUBRIC.md, so '$path' was NOT judged. PERMITTING (fail-open — see file-guard.yaml)." >&2
   exit 0
 fi
 
@@ -149,7 +174,7 @@ case "$frame" in
     # meta-rules would be silently dropped and the model would judge against a
     # frame that says "below are the meta-rules" with nothing below it. That is
     # the judge-against-nothing failure, arriving by a different door.
-    echo "rule-quality: RUBRIC.md has no <<<META_RULES>>> marker, so the meta-rules could not be spliced in and '$path' was NOT judged. PERMITTING (fail-open — see GUARDRAIL.md)." >&2
+    echo "rule-quality: RUBRIC.md has no <<<META_RULES>>> marker, so the meta-rules could not be spliced in and '$path' was NOT judged. PERMITTING (fail-open — see file-guard.yaml)." >&2
     exit 0
     ;;
 esac
@@ -160,11 +185,11 @@ for rf in "$guardrail_dir"/rules/*/RULE.md; do
   [ -f "$rf" ] || continue
 
   # `enforced:` in the frontmatter decides whether a meta-rule enters the
-  # prompt. Presence of the file is NOT enough — see GUARDRAIL.md, "Why
-  # enforced: and not mere presence". A meta-rule may legitimately be written
-  # down for the next author while being undecidable by a judge, exactly as the
-  # four rules in authoring-slop/ already do; without the flag the only way to
-  # record such a rule would be to leave it out of the repo.
+  # prompt. Presence of the file is NOT enough (why enforced: and not mere
+  # presence): a meta-rule may legitimately be written down for the next author
+  # while being undecidable by a judge, exactly as the four rules in
+  # authoring-slop/ already do; without the flag the only way to record such a
+  # rule would be to leave it out of the repo.
   enforced="$(awk '
     NR==1 && $0=="---" { infm=1; next }
     infm && $0=="---"  { exit }
@@ -224,7 +249,7 @@ rubric="$(META="$meta" awk '
 claude_bin="${A10N_CLAUDE_BIN:-claude}"
 if ! command -v "$claude_bin" >/dev/null 2>&1; then
   # FAIL-OPEN: no judge available.
-  echo "rule-quality: '$claude_bin' is not on PATH, so '$path' was NOT judged. PERMITTING (fail-open — see GUARDRAIL.md)." >&2
+  echo "rule-quality: '$claude_bin' is not on PATH, so '$path' was NOT judged. PERMITTING (fail-open — see file-guard.yaml)." >&2
   exit 0
 fi
 
@@ -268,9 +293,10 @@ EOF
 # this rule can fire several times per turn.
 #
 # Timeout is 25s, NOT the 60s used by the sibling judge in the executive-memory
-# repo. The engine kills a hook's process group at hookTimeout = 30s
-# (services/sr-session/session_pre_tool.go), so a 60s bound here would never be
-# reached: the engine would kill the judge first and the fail-open branches
+# repo. The engine kills a check's process group at defaultCheckTimeout = 30s
+# (internal/dispatch/exec.go), and the pre-tool hook wrapping it at hookTimeout =
+# 30s (services/sr-session/session_pre_tool.go) — so a 60s bound here would never
+# be reached: the engine would kill the judge first and the fail-open branches
 # below — which exist to explain themselves on stderr — would never run. 25s
 # leaves room to write the message and exit before the engine's axe falls.
 ( cd /tmp && printf '%s' "$prompt" | timeout 25 "$claude_bin" \
@@ -281,7 +307,7 @@ EOF
 
 if [ ! -s "$verdict" ]; then
   # FAIL-OPEN: timed out, errored, or wrote nowhere we can read.
-  echo "rule-quality: the judge produced no verdict for '$path' (timeout or error), so it was NOT judged. PERMITTING (fail-open — see GUARDRAIL.md)." >&2
+  echo "rule-quality: the judge produced no verdict for '$path' (timeout or error), so it was NOT judged. PERMITTING (fail-open — see file-guard.yaml)." >&2
   exit 0
 fi
 
@@ -306,7 +332,7 @@ raw="$(tr -d '\r' < "$verdict" 2>/dev/null | sed 's/```json//g; s/```//g')"
 json="$(printf '%s' "$raw" | tr '\n' ' ' | grep -o '{[^{}]*}' | head -1)"
 if [ -z "$json" ]; then
   # FAIL-OPEN: unparseable.
-  echo "rule-quality: the judge's verdict for '$path' could not be parsed, so it was NOT judged. PERMITTING (fail-open — see GUARDRAIL.md)." >&2
+  echo "rule-quality: the judge's verdict for '$path' could not be parsed, so it was NOT judged. PERMITTING (fail-open — see file-guard.yaml)." >&2
   exit 0
 fi
 

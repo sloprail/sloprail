@@ -145,10 +145,14 @@ Investigation changed the picture — much of what looked like "real claude / st
 
 ### WAVE 3 (GOAL.md) — cleanup, SEPARATE PRs, at the very end
 READINESS ASSESSMENT (2026-08-20): the old format is NOT deletable as-is — it still has live consumers:
-1. **The repo's OWN guardrails** `.sloprail/guardrails/{rule-quality,skill-quality}/GUARDRAIL.md` are still
-   OLD format — LIVE, enforcing this repo's own rules/skills, tested by tests/e2e/engine_repo_judges. These
-   must be MIGRATED old→new (.sloprail/{file-guard,gate,context}) BEFORE the old loader is deleted, and
-   engine_repo_judges retargeted. (Real behavioral change to the repo's own enforcement.)
+1. **The repo's OWN guardrails** — DONE (Wave-3 PR1, branch wave3/migrate-repo-guardrails). Migrated from
+   `.sloprail/guardrails/{rule-quality,skill-quality}/GUARDRAIL.md` (old hooks format) to
+   `.sloprail/file-guard/{rule-quality,skill-quality}/file-guard.yaml` (file-guard nature, `preventive: true`
+   to keep the old Pre+Post binding). RUBRIC.md/judge-*.sh/rules/ moved verbatim; judge scripts adapted to
+   the flat CheckPayload (`.event.path`/`.event.newContent`) + `SR_GUARDRAIL_DIR` env (was `.guardrailDir`
+   payload field); documented semantics preserved (fail-open, empty-rules refusal, `{[^{}]*}` verdict, 25s
+   timeout). engine_repo_judges retargeted to install from `.sloprail/file-guard/<name>` and proves the same
+   invariants. The old-format DELETION (#3 below) can now proceed.
 2. `examples/deprecated/` (deterministic-refactoring + required-context-precondition, OLD GUARDRAIL.md) —
    already superseded by new-format examples/deterministic-refactoring-mode + examples/required-context-
    precondition (both have merged Wave-2 e2e). → DELETE (not migrate).

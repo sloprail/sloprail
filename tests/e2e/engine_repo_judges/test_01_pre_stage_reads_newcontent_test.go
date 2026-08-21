@@ -8,24 +8,25 @@ import (
 
 // INVARIANT: the PRE stage reads the PENDING body, from the right field.
 //
-// Both engine-repo judges bind PreFileCreate/PreFileUpdate as well as the Post
-// kinds, and the Pre binding is the one that PREVENTS a bad SKILL.md/RULE.md
-// from landing rather than reporting it after the fact. It works only if the
-// hook reads the pending body out of the event — which the file kinds carry as
-// `newContent` (the field the events-vocab rename settled on). A hook still
-// reading the old `.event.fields.content` gets an empty body, hits
+// Both engine-repo judges are `preventive: true` file-guards, so they fire at
+// the PRE write as well as the after-check at Stop, and the preventive Pre run
+// is the one that PREVENTS a bad SKILL.md/RULE.md from landing rather than
+// reporting it after the fact. It works only if the check reads the pending body
+// out of the flat CheckPayload event — which the file kinds carry as
+// `event.newContent`. A check still reading the old nested
+// `.event.fields.newContent` gets an empty body, hits
 // `[ -n "$body" ] || exit 0`, and PERMITS — the Pre stage silently dead while
-// the Post stage still fires off disk.
+// the Post after-check still fires off disk.
 //
 // These tests pin the Pre behaviour directly: a Write TOOL (which lets the
-// engine derive the pending bytes, so the Pre kind fires) creating a flagged
-// file must be REFUSED. That refusal is only possible if the hook read the
-// content the write states, so the assertion is a proof the field is read
-// correctly — the exact regression the rename could have left behind, and did
-// until judge-skill.sh/judge-rule.sh were brought to `newContent`.
+// engine derive the pending bytes, so the preventive guard's Pre run fires and
+// can block) creating a flagged file must be REFUSED. That refusal is only
+// possible if the check read the content the write states, so the assertion is a
+// proof the field is read correctly — the exact regression the flat-event
+// migration could have left behind if a `.event.fields.*` read survived.
 //
 // The whole path runs through the mock: the harness drives a10n-claude-mock to
-// attempt the write, the real plugin fires this repo's real guardrail, and the
+// attempt the write, the real plugin fires this repo's real file-guard, and the
 // only substitution is the judge's own model verdict (stubJudge). Distinct from
 // the verdict-PARSE invariant, whose subject is the greedy span rather than the
 // stage — those also exercise the Pre stage but are about a different failure.
@@ -50,7 +51,7 @@ func TestPreStageRefusesAFlaggedSkillWrite(t *testing.T) {
 	// what distinguishes a prevented write from an after-the-fact objection.
 	if !got.Saw("SKILL QUALITY") {
 		t.Fatalf("a Write creating a flagged SKILL.md was not refused at the Pre stage — "+
-			"the hook did not read the pending body (newContent), so the Pre binding is silently dead:\n%s", got.Output)
+			"the check did not read the pending body (event.newContent), so the preventive Pre run is silently dead:\n%s", got.Output)
 	}
 }
 
@@ -70,7 +71,7 @@ func TestPreStageRefusesAFlaggedRuleWrite(t *testing.T) {
 
 	if !got.Saw("RULE QUALITY") {
 		t.Fatalf("a Write creating a flagged RULE.md was not refused at the Pre stage — "+
-			"the hook did not read the pending body (newContent), so the Pre binding is silently dead:\n%s", got.Output)
+			"the check did not read the pending body (event.newContent), so the preventive Pre run is silently dead:\n%s", got.Output)
 	}
 }
 
