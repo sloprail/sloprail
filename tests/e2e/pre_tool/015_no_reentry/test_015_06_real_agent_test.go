@@ -16,7 +16,7 @@ import (
 // That shim is the component the guard's proof actually turns on, and it is the
 // one thing the mock cannot stand in for. The property under test is:
 //
-//	SLOPRAIL_LAUNCHED_BY, set by the engine on the OUTER hook, survives the exec
+//	SLOPRAIL_LAUNCHED_BY, set by the engine on the OUTER check, survives the exec
 //	into a real harness, is loaded by that harness into ITS own hook environment,
 //	and is read there by a second, independent invocation of the engine.
 //
@@ -47,12 +47,12 @@ import (
 //
 // Two haiku invocations, each capped by --max-budget-usd, on a prompt that asks
 // for one small file. Measured at well under $0.01 per run. The cap is passed to
-// the INNER agent through the guardrail's own script, which is where a runaway
+// the INNER agent through the guard's own script, which is where a runaway
 // would spend, and the depth counter below bounds it a second way.
 //
 // # The measurement
 //
-// Two guardrails bind the same paths:
+// Two file-guards bind the same paths (preventive, so they fire at pre-tool):
 //
 //	judge-notes   launches an agent — the rule that must NOT re-enter itself.
 //	env-witness   launches nothing and only records the environment it sees.
@@ -64,62 +64,44 @@ import (
 // not run twice", which is equally satisfied by an inner session whose hooks
 // never fired at all — the vacuous pass this test exists to rule out.
 //
-// This run was performed by hand before the file was written, and the ledger it
-// produced is quoted in the task. The three lines that matter:
+// The three ledger lines that matter read like:
 //
 //	WITNESS pid=31797 depth=0 launched_by=[env-witness]
 //	depth=0 guardrail=judge-notes launched_by=[judge-notes]
 //	WITNESS pid=32435 depth=1 launched_by=[judge-notes:env-witness]
 //
-// The third line is the whole proof: a hook inside the real launched agent,
+// The third line is the whole proof: a check inside the real launched agent,
 // reporting the outer rule's name inherited across the exec with its own
 // appended. judge-notes has no depth=1 line beside it — it declined.
 //
-// The same experiment run against a binary with the guard mutated to `false &&`
-// recursed to the depth-2 kill switch, which is what shows the measurement
+// The same experiment run against a binary that does not set SLOPRAIL_LAUNCHED_BY
+// recurses to the depth-2 kill switch, which is what shows the measurement
 // discriminates rather than passing on a technicality.
-const realJudgeDecl = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "notes/"
-      hooks:
-        - type: command
-          command: ./judge.sh
----
-
-# Asks a real agent whether the note is any good
-
-Launches sr-agent against the operator's actual claude.
+const realJudgeDecl = `match: path startsWith "notes/"
+preventive: true
+checks:
+  - script: ./judge.sh
 `
 
-const realWitnessDecl = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "notes/"
-      hooks:
-        - type: command
-          command: ./witness.sh
----
-
-# Records the provenance environment of every process it fires in
-
-Launches nothing. Exists only to observe SLOPRAIL_LAUNCHED_BY, including
-inside a session some other rule launched.
+const realWitnessDecl = `match: path startsWith "notes/"
+preventive: true
+checks:
+  - script: ./witness.sh
 `
 
 // realJudgeScript launches a real agent, bounded three ways.
 //
 // The `cd "$SR_WORKSPACE"` is not tidiness and removing it invalidates the test.
-// A hook runs with its working directory set to the GUARDRAIL'S OWN FOLDER, so
+// A check runs with its working directory set to the GUARD'S OWN FOLDER, so
 // an agent launched without it starts there — outside the project, where the
-// plugin is not installed and no hook fires. Measured: the inner agent wrote its
-// file into .sloprail/guardrails/judge-notes/notes/ and the witness never ran,
+// plugin is not installed and no check fires. Measured: the inner agent wrote its
+// file into .sloprail/file-guard/judge-notes/notes/ and the witness never ran,
 // which reads exactly like a guard that works. The guarded tree is where a real
 // judging agent works, and it is the only place the recursion exists.
 //
-// The depth counter is the kill switch. With the guard in place it is never
-// reached; with the guard removed it is the only thing that ends the run, which
-// is why the number is 2 and not 8.
+// The depth counter is the kill switch. With the fix in place it is never
+// reached; without it it is the only thing that ends the run, which is why the
+// number is 2 and not 8.
 const realJudgeScript = `#!/bin/sh
 cat >/dev/null
 
@@ -154,7 +136,7 @@ printf 'WITNESS depth=%s launched_by=[%s]\n' \
 exit 0
 `
 
-// T015_06: against a real `claude`, the launched agent's OWN hooks see the rule
+// T015_06: against a real `claude`, the launched agent's OWN checks see the rule
 // that launched it, and that rule declines to enforce there.
 //
 // Skipped unless SLOPRAIL_REAL_AGENT=1, because it bills the operator.
@@ -173,8 +155,8 @@ func TestT015_06_RealAgentInheritsProvenanceAndTheRuleDeclines(t *testing.T) {
 	// hook at all — a green run that proves nothing. The mock has no such
 	// condition, which is why no other test in this package needs the call.
 	e.GitInit(proj)
-	e.Guardrail(proj, "judge-notes", realJudgeDecl, map[string]string{"judge.sh": realJudgeScript})
-	e.Guardrail(proj, "env-witness", realWitnessDecl, map[string]string{"witness.sh": realWitnessScript})
+	e.FileGuard(proj, "judge-notes", realJudgeDecl, map[string]string{"judge.sh": realJudgeScript})
+	e.FileGuard(proj, "env-witness", realWitnessDecl, map[string]string{"witness.sh": realWitnessScript})
 
 	// Deliberately NO InstallClaudeShim: the whole point is the real binary.
 	ledger := filepath.Join(proj, "ledger.txt")
@@ -192,7 +174,7 @@ func TestT015_06_RealAgentInheritsProvenanceAndTheRuleDeclines(t *testing.T) {
 		}
 	}
 
-	// The launched agent's own hooks must have fired at all. Without this the
+	// The launched agent's own checks must have fired at all. Without this the
 	// test passes vacuously whenever the inner session has no hooks — which is
 	// the failure mode that made the first closure wrong.
 	var innerWitness string
@@ -202,14 +184,14 @@ func TestT015_06_RealAgentInheritsProvenanceAndTheRuleDeclines(t *testing.T) {
 		}
 	}
 	if innerWitness == "" {
-		t.Fatalf("no hook fired inside the launched agent, so the guard was never consulted "+
+		t.Fatalf("no check fired inside the launched agent, so the guard was never consulted "+
 			"and this proves nothing; ledger:\n%s", strings.Join(lines, "\n"))
 	}
 
-	// The observation this test exists for: the inner process's OWN hook
+	// The observation this test exists for: the inner process's OWN check
 	// environment names the rule that launched it.
 	if !strings.Contains(innerWitness, "judge-notes") {
-		t.Fatalf("the launched agent's hook did not inherit the launching rule in %s: %q",
+		t.Fatalf("the launched agent's check did not inherit the launching rule in %s: %q",
 			"SLOPRAIL_LAUNCHED_BY", innerWitness)
 	}
 
@@ -221,7 +203,7 @@ func TestT015_06_RealAgentInheritsProvenanceAndTheRuleDeclines(t *testing.T) {
 	}
 }
 
-// readLines reads a ledger written by a hook, skipping blanks.
+// readLines reads a ledger written by a check, skipping blanks.
 func readLines(t *testing.T, path string) []string {
 	t.Helper()
 	body, err := os.ReadFile(path)

@@ -2,25 +2,17 @@ package e2e
 
 import "testing"
 
-// A guardrail whose hook runs a command that FORGES the provenance variable
+// A file-guard whose check runs a command that FORGES the provenance variable
 // before doing the work, naming a rule that never launched anything.
 //
 // This stands in for the agent-side attack. The variable is inherited by
-// everything a hook spawns, and an agent running Bash can export whatever it
+// everything a check spawns, and an agent running Bash can export whatever it
 // likes into its own children — so the honest question is what an actor who
 // writes the variable himself can switch off.
-const forgeSecrets = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "notes/"
-      hooks:
-        - type: command
-          command: ./forge.sh
----
-
-# Exports a rule name it was never launched by
-
-Names no-secrets, which launched nothing.
+const forgeSecrets = `match: path startsWith "notes/"
+preventive: true
+checks:
+  - script: ./forge.sh
 `
 
 // forge.sh launches an agent while claiming to have been launched by a rule
@@ -45,11 +37,15 @@ exit 0
 // unobservable — it reports the same green as the limitation still holding, so
 // the one event this test exists to catch would pass in silence.
 //
-// The engine cannot tell a value it set from one a hook exported. Both arrive
+// The engine cannot tell a value it set from one a check exported. Both arrive
 // the same way, and they have to — inheritance across the exec is the mechanism
-// that makes the guard work at all. So an actor who can set environment
-// variables in his own children can name any rule and have it not enforced in
-// those children.
+// that makes the guard work at all. The new dispatch reads the variable exactly
+// as the old one did (isLaunchedBy over os.Getenv), and the engine's own append
+// (appendLaunchedBy) PRESERVES whatever value it inherited rather than
+// re-minting it — so an actor who can set environment variables in his own
+// children can name any rule and have it not enforced in those children, the
+// same as before. Re-vehicling to the new format did not change this: the
+// forgeable channel is the inherited environment, which is format-independent.
 //
 // # Why this is accepted rather than fixed here
 //
@@ -59,8 +55,8 @@ exit 0
 // / subshell evasion — a shell-level guard can't, and that residual risk is
 // accepted".
 //
-// It is also worth being exact about who can do this. A GUARDRAIL HOOK is
-// project-authored code that already runs arbitrary shell; a hook that wanted a
+// It is also worth being exact about who can do this. A GUARDRAIL CHECK is
+// project-authored code that already runs arbitrary shell; a check that wanted a
 // rule off could simply not call it. The agent is the interesting actor, and it
 // reaches this only through a Bash tool call — which is itself a PreToolUse
 // event this engine already sees, so a project that cares can bind a rule to
@@ -74,8 +70,8 @@ exit 0
 func TestT015_05_ForgedProvenanceIsAKnownLimitation(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge-notes", forgeSecrets, map[string]string{"forge.sh": forgeScript})
-	e.Guardrail(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
+	e.FileGuard(proj, "judge-notes", forgeSecrets, map[string]string{"forge.sh": forgeScript})
+	e.FileGuard(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	e.InnerScenario(proj, Turns("judged", Write("i1", "secrets/leak.md", "oops")))
 
@@ -83,7 +79,7 @@ func TestT015_05_ForgedProvenanceIsAKnownLimitation(t *testing.T) {
 		Write("w1", "notes/first.md", "hello"),
 	))
 
-	if len(e.Ledger(proj, "judge-notes", "ledger.txt")) == 0 {
+	if len(fileGuardLedgerLines(t, proj, "judge-notes", "ledger.txt")) == 0 {
 		t.Fatalf("the launching guardrail never ran, so nothing was forged:\n%s", got.Output)
 	}
 
