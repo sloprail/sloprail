@@ -33,9 +33,9 @@ checks:
 
 Three keys. `on` is the list of triggers — each an `event` kind and an optional
 `match`. `require` is a list of preconditions that must already hold. `checks` is
-the list of checks ([check-scripts.md](check-scripts.md)). A gate needs `on`; the
-other two are optional, but a gate with neither `require` nor `checks` decides
-nothing.
+the list of checks — each a script ([script-checks.md](script-checks.md)) or a
+judge ([judge-checks.md](judge-checks.md)). A gate needs `on`; the other two are
+optional, but a gate with neither `require` nor `checks` decides nothing.
 
 ## The gate scope: `event.*`, nested
 
@@ -52,8 +52,9 @@ on a path writes it out: `event.path startsWith "memories/decisions/"`.
 
 ## What a gate triggers on
 
-Any **pre-action** event kind, plus **`Stop`**. Ask the load check for the build's
-exact list; the ones a gate is written on:
+Any **pre-action** event kind, plus **`Stop`** — never a `Post` variant (a gate
+that already happened is too late to gate). [events.md](events.md) has the full
+per-nature admission table and every kind's fields; the ones a gate is written on:
 
 ### An event about to happen — the pre-action gate
 
@@ -101,28 +102,21 @@ walks that structure once and emits **every invocation it finds, flattened**, so
 no rule has to recurse through shell syntax — and nesting an invocation one level
 deeper does not defeat a rule written against it.
 
-So match the `invocations` list, not the raw line:
+So a gate narrows on the `invocations` list, not the raw line:
 
 ```
 any(event.invocations, .bin == "curl")
 not any(event.invocations, .bin == "npm")
 len(event.invocations) > 1
-```
-
-Each invocation carries the program (`.bin`), its argument vector (`.argv`), and
-its parsed flags (`.flags`). `.bin` and `.argv` have **declared element shapes**,
-so a mistyped key inside a predicate is refused at load with the real keys named:
-
-```
 any(event.invocations, .bin == "rm" and any(.argv, # == "-rf"))
 ```
 
-**Flags are left open, and the asymmetry is deliberate.** A flag name belongs to
-the command being run, not to the engine, so there is no vocabulary to enumerate
-— a closed type would refuse a real `npm` flag the engine has not heard of. The
-consequence: a key read off `.flags` is verified against nothing, so a mistyped
-one compiles, loads, and evaluates false forever. **Cause the command and watch
-it fire** before believing a flags match.
+Each invocation's fields — `.bin`, `.argv` (both with declared element shapes, so
+a mistyped key inside a predicate is refused at load) and the **open** `.flags`
+map (verified against nothing, so a mistyped flag evaluates false forever — cause
+the command and watch it fire before trusting one) — are set out in full in
+[events.md](events.md). The gate-specific point is only that you match against the
+flattened list.
 
 ### The resolution floor
 

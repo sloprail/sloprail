@@ -11,28 +11,21 @@ prev=$(sr-session state get seen 2>/dev/null || echo 0)
 sr-session state set seen "$((prev + 1))"
 ```
 
-## The check environment
+## The keyspace comes from the environment
 
 Neither the guardrail nor the session is an argument to `sr-session state`. Both
-come from the environment the engine sets on **every check, prepare, enter and
-exit script** it runs:
+come from the environment the engine sets on every check, prepare, enter and exit
+script: `SR_GUARDRAIL` is the keyspace `state` reads and writes under, and
+`SR_SESSION_ID` scopes it to this session. So a script calls `state` with nothing
+but a key, and it cannot read a rule it was never told about or reach into another
+session. Outside a hook there is no guardrail in scope and it says so rather than
+guessing. Run `sr-session state --help` for the subcommands.
 
-| var | what it is |
-|---|---|
-| `SR_GUARDRAIL` | the rule's name — the keyspace `state` reads and writes under |
-| `SR_GUARDRAIL_DIR` | the rule's own folder (absolute) — where `RUBRIC.md`, `rules/` resolve |
-| `SR_WORKSPACE` | the repository root — prepend it to a `.event.path` to reach the file on disk |
-| `SR_SESSION_ID` | the session, so one session's memory is not another's |
-| `SR_TRANSCRIPT` | the session record |
-
-So a script calls `state` with nothing but a key, and it cannot read a rule it
-was never told about or reach into another session. Outside a hook there is no
-guardrail in scope and it says so rather than guessing. Run `sr-session state
---help` for the subcommands.
-
-(The old format handed a script the guard's directory as a `guardrailDir` field
-on stdin. It is now the `SR_GUARDRAIL_DIR` environment variable — read it from
-the env, not the payload.)
+The full set of `SR_*` variables a script receives — `SR_GUARDRAIL`,
+`SR_GUARDRAIL_DIR`, `SR_WORKSPACE`, `SR_SESSION_ID`, `SR_TRANSCRIPT`, and the
+`SLOPRAIL_LAUNCHED_BY` re-entry provenance — is in **[environment.md](environment.md)**.
+They are cross-cutting (every guardrail script sees them, not only state ones), so
+they live there rather than here.
 
 ## The two-halves pattern: a context records, a Stop gate judges
 
