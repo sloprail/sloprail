@@ -5,6 +5,26 @@ import (
 	"testing"
 )
 
+// NOT RE-VEHICLED — deliberately still OLD-format (e.Guardrail / GUARDRAIL.md).
+//
+// This is the authoring-skill ACCEPTANCE test: it installs the exact declaration
+// an agent would author "from nothing but the authoring-guardrails skill" and
+// proves it fires. That is only faithful if the installed declaration is the one
+// the skill actually teaches. The skill
+// (marketplace/plugins/sloprail/skills/authoring-guardrails/SKILL.md) still
+// teaches the OLD format end to end — `.sloprail/guardrails/<name>/GUARDRAIL.md`,
+// `hooks:` keyed by kind, `matcher:`, the nested `{"event":{"fields":…},
+// "guardrailDir":…}` wire form, and `{"decision":"block"}` refusals. Migrating
+// this test to e.FileGuard/e.Gate would make it assert that a rule authored from
+// the skill fires while installing a rule in a format the skill does not teach —
+// falsifying the very invariant it exists for.
+//
+// Re-vehicling therefore CANNOT happen until the skill is migrated to the new
+// nature format (a skill-content change, out of scope for this e2e-only wave).
+// When that lands, `authoredFromHelp` and `noNetworkScript` below become the
+// new-format declaration + flat-payload script, and the installer becomes
+// e.FileGuard/e.Gate to match. Until then this legitimately covers old format.
+//
 // T003_11: a guardrail written from nothing but the authoring-guardrails skill
 // and the engine's own load check actually fires.
 //

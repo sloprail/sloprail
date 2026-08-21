@@ -11,6 +11,25 @@ import (
 	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
+// NOT RE-VEHICLED — deliberately still OLD-format (e.Guardrail / GUARDRAIL.md).
+//
+// These tests pin the authoring-guardrails SKILL's own claims by installing a
+// declaration in the format the skill teaches and checking the engine behaves as
+// the skill says (the folder name is the rule's name, a duplicate key is refused,
+// a binding must be a list, a misspelled field is caught, an unknown kind is
+// reported). The skill
+// (marketplace/plugins/sloprail/skills/authoring-guardrails/SKILL.md, read here
+// via skillDir) still teaches the OLD format — GUARDRAIL.md frontmatter, `hooks:`
+// keyed by kind, `matcher:`, the nested `event.fields`/`guardrailDir` wire form.
+// So the declarations these tests install ARE old-format on purpose: they must
+// match what the skill teaches, or they stop being tests OF the skill.
+//
+// Re-vehicling to e.FileGuard/e.Gate cannot happen until the skill is migrated to
+// the new nature format (a skill-content change, out of scope for this e2e-only
+// wave). The sibling already-migrated authoring/003 test (003_06) is about the
+// ABSENCE of guardrails and so gives no format signal either way; nothing in this
+// directory was migrated, which is consistent with the skill being unmigrated.
+//
 // The skill is the ENTIRE authoring interface now. `sr-guardrail help` is gone
 // — it was the only subcommand of its binary, and a help command that describes
 // a declaration format rather than its own command's behaviour was the wrong
