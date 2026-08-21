@@ -999,6 +999,35 @@ func (e *Env) FileGuardLedgerLines(projDir, name, file string) []string {
 	return lines
 }
 
+// GateLedgerLines returns the LINES a project's own gate check appended to a file
+// in the gate's folder (`.sloprail/gate/<name>/<file>`), or nothing when the file
+// was never created.
+//
+// The gate analogue of FileGuardLedgerLines. A gate's check runs with
+// SR_GUARDRAIL_DIR set to `.sloprail/gate/<name>/` and its cwd there, so a check
+// that appends to a file writes it under that folder — the channel a test uses to
+// observe WHAT a gate's check was handed (the flat GateCheckPayload it parses back
+// into `.event.kind` / `.event.tool`), independently of the pass/fail verdict. An
+// absent file is a real answer: the check never recorded anything (it never fired,
+// or fired without writing).
+func (e *Env) GateLedgerLines(projDir, name, file string) []string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "gate", name, file))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read gate ledger %s/%s: %v", name, file, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
 // StructureGate writes the NEW-FORMAT structure gate — one tree-wide path
 // allowlist — at `.sloprail/file-guard/structure.yaml`.
 //

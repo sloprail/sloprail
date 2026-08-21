@@ -1,7 +1,7 @@
 // Package e2e covers the spellings a path can arrive in, and what a rule is
 // therefore able to narrow on.
 //
-// This is hook_within_binding at its most consequential. A matcher is a prefix
+// This is hook_within_binding at its most consequential. A match is a prefix
 // test over the reported subject, so the spelling the engine chooses IS the
 // scope of every narrowed rule in the project. Get it wrong in one direction and
 // `path startsWith "secret/"` stops admitting the writes it was written for; get
@@ -23,9 +23,23 @@
 //   - The same directory spelled two ways (/tmp vs /private/tmp on macOS),
 //     which must be recognised as one.
 //
-// Every assertion is on the spelling the hook was HANDED, read off the payload,
-// because that is what a matcher sees. A test asserting only that the write was
+// Every assertion is on the spelling the check was HANDED, read off the payload,
+// because that is what a match sees. A test asserting only that the write was
 // permitted or refused would pass on an engine reporting any spelling at all.
+//
+// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+//
+// Path canonicalization (`reportable`) is shared engine machinery the new dispatch
+// still uses: the path a file event carries is the same whichever dispatch reads
+// it. The observer is a gate triggering on the pre-write events, recording
+// `.event.path` FLAT (see main_test.go); the narrowed rules are gates whose
+// trigger match is the GateMatchScope expression `event.path startsWith "…"` — the
+// analogue of the old `matcher: path startsWith "…"`, over the event's own path a
+// gate reads under `event`. A gate blocks the write before it lands, so a narrowed
+// rule's refusal is observed as `res.Refused()` and the file's absence, exactly as
+// the old pre-tool block was. A gate rather than a file-guard because a file-guard
+// does not fire for a path outside the workspace, which several of these cases
+// deliberately are — see seeEveryCreate's note in main_test.go.
 package e2e
 
 import (
@@ -38,12 +52,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// guardsSecret is a gate that refuses any write under secret/, narrowed the
+// ordinary way — `event.path startsWith "secret/"` over the GateMatchScope, the
+// analogue of the old `matcher: path startsWith "secret/"` against the reported
+// path. Triggering on both pre-write kinds so a create and an update are both
+// caught.
+const guardsSecret = `on:
+  - event: PreFileCreate
+    match: event.path startsWith "secret/"
+  - event: PreFileUpdate
+    match: event.path startsWith "secret/"
+checks:
+  - script: ./h.sh
+`
+
+// refuseWithReason refuses with a fixed structured reason, the new-format contract.
+func refuseWithReason(reason string) string {
+	return "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"" + reason + "\"}'\nexit 1\n"
+}
+
 // T028_01: an absolute path inside the workspace is reported relative to it.
 //
 // The case Claude Code actually produces, and the one a narrowed rule depends
 // on. The agent announces `<proj>/docs/guide.md`; the rule must be handed
-// `docs/guide.md`, because that is the spelling an author writes a matcher
-// against.
+// `docs/guide.md`, because that is the spelling an author writes a match against.
 //
 // Asserted as byte equality against the relative spelling rather than as
 // "contains docs/", which would pass on an engine handing over the absolute
@@ -52,7 +84,7 @@ func TestT028_01_AnAbsolutePathInsideTheWorkspaceIsReportedRelative(t *testing.T
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
+	e.Gate(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
 
 	abs := filepath.Join(proj, "docs", "guide.md")
 	res := e.Run(proj, "s-028-01", "write with an absolute path", Turns("done",
@@ -64,34 +96,25 @@ func TestT028_01_AnAbsolutePathInsideTheWorkspaceIsReportedRelative(t *testing.T
 	require.Len(t, got, 1, "the write must reach the rule exactly once")
 	assert.Equal(t, "docs/guide.md", got[0],
 		"an absolute path inside the workspace must be reported relative to it — this is the "+
-			"spelling Claude Code really sends, and a matcher is a prefix test, so reporting it "+
+			"spelling Claude Code really sends, and a match is a prefix test, so reporting it "+
 			"absolute makes every narrowed rule in every real project silently never fire")
 }
 
 // T028_02: a rule narrowed the ordinary way admits a write announced absolutely.
 //
-// T028_01 asserts the spelling; this asserts the consequence, through a matcher,
+// T028_01 asserts the spelling; this asserts the consequence, through a match,
 // which is the thing an author actually writes. The two are separate claims: an
-// engine could report the relative spelling to the hook while matching against
+// engine could report the relative spelling to the check while matching against
 // the absolute one, and only this test would notice.
 //
-// The hook refuses, so the refusal reaching the agent is proof the matcher
-// admitted the event.
+// The check refuses, so the refusal reaching the agent is proof the match
+// admitted the file.
 func TestT028_02_ARelativeMatcherAdmitsAnAbsolutelyAnnouncedWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "guarded-dir", `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "secret/"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Nothing may be written under secret/
-`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'this path is guarded' >&2\nexit 1\n"})
+	e.Gate(proj, "guarded-dir", guardsSecret,
+		map[string]string{"h.sh": refuseWithReason("this path is guarded")})
 
 	abs := filepath.Join(proj, "secret", "keys.md")
 	res := e.Run(proj, "s-028-02", "write into the guarded directory", Turns("done",
@@ -118,7 +141,7 @@ func TestT028_03_SpellingsOfOneFileAgree(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
+	e.Gate(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
 
 	e.Run(proj, "s-028-03", "one file, three spellings", Turns("done",
 		Write("w1", "docs/a.md", "one"),
@@ -130,7 +153,7 @@ func TestT028_03_SpellingsOfOneFileAgree(t *testing.T) {
 	require.Len(t, got, 3, "every write must reach the rule")
 	assert.Equal(t, []string{"docs/a.md", "docs/b.md", "docs/c.md"}, got,
 		"a relative path, a dot-relative path and an absolute one must all be reported in the "+
-			"one spelling a matcher is written against")
+			"one spelling a match is written against")
 }
 
 // T028_03b: a dot-relative spelling does not get past a narrowed rule.
@@ -140,7 +163,7 @@ func TestT028_03_SpellingsOfOneFileAgree(t *testing.T) {
 // This is T028_03's consequence, and it was a live guardrail bypass rather than
 // an untidy spelling. `reportable` returned a relative path verbatim, so a rule
 // written `path startsWith "secret/"` was handed `./secret/keys.md`, the prefix
-// did not match, the hook was never asked, and the write LANDED. Measured before
+// did not match, the check was never asked, and the write LANDED. Measured before
 // the fix: refused=false, landed=true.
 //
 // One character is the whole of it, and it is a character an agent produces
@@ -159,17 +182,8 @@ func TestT028_03b_ADotRelativeSpellingDoesNotEvadeANarrowedRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "guarded-dir", `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "secret/"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Nothing may be written under secret/
-`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'this path is guarded' >&2\nexit 1\n"})
+	e.Gate(proj, "guarded-dir", guardsSecret,
+		map[string]string{"h.sh": refuseWithReason("this path is guarded")})
 
 	res := e.Run(proj, "s-028-03b", "write the guarded path the other way", Turns("done",
 		Write("w1", "./secret/keys.md", "hunter2\n"),
@@ -177,7 +191,7 @@ hooks:
 
 	assert.True(t, res.Saw("this path is guarded"),
 		"writing `./secret/keys.md` instead of `secret/keys.md` got past a rule narrowed on "+
-			"`secret/` — a matcher is a prefix test, so an uncleaned spelling is a way round "+
+			"`secret/` — a match is a prefix test, so an uncleaned spelling is a way round "+
 			"every narrowed rule in the project")
 	assert.False(t, e.Exists(proj, "secret/keys.md"),
 		"the guarded write landed despite the rule")
@@ -186,11 +200,11 @@ hooks:
 // T028_04: a path outside the workspace keeps its absolute spelling.
 //
 // The other direction, and a security property rather than a tidiness one.
-// `filepath.Rel` would happily return `../../../etc/passwd`, and a matcher is a
+// `filepath.Rel` would happily return `../../../etc/passwd`, and a match is a
 // prefix test — a rule written for a folder in the project must never be handed
 // a spelling that could climb into one.
 //
-// Leaving it absolute is the honest answer: no project-relative matcher admits
+// Leaving it absolute is the honest answer: no project-relative match admits
 // it, because the write is outside the rule's subject.
 //
 // The assertion is that the reported path is ABSOLUTE and names the outside
@@ -200,7 +214,7 @@ func TestT028_04_APathOutsideTheWorkspaceStaysAbsolute(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
+	e.Gate(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
 
 	outside := filepath.Join(t.TempDir(), "note.md")
 	e.Run(proj, "s-028-04", "write outside the project", Turns("done",
@@ -212,16 +226,15 @@ func TestT028_04_APathOutsideTheWorkspaceStaysAbsolute(t *testing.T) {
 
 	assert.True(t, filepath.IsAbs(got[0]),
 		"a path outside the workspace must keep its absolute spelling, so that no "+
-			"project-relative matcher can admit it: got %q", got[0])
+			"project-relative match can admit it: got %q", got[0])
 	assert.False(t, strings.HasPrefix(got[0], ".."),
 		"a path outside the workspace must never be reported as a climbing relative path — "+
-			"a matcher is a prefix test and `..` is how one gets fooled: got %q", got[0])
+			"a match is a prefix test and `..` is how one gets fooled: got %q", got[0])
 }
 
-// T028_05: a project-relative matcher does not admit a write outside the
-// project.
+// T028_05: a project-relative match does not admit a write outside the project.
 //
-// The consequence of T028_04, asserted through a matcher. The rule guards
+// The consequence of T028_04, asserted through a match. The rule guards
 // `secret/`; a file called `secret/keys.md` in a DIFFERENT directory entirely
 // must not be caught by it.
 //
@@ -233,17 +246,8 @@ func TestT028_05_AProjectMatcherDoesNotReachOutsideTheProject(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "guarded-dir", `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "secret/"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Nothing may be written under this project's secret/
-`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'this path is guarded' >&2\nexit 1\n"})
+	e.Gate(proj, "guarded-dir", guardsSecret,
+		map[string]string{"h.sh": refuseWithReason("this path is guarded")})
 
 	// The same trailing shape, in a tree that is not this project.
 	elsewhere := filepath.Join(t.TempDir(), "secret", "keys.md")
@@ -253,7 +257,7 @@ hooks:
 
 	assert.False(t, res.Saw("this path is guarded"),
 		"a rule about this project's secret/ refused a write in a different tree — the outside "+
-			"path was given a project-relative spelling, which lets a prefix matcher reach "+
+			"path was given a project-relative spelling, which lets a prefix match reach "+
 			"anywhere on the filesystem")
 }
 
@@ -265,7 +269,7 @@ hooks:
 // repository containing `escape -> /outside`, written to at
 // `<root>/escape/id_rsa`: `filepath.Rel` returns `escape/id_rsa`, with no `..`
 // anywhere in it, so every string check passes and the event carries a clean
-// relative path naming a file OUTSIDE the repository. A hook joins it against
+// relative path naming a file OUTSIDE the repository. A check joins it against
 // its own root and reads the outside file, and nothing reports a problem.
 //
 // The engine's comment records that this was measured rather than argued: with
@@ -273,7 +277,7 @@ hooks:
 // directory entirely. This is that measurement, driven end to end.
 //
 // The claim is narrow and is the one that matters: the reported path must not be
-// a project-relative spelling, because a project-relative matcher would then
+// a project-relative spelling, because a project-relative match would then
 // admit a file that is not in the project.
 //
 // # What this test can and cannot discriminate
@@ -296,7 +300,7 @@ func TestT028_06_ASymlinkEscapingTheRepositoryIsNotReportedAsInside(t *testing.T
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
+	e.Gate(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
 
 	// A real directory outside the project, reached from inside it by a symlink.
 	outside := t.TempDir()
@@ -313,12 +317,12 @@ func TestT028_06_ASymlinkEscapingTheRepositoryIsNotReportedAsInside(t *testing.T
 
 	assert.True(t, filepath.IsAbs(got[0]),
 		"a write through a symlink pointing OUT of the repository was reported as a "+
-			"project-relative path — a matcher would admit it as project content, and a hook "+
+			"project-relative path — a match would admit it as project content, and a check "+
 			"joining it against the project root would read a file that is not in the "+
 			"project: got %q", got[0])
 }
 
-// T028_06b: a project-relative matcher does not admit a write that escaped
+// T028_06b: a project-relative match does not admit a write that escaped
 // through a symlink.
 //
 // T028_06's consequence, and the assertion that actually matters to a rule
@@ -327,23 +331,20 @@ func TestT028_06_ASymlinkEscapingTheRepositoryIsNotReportedAsInside(t *testing.T
 // lives outside the repository.
 //
 // Distinct from T028_06 rather than a restatement: that one reads the spelling
-// off the payload, this one goes through the matcher, and an engine could report
-// one spelling to the hook while narrowing on another.
+// off the payload, this one goes through the match, and an engine could report
+// one spelling to the check while narrowing on another.
 func TestT028_06b_AProjectMatcherDoesNotAdmitAnEscapedWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "guards-escape", `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "escape/"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# A rule about what looks like an ordinary directory in this project
-`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'inside the project' >&2\nexit 1\n"})
+	e.Gate(proj, "guards-escape", `on:
+  - event: PreFileCreate
+    match: event.path startsWith "escape/"
+  - event: PreFileUpdate
+    match: event.path startsWith "escape/"
+checks:
+  - script: ./h.sh
+`, map[string]string{"h.sh": refuseWithReason("inside the project")})
 
 	outside := t.TempDir()
 	link := filepath.Join(proj, "escape")
@@ -374,7 +375,7 @@ func TestT028_07_ASymlinkInsideTheRepositoryStaysInside(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
+	e.Gate(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
 
 	// A real directory in the project, and a link to it from another name in the
 	// same project.
@@ -423,7 +424,7 @@ func TestT028_08_AWriteAimedAtADirectoryProducesNoFileEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
+	e.Gate(proj, "observer", seeEveryCreate, map[string]string{"h.sh": recordPayload})
 
 	require.NoError(t, os.MkdirAll(filepath.Join(proj, "adir"), 0o755))
 
@@ -445,22 +446,18 @@ func TestT028_08_AWriteAimedAtADirectoryProducesNoFileEvent(t *testing.T) {
 // reading a guardrail refusal would go looking for a rule that does not exist.
 //
 // The project has a rule bound to creations, so an engine that emitted an event
-// here would reach a hook; the hook refuses, which is what makes a refusal
+// here would reach a check; the check refuses, which is what makes a refusal
 // visible if one is ever produced.
 func TestT028_09_ADirectoryWriteIsNotAGuardrailRefusal(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "refuses-creates", `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Refuses anything it is shown
-`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'refused by the rule' >&2\nexit 1\n"})
+	e.Gate(proj, "refuses-creates", `on:
+  - event: PreFileCreate
+  - event: PreFileUpdate
+checks:
+  - script: ./h.sh
+`, map[string]string{"h.sh": refuseWithReason("refused by the rule")})
 
 	require.NoError(t, os.MkdirAll(filepath.Join(proj, "adir"), 0o755))
 

@@ -3,14 +3,14 @@
 // The existing suites each isolate one property with one rule, which is what
 // makes them readable and what makes them incomplete. A project does not
 // declare one rule. It declares several, bound to overlapping kinds, narrowed
-// by matchers that agree about some events and disagree about others — and the
+// by matches that agree about some events and disagree about others — and the
 // interactions are where an engine that passes every isolated test still gets
 // it wrong.
 //
 // The invariants these bear on:
 //
 //   - hook_within_binding: several guardrails on one kind, one guardrail on
-//     several kinds, and a matcher admitting some occurrences of one kind and
+//     several kinds, and a match admitting some occurrences of one kind and
 //     not others.
 //   - order_within_binding: "between Guardrails, no order is promised" — so
 //     these tests assert what is true regardless of the order rules are walked
@@ -20,6 +20,19 @@
 // stronger-looking test that pinned which of two rules ran first; it would also
 // be wrong, because the spec explicitly declines to promise it and the test
 // would fail the day the walk changed for a good reason.
+//
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
+//
+// Every rule here acts at the PRE-ACTION moment (a pending write or command
+// blocked, or a permitting rule recording what it was asked), so the vehicle is
+// a GATE. Several gates on one event stand in for several guardrails on one kind;
+// one gate with several `on` triggers stands in for one guardrail on several
+// kinds — including PreCommandInvoke, which only a gate (not a file-guard) can
+// trigger on. The checks read the FLAT payload (`.event.path`, `.event.kind`) and
+// their ledgers are read with e.GateLedgerLines from `.sloprail/gate/<name>/`.
+// The pre-tool dispatch runs gates in name order and stops at the first refusal,
+// exactly the "first refusal ends the matter" the old path took — which is what
+// T017_07 pins.
 package e2e
 
 import (
@@ -30,22 +43,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// logPath records the path each event named, one line per question asked.
+// logPath records the path each event named, one line per question asked, into
+// the gate's own folder. Reads `.event.path` FLAT.
 const logPath = `#!/bin/sh
 p="$(cat)"
-printf '%s\n' "$p" | sed 's/.*"path":"\([^"]*\)".*/\1/' >> "$PWD/log"
+printf '%s\n' "$p" | sed 's/.*"path":"\([^"]*\)".*/\1/' >> "$SR_GUARDRAIL_DIR/log"
 exit 0
 `
 
-// logKind records the KIND each event was, which is what a rule bound to
-// several kinds is asked to distinguish.
+// logKind records the whole FLAT payload each event was, which is what a rule
+// bound to several kinds is asked to distinguish.
 const logKind = `#!/bin/sh
 p="$(cat)"
-printf '%s\n' "$p" >> "$PWD/log"
+printf '%s\n' "$p" >> "$SR_GUARDRAIL_DIR/log"
 exit 0
 `
 
-// kindsSeen reads the event kinds a hook was handed, off its own ledger.
+// kindsSeen reads the event kinds a check was handed, off its own ledger. The
+// event's own fields are spread FLAT under `event` (`.event.kind`).
 func kindsSeen(t *testing.T, lines []string) []string {
 	t.Helper()
 	var kinds []string
@@ -56,7 +71,7 @@ func kindsSeen(t *testing.T, lines []string) []string {
 			} `json:"event"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(line), &got),
-			"a hook was handed something that is not an event payload: %s", line)
+			"a check was handed something that is not an event payload: %s", line)
 		kinds = append(kinds, got.Event.Kind)
 	}
 	return kinds
@@ -64,7 +79,7 @@ func kindsSeen(t *testing.T, lines []string) []string {
 
 // T017_01: several guardrails bound to ONE kind are all asked about it.
 //
-// Three rules, all bound to PreFileCreate, all permitting. Each must see the
+// Three gates, all triggering on PreFileCreate, all permitting. Each must see the
 // event. The failure this catches is a dispatch that stops after the first rule
 // that has an opinion — which would look correct in every single-rule suite and
 // would silently disarm every rule but one in a real project.
@@ -77,15 +92,10 @@ func TestT017_01_SeveralGuardrailsOnOneKindAreAllAsked(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	for _, name := range []string{"alpha", "beta", "gamma"} {
-		e.Guardrail(proj, name, `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./h.sh
----
-
-# One of several rules on the same kind
+		e.Gate(proj, name, `on:
+  - event: PreFileCreate
+checks:
+  - script: ./h.sh
 `, map[string]string{"h.sh": logPath})
 	}
 
@@ -94,8 +104,8 @@ hooks:
 	))
 
 	for _, name := range []string{"alpha", "beta", "gamma"} {
-		assert.Equal(t, []string{"notes.md"}, e.Ledger(proj, name, "log"),
-			"every guardrail bound to the kind must be asked about the event: %s", name)
+		assert.Equal(t, []string{"notes.md"}, e.GateLedgerLines(proj, name, "log"),
+			"every gate triggering on the kind must be asked about the event: %s", name)
 	}
 }
 
@@ -109,27 +119,18 @@ hooks:
 // Both halves are asserted. That the rule was asked three times is the weaker
 // claim; that the three questions were DIFFERENT KINDS is the one that matters,
 // because a rule bound to three kinds and handed the same kind three times
-// cannot tell a create from a command and its script would be unwritable.
+// cannot tell a create from a command and its script would be unwritable. A gate
+// with three `on` triggers is the vehicle — and a command kind (PreCommandInvoke)
+// is one only a gate can name.
 func TestT017_02_OneGuardrailOnSeveralKindsIsToldWhichIsWhich(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "everything", `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./h.sh
-  PreFileUpdate:
-    - hooks:
-        - type: command
-          command: ./h.sh
-  PreCommandInvoke:
-    - hooks:
-        - type: command
-          command: ./h.sh
----
-
-# One rule guarding creations, changes and commands
+	e.Gate(proj, "everything", `on:
+  - event: PreFileCreate
+  - event: PreFileUpdate
+  - event: PreCommandInvoke
+checks:
+  - script: ./h.sh
 `, map[string]string{"h.sh": logKind})
 
 	// The file the update turn changes has to exist first, or that turn is a
@@ -144,35 +145,30 @@ hooks:
 
 	assert.Equal(t,
 		[]string{"PreFileCreate", "PreFileUpdate", "PreCommandInvoke"},
-		kindsSeen(t, e.Ledger(proj, "everything", "log")),
+		kindsSeen(t, e.GateLedgerLines(proj, "everything", "log")),
 		"one rule bound to three kinds must be handed each of them, distinguishable")
 }
 
-// T017_03: a matcher admits some occurrences of a kind and not others, within
+// T017_03: a match admits some occurrences of a kind and not others, within
 // one session.
 //
 // hook_within_binding at the granularity that actually bites. 001 proves a
-// matcher admits one path and rejects another across two separate runs; this
+// match admits one path and rejects another across two separate runs; this
 // puts admitted and rejected events in the SAME session, interleaved, which is
-// how a real matcher is exercised and where a matcher evaluated once and cached
+// how a real match is exercised and where a match evaluated once and cached
 // would show up.
 //
-// The interleaving is the point: admitted, rejected, admitted. A matcher
+// The interleaving is the point: admitted, rejected, admitted. A match
 // evaluated once and reused would produce three identical answers, and either
 // order of two events could hide that.
 func TestT017_03_AMatcherSplitsOccurrencesOfOneKindInOneSession(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "docs-only", `---
-hooks:
-  PreFileCreate:
-    - matcher: path endsWith ".md"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Only documentation
+	e.Gate(proj, "docs-only", `on:
+  - event: PreFileCreate
+    match: event.path endsWith ".md"
+checks:
+  - script: ./h.sh
 `, map[string]string{"h.sh": logPath})
 
 	e.Run(proj, "s-017-03", "md, txt, md", Turns("done",
@@ -181,8 +177,8 @@ hooks:
 		Write("t3", "three.md", "c"),
 	))
 
-	assert.Equal(t, []string{"one.md", "three.md"}, e.Ledger(proj, "docs-only", "log"),
-		"the matcher must admit and reject occurrences of the same kind independently")
+	assert.Equal(t, []string{"one.md", "three.md"}, e.GateLedgerLines(proj, "docs-only", "log"),
+		"the match must admit and reject occurrences of the same kind independently")
 
 	// Everything landed: the narrowed rule permits what it admits, and never
 	// touched what it did not. Without this the ledger above is satisfied by a
@@ -194,7 +190,7 @@ hooks:
 
 // T017_04: one rule refuses an event another permits, and the refusal governs.
 //
-// Two guardrails, same kind, same event, opposite verdicts. The work must be
+// Two gates, same kind, same event, opposite verdicts. The work must be
 // prevented — a permit is not a veto over a refusal, or any rule could disarm
 // every other by declaring itself permissive.
 //
@@ -205,26 +201,16 @@ hooks:
 func TestT017_04_ARefusalGovernsOverAPermit(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "permits", `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Permits everything
+	e.Gate(proj, "permits", `on:
+  - event: PreFileCreate
+checks:
+  - script: ./h.sh
 `, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n"})
-	e.Guardrail(proj, "refuses", `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Refuses everything
-`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'this rule says no' >&2\nexit 1\n"})
+	e.Gate(proj, "refuses", `on:
+  - event: PreFileCreate
+checks:
+  - script: ./h.sh
+`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"this rule says no\"}'\nexit 1\n"})
 
 	res := e.Run(proj, "s-017-04", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello"),
@@ -242,8 +228,8 @@ hooks:
 // One guards `src/`, the other guards `docs/`, and three writes exercise each
 // scope plus a path neither claims.
 //
-// What this catches is a matcher whose scope leaks across guardrails — a shared
-// compiled matcher, or a scope resolved from the wrong declaration. Every
+// What this catches is a match whose scope leaks across guardrails — a shared
+// compiled match, or a scope resolved from the wrong declaration. Every
 // single-rule test would pass with that defect present, because it takes two
 // narrowed rules in one project to observe it.
 //
@@ -253,28 +239,18 @@ hooks:
 func TestT017_05_TwoNarrowedRulesEachGovernTheirOwnScope(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "src-guard", `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "src/"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Guards src/
-`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'src is closed' >&2\nexit 1\n"})
-	e.Guardrail(proj, "docs-guard", `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "docs/"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Guards docs/
-`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'docs is closed' >&2\nexit 1\n"})
+	e.Gate(proj, "src-guard", `on:
+  - event: PreFileCreate
+    match: event.path startsWith "src/"
+checks:
+  - script: ./h.sh
+`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"src is closed\"}'\nexit 1\n"})
+	e.Gate(proj, "docs-guard", `on:
+  - event: PreFileCreate
+    match: event.path startsWith "docs/"
+checks:
+  - script: ./h.sh
+`, map[string]string{"h.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"docs is closed\"}'\nexit 1\n"})
 
 	res := e.Run(proj, "s-017-05", "src, docs, neither", Turns("done",
 		Write("t1", "src/main.go", "a"),

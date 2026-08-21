@@ -20,6 +20,18 @@
 // observations. Several tests below assert both, because a rule that refuses
 // the message while letting the write through is exactly the failure a
 // stream-only assertion cannot see.
+//
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
+//
+// Every rule here blocks a pending write BEFORE it lands and is re-evaluated
+// fresh on each turn's write, so the vehicle is a GATE on the pre-write events.
+// A gate fires once per turn's matching event (no after-check to double it) and
+// is asked again every turn a matching write recurs — which is exactly the
+// "asked again on the next cycle / refused again / cleared once fixed" behaviour
+// this suite measures, now driven through the pre-tool gate dispatch. The checks
+// read the FLAT payload; a gate's own ledger under `.sloprail/gate/<name>/`
+// records each verdict. Refusals are observed with res.Saw()/Refused() and the
+// tree; the ledger of verdicts is read with e.GateLedgerLines.
 package e2e
 
 import (
@@ -35,46 +47,35 @@ import (
 // The declaration a "fix it and retry" scenario needs: a rule whose verdict
 // depends on something the agent can CHANGE between turns. A rule with a fixed
 // answer could not tell a cleared refusal from a refusal that never happened.
-const gatedOnLicense = `---
-hooks:
-  PreFileCreate:
-    - matcher: path endsWith ".md"
-      hooks:
-        - type: command
-          command: ./h.sh
-  PreFileUpdate:
-    - matcher: path endsWith ".md"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# No documentation before the project has a licence
-
-Bound to both pending file kinds, because a retry of a write that was refused
-before the file existed is a create, and a retry after it exists is an update.
-A rule bound to only one of them would go quiet at exactly the turn under test.
+// Triggered on both pre-write kinds, because a retry of a write that was refused
+// before the file existed is a create, and a retry after it exists is an update.
+const gatedOnLicense = `on:
+  - event: PreFileCreate
+    match: event.path endsWith ".md"
+  - event: PreFileUpdate
+    match: event.path endsWith ".md"
+checks:
+  - script: ./h.sh
 `
 
 // licenceScript refuses while LICENSE is absent, and records every question it
 // was asked.
 //
-// The path is reached by climbing out of the guardrail folder rather than being
-// interpolated, so the script is a constant and cannot be accidentally pointed
-// at a file the scenario never touches. A hook runs with its working directory
-// set to .sloprail/guardrails/<name>, so three levels up is the project root.
-//
-// The ledger line carries the verdict, not merely the fact of a run. "The rule
-// was asked twice" and "the rule refused then permitted" are different claims,
-// and the second is the one a cleared refusal is about.
+// The project root is reached from $SR_GUARDRAIL_DIR (the gate's own folder,
+// `.sloprail/gate/<name>/`, so trimming `/.sloprail/gate/*` yields the root) —
+// the new-format replacement for the old $PWD-climb and for the payload's retired
+// guardrailDir field. The ledger line carries the VERDICT, not merely the fact of
+// a run: "asked twice" and "refused then permitted" are different claims, and the
+// second is the one a cleared refusal is about.
 const licenceScript = `#!/bin/sh
 cat >/dev/null
-if [ -f "$PWD/../../../LICENSE" ]; then
-  echo permitted >> "$PWD/log"
+root="${SR_GUARDRAIL_DIR%/.sloprail/gate/*}"
+if [ -f "$root/LICENSE" ]; then
+  echo permitted >> "$SR_GUARDRAIL_DIR/log"
   exit 0
 fi
-echo refused >> "$PWD/log"
-echo 'this project has no LICENSE yet' >&2
+echo refused >> "$SR_GUARDRAIL_DIR/log"
+echo '{"reason":"this project has no LICENSE yet"}'
 exit 1
 `
 
@@ -96,7 +97,7 @@ exit 1
 func TestT016_01_ARefusalClearsOnceTheCauseIsFixed(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "needs-licence", gatedOnLicense, map[string]string{"h.sh": licenceScript})
+	e.Gate(proj, "needs-licence", gatedOnLicense, map[string]string{"h.sh": licenceScript})
 
 	res := e.Run(proj, "s-016-01", "write docs, add a licence, write docs again", Turns("done",
 		Write("t1", "README.md", "first attempt"),
@@ -112,7 +113,7 @@ func TestT016_01_ARefusalClearsOnceTheCauseIsFixed(t *testing.T) {
 	// is a different story than the one this test claims — one entry means the
 	// retry never reached the rule, and two refusals mean the fix did not clear
 	// it.
-	assert.Equal(t, []string{"refused", "permitted"}, e.Ledger(proj, "needs-licence", "log"),
+	assert.Equal(t, []string{"refused", "permitted"}, e.GateLedgerLines(proj, "needs-licence", "log"),
 		"the rule must be asked again after the fix, and must answer differently")
 
 	assert.True(t, e.Exists(proj, "README.md"),
@@ -130,18 +131,17 @@ func TestT016_01_ARefusalClearsOnceTheCauseIsFixed(t *testing.T) {
 // work in between, and must still be asked when the original path comes back.
 //
 // The content differs on the two writes to the same path, which is the whole
-// point — identical content is the one case an exemption is entitled to skip
-// (013_content_judged_once owns that), so using it here would make the test
-// assert the opposite of what it names.
+// point — identical content is the one case an exemption is entitled to skip,
+// so using it here would make the test assert the opposite of what it names.
 func TestT016_02_APassedFileIsJudgedAgainWhenItComesBack(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "watcher", gatedOnLicense, map[string]string{
+	e.Gate(proj, "watcher", gatedOnLicense, map[string]string{
 		// Permits everything, and records the path it was shown. What is under
 		// test is which questions the rule is asked, not how it answers them.
 		"h.sh": `#!/bin/sh
 p="$(cat)"
-printf '%s\n' "$p" | sed 's/.*"path":"\([^"]*\)".*/\1/' >> "$PWD/log"
+printf '%s\n' "$p" | sed 's/.*"path":"\([^"]*\)".*/\1/' >> "$SR_GUARDRAIL_DIR/log"
 exit 0
 `,
 	})
@@ -152,7 +152,7 @@ exit 0
 		Write("t3", "notes.md", "version two, quite different"),
 	))
 
-	assert.Equal(t, []string{"notes.md", "other.md", "notes.md"}, e.Ledger(proj, "watcher", "log"),
+	assert.Equal(t, []string{"notes.md", "other.md", "notes.md"}, e.GateLedgerLines(proj, "watcher", "log"),
 		"a file the rule passed early must be put back in front of it when it changes later")
 
 	// And the last write is the one on disk. A rule being asked is worth
@@ -178,7 +178,7 @@ exit 0
 func TestT016_03_ARefusalSurvivesAnUnrelatedWriteInBetween(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "guarded-dir", refuseUnderSecret, map[string]string{"h.sh": secretScript})
+	e.Gate(proj, "guarded-dir", refuseUnderSecret, map[string]string{"h.sh": secretScript})
 
 	res := e.Run(proj, "s-016-03", "bad, unrelated, bad again", Turns("done",
 		Write("t1", "secret/keys.md", "attempt one"),
@@ -196,29 +196,23 @@ func TestT016_03_ARefusalSurvivesAnUnrelatedWriteInBetween(t *testing.T) {
 	// Asked on both attempts. An exemption granted by the intervening permit
 	// would show up here as one entry rather than two — and the tree assertion
 	// above would still pass, because a skipped rule permits.
-	assert.Equal(t, 2, len(e.Ledger(proj, "guarded-dir", "log")),
+	assert.Equal(t, 2, len(e.GateLedgerLines(proj, "guarded-dir", "log")),
 		"both attempts on the guarded path must reach the rule")
 }
 
 // refuseUnderSecret guards one directory and leaves everything else alone.
-const refuseUnderSecret = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "secret/"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Nothing is written under secret/
-
-Narrowed to a directory so a test can tell "this path was refused" from "the
-session was poisoned by an earlier refusal".
+const refuseUnderSecret = `on:
+  - event: PreFileCreate
+    match: event.path startsWith "secret/"
+  - event: PreFileUpdate
+    match: event.path startsWith "secret/"
+checks:
+  - script: ./h.sh
 `
 
 const secretScript = `#!/bin/sh
 cat >/dev/null
-echo asked >> "$PWD/log"
-echo 'nothing may be written under secret/' >&2
+echo asked >> "$SR_GUARDRAIL_DIR/log"
+echo '{"reason":"nothing may be written under secret/"}'
 exit 1
 `

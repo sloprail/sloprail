@@ -12,47 +12,53 @@ import "testing"
 //
 // # How this observes "nothing happened"
 //
-// A hook that stays silent and a hook that never ran look identical from
+// A check that stays silent and a check that never ran look identical from
 // outside, so these do not assert on the absence of a refusal alone — that
 // would pass just as well against an engine where the whole rule failed to
-// load. Each test uses a LEDGER: the hook appends a line to a file in its own
-// folder every time it runs, so an absent file is positive evidence that the
+// load. Each test uses a LEDGER: the check appends a line to a file in the gate's
+// own folder every time it runs, so an absent file is positive evidence that the
 // event never reached it, and a present one names exactly what did.
 //
-// The positive control is what makes the absence readable. T021_08 drives a
-// refusing command through the SAME rule in the SAME shape and finds the ledger
-// written — so when the reading commands leave it empty, that is the rule
-// declining to fire rather than the rule being broken.
+// The positive control is what makes the absence readable. T021_08 drives real
+// changes through the SAME rule in the SAME shape and finds the ledger written —
+// so when the reading commands leave it empty, that is the rule declining to fire
+// rather than the rule being broken.
+//
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
+//
+// What is observed here is WHICH file events a command derives — a delete for
+// `rm`, an update for an in-place edit, nothing for a read. A gate triggering on
+// the derived file events (PreFileDelete + PreFileUpdate) narrowed to notes.md is
+// the faithful vehicle: it sees the command-derived pre file events with their
+// real kinds and records them, and unlike a preventive file-guard it has no
+// fail-closed shortcut on a command-derived update — so the recording check can
+// permit and the ledger reflects exactly which kinds arrived. The check reads the
+// FLAT GateCheckPayload (`.event.kind`) and the ledger is read with
+// e.GateLedgerLines from `.sloprail/gate/<name>/`.
 
-// watchNotes runs its hook on every event bound to notes.md, whatever the kind,
-// and permits the work. Permitting is deliberate: what is under test is which
-// events ARRIVE, not what is decided about them, and a refusing hook would stop
-// the scenario at the first one.
-const watchNotes = `---
-hooks:
-  PreFileDelete:
-    - matcher: path == "notes.md"
-      hooks:
-        - type: command
-          command: ./note.sh
-  PreFileUpdate:
-    - matcher: path == "notes.md"
-      hooks:
-        - type: command
-          command: ./note.sh
----
-
-# Records every event about notes.md, and permits it
+// watchNotes is a gate that runs its check on every derived file event about
+// notes.md — a delete or an update — and permits the work. Permitting is
+// deliberate: what is under test is which events ARRIVE, not what is decided about
+// them, and a refusing check would stop the scenario at the first one.
+const watchNotes = `on:
+  - event: PreFileDelete
+    match: event.path == "notes.md"
+  - event: PreFileUpdate
+    match: event.path == "notes.md"
+checks:
+  - script: ./note.sh
 `
 
-// noteScript writes the event's kind into a ledger and permits the work.
+// noteScript writes the event's kind into a ledger under the gate's own folder and
+// permits the work.
 //
-// The kind is read off the payload on stdin rather than guessed, so the ledger
-// says WHICH event arrived — a test that only counted lines could not tell a
-// delete from an update, and this feature can get exactly that wrong.
+// The kind is read off the FLAT payload on stdin rather than guessed, so the
+// ledger says WHICH event arrived — a test that only counted lines could not tell
+// a delete from an update, and this feature can get exactly that wrong. The flat
+// wire form carries `"kind":"…"` directly under `event`, so the same sed matches.
 const noteScript = `#!/bin/sh
 payload="$(cat)"
-printf '%s\n' "$payload" | sed -n 's/.*"kind":"\([A-Za-z]*\)".*/\1/p' >> "$PWD/ledger"
+printf '%s\n' "$payload" | sed -n 's/.*"kind":"\([A-Za-z]*\)".*/\1/p' >> "$SR_GUARDRAIL_DIR/ledger"
 exit 0
 `
 
@@ -69,7 +75,7 @@ exit 0
 func TestT021_05_ReadingCommandsProduceNoEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
+	e.Gate(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
 	e.WriteFile(proj, "notes.md", "the notes\n")
 
 	e.Run(proj, "s-021-05", "look at the notes", Turns("done",
@@ -79,7 +85,7 @@ func TestT021_05_ReadingCommandsProduceNoEvent(t *testing.T) {
 		Bash("b4", "sed s/a/b/ notes.md"),
 	))
 
-	if lines := e.Ledger(proj, "watch-notes", "ledger"); len(lines) != 0 {
+	if lines := e.GateLedgerLines(proj, "watch-notes", "ledger"); len(lines) != 0 {
 		t.Fatalf("a command that changes nothing produced %d event(s): %v — the rule fires on reading", len(lines), lines)
 	}
 	if !e.Exists(proj, "notes.md") {
@@ -96,7 +102,7 @@ func TestT021_05_ReadingCommandsProduceNoEvent(t *testing.T) {
 func TestT021_06_UnknowableCommandsProduceNoEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
+	e.Gate(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
 	e.WriteFile(proj, "notes.md", "the notes\n")
 
 	e.Run(proj, "s-021-06", "run some tooling", Turns("done",
@@ -105,7 +111,7 @@ func TestT021_06_UnknowableCommandsProduceNoEvent(t *testing.T) {
 		Bash("b3", "ls -la"),
 	))
 
-	if lines := e.Ledger(proj, "watch-notes", "ledger"); len(lines) != 0 {
+	if lines := e.GateLedgerLines(proj, "watch-notes", "ledger"); len(lines) != 0 {
 		t.Fatalf("a command naming no file produced %d event(s): %v", len(lines), lines)
 	}
 }
@@ -113,14 +119,14 @@ func TestT021_06_UnknowableCommandsProduceNoEvent(t *testing.T) {
 // T021_07: a command changing a DIFFERENT file does not fire a rule about this
 // one.
 //
-// The matcher's own half. A guardrail narrowed to notes.md must not be woken by
+// The trigger's own half. A gate narrowed to notes.md must not be woken by
 // `rm other.md` — and this is the assertion that would catch a path being
 // reported wrongly, since a rule bound to one file firing on another means the
 // path in the event is not the path the command named.
 func TestT021_07_AnotherFileDoesNotFireThisRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
+	e.Gate(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
 	e.WriteFile(proj, "notes.md", "the notes\n")
 	e.WriteFile(proj, "other.md", "not protected\n")
 
@@ -128,7 +134,7 @@ func TestT021_07_AnotherFileDoesNotFireThisRule(t *testing.T) {
 		Bash("b1", "rm other.md"),
 	))
 
-	if lines := e.Ledger(proj, "watch-notes", "ledger"); len(lines) != 0 {
+	if lines := e.GateLedgerLines(proj, "watch-notes", "ledger"); len(lines) != 0 {
 		t.Fatalf("a rule bound to notes.md fired on other.md: %v", lines)
 	}
 	if e.Exists(proj, "other.md") {
@@ -144,8 +150,8 @@ func TestT021_07_AnotherFileDoesNotFireThisRule(t *testing.T) {
 //
 // Each of those asserts an empty ledger. An empty ledger is also what a broken
 // rule produces — one that failed to load, bound to a kind nothing dispatches,
-// or whose hook cannot run. So this drives commands that MUST fire through the
-// identical declaration and hook, and requires the ledger to hold exactly what
+// or whose check cannot run. So this drives commands that MUST fire through the
+// identical declaration and check, and requires the ledger to hold exactly what
 // they should have produced.
 //
 // It also pins the kinds, which is the part a line count would miss. `rm`
@@ -155,7 +161,7 @@ func TestT021_07_AnotherFileDoesNotFireThisRule(t *testing.T) {
 func TestT021_08_TheSameRuleDoesFireOnRealChanges(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
+	e.Gate(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
 	e.WriteFile(proj, "notes.md", "the notes\n")
 
 	e.Run(proj, "s-021-08", "edit then remove", Turns("done",
@@ -163,7 +169,7 @@ func TestT021_08_TheSameRuleDoesFireOnRealChanges(t *testing.T) {
 		Bash("b2", "rm notes.md"),
 	))
 
-	lines := e.Ledger(proj, "watch-notes", "ledger")
+	lines := e.GateLedgerLines(proj, "watch-notes", "ledger")
 	if len(lines) != 2 {
 		t.Fatalf("want 2 events (an update then a delete), got %d: %v — "+
 			"the empty-ledger assertions in this file are vacuous unless this fires", len(lines), lines)
@@ -187,14 +193,14 @@ func TestT021_08_TheSameRuleDoesFireOnRealChanges(t *testing.T) {
 func TestT021_09_ARedirectionIsSeenWhateverRanInFrontOfIt(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
+	e.Gate(proj, "watch-notes", watchNotes, map[string]string{"note.sh": noteScript})
 	e.WriteFile(proj, "notes.md", "the notes\n")
 
 	e.Run(proj, "s-021-09", "append via redirection", Turns("done",
 		Bash("b1", "printf 'more\\n' >> notes.md"),
 	))
 
-	lines := e.Ledger(proj, "watch-notes", "ledger")
+	lines := e.GateLedgerLines(proj, "watch-notes", "ledger")
 	if len(lines) != 1 || lines[0] != "PreFileUpdate" {
 		t.Fatalf("an append redirection should be one PreFileUpdate, got %v", lines)
 	}
