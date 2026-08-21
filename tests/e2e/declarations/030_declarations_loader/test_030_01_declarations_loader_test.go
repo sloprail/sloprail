@@ -191,6 +191,32 @@ func TestT030_05_ShippedExamplesLoadCleanThroughTheBinary(t *testing.T) {
 	}
 }
 
+// T030_06: every shipped PLUGIN's `.sloprail` tree loads clean through the binary.
+// The examples above live under examples/; a use-case plugin ships its guardrails
+// under marketplace/plugins/<name>/.sloprail and is lifted whole by a consumer, so
+// its declarations must load exactly as an example's do. sloprail-tasks is the
+// first such plugin — a file-guard trio (two preventive, one after-check) plus a
+// Stop gate — and this pins that its four new-format guardrails parse and validate,
+// the CLI-level reconciliation proof for a shipped plugin rather than a shipped
+// example.
+func TestT030_06_ShippedPluginsLoadCleanThroughTheBinary(t *testing.T) {
+	e := New(t)
+	repo := repoRootForExamples(t)
+
+	for _, plugin := range []string{
+		"sloprail-tasks",
+	} {
+		plugin := plugin
+		t.Run(plugin, func(t *testing.T) {
+			dir := filepath.Join(repo, "marketplace", "plugins", plugin)
+			res := e.CLIDirect(dir, "sr-file", "declarations", dir)
+			if res.Code != 0 {
+				t.Fatalf("plugin %q must load clean through the binary, got exit %d:\n%s", plugin, res.Code, res.Output)
+			}
+		})
+	}
+}
+
 // repoRootForExamples finds the module root so the shipped examples are reachable
 // from the test's working directory.
 func repoRootForExamples(t *testing.T) string {

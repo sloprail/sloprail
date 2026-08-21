@@ -1,0 +1,44 @@
+# A task's frontmatter is valid and its evidence citations resolve — the
+# DETERMINISTIC floor of task management. It spends no model call and answers only
+# questions a string comparison, a schema check, or `cite` can settle: every
+# memories/tasks/<category>/<name>/TASK.md must satisfy .sloprail/schemas/task.cue,
+# and every `[quote](jsonl-path)` evidence link in it must ground to the user's own
+# words. The full argument lives in the plugin's README, migrated from the
+# old-format rule doc.
+#
+# A SCRIPT check, migrated from the old-format Pre+Post command hook (check-task.sh).
+# The detection logic is deterministic — `sr-file validate` for the schema,
+# `sr-session trajectory cite` for the grounding — so it stays a script; no model,
+# so no judge: to convert to.
+#
+# CITE IS THE SINGLE VALIDATOR (2026-08-21). The old rule hand-rolled a citations.sh
+# that walked the transcript itself and filtered harness-injected user messages
+# (<system-reminder>/<task-notification>/…) by prefix. That logic moved into cite
+# (internal/transcript/cite.go), which now excludes exactly those AND tool results,
+# so the guard just greps the `[quote](jsonl-path)` links and trusts cite's verdict.
+# No transcript-walking or tag-filtering lives here any more.
+#
+# match: the task file, TWO directory levels deep —
+# `memories/tasks/<category>/<name>/TASK.md`, the old regex
+# `^memories/tasks/[^/]+/[^/]+/TASK\.md$`. A `matches` expression (not a glob): a
+# single-`*` glob is one segment and would not require two arbitrary levels
+# precisely. The file-match scope compiles `matches` as a regex over `path`
+# (internal/guardrail/scopes.go), the same operator the old format used.
+match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
+
+# preventive: true reproduces the old Pre+Post binding. A preventive file-guard
+# fires on the PRE write to refuse a malformed/ungrounded TASK.md before it lands
+# (the right moment for a rule about permission to act), AND, like every guard,
+# fires the after-check at Stop on the SETTLED file. The Post after-check is the
+# backstop Pre cannot cover: a task written by a command/heredoc/sed whose result
+# the engine cannot derive reaches Pre unverifiable — a preventive guard fails
+# CLOSED engine-side there and the settled file is judged at Stop, where newContent
+# carries the settled bytes off the tree diff. check-task.sh handles both moments:
+# it dispatches on .event.kind, consulting .event.resultKnown on the Pre kinds
+# before reading .event.newContent, and reading the file on disk on Post.
+preventive: true
+
+checks:
+  # Deterministic, fail-closed throughout. A refusal exits non-zero with
+  # `{"reason": "..."}` on stdout.
+  - script: ./check-task.sh

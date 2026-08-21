@@ -1,0 +1,77 @@
+# `in_review` is a claim; this guard is what judges it. A task whose status is
+# `in_review` asserts the work is finished and that the evidence it carries proves
+# it. This guard reads the stated outcome, reads the cited observations and
+# artifacts, and asks a model whether the evidence actually substantiates the
+# claim. Without it, `in_review` is a status an agent can write about its own work
+# and nothing ever tests. The full argument lives in README.md, migrated from the
+# old-format rule doc.
+#
+# NO preventive — this is an AFTER-CHECK, the migration of the old-format Post-only
+# binding (PostFileCreate + PostFileUpdate). A file-guard with no `preventive:` key
+# fires ONLY on the settled Post event, at Stop, where the bytes on disk are what
+# actually landed. The old rule chose Post deliberately (README, "The event, and
+# why Post only"): a Pre binding would judge only the cases Post already judges, at
+# the cost of a second model call, and a judged rule evadable by writing the file a
+# different way would be worse than none. Post → after-check is the exact new-format
+# spelling of that choice.
+#
+# A JUDGE check, migrated from the old review-task.sh, which called sr-agent itself
+# and had the model Write a {"decision","reasoning","failures"} verdict to a file.
+# The engine's judge substrate owns the model call, the timeout, the isolation and
+# the verdict shape now — a judge: check hand-rolls none of it. The judging INTENT
+# and the RUBRIC.md prompt are preserved in review-task.md.j2.
+#
+# TWO checks, cheap first — the same shape the old script ran internally (a
+# deterministic pre-flight, then the model):
+#
+#   1. SCRIPT (review-preflight.sh): the GATE and the pre-flight. Only `in_review`
+#      is reviewed (most task writes are to_do/in_progress and must cost nothing),
+#      and every `[quote](jsonl)` evidence link must GROUND via cite before a judge
+#      is shown anything — an ungrounded citation leaves nothing real to review, so
+#      it is refused here without a model call, naming the quote. task-evidence-
+#      resolves normally refuses these first; this handles the case it was bypassed.
+#   2. PREPARE + JUDGE: prepare (expand-evidence.sh) assembles the grounded quotes
+#      (the user's own words about the work, plus any AskUserQuestion envelope) as
+#      the evidence; review-task.md.j2 asks the model whether it substantiates the
+#      claim the task makes.
+#
+# THE APPROVE/REJECT MAPPING — the one behaviour the binary judge model changes,
+# flagged not hidden. The old rule NEVER permitted an in_review task: REJECTED
+# exited 1 (fix the evidence) and APPROVED ALSO exited 1 (delete the folder and
+# commit solely that deletion — a workflow instruction, the hook running no git).
+# The engine's judge is pass/permit or fail/refuse:
+#   - NOT SUBSTANTIATED -> the judge FAILS -> the write is refused with the REJECTED
+#     message. A Post refusal does not advance the read mark, so the same task is
+#     re-judged next cycle until its evidence is fixed — the exact loop the old rule
+#     wanted, preserved.
+#   - SUBSTANTIATED -> the judge PASSES -> the write is PERMITTED. This is the change:
+#     the old rule refused-to-force-deletion here, which a binary judge whose PASS is
+#     a permit cannot do. Deleting an approved task is now the agent's own next step,
+#     the same way approving-then-deleting always was the agent's job (the old hook
+#     ran no git either). The README's "approve path" section records this.
+#
+# FAIL-OPEN RECONCILIATION. The old rule failed OPEN on its own machinery (no
+# sr-agent, a timeout, an unparseable verdict) so a model flake could not wedge a
+# session. The engine's judge path fails CLOSED on machinery failure by design
+# (internal/dispatch/judge.go), so those cases now refuse. The pre-flight's own
+# deterministic checks failed closed already, unchanged.
+#
+# match: the task file, TWO directory levels deep — the old regex
+# `^memories/tasks/[^/]+/[^/]+/TASK\.md$`, as a `matches` expression (a single-`*`
+# glob is one segment and would not require two arbitrary levels precisely).
+match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
+
+checks:
+  # The gate + pre-flight: skips a non-in_review task (exit 0), refuses an
+  # in_review task whose evidence does not resolve (exit non-zero, `{"reason"}`).
+  - script: ./review-preflight.sh
+
+  # The judge, reached only for an in_review task whose citations all resolve.
+  # model pinned to haiku; timeout 25s under the engine's 30s bound;
+  # allowed_tools: [Read] adds Read on top of the engine-granted Write for the
+  # verdict file (the evidence is already expanded INTO the prompt).
+  - prepare: ./expand-evidence.sh
+    judge: ./review-task.md.j2
+    model: claude-haiku-4-5-20251001
+    timeout: 25s
+    allowed_tools: [Read]
