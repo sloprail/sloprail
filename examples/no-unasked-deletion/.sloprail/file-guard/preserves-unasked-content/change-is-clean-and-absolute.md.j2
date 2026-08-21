@@ -9,6 +9,21 @@ real, grounded ask. Two questions a diff alone cannot answer:
 
 > {{ additionalContext.asked_quote }}
 
+{% if additionalContext.asked_envelope %}
+## The full question the user was answering (so you can weigh the answer in context)
+
+When the ask above was the user's answer to an AskUserQuestion, the whole
+envelope is below — the QUESTION they were answering and every answer they gave,
+not just the one quote. Read the removal against what was actually asked: an
+answer of "the second option" authorizes only what that option, in the question's
+own terms, covers. The sibling answers show what the user did and did not ask to
+change.
+
+```
+{{ additionalContext.asked_envelope }}
+```
+{% endif %}
+
 ## The change (unified diff — `-` lines are removed, `+` lines are added)
 
 ```diff
