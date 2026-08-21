@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -19,31 +20,70 @@ import (
 // bind point exists at all. That whole wiring is only observable from outside
 // the binary.
 //
-// A note on committing the guardrail: a hook's working directory is its
-// guardrail's folder, inside the tree the engine compares, so a hook that writes
-// a ledger there is itself a change the next cycle would report. The guardrail is
-// committed before the session runs, and the assertions name the tags they
-// expect rather than counting events, so a ledger file in a later diff cannot
-// make a test lie.
+// # RE-VEHICLED onto a NEW-format CONTEXT (was old GUARDRAIL.md PostTagWrite hooks)
+//
+// PostTagWrite is a ContextEventKind, NOT a GateEventKind (a gate wakes on
+// pre-action events plus Stop, never on a Post event; a context may wake on the
+// Post file events and PostTagWrite "because it sometimes must recognise itself
+// from a file's settled content" — internal/declaration/events.go). So the new
+// vehicle for a rule bound to PostTagWrite is a CONTEXT that ENTERS on it, and the
+// context's enter is the check that is handed the event. The mechanical
+// transformation is otherwise the one in tests/e2e/REVEHICLE-PATTERN.md: the enter
+// receives the FLAT event (`.event.kind`, `.event.tags`), never the old nested
+// `.event.fields`.
+//
+// The context enters unconditionally on every PostTagWrite (its trigger carries no
+// `match`), which is what lets T030_02 observe the empty-tags cycle too. What the
+// enter was handed is read back through the context's own recorded payload
+// (ContextState): the enter emits the event it received as its payload, so the
+// exact wire shape a rule sees is what the assertions inspect — kind, the bulk tag
+// list, and an empty list on a cycle with no tag.
 
-// recordTags writes the whole PostTagWrite payload it was handed, one line per
-// run, so the test can read the tags off the wire.
-const recordTags = `#!/bin/sh
-cat >> tags.jsonl
-printf '\n' >> tags.jsonl
+// tagWatch is a NEW-FORMAT context that enters on every PostTagWrite the cycle
+// dispatches. No `match`, so it fires whether or not the agent wrote a tag — the
+// empty-cycle case T030_02 needs. Its enter records the event it was handed as the
+// context's payload; its exit stays active (it never governs anything here).
+const tagWatch = `on:
+  - event: PostTagWrite
+enter: ./enter.sh
+exit: ./exit.sh
 `
 
-// boundToTags records every PostTagWrite the cycle dispatches.
-const boundToTags = `---
-hooks:
-  PostTagWrite:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records the tags the agent wrote this cycle
+// enterRecordsTags emits the FLAT event it was handed as the context's payload, so
+// a test can read the tags off the wire through ContextState. `.event` carries the
+// kind alongside the tags (the flat form: fields spread under `event`, `kind`
+// beside them), so the emitted payload is `{"tags":[{"label":…},…],"kind":"PostTagWrite"}`
+// — exactly the event a rule bound to PostTagWrite receives.
+const enterRecordsTags = `#!/bin/sh
+payload="$(cat)"
+printf '%s' "$payload" | jq -c '.event'
+exit 0
 `
+
+// exitStayActive never says done, so the context stays active for the rest of the
+// session (exit 0 = deactivate, non-zero = stay active). Nothing here reads the
+// active flag; only the enter's recorded payload matters.
+const exitStayActive = `#!/bin/sh
+cat >/dev/null
+exit 1
+`
+
+// tagsSeen reads the event a PostTagWrite context's enter recorded, as the JSON a
+// rule bound to PostTagWrite was handed. The enter emits the flat event as the
+// context's payload, so this re-marshals that payload back to JSON and the
+// assertions read the same wire shape the old hook read off its stdin.
+func tagsSeen(t *testing.T, e *Env, proj, sess, contextName string) string {
+	t.Helper()
+	active, payload := e.ContextState(proj, sess, contextName)
+	if !active && payload == nil {
+		return ""
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("the context payload is not marshalable JSON: %v", err)
+	}
+	return string(b)
+}
 
 // T030_01: the tags the agent wrote in its messages reach a rule bound to
 // PostTagWrite, as one bulk event.
@@ -51,17 +91,21 @@ func TestT030_01_TagsTheAgentWroteReachTheRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "tag-watch", boundToTags, map[string]string{"record.sh": recordTags})
+	e.Context(proj, "tag-watch", tagWatch, map[string]string{
+		"enter.sh": enterRecordsTags,
+		"exit.sh":  exitStayActive,
+	})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 
-	e.Run(proj, "s-030-01", "do some tagged work", Turns("done",
+	sess := "s-030-01"
+	e.Run(proj, sess, "do some tagged work", Turns("done",
 		Say("m1", "Recording this as #update and #decision for later."),
 	))
 
-	tags := strings.Join(e.Ledger(proj, "tag-watch", "tags.jsonl"), "\n")
+	tags := tagsSeen(t, e, proj, sess, "tag-watch")
 	if tags == "" {
-		t.Fatalf("no PostTagWrite reached the hook — the agent wrote tags and nothing scanned them")
+		t.Fatalf("no PostTagWrite reached the rule — the agent wrote tags and nothing scanned them")
 	}
 	if !strings.Contains(tags, `"kind":"PostTagWrite"`) {
 		t.Errorf("the event a rule bound to PostTagWrite received was not a PostTagWrite:\n%s", tags)
@@ -91,15 +135,19 @@ func TestT030_02_AnEmptyCycleStillDispatchesPostTagWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "tag-watch", boundToTags, map[string]string{"record.sh": recordTags})
+	e.Context(proj, "tag-watch", tagWatch, map[string]string{
+		"enter.sh": enterRecordsTags,
+		"exit.sh":  exitStayActive,
+	})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 
-	e.Run(proj, "s-030-02", "say something untagged", Turns("done",
+	sess := "s-030-02"
+	e.Run(proj, sess, "say something untagged", Turns("done",
 		Say("m1", "Nothing tagged in this message at all."),
 	))
 
-	tags := strings.Join(e.Ledger(proj, "tag-watch", "tags.jsonl"), "\n")
+	tags := tagsSeen(t, e, proj, sess, "tag-watch")
 	if tags == "" {
 		t.Fatalf("no PostTagWrite fired for a cycle with no tags — a context reacting to a missing tag would never wake")
 	}

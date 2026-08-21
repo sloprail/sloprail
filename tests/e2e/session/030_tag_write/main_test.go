@@ -10,6 +10,11 @@ import (
 // PostTagWrite through the wiring a user gets: the one bulk event carrying every
 // `#tag` the agent wrote into its own messages this cycle, so a context can bind
 // a tag directly instead of re-grepping the trajectory in its own enter script.
+
+// Env is the harness environment, aliased so scenario helpers in this package can
+// take one without naming the import at every call site.
+type Env = harness.Env
+
 var (
 	New   = harness.New
 	Turns = harness.Turns
