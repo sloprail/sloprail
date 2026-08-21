@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -12,15 +13,20 @@ import (
 // # What the mock can and cannot present
 //
 // The gate counts user messages via `sr-session trajectory normalize | jq
-// 'select(.type=="user")'`. In this harness a session's transcript has exactly
-// ONE normalized `type:"user"` entry — the seeded root (the prompt). The mock's
-// tool_result records are also `type:"user"` but carry no uuid, and transcript
-// reading drops uuid-less records, so normalize never emits them. So every
-// scenario here has exactly one accountable user message: the prompt. That is
-// enough to exercise all three logic branches (unaccounted → refuse; accounted
-// via a task → admit; not-fired-outside-Stop), which is what these tests do. A
-// residue of SEVERAL distinct user messages cannot be presented through this
-// mock, and is noted as a harness limitation rather than faked.
+// 'select(.type=="user")'`. Every scenario here drives a single `Say` turn, which is a
+// pure-text assistant record with NO tool call — so the mock synthesises no
+// tool_result, and the only `type:"user"` entry the transcript carries is the seeded
+// root (the prompt). (A tool turn WOULD add a tool_result `type:"user"` entry — since
+// the mock now stamps a uuid on it, transcript reading keeps it — so these scenarios
+// deliberately avoid one, keeping exactly one accountable user message.) That one
+// message is enough to exercise all three logic branches (unaccounted → refuse;
+// accounted via a task → admit; not-fired-outside-Stop), which is what these tests do.
+// A residue of SEVERAL distinct user messages cannot be presented through this mock,
+// and is noted as a harness limitation rather than faked.
+//
+// The root prompt does NOT sit on physical line 1: the mock opens every fresh
+// transcript with its no-uuid preamble block (custom-title / mode / last-prompt) ahead
+// of the root, so the message's ref line is the harness's RootMessageLine, not 1.
 
 // residueReason is the gate's own refusal wording (verify-no-residue.sh) — the
 // words that must reach the agent when a message is unaccounted for.
@@ -59,9 +65,12 @@ func TestT036_01_UnaccountedMessageRefused(t *testing.T) {
 		t.Errorf("the refusal did not name the gate:\n%s", joined)
 	}
 	// And it must carry the offending message's ref (the transcript path + line
-	// range), which is how the agent knows WHICH message to account for.
-	if !strings.Contains(joined, ":1-1") {
-		t.Errorf("the refusal did not carry the unaccounted message's ref:\n%s", joined)
+	// range), which is how the agent knows WHICH message to account for. The prompt
+	// does not sit on line 1 — the mock opens the transcript with its preamble block —
+	// so the ref line is the root message's actual physical line.
+	msgRef := fmt.Sprintf(":%d-%d", e.RootMessageLine(sess), e.RootMessageLine(sess))
+	if !strings.Contains(joined, msgRef) {
+		t.Errorf("the refusal did not carry the unaccounted message's ref (%s):\n%s", msgRef, joined)
 	}
 }
 
@@ -82,7 +91,9 @@ func TestT036_02_AccountedMessageAdmits(t *testing.T) {
 	installExampleTree(t, proj, exampleName)
 
 	sess := "s-036-02"
-	ref := e.TranscriptPath(proj, sess) + ":1-1"
+	// The message ref names the root prompt's ACTUAL physical line — the mock opens the
+	// transcript with its preamble block ahead of the root, so it is not line 1.
+	ref := fmt.Sprintf("%s:%d-%d", e.TranscriptPath(proj, sess), e.RootMessageLine(sess), e.RootMessageLine(sess))
 	// A task file at the repository root, referencing the message ref in the
 	// parenthesized markdown-link form the gate matches: (/abs/path:N-N).
 	e.WriteFile(proj, "tasks/task-a/ASK.md",
@@ -117,7 +128,7 @@ func TestT036_03_DoesNotFireOnFileWrite(t *testing.T) {
 	// Account for the one message so the Stop cycle itself admits, isolating the
 	// question "did the WRITE trigger a refusal" from "did Stop refuse".
 	sess := "s-036-03"
-	ref := e.TranscriptPath(proj, sess) + ":1-1"
+	ref := fmt.Sprintf("%s:%d-%d", e.TranscriptPath(proj, sess), e.RootMessageLine(sess), e.RootMessageLine(sess))
 	e.WriteFile(proj, "tasks/t/ASK.md", "("+ref+")\n")
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "install + task")

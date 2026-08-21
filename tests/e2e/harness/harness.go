@@ -73,16 +73,6 @@ type Env struct {
 	// EnablePluginShippingFileGuard.
 	extraPlugins []extraPlugin
 
-	// preambleLines are no-uuid preamble records seeded at the HEAD of the session
-	// transcript, BEFORE the root prompt record — the custom-title / ai-title / mode
-	// / queue-operation / last-prompt lines a real session file opens with, which a
-	// transcript reader counts as physical lines but skips as entries. Set by
-	// SeedPreamble. Seeding happens in the harness (not via the mock's --preamble-file)
-	// because the harness pre-seeds the transcript's root record itself — for the
-	// parentless-root the identity walk needs — so the preamble has to be written
-	// ahead of that same record, in the same place. Empty for the ordinary session.
-	preambleLines []string
-
 	// seenSessions records which session ids this Env has already driven a Run for, so
 	// a REPEAT Run on the same id is driven as a --resume rather than a second fresh
 	// --session-id. The mock treats --session-id as a NEW session and drops the prompt
@@ -1363,50 +1353,28 @@ func resolveWorkDir(dir string) string {
 // seedTranscript writes a minimal valid transcript for (cwd, sessionID): a root
 // record with a uuid and a null parentUuid, which is the shape anything looking
 // for a conversation's origin scans for.
+//
+// The transcript's no-uuid PREAMBLE — the custom-title / mode / last-prompt records a
+// real session file opens with, ahead of this root — is NOT written here: the mock
+// writes it itself on a fresh session (a10n-claude-mock seedPreamble), prepending the
+// block ahead of this pre-seeded root so the head lands as [preamble..., root,
+// conversation...]. So the preamble a test relies on is the mock's, produced the same
+// way a real Claude Code session produces it, not a per-test fixture.
 func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
 	e.t.Helper()
 	dir := filepath.Join(e.configDir, "projects", encodeProjectDir(resolveWorkDir(cwd)))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatalf("harness: seed transcript: %v", err)
 	}
-	// Any no-uuid preamble records go FIRST, so they occupy the transcript's opening
-	// physical lines exactly where a real session file has them — the root prompt
-	// record follows. SeedPreamble sets these; empty for the ordinary session.
-	var body strings.Builder
-	for _, p := range e.preambleLines {
-		body.WriteString(p)
-		body.WriteByte('\n')
-	}
-	body.WriteString(fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
-		"e2e-root-"+sessionID, cwd, prompt))
+	body := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
+		"e2e-root-"+sessionID, cwd, prompt)
 	path := filepath.Join(dir, sessionID+".jsonl")
 	if _, err := os.Stat(path); err == nil {
 		return // already seeded, or the mock has started writing — never overwrite
 	}
-	if err := os.WriteFile(path, []byte(body.String()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		e.t.Fatalf("harness: seed transcript: %v", err)
 	}
-}
-
-// SeedPreamble makes the next Run seed the given no-uuid preamble records at the HEAD
-// of the transcript, before the root prompt — the custom-title / ai-title / mode /
-// queue-operation / last-prompt lines a real session file opens with. A transcript
-// reader counts them as physical lines but skips them as entries (they carry no uuid),
-// which is what a line-number derivation rests on. Each line must be one JSON record.
-//
-// Seeded by the harness rather than the mock's --preamble-file because the harness
-// pre-seeds the transcript's own parentless root record (the identity walk needs it),
-// and the preamble must sit ahead of that same record; the mock's flag writes only
-// into a still-empty transcript, which the harness's pre-seed has already filled.
-func (e *Env) SeedPreamble(lines ...string) {
-	e.preambleLines = lines
-}
-
-// PreambleTitle is a no-uuid `custom-title` preamble record — one of the record
-// types a real Claude Code session file opens with, carrying no uuid so a transcript
-// reader counts its line but skips it as an entry. For SeedPreamble.
-func PreambleTitle(title string) string {
-	return fmt.Sprintf(`{"type":"custom-title","customTitle":%q,"sessionId":"s"}`, title)
 }
 
 // RootMessageID is the uuid seedTranscript gives a session's root user message —
@@ -1421,6 +1389,32 @@ func PreambleTitle(title string) string {
 // Run, and the two together are what the guard's prepare resolves and the judge reads.
 func (e *Env) RootMessageID(sessionID string) string {
 	return "e2e-root-" + sessionID
+}
+
+// MockPreambleLines is the number of no-uuid preamble records a10n-claude-mock writes
+// at the HEAD of every fresh transcript, ahead of the root prompt (custom-title / mode
+// / last-prompt — a10n-claude-mock seedPreamble). A transcript reader counts these
+// physical lines but skips them as entries, so the root prompt does NOT sit on physical
+// line 1 — it sits on line MockPreambleLines+1. A test that must name the root message's
+// LINE up front (before the run, e.g. an agent declaring `#skip <line>` in its prose)
+// uses RootMessageLine, which is built from this. Kept as the single place the mock's
+// preamble count is mirrored, so a change to how many records the mock opens with is a
+// one-line update here rather than a hunt through every test that names a line.
+const MockPreambleLines = 3
+
+// RootMessageLine is the 1-based PHYSICAL line the root prompt record sits on in a
+// session's transcript — MockPreambleLines preamble records precede it, so it is
+// MockPreambleLines+1.
+//
+// This is what a test uses to name the authorising message's LINE without hardcoding
+// the preamble count: a task's ASK.md references the message by `<path>:<line>-<line>`,
+// or an agent's prose declares `#skip <line>`, and both are authored before the run,
+// so the line must be known up front. The mock opens every fresh transcript with a
+// fixed preamble block ahead of the harness-seeded root, so the root's line is
+// deterministic. (For a line derived AFTER a run — e.g. a citation's own output — read
+// it from the file the mock wrote instead; this is the up-front constant.)
+func (e *Env) RootMessageLine(sessionID string) int {
+	return MockPreambleLines + 1
 }
 
 // ControlGuard and ControlScript are the positive control every revalidation

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -27,9 +28,13 @@ func TestT036_04_ExplicitSkipAdmits(t *testing.T) {
 	e.Git(proj, "commit", "-m", "install")
 
 	sess := "s-036-04"
-	// The one user message is at transcript line 1; #skip 1 excuses it.
+	// The one user message is at transcript line RootMessageLine (the mock's preamble
+	// block precedes the root, so it is not line 1); `#skip <that line>` excuses it. The
+	// line is named in the agent's prose, authored before the run, so it is taken from
+	// the harness's deterministic RootMessageLine rather than hardcoded.
+	line := e.RootMessageLine(sess)
 	res := e.Run(proj, sess, "just saying hi, no task needed", Turns("done",
-		Say("m1", "This is a greeting that needs no task. #skip 1"),
+		Say("m1", fmt.Sprintf("This is a greeting that needs no task. #skip %d", line)),
 	))
 
 	// The skip context logged the excused message under its own name — the exact
@@ -38,8 +43,9 @@ func TestT036_04_ExplicitSkipAdmits(t *testing.T) {
 	if len(reg) == 0 {
 		t.Fatalf("precondition: the skip-declared context logged no skip; registry=%v", reg)
 	}
-	if !anyKeyHasSuffix(reg, ":1-1") {
-		t.Fatalf("the skip context did not log the line-1 message ref; registry keys=%v", keysOf(reg))
+	skipSuffix := fmt.Sprintf(":%d-%d", line, line)
+	if !anyKeyHasSuffix(reg, skipSuffix) {
+		t.Fatalf("the skip context did not log the message ref (%s); registry keys=%v", skipSuffix, keysOf(reg))
 	}
 
 	// With the message excused, the gate admits.
@@ -55,11 +61,13 @@ func TestT036_04_ExplicitSkipAdmits(t *testing.T) {
 // — the gate still refuses, and only the named line is excused.
 //
 // The control that proves the skip is per-ref, not a blanket "any skip clears
-// everything": the one user message is at line 1, but the agent skips line 9 (a
-// line that is not the user message). The skip context logs skip:...:9-9, which
-// does not match the residue's :1-1, so the message stays unaccounted and the gate
-// refuses. Without this, a skip test could pass merely because SOME skip was
-// present, regardless of whether it named the right message.
+// everything": the one user message is at line RootMessageLine, but the agent skips
+// line 9 (a line that is not the user message). The skip context logs skip:...:9-9,
+// which does not match the message's own ref, so the message stays unaccounted and the
+// gate refuses. Without this, a skip test could pass merely because SOME skip was
+// present, regardless of whether it named the right message. (Line 9 is chosen to sit
+// clear of the root's line — the preamble block plus the root occupy the first few
+// lines — so it is unambiguously the wrong line.)
 func TestT036_05_SkipOfWrongLineStillRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

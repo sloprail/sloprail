@@ -30,12 +30,16 @@ func TestT029_13_PayloadSessionIDResolvesTheRoot(t *testing.T) {
 	e.GitInit(proj)
 
 	// A real session, its transcript written by the mock under the config dir, with
-	// the citable phrase in the prompt (the user's own words) on line 1.
+	// the citable phrase in the prompt (the user's own words). The prompt does not sit
+	// on physical line 1 — the mock opens the transcript with its no-uuid preamble block
+	// (custom-title / mode / last-prompt) ahead of the root — so the expected line is
+	// derived from the file the mock wrote rather than hardcoded.
 	sessionID := "s-029-13"
 	e.Run(proj, sessionID, "please tidy the ORPHANED helper now", Turns("done",
 		Bash("b1", "echo ok > ok.md"),
 	))
 	path := e.TranscriptPath(proj, sessionID)
+	promptLine := physicalLine(t, path, "please tidy the ORPHANED helper now")
 
 	// The payload names only the session id and the cwd — no transcript_path, no
 	// agent fields. record() joins <config>/projects/<encoded-cwd>/<session-id>.jsonl,
@@ -47,7 +51,7 @@ func TestT029_13_PayloadSessionIDResolvesTheRoot(t *testing.T) {
 	if res.Code != 0 {
 		t.Fatalf("cite from a session-id payload exited %d, want 0 (it resolves the root):\n%s", res.Code, res.Output)
 	}
-	want := fmt.Sprintf("%s:1", path)
+	want := fmt.Sprintf("%s:%d", path, promptLine)
 	if strings.TrimSpace(res.Output) != want {
 		t.Fatalf("stdout = %q, want %q (the line the prompt sits on in the root transcript)",
 			strings.TrimSpace(res.Output), want)

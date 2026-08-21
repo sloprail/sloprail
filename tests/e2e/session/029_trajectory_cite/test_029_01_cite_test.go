@@ -11,9 +11,9 @@ import (
 //
 // The success case the whole command exists for. The mock is driven with the
 // quote in its PROMPT — the user's own words — and cite resolves that message to
-// its 1-based physical line. The mock writes the prompt as the transcript's first
-// record, which this test verifies against the raw file so the expected line is a
-// checked fact rather than an assumption, then asserts cite lands on it.
+// its 1-based physical line. The prompt's line is derived from the raw file the
+// mock wrote (it follows the mock's no-uuid preamble block, so it is not line 1),
+// so the expected line is a checked fact rather than an assumption.
 func TestT029_01_CiteUniqueMatchExitsZero(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -24,19 +24,18 @@ func TestT029_01_CiteUniqueMatchExitsZero(t *testing.T) {
 	))
 	path := e.TranscriptPath(proj, "s-029-01")
 
-	// The prompt is the record on physical line 1 — verified against the file the
-	// mock wrote, so the citation below is checked against the record's real
-	// layout rather than a hard-coded guess.
-	if got := physicalLine(t, path, "please refactor the auth module carefully"); got != 1 {
-		t.Fatalf("the mock did not write the prompt on line 1 (found line %d); the citation "+
-			"assertion below rests on that layout", got)
+	// The prompt's physical line, read from the file the mock wrote, so the citation
+	// below is checked against the record's real layout rather than a hard-coded guess.
+	promptLine := physicalLine(t, path, "please refactor the auth module carefully")
+	if promptLine == 0 {
+		t.Fatalf("the mock did not write the prompt to the transcript\n%s", readFile(t, path))
 	}
 
 	res := cite(e, proj, path, "auth module")
 	if res.Code != 0 {
 		t.Fatalf("a unique match exited %d, want 0:\n%s", res.Code, res.Output)
 	}
-	want := fmt.Sprintf("%s:1", path)
+	want := fmt.Sprintf("%s:%d", path, promptLine)
 	if strings.TrimSpace(res.Output) != want {
 		t.Fatalf("stdout = %q, want %q", strings.TrimSpace(res.Output), want)
 	}
@@ -180,19 +179,18 @@ func TestT029_04_CiteMatchesAnAskUserQuestionAnswer(t *testing.T) {
 	))
 	path := e.TranscriptPath(proj, "s-029-04")
 
-	// The envelope is the record on physical line 2 — verified against the file the
-	// mock wrote, so the citation below rests on the record's real layout rather than
-	// a hard-coded guess.
-	if got := physicalLine(t, path, "go with the second option"); got != 2 {
-		t.Fatalf("the mock did not write the answer envelope on line 2 (found line %d); the "+
-			"citation assertion below rests on that layout", got)
+	// The envelope's physical line, read from the file the mock wrote — it follows the
+	// mock's no-uuid preamble block and the root prompt, so it is not a hard-coded line.
+	answerLine := physicalLine(t, path, "go with the second option")
+	if answerLine == 0 {
+		t.Fatalf("the mock did not write the answer envelope to the transcript\n%s", readFile(t, path))
 	}
 
 	res := cite(e, proj, path, "second option")
 	if res.Code != 0 {
 		t.Fatalf("citing a prompted answer exited %d, want 0:\n%s", res.Code, res.Output)
 	}
-	want := fmt.Sprintf("%s:2", path)
+	want := fmt.Sprintf("%s:%d", path, answerLine)
 	if strings.TrimSpace(res.Output) != want {
 		t.Fatalf("stdout = %q, want %q (the line the answer envelope sits on)", strings.TrimSpace(res.Output), want)
 	}
@@ -228,15 +226,22 @@ func TestT029_05_CiteDoesNotMatchAnyQuestion(t *testing.T) {
 	))
 	path := e.TranscriptPath(proj, "s-029-05")
 
+	// The envelope's physical line, read from the file the mock wrote (it follows the
+	// mock's no-uuid preamble block and the root prompt).
+	envLine := physicalLine(t, path, "no, keep it simple")
+	if envLine == 0 {
+		t.Fatalf("the mock did not write the answer envelope to the transcript\n%s", readFile(t, path))
+	}
+
 	// Positive control: an ANSWER from the envelope resolves to the line the envelope
-	// sits on (line 2, after the seeded prompt). Without this the question-negatives
-	// below could pass vacuously — a run where the mock never wrote the envelope would
-	// also make every question "not found". This proves the envelope IS there and its
-	// answers ARE citable, so the negatives are about the parse, not an empty file.
+	// sits on. Without this the question-negatives below could pass vacuously — a run
+	// where the mock never wrote the envelope would also make every question "not
+	// found". This proves the envelope IS there and its answers ARE citable, so the
+	// negatives are about the parse, not an empty file.
 	if res := cite(e, proj, path, "keep it simple"); res.Code != 0 ||
-		strings.TrimSpace(res.Output) != fmt.Sprintf("%s:2", path) {
-		t.Fatalf("the answer envelope's own answer did not resolve to line 2 (code %d, out %q) — "+
-			"the question-negatives below would be vacuous", res.Code, strings.TrimSpace(res.Output))
+		strings.TrimSpace(res.Output) != fmt.Sprintf("%s:%d", path, envLine) {
+		t.Fatalf("the answer envelope's own answer did not resolve to its line %d (code %d, out %q) — "+
+			"the question-negatives below would be vacuous", envLine, res.Code, strings.TrimSpace(res.Output))
 	}
 
 	// FROBNICATE is only in the FIRST question; BAZQUX only in the SECOND. Neither
@@ -276,19 +281,21 @@ func TestT029_07_CiteMatchesEachAnswerInAMultiQuestion(t *testing.T) {
 	))
 	path := e.TranscriptPath(proj, "s-029-07")
 
-	// The envelope sits on physical line 2 — checked against the file the mock wrote.
-	if got := physicalLine(t, path, "under the dotdir store"); got != 2 {
-		t.Fatalf("the mock did not write the answer envelope on line 2 (found line %d)", got)
+	// The envelope's physical line, read from the file the mock wrote (it follows the
+	// mock's no-uuid preamble block and the root prompt).
+	envLine := physicalLine(t, path, "under the dotdir store")
+	if envLine == 0 {
+		t.Fatalf("the mock did not write the answer envelope to the transcript\n%s", readFile(t, path))
 	}
 
-	// Each answer resolves to line 2; no answer is ambiguous, since one envelope
-	// is one line however many pairs it carries.
+	// Each answer resolves to the ONE envelope line; no answer is ambiguous, since one
+	// envelope is one line however many pairs it carries.
 	for _, a := range []string{"under the dotdir store", "make it required", "yes backfill everything"} {
 		res := cite(e, proj, path, a)
 		if res.Code != 0 {
 			t.Fatalf("citing answer %q exited %d, want 0:\n%s", a, res.Code, res.Output)
 		}
-		want := fmt.Sprintf("%s:2", path)
+		want := fmt.Sprintf("%s:%d", path, envLine)
 		if strings.TrimSpace(res.Output) != want {
 			t.Fatalf("citing answer %q gave %q, want %q", a, strings.TrimSpace(res.Output), want)
 		}
@@ -317,9 +324,10 @@ func TestT029_08_CiteAnswerWithInnerQuoteInMultiQuestion(t *testing.T) {
 	))
 	path := e.TranscriptPath(proj, "s-029-08")
 
-	// The envelope sits on physical line 2 — checked against the file the mock wrote.
-	if got := physicalLine(t, path, `keep it plain`); got != 2 {
-		t.Fatalf("the mock did not write the answer envelope on line 2 (found line %d)", got)
+	// The envelope's physical line, read from the file the mock wrote.
+	envLine := physicalLine(t, path, `keep it plain`)
+	if envLine == 0 {
+		t.Fatalf("the mock did not write the answer envelope to the transcript\n%s", readFile(t, path))
 	}
 
 	// A substring spanning the inner-quoted word: only resolvable if the whole
@@ -328,7 +336,7 @@ func TestT029_08_CiteAnswerWithInnerQuoteInMultiQuestion(t *testing.T) {
 	if res.Code != 0 {
 		t.Fatalf("citing an answer with an inner quote exited %d, want 0:\n%s", res.Code, res.Output)
 	}
-	if !strings.Contains(res.Output, path+":2") {
+	if !strings.Contains(res.Output, fmt.Sprintf("%s:%d", path, envLine)) {
 		t.Fatalf("the inner-quote answer did not resolve to its line:\n%s", res.Output)
 	}
 }
@@ -357,6 +365,12 @@ func TestT029_06_CiteDefaultAndNoTrajectory(t *testing.T) {
 		Bash("b1", "echo done > done.md"),
 	))
 	path := e.TranscriptPath(proj, "s-029-06")
+	// The prompt's physical line, read from the file the mock wrote (it follows the
+	// mock's no-uuid preamble block).
+	promptLine := physicalLine(t, path, "cite this exact phrase here")
+	if promptLine == 0 {
+		t.Fatalf("the mock did not write the prompt to the transcript\n%s", readFile(t, path))
+	}
 
 	// Default: no --path, transcript_path on the payload.
 	payload := `{"transcript_path":"` + path + `","cwd":"` + proj + `"}`
@@ -364,7 +378,7 @@ func TestT029_06_CiteDefaultAndNoTrajectory(t *testing.T) {
 	if res.Code != 0 {
 		t.Fatalf("cite from a payload exited %d, want 0:\n%s", res.Code, res.Output)
 	}
-	if !strings.Contains(res.Output, path+":1") {
+	if !strings.Contains(res.Output, fmt.Sprintf("%s:%d", path, promptLine)) {
 		t.Fatalf("cite from a payload did not resolve to the right line:\n%s", res.Output)
 	}
 

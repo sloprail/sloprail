@@ -32,18 +32,16 @@ func TestT029_15_NoPathResolvesCurrentSessionFromEnv(t *testing.T) {
 	e.GitInit(proj)
 
 	// A real session: the mock writes its transcript under the config dir, with the
-	// citable phrase in the prompt (the user's own words) on the first record.
+	// citable phrase in the prompt (the user's own words). The prompt does not sit on
+	// physical line 1 — the mock opens the transcript with its no-uuid preamble block
+	// (custom-title / mode / last-prompt) ahead of the root — so the expected line is
+	// derived from the file the mock wrote rather than hardcoded.
 	sessionID := "s-029-15"
 	e.Run(proj, sessionID, "please refactor the auth module carefully", Turns("done",
 		Bash("b1", "echo on-it > note.md"),
 	))
 	path := e.TranscriptPath(proj, sessionID)
-
-	// The prompt is the record on physical line 1 — verified against the file the
-	// mock wrote, so the citation assertion rests on the record's real layout.
-	if got := physicalLine(t, path, "please refactor the auth module carefully"); got != 1 {
-		t.Fatalf("the mock did not write the prompt on line 1 (found line %d)", got)
-	}
+	promptLine := physicalLine(t, path, "please refactor the auth module carefully")
 
 	// The agent-facing call: cwd is the project (so os.Getwd() names the tree
 	// Claude Code filed the transcript under), CLAUDE_CODE_SESSION_ID names the
@@ -57,7 +55,7 @@ func TestT029_15_NoPathResolvesCurrentSessionFromEnv(t *testing.T) {
 	if res.Code != 0 {
 		t.Fatalf("cite with no --path (env-resolved) exited %d, want 0:\n%s", res.Code, res.Output)
 	}
-	want := fmt.Sprintf("%s:1", path)
+	want := fmt.Sprintf("%s:%d", path, promptLine)
 	if strings.TrimSpace(res.Output) != want {
 		t.Fatalf("stdout = %q, want %q (the line the prompt sits on in the env-resolved transcript)",
 			strings.TrimSpace(res.Output), want)
@@ -75,14 +73,14 @@ func TestT029_16_NoPathResolvesAnAnswerFromEnv(t *testing.T) {
 
 	sessionID := "s-029-16"
 	// The prompt deliberately does NOT contain the answer substring, so the match is
-	// unique to the answer envelope the mock writes on line 2.
+	// unique to the answer envelope. Its physical line is derived from the file the mock
+	// wrote — the answer envelope follows the mock's no-uuid preamble block and the root
+	// prompt, so it does not sit on a hardcoded line.
 	e.Run(proj, sessionID, "here is the task", Turns("done",
 		AnswerQuestion("q1", [2]string{"which approach?", "go with the second option"}),
 	))
 	path := e.TranscriptPath(proj, sessionID)
-	if got := physicalLine(t, path, "go with the second option"); got != 2 {
-		t.Fatalf("the mock did not write the answer envelope on line 2 (found line %d)", got)
-	}
+	answerLine := physicalLine(t, path, "go with the second option")
 
 	env := []string{
 		"CLAUDE_CODE_SESSION_ID=" + sessionID,
@@ -92,7 +90,7 @@ func TestT029_16_NoPathResolvesAnAnswerFromEnv(t *testing.T) {
 	if res.Code != 0 {
 		t.Fatalf("citing an answer with no --path (env-resolved) exited %d, want 0:\n%s", res.Code, res.Output)
 	}
-	want := fmt.Sprintf("%s:2", path)
+	want := fmt.Sprintf("%s:%d", path, answerLine)
 	if strings.TrimSpace(res.Output) != want {
 		t.Fatalf("stdout = %q, want %q", strings.TrimSpace(res.Output), want)
 	}

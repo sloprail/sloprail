@@ -36,11 +36,11 @@ import (
 //     pre-write state the derivation is about.
 //
 // PREAMBLE LINES (T031_06) used to keep a fixture too: the physical-line count rests
-// on Claude Code's own no-uuid preamble records (custom-title / ai-title / mode /
-// queue-operation / last-prompt), which the mock's scenario validator rejects as
-// unknown types. The harness now seeds them at the transcript HEAD via SeedPreamble
-// (ahead of its own parentless root record, where they have to sit), so T031_06 reads
-// a mock-produced transcript whose opening lines are real preamble records.
+// on Claude Code's own no-uuid preamble records (custom-title / mode / last-prompt).
+// The MOCK now writes those itself on every fresh session — a10n-claude-mock opens a
+// fresh transcript with the preamble block ahead of the root, exactly as real Claude
+// Code does — so T031_06 drives a plain Run and reads a mock-produced transcript whose
+// opening physical lines are real preamble records, no harness or per-test fixture.
 //
 // # What a10n-cli#470 MADE producible: multi-block assistant turns
 //
@@ -66,14 +66,13 @@ import (
 type Env = harness.Env
 
 var (
-	New           = harness.New
-	Turns         = harness.Turns
-	Write         = harness.Write
-	Bash          = harness.Bash
-	Say           = harness.Say
-	SayBash       = harness.SayBash
-	BashBatch     = harness.BashBatch
-	PreambleTitle = harness.PreambleTitle
+	New       = harness.New
+	Turns     = harness.Turns
+	Write     = harness.Write
+	Bash      = harness.Bash
+	Say       = harness.Say
+	SayBash   = harness.SayBash
+	BashBatch = harness.BashBatch
 )
 
 func TestMain(m *testing.M) {

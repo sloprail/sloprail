@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -187,34 +189,41 @@ func TestT031_05_ThreeToolCallsYieldThreeEvents(t *testing.T) {
 // T031_06: line numbers are the physical lines of the file, counting the preamble
 // lines transcript reading skips — the one field jq cannot recompute downstream.
 //
-// Driven through the MOCK: the count rests on Claude Code's own no-uuid preamble
-// records — custom-title / ai-title / mode / queue-operation / last-prompt — which a
-// transcript reader counts-but-skips. The harness seeds two of them at the transcript
-// HEAD via SeedPreamble (the mock's own --preamble-file writes only into a still-empty
-// transcript, and the harness pre-seeds the parentless root record itself, so the
-// preamble is written ahead of that same record by the harness), then the session's
-// own records follow: the seeded prompt on line 3, an assistant turn on line 4. So the
-// physical-line count is checked against a mock-produced transcript whose opening lines
-// are real preamble records, not a fully hand-authored fixture.
+// Driven through the MOCK, with NO fixture and NO harness-seeded preamble: the mock
+// opens every fresh transcript with the no-uuid preamble records real Claude Code writes
+// (custom-title / mode / last-prompt) AHEAD of the root prompt — a10n-claude-mock's own
+// seedPreamble, prepended ahead of the root the harness pre-seeds. A transcript reader
+// counts those physical lines but skips them as entries (they carry no uuid), so a
+// uuid-carrying entry's physical `.Line` runs PAST its entry ordinal by the number of
+// skipped preamble lines. That gap — physical line != entry ordinal — is the whole point.
 //
-// A `Say` turn is the assistant entry because it produces a single assistant record
-// with NO synthesised tool_result after it (a tool turn would add a tool_result entry,
-// making a third entry on a later line); the two entries are then exactly the prompt
-// and the assistant turn, on lines 3 and 4.
+// A `Say` turn is the assistant entry because it produces a single assistant record with
+// NO synthesised tool_result after it (a tool turn would add a tool_result entry — which,
+// after the mock's FIX 1, now carries a uuid and so IS an entry — making a third entry on
+// a later line). So the entries are exactly two: the root prompt and the assistant turn.
+//
+// The preamble count is DERIVED from the transcript the mock wrote (the leading no-uuid
+// lines), not hardcoded, so the assertion holds if the mock ever writes a different
+// number of preamble records: an entry's physical line is its ordinal position among the
+// physical lines, and the first entry sits exactly `preamble+1` in.
 func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 
-	// Two no-uuid preamble records occupy physical lines 1 and 2, ahead of the prompt.
-	e.SeedPreamble(
-		PreambleTitle("a conversation"),
-		PreambleTitle("still a conversation"),
-	)
 	e.Run(proj, "s-031-06", "start", Turns("done",
 		Say("m1", "on it"),
 	))
 	path := e.TranscriptPath(proj, "s-031-06")
+
+	// The mock-produced transcript opens with a run of no-uuid preamble records; count
+	// them from the file the mock wrote so the line assertions rest on its real layout
+	// rather than a hardcoded guess.
+	preamble := leadingNoUUIDLines(t, path)
+	if preamble < 1 {
+		t.Fatalf("the mock did not open the transcript with any no-uuid preamble records; "+
+			"the physical-line assertion rests on them\nfile:\n%s", readFile(t, path))
+	}
 
 	res := normalize(e, proj, path)
 	if res.Code != 0 {
@@ -222,18 +231,62 @@ func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 	}
 	entries := decodeEntries(t, res.Output)
 	if len(entries) != 2 {
-		t.Fatalf("only the two uuid-carrying lines are entries, got %d:\n%s", len(entries), res.Output)
+		t.Fatalf("only the two uuid-carrying lines are entries (root + the Say turn), got %d:\n%s",
+			len(entries), res.Output)
 	}
-	// The seeded prompt is the user entry on physical line 3 (after the two preamble
-	// lines); the assistant Say turn is the entry on line 4.
-	if entries[0].Type != "user" || entries[0].Line != 3 {
-		t.Fatalf("the user entry sits on physical line 3, got type %q line %d:\n%s",
-			entries[0].Type, entries[0].Line, res.Output)
+	// The root prompt is the FIRST entry, but it does not sit on physical line 1 — the
+	// preamble records occupy the opening lines, so it sits on line preamble+1. That its
+	// line is past its ordinal (1) is exactly "physical line != entry ordinal".
+	if entries[0].Type != "user" || entries[0].Line != preamble+1 {
+		t.Fatalf("the user entry sits on physical line %d (after %d preamble lines), got type %q line %d:\n%s",
+			preamble+1, preamble, entries[0].Type, entries[0].Line, res.Output)
 	}
-	if entries[1].Type != "assistant" || entries[1].Line != 4 {
-		t.Fatalf("the assistant entry sits on physical line 4, got type %q line %d:\n%s",
-			entries[1].Type, entries[1].Line, res.Output)
+	if entries[0].Line <= 1 {
+		t.Fatalf("the first entry's physical line must run PAST its ordinal because the preamble "+
+			"records before it are counted-but-skipped, got line %d", entries[0].Line)
 	}
+	// The assistant Say turn is the next physical line after the root.
+	if entries[1].Type != "assistant" || entries[1].Line != preamble+2 {
+		t.Fatalf("the assistant entry sits on physical line %d, got type %q line %d:\n%s",
+			preamble+2, entries[1].Type, entries[1].Line, res.Output)
+	}
+}
+
+// leadingNoUUIDLines counts the run of records at the HEAD of the transcript that carry
+// no uuid — the preamble a transcript reader counts as physical lines but skips as
+// entries. It stops at the first uuid-carrying record (the root). This is the mock's
+// own preamble block, read back from the file it wrote so the line assertions do not
+// hardcode how many records the mock opens with.
+func leadingNoUUIDLines(t *testing.T, path string) int {
+	t.Helper()
+	n := 0
+	for _, line := range strings.Split(readFile(t, path), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec struct {
+			UUID string `json:"uuid"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("transcript line is not JSON: %v\nline: %s", err, line)
+		}
+		if rec.UUID != "" {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// readFile reads a transcript file for the line-counting helpers, failing the test on
+// error (a path returned for a session that ran must exist).
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read transcript %s: %v", path, err)
+	}
+	return string(body)
 }
 
 // bashEntry returns the single entry carrying a PreCommandInvoke, failing when
