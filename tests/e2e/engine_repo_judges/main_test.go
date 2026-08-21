@@ -74,7 +74,7 @@ func repoRoot(t *testing.T) string {
 // whole standard for these two judges, so a copier that skipped directories
 // would install a judge with an empty rules/ and every test would observe the
 // empty-rules refusal instead of the behaviour under test. The file-guard.yaml,
-// RUBRIC.md, judge-*.sh and the whole rules/ tree all come across, so the
+// prepare.sh, judge-*.md.j2 and the whole rules/ tree all come across, so the
 // installed guard is byte-for-byte the one enforcing in this repo.
 func installGuardrail(t *testing.T, projDir, name string) string {
 	t.Helper()

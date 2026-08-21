@@ -1,38 +1,49 @@
 #!/usr/bin/env bash
-# prepare: assemble the rubric this judge is asked against, from the guard's own
-# rules/ directory — one meta-rule per rules/<name>/RULE.md, spliced into
-# RUBRIC.md's frame. Adding a meta-rule is adding a directory; no prompt is
-# edited. Emits the assembled rubric as additionalContext.rubric, which the
-# .md.j2 interpolates; the judge template reads the SKILL.md's own content
-# directly off the flat event (event.newContent), so this prepare's ONE job is
-# the rubric.
+# prepare: load this guard's meta-rules as structured data for the judge, from the
+# guard's own rules/ directory — one entry per rules/<name>/RULE.md. Adding a
+# meta-rule is adding a directory; no prompt is edited (the judge TEMPLATE
+# iterates whatever array this emits). Emits the meta-rules as an ARRAY under
+# additionalContext.meta_rules ([{name, body}, ...]); the judge-skill.md.j2 holds
+# the rubric frame and renders the array with a {% for %} loop. The judge
+# template reads the SKILL.md's own content directly off the flat event
+# (event.newContent), so this prepare's ONE job is the meta-rule array.
 #
 # WHY A PREPARE AND NOT THE OLD HAND-ROLLED CLAUDE CALL. This guard was a SCRIPT
 # check that assembled the prompt AND called `claude` itself, hand-rolling the
 # model, the 25s timeout, the isolation --settings and the verdict parse. The
 # reviewer asked for a judge: check so the engine (via sr-agent) owns all of
-# that. What remains genuinely this guard's is the rubric assembly — non-trivial
-# (the enforced-only selection, the frame/splice) — so it lives here, in prepare,
-# and the model call is now the engine's.
+# that. What remains genuinely this guard's is loading the meta-rules — non-trivial
+# (the enforced-only selection) — so it lives here, in prepare, and the model call
+# is now the engine's.
 #
-# EXIT 0 with additionalContext on stdout: the rubric is assembled; the judge
-# runs against it. EXIT 1: a REFUSAL — the check fails closed carrying this
+# WHY AN ARRAY AND NOT A PRE-SPLICED STRING. This prepare used to read RUBRIC.md's
+# frame and splice the meta-rules into a marker inside it, emitting the whole
+# assembled blob as additionalContext.rubric. The reviewer asked for the frame to
+# live in the template (visible, versioned as a prompt) and the rules to arrive as
+# structured data. So the frame moved into judge-skill.md.j2 and this prepare now
+# emits meta_rules as an array — no RUBRIC.md, no splice marker, no
+# string-assembly. The template's {% for %} produces the same <meta-rule> blocks
+# the splice once produced (gonja supports the loop; see judge.go/template.go).
+#
+# EXIT 0 with additionalContext on stdout: the meta-rules are loaded; the judge
+# runs against them. EXIT 1: a REFUSAL — the check fails closed carrying this
 # script's words (spec: a prepare failure fails the check). prepare has no third
 # "permit without judging" outcome, which is the one behavioural change from the
 # old script; see the FAIL-OPEN note below.
 #
 # FAIL-OPEN RECONCILIATION. The old script failed OPEN (permitted, unjudged) when
 # its OWN machinery failed — no claude, a timeout, an unparseable verdict, a
-# missing RUBRIC.md, a lost splice marker. A judge: check cannot reproduce that:
+# missing rules directory, an unreadable rule. A judge: check cannot reproduce
+# that:
 #   - MODEL machinery (no claude / timeout / bad verdict) is now the ENGINE's, and
 #     the engine's judge path fails CLOSED on it by deliberate design
 #     (internal/dispatch/judge.go). So those cases now REFUSE rather than permit.
 #     Flagged, not hidden — the one behaviour a judge: check semantics cannot keep.
-#   - RUBRIC/MARKER machinery is this prepare's, and prepare has only refuse-closed
-#     or proceed; there is no permit-without-judging. A missing RUBRIC.md or lost
-#     marker is the guard's OWN committed file broken, so refusing loudly (below)
-#     is the safe, diagnosable direction — a change from the old fail-open, and
-#     flagged as such.
+#   - RULE-LOADING machinery is this prepare's, and prepare has only refuse-closed
+#     or proceed; there is no permit-without-judging. A missing rules/ dir or an
+#     unreadable rule is the guard's OWN committed files broken, so refusing loudly
+#     (via the empty-count refusal below) is the safe, diagnosable direction — a
+#     change from the old fail-open, and flagged as such.
 # EMPTY rules/ IS STILL A REFUSAL, not fail-open — the deliberate asymmetry of a
 # composed rubric is preserved exactly (see "Nothing to judge against" below).
 
@@ -46,8 +57,8 @@ payload="$(cat)"
 
 path="$(printf '%s' "$payload" | jq -r '.event.path // empty' 2>/dev/null)"
 
-# The guard's own directory, so RUBRIC.md and rules/ resolve under it. The engine
-# sets SR_GUARDRAIL_DIR on every check dispatch (internal/dispatch/exec.go).
+# The guard's own directory, so rules/ resolves under it. The engine sets
+# SR_GUARDRAIL_DIR on every check dispatch (internal/dispatch/exec.go).
 guardrail_dir="${SR_GUARDRAIL_DIR:-}"
 
 if [ -z "$path" ]; then
@@ -97,41 +108,20 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# Assemble the rubric: RUBRIC.md's frame, with <<<META_RULES>>> replaced by the
-# concatenated rules/<name>/RULE.md.
+# Load the meta-rules into a JSON array: one {name, body} entry per
+# rules/<name>/RULE.md that is enforced.
 #
 # Ordering is LEXICAL BY DIRECTORY NAME, which is what the `for` glob gives.
-# Not by mtime, not by a manifest: the rubric must be a pure function of the
+# Not by mtime, not by a manifest: the array must be a pure function of the
 # directory's contents, so two checkouts of the same tree produce the same
-# rubric and a diff of rules/ is a complete account of what changed.
+# prompt and a diff of rules/ is a complete account of what changed.
+#
+# Built with jq rather than by shell string-concatenation because the bodies
+# contain arbitrary punctuation — backslashes, ampersands, quotes, angle
+# brackets — and jq --arg encodes each as a JSON string safely, where a
+# hand-built string would need escaping the template then has to undo.
 # ---------------------------------------------------------------------------
-frame=""
-if [ -f "$guardrail_dir/RUBRIC.md" ]; then
-  frame="$(grep -v '^#' "$guardrail_dir/RUBRIC.md" 2>/dev/null)"
-fi
-
-if [ -z "$frame" ]; then
-  # Old behaviour was FAIL-OPEN here (permit unjudged). A judge: check's prepare
-  # cannot permit-without-judging, and RUBRIC.md is the guard's OWN committed
-  # file — a missing one is a real breakage, so this refuses loudly. Flagged as
-  # a change from the old fail-open in the header note.
-  echo "skill-quality: could not read RUBRIC.md, so there is no rubric frame to judge '$path' against. REFUSING (the guard's own rubric file is missing or empty)." >&2
-  exit 1
-fi
-
-case "$frame" in
-  *'<<<META_RULES>>>'*) ;;
-  *)
-    # The frame is present but lost its splice point, so the meta-rules would be
-    # silently dropped and the judge would be asked against a frame that says
-    # "below are the meta-rules" with nothing below it. Old behaviour: fail-open.
-    # New: refuse.
-    echo "skill-quality: RUBRIC.md has no <<<META_RULES>>> marker, so the meta-rules could not be spliced in. REFUSING (the guard's own rubric frame is malformed)." >&2
-    exit 1
-    ;;
-esac
-
-meta=""
+meta_rules='[]'
 count=0
 for rf in "$guardrail_dir"/rules/*/RULE.md; do
   [ -f "$rf" ] || continue
@@ -163,11 +153,16 @@ for rf in "$guardrail_dir"/rules/*/RULE.md; do
 
   [ -n "$content" ] || continue
 
-  meta="${meta}<meta-rule name=\"${name}\">
-${content}
-</meta-rule>
-
-"
+  # Append {name, body} to the array. jq --arg encodes both as JSON strings, so
+  # the body's own punctuation cannot break the structure.
+  meta_rules="$(jq -c --arg name "$name" --arg body "$content" \
+    '. + [{name: $name, body: $body}]' <<<"$meta_rules")" || {
+    # jq itself failing is the loader's machinery breaking around a rule that
+    # exists — refuse closed rather than silently drop the rule (which would judge
+    # against a smaller standard than the tree actually declares).
+    echo "skill-quality: failed to encode meta-rule '$name' as JSON, so the rubric could not be assembled. REFUSING (the guard's own rule file could not be loaded)." >&2
+    exit 1
+  }
   count=$((count + 1))
 done
 
@@ -181,20 +176,16 @@ if [ "$count" -eq 0 ]; then
   # the inert-but-official-looking rule sloprail exists to prevent. A judge with
   # no criteria cannot find a violation, so permitting here is indistinguishable
   # from a permanent clean bill of health. Refuse instead — loud and immediately
-  # diagnosable.
+  # diagnosable. (A missing rules/ dir or an unreadable rule lands here too: the
+  # glob matches nothing, count stays 0 — fail-closed, the old fail-open's
+  # replacement for the rule-loading machinery.)
   echo "skill-quality: rules/ contains no meta-rule with 'enforced: true', so there is no standard to judge '$path' against. REFUSING rather than judging against nothing — add a rules/<name>/RULE.md, or disable this guardrail." >&2
   exit 1
 fi
 
-# Splice. awk rather than a shell parameter expansion because the meta-rules
-# contain backslashes and ampersands (sed would reinterpret them).
-rubric="$(META="$meta" awk '
-  index($0, "<<<META_RULES>>>") { print ENVIRON["META"]; next }
-  { print }
-' <<<"$frame")"
-
-# Emit the assembled rubric under additionalContext.rubric, the ONE key a prepare
+# Emit the meta-rules under additionalContext.meta_rules, the ONE key a prepare
 # may add (internal/dispatch/checks.go parsePreparedContext). The judge template
-# renders {{ additionalContext.rubric }} into the prompt; jq -Rs keeps the whole
-# rubric intact regardless of its punctuation.
-jq -n --arg rubric "$rubric" '{additionalContext: {rubric: $rubric}}'
+# iterates {% for r in additionalContext.meta_rules %} to render each into the
+# rubric frame it holds; --argjson keeps the array structured rather than
+# re-stringifying it.
+jq -n --argjson meta_rules "$meta_rules" '{additionalContext: {meta_rules: $meta_rules}}'
