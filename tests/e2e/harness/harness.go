@@ -1912,22 +1912,20 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	cmd.Env = append(os.Environ(),
 		"HOME="+e.home,
 		"CLAUDE_CONFIG_DIR="+e.configDir,
-		"CLAUDE_CODE_SESSION_ID="+sessionID,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
-		// The mock STANDS IN FOR Claude Code, so it must present the environment
-		// Claude Code presents — including the two variables that name the running
-		// harness. Real Claude Code sets CLAUDECODE=1 on every session (and
-		// CLAUDE_CODE_ENTRYPOINT names how it launched); sr-agent reads exactly
-		// these to detect its harness (services/sr-agent/harness.go: "CLAUDECODE is
-		// what Claude Code sets on every session"), and a judge's `sr-agent
-		// --model … --verify` REFUSES with ErrNoHarness when neither is set. A
-		// developer running the suite inside Claude Code inherits CLAUDECODE from
-		// their own session and never sees this; CI does not, so a judge test that
-		// passed locally failed in CI with "no supported harness detected" until
-		// the mock's env carried these explicitly. Set here (not left to
-		// os.Environ inheritance) so the two environments behave identically.
-		"CLAUDECODE=1",
-		"CLAUDE_CODE_ENTRYPOINT=cli",
+		// The session-identifying and harness-naming variables are the MOCK's to
+		// present, not the harness's: the mock takes --session-id (above) and sets
+		// CLAUDE_CODE_SESSION_ID on every hook/script env from it, and sets
+		// CLAUDECODE=1 + CLAUDE_CODE_ENTRYPOINT=cli on every hook env unconditionally
+		// (a10n-claude-mock internal/hooks/invoker.go) — because the mock stands in
+		// for Claude Code and must present the environment it presents. sr-agent's
+		// harness detection reads CLAUDECODE/CLAUDE_CODE_ENTRYPOINT and REFUSES with
+		// ErrNoHarness when neither is set; the mock now supplies them itself, so the
+		// harness no longer sets any of the three here. (This used to be a CI-vs-local
+		// gotcha: a developer inside Claude Code inherited CLAUDECODE and never saw the
+		// gap, CI did not, and a judge test failed in CI with "no supported harness
+		// detected" — now moot, the value is the mock's whatever the outer environment.)
+		//
 		// The plugin invokes `sloprail`; this is how the hook subprocess finds
 		// the build under test rather than whatever happens to be installed.
 		//
