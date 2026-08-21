@@ -4,31 +4,50 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
 // newSessionStartCmd is the hook point that fires when a session begins.
 //
-// Its one job is to record where this session measures from — the baseline
-// commit and branch. It never refuses: a session that cannot start because of a
-// guardrail is worse than a session with none.
+// It records where this session measures from — the baseline commit and branch —
+// and loads the project's declarations once so a malformed one surfaces while the
+// person is still watching. It never refuses: a session that cannot start because
+// of a guardrail is worse than a session with none.
 //
-// It does NOT load and report the project's declarations. The new nature
-// dispatch reports a malformed declaration on EVERY pre-tool and Stop dispatch
-// (newNatureDeclarations → reportNatureInvalid / reportNatureShadowed /
-// reportUnresolved), so a fault surfaces the first time the agent does anything —
-// rather than only at a session start nobody was watching. Reporting here as
-// well would print each fault twice for no gain.
+// The load report is the new-format vocabulary oracle the authoring skill sends
+// authors to: `sr-session start` reports a declaration that binds a kind this
+// build does not have (naming the kinds it does), a match naming a field the kind
+// does not carry (naming the fields it does), a duplicate key, and a check that
+// names neither a script nor a judge. newNatureDeclarations produces exactly that
+// report (reportNatureInvalid / reportNatureShadowed / reportUnresolved) as a side
+// effect of loading — the same report every pre-tool and Stop dispatch prints, so
+// a fault an author reads here is recognisably the one they meet at a write.
 func newSessionStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
-		Short: "Session start: record the baseline this session measures from",
+		Short: "Session start: record the baseline and report the project's declarations",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p := readPayload(cmd)
 
-			// Where this session measures from. The one thing session start is
-			// for: without it the first cycle has no point to diff against.
+			// Where this session measures from. Recorded before the declarations
+			// are touched: a malformed declaration is a reason to print something,
+			// never a reason for the session to have no point to diff against.
 			recordBaseline(cmd, p)
+
+			reg, err := modules.Registry()
+			if err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+				return nil
+			}
+
+			// Load and report. newNatureDeclarations reports every declaration that
+			// could not load, every shadowed one, and every unresolved plugin — the
+			// load check an author runs, and the one place a person is reliably
+			// watching. The loaded set is not used here; session start enforces
+			// nothing, by design.
+			newNatureDeclarations(cmd, p.Cwd, reg)
 			return nil
 		},
 	}
