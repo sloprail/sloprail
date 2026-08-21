@@ -154,6 +154,58 @@ func TestReview_UnsubstantiatedBlocksAtStop(t *testing.T) {
 	}
 }
 
+// TestReview_NotInReviewSkipsTheJudge: a task that is NOT in_review (here to_do)
+// reaches the Stop after-check — its write lands (task-evidence-resolves requires
+// evidence only for in_review, so an evidence-less to_do is permitted at Pre) — but
+// the review JUDGE is NEVER invoked. expand-evidence.sh reads the status and emits
+// `{"skip": true}`, which makes the judge check ABSTAIN: no model call, no verdict.
+// The judge and the pre-flight are two SEPARATE checks, and a passing pre-flight does
+// not end the chain, so without the skip the judge would run a full model call to
+// "review" a task not up for review. Proven by the CAPTURING judge writing NO prompt.
+//
+// (The turn is still blocked at Stop — by no-unfinished-work-at-turn-end, because a
+// to_do task is open work — but that block is a different guardrail's, and crucially
+// it is NOT the review judge: the review simply abstained.)
+func TestReview_NotInReviewSkipsTheJudge(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installPluginTree(t, proj)
+	// task-body-is-human-authored guards this same path at Pre, and its stage-1 script
+	// requires a grounding `[quote](jsonl)` link in the body — the bare to_do body below
+	// has none, so with task-body enabled the write would be REFUSED at Pre and never
+	// reach Stop (a false failure unrelated to the review). It also has a stage-2 judge
+	// sharing the single capturing stub, which would capture a prompt and mask what we
+	// measure. Disabling it removes both: the write lands, and the ONLY judge that can
+	// capture a prompt is task-review's — so an empty capture proves the REVIEW judge
+	// specifically did not run. task-evidence-resolves stays enabled (deterministic, no
+	// judge); it requires no evidence for a non-in_review task, so the to_do write lands.
+	e.DisableFileGuard(proj, "task-body-is-human-authored")
+	// A capturing judge: it records its prompt to a file, so a non-empty prompt is proof
+	// the model was invoked. Stubbed PASS so that IF it wrongly ran it would not itself
+	// refuse — the only signal read is whether a prompt was captured.
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
+
+	// to_do — not up for review — with NO delivery evidence. (No body citation needed:
+	// task-body is disabled, and task-evidence-resolves does not require evidence off an
+	// in_review task, so a bare to_do write lands and reaches the Stop review.)
+	body := "Will migrate the auth module later."
+	res := e.Run(proj, "s-review-todo", authPrompt, Turns("done",
+		Write("w1", taskPath, taskWithEvidence("to_do", "P1", body, nil, nil)),
+	))
+
+	if res.Refused() {
+		t.Fatalf("a to_do task write was refused at Pre — it should land and reach Stop:\n%s", res.Output)
+	}
+	if !e.Exists(proj, taskPath) {
+		t.Fatalf("the to_do task did not land on disk, so it never reached the Stop review")
+	}
+	// THE POINT: the review judge did not run for a non-in_review task.
+	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); prompt != "" {
+		t.Fatalf("the review judge WAS invoked for a to_do task (%d-byte prompt) — the skip did not abstain the check:\n%s", len(prompt), prompt)
+	}
+}
+
 // TestReview_ObservationNotAToolResultRefusedByPreflight: an in_review task whose
 // observation cites a transcript line that is NOT a tool_result (here the user's own
 // prompt line) is refused deterministically — task-review's pre-flight refuses when

@@ -76,11 +76,17 @@
 match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 
 checks:
-  # The gate + pre-flight: skips a non-in_review task (exit 0), refuses an
-  # in_review task whose evidence does not resolve (exit non-zero, `{"reason"}`).
+  # The gate + pre-flight: exits 0 for a non-in_review task, refuses an in_review
+  # task whose evidence does not resolve (exit non-zero, `{"reason"}`).
   - script: ./review-preflight.sh
 
-  # The judge, reached only for an in_review task whose citations all resolve.
+  # The judge. It is a SEPARATE check from the pre-flight — the pre-flight passing
+  # (exit 0) does not end the check chain, only a refusal does — so this would run
+  # for EVERY status without a gate of its own. Its prepare is that gate: for a
+  # non-in_review task expand-evidence.sh emits `{"skip": true}` and this check
+  # ABSTAINS, so the model is reached ONLY for an in_review task whose citations all
+  # resolve. Without the skip a to_do/in_progress task would pay for a review it is
+  # not up for.
   # model is size-md (engine default judge modelset); timeout 25s under the engine's 30s bound;
   # allowed_tools: [Read] adds Read on top of the engine-granted Write for the
   # verdict file (the evidence is already expanded INTO the prompt).

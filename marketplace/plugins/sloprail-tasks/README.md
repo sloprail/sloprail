@@ -111,9 +111,13 @@ evidence** and asks a model whether the evidence **substantiates** the claim.
 - A **script pre-flight** gates on `in_review` (most task writes cost nothing) and
   refuses deterministically if an observation is not a tool_result or an artifact
   does not resolve — there is nothing to review until the evidence resolves.
-- The **prepare** expands the frontmatter evidence to the bytes: each observation to
-  the **tool_result content** at its cited line, each artifact to the **cited tree
-  lines**. The **judge** weighs that delivered evidence against the claim — a task
+- The **prepare** gates on `in_review` a **second** time — it is a separate check
+  from the pre-flight, and a passing pre-flight does not stop it, so without its own
+  gate a to_do task would still pay for the model call. For a non-in_review task it
+  emits `{"skip": true}` and the judge check **abstains** (no model call, no verdict).
+  For an in_review task it expands the frontmatter evidence to the bytes: each
+  observation to the **tool_result content** at its cited line, each artifact to the
+  **cited tree lines**. The **judge** weighs that delivered evidence against the claim — a task
   claiming X with evidence showing X *happening* is approved even if X was a poor
   idea; the judge checks the gap between what the task says was done and what the
   evidence shows. Not substantiated → the turn is refused (the task stays
