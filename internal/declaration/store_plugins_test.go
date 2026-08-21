@@ -155,6 +155,47 @@ func TestNewWithPlugins_ProjectShadowsPlugin(t *testing.T) {
 	assert.Contains(t, sh.Message(), "takes precedence")
 }
 
+// A plugin-shipped STRUCTURE gate is loaded when the project ships none, and the
+// project's own structure gate takes precedence over a plugin's — the structure
+// gate is the one singleton nature, so "project shadows plugin" is the whole of
+// its precedence, and the displaced plugin gate is reported Shadowed, not dropped.
+func TestNewWithPlugins_ProjectShadowsPluginStructure(t *testing.T) {
+	const structureYAML = `
+allow:
+  - glob: "memories/updates/*.md"
+`
+	// First: a project with NO structure gate loads the plugin's.
+	projectNone := projectDotDir(t, nil)
+	plugin := pluginRoot(t, map[string]string{
+		"file-guard/structure.yaml": structureYAML,
+	})
+	store := NewWithPlugins(projectNone, []Origin{{Plugin: "sloprail", Root: plugin}})
+	loaded, err := store.Load(testRegistry(t))
+	require.NoError(t, err)
+	require.Empty(t, loaded.Invalid, "invalid: %v", invalidReasons(loaded))
+	require.NotNil(t, loaded.Structure, "the plugin's structure gate was not loaded")
+	assert.True(t, loaded.Structure.Origin.FromPlugin(), "the loaded structure gate is not tagged as from a plugin")
+	assert.Equal(t, "sloprail", loaded.Structure.Origin.Plugin)
+	assert.Empty(t, loaded.Shadowed, "nothing should be shadowed when the project ships no structure gate")
+
+	// Then: a project that DOES ship one wins, and the plugin's is shadowed.
+	projectOwn := projectDotDir(t, map[string]string{
+		"file-guard/structure.yaml": structureYAML,
+	})
+	store = NewWithPlugins(projectOwn, []Origin{{Plugin: "sloprail", Root: plugin}})
+	loaded, err = store.Load(testRegistry(t))
+	require.NoError(t, err)
+	require.NotNil(t, loaded.Structure)
+	assert.False(t, loaded.Structure.Origin.FromPlugin(), "the plugin's structure gate won, not the project's")
+
+	require.Len(t, loaded.Shadowed, 1)
+	sh := loaded.Shadowed[0]
+	assert.Equal(t, NatureStructure, sh.Nature)
+	assert.Equal(t, "sloprail", sh.Plugin)
+	assert.Empty(t, sh.WinnerPlugin, "the project won, so WinnerPlugin must be empty")
+	assert.Contains(t, sh.Message(), "takes precedence")
+}
+
 // Between two plugins that ship the same (nature, name), the EARLIER-listed one
 // wins and the later is shadowed — so the order the resolver is handed is the
 // precedence, and it must not be re-sorted.
