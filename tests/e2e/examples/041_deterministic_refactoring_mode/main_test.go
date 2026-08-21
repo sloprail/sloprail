@@ -11,19 +11,33 @@ import (
 )
 
 // This package is the end-to-end for the deterministic-refactoring-mode USE CASE
-// (strategy unit 12): a refactor must be MECHANICAL, not regenerated. A context
-// (`refactoring`) activates when the agent declares `#refactor scope=...` in its
-// prose, and a PREVENTIVE file-guard (`moved-content-reconciles`, PreToolUse)
-// then blocks any write of a file carrying an `sr:moved-from` marker whose body
-// does not reconcile byte-for-byte (minus imports/whitespace) against the origin
-// range the marker pins. The context's exit at Stop also refuses if a declared
-// marker was never written.
+// (strategy unit 12): a refactor must be MECHANICAL, not regenerated. Two halves:
+//
+//   - a PREVENTIVE file-guard (`moved-content-reconciles`, PreToolUse) blocks any
+//     write of a file carrying an `sr:moved-from` marker whose body does not
+//     reconcile byte-for-byte (minus imports/whitespace) against the origin range
+//     the marker pins. Relevant only inside the refactoring context (its match
+//     reads `context["refactoring"].active`). T041_01..05.
+//   - a COMPLETENESS check: a declared refactor's every promised move must land.
+//     This BLOCKS, so it is a Stop GATE (`gate/refactor-complete`), NOT the
+//     context's exit — a context's exit is pure lifecycle and cannot refuse a Stop
+//     (services/sr-session/nature_context.go). The gate reads the refactoring
+//     context's `declared_markers` and refuses at Stop if a declared move never
+//     landed. T041_06..08.
+//
+// The `refactoring` context TRACKS the declaration: it activates on PreToolUse (so
+// the file-guard's `.active` match holds before a write) and on PostTagWrite (which
+// fires at Stop, once the turn is settled, so enter can read `#refactor scope=...`
+// and populate declared_markers before the gate reads it). The declared scope
+// names the ACTUAL move fqns (`<path>@<sha>:<lines>`), so a declared token IS a
+// landed `sr:moved-from` marker's fqn — that literal correspondence is what lets
+// the gate check a completed move by a plain search of the tree.
 //
 // This is the one composite in the wave that works end to end against the engine
 // as shipped: it reads the context via the file-guard's `match:
-// context["refactoring"].active` (the sanctioned channel, not the non-existent
-// `state list --owner`) and resolves the origin via `git show <sha>:<path>` (no
-// cwd-relative grep). Its scripts DO ship with the execute bit.
+// context["refactoring"].active` and the gate's stdin `.context`, and resolves the
+// origin via `git show <sha>:<path>` (no cwd-relative grep). Its scripts DO ship
+// with the execute bit.
 //
 // # The combined turn
 //

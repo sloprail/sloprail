@@ -25,6 +25,21 @@ import (
 const reconcileRefusal = "does not reconcile against its origin"
 const originRefusal = "names a commit or path this checkout does not have"
 
+// completenessRefusal is the Stop GATE's wording (gate/refactor-complete), the
+// words that must reach the agent when a declared move never landed.
+const completenessRefusal = "Refactor declared but not complete"
+
+// declRefactor is the #refactor declaration prose. The scope names the ACTUAL fqn
+// a completed move's `sr:moved-from` marker carries — `<path>@<sha>:<start>-<end>`
+// — not a logical nickname. That is the bug-3 design: the declared token IS the
+// marker's fqn, so the Stop completeness gate can verify a literal correspondence
+// (a file carrying `sr:moved-from <this fqn>` exists) rather than guessing which
+// landed marker a nickname meant. Here the declared move is origin.go lines 1-3 at
+// the pinned commit — the exact fqn the moved file carries in these scenarios.
+func declRefactor(sha string) string {
+	return "Refactoring. #refactor scope=origin.go@" + sha + ":1-3"
+}
+
 // setupOrigin installs the example and commits an origin file whose lines 1-3 are
 // a self-contained function, returning the harness/project and the commit sha the
 // marker pins.
@@ -61,7 +76,7 @@ func TestT041_01_ReconcilingMoveAdmits(t *testing.T) {
 	sess := "s-041-01"
 	moved := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 1\n}\n"
 	res := e.Run(proj, sess, "move the function", Turns("done",
-		SayWrite("w1", "Refactoring. #refactor scope=sr:moved-from:beta", "dest.go", moved),
+		SayWrite("w1", declRefactor(sha), "dest.go", moved),
 	))
 
 	if res.Refused() {
@@ -86,7 +101,7 @@ func TestT041_02_NonReconcilingMoveRefused(t *testing.T) {
 	sess := "s-041-02"
 	movedBad := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 999\n}\n"
 	res := e.Run(proj, sess, "move the function", Turns("done",
-		SayWrite("w1", "Refactoring. #refactor scope=sr:moved-from:beta", "dest.go", movedBad),
+		SayWrite("w1", declRefactor(sha), "dest.go", movedBad),
 	))
 
 	if !res.Refused() {
@@ -118,8 +133,11 @@ func TestT041_03_UnfetchableOriginRefused(t *testing.T) {
 	// A sha that does not exist in the repo.
 	bogus := "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 	moved := "// sr:moved-from origin.go@" + bogus + ":1-3\nfunc Beta() int {\n\treturn 1\n}\n"
+	// The declaration names the fqn the agent will write (the bogus-sha move), so
+	// the declaration↔marker correspondence holds — the move is refused because the
+	// origin is unfetchable, so it never lands.
 	res := e.Run(proj, sess, "move the function", Turns("done",
-		SayWrite("w1", "Refactoring. #refactor scope=sr:moved-from:beta", "dest.go", moved),
+		SayWrite("w1", "Refactoring. #refactor scope=origin.go@"+bogus+":1-3", "dest.go", moved),
 	))
 
 	if !res.Refused() {
@@ -139,15 +157,21 @@ func TestT041_03_UnfetchableOriginRefused(t *testing.T) {
 // The control that proves the guard narrows to marked files: the guard's match is
 // `... and any(markers, .kind == "moved-from")`. A file without that marker is not
 // a declared move and must pass untouched. (Measured: the context half of the
-// match is effectively always active on a PreToolUse — see the package report —
-// so the marker is what actually narrows the guard; this pins that.)
+// match is effectively always active on a PreToolUse — the enter-decline is a
+// no-op — so the marker is what actually narrows the guard; this pins that.)
+//
+// The declaration here carries `#refactor` with NO `scope=`, so the completeness
+// gate has nothing to complete (empty declared_markers → the gate permits): this
+// test is about the file-guard's marker-narrowing, not completeness, and a scope
+// would drag the Stop gate into it. The completeness gate's own firing is proven
+// by T041_07 (blocks) and T041_08 (permits).
 func TestT041_04_UnmarkedWriteNotGuarded(t *testing.T) {
 	env, _ := setupOrigin(t)
 	e, proj := env.e, env.proj
 
 	sess := "s-041-04"
 	res := e.Run(proj, sess, "write an ordinary file", Turns("done",
-		SayWrite("w1", "Refactoring. #refactor scope=sr:moved-from:beta", "plain.go", "package x\n\nfunc Y() int { return 42 }\n"),
+		SayWrite("w1", "Refactoring. #refactor (no scope)", "plain.go", "package x\n\nfunc Y() int { return 42 }\n"),
 	))
 
 	if res.Refused() {
@@ -176,7 +200,7 @@ func TestT041_05_NonReconcilingReFiresUntilFixed(t *testing.T) {
 
 	// Cycle 1: bad move — refused, does not land.
 	res1 := e.Run(proj, sess, "move (regenerated)", Turns("done",
-		SayWrite("w1", "Refactoring. #refactor scope=sr:moved-from:beta", "dest.go", movedBad),
+		SayWrite("w1", declRefactor(sha), "dest.go", movedBad),
 	))
 	if !res1.Refused() || e.Exists(proj, "dest.go") {
 		t.Fatalf("cycle 1: the bad move was not blocked (refused=%v, exists=%v)", res1.Refused(), e.Exists(proj, "dest.go"))
@@ -185,7 +209,7 @@ func TestT041_05_NonReconcilingReFiresUntilFixed(t *testing.T) {
 	// Cycle 2: the SAME bad move again — refused again (re-fire: the guard is not
 	// used up by having refused once).
 	res2 := e.Run(proj, sess, "move (still regenerated)", Turns("done",
-		SayWrite("w2", "Refactoring. #refactor scope=sr:moved-from:beta", "dest.go", movedBad),
+		SayWrite("w2", declRefactor(sha), "dest.go", movedBad),
 	))
 	if !res2.Refused() {
 		t.Fatalf("cycle 2: the still-bad move was NOT refused again — the guard was wrongly used up:\n%s", res2.Output)
@@ -197,7 +221,7 @@ func TestT041_05_NonReconcilingReFiresUntilFixed(t *testing.T) {
 	// Cycle 3: FIX it — the exact origin bytes — admitted, and it lands.
 	movedGood := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 1\n}\n"
 	res3 := e.Run(proj, sess, "move (correct bytes)", Turns("done",
-		SayWrite("w3", "Refactoring. #refactor scope=sr:moved-from:beta", "dest.go", movedGood),
+		SayWrite("w3", declRefactor(sha), "dest.go", movedGood),
 	))
 	if res3.Refused() {
 		t.Errorf("cycle 3: the corrected (reconciling) move was refused:\n%s", res3.Output)

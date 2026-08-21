@@ -28,7 +28,7 @@ start="${range%-*}"; end="${range#*-}"
 
 origin="$(git show "$sha:$path" 2>/dev/null | sed -n "${start},${end}p")" || {
   cat <<EOF
-{"decision":"block","reason":"moved-from origin '$fqn' names a commit or path this checkout does not have — a move cannot be verified against bytes that are not here."}
+{"reason":"moved-from origin '$fqn' names a commit or path this checkout does not have — a move cannot be verified against bytes that are not here."}
 EOF
   exit 1
 }
@@ -42,7 +42,7 @@ origin_body="$(printf '%s' "$origin" | normalize)"
 
 if [ "$moved_body" != "$origin_body" ]; then
   cat <<EOF
-{"decision":"block","reason":"Content marked moved-from '$fqn' does not reconcile against its origin — after dropping imports and whitespace, the bytes differ. A move must carry the origin's bytes, not regenerated ones."}
+{"reason":"Content marked moved-from '$fqn' does not reconcile against its origin — after dropping imports and whitespace, the bytes differ. A move must carry the origin's bytes, not regenerated ones."}
 EOF
   exit 1
 fi

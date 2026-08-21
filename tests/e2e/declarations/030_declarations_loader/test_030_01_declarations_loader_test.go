@@ -168,7 +168,9 @@ func TestT030_05_ShippedExamplesLoadCleanThroughTheBinary(t *testing.T) {
 	// A representative spread across natures and both aliases: a gate with a
 	// PreFileWrite alias (required-context-precondition), a context with a
 	// PostFileWrite alias (eval-loop-maxing), a PostTagWrite context
-	// (research-rigor), and a structure gate (completeness-artifact-on-trigger).
+	// (research-rigor), a structure gate (completeness-artifact-on-trigger), and a
+	// gate+context+file-guard composite where a Stop gate reads a context's payload
+	// (deterministic-refactoring-mode).
 	for _, example := range []string{
 		"required-context-precondition",
 		"eval-loop-maxing",
@@ -176,6 +178,7 @@ func TestT030_05_ShippedExamplesLoadCleanThroughTheBinary(t *testing.T) {
 		"completeness-artifact-on-trigger",
 		"interlinking",
 		"marker-anchored-structure",
+		"deterministic-refactoring-mode",
 	} {
 		example := example
 		t.Run(example, func(t *testing.T) {
