@@ -31,7 +31,8 @@ Any **pre-action** kind (so a refactor can be spotted before a write via
 `PreToolUse`), plus the **`PostFile*` and `PostTagWrite`** kinds (so it can wake
 on a tag the agent just wrote, or a file that just landed). A context may **not**
 trigger on `Stop` — its `exit` is *always* checked on Stop anyway, so a Stop
-trigger would be redundant. Ask the load check for the build's exact list.
+trigger would be redundant. Ask the load check for the build's exact list, or see
+the per-nature admission table in [events.md](events.md).
 
 `PostFileWrite` is available here (context-only) as the alias for `PostFileCreate`
 + `PostFileUpdate`.
@@ -55,11 +56,12 @@ input="$(cat)"
 jq -n --arg scope "$scope" '{declared_markers: ($scope | split(",")), declared_at: "trajectory"}'
 ```
 
-**On stdin** `enter` receives a `ContextEnterPayload`: the flat `event` (read
+**On stdin** `enter` receives a **ContextEnterPayload**: the flat `event` (read
 `.event.path`, `.event.newContent`, `.event.tags`, `.event.kind`),
-`.transcriptPath`, `.currentContext` (this context's own last `{active,
-payload}` — because enter runs whether or not it was already active), and
-`.gates` (every declared gate's most recent verdict).
+`.transcriptPath`, `.currentContext` (this context's own last `{active, payload}`
+— because enter runs whether or not it was already active), and `.gates` (every
+declared gate's most recent verdict). Its full shape and the other payload
+envelopes are in [events.md](events.md).
 
 When a trigger's `match` already settled the condition (e.g. `any(event.tags,
 .label == "research")`), `enter` need not re-check it — activating unconditionally
@@ -117,10 +119,10 @@ fi
 exit 0
 ```
 
-**On stdin** `exit` receives a `ContextExitPayload`: the flat `event` (always the
-Stop, so only `.event.kind`), `.transcriptPath`, `.currentContext` (this
-context's own `{active, payload}` — where `payload` is what `enter` produced),
-and `.gates` (every gate's most recent verdict, by name).
+**On stdin** `exit` receives a **ContextExitPayload**: the flat `event` (always the
+Stop, so only `.event.kind`), `.transcriptPath`, `.currentContext` (this context's
+own `{active, payload}` — where `payload` is what `enter` produced), and `.gates`
+(every gate's most recent verdict, by name). Full shape in [events.md](events.md).
 
 ### A thin exit that reads a gate's verdict
 

@@ -21,8 +21,9 @@ checks:
 
 Three keys. `match` narrows to the files this rule is about (a glob or an
 expression — [matchers.md](matchers.md)). `checks` is the list of checks, run in
-order, first refusal ending it ([check-scripts.md](check-scripts.md)).
-`preventive` is the one nature-specific knob, below.
+order, first refusal ending it — each a script ([script-checks.md](script-checks.md))
+or a judge ([judge-checks.md](judge-checks.md)). `preventive` is the one
+nature-specific knob, below.
 
 A file-guard's match sees the file's own facts **bare**: `path`, `markers`,
 `context` — not `event.path`. It reasons about a settled file, so `markers` is
@@ -76,7 +77,9 @@ worth remembering when a cross-cycle rule records what it saw
 ## The pending bytes
 
 Create and update differ in how they answer "what will this file hold
-afterwards", and the difference decides which field a check reads.
+afterwards", and the difference decides which field a check reads. ([events.md](events.md)
+has the exact field set each file kind carries; this section is how a file-guard
+*uses* them.)
 
 A **create** carries the pending body in `newContent`. The file does not exist
 yet, so a check that wants to look at what would be written has nowhere else to
@@ -162,19 +165,15 @@ esac
 The `Post` kinds carry `newContent` too, but reading disk keeps that branch
 identical whatever a Post event happens to carry, and the bytes on disk **are**
 what the cycle produced. `SR_WORKSPACE` is set on the check's environment by the
-engine.
+engine ([environment.md](environment.md)).
 
 ## Markers
 
-A file event carries the `// sr:<kind>` markers as a **list** whose elements have
-a declared shape (`kind`, `fqn`, `line`) — so a mistyped key inside a predicate
-is refused at load rather than evaluating false forever. The field name says
-which text the markers were scanned from:
-
-- `newMarkers` — the markers the written result would carry. On a **create** it
-  is the only markers field; on an **update** it is the markers of `newContent`.
-- `oldMarkers` — the markers the file carries **now**, before the change. On an
-  **update** and a **delete**; a create has none.
+A file event carries the `// sr:<kind>` markers as a **list** of `{kind, fqn,
+line}` — `newMarkers` (the result's markers) on the create and update kinds,
+`oldMarkers` (the file's current markers) on the update and delete kinds. The
+per-kind field set and the element shape are in [events.md](events.md); read them
+in a check with a quantifier:
 
 ```
 any(newMarkers, .kind == "decision")     would the result carry one
