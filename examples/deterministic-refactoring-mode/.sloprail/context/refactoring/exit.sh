@@ -32,7 +32,7 @@ done
 
 if [ -n "$missing" ]; then
   cat <<EOF
-{"decision":"block","reason":"Refactor declared but not complete — these declared markers were never written:$missing. Finish the moves you declared, or the turn cannot end."}
+{"reason":"Refactor declared but not complete — these declared markers were never written:$missing. Finish the moves you declared, or the turn cannot end."}
 EOF
   exit 1
 fi

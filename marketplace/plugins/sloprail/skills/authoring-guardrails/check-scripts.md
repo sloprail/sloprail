@@ -174,8 +174,16 @@ model binary directly — so a template names neither `claude` nor a concrete mo
 `model:` is a modelset in sr-agent's format: a **size alias** (`size-xs` …
 `size-xxl`) or a concrete harness model name or a comma-separated preference list;
 omitted, it is the engine default `size-md`. `timeout:` is a Go duration (`45s`,
-`2m`) bounding the call; omitted, 30s. There is **no `allowed_tools` key** — a
-judge's tools are fixed by the substrate, not set per-check.
+`2m`) bounding the call; omitted, 30s.
+
+`allowed_tools:` is an optional list of tool names this judge's agent may use
+(`allowed_tools: [Read, WebFetch]`), threaded to `sr-agent`'s `--allowed-tools`.
+The substrate always grants the judge whatever it needs to write its verdict, so
+an empty/absent list still works — you name tools here only when the judge must do
+more than reason over what `prepare` already handed it (Read the file it judges,
+WebFetch a cited URL). It is a **judge-only key**: set on a script-only check it is
+a load error (a script gets its capabilities by being an executable, not from this
+list), and an empty string entry in the list is refused at load.
 
 ### Fail-closed by default
 
