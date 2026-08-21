@@ -27,20 +27,60 @@ import (
 // whole-YAML files, not frontmatter, so there is no fence to split — yaml.Unmarshal
 // reads the whole file.
 
-// Store reads the declarations a project keeps under its `.sloprail/` directory.
+// Store reads the declarations in force for a project: the ones it declares under
+// its own `.sloprail/` directory, and the ones it installed, which live inside the
+// plugins that ship them.
+//
+// The two are read the same way and validated by the same code, deliberately —
+// the exact stance internal/guardrail.Store takes for the old format. A plugin's
+// declaration is not a second kind of thing with its own rules; it is the same
+// declaration in a different place, and the moment the two paths diverge is the
+// moment a rule can behave one way for its author and another for the project that
+// installed it.
 //
 // Rooted at the `.sloprail` dir itself (not the project root), matching how
 // internal/guardrail.Store is rooted at the dot-directory: the store owns every
 // path beneath it, and a caller passes typed identifiers (a nature, a name), never
-// a built path. Plugin-shipped declarations are out of scope for this slice — the
-// old loader's plugin resolution stays where it is; this reads one project's own
-// `.sloprail`.
+// a built path. A plugin's own `.sloprail` sits at `<pluginRoot>/.sloprail`, the
+// same relative layout a project uses, so a rule can be developed in a project and
+// shipped in a plugin without being rewritten.
 type Store struct {
 	root string
+
+	// plugins are the installed plugins whose declarations this store also reads,
+	// in precedence order. Empty for a store built with New, which is every caller
+	// that has no business knowing about plugins — `sr-file validate` reads one
+	// project's declarations and nothing else. The plugins are supplied ALREADY
+	// RESOLVED (name and directory both) rather than discovered here: finding out
+	// which plugins a project installed is internal/harness's job, and this package
+	// takes the set of places to read from as an input. See NewWithPlugins.
+	plugins []Origin
 }
 
-// New returns a store rooted at a project's `.sloprail` directory.
+// New returns a store rooted at a project's `.sloprail` directory, reading only
+// the declarations the project itself declares.
 func New(root string) *Store { return &Store{root: root} }
+
+// NewWithPlugins returns a store that reads a project's own declarations AND the
+// ones shipped by the installed plugins given.
+//
+// projectRoot is the project's own `.sloprail` directory. The plugins are the
+// installation ROOTS of the enabled plugins (the directory holding a plugin's
+// `.sloprail/`, `hooks/`, `skills/`), each paired with the plugin NAME the user
+// enabled it by — an Origin. This division mirrors guardrail.NewWithPlugins
+// exactly: discovering which plugins a project installed means reading a specific
+// harness's settings files and cache layout, knowledge that belongs in
+// internal/harness and not spread into the loader. This package's job is to read
+// declarations; it takes the set of places to read them from as an input.
+//
+// The name arrives as part of the Origin rather than being derived from the
+// directory, because the name a user knows a plugin by is the one they wrote in
+// their settings, and a cache directory's name is an artefact they never see.
+// Deriving it here would mean guessing, and the guess would appear in refusal
+// messages and in the disable list — the two places a wrong name costs most.
+func NewWithPlugins(projectRoot string, plugins []Origin) *Store {
+	return &Store{root: projectRoot, plugins: plugins}
+}
 
 // Directory names beneath `.sloprail`, one per file-backed nature. The store owns
 // these — a caller never spells them.
@@ -88,6 +128,93 @@ type Loaded struct {
 	// sorted by their qualified name. Reported rather than fatal: the engine loads
 	// every sound declaration and refuses only the ones that are not.
 	Invalid []Invalid
+
+	// Shadowed are plugin declarations a declaration of the same (nature, name)
+	// displaced — the project's own, or an earlier-listed plugin's. Returned rather
+	// than applied silently, for the reason guardrail.Resolution.Shadowed is: a
+	// project that believes it has two protections and has one is the failure this
+	// product exists to prevent. The precedence IS applied (the winner is what
+	// loads); the consumer is merely told which rule they displaced and where it
+	// lives, so overriding stays a choice rather than an accident. See Shadow.
+	Shadowed []Shadow
+}
+
+// Shadow is one plugin declaration that a declaration of the same (nature, name)
+// took precedence over. It mirrors guardrail.Shadow, extended by the nature axis
+// the new format keys on (a plugin gate `x` does not shadow a project context
+// `x`).
+//
+// # Why the project wins
+//
+// A project must be able to override a rule it did not write. The alternative is
+// that installing a plugin can impose a rule the project cannot adjust except by
+// uninstalling the whole plugin — which makes the plugin all-or-nothing and
+// guarantees the first rule anyone disagrees with takes the useful ones down with
+// it.
+//
+// # Why it is REPORTED
+//
+// Silently is the failure this product exists to prevent. Both declarations load,
+// both are well-formed, and the tree looks exactly as it would if both enforced.
+// So the shadowing travels back to the caller as a fact to announce.
+type Shadow struct {
+	// Nature and Name are the (nature, name) both declarations share.
+	Nature Nature
+	Name   string
+
+	// Plugin is the plugin whose declaration was displaced, and PluginDir is where
+	// that displaced declaration sits — the path an author needs to read the rule
+	// they have overridden.
+	Plugin    string
+	PluginDir string
+
+	// WinnerDir is the folder that took precedence — the project's own, or an
+	// earlier-listed plugin's.
+	WinnerDir string
+
+	// WinnerPlugin is the plugin the winning declaration came from, empty when the
+	// project's own won. What distinguishes "you overrode this" from "one of your
+	// two plugins is quietly not enforcing", which need different remedies.
+	WinnerPlugin string
+}
+
+// Qualified is the shadowed declaration's disable key, so a report can tell the
+// consumer exactly what to write to silence the losing side if that is what they
+// meant. Keyed on the displaced plugin's origin.
+func (sh Shadow) Qualified() string {
+	return Origin{Plugin: sh.Plugin, Root: sh.PluginDir}.Qualified(sh.Nature, sh.Name)
+}
+
+// describeName renders the shadowed (nature, name) for a message — "file-guard
+// \"x\"" for a named nature, or bare "structure" for the singleton.
+func (sh Shadow) describeName() string {
+	if sh.Name == "" {
+		return string(sh.Nature)
+	}
+	return string(sh.Nature) + " " + quoteName(sh.Name)
+}
+
+// Message renders a shadow for a person, naming both sides and what to do about
+// it. One wording, here, because every hook point reports this and two copies
+// would drift — the same single-source rule guardrail.Shadow.Message follows.
+//
+// The two cases are worded apart because the remedy differs. A project overriding
+// a shipped rule is usually deliberate and needs only to be visible. One plugin
+// displacing another's rule is nobody's decision — the consumer installed both and
+// got an ordering they never chose — so that message says which one is live, or
+// the reader cannot tell which rule is running.
+func (sh Shadow) Message() string {
+	if sh.WinnerPlugin == "" {
+		return fmt.Sprintf(
+			"%s in this project takes precedence over the one plugin %q ships, "+
+				"so the plugin's version (%s) is not enforcing. "+
+				"Rename one of them if both were meant to run, or remove the project's copy to go back to the plugin's.",
+			sh.describeName(), sh.Plugin, sh.PluginDir)
+	}
+	return fmt.Sprintf(
+		"two installed plugins ship a %s: plugin %q is enforcing (%s) and plugin %q is not (%s). "+
+			"The earlier-installed one wins. Disable whichever you do not want with `disabled: [%s]` in %s.",
+		sh.describeName(), sh.WinnerPlugin, sh.WinnerDir, sh.Plugin, sh.PluginDir, sh.Qualified(), configFile)
 }
 
 // Invalid is a declaration that could not be read or could not do what it says,
@@ -105,6 +232,13 @@ type Invalid struct {
 	// singleton, which has no per-name folder.
 	Name string
 
+	// Origin says where this unloadable declaration was found. A broken rule needs
+	// attribution more than a working one does, not less: the refusal it causes
+	// tells an author to go and fix a file, and for a plugin's rule that file is not
+	// in their project and not theirs to fix. The zero value is a project's own.
+	// Mirrors guardrail.Invalid.Origin.
+	Origin Origin
+
 	// Path is where the unloadable declaration was found, so an author can open
 	// the exact file.
 	Path string
@@ -119,13 +253,20 @@ type Invalid struct {
 	Reason  string
 }
 
-// newInvalid builds an Invalid from the problems found, keeping every view of
-// them in step. The only place an Invalid is made.
-func newInvalid(nature Nature, name, path string, problems ...Problem) Invalid {
+// newInvalidWithOrigin builds an Invalid from the problems found, tagging it with
+// the origin the declaration was read from, and keeping every view of the problems
+// in step. The only place an Invalid is made.
+//
+// The origin is carried so a report about a rule that will not load names where
+// the file lives (Attribution) and a consumer can switch it off from their own
+// config (Qualified) — for a plugin's broken rule, the two facts they most need,
+// exactly as guardrail.Invalid carries its Origin.
+func newInvalidWithOrigin(nature Nature, name, path string, origin Origin, problems ...Problem) Invalid {
 	reasons := Messages(problems)
 	return Invalid{
 		Nature:   nature,
 		Name:     name,
+		Origin:   origin,
 		Path:     path,
 		Problems: problems,
 		Reasons:  reasons,
@@ -133,130 +274,255 @@ func newInvalid(nature Nature, name, path string, problems ...Problem) Invalid {
 	}
 }
 
-// Qualified names this declaration as "<nature>/<name>", the stable key a
-// diagnostic and a sort use — unique across natures where a bare name is not.
+// Qualified names this declaration as its disable key — "<nature>/<name>" for a
+// project's own, "<plugin>/<nature>/<name>" for a shipped one — the stable key a
+// diagnostic and a sort use, and the one a consumer writes to switch a broken
+// plugin declaration off (see Config). Unique across natures where a bare name is
+// not, and across plugins where a bare nature/name is not.
+//
+// Delegates to Origin.Qualified so a broken declaration and a sound one of the
+// same identity produce the SAME key — the disable list must reach a declaration
+// whose contents never parsed, so its key cannot depend on anything inside the
+// file, only on its origin, nature and folder name (all known from the path).
 func (iv Invalid) Qualified() string {
-	if iv.Name == "" {
-		return string(iv.Nature)
-	}
-	return string(iv.Nature) + "/" + iv.Name
+	return iv.Origin.Qualified(iv.Nature, iv.Name)
 }
 
-// Load reads every declaration under `.sloprail`, validating each against the
-// event vocabulary the given registry declares.
+// Attribution is this broken declaration's name as a refusal or diagnostic should
+// carry it — bare for a project's own, plus " from plugin X" for a shipped one,
+// so a report about a rule that will not load names where the file lives. Mirrors
+// guardrail.Invalid.Attribution.
+func (iv Invalid) Attribution() string {
+	if iv.Name == "" {
+		// The structure singleton has no name to quote; the origin alone says
+		// where it came from.
+		return string(iv.Nature) + iv.Origin.Describe()
+	}
+	return quoteName(iv.Name) + iv.Origin.Describe()
+}
+
+// Load reads every declaration in force — the project's own and the plugins' —
+// validating each against the event vocabulary the given registry declares, and
+// resolving precedence and the project's disable list.
 //
 // A project with no `.sloprail` directory, or one with none of a given nature's
 // folders, has no declarations of that kind — not an error, the ordinary state of
-// a project that has not adopted them.
+// a project that has not adopted them. A plugin root with no `.sloprail` is the
+// same: most plugins ship none.
 //
-// The load is TWO-PHASE for one reason: a `require: [{context: X}]` on any
-// declaration may name a context X declared in the context folder, and resolving
-// it needs the full set of context names in hand before ANY declaration is
-// validated. So phase one parses every context.yaml and collects the names, and
-// phase two validates everything (contexts included) against that set. Parsing a
-// context still happens once — its parsed form from phase one is reused in phase
-// two, not re-read.
+// # The order of operations, mirroring guardrail.Store.Resolve
+//
+//  1. PARSE every root — the project's own first, then each plugin's in order —
+//     tagging each declaration with its Origin. Parsing is separated from
+//     validating so the FULL set of context names (across all roots) is known
+//     before any declaration is validated: a `require: [{context: X}]` may name a
+//     context declared in another root, and it resolves as long as SOME root
+//     declares X, independent of who wins precedence.
+//  2. VALIDATE each parsed declaration against that environment. A declaration
+//     with any disabling problem becomes an Invalid.
+//  3. RESOLVE precedence: the project's declarations claim their (nature, name)
+//     first, so they win; between two plugins the earlier-listed wins. A
+//     displaced declaration is recorded as Shadowed rather than loaded — first
+//     writer wins, and it is never loaded even briefly.
+//  4. DISABLE: the project's own config (`.sloprail/config.yaml` `disabled:`) is
+//     applied last, filtering both the loaded set and the Invalid set — the
+//     consumer's final say over everything above, and the only way to switch off
+//     a plugin declaration that will not load (its file is in an install cache
+//     they must not edit). This is the exact shape guardrail.Store.Resolve uses.
 //
 // A nil registry parses and validates everything EXCEPT trigger `match`
 // expressions, which have no kind declaration to compile against — the same
 // position internal/guardrail.Load (versus LoadWith) takes. Every caller about to
 // act on what it loaded passes modules.Registry.
 func (s *Store) Load(reg *module.Registry) (Loaded, error) {
-	// Phase one: parse every nature's files. Parsing is separated from validating
-	// so the context names are known before validation runs. A parse failure
-	// (unreadable YAML) is recorded as an Invalid immediately — it needs no
-	// environment to diagnose.
-	fileGuards, fgInvalid, err := s.parseFileGuards()
-	if err != nil {
-		return Loaded{}, err
-	}
-	gates, gateInvalid, err := s.parseGates()
-	if err != nil {
-		return Loaded{}, err
-	}
-	contexts, ctxInvalid, err := s.parseContexts()
-	if err != nil {
-		return Loaded{}, err
-	}
-	structure, structInvalid, err := s.parseStructure()
+	// The project's disable list, read first so a config that exists and cannot be
+	// parsed refuses the whole load rather than silently re-enabling every rule the
+	// project switched off — the fail-closed guardrail.LoadConfig takes, for the
+	// same reason.
+	cfg, err := loadConfig(s.root)
 	if err != nil {
 		return Loaded{}, err
 	}
 
-	// The set of declared context names, from the contexts that PARSED. A context
-	// whose YAML did not parse contributes no name — a prerequisite naming it
-	// would (correctly) be reported as unknown, because a context the engine could
-	// not read is a context it cannot order against.
-	contextNames := make(map[string]bool, len(contexts))
-	for _, c := range contexts {
+	// -- 1. parse every root, project first, tagging origin --
+	//
+	// The origins to read, in precedence order: the project's own `.sloprail`
+	// (empty Origin) ahead of every plugin's, so the project's declarations are the
+	// ones already claimed when a plugin offers the same (nature, name).
+	roots := s.rootsInPrecedenceOrder()
+
+	var (
+		parsedFileGuards []FileGuard
+		parsedGates      []Gate
+		parsedContexts   []Context
+		parsedStructures []StructureGate // at most one per root; precedence picks the winner
+		parseInvalid     []Invalid
+	)
+	for _, r := range roots {
+		fgs, fgInvalid, err := parseFileGuards(r.dir, r.origin)
+		if err != nil {
+			return Loaded{}, err
+		}
+		gates, gateInvalid, err := parseGates(r.dir, r.origin)
+		if err != nil {
+			return Loaded{}, err
+		}
+		contexts, ctxInvalid, err := parseContexts(r.dir, r.origin)
+		if err != nil {
+			return Loaded{}, err
+		}
+		structure, structInvalid, err := parseStructure(r.dir, r.origin)
+		if err != nil {
+			return Loaded{}, err
+		}
+		parsedFileGuards = append(parsedFileGuards, fgs...)
+		parsedGates = append(parsedGates, gates...)
+		parsedContexts = append(parsedContexts, contexts...)
+		if structure != nil {
+			parsedStructures = append(parsedStructures, *structure)
+		}
+		parseInvalid = append(parseInvalid, fgInvalid...)
+		parseInvalid = append(parseInvalid, gateInvalid...)
+		parseInvalid = append(parseInvalid, ctxInvalid...)
+		parseInvalid = append(parseInvalid, structInvalid...)
+	}
+
+	// The set of declared context names, from the contexts that PARSED across ALL
+	// roots. A prerequisite naming a context declared in any root resolves — the
+	// name existing is what a require checks, and precedence only decides which
+	// declaration of that name wins, not whether the name exists. A context whose
+	// YAML did not parse contributes no name (correctly: a context the engine could
+	// not read is one it cannot order against).
+	contextNames := make(map[string]bool, len(parsedContexts))
+	for _, c := range parsedContexts {
 		contextNames[c.Name] = true
 	}
 	env := Env{Registry: reg, Contexts: contextNames}
 
-	var out Loaded
-	out.Invalid = append(out.Invalid, fgInvalid...)
-	out.Invalid = append(out.Invalid, gateInvalid...)
-	out.Invalid = append(out.Invalid, ctxInvalid...)
-	out.Invalid = append(out.Invalid, structInvalid...)
-
-	// Phase two: validate each parsed declaration against the environment. A
-	// declaration with any disabling problem becomes an Invalid; a sound one joins
-	// the loaded set.
-	for _, g := range fileGuards {
+	// -- 2. validate; the sound ones go forward to precedence, the broken to Invalid --
+	var (
+		soundFileGuards []FileGuard
+		soundGates      []Gate
+		soundContexts   []Context
+		soundStructures []StructureGate
+	)
+	invalid := append([]Invalid(nil), parseInvalid...)
+	for _, g := range parsedFileGuards {
 		if problems := ValidateFileGuard(g, env); Disabling(problems) {
-			out.Invalid = append(out.Invalid, newInvalid(NatureFileGuard, g.Name, s.fileGuardPath(g.Name), problems...))
+			invalid = append(invalid, newInvalidWithOrigin(NatureFileGuard, g.Name, fileGuardPath(originRoot(s.root, g.Origin), g.Name), g.Origin, problems...))
 			continue
 		}
-		out.FileGuards = append(out.FileGuards, g)
+		soundFileGuards = append(soundFileGuards, g)
 	}
-	for _, g := range gates {
+	for _, g := range parsedGates {
 		if problems := ValidateGate(g, env); Disabling(problems) {
-			out.Invalid = append(out.Invalid, newInvalid(NatureGate, g.Name, s.gatePath(g.Name), problems...))
+			invalid = append(invalid, newInvalidWithOrigin(NatureGate, g.Name, gatePath(originRoot(s.root, g.Origin), g.Name), g.Origin, problems...))
 			continue
 		}
-		out.Gates = append(out.Gates, g)
+		soundGates = append(soundGates, g)
 	}
-	for _, c := range contexts {
+	for _, c := range parsedContexts {
 		if problems := ValidateContext(c, env); Disabling(problems) {
-			out.Invalid = append(out.Invalid, newInvalid(NatureContext, c.Name, s.contextPath(c.Name), problems...))
+			invalid = append(invalid, newInvalidWithOrigin(NatureContext, c.Name, contextPath(originRoot(s.root, c.Origin), c.Name), c.Origin, problems...))
 			continue
 		}
-		out.Contexts = append(out.Contexts, c)
+		soundContexts = append(soundContexts, c)
 	}
-	if structure != nil {
-		if problems := ValidateStructureGate(*structure, env); Disabling(problems) {
-			out.Invalid = append(out.Invalid, newInvalid(NatureStructure, "", s.structurePath(), problems...))
-		} else {
-			out.Structure = structure
+	for _, sg := range parsedStructures {
+		if problems := ValidateStructureGate(sg, env); Disabling(problems) {
+			invalid = append(invalid, newInvalidWithOrigin(NatureStructure, "", structurePath(originRoot(s.root, sg.Origin)), sg.Origin, problems...))
+			continue
 		}
+		soundStructures = append(soundStructures, sg)
 	}
+
+	// -- 3. resolve precedence; a displaced declaration is Shadowed, not loaded --
+	var out Loaded
+	out.Invalid = invalid
+	resolveFileGuards(&out, soundFileGuards)
+	resolveGates(&out, soundGates)
+	resolveContexts(&out, soundContexts)
+	resolveStructure(&out, soundStructures)
+
+	// -- 4. apply the project's disable list to loaded AND invalid --
+	applyDisable(&out, cfg)
 
 	sortLoaded(&out)
 	return out, nil
 }
 
-// -- path construction (the store owns every path) --
+// rootHandle is one directory to read declarations from, and the Origin to tag
+// what is found there.
+type rootHandle struct {
+	dir    string
+	origin Origin
+}
 
-func (s *Store) natureDir(dir string) string { return filepath.Join(s.root, dir) }
-func (s *Store) fileGuardPath(name string) string {
-	return filepath.Join(s.root, dirFileGuard, name, fileFileGuard)
+// rootsInPrecedenceOrder is the project's own `.sloprail` (empty Origin) ahead of
+// each plugin's `.sloprail`, in the order the plugins were given. The order is the
+// precedence: the project claims a (nature, name) first, then plugins in turn, so
+// the project always wins and between two plugins the earlier-listed does. It is
+// why the caller must NOT sort the plugins after resolving which one wins — the
+// resolver sorts nothing.
+func (s *Store) rootsInPrecedenceOrder() []rootHandle {
+	roots := []rootHandle{{dir: s.root, origin: Origin{}}}
+	for _, p := range s.plugins {
+		roots = append(roots, rootHandle{dir: pluginDotDir(p.Root), origin: p})
+	}
+	return roots
 }
-func (s *Store) gatePath(name string) string { return filepath.Join(s.root, dirGate, name, fileGate) }
-func (s *Store) contextPath(name string) string {
-	return filepath.Join(s.root, dirContext, name, fileContext)
+
+// -- path construction (the store owns every path) --
+//
+// Package functions taking a root, because a load now reads several roots (the
+// project's own and each plugin's) and the root is therefore an argument rather
+// than a property of the store — the same shape guardrail's loadOne took when it
+// grew a second root.
+
+func natureDir(root, dir string) string { return filepath.Join(root, dir) }
+func fileGuardPath(root, name string) string {
+	return filepath.Join(root, dirFileGuard, name, fileFileGuard)
 }
-func (s *Store) structurePath() string { return filepath.Join(s.root, dirFileGuard, fileStructure) }
+func gatePath(root, name string) string { return filepath.Join(root, dirGate, name, fileGate) }
+func contextPath(root, name string) string {
+	return filepath.Join(root, dirContext, name, fileContext)
+}
+func structurePath(root string) string { return filepath.Join(root, dirFileGuard, fileStructure) }
+
+// pluginDotDir is where a plugin's declarations live inside its installation —
+// `<pluginRoot>/.sloprail`, the SAME relative layout a project uses, so a rule can
+// be developed in a project and shipped in a plugin without being rewritten. A
+// plugin ships declarations the way it already ships hooks/ and skills/: a
+// directory at its root named for what is in it.
+func pluginDotDir(pluginRoot string) string { return filepath.Join(pluginRoot, dotDirName) }
+
+// dotDirName is the directory a project (and a plugin) keeps its new-format
+// declarations in. Named here so the loader and the plugin-root resolution agree
+// on the spelling; it matches services/sr-session's DotDirName.
+const dotDirName = ".sloprail"
+
+// originRoot returns the `.sloprail` directory a declaration with this origin was
+// read from — the project's own projectRoot for a project declaration, or the
+// plugin's `.sloprail` for a shipped one. Used to rebuild a declaration's path for
+// an Invalid after validation, so a broken declaration names the exact file even
+// though validation does not carry the path.
+func originRoot(projectRoot string, o Origin) string {
+	if !o.FromPlugin() {
+		return projectRoot
+	}
+	return pluginDotDir(o.Root)
+}
 
 // -- per-nature parsing --
 //
-// Each parse* reads one nature's per-name folders, unmarshals each file, and
-// returns the parsed declarations alongside any Invalid for a file that would not
-// parse. Validation is NOT done here — it needs the environment assembled in
-// Load. A folder that does not exist yields nothing, not an error: the ordinary
-// state of a project that has not adopted that nature.
+// Each parse* reads one root's nature folders, unmarshals each file, tags it with
+// the origin, and returns the parsed declarations alongside any Invalid for a file
+// that would not parse. Validation is NOT done here — it needs the environment
+// assembled in Load. A folder that does not exist yields nothing, not an error:
+// the ordinary state of a project (or plugin) that has not adopted that nature.
 
-func (s *Store) parseFileGuards() ([]FileGuard, []Invalid, error) {
-	names, err := s.natureNames(dirFileGuard)
+func parseFileGuards(root string, origin Origin) ([]FileGuard, []Invalid, error) {
+	names, err := natureNames(root, dirFileGuard)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -265,21 +531,22 @@ func (s *Store) parseFileGuards() ([]FileGuard, []Invalid, error) {
 		invalid []Invalid
 	)
 	for _, name := range names {
-		path := s.fileGuardPath(name)
+		path := fileGuardPath(root, name)
 		var g FileGuard
 		if problems := parseYAMLFile(path, &g); problems != nil {
-			invalid = append(invalid, newInvalid(NatureFileGuard, name, path, problems...))
+			invalid = append(invalid, newInvalidWithOrigin(NatureFileGuard, name, path, origin, problems...))
 			continue
 		}
 		g.Name = name
-		g.Dir = filepath.Join(s.root, dirFileGuard, name)
+		g.Dir = filepath.Join(root, dirFileGuard, name)
+		g.Origin = origin
 		decls = append(decls, g)
 	}
 	return decls, invalid, nil
 }
 
-func (s *Store) parseGates() ([]Gate, []Invalid, error) {
-	names, err := s.natureNames(dirGate)
+func parseGates(root string, origin Origin) ([]Gate, []Invalid, error) {
+	names, err := natureNames(root, dirGate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -288,21 +555,22 @@ func (s *Store) parseGates() ([]Gate, []Invalid, error) {
 		invalid []Invalid
 	)
 	for _, name := range names {
-		path := s.gatePath(name)
+		path := gatePath(root, name)
 		var g Gate
 		if problems := parseYAMLFile(path, &g); problems != nil {
-			invalid = append(invalid, newInvalid(NatureGate, name, path, problems...))
+			invalid = append(invalid, newInvalidWithOrigin(NatureGate, name, path, origin, problems...))
 			continue
 		}
 		g.Name = name
-		g.Dir = filepath.Join(s.root, dirGate, name)
+		g.Dir = filepath.Join(root, dirGate, name)
+		g.Origin = origin
 		decls = append(decls, g)
 	}
 	return decls, invalid, nil
 }
 
-func (s *Store) parseContexts() ([]Context, []Invalid, error) {
-	names, err := s.natureNames(dirContext)
+func parseContexts(root string, origin Origin) ([]Context, []Invalid, error) {
+	names, err := natureNames(root, dirContext)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -311,24 +579,25 @@ func (s *Store) parseContexts() ([]Context, []Invalid, error) {
 		invalid []Invalid
 	)
 	for _, name := range names {
-		path := s.contextPath(name)
+		path := contextPath(root, name)
 		var c Context
 		if problems := parseYAMLFile(path, &c); problems != nil {
-			invalid = append(invalid, newInvalid(NatureContext, name, path, problems...))
+			invalid = append(invalid, newInvalidWithOrigin(NatureContext, name, path, origin, problems...))
 			continue
 		}
 		c.Name = name
-		c.Dir = filepath.Join(s.root, dirContext, name)
+		c.Dir = filepath.Join(root, dirContext, name)
+		c.Origin = origin
 		decls = append(decls, c)
 	}
 	return decls, invalid, nil
 }
 
-// parseStructure reads the structure singleton, if present. Absent is nil, not an
-// error — most projects declare no structure gate. Unlike the per-name natures it
-// is one fixed file, so there are no names to enumerate.
-func (s *Store) parseStructure() (*StructureGate, []Invalid, error) {
-	path := s.structurePath()
+// parseStructure reads one root's structure singleton, if present. Absent is nil,
+// not an error — most projects (and plugins) declare no structure gate. Unlike the
+// per-name natures it is one fixed file, so there are no names to enumerate.
+func parseStructure(root string, origin Origin) (*StructureGate, []Invalid, error) {
+	path := structurePath(root)
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil, nil
@@ -338,27 +607,28 @@ func (s *Store) parseStructure() (*StructureGate, []Invalid, error) {
 	}
 	var sg StructureGate
 	if problems := parseYAML(path, data, &sg); problems != nil {
-		return nil, []Invalid{newInvalid(NatureStructure, "", path, problems...)}, nil
+		return nil, []Invalid{newInvalidWithOrigin(NatureStructure, "", path, origin, problems...)}, nil
 	}
-	sg.Dir = filepath.Join(s.root, dirFileGuard)
+	sg.Dir = filepath.Join(root, dirFileGuard)
+	sg.Origin = origin
 	return &sg, nil, nil
 }
 
-// natureNames lists the per-name subfolders of one nature's directory, in a
-// stable order. A missing directory yields no names, not an error.
+// natureNames lists the per-name subfolders of one nature's directory under a
+// root, in a stable order. A missing directory yields no names, not an error.
 //
 // Only DIRECTORIES are names — a nature's folder holds one subfolder per
 // declaration, each carrying the nature's yaml plus its scripts. A stray FILE in
 // the nature directory (structure.yaml is the one legitimate case, and it sits in
 // file-guard/) is not a name and is skipped here; structure.yaml is read by its
 // own parseStructure, not through this enumeration.
-func (s *Store) natureNames(dir string) ([]string, error) {
-	entries, err := os.ReadDir(s.natureDir(dir))
+func natureNames(root, dir string) ([]string, error) {
+	entries, err := os.ReadDir(natureDir(root, dir))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("declaration: read %s: %w", s.natureDir(dir), err)
+		return nil, fmt.Errorf("declaration: read %s: %w", natureDir(root, dir), err)
 	}
 	var names []string
 	for _, e := range entries {
@@ -400,9 +670,160 @@ func parseYAML(path string, data []byte, dst any) []Problem {
 // sortLoaded orders every slice in a Loaded by name, so two loads of the same
 // project produce the same order — a diff of two reports is signal, not the noise
 // directory iteration order would inject.
+//
+// Sorting the loaded slices AFTER precedence is safe: precedence is decided by
+// claiming during resolution (first writer wins), not by the final order, so a
+// name-sort here reorders the winners without changing who won. The Shadowed slice
+// is sorted too, so a report of displacements is stable across runs.
 func sortLoaded(l *Loaded) {
 	sort.Slice(l.FileGuards, func(i, j int) bool { return l.FileGuards[i].Name < l.FileGuards[j].Name })
 	sort.Slice(l.Gates, func(i, j int) bool { return l.Gates[i].Name < l.Gates[j].Name })
 	sort.Slice(l.Contexts, func(i, j int) bool { return l.Contexts[i].Name < l.Contexts[j].Name })
 	sort.Slice(l.Invalid, func(i, j int) bool { return l.Invalid[i].Qualified() < l.Invalid[j].Qualified() })
+	sort.Slice(l.Shadowed, func(i, j int) bool { return l.Shadowed[i].Qualified() < l.Shadowed[j].Qualified() })
+}
+
+// -- precedence resolution --
+//
+// Each resolve* walks the SOUND declarations of one nature in the order they were
+// parsed (project's own first, then plugins in the given order), and claims each
+// (nature, name). The first to claim a name wins and is loaded; a later
+// declaration of the same name is recorded as Shadowed and NOT loaded — first
+// writer wins, so the project always does and between two plugins the earlier
+// does. This is guardrail.Store.Resolve's claim loop, per nature.
+//
+// Only sound declarations are resolved here. A broken declaration is already an
+// Invalid; whether a broken PLUGIN declaration a project has overridden should
+// still be reported is a real question the old format answers (it reports the
+// shadow), but the new format's dispatch already treats an Invalid as blocking
+// nothing and every hook point reports the full Invalid set, so a broken shadowed
+// plugin declaration surfaces as an Invalid the consumer can disable by its
+// qualified name — the same remedy. Keeping the broken-and-shadowed bookkeeping
+// out of here avoids inventing a second reporting path for a case the Invalid set
+// already covers.
+
+func resolveFileGuards(out *Loaded, sound []FileGuard) {
+	claimed := map[string]FileGuard{}
+	for _, g := range sound {
+		if prior, taken := claimed[g.Name]; taken {
+			out.Shadowed = append(out.Shadowed, shadowOf(NatureFileGuard, g.Name, g.Origin, g.Dir, prior.Origin, prior.Dir))
+			continue
+		}
+		claimed[g.Name] = g
+		out.FileGuards = append(out.FileGuards, g)
+	}
+}
+
+func resolveGates(out *Loaded, sound []Gate) {
+	claimed := map[string]Gate{}
+	for _, g := range sound {
+		if prior, taken := claimed[g.Name]; taken {
+			out.Shadowed = append(out.Shadowed, shadowOf(NatureGate, g.Name, g.Origin, g.Dir, prior.Origin, prior.Dir))
+			continue
+		}
+		claimed[g.Name] = g
+		out.Gates = append(out.Gates, g)
+	}
+}
+
+func resolveContexts(out *Loaded, sound []Context) {
+	claimed := map[string]Context{}
+	for _, c := range sound {
+		if prior, taken := claimed[c.Name]; taken {
+			out.Shadowed = append(out.Shadowed, shadowOf(NatureContext, c.Name, c.Origin, c.Dir, prior.Origin, prior.Dir))
+			continue
+		}
+		claimed[c.Name] = c
+		out.Contexts = append(out.Contexts, c)
+	}
+}
+
+// resolveStructure claims the single structure gate. The structure gate is a
+// singleton per root, so the FIRST root that declares one wins — the project's own
+// over any plugin's, and an earlier plugin's over a later one's — and every other
+// is Shadowed. This is the same "first writer wins" the per-name natures use,
+// applied to the one nature that has no name.
+func resolveStructure(out *Loaded, sound []StructureGate) {
+	for _, sg := range sound {
+		if out.Structure != nil {
+			prior := out.Structure
+			out.Shadowed = append(out.Shadowed, shadowOf(NatureStructure, "", sg.Origin, sg.Dir, prior.Origin, prior.Dir))
+			continue
+		}
+		winner := sg
+		out.Structure = &winner
+	}
+}
+
+// shadowOf builds the Shadow record for a displaced declaration: what was
+// displaced (loser's origin/dir) and what displaced it (winner's origin/dir). The
+// winner may be the project (empty WinnerPlugin) or an earlier plugin — the two
+// cases a report words differently, because the remedy differs.
+func shadowOf(nature Nature, name string, loser Origin, loserDir string, winner Origin, winnerDir string) Shadow {
+	return Shadow{
+		Nature:       nature,
+		Name:         name,
+		Plugin:       loser.Plugin,
+		PluginDir:    loserDir,
+		WinnerDir:    winnerDir,
+		WinnerPlugin: winner.Plugin,
+	}
+}
+
+// applyDisable removes from the loaded AND invalid sets every declaration the
+// project's config switches off, keyed on the qualified name.
+//
+// Filtered out entirely rather than marked, so a disabled declaration is inert in
+// the same way across natures: it never dispatches, no check runs for it. The
+// INVALID ones are filtered too, and that half is the one that matters most — a
+// declaration that cannot load blocks nothing but is reported every dispatch, and
+// when it is a plugin's the consumer cannot fix the file (it is in an install
+// cache). Without reaching the invalid set, a plugin shipping one broken
+// declaration would keep a consuming project's logs noisy with a report they have
+// no way to silence. This is guardrail.Store.Resolve's disable step, applied to
+// every nature.
+func applyDisable(out *Loaded, cfg config) {
+	if len(cfg.Disabled) == 0 {
+		return
+	}
+
+	fgs := out.FileGuards[:0]
+	for _, g := range out.FileGuards {
+		if cfg.isDisabled(g.Qualified()) {
+			continue
+		}
+		fgs = append(fgs, g)
+	}
+	out.FileGuards = fgs
+
+	gates := out.Gates[:0]
+	for _, g := range out.Gates {
+		if cfg.isDisabled(g.Qualified()) {
+			continue
+		}
+		gates = append(gates, g)
+	}
+	out.Gates = gates
+
+	contexts := out.Contexts[:0]
+	for _, c := range out.Contexts {
+		if cfg.isDisabled(c.Qualified()) {
+			continue
+		}
+		contexts = append(contexts, c)
+	}
+	out.Contexts = contexts
+
+	if out.Structure != nil && cfg.isDisabled(out.Structure.Qualified()) {
+		out.Structure = nil
+	}
+
+	invalid := out.Invalid[:0]
+	for _, iv := range out.Invalid {
+		if cfg.isDisabled(iv.Qualified()) {
+			continue
+		}
+		invalid = append(invalid, iv)
+	}
+	out.Invalid = invalid
 }

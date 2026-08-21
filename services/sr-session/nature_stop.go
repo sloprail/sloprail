@@ -86,7 +86,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	//    (re-fire), collects refusals.
 	for _, r := range runFileGuardsPost(cmd, loaded.FileGuards, postFileEvents, rev, scope, root, contextMap) {
 		if r.Refused {
-			refusals = append(refusals, r.Reason+" (file-guard "+r.Name+")")
+			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
 		}
 	}
 
@@ -100,7 +100,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	stop := cyclemod.Event()
 	for _, r := range runGatesForEvents(cmd, reg, loaded.Gates, []event.Event{stop}, scope, store, contextMap, gatesMap) {
 		if r.Refused {
-			refusals = append(refusals, r.Reason+" (gate "+r.Name+")")
+			refusals = append(refusals, r.Reason+" (gate "+r.Attribution+")")
 		}
 	}
 

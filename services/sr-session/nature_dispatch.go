@@ -11,6 +11,7 @@ import (
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/guardrail"
+	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
@@ -132,34 +133,112 @@ const gatesGuardrailKey = "!sloprail:gates"
 // is one entry per gate and ListState with this prefix reads them all back.
 const gateStatePrefix = "gate:"
 
-// newNatureDeclarations loads the project's new-format `.sloprail` declarations,
-// reporting any that could not be loaded on the same channel the old format uses.
+// newNatureDeclarations loads the new-format declarations in force for a session:
+// the project's own under `.sloprail`, PLUS those shipped by the plugins the
+// project has enabled. Any that could not be loaded are reported on the same
+// channel the old format uses, as are unresolved plugins and shadowed declarations.
 //
-// Rooted at the project's own `.sloprail` (dotDir), NOT the plugin-resolving store
-// the old format uses: this slice reads one project's own declarations. Plugin
-// distribution of new-format rules is out of scope here, the same boundary
-// internal/declaration.Store draws.
+// # Plugin resolution mirrors the old path exactly
+//
+// The enabled-plugin set is resolved the SAME way guardrailStore (dotdir.go)
+// resolves it for the old format: internal/harness reads the project's own
+// `.claude/settings.json` and `settings.local.json`, locates each enabled plugin's
+// installation, and returns its root. Those roots become declaration.Origins, and
+// declaration.NewWithPlugins reads each plugin's own `.sloprail` alongside the
+// project's. This is deliberately not a second discovery mechanism — harness.Resolve
+// is harness-generic plugin discovery, not old-format-specific, so both formats
+// find the same plugins the same way and cannot come to disagree about which are
+// installed.
+//
+// # Fail-open parity with the old dispatch
+//
+// Every failure here is REPORTED and treated as "no plugin declarations", never as
+// a refusal, matching the old dispatch's stance:
+//
+//   - No home directory (the install cache cannot be located): reported, and the
+//     load falls back to the project's own declarations only. The old path returns
+//     the error to its caller; the new dispatch has no error channel to its hook
+//     wrapper, so it degrades to project-only and says so — the same "half the
+//     rules is worse than none of the plugin's" tension, resolved toward keeping
+//     the project's own rules live rather than dropping everything.
+//   - harness.Resolve error (a settings file that exists but cannot be read or
+//     parsed): reported, project-only. guardrail's own path refuses the action on
+//     this; here the new dispatch reports and runs project-only so a broken
+//     settings file does not disarm the project's own new-format rules, which the
+//     old format's dispatch is simultaneously enforcing from the same settings.
+//   - Unresolved enabled plugins (a plugin the project enabled whose files were not
+//     found): reported LOUDLY via reportUnresolved — the same call the old path
+//     makes — so a plugin whose guardrails silently vanished is named on the next
+//     tool call rather than never. This is the whole safety property of reading a
+//     harness's configuration from in here.
+//   - An unreadable store (a `.sloprail` directory that will not list): reported
+//     and treated as empty, since a directory that gives the engine nothing to
+//     enforce must not make it refuse every action the agent cannot fix.
 //
 // A registry is required so trigger matches can be evaluated — the loader compiles
-// them against the module vocabulary. Returns the loaded set; a load error at the
-// store level (the directory could not be listed) is reported and yields an empty
-// set, matching the old dispatch's "report and permit" for an unreadable store.
+// them against the module vocabulary.
 func newNatureDeclarations(cmd *cobra.Command, cwd string, reg *module.Registry) declaration.Loaded {
-	store := declaration.New(dotDir(cwd))
+	store, unresolved := natureDeclarationStore(cmd, cwd)
+	// Reported here, once per load, the same as reportUnresolved is called at every
+	// old-format hook point — a plugin that could not be located is named on every
+	// dispatch, not only at a session start nobody was watching.
+	reportUnresolved(cmd, unresolved)
+
 	loaded, err := store.Load(reg)
 	if err != nil {
-		// The store itself could not be read. Reported and treated as empty, the
-		// same as the old dispatch does for an unreadable guardrails directory: an
-		// engine deciding on its own that nothing was declared is the fail-open this
-		// codebase closes elsewhere, but a directory that will not list gives it
-		// nothing to enforce and refusing every action punishes a fault the agent
-		// cannot fix.
+		// The store itself could not be read (an unreadable `.sloprail`, or a
+		// config.yaml that exists and cannot be parsed). Reported and treated as
+		// empty, the same as the old dispatch does for an unreadable guardrails
+		// directory: an engine deciding on its own that nothing was declared is the
+		// fail-open this codebase closes elsewhere, but a directory that will not
+		// list gives it nothing to enforce and refusing every action punishes a
+		// fault the agent cannot fix.
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"sloprail: the new-format declarations in this project could not be read: %v\n", err)
 		return declaration.Loaded{}
 	}
 	reportNatureInvalid(cmd, loaded.Invalid)
+	reportNatureShadowed(cmd, loaded.Shadowed)
 	return loaded
+}
+
+// natureDeclarationStore builds the plugin-aware declaration store for a session,
+// resolving the enabled plugins the same way guardrailStore does, and returns the
+// unresolved plugins alongside so the caller can report them.
+//
+// On any resolution failure it returns a PROJECT-ONLY store (the project's own
+// `.sloprail`, no plugins) rather than nil, so the caller always has a store to
+// load and the project's own new-format rules keep enforcing even when plugin
+// discovery could not run. The failure is reported here; the empty store is what
+// the caller proceeds with.
+func natureDeclarationStore(cmd *cobra.Command, cwd string) (*declaration.Store, []harness.Unresolved) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Without a home directory the install cache cannot be found. Reported, and
+		// the load proceeds with the project's own declarations — a session that
+		// enforces the project's own rules is better than one that enforces nothing
+		// because it could not find the plugin cache.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"sloprail: plugin-shipped new-format declarations not loaded (no home directory to locate the plugin cache): %v\n", err)
+		return declaration.New(dotDir(cwd)), nil
+	}
+
+	res, err := harness.Resolve(projectDir(cwd), home)
+	if err != nil {
+		// A settings file that exists and cannot be read or parsed. Reported, and
+		// the load proceeds project-only. The old format refuses the action here;
+		// the new dispatch keeps the project's own new-format rules live rather than
+		// disarming them over a settings file the old format is reading from too.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"sloprail: plugin-shipped new-format declarations not loaded (the project's plugin settings could not be read): %v\n", err)
+		return declaration.New(dotDir(cwd)), nil
+	}
+
+	plugins := make([]declaration.Origin, 0, len(res.Roots))
+	for _, r := range res.Roots {
+		plugins = append(plugins, declaration.Origin{Plugin: r.Plugin.Name, Root: r.Dir})
+	}
+	return declaration.NewWithPlugins(dotDir(cwd), plugins), res.Unresolved
 }
 
 // reportNatureInvalid names every new-format declaration that could not be loaded,
@@ -171,19 +250,45 @@ func newNatureDeclarations(cmd *cobra.Command, cwd string, reg *module.Registry)
 // raised for a rule that could not load, matching the old format's settled rule.
 func reportNatureInvalid(cmd *cobra.Command, invalid []declaration.Invalid) {
 	for _, iv := range invalid {
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: declaration %s not loaded:\n", iv.Qualified())
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: declaration %s not loaded:\n", iv.Attribution())
 		for _, reason := range iv.Reasons {
 			fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", reason)
 		}
 	}
 }
 
-// gateResult is one gate's outcome on one fired event: the gate's name, whether it
-// refused, and the reason to relay.
+// reportNatureShadowed says which plugin-shipped new-format declarations a
+// declaration of the same (nature, name) displaced — the project's own, or an
+// earlier plugin's.
+//
+// Reported at the same point the invalid set is, for the reason guardrail's
+// reportShadowed is: a project that displaced a shipped rule and was never told
+// believes it has two protections and has one. Stderr is a weak channel beside a
+// PERMITTED action (it reaches no agent at exit 0, per the table in refuseForBroken),
+// and that is accepted rather than escalated: shadowing is not a broken rule — both
+// declarations are well-formed and the winner is enforcing — and refusing every
+// action because a project overrode a rule would make overriding impossible, which
+// is the capability the mechanism exists to provide. The warning belongs where a
+// person looking for it will find it.
+func reportNatureShadowed(cmd *cobra.Command, shadowed []declaration.Shadow) {
+	for _, sh := range shadowed {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s\n", sh.Message())
+	}
+}
+
+// gateResult is one gate's outcome on one fired event: the gate's name, how a
+// refusal should attribute it, whether it refused, and the reason to relay.
+//
+// Attribution carries the plugin-aware name (the bare name for a project's gate,
+// the name plus " from plugin X" for a shipped one), so a refusal names where a
+// gate a project never wrote actually lives — the same reason the old format
+// attributes a refusal by Origin. Name stays for the diagnostics that key on the
+// bare folder name (the re-entry guard, the state map).
 type gateResult struct {
-	Name    string
-	Refused bool
-	Reason  string
+	Name        string
+	Attribution string
+	Refused     bool
+	Reason      string
 }
 
 // runGatesForEvents runs every gate whose `on` trigger matches one of the fired
@@ -257,11 +362,12 @@ func runGatesForEvents(
 			// The runner itself could not decide (a programming error, not a check
 			// refusal — the runner turns a check that cannot run into a refusal
 			// rather than an error). Fail-closed: refuse, naming the gate.
-			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: gate %q: %v\n", g.Name, err)
+			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: gate %s: %v\n", g.Attribution(), err)
 			results = append(results, gateResult{
-				Name:    g.Name,
-				Refused: true,
-				Reason:  fmt.Sprintf("the gate %q could not be evaluated (%v); refusing because a gate that could not decide must not be read as approval", g.Name, err),
+				Name:        g.Name,
+				Attribution: g.Attribution(),
+				Refused:     true,
+				Reason:      fmt.Sprintf("the gate %s could not be evaluated (%v); refusing because a gate that could not decide must not be read as approval", g.Attribution(), err),
 			})
 			recordGateVerdict(cmd, store, gatesMap, g.Name, natures.GateStatusFail)
 			continue
@@ -274,7 +380,7 @@ func runGatesForEvents(
 		recordGateVerdict(cmd, store, gatesMap, g.Name, status)
 
 		if verdict.Refused {
-			results = append(results, gateResult{Name: g.Name, Refused: true, Reason: verdict.Reason})
+			results = append(results, gateResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: verdict.Reason})
 		}
 	}
 	return results

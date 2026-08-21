@@ -85,7 +85,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	results := runGatesForEvents(cmd, reg, loaded.Gates, events, scope, store, contextMap, gatesMap)
 	for _, r := range results {
 		if r.Refused {
-			return natureVerdict{Blocked: fmt.Sprintf("%s (gate %s)", r.Reason, r.Name)}
+			return natureVerdict{Blocked: fmt.Sprintf("%s (gate %s)", r.Reason, r.Attribution)}
 		}
 	}
 	return natureVerdict{}
