@@ -45,31 +45,22 @@ import (
 // T021_01 reproduced the defect and was deleted when the fix landed, on its own
 // instructions. T021_02 is the invariant it guarded and is now live.
 
-// bindPostFileEvents records every after-the-fact file event the cycle
-// dispatches, so a test can read exactly which paths were put in front of a rule
-// bound to the ROOT's own work.
-const bindPostFileEvents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records every after-the-fact file event it is handed
+// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
+// file event the cycle dispatches, so a test can read exactly which paths were put
+// in front of a rule bound to the ROOT's own work. `match: "**/*.md"` fires on
+// whichever Post kind each change produced. (Re-vehicled from the old GUARDRAIL.md
+// hooks per tests/e2e/REVEHICLE-PATTERN.md; used by T021_03, which drives the real
+// dispatch. T021_02 above reads gitrepo.Changed directly and is format-neutral.)
+// The ledger (`seen`, no `.md`) is not matched, so the guard cannot re-observe its
+// own bookkeeping.
+const recordEverything = `match: "**/*.md"
+checks:
+  - script: ./record.sh
 `
 
 const recordScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
+cat >> "$SR_GUARDRAIL_DIR/seen"
+echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
@@ -78,21 +69,23 @@ type observed struct {
 	Path string
 }
 
+// observedFiles decodes what a file-guard's check was handed — the FLAT event,
+// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
+// the old nested `event.fields` envelope.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -294,7 +287,7 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 
@@ -326,7 +319,7 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 			"the pollution this test is about is not present, so its conclusion would be vacuous", others)
 	}
 
-	got := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 
 	// The control: the root's own work reached the rule.
 	if !sawPath(got, "root-own.md") {

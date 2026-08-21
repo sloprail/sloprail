@@ -13,94 +13,123 @@
 //
 // # Why the shape of "empty" is the thing under test
 //
-// The engine marshals a subjectless event as `"fields":{}` rather than as
-// `null`, and internal/event says why in the code: a hook doing the obvious
-// thing with null — `.fields.path` in jq, `["fields"].get("path")` in Python —
-// gets an ERROR where it gets a clean miss on `{}`. The hook then exits
-// non-zero, and a non-zero exit is a refusal. An event carrying nothing would
-// refuse the work it was reporting on.
+// A subjectless event must reach a check as an OBJECT carrying only its kind,
+// never as a null. internal/declaration's FlatEvent says why in its own code: a
+// nil Fields marshals to `{"kind":"Stop"}` — "an object, never a null, so a script
+// indexing `.event.<anything>` gets a clean miss rather than an error". A hook
+// doing the obvious thing with null — `.event.path` in jq — errors, exits
+// non-zero, and a non-zero exit is a refusal; an event carrying nothing would then
+// refuse the work it was only reporting on. That makes the distinction a
+// difference between a working guardrail and one that blocks every cycle, so it is
+// asserted as the literal wire shape: the flat `event` object carries `kind` and
+// NO subject key, rather than being null.
 //
-// That makes the distinction between `{}` and `null` a difference between a
-// working guardrail and one that blocks every cycle, so it is asserted as the
-// literal wire shape rather than as "no path was set". A test checking only
-// that `path` was absent passes on `null`, which is the broken case.
+// # RE-VEHICLED onto the NEW-format nature dispatch (was old GUARDRAIL.md hooks)
+//
+// Stop is a GateEventKind, so a rule bound to Stop is now a GATE that wakes on it,
+// and the gate's check is what the Stop event is handed to. Every OTHER kind here
+// (PreFileCreate, PreCommandInvoke) is a GateEventKind too, so the subject-naming
+// half is a gate on those pre-action kinds. The mechanical transformation is the
+// one in tests/e2e/REVEHICLE-PATTERN.md: the check receives the FLAT event
+// (`.event.kind`, `.event.path`, `.event.invocations`), never the old nested
+// `.event.fields`, and the subjectless-Stop assertion is read against that flat
+// shape — `{"kind":"Stop"}`, an object with no subject, which is the flat-form
+// version of the old `"fields":{}`.
 //
 // # Where Stop comes from
 //
-// It is dispatched at the end of a cycle by the Stop hook, appended
-// UNCONDITIONALLY after whatever the tree difference produced — see
-// runPostDispatch. Nothing a scenario does makes it fire and nothing makes it
-// stop firing, which is exactly what T026_02 pins.
+// It is dispatched at the end of a cycle by the Stop dispatch, appended
+// UNCONDITIONALLY after whatever the tree difference produced. Nothing a scenario
+// does makes it fire and nothing makes it stop firing, which is what T026_02 pins.
 package e2e
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// boundToStop records the whole event it was handed, once per cycle.
-//
-// No matcher. Stop's kind declaration carries no fields at all, so there is
-// nothing a matcher could narrow on — which is itself part of the invariant and
-// is pinned separately by T026_04.
-const boundToStop = `---
-hooks:
-  Stop:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records the cycle-end event it is given
+// boundToStop is a NEW-FORMAT gate that wakes on Stop and records the event it was
+// handed, once per cycle. No `match`: Stop's kind declaration carries no fields at
+// all, so there is nothing a match could narrow on — which is itself part of the
+// invariant and is pinned separately by T026_04. Its check permits, so nothing
+// here blocks except where a test's own check refuses.
+const boundToStop = `on:
+  - event: Stop
+checks:
+  - script: ./record.sh
 `
 
-// recordEvent writes the hook's entire stdin payload to the ledger as one line,
-// so the test can read the event off the wire exactly as the hook received it.
+// recordEvent writes the check's entire stdin payload to the ledger as one line,
+// so the test can read the event off the wire exactly as the check received it.
 //
-// The whole payload rather than a field extracted with sed: the shape is what
-// is under test, and a script that reached in for `.fields.path` would report
-// "absent" for `null` and for `{}` alike — the two cases this suite exists to
-// tell apart.
-//
-// tr squeezes the JSON onto one line. It arrives on one line already; the guard
-// costs nothing and keeps a pretty-printing change from splitting one event
-// across several ledger entries and being read as several cycles.
+// The whole payload rather than a field extracted with jq: the shape is what is
+// under test, and a script that reached in for `.event.path` would report the same
+// "absent" for a null event and for a `{"kind":"Stop"}` one alike — the two cases
+// this suite exists to tell apart. The ledger is $SR_GUARDRAIL_DIR/events, the
+// folder the engine sets for the check (`.sloprail/gate/<name>/`).
 const recordEvent = `#!/bin/sh
-tr -d '\n' < /dev/stdin >> "$PWD/events"
-echo "" >> "$PWD/events"
+tr -d '\n' < /dev/stdin >> "$SR_GUARDRAIL_DIR/events"
+echo "" >> "$SR_GUARDRAIL_DIR/events"
 exit 0
 `
 
-// payload is the JSON a hook was handed on its standard input.
+// payload is one event a check recorded, decoded from the FLAT wire form: the
+// event's own fields spread directly under `event` with `kind` beside them, so
+// Kind is the discriminator and Subject is every OTHER key it carried (a file's
+// path, a command's invocations, …). rawEvent keeps the `event` object verbatim
+// for the shape assertions. There is no `event.fields` envelope in the new wire
+// form, so eventsSeen populates these by hand rather than by struct tags.
 type payload struct {
 	Event struct {
-		Kind   string          `json:"kind"`
-		Fields json.RawMessage `json:"fields"`
-	} `json:"event"`
+		Kind    string
+		Subject map[string]json.RawMessage
+	}
+	rawEvent json.RawMessage
 }
 
-// eventsSeen parses every event a guardrail's hook recorded, in the order it
-// recorded them.
-func eventsSeen(t *testing.T, e *harness.Env, proj, guardrail string) []payload {
+// eventsSeen parses every event a gate's check recorded, in the order it recorded
+// them, reading them back off the gate's own ledger.
+func eventsSeen(t *testing.T, e *Env, proj, gateName string) []payload {
 	t.Helper()
 	var out []payload
-	for _, line := range e.Ledger(proj, guardrail, "events") {
-		var p payload
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("a hook recorded something that is not a payload: %v\n%s", err, line)
+	for _, line := range e.GateLedgerLines(proj, gateName, "events") {
+		var envelope struct {
+			Event json.RawMessage `json:"event"`
 		}
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			t.Fatalf("a check recorded something that is not a payload: %v\n%s", err, line)
+		}
+		// The flat event: a map of every key it carries. `kind` is the
+		// discriminator; every other key is a subject field. A null event (the
+		// shape this suite forbids for Stop) decodes to a nil map, which is what the
+		// subject assertions read against.
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(envelope.Event, &fields); err != nil {
+			t.Fatalf("the recorded event is not an object: %v\n%s", err, string(envelope.Event))
+		}
+		var p payload
+		p.rawEvent = envelope.Event
+		if kindRaw, ok := fields["kind"]; ok {
+			_ = json.Unmarshal(kindRaw, &p.Event.Kind)
+		}
+		subject := make(map[string]json.RawMessage, len(fields))
+		for k, v := range fields {
+			if k == "kind" {
+				continue
+			}
+			subject[k] = v
+		}
+		p.Event.Subject = subject
 		out = append(out, p)
 	}
 	return out
 }
 
-// project is a repository whose guardrails are committed before the session, so
-// the rules' own folders are part of the baseline and the cycle's difference
-// does not report them as newly created files.
-func project(t *testing.T) (*harness.Env, string) {
+// project is a repository whose rules are committed before the session, so their
+// own folders are part of the baseline and the cycle's difference does not report
+// them as newly created files.
+func project(t *testing.T) (*Env, string) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
@@ -108,26 +137,28 @@ func project(t *testing.T) (*harness.Env, string) {
 	return e, proj
 }
 
-func commitGuardrails(e *harness.Env, proj string) {
+func commitGuardrails(e *Env, proj string) {
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 }
 
-// T026_01: the Stop event a hook is given carries an empty subject, on the
-// wire, as an object.
+// T026_01: the Stop event a check is given carries an empty subject, on the wire,
+// as an object.
 //
-// The positive half of the invariant, and the one that had no test. Three
-// separate claims:
+// The positive half of the invariant, and the one that had no test. Three separate
+// claims:
 //
-//   - the hook ran at all — without this the rest is a test about an empty
+//   - the check ran at all — without this the rest is a test about an empty
 //     ledger, which passes against an engine that dispatches no Stop;
-//   - the kind really is Stop, so the payload being examined is the cycle's
-//     and not some file event that happened to arrive;
-//   - `fields` is the empty OBJECT. Not null, which is the shape that makes an
-//     ordinary hook crash and turns a reporting event into a refusal.
+//   - the kind really is Stop, so the payload being examined is the cycle's and
+//     not some other event that happened to arrive;
+//   - the flat `event` is an OBJECT carrying only `kind` and NO subject key. Not
+//     null, which is the shape that makes an ordinary check crash and turns a
+//     reporting event into a refusal. This is the flat-form version of the old
+//     `"fields":{}` assertion — an empty subject, present as an object.
 func TestT026_01_StopCarriesAnEmptySubject(t *testing.T) {
 	e, proj := project(t)
-	e.Guardrail(proj, "cycle-watch", boundToStop, map[string]string{"record.sh": recordEvent})
+	e.Gate(proj, "cycle-watch", boundToStop, map[string]string{"record.sh": recordEvent})
 	commitGuardrails(e, proj)
 
 	e.Run(proj, "s-026-01", "do a little work", Turns("done",
@@ -136,38 +167,46 @@ func TestT026_01_StopCarriesAnEmptySubject(t *testing.T) {
 
 	seen := eventsSeen(t, e, proj, "cycle-watch")
 	if len(seen) == 0 {
-		t.Fatalf("no Stop reached the hook, so nothing here is a claim about its subject")
+		t.Fatalf("no Stop reached the check, so nothing here is a claim about its subject")
 	}
 
 	last := seen[len(seen)-1]
 	if last.Event.Kind != "Stop" {
-		t.Fatalf("a rule bound to Stop was handed a %q", last.Event.Kind)
+		t.Fatalf("a gate bound to Stop was handed a %q", last.Event.Kind)
 	}
 
-	// The literal wire shape. `{}` is the contract; `null` is the shape that
-	// makes `.fields.path` an error rather than a miss, and an event carrying
-	// nothing would then refuse the work it was reporting on.
-	got := strings.TrimSpace(string(last.Event.Fields))
-	if got != "{}" {
-		t.Fatalf("Stop must carry an empty subject as an empty object, got %q — "+
-			"null makes an ordinary hook error, and a hook that errors refuses the cycle it "+
-			"was only reporting on", got)
+	// The literal wire shape. The event decoded to an object (not null — a null
+	// would have failed eventsSeen's object decode), it carries the kind, and it
+	// carries NO subject field: `.event.path` on it is a clean miss, not the error
+	// a null produces, and an event carrying nothing would then refuse the work it
+	// was only reporting on.
+	if last.rawEvent == nil || string(last.rawEvent) == "null" {
+		t.Fatalf("Stop's event arrived as null rather than an object — `.event.path` on it is an "+
+			"error, and a check that errors refuses the cycle it was only reporting on:\n%s", string(last.rawEvent))
+	}
+	if len(last.Event.Subject) != 0 {
+		keys := make([]string, 0, len(last.Event.Subject))
+		for k := range last.Event.Subject {
+			keys = append(keys, k)
+		}
+		t.Fatalf("Stop must carry an empty subject — the flat event carried subject field(s) %v "+
+			"besides kind: %s", keys, string(last.rawEvent))
 	}
 }
 
 // T026_02: Stop fires for a cycle that changed nothing at all.
 //
-// The unconditional half. A cycle that touched no file still ended, and the
-// rules that fire on completeness — a required artifact never produced, a
-// checklist not filled in — are exactly the ones whose violation looks like
-// nothing having happened. An engine deriving Stop from the tree difference
-// would go silent in precisely the case those rules exist for.
+// The unconditional half. A cycle that touched no file still ended, and the rules
+// that fire on completeness — a required artifact never produced, a checklist not
+// filled in — are exactly the ones whose violation looks like nothing having
+// happened. An engine deriving Stop from the tree difference would go silent in
+// precisely the case those rules exist for.
 //
-// The scenario runs a command that touches nothing, so the difference is empty
-// and the only event that can reach the hook is the cycle's own.
+// The scenario runs a command that touches nothing, so the difference is empty and
+// the only event that can reach the check is the cycle's own Stop.
 func TestT026_02_StopFiresWhenNothingChanged(t *testing.T) {
 	e, proj := project(t)
-	e.Guardrail(proj, "cycle-watch", boundToStop, map[string]string{"record.sh": recordEvent})
+	e.Gate(proj, "cycle-watch", boundToStop, map[string]string{"record.sh": recordEvent})
 	commitGuardrails(e, proj)
 
 	e.Run(proj, "s-026-02", "look around and change nothing", Turns("done",
@@ -179,39 +218,34 @@ func TestT026_02_StopFiresWhenNothingChanged(t *testing.T) {
 		t.Fatalf("a cycle that changed nothing dispatched no Stop — the completeness rules " +
 			"whose violation looks like nothing having happened would never fire")
 	}
-	if k := seen[len(seen)-1].Event.Kind; k != "Stop" {
-		t.Fatalf("want Stop for a cycle that changed nothing, got %q", k)
+	last := seen[len(seen)-1]
+	if last.Event.Kind != "Stop" {
+		t.Fatalf("want Stop for a cycle that changed nothing, got %q", last.Event.Kind)
 	}
-	if got := strings.TrimSpace(string(seen[len(seen)-1].Event.Fields)); got != "{}" {
-		t.Fatalf("Stop carried %q rather than an empty object", got)
+	if len(last.Event.Subject) != 0 {
+		t.Fatalf("Stop carried a subject rather than an empty object: %s", string(last.rawEvent))
 	}
 }
 
 // T026_03: every kind that is NOT Stop names what it concerns.
 //
-// The other half of the predicate, and the half a subject-less engine would
-// pass if it were left out. Two producers are exercised in one session so the
-// claim is about the rule rather than about one module: a file event must name
-// its path, and a command event must name its command line.
+// The other half of the predicate, and the half a subject-less engine would pass
+// if it were left out. Two producers are exercised in one session so the claim is
+// about the engine rather than about one module: a file event must name its path,
+// and a command event must name its command line.
 //
-// Asserted as "the subject is non-empty AND is the thing the scenario did",
-// because an engine setting every subject to a constant would satisfy mere
-// non-emptiness while making every narrowed matcher useless.
+// Asserted as "the subject is the thing the scenario did", because an engine
+// setting every subject to a constant would satisfy mere presence while making
+// every narrowed matcher useless. One gate bound to both pre-action kinds fires
+// once per matching tool call (a pre-tool dispatch per Write and per Bash), so it
+// records both events.
 func TestT026_03_EveryOtherKindNamesItsSubject(t *testing.T) {
 	e, proj := project(t)
-	e.Guardrail(proj, "subjects", `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PreCommandInvoke:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records the subject of every pending event it is shown
+	e.Gate(proj, "subjects", `on:
+  - event: PreFileCreate
+  - event: PreCommandInvoke
+checks:
+  - script: ./record.sh
 `, map[string]string{"record.sh": recordEvent})
 	commitGuardrails(e, proj)
 
@@ -227,17 +261,18 @@ hooks:
 
 	var sawPath, sawCommand bool
 	for _, p := range seen {
-		fields := string(p.Event.Fields)
+		fields := string(p.rawEvent)
 		switch p.Event.Kind {
 		case "PreFileCreate":
-			// The path the scenario actually wrote, not merely some non-empty
-			// string — a constant subject would pass a non-emptiness check and
-			// break every narrowed matcher.
+			// The path the scenario actually wrote, on the flat event under
+			// `.event.path` — not merely some non-empty string, which a constant
+			// subject would satisfy while breaking every narrowed matcher.
 			if !strings.Contains(fields, "docs/guide.md") {
 				t.Errorf("a PreFileCreate did not name the file it concerns: %s", fields)
 			}
 			sawPath = true
 		case "PreCommandInvoke":
+			// The command line, carried on the flat event under `.event.invocations`.
 			if !strings.Contains(fields, "needle") {
 				t.Errorf("a PreCommandInvoke did not name the command line it concerns: %s", fields)
 			}
@@ -253,40 +288,29 @@ hooks:
 	}
 }
 
-// T026_04: a matcher naming a field on Stop does not load, and the rule it
-// belongs to therefore never runs.
+// T026_04: a match naming a field on Stop does not load, and the gate it belongs
+// to therefore never runs.
 //
-// The consequence the invariant's own rationale states: a matcher narrowing on
-// a subject "has nothing to narrow on here". Stop's kind declaration carries
-// no fields, so `path` is not a field it could ever have, and the load check
-// that catches a misspelled field on any other kind catches every field here.
+// The consequence the invariant's own rationale states: a match narrowing on a
+// subject "has nothing to narrow on here". Stop's kind declaration carries no
+// fields, so `event.path` is not a field it could ever have, and the check the
+// gate's trigger compiles against Stop's fieldless scope fails to compile — so the
+// gate is skipped and its check never runs.
 //
 // This is what keeps the invariant from being merely descriptive. Without it an
-// author could write `matcher: path endsWith ".md"` on Stop, the expression
-// would compile against an open environment, evaluate against nothing, and the
-// rule would silently never fire — the exact failure the expression language was
-// chosen to prevent.
+// author could write a trigger `match: event.path endsWith ".md"` on Stop, the
+// gate would run against nothing, and it would appear satisfied whatever the cycle
+// did — the exact failure the expression language was chosen to prevent.
 //
-// What this asserts is the LOADER's half: the hook never runs. That the failure
-// is also REPORTED — rather than being a rule that quietly went away — is a
-// separate claim and a separate mechanism, and it is T026_06's. Splitting them
-// matters because they were not both true: the loader rejected this declaration
-// correctly all along, while nothing at the cycle's own hook point ever said so.
-//
-// The hook records into the ledger, so "never ran" is observable as the absence
+// The check records into the ledger, so "never ran" is observable as the absence
 // of a file rather than inferred from silence on a stream.
-func TestT026_04_AMatcherOnStopDoesNotLoad(t *testing.T) {
+func TestT026_04_AMatchOnStopDoesNotLoad(t *testing.T) {
 	e, proj := project(t)
-	e.Guardrail(proj, "narrowed-cycle", `---
-hooks:
-  Stop:
-    - matcher: path endsWith ".md"
-      hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Tries to narrow the end of a cycle to a path, which a cycle does not have
+	e.Gate(proj, "narrowed-cycle", `on:
+  - event: Stop
+    match: event.path endsWith ".md"
+checks:
+  - script: ./record.sh
 `, map[string]string{"record.sh": recordEvent})
 	commitGuardrails(e, proj)
 
@@ -294,69 +318,69 @@ hooks:
 		Write("w1", "notes.md", "hello\n"),
 	))
 
-	if ran := e.Ledger(proj, "narrowed-cycle", "events"); len(ran) != 0 {
-		t.Fatalf("a matcher naming a field Stop does not carry was accepted and its hook ran "+
+	if ran := e.GateLedgerLines(proj, "narrowed-cycle", "events"); len(ran) != 0 {
+		t.Fatalf("a match naming a field Stop does not carry was accepted and its check ran "+
 			"%d time(s) — the expression evaluates against nothing, so the rule would appear to "+
 			"be satisfied whatever the cycle did: %v", len(ran), ran)
 	}
 }
 
-// T026_04b: the same rule with no matcher DOES run.
+// T026_04b: the same gate with no match DOES run.
 //
-// The control for T026_04, and it is not optional. An empty ledger is what a
-// rule that never loaded leaves, and it is also what a Stop that never
-// dispatched leaves, and what a hook the engine could not execute leaves. Only
-// running the same guardrail — same kind, same hook, same script — with the one
-// offending line removed tells those apart.
-func TestT026_04b_TheSameRuleWithoutTheMatcherRuns(t *testing.T) {
+// The control for T026_04, and it is not optional. An empty ledger is what a gate
+// that never loaded leaves, and it is also what a Stop that never dispatched
+// leaves, and what a check the engine could not execute leaves. Only running the
+// same gate — same kind, same check, same script — with the one offending line
+// removed tells those apart.
+func TestT026_04b_TheSameRuleWithoutTheMatchRuns(t *testing.T) {
 	e, proj := project(t)
-	e.Guardrail(proj, "narrowed-cycle", boundToStop, map[string]string{"record.sh": recordEvent})
+	e.Gate(proj, "narrowed-cycle", boundToStop, map[string]string{"record.sh": recordEvent})
 	commitGuardrails(e, proj)
 
 	e.Run(proj, "s-026-04b", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello\n"),
 	))
 
-	if ran := e.Ledger(proj, "narrowed-cycle", "events"); len(ran) == 0 {
-		t.Fatalf("the same guardrail without the offending matcher did not run either, so " +
-			"T026_04 proves nothing about the matcher")
+	if ran := e.GateLedgerLines(proj, "narrowed-cycle", "events"); len(ran) == 0 {
+		t.Fatalf("the same gate without the offending match did not run either, so " +
+			"T026_04 proves nothing about the match")
 	}
 }
 
-// T026_05: a Stop hook that refuses blocks the cycle, and names its rule.
+// T026_05: a Stop gate that refuses blocks the cycle, and names its rule.
 //
-// The invariant says a rule bound to Stop "runs for the cycle as a whole".
-// That is only enforcement if its refusal governs, so this is the half that
-// makes the rest matter: a completeness rule that cannot stop a turn is a rule
-// that complains once and is ignored.
+// The invariant says a rule bound to Stop "runs for the cycle as a whole". That is
+// only enforcement if its refusal governs, so this is the half that makes the rest
+// matter: a completeness rule that cannot stop a turn is a rule that complains once
+// and is ignored.
 //
-// The refusal is read from the blocking attachments rather than the stream. A
-// Stop hook blocks by exiting 0 with {"decision":"block"} on stdout, so its
-// stderr reaches no agent at all — a test scanning the stream would assert on a
-// channel the refusal never travels.
+// The refusal is read from the blocking attachments rather than the stream. A Stop
+// gate blocks the TURN, and its reason travels as a blocking error on the record,
+// not as a line on the result stream — BlockingErrorsFrom(…, "Stop") reads it.
 func TestT026_05_ARefusalAtStopBlocksTheCycle(t *testing.T) {
 	e, proj := project(t)
-	e.Guardrail(proj, "needs-changelog", boundToStop, map[string]string{
-		"record.sh": "#!/bin/sh\ncat >/dev/null\necho 'the cycle produced no CHANGELOG entry' >&2\nexit 1\n",
+	e.Gate(proj, "needs-changelog", boundToStop, map[string]string{
+		"record.sh": `#!/bin/sh
+cat >/dev/null
+echo '{"reason":"the cycle produced no CHANGELOG entry"}'
+exit 1
+`,
 	})
 	commitGuardrails(e, proj)
 
-	got := e.Run(proj, "s-026-05", "do some work", Turns("done",
+	e.Run(proj, "s-026-05", "do some work", Turns("done",
 		Write("w1", "notes.md", "work\n"),
 	))
 
-	// A blocked stop sends the agent round again, so the mock emits its final
-	// result more than once. One result means the turn simply ended.
-	if strings.Count(got.Output, `"subtype":"success"`) < 2 {
-		t.Fatalf("a Stop refusal did not stop the turn — a rule about the cycle as a whole "+
-			"that cannot block it is advisory, which this product does not have:\n%s", got.Output)
+	told := strings.Join(e.BlockingErrorsFrom(proj, "s-026-05", "Stop"), "\n")
+	if told == "" {
+		t.Fatalf("a Stop refusal did not stop the turn — a rule about the cycle as a whole that " +
+			"cannot block it is advisory, which this product does not have")
 	}
-
-	told := strings.Join(e.BlockingErrors(proj, "s-026-05"), "\n")
 	if !strings.Contains(told, "the cycle produced no CHANGELOG entry") {
-		t.Errorf("the hook's own words did not reach the agent:\n%s", told)
+		t.Errorf("the check's own words did not reach the agent:\n%s", told)
 	}
 	if !strings.Contains(told, "needs-changelog") {
-		t.Errorf("the refusal did not name the guardrail that produced it:\n%s", told)
+		t.Errorf("the refusal did not name the gate that produced it:\n%s", told)
 	}
 }

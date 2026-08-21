@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -12,550 +13,409 @@ import (
 // # The bug this package is built around
 //
 // A create records its pass on the PENDING bytes — the only place a creation's
-// content can be seen, since the file is not there yet. The next update takes
-// its subject from DISK, which by then holds exactly those bytes. So the two
-// derivations coincide the instant the create lands, and the first update after
-// any successful create matched the create's stored pass and was skipped
-// REGARDLESS OF WHAT IT CONTAINED.
-//
-// It shipped. Review caught it, not tests — which is the reason this package
-// exists rather than one more case being appended to 013.
+// content can be seen, since the file is not there yet. On the OLD Pre dispatch the
+// next update took its subject from DISK, which by then held exactly those bytes.
+// So the two derivations coincided the instant the create landed, and the first
+// update after any successful create matched the create's stored pass and was
+// skipped REGARDLESS OF WHAT IT CONTAINED.
 //
 // The fix is stated as a rule about what a subject IS: it exists only where the
-// fingerprint names what the action WOULD LEAVE. PreFileCreate has one (the
-// pending bytes are on the event). PreFileUpdate has none (the kind carries a
-// path and no content, so the bytes the write leaves are unavailable rather
-// than merely unread). Deletes have none (there are no resulting bytes at all).
+// fingerprint names what the action WOULD LEAVE. PreFileCreate has one (pending
+// bytes on the event); PreFileUpdate has none (a path and no content); a delete has
+// none.
 //
-// # What that rule predicts, and what each test here holds it to
+// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
 //
-// A rule is only worth having if it decides cases nobody enumerated. Each test
-// below is a case the rule decides, arrived at by asking what ELSE coincides:
+// The invariant this family defends is that a verdict is keyed on CONTENT AT A
+// PATH, so stale content never licenses new content and a refusal is never lost to
+// a pass for other bytes. The file-guard's after-check drives the SAME
+// (path, guardrail, fingerprint) store (nature_fileguard.go's runFileGuardsPost),
+// so every claim here is reached identically. What changes is HOW the bytes reach
+// the subject: on the after-check the subject is ALWAYS the settled file on disk,
+// for a create and an update alike, so the specific Pre-path coincidence that
+// produced the bug cannot arise — the disk genuinely moves between two successive
+// writes of different content, and the second is correctly re-judged. The family
+// therefore reads here as "different content is judged on its own account; a
+// refusal survives a pass for other bytes or another path" — the invariant, reached
+// through the after-check rather than the Pre subject. The exact transformation is
+// in tests/e2e/REVEHICLE-PATTERN.md.
 //
-//   - T017_01 create-then-update: the original bug, one cycle.
-//   - T017_02 create, update, update: the bug's tail. A design that fixed only
-//     the FIRST update would pass T017_01 and fail here.
-//   - T017_03 create in cycle 1, update in cycle 2: the same coincidence across
-//     a turn boundary, where the pass is read back from the store rather than
-//     held in one process's memory.
-//   - T017_04 two guardrails, one of which passed the content and one of which
-//     never saw it: pooling by content rather than by rule would let the blind
-//     one inherit.
-//   - T017_05 a file edited back to previously-refused content: the bypass run
-//     backwards. The refusal must not be lost to the pass in between.
-//   - T017_06 two files whose content is identical: a subject is a (path,
-//     content) pair, and keying on content alone would exempt the second file
-//     on the first file's verdict.
-//   - T017_07 delete: an action that leaves no bytes may not record a pass, or
-//     the delete's "verdict" would license the create that follows it.
+// Two consequences for the shape of the fixtures:
 //
-// # Why the ledger, and why it records what it SAW
-//
-// "The hook did not run" leaves no trace in the stream — a hook that stayed
-// silent and a hook that never ran are identical from outside. So every hook
-// here appends a line, and the line carries what the hook was shown. A count
-// alone cannot tell "asked twice about two different bodies" from "asked twice
-// about the same one", and several tests here turn on exactly that distinction.
+//   - Successive offers against ONE path are driven across CYCLES, not within one
+//     cycle: two writes to a path in a single cycle collapse to one net Post event,
+//     so the second offer is a later cycle's write, which is also the durable path
+//     the bug rode (a verdict written to the store and read back by a later
+//     process).
+//   - A refusal is a Stop block whose reason names the path (read with
+//     e.BlockingErrorsFrom(…, "Stop")); a not-fine cycle is a permanent block, so
+//     SetStopBlockCap(1) bounds the mock's Stop retries and keeps re-fire counts one
+//     per cycle. The check records to `.sloprail/file-guard/<name>/log` via
+//     $SR_GUARDRAIL_DIR, read with e.FileGuardLedgerLines. `match: "**/*.md"`
+//     selects the written files and never a guard's own `log`.
 
-// judgeDecl binds a judging hook to both pre-file kinds a write goes through:
-// the first write to a path creates, every later one updates.
-const judgeDecl = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PreFileUpdate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
----
-
-# Refuses content holding a secret, and records every time it is asked.
+// judgeGuard is a REAL judge: a `.md` file is not fine if its settled content holds
+// SECRET. It records the path it was asked about (T017_06 turns on two files being
+// judged separately) and refuses with a per-path reason.
+const judgeGuard = `match: "**/*.md"
+checks:
+  - script: ./judge.sh
 `
 
-// judgeScript is a REAL judge: it reads what it is handed and decides.
-//
-// It records that it was asked BEFORE deciding, so a refusal and a pass are
-// both visible as invocations — a refusal that left no ledger line would be
-// indistinguishable from a hook that never ran.
-//
-// It records the PATH it was asked about as well as the disk it saw. T017_06
-// turns on two different files being judged separately, which a bare count
-// cannot express.
-//
-// The workspace comes off guardrailDir in the payload rather than from an
-// environment variable: the payload is the one channel that carries it on every
-// branch here, and a rule reaching for an unset variable would silently judge
-// nothing and pass everything — which would make the refusal assertions green
-// for the wrong reason.
 const judgeScript = `#!/bin/sh
 payload=$(cat)
 path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
-ws=$(printf '%s' "$payload" | sed -n 's|.*"guardrailDir":"\(.*\)/\.sloprail/guardrails/.*|\1|p')
-echo "asked path=[$path] disk=[$(cat "$ws/$path" 2>/dev/null)]" >> "$PWD/log"
-body=$(printf '%s' "$payload" | grep -o '"newContent":"[^"]*"' || true)
-if [ -z "$body" ]; then
-  body=$(cat "$ws/$path" 2>/dev/null || true)
-fi
-case "$body" in
-  *SECRET*) echo "content holds a secret" >&2; exit 2 ;;
+case "$path" in
+  .sloprail/*) exit 0 ;;
 esac
+echo "asked path=[$path]" >> "$SR_GUARDRAIL_DIR/log"
+root="${SR_GUARDRAIL_DIR%/.sloprail/file-guard/*}"
+if [ -n "$path" ] && [ -f "$root/$path" ] && grep -q SECRET "$root/$path"; then
+  printf '{"reason":"content of %s holds a secret"}\n' "$path"
+  exit 1
+fi
 exit 0
 `
 
-// T017_01: a create's pass does not exempt the update that follows it.
+// permissiveScript records the path and permits everything — for the rule that
+// must NOT have an opinion, so a refusal observed in T017_04 can only have come
+// from the rule that does.
+const permissiveScript = `#!/bin/sh
+payload=$(cat)
+path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
+case "$path" in
+  .sloprail/*) exit 0 ;;
+esac
+echo "asked path=[$path]" >> "$SR_GUARDRAIL_DIR/log"
+exit 0
+`
+
+func asks(lines []string, path string) int {
+	n := 0
+	for _, l := range lines {
+		if strings.Contains(l, "path=["+path+"]") {
+			n++
+		}
+	}
+	return n
+}
+
+func refusedPath(t *testing.T, e *harness.Env, proj, sess, path string) bool {
+	t.Helper()
+	for _, b := range e.BlockingErrorsFrom(proj, sess, "Stop") {
+		if strings.Contains(b, "content of "+path+" holds a secret") {
+			return true
+		}
+	}
+	return false
+}
+
+// T017_01: a pass for one content does not exempt DIFFERENT content at the same
+// path.
 //
-// The bug as it shipped, in its shortest form:
+// The original bug's invariant. On the old Pre dispatch a create's pass was keyed
+// on the pending bytes and the next update's subject came from disk holding exactly
+// those bytes, so the update rode the pass whatever it contained. On the after-check
+// the subject is the settled file, which genuinely moves between the two writes — so
+// the second content is correctly re-judged, and this pins that a stale pass
+// licenses nothing.
 //
-//	Write "v1" -> a CREATE. Subject is the PENDING bytes. Judged, passes, a
-//	              pass is recorded under fingerprint(v1). The write lands, so
-//	              disk now holds v1.
-//	Write "v2" -> an UPDATE. Under the broken design its subject came from
-//	              DISK — which holds v1, the exact content the create's pass
-//	              was recorded under. Row matches, verdict was a pass, SKIPPED.
-//
-// So the first update after any successful create was exempt whatever it
-// contained. Two writes, two different bodies, two judgements — and the second
-// is the one that went missing.
-//
-// The assertion is the count. On this engine an update-bound hook cannot see
-// the pending payload to refuse it (PreFileUpdate carries no content), so
-// "judged" is observable here only as "asked". T017_04 states the refusing half
-// where the content IS on the event.
-func TestT017_01_ACreatesPassDoesNotExemptTheUpdateThatFollows(t *testing.T) {
+// Two cycles, two different bodies against one path. The second must be judged.
+func TestT017_01_APassDoesNotExemptDifferentContentAtTheSamePath(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", judgeGuard, map[string]string{"judge.sh": judgeScript})
 
-	got := e.Run(proj, "s-017-01", "create then change", Turns("done",
-		Write("w1", "notes.md", "v1 benign"),
-		Write("w2", "notes.md", "v2 quite different"),
-	))
+	const sess = "s-017-01"
 
-	// The create landed, or there is no pass on record for the update to
-	// inherit and the count below would mean something else entirely.
-	if n := strings.Count(got.Output, "File written successfully"); n != 2 {
-		t.Fatalf("%d write(s) landed, want 2 — the create must go through for its pass to be on "+
-			"record when the update arrives:\n%s", n, got.Output)
+	e.Run(proj, sess, "write v1", Turns("done", Write("w1", "notes.md", "v1 benign")))
+	if n := asks(e.FileGuardLedgerLines(proj, "judge", "log"), "notes.md"); n != 1 {
+		t.Fatalf("the first content was judged %d time(s), want 1 — its pass has to be on record", n)
 	}
 
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 2 {
-		t.Fatalf("the guardrail was asked %d time(s), want 2. REFUSAL BYPASS: the create recorded "+
-			"its pass under the fingerprint of the PENDING bytes; the update that followed took "+
-			"its subject from DISK, which by then held exactly those bytes — so the update "+
-			"matched the create's pass and was skipped without its own content ever being "+
-			"judged. Ledger: %v\n%s", n, lines, got.Output)
+	seen := len(e.FileGuardLedgerLines(proj, "judge", "log"))
+	e.Run(proj, sess, "change it", Turns("done", Write("w2", "notes.md", "v2 quite different")))
+	if n := asks(e.FileGuardLedgerLines(proj, "judge", "log")[seen:], "notes.md"); n == 0 {
+		t.Fatalf("the changed content was not re-judged — a stored pass keyed on the previous bytes " +
+			"licenses nothing here, or an edit inherits the verdict its predecessor earned")
 	}
 }
 
-// T017_02: the bypass does not merely shift by one — a SECOND update is judged
-// too.
+// T017_02: EVERY change is judged, not just the first after a settle.
 //
-// The bug's tail, and the case that separates a real fix from a patch. Suppose
-// an engine were "fixed" by exempting an update only once, or by clearing the
-// create's row after the first update consumed it. T017_01 would go green while
-// the mechanism stayed wrong, because the coincidence between the pending bytes
-// and the disk recurs: after the first update lands, disk holds v2, and an
-// engine still deriving an update's subject from disk records a pass on v2 and
-// hands it to the offer of v3.
-//
-// Three writes, three distinct bodies, three judgements. Anything less means
-// some update rode a verdict earned by content that is no longer what it holds.
-func TestT017_02_EveryUpdateAfterACreateIsJudgedNotJustTheFirst(t *testing.T) {
+// The bug's tail. On the old dispatch a fix that exempted an update only once would
+// pass a create-then-update case and fail here, because the coincidence recurs. On
+// the after-check the disk advances with each write, so three distinct bodies across
+// three cycles are three distinct subjects and three judgements.
+func TestT017_02_EveryChangeIsJudgedNotJustTheFirst(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", judgeGuard, map[string]string{"judge.sh": judgeScript})
 
-	got := e.Run(proj, "s-017-02", "create then change twice", Turns("done",
-		Write("w1", "notes.md", "v1 benign"),
-		Write("w2", "notes.md", "v2 also benign, different"),
-		Write("w3", "notes.md", "v3 benign again, different still"),
-	))
+	const sess = "s-017-02"
+	bodies := []string{"v1 benign", "v2 also benign, different", "v3 benign again, different still"}
 
-	// All three landed, so each offer really did face a disk holding its
-	// predecessor's bytes — the arrangement the bypass needs.
-	if n := strings.Count(got.Output, "File written successfully"); n != 3 {
-		t.Fatalf("%d write(s) landed, want 3 — every offer must go through for the next one to "+
-			"meet a disk holding the previous body:\n%s", n, got.Output)
-	}
-
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 3 {
-		t.Fatalf("the guardrail was asked %d time(s), want 3 — the bypass recurs on every update, "+
-			"not only the first after a create: each landed write makes the disk match the pass "+
-			"just recorded, so an engine keying an update's subject on disk skips them all. A fix "+
-			"that exempted only one update would pass the create-then-update case and fail here. "+
-			"Ledger: %v\n%s", n, lines, got.Output)
-	}
-
-	// And the three offers really were three different bodies. The disk each
-	// hook saw is what the previous write left, so the recorded disks must
-	// advance rather than repeat — if they did not, the file never moved and
-	// the count above is right for a reason unrelated to the invariant.
-	if len(lines) == 3 {
-		if !strings.Contains(lines[1], "disk=[v1 benign]") {
-			t.Fatalf("the second invocation saw %q, want the first write's bytes on disk — the "+
-				"file did not move between offers, so the subjects did not coincide the way the "+
-				"bypass needs and this test proves nothing: %v", lines[1], lines)
+	seen := 0
+	for i, body := range bodies {
+		e.Run(proj, sess, fmt.Sprintf("write %d", i+1), Turns("done",
+			Write(fmt.Sprintf("w%d", i), "notes.md", body)))
+		lines := e.FileGuardLedgerLines(proj, "judge", "log")
+		if n := asks(lines[seen:], "notes.md"); n == 0 {
+			t.Fatalf("write %d (%q) was not judged (delta %v) — every change is judged on its own "+
+				"content, not skipped on a verdict earned by content the file no longer holds",
+				i+1, body, lines[seen:])
 		}
-		if !strings.Contains(lines[2], "disk=[v2 also benign, different]") {
-			t.Fatalf("the third invocation saw %q, want the second write's bytes on disk: %v",
-				lines[2], lines)
-		}
+		seen = len(lines)
 	}
 }
 
-// T017_03: the same coincidence across a CYCLE boundary.
+// T017_03: a settle in one cycle does not exempt a change in the next.
 //
-// T017_01 and T017_02 run inside one invocation of the agent, so a store that
-// happened to be right only because a single process held its own decisions in
-// memory would satisfy them. This spans two Runs of the SAME conversation: the
-// create is judged and recorded in cycle 1, the process exits, and the update
-// arrives in cycle 2 to a store that has to be reopened and read back.
-//
-// The claim is unchanged — an update is judged on its own account — but the
-// path the verdict travels is the durable one. A pass written to the database
-// and read back by a later process is exactly what the bypass rode.
-func TestT017_03_ACreateInOneCycleDoesNotExemptAnUpdateInTheNext(t *testing.T) {
+// The claim across a CYCLE boundary, where the verdict travels the durable path: a
+// pass written to the database in cycle 1 and read back by a fresh process in cycle
+// 2. A verdict written to the store and read back is exactly what the bug rode.
+func TestT017_03_ASettleInOneCycleDoesNotExemptAChangeInTheNext(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", judgeGuard, map[string]string{"judge.sh": judgeScript})
 
 	const sess = "s-017-03"
 
-	// Cycle 1: the create alone. Its pass is recorded and the file lands.
-	first := e.Run(proj, sess, "create the file", Turns("done",
-		Write("w1", "notes.md", "v1 benign"),
-	))
-	if !first.Saw("File written successfully") {
-		t.Fatalf("the create did not land, so no pass was recorded and the second cycle has "+
-			"nothing to wrongly inherit:\n%s", first.Output)
-	}
-	if n := len(e.Ledger(proj, "judge", "log")); n != 1 {
-		t.Fatalf("the guardrail was asked %d time(s) in the first cycle, want 1 — the create has "+
-			"to be judged for its pass to be on record", n)
+	e.Run(proj, sess, "settle in cycle 1", Turns("done", Write("w1", "notes.md", "v1 benign")))
+	if n := asks(e.FileGuardLedgerLines(proj, "judge", "log"), "notes.md"); n != 1 {
+		t.Fatalf("the file was judged %d time(s) in the first cycle, want 1 — its pass has to be on "+
+			"record for the second cycle to have something to wrongly inherit", n)
 	}
 
-	// Cycle 2: same conversation, a fresh process, and an update whose body the
-	// earlier pass never covered.
-	second := e.Run(proj, sess, "change it in the next cycle", Turns("done",
-		Write("w2", "notes.md", "v2 quite different"),
-	))
-
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 2 {
-		t.Fatalf("the guardrail was asked %d time(s) in total, want 2 — the create's pass was "+
-			"written to the session's record in one cycle and read back in the next, which is the "+
-			"durable path the bypass rode. An update arriving a cycle later is still an update, "+
-			"and is still judged on its own content. Ledger: %v\n%s", n, lines, second.Output)
+	seen := len(e.FileGuardLedgerLines(proj, "judge", "log"))
+	e.Run(proj, sess, "change it in cycle 2", Turns("done", Write("w2", "notes.md", "v2 quite different")))
+	if n := asks(e.FileGuardLedgerLines(proj, "judge", "log")[seen:], "notes.md"); n == 0 {
+		t.Fatalf("a change arriving a cycle later was not judged (delta) — the pass was written to " +
+			"the session's record in one cycle and read back in the next, which is the durable path " +
+			"the bypass rode; a later change is still judged on its own content")
 	}
 }
 
-// T017_04: two guardrails, one of which passed the content and one of which
-// never saw it.
+// T017_04: two guardrails, one of which passed the content and one of which never
+// saw it.
 //
-// The bypass reached through the OTHER key of the record. A verdict is stored
-// per (path, guardrail, content); pool it per (path, content) instead and a
-// rule that has never judged a file inherits whatever another rule concluded
-// about it. That is the failure that makes adding a guardrail dangerous — it
-// would be installed, bound, enabled, and inert on everything the existing
-// rules had already passed.
+// The bypass reached through the guardrail key of the record. A verdict is stored
+// per (path, guardrail, content); pool it per (path, content) and a rule that has
+// never judged a file inherits whatever another rule concluded. That is what makes
+// adding a guardrail dangerous — installed, bound, enabled, inert on everything the
+// older rules had already passed.
 //
-// Stated where a refusal is observable, which is what makes this the sharp
-// version of the family:
-//
-//	cycle 1: only "blind" is installed. It judges a CREATE of benign content
-//	         and passes. Nothing else has seen this file.
-//	         The file is then removed, so the next offer is a create too.
-//	cycle 2: "picky" is installed alongside it, and the SAME benign content is
-//	         offered again — content picky would pass — followed by a create of
-//	         SECRET content, which picky refuses and blind does not.
-//
-// The load-bearing assertion is the refusal. A count could be satisfied by an
-// engine that asked picky and let the secret through anyway; the point is that
-// the new rule's judgement actually governs.
+// blind settles benign content in cycle 1. picky arrives in cycle 2 and the SAME
+// benign content is re-written (picky must judge it — it holds no verdict), then
+// SECRET content (picky must refuse it; blind does not). The load-bearing assertion
+// is the refusal: the new rule's judgement actually governs.
 func TestT017_04_AGuardrailThatNeverSawTheContentDoesNotInheritAnothersPass(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
+	// picky refuses the SECRET write — a permanent block — so bound the retries.
+	e.SetStopBlockCap(1)
 	proj := e.Project()
-	// blind permits everything and records that it was asked.
-	e.Guardrail(proj, "blind", judgeDecl, map[string]string{"judge.sh": permissiveScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "blind", judgeGuard, map[string]string{"judge.sh": permissiveScript})
 
 	const sess = "s-017-04"
 
-	// Cycle 1: blind alone settles the benign content. Removed afterwards so
-	// the repeat offer is a create — an update's subject comes from disk and
-	// would make cycle 2 a different comparison than intended.
-	e.Run(proj, sess, "settle the content under one rule", Turns("done",
-		Write("w1", "notes.md", "benign settled content"),
-		Bash("b1", "rm -f notes.md"),
-	))
-	if n := len(e.Ledger(proj, "blind", "log")); n != 1 {
-		t.Fatalf("blind was asked %d time(s) in the first cycle, want 1 — the content has to be "+
-			"settled under blind alone for this test to mean anything", n)
+	e.Run(proj, sess, "settle under one rule", Turns("done",
+		Write("w1", "notes.md", "benign settled content")))
+	if n := asks(e.FileGuardLedgerLines(proj, "blind", "log"), "notes.md"); n != 1 {
+		t.Fatalf("blind was asked %d time(s) in the first cycle about notes.md, want 1 — the "+
+			"content has to be settled under blind alone for this test to mean anything", n)
 	}
 
-	// picky arrives mid-session, after the verdict was recorded. It has judged
-	// nothing.
-	e.Guardrail(proj, "picky", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	// picky arrives mid-session, after the verdict was recorded. It has judged nothing.
+	e.FileGuard(proj, "picky", judgeGuard, map[string]string{"judge.sh": judgeScript})
 
-	got := e.Run(proj, sess, "offer the settled content, then a secret", Turns("done",
-		Write("w2", "notes.md", "benign settled content"),
-		Bash("b2", "rm -f notes.md"),
-		Write("w3", "notes.md", "SECRET=hunter2"),
-	))
-
-	// picky was asked about BOTH offers. It holds no verdict of its own on
-	// either, so neither may be exempt — the pass on record belongs to blind.
-	pickyLines := e.Ledger(proj, "picky", "log")
-	if n := len(pickyLines); n != 2 {
-		t.Fatalf("picky was asked %d time(s), want 2 — a rule that has never judged a file cannot "+
-			"be exempted by another rule's verdict on it. An exemption here is picky inheriting "+
-			"blind's pass, under which any guardrail added to a running session is inert on every "+
-			"file the older rules already permitted. Ledger: %v\n%s", n, pickyLines, got.Output)
+	// The settled benign content, re-written. picky holds no verdict on it and must
+	// judge it.
+	seenPicky := 0
+	e.Run(proj, sess, "re-offer the settled content", Turns("done",
+		Write("w2", "notes.md", "benign settled content")))
+	pickyLines := e.FileGuardLedgerLines(proj, "picky", "log")
+	if n := asks(pickyLines[seenPicky:], "notes.md"); n == 0 {
+		t.Fatalf("picky was not asked about content blind had settled — a rule that has never judged " +
+			"a file cannot be exempted by another rule's verdict on it. An exemption here is picky " +
+			"inheriting blind's pass, under which any guardrail added to a running session is inert " +
+			"on every file the older rules already permitted")
 	}
+	seenPicky = len(pickyLines)
 
-	// And picky's judgement governs: the secret is refused, by the rule that
-	// has an opinion about it. This is the half a count cannot reach.
-	if !got.Saw("content holds a secret") {
-		t.Fatalf("the secret-bearing write was never refused, though picky was asked %d time(s) — "+
-			"being asked is not the same as governing, and the whole value of a new rule is that "+
-			"its verdict decides.\nLedger: %v\n%s", len(pickyLines), pickyLines, got.Output)
+	// Now SECRET content. picky refuses it; blind does not.
+	e.Run(proj, sess, "offer a secret", Turns("done",
+		Write("w3", "secret.md", "SECRET=hunter2")))
+	if n := asks(e.FileGuardLedgerLines(proj, "picky", "log"), "secret.md"); n == 0 {
+		t.Fatalf("picky did not judge the secret content")
 	}
-
-	// blind stays exempt on its own pass for the repeat of the benign content.
-	// Without this the test would also pass on a build where nothing is ever
-	// skipped, and picky running would say nothing about the per-rule grain.
-	//
-	// It is asked twice in total: once in cycle 1, and once for the SECRET
-	// content in cycle 2, which it has never seen. The repeat of the benign
-	// content is the one it must skip.
-	blindLines := e.Ledger(proj, "blind", "log")
-	if n := len(blindLines); n != 2 {
-		t.Fatalf("blind was asked %d time(s) in total, want 2 — one for the content it settled in "+
-			"cycle 1, and one for the SECRET content it has never seen. The repeat of its own "+
-			"settled content must be skipped; if it was not, nothing is being skipped here at all "+
-			"and picky running proves nothing about verdicts belonging to the rule that reached "+
-			"them. Ledger: %v", n, blindLines)
+	// picky's judgement governs: the secret is refused, by the rule that has an
+	// opinion about it. This is the half a count cannot reach.
+	if !refusedPath(t, e, proj, sess, "secret.md") {
+		t.Fatalf("the secret-bearing write was never refused, though picky was asked about it — " +
+			"being asked is not the same as governing, and the whole value of a new rule is that its " +
+			"verdict decides")
 	}
 }
 
-// T017_05: a file edited back to previously-refused content is refused again.
+// T017_05: content edited back to a previously-refused body is refused again.
 //
-// The bypass run backwards. Forwards, a stale pass licenses new content;
-// backwards, a fresh pass would erase an older refusal for content that is
-// coming back:
+// The bypass run backwards. Forwards, a stale pass licenses new content; backwards,
+// a fresh pass would erase an older refusal for content that is coming back:
 //
-//	SECRET=hunter2 -> refused. Nothing lands.
-//	benign         -> judged, passes.
-//	SECRET=hunter2 -> the ORIGINAL refused content, offered again.
+//	cycle 1  SECRET=hunter2 -> refused, a fail recorded on those bytes.
+//	cycle 2  benign         -> passes.
+//	cycle 3  SECRET=hunter2 -> the ORIGINAL refused content, offered again.
 //
-// An engine keying its verdict on the PATH rather than on the content holds one
-// row per file, the benign pass is that row, and the return to the failing
-// content rides it. Same shape as the shipped bug, reached from the other
-// direction.
-//
-// Every offer is a creation — the benign write that lands is removed — because
-// a refused write never lands and a create is the kind that carries its pending
-// bytes where the hook can see them. That is what makes the REFUSAL, not merely
-// the invocation, observable.
+// The third cycle must be refused. An engine keying its verdict on the PATH rather
+// than the content holds one row per file, the benign pass is that row, and the
+// return to the failing content rides it.
 func TestT017_05_ContentEditedBackToARefusedBodyIsRefusedAgain(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
+	e.SetStopBlockCap(1)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", judgeGuard, map[string]string{"judge.sh": judgeScript})
 
-	got := e.Run(proj, "s-017-05", "bad, good, bad again", Turns("done",
-		Write("w1", "notes.md", "SECRET=hunter2"),
-		Write("w2", "notes.md", "benign"),
-		Bash("b1", "rm -f notes.md"),
-		Write("w3", "notes.md", "SECRET=hunter2"),
-	))
+	const sess = "s-017-05"
 
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 3 {
-		t.Fatalf("the guardrail was asked %d time(s), want 3 — the first offer is refused, the "+
-			"second passes, and the return to the refused content must be judged in its own "+
-			"right. Ledger: %v\n%s", n, lines, got.Output)
+	e.Run(proj, sess, "bad", Turns("done", Write("w1", "notes.md", "SECRET=hunter2")))
+	if !refusedPath(t, e, proj, sess, "notes.md") {
+		t.Fatalf("the first offer was not refused, so there is no refusal to be run backwards")
 	}
 
-	// Two refusals: the first offer and the return to it. One refusal means the
-	// third offer rode the benign pass — a verdict keyed on the path rather
-	// than on the content, and the violation came back unnoticed.
-	if n := strings.Count(got.Output, "content holds a secret"); n != 2 {
-		t.Fatalf("the guardrail refused %d time(s), want 2 — content that was refused, fixed, and "+
-			"then restored must be refused again. One refusal here means the pass earned by the "+
-			"benign content in between was read as the FILE's verdict rather than as that "+
-			"content's.\nLedger: %v\n%s", n, lines, got.Output)
-	}
+	e.Run(proj, sess, "good", Turns("done", Write("w2", "notes.md", "benign")))
 
-	// The benign write really passed, or the two refusals above could be the
-	// first two offers with the third never judged at all.
-	if !got.Saw("File written successfully") {
-		t.Fatalf("no write ever landed, so the benign offer never passed and the sequence under "+
-			"test did not happen:\n%s", got.Output)
+	seen := len(e.FileGuardLedgerLines(proj, "judge", "log"))
+	e.Run(proj, sess, "bad again", Turns("done", Write("w3", "notes.md", "SECRET=hunter2")))
+	if n := asks(e.FileGuardLedgerLines(proj, "judge", "log")[seen:], "notes.md"); n == 0 {
+		t.Fatalf("the return to the refused content was not judged — content refused, fixed, and " +
+			"then restored must be judged in its own right")
+	}
+	if !refusedPath(t, e, proj, sess, "notes.md") {
+		t.Fatalf("content that was refused, fixed, and then restored was not refused again — the " +
+			"pass earned by the benign content in between was read as the FILE's verdict rather than " +
+			"as that content's")
 	}
 }
 
-// T017_06: a file whose content is identical to another file's is judged on its
-// own account.
+// T017_06: a file whose content is identical to another file's is judged on its own
+// account.
 //
-// A subject is a (path, content) pair, and this is the test for the path half.
-// Key an exemption on the fingerprint alone — a plausible simplification, since
-// the fingerprint is the thing that "identifies the content" — and the second
-// file rides the first file's verdict. Two files are then interchangeable to
-// every rule the moment their bodies agree, which is common: a template copied
-// into two places, an empty file, a generated header.
+// A subject is a (path, content) pair, and this is the test for the path half. Key
+// an exemption on the fingerprint alone and the second file rides the first's
+// verdict, making any two files interchangeable the moment their bodies agree.
 //
-// Stated where it is sharp: the first file's content passes, and the same bytes
-// are offered at a DIFFERENT path. That second offer must be judged. Then the
-// reverse case — identical bytes that were REFUSED at one path must not silence
-// the judgement at another, which is the same claim with the verdict flipped.
+// The same bytes at three DIFFERENT paths, in one cycle — three distinct paths do
+// not collapse. Each must be judged.
 func TestT017_06_TwoFilesWithIdenticalContentAreJudgedSeparately(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", judgeGuard, map[string]string{"judge.sh": judgeScript})
 
-	got := e.Run(proj, "s-017-06", "the same bytes at three paths", Turns("done",
+	e.Run(proj, "s-017-06", "the same bytes at three paths", Turns("done",
 		Write("w1", "one.md", "identical content"),
 		Write("w2", "two.md", "identical content"),
 		Write("w3", "three.md", "identical content"),
 	))
 
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 3 {
-		t.Fatalf("the guardrail was asked %d time(s), want 3 — a verdict is about a file's "+
-			"content AT A PATH, not about content anywhere. Keyed on the fingerprint alone, the "+
-			"second and third files would ride the first's pass, and any two files would become "+
-			"interchangeable to every rule the moment their bodies agreed. Ledger: %v\n%s",
-			n, lines, got.Output)
-	}
-
-	// Each invocation names a different path, so the three really were three
-	// distinct subjects rather than one file offered three times.
-	for _, want := range []string{"path=[one.md]", "path=[two.md]", "path=[three.md]"} {
-		found := false
-		for _, l := range lines {
-			if strings.Contains(l, want) {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("no invocation was asked about %s — the three offers were not the three "+
-				"distinct paths this test needs. Ledger: %v", want, lines)
+	lines := e.FileGuardLedgerLines(proj, "judge", "log")
+	for _, p := range []string{"one.md", "two.md", "three.md"} {
+		if n := asks(lines, p); n == 0 {
+			t.Fatalf("%s was not judged (%v) — a verdict is about content AT A PATH, not about "+
+				"content anywhere. Keyed on the fingerprint alone, the second and third files would "+
+				"ride the first's pass, and any two files would become interchangeable the moment "+
+				"their bodies agreed", p, lines)
 		}
 	}
 }
 
 // T017_07: identical bytes REFUSED at one path are still refused at another.
 //
-// The mirror of T017_06, and the one where the cost is a lost refusal rather
-// than a lost check. The same secret is written to two paths. Both must be
-// refused: the refusal recorded for the first names that path, and the second
-// file has no verdict at all.
-//
-// This also rules out a subtler shape than fingerprint-only keying — a store
-// that recorded refusals per CONTENT (reasonable-sounding: "these bytes are
-// bad, wherever they are") would refuse both and pass this test, so what makes
-// it non-vacuous is T017_06 alongside it: the pass case proves the key is not
-// content-only, and this proves the refusal is not lost by the path being new.
+// The mirror of T017_06, where the cost is a lost refusal rather than a lost check.
+// The same secret at two paths; both must be refused. This also rules out a store
+// that recorded refusals per CONTENT — reasonable-sounding, and wrong: T017_06
+// proves the key is not content-only, and this proves the refusal is not lost by the
+// path being new.
 func TestT017_07_ARefusalAtOnePathDoesNotSilenceJudgementAtAnother(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
+	e.SetStopBlockCap(1)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", judgeGuard, map[string]string{"judge.sh": judgeScript})
 
-	got := e.Run(proj, "s-017-07", "the same secret at two paths", Turns("done",
+	const sess = "s-017-07"
+	e.Run(proj, sess, "the same secret at two paths", Turns("done",
 		Write("w1", "one.md", "SECRET=hunter2"),
 		Write("w2", "two.md", "SECRET=hunter2"),
 	))
 
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 2 {
-		t.Fatalf("the guardrail was asked %d time(s), want 2 — the second file has no verdict of "+
-			"its own and must be judged. Ledger: %v\n%s", n, lines, got.Output)
-	}
-	if n := strings.Count(got.Output, "content holds a secret"); n != 2 {
-		t.Fatalf("the guardrail refused %d time(s), want 2 — a refusal recorded against one path "+
-			"is about that path, and the same bytes arriving somewhere else are unjudged rather "+
-			"than settled.\nLedger: %v\n%s", n, lines, got.Output)
+	lines := e.FileGuardLedgerLines(proj, "judge", "log")
+	for _, p := range []string{"one.md", "two.md"} {
+		if n := asks(lines, p); n == 0 {
+			t.Fatalf("%s was not judged (%v) — the second file has no verdict of its own and must be "+
+				"judged", p, lines)
+		}
+		if !refusedPath(t, e, proj, sess, p) {
+			t.Fatalf("%s was not refused — a refusal recorded against one path is about that path, "+
+				"and the same bytes arriving somewhere else are unjudged rather than settled", p)
+		}
 	}
 }
 
 // T017_08: a delete records no pass, so the create that follows it is judged.
 //
-// The rule says a subject exists only where the fingerprint names what the
-// action WOULD LEAVE, and a delete leaves nothing. The dangerous version of
-// getting this wrong is specific: fingerprint the DOOMED file on the Pre side
-// and the exemption is keyed on exactly the content the action exists to
-// remove. Then
+// The rule says a subject exists only where the fingerprint names what the action
+// WOULD LEAVE, and a delete leaves nothing. The dangerous version of getting this
+// wrong is fingerprinting the DOOMED file and keying an exemption on exactly the
+// content the action exists to remove.
 //
-//	create "benign"  -> passes. Pass recorded on fingerprint(benign).
-//	delete           -> if this recorded a pass keyed on the disk it is about
-//	                    to destroy, that is a SECOND pass on fingerprint(benign)
-//	                    — or worse, the delete's own pass becomes the row.
-//	create "benign"  -> matches, skipped.
-//
-// The last step is legitimately skipped here (same path, same content, a real
-// earlier pass), so the delete cannot be caught that way. What catches it is
-// asking whether the guardrail was invoked for the DELETE at all, and whether a
-// create of DIFFERENT content after a delete is judged — which it must be,
-// since nothing about a removal can license bytes nobody has seen.
-//
-// This is the neighbour the bypass rule decides without anyone having enumerated
-// it, which is the test of whether the rule is a rule or a patch.
+// create benign (passes), delete it, create DIFFERENT content that holds a secret.
+// Nothing about the removal can license bytes nobody has seen, so the secret create
+// must be judged and refused.
 func TestT017_08_ADeleteLicensesNothingForTheCreateThatFollows(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
+	e.SetStopBlockCap(1)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", judgeGuard, map[string]string{"judge.sh": judgeScript})
 
-	// The removal is done through Bash rather than a file tool, because what is
-	// under test is that nothing recorded around a removal licenses the write
-	// that follows it. The create afterwards carries DIFFERENT bytes from the
-	// one before, so no legitimate exemption can cover it — and it carries a
-	// secret, so the failure is a refusal that went missing rather than a count
-	// that came up short.
-	got := e.Run(proj, "s-017-08", "create, remove, create something else", Turns("done",
+	const sess = "s-017-08"
+	// The removal is done through Bash, and the create afterwards carries DIFFERENT
+	// bytes holding a secret — so no legitimate exemption can cover it and the failure
+	// is a refusal that went missing.
+	e.Run(proj, sess, "create, remove, create something else", Turns("done",
 		Write("w1", "notes.md", "benign original"),
 		Bash("b1", "rm -f notes.md"),
 		Write("w2", "notes.md", "SECRET=hunter2"),
 	))
 
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 2 {
-		t.Fatalf("the guardrail was asked %d time(s), want 2 — a removal leaves no bytes, so "+
-			"nothing about it can license the content of a later write. Ledger: %v\n%s",
-			n, lines, got.Output)
+	if n := asks(e.FileGuardLedgerLines(proj, "judge", "log"), "notes.md"); n == 0 {
+		t.Fatalf("the file was never judged — a removal leaves no bytes, so nothing about it can " +
+			"license the content of a later write")
 	}
-	if !got.Saw("content holds a secret") {
-		t.Fatalf("the secret-bearing create after a removal was never refused. Nothing a delete "+
-			"does may stand in for a judgement of the bytes a later create leaves behind.\n"+
-			"Ledger: %v\n%s", lines, got.Output)
+	if !refusedPath(t, e, proj, sess, "notes.md") {
+		t.Fatalf("the secret-bearing create after a removal was never refused. Nothing a delete does " +
+			"may stand in for a judgement of the bytes a later create leaves behind")
 	}
 }
-
-// permissiveScript records that it was asked and permits everything.
-//
-// Used for the rule that must NOT have an opinion, so that a refusal observed
-// in T017_04 can only have come from the rule that does.
-const permissiveScript = `#!/bin/sh
-payload=$(cat)
-path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
-echo "asked path=[$path]" >> "$PWD/log"
-exit 0
-`

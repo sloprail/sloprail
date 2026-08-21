@@ -969,6 +969,65 @@ func (e *Env) FileGuardLedger(projDir, name, ledgerFile string) int {
 	return n
 }
 
+// FileGuardLedgerLines returns the LINES a project's own file-guard check appended
+// to a file in the guard's folder (`.sloprail/file-guard/<name>/<file>`), or
+// nothing when the file was never created.
+//
+// The new-format analogue of Ledger. Ledger reads the OLD path
+// (`.sloprail/guardrails/<name>/<file>`, where an old-format hook's $PWD sat);
+// this reads the NEW path a file-guard check writes to via $SR_GUARDRAIL_DIR
+// (`.sloprail/file-guard/<name>/`). FileGuardLedger above answers "how many times
+// did the check run" with a count; this answers "what did each run record" with
+// the raw lines, which a re-vehicled test parses back into the flat CheckPayload
+// (`.event.path`) it observed arrival through — the same shape refusal-survival is
+// proven on. An absent file is a real answer: nothing ran.
+func (e *Env) FileGuardLedgerLines(projDir, name, file string) []string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "file-guard", name, file))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read file-guard ledger %s/%s: %v", name, file, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// GateLedgerLines returns the LINES a project's own gate check appended to a file
+// in the gate's folder (`.sloprail/gate/<name>/<file>`), or nothing when the file
+// was never created.
+//
+// The gate analogue of FileGuardLedgerLines. A gate's check runs with
+// SR_GUARDRAIL_DIR set to `.sloprail/gate/<name>/` and its cwd there, so a check
+// that appends to a file writes it under that folder — the channel a test uses to
+// observe WHAT a gate's check was handed (the flat GateCheckPayload it parses back
+// into `.event.kind` / `.event.tool`), independently of the pass/fail verdict. An
+// absent file is a real answer: the check never recorded anything (it never fired,
+// or fired without writing).
+func (e *Env) GateLedgerLines(projDir, name, file string) []string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "gate", name, file))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read gate ledger %s/%s: %v", name, file, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
 // StructureGate writes the NEW-FORMAT structure gate — one tree-wide path
 // allowlist — at `.sloprail/file-guard/structure.yaml`.
 //
@@ -1190,6 +1249,66 @@ func (e *Env) DisableGuardrail(projDir, name, declaration string) {
 	path := filepath.Join(projDir, ".sloprail", "guardrails", name, "GUARDRAIL.md")
 	if err := os.WriteFile(path, []byte(disabled), 0o644); err != nil {
 		e.t.Fatalf("harness: disable guardrail %s: %v", name, err)
+	}
+}
+
+// RemoveFileGuard takes a NEW-FORMAT file-guard out of a project mid-session, the
+// way a user removes one: the whole `.sloprail/file-guard/<name>/` folder goes.
+//
+// The file-guard analogue of RemoveGuardrail. It returns the guard's ledger lines
+// as they stood at removal, read from the guard's own folder via
+// FileGuardLedgerLines, because that folder is about to be deleted along with the
+// ledger inside it. A test asking whether a removed guard kept firing compares this
+// against what it finds afterwards: with the folder gone, a guard that somehow
+// still ran would recreate the file, and an absent file is the answer that nothing
+// did.
+func (e *Env) RemoveFileGuard(projDir, name, ledgerFile string) []string {
+	e.t.Helper()
+	before := e.FileGuardLedgerLines(projDir, name, ledgerFile)
+	dir := filepath.Join(projDir, ".sloprail", "file-guard", name)
+	if err := os.RemoveAll(dir); err != nil {
+		e.t.Fatalf("harness: remove file-guard %s: %v", name, err)
+	}
+	return before
+}
+
+// DisableFileGuard turns a NEW-FORMAT file-guard off the way a consumer does: from
+// the project's own `.sloprail/config.yaml` `disabled:` list, naming the guard by
+// its qualified key `file-guard/<name>`.
+//
+// A distinct mechanism from removal rather than a synonym for it — the folder, the
+// scripts and the ledger all remain, so a disabled guard that kept firing appends a
+// line to a file that is still there, which removal cannot observe. This is the
+// file-guard analogue of DisableGuardrail, but it disables from config rather than
+// editing frontmatter: a file-guard.yaml has no `---` frontmatter to add an
+// `enabled: false` to, and the new format's OFF switch is the project config
+// `disabled:` key the loader honours (internal/declaration/store.go filters a
+// disabled declaration out entirely).
+//
+// It merges into any existing `.sloprail/config.yaml` disabled list rather than
+// overwriting it, so a test disabling two guards in turn does not silently re-enable
+// the first.
+func (e *Env) DisableFileGuard(projDir string, names ...string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
+	}
+	path := filepath.Join(dir, "config.yaml")
+	body := ""
+	if existing, err := os.ReadFile(path); err == nil {
+		body = string(existing)
+	} else if !os.IsNotExist(err) {
+		e.t.Fatalf("harness: read config: %v", err)
+	}
+	if !strings.Contains(body, "disabled:") {
+		body += "disabled:\n"
+	}
+	for _, name := range names {
+		body += "  - file-guard/" + name + "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		e.t.Fatalf("harness: write config: %v", err)
 	}
 }
 

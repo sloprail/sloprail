@@ -5,47 +5,30 @@ import (
 	"testing"
 )
 
-// One guardrail, two hooks in declaration order. The first plants a registry
-// under a DIFFERENT guardrail's name; the second reads it back with
-// `state list --owner <that name>` and reports what it saw.
+// One guardrail, two checks in declaration order. The first plants a registry
+// under a DIFFERENT guardrail's name; the second reads it back with `state list
+// --owner <that name>` and reports what it saw. SHARED machinery — the
+// cross-guard `--owner` read a shipped gate uses to cross-reference a context's
+// registry, exercised through the real CLI against a NEW-format file-guard.
 //
-// Two hooks of one rule rather than two rules because between guardrails nothing
-// is promised about order, but hooks within a binding run in declaration order —
-// so the second hook genuinely runs after the registry exists. The owner name
-// the second hook reads is one the reading guardrail never wrote under, so a
-// non-empty read is the cross-guardrail read working, not its own entries coming
-// back.
-//
-// Planting the owner's rows by naming it on the way in is legitimate and already
-// pinned by T008_04: a hook is an arbitrary command and may set SR_GUARDRAIL
-// before calling the CLI. This test uses that only to stand a sibling context's
-// registry up deterministically; the behaviour under test is the READER's
+// Two checks of one guard rather than two guards because the new preventive
+// dispatch runs guards in name order but stops at the first refusal — two checks
+// of one guard run in declaration order, so the reader genuinely runs after the
+// registry exists. Planting the owner's rows by naming it on the way in is
+// legitimate and already pinned by T008_04: a check is an arbitrary command and may
+// set SR_GUARDRAIL before calling the CLI. The behaviour under test is the READER's
 // --owner.
-const ownerReadGuardrail = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "owner/"
-      hooks:
-        - type: command
-          command: ./plant.sh
-        - type: command
-          command: ./read.sh
----
-
-# Reads a sibling context's registry with --owner
-
-The context logs each subject under its own name; this gate reads the group
-back by naming that context as --owner. Ordering across the two is the caller's
-to establish with require: [{context}]; here the two hooks run in order so the
-registry is present when the gate reads it.
+const ownerReadGuard = `match: "owner/**"
+preventive: true
+checks:
+  - script: ./plant.sh
+  - script: ./read.sh
 `
 
 // Plants a two-entry registry under the owner's name, and its OWN distinct entry
-// under the reading guardrail's real name. The own entry lets the reader prove
-// its own-scoped list is separate from what --owner returns.
-//
-// It refuses nothing — it exits zero so the second hook runs. A silent failure
-// here would make the reader's assertions vacuous, so each write is guarded.
+// under the reading guardrail's real name. The own entry lets the reader prove its
+// own-scoped list is separate from what --owner returns. It permits (exit 0) so the
+// second check runs.
 const ownerPlantScript = `#!/bin/sh
 cat >/dev/null
 SR_GUARDRAIL=registry-owner sr-session state set "reg:alpha" '{"kw":["x"]}' || { echo "PLANT-FAILED-alpha" >&2; exit 1; }
@@ -60,14 +43,9 @@ exit 0
 //   - --owner does-not-exist        an owner that never wrote -> empty
 //   - (own list, no --owner)        the reader's own entries, unaffected
 //
-// The KEYS are asserted, extracted with `jq -r .key` and comma-joined. Keys are
-// plain tokens (reg:alpha, own:mine) that survive the hook's stderr becoming a
-// JSON string in the tool_result, whereas the values carry quotes and
-// backslashes that get re-escaped in transport and are painful to match.
-//
-// To prove the VALUE genuinely crosses the boundary too — not only the key — the
-// reader also reads one owned value directly and reports it. That value is picked
-// to be quote-free (a bare token) so it matches cleanly through transport.
+// The KEYS are asserted, extracted with `jq -r .key`. To prove the VALUE genuinely
+// crosses too, the reader also reads one owned value directly (a quote-free token
+// that matches cleanly through transport).
 const ownerReadScript = `#!/bin/sh
 cat >/dev/null
 owned_keys="$(sr-session state list --owner registry-owner "reg:" | jq -r .key | paste -sd, -)"
@@ -85,17 +63,14 @@ exit 1
 //
 // The reader is a different guardrail from the one whose rows it reads: it reads
 // registry-owner's entries though it never wrote under that name, and gets them.
-// This is the capability the shipped gates need — a gate cross-referencing the
-// registry a context accumulated — exercised through the real CLI.
-//
-// Three facts are asserted together, because --owner is only correct if all
-// three hold: it returns the OWNER's entries under the prefix; an owner that
-// never wrote is EMPTY not an error; and the reader's OWN list is untouched by
-// --owner, still its own entry and not the owner's.
+// Three facts are asserted together, because --owner is only correct if all three
+// hold: it returns the OWNER's entries under the prefix; an owner that never wrote
+// is EMPTY not an error; and the reader's OWN list is untouched by --owner.
 func TestT008_07_OwnerReadsSiblingRegistry(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "gate", ownerReadGuardrail, map[string]string{
+	e.GitInit(proj)
+	e.FileGuard(proj, "gate", ownerReadGuard, map[string]string{
 		"plant.sh": ownerPlantScript, "read.sh": ownerReadScript,
 	})
 
@@ -103,36 +78,31 @@ func TestT008_07_OwnerReadsSiblingRegistry(t *testing.T) {
 		Write("w1", "owner/notes.md", "hello"),
 	))
 
-	// The registry has to have been planted, or an empty owned read proves
-	// nothing about isolation vs. a broken write.
+	// The registry has to have been planted, or an empty owned read proves nothing.
 	if got.Saw("PLANT-FAILED") {
 		t.Fatalf("the sibling registry could not be planted, so the owned read proves nothing:\n%s", got.Output)
 	}
 	if !got.Saw("OWNED-KEYS:") {
-		t.Fatalf("the reader hook never ran, so nothing was tested:\n%s", got.Output)
+		t.Fatalf("the reader check never ran, so nothing was tested:\n%s", got.Output)
 	}
 
 	// The cross-guardrail read returns the owner's two reg: keys, in key order,
-	// under the prefix. The reading guardrail never wrote under registry-owner,
-	// so these are the owner's rows and not its own.
+	// under the prefix. The reading guardrail never wrote under registry-owner, so
+	// these are the owner's rows and not its own.
 	if !got.Saw("OWNED-KEYS:[reg:alpha,reg:beta]") {
 		t.Fatalf("--owner did not return the sibling's registry keys under the prefix:\n%s", got.Output)
 	}
-	// The VALUE crosses too, not only the key: the owner's sig: entry reads back
-	// as the exact value the owner stored.
+	// The VALUE crosses too, not only the key.
 	if !got.Saw("OWNED-VAL:[owner-signature]") {
 		t.Fatalf("--owner returned the key but not the owner's stored value:\n%s", got.Output)
 	}
-
 	// An owner that never wrote is an empty read, exiting zero — not an error the
 	// gate would have to tell apart from "nothing declared".
 	if !got.Saw("MISSING:[]") {
 		t.Fatalf("--owner on a guardrail that never wrote was not empty:\n%s", got.Output)
 	}
-
 	// The reader's OWN list is unaffected by --owner: it still sees its own entry
-	// and NOT the owner's. The own read returns own:mine alone — none of the
-	// owner's keys, so the cross-guardrail read did not leak into the plain one.
+	// and NOT the owner's.
 	if !got.Saw("MINE-KEYS:[own:mine]") {
 		t.Fatalf("the reader's own list was not its own entry alone — --owner may have leaked into the plain read:\n%s", got.Output)
 	}
@@ -141,8 +111,8 @@ func TestT008_07_OwnerReadsSiblingRegistry(t *testing.T) {
 	}
 }
 
-// lineWithPrefix returns the substring of output starting at prefix and ending
-// at the next newline (or end), or "" when the prefix is absent. It reads the
+// lineWithPrefix returns the substring of output starting at prefix and ending at
+// the next escaped newline (or end), or "" when the prefix is absent. It reads the
 // escaped transport blob, where lines are joined by literal \n rather than real
 // newlines, so it splits on that.
 func lineWithPrefix(output, prefix string) string {

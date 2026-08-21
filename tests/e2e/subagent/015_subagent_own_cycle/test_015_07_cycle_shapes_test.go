@@ -20,30 +20,30 @@ import (
 // refusesOnceThenRelents refuses the first cycle it judges and permits every
 // cycle after.
 //
-// The counter is a file in the guardrail's own folder, which for an isolated
-// sub-agent is the folder inside ITS worktree — so the count is per-sub-agent
-// and a second sub-agent does not inherit the first's.
-const refusesOnceThenRelents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Refuses the first time it is asked, then relents.
+// The counter is a file in the file-guard's own folder ($SR_GUARDRAIL_DIR), which
+// for an isolated sub-agent is the folder inside ITS worktree — so the count is
+// per-sub-agent and a second sub-agent does not inherit the first's.
+//
+// A file-guard after-check (preventive omitted): it fires at the sub-agent's
+// SubagentStop against the settled `.md` file it made, and a refusal blocks that
+// stop the same as the old Post hook did. New-format refusal contract: exit
+// non-zero with the reason as `{"reason":"…"}` on stdout (scriptRefusalReason
+// prefers structured stdout), replacing the old exit-2-with-stderr.
+const refusesOnceThenRelents = `match: "**/*.md"
+checks:
+  - script: ./record.sh
 `
 
 const refuseOnceScript = `#!/bin/sh
 payload=$(cat)
 path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
-n=$(cat "$PWD/count" 2>/dev/null || echo 0)
+n=$(cat "$SR_GUARDRAIL_DIR/count" 2>/dev/null || echo 0)
 n=$((n + 1))
-echo "$n" > "$PWD/count"
-echo "call $n path=[$path]" >> "$PWD/log"
+echo "$n" > "$SR_GUARDRAIL_DIR/count"
+echo "call $n path=[$path]" >> "$SR_GUARDRAIL_DIR/log"
 if [ "$n" -le 1 ]; then
-  echo "the first attempt is refused" >&2
-  exit 2
+  echo '{"reason":"the first attempt is refused"}'
+  exit 1
 fi
 exit 0
 `
@@ -74,7 +74,7 @@ exit 0
 func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "onceonly", refusesOnceThenRelents, map[string]string{"record.sh": refuseOnceScript})
+	e.FileGuard(proj, "onceonly", refusesOnceThenRelents, map[string]string{"record.sh": refuseOnceScript})
 	e.GitInit(proj)
 
 	sub := subScenario(t, harness.Turns("sub done",
@@ -122,7 +122,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	// tree the root never diffs, and no verdict of the root's is about it. A
 	// root judging it would be the parent handed another session's work as its
 	// own.
-	for _, l := range e.Ledger(proj, "onceonly", "log") {
+	for _, l := range e.FileGuardLedgerLines(proj, "onceonly", "log") {
 		if pathOf(l) == "first.md" || pathOf(l) == "second.md" {
 			t.Fatalf("the DISPATCHING session's own cycle judged %q — a file that exists only in "+
 				"the sub-agent's separate worktree. The delegated work was attributed to the "+
@@ -170,7 +170,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 func TestT015_08_AReFiredSubagentStopJudgesNothingAgain(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysScript})
+	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysScript})
 	e.GitInit(proj)
 
 	sub := subScenario(t, harness.Turns("sub done",
@@ -213,22 +213,16 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgain(t *testing.T) {
 	}
 }
 
-const refusesEverything = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Refuses everything it is asked about.
+const refusesEverything = `match: "**/*.md"
+checks:
+  - script: ./record.sh
 `
 
 const refuseAlwaysScript = `#!/bin/sh
 cat >/dev/null
-echo "asked" >> "$PWD/log"
-echo "this rule always says no" >&2
-exit 2
+echo "asked" >> "$SR_GUARDRAIL_DIR/log"
+echo '{"reason":"this rule always says no"}'
+exit 1
 `
 
 // T015_09: a sub-agent that changes nothing ends cleanly and judges nothing.
@@ -252,7 +246,7 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := New(t)
 			proj := e.Project()
-			e.Guardrail(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+			e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 			e.GitInit(proj)
 
 			sub := subScenario(t, harness.Turns("sub done", Bash("sb1", tc.command)))
@@ -311,7 +305,7 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 func TestT015_10_ASubagentThatCommitsLeavesItsCycleNothingToJudge(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
 	// Identity given on the command line so the run does not depend on whatever

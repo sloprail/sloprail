@@ -7,6 +7,10 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
+// Env is the harness environment, aliased so scenario helpers in this package can
+// take one without naming the import at every call site.
+type Env = harness.Env
+
 var (
 	New   = harness.New
 	Turns = harness.Turns

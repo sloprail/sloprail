@@ -32,28 +32,40 @@ import (
 // over on an odd tree reports nothing at all, and "the strange path was not
 // reported" is satisfied perfectly by that.
 
-const bindPostFileEvents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records every after-the-fact file event it is handed
+// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
+// file event it is handed (re-vehicled from the old GUARDRAIL.md hooks per
+// tests/e2e/REVEHICLE-PATTERN.md).
+//
+// `match: path != ""` — an EXPRESSION that admits every real path (a file's path
+// is never empty), the file-guard "match everything" this directory needs. It
+// cannot use the obvious `**` glob: `**` compiles to the regexp `.*`, whose `.`
+// does not match a newline, so a path holding one (T023_08's `odd<newline>name.md`)
+// would not be selected and would go unreported — the exact thing that test proves
+// arrives. It cannot use an empty match either (a file-guard requires a non-empty
+// `match` at load). A string `!=` comparison has no such newline blind spot, so
+// it selects every path this directory drives, `build.log` (T023_06) and
+// `.gitmodules` (T023_10) included — paths a `**/*.md` match would silence though
+// the tests assert they ARE reported. A single file-guard fires on whichever Post
+// kind the change produced, so the create/update/delete classification the kind
+// assertions read comes through the new dispatch unchanged.
+//
+// Because the match is this wide it WOULD also select the guard's own ledger
+// (`.sloprail/file-guard/watcher/seen`, an untracked file the check writes), so the
+// `.sloprail/*` skip in the check is LOAD-BEARING here — it stops the guard
+// re-observing its own bookkeeping every cycle, the same skip 015's fixture keeps
+// for the same reason under a broad binding.
+const recordEverything = `match: path != ""
+checks:
+  - script: ./record.sh
 `
 
 const recordScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
+payload="$(cat)"
+path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+case "$path" in
+  .sloprail/*) exit 0 ;;
+esac
+printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
@@ -62,21 +74,23 @@ type observed struct {
 	Path string
 }
 
+// observedFiles decodes what a file-guard's check was handed — the FLAT event,
+// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
+// the old nested `event.fields` envelope.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -100,7 +114,7 @@ func project(t *testing.T) (*harness.Env, string) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 	return e, proj
@@ -110,7 +124,7 @@ func project(t *testing.T) (*harness.Env, string) {
 func runOne(t *testing.T, e *harness.Env, proj, sess string, s harness.Scenario) []observed {
 	t.Helper()
 	e.Run(proj, sess, "cycle", s)
-	return observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	return observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 }
 
 // T023_01: a rename arrives as a delete of the old path and a create of the new.
@@ -170,10 +184,10 @@ func TestT023_02_ARenameChainAcrossCyclesEndsAtTheLastPath(t *testing.T) {
 
 	const sess = "s-023-02"
 	e.Run(proj, sess, "first move", Turns("done", Bash("b1", "git mv a.md b.md")))
-	firstEnd := len(e.Ledger(proj, "watcher", "seen"))
+	firstEnd := len(e.FileGuardLedgerLines(proj, "watcher", "seen"))
 
 	e.Run(proj, sess, "second move", Turns("done", Bash("b2", "git mv b.md c.md")))
-	all := e.Ledger(proj, "watcher", "seen")
+	all := e.FileGuardLedgerLines(proj, "watcher", "seen")
 	if len(all) <= firstEnd {
 		t.Fatalf("the second cycle put nothing in front of the rule, so nothing below can be read")
 	}
@@ -609,7 +623,7 @@ func TestT023_12_ADetachedHeadReachingTheBaselineKeepsThePoint(t *testing.T) {
 		t.Fatalf("HEAD is not detached (on %q), so this test is not about a detached HEAD", ref)
 	}
 
-	got := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if !sawPath(got, "early.md") {
 		t.Fatalf("work committed before a detach fell out of the difference: %v\n"+
 			"the detached commit still reaches the session's baseline, so the point must not "+

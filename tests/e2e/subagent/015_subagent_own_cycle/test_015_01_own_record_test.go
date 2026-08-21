@@ -36,7 +36,7 @@ import (
 func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
 	// Bash, not Write. The mock executes Bash and applies it in whatever tree the
@@ -86,7 +86,7 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	// judging the sub-agent's cycle against the dispatching session's record
 	// would resolve the parent's identity here, and every other assertion in
 	// this test would still hold.
-	rootLines := e.Ledger(proj, "recorder", "log")
+	rootLines := e.FileGuardLedgerLines(proj, "recorder", "log")
 	rootLine, ok := lineAbout(rootLines, "only-the-root-made-this.md")
 	if !ok {
 		t.Fatalf("the root's own write was not judged (%v), so there is no identity to compare "+
@@ -134,7 +134,7 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 func TestT015_02_ASharedTreeSubagentAndItsParentEachJudgeAsThemselves(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
 	sub := subScenario(t, harness.Turns("sub done",
@@ -163,7 +163,7 @@ func TestT015_02_ASharedTreeSubagentAndItsParentEachJudgeAsThemselves(t *testing
 
 	// Both cycles judged it, and they are the same tree so both ledgers are the
 	// project's own.
-	lines := e.Ledger(proj, "recorder", "log")
+	lines := e.FileGuardLedgerLines(proj, "recorder", "log")
 	var judges []string
 	for _, l := range lines {
 		if pathOf(l) == "from-the-sub.md" {
@@ -209,7 +209,7 @@ func TestT015_02_ASharedTreeSubagentAndItsParentEachJudgeAsThemselves(t *testing
 func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
+	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
 	e.GitInit(proj)
 
 	sub := subScenario(t, harness.Turns("sub done",
@@ -229,7 +229,7 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 		t.Fatalf("the sub-agent hit the retry cap:\n%s", res.Output)
 	}
 
-	rootLines := e.Ledger(proj, "memo", "log")
+	rootLines := e.FileGuardLedgerLines(proj, "memo", "log")
 	subLines := subLedger(t, proj, theWorktree(t, proj), "memo", "log")
 
 	// THE POSITIVE CONTROL. Some hook of the ROOT's read back what an earlier
@@ -314,7 +314,7 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
+	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
 	e.GitInit(proj)
 
 	first := subScenario(t, harness.Turns("one done", Bash("a1", "echo one > first-subs-file.md")))
@@ -388,7 +388,7 @@ func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
 func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
 	sub := subScenario(t, harness.Turns("sub done",

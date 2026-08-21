@@ -57,28 +57,24 @@ import (
 // this arrangement reports nothing at all, and "no spurious delete arrived" is
 // satisfied perfectly by that.
 
-const bindPostFileEvents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records every after-the-fact file event it is handed
+// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
+// file event it is handed (re-vehicled from the old GUARDRAIL.md hooks per
+// tests/e2e/REVEHICLE-PATTERN.md). It is installed in the SUBDIRECTORY the session
+// reports, because the engine loads rules from `<cwd>/.sloprail` and every cycle
+// here reports that subdirectory. `match: "**/*.md"` fires on whichever Post kind
+// each change produced; every path this directory drives is `.md`, and — crucially
+// for this suite — the paths arrive REPOSITORY-relative (`sub/deep/inner.md`,
+// `top.md`), which the `**/` optional-leading-directory glob matches at the root
+// and at any depth alike. The ledger (`seen`, no `.md`) is not matched, so the
+// guard cannot re-observe its own bookkeeping.
+const recordEverything = `match: "**/*.md"
+checks:
+  - script: ./record.sh
 `
 
 const recordScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
+cat >> "$SR_GUARDRAIL_DIR/seen"
+echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
@@ -87,21 +83,23 @@ type observed struct {
 	Path string
 }
 
+// observedFiles decodes what a file-guard's check was handed — the FLAT event,
+// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
+// the old nested `event.fields` envelope.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -134,7 +132,7 @@ func subProject(t *testing.T) (e *harness.Env, proj, sub string) {
 	proj = e.Project()
 	e.GitInit(proj)
 	sub = filepath.Join(proj, "sub", "deep")
-	e.Guardrail(sub, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 	return e, proj, sub
@@ -168,7 +166,7 @@ func TestT025_01_ACycleFromASubdirectoryReportsItsWork(t *testing.T) {
 			"it, so this is not testing the arrangement it claims to")
 	}
 
-	got := observedFiles(t, e.Ledger(sub, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(sub, "watcher", "seen"))
 	if !sawPath(got, "sub/deep/inner.md") {
 		t.Fatalf("a file written by a cycle reporting a subdirectory was not reported under its "+
 			"repository-relative path: %v — either the session could not be identified from "+
@@ -219,7 +217,7 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 			"the cycle to report and its silence would be correct")
 	}
 
-	got := observedFiles(t, e.Ledger(sub, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(sub, "watcher", "seen"))
 	k := kindsFor(got, "top.md")
 	if len(k) == 0 {
 		t.Fatalf("a file modified outside the reported subdirectory was not reported at all: %v — "+
@@ -318,7 +316,7 @@ func TestT025_04_AVerdictRecordedEarlierHoldsForASubdirectoryCycle(t *testing.T)
 	e.RunFrom(proj, "sub/deep", sess, "settle a file", Turns("done",
 		Write("w1", "settled.md", "judged and passed\n"),
 	))
-	first := e.Ledger(sub, "watcher", "seen")
+	first := e.FileGuardLedgerLines(sub, "watcher", "seen")
 	if len(kindsFor(observedFiles(t, first), "sub/deep/settled.md")) == 0 {
 		t.Fatalf("the file was never judged in the first cycle (%v), so there is no verdict for "+
 			"the second cycle to inherit and the skip below would hold for the wrong reason",
@@ -329,7 +327,7 @@ func TestT025_04_AVerdictRecordedEarlierHoldsForASubdirectoryCycle(t *testing.T)
 		Write("w2", "other.md", "cycle two\n"),
 	))
 
-	all := e.Ledger(sub, "watcher", "seen")
+	all := e.FileGuardLedgerLines(sub, "watcher", "seen")
 	if len(all) <= len(first) {
 		t.Fatalf("the second cycle dispatched nothing at all (%d lines, was %d) — a session "+
 			"whose hooks report a subdirectory judged nothing", len(all), len(first))
@@ -376,33 +374,29 @@ func TestT025_05_ARefusalStillRefusesInASubdirectoryCycle(t *testing.T) {
 
 	// Refuses any path containing "bad", and records everything it is handed
 	// BEFORE deciding — so arrival is observable independently of the verdict.
-	const refuseNamed = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./judge.sh
----
-
-# Refuses any file whose path contains "bad"
+	// A NEW-FORMAT file-guard, after-check: it observes at Stop and RE-FIRES next
+	// cycle, which is exactly where a retained refusal is measured. `match: "**/*.md"`
+	// selects the repository-relative markdown paths the cycle produces
+	// (`sub/deep/bad-file.md`) at the root or any depth; the ledger (`seen`) has no
+	// `.md` suffix and is not matched, so the guard cannot re-observe it.
+	const refuseNamed = `match: "**/*.md"
+checks:
+  - script: ./judge.sh
 `
+	// New-format refusal contract: exit non-zero refuses and a `{"reason":…}` on
+	// stdout is the reason the agent is told, replacing the old exit-2-with-stderr.
+	// The whole flat payload still carries `"path":"…bad…"`, so a `*bad*` match on it
+	// works unchanged. The ledger is $SR_GUARDRAIL_DIR/seen, the folder the engine
+	// sets for the check.
 	const judgeScript = `#!/bin/sh
 payload="$(cat)"
-printf '%s\n' "$payload" >> "$PWD/seen"
+printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
 case "$payload" in
-  *bad*) echo "this file is not acceptable" >&2; exit 2 ;;
+  *bad*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
 esac
 exit 0
 `
-	e.Guardrail(sub, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
+	e.FileGuard(sub, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 
@@ -411,7 +405,7 @@ exit 0
 	e.RunFrom(proj, "sub/deep", sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
 	))
-	first := e.Ledger(sub, "watcher", "seen")
+	first := e.FileGuardLedgerLines(sub, "watcher", "seen")
 	if len(kindsFor(observedFiles(t, first), "sub/deep/bad-file.md")) == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle (%v), so there "+
 			"is no refusal on record and nothing for the second cycle to carry",
@@ -437,7 +431,7 @@ exit 0
 		Write("w2", "fine.md", "acceptable\n"),
 	))
 
-	all := e.Ledger(sub, "watcher", "seen")
+	all := e.FileGuardLedgerLines(sub, "watcher", "seen")
 	if len(all) <= len(first) {
 		t.Fatalf("the second cycle dispatched nothing at all (%d lines, was %d)", len(all), len(first))
 	}

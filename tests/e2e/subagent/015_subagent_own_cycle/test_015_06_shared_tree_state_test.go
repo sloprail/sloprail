@@ -40,7 +40,7 @@ import (
 func TestT015_06_InOneTreeASubagentsStateIsStillItsOwn(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
+	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
 	e.GitInit(proj)
 
 	// The sub-agent writes into the SAME tree the root is working in. Bash
@@ -74,7 +74,7 @@ func TestT015_06_InOneTreeASubagentsStateIsStillItsOwn(t *testing.T) {
 	}
 
 	// Both cycles wrote into the one project tree, so both ledgers are here.
-	lines := e.Ledger(proj, "memo", "log")
+	lines := e.FileGuardLedgerLines(proj, "memo", "log")
 	if len(lines) == 0 {
 		t.Fatalf("nothing was judged at all:\n%s", res.Output)
 	}

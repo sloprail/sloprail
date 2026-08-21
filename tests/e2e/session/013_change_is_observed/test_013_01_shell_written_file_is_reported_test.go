@@ -28,46 +28,37 @@ import (
 // A test of only the first would pass against an engine that reported the union
 // of everything announced AND everything on disk.
 
-// bindPostFileEvents binds one guardrail to every after-the-fact file kind,
-// recording what it is handed.
+// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
+// file event it is handed, and permits unconditionally — the question here is
+// which changes were observed, not what anyone decided about them.
 //
-// Bound to all three (create, update, delete) rather than only the one a test
-// expects, so an engine that reported a change under the wrong kind is visible
-// here as a wrong kind rather than as silence — silence is what a test asserting
-// only PostFileCreate would see, and it reads identically to "nothing was
-// dispatched at all".
-const bindPostFileEvents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records every after-the-fact file event it is handed
-
-Permits unconditionally: the question here is which changes were observed, not
-what anyone decided about them.
+// `match: "**/*.md"` selects every markdown file the cycle's difference produces,
+// at the repository root or any depth (`**/` compiles to an OPTIONAL leading
+// directory), which is the faithful stand-in for the old binding to all three
+// after-the-fact kinds: a file-guard fires on whichever Post kind the change
+// produced, so create, update and delete all reach the one check. Every path
+// this directory writes is `.md`, and the guard's own ledger (`seen`, no `.md`)
+// is not matched — so, unlike the old $PWD-under-.sloprail/ ledger, the guard
+// cannot re-observe its own bookkeeping.
+//
+// (Re-vehicled from the old GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md:
+// the new declaration store does not read GUARDRAIL.md, so this coverage of the
+// shared tree-difference machinery would vanish once the old dispatch is deleted.
+// It observes the SAME behavior through the NEW dispatch — the flat CheckPayload
+// (`.event.path`, `.event.kind`) via the file-guard's own ledger.)
+const recordEverything = `match: "**/*.md"
+checks:
+  - script: ./record.sh
 `
 
 // recordScript appends the whole payload as one line.
 //
-// $PWD, not $CLAUDE_PROJECT_DIR: a hook runs with its working directory set to
-// the guardrail's own folder, and the mock does not set CLAUDE_PROJECT_DIR at
-// all. A script writing to an unset variable's path silently writes to the
-// filesystem root's relative path and the ledger stays empty — which a test
-// asserting absence would read as a pass.
+// The ledger is $SR_GUARDRAIL_DIR/seen — the folder the engine sets for a
+// file-guard check (`.sloprail/file-guard/<name>/`), the new-format ledger idiom
+// that replaces the old hook's $PWD (which the mock never set a project dir for).
 const recordScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
+cat >> "$SR_GUARDRAIL_DIR/seen"
+echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
@@ -77,22 +68,23 @@ type observed struct {
 	Path string
 }
 
-// observedFiles decodes what a guardrail's hook was handed.
+// observedFiles decodes what a file-guard's check was handed. The event's own
+// fields spread directly under `event` (`.event.kind`, `.event.path`), NOT nested
+// under an `event.fields` envelope the way the old format wrote them.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -122,13 +114,13 @@ func TestT013_01_AFileWrittenByAShellRedirectIsReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-013-01", "write through a script", Turns("done",
 		Bash("b1", "printf 'made by a script\n' > from-script.md"),
 	))
 
-	got := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if !sawPath(got, "from-script.md") {
 		t.Fatalf("a file created by a shell redirect was not reported: got %v — "+
 			"no tool call and no parseable argument names it, so only looking at the tree finds it", got)
@@ -150,7 +142,7 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 
 	// One turn that genuinely writes, so the cycle is not empty and a build
 	// dispatching nothing at all cannot pass this by being inert. The assertion
@@ -160,7 +152,7 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 		Bash("b2", "echo would have written never-written.md"),
 	))
 
-	got := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	// The control: the cycle DID report something, so the absence asserted next
 	// is a real absence rather than an engine that dispatched nothing.
 	if !sawPath(got, "really-written.md") {
