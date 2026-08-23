@@ -19,44 +19,79 @@ import (
 // has to be one that would genuinely remove the file from a
 // baseline-derived difference — otherwise the file arrives because it is still
 // in the diff, and the refusal's own contribution is unproven.
-
-// refuseNamed refuses any file whose path contains "bad", and records every
-// file it was handed.
 //
-// It records BEFORE deciding, so the ledger shows arrival independently of the
-// verdict — which is the whole observation this directory needs. A guardrail
-// that only refused would leave "was this file put in front of me again?"
-// answerable solely by the refusal travelling back, and a refusal at an
-// after-the-fact point does not stop anything, so it is a weaker signal.
-const refuseNamed = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./judge.sh
----
+// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+//
+// This directory tests SHARED engine machinery — baseline movement, tree-diff,
+// readdOutstanding, refusal survival across a branch switch — that the new format
+// still uses. It used to install that machinery's rule via an OLD-format guardrail
+// (`.sloprail/guardrails/watcher/GUARDRAIL.md`, `hooks: PostFileCreate: …`) and
+// observe it fire through the OLD dispatch. The new declaration store does not read
+// GUARDRAIL.md, so once the old dispatch is deleted the rule loads nothing and this
+// coverage vanishes. Re-vehicling it onto e.FileGuard makes it observe the SAME
+// behavior through the NEW dispatch — and refusal-survival IS file-guard re-fire
+// semantics, so the file-guard is the more faithful vehicle. The exact mechanical
+// transformation is in tests/e2e/REVEHICLE-PATTERN.md.
+//
+// The observation channel is a file-guard's own ledger under
+// `.sloprail/file-guard/watcher/seen` (written via $SR_GUARDRAIL_DIR), read with
+// e.FileGuardLedgerLines and parsed back into the FLAT CheckPayload (`.event.path`,
+// `.event.kind`) the new format hands a check — never the OLD nested
+// `.event.fields.path`.
 
-# Refuses any file whose path contains "bad"
+// refuseNamedGuard is a NEW-FORMAT file-guard that refuses any file whose path
+// contains "bad", and records every file it was handed.
+//
+// After-check (preventive omitted, the default): it observes at Stop and RE-FIRES
+// next cycle, which is exactly the point where refusal-survival is measured — a
+// pre-block would stop the write and there would be nothing on disk to re-report.
+//
+// `match: "**/*.md"` selects the same files the old path-based hook saw: `**/`
+// compiles to an OPTIONAL leading directory (`(?:.*/)?`), so it matches
+// `bad-file.md` at the repo root AND `sub/x.md` at any depth. Crucially it does
+// NOT match the guard's own ledger (`seen`, no `.md`), its `file-guard.yaml`, or
+// its `judge.sh` — so, unlike the old $PWD-under-.sloprail/ ledger, the guard
+// cannot re-observe its own bookkeeping and there is no ledger-doubling blowup.
+//
+// The check records BEFORE deciding, so the ledger shows arrival independently of
+// the verdict — which is the whole observation this directory needs. A guardrail
+// that only refused would leave "was this file put in front of me again?"
+// answerable solely by the refusal travelling back, and an after-check refusal
+// does not stop anything, so it is a weaker signal.
+const refuseNamedGuard = `match: "**/*.md"
+checks:
+  - script: ./judge.sh
 `
 
-// judgeScript records the payload, then refuses when the path contains "bad".
+// judgeScript records the FLAT CheckPayload, then refuses when the path contains
+// "bad".
 //
-// Exit 2 is the refusal channel. The path is read out of the payload with a
-// grep rather than a JSON parser because a hook is an ordinary shell script and
-// this keeps the fixture free of dependencies.
+// New-format refusal contract: exit non-zero refuses, and a `{"reason": "..."}` on
+// stdout is the reason the agent is told (scriptRefusalReason prefers structured
+// stdout). Exit 0 permits. This replaces the old exit-2-with-stderr channel.
+//
+// The path is read out of the payload with a sed rather than a JSON parser because
+// a check is an ordinary shell script and this keeps the fixture free of
+// dependencies. The flat wire form still carries `"path":"…"` (the event's fields
+// spread directly under `event`, so `.event.path` rather than `.event.fields.path`),
+// so the same sed matches.
+//
+// The ledger is written to $SR_GUARDRAIL_DIR/seen — the folder the engine sets for
+// a file-guard check (`.sloprail/file-guard/watcher/`), the new-format ledger idiom
+// (cf. the fileguard e2e's checkForbidSecret). A defensive `.sloprail/*` skip is
+// kept from the old fixture: it is no longer load-bearing (the ledger has no `.md`
+// suffix, so `**/*.md` never matches it and no self-observation can occur), but it
+// costs nothing and keeps the intent — this rule judges the agent's files, not the
+// engine's own bookkeeping — legible.
 const judgeScript = `#!/bin/sh
 payload="$(cat)"
-printf '%s\n' "$payload" >> "$PWD/seen"
-case "$payload" in
-  *bad*) echo "this file is not acceptable" >&2; exit 2 ;;
+path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+case "$path" in
+  .sloprail/*) exit 0 ;;
+esac
+printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
+case "$path" in
+  bad*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
 esac
 exit 0
 `
@@ -66,21 +101,24 @@ type observed struct {
 	Path string
 }
 
+// observedFiles parses the FLAT CheckPayload lines the check recorded. The event's
+// own fields are spread directly under `event` (`.event.kind`, `.event.path`), NOT
+// nested under an `event.fields` envelope the way the old format wrote them — so
+// this reads Event.Kind and Event.Path directly.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -110,14 +148,14 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
 
 	const sess = "s-015-01"
 	e.Run(proj, sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
 	))
 
-	first := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	first := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(first, "bad-file.md") == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
@@ -130,7 +168,7 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 		Write("w2", "unrelated.md", "fine\n"),
 	))
 
-	after := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	after := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(after, "bad-file.md") <= countPath(first, "bad-file.md") {
 		t.Fatalf("an unfixed refusal was not re-reported on the next cycle: saw it %d times "+
 			"after the first cycle and %d times after the second (%v) — the file is still broken "+
@@ -154,7 +192,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
 
 	// The rule is committed first, so it exists on both lines of history.
 	// Without this the checkout below deletes .sloprail/ along with everything
@@ -172,8 +210,8 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	e.Git(proj, "checkout", "main")
 	e.Git(proj, "commit", "--allow-empty", "-m", "on main, after the split")
 
-	if e.Git(proj, "cat-file", "-t", "feature:.sloprail/guardrails/watcher/GUARDRAIL.md") != "blob" {
-		t.Fatalf("the guardrail is not present on the branch the agent switches to, so the " +
+	if e.Git(proj, "cat-file", "-t", "feature:.sloprail/file-guard/watcher/file-guard.yaml") != "blob" {
+		t.Fatalf("the file-guard is not present on the branch the agent switches to, so the " +
 			"rule cannot fire there and a ledger that stops growing would prove nothing")
 	}
 
@@ -192,7 +230,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 		Bash("b1", "git add bad-file.md && git commit -m 'the bad file'"),
 	))
 
-	first := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	first := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(first, "bad-file.md") == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
@@ -223,7 +261,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	// one unfixed violation writes many lines in a single cycle — a comparison
 	// of cumulative totals measures how many times the mock retried, not whether
 	// the refusal outlived the branch switch.
-	after := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	after := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if len(after) <= len(first) {
 		t.Fatalf("the second cycle observed nothing at all (%d entries, was %d), so there is "+
 			"no evidence either way about the refusal surviving: %v", len(after), len(first), after)
@@ -249,67 +287,65 @@ func TestT015_03_AFixedFileStopsBeingReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	// Refuses on CONTENT here, so the same path can be fixed in place. The
-	// path-based fixture above cannot express a fix without a rename.
-	const refuseContent = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
----
-
-# Refuses while the file holds the forbidden word
+	// path-based fixture above cannot express a fix without a rename. Same
+	// new-format shape (match + a script check), after-check.
+	const refuseContentGuard = `match: "**/*.md"
+checks:
+  - script: ./judge.sh
 `
 	// Reads the file off disk rather than the payload: the after-the-fact kinds
 	// carry the path, and the content is already on disk by then.
 	//
-	// The project root is derived from guardrailDir, which is the one field in
-	// the payload that names an absolute location. There is no `cwd` in a
-	// guardrail hook payload (it carries `event` and `guardrailDir`, nothing
-	// else) and the mock sets no CLAUDE_PROJECT_DIR — verified against this
-	// worktree. A prefix that resolved to empty would make every grep miss, the
-	// rule would refuse nothing, and this test would pass while testing
-	// nothing. The refusal ledger checked below is what makes that failure
-	// visible instead.
+	// The project root is derived from $SR_GUARDRAIL_DIR, the one thing the engine
+	// hands a file-guard check that names an absolute location
+	// (`.sloprail/file-guard/watcher`, so trimming `/.sloprail/file-guard/*` yields
+	// the project root). The new-format CheckPayload has no `guardrailDir` field the
+	// old payload carried — SR_GUARDRAIL_DIR is the replacement. A prefix that
+	// resolved to empty would make every grep miss, the rule would refuse nothing,
+	// and this test would pass while testing nothing. The refusal ledger checked
+	// below is what makes that failure visible instead.
+	//
+	// The guardrail's OWN files are skipped. With a `**/*.md` match this is
+	// defensive rather than load-bearing (the seen/refused ledgers have no `.md`
+	// suffix and cannot match), but it keeps the rule about the agent's files, not
+	// the engine's own bookkeeping.
 	const judgeContentScript = `#!/bin/sh
 payload="$(cat)"
-printf '%s\n' "$payload" >> "$PWD/seen"
 path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
-gdir="$(printf '%s' "$payload" | sed -n 's/.*"guardrailDir":"\([^"]*\)".*/\1/p')"
-root="${gdir%/.sloprail/guardrails/*}"
+case "$path" in
+  .sloprail/*) exit 0 ;;
+esac
+printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
+root="${SR_GUARDRAIL_DIR%/.sloprail/file-guard/*}"
 if [ -n "$path" ] && [ -f "$root/$path" ] && grep -q FORBIDDEN "$root/$path"; then
-  echo "$path" >> "$PWD/refused"
-  echo "still contains the forbidden word" >&2; exit 2
+  echo "$path" >> "$SR_GUARDRAIL_DIR/refused"
+  echo '{"reason":"still contains the forbidden word"}'; exit 1
 fi
 exit 0
 `
-	e.Guardrail(proj, "watcher", refuseContent, map[string]string{"judge.sh": judgeContentScript})
+	e.FileGuard(proj, "watcher", refuseContentGuard, map[string]string{"judge.sh": judgeContentScript})
 
 	const sess = "s-015-03"
 	e.Run(proj, sess, "write then fix", Turns("done",
 		Write("w1", "subject.md", "FORBIDDEN content\n"),
 	))
-	first := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	first := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(first, "subject.md") == 0 {
 		t.Fatalf("the file never reached the rule in the first cycle: %v", first)
 	}
 	// The rule must have actually REFUSED, not merely been handed the file.
 	//
-	// This fixture locates the file from the payload's own fields; if it
-	// resolved neither the path nor the project root it would exit 0 on
-	// everything, leaving a "fixed" file indistinguishable from one that was
-	// never broken and the comparison below trivially satisfied.
+	// This fixture locates the file from $SR_GUARDRAIL_DIR; if it resolved neither
+	// the path nor the project root it would exit 0 on everything, leaving a
+	// "fixed" file indistinguishable from one that was never broken and the
+	// comparison below trivially satisfied.
 	//
-	// Read from the guardrail's own folder rather than from the run's output. A
-	// refusal at an after-the-fact point does not travel back through a tool
-	// result — there is no pending call to deny — so it does not appear in the
-	// mock's stream at all, and asserting on the stream here would fail for
-	// every build including a correct one.
-	if len(e.Ledger(proj, "watcher", "refused")) == 0 {
+	// Read from the guard's own folder rather than from the run's output. A refusal
+	// at an after-the-fact point does not travel back through a tool result — there
+	// is no pending call to deny — so it does not appear in the mock's stream at
+	// all, and asserting on the stream here would fail for every build including a
+	// correct one.
+	if len(e.FileGuardLedgerLines(proj, "watcher", "refused")) == 0 {
 		t.Fatalf("the rule never refused the offending file, so nothing here was ever unfixed " +
 			"and the comparison below cannot fail")
 	}
@@ -318,12 +354,12 @@ exit 0
 	e.Run(proj, sess, "fix it", Turns("done",
 		Write("w2", "subject.md", "acceptable content\n"),
 	))
-	fixed := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	fixed := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 
 	e.Run(proj, sess, "unrelated work", Turns("done",
 		Write("w3", "elsewhere.md", "fine\n"),
 	))
-	after := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	after := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 
 	if countPath(after, "subject.md") != countPath(fixed, "subject.md") {
 		t.Fatalf("a file that has been fixed and passed was reported again on a later cycle: "+
@@ -352,7 +388,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the guardrail, on every line of history")
 	root := e.Git(proj, "rev-parse", "HEAD")
@@ -371,7 +407,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 		Write("w1", "bad-file.md", "violates\n"),
 		Bash("b1", "git add bad-file.md && git commit -m 'the bad file'"),
 	))
-	first := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	first := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(first, "bad-file.md") == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
@@ -392,7 +428,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 			"and its absence from the report would be correct")
 	}
 
-	after := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	after := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if len(after) <= len(first) {
 		t.Fatalf("the second cycle observed nothing at all (%d entries, was %d), so there is "+
 			"no evidence either way: %v", len(after), len(first), after)

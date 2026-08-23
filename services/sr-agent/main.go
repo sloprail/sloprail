@@ -126,6 +126,8 @@ environment naming no known harness is refused rather than guessed at; pass
 		"Run this harness instead of the one the environment names ("+strings.Join(supportedNames(), ", ")+")")
 	cmd.Flags().String("claude-args", "",
 		`Claude Code's own settings as a JSON object, passed through untouched (e.g. '{"permission-mode":"plan"}')`)
+	cmd.Flags().String("allowed-tools", "",
+		"Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")")
 	cmd.Flags().String("verify", "",
 		"A script that decides whether the agent's answer is acceptable; the agent is asked again if not")
 	cmd.Flags().Int("verify-attempts", DefaultVerifyAttempts,
@@ -147,6 +149,7 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	promptFlag, _ := cmd.Flags().GetString("prompt")
 	harnessFlag, _ := cmd.Flags().GetString("harness")
 	claudeArgs, _ := cmd.Flags().GetString("claude-args")
+	allowedToolsFlag, _ := cmd.Flags().GetString("allowed-tools")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	verifyFlag, _ := cmd.Flags().GetString("verify")
 	verifyAttempts, _ := cmd.Flags().GetInt("verify-attempts")
@@ -197,6 +200,11 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The tools the agent may use, parsed from the comma/space-separated flag into
+	// the list the harness merges with the write grant it needs. Empty when the
+	// flag was not given, which grants only the mechanism's own Write.
+	allowedTools := ParseAllowedTools(allowedToolsFlag)
+
 	// Diagnostics go to stderr so that stdout carries only the agent's answer.
 	// A hook capturing this command's output to feed a rule must not find
 	// advice about model sets mixed into what the agent said.
@@ -208,8 +216,15 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	// because it OWNS the prompt — it appends the output path, and on a retry
 	// appends the objection too.
 	if cmd.Flags().Changed("verify") {
-		return runVerified(cmd, spec, resolution.Model, harnessArgs, prompt,
+		return runVerified(cmd, spec, resolution.Model, harnessArgs, allowedTools, prompt,
 			verifyFlag, verifyAttempts, false, dryRun)
+	}
+
+	// Outside --verify there is no write grant to merge the tools into, so they are
+	// passed as their own `--allowed-tools` group. Appended to the harness args so
+	// they render as an ordinary flag before the prompt.
+	if len(allowedTools) > 0 {
+		harnessArgs = append(harnessArgs, "--allowed-tools", strings.Join(allowedTools, " "))
 	}
 
 	inv := BuildInvocation(spec, resolution.Model, harnessArgs, prompt)

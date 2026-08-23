@@ -41,38 +41,35 @@ import (
 
 // askWhatHappened runs the query and records the answer, one cycle per line.
 //
-// It binds to a Post kind so it runs at the end of a cycle, which is the moment
-// the question "what has this session done since I last looked" is asked.
-const askWhatHappened = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./ask.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./ask.sh
----
-
-# Asks the engine what the session has done, and records the answer
+// A NEW-FORMAT file-guard (re-vehicled from the old GUARDRAIL.md hooks per
+// tests/e2e/REVEHICLE-PATTERN.md), after-check so it runs at the END of a cycle —
+// the moment the question "what has this session done since I last looked" is
+// asked. `match: "**/*.md"` fires on whichever Post kind each cycle's write
+// produced (create or update), the same two kinds the old hooks bound. The check
+// reaches its workspace and the session's read mark exactly as the old hook did:
+// the new dispatch sets SR_TRANSCRIPT / SR_WORKSPACE / SR_SESSION_ID on a
+// file-guard check just as the old-format hook env did (internal/dispatch/exec.go
+// mirrors services/sr-session's hookScope.env). The ledger (`answers`, no `.md`)
+// is not matched, so the guard cannot re-observe its own bookkeeping.
+const askWhatHappened = `match: "**/*.md"
+checks:
+  - script: ./ask.sh
 `
 
 // askScript records one line per invocation: the entries the engine handed back.
 //
-// A guardrail's hook is handed `{event, guardrailDir}` — the event payload, not
-// the harness's raw hook payload — so it has no transcript_path to forward, and
-// its working directory is the guardrail's own folder rather than the project.
-// Piping that payload in makes the command answer "no transcript path on the
-// hook payload" every time, and a fixture written that way records that sentence
-// as its "answer" — every marker assertion below then reads false, which looks
-// exactly like correct narrowing and would report coverage that does not exist.
-//
-// What closes it is SR_TRANSCRIPT, which impl/hook-env sets on every hook
-// process beside SR_GUARDRAIL, SR_SESSION_ID and SR_WORKSPACE. `session query`
-// does not read the environment itself — it is told which record to read, in the
-// same payload shape a harness sends — so the path is passed through explicitly,
-// which is the idiom the shipped example performs by name.
+// A file-guard's check is handed the flat CheckPayload — the event and
+// transcriptPath, not the harness's raw hook payload — and its working directory
+// is the guard's own folder rather than the project. What lets it read the
+// session's record is SR_TRANSCRIPT, which the new dispatch sets on every check
+// process beside SR_GUARDRAIL, SR_SESSION_ID and SR_WORKSPACE, exactly as the
+// old-format hook env did. `session query` does not read the environment itself —
+// it is told which record to read, in the same payload shape a harness sends — so
+// the path is passed through explicitly, the idiom the shipped example performs by
+// name. Piping the check's own stdin in instead would make the command answer "no
+// transcript path on the hook payload" every time, and every marker assertion
+// below would then read false — which looks exactly like correct narrowing and
+// would report coverage that does not exist.
 //
 // SR_WORKSPACE travels in the same payload as `cwd`, and it is what the
 // NARROWING depends on: the read mark lives in this session's own store, and
@@ -85,16 +82,18 @@ hooks:
 // from it lands on no file. The variable is unset rather than empty when there
 // is no record, so `test -n` is the whole check.
 //
-// The guard below is what stops a silent regression: if the answer is an error
-// rather than entries, the test says so instead of reading it as an absence.
+// The ledger is $SR_GUARDRAIL_DIR/answers — the folder the engine sets for a
+// file-guard check. The guard below is what stops a silent regression: if the
+// answer is an error rather than entries, the test says so instead of reading it
+// as an absence.
 const askScript = `#!/bin/sh
 cat > /dev/null
 if [ -z "${SR_TRANSCRIPT:-}" ]; then
-  echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "$PWD/answers"
+  echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "$SR_GUARDRAIL_DIR/answers"
   exit 0
 fi
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
-  sr-session query >> "$PWD/answers" 2>&1
+  sr-session query >> "$SR_GUARDRAIL_DIR/answers" 2>&1
 exit 0
 `
 
@@ -142,7 +141,8 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 	// from. Without one there is no diff and no PostFile* event, and a rule
 	// bound to one would never run.
 	e.GitInit(proj)
-	e.Guardrail(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	commitGuards(t, proj) // keep ask.sh out of the cycle diff (authoring-slop judges guard .sh at Stop)
 
 	const sess = "s-018-01"
 	const firstMarker = "MARKERALPHA"
@@ -151,7 +151,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 	e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "first cycle\n"),
 	))
-	answers := e.Ledger(proj, "asker", "answers")
+	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) == 0 {
 		t.Fatalf("the hook never asked the engine anything, so nothing here can be observed")
 	}
@@ -167,7 +167,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "second cycle\n"),
 	))
-	answers = e.Ledger(proj, "asker", "answers")
+	answers = e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= firstCount {
 		t.Fatalf("the second cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), firstCount)
@@ -218,12 +218,13 @@ func TestT018_02_TurnsNothingJudgedAreStillGivenToTheNextCycle(t *testing.T) {
 	))
 
 	// Now a rule appears, and the next cycle asks what the session has done.
-	e.Guardrail(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	commitGuards(t, proj) // keep ask.sh out of the cycle diff (authoring-slop judges guard .sh at Stop)
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "judged cycle\n"),
 	))
 
-	answers := strings.Join(e.Ledger(proj, "asker", "answers"), "\n")
+	answers := strings.Join(e.FileGuardLedgerLines(proj, "asker", "answers"), "\n")
 	if answers == "" {
 		t.Fatalf("the hook never asked the engine anything, so nothing here can be observed")
 	}

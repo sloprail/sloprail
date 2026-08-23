@@ -25,33 +25,64 @@ const (
 // Field names. They appear here, in Kinds below, and in the conversion in
 // event.go — nowhere else, so a rename cannot leave a matcher checking against
 // a name the events no longer carry.
+//
+// These are the spec's own names (events/main.tsp): a file event names what a
+// rule asks about, and a rule about a write asks about the bytes before and
+// after it, not about "content" and "result". The old `content`/`result` pair
+// said one meaning under two names that a rule binding creates and updates
+// alike could not choose between; `oldContent`/`newContent` say the same thing
+// under names that mean the same on every kind, so one matcher over both is
+// unambiguous.
 const (
-	FieldPath    = "path"
-	FieldContent = "content"
-	FieldMarkers = "markers"
+	FieldPath = "path"
 
-	// FieldResult is the bytes the file will hold AFTER the pending action, on
-	// the kinds where the engine could work them out. See KindPreUpdate's
-	// declaration for why this is a second field rather than `content` growing
-	// a second meaning, and FieldResultKnown for how "could not work them out"
-	// is said.
-	FieldResult = "result"
+	// FieldNewContent is what a write would leave behind — the created body on a
+	// create, the post-edit bytes on an update. Required and always present on a
+	// create (the file cannot be read off disk yet); optional on PreFileUpdate,
+	// where a command line may not let the engine compute it — see
+	// FieldResultKnown for how that gap is made askable.
+	FieldNewContent = "newContent"
 
-	// FieldResultKnown says whether FieldResult was computed or defaulted.
+	// FieldOldContent is the file's bytes BEFORE the change — the current file on
+	// disk for a Pre update or delete, and the session baseline's content for a
+	// Post update or delete (the prior bytes are no longer on disk to be read).
+	// Never carried on a create: nothing preceded it.
+	FieldOldContent = "oldContent"
+
+	// FieldNewMarkers are the `sr:` markers the written result would carry — the
+	// markers of FieldNewContent. Carried on a create and an update, never on a
+	// delete (nothing remains to read markers from).
+	FieldNewMarkers = "newMarkers"
+
+	// FieldOldMarkers are the `sr:` markers the file carries NOW, before the
+	// change. Carried on an update and a delete, never on a create (there was no
+	// prior file to read them from).
+	FieldOldMarkers = "oldMarkers"
+
+	// FieldResultKnown says whether FieldNewContent on PreFileUpdate was computed
+	// or is a zero value standing in for "the engine could not work it out".
 	//
-	// It exists because absence cannot say it. Matcher.env fills a DECLARED
-	// field the event omitted with its type's zero value, deliberately — an
-	// absent declared field used to error, matcher errors refuse, and a rule
-	// failed closed on the engine's gap rather than on the author's mistake. So
-	// an omitted `result` reads as `""`, which is indistinguishable from a
-	// pending action that genuinely empties the file.
-	//
-	// That is the same collision this whole change exists to remove, one field
-	// along. A boolean beside the value is what separates them: `result == ""`
-	// asks about the bytes, and `resultKnown` asks whether the engine knew them.
+	// It is not a spec field. The spec carries the gap as FieldNewContent being
+	// OPTIONAL — absent when a command line does not say what bytes will result —
+	// and its own doc states the requirement this field meets: "absent means the
+	// engine could not know the result, which a check must tell apart from an
+	// empty result, since the two imply opposite verdicts". The engine cannot
+	// carry that distinction in absence alone: Matcher.env fills a DECLARED field
+	// the event omitted with its type's zero value, deliberately (an absent
+	// declared field used to error, matcher errors refuse, and a rule failed
+	// closed on the engine's gap rather than on the author's mistake). So an
+	// omitted `newContent` reads as `""`, indistinguishable from a write that
+	// genuinely empties the file — which is the rule an author writes to catch
+	// exactly that. A boolean beside the value is what separates them:
+	// `newContent == ""` asks about the bytes, `resultKnown` asks whether the
+	// engine knew them. It is declared on the two PRE kinds whose result can
+	// arrive both ways — PreFileUpdate (a command-derived update) and
+	// PreFileCreate (a notebook create, whose one-cell `new_source` is not the
+	// document's bytes) — and nowhere else: a delete has no result, and the Post
+	// kinds are settled, their bytes read off disk.
 	FieldResultKnown = "resultKnown"
 
-	// Keys within one entry of FieldMarkers. Not fields of the kind: a matcher
+	// Keys within one entry of a markers list. Not fields of the kind: a matcher
 	// reads them off an element of the list, and the declaration describes the
 	// list itself.
 	KeyMarkerKind = "kind"
@@ -82,14 +113,14 @@ func (*Module) Name() string { return Name }
 // cost one script rather than two that have to be kept in step.
 func (*Module) Kinds() []module.KindDecl {
 	path := module.FieldDecl{Name: FieldPath, Type: module.TypeString}
-	content := module.FieldDecl{Name: FieldContent, Type: module.TypeString}
-	result := module.FieldDecl{Name: FieldResult, Type: module.TypeString}
+	oldContent := module.FieldDecl{Name: FieldOldContent, Type: module.TypeString}
+	newContent := module.FieldDecl{Name: FieldNewContent, Type: module.TypeString}
 	resultKnown := module.FieldDecl{Name: FieldResultKnown, Type: module.TypeBool}
 
-	// markers declares its element's shape, and that is the whole point of the
-	// Elem field. A list whose Elem is nil has its collection checked and its
-	// predicate body left alone (see module.FieldDecl.Elem), so
-	// `any(markers, .knid == "docs")` — a typo INSIDE the predicate — would
+	// A markers list declares its element's shape, and that is the whole point
+	// of the Elem field. A list whose Elem is nil has its collection checked and
+	// its predicate body left alone (see module.FieldDecl.Elem), so
+	// `any(newMarkers, .knid == "docs")` — a typo INSIDE the predicate — would
 	// compile, load, and return admitted=false forever. That is the silent
 	// never-fires CompileMatcherFor exists to prevent, alive one level down.
 	// With the element named, the checker refuses it at load and names the
@@ -99,107 +130,115 @@ func (*Module) Kinds() []module.KindDecl {
 	// structure over: a list of maps whose keys are enumerated. Naming them is
 	// this module asserting these are the fields, which is what makes refusing
 	// the others fair.
-	markers := module.FieldDecl{
-		Name: FieldMarkers,
-		Type: module.TypeList,
-		Elem: &module.FieldDecl{
-			Type: module.TypeMap,
-			Fields: []module.FieldDecl{
-				{Name: KeyMarkerKind, Type: module.TypeString},
-				{Name: KeyMarkerFQN, Type: module.TypeString},
-				{Name: KeyMarkerLine, Type: module.TypeInt},
+	//
+	// Two markers fields now — `oldMarkers` and `newMarkers` — with the same
+	// element shape, so a rule reading either reads the same three keys. A
+	// factory rather than one shared value, because each carries its own field
+	// name.
+	markersDecl := func(fieldName string) module.FieldDecl {
+		return module.FieldDecl{
+			Name: fieldName,
+			Type: module.TypeList,
+			Elem: &module.FieldDecl{
+				Type: module.TypeMap,
+				Fields: []module.FieldDecl{
+					{Name: KeyMarkerKind, Type: module.TypeString},
+					{Name: KeyMarkerFQN, Type: module.TypeString},
+					{Name: KeyMarkerLine, Type: module.TypeInt},
+				},
 			},
-		},
+		}
 	}
+	oldMarkers := markersDecl(FieldOldMarkers)
+	newMarkers := markersDecl(FieldNewMarkers)
 
 	return []module.KindDecl{
 		// Pre kinds are predictions: what a tool call or a parsed command says
 		// it is about to do. Refusing one prevents the work.
 		{
 			Name: KindPreCreate,
-			// Content only here. The file does not exist yet, so a rule that
-			// wants to look at what would be written has nowhere else to look;
-			// on the other kinds it is already on disk.
+			// newContent and its newMarkers, PLUS resultKnown. The file does not
+			// exist yet, so a rule that wants to look at what would be written has
+			// nowhere else to look; on the other kinds it is already on disk. There
+			// is no oldContent or oldMarkers on a creation — nothing preceded it.
 			//
-			// A create's content IS its result — there are no prior bytes for a
-			// replacement to be relative to — so `result` is not declared here.
-			// Declaring both would be one fact under two names, free to
-			// disagree, and a rule author would have no way to choose between
-			// them. `resultKnown` is likewise absent: a create is emitted only
-			// when the resulting bytes are known, and a field that is always
-			// true is one a rule can match on and never learn anything from —
-			// the argument KindPreDelete already makes about markers.
-			Fields: []module.FieldDecl{path, content, markers},
+			// resultKnown was ONCE argued unnecessary here on the premise that "a
+			// create is emitted only when the resulting bytes are known" — but that
+			// premise is FALSE for a write tool whose result is not derivable. A
+			// NotebookEdit creating a fresh .ipynb names a real file with a real
+			// pending write, but `new_source` is one cell, not the JSON document, so
+			// the resulting bytes are NOT derivable (see resultFor's notebook case).
+			// That create is emitted with `newContent: ""` — indistinguishable, on
+			// the value alone, from a write that genuinely creates an empty file,
+			// because Matcher.env fills an absent declared field with its zero value.
+			// resultKnown is the boolean beside the value that tells the two apart,
+			// exactly as it does on PreFileUpdate: `newContent == ""` asks about the
+			// bytes, `resultKnown` asks whether the engine knew them. Without it a
+			// preventive file-guard could not fail closed on an underivable create —
+			// it would judge the empty string as if it were the file and false-pass.
+			Fields: []module.FieldDecl{path, newContent, resultKnown, newMarkers},
 		},
 
-		// PreFileUpdate carries the POST-EDIT bytes, and this is Q1's answer.
+		// PreFileUpdate carries the bytes before AND after the change: the file
+		// on disk is oldContent, and the post-edit bytes are newContent.
 		//
-		// It used to carry none: the file is on disk, so a rule could read it
-		// there. But that is the file BEFORE the write, which is the wrong
-		// question for the rule anyone actually writes. "Will the result still
-		// have frontmatter?" cannot be answered from the bytes about to be
-		// replaced, and markersOnDisk's own comment has recorded this as a
-		// known limitation since it was written.
+		// newContent used to be absent — the file is on disk, so a rule could
+		// read it there. But that is the file BEFORE the write, which is the
+		// wrong question for the rule anyone actually writes. "Will the result
+		// still have frontmatter?" cannot be answered from the bytes about to be
+		// replaced.
 		//
-		// # Why a new field rather than `content`
+		// # Why newContent is paired with resultKnown
 		//
-		// `content` means "the bytes this action states outright", and on
-		// PreFileCreate it is required and always present. Reusing it here
-		// would make one name mean "the stated body" on one kind and "the
-		// computed outcome" on another, and a rule bound to both kinds — which
-		// is the normal case, since a guardrail about a file usually cares
-		// about creates and updates alike — could not tell which it had.
-		//
-		// # Why the value is paired with a boolean
-		//
-		// This is the constraint that decided the shape, and it is the engine's
-		// own. Matcher.env fills a declared field the event omitted with its
-		// type's zero value. So "we could not compute the result" and "the
-		// result is the empty file" are the SAME OBSERVATION to every matcher —
-		// exactly the collision that made `content: ""` on an Edit-create a
-		// defect worth this whole change.
-		//
-		// Three options were on the table. (a) Leave PreFileUpdate contentless:
-		// rejected, it is the limitation named above and the owner asked for
-		// the opposite. (b) Add `result` alone, present only when computable:
-		// rejected, because absence is not observable — it silently reads as
-		// `""`, so a `sed -i` whose outcome is unknowable would look like a
-		// command that empties the file, and a rule refusing empty results
-		// would fire on it. (c) `result` plus `resultKnown`: taken. The pair
-		// makes the gap VISIBLE and askable, which is the property the other
-		// two cannot give.
-		//
-		// Both are unconditional, so neither is ever filled in by the engine on
-		// this kind, and `resultKnown` is a real question here in a way it is
-		// not on a create: an update genuinely arrives both ways.
+		// The spec declares newContent OPTIONAL here (absent for a command whose
+		// result the engine cannot compute) and states the requirement that
+		// creates: "absent means the engine could not know the result, which a
+		// check must tell apart from an empty result". The engine cannot carry
+		// that in absence alone. Matcher.env fills a declared field the event
+		// omitted with its type's zero value, so "we could not compute the
+		// result" and "the result is the empty file" are the SAME OBSERVATION to
+		// every matcher — exactly the collision that made `content: ""` on an
+		// Edit-create a defect. resultKnown is the boolean beside the value that
+		// makes the gap VISIBLE and askable. It is declared here and nowhere
+		// else, because this is the one kind whose result genuinely arrives both
+		// ways.
 		//
 		// # What a rule author does with it
 		//
-		//	resultKnown && !(result contains "---")   refuse a write that would
-		//	                                          strip the frontmatter, and
-		//	                                          say nothing where the
-		//	                                          engine cannot see
-		//	!resultKnown                              catch the underivable
-		//	                                          cases deliberately
+		//	resultKnown && !(newContent contains "---")   refuse a write that
+		//	                                              would strip the
+		//	                                              frontmatter, and say
+		//	                                              nothing where the engine
+		//	                                              cannot see
+		//	!resultKnown                                  catch the underivable
+		//	                                              cases deliberately
 		//
 		// The first is the shape a correct rule takes: guard on `resultKnown`,
-		// then read `result`. A rule that reads `result` without guarding gets
-		// the empty string on the underivable cases, which is stated here so it
-		// is a choice rather than a surprise.
-		{Name: KindPreUpdate, Fields: []module.FieldDecl{path, result, resultKnown, markers}},
+		// then read `newContent`. A rule that reads `newContent` without guarding
+		// gets the empty string on the underivable cases, which is stated here so
+		// it is a choice rather than a surprise.
+		//
+		// oldMarkers are the markers the file carries NOW; newMarkers are the
+		// markers the result would carry (empty when the result is unknown).
+		{Name: KindPreUpdate, Fields: []module.FieldDecl{path, oldContent, newContent, resultKnown, oldMarkers, newMarkers}},
 
-		// No markers on a delete. A deletion has no text to read them out of,
-		// so the field could only ever be empty — and an always-empty field is
-		// one a rule can match on and never learn anything from. `len(markers)
-		// == 0` is a real question to ask of a create or an update; asked of a
-		// delete it is a tautology dressed as a rule.
-		{Name: KindPreDelete, Fields: []module.FieldDecl{path}},
+		// A delete carries the bytes about to be lost (oldContent) and the
+		// markers that go with them (oldMarkers), and nothing about a result —
+		// nothing remains. No newMarkers for the same reason: a deletion has no
+		// text to read them out of.
+		{Name: KindPreDelete, Fields: []module.FieldDecl{path, oldContent, oldMarkers}},
 
-		// Post kinds are observations, established by comparing the tree
-		// against where the session started rather than by trusting what any
-		// action announced. Refusing one demands a correction.
-		{Name: KindPostCreate, Fields: []module.FieldDecl{path}},
-		{Name: KindPostUpdate, Fields: []module.FieldDecl{path}},
-		{Name: KindPostDelete, Fields: []module.FieldDecl{path}},
+		// Post kinds are observations, established by comparing the tree against
+		// where the session started rather than by trusting what any action
+		// announced. Refusing one demands a correction.
+		//
+		// Each Post kind mirrors its Pre counterpart's shape — with both contents
+		// present on an update, since the change has settled and neither had to
+		// be predicted, so there is no resultKnown here. oldContent comes from
+		// the session baseline (the prior bytes are no longer on disk); newContent
+		// is read from disk as it now sits.
+		{Name: KindPostCreate, Fields: []module.FieldDecl{path, newContent, newMarkers}},
+		{Name: KindPostUpdate, Fields: []module.FieldDecl{path, oldContent, newContent, oldMarkers, newMarkers}},
+		{Name: KindPostDelete, Fields: []module.FieldDecl{path, oldContent, oldMarkers}},
 	}
 }

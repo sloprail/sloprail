@@ -1,0 +1,85 @@
+# No slop in the guardrails themselves — refuses a guardrail HOOK SCRIPT that
+# carries a shape measured to make a rule silently inert. It loads, it validates,
+# it sits in the project looking enforced, and it admits everything: the sharpest
+# version of the problem sloprail exists to catch, applied to sloprail's own
+# artifacts. The full argument — why a matcher and not a judge, the four shapes it
+# refuses, why each was found by measurement rather than review — lives in the
+# sibling README.md, migrated from the old GUARDRAIL.md prose, and in check-rules.sh's
+# own comments. The four shapes are one rules/<name>/RULE.md each.
+#
+# match: a NEW-FORMAT guardrail's hook script, retargeted from the old
+# `path contains ".sloprail/guardrails/" && path endsWith ".sh"`. A new-format
+# guardrail's script no longer lives under `.sloprail/guardrails/` — that path is
+# the OLD format's, which a later PR deletes. Each new-format nature keeps its
+# scripts under `.sloprail/<nature>/<name>/<script>.sh`, so the three nature
+# directories are the retarget of the single old prefix. A file-guard matches a
+# FILE'S STATE (FileMatchScope: flat `path`, `markers`, `context`), so the
+# expression reads `path`, NOT `event.path` (that nested form is a gate's scope).
+# The `contains`/`or`/`endsWith` operators are expr-lang builtins the file-guard
+# matcher already compiles (see internal/guardrail/matcher.go; `newContent contains`
+# and `path endsWith` are both exercised in matcher_test.go). Whitespace and quotes
+# route this to the expression parser, not the glob shorthand (CompileFileMatch's
+# looksLikeGlob).
+#
+# Scoped to a guardrail's own MACHINERY under the three nature dirs: its `.sh`
+# hooks AND its `.md.j2` judge prompt templates. It judges how a guardrail's
+# machinery is written, never the rules a project writes. A `RUBRIC.md` or a
+# `RULE.md` is prose, not machinery, and stays out — what a guardrail should
+# enforce is the project's, whether the enforcement can fire at all is sloprail's.
+#
+# TWO checks run on a match (below), and they cover different file types:
+#   - check-rules.sh (the grep) SELF-SCOPES to `.sh` — its signatures would
+#     false-positive on a template, which legitimately contains `event.newContent`
+#     and names tools in prose, so it permits a non-`.sh` path and leaves it to
+#     the judge.
+#   - the judge reasons about BOTH `.sh` scripts and `.md.j2` prompts — the
+#     prompt-quality half (a template interpolating content without a DATA
+#     delimiter) is the reason `.md.j2` was added to the match.
+# A file-guard has no per-check match, so the widening lives here and each check
+# scopes itself: the grep by an early path guard, the judge by its rules' own
+# "what this applies to" text.
+match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and (path endsWith ".sh" or path endsWith ".md.j2")
+
+# preventive: true reproduces the old format's binding, which was Pre-only
+# (PreFileCreate + PreFileUpdate) — block a slop hook BEFORE it lands, "the useful
+# moment". A preventive file-guard fires on the PRE write to refuse there, AND,
+# like every guard, fires the after-check at Stop on the SETTLED file. Keeping the
+# Pre-prevention is the whole point of the old rule; the Stop after-check is a
+# free backstop the old Pre-only binding lacked — a command/sed/git edit whose
+# result the engine cannot derive reaches the Pre stage unverifiable, where a
+# preventive guard fails CLOSED engine-side (before this script runs) and the
+# settled file is judged at Stop instead. check-rules.sh handles both moments:
+# it dispatches on `.event.kind`, reading the PENDING bytes from the event on a
+# Pre kind and the SETTLED bytes from disk on a Post kind.
+preventive: true
+
+# An ORDERED list: the cheap grep first, the judge second — the same script+judge
+# pattern the sibling rule-quality guard uses. First-refusal-ends-it, so a shape
+# the grep already refuses never reaches the model; the judge only ever runs on a
+# file the grep permitted, reasoning about what a signature cannot decide.
+checks:
+  # The deterministic floor: exact signatures, `.sh` only (it self-scopes).
+  - script: ./check-rules.sh
+
+  # The reasoning above the floor. prepare.sh assembles the primitive-usage rules
+  # registry (judge-rules/<name>/RULE.md) into an ARRAY; judge.md.j2 iterates it
+  # and renders the file's own content (event.newContent) as DATA. It catches what
+  # the grep cannot: the derivable-CREATE assumption (a script that names
+  # resultKnown but still reads newContent on PreFileCreate), a `.md.j2` prompt
+  # interpolating content without a DATA delimiter, a field read from the wrong
+  # place per kind, a ledger written to $PWD, an sr-agent spawn dropping
+  # SLOPRAIL_LAUNCHED_BY.
+  #
+  # model is size-md; the sibling judges' exact pin) — an unpinned model
+  # resolves larger and this can fire several times per turn. timeout 25s sits
+  # under the engine's 30s check bound so the judge's own limit fires first.
+  # allowed_tools: [Read] — the rules and the file content are both IN the prompt,
+  # so the judge needs no tools to reason; Read is the one conservative grant that
+  # lets it corroborate the file on disk if it chooses. The Write the verdict file
+  # needs is granted by the engine's judge substrate (sr-agent), not named here.
+  # Fail-CLOSED on machinery failure is the engine's judge default.
+  - prepare: ./prepare.sh
+    judge: ./judge.md.j2
+    model: size-md
+    timeout: 25s
+    allowed_tools: [Read]

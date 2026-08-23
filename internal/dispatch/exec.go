@@ -1,0 +1,439 @@
+package dispatch
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// This file runs the two kinds of executable a check names — a `script`/`prepare`
+// and a `judge`'s substrate — and turns each into a Verdict, fail-closed.
+//
+// The mechanics mirror services/sr-session's old runHooks, deliberately: a check
+// is an arbitrary shell command, so it is run as `sh -c` from the guard's own
+// folder with the payload on stdin, under a per-check timeout, in its own process
+// group so a wedged child (a model call, most of all) can be killed as a group.
+// Everything that is not a clean exit is a refusal — the mechanism failing must
+// not read as approval.
+
+// defaultCheckTimeout bounds how long one script/prepare/judge may take before
+// it is killed and read as a refusal, when the check names no timeout of its
+// own.
+//
+// Generous because a judge is a model call. It is the same 30s the old dispatch
+// uses for one hook, and it sits under the harness's own deadline for the same
+// reason: whichever bound fires first decides what the user sees, and only this
+// one can name the rule.
+//
+// A judge check may OVERRIDE this with its own `timeout` (dot-dir-file-store/
+// main.tsp Check.timeout) — a hard invariant-checking rubric can legitimately
+// take longer than a quick one, so the bound is per-judge. runShell takes the
+// resolved timeout as a parameter and falls back to this when it is zero; a
+// script/prepare has no `timeout` field and always runs under this default.
+const defaultCheckTimeout = 30 * time.Second
+
+// checkKillGrace caps how long Wait may block after the process group is killed.
+// SIGKILL cannot be caught, so this is only reached by a descendant wedged in an
+// uninterruptible syscall — without it one such process restores the unbounded
+// hang this timeout exists to remove.
+const checkKillGrace = 2 * time.Second
+
+// exitNotExecutable and exitNotFound are the statuses a shell uses to say it
+// could not run the command at all, as opposed to the command running and
+// failing. Named so the refusal reason can diagnose them.
+const (
+	exitNotExecutable = 126
+	exitNotFound      = 127
+)
+
+// maxSignalNumber bounds the 128+signum exit-code convention a shell uses to
+// report a signalled child: an exit code in (128, 128+maxSignalNumber] names the
+// signal that killed the work. 64 spans the POSIX signals and Linux real-time
+// signals, without a platform-specific SIGRTMAX (which darwin does not define).
+const maxSignalNumber = 64
+
+// scriptCall is one script/prepare execution: the guard's folder, the script's
+// path (relative to it), the payload for stdin, and the session facts a script
+// needs in its environment (the guard's name, the workspace, the session id, the
+// transcript path).
+type scriptCall struct {
+	Dir       string
+	Script    string
+	Stdin     []byte
+	GuardName string
+
+	// Workspace, SessionID and TranscriptPath are the session facts a check may
+	// need beyond the payload: SR_WORKSPACE to resolve a project-relative path (a
+	// goal's verify.sh under <workspace>/goal/…) and to key its own `sr-session
+	// state`, SR_SESSION_ID for that same keying, SR_TRANSCRIPT for a check that
+	// reads the trajectory itself. They mirror what the old-format hook env sets
+	// (services/sr-session hookScope.env), so a new-format check reaches its
+	// workspace and state the same way an old-format hook does. Empty values are
+	// left unset (the same "unset is diagnosable" stance), except Workspace, which
+	// the caller must supply resolved.
+	Workspace      string
+	SessionID      string
+	TranscriptPath string
+
+	// LaunchedBy is the colon-separated list of guards whose checks are on the
+	// current call stack, emitted as SLOPRAIL_LAUNCHED_BY so a check that spawns
+	// sr-agent marks provenance and the dispatch one level down declines to
+	// re-fire THIS guard on its own launched agent's writes (the re-entry guard).
+	//
+	// The CALLER computes it — appendLaunchedBy(os.Getenv, guardName) in
+	// services/sr-session, which appends this guard to any value inherited from an
+	// outer launched check — because this package cannot import that one (the
+	// append+dedup logic and the SLOPRAIL_LAUNCHED_BY constant are the source of
+	// truth in services/sr-session/provenance.go). env() only forwards it. Empty
+	// leaves the variable unset, which is correct for a check that cannot spawn an
+	// agent and harmless for one whose own name is the only entry.
+	LaunchedBy string
+}
+
+// scriptResult is what a script/prepare execution produced.
+//
+// Passed is the verdict (exit zero). Reason is what to tell the agent on a
+// non-pass — the script's own words where it gave any, a diagnosis otherwise,
+// never empty when !Passed. Stdout is the raw standard output, kept for a prepare
+// whose stdout carries the additionalContext object.
+type scriptResult struct {
+	Passed bool
+	Reason string
+	Stdout []byte
+}
+
+// runScriptExec is the production runScript: it runs the script as `sh -c` from
+// the guard's folder, with the payload on stdin, and reports pass/fail by exit
+// code.
+//
+// FAIL-CLOSED throughout. A clean exit passes; every other outcome — a non-zero
+// exit, a timeout, a process that would not start, a NUL in the command — refuses.
+// A caller could read the exit status itself, but the point of running it here is
+// that all the ways a check can fail land on the safe side without each caller
+// arranging it.
+//
+// The `sh -c` shape and the relative-to-Dir resolution match the old hooks and
+// the spec's "resolved relative to the guard's folder": an author writes
+// `./verify.sh` and it runs from the guard's directory, so a bare relative path
+// finds the sibling script.
+func runScriptExec(s scriptCall) (scriptResult, error) {
+	// A script/prepare has no per-check timeout — its runtime is the author's to
+	// bound (spec: model/timeout are judge-only) — so it always runs under the
+	// default. Passing 0 would work too (runShell falls back), but naming the
+	// default here keeps the expired message's duration honest.
+	stdout, stderr, code, expired, signal, startErr := runShell(s.Dir, s.command(), s.Stdin, s.env(), defaultCheckTimeout)
+	if startErr != nil {
+		// Could not be started at all — a NUL byte in the command, a Dir that went
+		// away. Not the rule's decision, but a mechanism failure, and a mechanism
+		// failure refuses (fail-closed) rather than erroring up to a caller who
+		// would then have to decide again. The old dispatch returned an error here
+		// and refused at the call site; folding it into a refusal keeps every
+		// script outcome one shape.
+		return scriptResult{
+			Passed: false,
+			Reason: fmt.Sprintf(
+				"the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.",
+				s.Script, startErr),
+		}, nil
+	}
+	if expired {
+		return scriptResult{
+			Passed: false,
+			Reason: fmt.Sprintf(
+				"the check %q was killed after %s without answering, and the action was refused because a check that did not answer must not be read as approval.%s",
+				s.Script, defaultCheckTimeout, quoted(stderr)),
+		}, nil
+	}
+	if code == 0 {
+		return scriptResult{Passed: true, Stdout: stdout}, nil
+	}
+	return scriptResult{
+		Passed: false,
+		Reason: scriptRefusalReason(s.Script, code, signal, stdout, stderr),
+		Stdout: stdout,
+	}, nil
+}
+
+// command is the shell line for a script call: the script path as the author
+// wrote it, run from the guard's folder so a `./x.sh` resolves there.
+func (s scriptCall) command() string { return s.Script }
+
+// env is the environment one check runs in: the parent's, plus the guard's own
+// name under SR_GUARDRAIL so a check calling `sr-session state` reaches its own
+// keyspace, plus SR_GUARDRAIL_DIR so a script can find its siblings by absolute
+// path if it needs to.
+//
+// The session/workspace/transcript variables the old hooks set are NOT added
+// here: this runner is called from inside a hook that already resolved those and
+// set them on ITS OWN environment (see the caller in services/sr-session), and
+// the payload on stdin carries transcriptPath for a check that reads the record.
+// Adding them again would duplicate a resolution this runner does not own.
+func (s scriptCall) env() []string {
+	env := os.Environ()
+	if s.GuardName != "" {
+		env = append(env, "SR_GUARDRAIL="+s.GuardName)
+	}
+	if s.Dir != "" {
+		env = append(env, "SR_GUARDRAIL_DIR="+s.Dir)
+	}
+	// The session facts, mirroring the old-format hook env so a new-format check
+	// reaches its workspace and state the same way. Appended AFTER os.Environ() so
+	// the engine's answer wins over any stale value an outer process exported — the
+	// same append-ordering the old hookScope.env relies on. Left unset when empty,
+	// the documented "unset is diagnosable" stance a rule tests for.
+	if s.Workspace != "" {
+		env = append(env, "SR_WORKSPACE="+s.Workspace)
+	}
+	if s.SessionID != "" {
+		env = append(env, "SR_SESSION_ID="+s.SessionID)
+	}
+	if s.TranscriptPath != "" {
+		env = append(env, "SR_TRANSCRIPT="+s.TranscriptPath)
+	}
+	// The re-entry provenance: which guards' checks are on this call stack. Set so
+	// a check that spawns sr-agent carries it across the exec into the launched
+	// agent's own hooks, where the dispatch reads it and declines to re-fire those
+	// guards on the agent's writes. The caller already appended THIS guard (and
+	// deduped) via appendLaunchedBy; this only forwards the computed value.
+	// Appended AFTER os.Environ() so the engine's answer wins over any stale outer
+	// value — the same append-ordering the other vars use and the old
+	// hookScope.env relies on. Empty is left unset (a check that cannot launch an
+	// agent needs no provenance). The variable name mirrors provenance.go's
+	// LaunchedByEnv, which is the source of truth for it.
+	if s.LaunchedBy != "" {
+		env = append(env, launchedByEnv+"="+s.LaunchedBy)
+	}
+	return env
+}
+
+// launchedByEnv is the environment variable naming which guards' checks are on
+// the current call stack — the re-entry provenance a check that spawns sr-agent
+// must carry so the launched agent's own hooks decline to re-fire those guards.
+//
+// A LITERAL copy of services/sr-session/provenance.go's LaunchedByEnv, which is
+// the source of truth: this package sits BELOW services/sr-session in the
+// dependency graph and cannot import it, and the value is computed there
+// (appendLaunchedBy) and threaded in as scriptCall.LaunchedBy / judgeCall.LaunchedBy.
+// If the name ever changes, it changes in provenance.go and here together.
+const launchedByEnv = "SLOPRAIL_LAUNCHED_BY"
+
+// runShell runs one shell command from dir, with stdin, under the given timeout,
+// in its own process group, and reports what happened.
+//
+// The single primitive both a script and the judge substrate go through. It
+// returns the two streams, the exit code, whether the deadline expired, the
+// signal that killed the process (0 when it exited on its own), and a start error
+// (the process could not be launched at all) — leaving the fail-closed
+// interpretation to the caller, which differs slightly between a script (exit code
+// is the verdict) and a judge (a verify script inside sr-agent decides).
+//
+// The signal is returned separately because exitErr.ExitCode() FLATTENS a
+// signalled death to -1, losing which signal it was — so a check the OS killed
+// (a segfault, an outer `kill`, an OOM) is indistinguishable from any other
+// non-clean exit by the code alone. Recovering the signal here lets the caller's
+// refusal reason say the check was KILLED rather than report a bare "exit -1, no
+// reason" (which the old dispatch did not). It is 0 for a clean or ordinary
+// non-zero exit, and set only when WaitStatus.Signaled(). A TIMEOUT is also a
+// signalled death (the process-group SIGKILL), but expired is reported first and
+// the caller special-cases it before ever consulting the signal, so the timeout
+// keeps its own "did not answer in time" wording.
+//
+// The timeout is a PER-RUN parameter rather than the const it once was, so a
+// judge check can carry its own (dot-dir-file-store/main.tsp Check.timeout). A
+// zero or negative value falls back to defaultCheckTimeout — the script path and
+// any judge without an override run under the same 30s as before. Whatever bound
+// applies, an expiry is still a refusal at the call site: fail-closed is
+// preserved at the per-check bound exactly as it was at the const one.
+//
+// The process GROUP is killed on timeout, not just the shell: a check that spawns
+// sr-agent, which spawns a model call, leaves children that outlive a kill aimed
+// at the shell and hold the pipes open — so Setpgid gives the shell its own group
+// and one signal to the negated pgid ends the tree. This is the old runHooks'
+// mechanism, unchanged, because the failure it prevents (a leaked model-calling
+// subprocess per guarded action, and an unbounded hang) is identical here.
+func runShell(dir, command string, stdin []byte, env []string, timeout time.Duration) (stdout, stderr []byte, code int, expired bool, signal syscall.Signal, startErr error) {
+	if timeout <= 0 {
+		timeout = defaultCheckTimeout
+	}
+	var outBuf, errBuf bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	c := exec.CommandContext(ctx, "sh", "-c", command)
+	c.Dir = dir
+	c.Env = env
+	c.Stdin = bytes.NewReader(stdin)
+	c.Stdout = &outBuf
+	c.Stderr = &errBuf
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error {
+		if err := syscall.Kill(-c.Process.Pid, syscall.SIGKILL); err != nil {
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
+		}
+		return nil
+	}
+	c.WaitDelay = checkKillGrace
+
+	err := c.Run()
+	expired = ctx.Err() != nil
+	stdout, stderr = outBuf.Bytes(), errBuf.Bytes()
+
+	if err == nil {
+		return stdout, stderr, 0, false, 0, nil
+	}
+	if expired {
+		// The deadline fired. Report it as expired regardless of the exit shape;
+		// the caller refuses on it before reading the code or the signal, which for
+		// a signalled death (the process-group SIGKILL) would otherwise read as a
+		// bare "killed" and lose the "did not answer in time" wording.
+		return stdout, stderr, -1, true, 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		// A non-clean exit that was not the deadline. Recover the signal if the OS
+		// killed the process (a crash, an outer `kill`, an OOM): ExitCode() reports
+		// -1 for a signalled death and drops which signal it was, so the caller
+		// could otherwise only say "exit -1, no reason". WaitStatus.Signal() gives
+		// the actual signal; it is left 0 for an ordinary non-zero exit.
+		//
+		// TWO shapes, because a signal can reach the direct child OR a shell's own
+		// grandchild:
+		//  1. THE SHELL ITSELF was signalled (`Signaled()` true) — macOS `sh -c`
+		//     execs the single command, so `kill -9 $$` kills the process Wait
+		//     watches. Read the signal straight off the wait status.
+		//  2. THE SHELL EXITED CLEANLY reporting a signalled child (code >= 128) —
+		//     Linux `sh -c "./x"` FORKS `./x`, so `kill -9 $$` in the script kills
+		//     the FORKED child; the outer shell then exits NORMALLY with 128+signum
+		//     (the POSIX convention). `Signaled()` is false, but the exit code still
+		//     names the signal that killed the work. Without this the caller falls
+		//     back to the shell's bare "Killed" stderr and loses the signal number —
+		//     exactly the macOS/Linux split T036 catches.
+		code := exitErr.ExitCode()
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			signal = ws.Signal()
+		} else if code > 128 && code <= 128+maxSignalNumber {
+			// The 128+signum convention: the low bits above 128 are the signal that
+			// killed the work. 64 covers POSIX signals plus Linux real-time signals
+			// without depending on a platform-specific SIGRTMAX (absent on darwin).
+			signal = syscall.Signal(code - 128)
+		}
+		return stdout, stderr, code, false, signal, nil
+	}
+	// Not an ExitError: the process could not be started at all.
+	return stdout, stderr, -1, false, 0, err
+}
+
+// scriptRefusalReason works out what to tell the agent about a script that exited
+// non-zero. There is always something to say — this never returns "".
+//
+// The script's own words win where it gave any (stdout first — a script that
+// writes there is answering; then stderr — `echo … >&2; exit 1` is an ordinary
+// refusal idiom). A process the OS KILLED gets a "killed by signal" diagnosis
+// rather than the bare "exit -1" the code alone would yield (see below). The two
+// could-not-run statuses get a diagnosis naming the fix, since the shell's own
+// message is accurate and useless. Failing everything, the exit status itself is
+// reported. This is a trimmed form of the old dispatch's refusalReason, which had
+// been tuned against real hooks.
+//
+// signal is the signal that killed the process (0 when it exited on its own),
+// recovered by runShell because ExitCode() flattens a signalled death to -1. A
+// TIMEOUT is also a signalled death, but runScriptExec/askJudge report expiry
+// FIRST and never reach this with a timeout, so the signal branch here only ever
+// describes a NON-timeout kill (a crash, an outer `kill`, an OOM) — the old
+// dispatch called that "killed", and this restores that word in place of the
+// regressed "exit -1 … no reason".
+func scriptRefusalReason(script string, code int, signal syscall.Signal, stdout, stderr []byte) string {
+	// A structured {"reason": "..."} on stdout is the script speaking; prefer it
+	// even over a signal — a script that managed to author a verdict said something
+	// the agent should hear.
+	if reason := structuredReason(stdout); reason != "" {
+		return reason
+	}
+
+	// The OS killed the process (not the timeout — that was reported before this).
+	// Say so, in the "killed" family the timeout message uses, rather than letting
+	// the -1 sentinel fall through to "exit -1 … no reason". Any dying words on
+	// stderr are quoted, the same as the timeout and could-not-run paths.
+	if signal != 0 {
+		return fmt.Sprintf(
+			"the check %q was killed by signal %d (%s), and the action was refused because a check the OS killed must not be read as approval.%s",
+			script, int(signal), signal, quoted(stderr))
+	}
+
+	switch code {
+	case exitNotExecutable:
+		return fmt.Sprintf(
+			"the check %q could not be run: it is not executable (chmod +x it, and check its interpreter line). "+
+				"The action was refused because a check that cannot run must not be read as approval.%s",
+			script, quoted(stderr))
+	case exitNotFound:
+		return fmt.Sprintf(
+			"the check %q was not found. The command is resolved relative to the rule's own folder. "+
+				"The action was refused because a check that cannot run must not be read as approval.%s",
+			script, quoted(stderr))
+	}
+
+	if text := plainText(stdout); text != "" {
+		return text
+	}
+	if text := plainText(stderr); text != "" {
+		return text
+	}
+	return fmt.Sprintf("the check %q refused (exit %d) but gave no reason", script, code)
+}
+
+// structuredReason reads a {"reason": "..."} object off a script's stdout, the
+// same shape the old hooks emit for a structured verdict. Empty when stdout is
+// not that shape or carries no reason.
+func structuredReason(stdout []byte) string {
+	var res struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(stdout), &res); err == nil {
+		return strings.TrimSpace(res.Reason)
+	}
+	return ""
+}
+
+// plainText returns trimmed output meant to be read by a person, or "" when there
+// is nothing usable. JSON is excluded: it is either a structured verdict already
+// handled or a detail the agent should not be shown raw.
+func plainText(b []byte) string {
+	text := strings.TrimSpace(string(b))
+	if text == "" || json.Valid([]byte(text)) {
+		return ""
+	}
+	return text
+}
+
+// quoted appends what the shell said, when it said anything, so the underlying
+// message is not lost behind a diagnosis.
+func quoted(stderr []byte) string {
+	text := strings.TrimSpace(string(stderr))
+	if text == "" {
+		return ""
+	}
+	return " (" + text + ")"
+}
+
+// resolveScriptPath is the absolute path of a script named relative to the guard
+// folder, for a helper that needs it outside the `sh -c` cwd. Kept small and
+// separate because the judge path builds a prompt naming files and wants the
+// absolute form.
+func resolveScriptPath(dir, script string) string {
+	if filepath.IsAbs(script) {
+		return script
+	}
+	return filepath.Join(dir, script)
+}

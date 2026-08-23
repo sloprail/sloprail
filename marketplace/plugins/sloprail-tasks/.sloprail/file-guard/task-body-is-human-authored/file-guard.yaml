@@ -1,0 +1,75 @@
+# A task's BODY is the human's ask, cited, and nothing else — the guard that
+# protects the ORACLE rather than an artifact. Every other guard here protects
+# something the work produces; this one protects the specification all the others
+# are checked against. The failure it prevents has no detector once it happens: an
+# agent implements 70% of an ask, edits the body to describe that 70%, and from
+# then on every verification passes because the spec was rewritten to match the
+# work. The full argument lives in the plugin's README, migrated from the
+# old-format rule doc.
+#
+# TWO checks, cheap first — the same script+judge shape ask-is-human-authored and
+# rule-quality use, and the old judge-body.sh's own two stages:
+#
+#   1. SCRIPT (has-body-citation.sh): deterministic, no model. The body must carry
+#      at least one `[quote](jsonl-path)` citation LINK, and every quote must
+#      GROUND via `sr-session trajectory cite` to the user's own words. cite is the
+#      single validator — it excludes tool results AND harness-injected user-role
+#      messages (<system-reminder>/<task-notification>/…), which is the exact
+#      substitution this rule exists to prevent, so the script filters no tags
+#      itself. No citation, or one that does not ground: refused here, and the
+#      judge is never paid for. (The old rule hand-rolled that entry-type check in
+#      a citations.sh; it now lives in cite — internal/transcript/cite.go.)
+#   2. PREPARE + JUDGE: only reached once the script passed. prepare
+#      (resolve-cited-messages.sh) assembles the grounded quotes (the user's own
+#      words) as the judge's ground truth; judge-body.md.j2 asks the model whether
+#      the body CORRESPONDS to them and holds THAT AND NOTHING ELSE. This is the old
+#      judge-body.sh's stage 2, but the model call, timeout, isolation and verdict
+#      shape are now the engine's (via sr-agent) — a judge: check hand-rolls none.
+#
+# WHY A JUDGE CHECK AND NOT THE OLD HAND-ROLLED CLAUDE CALL. The old script called
+# a model itself and parsed `VERDICT: PASS/FAIL`. The engine's judge substrate owns
+# that now: the template renders, sr-agent runs the model, the engine reads a
+# {"pass","reasoning"} verdict. The judging INTENT and prompt are preserved in
+# judge-body.md.j2 (the RUBRIC.md text, moved into the template where it is visible
+# and versioned).
+#
+# FAIL-OPEN RECONCILIATION (flagged, not hidden). The old judge FAILED OPEN on its
+# own machinery (no sr-agent, a timeout, an unparseable verdict): a model flake
+# must not wedge a session. A judge: check cannot reproduce that — the model call
+# is the engine's, and the engine's judge path fails CLOSED on machinery failure by
+# deliberate design (internal/dispatch/judge.go). So those cases now REFUSE rather
+# than permit. This is the one behaviour a judge: check semantics cannot keep, and
+# it is flagged here rather than hidden. The DETERMINISTIC half (stage 1 and the
+# prepare's own resolution) already failed closed, unchanged.
+#
+# match: the task file, TWO directory levels deep —
+# `memories/tasks/<category>/<name>/TASK.md`, the old regex
+# `^memories/tasks/[^/]+/[^/]+/TASK\.md$`. A `matches` expression (not a glob): a
+# single-`*` glob is one segment and would not require two arbitrary levels
+# precisely. The file-match scope compiles `matches` as a regex over `path`.
+match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
+
+# preventive: true reproduces the old Pre+Post binding. An edit to the ask must be
+# refused BEFORE it lands: a Post refusal reports damage already done to the oracle
+# and the agent's remedy would be to edit the task again — the prohibited act
+# itself. The Stop after-check is the backstop for a write the engine cannot derive
+# at Pre (failed closed engine-side, re-judged at Stop on the settled bytes).
+preventive: true
+
+checks:
+  # Stage 1 — deterministic, fail-closed. Refuses with `{"reason": "..."}` on
+  # stdout, exit non-zero.
+  - script: ./has-body-citation.sh
+
+  # Stage 2 — the judge, reached only because stage 1 passed. model is size-md (engine default judge modelset)
+  # (an unpinned model resolves larger and this can fire several times per turn);
+  # timeout 25s sits under the engine's 30s check bound so the judge's own limit
+  # fires first. allowed_tools: [Read] ADDS Read on top of the Write the engine's
+  # judge substrate always grants for the verdict file — the one conservative grant
+  # that lets the judge corroborate the file on disk; the cited messages and the
+  # body are both already IN the prompt.
+  - prepare: ./resolve-cited-messages.sh
+    judge: ./judge-body.md.j2
+    model: size-md
+    timeout: 25s
+    allowed_tools: [Read]

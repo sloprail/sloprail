@@ -1,0 +1,6 @@
+match: "**/tasks/*/*/ASK.md"
+preventive: true
+checks:
+  - script: ./has-message-reference.sh
+  - prepare: ./resolve-referenced-message.sh
+    judge: ./reference-is-true-and-only-this.md.j2

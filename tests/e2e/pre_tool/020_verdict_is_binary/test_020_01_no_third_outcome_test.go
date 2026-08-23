@@ -1,6 +1,6 @@
 // Package e2e drives the one enforcement invariant nothing referenced.
 //
-// verdict_is_binary: "A Hook either refuses the work or permits it, with no
+// verdict_is_binary: "A check either refuses the work or permits it, with no
 // third outcome that records an objection while allowing the work to proceed."
 // Why: "An advisory tier is where rules go to be ignored. A rule worth
 // declaring is worth enforcing, and a warning an agent may disregard is
@@ -8,41 +8,34 @@
 //
 // An audit of enforcement.tsp found this the only one of its eleven invariants
 // with no test anywhere in the tree — by name or by property. The behaviour IS
-// implemented, and structurally so: `verdict` in session_pre_tool.go carries a
-// bool, and its comment already explains why refusal is a field rather than a
-// non-empty reason string. There is no advisory branch to find. But "the code
-// has no third state" is a claim about the code, and the invariant is a claim
-// about what a HOOK AUTHOR can achieve — which is a different question, because
-// a hook is an arbitrary program free to print whatever it likes.
+// implemented, and structurally so: the check-runner's Verdict carries a bool
+// (internal/dispatch), and a check that decided nothing is a refusal rather than
+// a silent pass. There is no advisory branch to find. But "the code has no third
+// state" is a claim about the code, and the invariant is a claim about what a
+// CHECK AUTHOR can achieve — which is a different question, because a check is an
+// arbitrary program free to print whatever it likes.
 //
-// So these tests come at it from the author's side. Each one is a hook
+// So these tests come at it from the author's side. Each one is a check
 // genuinely TRYING to record an objection while letting the work through, using
-// a vocabulary that exists somewhere in the hook ecosystem, and each asserts the
+// a vocabulary that exists somewhere in the ecosystem, and each asserts the
 // attempt collapses into one of the two outcomes there are.
 //
-// The measured channel table in refuseForBroken is what makes this sharp rather
-// than pedantic. At PreToolUse only stderr-at-exit-2 and permissionDecision
-// "deny"-at-exit-0 reach the agent at all, and BOTH refuse. There is no channel
-// that delivers text beside a permitted action. An advisory tier is therefore
-// not merely disallowed by this engine — it is unreachable through this hook
-// point, and a hook attempting one produces silence. That is the failure the
-// `why` describes, and T020_01 is the test that shows it happening.
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
 //
-// # On the "no test anywhere" finding above, which was later made twice
-//
-// This package is the test that finding said was missing. A LATER audit reached
-// the same "zero coverage anywhere, by name or by property" conclusion and acted
-// on it, adding a second package — tests/e2e/pre_tool/016_verdict_is_binary —
-// for this same invariant under this same name. It had missed a directory
-// literally called 020_verdict_is_binary.
-//
-// That package is now removed. It was the weaker of the two: none of its tests
-// carried a ledger, so its permit-side cases were satisfied by a guardrail that
-// never loaded, and it never asserted the half that gives this invariant its
-// force — that the objection reaches nobody. Its one case with no counterpart
-// here, an objection combined with a refusal, is T020_05 below.
-//
-// Anything auditing this invariant's coverage should find it here and stop.
+// The binary verdict is a PRE-ACTION property — a pending write either lands or
+// it does not — so the vehicle is a GATE on the pre-write event. The new-format
+// check contract is where "binary" now lives: exit 0 permits, exit non-zero
+// refuses (a `{"reason":...}` on stdout is the reason; scriptRefusalReason reads
+// the exit STATUS, never a printed decision). So the old "third outcome" attempts
+// — the OLD hook protocol's `{"decision":"block"}` at exit 0, its
+// `permissionDecision:"ask"` — are re-expressed as the SAME shape a new check
+// author would reach for: printing an objection (a reason document, or a plain
+// line) while exiting 0. It permits, and the objection reaches nobody, because a
+// check at exit 0 permits and its stdout is not read as a verdict. That is the
+// failure the `why` describes, and T020_01 shows it happening. Refusals are
+// observed with res.Refused() (the pre-tool deny marker) and the tree; the
+// gate's own ledger under `.sloprail/gate/<name>/` proves the check ran.
+
 package e2e
 
 import (
@@ -52,47 +45,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// bindEveryCreate binds one hook to every file creation. What varies across
-// these tests is only what the hook says and how it exits.
-const bindEveryCreate = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Sees every creation
-
-The tests here vary how a hook tries to express a third outcome, never whether
-it was asked.
+// bindEveryCreate is a gate that runs one check on every file creation. What
+// varies across these tests is only what the check says and how it exits.
+const bindEveryCreate = `on:
+  - event: PreFileCreate
+checks:
+  - script: ./h.sh
 `
 
-// T020_01: a hook that says "block" and exits zero does NOT block.
+// T020_01: a check that prints a refusal DOCUMENT and exits zero does NOT block.
 //
-// The purest attempt at the forbidden third outcome, and the one a hook author
-// is most likely to write by accident: the refusal vocabulary the engine really
-// does understand, paired with a success exit. If anything were going to record
-// an objection while permitting the work, it would be this.
+// The purest attempt at the forbidden third outcome, and the one a check author
+// is most likely to write by accident: a `{"reason":...}` — the very shape the
+// engine reads on a REFUSAL — paired with a success exit. If anything were going
+// to record an objection while permitting the work, it would be this.
 //
 // It permits, and — the half that matters for the `why` — the objection reaches
-// nobody. The reason text is not on the stream, because no channel out of a
-// PreToolUse hook delivers text beside a permitted action. So the rule did not
-// become advisory; it became silent, which is what "indistinguishable from no
-// rule at all" means concretely.
+// nobody. The reason text is not delivered, because a check that exits 0 permits
+// and its stdout is not consulted for a verdict. So the rule did not become
+// advisory; it became silent, which is what "indistinguishable from no rule at
+// all" means concretely.
 //
-// The MARK assertion is what stops this being vacuous. Asserting only that the
-// write landed would pass on an engine that had never run the hook, and the
+// The LEDGER assertion is what stops this being vacuous. Asserting only that the
+// write landed would pass on an engine that had never run the check, and the
 // ledger below is what separates those: the rule WAS asked, said its piece, and
 // its piece went nowhere.
 func TestT020_01_AnObjectionAtExitZeroPermitsAndIsNotDelivered(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "objector", bindEveryCreate, map[string]string{
+	e.Gate(proj, "objector", bindEveryCreate, map[string]string{
 		"h.sh": `#!/bin/sh
 cat >/dev/null
-echo asked >> "$PWD/log"
-echo '{"decision":"block","reason":"MARK-I-object-but-carry-on"}'
+echo asked >> "$SR_GUARDRAIL_DIR/log"
+echo '{"reason":"MARK-I-object-but-carry-on"}'
 exit 0
 `,
 	})
@@ -102,36 +87,36 @@ exit 0
 	))
 
 	// The rule really was consulted. Without this the two assertions below are
-	// satisfied by a guardrail that never loaded.
-	require.Equal(t, []string{"asked"}, e.Ledger(proj, "objector", "log"),
-		"the hook must have run, or nothing here is about what it decided")
+	// satisfied by a gate that never loaded.
+	require.Equal(t, []string{"asked"}, e.GateLedgerLines(proj, "objector", "log"),
+		"the check must have run, or nothing here is about what it decided")
 
-	assert.False(t, res.Refused(), "exit zero permits, whatever the hook printed")
+	assert.False(t, res.Refused(), "exit zero permits, whatever the check printed")
 	assert.True(t, e.Exists(proj, "notes.md"),
 		"the work proceeds — there is no outcome that objects and still allows it")
 	assert.False(t, res.Saw("MARK-I-object-but-carry-on"),
-		"and the objection reaches nobody: no channel delivers text beside a permitted action")
+		"and the objection reaches nobody: a check at exit 0 permits and its stdout is not a verdict channel")
 }
 
-// T020_02: `permissionDecision: "ask"` is not a third outcome either.
+// T020_02: a plain-prose objection at exit zero is not a third outcome either.
 //
-// The other vocabulary an author might reach for, and the one that looks most
-// like a legitimate middle tier — it is a real value in the hook protocol this
-// engine's own deny() writes into. The measured table records it as reaching
-// nobody and refusing nothing, and this drives that end to end.
+// The other vocabulary an author might reach for: not the structured reason
+// document but an ordinary line of prose meant to warn, still at a success exit.
+// A check's plain stdout is read only when it REFUSES (as the reason); at exit 0
+// it is not read at all. This drives that end to end.
 //
 // Distinct from T020_01 rather than a duplicate of it: that one is the engine's
-// own refusal vocabulary at the wrong exit status, this one is a decision value
-// that MEANS "neither yes nor no". If any input could produce a third outcome
-// it would be the one whose entire purpose is to be a third outcome.
-func TestT020_02_AskIsNeitherARefusalNorDelivered(t *testing.T) {
+// own refusal vocabulary at the wrong exit status, this one is a message with no
+// structure at all — the thing a debugging `echo` leaves behind. If any input
+// could produce a third outcome it would be one of these two.
+func TestT020_02_ProsePrintedAtExitZeroIsNeitherARefusalNorDelivered(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "asker", bindEveryCreate, map[string]string{
+	e.Gate(proj, "asker", bindEveryCreate, map[string]string{
 		"h.sh": `#!/bin/sh
 cat >/dev/null
-echo asked >> "$PWD/log"
-echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"MARK-please-confirm-this"}}'
+echo asked >> "$SR_GUARDRAIL_DIR/log"
+echo 'MARK-please-confirm-this'
 exit 0
 `,
 	})
@@ -140,22 +125,22 @@ exit 0
 		Write("w1", "notes.md", "hello"),
 	))
 
-	require.Equal(t, []string{"asked"}, e.Ledger(proj, "asker", "log"),
-		"the hook must have run")
+	require.Equal(t, []string{"asked"}, e.GateLedgerLines(proj, "asker", "log"),
+		"the check must have run")
 
-	assert.False(t, res.Refused(), `"ask" does not refuse`)
+	assert.False(t, res.Refused(), `prose at exit 0 does not refuse`)
 	assert.True(t, e.Exists(proj, "notes.md"), "the work proceeds")
 	assert.False(t, res.Saw("MARK-please-confirm-this"),
-		`"ask" does not reach the agent either — it is silence, not a middle tier`)
+		`the message does not reach the agent either — it is silence, not a middle tier`)
 }
 
-// T020_03: a hook claiming approval while exiting non-zero is still a refusal.
+// T020_03: a check claiming approval while exiting non-zero is still a refusal.
 //
-// The mirror image, and the one that pins which side wins when a hook
-// contradicts itself. An engine reading the printed decision in preference to
-// the exit status would let a hook approve work by saying so — and since a
-// non-zero exit is how every BROKEN hook fails, that would hand every crashing
-// script a way to claim consent.
+// The mirror image, and the one that pins which side wins when a check
+// contradicts itself. An engine reading printed text in preference to the exit
+// status would let a check approve work by saying so — and since a non-zero exit
+// is how every BROKEN check fails, that would hand every crashing script a way to
+// claim consent.
 //
 // The exit status governs, and the printed reason is used only as the wording.
 // Both halves are asserted: the work was stopped, and the agent was told
@@ -163,11 +148,11 @@ exit 0
 func TestT020_03_AClaimOfApprovalDoesNotSurviveANonZeroExit(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "contradictor", bindEveryCreate, map[string]string{
+	e.Gate(proj, "contradictor", bindEveryCreate, map[string]string{
 		"h.sh": `#!/bin/sh
 cat >/dev/null
-echo asked >> "$PWD/log"
-echo '{"decision":"approve","reason":"MARK-approved-anyway"}'
+echo asked >> "$SR_GUARDRAIL_DIR/log"
+echo '{"reason":"MARK-approved-anyway"}'
 exit 1
 `,
 	})
@@ -176,23 +161,23 @@ exit 1
 		Write("w1", "notes.md", "hello"),
 	))
 
-	require.Equal(t, []string{"asked"}, e.Ledger(proj, "contradictor", "log"),
-		"the hook must have run")
+	require.Equal(t, []string{"asked"}, e.GateLedgerLines(proj, "contradictor", "log"),
+		"the check must have run")
 
 	assert.True(t, res.Refused(),
-		"a non-zero exit refuses, whatever the hook claimed about approving")
+		"a non-zero exit refuses, whatever the check printed")
 	assert.False(t, e.Exists(proj, "notes.md"),
 		"and the work really is prevented, not merely reported as refused")
 	assert.True(t, res.Saw("MARK-approved-anyway"),
-		"the hook's own words become the reason — the status decides, the text explains")
+		"the check's own words become the reason — the status decides, the text explains")
 }
 
 // T020_04: the two outcomes are genuinely distinguishable.
 //
 // The control the three tests above need. Each of them asserts an attempted
 // third outcome collapsed to permit or to refuse — claims that would all pass
-// on an engine stuck permanently in one state. This runs the same binding with
-// a plainly-permitting and a plainly-refusing hook and shows the two produce
+// on an engine stuck permanently in one state. This runs the same gate with
+// a plainly-permitting and a plainly-refusing check and shows the two produce
 // different answers on the tree.
 //
 // Without it, T020_01 and T020_02 are satisfied by an engine that permits
@@ -202,21 +187,21 @@ func TestT020_04_BothOutcomesAreReachable(t *testing.T) {
 	e := New(t)
 
 	permit := e.Project()
-	e.Guardrail(permit, "yes", bindEveryCreate, map[string]string{
+	e.Gate(permit, "yes", bindEveryCreate, map[string]string{
 		"h.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n",
 	})
 	permitRes := e.Run(permit, "s-020-04a", "write", Turns("done", Write("w1", "notes.md", "hello")))
 
 	refuse := e.Project()
-	e.Guardrail(refuse, "no", bindEveryCreate, map[string]string{
-		"h.sh": "#!/bin/sh\ncat >/dev/null\necho 'MARK-refused' >&2\nexit 1\n",
+	e.Gate(refuse, "no", bindEveryCreate, map[string]string{
+		"h.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"MARK-refused\"}'\nexit 1\n",
 	})
 	refuseRes := e.Run(refuse, "s-020-04b", "write", Turns("done", Write("w1", "notes.md", "hello")))
 
-	assert.False(t, permitRes.Refused(), "a permitting hook permits")
+	assert.False(t, permitRes.Refused(), "a permitting check permits")
 	assert.True(t, e.Exists(permit, "notes.md"), "and the file lands")
 
-	assert.True(t, refuseRes.Refused(), "a refusing hook refuses")
+	assert.True(t, refuseRes.Refused(), "a refusing check refuses")
 	assert.False(t, e.Exists(refuse, "notes.md"), "and the file does not land")
 }
 
@@ -224,7 +209,7 @@ func TestT020_04_BothOutcomesAreReachable(t *testing.T) {
 // of the two outcomes.
 //
 // The composition case. T020_01 to T020_03 each drive a single rule, so they
-// show that no ONE hook can reach a third outcome. If a third outcome existed
+// show that no ONE check can reach a third outcome. If a third outcome existed
 // anywhere it would more likely appear where verdicts have to be COMBINED — one
 // rule objecting at exit zero, another refusing — since that is the only place
 // the engine holds two answers at once and has to reduce them.
@@ -235,26 +220,25 @@ func TestT020_04_BothOutcomesAreReachable(t *testing.T) {
 // engine that merged the two, or that let the adviser's text stand in for a
 // verdict, would still stop the write and would still look green without it.
 //
-// Both ledgers are asserted because the claim is about two rules. Without the
-// adviser's, this passes on an engine that stopped dispatching after the first
-// refusal it found — which is the very short-circuit that would make the
-// composition untested while the test named for it stayed green.
+// Both ledgers are asserted because the claim is about two rules. Two gates on
+// the same event both run when the first PERMITS, so this says both were reached
+// — the adviser (which permits at exit 0) is asked, and the blocker refuses.
 func TestT020_05_AnObjectionCombinedWithARefusalIsJustARefusal(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "adviser", bindEveryCreate, map[string]string{
+	e.Gate(proj, "adviser", bindEveryCreate, map[string]string{
 		"h.sh": `#!/bin/sh
 cat >/dev/null
-echo asked >> "$PWD/log"
-echo '{"decision":"block","reason":"MARK-adviser-objects"}'
+echo asked >> "$SR_GUARDRAIL_DIR/log"
+echo '{"reason":"MARK-adviser-objects"}'
 exit 0
 `,
 	})
-	e.Guardrail(proj, "blocker", bindEveryCreate, map[string]string{
+	e.Gate(proj, "blocker", bindEveryCreate, map[string]string{
 		"h.sh": `#!/bin/sh
 cat >/dev/null
-echo asked >> "$PWD/log"
-echo 'MARK-blocker-refused' >&2
+echo asked >> "$SR_GUARDRAIL_DIR/log"
+echo '{"reason":"MARK-blocker-refused"}'
 exit 1
 `,
 	})
@@ -263,11 +247,13 @@ exit 1
 		Write("w1", "notes.md", "hello"),
 	))
 
-	// Both rules were really asked. Guardrails run in no promised order between
-	// each other, so this says both were reached, not which went first.
-	require.Equal(t, []string{"asked"}, e.Ledger(proj, "adviser", "log"),
+	// The adviser ran (it permits at exit 0, so it never ends the dispatch) and
+	// the blocker ran (it refused). Gates run in name order between each other, so
+	// "adviser" precedes "blocker" and both are reached; this says both ran, which
+	// is what the composition claim needs.
+	require.Equal(t, []string{"asked"}, e.GateLedgerLines(proj, "adviser", "log"),
 		"the objecting rule must have been asked, or this says nothing about combining")
-	require.Equal(t, []string{"asked"}, e.Ledger(proj, "blocker", "log"),
+	require.Equal(t, []string{"asked"}, e.GateLedgerLines(proj, "blocker", "log"),
 		"the refusing rule must have been asked")
 
 	assert.True(t, res.Refused(), "a refusal combined with an objection is a refusal")

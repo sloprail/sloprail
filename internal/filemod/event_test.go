@@ -16,49 +16,57 @@ func TestFileEvent_Event_PathOnly(t *testing.T) {
 	assert.Equal(t, KindPreUpdate, e.Kind)
 	assert.Equal(t, map[string]any{
 		FieldPath: "memories/a.md",
-		// Present and empty. PreFileUpdate declares markers, so it carries
-		// them; this FileEvent simply has none.
-		FieldMarkers: []any{},
-		// Both present, because PreFileUpdate declares both and presence is
-		// decided by the declaration rather than by the value. A bare
-		// FileEvent has derived nothing, so resultKnown is false and result
-		// holds its zero value — which is exactly the pair a rule must consult
-		// together.
-		FieldResult:      "",
+		// oldContent and newContent both present and empty. PreFileUpdate
+		// declares both, and presence is decided by the declaration rather than
+		// by the value.
+		FieldOldContent: "",
+		FieldNewContent: "",
+		// resultKnown present and false. A bare FileEvent has derived nothing, so
+		// the pair a rule must consult together — `newContent == ""` and
+		// `resultKnown` — is exactly what is carried here.
 		FieldResultKnown: false,
+		// Both markers lists present and empty. PreFileUpdate declares oldMarkers
+		// and newMarkers; this FileEvent simply has none.
+		FieldOldMarkers: []any{},
+		FieldNewMarkers: []any{},
 	}, e.Fields)
-	assert.NotContains(t, e.Fields, FieldContent,
-		"content is absent, not empty: on every kind but PreFileCreate the file is on disk")
 }
 
 func TestFileEvent_Event_WithContent(t *testing.T) {
-	e := FileEvent{Path: "memories/a.md", Content: "# Notes\n"}.Event(KindPreCreate)
+	e := FileEvent{Path: "memories/a.md", NewContent: "# Notes\n", ResultKnown: true}.Event(KindPreCreate)
 
 	assert.Equal(t, KindPreCreate, e.Kind)
 	assert.Equal(t, map[string]any{
-		FieldPath:    "memories/a.md",
-		FieldContent: "# Notes\n",
-		FieldMarkers: []any{},
+		FieldPath:        "memories/a.md",
+		FieldNewContent:  "# Notes\n",
+		FieldResultKnown: true,
+		FieldNewMarkers:  []any{},
 	}, e.Fields)
+	assert.NotContains(t, e.Fields, FieldOldContent,
+		"a create has no oldContent: nothing preceded it")
 }
 
-// TestFileEvent_Event_EmptyContentIsCarried states what is now true: content is
-// carried whenever the kind declares it, empty or not, so a file whose content
-// genuinely is the empty string produces an event with `content: ""` — and
-// `content == ""`, the rule an author writes to catch an empty file, fires.
+// TestFileEvent_Event_EmptyContentIsCarried states what is now true: newContent
+// is carried whenever the kind declares it, empty or not, so a file whose
+// content genuinely is the empty string produces an event with `newContent: ""`
+// — and `newContent == ""`, the rule an author writes to catch an empty file,
+// fires.
 //
 // This test previously asserted the opposite and pinned the defect. Content and
 // markers are now carried by the same rule: the declaration decides presence,
-// the value decides only what is held. `len(markers) == 0` and `content == ""`
-// are both real questions an author asks, and neither may error.
+// the value decides only what is held. `len(newMarkers) == 0` and `newContent
+// == ""` are both real questions an author asks, and neither may error.
 func TestFileEvent_Event_EmptyContentIsCarried(t *testing.T) {
-	e := FileEvent{Path: "empty.md", Content: ""}.Event(KindPreCreate)
+	e := FileEvent{Path: "empty.md", NewContent: "", ResultKnown: true}.Event(KindPreCreate)
 
-	require.Contains(t, e.Fields, FieldContent)
-	assert.Equal(t, "", e.Fields[FieldContent])
-	// path, content and markers — every field PreFileCreate declares.
-	assert.Len(t, e.Fields, 3)
-	assert.Contains(t, e.Fields, FieldMarkers)
+	require.Contains(t, e.Fields, FieldNewContent)
+	assert.Equal(t, "", e.Fields[FieldNewContent])
+	// path, newContent, resultKnown and newMarkers — every field PreFileCreate
+	// declares. resultKnown is carried too now, so an underivable empty result is
+	// tellable from this genuinely-empty (resultKnown true) one.
+	assert.Len(t, e.Fields, 4)
+	assert.Contains(t, e.Fields, FieldNewMarkers)
+	assert.Equal(t, true, e.Fields[FieldResultKnown])
 }
 
 func TestFileEvent_Event_KindIsPassedThroughUnchecked(t *testing.T) {
@@ -75,10 +83,10 @@ func TestFileEvent_Event_KindIsPassedThroughUnchecked(t *testing.T) {
 // is the silent nothing this engine exists to prevent. Path is unconditional
 // for exactly this reason.
 func TestFileEvent_PathSurvivesAnUnknownKind(t *testing.T) {
-	e := FileEvent{Path: "a.md", Content: "x"}.Event("NotAFileKind")
+	e := FileEvent{Path: "a.md", NewContent: "x"}.Event("NotAFileKind")
 	require.Contains(t, e.Fields, FieldPath, "an event must always name its file")
 	assert.Equal(t, "a.md", e.Fields[FieldPath])
-	assert.NotContains(t, e.Fields, FieldContent, "an unknown kind declares nothing else")
+	assert.NotContains(t, e.Fields, FieldNewContent, "an unknown kind declares nothing else")
 }
 
 // TestModule_EveryDeclaredKindCarriesPath is the premise the unconditional path
@@ -99,7 +107,7 @@ func TestModule_EveryDeclaredKindCarriesPath(t *testing.T) {
 func TestFileEvent_Event_FieldsAreFresh(t *testing.T) {
 	// Two events built from one FileEvent must not share a fields map, or
 	// mutating one would rewrite the other.
-	f := FileEvent{Path: "a.md", Content: "x"}
+	f := FileEvent{Path: "a.md", NewContent: "x"}
 	first := f.Event(KindPreCreate)
 	second := f.Event(KindPreCreate)
 
@@ -110,25 +118,25 @@ func TestFileEvent_Event_FieldsAreFresh(t *testing.T) {
 func TestFromEvent_RoundTrip(t *testing.T) {
 	for name, in := range map[string]FileEvent{
 		"path only":        {Path: "memories/a.md"},
-		"path and content": {Path: "memories/a.md", Content: "# Notes\n"},
-		"unicode path":     {Path: "памʼять/файл.md", Content: "Правило ✅\n"},
-		"content with nul": {Path: "a.bin", Content: "a\x00b"},
-		"whitespace body":  {Path: "a.md", Content: "  \n\t\n"},
+		"path and content": {Path: "memories/a.md", NewContent: "# Notes\n"},
+		"unicode path":     {Path: "памʼять/файл.md", NewContent: "Правило ✅\n"},
+		"content with nul": {Path: "a.bin", NewContent: "a\x00b"},
+		"whitespace body":  {Path: "a.md", NewContent: "  \n\t\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := FromEvent(in.Event(KindPreCreate))
 			require.NoError(t, err)
 
-			// Markers do not round-trip nil: a FileEvent built without any
+			// newMarkers does not round-trip nil: a FileEvent built without any
 			// comes back with an EMPTY list, because the wire form carries the
 			// field present-and-empty on every kind that declares it. That
-			// asymmetry is the point — `len(markers) == 0` must hold for a file
-			// with no markers rather than error on an absent field — so it is
-			// asserted rather than normalised away.
-			assert.NotNil(t, got.Markers, "the wire form is empty, not absent")
-			assert.Empty(t, got.Markers)
+			// asymmetry is the point — `len(newMarkers) == 0` must hold for a
+			// file with no markers rather than error on an absent field — so it
+			// is asserted rather than normalised away.
+			assert.NotNil(t, got.NewMarkers, "the wire form is empty, not absent")
+			assert.Empty(t, got.NewMarkers)
 
-			got.Markers = in.Markers
+			got.NewMarkers = in.NewMarkers
 			assert.Equal(t, in, got, "everything else round-trips exactly")
 		})
 	}
@@ -141,7 +149,8 @@ func TestFromEvent_ContentAbsentGivesEmptyString(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, FileEvent{Path: "a.md"}, got)
-	assert.Empty(t, got.Content)
+	assert.Empty(t, got.NewContent)
+	assert.Empty(t, got.OldContent)
 }
 
 func TestFromEvent_NoPathIsAnError(t *testing.T) {
@@ -151,7 +160,7 @@ func TestFromEvent_NoPathIsAnError(t *testing.T) {
 		"nil fields":   {Kind: KindPreCreate},
 		"empty fields": {Kind: KindPreCreate, Fields: map[string]any{}},
 		"empty path":   {Kind: KindPreCreate, Fields: map[string]any{FieldPath: ""}},
-		"content only": {Kind: KindPreCreate, Fields: map[string]any{FieldContent: "x"}},
+		"content only": {Kind: KindPreCreate, Fields: map[string]any{FieldNewContent: "x"}},
 	}
 	for name, e := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -190,8 +199,8 @@ func TestFromEvent_WrongTypedContentIsIgnored(t *testing.T) {
 	got, err := FromEvent(event.Event{
 		Kind: KindPreCreate,
 		Fields: map[string]any{
-			FieldPath:    "a.md",
-			FieldContent: 42,
+			FieldPath:       "a.md",
+			FieldNewContent: 42,
 		},
 	})
 	require.NoError(t, err)
@@ -208,6 +217,25 @@ func TestFromEvent_IgnoresUnknownFields(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, FileEvent{Path: "a.md"}, got)
+}
+
+// TestFromEvent_MarkersRoundTripOnBothSides checks that both marker lists are
+// read back, keyed off the right field names — a create's newMarkers and a
+// delete's oldMarkers land on the matching struct field, not swapped.
+func TestFromEvent_MarkersRoundTripOnBothSides(t *testing.T) {
+	create := FileEvent{Path: "a.go", NewContent: "// sr:endpoint api.get\n"}
+	create.NewMarkers = Scan(create.NewContent)
+	got, err := FromEvent(create.Event(KindPreCreate))
+	require.NoError(t, err)
+	assert.Equal(t, create.NewMarkers, got.NewMarkers)
+	assert.Empty(t, got.OldMarkers, "a create carries no oldMarkers")
+
+	del := FileEvent{Path: "a.go", OldContent: "// sr:endpoint api.get\n"}
+	del.OldMarkers = Scan(del.OldContent)
+	gotDel, err := FromEvent(del.Event(KindPreDelete))
+	require.NoError(t, err)
+	assert.Equal(t, del.OldMarkers, gotDel.OldMarkers)
+	assert.Empty(t, gotDel.NewMarkers, "a delete carries no newMarkers")
 }
 
 // --- Kinds -------------------------------------------------------------------
@@ -235,9 +263,11 @@ func TestModule_KindsAreDistinct(t *testing.T) {
 	}
 }
 
-func TestModule_ContentOnPreCreateAlone(t *testing.T) {
-	// The file does not exist yet only on PreFileCreate, so that is the one
-	// kind with nowhere else for a rule to look.
+// TestModule_FieldsPerKind pins the exact field layout of every kind against the
+// spec (events/main.tsp). This is the one place the whole field model is stated,
+// so a field added to or dropped from a kind is caught here rather than
+// discovered by a rule that stops firing.
+func TestModule_FieldsPerKind(t *testing.T) {
 	fieldsOf := map[string][]string{}
 	for _, k := range New().Kinds() {
 		for _, f := range k.Fields {
@@ -245,32 +275,69 @@ func TestModule_ContentOnPreCreateAlone(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, []string{FieldPath, FieldContent, FieldMarkers}, fieldsOf[KindPreCreate])
-	for _, kind := range []string{
-		KindPreDelete, KindPostCreate, KindPostUpdate, KindPostDelete,
-	} {
-		assert.Equal(t, []string{FieldPath}, fieldsOf[kind], "kind %q", kind)
-	}
-	assert.Equal(t, []string{FieldPath, FieldResult, FieldResultKnown, FieldMarkers},
+	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldResultKnown, FieldNewMarkers},
+		fieldsOf[KindPreCreate],
+		"a create has no prior bytes — newContent, its newMarkers, and resultKnown (a notebook create's bytes are not derivable, so the empty result must be tellable from a genuinely-empty one)")
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldResultKnown, FieldOldMarkers, FieldNewMarkers},
 		fieldsOf[KindPreUpdate],
-		"result and resultKnown but still no content: `content` stays the "+
-			"create-only field meaning \"the body this action states outright\", "+
-			"while the post-edit bytes an update computes get their own name")
+		"an update carries both contents; resultKnown makes an uncomputable newContent askable")
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers},
+		fieldsOf[KindPreDelete],
+		"a delete carries only the bytes about to be lost")
+
+	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldNewMarkers},
+		fieldsOf[KindPostCreate],
+		"a Post create mirrors PreFileCreate")
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldOldMarkers, FieldNewMarkers},
+		fieldsOf[KindPostUpdate],
+		"a Post update carries both settled contents and no resultKnown")
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers},
+		fieldsOf[KindPostDelete],
+		"a Post delete mirrors PreFileDelete")
 }
 
-func TestModule_MarkersOnTheTwoKindsWithText(t *testing.T) {
-	// Create and update have text; a delete does not, and an always-empty
-	// field is one a rule can match on and never learn from. The Post kinds
-	// are diff observations and carry the path alone.
+// TestModule_ResultKnownOnPreCreateAndUpdate: the companion boolean exists to
+// make an uncomputable result's empty value tellable from a genuinely-empty one,
+// and the two PRE kinds whose result can arrive either way are PreFileUpdate (a
+// command-derived update) and PreFileCreate (a notebook create). A delete has no
+// result, and the Post kinds are settled — none of those carry it.
+func TestModule_ResultKnownOnPreCreateAndUpdate(t *testing.T) {
 	declares := map[string]bool{}
 	for _, k := range New().Kinds() {
 		for _, f := range k.Fields {
-			if f.Name == FieldMarkers {
+			if f.Name == FieldResultKnown {
 				declares[k.Name] = true
 			}
 		}
 	}
 	assert.Equal(t, map[string]bool{KindPreCreate: true, KindPreUpdate: true}, declares)
+}
+
+// TestModule_NewMarkersOnCreateAndUpdate / OldMarkersOnUpdateAndDelete: markers
+// follow their content. newMarkers wherever there is a result to scan (create,
+// update); oldMarkers wherever there is prior text (update, delete); a delete
+// has no newMarkers and a create has no oldMarkers.
+func TestModule_MarkersFollowTheirContent(t *testing.T) {
+	newMarkers := map[string]bool{}
+	oldMarkers := map[string]bool{}
+	for _, k := range New().Kinds() {
+		for _, f := range k.Fields {
+			if f.Name == FieldNewMarkers {
+				newMarkers[k.Name] = true
+			}
+			if f.Name == FieldOldMarkers {
+				oldMarkers[k.Name] = true
+			}
+		}
+	}
+	assert.Equal(t, map[string]bool{
+		KindPreCreate: true, KindPreUpdate: true,
+		KindPostCreate: true, KindPostUpdate: true,
+	}, newMarkers, "newMarkers wherever there is a result to scan")
+	assert.Equal(t, map[string]bool{
+		KindPreUpdate: true, KindPreDelete: true,
+		KindPostUpdate: true, KindPostDelete: true,
+	}, oldMarkers, "oldMarkers wherever there is prior text")
 }
 
 func TestModule_EveryDeclaredFieldIsTyped(t *testing.T) {
@@ -288,35 +355,35 @@ func TestModule_EveryDeclaredFieldIsTyped(t *testing.T) {
 	}
 }
 
-func TestModule_MarkersDeclaresItsElementShape(t *testing.T) {
-	// The whole point of Elem. A list whose Elem is nil has its collection
-	// checked and its predicate body left unchecked, so a typo INSIDE
-	// `any(markers, .knid == "docs")` would compile, load, and never fire.
-	// See TestCompileMatcherFor_MarkerPredicateTypo in internal/guardrail for
-	// the end-to-end proof that the refusal actually happens.
-	var markers *module.FieldDecl
-	for _, k := range New().Kinds() {
-		for i, f := range k.Fields {
-			if f.Name == FieldMarkers {
-				markers = &k.Fields[i]
+// TestModule_MarkersDeclareTheirElementShape: both markers fields declare the
+// same closed element shape, so a typo inside a predicate over either is refused
+// at load rather than silently never firing.
+func TestModule_MarkersDeclareTheirElementShape(t *testing.T) {
+	for _, fieldName := range []string{FieldOldMarkers, FieldNewMarkers} {
+		var markers *module.FieldDecl
+		for _, k := range New().Kinds() {
+			for i, f := range k.Fields {
+				if f.Name == fieldName {
+					markers = &k.Fields[i]
+				}
 			}
 		}
-	}
-	require.NotNil(t, markers)
-	require.Equal(t, module.TypeList, markers.Type)
-	require.NotNil(t, markers.Elem, "a nil Elem leaves the predicate body unchecked")
-	require.Equal(t, module.TypeMap, markers.Elem.Type,
-		"only a TypeMap with Fields resolves to a closed structure in matcherenv")
+		require.NotNilf(t, markers, "no kind declares %q", fieldName)
+		require.Equal(t, module.TypeList, markers.Type)
+		require.NotNilf(t, markers.Elem, "%q: a nil Elem leaves the predicate body unchecked", fieldName)
+		require.Equalf(t, module.TypeMap, markers.Elem.Type,
+			"%q: only a TypeMap with Fields resolves to a closed structure in matcherenv", fieldName)
 
-	byName := map[string]module.FieldType{}
-	for _, f := range markers.Elem.Fields {
-		byName[f.Name] = f.Type
+		byName := map[string]module.FieldType{}
+		for _, f := range markers.Elem.Fields {
+			byName[f.Name] = f.Type
+		}
+		assert.Equalf(t, map[string]module.FieldType{
+			KeyMarkerKind: module.TypeString,
+			KeyMarkerFQN:  module.TypeString,
+			KeyMarkerLine: module.TypeInt,
+		}, byName, "%q element keys", fieldName)
 	}
-	assert.Equal(t, map[string]module.FieldType{
-		KeyMarkerKind: module.TypeString,
-		KeyMarkerFQN:  module.TypeString,
-		KeyMarkerLine: module.TypeInt,
-	}, byName)
 }
 
 func TestModule_KindsIsStable(t *testing.T) {
@@ -326,43 +393,52 @@ func TestModule_KindsIsStable(t *testing.T) {
 func TestFileEvent_MarkersAreCarriedExactlyWhereDeclared(t *testing.T) {
 	// The claim in Event's doc comment: markers are keyed off the declaration,
 	// so the wire form cannot carry them on a kind that does not declare them or
-	// omit them on one that does. Checked against every kind rather than the two
-	// that were on my mind, and with a FileEvent that HOLDS markers, so a kind
-	// that leaked them would be caught rather than passing on an empty struct.
-	f := FileEvent{Path: "a.go", Markers: []Marker{{Kind: "k", FQN: "f", Line: 1}}}
-	for _, k := range New().Kinds() {
-		declared := false
-		for _, fd := range k.Fields {
-			if fd.Name == FieldMarkers {
-				declared = true
+	// omit them on one that does. Checked against every kind and every markers
+	// field, with a FileEvent that HOLDS markers, so a kind that leaked them
+	// would be caught rather than passing on an empty struct.
+	f := FileEvent{
+		Path:       "a.go",
+		OldMarkers: []Marker{{Kind: "k", FQN: "f", Line: 1}},
+		NewMarkers: []Marker{{Kind: "k", FQN: "f", Line: 1}},
+	}
+	for _, fieldName := range []string{FieldOldMarkers, FieldNewMarkers} {
+		for _, k := range New().Kinds() {
+			declared := false
+			for _, fd := range k.Fields {
+				if fd.Name == fieldName {
+					declared = true
+				}
 			}
+			fields := f.Event(k.Name).Fields
+			if declared {
+				assert.Containsf(t, fields, fieldName, "kind %q declares %q but does not carry it", k.Name, fieldName)
+				continue
+			}
+			assert.NotContainsf(t, fields, fieldName, "kind %q carries %q it does not declare", k.Name, fieldName)
 		}
-		fields := f.Event(k.Name).Fields
-		if declared {
-			assert.Containsf(t, fields, FieldMarkers, "kind %q declares markers but does not carry them", k.Name)
-			continue
-		}
-		assert.NotContainsf(t, fields, FieldMarkers, "kind %q carries markers it does not declare", k.Name)
 	}
 }
 
 // TestFileEvent_ContentIsOmittedFromKindsThatDoNotDeclareIt is the fixed form
 // of a test that used to pin the opposite.
 //
-// Event once set content whenever FileEvent.Content was non-empty without
-// asking whether the kind declared it, so a FileEvent carrying content produced
-// a PreFileDelete with a content field no matcher could be checked against —
-// CompileMatcherFor validates names against the declaration and refuses one
-// that is not there. Every field now goes through kindDeclares, so presence is
-// the declaration's answer and never the value's.
+// Event once set content whenever it was non-empty without asking whether the
+// kind declared it, so a FileEvent carrying content produced a PreFileDelete
+// with a content field no matcher could be checked against — CompileMatcherFor
+// validates names against the declaration and refuses one that is not there.
+// Every field now goes through kindDeclares, so presence is the declaration's
+// answer and never the value's. A delete declares no newContent; a create
+// declares no oldContent.
 func TestFileEvent_ContentIsOmittedFromKindsThatDoNotDeclareIt(t *testing.T) {
-	f := FileEvent{Path: "a.go", Content: "x"}
-	for _, kind := range []string{
-		KindPreDelete, KindPostCreate, KindPostUpdate, KindPostDelete,
-	} {
-		assert.NotContainsf(t, f.Event(kind).Fields, FieldContent,
-			"kind %q does not declare content and must not carry it", kind)
-	}
+	f := FileEvent{Path: "a.go", OldContent: "old", NewContent: "new"}
+	// newContent is not on a delete.
+	assert.NotContains(t, f.Event(KindPreDelete).Fields, FieldNewContent,
+		"a delete does not declare newContent and must not carry it")
+	assert.NotContains(t, f.Event(KindPostDelete).Fields, FieldNewContent)
+	// oldContent is not on a create.
+	assert.NotContains(t, f.Event(KindPreCreate).Fields, FieldOldContent,
+		"a create does not declare oldContent and must not carry it")
+	assert.NotContains(t, f.Event(KindPostCreate).Fields, FieldOldContent)
 }
 
 // TestFileEvent_DeclaredFieldsAreAlwaysPresent is the general statement of the
@@ -385,23 +461,23 @@ func TestFileEvent_DeclaredFieldsAreAlwaysPresent(t *testing.T) {
 }
 
 // TestFileEvent_EmptyContentIsCarriedOnPreFileCreate is defect 1 exactly: the
-// empty file. `content` is required on PreFileCreate (spec events/main.tsp),
-// and a matcher written `content == ""` — the rule an author writes to catch an
-// empty file — is the one that met a nil and errored.
+// empty file. `newContent` is required on PreFileCreate (spec events/main.tsp),
+// and a matcher written `newContent == ""` — the rule an author writes to catch
+// an empty file — is the one that met a nil and errored.
 func TestFileEvent_EmptyContentIsCarriedOnPreFileCreate(t *testing.T) {
-	fields := FileEvent{Path: "empty.txt", Content: ""}.Event(KindPreCreate).Fields
-	require.Contains(t, fields, FieldContent,
+	fields := FileEvent{Path: "empty.txt", NewContent: ""}.Event(KindPreCreate).Fields
+	require.Contains(t, fields, FieldNewContent,
 		"a genuinely empty file must still carry the content its kind declares")
-	assert.Equal(t, "", fields[FieldContent])
+	assert.Equal(t, "", fields[FieldNewContent])
 }
 
 func TestFileEvent_EveryKindsMarkersAreFreshPerCall(t *testing.T) {
 	// Two events from one FileEvent must not share the markers slice, or
 	// mutating one rewrites the other. The existing fields-map test does not
 	// reach inside the list.
-	f := FileEvent{Path: "a.go", Markers: []Marker{{Kind: "k", FQN: "f", Line: 1}}}
-	first := f.Event(KindPreCreate).Fields[FieldMarkers].([]any)
-	second := f.Event(KindPreCreate).Fields[FieldMarkers].([]any)
+	f := FileEvent{Path: "a.go", NewMarkers: []Marker{{Kind: "k", FQN: "f", Line: 1}}}
+	first := f.Event(KindPreCreate).Fields[FieldNewMarkers].([]any)
+	second := f.Event(KindPreCreate).Fields[FieldNewMarkers].([]any)
 
 	first[0].(map[string]any)[KeyMarkerFQN] = "mutated"
 	assert.Equal(t, "f", second[0].(map[string]any)[KeyMarkerFQN])

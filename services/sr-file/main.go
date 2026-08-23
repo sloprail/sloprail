@@ -75,6 +75,7 @@ func newRoot() *cobra.Command {
 		SilenceErrors: true,
 	}
 	cmd.AddCommand(newValidateCmd())
+	cmd.AddCommand(newDeclarationsCmd())
 	return cmd
 }
 
@@ -110,7 +111,7 @@ func newValidateCmd() *cobra.Command {
 			"EXAMPLES:\n" +
 			"  sr-file validate memories/note.md --schema .sloprail/schemas/note.cue\n" +
 			"  sr-file validate config.yaml --schema schema.cue --path '#Config'\n" +
-			"  jq -r .event.fields.content event.json | sr-file validate - --as .md --schema s.cue\n" +
+			"  jq -r .event.fields.newContent event.json | sr-file validate - --as .md --schema s.cue\n" +
 			"  sr-file validate DECISION.md --schema s.cue --emit | jq -r .transcript_path",
 		Args:          cobra.ExactArgs(1),
 		SilenceUsage:  true,

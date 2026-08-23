@@ -1,0 +1,352 @@
+package dispatch
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/sloprail/sloprail/internal/declaration"
+	"github.com/sloprail/sloprail/internal/natures"
+	"github.com/sloprail/sloprail/internal/transcript"
+)
+
+// This file is the `checks` half of the check-runner: one Check at a time, in the
+// order the caller listed them, first-refusal-ends-it (dot-dir-file-store/main.tsp
+// Check). A check is a `script` or a `judge`, never both on one entry (the
+// validator's exactly-one-of), and a `judge` may carry a `prepare` that runs
+// first and feeds its result into the judge's prompt.
+//
+// The payload a check receives is assembled here to the spec's exact shape, keyed
+// by the request's Nature: a file-guard's CheckPayload / FileJudgeInput, a gate's
+// GateCheckPayload / GateJudgeInput. Assembling it in one place is what keeps a
+// script's stdin and a judge's template variables reading the same facts.
+
+// runCheck runs one check and returns its verdict.
+//
+// A script check is the deterministic half: the payload on stdin, pass/fail by
+// exit code. A judge check is the model half: prepare (if set) runs first and its
+// additionalContext feeds the judge's prompt, then the judge renders and is asked
+// for a pass/fail verdict. The two are dispatched on which field the check set.
+func (r Runner) runCheck(req Request, c declaration.Check) (Verdict, error) {
+	switch {
+	case c.Script != "":
+		return r.runScriptCheck(req, c)
+	case c.Judge != "":
+		return r.runJudgeCheck(req, c)
+	default:
+		// A loaded check always sets exactly one of script/judge (the validator
+		// refuses an empty one), so this is unreachable for a real rule. Treated as
+		// a fail-closed refusal rather than a silent pass: a check that decided
+		// nothing must not read as approval.
+		return refuse("this check names neither a script nor a judge, so it decided nothing; refusing rather than treating an empty check as a pass"), nil
+	}
+}
+
+// runScriptCheck runs a script check: the nature's CheckPayload on stdin, exit
+// code the verdict.
+//
+// Zero exits and permits; non-zero refuses, carrying whatever the script said as
+// the reason — the same convention every check in a shell already uses, and the
+// same one the old-format hooks use. A script that could not be RUN at all is a
+// refusal too (fail-closed), so a missing or non-executable script blocks rather
+// than silently admitting.
+func (r Runner) runScriptCheck(req Request, c declaration.Check) (Verdict, error) {
+	payload, err := r.checkPayloadJSON(req)
+	if err != nil {
+		return Verdict{}, err
+	}
+	res, err := r.runScript(scriptCall{
+		Dir:            req.Dir,
+		Script:         c.Script,
+		Stdin:          payload,
+		GuardName:      req.GuardName,
+		Workspace:      req.Workspace,
+		SessionID:      req.SessionID,
+		TranscriptPath: req.TranscriptPath,
+		LaunchedBy:     req.LaunchedBy,
+	})
+	if err != nil {
+		return Verdict{}, err
+	}
+	if res.Passed {
+		return pass(), nil
+	}
+	return refuse(res.Reason), nil
+}
+
+// runJudgeCheck runs a judge check: prepare (if set) first, then — unless prepare
+// asked to skip — the model.
+//
+// prepare, when set, runs first and resolves to one of the outcomes catalogued on
+// declaration.PreparedOutcome:
+//
+//   - it FAILS to run (or its stdout is malformed) -> the check fails closed,
+//     carrying prepare's own words, the same as a script refusal would (the spec:
+//     "a prepare failure fails the check"). The model is never asked.
+//   - it asks to SKIP (stdout `skip: true`) -> this check ABSTAINS: the model is
+//     NOT invoked and the check reaches no verdict of its own. Returning abstain()
+//     — not pass() — is deliberate: a skip must not stand in for an affirmative
+//     verdict that could mask a LATER check that would refuse. The check drops out
+//     of the chain and whatever else the guard says (or the default permit)
+//     decides. The model call is the expensive part and skipping it is the whole
+//     point; its `additionalContext` is moot (there is no prompt to fold it into)
+//     and is not read here.
+//   - it runs cleanly WITHOUT a skip -> its `additionalContext` (and only that key)
+//     is added to the judge's input under `additionalContext`, alongside the
+//     standard payload rather than replacing it, and the model runs. Empty stdout
+//     is this case with no additional context — silence lets the judge run, it is
+//     not a skip.
+func (r Runner) runJudgeCheck(req Request, c declaration.Check) (Verdict, error) {
+	var additional declaration.PreparedContext
+	if c.Prepare != "" {
+		prepared, v, err := r.runPrepare(req, c.Prepare)
+		if err != nil {
+			return Verdict{}, err
+		}
+		if v.Refused {
+			// prepare could not run (or refused): the check fails closed, carrying
+			// prepare's own words.
+			return v, nil
+		}
+		if prepared.Skip {
+			// prepare inspected the subject and decided the judge does not apply
+			// here: ABSTAIN WITHOUT a model call. Returning abstain() before
+			// judgeInputJSON/runJudge is what makes "skip" mean no model invocation
+			// at all — nothing renders the template and no agent is spawned — while
+			// leaving the guard's decision to the remaining checks rather than
+			// forcing a pass that would mask a later refusal.
+			return abstain(), nil
+		}
+		additional = prepared.Context
+	}
+
+	input, err := r.judgeInputJSON(req, additional)
+	if err != nil {
+		return Verdict{}, err
+	}
+
+	// The check's own timeout, parsed from its duration string. The loader
+	// already validated it parses to a positive duration, so a loaded rule never
+	// fails here; a malformed value that somehow reached this point is treated as
+	// fail-closed (refuse) rather than silently falling back to the default — a
+	// judge's timeout is a safety bound, and running one the author's config did
+	// not actually specify is the wrong direction to guess.
+	timeout, err := checkTimeout(c)
+	if err != nil {
+		return refuse(fmt.Sprintf(
+			"the judge's timeout %q could not be read (%v); refusing rather than judging under a timeout the rule did not specify", c.Timeout, err)), nil
+	}
+
+	return r.runJudge(judgeCall{
+		Dir:          req.Dir,
+		Template:     c.Judge,
+		InputJSON:    input,
+		GuardName:    req.GuardName,
+		Model:        c.Model,
+		Timeout:      timeout,
+		LaunchedBy:   req.LaunchedBy,
+		AllowedTools: c.AllowedTools,
+	})
+}
+
+// checkTimeout parses a check's `timeout` duration string, or returns 0 (meaning
+// "the engine default") when the check names none. A non-empty value that does
+// not parse is an error the caller turns into a fail-closed refusal — but the
+// loader validates this field, so that path is defensive.
+func checkTimeout(c declaration.Check) (time.Duration, error) {
+	if c.Timeout == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(strings.TrimSpace(c.Timeout))
+}
+
+// preparedResult is what runPrepare concluded from a prepare that RAN cleanly: the
+// freeform context to fold into the judge's prompt, and whether prepare asked to
+// skip the judge outright. A struct rather than a second bool return, matching
+// scriptResult's shape — the codebase's idiom for a dispatch step whose result is
+// more than one value. It is meaningful only alongside a non-refused Verdict; a
+// refusal carries its reason and this is left zero.
+type preparedResult struct {
+	// Context is prepare's `additionalContext`, folded into the judge input when
+	// the judge runs. Zero (nil) when prepare emitted none — or when skipping,
+	// where it is moot.
+	Context declaration.PreparedContext
+
+	// Skip is prepare's `skip` signal: when true, the judge is not invoked and the
+	// check ABSTAINS (reaches no verdict; other checks decide). False is the
+	// unchanged "run the judge" default.
+	Skip bool
+}
+
+// runPrepare runs a prepare script and returns what it concluded — the
+// additionalContext it produced and whether it asked to skip the judge.
+//
+// prepare receives the SAME CheckPayload a script would on stdin (the spec is
+// explicit), so the payload is assembled the same way. Its stdout envelope is read
+// for two keys: `additionalContext` (a freeform object, folded into the judge's
+// prompt) and `skip` (a typed control signal); everything else it printed is not
+// part of the contract. A prepare that could not run, or whose stdout is not the
+// `{additionalContext: {...}, skip: <bool>}` shape, fails the check closed: a judge
+// fed a half-prepared prompt would judge against something the author did not
+// intend, and an envelope the engine cannot read must resolve to a refusal, never a
+// silent skip or a half-read prompt.
+func (r Runner) runPrepare(req Request, prepare string) (preparedResult, Verdict, error) {
+	payload, err := r.checkPayloadJSON(req)
+	if err != nil {
+		return preparedResult{}, Verdict{}, err
+	}
+	res, err := r.runScript(scriptCall{
+		Dir:            req.Dir,
+		Script:         prepare,
+		Stdin:          payload,
+		GuardName:      req.GuardName,
+		Workspace:      req.Workspace,
+		SessionID:      req.SessionID,
+		TranscriptPath: req.TranscriptPath,
+		LaunchedBy:     req.LaunchedBy,
+	})
+	if err != nil {
+		return preparedResult{}, Verdict{}, err
+	}
+	if !res.Passed {
+		// prepare exited non-zero. The spec says a prepare failure fails the check;
+		// carry its words so the agent hears what prepare complained about.
+		return preparedResult{}, refuse(fmt.Sprintf("the judge's prepare step refused (before the model was asked): %s", res.Reason)), nil
+	}
+
+	// Read the envelope out of prepare's stdout: `additionalContext` and `skip`,
+	// the two keys of the contract; anything else printed is ignored.
+	outcome, err := parsePreparedContext(res.Stdout)
+	if err != nil {
+		return preparedResult{}, refuse(fmt.Sprintf(
+			"the judge's prepare step produced output this engine could not read as {\"additionalContext\": {...}, \"skip\": <bool>} (%v); "+
+				"refusing rather than asking the model against a half-prepared prompt", err)), nil
+	}
+	return preparedResult{Context: outcome.AdditionalContext, Skip: outcome.Skip}, pass(), nil
+}
+
+// checkPayloadJSON assembles the nature's check payload and marshals it for stdin.
+//
+// A file-guard's script/prepare receive CheckPayload; a gate's receive
+// GateCheckPayload. The two carry the same fields (event, transcriptPath, context)
+// and differ only in the doc-level type of `event` — so the assembled JSON is the
+// same shape, and the Nature selects which Go type names it for correctness rather
+// than changing the bytes. Both are built here so a script's stdin and a judge's
+// (prepare-less) input agree.
+func (r Runner) checkPayloadJSON(req Request) ([]byte, error) {
+	switch req.Nature {
+	case NatureGate:
+		return json.Marshal(declaration.GateCheckPayload{
+			Event:          declaration.FlatEvent(req.Event),
+			TranscriptPath: req.TranscriptPath,
+			Context:        req.contextMap(),
+		})
+	default:
+		return json.Marshal(declaration.CheckPayload{
+			Event:          declaration.FlatEvent(req.Event),
+			TranscriptPath: req.TranscriptPath,
+			Context:        req.contextMap(),
+		})
+	}
+}
+
+// judgeInputJSON assembles the nature's judge input — the payload spread flat plus
+// `additionalContext` when prepare set one — and marshals it for the template.
+//
+// FileJudgeInput / GateJudgeInput embed their payload inline, so the payload's own
+// fields render unprefixed at the template's top level and `additionalContext`, if
+// present, is one more top-level field — never spread into the payload's namespace,
+// so a prepare key cannot collide with `event` or `transcriptPath`. That is the
+// spec's rule, and inlining the payload struct is what enforces it.
+func (r Runner) judgeInputJSON(req Request, additional declaration.PreparedContext) ([]byte, error) {
+	switch req.Nature {
+	case NatureGate:
+		return json.Marshal(declaration.GateJudgeInput{
+			GateCheckPayload: declaration.GateCheckPayload{
+				Event:          declaration.FlatEvent(req.Event),
+				TranscriptPath: req.TranscriptPath,
+				Context:        req.contextMap(),
+			},
+			AdditionalContext: additional,
+		})
+	default:
+		return json.Marshal(declaration.FileJudgeInput{
+			CheckPayload: declaration.CheckPayload{
+				Event:          declaration.FlatEvent(req.Event),
+				TranscriptPath: req.TranscriptPath,
+				Context:        req.contextMap(),
+			},
+			AdditionalContext: additional,
+		})
+	}
+}
+
+// contextMap returns the request's context map, never nil, so the payload always
+// carries `context` as an object rather than a null — the same "always an object"
+// discipline the event envelope keeps for a hook that indexes it.
+func (req Request) contextMap() map[string]natures.ContextState {
+	if req.Context == nil {
+		return map[string]natures.ContextState{}
+	}
+	return req.Context
+}
+
+// parsePreparedContext reads the two supported keys off a prepare script's stdout
+// envelope: the freeform `additionalContext` and the `skip` control signal.
+//
+// The wire shape is `{"additionalContext": {...}, "skip": <bool>}`, both keys
+// optional. `additionalContext` is the freeform template context; `skip` is a
+// separate, typed channel — decoded as a real bool rather than fished out of the
+// freeform map, so a context key an author happens to name can never read as a
+// skip instruction. Empty stdout is treated as "no additional context, judge
+// runs", not an error and NOT a skip: a prepare that ran, decided it had nothing
+// to add, and printed nothing is a legitimate no-op (the spec: "exiting without
+// producing output leaves ... as it was"), and a no-op still lets the judge run —
+// silence is not an abstain. Anything present but not of that shape is an error the
+// caller turns into a fail-closed refusal, so a prepare whose output cannot be
+// read never accidentally skips the judge (or runs it against a half-read
+// envelope) — it refuses.
+func parsePreparedContext(stdout []byte) (declaration.PreparedOutcome, error) {
+	trimmed := trimSpace(stdout)
+	if len(trimmed) == 0 {
+		return declaration.PreparedOutcome{}, nil
+	}
+	var outcome declaration.PreparedOutcome
+	if err := json.Unmarshal(trimmed, &outcome); err != nil {
+		return declaration.PreparedOutcome{}, err
+	}
+	return outcome, nil
+}
+
+// skillNameOf reads a Skill tool_use's `input.skill`.
+//
+// The input is kept raw on a ToolCall (what it means is the tool's business), so
+// the one field this check needs is decoded here. `skill` and nothing else — the
+// spec declares SkillToolInput with that field, and require-skill.sh's own
+// measurement settled that no fallback field name occurs.
+func skillNameOf(call transcript.ToolCall) string {
+	var in struct {
+		Skill string `json:"skill"`
+	}
+	if json.Unmarshal(call.Input, &in) != nil {
+		return ""
+	}
+	return in.Skill
+}
+
+// trimSpace trims leading/trailing ASCII whitespace from a byte slice without a
+// string round-trip, for reading a script's stdout.
+func trimSpace(b []byte) []byte {
+	start := 0
+	for start < len(b) && isSpace(b[start]) {
+		start++
+	}
+	end := len(b)
+	for end > start && isSpace(b[end-1]) {
+		end--
+	}
+	return b[start:end]
+}
+
+func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }

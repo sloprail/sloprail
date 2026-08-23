@@ -427,9 +427,9 @@ func TestExtract_EmptyFileCreateCarriesContent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Equal(t, KindPreCreate, events[0].Kind)
-	require.Contains(t, events[0].Fields, FieldContent,
-		"an empty file is still a file, and its kind declares content")
-	assert.Equal(t, "", events[0].Fields[FieldContent])
+	require.Contains(t, events[0].Fields, FieldNewContent,
+		"an empty file is still a file, and its kind declares newContent")
+	assert.Equal(t, "", events[0].Fields[FieldNewContent])
 }
 
 // --- the create/update fork, which needs a real file ------------------------
@@ -447,11 +447,13 @@ func TestExtract_NonexistentPathIsACreateCarryingContent(t *testing.T) {
 	e := events[0]
 	assert.Equal(t, KindPreCreate, e.Kind)
 	assert.Equal(t, path, e.Fields[FieldPath])
-	assert.Equal(t, "# Notes\n", e.Fields[FieldContent],
+	assert.Equal(t, "# Notes\n", e.Fields[FieldNewContent],
 		"the file does not exist yet, so a rule has nowhere else to look")
+	assert.NotContains(t, e.Fields, FieldOldContent,
+		"a create has no oldContent: nothing preceded it")
 }
 
-func TestExtract_ExistingPathIsAnUpdateWithoutContent(t *testing.T) {
+func TestExtract_ExistingPathIsAnUpdateCarryingBothContents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "existing.md")
 	require.NoError(t, os.WriteFile(path, []byte("old\n"), 0o644))
 
@@ -465,8 +467,14 @@ func TestExtract_ExistingPathIsAnUpdateWithoutContent(t *testing.T) {
 	e := events[0]
 	assert.Equal(t, KindPreUpdate, e.Kind)
 	assert.Equal(t, path, e.Fields[FieldPath])
-	assert.NotContains(t, e.Fields, FieldContent,
-		"the file is on disk, so a hook can read it there rather than have it copied through")
+	// A Write states the whole body, so the update carries both the bytes on
+	// disk (oldContent) and the bytes it would leave (newContent). The old model
+	// carried no content on an update; the new one carries both, which is what a
+	// rule asking "will the result still have frontmatter?" needs.
+	assert.Equal(t, "old\n", e.Fields[FieldOldContent],
+		"oldContent is the file as it stands on disk")
+	assert.Equal(t, "new content\n", e.Fields[FieldNewContent],
+		"newContent is the body the write would leave")
 }
 
 func TestExtract_ExistingDirectoryIsNotAFileAndProducesNoEvent(t *testing.T) {
@@ -484,9 +492,9 @@ func TestExtract_ExistingDirectoryIsNotAFileAndProducesNoEvent(t *testing.T) {
 }
 
 func TestExtract_CreateWithEmptyContentCarriesTheDeclaredContentField(t *testing.T) {
-	// PreFileCreate declares content, so it carries content — including the
+	// PreFileCreate declares newContent, so it carries newContent — including the
 	// empty string. This test previously asserted the field was absent,
-	// pinning the defect that made `content == ""` error rather than fire.
+	// pinning the defect that made `newContent == ""` error rather than fire.
 	path := filepath.Join(t.TempDir(), "empty.md")
 
 	events, err := New().Extract(module.Input{
@@ -496,8 +504,8 @@ func TestExtract_CreateWithEmptyContentCarriesTheDeclaredContentField(t *testing
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, KindPreCreate, events[0].Kind)
-	require.Contains(t, events[0].Fields, FieldContent)
-	assert.Equal(t, "", events[0].Fields[FieldContent])
+	require.Contains(t, events[0].Fields, FieldNewContent)
+	assert.Equal(t, "", events[0].Fields[FieldNewContent])
 }
 
 func TestExtract_DefaultsToPendingWhenPhaseIsUnset(t *testing.T) {
@@ -547,9 +555,9 @@ func TestExtract_RoundTripsThroughFromEvent(t *testing.T) {
 
 	f, err := FromEvent(events[0])
 	require.NoError(t, err)
-	// Markers is an empty list rather than nil: the content carries none, and
+	// NewMarkers is an empty list rather than nil: the content carries none, and
 	// the field is present-and-empty on every kind that declares it.
-	assert.Equal(t, FileEvent{Path: path, Content: "# Notes\n", Markers: []Marker{}}, f)
+	assert.Equal(t, FileEvent{Path: path, NewContent: "# Notes\n", NewMarkers: []Marker{}}, f)
 }
 
 func TestExtract_ExtraArgumentKeysAreIgnored(t *testing.T) {
@@ -590,11 +598,11 @@ func TestExtract_CreateCarriesMarkersFromPendingContent(t *testing.T) {
 
 	assert.Equal(t, []any{
 		map[string]any{KeyMarkerKind: "blueprint", KeyMarkerFQN: "pkg.Alpha", KeyMarkerLine: 2},
-	}, events[0].Fields[FieldMarkers])
+	}, events[0].Fields[FieldNewMarkers])
 }
 
 func TestExtract_CreateWithNoMarkersCarriesAnEmptyList(t *testing.T) {
-	// Present and empty, not absent. `len(markers) == 0` is how an author
+	// Present and empty, not absent. `len(newMarkers) == 0` is how an author
 	// writes a rule about unmarked code, and a field that vanished when empty
 	// would make that expression error instead of holding.
 	path := filepath.Join(t.TempDir(), "new.go")
@@ -606,17 +614,18 @@ func TestExtract_CreateWithNoMarkersCarriesAnEmptyList(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 
-	require.Contains(t, events[0].Fields, FieldMarkers, "the field is carried even when empty")
-	markers := events[0].Fields[FieldMarkers]
+	require.Contains(t, events[0].Fields, FieldNewMarkers, "the field is carried even when empty")
+	markers := events[0].Fields[FieldNewMarkers]
 	assert.NotNil(t, markers)
 	assert.Empty(t, markers)
 }
 
 func TestExtract_CreateWithEmptyContentCarriesBothDeclaredFields(t *testing.T) {
-	// Content and markers are now carried by the SAME rule — the declaration —
-	// so an empty create carries both, each holding its empty value. This test
-	// used to assert content was absent while markers were present, pinning
-	// the divergence between the two paths that has since been removed.
+	// newContent and newMarkers are now carried by the SAME rule — the
+	// declaration — so an empty create carries both, each holding its empty
+	// value. This test used to assert content was absent while markers were
+	// present, pinning the divergence between the two paths that has since been
+	// removed.
 	path := filepath.Join(t.TempDir(), "empty.go")
 
 	events, err := New().Extract(module.Input{
@@ -625,18 +634,18 @@ func TestExtract_CreateWithEmptyContentCarriesBothDeclaredFields(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, events, 1)
-	require.Contains(t, events[0].Fields, FieldContent)
-	assert.Equal(t, "", events[0].Fields[FieldContent])
-	require.Contains(t, events[0].Fields, FieldMarkers)
-	assert.Empty(t, events[0].Fields[FieldMarkers])
+	require.Contains(t, events[0].Fields, FieldNewContent)
+	assert.Equal(t, "", events[0].Fields[FieldNewContent])
+	require.Contains(t, events[0].Fields, FieldNewMarkers)
+	assert.Empty(t, events[0].Fields[FieldNewMarkers])
 }
 
 func TestExtract_UpdateMarkersDescribeTheBytesBeingREPLACED(t *testing.T) {
-	// PreFileUpdate has no content field, so the markers come off disk — which
-	// means they describe the PRE-WRITE state, not what the write would leave.
-	// This test is built so the two answers differ: the file on disk carries
-	// pkg.Old, the pending write carries pkg.New, and only one of them can be
-	// reported.
+	// oldMarkers describe the bytes being REPLACED — the file as it stands on
+	// disk — not what the write would leave; newMarkers carry that. This test is
+	// built so the two answers differ: the file on disk carries pkg.Old, the
+	// pending write carries pkg.New, so oldMarkers and newMarkers report
+	// different things.
 	path := filepath.Join(t.TempDir(), "existing.go")
 	onDisk := "package main\n// sr:blueprint pkg.Old\n"
 	pending := "package main\n// sr:blueprint pkg.New\n// sr:docs pkg.Extra\n"
@@ -652,8 +661,13 @@ func TestExtract_UpdateMarkersDescribeTheBytesBeingREPLACED(t *testing.T) {
 
 	assert.Equal(t, []any{
 		map[string]any{KeyMarkerKind: "blueprint", KeyMarkerFQN: "pkg.Old", KeyMarkerLine: 2},
-	}, events[0].Fields[FieldMarkers],
-		"the bytes the write would REPLACE — a known limitation until PreFileUpdate carries its pending content")
+	}, events[0].Fields[FieldOldMarkers],
+		"oldMarkers are the bytes the write would REPLACE, read off the file on disk")
+	assert.Equal(t, []any{
+		map[string]any{KeyMarkerKind: "blueprint", KeyMarkerFQN: "pkg.New", KeyMarkerLine: 2},
+		map[string]any{KeyMarkerKind: "docs", KeyMarkerFQN: "pkg.Extra", KeyMarkerLine: 3},
+	}, events[0].Fields[FieldNewMarkers],
+		"newMarkers are the markers the result would carry — the pending body a Write states")
 }
 
 func TestExtract_UpdateOfAnUnreadableFileStillProducesTheEvent(t *testing.T) {
@@ -663,7 +677,7 @@ func TestExtract_UpdateOfAnUnreadableFileStillProducesTheEvent(t *testing.T) {
 	// fixture changed — it used to use a directory, which since the lookAt
 	// tri-state is not a file at all and is covered by
 	// TestExtract_ExistingDirectoryIsNotAFileAndProducesNoEvent. A real
-	// unreadable regular file is the honest way to make markersOnDisk fail.
+	// unreadable regular file is the honest way to make contentOnDisk fail.
 	if os.Geteuid() == 0 {
 		t.Skip("root reads regardless of mode")
 	}
@@ -680,8 +694,8 @@ func TestExtract_UpdateOfAnUnreadableFileStillProducesTheEvent(t *testing.T) {
 	require.Len(t, events, 1, "an unreadable file is still a file being updated")
 	assert.Equal(t, KindPreUpdate, events[0].Kind)
 	assert.Equal(t, path, events[0].Fields[FieldPath])
-	require.Contains(t, events[0].Fields, FieldMarkers)
-	assert.Empty(t, events[0].Fields[FieldMarkers],
+	require.Contains(t, events[0].Fields, FieldOldMarkers)
+	assert.Empty(t, events[0].Fields[FieldOldMarkers],
 		"unreadable text yields no markers rather than failing the extraction")
 }
 
@@ -697,39 +711,45 @@ func TestExtract_UpdateKeepsBothOccurrencesOfOneFQN(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 
-	markers, ok := events[0].Fields[FieldMarkers].([]any)
+	markers, ok := events[0].Fields[FieldOldMarkers].([]any)
 	require.True(t, ok)
 	require.Len(t, markers, 2, "a list, not a mapping keyed by name")
 }
 
-func TestFileEvent_DeleteKindsCarryNoMarkersField(t *testing.T) {
-	// A deletion has no text to read markers out of. A field that was always
-	// empty would be one a rule could match on and never learn anything from.
-	f := FileEvent{Path: "a.go", Markers: []Marker{{Kind: "k", FQN: "f", Line: 1}}}
-	for _, kind := range []string{KindPreDelete, KindPostCreate, KindPostUpdate, KindPostDelete} {
-		assert.NotContains(t, f.Event(kind).Fields, FieldMarkers,
-			"%s does not declare markers, so it must not carry them — even when the struct holds some", kind)
+func TestFileEvent_DeleteKindsCarryNoNewMarkersField(t *testing.T) {
+	// A deletion has no text to read a RESULT's markers out of, so it declares
+	// no newMarkers — even when the struct holds some. It does carry oldMarkers,
+	// the annotations of the bytes about to be lost.
+	f := FileEvent{Path: "a.go", OldMarkers: []Marker{{Kind: "k", FQN: "f", Line: 1}}}
+	for _, kind := range []string{KindPreDelete, KindPostDelete} {
+		fields := f.Event(kind).Fields
+		assert.NotContains(t, fields, FieldNewMarkers,
+			"%s does not declare newMarkers, so it must not carry them — even when the struct holds some", kind)
+		assert.Contains(t, fields, FieldOldMarkers,
+			"%s carries the markers of the bytes about to be lost", kind)
 	}
 }
 
 func TestFileEvent_RoundTripsMarkers(t *testing.T) {
-	f := FileEvent{Path: "a.go", Markers: []Marker{
+	// On an update the struct's markers are the PRE-WRITE file's, which land in
+	// oldMarkers and read back the same way.
+	f := FileEvent{Path: "a.go", OldMarkers: []Marker{
 		{Kind: "blueprint", FQN: "pkg.A", Line: 3},
 		{Kind: "docs", FQN: "pkg.A", Line: 9},
 	}}
 	back, err := FromEvent(f.Event(KindPreUpdate))
 	require.NoError(t, err)
-	assert.Equal(t, f.Markers, back.Markers)
+	assert.Equal(t, f.OldMarkers, back.OldMarkers)
 }
 
 // TestExtract_EmptyFileMatcherActuallyFires is defect 1 at the level the user
 // meets it, and the reason the defect was worse than it read.
 //
-// `content == ""` is the rule an author writes to catch an empty file. Against
-// the old emitter the field was absent, so evaluation hit a nil where a string
-// was declared and returned `interface conversion: nil, not string`. That is
-// not a rule quietly failing to fire: since session_pre_tool refuses on a
-// matcher error, every write of an empty file became a refusal blaming a
+// `newContent == ""` is the rule an author writes to catch an empty file.
+// Against the old emitter the field was absent, so evaluation hit a nil where a
+// string was declared and returned `interface conversion: nil, not string`.
+// That is not a rule quietly failing to fire: since session_pre_tool refuses on
+// a matcher error, every write of an empty file became a refusal blaming a
 // guardrail that was correct.
 //
 // This is the assertion that fails loudly if the emitter ever again decides a
@@ -744,7 +764,7 @@ func TestExtract_EmptyFileMatcherActuallyFires(t *testing.T) {
 	}
 	require.Equal(t, KindPreCreate, decl.Name, "PreFileCreate must be declared")
 
-	m, err := guardrail.CompileMatcherFor(`content == ""`, decl)
+	m, err := guardrail.CompileMatcherFor(`newContent == ""`, decl)
 	require.NoError(t, err)
 
 	events, err := New().Extract(module.Input{
@@ -756,7 +776,7 @@ func TestExtract_EmptyFileMatcherActuallyFires(t *testing.T) {
 
 	admitted, err := m.Match(events[0])
 	require.NoError(t, err, "a declared field must never evaluate to a nil the cast rejects")
-	assert.True(t, admitted, `content == "" must fire for a genuinely empty file`)
+	assert.True(t, admitted, `newContent == "" must fire for a genuinely empty file`)
 }
 
 // --- the spelling check runs before the dedupe can hide the breach (F-4) -----

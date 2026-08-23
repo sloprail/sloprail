@@ -16,6 +16,8 @@ require (
 	modernc.org/sqlite v1.56.0
 )
 
+require github.com/aisbergg/gonja v0.0.0-20230529111726-b16083958108
+
 require (
 	cuelang.org/go v0.17.1
 	github.com/cockroachdb/apd/v3 v3.2.3 // indirect

@@ -5,171 +5,196 @@ import (
 	"testing"
 )
 
-// hook_judges_event: a hook is given one event and decides about that event,
-// and what reaches it is settled before it runs.
+// hook_judges_event: a check is given one event and decides about that event, and
+// what reaches it is settled before it runs.
 //
-// Everything about which occurrences a rule sees belongs to the binding. A hook
-// that had to work out whether an occurrence was its own would be
-// re-implementing its matcher, and the two would drift. Observably that means:
-// one invocation carries exactly one event, never a batch to filter; the
-// narrowing has already happened, so nothing the matcher excluded arrives; and
-// the payload carries the event and the guardrail's own folder, not the history
-// a matcher is forbidden to read.
+// Everything about which occurrences a rule sees belongs to the binding. A check
+// that had to work out whether an occurrence was its own would be re-implementing
+// its matcher, and the two would drift. Observably that means: one invocation
+// carries exactly one event, never a batch to filter; the narrowing has already
+// happened, so nothing the match excluded arrives; and the payload carries the
+// event and the session facts, not the history a match is forbidden to read.
+//
+// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+//
+// It used to install an OLD-format rule (`hooks: PreFileCreate: [matcher: path
+// startsWith "guarded/"]`) whose hook read the NESTED payload (`.event.fields.path`)
+// and asserted the surface was `{event, guardrailDir}`. The NEW dispatch hands a
+// file-guard's check the FLAT CheckPayload (internal/declaration/payload.go): the
+// event's own fields spread directly under `event` (`.event.path`, `.event.kind`,
+// never `.event.fields.path`), and the payload's whole surface is `{event,
+// transcriptPath, context}` — there is NO `guardrailDir` field (a check finds its
+// folder via $SR_GUARDRAIL_DIR instead). So this re-proves the SAME invariant
+// against the new payload shape: narrowing by `match`, a single flat event, and a
+// surface a matcher cannot smuggle history through.
+//
+// The guard is PREVENTIVE and its check RECORDS then REFUSES, so the observation
+// is the PRE file event and nothing lands (a landed write would also run the Stop
+// after-check, mixing a Post event into the ledger). A denied pre-write is retried
+// by the mock, so the ledger holds the SAME single event repeated; every assertion
+// reads a representative line, and the claim is about the SHAPE of what the check
+// is handed, not how many retries happened.
 
-// narrowed admits only what is under guarded/. Two writes go out per test, one
-// admitted and one not, so "the hook was handed only its own" is a claim with
-// something to exclude rather than a description of the only write there was.
-const narrowed = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "guarded/"
-      hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records what it is handed, and permits
-
-The matcher is the whole of the scope. What arrives here has already been
-narrowed by it.
+// narrowed is a NEW-FORMAT preventive file-guard that admits only what is under
+// guarded/. Two writes go out per test, one admitted and one not, so "the check
+// was handed only its own" is a claim with something to exclude rather than a
+// description of the only write there was. It records what it is handed, then
+// refuses (so nothing lands).
+const narrowed = `match: "guarded/**"
+preventive: true
+checks:
+  - script: ./record.sh
 `
 
 const recordScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
-exit 0
+cat >> "$SR_GUARDRAIL_DIR/seen"
+echo >> "$SR_GUARDRAIL_DIR/seen"
+echo '{"reason":"recorded"}'
+exit 1
 `
 
 type payload struct {
 	Event struct {
-		Kind   string         `json:"kind"`
-		Fields map[string]any `json:"fields"`
+		Kind string `json:"kind"`
+		Path string `json:"path"`
 	} `json:"event"`
-	GuardrailDir string `json:"guardrailDir"`
 }
 
 func decode(t *testing.T, line string) payload {
 	t.Helper()
 	var p payload
 	if err := json.Unmarshal([]byte(line), &p); err != nil {
-		t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+		t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 	}
 	return p
 }
 
 // T009_01: each invocation carries exactly one event, already narrowed.
 //
-// Two writes, one inside the binding and one outside. The hook must be run once,
-// handed the admitted occurrence alone — not twice, not once with both to sort
-// through.
-func TestT009_01_HookIsHandedOneAlreadyNarrowedEvent(t *testing.T) {
+// Two writes, one inside the binding and one outside. The check must be handed the
+// admitted occurrence alone — the FLAT event for guarded/notes.md — and never the
+// excluded one.
+func TestT009_01_CheckIsHandedOneAlreadyNarrowedEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "narrow", narrowed, map[string]string{"record.sh": recordScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "narrow", narrowed, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-009-01", "write two notes", Turns("done",
 		Write("w1", "guarded/notes.md", "hello"),
 		Write("w2", "elsewhere/notes.md", "hello"),
 	))
 
-	lines := e.Ledger(proj, "narrow", "seen")
-	if len(lines) != 1 {
-		t.Fatalf("the hook ran %d times for one admitted write, want 1: %v", len(lines), lines)
+	lines := e.FileGuardLedgerLines(proj, "narrow", "seen")
+	if len(lines) == 0 {
+		t.Fatalf("the check never ran on the admitted write")
 	}
 
-	p := decode(t, lines[0])
-	path, _ := p.Event.Fields["path"].(string)
-	if path != "guarded/notes.md" {
-		t.Fatalf("the hook was handed %q — the matcher's narrowing was not applied before it ran", path)
+	// The narrowing was applied BEFORE the check: every line it recorded is the
+	// admitted path, and the excluded one never appears.
+	for _, line := range lines {
+		p := decode(t, line)
+		if p.Event.Path != "guarded/notes.md" {
+			t.Fatalf("the check was handed %q — the match's narrowing was not applied before it ran:\n%s", p.Event.Path, line)
+		}
+		// A pre file event, read FLAT: `.event.path` and `.event.kind` directly, not
+		// through a nested `event.fields` envelope.
+		if p.Event.Kind != "PreFileCreate" {
+			t.Errorf("the check was handed kind %q, want PreFileCreate:\n%s", p.Event.Kind, line)
+		}
 	}
 
-	// One event, not a list. A payload carrying a batch would make filtering
-	// the hook's job, which is the drift this invariant exists to prevent.
+	// One event, not a list. A payload carrying a batch would make filtering the
+	// check's job, which is the drift this invariant exists to prevent.
 	var shape map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(lines[0]), &shape); err != nil {
 		t.Fatalf("payload is not an object: %v", err)
 	}
 	if _, batched := shape["events"]; batched {
-		t.Errorf("the hook was handed a list of events to filter itself:\n%s", lines[0])
+		t.Errorf("the check was handed a list of events to filter itself:\n%s", lines[0])
 	}
-	if p.Event.Kind == "" {
+	if _, single := shape["event"]; !single {
 		t.Errorf("the payload carries no single event:\n%s", lines[0])
 	}
 }
 
-// T009_02: the payload carries the event and the guardrail's own folder, and no
-// history to judge against.
+// T009_02: the payload carries the event and the session facts, and no history to
+// judge against.
 //
-// The spec's second reason: a matcher that could read what a rule remembered
-// would be unverifiable when the guardrail loads, since the keys are the rule's
-// own and unknown until it runs. A hook is handed the occurrence and where its
-// own files are — what it remembered is fetched deliberately, never pushed at it
-// as something to match on.
+// The spec's second reason: a matcher that could read what a rule remembered would
+// be unverifiable when the guard loads, since the keys are the rule's own and
+// unknown until it runs. So the NEW CheckPayload's whole surface is `{event,
+// transcriptPath, context}` — the occurrence, the record it can query
+// deliberately, and the declared contexts. What a rule remembered is fetched by
+// the check on purpose (via sr-session state / $SR_GUARDRAIL_DIR), never pushed at
+// it as something to match on. A key beyond these three is a fact a matcher could
+// come to depend on.
 func TestT009_02_PayloadCarriesTheEventAndNothingToMatchHistoryOn(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "narrow", narrowed, map[string]string{"record.sh": recordScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "narrow", narrowed, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-009-02", "write a note", Turns("done",
 		Write("w1", "guarded/notes.md", "hello"),
 	))
 
-	lines := e.Ledger(proj, "narrow", "seen")
-	if len(lines) != 1 {
-		t.Fatalf("the hook ran %d times, want 1: %v", len(lines), lines)
-	}
-
-	p := decode(t, lines[0])
-	if p.GuardrailDir == "" {
-		t.Errorf("the hook was not told where its own folder is — it cannot read the rubric beside it:\n%s", lines[0])
+	lines := e.FileGuardLedgerLines(proj, "narrow", "seen")
+	if len(lines) == 0 {
+		t.Fatalf("the check never ran")
 	}
 
 	var shape map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(lines[0]), &shape); err != nil {
 		t.Fatalf("payload is not an object: %v", err)
 	}
-	// The payload's whole surface. A key beyond these is a fact a matcher could
-	// come to depend on, and the expression language was chosen precisely so a
-	// matcher reaches nothing beyond the event it was given.
+	// The payload's whole surface. `event` carries the occurrence; `transcriptPath`
+	// is the record a check queries deliberately; `context` is the declared contexts
+	// (empty here). None of these is history a match reaches implicitly.
 	for key := range shape {
-		if key != "event" && key != "guardrailDir" {
-			t.Errorf("the payload carries %q beyond the event and the guardrail's folder — a matcher could come to read it:\n%s", key, lines[0])
+		if key != "event" && key != "transcriptPath" && key != "context" {
+			t.Errorf("the payload carries %q beyond the event, the transcript path and the context — a matcher could come to read it:\n%s", key, lines[0])
 		}
+	}
+	// The event itself is present.
+	if _, ok := shape["event"]; !ok {
+		t.Errorf("the payload carries no event:\n%s", lines[0])
 	}
 }
 
-// T009_03: a hook bound to one kind is never handed another.
+// T009_03: a check bound to files is never handed a command event.
 //
-// What reaches a hook is settled by its binding's event kind before the hook
-// runs. A rule about files asked to judge a command event would have to detect
-// and ignore it — re-implementing, in script, the routing the binding already
-// declared.
-func TestT009_03_HookIsNeverHandedAnotherKind(t *testing.T) {
+// What reaches a check is settled by its binding before the check runs. A
+// file-guard matches a FILE's state, and the dispatch only ever hands it file
+// events (nature_fileguard.go's isPreFileEvent) — a rule about files asked to judge
+// a command event would have to detect and ignore it, re-implementing the routing
+// the binding already declared. A write and a bash go out; only the write reaches
+// the guard.
+func TestT009_03_CheckIsNeverHandedACommandEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
+	e.GitInit(proj)
 
-	const filesOnly = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Bound to file creation alone
+	// Bound to markdown writes alone.
+	const filesOnly = `match: "**/*.md"
+preventive: true
+checks:
+  - script: ./record.sh
 `
-	e.Guardrail(proj, "files-only", filesOnly, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "files-only", filesOnly, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-009-03", "write then run", Turns("done",
 		Write("w1", "some/notes.md", "hello"),
 		Bash("b1", "npm publish --access public"),
 	))
 
-	lines := e.Ledger(proj, "files-only", "seen")
-	if len(lines) != 1 {
-		t.Fatalf("a hook bound to one kind ran %d times across two differing turns, want 1: %v", len(lines), lines)
+	lines := e.FileGuardLedgerLines(proj, "files-only", "seen")
+	if len(lines) == 0 {
+		t.Fatalf("the check never ran on the file write")
 	}
-	if kind := decode(t, lines[0]).Event.Kind; kind != "PreFileCreate" {
-		t.Fatalf("a hook bound to PreFileCreate was handed %q", kind)
+	for _, line := range lines {
+		if kind := decode(t, line).Event.Kind; kind != "PreFileCreate" {
+			t.Fatalf("a check bound to files was handed %q — a command event reached a file rule:\n%s", kind, line)
+		}
 	}
 }

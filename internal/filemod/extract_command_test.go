@@ -244,7 +244,7 @@ func TestExtractCommand_ACreationIsPredictedWhenItsBytesAreDerivable(t *testing.
 			require.NoError(t, err)
 			require.Len(t, events, 1, "a derivable creation is predicted")
 			require.Equal(t, KindPreCreate, events[0].Kind)
-			assert.Equal(t, tc.want, events[0].Fields[FieldContent],
+			assert.Equal(t, tc.want, events[0].Fields[FieldNewContent],
 				"the exact bytes, trailing newline and all")
 		})
 	}
@@ -280,7 +280,7 @@ func TestExtractCommand_CopyingAFileCarriesTheSourcesCurrentBytes(t *testing.T) 
 			}
 			require.True(t, found, "the destination must be reported")
 			assert.Equal(t, KindPreCreate, create.Kind)
-			assert.Equal(t, "# Source body\n", create.Fields[FieldContent],
+			assert.Equal(t, "# Source body\n", create.Fields[FieldNewContent],
 				"the destination's bytes are the source's current bytes")
 		})
 	}
@@ -310,7 +310,7 @@ func TestExtractCommand_AbsentContentIsNotEmptyContent(t *testing.T) {
 		if len(events) != 1 {
 			return nil, false, len(events)
 		}
-		v, present := events[0].Fields[FieldContent]
+		v, present := events[0].Fields[FieldNewContent]
 		return v, present, 1
 	}
 
@@ -346,7 +346,7 @@ func TestExtractCommand_AbsentContentIsNotEmptyContent(t *testing.T) {
 			events, err := extractFor(t, fmt.Sprintf(command, path))
 			require.NoErrorf(t, err, "command %q", command)
 			for _, e := range events {
-				_, present := e.Fields[FieldContent]
+				_, present := e.Fields[FieldNewContent]
 				assert.Falsef(t, present,
 					"command %q cannot derive its bytes, so content must be ABSENT — "+
 						"an empty one would be indistinguishable from touch", command)
@@ -375,7 +375,7 @@ func TestExtractCommand_ConcatenatingNamedFilesCarriesTheirBytesInOrder(t *testi
 		require.NoError(t, err)
 		require.Len(t, events, 1)
 		require.Equal(t, KindPreCreate, events[0].Kind)
-		assert.Equal(t, "# First\n# Second\n", events[0].Fields[FieldContent],
+		assert.Equal(t, "# First\n# Second\n", events[0].Fields[FieldNewContent],
 			"the sources' bytes, concatenated in the order the line names them")
 	})
 
@@ -386,7 +386,7 @@ func TestExtractCommand_ConcatenatingNamedFilesCarriesTheirBytesInOrder(t *testi
 		events, err := extractFor(t, "cat "+b+" "+a+" > "+out)
 		require.NoError(t, err)
 		require.Len(t, events, 1)
-		assert.Equal(t, "# Second\n# First\n", events[0].Fields[FieldContent])
+		assert.Equal(t, "# Second\n# First\n", events[0].Fields[FieldNewContent])
 	})
 
 	t.Run("over an existing file it is a known result", func(t *testing.T) {
@@ -397,7 +397,7 @@ func TestExtractCommand_ConcatenatingNamedFilesCarriesTheirBytesInOrder(t *testi
 		require.Len(t, events, 1)
 		require.Equal(t, KindPreUpdate, events[0].Kind)
 		assert.Equal(t, true, events[0].Fields[FieldResultKnown])
-		assert.Equal(t, "# First\n# Second\n", events[0].Fields[FieldResult])
+		assert.Equal(t, "# First\n# Second\n", events[0].Fields[FieldNewContent])
 	})
 }
 
@@ -456,7 +456,7 @@ func TestExtractCommand_CopyingIntoADirectoryNamesTheResultingFiles(t *testing.T
 					continue
 				}
 				path, _ := e.Fields[FieldPath].(string)
-				content, _ := e.Fields[FieldContent].(string)
+				content, _ := e.Fields[FieldNewContent].(string)
 				got[path] = content
 			}
 			assert.Equal(t, map[string]string{
@@ -560,7 +560,7 @@ func TestExtractCommand_ATwoOperandCopyOntoADirectoryIsAlsoExpanded(t *testing.T
 	require.Equal(t, KindPreCreate, events[0].Kind)
 	assert.Equal(t, filepath.Join(target, "a.md"), events[0].Fields[FieldPath],
 		"the destination is INSIDE the directory, not the directory")
-	assert.Equal(t, "# A\n", events[0].Fields[FieldContent])
+	assert.Equal(t, "# A\n", events[0].Fields[FieldNewContent])
 }
 
 // TestExtractCommand_ACopyOntoAFileIsNotExpanded is the other side of the same
@@ -579,7 +579,7 @@ func TestExtractCommand_ACopyOntoAFileIsNotExpanded(t *testing.T) {
 	require.Equal(t, KindPreUpdate, events[0].Kind)
 	assert.Equal(t, dst, events[0].Fields[FieldPath])
 	assert.Equal(t, true, events[0].Fields[FieldResultKnown])
-	assert.Equal(t, "# A\n", events[0].Fields[FieldResult])
+	assert.Equal(t, "# A\n", events[0].Fields[FieldNewContent])
 }
 
 // TestExtractCommand_CopyingIntoADirectoryOverExistingFilesIsAnUpdate holds
@@ -600,7 +600,7 @@ func TestExtractCommand_CopyingIntoADirectoryOverExistingFilesIsAnUpdate(t *test
 	require.Equal(t, KindPreUpdate, events[0].Kind,
 		"a file already inside the directory is replaced, not created")
 	assert.Equal(t, true, events[0].Fields[FieldResultKnown])
-	assert.Equal(t, "# New\n", events[0].Fields[FieldResult])
+	assert.Equal(t, "# New\n", events[0].Fields[FieldNewContent])
 }
 
 // TestExtractCommand_MovingIntoADirectoryStillRemovesItsSources is the half a
@@ -633,7 +633,7 @@ func TestExtractCommand_DdWithAnInputFileCarriesItsBytes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Equal(t, KindPreCreate, events[0].Kind)
-	assert.Equal(t, "# Source\n", events[0].Fields[FieldContent])
+	assert.Equal(t, "# Source\n", events[0].Fields[FieldNewContent])
 }
 
 // TestExtractCommand_DdWithAPartialCopyIsNotDerivable is the boundary. A
@@ -714,7 +714,7 @@ func TestExtractCommand_PrintfWidenedFormatsAreRenderedExactly(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, events, 1)
 			require.Equal(t, KindPreCreate, events[0].Kind)
-			assert.Equal(t, tc.want, events[0].Fields[FieldContent])
+			assert.Equal(t, tc.want, events[0].Fields[FieldNewContent])
 		})
 	}
 }
@@ -799,7 +799,7 @@ func TestExtractCommand_AppendingCarriesTheWholeResultingFile(t *testing.T) {
 	e := events[0]
 	require.Equal(t, KindPreUpdate, e.Kind, "appending to an existing file is an update")
 	assert.Equal(t, true, e.Fields[FieldResultKnown])
-	assert.Equal(t, "first line\nsecond line\n", e.Fields[FieldResult],
+	assert.Equal(t, "first line\nsecond line\n", e.Fields[FieldNewContent],
 		"the whole resulting file: what is there now, plus what is being added")
 }
 
@@ -813,7 +813,7 @@ func TestExtractCommand_AppendingToAnAbsentFileCreatesItWithJustTheNewText(t *te
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Equal(t, KindPreCreate, events[0].Kind)
-	assert.Equal(t, "first\n", events[0].Fields[FieldContent])
+	assert.Equal(t, "first\n", events[0].Fields[FieldNewContent])
 }
 
 // TestExtractCommand_TruncatingAnExistingFileIsAKnownEmptyResult pins the
@@ -837,7 +837,7 @@ func TestExtractCommand_TruncatingAnExistingFileIsAKnownEmptyResult(t *testing.T
 			require.Equal(t, KindPreUpdate, events[0].Kind)
 			assert.Equal(t, true, events[0].Fields[FieldResultKnown],
 				"emptying a file is a known outcome, not an unknown one")
-			assert.Equal(t, "", events[0].Fields[FieldResult])
+			assert.Equal(t, "", events[0].Fields[FieldNewContent])
 		})
 	}
 }
@@ -877,9 +877,9 @@ func TestExtractCommand_TouchingAnExistingFileDoesNotClaimToEmptyIt(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Equal(t, KindPreUpdate, events[0].Kind)
-	assert.NotEqual(t, "", events[0].Fields[FieldResult],
+	assert.NotEqual(t, "", events[0].Fields[FieldNewContent],
 		"touch does not empty a file, and must never be reported as though it does")
-	assert.Equal(t, "untouched body\n", events[0].Fields[FieldResult],
+	assert.Equal(t, "untouched body\n", events[0].Fields[FieldNewContent],
 		"the bytes are unchanged, which is itself a known result")
 }
 
@@ -1042,10 +1042,11 @@ func TestExtractCommand_OneFileIsOneEventAcrossSpellings(t *testing.T) {
 // TestExtractCommand_AnUpdateCarriesTheMarkersOnDisk pins that a command-derived
 // update is the same event a tool-derived one is.
 //
-// PreFileUpdate declares `markers`, and an event missing a declared field makes
-// a matcher reading it ERROR — which refuses the action and blames the author's
-// rule for the engine's gap. So the command path must fill it exactly as the
-// tool path does.
+// PreFileUpdate declares `oldMarkers`, and an event missing a declared field
+// makes a matcher reading it ERROR — which refuses the action and blames the
+// author's rule for the engine's gap. So the command path must fill it exactly
+// as the tool path does. `sed -i` states a transformation, not an outcome, so
+// newMarkers is empty; oldMarkers describe the bytes on disk being replaced.
 func TestExtractCommand_AnUpdateCarriesTheMarkersOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "f.md")
@@ -1056,22 +1057,23 @@ func TestExtractCommand_AnUpdateCarriesTheMarkersOnDisk(t *testing.T) {
 	require.Len(t, events, 1)
 
 	require.Equal(t, KindPreUpdate, events[0].Kind)
-	markers, ok := events[0].Fields[FieldMarkers].([]any)
-	require.Truef(t, ok, "markers must be present and a list, got %T", events[0].Fields[FieldMarkers])
+	markers, ok := events[0].Fields[FieldOldMarkers].([]any)
+	require.Truef(t, ok, "oldMarkers must be present and a list, got %T", events[0].Fields[FieldOldMarkers])
 	require.Len(t, markers, 1)
 	entry, ok := markers[0].(map[string]any)
 	require.True(t, ok, "a marker is carried as a map at the boundary")
 	assert.Equal(t, "thing.one", entry[KeyMarkerFQN])
 }
 
-// TestExtractCommand_ADeletionCarriesNoMarkers is the complement, and it is a
+// TestExtractCommand_ADeletionCarriesNoResult is the complement, and it is a
 // declaration question rather than a value one.
 //
-// PreFileDelete declares `path` alone, so an event carrying `markers` would
-// carry a field nothing declares — a field no matcher can be checked against,
-// because CompileMatcherFor validates against the declaration and refuses the
-// name.
-func TestExtractCommand_ADeletionCarriesNoMarkers(t *testing.T) {
+// PreFileDelete declares `path`, `oldContent` and `oldMarkers` — the bytes about
+// to be lost and their markers, but nothing about a result. An event carrying
+// `newContent` or `newMarkers` would carry a field nothing declares, a field no
+// matcher can be checked against, because CompileMatcherFor validates against the
+// declaration and refuses the name.
+func TestExtractCommand_ADeletionCarriesNoResult(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notes.md")
 	require.NoError(t, os.WriteFile(path, []byte("# sr:doc thing.one\n"), 0o644))
@@ -1080,8 +1082,16 @@ func TestExtractCommand_ADeletionCarriesNoMarkers(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 
-	assert.NotContains(t, events[0].Fields, FieldMarkers, "a delete has no text to read markers from")
-	assert.NotContains(t, events[0].Fields, FieldContent, "a delete has no content")
+	assert.NotContains(t, events[0].Fields, FieldNewMarkers, "a delete leaves nothing to scan for a result's markers")
+	assert.NotContains(t, events[0].Fields, FieldNewContent, "a delete leaves no result")
+	// It DOES carry the bytes about to be lost, read off the file on disk.
+	assert.Equal(t, "# sr:doc thing.one\n", events[0].Fields[FieldOldContent],
+		"oldContent is the file the command is about to remove")
+	require.Contains(t, events[0].Fields, FieldOldMarkers)
+	oldMarkers, ok := events[0].Fields[FieldOldMarkers].([]any)
+	require.True(t, ok)
+	require.Len(t, oldMarkers, 1, "the markers of the bytes about to be lost")
+	assert.Equal(t, "thing.one", oldMarkers[0].(map[string]any)[KeyMarkerFQN])
 	assert.Equal(t, path, events[0].Fields[FieldPath])
 }
 

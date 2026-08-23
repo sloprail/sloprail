@@ -136,7 +136,7 @@ func (r *revalidation) Subject(e event.Event, cwd string) (subject, bool) {
 	switch e.Kind {
 	case filemod.KindPreCreate:
 		// The pending bytes, which for a creation are exactly what would land.
-		return subject{Path: f.Path, Fingerprint: fingerprint.Of([]byte(f.Content))}, true
+		return subject{Path: f.Path, Fingerprint: fingerprint.Of([]byte(f.NewContent))}, true
 
 	case filemod.KindPostCreate, filemod.KindPostUpdate:
 		fp, err := fingerprint.OfFile(resolve(cwd, f.Path))

@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -53,7 +54,38 @@ type Env struct {
 	repoRoot  string
 	mock      string
 	shimDir   string // a `claude` that is really the mock, ahead of the real one on PATH
+
+	// stopBlockCap, when > 0, sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's
+	// mock runs — how many times the mock re-runs the agent when a Stop hook
+	// blocks before giving up. 0 leaves the mock's own default (8). A test whose
+	// Stop block is PERMANENT by construction (a retained refusal that cannot clear
+	// on a re-run) hits the cap every time, and each re-run re-fires the Stop hook;
+	// with the default 8 and a slow Stop that is a many-second stall for no added
+	// coverage, so such a test sets this to 1 (one re-run is enough to observe the
+	// block). Tests that assert the mock RE-PROMPTS on a block — the Post-refusal
+	// suite, which reads ">= 2 result frames" as "the turn was sent round again" —
+	// must NOT lower it, so it is per-Env rather than a global default.
+	stopBlockCap int
+
+	// extraPlugins are synthetic plugins a test installed alongside sloprail — each
+	// ships new-format DECLARATIONS (not hooks) and is enabled in the project's
+	// settings so the sloprail plugin's own dispatch discovers it. See
+	// EnablePluginShippingFileGuard.
+	extraPlugins []extraPlugin
+
+	// seenSessions records which session ids this Env has already driven a Run for, so
+	// a REPEAT Run on the same id is driven as a --resume rather than a second fresh
+	// --session-id. The mock treats --session-id as a NEW session and drops the prompt
+	// when the transcript is already non-empty (which a repeat Run's is); --resume makes
+	// it APPEND the prompt as a continuation human turn instead. This is what lets a test
+	// build a genuine multi-human-turn transcript by Running the same session id twice.
+	// Keyed by sessionID; the value is unused (presence is the fact).
+	seenSessions map[string]bool
 }
+
+// SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent
+// mock runs. Call before Run/RunFrom. See the field's doc for when to use it.
+func (e *Env) SetStopBlockCap(n int) { e.stopBlockCap = n }
 
 var (
 	buildOnce sync.Once
@@ -178,13 +210,14 @@ func New(t *testing.T) *Env {
 	t.Cleanup(func() { os.RemoveAll(root) })
 
 	e := &Env{
-		t:         t,
-		binDir:    build(t),
-		home:      filepath.Join(root, "home"),
-		configDir: filepath.Join(root, "claude-cfg"),
-		pluginDir: filepath.Join(root, "plugins"),
-		repoRoot:  repoRoot(t),
-		mock:      mock,
+		t:            t,
+		binDir:       build(t),
+		home:         filepath.Join(root, "home"),
+		configDir:    filepath.Join(root, "claude-cfg"),
+		pluginDir:    filepath.Join(root, "plugins"),
+		repoRoot:     repoRoot(t),
+		mock:         mock,
+		seenSessions: map[string]bool{},
 	}
 	for _, d := range []string{e.home, e.configDir, e.pluginDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -232,6 +265,200 @@ func (e *Env) InstallClaudeShim(projDir string) {
 	}
 }
 
+// InstallJudgeClaude puts a `claude` on PATH that stands in for the model a JUDGE
+// check invokes through sr-agent, writing a fixed verdict to the output file
+// sr-agent named.
+//
+// A gate's judge check runs `sr-agent --verify … --prompt …`, and sr-agent tells
+// the agent (in the prompt) which file to write its answer to — the same two-route
+// path the real thing uses. This shim reads that prompt, recovers the output path
+// from it (the "Write your answer to the file <path>" line sr-agent appends), and
+// writes the verdict there, exactly as a model that followed the instruction would.
+// So the whole judge path is exercised — the template rendered, sr-agent invoked,
+// the verify script run, the verdict parsed — with only the model's own text
+// replaced by a fixed answer, the same substitution the old-format judge tests make
+// through A10N_CLAUDE_BIN.
+//
+// The shim must sit ahead of the real `claude` on PATH; it shares shimDir with
+// InstallClaudeShim (a test uses one or the other), which run() already places
+// first. The verdict is the JSON object the judge's verify script reads, e.g.
+// `{"pass": false, "reasoning": "…"}`.
+//
+// # Why this is a bespoke shim rather than the a10n-claude-mock
+//
+// It is a fair question — the rest of the e2e drives the mock, and the mock DOES
+// execute a Write tool call, so a scenario that wrote the verdict to sr-agent's
+// output file could in principle stand in for the model here. It was tried and it
+// does not work, for a reason that is about the INVOCATION, not the verdict.
+//
+// sr-agent builds the harness command line itself (services/sr-agent, Build-
+// Invocation) as `claude -p --model <model> <harness-args> -- <prompt>`, and a
+// judge check adds more claude flags on top — the gate/skill judges pass
+// `--allowedTools "Write"` and `--settings '{…}'`. The mock accepts only the small
+// flag set a harness-driven run uses (--script, --session-id, --output-format,
+// --project-dir, --config-dir, --add-dir, …); it has NO --model, --allowedTools or
+// --settings, and REFUSES an unknown flag with exit 1 rather than ignoring it.
+// Measured against a10n-claude-mock: `--model`, `--allowedTools` and `--settings`
+// each exit 1. So a mock invoked as sr-agent's `claude` dies on `--model` before it
+// ever reads a scenario, and never writes a verdict.
+//
+// Fixing that would mean either teaching the mock sr-agent's whole claude-flag
+// surface (a change in a different repo, the a10n-cli one) or changing how sr-agent
+// invokes the harness (the production judge path, out of a test's remit). This shim
+// sidesteps both: it tolerates whatever argv sr-agent builds and needs only the one
+// fact sr-agent puts in the prompt — the output path — which is the minimal, honest
+// stand-in for a judge verdict until the mock grows that flag surface.
+func (e *Env) InstallJudgeClaude(verdict string) {
+	e.t.Helper()
+	// The prompt arrives as the LAST argument (sr-agent passes it positionally
+	// after `--`). The shim scans every argument for sr-agent's own
+	// "Write your answer to the file <path>" line and writes the verdict there.
+	// A here-doc keeps the verdict body intact regardless of its punctuation.
+	script := `#!/bin/sh
+# Recover the output path sr-agent told the agent to write, from the prompt in
+# the arguments. sr-agent appends "Write your answer to the file <path>."
+out=""
+for arg in "$@"; do
+  case "$arg" in
+    *"Write your answer to the file "*)
+      out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | head -1)"
+      ;;
+  esac
+done
+if [ -n "$out" ]; then
+  cat > "$out" <<'JUDGE_VERDICT_EOF'
+` + verdict + `
+JUDGE_VERDICT_EOF
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write judge claude shim: %v", err)
+	}
+}
+
+// InstallJudgeClaudeRecordingArgv is InstallJudgeClaude plus a recording of the
+// argv the harness (`claude`) was invoked with, written one-argument-per-line to
+// argvFile. It exists to let a test assert the judge's own `model` reached the
+// harness invocation: sr-agent builds `claude -p --model <resolved> …`, so the
+// resolved model (an alias's harness-native name) appears in this argv. The
+// verdict is still written exactly as InstallJudgeClaude does, so the judge path
+// runs to a real verdict; the recording is a side effect for the assertion.
+//
+// The file is truncated and rewritten on each invocation, so after a run it holds
+// the LAST `claude` call's argv — a single judge run makes exactly one.
+func (e *Env) InstallJudgeClaudeRecordingArgv(argvFile, verdict string) {
+	e.t.Helper()
+	script := `#!/bin/sh
+# Record the argv this harness was invoked with, one argument per line, so a test
+# can assert the judge's --model reached here.
+: > ` + shellQuote(argvFile) + `
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> ` + shellQuote(argvFile) + `
+done
+# Then behave as the ordinary judge shim: write the verdict to the file sr-agent
+# named in the prompt.
+out=""
+for arg in "$@"; do
+  case "$arg" in
+    *"Write your answer to the file "*)
+      out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | head -1)"
+      ;;
+  esac
+done
+if [ -n "$out" ]; then
+  cat > "$out" <<'JUDGE_VERDICT_EOF'
+` + verdict + `
+JUDGE_VERDICT_EOF
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write recording judge claude shim: %v", err)
+	}
+}
+
+// InstallJudgeClaudeCapturing is InstallJudgeClaude that ALSO records the prompt
+// the judge was asked, so a test can assert what the template actually rendered.
+//
+// # Why a capturing variant exists
+//
+// The model verdict is a stub either way — that is what lets a test drive the
+// pass/fail path. But a stubbed verdict alone cannot show that a check's PREPARE
+// step reached the judge TEMPLATE: the renderer treats an undefined variable as
+// empty rather than an error (internal/dispatch, TestTemplate_UndefinedIsEmptyAndFalsy),
+// so a template that reads `additionalContext.foo` renders fine whether prepare
+// produced `foo` or produced nothing at all. A test that only flipped the stub
+// would pass against an engine that never ran prepare and never rendered its
+// output into the prompt.
+//
+// So this shim tees the rendered prompt to a file the test names. sr-agent passes
+// that prompt as the LAST argument (positionally, after `--`), so it is the
+// longest argument and the one carrying the "Write your answer to the file" line;
+// the shim writes exactly that argument out. A test then reads it back with
+// JudgePrompt and asserts the PREPARED FACT'S VALUE appears in it — a value that
+// is present only if prepare extracted it from the trajectory AND the template
+// interpolated it. That is the prepare -> template wiring, proven directly rather
+// than inferred from a verdict the stub decided.
+//
+// Everything else matches InstallJudgeClaude: the same output-path recovery and
+// the same verdict write, so the verdict path is identical and only the prompt
+// capture is added. relPromptFile is written under the project dir (JudgePrompt
+// reads it from there).
+func (e *Env) InstallJudgeClaudeCapturing(projDir, relPromptFile, verdict string) {
+	e.t.Helper()
+	promptPath := filepath.Join(projDir, relPromptFile)
+	// The prompt argument is the one sr-agent appends its answer-file line to and
+	// is the whole rendered template; the shim picks that argument and writes it
+	// out verbatim, then recovers the output path from it and writes the verdict —
+	// exactly as InstallJudgeClaude does.
+	script := `#!/bin/sh
+out=""
+for arg in "$@"; do
+  case "$arg" in
+    *"Write your answer to the file "*)
+      # tail -1, not head -1: if sr-agent retried, the argument carries several
+      # "Write your answer to the file <path>" lines (the accumulated attempts),
+      # and the CURRENT attempt's path is the LAST one. Writing the verdict to the
+      # last path means the current output file is satisfied on the first try, so
+      # a well-formed verdict is honored without a retry storm and the captured
+      # prompt is a single clean render.
+      out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | tail -1)"
+      printf '%s' "$arg" > ` + shellQuote(promptPath) + `
+      ;;
+  esac
+done
+if [ -n "$out" ]; then
+  cat > "$out" <<'JUDGE_VERDICT_EOF'
+` + verdict + `
+JUDGE_VERDICT_EOF
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write capturing judge claude shim: %v", err)
+	}
+}
+
+// JudgePrompt returns the rendered judge prompt a capturing shim recorded, or ""
+// when no judge ran (the file was never written).
+//
+// This is how a test reads back what the template rendered — see
+// InstallJudgeClaudeCapturing. An empty string means the judge check never
+// reached the shim (no matching action, a script tier refused first, the guard
+// did not fire), which is itself an answer a test may assert on.
+func (e *Env) JudgePrompt(projDir, relPromptFile string) string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, relPromptFile))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read judge prompt %s: %v", relPromptFile, err)
+	}
+	return string(body)
+}
+
 // InnerScenario is what the agent a hook LAUNCHES does once it is running.
 //
 // Written beside the project rather than passed as an argument because the shim
@@ -267,8 +494,8 @@ func (e *Env) Project() string {
 	return dir
 }
 
-// writeSettings writes the project's settings: the plugin as a user would
-// install it, and nothing else.
+// writeSettings writes the project's settings: THIS repo's plugin as a user would
+// install it, plus any extra plugins a test enabled (see EnablePluginShippingFileGuard).
 //
 // There is deliberately no way to add a lifecycle hook from here. A test that
 // hand-wired one into settings.json would be arranging wiring no user has, and
@@ -276,15 +503,35 @@ func (e *Env) Project() string {
 // about the product — the whole point of driving the mock is that what fires is
 // the plugin someone installs. A property that needs a hook point the plugin
 // does not register is a gap in the plugin, and belongs in hooks.json.
+//
+// The EXTRA plugins are a different matter and are allowed: they ship no hooks —
+// they ship DECLARATIONS, discovered by the already-installed sloprail plugin's
+// own dispatch reading the project's enabledPlugins. That is exactly how a real
+// plugin ships a guardrail (026 does the same for the old format via the shipped
+// authoring-slop), so enabling one here arranges no wiring a user lacks; it
+// installs a second plugin the way a user installs any plugin.
 func (e *Env) writeSettings(dir string) {
 	e.t.Helper()
-	settings := map[string]any{
-		"enabledPlugins": map[string]any{pluginKey: true},
-		"extraKnownMarketplaces": map[string]any{
-			marketplaceName: map[string]any{
-				"source": map[string]any{"source": "directory", "path": e.repoRoot},
-			},
+
+	enabled := map[string]any{pluginKey: true}
+	marketplaces := map[string]any{
+		marketplaceName: map[string]any{
+			"source": map[string]any{"source": "directory", "path": e.repoRoot},
 		},
+	}
+	// Extra plugins a test enabled — each a directory-sourced marketplace pointing
+	// at the plugin's own install root, exactly as a locally-developed plugin is
+	// resolved (internal/harness's directory-source branch).
+	for _, p := range e.extraPlugins {
+		enabled[p.name+"@"+p.marketplace] = true
+		marketplaces[p.marketplace] = map[string]any{
+			"source": map[string]any{"source": "directory", "path": p.root},
+		}
+	}
+
+	settings := map[string]any{
+		"enabledPlugins":         enabled,
+		"extraKnownMarketplaces": marketplaces,
 	}
 	body, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -293,6 +540,107 @@ func (e *Env) writeSettings(dir string) {
 	if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), body, 0o644); err != nil {
 		e.t.Fatalf("harness: write settings: %v", err)
 	}
+}
+
+// extraPlugin is one synthetic plugin a test installed alongside sloprail — its
+// enabled key and where its install root sits, so writeSettings can enable it.
+type extraPlugin struct {
+	name        string
+	marketplace string
+	root        string
+}
+
+// EnablePluginShippingFileGuard installs a synthetic plugin that ships a
+// NEW-FORMAT file-guard, enables it in the project alongside sloprail, and returns
+// the plugin's install root (so a test can read the guard's ledger).
+//
+// This is the new-format analogue of what 026 relies on for the OLD format: a
+// guardrail that lives INSIDE an installed plugin and is never copied into the
+// project. 026 uses the real shipped authoring-slop; this ships a purpose-built
+// file-guard in a throwaway plugin instead, because the new-format migration of
+// authoring-slop is a LATER PR — the mechanism under test here is the LOADING, and
+// a synthetic plugin proves it without depending on that migration.
+//
+// The plugin's `.sloprail/file-guard/<name>/` holds the guard exactly where a
+// project's own would sit, one directory up: `<root>/.sloprail/...`. The sloprail
+// plugin's already-firing hooks run the nature dispatch, which resolves this
+// plugin from the project's enabledPlugins (internal/harness) and loads its
+// file-guard (declaration.NewWithPlugins). Nothing is copied into the project, so
+// "the guard fired" and "it was discovered inside the plugin" are the same fact.
+//
+// name is the guard's folder name; pluginName is what the user enables it by (and
+// what a refusal must attribute it to). guardYAML is the file-guard.yaml body;
+// files are its sibling scripts (a check's ./check.sh), written executable. Must
+// be called BEFORE Run/RunFrom so the settings are in place when the session
+// starts. Reusable: a test may call it once per plugin it wants installed.
+func (e *Env) EnablePluginShippingFileGuard(projDir, pluginName, name, guardYAML string, files map[string]string) string {
+	e.t.Helper()
+
+	root, err := os.MkdirTemp("", "slop-plugin-")
+	if err != nil {
+		e.t.Fatalf("harness: temp plugin: %v", err)
+	}
+	e.t.Cleanup(func() { os.RemoveAll(root) })
+
+	// The guard under the plugin's own `.sloprail`, the SAME relative layout a
+	// project uses — <root>/.sloprail/file-guard/<name>/file-guard.yaml.
+	dir := filepath.Join(root, ".sloprail", "file-guard", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir plugin file-guard: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "file-guard.yaml"), []byte(guardYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write plugin file-guard.yaml: %v", err)
+	}
+	for file, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write plugin file-guard file %s: %v", file, err)
+		}
+	}
+
+	// A `.claude-plugin/plugin.json` so the plugin is a well-formed one a
+	// directory-sourced marketplace can load, named as the user enables it.
+	pluginMeta := filepath.Join(root, ".claude-plugin")
+	if err := os.MkdirAll(pluginMeta, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir plugin meta: %v", err)
+	}
+	meta := fmt.Sprintf(`{"name":%q,"version":"0.0.1","description":"e2e synthetic plugin shipping a new-format file-guard"}`, pluginName)
+	if err := os.WriteFile(filepath.Join(pluginMeta, "plugin.json"), []byte(meta), 0o644); err != nil {
+		e.t.Fatalf("harness: write plugin.json: %v", err)
+	}
+
+	// Its own marketplace, distinct from sloprail's, sourced from this directory.
+	e.extraPlugins = append(e.extraPlugins, extraPlugin{
+		name:        pluginName,
+		marketplace: pluginName + "-marketplace",
+		root:        root,
+	})
+	// Re-write the project's settings so the new plugin is enabled. Project() has
+	// already written them once; this rewrites with the extra plugin appended.
+	// writeSettings takes the project root and joins `.claude/settings.json` itself.
+	e.writeSettings(projDir)
+	return root
+}
+
+// PluginFileGuardLedger reads the ledger a plugin-shipped file-guard's check
+// appended to, inside the PLUGIN's own folder (not the project's), counting how
+// many times the check was asked. Absent means it never ran. The pluginRoot is
+// what EnablePluginShippingFileGuard returned.
+func (e *Env) PluginFileGuardLedger(pluginRoot, name, ledgerFile string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(pluginRoot, ".sloprail", "file-guard", name, ledgerFile))
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read plugin file-guard ledger %s: %v", name, err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // CLI runs the root `sr` proxy and returns what it produced.
@@ -322,6 +670,21 @@ func (e *Env) CLIDirect(dir, binary string, args ...string) Result {
 	return e.runBin(dir, "", binary, args...)
 }
 
+// CLIDirectEnv runs one service binary by name with extra environment variables
+// set, and no stdin — for the agent-facing commands that read the environment
+// rather than a hook payload.
+//
+// cite auto-detects "the trajectory we are running in right now" from
+// CLAUDE_CODE_SESSION_ID and CLAUDE_CONFIG_DIR when it is handed no --path and no
+// piped payload. runBin does not set those (an ordinary CLIDirect has no session),
+// so a test exercising that path passes them here. env is a flat list of
+// "KEY=value" strings appended after the harness's own, so it wins over any
+// ambient value.
+func (e *Env) CLIDirectEnv(dir string, env []string, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBinEnv(dir, "", env, binary, args...)
+}
+
 // CLIStdin runs the proxy with a payload on standard input.
 func (e *Env) CLIStdin(dir, stdin string, args ...string) Result {
 	e.t.Helper()
@@ -335,7 +698,22 @@ func (e *Env) CLIDirectStdin(dir, stdin, binary string, args ...string) Result {
 	return e.runBin(dir, stdin, binary, args...)
 }
 
+// CLIDirectStdinEnv runs one service binary with a payload on standard input AND
+// extra environment variables — for a hook-shaped call whose resolution also reads
+// the environment (e.g. a payload naming only a session id, which record() joins
+// against the config dir named by CLAUDE_CONFIG_DIR). env entries are appended
+// last so they win over any ambient value.
+func (e *Env) CLIDirectStdinEnv(dir, stdin string, env []string, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBinEnv(dir, stdin, env, binary, args...)
+}
+
 func (e *Env) runBin(dir, stdin, binary string, args ...string) Result {
+	e.t.Helper()
+	return e.runBinEnv(dir, stdin, nil, binary, args...)
+}
+
+func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, args ...string) Result {
 	e.t.Helper()
 	cmd := exec.Command(filepath.Join(e.binDir, binary), args...)
 	cmd.Dir = dir
@@ -347,6 +725,10 @@ func (e *Env) runBin(dir, stdin, binary string, args ...string) Result {
 	// it makes the test independent of that layout rather than quietly relying
 	// on it.
 	cmd.Env = append(os.Environ(), "HOME="+e.home, "SLOP_SUBBIN_DIR="+e.binDir)
+	// extraEnv is appended LAST so a caller-supplied variable wins over any
+	// ambient one — a test exercising cite's environment fallback sets
+	// CLAUDE_CODE_SESSION_ID and CLAUDE_CONFIG_DIR this way.
+	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if exitErr, ok := err.(*exec.ExitError); ok {
@@ -446,6 +828,68 @@ func (e *Env) transcriptPath(projDir, sessionID string) string {
 		encodeProjectDir(resolveWorkDir(projDir)), sessionID+".jsonl")
 }
 
+// TranscriptPath is where the mock wrote a session's root transcript on disk,
+// for a test that runs a `trajectory` command against a mock-PRODUCED record
+// rather than a hand-authored one.
+//
+// This is the mechanism the trajectory tests use to keep their fixtures the
+// mock's: drive a scenario with Run, then hand this path to `trajectory
+// describe/cite/normalize --path`. What the command reads is then a transcript
+// the mock streamed, deterministic and centralised, not a shape re-derived by
+// hand in each test — the only shapes that stay hand-authored are the ones the
+// mock provably cannot emit (an AskUserQuestion answer envelope, a sub-agent
+// meta naming its dispatching tool_use), each kept with a note saying so.
+//
+// The file must already exist — Run seeds it and the mock appends to it — so a
+// path returned for a session that never ran is a test asking to read a record
+// that was never written, and the caller's own read will say so.
+func (e *Env) TranscriptPath(projDir, sessionID string) string {
+	e.t.Helper()
+	return e.transcriptPath(projDir, sessionID)
+}
+
+// ConfigDir is the isolated stand-in for ~/.claude the mock wrote this run's
+// transcripts under. A test that drives a `trajectory` command through cite's
+// ENVIRONMENT fallback (no --path, no payload) hands this to the binary as
+// CLAUDE_CONFIG_DIR, so transcript.ConfigDir() resolves to the same place the mock
+// filed the record rather than to the sandbox HOME's own .claude.
+func (e *Env) ConfigDir() string {
+	return e.configDir
+}
+
+// SubagentRecordPaths lists the sub-agent transcript files the mock wrote for a
+// session, as a plain directory listing of <session>/subagents/agent-*.jsonl.
+//
+// Deliberately a filesystem glob rather than a call to transcript.SubagentPaths:
+// a test asserting that `describe` enumerates the sub-agents must compare its
+// output against something derived WITHOUT the code under test, or a bug shared
+// by both would hide. This is that independent witness — the records the mock
+// actually left on disk, sorted for a stable comparison.
+//
+// Empty when the session dispatched no sub-agent (there is no subagents
+// directory), which is a plain "none" rather than a fault.
+func (e *Env) SubagentRecordPaths(projDir, sessionID string) []string {
+	e.t.Helper()
+	dir := filepath.Join(strings.TrimSuffix(e.transcriptPath(projDir, sessionID), ".jsonl"), "subagents")
+	ents, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read sub-agent records %s: %v", dir, err)
+	}
+	var paths []string
+	for _, ent := range ents {
+		name := ent.Name()
+		if ent.IsDir() || !strings.HasPrefix(name, "agent-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	sort.Strings(paths)
+	return paths
+}
+
 // dataHome mirrors the engine's own platform data directory, for the sandboxed
 // home the mock ran under.
 func dataHome(home string) string {
@@ -482,6 +926,22 @@ func (e *Env) WriteFile(projDir, rel, body string) {
 	}
 }
 
+// WriteExecutable writes a file into a project with the executable bit set — for
+// a script a rule will run that lives in the tree rather than beside a rule's own
+// declaration (a goal's verify.sh under goal/<name>/, which a gate's check execs).
+// WriteFile writes 0644, which a check trying to run the file would refuse; this
+// is the same helper for the case where the file IS a program.
+func (e *Env) WriteExecutable(projDir, rel, body string) {
+	e.t.Helper()
+	full := filepath.Join(projDir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o755); err != nil {
+		e.t.Fatalf("harness: write executable %s: %v", rel, err)
+	}
+}
+
 // Exists reports whether a path is present in a project.
 //
 // How a test asks what actually happened to the tree, as opposed to what came
@@ -499,70 +959,340 @@ func (e *Env) Exists(projDir, rel string) bool {
 	return false
 }
 
-// Guardrail writes a declaration and its hook scripts into a project.
-func (e *Env) Guardrail(projDir, name, declaration string, scripts map[string]string) {
+// Gate writes a gate declaration and its check scripts/templates into a project,
+// at `.sloprail/gate/<name>/gate.yaml`.
+//
+// The gate and the structure gate are the nature-based dispatch. Scripts (a
+// check's `./verify.sh`, a `prepare`, a judge template) are written as siblings of
+// gate.yaml, executable, exactly where the gate's own relative paths resolve them.
+func (e *Env) Gate(projDir, name, gateYAML string, files map[string]string) {
 	e.t.Helper()
-	dir := filepath.Join(projDir, ".sloprail", "guardrails", name)
+	dir := filepath.Join(projDir, ".sloprail", "gate", name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		e.t.Fatalf("harness: mkdir guardrail: %v", err)
+		e.t.Fatalf("harness: mkdir gate: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "GUARDRAIL.md"), []byte(declaration), 0o644); err != nil {
-		e.t.Fatalf("harness: write declaration: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "gate.yaml"), []byte(gateYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write gate.yaml: %v", err)
 	}
-	for file, body := range scripts {
+	for file, body := range files {
 		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
-			e.t.Fatalf("harness: write script %s: %v", file, err)
+			e.t.Fatalf("harness: write gate file %s: %v", file, err)
 		}
 	}
 }
 
-// RemoveGuardrail takes a guardrail out of a project mid-session, the way a
-// user removes a rule: the whole folder goes.
-//
-// The WHOLE folder, and that is not a convenience. Deleting only GUARDRAIL.md
-// leaves a folder the project still keeps as a guardrail and which can no
-// longer be read — and the engine refuses every action while a declaration
-// cannot be parsed, deliberately, because an unreadable rule must not be read
-// as approval merely for being unreadable. So a half-removal does not remove a
-// rule; it disarms the session. That behaviour is pinned by
-// pre_tool/013_broken_declaration_is_not_silent, and this helper exists to keep
-// tests about REMOVAL from accidentally exercising it.
-//
-// It returns the rule's ledger lines as they stood at removal, because the
-// ledger lives inside the folder that is about to go. A test asking whether a
-// removed rule kept firing compares this against what it finds afterwards: with
-// the folder gone, a rule that somehow still ran would recreate the file, and an
-// absent file is the answer that nothing did.
-func (e *Env) RemoveGuardrail(projDir, name, ledgerFile string) []string {
+// FileGuardLedger reads the ledger a project's own file-guard check appended to,
+// inside the guard's folder under the project (`.sloprail/file-guard/<name>/`),
+// counting how many times the check was asked. Absent means it never ran. The
+// project-side analogue of PluginFileGuardLedger.
+func (e *Env) FileGuardLedger(projDir, name, ledgerFile string) int {
 	e.t.Helper()
-	before := e.Ledger(projDir, name, ledgerFile)
-	dir := filepath.Join(projDir, ".sloprail", "guardrails", name)
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "file-guard", name, ledgerFile))
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read file-guard ledger %s: %v", name, err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// FileGuardLedgerLines returns the LINES a project's own file-guard check appended
+// to a file in the guard's folder (`.sloprail/file-guard/<name>/<file>`), or
+// nothing when the file was never created.
+//
+// The new-format analogue of Ledger. Ledger reads the OLD path
+// (`.sloprail/guardrails/<name>/<file>`, where an old-format hook's $PWD sat);
+// this reads the NEW path a file-guard check writes to via $SR_GUARDRAIL_DIR
+// (`.sloprail/file-guard/<name>/`). FileGuardLedger above answers "how many times
+// did the check run" with a count; this answers "what did each run record" with
+// the raw lines, which a re-vehicled test parses back into the flat CheckPayload
+// (`.event.path`) it observed arrival through — the same shape refusal-survival is
+// proven on. An absent file is a real answer: nothing ran.
+func (e *Env) FileGuardLedgerLines(projDir, name, file string) []string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "file-guard", name, file))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read file-guard ledger %s/%s: %v", name, file, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// GateLedgerLines returns the LINES a project's own gate check appended to a file
+// in the gate's folder (`.sloprail/gate/<name>/<file>`), or nothing when the file
+// was never created.
+//
+// The gate analogue of FileGuardLedgerLines. A gate's check runs with
+// SR_GUARDRAIL_DIR set to `.sloprail/gate/<name>/` and its cwd there, so a check
+// that appends to a file writes it under that folder — the channel a test uses to
+// observe WHAT a gate's check was handed (the flat GateCheckPayload it parses back
+// into `.event.kind` / `.event.tool`), independently of the pass/fail verdict. An
+// absent file is a real answer: the check never recorded anything (it never fired,
+// or fired without writing).
+func (e *Env) GateLedgerLines(projDir, name, file string) []string {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "gate", name, file))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read gate ledger %s/%s: %v", name, file, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// StructureGate writes the NEW-FORMAT structure gate — one tree-wide path
+// allowlist — at `.sloprail/file-guard/structure.yaml`.
+//
+// A singleton for the whole project (there is at most one structure.yaml), so this
+// takes only the yaml. It sits beside the per-guard subfolders in file-guard/,
+// where the loader reads it.
+func (e *Env) StructureGate(projDir, structureYAML string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail", "file-guard")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir file-guard: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "structure.yaml"), []byte(structureYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write structure.yaml: %v", err)
+	}
+}
+
+// GateState reads one gate's recorded verdict from the session store — pass or
+// fail, or "" if the gate never ran.
+//
+// How a test observes that a gate's verdict LANDED in the gates[] map, which a
+// context will read next slice. Read directly from the store, because there is no
+// command that prints it (the map is engine-owned, like the baseline meta the Meta
+// helper reads). The store is located the same way Meta locates it — by asking the
+// binary under test for the conversation identity — so a test cannot pass against a
+// store the engine would never have written to.
+//
+// The keyspace and value shape mirror the engine's own (services/sr-session's
+// nature dispatch): per-guardrail state under the reserved `!sloprail:gates` name,
+// one `gate:<name>` key per gate, value `{"status":"pass|fail"}`.
+func (e *Env) GateState(projDir, sessionID, gateName string) string {
+	e.t.Helper()
+
+	db, err := sessionstate.Open(e.sessionDBPath(projDir, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+
+	value, ok, err := db.State("!sloprail:gates", "gate:"+gateName)
+	if err != nil {
+		e.t.Fatalf("harness: read gate state %s: %v", gateName, err)
+	}
+	if !ok {
+		return ""
+	}
+	var st struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(value), &st); err != nil {
+		e.t.Fatalf("harness: decode gate state %s: %v", gateName, err)
+	}
+	return st.Status
+}
+
+// FileGuard writes a NEW-FORMAT file-guard declaration and its check
+// scripts/templates into a project, at `.sloprail/file-guard/<name>/file-guard.yaml`.
+//
+// A file-guard is bound to a FILE'S STATE (its `match` over path/markers/context),
+// checked after a write settles and — when `preventive: true` — before it lands.
+// Scripts (a check's `./verify.sh`, a `prepare`, a judge template) are written as
+// siblings of file-guard.yaml, executable, where the guard's own relative paths
+// resolve them. It shares the file-guard/ directory with the structure singleton.
+func (e *Env) FileGuard(projDir, name, guardYAML string, files map[string]string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail", "file-guard", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir file-guard: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "file-guard.yaml"), []byte(guardYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write file-guard.yaml: %v", err)
+	}
+	for file, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write file-guard file %s: %v", file, err)
+		}
+	}
+}
+
+// Context writes a NEW-FORMAT context declaration and its enter/exit (and any
+// require/check) scripts into a project, at `.sloprail/context/<name>/context.yaml`.
+//
+// A context is an activatable scope: its `enter` runs on every matching `on`
+// trigger and its stdout replaces the context's payload; its `exit` runs at Stop
+// and flips active/inactive (never blocking the Stop). enter.sh / exit.sh and any
+// other scripts are written executable as siblings of context.yaml.
+func (e *Env) Context(projDir, name, contextYAML string, files map[string]string) {
+	e.t.Helper()
+	dir := filepath.Join(projDir, ".sloprail", "context", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir context: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "context.yaml"), []byte(contextYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write context.yaml: %v", err)
+	}
+	for file, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write context file %s: %v", file, err)
+		}
+	}
+}
+
+// GuardrailState reads the raw key/value entries a NAMED guardrail stored under a
+// prefix — the same `sr-session state list` a hook running as that guardrail would
+// get, but reached from a test so it can assert what a rule's own enter/check
+// actually recorded.
+//
+// This is how a test observes the registry a CONTEXT writes with `sr-session state
+// set` (keyed on the context's own name), independently of whether some sibling
+// gate can read it. A composite whose gate reads the wrong scope still has a
+// context that logged real entries; this reads those entries under the guardrail
+// that wrote them, so "the context logged both people this turn" is checkable even
+// when the gate that should consume them cannot.
+//
+// Located the same way GateState/ContextState locate the store — by asking the
+// binary under test for the conversation identity — so a test cannot pass against
+// a store the engine would never have written to. An empty map means the guardrail
+// stored nothing under that prefix (or never ran).
+func (e *Env) GuardrailState(projDir, sessionID, guardrail, prefix string) map[string]string {
+	e.t.Helper()
+
+	db, err := sessionstate.Open(e.sessionDBPath(projDir, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+
+	entries, err := db.ListState(guardrail, prefix)
+	if err != nil {
+		e.t.Fatalf("harness: list state for %q: %v", guardrail, err)
+	}
+	out := make(map[string]string, len(entries))
+	for _, ent := range entries {
+		out[ent.Key] = ent.Value
+	}
+	return out
+}
+
+// ContextState reads one context's recorded {active, payload} from the session
+// store — how a test observes that a context ENTERED or EXITED, and what payload
+// its enter left. Returns active and the payload map; active is false and the
+// payload nil when the context has no recorded state.
+//
+// Read directly from the store the same way GateState reads the gates[] map, from
+// the reserved `!sloprail:contexts` keyspace the engine's context dispatch writes:
+// one `context:<name>` key per context, value `{"active":…,"payload":{…}}`. The
+// store is located by asking the binary for the conversation identity, so a test
+// cannot pass against a store the engine would never have written to.
+func (e *Env) ContextState(projDir, sessionID, contextName string) (bool, map[string]any) {
+	e.t.Helper()
+
+	db, err := sessionstate.Open(e.sessionDBPath(projDir, sessionID))
+	if err != nil {
+		e.t.Fatalf("harness: open session state: %v", err)
+	}
+	defer db.Close()
+
+	value, ok, err := db.State("!sloprail:contexts", "context:"+contextName)
+	if err != nil {
+		e.t.Fatalf("harness: read context state %s: %v", contextName, err)
+	}
+	if !ok {
+		return false, nil
+	}
+	var st struct {
+		Active  bool           `json:"active"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(value), &st); err != nil {
+		e.t.Fatalf("harness: decode context state %s: %v", contextName, err)
+	}
+	return st.Active, st.Payload
+}
+
+// RemoveFileGuard takes a NEW-FORMAT file-guard out of a project mid-session, the
+// way a user removes one: the whole `.sloprail/file-guard/<name>/` folder goes.
+//
+// The file-guard analogue of RemoveGuardrail. It returns the guard's ledger lines
+// as they stood at removal, read from the guard's own folder via
+// FileGuardLedgerLines, because that folder is about to be deleted along with the
+// ledger inside it. A test asking whether a removed guard kept firing compares this
+// against what it finds afterwards: with the folder gone, a guard that somehow
+// still ran would recreate the file, and an absent file is the answer that nothing
+// did.
+func (e *Env) RemoveFileGuard(projDir, name, ledgerFile string) []string {
+	e.t.Helper()
+	before := e.FileGuardLedgerLines(projDir, name, ledgerFile)
+	dir := filepath.Join(projDir, ".sloprail", "file-guard", name)
 	if err := os.RemoveAll(dir); err != nil {
-		e.t.Fatalf("harness: remove guardrail %s: %v", name, err)
+		e.t.Fatalf("harness: remove file-guard %s: %v", name, err)
 	}
 	return before
 }
 
-// DisableGuardrail turns a rule off the other way a user can: the declaration
-// stays and says so.
+// DisableFileGuard turns a NEW-FORMAT file-guard off the way a consumer does: from
+// the project's own `.sloprail/config.yaml` `disabled:` list, naming the guard by
+// its qualified key `file-guard/<name>`.
 //
-// A distinct mechanism from removal rather than a synonym for it — the folder,
-// the scripts and the LEDGER all remain, so a disabled rule that kept firing
-// appends a line to a file that is still there, which removal cannot observe.
-// Written by replacing the declaration wholesale, because the frontmatter is
-// what the engine parses and a test that patched a line would be asserting
-// something about yaml editing.
-func (e *Env) DisableGuardrail(projDir, name, declaration string) {
+// A distinct mechanism from removal rather than a synonym for it — the folder, the
+// scripts and the ledger all remain, so a disabled guard that kept firing appends a
+// line to a file that is still there, which removal cannot observe. This is the
+// file-guard analogue of DisableGuardrail, but it disables from config rather than
+// editing frontmatter: a file-guard.yaml has no `---` frontmatter to add an
+// `enabled: false` to, and the new format's OFF switch is the project config
+// `disabled:` key the loader honours (internal/declaration/store.go filters a
+// disabled declaration out entirely).
+//
+// It merges into any existing `.sloprail/config.yaml` disabled list rather than
+// overwriting it, so a test disabling two guards in turn does not silently re-enable
+// the first.
+func (e *Env) DisableFileGuard(projDir string, names ...string) {
 	e.t.Helper()
-	disabled := strings.Replace(declaration, "---\n", "---\nenabled: false\n", 1)
-	if disabled == declaration {
-		e.t.Fatalf("harness: disable guardrail %s: the declaration has no frontmatter to add "+
-			"`enabled: false` to, so nothing was turned off and a test resting on this would "+
-			"pass against a rule that is still live", name)
+	dir := filepath.Join(projDir, ".sloprail")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
 	}
-	path := filepath.Join(projDir, ".sloprail", "guardrails", name, "GUARDRAIL.md")
-	if err := os.WriteFile(path, []byte(disabled), 0o644); err != nil {
-		e.t.Fatalf("harness: disable guardrail %s: %v", name, err)
+	path := filepath.Join(dir, "config.yaml")
+	body := ""
+	if existing, err := os.ReadFile(path); err == nil {
+		body = string(existing)
+	} else if !os.IsNotExist(err) {
+		e.t.Fatalf("harness: read config: %v", err)
+	}
+	if !strings.Contains(body, "disabled:") {
+		body += "disabled:\n"
+	}
+	for _, name := range names {
+		body += "  - file-guard/" + name + "\n"
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		e.t.Fatalf("harness: write config: %v", err)
 	}
 }
 
@@ -588,38 +1318,6 @@ func (e *Env) DisablePluginGuardrail(projDir string, qualified ...string) {
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644); err != nil {
 		e.t.Fatalf("harness: write config: %v", err)
 	}
-}
-
-// Ledger returns the lines a guardrail's hooks appended to a file in their own
-// folder, or nothing when the file was never created.
-//
-// This is how a test observes what DID NOT happen. A refusal travels back
-// through the tool result and can be read off the stream, but "this hook never
-// ran", "this extractor produced nothing" and "these two hooks ran in this
-// order" leave no trace there — a hook that stays silent and a hook that never
-// ran look identical from outside.
-//
-// So the hooks write. A hook is an ordinary shell script run with its working
-// directory set to the guardrail's folder, so appending a line to a file there
-// is the one channel that records a run without the engine's cooperation and
-// without a test reaching inside the binary. An absent file is a real answer:
-// nothing ran.
-func (e *Env) Ledger(projDir, guardrail, file string) []string {
-	e.t.Helper()
-	body, err := os.ReadFile(filepath.Join(projDir, ".sloprail", "guardrails", guardrail, file))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		e.t.Fatalf("harness: read ledger %s/%s: %v", guardrail, file, err)
-	}
-	var lines []string
-	for _, l := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return lines
 }
 
 // Wrote reports whether a path exists in the project tree.
@@ -655,50 +1353,93 @@ func resolveWorkDir(dir string) string {
 // seedTranscript writes a minimal valid transcript for (cwd, sessionID): a root
 // record with a uuid and a null parentUuid, which is the shape anything looking
 // for a conversation's origin scans for.
+//
+// The transcript's no-uuid PREAMBLE — the custom-title / mode / last-prompt records a
+// real session file opens with, ahead of this root — is NOT written here: the mock
+// writes it itself on a fresh session (a10n-claude-mock seedPreamble), prepending the
+// block ahead of this pre-seeded root so the head lands as [preamble..., root,
+// conversation...]. So the preamble a test relies on is the mock's, produced the same
+// way a real Claude Code session produces it, not a per-test fixture.
 func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
 	e.t.Helper()
 	dir := filepath.Join(e.configDir, "projects", encodeProjectDir(resolveWorkDir(cwd)))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatalf("harness: seed transcript: %v", err)
 	}
-	line := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
+	body := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
 		"e2e-root-"+sessionID, cwd, prompt)
 	path := filepath.Join(dir, sessionID+".jsonl")
 	if _, err := os.Stat(path); err == nil {
 		return // already seeded, or the mock has started writing — never overwrite
 	}
-	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		e.t.Fatalf("harness: seed transcript: %v", err)
 	}
 }
 
-// ControlDecl and ControlScript are the positive control every revalidation
-// test rests on: a hook that stores something under its own scope and reads it
-// back on its next invocation.
+// RootMessageID is the uuid seedTranscript gives a session's root user message —
+// the human prompt every Run starts from — so a test can REFERENCE that message by
+// id without hardcoding the seeding scheme.
 //
-// Here rather than in one scenario package because every scenario needs it and
-// a Go test package cannot import another's helpers. Exported so the scenario
-// that reports the control as a test of its own runs the SAME rule this package
-// gates on — two copies could drift, and the copy the gate used would be the
-// one nobody was reading. See RequireSessionStore.
-const ControlDecl = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./probe.sh
-  PreFileUpdate:
-    - hooks:
-        - type: command
-          command: ./probe.sh
----
+// This is what a task's ASK.md cites when it names the authorising human message by
+// `message_id=<uuid>` (task-management). The reference has to sit in the ASK.md
+// content the agent writes, which is authored before the run, so the id must be
+// known up front — this exposes it as the one fact a test would otherwise have to
+// duplicate from the harness internals. The message's TEXT is the `prompt` passed to
+// Run, and the two together are what the guard's prepare resolves and the judge reads.
+func (e *Env) RootMessageID(sessionID string) string {
+	return "e2e-root-" + sessionID
+}
 
-# Reads its own state back, and says what it found.
+// MockPreambleLines is the number of no-uuid preamble records a10n-claude-mock writes
+// at the HEAD of every fresh transcript, ahead of the root prompt (custom-title / mode
+// / last-prompt — a10n-claude-mock seedPreamble). A transcript reader counts these
+// physical lines but skips them as entries, so the root prompt does NOT sit on physical
+// line 1 — it sits on line MockPreambleLines+1. A test that must name the root message's
+// LINE up front (before the run, e.g. an agent declaring `#skip <line>` in its prose)
+// uses RootMessageLine, which is built from this. Kept as the single place the mock's
+// preamble count is mirrored, so a change to how many records the mock opens with is a
+// one-line update here rather than a hunt through every test that names a line.
+const MockPreambleLines = 3
+
+// RootMessageLine is the 1-based PHYSICAL line the root prompt record sits on in a
+// session's transcript — MockPreambleLines preamble records precede it, so it is
+// MockPreambleLines+1.
+//
+// This is what a test uses to name the authorising message's LINE without hardcoding
+// the preamble count: a task's ASK.md references the message by `<path>:<line>-<line>`,
+// or an agent's prose declares `#skip <line>`, and both are authored before the run,
+// so the line must be known up front. The mock opens every fresh transcript with a
+// fixed preamble block ahead of the harness-seeded root, so the root's line is
+// deterministic. (For a line derived AFTER a run — e.g. a citation's own output — read
+// it from the file the mock wrote instead; this is the up-front constant.)
+func (e *Env) RootMessageLine(sessionID string) int {
+	return MockPreambleLines + 1
+}
+
+// ControlGuard and ControlScript are the positive control every revalidation
+// test rests on: a file-guard whose check stores something under its own scope
+// and reads it back on its next invocation.
+//
+// A NEW-format file-guard on every markdown write. Its default after-check fires
+// once per Post file event at Stop, so two writes in one cycle give two separate
+// check processes — the second is the one that must read back what the first
+// stored. It logs to $SR_GUARDRAIL_DIR/log (the guard's own folder), the same
+// idiom the scenario controls use, read back with FileGuardLedgerLines.
+//
+// Here rather than in one scenario package because every scenario needs it and a
+// Go test package cannot import another's helpers. Exported so a scenario that
+// reports the control as a test of its own runs the SAME rule this package gates
+// on — two copies could drift, and the copy the gate used would be the one nobody
+// was reading. See RequireSessionStore.
+const ControlGuard = `match: "**/*.md"
+checks:
+  - script: ./probe.sh
 `
 
 const ControlScript = `#!/bin/sh
 cat >/dev/null
-echo "before=[$(sr-session state get seen 2>&1)]" >> "$PWD/log"
+echo "before=[$(sr-session state get seen 2>&1)]" >> "$SR_GUARDRAIL_DIR/log"
 sr-session state set seen yes >/dev/null 2>&1
 exit 0
 `
@@ -732,7 +1473,7 @@ func (e *Env) SessionStoreOpens() (bool, string) {
 	e.t.Helper()
 
 	proj := e.Project()
-	e.Guardrail(proj, "control", ControlDecl, map[string]string{"probe.sh": ControlScript})
+	e.FileGuard(proj, "control", ControlGuard, map[string]string{"probe.sh": ControlScript})
 
 	// Two DIFFERENT paths, so neither invocation can be exempted by the other.
 	// The control must not be silenced by the very mechanism it exists to make
@@ -744,7 +1485,7 @@ func (e *Env) SessionStoreOpens() (bool, string) {
 		Write("c2", "two.md", "second"),
 	))
 
-	lines := e.Ledger(proj, "control", "log")
+	lines := e.FileGuardLedgerLines(proj, "control", "log")
 	if len(lines) != 2 {
 		return false, "the control guardrail's hook did not run twice (got " +
 			strings.Join(lines, " | ") + ") — nothing about session state can be concluded"
@@ -1188,17 +1929,36 @@ func (e *Env) RunReal(projDir, prompt string) Result {
 func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result {
 	e.t.Helper()
 
-	// Seeded where the MOCK will write it, which is keyed on the directory the
-	// session reports rather than on the repository root. See RunFrom: seeding
-	// elsewhere leaves the mock's own record without a parentless root, and the
-	// identity walk then keys the session on a tool_use uuid.
-	e.seedTranscript(workDir, sessionID, prompt)
+	// A REPEAT Run on the same session id is a CONTINUATION: the transcript already
+	// exists, so the mock must be driven as a --resume (which APPENDS this prompt as a
+	// new human turn) rather than a second --session-id (which the mock treats as a new
+	// session and, against a non-empty transcript, drops the prompt). The first Run for a
+	// session id seeds the transcript and uses --session-id as before; a subsequent Run
+	// re-seeds nothing (the mock appends the prompt itself) and uses --resume. This is
+	// what lets a test build a genuine multi-human-turn transcript by Running twice.
+	resume := e.seenSessions[sessionID]
+	if !resume {
+		// Seeded where the MOCK will write it, which is keyed on the directory the
+		// session reports rather than on the repository root. See RunFrom: seeding
+		// elsewhere leaves the mock's own record without a parentless root, and the
+		// identity walk then keys the session on a tool_use uuid.
+		e.seedTranscript(workDir, sessionID, prompt)
+		e.seenSessions[sessionID] = true
+	}
 
 	scriptPath := filepath.Join(projDir, ".scenario.sh")
 	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
 		e.t.Fatalf("harness: write scenario: %v", err)
 	}
 
+	// The session flag differs by whether this id has been Run before: --session-id for
+	// the first (new session), --resume for a repeat (continuation). Everything else —
+	// --script, --project-dir, --config-dir, --plugin-cache-dir, the prompt, the env — is
+	// identical between the two.
+	sessionFlag := "--session-id"
+	if resume {
+		sessionFlag = "--resume"
+	}
 	cmd := exec.Command(e.mock,
 		"-p", "--output-format", "stream-json",
 		"--script", scriptPath,
@@ -1207,15 +1967,27 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 		"--project-dir", workDir,
 		"--config-dir", e.configDir,
 		"--plugin-cache-dir", e.pluginDir,
-		"--session-id", sessionID,
+		sessionFlag, sessionID,
 		prompt,
 	)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"HOME="+e.home,
 		"CLAUDE_CONFIG_DIR="+e.configDir,
-		"CLAUDE_CODE_SESSION_ID="+sessionID,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
+		// The session-identifying and harness-naming variables are the MOCK's to
+		// present, not the harness's: the mock takes --session-id (above) and sets
+		// CLAUDE_CODE_SESSION_ID on every hook/script env from it, and sets
+		// CLAUDECODE=1 + CLAUDE_CODE_ENTRYPOINT=cli on every hook env unconditionally
+		// (a10n-claude-mock internal/hooks/invoker.go) — because the mock stands in
+		// for Claude Code and must present the environment it presents. sr-agent's
+		// harness detection reads CLAUDECODE/CLAUDE_CODE_ENTRYPOINT and REFUSES with
+		// ErrNoHarness when neither is set; the mock now supplies them itself, so the
+		// harness no longer sets any of the three here. (This used to be a CI-vs-local
+		// gotcha: a developer inside Claude Code inherited CLAUDECODE and never saw the
+		// gap, CI did not, and a judge test failed in CI with "no supported harness
+		// detected" — now moot, the value is the mock's whatever the outer environment.)
+		//
 		// The plugin invokes `sloprail`; this is how the hook subprocess finds
 		// the build under test rather than whatever happens to be installed.
 		//
@@ -1226,6 +1998,12 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 		"PATH="+e.shimDir+string(os.PathListSeparator)+
 			e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
+	// A test that set a blocked-Stop retry cap passes it to the mock. Appended
+	// last so it wins over any ambient value; omitted entirely when unset, leaving
+	// the mock's own default (8). See the stopBlockCap field's doc.
+	if e.stopBlockCap > 0 {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=%d", e.stopBlockCap))
+	}
 
 	out, err := cmd.CombinedOutput()
 	code := 0

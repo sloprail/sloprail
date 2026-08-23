@@ -48,41 +48,60 @@ import (
 // askAndMaybeRefuse asks the engine what the session has done, records the
 // answer, and refuses when the tree holds a file the rule objects to.
 //
-// One rule for every cycle, so the refusing cycle and the clean ones write to
-// ONE ledger in order. Swapping the guardrail between cycles — as 019 does —
-// would work, but here the point is a session that carries on with the same
-// rule, and a rule that changed mid-session would be a second variable.
-const askAndMaybeRefuse = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./ask.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./ask.sh
----
-
-# Asks what the session has done, and refuses while an offending file is present
+// A NEW-FORMAT file-guard, after-check (re-vehicled from the old GUARDRAIL.md
+// hooks per tests/e2e/REVEHICLE-PATTERN.md), so it runs at a cycle's end — where
+// the refusal-and-read-mark interaction is measured — and its refusal RE-FIRES
+// next cycle, the retained-refusal behavior this suite depends on. One rule for
+// every cycle, so the refusing cycle and the clean ones write to ONE ledger in
+// order: the point is a session that carries on with the same rule, and a rule
+// that changed mid-session would be a second variable. `match: "**/*.md"` fires on
+// whichever Post kind each write produced — including a DELETE, which the old
+// hooks did NOT bind (they bound PostFileCreate + PostFileUpdate only). A
+// file-guard selects by a file's state, not by kind, so the check restores that
+// scope itself: it short-circuits on a PostFileDelete (see ask.sh), so removing the
+// offending file — which is how the recovering cycle clears the violation — is not
+// itself refused as a "bad" path. The `answers` ledger has no `.md` suffix, so the
+// guard is never handed its own bookkeeping.
+const askAndMaybeRefuse = `match: "**/*.md"
+checks:
+  - script: ./ask.sh
 `
 
 // askScript records the span it was handed, then refuses if the event names a
 // path containing "bad".
 //
-// The record is named explicitly rather than taken from the payload: a guardrail
-// hook is handed `{event, guardrailDir}`, which carries no transcript_path, so
-// piping that in makes the command answer "no transcript path on the hook
-// payload" every time — an answer in which every marker below reads as absent,
-// which is indistinguishable from correct narrowing. SR_TRANSCRIPT and
-// SR_WORKSPACE are set on every hook process for exactly this.
+// The record is named explicitly from the environment rather than taken from the
+// check's stdin: a file-guard check is handed the flat CheckPayload, and piping
+// that in makes the command answer "no transcript path on the hook payload" every
+// time — an answer in which every marker below reads as absent, indistinguishable
+// from correct narrowing. SR_TRANSCRIPT and SR_WORKSPACE are set on every check
+// process by the new dispatch for exactly this. The ledger is
+// $SR_GUARDRAIL_DIR/answers.
 //
 // The answer is bracketed so one cycle's span can be told from the next's even
 // when a cycle is driven round more than once by a block.
+//
+// The refusal keys on the event's own `"path"` field, NOT on "bad" appearing
+// anywhere in the payload. That distinction was load-bearing under the old broad
+// binding, because the `answers` ledger quoted the offending file's name and the
+// guard could re-observe it. Under `match: "**/*.md"` the guard never sees its own
+// `answers` at all, but keeping the `"path":"bad` match is free and keeps the
+// intent legible — it is the event's own subject, whose quotes are literal, and it
+// sidesteps any escaped `\"file_path\":\"bad-file.md\"` riding inside newContent.
+//
+// New-format refusal contract: exit non-zero refuses and a `{"reason":…}` on
+// stdout is the reason the agent is told, replacing the old exit-2-with-stderr.
 const askScript = `#!/bin/sh
 payload="$(cat)"
+# The old rule bound only PostFileCreate + PostFileUpdate. A file-guard fires on
+# deletes too, so drop them here: this keeps removing the offending file (the
+# recovering cycle's fix) from being refused as a "bad" path, and keeps the
+# recorded span the same set of events the old binding produced.
+case "$payload" in
+  *'"kind":"PostFileDelete"'*) exit 0 ;;
+esac
 if [ -z "${SR_TRANSCRIPT:-}" ]; then
-  echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "$PWD/answers"
+  echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "$SR_GUARDRAIL_DIR/answers"
   exit 0
 fi
 {
@@ -90,9 +109,9 @@ fi
   printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
     sr-session query 2>&1 | tr -d '\n'
   printf '>>>\n'
-} >> "$PWD/answers"
+} >> "$SR_GUARDRAIL_DIR/answers"
 case "$payload" in
-  *bad*) echo "this file is not acceptable" >&2; exit 2 ;;
+  *'"path":"bad'*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
 esac
 exit 0
 `
@@ -117,7 +136,7 @@ func project(t *testing.T) (*harness.Env, string) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "asker", askAndMaybeRefuse, map[string]string{"ask.sh": askScript})
+	e.FileGuard(proj, "asker", askAndMaybeRefuse, map[string]string{"ask.sh": askScript})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 	return e, proj
@@ -154,11 +173,11 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	e.Run(proj, sess, "cycle one", Turns("done",
 		Write("w1", "one.md", "cycle one\n"),
 	))
-	afterFirst := len(e.Ledger(proj, "asker", "answers"))
+	afterFirst := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
 	if afterFirst == 0 {
 		t.Fatalf("the first cycle never reached the hook, so nothing here can be observed")
 	}
-	answered(t, strings.Join(e.Ledger(proj, "asker", "answers"), "\n"))
+	answered(t, strings.Join(e.FileGuardLedgerLines(proj, "asker", "answers"), "\n"))
 
 	// Where the mark stands after a cycle that COMPLETED. The refused cycle
 	// below must leave it exactly here.
@@ -181,7 +200,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 		t.Fatalf("the second cycle completed normally (blocking: %v), so there is no "+
 			"interrupted cycle here and the mark had every right to move", blocking)
 	}
-	afterSecond := len(e.Ledger(proj, "asker", "answers"))
+	afterSecond := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
 	if afterSecond <= afterFirst {
 		t.Fatalf("the second cycle never reached the hook (%d answers, was %d), so it read "+
 			"nothing and there is no span for the third cycle to be re-offered",
@@ -218,7 +237,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 		Bash("b1", "rm bad-file.md"),
 		Write("w3", "three.md", "cycle three\n"),
 	))
-	answers := e.Ledger(proj, "asker", "answers")
+	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= afterSecond {
 		t.Fatalf("the third cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), afterSecond)
@@ -285,7 +304,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 		Bash("b1", "rm bad-file.md"),
 		Write("w2", "two.md", "recovered\n"),
 	))
-	afterRecovered := len(e.Ledger(proj, "asker", "answers"))
+	afterRecovered := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
 	if afterRecovered == 0 {
 		t.Fatalf("the recovering cycle never reached the hook, so nothing can be observed")
 	}
@@ -294,7 +313,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 	e.Run(proj, sess, "a later cycle", Turns("done",
 		Write("w3", "three.md", "later\n"),
 	))
-	answers := e.Ledger(proj, "asker", "answers")
+	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= afterRecovered {
 		t.Fatalf("the later cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), afterRecovered)

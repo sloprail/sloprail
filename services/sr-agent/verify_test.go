@@ -58,7 +58,7 @@ func runVerifyHarness(
 	t.Setenv(outputDirEnv, outputDir)
 	t.Setenv("SR_TEST_OUTPUT", filepath.Join(outputDir, "answer"))
 
-	err = runVerified(cmd, spec, "fake-model", nil, prompt, verifier, attempts, false, false)
+	err = runVerified(cmd, spec, "fake-model", nil, nil, prompt, verifier, attempts, false, false)
 	return out.String(), errOut.String(), err
 }
 
@@ -427,6 +427,30 @@ func TestCLI_VerifyGrantsWriteAccessToTheOutputDirectory(t *testing.T) {
 	assert.Contains(t, stdout, "--add-dir",
 		"the agent cannot write its answer without being granted the directory")
 	assert.Contains(t, stdout, outputDir)
+}
+
+// A judge's --allowed-tools are MERGED into the same --allowed-tools argument as
+// the Write the answer file needs — one flag carrying `Write <tools>`, never two
+// competing variadic groups. Under --verify (the judge path) the merge happens in
+// grantWrite, so the dry-run command shows the single merged argument with Write
+// first and the caller's tools after.
+func TestCLI_VerifyMergesAllowedToolsWithTheWriteGrant(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+
+	outputDir := filepath.Join(dir, "out")
+	require.NoError(t, os.MkdirAll(outputDir, 0o755))
+	t.Setenv(outputDirEnv, outputDir)
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--allowed-tools", "Read WebFetch", "--verify", script, "judge this")
+	require.NoError(t, err)
+
+	// One argument, Write first then the requested tools — quoted by dry-run's
+	// printer because it contains spaces.
+	assert.Contains(t, stdout, `--allowed-tools "Write Read WebFetch"`,
+		"the judge's tools must be unioned into the Write grant as one --allowed-tools argument")
 }
 
 func TestCLI_NonExecutableVerifierIsRefusedBeforeAnythingRuns(t *testing.T) {

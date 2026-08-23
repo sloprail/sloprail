@@ -520,7 +520,7 @@ func TestResolve_ASymlinkLoopAmongAncestorsIsRefusedRatherThanLoopedOn(t *testin
 }
 
 // TestLookAt_AFifoIsPresentAndNotAFile. lookAt is the guard that keeps every
-// blocking-open in this module unreached: markersOnDisk uses os.ReadFile, which
+// blocking-open in this module unreached: contentOnDisk uses os.ReadFile, which
 // blocks on a FIFO exactly as fingerprint.OfFile did, and it is only ever called
 // on the presentFile branch.
 //
@@ -544,7 +544,7 @@ func TestLookAt_AFifoIsPresentAndNotAFile(t *testing.T) {
 // same fact carried through the module, and it is the one that matters
 // operationally.
 //
-// markersOnDisk would block forever on a FIFO, so if presentNotAFile ever
+// contentOnDisk would block forever on a FIFO, so if presentNotAFile ever
 // stopped being its own state the pre phase would stop returning. Asserting the
 // silence alone would not catch that — a hung call produces no event either.
 // The deadline is what tells "no event" from "no answer".
@@ -568,7 +568,7 @@ func TestExtractPending_AWriteAimedAtAFifoProducesNoEventAndDoesNotBlock(t *test
 		require.NoError(t, r.err, "a harness aiming a write at a FIFO is a filesystem condition, not a producer breach")
 		assert.Zero(t, r.events, "no file write can land on a FIFO, so there is no file modification to report")
 	case <-timeoutAfterASecond():
-		t.Fatal("the pre phase blocked on a FIFO — markersOnDisk waits for a writer, so presentNotAFile must never reach it")
+		t.Fatal("the pre phase blocked on a FIFO — contentOnDisk waits for a writer, so presentNotAFile must never reach it")
 	}
 }
 

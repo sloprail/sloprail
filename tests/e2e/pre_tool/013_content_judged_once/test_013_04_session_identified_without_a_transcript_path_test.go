@@ -7,70 +7,54 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// countingRail counts every creation it is asked about and permits it. Named to
-// sort BEFORE the blocker below, so it is asked before the refusal
-// short-circuits the event.
-const countingRail = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./count.sh
----
-
-# counts every creation it is asked about
-`
-
-// blockingRail refuses every write, so nothing ever lands.
-const blockingRail = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./no.sh
----
-
-# refuses every write, so nothing lands
-`
-
+// T013_04: the session is identified without a transcript path — which is what
+// makes every test in this package reachable, pinned so it cannot quietly go away.
+//
+// The mock's main-session payload really does omit transcript_path — it carries
+// session_id and cwd and nothing else. Identity is read from the ORIGIN RECORD
+// inside the transcript, so locating the file by the harness's own naming resolves
+// the same conversation a handed-over path would. Only the file NAME is assumed.
+//
+// # How this is proven for the file-guard nature
+//
+// The revalidation store that drives the skip/re-fire is keyed to the SESSION. If
+// the session could not be identified each cycle, a fresh store would be used every
+// time and no pass could ever be found — so a fine file that already passed could
+// never be SKIPPED. The skip firing is therefore proof the session was resolved
+// from a payload with no transcript path: the pass recorded in the first cycle was
+// found in the second, which can only happen if both cycles resolved the same
+// session.
+//
+// Non-vacuous by construction. If identity did not resolve, the second cycle would
+// re-judge the identical content (a fresh store, no stored pass), and the count
+// would climb — which is exactly what the assertion below forbids.
 func TestT013_04_TheSessionIsIdentifiedWithoutATranscriptPath(t *testing.T) {
-	// What makes every test in this package reachable, pinned so it cannot
-	// quietly go away.
-	//
-	// The mock's main-session PreToolUse payload really does omit
-	// transcript_path — it carries session_id and cwd and nothing else. This
-	// branch previously read that fact as "the dispatch is unreachable end to
-	// end" and deleted its e2e over it. The fact was right and the conclusion was
-	// wrong: identity is read from the ORIGIN RECORD inside the transcript, so
-	// locating the file by the harness's own naming resolves the same
-	// conversation a handed-over path would. Only the file NAME is assumed.
-	//
-	// Non-vacuous, and it took two attempts to make it so. The obvious scenario —
-	// write the same bytes to the same path twice — proves nothing: the first
-	// write LANDS, so the second offer is an update, a kind that is never exempt
-	// by design, and the count is 1 whether the session resolved or not.
-	//
-	// So the creation is made to repeat. A second rule refuses every write, the
-	// file never lands, and the SAME pending creation is offered twice. Now the
-	// count separates the two worlds — 1 with the record, 2 without — which was
-	// checked both ways by disabling the fallback.
 	e := New(t)
 	proj := e.Project()
+	e.GitInit(proj)
+	judgeRail(e, proj)
 
-	e.Guardrail(proj, "a-counter", countingRail, map[string]string{
-		"count.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> ./ran.log\nexit 0\n",
-	})
-	e.Guardrail(proj, "z-blocker", blockingRail, map[string]string{
-		"no.sh": "#!/bin/sh\ncat >/dev/null\necho 'not today' >&2\nexit 1\n",
-	})
+	sess := "sess-013-04"
 
-	res := e.Run(proj, "sess-013-04", "offer the same creation twice", Turns("done",
-		Write("t1", "a.md", "same bytes"),
-		Write("t2", "a.md", "same bytes"),
+	// Cycle 1: a benign file, judged and passed. The pass is recorded in the
+	// session-keyed revalidation store.
+	res := e.Run(proj, sess, "write a benign memory", Turns("done",
+		Write("t1", "memories/note.md", "same bytes"),
 	))
 	require.False(t, res.Saw("session state unavailable"),
 		"the session must be identifiable from a payload carrying no transcript path")
+	require.False(t, res.Saw("no session"),
+		"the session must be identifiable from a payload carrying no transcript path")
+	first := asks(e, proj)
+	require.Greater(t, first, 0, "the benign file must be judged in the first cycle")
 
-	assert.Equal(t, 1, len(e.Ledger(proj, "a-counter", "ran.log")),
-		"the same pending creation offered twice reaches the rule once — which it can only do if the session was identified from a payload with no transcript path")
+	// Cycle 2: the SAME content again. It is skipped — which requires finding the
+	// first cycle's pass in the same session's store, so the session resolved from a
+	// transcript-path-less payload both times.
+	e.Run(proj, sess, "offer the same content again", Turns("done",
+		Write("t2", "memories/note.md", "same bytes"),
+	))
+	after := asks(e, proj)
+	assert.Equal(t, first, after,
+		"the same content offered again was re-judged rather than skipped — the session was not identified from a payload with no transcript path, so the recorded pass could not be found")
 }

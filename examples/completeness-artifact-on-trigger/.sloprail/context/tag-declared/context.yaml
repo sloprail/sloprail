@@ -1,0 +1,20 @@
+# His correction, 2026-08-19: "tag enters a context, and gates verify that
+# artifacts of that tag are there... the context should also open on the
+# tags as well, if the tag appeared... so tag or files -> enters context."
+#
+# Wakes on BOTH: PostTagWrite, filtered declaratively to the three tags
+# this rule cares about (his follow-up: match on tags rather than checking
+# inside enter), and the Post file events under the artifact paths those
+# tags demand. Either can activate; while active, further occurrences of
+# either log what showed up into the registry (sr-session state), so the
+# paired gate on Stop can read back which tag was declared and which
+# artifact files actually landed.
+on:
+  - event: PostTagWrite
+    match: any(event.tags, .label == "update" or .label == "decision" or .label == "skip")
+  - event: PostFileCreate
+    match: event.path startsWith "memories/updates/" or event.path startsWith "memories/decisions/"
+  - event: PostFileUpdate
+    match: event.path startsWith "memories/updates/" or event.path startsWith "memories/decisions/"
+enter: ./enter.sh
+exit: ./exit.sh

@@ -102,6 +102,30 @@ func scalarString(value any) (string, error) {
 	}
 }
 
+// ParseAllowedTools splits the --allowed-tools value into individual tool names.
+//
+// The flag takes the SAME comma-or-space-separated form claude's own
+// `--allowed-tools <tools...>` documents, so an author who knows one knows this.
+// Both separators are honoured and empty fields dropped, so "Read, WebFetch" and
+// "Read WebFetch" and "Read,WebFetch" all yield the same two tools and a stray
+// comma grants nothing rather than an empty tool name. Returns nil for an empty or
+// whitespace-only value, which the caller reads as "grant only what the run itself
+// needs".
+//
+// A tool name is not otherwise validated here: like a concrete model name in a
+// model set, whether the harness HAS a tool by that name is the harness's to
+// answer, not this binary's — sr-agent's job is to pass the request through in the
+// harness's own spelling.
+func ParseAllowedTools(raw string) []string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
 // CheckHarnessArgs reports a harness-args flag given while a different harness
 // is running.
 //
@@ -168,9 +192,17 @@ func (inv Invocation) String() string {
 //
 // This also subsumes the dash-leading-prompt case: after `--`, a prompt reading
 // "--model isn't resolving, why?" is text rather than a flag.
+// spec.baseArgs come FIRST among the flags (after `-p --model`, before the
+// caller's), so a run always carries its harness's required settings — the Claude
+// Code isolation `--settings`, most of all — whatever the caller passed. They sit
+// before the caller's args, not after, so a caller-supplied flag of the same name
+// is the LATER one; where a harness lets a repeated flag override, the caller's
+// intent wins over the default, and where it unions (claude's `--allowed-tools`),
+// both apply.
 func BuildInvocation(spec harnessSpec, model string, harnessArgs []string, prompt string) Invocation {
-	args := make([]string, 0, len(harnessArgs)+5)
+	args := make([]string, 0, len(spec.baseArgs)+len(harnessArgs)+5)
 	args = append(args, "-p", "--model", model)
+	args = append(args, spec.baseArgs...)
 	args = append(args, harnessArgs...)
 	args = append(args, "--", prompt)
 	return Invocation{Binary: spec.binary, Args: args}

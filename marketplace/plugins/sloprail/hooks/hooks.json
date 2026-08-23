@@ -4,9 +4,7 @@
       { "matcher": "*", "hooks": [{ "type": "command", "command": "sr-session start" }] }
     ],
     "PreToolUse": [
-      { "matcher": "Write", "hooks": [{ "type": "command", "command": "sr-session pre-tool" }] },
-      { "matcher": "Edit", "hooks": [{ "type": "command", "command": "sr-session pre-tool" }] },
-      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "sr-session pre-tool" }] }
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "sr-session pre-tool" }] }
     ],
     "Stop": [
       { "matcher": "*", "hooks": [{ "type": "command", "command": "sr-session stop" }] }

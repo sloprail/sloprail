@@ -1,0 +1,142 @@
+package dispatch
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// The judge-template renderer is gonja (a real Jinja2), so these tests pin the
+// constructs the shipped templates actually use — interpolation, `if`/`elif`/
+// `else`, a `for` with an inline filter, the value-fallback ternary, the two
+// registered filters — and, crucially, the FAIL-CLOSED contract: a template gonja
+// cannot parse or cannot resolve returns an ERROR from renderTemplate, which the
+// caller (judge.go) turns into a refusal, never a silent blank prompt.
+//
+// The per-construct cases here are the unit half; templatefiles_test.go renders
+// the REAL example templates against the REAL assembled JudgeInput, which is what
+// proves the flat-event contract end to end.
+
+func render(t *testing.T, src string, varsJSON string) string {
+	t.Helper()
+	var vars map[string]any
+	require.NoError(t, json.Unmarshal([]byte(varsJSON), &vars))
+	out, err := renderTemplate(src, vars)
+	require.NoError(t, err, "template: %q", src)
+	return out
+}
+
+func TestTemplate_Interpolation(t *testing.T) {
+	assert.Equal(t, "path is a.md", render(t, "path is {{ event.path }}", `{"event":{"path":"a.md"}}`))
+	// A subscript by string reads the same key.
+	assert.Equal(t, "active", render(t, `{% if context["r"].active %}active{% endif %}`,
+		`{"context":{"r":{"active":true}}}`))
+}
+
+func TestTemplate_IfElifElse(t *testing.T) {
+	src := `{% if a %}A{% elif b %}B{% else %}C{% endif %}`
+	assert.Equal(t, "A", render(t, src, `{"a":true,"b":true}`))
+	assert.Equal(t, "B", render(t, src, `{"a":false,"b":true}`))
+	assert.Equal(t, "C", render(t, src, `{"a":false,"b":false}`))
+}
+
+func TestTemplate_NotAndOr(t *testing.T) {
+	assert.Equal(t, "yes", render(t, `{% if not x.active %}yes{% endif %}`, `{"x":{"active":false}}`))
+	assert.Equal(t, "yes", render(t, `{% if a or b %}yes{% endif %}`, `{"a":false,"b":true}`))
+	assert.Equal(t, "", render(t, `{% if a and b %}yes{% endif %}`, `{"a":true,"b":false}`))
+}
+
+func TestTemplate_Equality(t *testing.T) {
+	assert.Equal(t, "match", render(t, `{% if m.kind == "conforms-to-doc" %}match{% endif %}`,
+		`{"m":{"kind":"conforms-to-doc"}}`))
+	assert.Equal(t, "", render(t, `{% if m.kind == "other" %}match{% endif %}`,
+		`{"m":{"kind":"conforms-to-doc"}}`))
+}
+
+// The value-fallback ternary — `X if X else Y` — is the gonja-correct way the
+// templates render "newContent, or oldContent when it is empty". (gonja's `or` is
+// a boolean operator, not Jinja2's value-returning `or`, so the templates use the
+// ternary; this pins that the ternary returns the VALUE, not a bool.)
+func TestTemplate_ValueFallbackTernary(t *testing.T) {
+	src := `{{ event.newContent if event.newContent else event.oldContent }}`
+	assert.Equal(t, "NEW", render(t, src, `{"event":{"newContent":"NEW","oldContent":"OLD"}}`))
+	assert.Equal(t, "OLD", render(t, src, `{"event":{"newContent":"","oldContent":"OLD"}}`))
+}
+
+// A for-loop iterates a list, binding the loop variable; the inline `if` filter
+// keeps only matching elements; loop.index is 1-based.
+func TestTemplate_ForLoop(t *testing.T) {
+	out := render(t, `{% for c in cites %}#{{ loop.index }}:{{ c.quote }} {% endfor %}`,
+		`{"cites":[{"quote":"one"},{"quote":"two"}]}`)
+	assert.Equal(t, "#1:one #2:two ", out)
+
+	// Inline filter over a real list.
+	out = render(t, `{% for m in markers if m.kind == "x" %}({{ m.fqn }}){% endfor %}`,
+		`{"markers":[{"kind":"x","fqn":"a"},{"kind":"y","fqn":"b"},{"kind":"x","fqn":"c"}]}`)
+	assert.Equal(t, "(a)(c)", out)
+
+	// An empty list yields no iterations without erroring.
+	assert.Equal(t, "DONE", render(t, `{% for m in markers if m.kind == "x" %}({{ m.fqn }}){% endfor %}DONE`,
+		`{"markers":[]}`))
+}
+
+// The two filters this renderer registers (matching a10n's set) work.
+func TestTemplate_RegisteredFilters(t *testing.T) {
+	assert.Equal(t, "a/b", render(t, `{{ p | dirname }}`, `{"p":"a/b/c.md"}`))
+	assert.Equal(t, "TestFoo", render(t, `{{ s | funcname }}`, `{"s":"e2e.TestFoo"}`))
+}
+
+// FAIL-CLOSED: a template gonja cannot PARSE (a malformed or unclosed tag) is an
+// error, not a silent blank — the caller refuses on it. These are the malformed
+// shapes gonja rejects promptly with a parse error; the one it instead HANGS on
+// (an unterminated `{{`) is covered by the watchdog test below.
+func TestTemplate_ParseErrorFailsClosed(t *testing.T) {
+	for _, src := range []string{
+		`{% if event.path %}unclosed`, // missing endif
+		`{% for x in y %}no end`,      // missing endfor
+		`{% if %}empty{% endif %}`,    // no condition
+	} {
+		_, err := renderTemplate(src, map[string]any{"event": map[string]any{"path": "a"}, "y": []any{}})
+		assert.Errorf(t, err, "%q must be refused (parse error), not rendered blank", src)
+	}
+}
+
+// FAIL-CLOSED against a gonja HANG: this fork's lexer loops forever on an
+// unterminated `{{` rather than returning a parse error, and that render runs
+// before the sr-agent shell timeout — so without the watchdog it would wedge the
+// hook. The watchdog turns "did not finish in time" into an error (→ refusal).
+// renderTimeout is lowered here so the proof is fast; production keeps the
+// generous bound.
+func TestTemplate_HangingTemplateFailsClosedViaWatchdog(t *testing.T) {
+	orig := renderTimeout
+	renderTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { renderTimeout = orig })
+
+	start := time.Now()
+	_, err := renderTemplate(`{{ event.path`, map[string]any{"event": map[string]any{"path": "a"}})
+	require.Error(t, err, "an unterminated {{ hangs gonja's lexer; the watchdog must refuse rather than wedge")
+	assert.Contains(t, err.Error(), "did not finish")
+	assert.Less(t, time.Since(start), 2*time.Second, "the watchdog must fire near its bound, not run unbounded")
+}
+
+// FAIL-CLOSED: reading a key off an ABSENT parent — and using it in a condition —
+// is a gonja RENDER error (its undefined resolution is not uniformly strict, but a
+// missing-parent access and an `{% if %}` on an undefined both throw). So a template
+// written for a prepare-backed judge that references `additionalContext.<x>` when no
+// prepare ran refuses, rather than asking the model a prompt with a hole in it.
+func TestTemplate_MissingReferenceFailsClosed(t *testing.T) {
+	// `additionalContext` absent (no prepare ran) but the template reads a key off
+	// it: an error, so a template written for a prepare-backed judge cannot be
+	// rendered blank when no prepare fed it.
+	_, err := renderTemplate(`{% if additionalContext.proof %}x{% endif %}`, map[string]any{
+		"event": map[string]any{"path": "a"},
+	})
+	assert.Error(t, err, "reading additionalContext.* when additionalContext is absent must fail closed")
+
+	// Reading a nested attribute off a missing top-level name likewise errors.
+	_, err = renderTemplate(`{{ missing.deep }}`, map[string]any{})
+	assert.Error(t, err, "a nested access off a missing variable must fail closed")
+}

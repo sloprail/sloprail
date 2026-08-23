@@ -22,9 +22,12 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// project is a repository whose guardrails are committed before the session, so
-// the rules' own folders are part of the baseline rather than being reported as
-// files this cycle created.
+// project is a repository whose new-format rules are committed before the session,
+// so the rules' own folders under .sloprail/ are part of the baseline rather than
+// being reported as files this cycle created — which matters for the file-guard
+// after-checks here, whose Post events are computed from the cycle's tree
+// difference and would otherwise include the guard's own .sloprail/file-guard/…
+// files (and `int(path) > 0` errors on every path, the guard's own included).
 func project(t *testing.T) (*harness.Env, string) {
 	t.Helper()
 	e := New(t)
@@ -33,7 +36,11 @@ func project(t *testing.T) (*harness.Env, string) {
 	return e, proj
 }
 
-func commitGuardrails(e *harness.Env, proj string) {
+// commitProject commits the whole project — including the new-format
+// .sloprail/{gate,file-guard}/… declarations — so they are the baseline and not
+// the cycle's own work. The new-format equivalent of the old-format
+// commitGuardrails, which committed .sloprail/guardrails/….
+func commitProject(e *harness.Env, proj string) {
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 }

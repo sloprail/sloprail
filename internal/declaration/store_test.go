@@ -1,0 +1,1071 @@
+package declaration
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/module/modules"
+)
+
+// The loader is exercised here against declarations written into a temporary
+// `.sloprail` root, not against real fixture directories on disk — one test can
+// then state exactly the declaration it is about, valid or malformed, next to the
+// assertion, and a table row is one rule and its expected verdict. The one test
+// that DOES read the real examples/ tree is in examples_test.go, and its job is
+// the opposite: to prove the shipped examples reconcile with this loader.
+
+// testRegistry builds the same module vocabulary the shipped build has, so a
+// trigger's `match` is compiled against the REAL kind field declarations — the
+// same `event.path`, `event.invocations`, `event.tags` a shipped gate/context
+// trigger sees. It feeds modules.All (the one shipped list) to NewRegistryForTest,
+// the sanctioned way for a test to hold a vocabulary without being the one place
+// allowed to build the shipped registry. Building from the real list rather than a
+// hand-picked subset is what makes these tests prove the loader against the engine
+// the examples will actually run under, not a stand-in.
+func testRegistry(t *testing.T) *module.Registry {
+	t.Helper()
+	reg, err := module.NewRegistryForTest(modules.All()...)
+	require.NoError(t, err)
+	return reg
+}
+
+// write puts one declaration file at rel under a fresh `.sloprail` root and
+// returns the root. rel is nature-relative (e.g. "gate/foo/gate.yaml"), so a test
+// reads like the on-disk layout it is building.
+func writeDecl(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for rel, content := range files {
+		path := filepath.Join(root, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	}
+	return root
+}
+
+// loadOK loads and asserts nothing was invalid, returning the Loaded for further
+// assertions. The common shape of a "this declaration is valid" test.
+func loadOK(t *testing.T, files map[string]string) Loaded {
+	t.Helper()
+	root := writeDecl(t, files)
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	require.Empty(t, loaded.Invalid, "expected every declaration to load; invalid: %v", invalidReasons(loaded))
+	return loaded
+}
+
+// loadOneInvalid loads, asserts exactly one declaration was invalid, and returns
+// it. The common shape of a "this declaration is refused" test.
+func loadOneInvalid(t *testing.T, files map[string]string) Invalid {
+	t.Helper()
+	root := writeDecl(t, files)
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, loaded.Invalid, 1, "expected exactly one invalid declaration")
+	return loaded.Invalid[0]
+}
+
+func invalidReasons(l Loaded) []string {
+	out := make([]string, 0, len(l.Invalid))
+	for _, iv := range l.Invalid {
+		out = append(out, iv.Qualified()+": "+iv.Reason)
+	}
+	return out
+}
+
+// hasKind reports whether an Invalid carries a problem of the given sentinel
+// kind, so a refusal test asserts on the CLASS of fault rather than its wording.
+func hasKind(iv Invalid, kind error) bool {
+	for _, p := range iv.Problems {
+		if p.Is(kind) {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// Empty / absent
+// ---------------------------------------------------------------------------
+
+// A project with no `.sloprail` directory has no declarations — the ordinary
+// state of a project that has not adopted any, not an error.
+func TestLoad_NoDotDir(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "does-not-exist")
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	assert.Empty(t, loaded.FileGuards)
+	assert.Empty(t, loaded.Gates)
+	assert.Empty(t, loaded.Contexts)
+	assert.Nil(t, loaded.Structure)
+	assert.Empty(t, loaded.Invalid)
+}
+
+// An empty `.sloprail` directory is the same: nothing adopted, nothing wrong.
+func TestLoad_EmptyDotDir(t *testing.T) {
+	loaded := loadOK(t, map[string]string{})
+	assert.Empty(t, loaded.FileGuards)
+	assert.Empty(t, loaded.Gates)
+}
+
+// ---------------------------------------------------------------------------
+// File-guard: valid loads
+// ---------------------------------------------------------------------------
+
+func TestLoad_FileGuard_Valid(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/pinned/file-guard.yaml": `
+match: any(markers, .kind == "invariant")
+preventive: true
+checks:
+  - script: ./check.sh
+  - judge: ./judge.md.j2
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	g := loaded.FileGuards[0]
+	assert.Equal(t, "pinned", g.Name)
+	assert.True(t, g.Preventive)
+	assert.Len(t, g.Checks, 2)
+	assert.True(t, g.Checks[0].isScript())
+	assert.True(t, g.Checks[1].isJudge())
+	// The folder is recorded so scripts resolve relative to it.
+	assert.Equal(t, filepath.Join(g.Dir, "check.sh"), filepath.Join(g.Dir, "check.sh"))
+	assert.True(t, filepath.IsAbs(g.Dir) || g.Dir != "")
+}
+
+// A bare glob is the shorthand half of the file-match union and must load.
+func TestLoad_FileGuard_GlobMatch(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/mdfiles/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./check.sh
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	assert.Equal(t, "**/*.md", loaded.FileGuards[0].Match)
+}
+
+// A file-guard's match reading a context is at parity with its checks — it must
+// load, since context[<name>] is in the file scope.
+func TestLoad_FileGuard_ContextInMatch(t *testing.T) {
+	loadOK(t, map[string]string{
+		"file-guard/moved/file-guard.yaml": `
+match: context["refactoring"].active and any(markers, .kind == "moved-from")
+checks:
+  - script: ./check.sh
+`,
+		// The context it names must exist for a prerequisite; a match read of a
+		// context is NOT a prerequisite, so this loads even without the context —
+		// but declare it so the test also documents the guard→context link.
+		"context/refactoring/context.yaml": validContextYAML,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// File-guard: refusals
+// ---------------------------------------------------------------------------
+
+func TestLoad_FileGuard_MissingMatch(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/nomarch/file-guard.yaml": `
+checks:
+  - script: ./check.sh
+`,
+	})
+	assert.Equal(t, NatureFileGuard, iv.Nature)
+	assert.True(t, hasKind(iv, ErrMissingField), "a file-guard with no match is refused: %v", iv.Reason)
+}
+
+// The singular `marker.kind` the older example vocabulary used is refused — the
+// file scope exposes `markers` (list), and `marker` is out of scope.
+func TestLoad_FileGuard_SingularMarkerRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/bad/file-guard.yaml": `
+match: marker.kind == "endpoint"
+checks:
+  - script: ./check.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadMatch), "singular marker.kind is not in the file scope: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "marker")
+
+	// The refusal must also NAME the fields the file scope DOES carry, or an
+	// author who mistyped one is left guessing at the spelling. The offending
+	// name is in front of them; the available names have to be too. (The old
+	// GUARDRAIL.md validator proved this via guardrail.Validate's field list; the
+	// new file-guard validator carries the same courtesy in its match message.)
+	for _, field := range []string{"path", "markers", "context"} {
+		assert.Containsf(t, iv.Reason, field,
+			"the refusal should name %q as an available field on the file scope", field)
+	}
+}
+
+// The bare `refactoring.active` the older example vocabulary used does NOT read
+// as a context reference — a context is reached as `context[<name>]`. Because it
+// carries no whitespace or quote, CompileFileMatch's union discriminator reads it
+// as a bare GLOB, so it silently compiles to a path match on the literal path
+// `refactoring.active` and matches nothing real. This is precisely WHY the example
+// reconciliation rewrites it to `context["refactoring"].active`: the old form is
+// not refused, it is worse — it loads and never fires. The test pins that
+// surprising behaviour so a future change to the discriminator that DID start
+// refusing it is noticed here.
+func TestLoad_FileGuard_BareDottedTokenIsAGlobNotAContext(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/bad/file-guard.yaml": `
+match: refactoring.active
+checks:
+  - script: ./check.sh
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	assert.Equal(t, "refactoring.active", loaded.FileGuards[0].Match,
+		"a bare dotted token is stored verbatim and compiled as a glob, not a context read")
+}
+
+// The quoted/spaced form that genuinely reaches for an out-of-scope bare variable
+// IS refused — e.g. `refactoring.active == true`, which carries whitespace and so
+// routes to the expression parser, where `refactoring` is not in the file scope.
+func TestLoad_FileGuard_OutOfScopeVariableInExpressionRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/bad/file-guard.yaml": `
+match: refactoring.active == true
+checks:
+  - script: ./check.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadMatch), "an expression reading a bare out-of-scope variable is refused: %v", iv.Reason)
+}
+
+// A file-guard whose whole enforcement is a `require:` precondition is meaningful
+// without any checks — the engine evaluates `require` before any check and refuses
+// the write when it is unmet — so an absent `checks` LOADS as long as `require` is
+// present, the same at-least-one rule a gate carries.
+func TestLoad_FileGuard_PureRequire(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/require-topic/file-guard.yaml": `
+match: "memories/topics/**/*.md"
+require:
+  - skill: document-topic
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	g := loaded.FileGuards[0]
+	assert.Empty(t, g.Checks)
+	assert.Len(t, g.Require, 1)
+	assert.Equal(t, "document-topic", g.Require[0].Skill)
+}
+
+// A file-guard with neither require nor checks would select a file and decide
+// nothing — refused, the same at-least-one rule the gate has (ErrAtLeastOne, not a
+// per-field missing-field fault).
+func TestLoad_FileGuard_NeitherRequireNorChecks(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/nochecks/file-guard.yaml": `
+match: "**/*.md"
+`,
+	})
+	assert.True(t, hasKind(iv, ErrAtLeastOne), "a file-guard with neither require nor checks is refused: %v", iv.Reason)
+}
+
+// ---------------------------------------------------------------------------
+// Check: exactly-one-of script/judge, prepare placement
+// ---------------------------------------------------------------------------
+
+func TestLoad_Check_BothScriptAndJudge(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/both/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    judge: ./j.md.j2
+`,
+	})
+	assert.True(t, hasKind(iv, ErrExactlyOne), "a check setting both script and judge is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "both")
+}
+
+func TestLoad_Check_NeitherScriptNorJudge(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/neither/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - prepare: ./p.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrExactlyOne), "a check setting neither script nor judge is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "neither")
+}
+
+// A prepare belongs with a judge; on a script-only check it can only be a
+// mistake and is refused, so the author learns it does nothing.
+func TestLoad_Check_StrayPrepareOnScript(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/stray/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    prepare: ./p.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrStrayPrepare), "prepare on a script-only check is refused: %v", iv.Reason)
+}
+
+// A prepare ALONGSIDE a judge is the sanctioned shape and loads.
+func TestLoad_Check_PrepareWithJudge(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/prep/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - prepare: ./p.sh
+    judge: ./j.md.j2
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	c := loaded.FileGuards[0].Checks[0]
+	assert.True(t, c.isJudge())
+	assert.True(t, c.hasPrepare())
+}
+
+// model/timeout are judge-only. On a script-only check each can only be a
+// mistake and is refused, the same way a stray prepare is — so the author learns
+// the field does nothing rather than having it silently ignored.
+func TestLoad_Check_StrayModelOnScript(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/straymodel/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    model: size-md
+`,
+	})
+	assert.True(t, hasKind(iv, ErrStrayModel), "model on a script-only check is refused: %v", iv.Reason)
+}
+
+func TestLoad_Check_StrayTimeoutOnScript(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/straytimeout/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    timeout: 45s
+`,
+	})
+	assert.True(t, hasKind(iv, ErrStrayModel), "timeout on a script-only check is refused: %v", iv.Reason)
+}
+
+// A judge carrying a well-formed model and timeout is the sanctioned shape and
+// loads, with the values preserved on the parsed Check.
+func TestLoad_Check_JudgeWithModelAndTimeout(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/judgecfg/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    model: size-xl
+    timeout: 1m30s
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	c := loaded.FileGuards[0].Checks[0]
+	assert.True(t, c.isJudge())
+	assert.Equal(t, "size-xl", c.Model)
+	assert.Equal(t, "1m30s", c.Timeout)
+}
+
+// A comma-separated modelset (a preference list, sr-agent's own --model format)
+// loads on a judge — the loader validates the shape without consulting a
+// catalogue, exactly as sr-agent classifies entries lexically.
+func TestLoad_Check_JudgeWithModelSetList(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/modelset/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    model: claude-opus-5,size-md
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	assert.Equal(t, "claude-opus-5,size-md", loaded.FileGuards[0].Checks[0].Model)
+}
+
+// A malformed modelset — a stray/trailing comma leaving an empty entry — is
+// refused at load, mirroring what sr-agent's own --model parsing refuses, so a
+// set that would fail at the judge is caught here instead.
+func TestLoad_Check_BadModelSet(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/badmodel/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    model: "size-md,"
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadModel), "a modelset with an empty entry is refused: %v", iv.Reason)
+}
+
+// A timeout that does not parse as a Go duration is refused at load.
+func TestLoad_Check_BadTimeoutFormat(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/badtimeout/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    timeout: "half a minute"
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadTimeout), "a non-duration timeout is refused: %v", iv.Reason)
+}
+
+// A non-positive timeout is refused — a timeout that never fires is not a
+// timeout.
+func TestLoad_Check_NonPositiveTimeout(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/zerotimeout/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    timeout: 0s
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadTimeout), "a zero timeout is refused: %v", iv.Reason)
+}
+
+// allowed_tools on a SCRIPT-only check is a load error, mirroring the stray
+// prepare/model rule — the field grants tools to a judge's agent, and a script
+// has no agent to grant them to.
+func TestLoad_Check_StrayAllowedToolsOnScript(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/straytools/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    allowed_tools: [Read]
+`,
+	})
+	assert.True(t, hasKind(iv, ErrStrayAllowedTools), "allowed_tools on a script-only check is refused: %v", iv.Reason)
+}
+
+// A judge carrying allowed_tools is the sanctioned shape and loads, with the list
+// preserved on the parsed Check.
+func TestLoad_Check_JudgeWithAllowedTools(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/judgetools/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    allowed_tools: [Read, WebFetch]
+`,
+	})
+	require.Len(t, loaded.FileGuards, 1)
+	c := loaded.FileGuards[0].Checks[0]
+	assert.True(t, c.isJudge())
+	assert.Equal(t, []string{"Read", "WebFetch"}, c.AllowedTools)
+}
+
+// An allowed_tools list carrying an empty entry is refused at load — a blank tool
+// name grants nothing, mirroring the empty-modelset-entry refusal.
+func TestLoad_Check_BadAllowedTools(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/badtools/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    allowed_tools: ["Read", ""]
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadAllowedTools), "an allowed_tools list with an empty entry is refused: %v", iv.Reason)
+}
+
+// ---------------------------------------------------------------------------
+// Gate: valid + at-least-one + on-kinds
+// ---------------------------------------------------------------------------
+
+func TestLoad_Gate_PureRequire(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"gate/skillgate/gate.yaml": `
+on:
+  - event: PreFileWrite
+    match: event.path startsWith "memories/topics/"
+require:
+  - skill: document-topic
+`,
+	})
+	require.Len(t, loaded.Gates, 1)
+	assert.Len(t, loaded.Gates[0].Require, 1)
+	assert.Equal(t, "document-topic", loaded.Gates[0].Require[0].Skill)
+}
+
+func TestLoad_Gate_PureChecks(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"gate/proofgate/gate.yaml": `
+on:
+  - event: Stop
+checks:
+  - script: ./verify.sh
+`,
+	})
+	require.Len(t, loaded.Gates, 1)
+	assert.Len(t, loaded.Gates[0].Checks, 1)
+}
+
+// A gate with neither require nor checks would wake and do nothing — refused.
+func TestLoad_Gate_NeitherRequireNorChecks(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/empty/gate.yaml": `
+on:
+  - event: Stop
+`,
+	})
+	assert.True(t, hasKind(iv, ErrAtLeastOne), "a gate with neither require nor checks is refused: %v", iv.Reason)
+}
+
+// A gate may not wake on a Post file event — the action already landed.
+func TestLoad_Gate_PostEventRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/late/gate.yaml": `
+on:
+  - event: PostFileCreate
+checks:
+  - script: ./s.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrUnknownEventKind), "a gate on a Post event is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "PostFileCreate")
+}
+
+// The PostFileWrite alias is a context's alone — a gate naming it is refused.
+func TestLoad_Gate_PostFileWriteAliasRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/late/gate.yaml": `
+on:
+  - event: PostFileWrite
+checks:
+  - script: ./s.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrUnknownEventKind), "a gate on PostFileWrite is refused: %v", iv.Reason)
+}
+
+// A gate naming a kind no nature has is refused with a diagnostic listing what a
+// gate admits.
+func TestLoad_Gate_UnknownKindRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/typo/gate.yaml": `
+on:
+  - event: PreFileWirte
+checks:
+  - script: ./s.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrUnknownEventKind), "a gate on a typo'd kind is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "PreFileCreate", "the diagnostic lists the kinds a gate admits")
+}
+
+// A gate trigger's match reads the event under `event`; a bare `path` is refused.
+func TestLoad_Gate_BareEventFieldRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/bare/gate.yaml": `
+on:
+  - event: PreFileCreate
+    match: path startsWith "x"
+checks:
+  - script: ./s.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadMatch), "a gate match reading a bare event field is refused: %v", iv.Reason)
+}
+
+// A gate trigger's match reading a misspelled event field is refused at load.
+func TestLoad_Gate_MisspelledEventFieldRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/typo/gate.yaml": `
+on:
+  - event: PreFileCreate
+    match: event.paht startsWith "x"
+checks:
+  - script: ./s.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadMatch), "a gate match reading event.paht is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "paht")
+}
+
+// A gate on Stop is legal (the one non-file/command event a gate carries).
+func TestLoad_Gate_StopIsValid(t *testing.T) {
+	loadOK(t, map[string]string{
+		"gate/stopgate/gate.yaml": `
+on:
+  - event: Stop
+checks:
+  - script: ./s.sh
+`,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Gate: PreFileWrite alias expansion
+// ---------------------------------------------------------------------------
+
+// The PreFileWrite alias must load on a gate, and its match must be checked
+// against BOTH kinds it expands to — a match valid for create and update passes.
+func TestLoad_Gate_PreFileWriteAliasExpands(t *testing.T) {
+	loadOK(t, map[string]string{
+		"gate/write/gate.yaml": `
+on:
+  - event: PreFileWrite
+    match: event.path startsWith "memories/"
+require:
+  - skill: document-topic
+`,
+	})
+}
+
+// The alias expands to create + update, so a match reading a field only ONE of
+// them declares is refused — this is what makes the expansion honest. PreFileCreate
+// has newContent (required); PreFileUpdate has it optional but still declared, and
+// oldContent which PreFileCreate lacks — so a match on event.oldContent is valid
+// for update and NOT for create, and must be refused because the alias covers
+// create too.
+func TestLoad_Gate_PreFileWriteAliasRejectsFieldOnlyOneKindHas(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/write/gate.yaml": `
+on:
+  - event: PreFileWrite
+    match: event.oldContent startsWith "x"
+require:
+  - skill: document-topic
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadMatch),
+		"a PreFileWrite match reading a field only PreFileUpdate has (oldContent) is refused, because the alias also covers PreFileCreate: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "PreFileCreate", "the refusal names the kind whose scope rejected it")
+}
+
+// ---------------------------------------------------------------------------
+// Context: valid + on-kinds + enter/exit + PostFileWrite alias
+// ---------------------------------------------------------------------------
+
+func TestLoad_Context_Valid(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"context/refactoring/context.yaml": `
+on:
+  - event: PreToolUse
+enter: ./enter.sh
+exit: ./exit.sh
+`,
+	})
+	require.Len(t, loaded.Contexts, 1)
+	assert.Equal(t, "refactoring", loaded.Contexts[0].Name)
+	assert.Equal(t, "./enter.sh", loaded.Contexts[0].Enter)
+	assert.Equal(t, "./exit.sh", loaded.Contexts[0].Exit)
+}
+
+// A context may wake on a Post file event — the whole reason its vocabulary is
+// wider than a gate's.
+func TestLoad_Context_PostEventValid(t *testing.T) {
+	loadOK(t, map[string]string{
+		"context/people/context.yaml": `
+on:
+  - event: PostFileCreate
+    match: event.path startsWith "people/"
+enter: ./enter.sh
+exit: ./exit.sh
+`,
+	})
+}
+
+// A context may wake on PostTagWrite, reading event.tags.
+func TestLoad_Context_PostTagWriteValid(t *testing.T) {
+	loadOK(t, map[string]string{
+		"context/research/context.yaml": `
+on:
+  - event: PostTagWrite
+    match: any(event.tags, .label == "research")
+enter: ./enter.sh
+exit: ./exit.sh
+`,
+	})
+}
+
+// Stop is intentionally never a context ENTRY event — a Stop is where exit runs.
+func TestLoad_Context_StopRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"context/bad/context.yaml": `
+on:
+  - event: Stop
+enter: ./enter.sh
+exit: ./exit.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrUnknownEventKind), "a context on Stop is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "Stop")
+}
+
+func TestLoad_Context_MissingEnter(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"context/noenter/context.yaml": `
+on:
+  - event: PreToolUse
+exit: ./exit.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrMissingField), "a context with no enter is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "enter")
+}
+
+func TestLoad_Context_MissingExit(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"context/noexit/context.yaml": `
+on:
+  - event: PreToolUse
+enter: ./enter.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrMissingField), "a context with no exit is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "exit")
+}
+
+func TestLoad_Context_NoTriggers(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"context/notrig/context.yaml": `
+enter: ./enter.sh
+exit: ./exit.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrMissingField), "a context with no on triggers is refused: %v", iv.Reason)
+}
+
+// PostFileWrite is a context alias, expanded to PostFileCreate + PostFileUpdate.
+func TestLoad_Context_PostFileWriteAliasExpands(t *testing.T) {
+	loadOK(t, map[string]string{
+		"context/goaltrack/context.yaml": `
+on:
+  - event: PostFileWrite
+    match: event.path startsWith "goal/" and event.path endsWith "goal.yaml"
+enter: ./enter.sh
+exit: ./exit.sh
+`,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Prerequisite: exactly-one-of, context resolution
+// ---------------------------------------------------------------------------
+
+func TestLoad_Prerequisite_BothSkillAndContext(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/both/gate.yaml": `
+on:
+  - event: Stop
+require:
+  - skill: document-topic
+    context: some-context
+checks:
+  - script: ./s.sh
+`,
+		"context/some-context/context.yaml": validContextYAML,
+	})
+	assert.True(t, hasKind(iv, ErrExactlyOne), "a prerequisite setting both skill and context is refused: %v", iv.Reason)
+}
+
+func TestLoad_Prerequisite_Empty(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/empty/gate.yaml": `
+on:
+  - event: Stop
+require:
+  - {}
+checks:
+  - script: ./s.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrExactlyOne), "an empty prerequisite is refused: %v", iv.Reason)
+}
+
+// A skill prerequisite naming an unknown skill is NOT a load error — skills are a
+// runtime fact the loader has no list of.
+func TestLoad_Prerequisite_UnknownSkillIsFine(t *testing.T) {
+	loadOK(t, map[string]string{
+		"gate/skillgate/gate.yaml": `
+on:
+  - event: PreToolUse
+require:
+  - skill: some-skill-that-may-not-exist-yet
+`,
+	})
+}
+
+// A context prerequisite naming a context that resolves loads.
+func TestLoad_Prerequisite_KnownContextResolves(t *testing.T) {
+	loadOK(t, map[string]string{
+		"gate/verify/gate.yaml": `
+on:
+  - event: Stop
+require:
+  - context: goal-tracking
+checks:
+  - script: ./s.sh
+`,
+		"context/goal-tracking/context.yaml": validContextYAML,
+	})
+}
+
+// A context prerequisite naming a context nothing declares IS a configuration
+// error caught at load — the engine cannot order against a context that does not
+// exist.
+func TestLoad_Prerequisite_UnknownContextRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/verify/gate.yaml": `
+on:
+  - event: Stop
+require:
+  - context: no-such-context
+checks:
+  - script: ./s.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrUnknownContext), "a prerequisite naming an unknown context is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "no-such-context")
+}
+
+// A context whose OWN yaml failed to parse contributes no name, so a prerequisite
+// naming it is (correctly) reported unknown — the engine cannot order against a
+// context it could not read.
+func TestLoad_Prerequisite_UnreadableContextIsUnknown(t *testing.T) {
+	root := writeDecl(t, map[string]string{
+		"gate/verify/gate.yaml": `
+on:
+  - event: Stop
+require:
+  - context: broken
+checks:
+  - script: ./s.sh
+`,
+		"context/broken/context.yaml": "this: is: not: valid: yaml: {",
+	})
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	// Two invalids: the broken context (malformed) and the gate (unknown context).
+	require.Len(t, loaded.Invalid, 2)
+	var gateIv, ctxIv *Invalid
+	for i := range loaded.Invalid {
+		switch loaded.Invalid[i].Nature {
+		case NatureGate:
+			gateIv = &loaded.Invalid[i]
+		case NatureContext:
+			ctxIv = &loaded.Invalid[i]
+		}
+	}
+	require.NotNil(t, ctxIv)
+	require.NotNil(t, gateIv)
+	assert.True(t, hasKind(*ctxIv, ErrMalformed), "the broken context is malformed")
+	assert.True(t, hasKind(*gateIv, ErrUnknownContext), "the gate requiring it reports unknown context")
+}
+
+// ---------------------------------------------------------------------------
+// Structure gate
+// ---------------------------------------------------------------------------
+
+func TestLoad_Structure_Valid(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/structure.yaml": `
+allow:
+  - glob: "memories/updates/*.md"
+  - regex: "^memories/decisions/[0-9]{8}_[a-z0-9-]+/.*\\.md$"
+deny:
+  - glob: "memories/updates/secret.md"
+`,
+	})
+	require.NotNil(t, loaded.Structure)
+	assert.Len(t, loaded.Structure.Allow, 2)
+	assert.Len(t, loaded.Structure.Deny, 1)
+	assert.True(t, loaded.Structure.Allow[0].isGlob())
+	assert.True(t, loaded.Structure.Allow[1].isRegex())
+}
+
+func TestLoad_Structure_EntryBothGlobAndRegex(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/structure.yaml": `
+allow:
+  - glob: "x/*.md"
+    regex: "^x/.*$"
+`,
+	})
+	assert.Equal(t, NatureStructure, iv.Nature)
+	assert.True(t, hasKind(iv, ErrExactlyOne), "a structure entry setting both glob and regex is refused: %v", iv.Reason)
+}
+
+func TestLoad_Structure_EntryNeither(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/structure.yaml": `
+allow:
+  - {}
+`,
+	})
+	assert.True(t, hasKind(iv, ErrExactlyOne), "an empty structure entry is refused: %v", iv.Reason)
+}
+
+func TestLoad_Structure_EmptyAllowRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/structure.yaml": `
+deny:
+  - glob: "x/*.md"
+`,
+	})
+	assert.True(t, hasKind(iv, ErrMissingField), "a structure gate with an empty allowlist is refused: %v", iv.Reason)
+}
+
+func TestLoad_Structure_MalformedRegexRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/structure.yaml": `
+allow:
+  - regex: "^[unterminated"
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadMatch), "a structure entry with a malformed regex is refused: %v", iv.Reason)
+}
+
+// The structure singleton sits BESIDE the per-guard folders under file-guard/, and
+// is not mistaken for a file-guard folder.
+func TestLoad_Structure_CoexistsWithFileGuards(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/structure.yaml": `
+allow:
+  - glob: "memories/*.md"
+`,
+		"file-guard/pinned/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+`,
+	})
+	require.NotNil(t, loaded.Structure)
+	require.Len(t, loaded.FileGuards, 1)
+	assert.Equal(t, "pinned", loaded.FileGuards[0].Name)
+}
+
+// ---------------------------------------------------------------------------
+// Malformed / parse failures
+// ---------------------------------------------------------------------------
+
+func TestLoad_Malformed_UnparseableYAML(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/bad/gate.yaml": "on: [ this is not valid",
+	})
+	assert.True(t, hasKind(iv, ErrMalformed), "unparseable YAML is refused: %v", iv.Reason)
+}
+
+// A nature folder with no yaml inside is a half-written declaration — refused by
+// name rather than silently skipped, so the author sees the folder they meant to
+// fill.
+func TestLoad_Malformed_FolderWithoutYAML(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "gate", "empty-folder"), 0o755))
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, loaded.Invalid, 1)
+	assert.True(t, hasKind(loaded.Invalid[0], ErrMalformed), "a gate folder with no gate.yaml is refused: %v", loaded.Invalid[0].Reason)
+}
+
+// ---------------------------------------------------------------------------
+// One bad declaration does not disarm the others
+// ---------------------------------------------------------------------------
+
+func TestLoad_OneBadDoesNotDisarmOthers(t *testing.T) {
+	root := writeDecl(t, map[string]string{
+		"gate/good/gate.yaml": `
+on:
+  - event: Stop
+checks:
+  - script: ./s.sh
+`,
+		"gate/bad/gate.yaml": `
+on:
+  - event: PostFileCreate
+checks:
+  - script: ./s.sh
+`,
+	})
+	loaded, err := New(root).Load(testRegistry(t))
+	require.NoError(t, err)
+	require.Len(t, loaded.Gates, 1, "the good gate loaded")
+	assert.Equal(t, "good", loaded.Gates[0].Name)
+	require.Len(t, loaded.Invalid, 1, "the bad gate is invalid")
+	assert.Equal(t, "bad", loaded.Invalid[0].Name)
+}
+
+// Every fault is reported, not just the first — an author fixing a declaration
+// sees all of it at once.
+func TestLoad_ReportsEveryFault(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/many/gate.yaml": `
+on:
+  - event: PostFileCreate
+  - event: AlsoBad
+checks:
+  - script: ./s.sh
+    judge: ./j.md.j2
+`,
+	})
+	// Two bad on-kinds + one both-set check = three problems.
+	assert.GreaterOrEqual(t, len(iv.Problems), 3, "every fault is reported: %v", iv.Reasons)
+}
+
+// ---------------------------------------------------------------------------
+// nil registry: parses, skips match checks
+// ---------------------------------------------------------------------------
+
+// Without a registry the loader still parses and validates structure — but a
+// trigger's match cannot be compiled (no kind fields), so a match that WOULD be
+// refused with a registry loads without one. This mirrors guardrail.Load vs
+// LoadWith.
+func TestLoad_NilRegistry_SkipsMatchCheck(t *testing.T) {
+	root := writeDecl(t, map[string]string{
+		"gate/g/gate.yaml": `
+on:
+  - event: PreFileCreate
+    match: event.paht startsWith "x"
+checks:
+  - script: ./s.sh
+`,
+	})
+	loaded, err := New(root).Load(nil)
+	require.NoError(t, err)
+	// The match typo is not caught (no registry), but the on-kind check still runs
+	// (it needs no registry), so this gate loads clean.
+	require.Empty(t, loaded.Invalid, "a bad match is not caught without a registry: %v", invalidReasons(loaded))
+	require.Len(t, loaded.Gates, 1)
+}
+
+// But the on-kind check does NOT need a registry — a Post event on a gate is
+// refused even with a nil registry.
+func TestLoad_NilRegistry_StillChecksOnKinds(t *testing.T) {
+	root := writeDecl(t, map[string]string{
+		"gate/late/gate.yaml": `
+on:
+  - event: PostFileCreate
+checks:
+  - script: ./s.sh
+`,
+	})
+	loaded, err := New(root).Load(nil)
+	require.NoError(t, err)
+	require.Len(t, loaded.Invalid, 1)
+	assert.True(t, hasKind(loaded.Invalid[0], ErrUnknownEventKind))
+}
+
+// validContextYAML is a minimal valid context, reused where a test needs a
+// context to exist so a prerequisite resolves.
+const validContextYAML = `
+on:
+  - event: PreToolUse
+enter: ./enter.sh
+exit: ./exit.sh
+`

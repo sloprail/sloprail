@@ -51,7 +51,7 @@ import (
 // second set of answers to when the baseline moves, when the mark advances and
 // what a refusal does to both, and the two would drift into a sub-agent being
 // guarded by almost the same rules as a root. Everything that function needs is
-// already keyed by the payload — openEngineState by p.Cwd, and runPostDispatch
+// already keyed by the payload — openEngineState by p.Cwd, and the Stop dispatch
 // by p.record() and stableID(p), both of which resolve the SUB-AGENT's own
 // record here — so passing the sub-agent's payload is the whole of what makes
 // it the sub-agent's cycle.

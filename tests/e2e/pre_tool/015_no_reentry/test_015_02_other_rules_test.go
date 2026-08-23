@@ -2,28 +2,21 @@ package e2e
 
 import "testing"
 
-// A SECOND, ordinary guardrail that did not launch anything.
+// A SECOND, ordinary file-guard that did not launch anything.
 //
 // It refuses writes under secrets/, which is the kind of rule a project has
 // regardless of whether anything judges anything. Nothing about it knows an
-// agent was launched.
-const refuseSecrets = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "secrets/"
-      hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# Nothing writes under secrets/
-
-The rule a launched agent must STILL be held to.
+// agent was launched. It is preventive so it acts at pre-tool, the same moment
+// the launched agent's write is about to land — which is where it must still bite.
+const refuseSecrets = `match: path startsWith "secrets/"
+preventive: true
+checks:
+  - script: ./refuse.sh
 `
 
 const refuseSecretsScript = `#!/bin/sh
 cat >/dev/null
-echo '{"decision":"block","reason":"secrets/ is off limits"}'
+echo '{"reason":"secrets/ is off limits"}'
 exit 1
 `
 
@@ -42,9 +35,9 @@ exit 0
 //
 // This is the half that rules out the scope answer — "the engine declines to
 // enforce inside a session it started". That would pass T015_01 and fail here,
-// which is exactly why the guard is keyed to the guardrail's NAME rather than
-// to the session. A judging agent that legitimately edits files is still an
-// agent editing this project's files.
+// which is exactly why the guard is keyed to the rule's NAME rather than to the
+// session. A judging agent that legitimately edits files is still an agent
+// editing this project's files.
 //
 // The launched agent tries to write under secrets/. The rule that launched it
 // (judge-notes) is correctly not enforced; the unrelated rule (no-secrets) must
@@ -52,8 +45,8 @@ exit 0
 func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
-	e.Guardrail(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
+	e.FileGuard(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
+	e.FileGuard(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	// The launched agent reaches for a path the OTHER rule guards.
 	e.InnerScenario(proj, Turns("judged", Write("i1", "secrets/leak.md", "oops")))
@@ -61,11 +54,11 @@ func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 	got := e.Run(proj, "s-015-02", "write a note", Turns("done",
 		Write("w1", "notes/first.md", "hello"),
 	))
-	t.Logf("judge ledger: %v", e.Ledger(proj, "judge-notes", "ledger.txt"))
+	t.Logf("judge ledger: %v", fileGuardLedgerLines(t, proj, "judge-notes", "ledger.txt"))
 
 	// The launching rule ran, so an agent really was launched — without this the
-	// test could pass by the hook never firing at all.
-	if len(e.Ledger(proj, "judge-notes", "ledger.txt")) == 0 {
+	// test could pass by the check never firing at all.
+	if len(fileGuardLedgerLines(t, proj, "judge-notes", "ledger.txt")) == 0 {
 		t.Fatalf("the launching guardrail never ran, so nothing was launched:\n%s", got.Output)
 	}
 
@@ -88,8 +81,8 @@ func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 func TestT015_03_LaunchedAgentCanStillDoItsWork(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
-	e.Guardrail(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
+	e.FileGuard(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
+	e.FileGuard(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	// A path judge-notes guards (notes/) and no-secrets does not.
 	e.InnerScenario(proj, Turns("judged", Write("i1", "notes/judged.md", "ok")))

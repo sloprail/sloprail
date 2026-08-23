@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,9 +127,25 @@ func TestBuildInvocation_PromptIsLastAndPositional(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "does this uphold the invariant?")
 
 	assert.Equal(t, "claude", inv.Binary)
-	assert.Equal(t, []string{"-p", "--model", "sonnet", "--", "does this uphold the invariant?"}, inv.Args)
+	assert.Equal(t, []string{
+		"-p", "--model", "sonnet",
+		"--settings", claudeIsolationSettings,
+		"--", "does this uphold the invariant?",
+	}, inv.Args)
 	assert.Equal(t, "does this uphold the invariant?", inv.Args[len(inv.Args)-1])
 }
+
+// claudeIsolationSettings is the isolation --settings sr-agent always gives Claude
+// Code (harnessSpec.baseArgs) — empty hooks/mcpServers/enabledPlugins so a launched
+// judge carries none of the caller's session wiring and cannot recurse. Named here
+// so the invocation tests assert against the same string the spec ships rather than
+// re-spelling the JSON, and a change to the spec's settings updates one place.
+const claudeIsolationSettings = `{"hooks":{},"mcpServers":{},"enabledPlugins":{}}`
+
+// claudeSettingsArg is how the isolation settings render in Invocation.String() /
+// --dry-run output: the JSON contains quotes, so String() runs it through
+// strconv.Quote. A dry-run string assertion inserts this after `--settings`.
+var claudeSettingsArg = "--settings " + strconv.Quote(claudeIsolationSettings)
 
 // The falsifier for the ordering claim: a prompt that looks exactly like a flag
 // must still be the final argument, after everything else.
@@ -138,6 +155,7 @@ func TestBuildInvocation_DashLeadingPromptStaysLast(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"-p", "--model", "sonnet",
+		"--settings", claudeIsolationSettings,
 		"--permission-mode", "plan",
 		"--", "--model is not resolving, why?",
 	}, inv.Args)
@@ -158,6 +176,7 @@ func TestBuildInvocation_HarnessArgsPassThrough(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"-p", "--model", "opus",
+		"--settings", claudeIsolationSettings,
 		"--permission-mode", "plan", "--max-budget-usd", "5",
 		"--", "q",
 	}, inv.Args)
@@ -191,6 +210,7 @@ func TestBuildInvocation_VariadicFlagCannotSwallowThePrompt(t *testing.T) {
 
 	require.Equal(t, []string{
 		"-p", "--model", "haiku",
+		"--settings", claudeIsolationSettings,
 		"--add-dir", "/tmp/out",
 		"--", "count the lines",
 	}, inv.Args)
@@ -211,12 +231,51 @@ func indexOf(args []string, want string) int {
 	return -1
 }
 
+// The const the invocation assertions use must be the SAME settings the spec
+// actually ships, or the tests would pass against a drifted baseArgs. This pins
+// them together, so a change to claudeCodeSpec.baseArgs that forgot to update the
+// const (or vice-versa) fails here rather than letting the two disagree.
+func TestBaseArgs_IsolationSettingsMatchTheConst(t *testing.T) {
+	assert.Equal(t, []string{"--settings", claudeIsolationSettings}, claudeCodeSpec.baseArgs)
+}
+
+// The isolation --settings is ALWAYS present, whatever else the caller passed —
+// it is the whole point of moving it into baseArgs. Even a bare run with no caller
+// args carries it.
+func TestBuildInvocation_IsolationSettingsAlwaysPresent(t *testing.T) {
+	inv := BuildInvocation(claudeCodeSpec, "haiku", nil, "q")
+	i := indexOf(inv.Args, "--settings")
+	require.NotEqual(t, -1, i, "the isolation --settings must always be present")
+	require.Less(t, i+1, len(inv.Args))
+	assert.Equal(t, claudeIsolationSettings, inv.Args[i+1])
+}
+
+// ParseAllowedTools honours both separators claude documents and drops empties, so
+// a stray comma grants nothing rather than a blank tool name.
+func TestParseAllowedTools_SeparatorsAndEmpties(t *testing.T) {
+	cases := map[string][]string{
+		"Read WebFetch":      {"Read", "WebFetch"},
+		"Read,WebFetch":      {"Read", "WebFetch"},
+		"Read, WebFetch":     {"Read", "WebFetch"},
+		" Read ,, WebFetch ": {"Read", "WebFetch"},
+		"Read":               {"Read"},
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, ParseAllowedTools(in), "input %q", in)
+	}
+	assert.Nil(t, ParseAllowedTools(""), "empty grants nothing")
+	assert.Nil(t, ParseAllowedTools("   , ,  "), "only separators grants nothing")
+}
+
 func TestInvocation_StringQuotesArgumentsWithSpaces(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "does this hold?")
-	assert.Equal(t, `claude -p --model sonnet -- "does this hold?"`, inv.String())
+	// The isolation --settings JSON contains quotes, so String() runs it through
+	// strconv.Quote (claudeSettingsArg carries that quoted form); the prompt is the
+	// argument with spaces and is quoted too.
+	assert.Equal(t, `claude -p --model sonnet `+claudeSettingsArg+` -- "does this hold?"`, inv.String())
 }
 
 func TestInvocation_StringLeavesPlainArgumentsUnquoted(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "why")
-	assert.Equal(t, "claude -p --model sonnet -- why", inv.String())
+	assert.Equal(t, "claude -p --model sonnet "+claudeSettingsArg+" -- why", inv.String())
 }

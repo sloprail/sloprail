@@ -18,28 +18,23 @@ import (
 // The correct comparison is against the session's recorded point, which does not
 // move when the agent commits — established on impl/baseline-mark's T005_03.
 
-const bindPostFileEvents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records every after-the-fact file event it is handed
+// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
+// file event it is handed and permits unconditionally. `match: "**/*.md"` selects
+// every markdown file at any depth — the faithful stand-in for the old binding to
+// all three after-the-fact kinds, which a single file-guard now covers because it
+// fires on whichever Post kind the change produced. The ledger (`seen`, no `.md`)
+// is not matched, so the guard cannot re-observe its own bookkeeping. Re-vehicled
+// from the old GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md so this
+// coverage of the shared difference machinery survives the old dispatch's
+// deletion, observed through the new flat CheckPayload.
+const recordEverything = `match: "**/*.md"
+checks:
+  - script: ./record.sh
 `
 
 const recordScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
+cat >> "$SR_GUARDRAIL_DIR/seen"
+echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
@@ -48,21 +43,23 @@ type observed struct {
 	Path string
 }
 
+// observedFiles decodes what a file-guard's check was handed — the FLAT event,
+// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
+// the old nested `event.fields` envelope.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -86,7 +83,7 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-016-01", "write and commit", Turns("done",
 		Write("w1", "committed-work.md", "written then committed\n"),
@@ -110,7 +107,7 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 		t.Fatalf("the agent's file was never committed, so this does not test the committed case")
 	}
 
-	got := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if !sawPath(got, "committed-work.md") {
 		t.Fatalf("work the agent committed mid-cycle was not reported: %v — the tree is clean, "+
 			"so a difference that only looked at outstanding work found nothing and called the "+
@@ -132,7 +129,7 @@ func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-016-02", "commit one, leave one", Turns("done",
 		Write("w1", "committed.md", "this one is committed\n"),
@@ -151,7 +148,7 @@ func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
 			"of this test is not set up")
 	}
 
-	got := observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if !sawPath(got, "committed.md") {
 		t.Fatalf("the committed half of the cycle's work is missing: %v — an engine looking only "+
 			"at outstanding work reports this cycle as smaller than it was", got)

@@ -46,28 +46,35 @@ import (
 // over on an odd tree reports nothing at all, and "the strange path was not
 // reported" is satisfied perfectly by that.
 
-const bindPostFileEvents = `---
-hooks:
-  PostFileCreate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileUpdate:
-    - hooks:
-        - type: command
-          command: ./record.sh
-  PostFileDelete:
-    - hooks:
-        - type: command
-          command: ./record.sh
----
-
-# Records every after-the-fact file event it is handed
+// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
+// file event it is handed (re-vehicled from the old GUARDRAIL.md hooks per
+// tests/e2e/REVEHICLE-PATTERN.md).
+//
+// `match: path != ""` — an expression that admits every real path, the file-guard
+// "match everything" this directory needs: it drives non-`.md` paths a `**/*.md`
+// match would silence (`script.sh` in T026_01, `vendor/clone/…` in T026_05) and
+// asserts what does or does not reach the rule for them. It is an expression rather
+// than the `**` glob because `**` compiles to the regexp `.*`, whose `.` does not
+// match a newline — the same blind spot 023 documents — and an empty match is
+// rejected at load. A single file-guard fires on whichever Post kind each change
+// produced, so the create/update/delete classification the kind assertions read
+// comes through the new dispatch unchanged.
+//
+// Because the match is this wide it WOULD also select the guard's own ledger
+// (`.sloprail/file-guard/watcher/seen`), so the `.sloprail/*` skip in the check is
+// LOAD-BEARING — it stops the guard re-observing its own bookkeeping.
+const recordEverything = `match: path != ""
+checks:
+  - script: ./record.sh
 `
 
 const recordScript = `#!/bin/sh
-cat >> "$PWD/seen"
-echo >> "$PWD/seen"
+payload="$(cat)"
+path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+case "$path" in
+  .sloprail/*) exit 0 ;;
+esac
+printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
@@ -76,21 +83,23 @@ type observed struct {
 	Path string
 }
 
+// observedFiles decodes what a file-guard's check was handed — the FLAT event,
+// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
+// the old nested `event.fields` envelope.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
 			Event struct {
-				Kind   string         `json:"kind"`
-				Fields map[string]any `json:"fields"`
+				Kind string `json:"kind"`
+				Path string `json:"path"`
 			} `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("hook was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
 		}
-		path, _ := p.Event.Fields["path"].(string)
-		got = append(got, observed{Kind: p.Event.Kind, Path: path})
+		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
 	}
 	return got
 }
@@ -117,7 +126,7 @@ func project(t *testing.T) (*harness.Env, string) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": recordScript})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 	return e, proj
@@ -127,7 +136,7 @@ func project(t *testing.T) (*harness.Env, string) {
 func runOne(t *testing.T, e *harness.Env, proj, sess string, s harness.Scenario) []observed {
 	t.Helper()
 	e.Run(proj, sess, "cycle", s)
-	return observedFiles(t, e.Ledger(proj, "watcher", "seen"))
+	return observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 }
 
 // cycles drives a sequence of cycles under one session id and returns, for each,
@@ -144,7 +153,7 @@ func cycles(t *testing.T, e *harness.Env, proj, sess string, scenarios ...harnes
 	seen := 0
 	for i, s := range scenarios {
 		e.Run(proj, sess, "cycle", s)
-		lines := e.Ledger(proj, "watcher", "seen")
+		lines := e.FileGuardLedgerLines(proj, "watcher", "seen")
 		if len(lines) < seen {
 			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
 		}
@@ -340,21 +349,26 @@ func TestT026_04_CreatedThenModifiedInOneCycleIsOneCreateOfTheFinalBytes(t *test
 	e.GitInit(proj)
 
 	// Reads the file the event names and records the verdict word it found. The
-	// project root is derived from guardrailDir, the one field in the payload
-	// that names an absolute location — a hook has no cwd for the project and the
-	// mock sets no CLAUDE_PROJECT_DIR.
+	// project root is derived from $SR_GUARDRAIL_DIR — the new-format CheckPayload
+	// has no `guardrailDir` field the old payload carried, and SR_GUARDRAIL_DIR is
+	// its replacement (`.sloprail/file-guard/watcher`, so trimming
+	// `/.sloprail/file-guard/*` yields the project root). The `.sloprail/*` skip is
+	// load-bearing under the wide `path != ""` match, keeping the guard off its own
+	// ledgers.
 	const readsContent = `#!/bin/sh
 payload="$(cat)"
-printf '%s\n' "$payload" >> "$PWD/seen"
 path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
-gdir="$(printf '%s' "$payload" | sed -n 's/.*"guardrailDir":"\([^"]*\)".*/\1/p')"
-root="${gdir%/.sloprail/guardrails/*}"
+case "$path" in
+  .sloprail/*) exit 0 ;;
+esac
+printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
+root="${SR_GUARDRAIL_DIR%/.sloprail/file-guard/*}"
 if [ -n "$path" ] && [ -f "$root/$path" ]; then
-  printf '%s=%s\n' "$path" "$(cat "$root/$path")" >> "$PWD/content"
+  printf '%s=%s\n' "$path" "$(cat "$root/$path")" >> "$SR_GUARDRAIL_DIR/content"
 fi
 exit 0
 `
-	e.Guardrail(proj, "watcher", bindPostFileEvents, map[string]string{"record.sh": readsContent})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": readsContent})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 
@@ -384,7 +398,7 @@ exit 0
 	// word therefore matches the scenario file and fails against a correct
 	// engine, which is what this assertion did before it was scoped.
 	var line string
-	for _, l := range e.Ledger(proj, "watcher", "content") {
+	for _, l := range e.FileGuardLedgerLines(proj, "watcher", "content") {
 		if strings.HasPrefix(l, "drafted.md=") {
 			line = strings.TrimPrefix(l, "drafted.md=")
 		}
@@ -392,7 +406,7 @@ exit 0
 	if line == "" {
 		t.Fatalf("the rule never read the file it was told about, so which bytes it would have "+
 			"been judging cannot be observed and the assertion below would be vacuous: %v",
-			e.Ledger(proj, "watcher", "content"))
+			e.FileGuardLedgerLines(proj, "watcher", "content"))
 	}
 	if line != "FINALVERSION" {
 		t.Fatalf("the rule was shown %q, want %q — only what the tree holds when the "+

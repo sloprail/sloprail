@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,9 +12,9 @@ import (
 // discarded.
 //
 // A refusal that is forgotten stops being enforced. Keeping it is what makes
-// the violation resurface every cycle until the content changes or the hook
+// the violation resurface every cycle until the content changes or the check
 // permits it — so what is observable from outside is not the row but its
-// consequence: the hook is asked AGAIN about content it already refused, and
+// consequence: the check is asked AGAIN about content it already refused, and
 // refuses again.
 //
 // Note what a dropped refusal would look like. It does not look like a bug in
@@ -23,339 +24,332 @@ import (
 // is believed. That is why every test here spans at least two offers of the
 // same content.
 //
+// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+//
+// This directory tests the SHARED revalidation machinery — revalidation.Record
+// keeping a failing FileCheck, Skippable answering false for it, and
+// readdOutstanding re-adding the still-refused path to the next cycle's
+// difference. The new file-guard's AFTER-check drives that exact machinery
+// (services/sr-session/nature_fileguard.go's runFileGuardsPost calls the same
+// rev.Subject / rev.Skip / rev.Record the old dispatch did), so re-vehicling onto
+// e.FileGuard observes the SAME retention through the NEW dispatch. The exact
+// transformation is in tests/e2e/REVEHICLE-PATTERN.md.
+//
+// The observation channel moves with the vehicle. The old Pre-path dispatch
+// refused a write BEFORE it landed and the refusal travelled back on the tool
+// stream; a file-guard's after-check judges the SETTLED file, so the write lands
+// and its refusal is a Stop block that re-fires next cycle. So:
+//
+//   - "the check was asked" is still the check's own ledger, read with
+//     e.FileGuardLedgerLines — now under `.sloprail/file-guard/<name>/`.
+//   - "the refusal reached the agent" is now e.BlockingErrorsFrom(…, "Stop"), the
+//     format-neutral channel a Stop-blocking refusal travels down.
+//   - retention is observed as re-fire ACROSS cycles rather than re-judgement of
+//     successive offers within one cycle: two writes of one path in a single
+//     cycle collapse to one net Post event, so the same-content offers the old
+//     Pre path counted per-write are driven here as one write plus the re-fires a
+//     still-not-fine file produces on later cycles — the shape 015's
+//     refusal_outlives_baseline and fileguard/034_03 already pin.
+//
 // # What is and is not covered here, and why
 //
-// The RETENTION ITSELF is not observable through THESE fixtures, and saying so
-// is more useful than a test that appears to cover it. Every test in this
-// directory observes the engine through sessionstate.Skippable, which asks "may
-// this be skipped": it answers false for a retained refusal (passed is false)
-// and false for a discarded one (no row at all). The two are indistinguishable
-// from here however many cycles a test spans.
+// The RETENTION ITSELF is not observable through THESE fixtures alone, and saying
+// so is more useful than a test that appears to cover it. Every test in this
+// directory observes the engine through the exemption side — a refusal never
+// licenses a skip, on every subsequent cycle, for as long as the content stays as
+// it is. That half is real, it can fail, and it is what T013_01 exercises.
 //
-// This was measured, not assumed. Making Record drop failing verdicts outright
-// leaves every test in this file green, including a flaky-judge sequence built
-// specifically to make a pass compete with an earlier refusal for one row.
-//
-// Telling them apart needs a different question — "what is still unfixed" —
-// which is sessionstate.OutstandingRefusals, read at the end of a cycle by
-// readdOutstanding. That reader exists now, and the claim it enables is pinned
-// end to end by T015_04 in tests/e2e/session/015_refusal_outlives_baseline: a
-// refused file that has dropped out of the difference is put in front of its
-// rule again. It lives there rather than here because it needs the Post kinds
-// and a branch switch, neither of which this directory's fixtures have; see
-// T014_05 below.
-//
-// What these tests pin is the OBSERVABLE half from the exemption side: a
-// refusal never licenses a skip, on every subsequent offer, for as long as the
-// content stays as it is. That half is real, it can fail, and it is what
-// T013_01 exercises.
+// Telling a retained refusal apart from a discarded one needs the reader that asks
+// "what is still unfixed" — sessionstate.OutstandingRefusals, read at the end of a
+// cycle by readdOutstanding — which is pinned end to end by T015_04 in
+// tests/e2e/session/015_refusal_outlives_baseline (also re-vehicled onto a
+// file-guard). It lives there rather than here because it needs a branch switch
+// this directory's fixtures do not have.
 
-const judgeDecl = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
-  PreFileUpdate:
-    - hooks:
-        - type: command
-          command: ./judge.sh
----
-
-# Refuses content holding a secret, and records every time it is asked.
+// forbidSecretGuard is a non-preventive file-guard: a `.md` file is not fine if
+// its settled content holds SECRET. The after-check fires on the POST file event,
+// re-fires next cycle until the file is fixed, and records every time it is ASKED
+// so a test can count re-fires.
+//
+// `match: "**/*.md"` selects the same files the old path-based hook saw at any
+// depth (the `**/` leading dir is optional), and never matches the guard's own
+// `log` ledger (no `.md` suffix), so no self-observation doubles the ledger.
+const forbidSecretGuard = `match: "**/*.md"
+checks:
+  - script: ./judge.sh
 `
 
-// judgeScript refuses any PENDING content holding SECRET, and records what it
-// saw so a test can tell an invocation that judged the pending bytes from one
-// that judged whatever happened to be on disk.
+// judgeScript records that it was asked, then refuses when the settled file holds
+// SECRET.
 //
-// The pending bytes live under a different field name per kind, and reading the
-// right one is the whole point. PreFileCreate states them as `content`;
-// PreFileUpdate states them as `result` — the POST-edit bytes — alongside
-// `resultKnown`. Falling back to the file on disk would read the bytes the
-// write is about to REPLACE, which is one write behind and judges the wrong
-// content: it passes the offer that should be refused and refuses the next one.
+// It reads the file off DISK: a file-guard's after-check runs on the POST event,
+// by which point the write has landed and the settled bytes are what a refusal
+// must be about. The project root is derived from $SR_GUARDRAIL_DIR — the one
+// absolute location the engine hands a file-guard check
+// (`.sloprail/file-guard/<name>`, so trimming `/.sloprail/file-guard/*` yields the
+// root). A prefix that resolved empty would make every grep miss and refuse
+// nothing, which the refusal ledger below is what makes visible.
+//
+// New-format refusal contract: exit non-zero refuses, and the reason on stdout as
+// `{"reason":"…"}` is what the agent is told (scriptRefusalReason prefers
+// structured stdout). The reason names the PATH so distinct not-fine files produce
+// distinct Stop-block strings — e.BlockingErrorsFrom de-duplicates by text, and a
+// per-path reason is what lets two different files' refusals be told apart. This
+// replaces the old exit-2-with-stderr channel.
+//
+// A defensive `.sloprail/*` skip is kept: under `**/*.md` it is not load-bearing
+// (the ledgers have no `.md` suffix), but it keeps the rule about the agent's
+// files rather than the engine's own bookkeeping.
 const judgeScript = `#!/bin/sh
 payload=$(cat)
 path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
-ws=$(printf '%s' "$payload" | sed -n 's|.*"guardrailDir":"\(.*\)/\.sloprail/guardrails/.*|\1|p')
-echo "asked disk=[$(cat "$ws/$path" 2>/dev/null)]" >> "$PWD/log"
-# A create states its body as content; an update states its outcome as result.
-body=$(printf '%s' "$payload" | grep -o '"content":"[^"]*"' || true)
-if [ -z "$body" ]; then
-  body=$(printf '%s' "$payload" | grep -o '"result":"[^"]*"' || true)
-fi
-case "$body" in
-  *SECRET*) echo "content holds a secret" >&2; exit 2 ;;
+case "$path" in
+  .sloprail/*) exit 0 ;;
 esac
+echo "asked path=[$path]" >> "$SR_GUARDRAIL_DIR/log"
+root="${SR_GUARDRAIL_DIR%/.sloprail/file-guard/*}"
+if [ -n "$path" ] && [ -f "$root/$path" ] && grep -q SECRET "$root/$path"; then
+  printf '{"reason":"content of %s holds a secret"}\n' "$path"
+  exit 1
+fi
 exit 0
 `
 
-// T014_01: a refusal re-fires on every subsequent offer of the same content.
+// asked counts, over the delta of the ledger a cycle added, how many times the
+// check was invoked about a given path.
+func askedAbout(lines []string, path string) int {
+	n := 0
+	for _, l := range lines {
+		if strings.Contains(l, "path=["+path+"]") {
+			n++
+		}
+	}
+	return n
+}
+
+// blocks reads the distinct Stop-blocking refusals recorded for a session. A
+// refusal's reason names its path, so a per-path refusal is one distinct string.
+func refusedPath(t *testing.T, e *harness.Env, proj, sess, path string) bool {
+	t.Helper()
+	for _, b := range e.BlockingErrorsFrom(proj, sess, "Stop") {
+		if strings.Contains(b, "content of "+path+" holds a secret") {
+			return true
+		}
+	}
+	return false
+}
+
+// T014_01: a refusal re-fires on every subsequent cycle until the content
+// changes.
 //
-// The agent offers failing content three times running. Each offer must be
-// refused: the stored verdict is a refusal, so it never satisfies the passing
-// half of the exemption, and the hook is asked every time.
+// The bad file is written once; it lands, is refused, and — because the refusal
+// is retained — is put back in front of the check on every later cycle that does
+// not fix it. Three cycles, and the bad file must be judged in each.
 //
 // Three rather than two on purpose. Two would be satisfied by an engine that
-// retains a refusal for exactly one cycle — which is what a store that
-// overwrote the row with each new verdict, or expired it, would do. The third
-// offer is what distinguishes "retained" from "remembered once".
+// retains a refusal for exactly one cycle — a store that overwrote or expired the
+// row. The third cycle is what distinguishes "retained" from "remembered once".
+//
+// The old Pre-path form offered the same bad content three times in ONE cycle and
+// counted three denies; on the after-check path two writes of one path in a cycle
+// collapse to one net event, so the three offers become three CYCLES, which is the
+// durable shape retention is actually about — the row survives the process
+// boundary between them.
 func TestT014_01_ARefusalRefiresEveryCycleUntilTheContentChanges(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", forbidSecretGuard, map[string]string{"judge.sh": judgeScript})
 
-	got := e.Run(proj, "s-014-01", "offer the same bad content three times", Turns("done",
+	const sess = "s-014-01"
+
+	// Cycle 1: the bad file lands and is refused.
+	seen := 0
+	e.Run(proj, sess, "write bad content", Turns("done",
 		Write("w1", "notes.md", "SECRET=hunter2"),
-		Write("w2", "notes.md", "SECRET=hunter2"),
-		Write("w3", "notes.md", "SECRET=hunter2"),
 	))
-
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 3 {
-		t.Fatalf("the guardrail was asked %d time(s), want 3 — a refusal is retained, so the "+
-			"same failing content must be judged again on every offer. A dropped refusal shows "+
-			"up here as a later offer being skipped, at which point the violation has gone "+
-			"quiet. Ledger: %v", n, lines)
+	first := e.FileGuardLedgerLines(proj, "judge", "log")
+	if askedAbout(first[seen:], "notes.md") == 0 {
+		t.Fatalf("the bad file was never judged in the first cycle: %v — nothing was refused, so "+
+			"there is no surviving refusal to test", first)
 	}
-	if n := strings.Count(got.Output, "content holds a secret"); n != 3 {
-		t.Fatalf("the refusal reached the agent %d time(s), want 3 — being asked is not the "+
-			"same as refusing, and it is the refusal that has to survive:\n%s", n, got.Output)
+	seen = len(first)
+	if !refusedPath(t, e, proj, sess, "notes.md") {
+		t.Fatalf("the bad file was not refused in the first cycle, so this is not a retained refusal")
+	}
+
+	// Cycles 2 and 3: unrelated work that does NOT touch the bad file. A retained
+	// refusal must put it back in front of the check each time.
+	//
+	// A fresh turn id AND a fresh path each cycle: a reused turn id is silently
+	// skipped by the mock (its marker is already in the transcript), which would
+	// read as an empty cycle, and a reused unrelated path could be legitimately
+	// skipped by revalidation once it has passed.
+	for cycle := 2; cycle <= 3; cycle++ {
+		e.Run(proj, sess, "unrelated work", Turns("done",
+			Write(fmt.Sprintf("u%d", cycle), fmt.Sprintf("unrelated%d.md", cycle), "fine"),
+		))
+		lines := e.FileGuardLedgerLines(proj, "judge", "log")
+		if n := askedAbout(lines[seen:], "notes.md"); n == 0 {
+			t.Fatalf("cycle %d did not re-judge the still-not-fine file (delta %v) — a refusal is "+
+				"retained, so the same failing content must be judged again on every cycle. A "+
+				"dropped refusal shows up here as a later cycle skipping it, at which point the "+
+				"violation has gone quiet", cycle, lines[seen:])
+		}
+		seen = len(lines)
 	}
 }
 
 // T014_02: a refusal does not become a pass when the content is fixed and then
 // put back.
 //
-// The sequence the invariant is really about, and the one an engine gets wrong
-// by keying too loosely:
+// The sequence the invariant is really about, and the one an engine gets wrong by
+// keying too loosely:
 //
-//	SECRET=hunter2  -> refused. Nothing lands.
-//	benign          -> judged, passes. This content is now settled.
-//	SECRET=hunter2  -> the ORIGINAL failing content, offered again.
+//	cycle 1  SECRET=hunter2  -> refused, a fail recorded on those bytes.
+//	cycle 2  benign          -> passes. This content is now settled.
+//	cycle 3  SECRET=hunter2  -> the ORIGINAL failing content, offered again.
 //
-// The third offer must be refused. It is the same bytes that were refused the
+// The third cycle must be refused. It is the same bytes that were refused the
 // first time, and a refusal is retained — so it is neither exempt (the stored
-// verdict for those bytes is a refusal) nor covered by the pass in between
-// (that pass belongs to different bytes).
+// verdict for those bytes is a refusal) nor covered by the pass in between (that
+// pass belongs to different bytes).
 //
-// The failure this catches is an engine keying its verdict on the PATH rather
-// than on the content: the benign pass would then be the file's current verdict
-// and the return to the failing content would ride it. That is the same shape
-// as the bypass in 013, arrived at by going backwards instead of forwards.
-//
-// Every offer here is a creation, because a refused write never lands and so
-// the file is never there. See T014_03 for the same claim on the update path,
-// where the pending bytes arrive as `result` rather than `content`.
+// The failure this catches is an engine keying its verdict on the PATH rather than
+// on the content: the benign pass would then be the file's current verdict and the
+// return to the failing content would ride it.
 func TestT014_02_EditingAwayAndBackDoesNotClearTheRefusal(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", forbidSecretGuard, map[string]string{"judge.sh": judgeScript})
 
-	// The benign write in the middle lands, so it is removed before the third
-	// offer — otherwise that offer would be an update, which states its pending
-	// bytes as `result` rather than `content` (T014_03), and this test would be
-	// exercising the update path while claiming to be the create one.
-	got := e.Run(proj, "s-014-02", "bad, good, bad again", Turns("done",
-		Write("w1", "notes.md", "SECRET=hunter2"),
-		Write("w2", "notes.md", "benign"),
-		Bash("b1", "rm -f notes.md"),
-		Write("w3", "notes.md", "SECRET=hunter2"),
-	))
+	const sess = "s-014-02"
 
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 3 {
-		t.Fatalf("the guardrail was asked %d time(s), want 3 — the first offer is refused, the "+
-			"second passes, and the return to the refused content must be judged in its own "+
-			"right. Ledger: %v\n%s", n, lines, got.Output)
+	e.Run(proj, sess, "bad", Turns("done", Write("w1", "notes.md", "SECRET=hunter2")))
+	if !refusedPath(t, e, proj, sess, "notes.md") {
+		t.Fatalf("the first offer was not refused, so there is no refusal to survive the fix")
 	}
 
-	// Two refusals, not one: the first offer and the return to it. A single
-	// refusal means the third offer rode the benign pass — the refusal was not
-	// retained against those bytes, or was keyed on the path and overwritten.
-	if n := strings.Count(got.Output, "content holds a secret"); n != 2 {
-		t.Fatalf("the guardrail refused %d time(s), want 2 — content that was refused, fixed, "+
-			"and then restored must be refused again. One refusal here means the pass earned "+
-			"by the benign content in between was read as the file's verdict, and the "+
-			"violation came back unnoticed.\nLedger: %v\n%s", n, lines, got.Output)
-	}
+	// Fixed. The pass belongs to the benign bytes.
+	e.Run(proj, sess, "good", Turns("done", Write("w2", "notes.md", "benign")))
 
-	// And the benign write really did pass, or the two refusals above could be
-	// the first two offers with the third never judged at all.
-	if !got.Saw("File written successfully") {
-		t.Fatalf("no write ever landed, so the benign offer never passed and the sequence "+
-			"under test did not happen:\n%s", got.Output)
+	// Back to the failing content. It must be refused again — the pass in between
+	// was about other bytes.
+	seen := len(e.FileGuardLedgerLines(proj, "judge", "log"))
+	e.Run(proj, sess, "bad again", Turns("done", Write("w3", "notes.md", "SECRET=hunter2")))
+	after := e.FileGuardLedgerLines(proj, "judge", "log")
+	if n := askedAbout(after[seen:], "notes.md"); n == 0 {
+		t.Fatalf("the return to the refused content was not judged (delta %v) — content refused, "+
+			"fixed, and then restored must be judged in its own right", after[seen:])
+	}
+	if !refusedPath(t, e, proj, sess, "notes.md") {
+		t.Fatalf("content that was refused, fixed, and then restored was not refused again — the " +
+			"pass earned by the benign content in between was read as the FILE's verdict rather " +
+			"than as that content's")
 	}
 }
 
-// T014_03: the same claim as T014_02, on the update path.
+// T014_03: content that has PASSED and not changed is exempt — the check is not
+// re-asked.
 //
-// This used to be skipped, and the reason it gave has expired. PreFileUpdate
-// carried a path and no content, so a hook bound to an update could not see the
-// payload it was being asked to permit and reading the file got the bytes the
-// write would REPLACE — one write behind, refusing and passing at the wrong
-// moments. The kind now carries `result` (the POST-edit bytes) and
-// `resultKnown`, so the pending content is on the event and this asserts.
+// The positive half retention rests on, and the boundary "for as long as the
+// content stays as it is" names: once a file passes, it must fall out of the
+// re-fire until its content changes. Without this, T014_01 and T014_02 would both
+// be satisfied by an engine that re-judges everything forever, which is a
+// different bug that hides this one.
 //
-// The sequence is refuse / fix / restore against a file that EXISTS throughout,
-// so every offer is an update — which is what makes this the update-path twin
-// of T014_02 rather than a second copy of it.
-//
-// THE SKIP HAS BEEN LIFTED, and what it was waiting for has happened: the kind
-// now declares `result` (the bytes the write would LEAVE) and `resultKnown`
-// alongside `path`, so a hook bound to PreFileUpdate can see the pending payload
-// and no longer has to fall back to the bytes on disk. The judge script below
-// reads `result` when `content` is absent, which is exactly the fallback the
-// skip said did not exist.
-//
-// Measured on the un-skipped test: the sequence judges the PENDING bytes at
-// every offer — refused, permitted, refused — rather than the previous write's,
-// which is what the skip said was impossible on this engine.
-//
-// The count is FOUR, not three. The `printf > notes.md` that stages the file is
-// itself a write this guardrail is bound to and is judged like any other; three
-// was the arithmetic of a test that had never run.
-//
-// WHAT THIS TEST DOES AND DOES NOT PIN, since the distinction is the whole point
-// of this directory's header. It pins that the update path judges pending
-// content and that restored content is refused again. It does NOT pin retention:
-// dropping failing verdicts outright in RecordFileCheck leaves it green, for the
-// same reason it leaves every other test here green — Skippable answers false
-// for a retained refusal and for a missing row alike. Measured, not assumed.
-// Retention proper is pinned by T015_04 in tests/e2e/session/015, which was also
-// measured against that mutation and does turn red.
-func TestT014_03_EditingAwayAndBackOnTheUpdatePath(t *testing.T) {
+// A file passes in cycle 1; cycles 2 and 3 do unrelated work. The passed file must
+// NOT be re-judged — its settled content already has a pass on record, so
+// revalidation lets it be skipped. The unrelated files are the control: they ARE
+// judged, so the silence about the passed file is a real skip rather than a check
+// that stopped firing.
+func TestT014_03_PassedUnchangedContentIsNotReJudged(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", forbidSecretGuard, map[string]string{"judge.sh": judgeScript})
 
-	// The file exists before the first offer, so all three writes are updates.
-	got := e.Run(proj, "s-014-03", "bad, good, bad again in place", Turns("done",
-		Bash("b0", "printf 'starting point' > notes.md"),
-		Write("w1", "notes.md", "SECRET=hunter2"),
-		Write("w2", "notes.md", "benign"),
-		Write("w3", "notes.md", "SECRET=hunter2"),
-	))
+	const sess = "s-014-03"
 
-	// FOUR, not three: the `printf > notes.md` that stages the file is itself a
-	// write this guardrail is bound to, so it is judged like any other. Counting
-	// three here was the arithmetic of a test that never ran.
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 4 {
-		t.Fatalf("the guardrail was asked %d time(s), want 4 (the staging write plus three "+
-			"offers). Ledger: %v", n, lines)
+	seen := 0
+	e.Run(proj, sess, "write fine content", Turns("done", Write("w1", "settled.md", "benign")))
+	first := e.FileGuardLedgerLines(proj, "judge", "log")
+	if askedAbout(first[seen:], "settled.md") == 0 {
+		t.Fatalf("the file was never judged in the first cycle: %v — there is no pass for the "+
+			"skip to be about", first)
 	}
-	if n := strings.Count(got.Output, "content holds a secret"); n != 2 {
-		t.Fatalf("the guardrail refused %d time(s), want 2 — content refused, fixed, and "+
-			"restored must be refused again.\nLedger: %v\n%s", n, lines, got.Output)
-	}
+	seen = len(first)
 
-	// WHICH offers were refused, not just how many. Counting alone is satisfied
-	// by a judge reading the bytes the write REPLACES rather than the pending
-	// ones: that arrangement also refuses exactly twice, but it refuses the
-	// wrong two — the secret in w1 lands, the benign w2 is blocked, and the
-	// violation reaches disk while a harmless write is reported as the problem.
-	// This is not hypothetical; it is what this test caught when the judge fell
-	// back to reading the file, and a count-only assertion passed straight
-	// through it.
-	//
-	// Keyed on the tool_use_id so each verdict is tied to its own offer.
-	blocked := func(id string) bool {
-		for _, line := range strings.Split(got.Output, "\n") {
-			if strings.Contains(line, id) && strings.Contains(line, "content holds a secret") {
-				return true
-			}
+	for cycle := 2; cycle <= 3; cycle++ {
+		moving := fmt.Sprintf("moving%d.md", cycle)
+		e.Run(proj, sess, "unrelated work", Turns("done",
+			Write(fmt.Sprintf("u%d", cycle), moving, "cycle content"),
+		))
+		lines := e.FileGuardLedgerLines(proj, "judge", "log")
+		delta := lines[seen:]
+		// The control: this cycle judged the file it actually changed.
+		if !strings.Contains(strings.Join(delta, "\n"), "path=["+moving+"]") {
+			t.Fatalf("cycle %d judged nothing it changed (delta %v) — the silence about the passed "+
+				"file below would then prove nothing", cycle, delta)
 		}
-		return false
-	}
-	for _, want := range []struct {
-		id, why string
-	}{
-		{"w1", "the first offer states SECRET as its result and must be refused"},
-		{"w3", "the return to the refused content must be refused again"},
-	} {
-		if !blocked(want.id) {
-			t.Fatalf("offer %s was not refused — %s. A judge reading the pre-write bytes "+
-				"instead of `result` refuses the wrong offers and lets the secret land.\n"+
-				"Ledger: %v\n%s", want.id, want.why, lines, got.Output)
+		if n := askedAbout(delta, "settled.md"); n > 0 {
+			t.Fatalf("cycle %d re-judged a file that had already passed at unchanged content (%d "+
+				"times, delta %v) — a passing verdict must end the re-firing, or every file ever "+
+				"judged accumulates forever", cycle, n, delta)
 		}
-	}
-	if blocked("w2") {
-		t.Fatalf("the benign offer w2 was refused — the judge is one write behind, reading the "+
-			"bytes being replaced rather than the pending `result`.\nLedger: %v\n%s",
-			lines, got.Output)
+		seen = len(lines)
 	}
 }
 
 // T014_04: a refusal survives alongside a pass for a DIFFERENT file.
 //
-// The narrow failure this catches: a store keeping one verdict per session, or
-// per guardrail, rather than per file. Such a store would let the passing file
-// overwrite the refused one's row, and the violation would go quiet on the next
-// offer.
+// The narrow failure this catches: a store keeping one verdict per session, or per
+// guardrail, rather than per file. Such a store would let the passing file
+// overwrite the refused one's row, and the violation would go quiet next cycle.
 //
-// Two files, one refused and one passing, then the refused content offered
-// again. The refusal must still be there.
+// Cycle 1: one file refused, one file passing. Cycle 2: unrelated work. The
+// refused file must still re-fire; the passing file must not.
 func TestT014_04_ARefusalSurvivesAPassForAnotherFile(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge", judgeDecl, map[string]string{"judge.sh": judgeScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "judge", forbidSecretGuard, map[string]string{"judge.sh": judgeScript})
 
-	got := e.Run(proj, "s-014-04", "one bad file, one good file, the bad one again", Turns("done",
+	const sess = "s-014-04"
+
+	seen := 0
+	e.Run(proj, sess, "one bad, one good", Turns("done",
 		Write("w1", "bad.md", "SECRET=hunter2"),
 		Write("w2", "good.md", "benign"),
-		Write("w3", "bad.md", "SECRET=hunter2"),
 	))
-
-	lines := e.Ledger(proj, "judge", "log")
-	if n := len(lines); n != 3 {
-		t.Fatalf("the guardrail was asked %d time(s), want 3 — a pass recorded for one file "+
-			"must not settle another. Ledger: %v", n, lines)
+	first := e.FileGuardLedgerLines(proj, "judge", "log")
+	if askedAbout(first[seen:], "bad.md") == 0 || askedAbout(first[seen:], "good.md") == 0 {
+		t.Fatalf("both files must be judged in the first cycle: %v", first)
 	}
-	if n := strings.Count(got.Output, "content holds a secret"); n != 2 {
-		t.Fatalf("the guardrail refused %d time(s), want 2 — the refusal on bad.md must "+
-			"survive the pass recorded for good.md.\nLedger: %v\n%s", n, lines, got.Output)
+	seen = len(first)
+	if !refusedPath(t, e, proj, sess, "bad.md") {
+		t.Fatalf("the bad file was not refused, so there is no refusal to survive the other's pass")
+	}
+
+	e.Run(proj, sess, "unrelated work", Turns("done", Write("u", "unrelated.md", "fine")))
+	after := e.FileGuardLedgerLines(proj, "judge", "log")
+	delta := after[seen:]
+	if n := askedAbout(delta, "bad.md"); n == 0 {
+		t.Fatalf("the refusal on bad.md did not survive the pass recorded for good.md (delta %v) — "+
+			"a pass recorded for one file must not settle another", delta)
+	}
+	if n := askedAbout(delta, "good.md"); n > 0 {
+		t.Fatalf("the passed good.md was re-judged (%d times, delta %v) — its own pass should hold, "+
+			"and if it did not the re-fire of bad.md would say nothing about per-file verdicts",
+			n, delta)
 	}
 }
-
-// T014_05: a refusal is distinguishable from never having been judged.
-//
-// The half of refusal_is_retained the tests above cannot reach, and it is no
-// longer unreachable. It used to be: the only reader of a stored verdict was
-// sessionstate.Skippable, which answers false for a refusal (Passed is false)
-// and false for a missing row (not found) — so retaining a refusal and
-// discarding one produced identical behaviour everywhere the engine looked.
-//
-// What closed it is sessionstate.OutstandingRefusals, the end-of-cycle reader
-// that asks "what is still unfixed" rather than "may this be skipped". The
-// dispatcher puts every path it names back into the cycle's difference (see
-// readdOutstanding), so a violation the tree has gone quiet about is put in
-// front of its rule again.
-//
-// The ARRANGEMENT is the whole difficulty, and getting it wrong makes this test
-// pass for the wrong reason. Committing the offending file does NOT take it out
-// of the difference: a cycle's difference spans committed and uncommitted work
-// alike (difference_spans_both), so `git diff <baseline>` still reports it and
-// the file arrives with nothing retained. The file only leaves the difference
-// when the BASELINE itself moves off the history holding it — a branch switch
-// onto a line that already carries the same content, which re-takes the
-// measuring point and leaves the tree with nothing to say.
-//
-// That arrangement is exactly T015_04 in tests/e2e/session/015_refusal_outlives_
-// baseline, which is where this claim is pinned end to end: it fails when
-// readdOutstanding is removed and passes with it. It is not duplicated here,
-// because a second copy of the same scenario in a directory whose fixtures bind
-// the Pre kinds would be a weaker version of a test that already exists.
-//
-// What this directory keeps pinning is the observable half named at the top of
-// the file: a refusal never licenses a skip, on every subsequent offer, for as
-// long as the content stays as it is.

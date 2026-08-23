@@ -41,7 +41,7 @@ func write(t *testing.T, cwd, path, content string) event.Event {
 
 // creation is the pending-write event a Write of new content produces.
 func creation(path, content string) event.Event {
-	return filemod.FileEvent{Path: path, Content: content}.Event(filemod.KindPreCreate)
+	return filemod.FileEvent{Path: path, NewContent: content}.Event(filemod.KindPreCreate)
 }
 
 // skips asks the exemption and fails the test on any error, which is what the
@@ -181,7 +181,7 @@ func TestRevalidation_SubjectOfACreationFingerprintsThePendingContent(t *testing
 	// content on the event. Fingerprinting the disk would fail here; the
 	// assertion is that the answer is the pending bytes.
 	rev, cwd := openTestRevalidation(t)
-	e := filemod.FileEvent{Path: "new.go", Content: "about to be written\n"}.Event(filemod.KindPreCreate)
+	e := filemod.FileEvent{Path: "new.go", NewContent: "about to be written\n"}.Event(filemod.KindPreCreate)
 
 	subj, ok := rev.Subject(e, cwd)
 	require.True(t, ok)
@@ -197,7 +197,7 @@ func TestRevalidation_CreationThenUnchangedUpdateIsExempt(t *testing.T) {
 	// places, and this asserts they agree when the bytes are the same.
 	rev, cwd := openTestRevalidation(t)
 
-	create := filemod.FileEvent{Path: "a.go", Content: "v1\n"}.Event(filemod.KindPreCreate)
+	create := filemod.FileEvent{Path: "a.go", NewContent: "v1\n"}.Event(filemod.KindPreCreate)
 	created, ok := rev.Subject(create, cwd)
 	require.True(t, ok)
 	require.NoError(t, rev.Record("no-slop", created, true))
@@ -216,7 +216,7 @@ func TestRevalidation_CreationThenChangedFileIsJudgedAgain(t *testing.T) {
 	// separates a working exemption from one keyed on the path.
 	rev, cwd := openTestRevalidation(t)
 
-	create := filemod.FileEvent{Path: "a.go", Content: "v1\n"}.Event(filemod.KindPreCreate)
+	create := filemod.FileEvent{Path: "a.go", NewContent: "v1\n"}.Event(filemod.KindPreCreate)
 	created, ok := rev.Subject(create, cwd)
 	require.True(t, ok)
 	require.NoError(t, rev.Record("no-slop", created, true))
@@ -232,8 +232,8 @@ func TestRevalidation_SubjectOfADifferentPendingCreationDiffers(t *testing.T) {
 	// Two creations at the same path with different bodies are different
 	// content, so a pass on one is not a licence for the other.
 	rev, cwd := openTestRevalidation(t)
-	first := filemod.FileEvent{Path: "new.go", Content: "one\n"}.Event(filemod.KindPreCreate)
-	second := filemod.FileEvent{Path: "new.go", Content: "two\n"}.Event(filemod.KindPreCreate)
+	first := filemod.FileEvent{Path: "new.go", NewContent: "one\n"}.Event(filemod.KindPreCreate)
+	second := filemod.FileEvent{Path: "new.go", NewContent: "two\n"}.Event(filemod.KindPreCreate)
 
 	a, ok := rev.Subject(first, cwd)
 	require.True(t, ok)
@@ -289,8 +289,8 @@ func TestRevalidation_PendingUpdateHasNoSubject(t *testing.T) {
 	rev, cwd := openTestRevalidation(t)
 	write(t, cwd, "notes.md", "benign") // disk content, unchanged throughout
 
-	a := filemod.FileEvent{Path: "notes.md", Content: "PAYLOAD-A"}.Event(filemod.KindPreUpdate)
-	b := filemod.FileEvent{Path: "notes.md", Content: "SECRET=hunter2"}.Event(filemod.KindPreUpdate)
+	a := filemod.FileEvent{Path: "notes.md", NewContent: "PAYLOAD-A"}.Event(filemod.KindPreUpdate)
+	b := filemod.FileEvent{Path: "notes.md", NewContent: "SECRET=hunter2"}.Event(filemod.KindPreUpdate)
 
 	_, aOK := rev.Subject(a, cwd)
 	_, bOK := rev.Subject(b, cwd)
@@ -309,12 +309,12 @@ func TestRevalidation_APassOnOneUpdateCannotExemptAnother(t *testing.T) {
 	rev, cwd := openTestRevalidation(t)
 	write(t, cwd, "notes.md", "benign")
 
-	benign := filemod.FileEvent{Path: "notes.md", Content: "PAYLOAD-A"}.Event(filemod.KindPreUpdate)
+	benign := filemod.FileEvent{Path: "notes.md", NewContent: "PAYLOAD-A"}.Event(filemod.KindPreUpdate)
 	if subj, ok := rev.Subject(benign, cwd); ok {
 		require.NoError(t, rev.Record("no-slop", subj, true))
 	}
 
-	malicious := filemod.FileEvent{Path: "notes.md", Content: "SECRET=hunter2"}.Event(filemod.KindPreUpdate)
+	malicious := filemod.FileEvent{Path: "notes.md", NewContent: "SECRET=hunter2"}.Event(filemod.KindPreUpdate)
 	subj, ok := rev.Subject(malicious, cwd)
 	if !ok {
 		// No subject, so the dispatcher runs the hook and there is nothing to
@@ -406,7 +406,7 @@ func TestRevalidation_WithoutAStoreNothingIsSkipped(t *testing.T) {
 	subj := subject{Path: "a.go", Fingerprint: "f1"}
 	assert.False(t, skips(t, rev, "no-slop", subj))
 	assert.NoError(t, rev.Record("no-slop", subj, true))
-	_, ok := rev.Subject(filemod.FileEvent{Path: "a.go", Content: "x"}.Event(filemod.KindPreCreate), "")
+	_, ok := rev.Subject(filemod.FileEvent{Path: "a.go", NewContent: "x"}.Event(filemod.KindPreCreate), "")
 	assert.False(t, ok)
 	rev.Close()
 
@@ -430,7 +430,7 @@ func TestRevalidation_WithoutAStoreNothingIsSkipped(t *testing.T) {
 		filemod.KindPostUpdate,
 		filemod.KindPostDelete,
 	} {
-		_, ok := empty.Subject(filemod.FileEvent{Path: "a.go", Content: "v1\n"}.Event(kind), root)
+		_, ok := empty.Subject(filemod.FileEvent{Path: "a.go", NewContent: "v1\n"}.Event(kind), root)
 		assert.Falsef(t, ok, "%s: with no store there is nothing to key a verdict on", kind)
 	}
 

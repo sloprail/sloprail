@@ -5,27 +5,19 @@ import (
 	"testing"
 )
 
-// A SECOND launching rule, bound to a different path, whose hook also launches
+// A SECOND launching rule, bound to a different path, whose check also launches
 // an agent.
 //
 // Two launching rules is what makes the sub-agent case reachable: the agent
 // judge-notes launches writes under review/, which is where THIS rule is bound,
-// so its hook fires inside the launched agent and launches one of its own.
-const reviewByAgent = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "review/"
-      hooks:
-        - type: command
-          command: ./review.sh
----
-
-# A second rule that launches an agent
-
-Reached from inside the agent the first rule launched.
+// so its check fires inside the launched agent and launches one of its own.
+const reviewByAgent = `match: path startsWith "review/"
+preventive: true
+checks:
+  - script: ./review.sh
 `
 
-// Each launching hook records its own depth, so the ledger distinguishes "ran
+// Each launching check records its own depth, so the ledger distinguishes "ran
 // once at the level it should" from "ran again one level down".
 const depthScript = `#!/bin/sh
 cat >/dev/null
@@ -59,15 +51,17 @@ exit 0
 // silenced it would be the scope answer, which this branch rejects.
 //
 // So the chain terminates because each rule is spent once, not because nesting
-// is forbidden. Measured with the guard removed, judge-notes' ledger reads
+// is forbidden. Measured with the fix removed, judge-notes' ledger reads
 // 0, 6, test-counter-tripped — it re-enters and runs away.
 //
-// A single-valued marker passes T015_01 and fails here.
+// A single-valued marker passes T015_01 and fails here — which is exactly why
+// the engine appends (appendLaunchedBy) rather than replacing: the chain carries
+// every launcher above it, not merely the nearest.
 func TestT015_04_SubagentDoesNotReenterEitherRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": depthScript})
-	e.Guardrail(proj, "review-docs", reviewByAgent, map[string]string{"review.sh": depthScript})
+	e.FileGuard(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": depthScript})
+	e.FileGuard(proj, "review-docs", reviewByAgent, map[string]string{"review.sh": depthScript})
 	e.InstallClaudeShim(proj)
 	// Every launched agent runs this same scenario: it writes under review/
 	// (reaching review-docs) and then under notes/ (reaching judge-notes again).
@@ -83,7 +77,7 @@ func TestT015_04_SubagentDoesNotReenterEitherRule(t *testing.T) {
 	))
 
 	for _, rule := range []string{"judge-notes", "review-docs"} {
-		ledger := e.Ledger(proj, rule, "ledger.txt")
+		ledger := fileGuardLedgerLines(t, proj, rule, "ledger.txt")
 		t.Logf("%s ledger: %v", rule, ledger)
 
 		for _, l := range ledger {

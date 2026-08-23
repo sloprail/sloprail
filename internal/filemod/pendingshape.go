@@ -36,7 +36,7 @@ import (
 // every field is a *string or json.RawMessage, so "the key was not there" and
 // "the key held an empty string" are different values rather than both being "".
 //
-// The distinction is the whole defect. `content == ""` is the rule an author
+// The distinction is the whole defect. `newContent == ""` is the rule an author
 // writes to catch a genuinely empty file, and until now it fired on every
 // Edit-created file whatever the body.
 //

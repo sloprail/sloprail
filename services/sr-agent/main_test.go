@@ -36,7 +36,7 @@ const underClaude = "--harness=claude-code"
 func TestCLI_PositionalPrompt(t *testing.T) {
 	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run", "is this right?")
 	require.NoError(t, err)
-	assert.Equal(t, `claude -p --model sonnet -- "is this right?"`, strings.TrimSpace(stdout))
+	assert.Equal(t, `claude -p --model sonnet `+claudeSettingsArg+` -- "is this right?"`, strings.TrimSpace(stdout))
 }
 
 // cursor-agent takes `[prompt...]`, so unquoted words must join rather than
@@ -111,7 +111,7 @@ func TestCLI_DiagnosticsGoToStderrOnly(t *testing.T) {
 	assert.NotContains(t, stdout, "skipped")
 	assert.NotContains(t, stdout, "never be reached")
 	assert.Contains(t, stderr, "sr-agent:")
-	assert.Equal(t, "claude -p --model sonnet -- q", strings.TrimSpace(stdout))
+	assert.Equal(t, "claude -p --model sonnet "+claudeSettingsArg+" -- q", strings.TrimSpace(stdout))
 }
 
 // --- harness -------------------------------------------------------------
@@ -148,7 +148,9 @@ func TestCLI_ClaudeArgsPassThrough(t *testing.T) {
 	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
 		"--claude-args", `{"permission-mode": "plan"}`, "q")
 	require.NoError(t, err)
-	assert.Equal(t, "claude -p --model sonnet --permission-mode plan -- q", strings.TrimSpace(stdout))
+	// The isolation --settings sits between the model and the caller's flag; it is
+	// quoted by dry-run's printer because its JSON contains quotes.
+	assert.Equal(t, "claude -p --model sonnet "+claudeSettingsArg+" --permission-mode plan -- q", strings.TrimSpace(stdout))
 }
 
 func TestCLI_MalformedClaudeArgsIsRefused(t *testing.T) {
@@ -163,7 +165,7 @@ func TestCLI_EmptyClaudeArgsIsAccepted(t *testing.T) {
 	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
 		"--claude-args", "{}", "q")
 	require.NoError(t, err)
-	assert.Equal(t, "claude -p --model sonnet -- q", strings.TrimSpace(stdout))
+	assert.Equal(t, "claude -p --model sonnet "+claudeSettingsArg+" -- q", strings.TrimSpace(stdout))
 }
 
 // --- exit codes ----------------------------------------------------------

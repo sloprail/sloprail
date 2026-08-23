@@ -4,10 +4,12 @@ This plugin is the whole of what is Claude-Code-specific about sloprail. It maps
 that harness's lifecycle names onto `sr-session`'s subcommands, so nothing inside
 the engine has to know whose lifecycle it is running under.
 
-It also ships guardrails — see `guardrails/` — and this file records what a
-reader of `hooks.json` would otherwise have to guess, since JSON carries no
-comments: how a shipped rule reaches a project, and why that no longer has
-anything to do with the hooks below it.
+It also ships guardrails — new-format ones under `.sloprail/file-guard/` (and,
+when it grows them, `.sloprail/gate/` and `.sloprail/context/`), the same layout
+a project uses for its own — and this file records what a reader of `hooks.json`
+would otherwise have to guess, since JSON carries no comments: how a shipped rule
+reaches a project, and why that no longer has anything to do with the hooks below
+it.
 
 ## How a shipped guardrail is found
 
@@ -15,10 +17,12 @@ Nothing in this file makes it happen, and that is the point.
 
 The engine reads the PROJECT's `.claude/settings.json` and
 `.claude/settings.local.json`, takes whatever `enabledPlugins` turns on, and
-resolves each plugin to its installation directory itself. A project that has
-enabled `sloprail@sloprail-marketplace` gets `guardrails/authoring-slop/` from
-inside this installation, without copying anything and without this plugin
-telling the engine where it lives.
+resolves each plugin to its installation directory itself. The nature loader then
+reads each enabled plugin's own `.sloprail/` the same way it reads the project's
+(see `internal/declaration` `NewWithPlugins` and `pluginDotDir`). A project that
+has enabled `sloprail@sloprail-marketplace` gets
+`.sloprail/file-guard/authoring-slop/` from inside this installation, without
+copying anything and without this plugin telling the engine where it lives.
 
 So `hooks.json` maps lifecycle names to subcommands and does nothing else:
 
@@ -88,7 +92,8 @@ edit inside the install cache is undone by the next reinstall. So a consumer
 disables a shipped rule from their own side, in `.sloprail/config.yaml`:
 
     disabled:
-      - sloprail/authoring-slop
+      - sloprail/file-guard/authoring-slop
 
-The name is qualified by the plugin, so disabling a shipped rule cannot also
-disable a project rule that happens to share its name.
+The name is qualified by the plugin AND the nature (`<plugin>/<nature>/<name>`),
+so disabling a shipped rule cannot also disable a project rule that happens to
+share its name — nor a differently-natured rule of the same name.

@@ -1,0 +1,16 @@
+# No script needed at all — `match` reads the tag-declared context's own
+# absence directly (his simplification, 2026-08-19: "чтобы не надо было
+# этих грепов делать"). tag-declared only activates once #update/#decision/
+# #skip has actually been written this cycle, so `not ...active` is exactly
+# "no tag was declared" — the same fact a script would otherwise re-derive
+# by re-reading the trajectory.
+#
+# This still isn't circular the way the earlier version would have been:
+# match is evaluated fresh each Stop against the context's CURRENT state,
+# not gated behind `require` — there's nothing here for tag-declared to
+# have had to run first.
+on:
+  - event: Stop
+    match: not context["tag-declared"].active
+checks:
+  - script: ./refuse.sh

@@ -1,0 +1,42 @@
+# Does each quote actually approximate its cited source?
+
+The script already confirmed every citation link resolves to a real chunk of
+the trajectory or a source file. `prepare` paired each quote with the text at
+that exact location. Your job is the question a script cannot answer: does
+the QUOTE actually say what the SOURCE says — referenced, not regenerated?
+
+## Citations
+
+{% for c in additionalContext.citations %}
+### Citation {{ loop.index }} — `{{ c.reference }}`
+
+**Quoted in the file:**
+```
+{{ c.quote }}
+```
+
+**Actual text at that location:**
+```
+{{ c.source_text }}
+```
+
+{% endfor %}
+
+## Pass
+
+Every quote is a faithful paraphrase or verbatim rendering of the text at its
+cited location — the SAME claim, not a nearby or related one the source
+happens to also contain.
+
+## Fail
+
+- A quote states something the cited location does not actually say (the
+  citation resolves, but to the wrong claim — a plausible-sounding
+  fabrication grounded in a real-but-irrelevant location).
+- A quote overstates or sharpens what the source says (the source hedges,
+  the quote asserts).
+- `source_text` is empty for a citation — the link resolved to a range with
+  no content, which is its own kind of ungrounded.
+
+Name the specific citation number and quote the source text it actually
+diverges from.

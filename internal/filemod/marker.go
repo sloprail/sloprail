@@ -23,15 +23,47 @@ type Marker struct {
 	Kind string
 
 	// FQN is what the marker names: whatever identifies the thing in the
-	// project's own terms — a dotted name, a path, a URL.
+	// project's own terms — a dotted name, a path, a URL, or a quoted phrase.
 	//
-	// The spec constrains it to what a URL admits, which rules out the
-	// whitespace that would make the written form ambiguous. This reader does
-	// not ENFORCE that, and the difference is worth stating rather than
-	// glossing: it reports what the line holds between the separators, whatever
-	// that is. What ends the fqn is one `\s` as RE2 defines it — [\t\n\f\r ] —
-	// so a vertical tab, a NUL, or a non-breaking space does NOT end it and
-	// lands inside the fqn instead. See
+	// # Two written forms
+	//
+	// A BARE fqn is a single run of non-whitespace — `pkg.Thing`, a path, a
+	// URL. This is the original form and the common one.
+	//
+	// A QUOTED fqn is a `"..."`-delimited string whose inner text — spaces and
+	// all — is the fqn, with the surrounding quotes stripped. It exists because
+	// a marker's name is not always a token: `# sr:asked "keep the original
+	// transcript_path, just add the new section"` records a phrase a person
+	// actually said, which a later check grounds against the trajectory. A bare
+	// `(\S+)` truncates that at the first space; the quoted form carries it
+	// whole. See examples/no-unasked-deletion and TestScan_QuotedFQN*.
+	//
+	// The quoted form's grammar is deliberately small, so what the writer emits
+	// and what this reads back cannot drift on a corner:
+	//   - The inner text CANNOT contain a `"`. There is no escaping and no
+	//     nesting — `"he said \"hi\""` is not a marker, it is a malformed line
+	//     the anchors reject. A name that needs an embedded quote is out of
+	//     scope, and rejecting it is visible where a half-parsed one would not
+	//     be.
+	//   - A line whose fqn STARTS with `"` is committed to the quoted form: it
+	//     must close and be followed only by whitespace, or it is not a marker
+	//     at all. An unterminated `"quote` does not silently fall back to a bare
+	//     fqn that begins with a quote character — that would be a surprising
+	//     name read out of a typo. A `"` anywhere OTHER than the first character
+	//     of a bare token is an ordinary character and stays in the fqn.
+	//   - `""` is a marker whose fqn is the empty string. Degenerate, but read
+	//     rather than rejected for the same reason every other odd fqn is: a
+	//     check that receives it (an empty quote grounds to nothing) refuses on
+	//     its own terms; a marker silently dropped reads as unmarked code.
+	//
+	// The spec constrains a bare fqn to what a URL admits, which rules out the
+	// whitespace that would make that form ambiguous — the quoted form is how a
+	// name WITH whitespace is written unambiguously. This reader does not
+	// ENFORCE the URL-safety of a bare fqn, and the difference is worth stating
+	// rather than glossing: it reports what the line holds between the
+	// separators, whatever that is. What ends a bare fqn is one `\s` as RE2
+	// defines it — [\t\n\f\r ] — so a vertical tab, a NUL, or a non-breaking
+	// space does NOT end it and lands inside the fqn instead. See
 	// TestScan_SeparatorIsGoRegexpWhitespaceAndNothingElse.
 	//
 	// Reporting rather than rejecting is the deliberate half. A scanner that
@@ -57,21 +89,32 @@ type Marker struct {
 	Line int
 }
 
-// markerPattern is the reader, taken verbatim from the writer's own
-// (services/sr-mark/marker.go on impl/sr-mark), so that what sr-mark writes is
-// exactly what this reads back. The written form is:
+// markerPattern is the reader. The written forms are:
 //
-//	<leader> sr:<kind> <fqn>
+//	<leader> sr:<kind> <bare-fqn>
+//	<leader> sr:<kind> "<quoted fqn, spaces and all>"
 //
 // with `//`, `#` or `--` as the leader. The whole line must be the marker: the
 // anchors are what keep this from reading a `sr:` that happens to sit at the end
 // of a line of code, where the text before it decides what it means and this
 // scanner cannot see that text.
 //
-// Group 1 is the kind, group 2 the fqn. The writer's pattern hard-codes one
-// kind because it is deleting a kind's markers; this one captures the kind,
-// because it is reading whatever a file carries.
-var markerPattern = regexp.MustCompile(`^\s*(?://|#|--)\s*sr:(\S+)\s+(\S+)\s*$`)
+// Group 1 is the kind. The fqn is EITHER group 2 (the inner text of a `"..."`,
+// captured without the quotes) OR group 3 (a bare non-whitespace token). The
+// two branches are mutually exclusive; Scan reads whichever participated, told
+// apart by submatch index rather than by an empty string, so that `""` — a
+// legitimately empty quoted fqn — is not confused with a branch that did not
+// match. See Marker.FQN for the grammar and why it is this small.
+//
+// The bare branch is `[^\s"]\S*`, not `\S+`: its first character may not be a
+// quote, which is what commits a line whose fqn starts with `"` to the quoted
+// form. A `"` in any later position is an ordinary character and stays in the
+// bare fqn, preserving the original reader's behavior for a name that happens
+// to contain one.
+//
+// The kind stays `(\S+)`: a kind is a single word by construction (it is the
+// token after `sr:` a rule binds to), and nothing has asked for a quoted kind.
+var markerPattern = regexp.MustCompile(`^\s*(?://|#|--)\s*sr:(\S+)\s+(?:"([^"]*)"|([^\s"]\S*))\s*$`)
 
 // Scan reads every `sr:` marker out of a file's text, in the order the lines
 // carry them.
@@ -99,6 +142,18 @@ var markerPattern = regexp.MustCompile(`^\s*(?://|#|--)\s*sr:(\S+)\s+(\S+)\s*$`)
 // marker dropped is a rule that silently does not fire on code that IS marked,
 // and that reads as the rule being satisfied. An extra marker read out of a
 // documentation example is visible: the rule fires, and someone looks.
+//
+// A marker inside a markdown file's YAML frontmatter — a `# sr:...` line
+// between the `---` fences at the top of the file — IS returned, and by the
+// same mechanism as everything else: the `#` leader is one this reader already
+// matches, and the scan is over raw lines, so the `---` fences need no special
+// handling. This is deliberate and load-bearing. A YAML comment parses to
+// nothing — comment-only frontmatter is a valid, EMPTY YAML document — so a
+// marker written as `# sr:asked "<quote>"` is invisible to any YAML parser and
+// must be read out of the text, which is exactly what this does. It is how a
+// markdown file carries a marker without having to invent a real frontmatter
+// field to hang it on. See examples/no-unasked-deletion and
+// TestScan_MarkerInMarkdownFrontmatter.
 func Scan(text string) []Marker {
 	markers := []Marker{}
 	if text == "" {
@@ -122,11 +177,23 @@ func Scan(text string) []Marker {
 	line := 0
 	for raw := range strings.SplitSeq(text, "\n") {
 		line++
-		m := markerPattern.FindStringSubmatch(raw)
-		if m == nil {
+		// Index form, not FindStringSubmatch: the fqn is one of two alternation
+		// branches, and an unset group and an empty-string match both read as ""
+		// from the string form. The index (-1 when a group did not participate)
+		// is what tells the quoted branch that matched `""` apart from the bare
+		// branch — see markerPattern. Groups: 1 kind; 2 quoted inner; 3 bare.
+		loc := markerPattern.FindStringSubmatchIndex(raw)
+		if loc == nil {
 			continue
 		}
-		markers = append(markers, Marker{Kind: m[1], FQN: m[2], Line: line})
+		kind := raw[loc[2]:loc[3]]
+		var fqn string
+		if loc[4] != -1 { // the quoted branch participated
+			fqn = raw[loc[4]:loc[5]]
+		} else { // the bare branch
+			fqn = raw[loc[6]:loc[7]]
+		}
+		markers = append(markers, Marker{Kind: kind, FQN: fqn, Line: line})
 	}
 	return markers
 }

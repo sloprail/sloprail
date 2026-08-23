@@ -183,6 +183,16 @@ const (
 	// InputPhase is which hook point is asking: what a cycle is about to do,
 	// or what it turned out to have done.
 	InputPhase = "phase"
+
+	// InputMessages is the agent's own settled message text for this cycle, as a
+	// []string, gathered by the caller from the record. The tag module reads it
+	// to scan for `#tag` tokens; every other module ignores it. It is a separate
+	// key rather than the payload because a Post dispatch carries two unrelated
+	// things at once — the tree difference the file module reads, and the settled
+	// messages the tag module reads — and one payload slot cannot be both. This
+	// is exactly the growth the map shape exists to allow: a module added later
+	// wanting an input the others do not.
+	InputMessages = "messages"
 )
 
 // Phase values for InputPhase.

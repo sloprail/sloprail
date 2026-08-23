@@ -188,12 +188,25 @@ func (s *session) notDispatched(stopHookActive bool) (stdout, stderr string) {
 	return s.withDispatch(false, func() (string, string) { return s.stop(stopHookActive) })
 }
 
-// withDispatch runs fn with the judging step reporting the given outcome.
+// withDispatch runs fn with the Stop judging step standing in as having run to
+// completion (ran) or as blocking the turn (!ran).
+//
+// The mark is held until the Stop dispatch has run without a refusal. `ran` true
+// stands the dispatch in as permitting — it returns "" and the mark advances;
+// `ran` false stands it in as refusing — it returns a block reason, completeCycle
+// writes the block and holds the mark. A test about the mark's POSITION must not
+// depend on what the dispatcher does with a particular tree, so the step is stood
+// in rather than driven through a real diff.
 func (s *session) withDispatch(ran bool, fn func() (string, string)) (stdout, stderr string) {
 	s.t.Helper()
-	restore := dispatchPostEvents
-	dispatchPostEvents = func(*cobra.Command, sessionstate.Store, HookPayload) bool { return ran }
-	defer func() { dispatchPostEvents = restore }()
+	restore := natureStopDispatch
+	natureStopDispatch = func(*cobra.Command, HookPayload) string {
+		if ran {
+			return ""
+		}
+		return "a rule refused"
+	}
+	defer func() { natureStopDispatch = restore }()
 	return fn()
 }
 

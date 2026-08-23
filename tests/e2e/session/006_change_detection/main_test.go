@@ -15,6 +15,11 @@ import (
 // A test that invoked the subcommand itself would prove the engine dispatches
 // correctly while proving nothing about whether the end of a cycle ever asks it
 // to — which is exactly the gap this hook point had.
+
+// Env is the harness environment, aliased so scenario helpers in this package
+// can take one without naming the import at every call site.
+type Env = harness.Env
+
 var (
 	New   = harness.New
 	Turns = harness.Turns

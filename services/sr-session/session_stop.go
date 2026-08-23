@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -78,8 +79,8 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 			"sloprail: the tree moved to another branch — measuring from a new point; recorded violations still stand")
 	}
 
-	// Diffing the tree and dispatching the Post events belongs here, between the
-	// baseline and the mark.
+	// Diffing the tree and dispatching the cycle's Stop work belongs here, between
+	// the baseline and the mark.
 	//
 	// The ORDER is the load-bearing part, not the placement. The mark says a
 	// position has been judged, and it is only true once the events for that
@@ -87,18 +88,22 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	// one nothing has earned: the position is recorded as judged by a cycle that
 	// ran no judging at all.
 	//
-	// So the mark is held until dispatch is a step that ran AND finished.
-	// dispatchPostEvents reports whether it did: false when the registry or the
-	// rules would not load, and false when a guardrail objected — a refusal
-	// blocks the turn and sends the agent round again over these same turns,
-	// which it cannot do if the cycle has just declared them judged.
+	// So the mark is held until the Stop dispatch has run: the nature Stop
+	// dispatch runs the cycle's file-guard after-checks, context enters/exits and
+	// Stop gates, and a refusal from any of them blocks the turn and sends the
+	// agent round again over these same turns — which it cannot do if the cycle
+	// has just declared them judged. On a refusal the mark is held below, exactly
+	// as an objection used to hold it.
 	//
 	// What the mark loses by waiting is a re-read, not a turn. The position is
 	// discarded with the cycle either way, so the next cycle reads from the mark
 	// — which has not moved — and sees everything this one saw, plus whatever
 	// arrived since. Carrying the position across instead would hand it to a
 	// cycle that never read those turns; see discardOffered.
-	if !dispatchPostEvents(cmd, store, p) {
+	if reason := natureStopDispatch(cmd, p); reason != "" {
+		if err := block(cmd, reason); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
 		discardOffered(cmd, p)
 		return nil
 	}
@@ -111,6 +116,19 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	discardOffered(cmd, p)
 
 	return nil
+}
+
+// natureStopDispatch runs the new-format Stop dispatch for a completed cycle,
+// resolving the registry the module registry supplies. Returns the text to
+// block the turn with, or "" to let it end. A variable so a test can stand it
+// in.
+var natureStopDispatch = func(cmd *cobra.Command, p HookPayload) string {
+	reg, err := modules.Registry()
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		return ""
+	}
+	return natureDispatchStop(cmd, p, reg)
 }
 
 // discardOffered forgets how far the record was read out, because the cycle
@@ -127,9 +145,9 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 // reads and is interrupted, turns land, and the next cycle finishes without any
 // rule having queried.
 //
-// So it is cleared on all three paths a cycle ends on: interrupted, held for
-// want of dispatch, and completed. What the first two lose is only a re-read —
-// the mark did not move, so the next cycle reads from where it still is and is
+// So it is cleared on all three paths a cycle ends on: interrupted, blocked by a
+// Stop refusal, and completed. What the first two lose is only a re-read — the
+// mark did not move, so the next cycle reads from where it still is and is
 // offered every turn this one saw. Re-reading a turn costs a second look;
 // skipping one loses a violation for good, which is the direction this errs in.
 //
@@ -159,19 +177,6 @@ func discardOffered(cmd *cobra.Command, p HookPayload) {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: read position not cleared:", err)
 	}
 }
-
-// dispatchPostEvents runs the guardrails bound to what this cycle changed, and
-// reports whether it ran at all.
-//
-// Returning false is what holds the mark. A cycle that dispatched nothing has
-// judged nothing, so it has no position to claim as judged — and the position
-// it read is remembered elsewhere and lost by no one.
-//
-// A variable so a test about the mark's POSITION can stand this step in and
-// still be testing the position rather than this step's behaviour. Those tests
-// mean the same thing now that it is implemented as they did while it was a
-// stub.
-var dispatchPostEvents = runPostDispatch
 
 // advanceReadMark carries forward the position this cycle actually read.
 //

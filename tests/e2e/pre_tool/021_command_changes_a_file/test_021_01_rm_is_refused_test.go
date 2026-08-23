@@ -17,9 +17,9 @@ import "testing"
 //	"echo x > out.md"          commandmod saw [echo] ; filemod saw NOTHING
 //	"sed -i '' s/a/b/ f.md"    commandmod saw [sed]  ; filemod saw NOTHING
 //
-// So a guardrail bound to PreFileDelete on notes.md did not fire on
-// `rm notes.md`, and the Bash tool was a hole straight through every file rule
-// — the difference between a guardrail and a suggestion.
+// So a rule about a file's deletion did not fire on `rm notes.md`, and the Bash
+// tool was a hole straight through every file rule — the difference between a
+// guardrail and a suggestion.
 //
 // # Why these are end-to-end and not unit tests
 //
@@ -27,42 +27,57 @@ import "testing"
 // correctly. They cannot prove anything asks it to. What is asserted here is
 // the whole path: the agent runs a command, the harness fires its PreToolUse
 // hook, the plugin reaches the subcommand, the file module reads the command
-// line, the matcher narrows, the hook refuses, and the file is still on disk
+// line, the trigger narrows, the check refuses, and the file is still on disk
 // afterwards.
 //
 // The last clause is the one that matters, and it is asserted against the TREE
 // rather than the stream. The mock really executes the command, so a refusal
 // that did not prevent the work leaves no file to find — whether or not a
 // message came back.
+//
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
+//
+// The property observed is PREVENTION of a shell deletion: `rm notes.md` is a
+// command about to run whose derived PreFileDelete names notes.md, and the block
+// happens at the pre-action moment before the command runs. The decision rule
+// sends a pre-action block keyed to an event KIND to a GATE — here a gate
+// triggering on the file events a command DERIVES (PreFileDelete for `rm`,
+// PreFileUpdate for an in-place edit), narrowed on `event.path`. A gate is the
+// faithful vehicle rather than a preventive file-guard, because a preventive
+// file-guard fails CLOSED on a command-derived update (its result is not known
+// ahead of time), which would turn "record the update and permit" into a refusal;
+// a gate has no such shortcut and decides on the check alone. The check reads the
+// FLAT GateCheckPayload (`.event.path`, `.event.kind`), refuses with a
+// `{"reason":...}` on stdout, and its refusal blocks the command — the file never
+// leaves disk.
 
 // guardNotes refuses any deletion of notes.md, and nothing else.
 //
-// Bound to PreFileDelete alone and narrowed by path, which is the ordinary
-// shape of a rule protecting one file. Nothing in it mentions commands, Bash,
-// or shells: that is the point. An author writes a rule about a FILE, and it
-// holds against every way a file can be deleted.
-const guardNotes = `---
-hooks:
-  PreFileDelete:
-    - matcher: path == "notes.md"
-      hooks:
-        - type: command
-          command: ./refuse.sh
----
-
-# notes.md may not be deleted
+// A gate triggering on PreFileDelete alone and narrowed by `event.path`, which is
+// the ordinary shape of a rule protecting one file from deletion. Nothing in it
+// mentions Bash or shells: that is the point. An author writes a rule about a
+// FILE'S deletion, and it holds against every way a file can be deleted, because
+// the file event is derived from whatever changed it.
+const guardNotes = `on:
+  - event: PreFileDelete
+    match: event.path == "notes.md"
+checks:
+  - script: ./refuse.sh
 `
 
+// refuseScript refuses with a structured reason on stdout — the new-format refusal
+// contract (exit non-zero, `{"reason":...}` preferred by scriptRefusalReason),
+// replacing the old exit-1-with-`{"decision":"block"}` shape.
 const refuseScript = `#!/bin/sh
 cat >/dev/null
-echo '{"decision":"block","reason":"notes.md is protected"}'
+echo '{"reason":"notes.md is protected"}'
 exit 1
 `
 
-// T021_01: a guardrail refusing deletion of notes.md refuses `rm notes.md`.
+// T021_01: a gate refusing deletion of notes.md refuses `rm notes.md`.
 //
-// THE case. A rule bound to PreFileDelete, an agent reaching for Bash instead
-// of a delete tool, and the file still there afterwards.
+// THE case. A gate triggering on PreFileDelete, an agent reaching for Bash
+// instead of a delete tool, and the file still there afterwards.
 //
 // Both halves are asserted because either alone can pass on a broken engine. A
 // refusal that reached the agent while the file was removed anyway would be an
@@ -71,7 +86,7 @@ exit 1
 func TestT021_01_ADeleteRuleRefusesRm(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "protect-notes", guardNotes, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "protect-notes", guardNotes, map[string]string{"refuse.sh": refuseScript})
 	e.WriteFile(proj, "notes.md", "the notes\n")
 
 	got := e.Run(proj, "s-021-01", "delete the notes", Turns("done",
@@ -79,7 +94,7 @@ func TestT021_01_ADeleteRuleRefusesRm(t *testing.T) {
 	))
 
 	if !got.Saw("notes.md is protected") {
-		t.Fatalf("the refusal never reached the agent — a rule bound to PreFileDelete did not fire on `rm`:\n%s", got.Output)
+		t.Fatalf("the refusal never reached the agent — a gate on PreFileDelete did not fire on `rm`:\n%s", got.Output)
 	}
 	if !e.Exists(proj, "notes.md") {
 		t.Fatal("the file was removed despite the refusal — the guardrail was an opinion, not a prevention")
@@ -94,7 +109,7 @@ func TestT021_01_ADeleteRuleRefusesRm(t *testing.T) {
 func TestT021_02_FlagsDoNotHideTheFile(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "protect-notes", guardNotes, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "protect-notes", guardNotes, map[string]string{"refuse.sh": refuseScript})
 	e.WriteFile(proj, "notes.md", "the notes\n")
 
 	got := e.Run(proj, "s-021-02", "force delete the notes", Turns("done",
@@ -116,14 +131,14 @@ func TestT021_02_FlagsDoNotHideTheFile(t *testing.T) {
 // unwrapping commandmod already does for invocations is what closes this, and
 // this asserts it reaches the file side too.
 //
-// The command is `sh -c` wrapped rather than literally `sudo`, because a test
-// must not need a password prompt or real privileges to run. What it exercises
-// is the same nesting: the deletion sits inside a construct the top-level parse
-// does not stop at.
+// The command is `&&`-nested rather than literally `sudo`, because a test must
+// not need a password prompt or real privileges to run. What it exercises is the
+// same nesting: the deletion sits inside a construct the top-level parse does not
+// stop at.
 func TestT021_03_NestingDoesNotHideTheDeletion(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "protect-notes", guardNotes, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "protect-notes", guardNotes, map[string]string{"refuse.sh": refuseScript})
 	e.WriteFile(proj, "notes.md", "the notes\n")
 
 	got := e.Run(proj, "s-021-03", "delete after a check", Turns("done",
@@ -152,7 +167,7 @@ func TestT021_03_NestingDoesNotHideTheDeletion(t *testing.T) {
 func TestT021_04_OneRuleHoldsAgainstBothMechanisms(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "protect-notes", guardNotes, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "protect-notes", guardNotes, map[string]string{"refuse.sh": refuseScript})
 	e.WriteFile(proj, "notes.md", "the notes\n")
 
 	got := e.Run(proj, "s-021-04", "work then delete", Turns("done",
@@ -161,7 +176,7 @@ func TestT021_04_OneRuleHoldsAgainstBothMechanisms(t *testing.T) {
 	))
 
 	if !e.Exists(proj, "scratch.md") {
-		t.Fatal("the unprotected write was blocked — the rule is firing outside its binding")
+		t.Fatal("the unprotected write was blocked — the rule is firing outside its trigger")
 	}
 	if !got.Saw("notes.md is protected") {
 		t.Fatalf("the command half was not refused:\n%s", got.Output)

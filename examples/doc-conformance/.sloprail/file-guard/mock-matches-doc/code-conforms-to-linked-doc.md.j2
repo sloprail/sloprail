@@ -1,0 +1,48 @@
+# Does this mock/emulator actually conform to the linked doc?
+
+No `prepare` step ran — nothing here needs a transcript lookup or a local
+file resolved ahead of time. The marker names a remote URL; visit it
+yourself and check the marked code against what it actually says.
+
+## Inputs
+
+- The doc URL this code claims to conform to:
+
+{% for m in event.newMarkers if m.kind == "conforms-to-doc" %}
+```
+{{ m.fqn }}
+```
+{% endfor %}
+
+- The file carrying the marker:
+
+```
+{{ event.newContent if event.newContent else event.oldContent }}
+```
+
+## What to do
+
+Visit the URL above and read what it actually says — do not rely on a title
+or a guess at its contents. Then compare the marked code against it.
+
+## Pass
+
+The marked code implements the same contract the doc describes at that URL —
+same trajectory-JSONL shape, same hook names and firing conditions, same
+field names — under the doc's CURRENT wording (fetched live), not an earlier
+or assumed version of it.
+
+## Fail
+
+- The URL does not resolve, or its content has nothing to do with what the
+  marker claims — refuse and say so; there is nothing to verify conformance
+  against.
+- The mock emits or expects a shape the doc does not describe (a field the
+  real implementation dropped, a hook the real one never fires).
+- The mock implements what the doc used to say rather than what it currently
+  says — the code has not caught up to a doc change.
+- The marker sits on code unrelated to what the doc is actually describing —
+  a marker placed hopefully rather than accurately.
+
+Name the specific line and quote the exact clause of the doc (as fetched)
+that it fails to match.

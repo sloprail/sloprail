@@ -1,0 +1,31 @@
+# An edit must not silently drop content nobody asked to remove (unit 17, his
+# 2026-08-14: "a crazy rewrite that silently drops content nobody asked to
+# remove is a violation, regardless of whether the new text is good"). The
+# load-bearing word is UNASKED — the relationship between a removal and the
+# user's own words, not removal itself.
+#
+# Bound to the file's state, PreFileUpdate, preventive:true — the content that
+# would be lost is still on disk at Pre time, so the diff is computed BEFORE
+# the loss. A Post check is too late, and git-restore is gone if the file was
+# never committed — the strongest pre-vs-post case in the topic.
+#
+# "Asked" is DETERMINISTIC, not a keyword grep (his correction, 2026-08-20,
+# after a first build grepped human messages for deletion words — itself the
+# fluent-guess disease this unit is about): the agent writes the QUOTE of what
+# the user asked as a marker in the file's frontmatter (`# sr:asked "<quote>"`,
+# a YAML comment the marker extractor reads), and the check grounds it with
+# `sr-session trajectory cite` — the quote must resolve to the user's own words
+# in the trajectory (a message, or an AskUserQuestion answer). A quote that
+# resolves nowhere is a fabricated ask.
+#
+# Two checks, cheap-gates-expensive. The script: pure additions (append) pass;
+# a removal with no valid grounded quote-marker is refused deterministically;
+# a removal WITH a grounded quote passes to the judge. The judge rules the two
+# properties only a model can: the change is clean & targeted (only what the
+# quote asked), and stated absolutely, not as a from-Y-to-X delta narrative.
+match: 'path startsWith "memories/" and path endsWith ".md"'
+preventive: true
+checks:
+  - script: ./removal-has-a-grounded-ask.sh
+  - judge: ./change-is-clean-and-absolute.md.j2
+    prepare: ./collect-quote-and-diff.sh

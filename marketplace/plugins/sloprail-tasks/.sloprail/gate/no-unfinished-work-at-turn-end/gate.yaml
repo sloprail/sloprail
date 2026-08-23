@@ -1,0 +1,29 @@
+# A turn may not end while work is still open — the CHECKPOINT at the turn
+# boundary. The check is "does any task sit in `to_do` or `in_progress`": if any
+# does, the Stop is BLOCKED and the agent is told which tasks, in which status, and
+# the four ways out. A status field nobody reads is a comment; making the turn
+# boundary the place the question is asked is what keeps the status honest. The full
+# argument lives in the plugin's README, migrated from the old-format rule doc.
+#
+# A GATE, migrated from the old-format turn-end hook (check-open-tasks.sh). That
+# turn-end event is the OLD name for the new `Stop` kind, and a gate is what BLOCKS
+# a Stop — a context bound to Stop only tracks active/inactive and does NOT refuse
+# (the spec is explicit: "a context does not block a Stop; a gate bound to Stop
+# does"). This needs to BLOCK, so it is a gate.
+#
+# on: Stop, with NO match — the whole of it. Stop carries no fields (the end of a
+# cycle is about the cycle, not one file), so there is nothing to narrow on, and
+# naming any field on this kind is refused at load. The gate has no subject handed
+# to it and goes and finds one: check-open-tasks.sh walks $SR_WORKSPACE's task tree.
+#
+# No `require:` — this gate depends on nothing upstream; it reads the tree directly.
+# A gate must carry at least one of require/checks, and this carries the check.
+on:
+  - event: Stop
+checks:
+  # Deterministic: an open task is a refusal (fail-closed on the logic), a missing
+  # tool or tree is a permit (fail-open on the plumbing — none of it is evidence
+  # the work is finished, and refusing would wedge a session the agent cannot
+  # un-wedge by touching its tasks). Every fail-open branch says so on stderr.
+  # Refuses with `{"reason": "..."}` on stdout.
+  - script: ./check-open-tasks.sh

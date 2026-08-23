@@ -1,0 +1,21 @@
+# The completeness half of deterministic-refactoring (unit 12): a declared
+# refactor's every promised move must actually LAND. This is the piece that
+# BLOCKS — a context cannot (its exit is pure lifecycle), only a gate does.
+#
+# on Stop + match on the refactoring context's own active flag, so the check is
+# skipped declaratively when no refactor was ever declared, instead of running
+# the script every Stop only to discover that for itself. The same shape
+# research-rigor's depth-check gate uses (Stop + context[...].active).
+#
+# `require: [{context: refactoring}]` names the context too: match reads
+# context["refactoring"].active, and require's ordering guarantees the gate runs
+# with the context's settled state in hand — the paired context's enter (which
+# writes declared_markers into the payload this check reads) is ordered before
+# this gate, and the gate reads that context still OPEN (exits run after gates).
+on:
+  - event: Stop
+    match: context["refactoring"].active
+require:
+  - context: refactoring
+checks:
+  - script: ./verify-declared-moves-landed.sh

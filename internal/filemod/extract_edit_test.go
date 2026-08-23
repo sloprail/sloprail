@@ -68,8 +68,8 @@ func TestExtractPending_EditCreatingAFileCarriesItsRealContent(t *testing.T) {
 
 	e := events[0]
 	require.Equal(t, KindPreCreate, e.Kind, "an Edit onto a path that does not exist creates it")
-	require.Contains(t, e.Fields, FieldContent)
-	assert.Equal(t, "CREATED BY EDIT", e.Fields[FieldContent],
+	require.Contains(t, e.Fields, FieldNewContent)
+	assert.Equal(t, "CREATED BY EDIT", e.Fields[FieldNewContent],
 		"the resulting body is new_string, not the empty string")
 }
 
@@ -77,15 +77,15 @@ func TestExtractPending_EditCreatingAFileCarriesItsRealContent(t *testing.T) {
 // distinction the defect erased, asserted as a difference rather than as two
 // separate values.
 //
-// `content == ""` is the exact rule an author writes to catch a genuinely empty
-// file. Before the fix it fired on every Edit-created file whatever the body,
-// so the rule meant nothing. Both halves are checked here because the property
-// is that the two differ — pinning only the non-empty case would let a fix that
-// reports every Edit-create as non-empty pass.
+// `newContent == ""` is the exact rule an author writes to catch a genuinely
+// empty file. Before the fix it fired on every Edit-created file whatever the
+// body, so the rule meant nothing. Both halves are checked here because the
+// property is that the two differ — pinning only the non-empty case would let a
+// fix that reports every Edit-create as non-empty pass.
 func TestExtractPending_EditCreateIsDistinguishableFromAGenuinelyEmptyFile(t *testing.T) {
 	dir := t.TempDir()
 
-	m, err := guardrail.CompileMatcherFor(`content == ""`, preCreateDecl(t))
+	m, err := guardrail.CompileMatcherFor(`newContent == ""`, preCreateDecl(t))
 	require.NoError(t, err)
 
 	for name, tc := range map[string]struct {
@@ -117,7 +117,34 @@ func TestExtractPending_EditCreateIsDistinguishableFromAGenuinelyEmptyFile(t *te
 			admitted, err := m.Match(events[0])
 			require.NoError(t, err, "a declared field must never evaluate to a nil the cast rejects")
 			assert.Equal(t, tc.empty, admitted,
-				`content == "" must fire for an empty file and only for an empty file`)
+				`newContent == "" must fire for an empty file and only for an empty file`)
+		})
+	}
+}
+
+// TestExtractPending_GenuineEmptyCreateIsResultKnown is the positive side of the
+// underivable-create distinction: a create whose empty body was STATED (a Write
+// of "", an Edit to "") is derivable, so resultKnown is TRUE — the empty file is
+// KNOWN, and a preventive file-guard may legitimately judge it. This is what a
+// notebook create (resultKnown false, its cell source not the document) must be
+// tellable from; the two share `newContent: ""` and differ only in this boolean.
+func TestExtractPending_GenuineEmptyCreateIsResultKnown(t *testing.T) {
+	dir := t.TempDir()
+	for name, payload := range map[string]fakePending{
+		"a Write of an empty body": writePending(filepath.Join(dir, "written-empty.md"), ""),
+		"an Edit to an empty body": editPending(filepath.Join(dir, "edited-empty.md"), "", ""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			events, err := New().Extract(module.Input{
+				module.InputPhase:   module.PhasePre,
+				module.InputPayload: payload,
+			})
+			require.NoError(t, err)
+			require.Len(t, events, 1)
+			require.Equal(t, KindPreCreate, events[0].Kind)
+			assert.Equal(t, "", events[0].Fields[FieldNewContent])
+			assert.Equal(t, true, events[0].Fields[FieldResultKnown],
+				"a STATED empty body is a known empty file — resultKnown true, unlike an underivable notebook create")
 		})
 	}
 }
@@ -140,7 +167,7 @@ func TestExtractPending_EditCreateCarriesMarkersFromTheResultingBody(t *testing.
 
 	assert.Equal(t, []any{
 		map[string]any{KeyMarkerKind: "blueprint", KeyMarkerFQN: "pkg.New", KeyMarkerLine: 2},
-	}, events[0].Fields[FieldMarkers],
+	}, events[0].Fields[FieldNewMarkers],
 		"a create's markers are read out of the body it would leave behind")
 }
 
@@ -216,7 +243,7 @@ func TestExtractPending_EditWithReplaceAllAppliesEveryOccurrence(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Equal(t, KindPreUpdate, events[0].Kind)
-	assert.Equal(t, "changed\nmiddle\nchanged\n", events[0].Fields[FieldResult],
+	assert.Equal(t, "changed\nmiddle\nchanged\n", events[0].Fields[FieldNewContent],
 		"replace_all makes every occurrence determined, so the result is derivable")
 }
 
@@ -239,14 +266,13 @@ func TestExtractPending_EditOntoAnAbsentFileWithANonEmptyOldStringProducesNoEven
 // --- Q1: the post-edit result on an update ----------------------------------
 
 // TestExtractPending_EditOnAnExistingFileCarriesTheResultingBytes is Q1's
-// answer in force: PreFileUpdate gains a `result` field, distinct from
-// `content`, carrying the bytes the file will hold AFTER the edit.
+// answer in force: PreFileUpdate carries `newContent`, the bytes the file will
+// hold AFTER the edit, alongside `oldContent`, the bytes it holds now.
 //
 // The fixture is built so the pre-write and post-write answers differ, which is
-// the only way to tell which one is being reported. `markers` still describes
-// the bytes being REPLACED — that is what the field has always meant and
-// changing it silently would break every rule reading it — while `result` is
-// the new, separately-named fact.
+// the only way to tell which one is being reported. `oldContent` and
+// `oldMarkers` describe the bytes being REPLACED, while `newContent` is the
+// resulting file.
 func TestExtractPending_EditOnAnExistingFileCarriesTheResultingBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "existing.md")
 	require.NoError(t, os.WriteFile(path, []byte("line one\nline two\n"), 0o644))
@@ -260,11 +286,11 @@ func TestExtractPending_EditOnAnExistingFileCarriesTheResultingBytes(t *testing.
 
 	e := events[0]
 	require.Equal(t, KindPreUpdate, e.Kind)
-	require.Contains(t, e.Fields, FieldResult)
-	assert.Equal(t, "LINE ONE CHANGED\nline two\n", e.Fields[FieldResult],
+	require.Contains(t, e.Fields, FieldNewContent)
+	assert.Equal(t, "LINE ONE CHANGED\nline two\n", e.Fields[FieldNewContent],
 		"the whole resulting file, not just the replacement")
-	assert.NotContains(t, e.Fields, FieldContent,
-		"content stays the create-only field it is declared as")
+	assert.Equal(t, "line one\nline two\n", e.Fields[FieldOldContent],
+		"oldContent is the file as it stands before the edit, distinct from the result")
 }
 
 // TestExtractPending_UpdateSaysWhetherItsResultIsKnown is the honest half of
@@ -274,13 +300,13 @@ func TestExtractPending_EditOnAnExistingFileCarriesTheResultingBytes(t *testing.
 // derivable. A Bash `sed -i` states a transformation the engine will not
 // execute, so its result is not.
 //
-// The tempting design is to omit `result` in the second case. It does not work,
-// and the reason is the engine's own: Matcher.env fills a DECLARED field the
-// event omitted with its type's zero value — deliberately, because an absent
+// The tempting design is to omit `newContent` in the second case. It does not
+// work, and the reason is the engine's own: Matcher.env fills a DECLARED field
+// the event omitted with its type's zero value — deliberately, because an absent
 // declared field used to error, matcher errors refuse, and rules failed closed
-// on the engine's gaps. So an omitted `result` reads as `""` inside a matcher,
-// which is indistinguishable from a command that truly empties the file. That
-// is the same absent-versus-empty collision as the original defect.
+// on the engine's gaps. So an omitted `newContent` reads as `""` inside a
+// matcher, which is indistinguishable from a command that truly empties the
+// file. That is the same absent-versus-empty collision as the original defect.
 //
 // Hence `resultKnown`. Both fields are always present; the boolean is what
 // carries the distinction that absence could not.
@@ -297,7 +323,7 @@ func TestExtractPending_UpdateSaysWhetherItsResultIsKnown(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, events, 1)
 		require.Equal(t, KindPreUpdate, events[0].Kind)
-		assert.Equal(t, "brand new body\n", events[0].Fields[FieldResult])
+		assert.Equal(t, "brand new body\n", events[0].Fields[FieldNewContent])
 		assert.Equal(t, true, events[0].Fields[FieldResultKnown])
 	})
 
@@ -314,7 +340,7 @@ func TestExtractPending_UpdateSaysWhetherItsResultIsKnown(t *testing.T) {
 		require.Equal(t, KindPreUpdate, events[0].Kind)
 		assert.Equal(t, false, events[0].Fields[FieldResultKnown],
 			"the engine will not run sed, so it does not know the resulting bytes")
-		require.Contains(t, events[0].Fields, FieldResult,
+		require.Contains(t, events[0].Fields, FieldNewContent,
 			"present but meaningless, because absence is not observable to a matcher")
 	})
 }
@@ -323,9 +349,9 @@ func TestExtractPending_UpdateSaysWhetherItsResultIsKnown(t *testing.T) {
 // doing the job it was declared for, through a real compiled matcher rather
 // than by reading the map.
 //
-// Two updates whose `result` is the empty string for opposite reasons: one
+// Two updates whose `newContent` is the empty string for opposite reasons: one
 // where the engine could not work it out, one where the file is genuinely being
-// emptied. `result == ""` cannot tell them apart — that is the point — and
+// emptied. `newContent == ""` cannot tell them apart — that is the point — and
 // `resultKnown` can.
 //
 // Without this test the pair could be reduced to a single field and the suite
@@ -341,7 +367,7 @@ func TestExtractPending_ResultKnownIsWhatSeparatesUnknownFromEmptied(t *testing.
 	}
 	require.Equal(t, KindPreUpdate, decl.Name)
 
-	emptied, err := guardrail.CompileMatcherFor(`resultKnown && result == ""`, decl)
+	emptied, err := guardrail.CompileMatcherFor(`resultKnown && newContent == ""`, decl)
 	require.NoError(t, err)
 
 	t.Run("a Write of an empty body genuinely empties the file", func(t *testing.T) {
@@ -403,7 +429,7 @@ func TestExtractPending_TheEditShapeIsReadWhateverTheToolIsCalled(t *testing.T) 
 			})
 			require.NoError(t, err)
 			require.Len(t, events, 1)
-			assert.Equal(t, "BODY", events[0].Fields[FieldContent],
+			assert.Equal(t, "BODY", events[0].Fields[FieldNewContent],
 				"the shape decides, so a rename cannot silence this")
 		})
 	}
@@ -434,7 +460,7 @@ func TestExtractPending_ContentWinsOverAnEditShapeWhenBothArePresent(t *testing.
 	})
 	require.NoError(t, err)
 	require.Len(t, events, 1)
-	assert.Equal(t, "THE WHOLE BODY", events[0].Fields[FieldContent],
+	assert.Equal(t, "THE WHOLE BODY", events[0].Fields[FieldNewContent],
 		"a stated body outranks a replacement that would have to be applied")
 }
 
@@ -455,7 +481,7 @@ func TestExtractPending_AReadIsStillNotAWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, KindPreCreate, events[0].Kind)
-	assert.Equal(t, "", events[0].Fields[FieldContent],
+	assert.Equal(t, "", events[0].Fields[FieldNewContent],
 		"no body was stated, so there is nothing to report but the empty string")
 }
 
@@ -502,7 +528,7 @@ func TestExtractPending_MultiEditAppliesItsEditsInOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Equal(t, KindPreUpdate, events[0].Kind)
-	assert.Equal(t, "gamma\n", events[0].Fields[FieldResult],
+	assert.Equal(t, "gamma\n", events[0].Fields[FieldNewContent],
 		"the second edit matched only because the first had already run")
 }
 
@@ -522,7 +548,7 @@ func TestExtractPending_MultiEditCreatingAFileCarriesTheFinalBody(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Equal(t, KindPreCreate, events[0].Kind)
-	assert.Equal(t, "first\nsecond\n", events[0].Fields[FieldContent])
+	assert.Equal(t, "first\nsecond\n", events[0].Fields[FieldNewContent])
 }
 
 // TestExtractPending_MultiEditWhoseLaterEditCannotApplyProducesNoEvent extends
@@ -722,10 +748,15 @@ func TestExtractPending_ANotebookNeverReportsCellSourceAsFileContent(t *testing.
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Equal(t, KindPreCreate, events[0].Kind)
-	assert.Equal(t, "", events[0].Fields[FieldContent],
+	assert.Equal(t, "", events[0].Fields[FieldNewContent],
 		"one cell's source is not the notebook document, and must never be passed off as it")
-	assert.NotEqual(t, "print(1)", events[0].Fields[FieldContent],
+	assert.NotEqual(t, "print(1)", events[0].Fields[FieldNewContent],
 		"the tempting wrong fix, named so it cannot be introduced quietly")
+	// The empty newContent here is UNDERIVABLE, not a genuinely-empty file, and
+	// resultKnown is what says so — the signal a preventive file-guard reads to
+	// fail closed rather than judging "" as if it were the file's bytes.
+	assert.Equal(t, false, events[0].Fields[FieldResultKnown],
+		"a notebook create's bytes are not derivable, so resultKnown must be false — not the empty-file case")
 }
 
 // TestExtractPending_TheNotebookPathKeyIsReadWhateverTheToolIsCalled applies the
@@ -769,7 +800,7 @@ func TestExtractPending_FilePathWinsWhenBothPathKeysAreCarried(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, want, events[0].Fields[FieldPath])
-	assert.Equal(t, "body", events[0].Fields[FieldContent],
+	assert.Equal(t, "body", events[0].Fields[FieldNewContent],
 		"file_path carries a stated body, and a stated body is still read")
 }
 

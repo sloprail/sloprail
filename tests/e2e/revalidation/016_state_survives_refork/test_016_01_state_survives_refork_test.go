@@ -33,34 +33,40 @@ import (
 // reported id opens an empty database; one keyed on the origin finds the
 // verdicts already recorded. That difference is the whole invariant.
 //
+// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+//
+// The identity the verdict store is keyed by is SHARED machinery: openRevalidation
+// resolves the CONVERSATION's id (the way `session id` does, not the harness's
+// reported id), and the file-guard's after-check opens that same store through the
+// same path. So a verdict recorded before a re-fork is found after it, or not, by
+// the same code the old dispatch used — re-vehicling onto e.FileGuard observes the
+// SAME survival through the NEW dispatch. The exact transformation is in
+// tests/e2e/REVEHICLE-PATTERN.md.
+//
+// The after-check fingerprints the settled file on disk, so "settle then re-offer
+// the same content" is just writing the same bytes twice: the second write's
+// fingerprint matches the pass recorded before the fork, and the check is skipped.
+// The ledger moves to `.sloprail/file-guard/<name>/log` (read with
+// e.FileGuardLedgerLines) and each guard writes it via $SR_GUARDRAIL_DIR.
+//
 // # Why the negative control matters more here than anywhere else
 //
-// "State survived" is observed as a hook NOT running — and on a broken build
-// the hook runs, which is the same thing an un-forked second cycle looks like
+// "State survived" is observed as a check NOT running — and on a broken build
+// the check runs, which is the same thing an un-forked second cycle looks like
 // if nothing was ever recorded. So T016_01 is paired with T016_02, which forks
-// to an UNRELATED conversation and requires the hook to run again. Without the
+// to an UNRELATED conversation and requires the check to run again. Without the
 // pair, a build that never skips anything would pass the first test by
 // accident, and a build that skips everything would pass it for the wrong
 // reason.
 
-const watcherDecl = `---
-hooks:
-  PreFileCreate:
-    - hooks:
-        - type: command
-          command: ./watch.sh
-  PreFileUpdate:
-    - hooks:
-        - type: command
-          command: ./watch.sh
----
-
-# Records every event it is asked about, and permits it.
+const watcherGuard = `match: "**/*.md"
+checks:
+  - script: ./watch.sh
 `
 
 const watcherScript = `#!/bin/sh
 cat >/dev/null
-echo "asked" >> "$PWD/log"
+echo "asked" >> "$SR_GUARDRAIL_DIR/log"
 exit 0
 `
 
@@ -71,28 +77,26 @@ exit 0
 // content is offered again under the NEW id.
 //
 // It must be skipped. The conversation is the same one, its record is where it
-// was, and the verdict recorded before the fork still applies. A hook running
+// was, and the verdict recorded before the fork still applies. A check running
 // here is the engine having followed the fork into an empty directory.
 func TestT016_01_AVerdictSurvivesTheHarnessChangingTheSessionID(t *testing.T) {
 	harness.RequireSessionStore(t)
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "watcher", watcherDecl, map[string]string{"watch.sh": watcherScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "watcher", watcherGuard, map[string]string{"watch.sh": watcherScript})
 
 	const before = "s-016-01-before"
 	const after = "s-016-01-after"
 
-	// Settle the content. A create, and the file is removed afterwards so the
-	// offer after the fork is also a create — the subject is then the pending
-	// bytes both times and is identical across the fork. An update's subject
-	// comes from disk (internal/filemod/module.go:70 carries no content), which
-	// would make this a different comparison than intended.
+	// Settle the content. On the after-check the subject is the settled file's
+	// fingerprint, so re-writing the same bytes after the fork yields the same
+	// subject and the pass recorded before it exempts the write.
 	e.Run(proj, before, "settle the file", Turns("done",
 		Write("w1", "notes.md", "settled content"),
-		Bash("b1", "rm -f notes.md"),
 	))
-	if n := len(e.Ledger(proj, "watcher", "log")); n != 1 {
+	if n := len(e.FileGuardLedgerLines(proj, "watcher", "log")); n != 1 {
 		t.Fatalf("the guardrail was asked %d time(s) before the fork, want 1 — the content has "+
 			"to be settled for this test to mean anything", n)
 	}
@@ -100,11 +104,11 @@ func TestT016_01_AVerdictSurvivesTheHarnessChangingTheSessionID(t *testing.T) {
 	// The harness re-forks: same conversation, new reported id.
 	e.Fork(proj, before, after)
 
-	e.Run(proj, after, "offer the same content again", Turns("done",
+	e.Run(proj, after, "rewrite the same content", Turns("done",
 		Write("w2", "notes.md", "settled content"),
 	))
 
-	if n := len(e.Ledger(proj, "watcher", "log")); n != 1 {
+	if n := len(e.FileGuardLedgerLines(proj, "watcher", "log")); n != 1 {
 		t.Fatalf("the guardrail was asked %d time(s) in total, want 1 — the verdict recorded "+
 			"before the re-fork must still be in force after it. A second invocation means the "+
 			"engine keyed its state on the id the harness reports, followed the fork into an "+
@@ -117,7 +121,7 @@ func TestT016_01_AVerdictSurvivesTheHarnessChangingTheSessionID(t *testing.T) {
 //
 // Same content, same path, same project — but a session whose transcript is a
 // root in its own right, continuing nothing. Its identity is its own, so it has
-// no record here and the hook must run.
+// no record here and the check must run.
 //
 // This is what makes T016_01 mean "the fork was followed" rather than "nothing
 // is ever judged twice". Together they pin the identity to the CONVERSATION:
@@ -129,23 +133,23 @@ func TestT016_02_AnUnrelatedSessionDoesNotInheritTheVerdicts(t *testing.T) {
 
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "watcher", watcherDecl, map[string]string{"watch.sh": watcherScript})
+	e.GitInit(proj)
+	e.FileGuard(proj, "watcher", watcherGuard, map[string]string{"watch.sh": watcherScript})
 
 	e.Run(proj, "s-016-02-first", "settle the file", Turns("done",
 		Write("w1", "notes.md", "settled content"),
-		Bash("b1", "rm -f notes.md"),
 	))
-	if n := len(e.Ledger(proj, "watcher", "log")); n != 1 {
+	if n := len(e.FileGuardLedgerLines(proj, "watcher", "log")); n != 1 {
 		t.Fatalf("the guardrail was asked %d time(s) in the first session, want 1", n)
 	}
 
 	// No Fork: a plain second session, seeded as its own root by Run. It
 	// continues nothing, so it is a different conversation.
-	e.Run(proj, "s-016-02-second", "offer the same content again", Turns("done",
+	e.Run(proj, "s-016-02-second", "rewrite the same content", Turns("done",
 		Write("w2", "notes.md", "settled content"),
 	))
 
-	if n := len(e.Ledger(proj, "watcher", "log")); n != 2 {
+	if n := len(e.FileGuardLedgerLines(proj, "watcher", "log")); n != 2 {
 		t.Fatalf("the guardrail was asked %d time(s) in total, want 2 — a session that "+
 			"continues nothing is a different conversation and holds no verdicts from this "+
 			"one. State keyed per session is the whole reason for that: a session may hold its "+
@@ -165,6 +169,10 @@ func TestT016_02_AnUnrelatedSessionDoesNotInheritTheVerdicts(t *testing.T) {
 // Asked of the engine, through the same command every hook uses. If the walk
 // stopped at the forked file's own root, the two ids would differ and the
 // verdicts would not have been reachable in T016_01 at all.
+//
+// This test installs no guardrail — it reads the engine's own identity resolution
+// (SessionIdentity), which is format-neutral — so it is unchanged by the
+// re-vehicling.
 func TestT016_03_TheForkedTranscriptResolvesToTheOriginalConversation(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

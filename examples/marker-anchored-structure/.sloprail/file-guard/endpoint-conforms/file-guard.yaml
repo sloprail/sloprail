@@ -1,0 +1,9 @@
+# The marker anchors the rule, not the path — file anywhere, as long as it
+# carries the sr:endpoint marker. Script confirms the file-name pattern and
+# that the declared marker set (5 endpoints + 1 agent + 1 db-table,
+# per-session) all actually appeared; judge confirms the marked code uses
+# the required libs / ORM / naming.
+match: any(markers, .kind == "endpoint")
+checks:
+  - script: ./file-name-matches-pattern.sh
+  - judge: ./endpoint-uses-required-libs.md.j2

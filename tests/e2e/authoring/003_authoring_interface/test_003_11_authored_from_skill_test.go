@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+// RE-VEHICLED onto the new nature format (was old e.Guardrail / GUARDRAIL.md).
+//
+// This is the authoring-skill ACCEPTANCE test: it installs the exact declaration
+// an agent would author "from nothing but the authoring-guardrails skill" and
+// proves it fires. That is only faithful if the installed declaration is the one
+// the skill actually teaches — and the skill
+// (marketplace/plugins/sloprail/skills/authoring-guardrails/) now teaches the new
+// nature format: a rule about a command about to run is a GATE
+// (.sloprail/gate/<name>/gate.yaml, gate.md) whose `on` names PreCommandInvoke,
+// whose `match` reads the flattened `event.invocations`, and whose check reads the
+// FLAT CheckPayload off stdin and refuses with `{"reason":…}` + a non-zero exit.
+//
+// So the declaration below is the new-format one an author derives from the skill,
+// and the installer is e.Gate to match.
+//
 // T003_11: a guardrail written from nothing but the authoring-guardrails skill
 // and the engine's own load check actually fires.
 //
@@ -25,59 +40,46 @@ import (
 //   - a kind picked off the load check's report of what this build produces
 //   - a `list` field matched with `any(...)`, the operator group the string
 //     table does not cover
-//   - `hooks` as a map to a LIST of bindings, which is the shape most likely to
-//     be guessed as a bare mapping
+//   - the gate's nested `event.*` match scope (gate.md's one asymmetry), so
+//     `any(event.invocations, .bin == "curl")` rather than a bare `invocations`
 //   - stdin read exactly once, then reused, which is the mistake the skill's
-//     hook-script section exists to prevent
+//     check-script section exists to prevent
 //   - a JSON `reason` on stdout with a non-zero exit
 //
 // It binds to PreCommandInvoke rather than to a file kind on purpose: the file
 // kinds are what every other e2e here already covers, so a rule over them could
-// pass by resembling one of those instead of by being derivable from the help.
-const authoredFromHelp = `---
-hooks:
-  PreCommandInvoke:
-    - matcher: any(invocations, .bin == "curl")
-      hooks:
-        - type: command
-          command: ./no-network.sh
----
-
-# Work is not fetched from the network mid-session
-
-A command that reaches the network makes a session's result depend on something
-outside the repository, which no later reader can reproduce.
-
-## Pass
-The command runs nothing that fetches over the network.
-
-## Fail
-Any invocation in the command line is a network fetcher.
+// pass by resembling one of those instead of by being derivable from the skill.
+const authoredGate = `on:
+  - event: PreCommandInvoke
+    match: any(event.invocations, .bin == "curl")
+checks:
+  - script: ./no-network.sh
 `
 
-// The hook, written from the skill's hook contract section.
+// The check, written from the skill's check-script and flat-payload sections.
 //
 // `set -uo pipefail` rather than `set -e`, stdin captured once into a variable,
-// the refusal as JSON with a reason addressed to the agent, and a non-zero exit
-// beside it. The reason does not name the guardrail — the engine appends that.
+// the event read FLAT (`.event.invocations`), the refusal as JSON with a reason
+// addressed to the agent, and a non-zero exit beside it. The reason does not name
+// the guardrail — the engine appends that.
 const noNetworkScript = `#!/usr/bin/env bash
 set -uo pipefail
 payload="$(cat)"
-raw="$(printf '%s' "$payload" | sed -n 's/.*"raw":"\([^"]*\)".*/\1/p')"
-printf '{"decision":"block","reason":"This command fetches over the network (%s). Use what is already in the repository, or ask for the data to be committed."}\n' "$raw"
+bins="$(printf '%s' "$payload" | jq -r '[.event.invocations[].bin] | join(", ")' 2>/dev/null)"
+printf '{"reason":"This command fetches over the network (%s). Use what is already in the repository, or ask for the data to be committed."}\n' "$bins"
 exit 1
 `
 
 func TestT003_11_GuardrailAuthoredFromSkillFires(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "no-network-fetch", authoredFromHelp, map[string]string{
+	e.Gate(proj, "no-network-fetch", authoredGate, map[string]string{
 		"no-network.sh": noNetworkScript,
 	})
 
 	// The load check the skill tells an author to run. A declaration that does
 	// not load would make the firing test below fail for the wrong reason, and
-	// the help promises this reports it.
+	// the skill promises this reports it.
 	load := e.CLI(proj, "session", "start")
 	if strings.Contains(load.Output, "not loaded") {
 		t.Fatalf("the declaration written from the skill does not load:\n%s", load.Output)
@@ -102,12 +104,12 @@ func TestT003_11_GuardrailAuthoredFromSkillFires(t *testing.T) {
 //
 // Without this, T003_11 passes for a matcher that admits everything — which is
 // exactly what a mistyped key inside `any(...)` does NOT do, but what a missing
-// matcher would. The help warns that a list matcher can only be confirmed by
+// matcher would. The skill warns that a list matcher can only be confirmed by
 // causing the event; this is the other half of causing it.
 func TestT003_12_AuthoredGuardrailLeavesOtherCommands(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "no-network-fetch", authoredFromHelp, map[string]string{
+	e.Gate(proj, "no-network-fetch", authoredGate, map[string]string{
 		"no-network.sh": noNetworkScript,
 	})
 

@@ -15,6 +15,16 @@
         "name": "sloprail",
         "email": "nikita.sviridenko@voypost.com"
       }
+    },
+    {
+      "name": "sloprail-tasks",
+      "description": "Guardrails for a memories/tasks/ workflow: a task's body must be the human's ask (cited, and nothing else), its evidence must resolve, its in_review claim is judged, and a turn may not end with open work. Four use-case guardrails in the nature format, shipped as a self-testing plugin. Requires the sloprail plugin (it installs the engine hooks).",
+      "version": "0.0.1",
+      "source": "./marketplace/plugins/sloprail-tasks",
+      "author": {
+        "name": "sloprail",
+        "email": "nikita.sviridenko@voypost.com"
+      }
     }
   ]
 }

@@ -27,46 +27,34 @@ import (
 //
 // Both are asserted below, and neither is observable from the stream alone —
 // the turn-1 refusal text is still in the output no matter what turn 3 did.
-
-// twoRules guards two different directories with one rule each, so a violation
-// on turn 3 can be a genuinely different rule from the one that refused on turn
-// 1 rather than the same rule seeing a second file.
 //
-// Bound to both pending kinds, because a retry after the file exists is an
-// update rather than a create, and a rule bound to only one of them would go
-// quiet at exactly the turn under test.
-const guardsDrafts = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "drafts/"
-      hooks:
-        - type: command
-          command: ./h.sh
-  PreFileUpdate:
-    - matcher: path startsWith "drafts/"
-      hooks:
-        - type: command
-          command: ./h.sh
----
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
+//
+// A gate on the pre-write events is re-evaluated fresh on each turn's write, so
+// "each subject judged on its own facts, each turn" is the gate dispatch's own
+// behaviour — a gate carries no cross-turn verdict of its own to leak forward,
+// and it does not poison later turns. The checks read the FLAT payload and refuse
+// with a `{"reason":...}` on stdout; the ledgers are read with e.GateLedgerLines.
 
-# Nothing may be written under drafts/ until the project has a TEMPLATE
+// guardsDrafts guards drafts/, refusing until the project has a TEMPLATE.
+// Triggered on both pre-write kinds, because a retry after the file exists is an
+// update rather than a create.
+const guardsDrafts = `on:
+  - event: PreFileCreate
+    match: event.path startsWith "drafts/"
+  - event: PreFileUpdate
+    match: event.path startsWith "drafts/"
+checks:
+  - script: ./h.sh
 `
 
-const guardsVendor = `---
-hooks:
-  PreFileCreate:
-    - matcher: path startsWith "vendor/"
-      hooks:
-        - type: command
-          command: ./h.sh
-  PreFileUpdate:
-    - matcher: path startsWith "vendor/"
-      hooks:
-        - type: command
-          command: ./h.sh
----
-
-# Nothing may be written under vendor/, ever
+const guardsVendor = `on:
+  - event: PreFileCreate
+    match: event.path startsWith "vendor/"
+  - event: PreFileUpdate
+    match: event.path startsWith "vendor/"
+checks:
+  - script: ./h.sh
 `
 
 // gatedOnTemplate refuses while TEMPLATE is absent and permits once it is
@@ -74,23 +62,25 @@ hooks:
 //
 // The condition is something the AGENT can change between turns, which is what
 // makes "the refusal cleared" a different observation from "the rule never
-// fired". Three levels up from the guardrail's own folder is the project root.
+// fired". The project root is reached from $SR_GUARDRAIL_DIR (a gate's own
+// folder, `.sloprail/gate/<name>/`).
 const gatedOnTemplate = `#!/bin/sh
 cat >/dev/null
-if [ -f "$PWD/../../../TEMPLATE" ]; then
-  echo permitted >> "$PWD/log"
+root="${SR_GUARDRAIL_DIR%/.sloprail/gate/*}"
+if [ -f "$root/TEMPLATE" ]; then
+  echo permitted >> "$SR_GUARDRAIL_DIR/log"
   exit 0
 fi
-echo refused >> "$PWD/log"
-echo 'drafts need a TEMPLATE first' >&2
+echo refused >> "$SR_GUARDRAIL_DIR/log"
+echo '{"reason":"drafts need a TEMPLATE first"}'
 exit 1
 `
 
-// alwaysRefuses is the second rule's hook: nothing it is shown is acceptable.
+// alwaysRefuses is the second rule's check: nothing it is shown is acceptable.
 const alwaysRefuses = `#!/bin/sh
 cat >/dev/null
-echo refused >> "$PWD/log"
-echo 'nothing may be written under vendor/' >&2
+echo refused >> "$SR_GUARDRAIL_DIR/log"
+echo '{"reason":"nothing may be written under vendor/"}'
 exit 1
 `
 
@@ -110,8 +100,8 @@ exit 1
 func TestT016_08_ANewViolationAfterAFixIsCaughtOnItsOwnTerms(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
-	e.Guardrail(proj, "no-vendor", guardsVendor, map[string]string{"h.sh": alwaysRefuses})
+	e.Gate(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
+	e.Gate(proj, "no-vendor", guardsVendor, map[string]string{"h.sh": alwaysRefuses})
 
 	res := e.Run(proj, "s-016-08", "draft, fix, then touch vendor", Turns("done",
 		Write("t1", "drafts/post.md", "first attempt"),
@@ -131,17 +121,16 @@ func TestT016_08_ANewViolationAfterAFixIsCaughtOnItsOwnTerms(t *testing.T) {
 	assert.False(t, e.Exists(proj, "vendor/lib.js"),
 		"a refused pending write must leave nothing on disk")
 
-	// The first rule was asked twice and changed its answer. One entry would
-	// mean turn 1 never reached it; two refusals would mean the fix did not
-	// clear it. Neither is visible from the stream.
-	assert.Equal(t, []string{"refused"}, e.Ledger(proj, "needs-template", "log"),
+	// The first rule was asked exactly once — on turn 1. Turn 3 is not under its
+	// match, and a rule that fired outside its match would show a second entry.
+	assert.Equal(t, []string{"refused"}, e.GateLedgerLines(proj, "needs-template", "log"),
 		"the drafts rule must have been asked exactly once — turn 3 is not under its scope, "+
-			"and a rule that fired outside its matcher would show a second entry")
+			"and a rule that fired outside its match would show a second entry")
 
 	// And the rule that refused turn 3 was asked exactly once: on turn 3. A
-	// vendor rule that had also fired on turns 1 or 2 would mean the matcher is
+	// vendor rule that had also fired on turns 1 or 2 would mean the match is
 	// not narrowing at all.
-	assert.Equal(t, []string{"refused"}, e.Ledger(proj, "no-vendor", "log"),
+	assert.Equal(t, []string{"refused"}, e.GateLedgerLines(proj, "no-vendor", "log"),
 		"the vendor rule must be asked once, on the turn that touched vendor/")
 }
 
@@ -160,8 +149,8 @@ func TestT016_08_ANewViolationAfterAFixIsCaughtOnItsOwnTerms(t *testing.T) {
 func TestT016_09_TheClearedRuleLetsTheOriginalWorkThroughLater(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
-	e.Guardrail(proj, "no-vendor", guardsVendor, map[string]string{"h.sh": alwaysRefuses})
+	e.Gate(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
+	e.Gate(proj, "no-vendor", guardsVendor, map[string]string{"h.sh": alwaysRefuses})
 
 	res := e.Run(proj, "s-016-09", "draft, fix, vendor, draft again", Turns("done",
 		Write("t1", "drafts/post.md", "first attempt"),
@@ -180,7 +169,7 @@ func TestT016_09_TheClearedRuleLetsTheOriginalWorkThroughLater(t *testing.T) {
 
 	// Refused, then permitted. The order is the claim: the same rule answering
 	// differently once its condition changed.
-	assert.Equal(t, []string{"refused", "permitted"}, e.Ledger(proj, "needs-template", "log"),
+	assert.Equal(t, []string{"refused", "permitted"}, e.GateLedgerLines(proj, "needs-template", "log"),
 		"the drafts rule must be asked again on turn 4 and must answer differently")
 
 	// The unrelated refusal in between did not stop turn 4 being judged, and did
@@ -194,16 +183,16 @@ func TestT016_09_TheClearedRuleLetsTheOriginalWorkThroughLater(t *testing.T) {
 // The other direction, and the one an over-eager exemption breaks. T016_03
 // covers two attempts at the same path with nothing in between; this adds a
 // SUCCESSFUL, judged, permitted write between the two attempts, so the rule has
-// recorded a pass for another subject before being asked about the refused one
+// been consulted for another subject before being asked about the refused one
 // again.
 //
-// An engine pooling verdicts per rule rather than per subject lets the pass
-// exempt the retry, which is exactly the failure "a file one rule has passed is
-// a file another may never have seen" is careful about, one level down.
+// A gate re-evaluates every pre-write and carries no per-rule verdict to pool,
+// so the intervening permit cannot exempt the retry — this pins that the retry
+// is asked and refused again.
 func TestT016_10_AnUnfixedRefusalIsRefusedAgainAfterAPermittedWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
+	e.Gate(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
 
 	res := e.Run(proj, "s-016-10", "draft, write elsewhere, draft again", Turns("done",
 		Write("t1", "drafts/post.md", "first attempt"),
@@ -220,35 +209,25 @@ func TestT016_10_AnUnfixedRefusalIsRefusedAgainAfterAPermittedWrite(t *testing.T
 
 	// Asked on both attempts, and refused both times. One entry would mean the
 	// retry was exempted — and the tree assertion above would still pass,
-	// because a skipped rule permits and the file would then exist. Two entries
-	// is what makes "refused again" a measurement rather than an inference.
-	assert.Equal(t, []string{"refused", "refused"}, e.Ledger(proj, "needs-template", "log"),
+	// because a skipped rule permits and the file would then exist.
+	assert.Equal(t, []string{"refused", "refused"}, e.GateLedgerLines(proj, "needs-template", "log"),
 		"both attempts on the guarded path must reach the rule and both must refuse")
 }
 
 // T016_11: a refusal on IDENTICAL content is refused again on a later turn.
 //
-// T016_10 retries with different text, which means its two attempts have
-// different fingerprints and the exemption machinery never engages — measured,
-// not assumed: mutating Skippable to return true for a REFUSED verdict, and
-// mutating the verdict key to a constant path, both leave T016_08 through
-// T016_10 green. Those tests are about which rule governs which turn, and they
-// discriminate that; they say nothing about the skip.
+// The same path with byte-identical content is exactly the case a verdict cache
+// would be tempted to skip. A gate has no such cache — it is asked on every
+// pre-write regardless of what it decided last time — so "already judged" is
+// never "already permitted", and a refusal cannot clear itself by being repeated,
+// which is the fail-open in its purest form.
 //
-// This is the turn where the skip is genuinely in play. The same path with
-// byte-identical content is exactly the case an exemption is entitled to skip
-// when the earlier verdict was a PASS — and must never skip when it was a
-// refusal, because "already judged" is not "already permitted". A refusal that
-// exempted its own retry would clear itself by being repeated, which is the
-// fail-open in its purest form.
-//
-// The middle turn is an unrelated permitted write, so the rule has recorded a
-// pass for another subject before being asked about this one again. That is what
-// separates a verdict keyed per (rule, path, content) from one pooled per rule.
+// The middle turn is an unrelated write, so the rule has been consulted for
+// another subject before being asked about this one again.
 func TestT016_11_AnIdenticalRetryOfRefusedContentIsRefusedAgain(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
+	e.Gate(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
 
 	// Byte-identical on turns 1 and 3. Nothing is fixed in between, so the
 	// honest answer both times is a refusal.
@@ -267,11 +246,9 @@ func TestT016_11_AnIdenticalRetryOfRefusedContentIsRefusedAgain(t *testing.T) {
 			"its own retry clears itself by being repeated")
 
 	// Three refusals: the two attempts on post.md and the one on other.md. A
-	// skip granted by the earlier REFUSAL would drop the third entry; a verdict
-	// pooled per rule rather than per path would drop it too, since other.md
-	// carries the same bytes.
+	// cache keyed on content would drop the third entry.
 	assert.Equal(t, []string{"refused", "refused", "refused"},
-		e.Ledger(proj, "needs-template", "log"),
+		e.GateLedgerLines(proj, "needs-template", "log"),
 		"every attempt must reach the rule: a refusal is never a licence, and two different "+
 			"paths holding the same bytes are two separate questions")
 }
@@ -279,26 +256,16 @@ func TestT016_11_AnIdenticalRetryOfRefusedContentIsRefusedAgain(t *testing.T) {
 // T016_12: two DIFFERENT paths carrying identical bytes are two questions.
 //
 // The complement of T016_11 from the other side. T016_11 shows a refusal never
-// licenses a skip; this shows the verdict is keyed on the path as well as the
-// content, so a pass recorded for one file is not a pass for another that
-// happens to hold the same text.
-//
-// Both writes are creations of paths that did not exist, which matters: a
-// creation is the one pending kind whose content is fingerprinted, because the
-// pending bytes are exactly what would land. A second write to an EXISTING path
-// is a PreFileUpdate, and Subject deliberately declines to fingerprint those —
-// the bytes on disk are what the write would replace, not what it would leave,
-// so a fingerprint taken there would let a second offer of different content
-// match the first offer's stored pass. That is why this test uses two paths
-// rather than writing the same path twice, and it is a real constraint on what
-// the exemption can be tested with rather than a preference.
+// licenses a skip; this shows a gate judges each write on its own, so a permit
+// recorded for one file is not a permit for another that happens to hold the
+// same text.
 //
 // TEMPLATE is present from the start, so the rule permits throughout and the
 // question is purely which subjects it is asked about.
 func TestT016_12_IdenticalBytesAtTwoPathsAreJudgedSeparately(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Guardrail(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
+	e.Gate(proj, "needs-template", guardsDrafts, map[string]string{"h.sh": gatedOnTemplate})
 	e.WriteFile(proj, "TEMPLATE", "so the rule permits from the first turn\n")
 
 	const same = "the very same bytes"
@@ -315,6 +282,6 @@ func TestT016_12_IdenticalBytesAtTwoPathsAreJudgedSeparately(t *testing.T) {
 	// Asked twice, once per path. A verdict pooled on content alone would skip
 	// the second and leave one entry — and every tree assertion above would
 	// still pass, because a skipped rule permits.
-	assert.Equal(t, []string{"permitted", "permitted"}, e.Ledger(proj, "needs-template", "log"),
-		"a pass recorded for one path must not exempt another path holding the same bytes")
+	assert.Equal(t, []string{"permitted", "permitted"}, e.GateLedgerLines(proj, "needs-template", "log"),
+		"a permit recorded for one path must not exempt another path holding the same bytes")
 }

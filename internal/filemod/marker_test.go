@@ -283,6 +283,221 @@ func TestScan_LeaderWithNoSpaceBeforeSR(t *testing.T) {
 	assert.Equal(t, "pkg.Thing", got[0].FQN)
 }
 
+// --- the quoted fqn ----------------------------------------------------------
+
+func TestScan_QuotedFQNKeepsTheWholePhrase(t *testing.T) {
+	// The reason the quoted form exists. A marker's name is not always a token:
+	// `sr:asked` records a phrase a person actually said, which a later check
+	// grounds against the trajectory. A bare `(\S+)` truncates it at the first
+	// space; the quoted form must carry it whole, with the surrounding quotes
+	// stripped and every inner space preserved.
+	got := Scan(`# sr:asked "keep the original transcript_path, just add the new section"` + "\n")
+	require.Len(t, got, 1)
+	assert.Equal(t, Marker{
+		Kind: "asked",
+		FQN:  "keep the original transcript_path, just add the new section",
+		Line: 1,
+	}, got[0], "the whole quoted phrase is the fqn, quotes removed, spaces kept")
+}
+
+func TestScan_QuotedFQNVariations(t *testing.T) {
+	// The quoted inner text is taken verbatim between the quotes — spaces,
+	// punctuation, and any character that is not itself a `"`.
+	for name, tc := range map[string]struct{ line, fqn string }{
+		"one word quoted":         {`// sr:k "word"`, "word"},
+		"several words":           {`// sr:k "two words here"`, "two words here"},
+		"punctuation":             {`// sr:asked "delete lines 3-7, keep the header!"`, "delete lines 3-7, keep the header!"},
+		"colons and slashes":      {`// sr:k "see src/a/b.go: the top half"`, "see src/a/b.go: the top half"},
+		"a sentence with a url":   {`// sr:k "per https://x.dev/a?b=c, drop the retry"`, "per https://x.dev/a?b=c, drop the retry"},
+		"unicode inside":          {`// sr:k "залиш оригінальний текст"`, "залиш оригінальний текст"},
+		"leading/trailing spaces": {`// sr:k "  padded  "`, "  padded  "},
+		"a single quote inside":   {`// sr:k "don't rewrite it"`, "don't rewrite it"},
+		"tab character inside":    {"// sr:k \"a\tb\"", "a\tb"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Scan(tc.line + "\n")
+			require.Len(t, got, 1)
+			assert.Equal(t, tc.fqn, got[0].FQN)
+		})
+	}
+}
+
+func TestScan_QuotedFQNOnEveryLeader(t *testing.T) {
+	// The quoted form is not special to `#`. It rides on all three leaders, so a
+	// quoted name written in a `//` or `--` comment reads back the same.
+	for _, leader := range []string{"//", "#", "--"} {
+		got := Scan(leader + ` sr:asked "keep it as is"` + "\n")
+		require.Lenf(t, got, 1, "leader %q with a quoted fqn", leader)
+		assert.Equal(t, "asked", got[0].Kind)
+		assert.Equal(t, "keep it as is", got[0].FQN)
+	}
+}
+
+func TestScan_QuotedFQNCoexistsWithBare(t *testing.T) {
+	// Both forms in one file, read in line order. The bare form is unchanged by
+	// the quoted form's addition.
+	text := strings.Join([]string{
+		`// sr:blueprint pkg.Thing`,          // 1 — bare
+		`# sr:asked "just append a section"`, // 2 — quoted
+		`-- sr:docs schema.users`,            // 3 — bare
+	}, "\n")
+
+	got := Scan(text)
+	assert.Equal(t, []Marker{
+		{Kind: "blueprint", FQN: "pkg.Thing", Line: 1},
+		{Kind: "asked", FQN: "just append a section", Line: 2},
+		{Kind: "docs", FQN: "schema.users", Line: 3},
+	}, got)
+}
+
+func TestScan_QuotedExtraWhitespaceIsTolerated(t *testing.T) {
+	// As with the bare form, a person may have reformatted the line. The spaces
+	// AROUND the quoted string are `\s*`/`\s+`; the spaces INSIDE it are the
+	// fqn and are kept exactly.
+	got := Scan(`   #    sr:asked    "the inner   spacing   is kept"   ` + "\n")
+	require.Len(t, got, 1)
+	assert.Equal(t, "asked", got[0].Kind)
+	assert.Equal(t, "the inner   spacing   is kept", got[0].FQN)
+}
+
+func TestScan_QuotedFQNWithTrailingCR(t *testing.T) {
+	// CRLF: the trailing `\r` after the closing quote is absorbed by `\s*$`,
+	// exactly as it is for a bare fqn. The quote must still close before it.
+	got := Scan("# sr:asked \"keep the header\"\r\n")
+	require.Len(t, got, 1)
+	assert.Equal(t, "keep the header", got[0].FQN)
+	assert.NotContains(t, got[0].FQN, "\r")
+}
+
+func TestScan_EmptyQuotedFQNIsAMarkerWithEmptyFQN(t *testing.T) {
+	// `""` is degenerate but read, not rejected — the same report-not-reject
+	// stance every other odd fqn gets. A check that receives an empty quote
+	// grounds it to nothing and refuses on its own terms; a marker silently
+	// dropped here would read as unmarked code instead. This case is also why
+	// Scan disambiguates by submatch index: the string form cannot tell an
+	// empty quoted match from a bare branch that did not participate.
+	got := Scan(`# sr:asked ""` + "\n")
+	require.Len(t, got, 1, "an empty quoted fqn is still a marker")
+	assert.Equal(t, "asked", got[0].Kind)
+	assert.Equal(t, "", got[0].FQN, "the fqn is the empty string, not the two quote characters")
+}
+
+func TestScan_MalformedQuotesAreNotMarkers(t *testing.T) {
+	// A line whose fqn STARTS with `"` is committed to the quoted form: it must
+	// close and be followed only by whitespace. None of these do, so each is a
+	// malformed line the anchors reject — not a bare fqn that silently begins
+	// with a quote character, and not a half-filled Marker.
+	for name, line := range map[string]string{
+		"unterminated":                 `// sr:asked "keep the header`,
+		"unterminated, one word":       `// sr:k "word`,
+		"opens, space, never closes":   `// sr:asked "keep this and that`,
+		"junk after the close":         `// sr:asked "keep it" and more`,
+		"a bare token after close":     `// sr:asked "keep it" trailing`,
+		"escaped quote is not nesting": `// sr:k "he said \"hi\""`, // no escaping: the \" closes early, the rest trails
+		"only an opening quote":        `// sr:k "`,
+		"three quotes":                 `// sr:k """`, // opens, closes empty, a stray " trails
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Empty(t, Scan(line+"\n"), "%q must not read as a marker", line)
+		})
+	}
+}
+
+func TestScan_QuoteNotAtStartOfBareFQNStaysInIt(t *testing.T) {
+	// The quoted form is entered only when the fqn's FIRST character is `"`. A
+	// `"` anywhere else is an ordinary character, so a bare token that happens
+	// to contain one is unchanged from the original reader — it is not suddenly
+	// interpreted as a broken quoted fqn.
+	for name, tc := range map[string]struct{ line, fqn string }{
+		"quote in the middle": {`// sr:k a"b`, `a"b`},
+		"quote at the end":    {`// sr:k ab"`, `ab"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := Scan(tc.line + "\n")
+			require.Len(t, got, 1)
+			assert.Equal(t, tc.fqn, got[0].FQN)
+		})
+	}
+}
+
+func TestScan_QuotedFQNMayContainTheCommentLeaders(t *testing.T) {
+	// The inner text is arbitrary (bar a `"`), so a quoted phrase that itself
+	// contains `//`, `#`, or `--` is kept whole — the leaders are only special
+	// at the START of the line, not inside a quoted fqn.
+	got := Scan(`// sr:asked "keep the // and the -- and the # in place"` + "\n")
+	require.Len(t, got, 1)
+	assert.Equal(t, "keep the // and the -- and the # in place", got[0].FQN)
+}
+
+// --- frontmatter -------------------------------------------------------------
+
+func TestScan_MarkerInMarkdownFrontmatter(t *testing.T) {
+	// The concrete case from examples/no-unasked-deletion. A markdown file
+	// carries the marker as a YAML comment between the `---` fences. A YAML
+	// comment parses to nothing (comment-only frontmatter is a valid, EMPTY
+	// document), so the marker MUST be read out of the raw text — which the
+	// per-line `#` scan does without needing to know what frontmatter is.
+	text := strings.Join([]string{
+		`---`, // 1
+		`# sr:asked "keep the original transcript_path, just add the new section"`, // 2
+		`---`,        // 3
+		`# Some doc`, // 4
+	}, "\n")
+
+	got := Scan(text)
+	require.Len(t, got, 1, "the frontmatter marker is found between the --- fences")
+	assert.Equal(t, Marker{
+		Kind: "asked",
+		FQN:  "keep the original transcript_path, just add the new section",
+		Line: 2,
+	}, got[0])
+}
+
+func TestScan_FrontmatterFenceLinesAreNotMarkers(t *testing.T) {
+	// The `---` fences themselves must not read as markers. `---` is not a
+	// supported leader (`--` is, but only when followed by `\s* sr:`), and a
+	// bare `---` has no `sr:` at all.
+	got := Scan("---\n# not a marker, just a yaml comment\n---\n")
+	assert.Empty(t, got, "neither the fences nor an ordinary comment is a marker")
+}
+
+func TestScan_FrontmatterWithRealFieldsAndAMarker(t *testing.T) {
+	// The marker rides alongside real YAML fields too, not only in comment-only
+	// frontmatter. The scan does not parse the YAML — it reads every line — so a
+	// `# sr:` comment among actual keys is found, and the keys are ignored
+	// because they carry no `sr:` leader-comment.
+	text := strings.Join([]string{
+		`---`,                              // 1
+		`title: My Doc`,                    // 2
+		`# sr:asked "only touch the body"`, // 3
+		`tags: [a, b]`,                     // 4
+		`---`,                              // 5
+		``,                                 // 6
+		`# Heading`,                        // 7 — a markdown H1, NOT a marker (no sr:)
+	}, "\n")
+
+	got := Scan(text)
+	require.Len(t, got, 1, "only the sr: comment is a marker; the fields and the H1 are not")
+	assert.Equal(t, Marker{Kind: "asked", FQN: "only touch the body", Line: 3}, got[0])
+}
+
+func TestScan_MarkdownHeadingIsNotAMarker(t *testing.T) {
+	// A markdown `#` heading shares the `#` leader but is not `\s* sr:` after
+	// it, so it is correctly ignored. Worth pinning because markdown is exactly
+	// where the `#`-leader marker lives, and an over-eager reader that matched
+	// any `#` line would swallow every heading in the file.
+	for name, line := range map[string]string{
+		"h1":               `# Introduction`,
+		"h2":               `## Details`,
+		"h1 mentioning sr": `# About sr: markers`, // the word "sr:" mid-heading, not a leader-comment
+		"setext-ish":       `# sr is a tool`,      // "sr" without the colon
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Empty(t, Scan(line+"\n"), "%q is a heading, not a marker", line)
+		})
+	}
+}
+
 // --- the wire form -----------------------------------------------------------
 
 func TestMarkerFields_LineIsAGoInt(t *testing.T) {

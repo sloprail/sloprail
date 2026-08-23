@@ -1,0 +1,38 @@
+# Does the marked code actually uphold this invariant?
+
+The script already confirmed the pin resolves and still matches HEAD — the
+marker points at real, current spec text. Your job is the question a script
+cannot answer: does the code near this marker actually DO what that pinned
+text requires?
+
+## Inputs
+
+- The marker's `fqn`, naming the pinned spec text (repo, sha, path, line
+  range) — read it at that pin.
+- The file carrying the marker:
+
+```
+{{ event.newContent if event.newContent else event.oldContent }}
+```
+
+No `prepare` step feeds this template — nothing here needs a transcript
+lookup, so it renders straight from `CheckPayload`'s own `event`.
+
+## Pass
+
+The code within the marker's scope enforces the invariant the pinned text
+states, under the specific wording of that pin — not a looser or stricter
+reading of it.
+
+## Fail
+
+- The code does something adjacent but not what the invariant actually
+  requires (e.g. the invariant says "never" and the code has a bypass branch).
+- The marker sits near code that does not touch the invariant's subject at
+  all — a marker placed hopefully rather than accurately.
+- The pinned text was reworded in a way the code has not caught up to, even
+  though the byte comparison passed (this happens when the pin range was
+  drawn too narrowly to catch the actual change).
+
+Name the specific line or behavior that violates the pinned wording, quoting
+the exact clause of the invariant it fails.
