@@ -84,52 +84,46 @@ type Pending interface {
 
 // extractPending reads a pending action for the files it would touch.
 //
-// It dispatches on the SHAPE of the arguments and never on Tool(). That
-// omission looks like a bug and has been reported as one, so the argument for
-// it lives here, where someone about to "fix" it will read it.
+// It dispatches on the SHAPE of the arguments and never on Tool(). A name
+// allowlist is a list of strings that must track a vocabulary this engine
+// does not own and is not told about — Claude Code renamed `Task` to `Agent`
+// in v2.1.63, and a corpus survey of 8,458 transcripts found filemod never
+// noticed, because it never asked. Every module that DID ask broke silently —
+// and silently is the point: an allowlist that has fallen behind does not
+// error, it stops producing events, and a guardrail that stops firing looks
+// exactly like a guardrail that is satisfied. commandmod makes the identical
+// choice for the identical reason, so this is the engine's rule rather than
+// this module's habit.
 //
-// The objection is fair on its face: any tool whose arguments carry a
-// `file_path` produces a file event, so `Read` — which is read-only — yields a
-// PreFileCreate. That is real. It is measured, not hypothetical, and
-// TestExtractPending_ReadOnlyToolStillProducesAnEvent pins it.
+// # Naming a path is not the same as stating a write
 //
-// It is still the right trade, for two reasons that a name allowlist cannot
-// give back.
+// This USED to dispatch on `file_path` alone: any tool whose arguments named
+// one produced a file event, so `Read` — which is read-only — yielded a
+// PreFileCreate or PreFileUpdate. That was deliberate for a while (see the
+// git history on this comment for the argument as it stood), reasoned as an
+// accepted cost of shape-based dispatch: `Grep`/`Glob`/`WebFetch` carry no
+// `file_path` at all, so shape already filtered them, and `Read` was called
+// the one acceptable residue.
 //
-// The first is drift. A name allowlist is a list of strings that must track a
-// vocabulary this engine does not own and is not told about. Claude Code
-// renamed `Task` to `Agent` in v2.1.63; a corpus survey of 8,458 transcripts
-// found filemod never noticed, because it never asked. Every module that DID
-// ask broke silently — and silently is the point: an allowlist that has fallen
-// behind does not error, it stops producing events, and a guardrail that stops
-// firing looks exactly like a guardrail that is satisfied. That is the precise
-// failure this engine exists to prevent, and it is worse than the false
-// positive above, because a spurious event is visible to whoever reads the rule
-// and a missing one is visible to no one.
+// It stopped being acceptable once a PREVENTIVE file-guard was bound to those
+// same kinds. A guard whose check refuses whenever a result is not derivable
+// sees a `Read` exactly as it would see the write the guard exists to catch —
+// `Read` never carries `content`, so resultKnown is always false for it — and
+// refuses the READ itself. Measured against a live guard
+// (scanner-ledger-is-append-only-via-script): a bare Read of a guarded ledger
+// was refused with the guard's own write-refusal message, before any Write
+// was ever attempted.
 //
-// The second is that the shape already does most of the filtering, which is
-// easy to miss because the defect report overstated the blast radius. Of the
-// read-only tools named as producing bogus events, only `Read` actually does.
-// `Grep` carries `pattern`/`path`, `Glob` carries `pattern`, `WebFetch`
-// carries `url` — none carries `file_path`, so none reaches an event at all.
-// The residue is `Read`, and one over-reported tool is a smaller wrong than a
-// vocabulary that goes stale without saying so.
-//
-// commandmod makes the identical choice for the identical reason, so this is
-// the engine's rule rather than this module's habit.
-//
-// What would change this: `Read`'s event is not merely spurious, it is
-// mislabelled — a PreFileCreate for a file that already exists on disk and is
-// only being read. If that becomes a problem worth solving, solve it on shape
-// too. A create whose arguments carry no `content` key at all is not a write,
-// and that is a question about the arguments rather than about the name.
-//
-// The raw-JSON reading that note called for now exists — see pendingshape.go,
-// which distinguishes an absent `content` from an empty one and is what fixed
-// the Edit-create defect. It was NOT used to suppress `Read`'s event, which
-// would be a behaviour change of its own and is pinned by
-// TestExtractPending_AReadIsStillNotAWrite. What it decides is the CONTENT a
-// write carries, not whether a path produces an event.
+// The fix stays inside the shape-not-name discipline this file already keeps
+// — see pendingArgs.statesAWrite, asked below right after path() and before
+// anything builds an event. A call that names a path but states nothing about
+// what it would leave behind produces no file event, the same silence
+// Grep/Glob/WebFetch already get for naming no path at all. What is
+// unchanged: resultFor's own errNotDerivable default still exists for a call
+// that DOES state a write whose bytes cannot be worked out (a notebook edit),
+// because that call says a write is coming even though this module cannot
+// say what it will contain — the two are different facts that used to share
+// one code path.
 func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 	pending, ok := in[module.InputPayload].(Pending)
 	if !ok {
@@ -141,6 +135,19 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		// No path named outright, under either spelling this understands. A
 		// command line may still name one, and that is the other shape this
 		// module reads — see extractCommand.
+		return m.extractCommand(pending)
+	}
+	if !w.statesAWrite() {
+		// A path is named, but nothing about the arguments says a write is
+		// coming — the shape `Read` has, and the shape every future read-only
+		// tool will have too, whatever it is called. See statesAWrite's doc
+		// comment for what this fixes: emitting PreFileCreate/PreFileUpdate
+		// here let a preventive file-guard refuse a plain Read as though it
+		// were the write the guard exists to catch.
+		//
+		// A command line may still name a real write on this same path — an
+		// agent can Read a file and, in the same turn, `cat` over it — so this
+		// falls through to the command shape rather than returning early.
 		return m.extractCommand(pending)
 	}
 	path := w.path()

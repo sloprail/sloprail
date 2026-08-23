@@ -130,24 +130,71 @@ func TestExtract_ToolNameIsNotConsulted(t *testing.T) {
 	}
 }
 
-// TestExtractPending_ReadOnlyToolStillProducesAnEvent is the accepted cost of
-// the choice above, measured rather than asserted. `Read` carries a file_path
-// and no content, so it yields a PreFileCreate for a file it only reads.
-//
-// Named for what is true. If a future change makes this stop happening — by
-// asking whether the arguments carry a `content` key, per extractPending's
-// closing note — this test is the one to rewrite, deliberately.
-func TestExtractPending_ReadOnlyToolStillProducesAnEvent(t *testing.T) {
-	events, err := New().Extract(module.Input{
-		module.InputPhase: module.PhasePre,
-		module.InputPayload: fakePending{
-			tool: "Read",
-			args: json.RawMessage(`{"file_path":"does-not-exist.md","offset":10,"limit":50}`),
-		},
+// TestExtractPending_ReadVariantsProduceNoEvent extends
+// TestExtractPending_AReadIsStillNotAWrite (extract_edit_test.go, which pins
+// the base case and carries the full argument for why) across the other
+// argument shapes a real Read call sends, so the fix is not accidentally
+// narrow to one exact payload.
+func TestExtractPending_ReadVariantsProduceNoEvent(t *testing.T) {
+	for name, args := range map[string]string{
+		"path only":         `{"file_path":"does-not-exist.md"}`,
+		"with offset/limit": `{"file_path":"does-not-exist.md","offset":10,"limit":50}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			events, err := New().Extract(module.Input{
+				module.InputPhase: module.PhasePre,
+				module.InputPayload: fakePending{
+					tool: "Read",
+					args: json.RawMessage(args),
+				},
+			})
+			require.NoError(t, err)
+			assert.Empty(t, events, "Read states no write, so it must reach no event")
+		})
+	}
+
+	t.Run("existing file", func(t *testing.T) {
+		// The base case and its sibling above name a file that is absent, which
+		// exercises resultFor's default case but not lookAt's presentFile
+		// branch. A Read of a file that IS there is the common case in
+		// practice — reading before an edit — so it needs its own fixture to
+		// confirm statesAWrite is checked before either branch of the
+		// existence switch, not folded into just the absent one.
+		path := filepath.Join(t.TempDir(), "exists.md")
+		require.NoError(t, os.WriteFile(path, []byte("already here"), 0o644))
+		args, err := json.Marshal(map[string]string{"file_path": path})
+		require.NoError(t, err)
+
+		events, extractErr := New().Extract(module.Input{
+			module.InputPhase: module.PhasePre,
+			module.InputPayload: fakePending{
+				tool: "Read",
+				args: args,
+			},
+		})
+		require.NoError(t, extractErr)
+		assert.Empty(t, events, "Read of an existing file states no write, so it must reach no event")
 	})
-	require.NoError(t, err)
-	require.Len(t, events, 1, "Read carries file_path, so it reaches an event")
-	assert.Equal(t, KindPreCreate, events[0].Kind)
+}
+
+// TestExtractPending_APathNamedWithNoWriteKeyProducesNoEventWhateverTheTool
+// pins the shape, not the name: a call under any tool identity that names a
+// path but states none of resultFor's write shapes produces no event. This is
+// the property that keeps a future read-only tool silent on day one, whatever
+// a vendor calls it — the same drift-immunity extractPending's doc comment
+// argues for the create/update side, applied to the read side.
+func TestExtractPending_APathNamedWithNoWriteKeyProducesNoEventWhateverTheTool(t *testing.T) {
+	for _, tool := range []string{"Read", "", "SomeFutureReadTool"} {
+		events, err := New().Extract(module.Input{
+			module.InputPhase: module.PhasePre,
+			module.InputPayload: fakePending{
+				tool: tool,
+				args: json.RawMessage(`{"file_path":"does-not-exist.md"}`),
+			},
+		})
+		require.NoError(t, err, "tool %q", tool)
+		assert.Empty(t, events, "tool %q names a path with no write key", tool)
+	}
 }
 
 // TestExtractPending_ShapeAlreadyFiltersToolsWithoutAFilePath is the other half

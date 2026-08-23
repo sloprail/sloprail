@@ -464,12 +464,19 @@ func TestExtractPending_ContentWinsOverAnEditShapeWhenBothArePresent(t *testing.
 		"a stated body outranks a replacement that would have to be applied")
 }
 
-// TestExtractPending_AReadIsStillNotAWrite holds the accepted cost from
-// extractPending's doc comment at its current value while the new branch lands.
+// TestExtractPending_AReadIsStillNotAWrite pins the CORRECTED behaviour: a
+// `Read` carries a file_path and neither a content nor an edit shape, so
+// pendingArgs.statesAWrite is false and no event is built at all.
 //
-// `Read` carries a file_path and neither a content nor an edit shape. It still
-// produces a PreFileCreate — the drift-immunity trade the module argues for at
-// length — and this fix must not quietly change that, in either direction.
+// This test used to assert the opposite value on purpose, holding the old
+// "Read still produces a PreFileCreate" behaviour in place while a fix was
+// pending — see git history on this comment. That trade stopped being
+// accepted once a live preventive file-guard was observed refusing a plain
+// Read as though it were the write the guard exists to catch (the guard sees
+// PreFileCreate/PreFileUpdate with resultKnown false and fails closed on it,
+// unable to tell a Read's synthesized event apart from a real underivable
+// write). The name is kept, because the property it names — a Read is not a
+// write — is the same property; only which value pins it changed.
 func TestExtractPending_AReadIsStillNotAWrite(t *testing.T) {
 	events, err := New().Extract(module.Input{
 		module.InputPhase: module.PhasePre,
@@ -479,10 +486,7 @@ func TestExtractPending_AReadIsStillNotAWrite(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, KindPreCreate, events[0].Kind)
-	assert.Equal(t, "", events[0].Fields[FieldNewContent],
-		"no body was stated, so there is nothing to report but the empty string")
+	assert.Empty(t, events, "Read states no write, so it must reach no event")
 }
 
 // --- Q3: several edits to one file in one call ------------------------------
