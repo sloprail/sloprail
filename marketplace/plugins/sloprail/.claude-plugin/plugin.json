@@ -1,5 +1,5 @@
 {
   "name": "sloprail",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Enforces a project's declared guardrails at the moments its harness can pause. This plugin is the whole of what is Claude-Code-specific: it maps that harness's lifecycle names onto sloprail's own session subcommands, so nothing inside the engine has to know whose lifecycle it is running under."
 }
