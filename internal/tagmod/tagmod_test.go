@@ -120,6 +120,48 @@ func TestScan_TagBodyCharacters(t *testing.T) {
 		"a trailing period ends the tag and stays in the prose")
 }
 
+// --- said, not shown ---------------------------------------------------------
+//
+// Two independent consumers of this module (sloprail's own `strategy` repo and
+// `nikita-executive-memory`'s predecessor rule) each measured, on real
+// sessions, that a `#tag`-shaped token an agent is SHOWING — a fenced example,
+// a quoted refusal, an inline span while explaining the mechanism — read as one
+// it was DECLARING. All four cases below are the ones actually measured; a
+// consumer refusing a turn on the wrong evidence is the failure this section
+// exists to prevent from recurring.
+
+// A fenced example showing what to reply is not the agent replying.
+func TestScan_FencedCodeBlockIsNotATag(t *testing.T) {
+	assert.Empty(t, scan([]string{"Here's an example:\n```\nreply with #skip if nothing to record\n```\nThat's the mechanism."}),
+		"a #tag inside a fenced block is being SHOWN, not declared")
+	assert.Empty(t, scan([]string{"~~~\nsome code #decision in a comment\n~~~"}),
+		"the tilde fence strips the same way as the backtick fence")
+}
+
+// An inline code span naming a tag while explaining it is not using it.
+func TestScan_InlineCodeSpanIsNotATag(t *testing.T) {
+	assert.Empty(t, scan([]string{"The token `#skip` means nothing here, explaining it."}),
+		"an inline span is a mention, not a declaration")
+}
+
+// A blockquote of a rule's own refusal — which necessarily CONTAINS the literal
+// tag it is telling the agent to use — is not the agent using it.
+func TestScan_BlockquotedLineIsNotATag(t *testing.T) {
+	assert.Empty(t, scan([]string{"> MEMORY GUARDRAIL: ... use #skip if nothing needs recording.\nI read the above."}),
+		"a quoted line is not the agent's own words")
+}
+
+// A tag genuinely written in the agent's own prose still matches — stripping
+// removes only the quoted/shown forms, not the tag pattern's own reach.
+func TestScan_UnquotedTagStillMatchesAlongsideStrippedOnes(t *testing.T) {
+	assert.Equal(t, []string{"skip"},
+		labels(scan([]string{"Nothing to record. #skip"})),
+		"genuine, unquoted use is unaffected")
+	assert.Equal(t, []string{"real"},
+		labels(scan([]string{"`#fake` is just an example; #real is what I mean."})),
+		"a quoted mention and a genuine use in the SAME message: only the genuine one counts")
+}
+
 // --- Extract ----------------------------------------------------------------
 
 func postWith(messages []string) module.Input {
