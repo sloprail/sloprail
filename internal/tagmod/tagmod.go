@@ -77,6 +77,62 @@ const (
 // Group 2 is the label, WITHOUT the leading `#`.
 var tagPattern = regexp.MustCompile(`(^|\s)#([A-Za-z_][A-Za-z0-9_-]*)`)
 
+// quotedForms are removed from a message before it is scanned — SAID, not
+// SHOWN. Each pattern strips one way an agent can put `#tag`-shaped text in
+// front of a reader without meaning it as a tag: a fenced code block, an inline
+// code span, or a quoted line. Applied in this order because a fenced block may
+// itself contain backticks or `>` that would otherwise be read as a span or a
+// quote — stripping the largest, most specific shape first is what keeps the
+// smaller patterns from tearing a fence in half.
+//
+// WHY THIS EXISTS, AND WHY IT WAS MISSING. Two independent consumers of this
+// module — the sloprail `strategy` repo's tag-required gate, and the
+// `nikita-executive-memory` repo's predecessor rule — each discovered, by
+// measurement rather than reasoning, that scanning raw text for `#tag` reads a
+// tag out of an EXAMPLE of one: a fenced snippet showing what to reply, a
+// blockquote of a rule's own refusal message (which necessarily contains the
+// literal tag it is telling the agent to use), or an inline span while
+// explaining the mechanism. All three shapes were measured, independently, in
+// each repo, permitting a turn that recorded and declared nothing. One repo
+// worked around it in the consumer's own hand-rolled trajectory re-scan,
+// because this module's scan had no such protection and a consumer cannot patch
+// a shared primitive from outside it. This is that fix, moved to the one place
+// that serves every consumer rather than the one that measured the hole.
+//
+// APPLIED TO EVERY TAG, not only ones a particular guardrail treats as
+// dangerous. A quoted ENTITY tag (`#decision` inside a fenced example) is safe
+// on its own in most consumers' logic — the tag is recorded, its matching
+// evidence is absent, and a downstream rule refuses, which is the safe
+// direction. But safety in ONE consumer's downstream logic is not a property of
+// this module, and a future consumer that treats an entity tag's mere presence
+// as sufficient (no matching-evidence check) would inherit the same hole `#skip`
+// had. Stripping uniformly means no consumer has to reason about which of its
+// tags are "the dangerous ones" — a quoted token is not a tag here, full stop,
+// and every consumer downstream inherits that for free.
+//
+// (?s) lets `.` cross newlines inside the fenced and quoted-line patterns, since
+// a fence or a quoted block commonly spans several lines. The blockquote
+// pattern is per-line ((?m), `^`/`$` match at each line boundary) because a `>`
+// prefix is a per-line marker, not a delimited span the way a fence is.
+var quotedForms = []*regexp.Regexp{
+	regexp.MustCompile("(?s)```.*?```"),   // fenced block, triple backtick
+	regexp.MustCompile("(?s)~~~.*?~~~"),   // fenced block, triple tilde
+	regexp.MustCompile("`[^`]*`"),         // inline code span
+	regexp.MustCompile(`(?m)^[ \t]*>.*$`), // a quoted (blockquote) line
+}
+
+// stripQuoted removes every quoted/shown form from msg, replacing each with a
+// single space so a tag straddling the boundary of a removed span (rare, but
+// possible with adjacent shapes) does not get spliced back together into
+// something new. What remains is what the agent SAID in its own prose, which is
+// the only text this module's tags are read from.
+func stripQuoted(msg string) string {
+	for _, p := range quotedForms {
+		msg = p.ReplaceAllString(msg, " ")
+	}
+	return msg
+}
+
 // Module produces the tag event.
 type Module struct{}
 
@@ -154,7 +210,11 @@ func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 }
 
 // scan finds every `#tag` in the messages, deduplicated by label with
-// first-occurrence order preserved.
+// first-occurrence order preserved. SAID text only — see stripQuoted and
+// quotedForms above: a fenced block, an inline code span, or a quoted line is
+// removed from each message before the pattern ever runs against it, so a
+// `#tag` an agent is SHOWING (an example, a quoted refusal, an explanation) is
+// not read as one it is declaring.
 //
 // Order is kept because the spec asks for the tags "in the order they appeared",
 // and a rule may care which tag came first. Duplicates are dropped because the
@@ -168,6 +228,7 @@ func scan(messages []string) []Tag {
 	seen := map[string]bool{}
 	var tags []Tag
 	for _, msg := range messages {
+		msg = stripQuoted(msg)
 		for _, match := range tagPattern.FindAllStringSubmatch(msg, -1) {
 			label := match[2]
 			if seen[label] {
