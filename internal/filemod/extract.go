@@ -84,64 +84,91 @@ type Pending interface {
 
 // extractPending reads a pending action for the files it would touch.
 //
-// It dispatches on the SHAPE of the arguments and never on Tool(). That
-// omission looks like a bug and has been reported as one, so the argument for
-// it lives here, where someone about to "fix" it will read it.
+// It dispatches on the HARNESS TOOL NAME first — commandmod.HarnessWriteTools
+// and commandmod.HarnessCommandTools — and only reads argument shape for a
+// tool that name already says is write-capable. This is a reversal from how
+// this function used to work, and the reversal is a deliberate project
+// decision, not a discovery that the old reasoning was wrong. See
+// commandmod/harnesstools.go for the full argument and the trade accepted:
+// a hand-maintained allowlist, with no shape fallback for an unlisted tool.
 //
-// The objection is fair on its face: any tool whose arguments carry a
-// `file_path` produces a file event, so `Read` — which is read-only — yields a
-// PreFileCreate. That is real. It is measured, not hypothetical, and
-// TestExtractPending_ReadOnlyToolStillProducesAnEvent pins it.
+// # What this replaced
 //
-// It is still the right trade, for two reasons that a name allowlist cannot
-// give back.
+// This USED to dispatch on argument SHAPE and never on Tool() at all — any
+// tool whose arguments carried `file_path` produced a file event regardless
+// of the tool's name, on the reasoning that a name allowlist tracks a
+// vocabulary this engine does not own (Claude Code renamed `Task` to `Agent`
+// in v2.1.63 with no warning, and a corpus survey found every module that
+// asked by name broke silently). That version of this function is preserved
+// in git history rather than restated here; the short version is that shape
+// dispatch initially treated ANY path-naming call as a write — so `Read`
+// yielded a `PreFileCreate` — until a PREVENTIVE file-guard bound to those
+// kinds was measured refusing the READ itself (a guard failing closed on an
+// unverifiable result cannot tell "a real write with unknown bytes" apart
+// from "no write at all"; `Read` never carries `content`, so it looked like
+// the former). That was fixed by asking the ARGUMENTS whether they stated a
+// write at all (pendingArgs.statesAWrite, since removed — see pendingshape.go
+// for where it was and why asking the tool name now makes asking the
+// arguments the same question a second time).
 //
-// The first is drift. A name allowlist is a list of strings that must track a
-// vocabulary this engine does not own and is not told about. Claude Code
-// renamed `Task` to `Agent` in v2.1.63; a corpus survey of 8,458 transcripts
-// found filemod never noticed, because it never asked. Every module that DID
-// ask broke silently — and silently is the point: an allowlist that has fallen
-// behind does not error, it stops producing events, and a guardrail that stops
-// firing looks exactly like a guardrail that is satisfied. That is the precise
-// failure this engine exists to prevent, and it is worse than the false
-// positive above, because a spurious event is visible to whoever reads the rule
-// and a missing one is visible to no one.
+// # Why the tool-name gate this time, when the argument above still holds
 //
-// The second is that the shape already does most of the filtering, which is
-// easy to miss because the defect report overstated the blast radius. Of the
-// read-only tools named as producing bogus events, only `Read` actually does.
-// `Grep` carries `pattern`/`path`, `Glob` carries `pattern`, `WebFetch`
-// carries `url` — none carries `file_path`, so none reaches an event at all.
-// The residue is `Read`, and one over-reported tool is a smaller wrong than a
-// vocabulary that goes stale without saying so.
+// The drift risk the shape-based design was built to avoid is real and is
+// not being denied here — a write tool renamed and not added to
+// HarnessWriteTools now produces nothing, silently, until the list catches
+// up. This project chose to accept that cost anyway, deliberately: the
+// people operating this engine are the same people who choose which harness
+// tools it watches, and maintaining a short, named list on a rename is
+// judged the smaller and more honest cost against inferring "is this a
+// write" from argument shape for every call, forever — which is what let a
+// plain `Read` synthesize a write event in the first place. A tool-name gate
+// makes a missed rename visible (a guardrail an author expects to fire does
+// not), where shape inference made the Read misclassification invisible
+// until a guard happened to fail closed on it.
 //
-// commandmod makes the identical choice for the identical reason, so this is
-// the engine's rule rather than this module's habit.
-//
-// What would change this: `Read`'s event is not merely spurious, it is
-// mislabelled — a PreFileCreate for a file that already exists on disk and is
-// only being read. If that becomes a problem worth solving, solve it on shape
-// too. A create whose arguments carry no `content` key at all is not a write,
-// and that is a question about the arguments rather than about the name.
-//
-// The raw-JSON reading that note called for now exists — see pendingshape.go,
-// which distinguishes an absent `content` from an empty one and is what fixed
-// the Edit-create defect. It was NOT used to suppress `Read`'s event, which
-// would be a behaviour change of its own and is pinned by
-// TestExtractPending_AReadIsStillNotAWrite. What it decides is the CONTENT a
-// write carries, not whether a path produces an event.
+// What is UNCHANGED beneath the gate: resultFor's own tier list (content,
+// edits, old_string/new_string, notebook) still decides what bytes a
+// recognised write tool's call would leave behind, and its errNotDerivable
+// default still exists for a write whose bytes cannot be worked out (a
+// notebook edit). The gate decides WHETHER a call is a write; resultFor still
+// decides WHAT it writes.
 func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 	pending, ok := in[module.InputPayload].(Pending)
 	if !ok {
 		return nil, nil
 	}
 
+	// ONE call has ONE tool name, so these two are mutually exclusive by
+	// construction — see harnesstools.go: HarnessWriteTools and
+	// HarnessCommandTools are disjoint vocabularies (Write-shaped tools vs.
+	// the shell tool), and nothing here assumes otherwise.
+	tool := pending.Tool()
+
+	if commandmod.HarnessCommandTools[tool] {
+		// A recognised shell tool. Its arguments are a command line, read by
+		// extractCommand below — never by the write-tool branch, because a
+		// command tool's arguments do not carry `file_path`/`content` in the
+		// first place.
+		return m.extractCommand(pending)
+	}
+
+	if !commandmod.HarnessWriteTools[tool] {
+		// Not a tool this project has named as write-capable or
+		// command-capable — see commandmod.HarnessWriteTools for the trade
+		// accepted: the tool-name gate is the SOLE signal, with no shape
+		// fallback, so an unrecognised tool produces no event however its
+		// arguments happen to be shaped. This is what excludes Read (never
+		// on either list) without asking anything about its arguments at
+		// all, and it is also what a renamed write or shell tool now costs:
+		// nothing, until the relevant list is updated.
+		return nil, nil
+	}
+
 	var w pendingArgs
 	if err := json.Unmarshal(pending.Arguments(), &w); err != nil || w.path() == "" {
-		// No path named outright, under either spelling this understands. A
-		// command line may still name one, and that is the other shape this
-		// module reads — see extractCommand.
-		return m.extractCommand(pending)
+		// A recognised write tool whose arguments do not parse, or name no
+		// path. Its own shape says nothing further can be built.
+		return nil, nil
 	}
 	path := w.path()
 
@@ -512,13 +539,18 @@ func reportable(path, root string) string {
 // tool-write path an unknown chooses between two events over a path the tool
 // named either way, which is why that one folds instead.
 func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
+	// The tool-name gate is the CALLER's, not this function's: extractPending
+	// only reaches here for a tool in commandmod.HarnessCommandTools. This
+	// function stayed nameless-by-design for a while (see git history on this
+	// comment) on the reasoning that a harness renaming its shell tool must
+	// not silently stop being watched — the same reasoning extractPending's
+	// own doc comment used to make about itself. Both now gate on name, by
+	// the same project decision; see commandmod/harnesstools.go for the
+	// argument and the cost accepted.
 	var pc pendingCommand
 	if err := json.Unmarshal(pending.Arguments(), &pc); err != nil || pc.Command == "" {
-		// A tool whose arguments carry neither a file path nor a command line
-		// concerns this module not at all, which is ordinary rather than an
-		// error. Note this does not gate on the tool's NAME, for the reason
-		// extractPending argues at length: a harness that renames its shell tool
-		// must not silently stop being watched.
+		// A recognised command tool whose arguments carry no command line —
+		// ordinary, not an error.
 		//
 		// The `== ""` half is EQUIVALENT and kept anyway. An empty command line
 		// parses to an empty file, which yields no targets and so no events —

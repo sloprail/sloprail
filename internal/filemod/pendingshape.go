@@ -116,6 +116,21 @@ func (a pendingArgs) isNotebook() bool {
 	return a.FilePath == "" && a.NotebookPath != ""
 }
 
+// A NOTE ON WHAT USED TO BE HERE
+//
+// This file used to carry pendingArgs.statesAWrite, a shape-only test (no
+// tool name consulted) for whether a call's arguments said anything about
+// bytes it would leave behind — added to stop `Read` from being classified as
+// a PreFileCreate. It is gone because extractPending no longer reaches
+// pendingArgs at all for a tool that is not on commandmod.HarnessWriteTools:
+// the tool-name gate now DECIDES "is this a write" before any argument is
+// parsed, which makes asking the arguments the same question a second time
+// redundant for every tool this project has named.
+//
+// See commandmod/harnesstools.go for the fuller argument and the trade this
+// project chose instead: a named allowlist, maintained by hand, with no
+// shape fallback for a tool that is not on it.
+
 // edit is one replacement within a call.
 type edit struct {
 	Old *string `json:"old_string"`
