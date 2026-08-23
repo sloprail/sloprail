@@ -914,28 +914,39 @@ func TestExtractCommand_ADirectoryIsNotAFile(t *testing.T) {
 	}
 }
 
-// TestExtractCommand_TheToolNameIsNotConsulted holds the rule extractPending
-// argues at length: dispatch is on the SHAPE of the arguments and never on the
-// name.
-//
-// A harness that renames its shell tool, or ships a second one, must not
-// silently stop being watched — which is the exact failure that broke every
-// module asking for `Task` after it became `Agent`.
-func TestExtractCommand_TheToolNameIsNotConsulted(t *testing.T) {
+// TestExtractCommand_OnlyARecognisedCommandToolIsRead pins the CORRECTED,
+// current contract: dispatch to the command shape is gated on
+// commandmod.HarnessCommandTools first, by tool name, with no shape
+// fallback. This test used to assert the opposite (name never consulted);
+// see commandmod/harnesstools.go for the argument behind the reversal.
+func TestExtractCommand_OnlyARecognisedCommandToolIsRead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notes.md")
-	require.NoError(t, os.WriteFile(path, []byte("body\n"), 0o644))
 
-	for _, tool := range []string{"Bash", "Shell", "RunCommand", "", "SomeFutureName"} {
-		args, _ := json.Marshal(map[string]string{"command": "rm " + path})
+	args, _ := json.Marshal(map[string]string{"command": "rm " + path})
+
+	t.Run("Bash is on the list", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(path, []byte("body\n"), 0o644))
 		events, err := New().Extract(module.Input{
 			module.InputPhase:   module.PhasePre,
-			module.InputPayload: fakePending{tool: tool, args: args},
+			module.InputPayload: fakePending{tool: "Bash", args: args},
 		})
-		require.NoError(t, err, "tool %q", tool)
-		require.Lenf(t, events, 1, "tool %q carries a command line and must be read", tool)
+		require.NoError(t, err)
+		require.Len(t, events, 1, "Bash is on HarnessCommandTools and must be read")
 		assert.Equal(t, KindPreDelete, events[0].Kind)
-	}
+	})
+
+	t.Run("an unrecognised tool is not, whatever it carries", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(path, []byte("body\n"), 0o644))
+		for _, tool := range []string{"Shell", "RunCommand", "", "SomeFutureShellTool"} {
+			events, err := New().Extract(module.Input{
+				module.InputPhase:   module.PhasePre,
+				module.InputPayload: fakePending{tool: tool, args: args},
+			})
+			require.NoError(t, err, "tool %q", tool)
+			assert.Emptyf(t, events, "tool %q is not on HarnessCommandTools, so its command line is not read", tool)
+		}
+	})
 }
 
 // TestExtractCommand_ArgumentsWithNeitherShapeProduceNothing pins that adding

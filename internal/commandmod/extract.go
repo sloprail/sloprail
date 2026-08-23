@@ -34,6 +34,16 @@ type pendingCommand struct {
 // something this module can report on — what it changed shows up as the file
 // module's Post events, established by diff rather than inferred from a string
 // that was never executed by us.
+//
+// Gated on HarnessCommandTools first, by tool name. This module used to
+// dispatch on argument shape alone — any tool carrying a `command` key
+// produced an event, and the doc comment here argued explicitly against
+// naming the tool for the same drift reason filemod's extractPending once
+// gave for itself: a harness renaming its shell tool, or adding a second
+// one, should not silently stop being watched. That reasoning is preserved
+// in git history rather than restated; see harnesstools.go for why this
+// project chose a named allowlist anyway, and the maintenance obligation
+// that choice carries.
 func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 	if in[module.InputPhase] == module.PhasePost {
 		return nil, nil
@@ -44,12 +54,19 @@ func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 		return nil, nil
 	}
 
+	if !HarnessCommandTools[pending.Tool()] {
+		// Not a tool this project has named as running a shell command. No
+		// shape fallback — see harnesstools.go: the tool-name gate is the
+		// sole signal, deliberately, so a call whose arguments merely
+		// happen to carry a `command` key under some other tool's name is
+		// not treated as one.
+		return nil, nil
+	}
+
 	var pc pendingCommand
 	if err := json.Unmarshal(pending.Arguments(), &pc); err != nil || pc.Command == "" {
-		// A tool whose arguments carry no command line concerns this module
-		// not at all, which is ordinary rather than an error. Note this does
-		// not gate on the tool's name: a harness that renames its shell tool,
-		// or adds a second one, should not silently stop being watched.
+		// A recognised command tool whose arguments carry no command line —
+		// ordinary, not an error.
 		return nil, nil
 	}
 

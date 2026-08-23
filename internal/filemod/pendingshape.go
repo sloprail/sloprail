@@ -116,44 +116,20 @@ func (a pendingArgs) isNotebook() bool {
 	return a.FilePath == "" && a.NotebookPath != ""
 }
 
-// statesAWrite reports whether this call's arguments say anything about bytes
-// it would leave behind — decided by which KEYS are present, never by the
-// tool's name, the same discipline path() and isNotebook() already keep.
+// A NOTE ON WHAT USED TO BE HERE
 //
-// This is resultFor's own tier list (Content, Edits, OldString/NewString,
-// isNotebook), asked as a yes/no question one layer up. A call that trips none
-// of them names a path and states nothing about what it would do to it — the
-// shape `Read` has, and the shape every future read-only tool will have too,
-// whatever a vendor renames it to.
+// This file used to carry pendingArgs.statesAWrite, a shape-only test (no
+// tool name consulted) for whether a call's arguments said anything about
+// bytes it would leave behind — added to stop `Read` from being classified as
+// a PreFileCreate. It is gone because extractPending no longer reaches
+// pendingArgs at all for a tool that is not on commandmod.HarnessWriteTools:
+// the tool-name gate now DECIDES "is this a write" before any argument is
+// parsed, which makes asking the arguments the same question a second time
+// redundant for every tool this project has named.
 //
-// # Why this exists, and what it fixes
-//
-// extractPending used to build a PreFileCreate/PreFileUpdate for ANY call that
-// named a path, `Read` included — documented and pinned at the time as an
-// accepted cost of shape-based dispatch (see extractPending's doc comment,
-// and TestExtractPending_ReadOnlyToolStillProducesAnEvent). That cost turned
-// out to be sharper than "spurious": a PREVENTIVE file-guard bound to
-// PreFileCreate/PreFileUpdate sees that event exactly as it would a real
-// write, and a guard whose check refuses whenever a result is not derivable
-// (a `Read` never carries `content`, so resultKnown is always false) then
-// refuses the READ itself — not a write to the guarded file, a Read tool call
-// that never touches its bytes. Measured against a live preventive guard
-// (scanner-ledger-is-append-only-via-script): a bare Read of a guarded ledger
-// was refused with the guard's own write-refusal message.
-//
-// The fix stays inside the shape-not-name discipline the rest of this file
-// already keeps: a call that states no write of any kind produces no file
-// event at all, the same silence Grep/Glob/WebFetch already get for carrying
-// no file_path. What is NOT touched is resultFor's own default case — a
-// notebook, or any future shape that names a path without determining its
-// bytes, keeps reaching an event with resultKnown: false, because those calls
-// SAY they will write; a Read's arguments say nothing of the kind.
-func (a pendingArgs) statesAWrite() bool {
-	return a.Content != nil ||
-		len(a.Edits) > 0 ||
-		(a.OldString != nil && a.NewString != nil) ||
-		a.isNotebook()
-}
+// See commandmod/harnesstools.go for the fuller argument and the trade this
+// project chose instead: a named allowlist, maintained by hand, with no
+// shape fallback for a tool that is not on it.
 
 // edit is one replacement within a call.
 type edit struct {

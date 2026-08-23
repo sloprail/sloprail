@@ -274,19 +274,39 @@ func TestEvent_FromEventRejectsAnEventWithNoRawLine(t *testing.T) {
 	}
 }
 
-// TestExtract_DoesNotGateOnTheToolName: extraction keys off the ARGUMENTS
-// carrying a command, never off what the harness calls its shell tool.
+// TestExtract_GatesOnTheToolName pins the CORRECTED, current contract in
+// place of what this test used to assert (see git history: extraction used
+// to key off the arguments carrying a `command`, deliberately never off the
+// tool's name, on the reasoning that a harness renaming Bash or adding a
+// second shell tool must not silently stop being watched).
 //
-// The distinction is load-bearing and invisible from the output shape. A
-// harness that renames Bash, or adds a second shell tool, must not silently
-// stop being watched — a rule that quietly covers nothing is the failure this
-// product exists to prevent, and a name check is the easiest way to introduce
-// one.
-func TestExtract_DoesNotGateOnTheToolName(t *testing.T) {
+// See harnesstools.go for the argument behind the reversal this project
+// chose: `Bash`, the one name on HarnessCommandTools, still works exactly as
+// before. Every other spelling — including one that looks like an obvious
+// rename or an alias — now produces nothing, by design, with no shape
+// fallback.
+func TestExtract_GatesOnTheToolName(t *testing.T) {
 	m := New()
 
+	t.Run("Bash is on the list", func(t *testing.T) {
+		evs, err := m.Extract(module.Input{
+			module.InputPhase:   module.PhasePre,
+			module.InputPayload: pending{tool: "Bash", args: `{"command":"npm publish"}`},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 1 {
+			t.Fatalf("got %d events, want 1 — Bash is on HarnessCommandTools", len(evs))
+		}
+		list, _ := evs[0].Fields[FieldInvocations].([]any)
+		if len(list) != 1 {
+			t.Errorf("invocations = %v, want one npm", list)
+		}
+	})
+
 	for _, tool := range []string{
-		"Bash", "bash", "BashTool", "Shell", "run_command", "Execute",
+		"bash", "BashTool", "Shell", "run_command", "Execute",
 		"terminal", "", "SomeFutureHarnessShell",
 	} {
 		t.Run(tool, func(t *testing.T) {
@@ -297,13 +317,9 @@ func TestExtract_DoesNotGateOnTheToolName(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(evs) != 1 {
-				t.Fatalf("tool %q: got %d events, want 1 — extraction must key off the "+
-					"arguments carrying a command, not the tool's name", tool, len(evs))
-			}
-			list, _ := evs[0].Fields[FieldInvocations].([]any)
-			if len(list) != 1 {
-				t.Errorf("tool %q: invocations = %v, want one npm", tool, list)
+			if len(evs) != 0 {
+				t.Fatalf("tool %q: got %d events, want 0 — not on HarnessCommandTools, "+
+					"and there is no shape fallback", tool, len(evs))
 			}
 		})
 	}

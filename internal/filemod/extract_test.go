@@ -111,22 +111,34 @@ func TestExtract_NoFilePathProducesNoEvents(t *testing.T) {
 	}
 }
 
-func TestExtract_ToolNameIsNotConsulted(t *testing.T) {
-	// Tool() exists to know how to read the arguments; nothing branches on it,
-	// so any tool naming a file_path produces a file event. This is ACCEPTED
-	// behaviour, not a pending defect — extractPending's doc comment argues it.
-	// The property being locked down is drift-immunity: a tool renamed upstream
-	// must go on producing events, which is what a name allowlist would break.
-	for _, tool := range []string{"Write", "Edit", "NotebookEdit", "", "SomethingElse"} {
+// TestExtract_ToolNameIsNowAuthoritative pins the CORRECTED, current
+// contract in place of what this test used to assert (see git history: a
+// name allowlist was deliberately rejected, then deliberately adopted —
+// commandmod/harnesstools.go carries the full argument for the reversal).
+//
+// A tool in commandmod.HarnessWriteTools produces an event from a
+// write-shaped payload; a tool NOT on that list produces none, however its
+// arguments are shaped — including a payload that looks exactly like a real
+// write. There is no shape fallback: this is what "sole gate" means.
+func TestExtract_ToolNameIsNowAuthoritative(t *testing.T) {
+	writeShapedArgs := json.RawMessage(`{"file_path":"does-not-exist.md","content":"x"}`)
+
+	for _, tool := range []string{"Write", "Edit", "NotebookEdit", "MultiEdit"} {
 		events, err := New().Extract(module.Input{
-			module.InputPhase: module.PhasePre,
-			module.InputPayload: fakePending{
-				tool: tool,
-				args: json.RawMessage(`{"file_path":"does-not-exist.md","content":"x"}`),
-			},
+			module.InputPhase:   module.PhasePre,
+			module.InputPayload: fakePending{tool: tool, args: writeShapedArgs},
 		})
 		require.NoError(t, err, "tool %q", tool)
-		require.Len(t, events, 1, "tool %q", tool)
+		require.Len(t, events, 1, "tool %q is on HarnessWriteTools and must produce an event", tool)
+	}
+
+	for _, tool := range []string{"", "SomethingElse", "Read", "AgentThatUsedToBeCalledWrite"} {
+		events, err := New().Extract(module.Input{
+			module.InputPhase:   module.PhasePre,
+			module.InputPayload: fakePending{tool: tool, args: writeShapedArgs},
+		})
+		require.NoError(t, err, "tool %q", tool)
+		assert.Empty(t, events, "tool %q is not on HarnessWriteTools, so a write-shaped payload still produces nothing", tool)
 	}
 }
 

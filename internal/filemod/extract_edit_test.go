@@ -407,32 +407,50 @@ func TestExtractPending_ResultKnownIsWhatSeparatesUnknownFromEmptied(t *testing.
 	})
 }
 
-// --- shape dispatch, not tool names -----------------------------------------
+// --- tool-name dispatch, not shape ------------------------------------------
 
-// TestExtractPending_TheEditShapeIsReadWhateverTheToolIsCalled is the drift
-// argument applied to this fix.
+// TestExtractPending_TheEditShapeIsReadOnlyForARecognisedWriteTool pins the
+// CORRECTED, current contract in place of what this test used to assert
+// (see git history: the old version proved the opposite — that any tool
+// name carrying an edit shape was read, precisely to survive a rename like
+// Claude Code's Task->Agent in v2.1.63).
 //
-// `Task` became `Agent` in Claude Code v2.1.63 and every module asking by name
-// broke silently. So the new branch asks which KEYS are present, never what the
-// tool is called: anything carrying file_path + old_string + new_string is an
-// edit, whatever a vendor decides to name it next.
-func TestExtractPending_TheEditShapeIsReadWhateverTheToolIsCalled(t *testing.T) {
+// commandmod/harnesstools.go carries the argument for the reversal: this
+// project chose to gate on tool name first, so the edit shape is now read
+// ONLY for a tool already on HarnessWriteTools. `Edit` still works; a
+// same-shaped call under an unrecognised name — including exactly the kind
+// of upstream rename the old test was built to survive — now produces
+// nothing until that name is added to the list.
+func TestExtractPending_TheEditShapeIsReadOnlyForARecognisedWriteTool(t *testing.T) {
 	dir := t.TempDir()
-	for _, tool := range []string{"Edit", "StrReplace", "Update", "", "SomethingNobodyHasNamedYet"} {
-		t.Run(tool, func(t *testing.T) {
-			p := editPending(filepath.Join(dir, tool+".md"), "", "BODY")
-			p.tool = tool
 
-			events, err := New().Extract(module.Input{
-				module.InputPhase:   module.PhasePre,
-				module.InputPayload: p,
-			})
-			require.NoError(t, err)
-			require.Len(t, events, 1)
-			assert.Equal(t, "BODY", events[0].Fields[FieldNewContent],
-				"the shape decides, so a rename cannot silence this")
+	t.Run("Edit is on the list", func(t *testing.T) {
+		p := editPending(filepath.Join(dir, "Edit.md"), "", "BODY")
+		p.tool = "Edit"
+		events, err := New().Extract(module.Input{
+			module.InputPhase:   module.PhasePre,
+			module.InputPayload: p,
 		})
-	}
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, "BODY", events[0].Fields[FieldNewContent])
+	})
+
+	t.Run("an unrecognised tool is not, whatever it carries", func(t *testing.T) {
+		for _, tool := range []string{"StrReplace", "Update", "", "SomethingNobodyHasNamedYet"} {
+			t.Run(tool, func(t *testing.T) {
+				p := editPending(filepath.Join(dir, tool+".md"), "", "BODY")
+				p.tool = tool
+
+				events, err := New().Extract(module.Input{
+					module.InputPhase:   module.PhasePre,
+					module.InputPayload: p,
+				})
+				require.NoError(t, err)
+				assert.Empty(t, events, "tool %q is not on HarnessWriteTools", tool)
+			})
+		}
+	})
 }
 
 // TestExtractPending_ContentWinsOverAnEditShapeWhenBothArePresent pins the
@@ -763,31 +781,57 @@ func TestExtractPending_ANotebookNeverReportsCellSourceAsFileContent(t *testing.
 		"a notebook create's bytes are not derivable, so resultKnown must be false — not the empty-file case")
 }
 
-// TestExtractPending_TheNotebookPathKeyIsReadWhateverTheToolIsCalled applies the
-// drift argument to the new key. The fix reads `notebook_path`, so a harness
-// that renames the tool keeps producing events with nothing to update here.
-func TestExtractPending_TheNotebookPathKeyIsReadWhateverTheToolIsCalled(t *testing.T) {
+// TestExtractPending_TheNotebookPathKeyIsReadOnlyForARecognisedWriteTool pins
+// the CORRECTED, current contract in place of what this test used to assert
+// (see git history: the old version proved the key decided regardless of the
+// tool's name, for the same drift-immunity reason TheEditShapeIsRead... used
+// to prove for content/old_string).
+//
+// `NotebookEdit` is on HarnessWriteTools, so its `notebook_path` key is still
+// read exactly as before. A same-shaped call under an unrecognised name is
+// now excluded by the tool-name gate before the key is ever read — see
+// commandmod/harnesstools.go.
+func TestExtractPending_TheNotebookPathKeyIsReadOnlyForARecognisedWriteTool(t *testing.T) {
 	dir := t.TempDir()
-	for _, tool := range []string{"NotebookEdit", "JupyterEdit", "", "RenamedUpstream"} {
-		t.Run(tool, func(t *testing.T) {
-			p := filepath.Join(dir, tool+".ipynb")
-			events, err := New().Extract(module.Input{
-				module.InputPhase: module.PhasePre,
-				module.InputPayload: fakePending{
-					tool: tool,
-					args: json.RawMessage(fmt.Sprintf(`{"notebook_path":%q,"new_source":"x"}`, p)),
-				},
-			})
-			require.NoError(t, err)
-			require.Len(t, events, 1, "the key decides, not the name")
-			assert.Equal(t, p, events[0].Fields[FieldPath])
+
+	t.Run("NotebookEdit is on the list", func(t *testing.T) {
+		p := filepath.Join(dir, "NotebookEdit.ipynb")
+		events, err := New().Extract(module.Input{
+			module.InputPhase: module.PhasePre,
+			module.InputPayload: fakePending{
+				tool: "NotebookEdit",
+				args: json.RawMessage(fmt.Sprintf(`{"notebook_path":%q,"new_source":"x"}`, p)),
+			},
 		})
-	}
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, p, events[0].Fields[FieldPath])
+	})
+
+	t.Run("an unrecognised tool is not, whatever it carries", func(t *testing.T) {
+		for _, tool := range []string{"JupyterEdit", "", "RenamedUpstream"} {
+			t.Run(tool, func(t *testing.T) {
+				p := filepath.Join(dir, tool+".ipynb")
+				events, err := New().Extract(module.Input{
+					module.InputPhase: module.PhasePre,
+					module.InputPayload: fakePending{
+						tool: tool,
+						args: json.RawMessage(fmt.Sprintf(`{"notebook_path":%q,"new_source":"x"}`, p)),
+					},
+				})
+				require.NoError(t, err)
+				assert.Empty(t, events, "tool %q is not on HarnessWriteTools", tool)
+			})
+		}
+	})
 }
 
 // TestExtractPending_FilePathWinsWhenBothPathKeysAreCarried pins the
-// precedence. Nothing sends both today; the generic spelling is what every
-// other tool means by a path, so it is the one that wins if anything ever does.
+// precedence between the two path keys, which is orthogonal to the tool-name
+// gate — this uses `Write`, a recognised write tool, so the gate admits the
+// call and the precedence question is what is actually under test. Nothing
+// sends both keys today; the generic spelling is what every other tool means
+// by a path, so it is the one that wins if anything ever does.
 func TestExtractPending_FilePathWinsWhenBothPathKeysAreCarried(t *testing.T) {
 	dir := t.TempDir()
 	want := filepath.Join(dir, "chosen.md")
@@ -795,7 +839,7 @@ func TestExtractPending_FilePathWinsWhenBothPathKeysAreCarried(t *testing.T) {
 	events, err := New().Extract(module.Input{
 		module.InputPhase: module.PhasePre,
 		module.InputPayload: fakePending{
-			tool: "Ambiguous",
+			tool: "Write",
 			args: json.RawMessage(fmt.Sprintf(
 				`{"file_path":%q,"notebook_path":%q,"content":"body"}`,
 				want, filepath.Join(dir, "other.ipynb"))),
