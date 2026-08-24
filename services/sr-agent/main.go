@@ -227,7 +227,7 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		harnessArgs = append(harnessArgs, "--allowed-tools", strings.Join(allowedTools, " "))
 	}
 
-	inv := BuildInvocation(spec, resolution.Model, harnessArgs, prompt)
+	inv := BuildInvocation(spec, resolution.Model, harnessArgs, prompt, os.Getenv)
 
 	if dryRun {
 		fmt.Fprintln(cmd.OutOrStdout(), inv.String())
@@ -284,12 +284,83 @@ func reportResolution(w interface{ Write([]byte) (int, error) }, spec harnessSpe
 	}
 }
 
+// childEnvBlocklist is the set of environment variables that name the CURRENT,
+// still-live Claude Code session and must never reach a nested harness
+// invocation. sr-agent's own most important caller is a guardrail firing from
+// WITHIN an already-running, interactive Claude Code session, which shells out
+// to spawn a nested, one-shot `claude -p` judge call — a call that is meant to
+// be its own independent session, not a second voice inside the parent's.
+//
+// Go's exec.Cmd inherits the FULL process environment by default whenever
+// Env is left nil, and main.go used to leave it nil: proc.Env was never set,
+// so every one of these rode along into the child unchanged. That is a strong
+// candidate for the child colliding with the parent's own live session/IPC
+// state — CLAUDE_CODE_SESSION_ID and CLAUDE_CODE_HOST_SESSION_ID identify the
+// parent's session, and CLAUDE_CODE_MESSAGING_SOCKET / _TOKEN are the parent's
+// own live IPC channel. A nested `claude -p` that inherited these would be
+// telling the world it IS the parent session, or trying to speak on a socket
+// the parent is still using — either one a plausible cause of the nested
+// process's opaque, undetailed crash.
+//
+// CLAUDECODE and CLAUDE_CODE_ENTRYPOINT are deliberately NOT on this list.
+// Those two are what tell a harness it is running non-interactively/headlessly
+// under Claude Code (the same pair claudeCodeSpec.detect reads), which the
+// nested `claude -p` still needs to behave correctly as a one-shot call rather
+// than trying to start an interactive session with no terminal to attach to.
+// Stripping identity/IPC state is about the child not impersonating or
+// colliding with the STILL-LIVE parent session; it is not about hiding that a
+// harness is present at all.
+var childEnvBlocklist = map[string]bool{
+	"CLAUDE_CODE_SESSION_ID":       true,
+	"CLAUDE_CODE_HOST_SESSION_ID":  true,
+	"CLAUDE_CODE_MESSAGING_SOCKET": true,
+	"CLAUDE_CODE_MESSAGING_TOKEN":  true,
+}
+
+// sanitizeChildEnv strips the parent Claude Code session's identity and IPC
+// variables out of an environment before it is handed to a nested harness
+// process, so a one-shot judge call started from within a live session does
+// not inherit that session's own live state. See childEnvBlocklist for which
+// variables and why.
+//
+// Takes and returns the os.Environ() "KEY=VALUE" slice form directly — the
+// same shape exec.Cmd.Env expects — rather than a map, so the caller can pass
+// os.Environ()'s result straight through with no reshaping on either side and
+// this function has nothing to do but filter.
+//
+// Everything else passes through untouched: PATH, ANTHROPIC_API_KEY (or
+// whatever auth the nested claude needs to run at all), CLAUDECODE and
+// CLAUDE_CODE_ENTRYPOINT, and anything this binary has no opinion about. This
+// is a blocklist rather than an allowlist on purpose — an allowlist would have
+// to anticipate every variable a future harness or a caller's own environment
+// might need, and getting that wrong silently breaks auth or configuration
+// that used to work. A blocklist only has to name the specific vars that are
+// actively wrong to inherit, which is a much smaller and more stable claim.
+func sanitizeChildEnv(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		key, _, found := strings.Cut(kv, "=")
+		if found && childEnvBlocklist[key] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // runHarness execs the harness, wiring its streams straight through.
 //
 // The agent's answer is the whole point of this command, so stdout is passed
 // through untouched rather than captured and re-emitted: a caller piping this
 // gets exactly what the harness wrote, and a long answer streams rather than
 // buffering. stdin is inherited so a harness reading a piped prompt still can.
+//
+// proc.Env is set explicitly (via sanitizeChildEnv) rather than left nil.
+// exec.Cmd's documented default for a nil Env is the CURRENT process's full
+// environment — fine for a standalone run, but this command's most important
+// caller is itself running nested inside a live Claude Code session, and that
+// session's own identity/IPC variables must not ride along into a child that
+// is supposed to be an independent one-shot call. See sanitizeChildEnv.
 func runHarness(cmd *cobra.Command, inv Invocation) error {
 	// cobra populates the context during Execute, but a command that was never
 	// executed has none, and exec.CommandContext PANICS on a nil one rather
@@ -305,6 +376,7 @@ func runHarness(cmd *cobra.Command, inv Invocation) error {
 	proc.Stdin = cmd.InOrStdin()
 	proc.Stdout = cmd.OutOrStdout()
 	proc.Stderr = cmd.ErrOrStderr()
+	proc.Env = sanitizeChildEnv(os.Environ())
 
 	err := proc.Run()
 	if err == nil {
