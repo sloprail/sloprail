@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -199,11 +200,72 @@ func (inv Invocation) String() string {
 // is the LATER one; where a harness lets a repeated flag override, the caller's
 // intent wins over the default, and where it unions (claude's `--allowed-tools`),
 // both apply.
-func BuildInvocation(spec harnessSpec, model string, harnessArgs []string, prompt string) Invocation {
+//
+// The binary comes from resolveBinary(spec, getenv), not bare spec.binary — see
+// that function for why a nested invocation cannot trust a PATH lookup of
+// "claude" to find the SAME build that is asking for it.
+func BuildInvocation(spec harnessSpec, model string, harnessArgs []string, prompt string, getenv func(string) string) Invocation {
 	args := make([]string, 0, len(spec.baseArgs)+len(harnessArgs)+5)
 	args = append(args, "-p", "--model", model)
 	args = append(args, spec.baseArgs...)
 	args = append(args, harnessArgs...)
 	args = append(args, "--", prompt)
-	return Invocation{Binary: spec.binary, Args: args}
+	return Invocation{Binary: resolveBinary(spec, getenv), Args: args}
+}
+
+// resolveBinary picks the executable BuildInvocation puts in Invocation.Binary.
+//
+// spec.binary ("claude") is a bare name, and exec.Command resolves a bare name
+// through a PATH lookup done AT RUN TIME — a lookup that has no idea which
+// build of "claude" is asking for it. sr-agent's own most important caller is a
+// guardrail firing from WITHIN an already-running, interactive Claude Code
+// session that then shells out to sr-agent to spawn a nested, one-shot
+// `claude -p` judge call. Confirmed in a live session: the PARENT session was
+// running via CLAUDE_CODE_EXECPATH pointing at claude-code 2.1.229, while a bare
+// "claude" on that same machine's PATH resolved to a DIFFERENT, newer build
+// (2.1.241, at ~/.local/bin/claude). The nested process then crashed with a bare
+// "claude exited with status 1" and no further detail — version skew between
+// the parent's actual binary and whatever PATH happens to resolve to is a
+// plausible cause: flag and settings-schema differences between builds are
+// exactly the kind of thing that fails opaquely rather than with a clear
+// "unknown flag" message.
+//
+// CLAUDE_CODE_EXECPATH is what Claude Code itself sets to the exact binary it
+// was launched from, so when it is present AND names a file that actually
+// exists, it is a strictly better answer than a PATH lookup: it is the one
+// binary guaranteed to be the SAME build as the session that is asking sr-agent
+// to spawn a judge. It is only trusted when getenv also shows CLAUDECODE or
+// CLAUDE_CODE_ENTRYPOINT set — the same pair claudeCodeSpec.detect checks — so
+// a stale CLAUDE_CODE_EXECPATH left over in an unrelated shell (one that is not
+// actually running inside Claude Code right now) cannot redirect this to a
+// binary that has nothing to do with the caller.
+//
+// Falling back to spec.binary — today's bare-name PATH lookup — whenever
+// CLAUDE_CODE_EXECPATH is unset, empty, or does not point to a file that exists
+// is what keeps this a strict improvement: sr-agent invoked standalone, outside
+// any live session, has no parent binary to prefer and behaves exactly as
+// before.
+//
+// A nil getenv or a nil spec.detect also falls back rather than panicking. A
+// test-only harnessSpec built as a bare struct literal (this package's own
+// verify_test.go does exactly that: `harnessSpec{name: "fake", binary: ...}`)
+// has no detect at all, and a helper this deep in the call graph should not be
+// the thing that turns "a test spec skipped a field it didn't need" into a
+// crash.
+func resolveBinary(spec harnessSpec, getenv func(string) string) string {
+	if getenv == nil || spec.detect == nil {
+		return spec.binary
+	}
+	if !spec.detect(getenv) {
+		return spec.binary
+	}
+	execPath := getenv("CLAUDE_CODE_EXECPATH")
+	if execPath == "" {
+		return spec.binary
+	}
+	info, err := os.Stat(execPath)
+	if err != nil || info.IsDir() {
+		return spec.binary
+	}
+	return execPath
 }

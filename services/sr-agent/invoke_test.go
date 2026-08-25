@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strconv"
 	"testing"
 
@@ -121,10 +122,18 @@ func TestCheckHarnessArgs_WrongHarnessIsReported(t *testing.T) {
 
 // --- invocation -----------------------------------------------------------
 
+// noBinaryOverride is a getenv that names no environment at all — CLAUDE_CODE_EXECPATH
+// unset, and neither of the detect variables set either. Every test in this section
+// is about the ARGS BuildInvocation assembles, not which binary it picks, so they all
+// go through the plain PATH-lookup path (resolveBinary's fallback) and keep asserting
+// "claude" as they did before resolveBinary existed. resolveBinary itself gets its
+// own dedicated tests below.
+func noBinaryOverride(string) string { return "" }
+
 // The prompt goes LAST and positionally. Last is what keeps a prompt beginning
 // with a dash from being read as a flag.
 func TestBuildInvocation_PromptIsLastAndPositional(t *testing.T) {
-	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "does this uphold the invariant?")
+	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "does this uphold the invariant?", noBinaryOverride)
 
 	assert.Equal(t, "claude", inv.Binary)
 	assert.Equal(t, []string{
@@ -151,7 +160,7 @@ var claudeSettingsArg = "--settings " + strconv.Quote(claudeIsolationSettings)
 // must still be the final argument, after everything else.
 func TestBuildInvocation_DashLeadingPromptStaysLast(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "sonnet",
-		[]string{"--permission-mode", "plan"}, "--model is not resolving, why?")
+		[]string{"--permission-mode", "plan"}, "--model is not resolving, why?", noBinaryOverride)
 
 	assert.Equal(t, []string{
 		"-p", "--model", "sonnet",
@@ -165,14 +174,14 @@ func TestBuildInvocation_DashLeadingPromptStaysLast(t *testing.T) {
 // -p is always passed: a hook has no terminal, and an interactive session
 // started there would hang holding the guardrail open.
 func TestBuildInvocation_AlwaysNonInteractive(t *testing.T) {
-	inv := BuildInvocation(claudeCodeSpec, "haiku", []string{"--verbose", "true"}, "q")
+	inv := BuildInvocation(claudeCodeSpec, "haiku", []string{"--verbose", "true"}, "q", noBinaryOverride)
 	assert.Contains(t, inv.Args, "-p")
 }
 
 // Harness args are passed through untouched, between the model and the prompt.
 func TestBuildInvocation_HarnessArgsPassThrough(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "opus",
-		[]string{"--permission-mode", "plan", "--max-budget-usd", "5"}, "q")
+		[]string{"--permission-mode", "plan", "--max-budget-usd", "5"}, "q", noBinaryOverride)
 
 	assert.Equal(t, []string{
 		"-p", "--model", "opus",
@@ -188,7 +197,7 @@ func TestBuildInvocation_DoesNotAliasHarnessArgs(t *testing.T) {
 	harnessArgs := make([]string, 0, 8)
 	harnessArgs = append(harnessArgs, "--verbose", "true")
 
-	inv := BuildInvocation(claudeCodeSpec, "opus", harnessArgs, "q")
+	inv := BuildInvocation(claudeCodeSpec, "opus", harnessArgs, "q", noBinaryOverride)
 	before := append([]string(nil), inv.Args...)
 
 	harnessArgs = append(harnessArgs, "--sneaky", "value")
@@ -206,7 +215,7 @@ func TestBuildInvocation_DoesNotAliasHarnessArgs(t *testing.T) {
 // is what makes the prompt a positional regardless of what precedes it.
 func TestBuildInvocation_VariadicFlagCannotSwallowThePrompt(t *testing.T) {
 	inv := BuildInvocation(claudeCodeSpec, "haiku",
-		[]string{"--add-dir", "/tmp/out"}, "count the lines")
+		[]string{"--add-dir", "/tmp/out"}, "count the lines", noBinaryOverride)
 
 	require.Equal(t, []string{
 		"-p", "--model", "haiku",
@@ -243,7 +252,7 @@ func TestBaseArgs_IsolationSettingsMatchTheConst(t *testing.T) {
 // it is the whole point of moving it into baseArgs. Even a bare run with no caller
 // args carries it.
 func TestBuildInvocation_IsolationSettingsAlwaysPresent(t *testing.T) {
-	inv := BuildInvocation(claudeCodeSpec, "haiku", nil, "q")
+	inv := BuildInvocation(claudeCodeSpec, "haiku", nil, "q", noBinaryOverride)
 	i := indexOf(inv.Args, "--settings")
 	require.NotEqual(t, -1, i, "the isolation --settings must always be present")
 	require.Less(t, i+1, len(inv.Args))
@@ -268,7 +277,7 @@ func TestParseAllowedTools_SeparatorsAndEmpties(t *testing.T) {
 }
 
 func TestInvocation_StringQuotesArgumentsWithSpaces(t *testing.T) {
-	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "does this hold?")
+	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "does this hold?", noBinaryOverride)
 	// The isolation --settings JSON contains quotes, so String() runs it through
 	// strconv.Quote (claudeSettingsArg carries that quoted form); the prompt is the
 	// argument with spaces and is quoted too.
@@ -276,6 +285,131 @@ func TestInvocation_StringQuotesArgumentsWithSpaces(t *testing.T) {
 }
 
 func TestInvocation_StringLeavesPlainArgumentsUnquoted(t *testing.T) {
-	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "why")
+	inv := BuildInvocation(claudeCodeSpec, "sonnet", nil, "why", noBinaryOverride)
 	assert.Equal(t, "claude -p --model sonnet "+claudeSettingsArg+" -- why", inv.String())
+}
+
+// --- resolveBinary ----------------------------------------------------------
+//
+// sr-agent's own most important caller is a guardrail firing from WITHIN an
+// already-running Claude Code session, which shells out to spawn a nested,
+// one-shot `claude -p` judge call. Confirmed in a live session: the PARENT was
+// running via CLAUDE_CODE_EXECPATH naming one build, while a bare "claude" on
+// that same PATH resolved to a DIFFERENT, newer one — and the nested process
+// crashed with a bare "claude exited with status 1". These tests pin the fix:
+// prefer the parent's own binary when it is trustworthy, and never change
+// behaviour when it is not.
+
+// self is a file every one of these tests can stat as "exists and is not a
+// directory" without depending on anything actually named claude being
+// installed on the machine running the tests.
+func selfExecutablePath(t *testing.T) string {
+	t.Helper()
+	path, err := os.Executable()
+	require.NoError(t, err, "need a real file to stand in for a resolved CLAUDE_CODE_EXECPATH")
+	return path
+}
+
+// The confirmed-in-production case: both the Claude Code detect variables and
+// CLAUDE_CODE_EXECPATH are set, and the path names a real file. This is what a
+// nested sr-agent invocation sees, and it must get the parent's own binary
+// rather than whatever PATH would resolve "claude" to.
+func TestResolveBinary_PrefersExecPathWhenClaudeCodeDetectedAndFileExists(t *testing.T) {
+	execPath := selfExecutablePath(t)
+	getenv := envOf(map[string]string{
+		"CLAUDECODE":           "1",
+		"CLAUDE_CODE_EXECPATH": execPath,
+	})
+	assert.Equal(t, execPath, resolveBinary(claudeCodeSpec, getenv))
+}
+
+// The entrypoint variable alone is enough to detect Claude Code, matching
+// claudeCodeSpec.detect's own "either alone is enough" rule.
+func TestResolveBinary_EntrypointAloneIsEnoughToTrustExecPath(t *testing.T) {
+	execPath := selfExecutablePath(t)
+	getenv := envOf(map[string]string{
+		"CLAUDE_CODE_ENTRYPOINT": "cli",
+		"CLAUDE_CODE_EXECPATH":   execPath,
+	})
+	assert.Equal(t, execPath, resolveBinary(claudeCodeSpec, getenv))
+}
+
+// CLAUDE_CODE_EXECPATH unset falls back to the bare name — sr-agent invoked
+// standalone, outside any live session, has no parent binary to prefer and
+// this is the strict-improvement case: behaviour must be identical to before
+// resolveBinary existed.
+func TestResolveBinary_FallsBackWhenExecPathUnset(t *testing.T) {
+	getenv := envOf(map[string]string{"CLAUDECODE": "1"})
+	assert.Equal(t, "claude", resolveBinary(claudeCodeSpec, getenv))
+}
+
+// An empty CLAUDE_CODE_EXECPATH is the same as unset, per the same rule
+// DetectHarness applies to CLAUDECODE itself: exported-but-blank is not a value.
+func TestResolveBinary_EmptyExecPathFallsBack(t *testing.T) {
+	getenv := envOf(map[string]string{
+		"CLAUDECODE":           "1",
+		"CLAUDE_CODE_EXECPATH": "",
+	})
+	assert.Equal(t, "claude", resolveBinary(claudeCodeSpec, getenv))
+}
+
+// CLAUDE_CODE_EXECPATH naming a path that does not exist must not be trusted —
+// a stale or hand-edited value pointing nowhere is exactly the kind of thing
+// that should fall back rather than hand exec.Command a path guaranteed to
+// fail with "file not found" when the bare name might still resolve.
+func TestResolveBinary_NonexistentExecPathFallsBack(t *testing.T) {
+	getenv := envOf(map[string]string{
+		"CLAUDECODE":           "1",
+		"CLAUDE_CODE_EXECPATH": "/no/such/path/sr-agent-test-does-not-exist",
+	})
+	assert.Equal(t, "claude", resolveBinary(claudeCodeSpec, getenv))
+}
+
+// CLAUDE_CODE_EXECPATH naming a DIRECTORY, not a file, must not be trusted —
+// exec.Command on a directory fails, and a directory is never what this
+// variable is documented to hold, so this is treated the same as "does not
+// point to a file that exists".
+func TestResolveBinary_DirectoryExecPathFallsBack(t *testing.T) {
+	getenv := envOf(map[string]string{
+		"CLAUDECODE":           "1",
+		"CLAUDE_CODE_EXECPATH": t.TempDir(),
+	})
+	assert.Equal(t, "claude", resolveBinary(claudeCodeSpec, getenv))
+}
+
+// The whole point of gating on detect: an environment that does NOT name a
+// live Claude Code session must not have its CLAUDE_CODE_EXECPATH trusted,
+// even if the variable happens to be set and to name a real file — e.g. a
+// stale value left over in a shell's exported environment from an earlier
+// session that is not the one running now. Without this gate, any process
+// with that variable lingering in its environment would silently start
+// execing a binary that has nothing to do with the current invocation.
+func TestResolveBinary_ExecPathIgnoredWhenClaudeCodeNotDetected(t *testing.T) {
+	execPath := selfExecutablePath(t)
+	getenv := envOf(map[string]string{
+		"CLAUDE_CODE_EXECPATH": execPath,
+		// Neither CLAUDECODE nor CLAUDE_CODE_ENTRYPOINT set.
+	})
+	assert.Equal(t, "claude", resolveBinary(claudeCodeSpec, getenv))
+}
+
+// A nil getenv (BuildInvocation called without one) must behave exactly like
+// today's bare spec.binary — the zero-value safe default for any caller this
+// change did not anticipate.
+func TestResolveBinary_NilGetenvFallsBack(t *testing.T) {
+	assert.Equal(t, "claude", resolveBinary(claudeCodeSpec, nil))
+}
+
+// A harnessSpec with no detect (a bare struct literal, which is exactly how
+// verify_test.go's fake harness is built) must fall back rather than panic —
+// the falsifier for calling spec.detect unconditionally.
+func TestResolveBinary_NilDetectFallsBackWithoutPanicking(t *testing.T) {
+	spec := harnessSpec{name: "fake", binary: "fake-binary"}
+	getenv := envOf(map[string]string{
+		"CLAUDECODE":           "1",
+		"CLAUDE_CODE_EXECPATH": selfExecutablePath(t),
+	})
+	require.NotPanics(t, func() {
+		assert.Equal(t, "fake-binary", resolveBinary(spec, getenv))
+	})
 }

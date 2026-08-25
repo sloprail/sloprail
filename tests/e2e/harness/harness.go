@@ -1998,6 +1998,24 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 		"PATH="+e.shimDir+string(os.PathListSeparator)+
 			e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
+	// CLAUDE_CODE_EXECPATH must NOT ride the append(os.Environ(), ...) above,
+	// unlike CLAUDECODE/CLAUDE_CODE_ENTRYPOINT which are harmless to inherit
+	// (the mock overrides both on every hook env regardless, per the comment
+	// above). This one the mock never sets at all, so an ambient value survives
+	// unmodified — and when a test process is ITSELF running nested inside a
+	// live Claude Code session (an author or CI running these tests from within
+	// one), the outer session's own CLAUDE_CODE_EXECPATH is sitting in
+	// os.Environ() and would ride straight through into the mock's environment.
+	// sr-agent's resolveBinary (services/sr-agent/invoke.go) treats a present
+	// CLAUDE_CODE_EXECPATH, once CLAUDECODE/CLAUDE_CODE_ENTRYPOINT are set, as
+	// the parent session's own binary and execs it directly — bypassing the
+	// shim dir entirely, since that lookup only happens for a bare "claude"
+	// resolved via PATH. That reaches the operator's actual, real claude
+	// binary from inside a mock-driven test, which is exactly what
+	// InstallClaudeShim exists to prevent. Scrubbed here, unconditionally, so
+	// the mock's environment reflects only what THIS harness constructs and
+	// never what happened to be running the test.
+	cmd.Env = append(cmd.Env, "CLAUDE_CODE_EXECPATH=")
 	// A test that set a blocked-Stop retry cap passes it to the mock. Appended
 	// last so it wins over any ambient value; omitted entirely when unset, leaving
 	// the mock's own default (8). See the stopBlockCap field's doc.

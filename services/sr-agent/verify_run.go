@@ -94,7 +94,7 @@ func runVerified(
 		// being configured — the whole point of --verify is the script, and a
 		// caller checking their wiring needs to see which script was resolved
 		// and where its verdict comes from.
-		fmt.Fprintln(cmd.OutOrStdout(), BuildInvocation(spec, model, harnessArgs, ask).String())
+		fmt.Fprintln(cmd.OutOrStdout(), BuildInvocation(spec, model, harnessArgs, ask, os.Getenv).String())
 		fmt.Fprintf(cmd.OutOrStdout(), "%s %s   # verdict: exit 0 accepts, non-zero re-asks (up to %d attempts)\n",
 			resolved, outputPath, attempts)
 		return nil
@@ -110,7 +110,7 @@ func runVerified(
 			return fmt.Errorf("%w: could not clear %s: %s", ErrVerifierBroken, outputPath, err)
 		}
 
-		inv := BuildInvocation(spec, model, harnessArgs, ask)
+		inv := BuildInvocation(spec, model, harnessArgs, ask, os.Getenv)
 		if err := runAgentQuietly(parent, cmd, inv); err != nil {
 			// The harness itself failed — not a verdict on the answer. Returned
 			// rather than retried: re-running a harness that could not start
