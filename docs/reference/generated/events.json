@@ -1,0 +1,54 @@
+{
+  "kinds": [
+    {
+      "name": "PreFileCreate",
+      "doc": "Fires before a new file is written."
+    },
+    {
+      "name": "PreFileUpdate",
+      "doc": "Fires before an existing file is changed."
+    },
+    {
+      "name": "PreFileDelete",
+      "doc": "Fires before a file is deleted."
+    },
+    {
+      "name": "PreCommandInvoke",
+      "doc": "Fires before a command is invoked."
+    },
+    {
+      "name": "PreToolUse",
+      "doc": "Fires before any tool runs — the general refusable moment."
+    },
+    {
+      "name": "PostFileCreate",
+      "doc": "Fires after a file is created."
+    },
+    {
+      "name": "PostFileUpdate",
+      "doc": "Fires after a file is changed."
+    },
+    {
+      "name": "PostFileDelete",
+      "doc": "Fires after a file is deleted."
+    },
+    {
+      "name": "PostTagWrite",
+      "doc": "Fires when a tag is written in the trajectory, as the turn settles."
+    },
+    {
+      "name": "Stop",
+      "doc": "Fires at the end of a turn — a gate's usual moment."
+    }
+  ],
+  "aliases": [
+    {
+      "name": "PreFileWrite",
+      "doc": "Expands to PreFileCreate + PreFileUpdate. Admitted on both a gate and a context (both may wake pre-write)."
+    },
+    {
+      "name": "PostFileWrite",
+      "doc": "Expands to PostFileCreate + PostFileUpdate. Admitted on a CONTEXT only — a gate does not wake on settled content, so `PostFileWrite` is not a gate alias."
+    }
+  ]
+}
