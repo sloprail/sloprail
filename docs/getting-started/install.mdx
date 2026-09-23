@@ -1,0 +1,37 @@
+---
+title: Install
+description: Get sloprail into your agent as a plugin.
+kind: tutorial
+related:
+  - getting-started/quickstart
+  - guides
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+sloprail runs inside your agent as a **plugin**. Installing it registers the
+hooks the engine needs; from then on, every tool call and turn-end runs through
+sloprail — you don't run anything by hand.
+
+## Install the plugin
+
+<Tabs>
+  <TabItem label="Claude Code">
+    ```bash
+    /plugin install sloprail@sloprail-marketplace
+    ```
+
+    That's it — the hooks are registered. A project with a `.sloprail/` directory
+    is now guarded; a project with none is an ordinary project until its first
+    rule.
+  </TabItem>
+</Tabs>
+
+More harnesses will get their own tab as they go live. The engine's contract —
+hook points in, events out — isn't specific to one, so the rules a project writes
+don't change between them.
+
+## Next
+
+Write your first guardrail and watch it refuse — the
+[Quickstart](/getting-started/quickstart).

@@ -1,0 +1,78 @@
+---
+title: Test not written
+description: Business invariant claimed intact but never re-checked
+kind: guide
+related:
+  - guides/file-guard
+  - concepts/grounding
+  - concepts/marker
+  - guides/script-checks
+---
+
+import { FileTree, Code, Steps } from '@astrojs/starlight/components';
+import UseCase from '../../_components/UseCase.astro';
+
+{/*
+  Config blocks below are the real shipped example, loaded from source via Vite
+  `?raw` imports (never copied inline). docs/ and examples/ are siblings, a
+  layout the website's build preserves.
+*/}
+import fileGuardYaml from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/file-guard.yaml?raw';
+import pinSh         from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/pin-still-matches-head.sh?raw';
+import judgeJ2       from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/code-upholds-invariant.md.j2?raw';
+
+## The failure
+
+An agent changes code that sits near a business rule and reports that the rule
+still holds. Nothing forced it to look. There is no automatic way to confirm the
+logic is still correct, so the claim rests on the agent's word, and confirming it
+means a person going to read the code by hand. The invariant that mattered most
+is the one nothing re-checks, and it stays that way until it breaks in
+production.
+
+<UseCase id="business-invariant-untrusted" label="Watch it happen — then get refused" />
+
+## How it works
+
+The invariant is pinned to the code with a marker — a note in the source that
+names it as an invariant. The guardrail keys off that marker, not off a path, so
+it fires wherever the marked code lives.
+
+<Steps>
+
+1. A cheap script confirms the pin still lines up with the current code, so a
+   stale or moved pin is caught before anything expensive runs.
+
+2. A judge then reads the marked code and rules on whether it still upholds the
+   invariant the marker names.
+
+</Steps>
+
+This is a **file-guard**: it runs against the write itself, and the marker is
+what tells it which files carry an invariant to check.
+
+## The actual configuration
+
+This is the real example shipped at `examples/business-invariants/`. One nature,
+a directory under `.sloprail/` — a `file-guard.yaml` declaration plus the checks
+it names:
+
+<FileTree>
+
+- .sloprail/
+  - file-guard/
+    - pinned-invariant/
+      - file-guard.yaml
+      - pin-still-matches-head.sh
+      - code-upholds-invariant.md.j2
+
+</FileTree>
+
+### file-guard
+
+Matches any file carrying an `invariant` marker. Two checks in order: the script
+gates the judge, so the model only runs once the pin is known to be current.
+
+<Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/pinned-invariant/file-guard.yaml" />
+<Code code={pinSh} lang="bash" title=".sloprail/file-guard/pinned-invariant/pin-still-matches-head.sh" />
+<Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/pinned-invariant/code-upholds-invariant.md.j2" />

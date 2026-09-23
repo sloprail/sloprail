@@ -1,16 +1,9 @@
-# The inverted "don't stop until target met" verdict lives HERE, not in the
-# context (reversed 2026-08-19, decision slice 7: a context's exit only
-# tracks active/inactive, it does not refuse a Stop — a gate does).
+# The "don't stop until target met" verdict lives here (a gate refuses; the
+# context only tracks active/inactive).
 #
-# match: context["goal-tracking"].active makes this gate SKIP when no goal was
-# declared this session — a session with no goal has nothing to iterate toward,
-# so its Stop must be permitted, not frozen (2026-08-20: `require` alone BLOCKS
-# an unmet dependency, which would refuse every goal-free Stop and never run the
-# check; the sibling keyword-coverage-registry gate uses this same match-skip for
-# the same reason). `require` still names the context so the check only runs once
-# the context has actually entered this cycle — match's read of
-# context[...].active is only meaningful after that. Together: skip declaratively
-# when inactive, run (and enforce "keep iterating") when a goal is active.
+# match skips this when no goal is active, so a goal-free Stop is permitted
+# (`require` alone would block it). `require` orders the context's enter first,
+# making the active read meaningful.
 on:
   - event: Stop
     match: context["goal-tracking"].active

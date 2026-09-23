@@ -1,0 +1,76 @@
+---
+title: Acted before loading
+description: Agent acts without loading the context it needed first
+kind: guide
+related:
+  - concepts/precondition
+  - guides/gate
+  - concepts/grounding
+  - guides/script-checks
+---
+
+import { FileTree, Code, Steps } from '@astrojs/starlight/components';
+import UseCase from '../../_components/UseCase.astro';
+
+{/*
+  Config blocks below are the real shipped example, loaded from source via Vite
+  `?raw` imports (never copied inline). docs/ and examples/ are siblings.
+*/}
+import decisionsGateYaml from '../../../examples/required-context-precondition/.sloprail/gate/require-skill-decisions/gate.yaml?raw';
+import topicsGateYaml    from '../../../examples/required-context-precondition/.sloprail/gate/require-skill-topics/gate.yaml?raw';
+
+## The failure
+
+An agent touches a file or takes an action without the prerequisite context — a
+skill, a doc, a checklist — actually being loaded first. The action proceeds as
+if the step happened, and afterward there's no way to tell that it didn't:
+"available" reads the same as "loaded" once the work is done. The record that
+was supposed to shape the action never entered the run, and nothing marks its
+absence.
+
+<UseCase id="acted-without-context" label="Watch it happen — then get refused" />
+
+## How it works
+
+The action is blocked until the required context is actually present in the run.
+The requirement is answered against what really happened — was this skill loaded
+this session — not against a claim that it was.
+
+<Steps>
+
+1. Writing under a governed path fires a **gate** in the pre-phase, before the
+   write lands.
+
+2. The gate's `require` names the skill that must have loaded first. If it
+   hasn't, the write is denied until the prerequisite is met.
+
+</Steps>
+
+This is a **precondition**: a gate whose `require` is the whole rule — no check
+script, because the requirement itself is the refusal.
+
+## The actual configuration
+
+This is the real example shipped at
+`examples/required-context-precondition/`. One nature — two gates, each a
+`gate.yaml` under `.sloprail/`, one per governed path:
+
+<FileTree>
+
+- .sloprail/
+  - gate/
+    - require-skill-decisions/
+      - gate.yaml
+    - require-skill-topics/
+      - gate.yaml
+
+</FileTree>
+
+### gate
+
+Each gate binds a governed path to the skill it demands. A separate gate per
+path, because `require` binds to the whole gate — which prefix demands which
+skill is the structure itself. No checks: the `require` is the entire rule.
+
+<Code code={decisionsGateYaml} lang="yaml" title=".sloprail/gate/require-skill-decisions/gate.yaml" />
+<Code code={topicsGateYaml} lang="yaml" title=".sloprail/gate/require-skill-topics/gate.yaml" />

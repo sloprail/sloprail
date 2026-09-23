@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# A stand-in for a real eval command — not part of the guardrail itself, but
-# what a real one looks like for this example to check something concrete
-# against. Produces a run artifact (a JSON hashmap of scores) and prints its
-# path on stdout, so the trajectory's tool_use output is proof this run
-# happened and where it lives — no guessing which file a run "must have"
-# produced.
+# A stand-in for a real eval command — not part of the guardrail itself.
+# Produces a run artifact (JSON scores) and prints its path on stdout, so the
+# trajectory's tool_use output is proof this run happened and where it lives.
 set -uo pipefail
 
 mkdir -p evals/runs

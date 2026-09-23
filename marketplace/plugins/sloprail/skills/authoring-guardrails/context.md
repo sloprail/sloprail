@@ -1,4 +1,4 @@
-# The context nature
+# Writing a context
 
 A context is an **activatable scope**. It is not a check that refuses — it is a
 *mode* that turns on and off as the session goes, accumulates what it sees while

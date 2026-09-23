@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# enter: a scanner.yaml was written under scanners/ — the on-trigger's own
-# `match` already confirmed the path, no re-checking here. Parse
-# { active: bool, keywords: str[] } and, only if active, log the scanner's
-# FULL keyword set into the registry — logged as a set (one entry per
-# scanner, all its keywords together), not one entry per keyword, because
-# the sibling gate needs to check "did ONE gh call cover ALL of these", not
-# "did each keyword individually appear somewhere".
+# enter: parse the written scanner.yaml and, if active, log its FULL keyword set
+# as one entry (not one per keyword) — the sibling gate checks "did ONE gh call
+# cover ALL of these".
 set -uo pipefail
 
 input="$(cat)"
@@ -25,9 +21,8 @@ if [ "$active" != "true" ]; then
   exit 0
 fi
 
-# keywords: is a YAML list, one `- term` per line, indented under the key.
-# Quoted or bare scalars both — the surrounding quotes are stripped, not
-# just the leading "- ".
+# keywords: is a YAML list under the key. Strip the leading "- " and any
+# surrounding quotes (bare or quoted scalars both).
 keywords="$(printf '%s' "$content" \
   | sed -n '/^keywords:/,/^[a-z]/p' \
   | grep -E '^[[:space:]]*-[[:space:]]' \

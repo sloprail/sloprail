@@ -1,48 +1,26 @@
 #!/usr/bin/env bash
-# For every scanner the sibling context logged (sr-session state, owned by
-# scanner-declared — this gate reads it via --owner), confirm ONE gh call
-# somewhere in this run's trajectories covered ALL of that scanner's
-# declared keywords together (his shape: "ensuring that gh call has all
-# keywords in 1 call"). Checked strictly against the DECLARED list — a
-# search this gate cannot match to a declared scanner does not count for
-# anything, and a declared scanner with no matching search is the
-# violation this gate exists to catch. Direction matters here (his
-# correction, 2026-08-19): keywords come from the files first, search
-# coverage is checked against them second — never the other way around.
+# For every scanner scanner-declared logged, confirm ONE gh call somewhere in
+# this run's trajectories covered ALL of its declared keywords together. A
+# declared scanner with no matching search is the violation this gate catches.
 set -uo pipefail
 
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
-# 2026-08-20: read the scanner-declared context's registry via `state list
-# --owner scanner-declared` (the read-only cross-guardrail read merged in
-# b8608c3); the gate's own `require: [{context: scanner-declared}]` guarantees
-# that context entered THIS cycle first, so the entries are current. `state
-# list` emits JSON-LINES, not an array, so it is SLURPED with `jq -s` before
-# being treated as one — an earlier draft's `jq -c '[.[] | ...]'` on the raw
-# lines iterated each object's field values instead of the stream and read
-# nothing. (The trajectory reads below already take absolute --path values, so
-# there is no cwd-relative path here to anchor on $SR_WORKSPACE.)
+# Read scanner-declared's registry; `require` guarantees it ran first, so entries
+# are current. `state list` emits JSON-LINES, so slurp with `jq -s`.
 declared="$(sr-session state list --owner scanner-declared 2>/dev/null | jq -s -c '[.[] | select(.key | startswith("scanner:"))]')"
 declared_count="$(printf '%s' "${declared:-[]}" | jq 'length' 2>/dev/null || echo 0)"
 
 if [ "$declared_count" -eq 0 ]; then
-  # Backstop only — gate.yaml's own match: context["scanner-declared"].active
-  # already skips this script declaratively when nothing was ever declared;
-  # this covers the edge where the context ran but left nothing usable
-  # (e.g. every scanner.yaml failed to parse). (Whether a project REQUIRES
-  # at least one scanner per research run is a separate concern, not this
-  # gate's — install a companion "at least one scanner declared" check if
-  # that is wanted.)
+  # Backstop only — gate.yaml's match already skips this script when nothing was
+  # declared; this covers the edge where the context ran but left nothing usable
+  # (e.g. every scanner.yaml failed to parse).
   exit 0
 fi
 
-# Every gh invocation across every trajectory this run touched, with the
-# search terms/query text each one actually carried.
-#
-# This run's sibling trajectories come from `describe`, which reports the
-# sub-agent trajectory paths spawned off this one; the current trajectory
-# itself is always included.
+# Every trajectory this run touched: the current one plus the sub-agent paths
+# `describe` reports.
 trajectory_files="$(
   { printf '%s\n' "$transcript_path"
     sr-session trajectory describe --path "$transcript_path" 2>/dev/null \
@@ -52,12 +30,8 @@ trajectory_files="$(
 all_gh_calls="[]"
 while IFS= read -r traj_path; do
   [ -f "$traj_path" ] || continue
-  # gh invocations are re-derived as PreCommandInvoke events; flatten every
-  # event's invocations[] down to the gh ones (each an object with .bin/.argv/
-  # .flags, the same shape the coverage check below reads).
-  # 2026-08-20: invocations sit under each event's `.fields.invocations` (the
-  # normalized event wire form is {kind, fields}); an earlier draft read
-  # `.invocations[]?` off the event and matched no gh call at all.
+  # Flatten every PreCommandInvoke event's invocations[] down to the gh ones.
+  # Invocations sit under `.fields.invocations` (event wire form is {kind, fields}).
   calls="$(sr-session trajectory normalize \
     --path "$traj_path" \
     --events PreCommandInvoke \

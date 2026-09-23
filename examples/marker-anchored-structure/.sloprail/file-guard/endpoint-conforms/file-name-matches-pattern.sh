@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
-# Two things a script can settle before any judge runs:
-#   1. this file's own name follows the endpoint naming pattern
-#   2. the per-session declared set (5 endpoints + 1 agent + 1 db-table) is
-#      being filled in — logged here so a later completeness check (outside
-#      this guard) can read back what showed up this session.
-#
-# The declared COUNTS themselves (exactly 5 endpoints, not 4 or 6) are not
-# this guard's business — a single-file guard re-fires per matched file and
-# has no "end of session" moment to total against; that belongs to a gate
-# reading this same registry on Stop, the same split used everywhere else
-# (unit 20260818_no-slop-primitives, slice 7: this guard's script tracks,
-# a gate elsewhere would verify totals — not yet built here, no case demanded
-# it before this file-guard's own two checks did).
+# Settle before the judge: (1) the file name follows the endpoint pattern, and
+# (2) log the declared marker into the registry, so a later Stop gate (not built
+# here) can total what showed up this session.
 set -uo pipefail
 
 input="$(cat)"

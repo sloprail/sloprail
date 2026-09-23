@@ -1,4 +1,4 @@
-# The file-guard nature
+# Writing a file-guard
 
 A file-guard judges **one file's state**: what a file holds after a change, and —
 when it is `preventive` — what a write is about to make it hold. Its whole job is

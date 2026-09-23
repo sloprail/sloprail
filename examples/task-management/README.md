@@ -1,7 +1,4 @@
-# task-management
-
-**Unit:** [16_task-management](/Users/nsviridenko/ws/sloprail/strategy/memories/topics/20260812_no-slop/units/16_task-management/UNIT.md)
-**Nature:** file-guard ([decision 20260818_no-slop-primitives](/Users/nsviridenko/ws/sloprail/strategy/memories/decisions/20260818_no-slop-primitives/DECISION.md), slice 2, candidate list)
+# task-management (file-guard)
 
 ## The rule
 

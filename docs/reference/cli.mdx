@@ -1,0 +1,52 @@
+---
+title: CLI reference
+description: Every command, subcommand and flag — generated from the binaries' own Cobra definitions, so it can't drift.
+kind: reference
+---
+
+import cli from './generated/cli.json';
+
+export const services = cli.filter((b) => b.path !== 'sr');
+
+There is one command to learn: **`sr`**. `sr <group> <cmd>` is a proxy for the
+`sr-<group>` binary (`sr session start` runs `sr-session start`), passing stdio,
+signals and exit codes through unchanged. The plugin's hooks call the
+`sr-<group>` binaries directly; you use `sr`. You rarely call any of this by hand
+— the hooks run it — but this is the whole surface, **generated from the
+binaries' own command definitions**.
+
+{services.map((bin) => (
+  <section>
+    <h2 id={bin.path}>{bin.path}</h2>
+    {bin.short && <p>{bin.short}.</p>}
+    {bin.long && <p>{bin.long}</p>}
+    {(bin.children || []).map((cmd) => (
+      <section>
+        <h3 id={cmd.path.replace(/\s+/g, '-')}><code>{cmd.path}</code></h3>
+        {cmd.short && <p>{cmd.short}.</p>}
+        {cmd.long && <p>{cmd.long}</p>}
+        {cmd.flags && cmd.flags.length > 0 && (
+          <table>
+            <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+            <tbody>
+              {cmd.flags.map((f) => (
+                <tr>
+                  <td><code>--{f.name}{f.short ? `, -${f.short}` : ''}</code></td>
+                  <td>{f.default ? <code>{f.default}</code> : '—'}</td>
+                  <td>{f.usage}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {(cmd.children || []).length > 0 && (
+          <ul>
+            {cmd.children.map((sub) => (
+              <li><code>{sub.path}</code>{sub.short ? ` — ${sub.short}` : ''}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+    ))}
+  </section>
+))}

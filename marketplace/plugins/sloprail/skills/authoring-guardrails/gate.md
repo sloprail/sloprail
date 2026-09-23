@@ -1,4 +1,4 @@
-# The gate nature
+# Writing a gate
 
 A gate is a **checkpoint on an event**. It wakes on the events its `on:` names,
 optionally requires some precondition, runs its checks, and **blocks** if they

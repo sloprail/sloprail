@@ -1,7 +1,4 @@
-# content-de-layering
-
-**Unit:** [07_content-de-layering](/Users/nsviridenko/ws/sloprail/strategy/memories/topics/20260812_no-slop/units/07_content-de-layering/UNIT.md)
-**Nature:** file-guard ([decision 20260818_no-slop-primitives](/Users/nsviridenko/ws/sloprail/strategy/memories/decisions/20260818_no-slop-primitives/DECISION.md), slice 2, candidate list)
+# content-de-layering (file-guard)
 
 ## The rule
 
@@ -28,12 +25,12 @@ belong here" is not a byte-comparable property — there is no string or
 line-count signature that separates a legitimate reference from an
 illegitimate restatement. The whole check is the judge.
 
-## The tension this unit names on purpose
+## The tension this names on purpose
 
-In direct tension with unit 17 (no-unasked-deletion) by design: 17 refuses
-removing content nobody asked to remove; this unit actively demands removing
+In direct tension with no-unasked-deletion by design: that rule refuses
+removing content nobody asked to remove; this one actively demands removing
 a specific class of content — a fact that demonstrably still lives
 elsewhere. The resolution lives in the judge's answer: a de-layering removal
 is only a pass if it names the surviving home the fact still lives in. A
 removal that cannot point at where the fact remains is not de-layering, it's
-unasked deletion wearing this unit's justification.
+unasked deletion wearing this rule's justification.

@@ -1,0 +1,56 @@
+---
+// UseCase — a slot for a use-case's animated trajectory ("watch it happen").
+//
+// This is the OPEN-REPO fallback: the animated player and its trajectory data
+// live in the (closed) website repo, so this file renders a plain link to the
+// use-case page instead. When the website builds these docs it swaps THIS file
+// for its own version that renders the real <UseCasePlayer> in place. The doc
+// is therefore complete on its own — it just shows a link rather than the
+// animation until the website renders it.
+//
+// A guide places the slot inline where the scenario belongs:
+//   import UseCase from '../../_components/UseCase.astro';
+//   <UseCase id="refactor-regenerated" />
+interface Props {
+  /** The use-case slug — the same id the website registry keys the player by. */
+  id: string;
+  /** Optional caption shown above the slot. */
+  label?: string;
+}
+const { id, label = 'Watch this scenario play out' } = Astro.props;
+const href = `/use-cases/${id}`;
+---
+
+<aside class="usecase-slot not-content">
+  <a href={href} class="usecase-slot__link">
+    <span class="usecase-slot__label">{label}</span>
+    <span class="usecase-slot__hint">See the full wrong-vs-right trajectory →</span>
+  </a>
+</aside>
+
+<style>
+  .usecase-slot {
+    margin: 1.5rem 0;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    background: var(--sl-color-gray-6, var(--sl-color-black));
+  }
+  .usecase-slot__link {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 1rem 1.25rem;
+    text-decoration: none;
+  }
+  .usecase-slot__label {
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+  .usecase-slot__hint {
+    font-size: 0.875rem;
+    color: var(--sl-color-gray-3);
+  }
+  .usecase-slot__link:hover .usecase-slot__hint {
+    color: var(--sl-color-text-accent);
+  }
+</style>

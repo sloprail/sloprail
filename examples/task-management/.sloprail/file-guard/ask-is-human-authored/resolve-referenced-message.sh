@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# prepare: pull the specific human message ASK.md's reference names, out of
-# the session record, so the judge template never has to parse a transcript
-# itself. Receives the same CheckPayload the script above did.
-#
-# Output must nest under additionalContext (2026-08-19, his correction, PR
-# #2 review 4974594141: only that one key is read from prepare's stdout,
-# merged alongside the standard payload — never in place of it).
+# prepare: resolve the human message ASK.md references out of the session record,
+# so the judge template never parses a transcript. Output nests under
+# additionalContext — only that key is merged into the payload.
 set -uo pipefail
 
 input="$(cat)"
@@ -18,9 +14,8 @@ ref="$(printf '%s' "$new" | grep -oE '(transcript_path=\S+|message_id=\S+|jsonl:
 case "$ref" in
   message_id=*)
     msg_id="${ref#message_id=}"
-    # A user message is an entry with .type == "user"; its id is .uuid and its
-    # text lives in .message (a bare string, or a content list whose text
-    # blocks carry .text). No event is involved, so read raw entries.
+    # A user message: .type == "user", id in .uuid, text in .message (bare string
+    # or a content list of text blocks). No event, so read raw entries.
     message="$(sr-session trajectory normalize \
       --path "$transcript_path" \
       | jq -r --arg id "$msg_id" '

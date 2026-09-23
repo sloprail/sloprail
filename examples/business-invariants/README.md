@@ -1,14 +1,10 @@
-# business-invariants
-
-**Unit:** [04_business-invariants](/Users/nsviridenko/ws/sloprail/strategy/memories/topics/20260812_no-slop/units/04_business-invariants/UNIT.md) (+ [pinned-spec-reference addendum](/Users/nsviridenko/ws/sloprail/strategy/memories/topics/20260812_no-slop/units/04_business-invariants/02_pinned-spec-reference.md))
-**Nature:** file-guard ([decision 20260818_no-slop-primitives](/Users/nsviridenko/ws/sloprail/strategy/memories/decisions/20260818_no-slop-primitives/DECISION.md), slice 2, candidate list)
+# business-invariants (file-guard)
 
 ## The rule
 
 Invariant files live in the codebase; the code carries MARKERS naming each
 one; a judge verifies the marked code actually upholds the business invariant
-it claims to. Distinct from structure (unit 03) — this is business logic, not
-shape.
+it claims to. This is business logic, not shape.
 
 ## The addition: pin the marker to a spec version
 

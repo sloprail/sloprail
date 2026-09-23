@@ -1,7 +1,6 @@
 # eval-loop-maxing (goal + context + gate)
 
-**Unit:** [14_eval-loop-maxing](/Users/nsviridenko/ws/sloprail/strategy/memories/topics/20260812_no-slop/units/14_eval-loop-maxing/UNIT.md)
-**Nature:** goal (composite) + context + gate, candidate list — rebuilt twice: 2026-08-19 split into goal+recording, then again same day after the context/gate reversal (decision slice 7)
+**Nature:** goal (composite) + context + gate
 
 ## The rule
 
@@ -12,8 +11,7 @@ the target is unmet.
 
 ## Three independent concerns, three pieces
 
-The original build treated this as one context. Two re-reads later it's
-three pieces, each with one job:
+Each piece has one job:
 
 1. **The goal** (`goal/accuracy-target/`, a project-level sibling of
    `.sloprail/` — NOT under it) — what "achieved" means. A composite
@@ -38,28 +36,24 @@ touch it, by path, at `${SR_WORKSPACE}/goal/<name>/`.
 - **`goal/accuracy-target/goal.yaml`** — `enabled: true`, `script: verify.sh`.
   **Not authored ahead of time.** Written BY THE AGENT during the trajectory,
   the moment it commits to a target — before that write, this folder does
-  not exist. The target itself lives in `verify.sh`, not here (2026-08-19:
-  "замени target на script, чтобы на verify.sh ссылаться") — one place for
+  not exist. The target itself lives in `verify.sh`, not here — one place for
   the condition.
 - **`goal/accuracy-target/verify.sh`** — `accuracy >= 0.95`, checked against
   the shared recording log.
 
-## Part 2 — goal-tracking, pure lifecycle (reversed 2026-08-19)
+## Part 2 — goal-tracking, pure lifecycle
 
 - **`context/goal-tracking/`** — wakes on `PostFileWrite` matched to any
   `goal/*/goal.yaml` (Post, not Pre: a goal's `enabled` only exists once the
   write settles). `enter` reads it and activates only if enabled.
   **`exit` does NOT run verify and does NOT refuse the Stop** — it only
   reads `gates["goal-verify"].status`, the paired gate's own verdict, the
-  `gates` map being symmetric to `context` (his: "контекст может иметь
-  доступ ко всем гейтам, так же, как гейты — к контексту"). `pass` →
-  deactivate; anything else → stay active.
+  `gates` map being symmetric to `context`. `pass` → deactivate; anything
+  else → stay active.
 
-**Why the reversal.** The first build had this context's own `exit` both
-deciding "can we stop" and calling `verify.sh` — thick, doing two jobs. His
-question forced the split: *"должен ли exit контекста и запрещать
-останавливаться, и параллельно помечать, что он вышел? Это две разные
-вещи."*
+The first build had this context's own `exit` both deciding "can we stop"
+and calling `verify.sh` — thick, doing two jobs. The split separates
+tracking (context) from refusing (gate).
 
 ## Part 3 — goal-verify, the gate that actually blocks
 
@@ -68,8 +62,8 @@ question forced the split: *"должен ли exit контекста и зап
   because a marketplace of independent plugins has no single party to
   coordinate priority numbers), `checks: [{script: run-verify.sh}]`.
   `run-verify.sh` calls the active goal's `verify.sh` and refuses the Stop
-  when it fails. **This is where unit 14's inverted "must-not-stop-until-
-  target" verdict actually lives now** — not in the context.
+  when it fails. **This is where the inverted "must-not-stop-until-target"
+  verdict lives** — not in the context.
 
 ## Part 4 — recording, unrelated to the goal
 
@@ -80,12 +74,10 @@ question forced the split: *"должен ли exit контекста и зап
   `dummy-eval.sh`-shaped command prints on its own stdout — proof a run
   happened and where, not a guess.
 
-## What this rebuild confirmed twice over
+## What this design confirms
 
-First rebuild: neither goal nor recording needed a fourth nature — both are
-`context` plus conventions layered by hand. Second rebuild: the inverted
-"don't stop" verdict that originally broke the single `on→check` structure
-belongs to **gate**, specifically, not to context in general — a context
-tracks a scope's aliveness; a gate is what refuses an action (including
-ending the turn). Splitting them cleanly is what made `gates[<name>]`
-necessary as a map symmetric to `context[<name>]`.
+Neither goal nor recording needs a fourth nature — both are `context` plus
+conventions layered by hand. And the inverted "don't stop" verdict belongs
+to **gate**, not context in general — a context tracks a scope's aliveness;
+a gate is what refuses an action (including ending the turn). Splitting them
+is what made `gates[<name>]` necessary as a map symmetric to `context[<name>]`.

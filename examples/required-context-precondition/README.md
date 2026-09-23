@@ -1,8 +1,5 @@
 # required-context-precondition (gate)
 
-**Unit:** [13_required-context-precondition](/Users/nsviridenko/ws/sloprail/strategy/memories/topics/20260812_no-slop/units/13_required-context-precondition/UNIT.md)
-**Nature:** gate ([decision 20260818_no-slop-primitives](/Users/nsviridenko/ws/sloprail/strategy/memories/decisions/20260818_no-slop-primitives/DECISION.md), slice 5, candidate list)
-
 ## The rule
 
 Before touching an artifact of a given kind, the required context must have

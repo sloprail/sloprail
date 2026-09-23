@@ -1,29 +1,20 @@
 #!/usr/bin/env bash
-# prepare: the script already confirmed every citation link resolves — pull
-# the actual cited text out of each source here, once, so the judge template
-# never has to parse a citation link itself.
+# prepare: the script already confirmed every citation link resolves — pull the
+# actual cited text out of each source here, once, so the judge template never
+# has to parse a citation link itself.
 #
-# Output must nest under additionalContext (2026-08-19, his correction, PR
-# #2 review 4974594141: only that one key is read from prepare's stdout,
-# merged alongside the standard payload — never in place of it).
+# Output must nest under additionalContext: only that key is read from prepare's
+# stdout, merged alongside the standard payload — never in place of it.
 set -uo pipefail
 
 input="$(cat)"
 
-# Bytes to prepare from, chosen by event kind — the honest three-case handling
-# of `newContent`, not the two-case `has("newContent")` short-cut that reads an
-# absent field as "". Mirrors citation-links-resolve.sh, which validated the
-# same content moments earlier.
-#
-# This guard is an AFTER-check (file-guard.yaml declares no `preventive:`), so at
-# runtime it only fires on the settled POST event, where the content is always
-# present. The Pre branches are here so the script is correct for whatever kind
-# it is handed: `.event.resultKnown` distinguishes "the update empties the file"
-# from "the result was not derivable", and on an underivable PreFileUpdate we
-# DEFER to the Post kind (fires at Stop on the settled file) — emitting the empty
-# additionalContext prepare must always emit — rather than guessing at absent
-# content. See .sloprail/file-guard/skill-quality/judge-skill.sh for the idiom
-# and the authoring-slop rule content-may-be-unresolvable for why.
+# Bytes chosen by event kind, mirroring citation-links-resolve.sh which
+# validated the same content moments earlier. This guard is an AFTER-check, so
+# at runtime it only fires on the settled POST event. The Pre branches keep the
+# script correct for any kind: on an underivable Pre write, DEFER to the Post
+# kind — still emitting the empty additionalContext prepare must always emit —
+# rather than guess at absent content.
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
 new=""
 case "$kind" in
@@ -31,8 +22,7 @@ case "$kind" in
     new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
   PreFileCreate|PreFileUpdate)
-    # resultKnown can be false on a create AS WELL AS an update (a NotebookEdit
-    # fresh .ipynb PreFileCreate, or a command-derived edit) — so gate BOTH on it.
+    # resultKnown can be false on a create as well as an update, so gate on it.
     known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
     if [ "$known" = "true" ]; then
       new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"

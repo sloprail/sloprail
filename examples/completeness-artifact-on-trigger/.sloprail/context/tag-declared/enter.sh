@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# enter: runs on every occurrence of either trigger — a tag being written
-# or an artifact file being touched. Logs whichever happened into the
-# registry (sr-session state, keyed on this context's own name) rather than
-# growing `payload` in place, so a turn where the tag and the artifact land
-# in different tool calls still ends up with both recorded.
+# enter: logs whichever fired (tag or artifact touch) into the registry
+# (sr-session state) rather than into `payload`, so a tag and an artifact landing
+# in different tool calls both get recorded.
 set -uo pipefail
 
 input="$(cat)"

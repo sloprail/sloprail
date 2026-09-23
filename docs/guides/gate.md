@@ -1,0 +1,206 @@
+---
+title: Writing a gate
+kind: reference
+sidebar:
+  order: 2
+---
+
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+A gate is a **checkpoint on an event**. It wakes on the events its `on:` names,
+optionally requires some precondition, runs its checks, and **blocks** if they
+refuse. Unlike a file-guard it is **one-shot** — it fires on the event, decides,
+and is done; it does not re-fire until a file settles.
+
+```
+.sloprail/gate/<name>/gate.yaml
+```
+
+```yaml
+# require-skill-topics — writing under memories/topics/ is blocked until
+# document-topic was loaded this session. `require` is the whole rule; no checks.
+on:
+  - event: PreFileWrite
+    match: event.path startsWith "memories/topics/"
+require:
+  - skill: document-topic
+```
+
+```yaml
+# verify-artifact-produced — on Stop, if a tag was declared this turn, the
+# matching artifact must have landed. Reads a sibling context's registry.
+on:
+  - event: Stop
+    match: context["tag-declared"].active
+require:
+  - context: tag-declared
+checks:
+  - script: ./verify-tag-and-artifact.sh
+```
+
+Three keys. `on` is the list of triggers — each an `event` kind and an optional
+`match`. `require` is a list of preconditions that must already hold. `checks` is
+the list of checks — each a script ([Script checks](/guides/script-checks)) or a
+judge ([Judge checks](/guides/judge-checks)). A gate needs `on`; the other two are
+optional, but a gate with neither `require` nor `checks` decides nothing.
+
+## The gate scope: `event.*`, nested
+
+A gate's `match` — and its checks' stdin — **nest the event under `event`**:
+`event.path`, `event.invocations`, `event.tags`, plus the `context` map. This is
+the asymmetry with a file-guard, whose match reads `path` bare. A gate is not "a
+file at a path" by default, so there is **no glob shorthand** — a gate narrowing
+on a path writes it out: `event.path startsWith "memories/decisions/"`.
+
+`match` is checked against the fields of the kind the trigger fires on, so
+`event.invocations` type-checks on a `PreCommandInvoke` trigger and
+`event.path` on a `PreFileWrite` one. A name the kind does not declare
+(`event.paht`) is refused at load.
+
+## What a gate triggers on
+
+Any **pre-action** event kind, plus **`Stop`** — never a `Post` variant (a gate
+that already happened is too late to gate). [Events](/guides/events) has the full
+per-nature admission table and every kind's fields; the ones a gate is written on:
+
+### An event about to happen — the pre-action gate
+
+The gate refuses **before** the action, preventing it. Examples:
+
+- **`PreFileWrite`** — the alias the engine expands to `PreFileCreate` +
+  `PreFileUpdate`, so one trigger covers both. `event.path startsWith
+  "memories/decisions/"`. (A gate cannot use `PostFileWrite` — that alias is
+  context-only.)
+- **`PreCommandInvoke`** — a shell command line about to run. It carries the
+  **flattened `invocations`** it parsed (below).
+- **`PreToolUse`** — a tool call about to run.
+
+### The turn as a whole — the Stop gate
+
+`Stop` fires once when a work cycle ends, **last and unconditionally** — whether
+or not anything changed. This is the right trigger for a rule about the *result*
+of a turn ("the turn promised an artifact; did it produce one?").
+
+A Stop refusal is reported to the agent as a blocking error on the cycle, and the
+cycle's read mark does not advance — so the next Stop judges the same span again,
+and a rule that stays unsatisfied stays reported rather than scrolling away.
+
+`Stop` carries **no fields** — the end of a cycle is about the cycle, not one
+file. So a Stop gate has nothing on the event to narrow on; it establishes its
+subject another way:
+
+- By reading a **context**'s accumulated state — the usual pattern. A context
+  logs what it saw into `sr-session state`; the Stop gate reads that registry
+  back (below, and [State management](/guides/state-management)). This is why a
+  Stop gate's `match` so often reads `context["…"].active`.
+- Or by asking `sr-session query` / `sr-session trajectory` about the transcript
+  (via `.transcriptPath`).
+
+Because a Stop gate fires every cycle, it can wedge a session wholesale rather
+than for one file. Refuse on the rule's own logic, and permit when the rule's
+plumbing fails ([State management](/guides/state-management), "fail closed on the
+logic, open on the plumbing").
+
+## Inside `PreCommandInvoke`: the flattened invocations
+
+One command line is rarely one program. A pipeline, an `&&` chain, a subshell, a
+`sudo` or an `xargs` each nest invocations inside a single string. The module
+walks that structure once and emits **every invocation it finds, flattened**, so
+no rule has to recurse through shell syntax — and nesting an invocation one level
+deeper does not defeat a rule written against it.
+
+So a gate narrows on the `invocations` list, not the raw line:
+
+```
+any(event.invocations, .bin == "curl")
+not any(event.invocations, .bin == "npm")
+len(event.invocations) > 1
+any(event.invocations, .bin == "rm" and any(.argv, # == "-rf"))
+```
+
+Each invocation's fields — `.bin`, `.argv` (both with declared element shapes, so
+a mistyped key inside a predicate is refused at load) and the **open** `.flags`
+map (verified against nothing, so a mistyped flag evaluates false forever — cause
+the command and watch it fire before trusting one) — are set out in full in
+[Events](/guides/events). The gate-specific point is only that you match against the
+flattened list.
+
+### The resolution floor
+
+A program named by a variable, a payload decoded and piped to a shell, splitting
+that depends on the runtime `IFS`: none of these can be known without running
+them, and running them is exactly what a guardrail must not do. What can be seen
+is emitted; what cannot is left alone rather than guessed at. This is a
+correctness aid, **never a security boundary** — a rule that assumes every way of
+invoking a program is visible here believes more than the parser promises.
+
+There is no `Post` counterpart to `PreCommandInvoke`. A file has a settled state
+a diff establishes afterwards; a command that already ran has no equivalent —
+what it changed shows up as the file events, which is where a rule about
+consequences belongs.
+
+## `require`: a precondition that must already hold
+
+`require` is a list of things that must be true **before** the gate's checks even
+run. If a requirement is unmet, the gate refuses on that alone — `require` can be
+the whole rule, with no `checks` at all.
+
+```yaml
+require:
+  - skill: document-topic        # this skill was loaded this session
+  - context: tag-declared        # this context is currently active
+```
+
+Two forms in use:
+
+- **`skill: <name>`** — the named skill was loaded this session. "Writing under
+  `memories/decisions/` is blocked until `document-strategy` was loaded" is a
+  gate whose `require` is exactly that, and nothing else. A separate gate per
+  prefix→skill pairing, rather than one gate branching internally, because
+  `require` binds to the **whole gate**.
+- **`context: <name>`** — the named context is active. This is also what makes a
+  Stop gate's cross-context read safe: `require: [{context: tag-declared}]`
+  guarantees that context **entered this cycle before** this gate's check runs,
+  so the registry the check reads back is current. `match` reads
+  `context["…"].active`, but that read is only *meaningful* once the context has
+  actually run its enter this cycle — which `require`'s ordering guarantees.
+
+A gate that reads a context's `sr-session state` registry via `--owner` **without**
+a matching `require` reads stale, prior-cycle state — a footgun. The `--owner`
+read supplies the entries; `require` supplies the ordering. See
+[State management](/guides/state-management).
+
+Note the two roles the context plays in the artifact example above: `match:
+context["tag-declared"].active` skips the gate declaratively when the context
+never activated, and `require: [{context: tag-declared}]` orders the context's
+enter before the check. A sibling gate can catch the opposite case — *no* tag at
+all — with `match: not context["tag-declared"].active` and no `require` (there is
+nothing for the context to have run first).
+
+## Reading a context's registry from a gate's check
+
+A Stop gate's check reads back what a paired context accumulated. The context
+logs each subject under its own name into `sr-session state`; the gate reads the
+group with the cross-guardrail `--owner` read (`list` only, read-only):
+
+```bash
+# state list emits JSON-LINES, so SLURP with `jq -s` before treating it as one.
+entries="$(sr-session state list --owner tag-declared 2>/dev/null)"
+tags="$(printf '%s' "$entries" | jq -s -r '[.[] | select(.key | startswith("tag:"))] | .[].key | ltrimstr("tag:")')"
+```
+
+The gate's own `require: [{context: tag-declared}]` is what makes those entries
+current. Full treatment — the JSON-lines shape, `--owner`, and why `require` is
+load-bearing — in [State management](/guides/state-management).
+
+## Turning one off
+
+Keep the folder; disable the gate from `.sloprail/config.yaml` by its qualified
+name (the same mechanism that disables a plugin's gate):
+
+```yaml
+disabled:
+  - <plugin-or-project>/gate/<name>
+```
+
+The nature is part of the key — `.../gate/<name>` — because a gate and a context
+may share a bare name. Keep the sibling prose that records why the gate exists.

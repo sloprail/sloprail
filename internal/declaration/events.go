@@ -28,16 +28,26 @@ import "sort"
 // events spec's EventKind enum names them. Named constants so the union sets and
 // the alias expansions below cannot drift on a spelling.
 const (
-	KindPreFileCreate    = "PreFileCreate"
-	KindPreFileUpdate    = "PreFileUpdate"
-	KindPreFileDelete    = "PreFileDelete"
+	// KindPreFileCreate fires before a new file is written.
+	KindPreFileCreate = "PreFileCreate"
+	// KindPreFileUpdate fires before an existing file is changed.
+	KindPreFileUpdate = "PreFileUpdate"
+	// KindPreFileDelete fires before a file is deleted.
+	KindPreFileDelete = "PreFileDelete"
+	// KindPreCommandInvoke fires before a command is invoked.
 	KindPreCommandInvoke = "PreCommandInvoke"
-	KindPreToolUse       = "PreToolUse"
-	KindPostFileCreate   = "PostFileCreate"
-	KindPostFileUpdate   = "PostFileUpdate"
-	KindPostFileDelete   = "PostFileDelete"
-	KindPostTagWrite     = "PostTagWrite"
-	KindStop             = "Stop"
+	// KindPreToolUse fires before any tool runs — the general refusable moment.
+	KindPreToolUse = "PreToolUse"
+	// KindPostFileCreate fires after a file is created.
+	KindPostFileCreate = "PostFileCreate"
+	// KindPostFileUpdate fires after a file is changed.
+	KindPostFileUpdate = "PostFileUpdate"
+	// KindPostFileDelete fires after a file is deleted.
+	KindPostFileDelete = "PostFileDelete"
+	// KindPostTagWrite fires when a tag is written in the trajectory, as the turn settles.
+	KindPostTagWrite = "PostTagWrite"
+	// KindStop fires at the end of a turn — a gate's usual moment.
+	KindStop = "Stop"
 )
 
 // The config-level aliases a trigger's `event` may name in place of a concrete
