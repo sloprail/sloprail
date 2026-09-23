@@ -5,9 +5,22 @@ sidebar:
   order: 0
 ---
 
-<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+{/* Sourced from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. */}
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-# Authoring Guardrails
+You don't have to read this to author a guardrail — run the skill and describe
+what you want; it walks the rest.
+
+<Tabs>
+  <TabItem label="Claude Code">
+    ```bash
+    /sloprail:authoring-guardrails add a rule that <what you want to enforce>
+    ```
+  </TabItem>
+</Tabs>
+
+More harnesses get their own tab as they go live. The rest of this page is the
+same guidance the skill follows, if you'd rather read it.
 
 ## A guardrail is one of three natures
 

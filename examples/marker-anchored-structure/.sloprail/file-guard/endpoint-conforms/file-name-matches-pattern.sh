@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# Two things a script can settle before any judge runs:
-#   1. this file's own name follows the endpoint naming pattern
-#   2. the per-session declared set is logged here, so a later completeness
-#      check (outside this guard) can read back what showed up this session.
-#
-# The declared COUNTS themselves are not this guard's business — a single-file
-# guard re-fires per matched file and has no "end of session" moment to total
-# against; that belongs to a gate reading this same registry on Stop (not built
-# here).
+# Settle before the judge: (1) the file name follows the endpoint pattern, and
+# (2) log the declared marker into the registry, so a later Stop gate (not built
+# here) can total what showed up this session.
 set -uo pipefail
 
 input="$(cat)"

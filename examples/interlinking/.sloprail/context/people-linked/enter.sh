@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# enter: every people/*.md touch this cycle. Logs into the registry (sr-session
-# state) rather than growing `payload` in place — state survives independently
-# of which firing is "first", so a two-file turn ends up with both entries
-# logged, not just the last one overwriting the first.
+# Fires per people/*.md touch. Logs into state, not `payload`, so a two-file
+# turn keeps both entries instead of the last firing overwriting the first.
 set -uo pipefail
 
 input="$(cat)"

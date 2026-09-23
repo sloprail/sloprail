@@ -1,12 +1,9 @@
-# The inverted "don't stop until target met" verdict lives HERE, not in the
-# context (a context's exit only tracks active/inactive; a gate refuses a Stop).
+# The "don't stop until target met" verdict lives here (a gate refuses; the
+# context only tracks active/inactive).
 #
-# match: context["goal-tracking"].active makes this gate SKIP when no goal was
-# declared — a goal-free session has nothing to iterate toward, so its Stop must
-# be permitted (`require` alone would BLOCK an unmet dependency and refuse every
-# goal-free Stop). `require` still names the context so the check runs only once
-# the context has entered this cycle — match's read of active is meaningful only
-# after that. Together: skip when inactive, enforce "keep iterating" when active.
+# match skips this when no goal is active, so a goal-free Stop is permitted
+# (`require` alone would block it). `require` orders the context's enter first,
+# making the active read meaningful.
 on:
   - event: Stop
     match: context["goal-tracking"].active

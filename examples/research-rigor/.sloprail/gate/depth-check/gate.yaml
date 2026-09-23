@@ -1,9 +1,6 @@
-# Stop plus a match on the research-run context's own active flag, so the
-# check is skipped declaratively when no research was ever declared, instead
-# of running the script every Stop to discover that for itself. `require`
-# still names the context too — match reads context[...].active, but that
-# read is only meaningful once the context has run its own enter this cycle,
-# which require's ordering guarantees.
+# On Stop, only when research-run is active (match skips otherwise). `require`
+# names the context so its enter runs first this cycle, making the active read
+# meaningful.
 on:
   - event: Stop
     match: context["research-run"].active

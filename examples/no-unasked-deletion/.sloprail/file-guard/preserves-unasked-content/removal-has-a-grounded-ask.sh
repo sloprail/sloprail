@@ -1,29 +1,19 @@
 #!/usr/bin/env bash
-# The deterministic half. Grounds "asked" in the user's actual words rather
-# than grepping for deletion keywords:
-#   - newContent absent  -> BLOCK (fail-closed): the write's result is unknowable
-#     (a `sed -i`, an env-dependent command), so no-loss cannot be established.
-#   - no removed lines   -> PASS: pure additions is "append, not rewrite".
-#   - removed lines, but NO sr:asked quote-marker on the file
-#                        -> BLOCK: a removal with no declared authorizing quote
-#     is exactly the unasked rewrite this rule catches.
-#   - removed lines WITH an sr:asked marker whose quote does NOT resolve in the
-#     trajectory -> BLOCK: a fabricated ask. `sr-session trajectory cite` is the
-#     authority — the quote must be the user's own words (a message, or an
-#     AskUserQuestion answer), not a paraphrase the agent invented.
-#   - removed lines WITH a marker whose quote RESOLVES -> PASS to the judge:
-#     the ask is real; whether the change is clean and only covers it is the
-#     model's call, not this script's.
+# The deterministic half. Grounds "asked" in the user's actual words, not a
+# deletion-keyword grep:
+#   - newContent absent      -> BLOCK (fail-closed): result unknowable, no-loss
+#     cannot be established.
+#   - no removed lines       -> PASS: pure additions.
+#   - removed, no sr:asked    -> BLOCK: an unasked rewrite.
+#   - removed, quote unresolved -> BLOCK: a fabricated ask.
+#   - removed, quote resolves -> PASS to the judge.
 set -uo pipefail
 
 input="$(cat)"
 path="$(printf '%s' "$input" | jq -r '.event.path')"
 old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
-# The trajectory to ground the quote against — the CheckPayload carries it, the
-# same field task-management's resolve-referenced-message.sh reads. cite MUST be
-# given it explicitly: with no --path cite fails closed (it cannot rule out a
-# sub-agent context from a tool call's environment), so a bare `cite "$quote"`
-# would refuse EVERY removal, grounded or not. Pass the payload's path.
+# The trajectory to ground the quote against. cite MUST be given --path
+# explicitly: with none it fails closed and would refuse every removal.
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
 # Absent newContent (not empty — absent) means the result is unknowable.
@@ -41,10 +31,8 @@ if [ "${removed:-0}" -eq 0 ]; then
   exit 0   # pure additions — always fine
 fi
 
-# Something was removed. The authorizing quote is an sr:asked marker the agent
-# put in the file's frontmatter (a YAML comment the extractor reads) — it
-# arrives already extracted on the event, so no file parsing here. Read it off
-# newMarkers (the result's markers).
+# Something was removed. The authorizing sr:asked marker arrives already
+# extracted on the event's newMarkers — no file parsing here.
 quote="$(printf '%s' "$input" \
   | jq -r '(.event.newMarkers // [])[] | select(.kind == "asked") | .fqn' \
   | head -1)"

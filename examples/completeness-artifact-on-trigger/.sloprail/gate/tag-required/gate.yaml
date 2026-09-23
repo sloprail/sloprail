@@ -1,11 +1,6 @@
-# No script needed — `match` reads the tag-declared context's absence directly.
-# tag-declared only activates once #update/#decision/#skip has been written this
-# cycle, so `not ...active` is exactly "no tag was declared", the fact a script
-# would otherwise re-derive from the trajectory.
-#
-# Not circular: match is evaluated fresh each Stop against the context's CURRENT
-# state, not gated behind `require`, so there is nothing for tag-declared to
-# have had to run first.
+# tag-declared activates only once a tag was written, so `not ...active` is
+# exactly "no tag declared". No `require`: match reads the context's current
+# state fresh each Stop, so nothing has to run first.
 on:
   - event: Stop
     match: not context["tag-declared"].active

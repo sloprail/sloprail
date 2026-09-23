@@ -1,6 +1,4 @@
-# Depends on the tag-declared context — this only runs once a tag or an artifact
-# touch happened this cycle, reading what the context accumulated rather than
-# re-deriving it.
+# Runs only once tag-declared is active, reading the registry it accumulated.
 on:
   - event: Stop
     match: context["tag-declared"].active

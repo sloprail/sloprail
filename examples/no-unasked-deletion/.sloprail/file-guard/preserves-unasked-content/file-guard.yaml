@@ -1,23 +1,16 @@
-# An edit must not silently drop content nobody asked to remove. The
-# load-bearing word is UNASKED — the relationship between a removal and the
-# user's own words, not removal itself.
+# An edit must not silently drop content nobody asked to remove. The load-bearing
+# word is UNASKED: the removal's relationship to the user's own words.
 #
-# PreFileUpdate + preventive:true — the content that would be lost is still on
-# disk at Pre time, so the diff is computed BEFORE the loss. A Post check is
-# too late, and git-restore is gone if the file was never committed.
+# preventive:true so the diff is computed at Pre time, before the loss — a Post
+# check is too late, and git-restore is gone on an uncommitted file.
 #
-# "Asked" is deterministic, not a keyword grep: the agent writes the QUOTE of
-# what the user asked as a marker in the file's frontmatter (`# sr:asked
-# "<quote>"`, a YAML comment the marker extractor reads), and the check grounds
-# it with `sr-session trajectory cite` — the quote must resolve to the user's
-# own words in the trajectory (a message, or an AskUserQuestion answer). A
-# quote that resolves nowhere is a fabricated ask.
+# "Asked" is deterministic: the agent writes an `# sr:asked "<quote>"` marker in
+# the frontmatter, and the check grounds it with `trajectory cite` — the quote
+# must resolve to the user's own words (a message or AskUserQuestion answer).
 #
-# Two checks, cheap-gates-expensive. The script: pure additions (append) pass;
-# a removal with no valid grounded quote-marker is refused deterministically;
-# a removal WITH a grounded quote passes to the judge. The judge rules the two
-# properties only a model can: the change is clean & targeted (only what the
-# quote asked), and stated absolutely, not as a from-Y-to-X delta narrative.
+# Two checks, cheap-gates-expensive: the script passes appends, refuses a removal
+# lacking a grounded quote, and hands a grounded removal to the judge, which
+# rules the model-only properties (change is clean and stated absolutely).
 match: 'path startsWith "memories/" and path endsWith ".md"'
 preventive: true
 checks:

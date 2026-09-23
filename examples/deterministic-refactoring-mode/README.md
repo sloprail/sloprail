@@ -1,7 +1,6 @@
 # deterministic-refactoring (context + Stop gate)
 
-**Unit:** [12_deterministic-refactoring](/Users/nsviridenko/ws/sloprail/strategy/memories/topics/20260812_no-slop/units/12_deterministic-refactoring/UNIT.md)
-**Natures:** context + gate + file-guard ([decision 20260818_no-slop-primitives](/Users/nsviridenko/ws/sloprail/strategy/memories/decisions/20260818_no-slop-primitives/DECISION.md), slice 4)
+**Natures:** context + gate + file-guard
 
 ## The rule
 
@@ -97,11 +96,11 @@ This was a deliberate choice among three:
   object on stdout. All present → permit.
 - **`file-guard/moved-content-reconciles/`** — the per-file byte check, active only
   while the context is. Reconciles a moved file against its pinned origin, dropping
-  imports and whitespace (unit 12's exception rules).
+  imports and whitespace (the exception rules).
 
 ## The refusal contract
 
 Every refusal here is a clean `{"reason": "…"}` object on stdout — the engine reads
-`reason` and turns it into the block text. (The old decision-wrapped shape still
+`reason` and turns it into the block text. (The old wrapped shape still
 worked because the engine reads `reason` regardless, but the scripts here use the
 current shape.)

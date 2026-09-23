@@ -6,11 +6,9 @@ set -uo pipefail
 input="$(cat)"
 goal_path="$(printf '%s' "$input" | jq -r '.event.path // ""')"
 
-# Bytes chosen by event kind. This context is bound to Post file events, so the
-# Post branch runs in practice; the Pre branches keep the script correct for any
-# kind. On a Pre write, `.event.resultKnown` false (create or update) means the
-# result was not derivable ahead of the write — defer to the Post kind rather
-# than mistake an absent newContent for an emptied file.
+# Content by event kind. Post runs in practice; the Pre branches keep the script
+# correct for any kind. On a Pre write with resultKnown false, the content is not
+# derivable yet — defer to the Post kind rather than mistake it for an empty file.
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
 case "$kind" in
   PostFileCreate|PostFileUpdate)

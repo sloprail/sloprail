@@ -1,28 +1,11 @@
-# The "explicitly linked to nothing" half of intake. A user message that needs
-# no task is marked with a #skip declared in the agent's own prose, naming the
-# message line(s) it excuses:
+# The "explicitly linked to nothing" half of intake. The agent marks a message
+# needing no task with `#skip <line>...` in its prose; this context enters on
+# the tag and logs each excused message as skip:<transcript>:<line>-<line> into
+# its own registry, the exact ref shape the intake gate collects and subtracts
+# via `state list --owner skip-declared`.
 #
-#   #skip 1              — the user message on line 1 needs no task
-#   #skip 1 3            — lines 1 and 3 need no task
-#
-# This context enters on that #skip tag and logs each excused message into its
-# OWN registry (sr-session state, owned by skip-declared) as a
-# skip:<transcript>:<line>-<line> entry — the exact reference shape the intake
-# gate collects for every user message. The gate reads this registry via
-# `state list --owner skip-declared` and subtracts the excused refs from the
-# residue.
-#
-# Why behind a context, not the agent's own Bash: `state set` needs the
-# SR_GUARDRAIL hook environment the agent's shell lacks, so the write must
-# happen inside a hook; --owner is the read that lets the gate cross into this
-# context's registry.
-#
-# The intake gate deliberately does NOT `require: [{context: skip-declared}]`:
-# it must run on EVERY Stop to check the residue, not only when a skip was
-# declared. Ordering is still sound — at Stop the engine runs context enters
-# BEFORE the Stop gates, so a #skip declared this cycle is logged before the
-# gate reads it; a skip from an earlier cycle persists in session state, which
-# is exactly the "stays excused" behaviour wanted.
+# Must be a context, not the agent's own Bash: `state set` needs the hook
+# environment the agent's shell lacks. --owner is the cross-context read.
 on:
   - event: PostTagWrite
     match: any(event.tags, .label == "skip")

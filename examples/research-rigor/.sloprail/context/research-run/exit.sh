@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# exit: thin — does NOT run the depth check itself and does NOT refuse the
-# Stop. Reads the paired gate's own verdict from `gates`, symmetric to
-# `context`.
+# exit: reads the paired gate's verdict from `gates`; does not check anything itself.
 set -uo pipefail
 
 input="$(cat)"

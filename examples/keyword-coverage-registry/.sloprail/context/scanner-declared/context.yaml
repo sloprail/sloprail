@@ -1,14 +1,9 @@
-# Two separate concerns, not one: (1) do the keywords even get written down
-# anywhere real, and (2) once they are, did a search actually cover them. This
-# context owns (1) — a scanner is declared FIRST, as a real file, before any
-# search happens; the sibling gate (verify-scanner-coverage) owns (2), checking
-# searches against what this context logged, never the other way around.
+# Owns "were the keywords written down as a real file"; the sibling gate
+# (verify-scanner-coverage) owns "did a search cover them", checked against what
+# this context logged.
 #
 # scanners/<name>/scanner.yaml declares one scanner: { active: bool,
-# keywords: str[] }. "Scanner" because it groups the keywords that must ALL
-# appear together in ONE gh call — not a flat bag of terms checked
-# independently. One scanner maps naturally to one research angle, though
-# nothing here enforces that pairing.
+# keywords: str[] }. Its keywords must ALL appear together in ONE gh call.
 on:
   - event: PostFileCreate
     match: event.path startsWith "scanners/" and event.path endsWith "/scanner.yaml"

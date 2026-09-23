@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# verify: is this goal's target currently met? Not invoked by the engine
-# directly — resolved via goal.yaml's `script: verify.sh` and run by the
-# goal-verify gate. Also runnable by hand: a plain executable.
-#
-# The target lives HERE, not in goal.yaml. Reads the shared recording log for
-# the latest measured value.
+# verify: is this goal's target met? Run by the goal-verify gate (via goal.yaml's
+# `script:`) or by hand. The target lives here; reads the latest value from the
+# recording log.
 set -uo pipefail
 
 TARGET_METRIC="accuracy"

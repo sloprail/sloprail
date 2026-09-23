@@ -1,10 +1,6 @@
-# The engine does not read goal.yaml on its own — this context IS the wiring.
-# PostFileWrite, not Pre: a goal's `enabled` flag only exists once the write
-# has SETTLED (Pre cannot always predict the write), so this reads final content.
-#
-# This context does NOT block the Stop — it only tracks active/inactive.
-# ../../gate/goal-verify/ is what refuses a Stop; this context's exit just
-# reads that gate's verdict.
+# Wires goal.yaml into the engine. PostFileWrite so it reads settled content
+# (the `enabled` flag exists only once the write lands). Tracks active/inactive
+# only; the goal-verify gate is what refuses a Stop.
 on:
   - event: PostFileWrite
     match: event.path startsWith "goal/" and event.path endsWith "goal.yaml"

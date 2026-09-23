@@ -1,14 +1,9 @@
-# The second half of the two-part test: the sibling scanner-declared context
-# owns "did the keywords get written down anywhere real" — this gate owns "did a
-# search actually cover them", checked strictly AGAINST what the context
-# declared, never derived from the searches themselves (else a search that never
-# ran could never be caught missing).
+# Owns "did a search cover the declared keywords", checked against what
+# scanner-declared logged (not derived from the searches themselves, else a
+# search that never ran could not be caught missing).
 #
-# match: context["scanner-declared"].active skips the script declaratively when
-# no scanner was declared this cycle, instead of running it every Stop to
-# discover emptiness. `require` still names the context: match's read of active
-# is meaningful only once the context has run its own enter this cycle, which
-# require's ordering guarantees.
+# match skips this when no scanner was declared; `require` orders the context's
+# enter first, making the active read meaningful.
 on:
   - event: Stop
     match: context["scanner-declared"].active

@@ -1,7 +1,6 @@
-# The marker anchors the rule, not the path — file anywhere, as long as it
-# carries the sr:endpoint marker. Script confirms the file-name pattern and logs
-# the declared marker set; judge confirms the marked code uses the required
-# libs / ORM / naming.
+# The marker anchors the rule, not the path — matches any file carrying an
+# endpoint marker. Script checks the file-name pattern; judge checks the code
+# uses the required libs / ORM / naming.
 match: any(markers, .kind == "endpoint")
 checks:
   - script: ./file-name-matches-pattern.sh

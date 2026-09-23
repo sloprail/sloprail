@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# The actual depth check, run only while research-run is active — real page
-# count and an actual clone (not just a README fetch). Keyword coverage is
-# its own SEPARATE test, not duplicated here (see check 3 below). Page count
-# is read off real gh CLI invocations (--limit/--paginate are explicit
-# arguments the agent had to type), not inferred from unrelated WebFetch/Read
-# calls.
+# Depth check: an actual clone happened (not just a README fetch) and gh CLI
+# calls covered enough pages. Keyword coverage is a separate gate, not checked here.
 set -uo pipefail
 
 input="$(cat)"
@@ -15,20 +11,10 @@ block() {
   exit 1
 }
 
-# 1. Did a real clone happen — not just a README/single-file fetch? A clone is
-# recognised by the COMMAND the agent actually ran: a `git clone` invocation,
-# re-derived from the trajectory as a PreCommandInvoke event whose invocation is
-# `git` with `clone` in its argv. A README/single-file fetch is a different
-# command (curl/WebFetch/gh api on one path), so it does not match — the
-# invocation itself is what distinguishes depth from a peek.
-#
-# This counts the git-clone INVOCATIONS rather than reading the clone's
-# captured output: `.toolUseResult` lives on the tool_RESULT record, not on
-# the assistant tool_use record the PreCommandInvoke event rides, so reading
-# it here would always be empty and refuse even a real clone. The command's
-# own presence is the honest, re-derivable signal (and the only one a
-# trajectory normalize exposes: result records carry no uuid and are not
-# re-emitted as normalized entries).
+# 1. A real clone, recognised by the command: a PreCommandInvoke `git` with
+# `clone` in argv. Count invocations, not captured output — .toolUseResult lives
+# on the result record, not the tool_use record this event rides, so it is always
+# empty here and would refuse even a real clone.
 clone_count="$(sr-session trajectory normalize \
   --path "$transcript_path" \
   --events PreCommandInvoke \
@@ -41,17 +27,9 @@ if [ "${clone_count:-0}" -eq 0 ]; then
   block "No git clone found in this research run's trajectory — a README fetch alone does not establish depth."
 fi
 
-# 2. Page count: read off the real `gh` CLI invocations, not a WebFetch/Read
-# tally — a `gh` command carries its own page count as an argument
-# (--limit N, --paginate), so this reads what the agent actually asked for
-# rather than inferring depth from unrelated tool calls.
-#
-# The invocations sit under each event's `.fields.invocations` (the normalized
-# event wire form is {kind, fields}), not `.invocations`. And a `--limit N`
-# written as two words captures the flag with an EMPTY value (the command
-# parser records `--flag=value` but leaves a space-separated value as a
-# separate positional in argv), so the page count reads the number out of argv
-# when the flag value is empty, and treats `--paginate` as unbounded.
+# 2. Page count from gh CLI invocations, which carry it as an argument
+# (--limit N, --paginate). Invocations sit under `.fields.invocations` (event
+# wire form is {kind, fields}).
 gh_invocations="$(sr-session trajectory normalize \
   --path "$transcript_path" \
   --events PreCommandInvoke \
@@ -84,22 +62,11 @@ if [ "${total_pages:-0}" -lt "$MIN_PAGES" ]; then
   block "gh CLI calls this run cover only $total_pages page(s) (via --limit/--paginate), below the minimum of $MIN_PAGES."
 fi
 
-# 3. Keyword coverage itself is NOT re-checked here — it is a SEPARATE test,
-# owned entirely by the sibling keyword-coverage-registry gate, which derives
-# its table straight off the same kind of `gh` invocations check 2 just read.
-# Duplicating that derivation here would be the same check running twice for
-# no reason; install both gates together if a project wants both tests.
+# 3. Keyword coverage is a separate gate (keyword-coverage-registry), not here.
 
-# 4. Separate-agent-per-trajectory, folded in here rather than kept as its
-# own gate: it is only meaningful when this research run happened INSIDE a
-# subagent trajectory — a main-line research turn has no sibling trajectories
-# to isolate from.
-#
-# `sr-session trajectory describe` reports the facts about this trajectory:
-# whether it is itself a subagent run (.isSubagent) and the sub-agent
-# trajectory paths hanging off it (.subagentPaths). The check is: this research
-# ran as a subagent AND carries other trajectory paths alongside it — each
-# research trajectory must be its own separate agent, not share one with others.
+# 4. Each research trajectory must be its own agent. Only meaningful inside a
+# subagent run: refuse when this ran as a subagent (.isSubagent) that carries
+# sibling trajectory paths (.subagentPaths) alongside it.
 facts="$(sr-session trajectory describe --path "$transcript_path" 2>/dev/null)"
 is_subagent="$(printf '%s' "$facts" | jq -r '.isSubagent // false' 2>/dev/null)"
 

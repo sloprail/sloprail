@@ -15,9 +15,19 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
 
-const SKILL_DIR = 'marketplace/plugins/sloprail/skills/authoring-guardrails';
+const PLUGIN_DIR = 'marketplace/plugins/sloprail';
+const SKILL_NAME = 'authoring-guardrails';
+const SKILL_DIR = `${PLUGIN_DIR}/skills/${SKILL_NAME}`;
 const OUT_DIR = 'docs/guides';
 const ROUTE = '/guides';
+
+// The user-facing invocation is `/<plugin>:<skill>` — plugin name from the
+// plugin manifest, skill from its directory. Read them so the command in the
+// docs can't drift from what the plugin is actually called.
+const pluginName = JSON.parse(
+  readFileSync(join(PLUGIN_DIR, '.claude-plugin', 'plugin.json'), 'utf8'),
+).name;
+const SKILL_COMMAND = `/${pluginName}:${SKILL_NAME}`;
 
 // Order + friendly labels for the pages (SKILL is the overview/index).
 const ORDER = [
@@ -49,8 +59,9 @@ function stripFrontmatter(src) {
 }
 
 // Remove the leading H1 (it becomes the page title) so it isn't shown twice.
+// Tolerates leading blank lines left after the frontmatter strip.
 function stripH1(src) {
-  return src.replace(/^#\s+.+\n+/, '');
+  return src.replace(/^\s*#\s+.+\n+/, '');
 }
 
 // Nice title for a page slug, for link text ("script-checks" -> "Script checks").
@@ -82,9 +93,39 @@ function frontmatter(name, title) {
   const lines = ['---', `title: ${title.replace(/"/g, '\\"')}`];
   lines.push(`kind: ${isIndex ? 'explanation' : 'reference'}`);
   lines.push('sidebar:', `  order: ${order < 0 ? 99 : order}`);
-  lines.push('---', '', '<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->', '');
+  lines.push('---', '');
+  // A generated-file note. For the index (MDX with an import right after) use an
+  // MDX comment so it doesn't sit awkwardly before the import; plain md gets an
+  // HTML comment.
+  lines.push(isIndex
+    ? '{/* Sourced from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. */}'
+    : '<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->');
+  lines.push('');
   return lines.join('\n');
 }
+
+// The command block that leads the index — a user runs the skill, they don't
+// read it all. `/<plugin>:<skill>` is the plugin-namespaced skill
+// invocation (plugin name from plugin.json + the skill's own name). Injected by
+// the generator so it survives regeneration. Only Claude Code is live, in a tab
+// like the install page.
+const INDEX_INTRO = `import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+You don't have to read this to author a guardrail — run the skill and describe
+what you want; it walks the rest.
+
+<Tabs>
+  <TabItem label="Claude Code">
+    \`\`\`bash
+    ${SKILL_COMMAND} add a rule that <what you want to enforce>
+    \`\`\`
+  </TabItem>
+</Tabs>
+
+More harnesses get their own tab as they go live. The rest of this page is the
+same guidance the skill follows, if you'd rather read it.
+
+`;
 
 function main() {
   rmSync(OUT_DIR, { recursive: true, force: true });
@@ -94,13 +135,17 @@ function main() {
   let n = 0;
   for (const f of files) {
     const name = basename(f, '.md');
+    const isIndex = name === 'SKILL';
     const raw = readFileSync(join(SKILL_DIR, f), 'utf8');
-    const title = name === 'SKILL' ? 'Authoring guardrails' : h1(raw);
+    const title = isIndex ? 'Authoring guardrails' : h1(raw);
     let body = stripFrontmatter(raw);
     body = stripH1(body);
     body = rewriteLinks(body);
-    const outName = name === 'SKILL' ? 'index.md' : `${name}.md`;
-    writeFileSync(join(OUT_DIR, outName), frontmatter(name, title) + body);
+    // The index leads with the run-the-skill command block; it needs MDX for the
+    // Tabs component, so it is the one page written as .mdx.
+    const intro = isIndex ? INDEX_INTRO : '';
+    const outName = isIndex ? 'index.mdx' : `${name}.md`;
+    writeFileSync(join(OUT_DIR, outName), frontmatter(name, title) + intro + body);
     n++;
   }
   console.error(`[skilldocs] wrote ${n} pages to ${OUT_DIR}`);

@@ -1,22 +1,12 @@
 #!/usr/bin/env bash
-# Reads the registry the paired context accumulated (sr-session state,
-# owned by tag-declared): which tags were declared this cycle, and which
-# artifact files actually landed. #skip needs no artifact; any other
-# declared tag must have a matching artifact entry, or absence is the
-# violation this rule exists to catch.
+# Reads tag-declared's registry: which tags were declared, and how many artifacts
+# landed. #skip needs no artifact; any other tag must have a matching artifact.
+# The no-tag-at-all case is the sibling tag-required gate's job, not this one's.
 #
-# Does NOT re-check whether a tag was declared at all — this gate's own
-# `require: [{context: tag-declared}]` already guarantees the context
-# activated (i.e. some tag showed up) before this script ever runs; the
-# sibling tag-required gate is what catches the no-tag-at-all case
-# (chicken-and-egg: tag-declared cannot activate on an absent tag).
+# `require: [{context: tag-declared}]` guarantees the context ran first, so the
+# entries are current. `state list` emits JSON-LINES, so reads slurp with `jq -s`.
 set -uo pipefail
 
-# Read the tag-declared context's registry via `state list --owner
-# tag-declared`; the gate's own `require: [{context: tag-declared}]` guarantees
-# that context entered THIS cycle first, so the entries are current. `state
-# list` emits JSON-LINES, not an array, so both reads SLURP with `jq -s` before
-# treating the stream as one.
 entries="$(sr-session state list --owner tag-declared 2>/dev/null)"
 
 tags="$(printf '%s' "$entries" | jq -s -r '[.[] | select(.key | startswith("tag:"))] | .[].key | ltrimstr("tag:")')"

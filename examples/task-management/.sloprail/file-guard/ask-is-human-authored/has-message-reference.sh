@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Cheap gate: does the new content of ASK.md carry a reference to a human
-# message at all? No reference at all is refused before any judge is asked
-# whether the reference is true.
+# Cheap gate: does ASK.md's new content reference a human message at all?
+# Refuse when absent, before the judge is asked whether the reference is true.
 set -uo pipefail
 
 input="$(cat)"

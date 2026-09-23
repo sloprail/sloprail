@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# exit: is this context done? Thin on purpose — does NOT run verify and does
-# NOT refuse the Stop; it only decides whether the context is still active. It
-# reads the paired gate's verdict from `gates` (the map symmetric to `context`)
-# and reflects pass/fail into active/inactive.
+# exit: reads the goal-verify gate's verdict from `gates` and reflects pass/fail
+# into active/inactive. Does not run verify or refuse the Stop itself.
 set -uo pipefail
 
 input="$(cat)"

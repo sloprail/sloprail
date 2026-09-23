@@ -1,6 +1,5 @@
-# Separate from goal-tracking on purpose: this is about every evaluation run
-# being documented, not about any one target. Re-enters on each eval invocation;
-# exit checks completeness across ALL runs so far, not just the one that ran.
+# Separate from goal-tracking: this tracks every eval run being documented, not
+# any one target. Re-enters per eval; exit checks completeness across all runs.
 on:
   - event: PreCommandInvoke
     match: any(event.invocations, .bin == "eval")
