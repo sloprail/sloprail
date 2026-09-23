@@ -2,14 +2,11 @@
 # enter: the agent declared a #skip this cycle. Read every #skip message out of
 # the trajectory, pull the message line number(s) it named, and log each one as
 # skip:<transcript>:<line>-<line> into this context's own state — the exact
-# reference shape the intake gate collects for every user message, so the gate
-# can subtract them by reading this registry via --owner.
+# reference shape the intake gate collects, so it can subtract them via --owner.
 #
-# Receives ContextEnterPayload: the PostTagWrite event that fired, the
-# transcriptPath, and currentContext. The transcriptPath is what turns a bare
-# line number the agent typed into the full /abs/path:line-line reference the
-# gate compares against — the agent names the line; the engine, which knows
-# which transcript this session is writing, supplies the path.
+# The transcriptPath turns a bare line number the agent typed into the full
+# /abs/path:line-line reference the gate compares against: the agent names the
+# line; the engine supplies the path.
 set -uo pipefail
 
 input="$(cat)"
@@ -26,8 +23,7 @@ fi
 # Every #skip message's prose. The tag is re-derived as a PostTagWrite event
 # (matched by .label == "skip"); the line number(s) it excuses are free text on
 # that same entry's assistant message, so take each entry that wrote the skip
-# tag and read its text. (Mirrors deterministic-refactoring's enter, which reads
-# a declared scope off the #refactor entry's text the same way.)
+# tag and read its text.
 skip_texts="$(sr-session trajectory normalize \
   --path "$transcript_path" \
   --events PostTagWrite \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# exit: thin, like goal-tracking (decision slice 7) — does NOT run the depth
-# check itself and does NOT refuse the Stop. Reads the paired gate's own
-# verdict from `gates`, symmetric to `context`.
+# exit: thin — does NOT run the depth check itself and does NOT refuse the
+# Stop. Reads the paired gate's own verdict from `gates`, symmetric to
+# `context`.
 set -uo pipefail
 
 input="$(cat)"

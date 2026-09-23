@@ -1,3 +1,5 @@
+//go:generate sh -c "go run ../../tools/docsgen > ../../docs/reference/generated/natures.json"
+
 // Package declaration reads the rule declarations a project keeps under its
 // `.sloprail/` directory into typed, validated Go values.
 //

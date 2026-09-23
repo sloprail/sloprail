@@ -1,0 +1,191 @@
+[
+  {
+    "name": "FileGuard",
+    "doc": "FileGuard is a file-guard declaration: a rule bound to a FILE'S STATE, not to an event. A guarded file must be FINE, and the check is the same whether the file was created or modified — a failing guard does not reject once; the file stays not-fine and the guard keeps failing every cycle until its content satisfies the checks. Stored at `file-guard/\u003cname\u003e/file-guard.yaml`, with the scripts and judge prompts it names living as siblings in the same folder.",
+    "fields": [
+      {
+        "yaml": "match",
+        "type": "string",
+        "doc": "Match is which files this guard covers, and under which contexts. A FileMatchExpression: either a bare glob (the common \"this path\" case) or a full expression over a file's own facts — its path, the markers it carries, and `context[\u003cname\u003e]`. Compiled against the file scope at load, so a bad expression is refused with a diagnostic naming it rather than silently never matching."
+      },
+      {
+        "yaml": "preventive",
+        "type": "bool",
+        "doc": "Preventive asks the engine to also try to prevent the file from becoming not-fine BEFORE the write lands, in addition to the always-available check after. Best-effort by nature (the engine cannot always predict a write), which is why it is opt-in. A boolean, not an array of events: the only two cases are \"fine at the end\" (the default) and \"always fine\" (checked before too), and they nest."
+      },
+      {
+        "yaml": "require",
+        "type": "[]Prerequisite",
+        "doc": "Require are preconditions that must hold before a guarded write is permitted — see Prerequisite. Optional."
+      },
+      {
+        "yaml": "checks",
+        "type": "[]Check",
+        "doc": "Checks are the checks a guarded file must pass, in order. Each is a script or a judge (both may appear across the list), and order is significant: a cheap deterministic script runs first and can settle the matter before a judge is paid for. The first check that refuses ends it."
+      }
+    ]
+  },
+  {
+    "name": "Gate",
+    "doc": "Gate is a gate declaration: a checkpoint on an event. It wakes on a pre-action event, evaluates its Require and Checks, and passes or blocks the action. One-shot — it decides at the moment and is done, unlike a file-guard that re-fires until a file is fine. Stored at `gate/\u003cname\u003e/gate.yaml`.",
+    "fields": [
+      {
+        "yaml": "on",
+        "type": "[]GateTrigger",
+        "doc": "On are the events this gate wakes on — pre-action only (GateEventKind). A trigger's `event` may be the alias `PreFileWrite`, which the loader expands to PreFileCreate + PreFileUpdate. Each trigger's optional `match` is compiled against the gate scope for the kind it names."
+      },
+      {
+        "yaml": "require",
+        "type": "[]Prerequisite",
+        "doc": "Require are preconditions that must hold before the gated action is permitted — the same Prerequisite a file-guard uses. Optional, BUT a gate must carry at least one of Require / Checks (a gate with neither would wake and do nothing)."
+      },
+      {
+        "yaml": "checks",
+        "type": "[]Check",
+        "doc": "Checks are the checks the gated action must pass, in order — the same Check shape a file-guard uses. Optional, subject to the same at-least-one rule as Require."
+      }
+    ]
+  },
+  {
+    "name": "Context",
+    "doc": "Context is a context declaration: an activatable scope with a lifecycle, the third rule nature. Where a file-guard hangs on a file's state, a context hangs on nothing until it is entered — then it is a scope the agent is inside, contributing an entry in the `context` map that guards naming it can read. Purely lifecycle tracking: a context does NOT block a Stop itself; a gate bound to Stop does. Stored at `context/\u003cname\u003e/context.yaml`.",
+    "fields": [
+      {
+        "yaml": "on",
+        "type": "[]ContextTrigger",
+        "doc": "On are the events that can (re-)run `enter` — the cheap first stage. Wider than a gate's (ContextEventKind): a context may wake on the Post file events and PostTagWrite, because it sometimes must recognise itself from a file's SETTLED content. A trigger's `event` may be the alias `PreFileWrite` or `PostFileWrite`, expanded to the matching Create + Update pair."
+      },
+      {
+        "yaml": "require",
+        "type": "[]Prerequisite",
+        "doc": "Require are preconditions that must hold before `enter` runs — see Prerequisite. Optional."
+      },
+      {
+        "yaml": "enter",
+        "type": "string",
+        "doc": "Enter is the script that decides whether to (re-)activate and what the context's payload should be. Runs on EVERY `on` trigger, active or not. Required and non-empty."
+      },
+      {
+        "yaml": "exit",
+        "type": "string",
+        "doc": "Exit is the script that decides whether the context is done, consulted on a Stop while active. Its verdict only flips this context's own `active`; it does not refuse the Stop. Required and non-empty."
+      }
+    ]
+  },
+  {
+    "name": "StructureGate",
+    "doc": "StructureGate is the tree-wide structure gate: an allowlist of paths a project may write under, deny by default. `deny` only carves exceptions out of `allow` — a `deny` entry matching nothing in `allow` is a no-op. A primitive, not a rule nature, and a singleton: one file for the whole project, `file-guard/structure.yaml`, sibling of the per-guard subfolders.",
+    "fields": [
+      {
+        "yaml": "allow",
+        "type": "[]StructureEntry",
+        "doc": "Allow is the allowlist. Each entry is a glob or a regex (exactly one set)."
+      },
+      {
+        "yaml": "deny",
+        "type": "[]StructureEntry",
+        "doc": "Deny carves exceptions out of Allow. Optional. Each entry is a glob or a regex (exactly one set)."
+      }
+    ]
+  },
+  {
+    "name": "Check",
+    "doc": "Check is one check in a rule's ordered list. Exactly one of Script or Judge is set — a rule needing both deterministic and model judgement lists two checks. Prepare is optional and only meaningful alongside Judge: it runs before the judge and adds to what the prompt template sees. Both Script and Prepare receive the nature's CheckPayload on stdin; a Judge's prompt renders against the nature's judge-input shape (FileJudgeInput on a file-guard, GateJudgeInput on a gate). See payload.go for those shapes.",
+    "fields": [
+      {
+        "yaml": "script",
+        "type": "string",
+        "doc": "Script is a deterministic executable, resolved relative to the rule's folder. Receives the payload on stdin and exits with a pass/fail code. Exactly one of Script / Judge is set."
+      },
+      {
+        "yaml": "judge",
+        "type": "string",
+        "doc": "Judge is a model judgement, a Jinja2 prompt template (`.md.j2`) resolved relative to the rule's folder. Exactly one of Script / Judge is set."
+      },
+      {
+        "yaml": "prepare",
+        "type": "string",
+        "doc": "Prepare is an optional deterministic executable that runs before Judge and adds to the prompt's variables under `additionalContext`. Only meaningful alongside a Judge; a Prepare set on a script-only check is a mistake the validator refuses, since a script check has nothing to prepare for."
+      },
+      {
+        "yaml": "model",
+        "type": "string",
+        "doc": "Model is which model a Judge asks, in the same modelset format sr-agent's `--model` takes (a `size-xs`..`size-xxl` alias, a concrete harness model name, or a comma-separated preference list). Empty means the engine's default (size-md). Only meaningful alongside a Judge — a script has no model to choose — so Model set on a script-only check is a load error the validator refuses, mirroring the stray-prepare rule. See dot-dir-file-store/main.tsp Check.model."
+      },
+      {
+        "yaml": "timeout",
+        "type": "string",
+        "doc": "Timeout is how long a Judge may take before it is killed and read as a refusal, overriding the engine's default (30s). A Go duration string (`45s`, `2m`, `1m30s`) parsed with time.ParseDuration; the validator refuses one that does not parse or is \u003c= 0. Only meaningful alongside a Judge — a script's own runtime is the author's to bound — so Timeout set on a script-only check is a load error. See dot-dir-file-store/main.tsp Check.timeout."
+      },
+      {
+        "yaml": "allowed_tools",
+        "type": "[]string",
+        "doc": "AllowedTools are the tools a Judge's agent is permitted to use, threaded to sr-agent's `--allowed-tools` (which maps to claude's own `--allowed-tools`). A judge that must Read the file it judges, or WebFetch a URL it verifies against, names those here; the engine's judge substrate already grants the Write the verdict file needs, so this is only the tools the RUBRIC's own work requires. Only meaningful alongside a Judge — a script names its own tools by being an executable — so AllowedTools set on a script-only check is a load error, mirroring the stray-model/timeout rule. See dot-dir-file-store/main.tsp Check.allowed_tools."
+      }
+    ]
+  },
+  {
+    "name": "Prerequisite",
+    "doc": "Prerequisite is a precondition that must hold before a rule's own check runs. A single list carrying two kinds, exactly one field set per entry — like Check's script/judge. What differs between them is not the shape but WHO establishes it and WHEN a violation is discovered: - Skill is read from the trajectory at the moment the check runs — a fact the agent may or may not have produced, discovered at runtime and refused with a remedy the agent can act on (\"load the skill\"). An unknown skill NAME is therefore NOT a load error: the loader has no list of skills to check against, and a skill that does not exist yet is a runtime miss, not a malformed rule. - Context names another context declaration the engine must run first when both match the same event — a guarantee the engine gives by ordering, not a fact it goes looking for. Naming one that cannot resolve (unknown name) IS a configuration error caught when the rule loads. The spec's Prerequisite carries no `gate` field yet — dropped deliberately, no gate-depends-on-gate case exists among the units built so far.",
+    "fields": [
+      {
+        "yaml": "skill",
+        "type": "string",
+        "doc": "Skill is the name of a skill that must have been loaded (a real Skill tool_use in the trajectory, not a claim) before the write. Optional."
+      },
+      {
+        "yaml": "context",
+        "type": "string",
+        "doc": "Context is the name of a context declaration that must run first, when both this rule and that context wake on the same event in the same cycle. Optional. Validated to resolve against the loaded contexts."
+      }
+    ]
+  },
+  {
+    "name": "GateTrigger",
+    "doc": "GateTrigger is one event a gate wakes on, optionally narrowed by a cheap expression over that event's own fields. Typed to GateEventKind — the pre-action subset, narrower than a context's (no Post events; a gate that already happened is too late to gate).",
+    "fields": [
+      {
+        "yaml": "event",
+        "type": "string",
+        "doc": "Event is the event kind. May be the config-level alias `PreFileWrite`, which the loader expands to PreFileCreate + PreFileUpdate. No `PostFileWrite` alias here — a gate does not wake on settled content."
+      },
+      {
+        "yaml": "match",
+        "type": "string",
+        "doc": "Match is an optional expression over the event's fields; absent means every occurrence of the kind. Scoped to the gate scope for whichever kind Event names, so the event's fields are read under `event` (`event.path`, `any(event.invocations, …)`)."
+      }
+    ]
+  },
+  {
+    "name": "ContextTrigger",
+    "doc": "ContextTrigger is one event a context wakes on to enter, optionally narrowed by a cheap expression. Wider than a gate's: `event` is typed to ContextEventKind, which includes the Post file events and PostTagWrite, because a context sometimes must recognise itself from a file's SETTLED content.",
+    "fields": [
+      {
+        "yaml": "event",
+        "type": "string",
+        "doc": "Event is the event kind. May be the config-level alias `PreFileWrite` or `PostFileWrite`, each expanded to the matching Create + Update pair on load."
+      },
+      {
+        "yaml": "match",
+        "type": "string",
+        "doc": "Match is an optional expression over the event's fields; absent means every occurrence. Scoped to the context scope for whichever kind Event names — the event's fields under `event` (`any(event.tags, …)`, `event.path startsWith …`)."
+      }
+    ]
+  },
+  {
+    "name": "StructureEntry",
+    "doc": "StructureEntry is one entry in structure.yaml's allow/deny lists. Exactly one of Glob / Regex is set — a model with two optional fields in XOR, the same shape as Check's script/judge, tagged by key rather than by a gitignore-style string prefix.",
+    "fields": [
+      {
+        "yaml": "glob",
+        "type": "string",
+        "doc": "Glob is a bare glob pattern. Exactly one of Glob / Regex is set."
+      },
+      {
+        "yaml": "regex",
+        "type": "string",
+        "doc": "Regex is a full regex pattern, for the cases a glob cannot express (a dated-folder shape, say). Exactly one of Glob / Regex is set."
+      }
+    ]
+  }
+]

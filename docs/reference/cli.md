@@ -2,6 +2,10 @@
 title: CLI reference
 description: Every sloprail command binary and its subcommands.
 kind: reference
+related:
+  - reference/event-vocabulary
+  - reference/nature-shapes
+  - concepts/marker
 ---
 
 There is one command to learn: **`sr`**. Everything is a subcommand of it —
@@ -65,7 +69,3 @@ make distribute-local          # rebuild into bin/, re-sign on macOS
 Binaries find each other as siblings, then on `$PATH`. `SLOP_SUBBIN_DIR`
 overrides the lookup (used by the e2e harness).
 
-## See also
-
-- [Event vocabulary →](/reference) — the flat event kinds each hook receives.
-- [Nature YAML shapes →](/guardrails/rule-kinds/file-guard).

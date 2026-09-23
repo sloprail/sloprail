@@ -1,11 +1,8 @@
-# Not authored ahead of time by a consumer — this file is written BY THE
-# AGENT during the trajectory, the moment it commits to an eval-loop-maxing
-# target. Before that write, `goal/accuracy-target/` does not exist at all.
-# This is the version an agent might have produced after declaring "I'll
-# keep iterating until accuracy >= 0.95".
+# Written BY THE AGENT during the trajectory, the moment it commits to a target;
+# before that write, `goal/accuracy-target/` does not exist. This is what an
+# agent might produce after declaring "keep iterating until accuracy >= 0.95".
 #
-# The target itself lives in verify.sh, not here (2026-08-19: "у goal замени
-# 'target' на 'script' — чтобы на verify.sh ссылаться") — one place for the
-# condition, not duplicated as prose here and re-parsed inside the script.
+# The target itself lives in verify.sh, not here — one place for the condition,
+# not duplicated as prose and re-parsed inside the script.
 enabled: true
 script: verify.sh

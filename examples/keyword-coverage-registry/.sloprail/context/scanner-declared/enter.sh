@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# enter: a scanner.yaml was written under scanners/ — the on-trigger's own
-# `match` already confirmed the path, no re-checking here. Parse
-# { active: bool, keywords: str[] } and, only if active, log the scanner's
-# FULL keyword set into the registry — logged as a set (one entry per
-# scanner, all its keywords together), not one entry per keyword, because
-# the sibling gate needs to check "did ONE gh call cover ALL of these", not
-# "did each keyword individually appear somewhere".
+# enter: a scanner.yaml was written under scanners/ (the trigger's `match`
+# already confirmed the path). Parse { active: bool, keywords: str[] } and, only
+# if active, log the scanner's FULL keyword set as one entry — all its keywords
+# together, not one entry per keyword, because the sibling gate checks "did ONE
+# gh call cover ALL of these", not "did each keyword appear somewhere".
 set -uo pipefail
 
 input="$(cat)"

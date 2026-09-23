@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
-# The gate that actually blocks the Stop. Split out of goal-tracking's own
-# exit (2026-08-19: "должен ли exit контекста и запрещать останавливаться, и
-# параллельно помечать, что он вышел? Это две разные вещи") — this gate
-# RUNS verify and decides; the context only tracks whether it's active.
+# The gate that actually blocks the Stop. This gate RUNS verify and decides;
+# the context only tracks whether it's active.
 #
-# require: [{context: goal-tracking}] already guarantees the context ran
-# this cycle before this gate does — no need to re-check that here, just
-# read what it left behind.
+# require: [{context: goal-tracking}] already guarantees the context ran this
+# cycle before this gate does — just read what it left behind.
 set -uo pipefail
 
 input="$(cat)"
 goal_name="$(printf '%s' "$input" | jq -r '.context["goal-tracking"].payload.goal // empty' 2>/dev/null)"
 
-# GateCheckPayload carries `context` at top level (2026-08-19 parity fix —
-# was read as .event.context here, which was never the payload's shape;
-# GateCheckPayload didn't even declare the field until that fix) — reading
-# it here rather than re-deriving which goal is active.
+# GateCheckPayload carries `context` at top level — read it here rather than
+# re-deriving which goal is active.
 if [ -z "$goal_name" ]; then
   # goal-tracking is not active — nothing to verify, permit the Stop.
   exit 0

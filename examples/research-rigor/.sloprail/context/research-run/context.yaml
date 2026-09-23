@@ -1,11 +1,9 @@
 # Depth-checking only makes sense if this branch of the trajectory was
 # declared as research in the first place. Wakes directly on PostTagWrite
-# (his correction, 2026-08-19: "tag matching should be a new event type —
-# so that we can hook into it") instead of an enter script grepping the
-# trajectory for #research — the engine has already found the tags by the
-# time this fires. `match` filters for #research declaratively (his
-# follow-up: why not `match` here too, same as file path filtering) — enter
-# is not even called on a turn that tagged something else.
+# instead of an enter script grepping the trajectory for #research — the
+# engine has already found the tags by the time this fires. `match` filters
+# for #research declaratively, so enter is not even called on a turn that
+# tagged something else.
 on:
   - event: PostTagWrite
     match: any(event.tags, .label == "research")

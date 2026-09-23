@@ -12,16 +12,11 @@
 # (chicken-and-egg: tag-declared cannot activate on an absent tag).
 set -uo pipefail
 
-# 2026-08-20: read the tag-declared context's registry via `state list
-# --owner tag-declared` (the read-only cross-guardrail read merged in
-# b8608c3); the gate's own `require: [{context: tag-declared}]` guarantees
+# Read the tag-declared context's registry via `state list --owner
+# tag-declared`; the gate's own `require: [{context: tag-declared}]` guarantees
 # that context entered THIS cycle first, so the entries are current. `state
-# list` emits JSON-LINES, not an array, so both reads SLURP with `jq -s`
-# before treating the stream as one — an earlier draft's `jq -r '[.[] | ...]'`
-# on the raw lines read each object's field values instead of the stream,
-# came back empty, and FALSE-REFUSED every legit tagged turn (an empty tag set
-# is neither "skip" nor "has an artifact"). No cwd-relative path here to
-# anchor on $SR_WORKSPACE — this gate reads only state.
+# list` emits JSON-LINES, not an array, so both reads SLURP with `jq -s` before
+# treating the stream as one.
 entries="$(sr-session state list --owner tag-declared 2>/dev/null)"
 
 tags="$(printf '%s' "$entries" | jq -s -r '[.[] | select(.key | startswith("tag:"))] | .[].key | ltrimstr("tag:")')"

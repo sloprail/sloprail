@@ -1,0 +1,83 @@
+---
+title: Unasked edit
+description: Whole-file rewrite destroys content nobody asked to remove
+kind: guide
+related:
+  - concepts/file-guard
+  - concepts/grounding
+  - concepts/refusal-contract
+---
+
+import { FileTree, Code, Steps } from '@astrojs/starlight/components';
+import UseCase from '../../_components/UseCase.astro';
+
+{/*
+  Config blocks below are the real shipped example, loaded from source via Vite
+  `?raw` imports (never copied inline). docs/ and examples/ are siblings.
+*/}
+import fileGuardYaml from '../../../examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/file-guard.yaml?raw';
+import removalSh     from '../../../examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/removal-has-a-grounded-ask.sh?raw';
+import collectSh     from '../../../examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/collect-quote-and-diff.sh?raw';
+import judgeJ2       from '../../../examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/change-is-clean-and-absolute.md.j2?raw';
+
+## The failure
+
+An agent reaches for a full rewrite when an append would do. It regenerates the
+file from what it currently holds in context — and everything it never read is
+silently gone. The diff looks like an edit; nothing errors. The load-bearing word
+is *unasked*: the removal was never tied to anything the user actually said, so
+content nobody asked to remove disappears along with the change that was
+requested.
+
+<UseCase id="destructive-overwrite" label="Watch it happen — then get refused" />
+
+## How it works
+
+Removal is allowed only when it is grounded in the user's own words. A pure
+addition passes freely; a removal has to carry a quote of what the user asked,
+and that quote has to resolve to something the user really said.
+
+<Steps>
+
+1. A script settles the cheap, deterministic case: pure additions pass; a removal
+   with no valid grounded quote is refused outright; a removal with a grounded
+   quote passes to the judge.
+
+2. A judge rules the two properties only a model can — that the change is clean
+   and targeted to what the quote asked, and stated absolutely rather than as a
+   narrative of what changed.
+
+</Steps>
+
+This is a **preventive file-guard**: it runs before the update lands, while the
+content that would be lost is still on disk, so the loss is prevented rather than
+mourned.
+
+## The actual configuration
+
+This is the real example shipped at `examples/no-unasked-deletion/`. One nature,
+a directory under `.sloprail/` — a `file-guard.yaml` declaration plus the checks
+it names:
+
+<FileTree>
+
+- .sloprail/
+  - file-guard/
+    - preserves-unasked-content/
+      - file-guard.yaml
+      - removal-has-a-grounded-ask.sh
+      - collect-quote-and-diff.sh
+      - change-is-clean-and-absolute.md.j2
+
+</FileTree>
+
+### file-guard
+
+Matches memory files and runs preventively. The script gates the judge:
+additions pass, ungrounded removals are refused deterministically, and a grounded
+removal is prepared and handed to the model to rule on cleanliness.
+
+<Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/preserves-unasked-content/file-guard.yaml" />
+<Code code={removalSh} lang="bash" title=".sloprail/file-guard/preserves-unasked-content/removal-has-a-grounded-ask.sh" />
+<Code code={collectSh} lang="bash" title=".sloprail/file-guard/preserves-unasked-content/collect-quote-and-diff.sh" />
+<Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/preserves-unasked-content/change-is-clean-and-absolute.md.j2" />

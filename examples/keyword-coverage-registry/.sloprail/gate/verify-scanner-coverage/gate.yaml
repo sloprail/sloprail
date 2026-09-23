@@ -1,18 +1,14 @@
-# The second half of the two-part test (his correction, 2026-08-19): the
-# sibling scanner-declared context owns "did the keywords get written down
-# anywhere real" — this gate owns "did a search actually cover them",
-# checked strictly AGAINST what the context declared, never derived from
-# the searches themselves (an earlier draft did it backwards — extracted
-# "keywords" out of whatever gh calls happened, so a search that never ran
-# could never be caught missing).
+# The second half of the two-part test: the sibling scanner-declared context
+# owns "did the keywords get written down anywhere real" — this gate owns "did a
+# search actually cover them", checked strictly AGAINST what the context
+# declared, never derived from the searches themselves (else a search that never
+# ran could never be caught missing).
 #
-# match: context["scanner-declared"].active skips the script declaratively
-# when no scanner was ever declared this cycle, same pattern as
-# research-rigor's own depth-check gate — instead of running the script
-# every Stop and having it discover emptiness for itself. `require` still
-# names the context too: match's read of context[...].active is only
-# meaningful once the context has actually run its own enter this cycle,
-# which require's ordering guarantees.
+# match: context["scanner-declared"].active skips the script declaratively when
+# no scanner was declared this cycle, instead of running it every Stop to
+# discover emptiness. `require` still names the context: match's read of active
+# is meaningful only once the context has run its own enter this cycle, which
+# require's ordering guarantees.
 on:
   - event: Stop
     match: context["scanner-declared"].active

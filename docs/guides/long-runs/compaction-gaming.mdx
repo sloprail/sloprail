@@ -1,0 +1,104 @@
+---
+title: Gamed the eval
+description: Compaction makes a long run forget its constraints
+kind: guide
+related:
+  - concepts/context
+  - concepts/gate
+  - concepts/reconciliation
+  - concepts/refusal-contract
+---
+
+import { FileTree, Code, Steps } from '@astrojs/starlight/components';
+import UseCase from '../../_components/UseCase.astro';
+
+{/*
+  Config blocks below are the real shipped example, loaded from source via Vite
+  `?raw` imports (never copied inline). docs/ and examples/ are siblings.
+*/}
+import goalContextYaml from '../../../examples/eval-loop-maxing/.sloprail/context/goal-tracking/context.yaml?raw';
+import goalEnterSh     from '../../../examples/eval-loop-maxing/.sloprail/context/goal-tracking/enter.sh?raw';
+import goalExitSh      from '../../../examples/eval-loop-maxing/.sloprail/context/goal-tracking/exit.sh?raw';
+import recContextYaml  from '../../../examples/eval-loop-maxing/.sloprail/context/recording/context.yaml?raw';
+import recEnterSh      from '../../../examples/eval-loop-maxing/.sloprail/context/recording/enter.sh?raw';
+import recExitSh       from '../../../examples/eval-loop-maxing/.sloprail/context/recording/exit.sh?raw';
+import gateYaml        from '../../../examples/eval-loop-maxing/.sloprail/gate/goal-verify/gate.yaml?raw';
+import verifySh        from '../../../examples/eval-loop-maxing/.sloprail/gate/goal-verify/run-verify.sh?raw';
+
+## The failure
+
+A long run keeps only so much in context. After enough compaction the original
+constraints stop being re-read, and the run drifts toward whatever moves the
+score — not what the score was standing in for. The metric climbs while the
+actual goal recedes. Because the loop optimizes the number in front of it, the
+gaming looks like progress right up until someone reads the output.
+
+<UseCase id="compaction-gaming" label="Watch it happen — then get refused" />
+
+## How it works
+
+The goal is held outside the agent's context, where compaction can't erode it.
+Two contexts track the run, and a gate reads their verdict at turn-end.
+
+<Steps>
+
+1. A **goal-tracking** context records the declared goal when it is written, and
+   stays active until the goal is met — so the target survives across turns and
+   compactions.
+
+2. A **recording** context requires every evaluation run to be documented, checked
+   across all runs so far, not just the latest.
+
+3. A **gate** at `Stop` refuses to let the run end while a declared goal is still
+   unmet — and skips entirely when no goal was declared, so a goal-free session
+   is free to stop.
+
+</Steps>
+
+A context can only track; only the gate refuses a turn.
+
+## The actual configuration
+
+This is the real example shipped at `examples/eval-loop-maxing/`. Three natures,
+each a directory under `.sloprail/` — a `*.yaml` declaration plus the scripts it
+names:
+
+<FileTree>
+
+- .sloprail/
+  - context/
+    - goal-tracking/
+      - context.yaml
+      - enter.sh
+      - exit.sh
+    - recording/
+      - context.yaml
+      - enter.sh
+      - exit.sh
+  - gate/
+    - goal-verify/
+      - gate.yaml
+      - run-verify.sh
+
+</FileTree>
+
+### context
+
+Two contexts. `goal-tracking` wakes when a goal is written and holds it active
+until it's met. `recording` wakes on each evaluation invocation and checks that
+every run so far is documented.
+
+<Code code={goalContextYaml} lang="yaml" title=".sloprail/context/goal-tracking/context.yaml" />
+<Code code={goalEnterSh} lang="bash" title=".sloprail/context/goal-tracking/enter.sh" />
+<Code code={goalExitSh} lang="bash" title=".sloprail/context/goal-tracking/exit.sh" />
+<Code code={recContextYaml} lang="yaml" title=".sloprail/context/recording/context.yaml" />
+<Code code={recEnterSh} lang="bash" title=".sloprail/context/recording/enter.sh" />
+<Code code={recExitSh} lang="bash" title=".sloprail/context/recording/exit.sh" />
+
+### gate
+
+The piece that blocks. It wakes at `Stop` only while a goal is active, and
+refuses the stop until the goal is verified met.
+
+<Code code={gateYaml} lang="yaml" title=".sloprail/gate/goal-verify/gate.yaml" />
+<Code code={verifySh} lang="bash" title=".sloprail/gate/goal-verify/run-verify.sh" />

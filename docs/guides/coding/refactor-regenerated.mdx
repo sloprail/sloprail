@@ -1,6 +1,6 @@
 ---
-title: Stop refactors that regenerate instead of move
-description: An agent asked to move code regenerates it and silently drops detail. Here's the guardrail that forces a mechanical move — shown with its real, shipped config.
+title: Move became rewrite
+description: Refactor that regenerates code instead of moving it
 kind: guide
 ---
 
@@ -117,16 +117,16 @@ should have left. Any missing → the turn is refused.
   <LinkCard
     title="Rule kinds: file-guard, gate, context"
     description="The three natures this guide composes, one reference page each."
-    href="/guardrails/rule-kinds/file-guard"
+    href="/concepts/file-guard"
   />
   <LinkCard
     title="Prove it fires"
     description="Loading is not firing — how to watch a guardrail refuse at least once."
-    href="/guardrails/authoring/prove-it-fires"
+    href="/authoring/prove-it-fires"
   />
   <LinkCard
     title="Markers"
     description="How sr:moved-from anchors a move to a line and survives renames."
-    href="/guardrails/anchors/markers"
+    href="/reference/markers"
   />
 </CardGrid>

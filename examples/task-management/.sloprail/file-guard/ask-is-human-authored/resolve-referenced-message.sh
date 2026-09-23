@@ -3,9 +3,9 @@
 # the session record, so the judge template never has to parse a transcript
 # itself. Receives the same CheckPayload the script above did.
 #
-# Output must nest under additionalContext (2026-08-19, his correction, PR
-# #2 review 4974594141: only that one key is read from prepare's stdout,
-# merged alongside the standard payload — never in place of it).
+# Output must nest under additionalContext — only that one key is read from
+# prepare's stdout, merged alongside the standard payload, never in place of
+# it.
 set -uo pipefail
 
 input="$(cat)"

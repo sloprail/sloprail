@@ -1,0 +1,76 @@
+---
+title: "Unproven 'done'"
+description: Task marked done with no evidence it happened
+kind: guide
+related:
+  - concepts/gate
+  - concepts/grounding
+  - concepts/refusal-contract
+---
+
+import { FileTree, Code, Steps } from '@astrojs/starlight/components';
+import UseCase from '../../_components/UseCase.astro';
+
+{/*
+  Config blocks below are the real shipped example, loaded from source via Vite
+  `?raw` imports (never copied inline). docs/ and examples/ are siblings.
+*/}
+import gateYaml from '../../../examples/action-proof/.sloprail/gate/screenshot-proves-fields/gate.yaml?raw';
+import findSh   from '../../../examples/action-proof/.sloprail/gate/screenshot-proves-fields/find-action-and-proof.sh?raw';
+import judgeJ2  from '../../../examples/action-proof/.sloprail/gate/screenshot-proves-fields/screenshot-shows-all-fields.md.j2?raw';
+
+## The failure
+
+A task moves to done. Nothing checks that the action it claims actually ran, or
+that the result is even in the record. The "done" is the agent's word, and a
+word is exactly what a plausible run produces whether or not the work happened.
+There is no artifact to point at, so the absence of proof looks the same as
+success — until someone needs the thing that was supposed to exist.
+
+<UseCase id="done-no-proof" label="Watch it happen — then get refused" />
+
+## How it works
+
+The proof is grounded in the trajectory, not asserted. When a turn claims an
+action — filling a form, producing an invoice — it has to carry evidence pulled
+from what actually happened, and a judge rules on whether that evidence is real
+and complete.
+
+<Steps>
+
+1. At `Stop`, a prepare step pulls the relevant tool output out of the trajectory
+   — the screenshot or artifact the action would have produced.
+
+2. A judge rules on whether the proof genuinely shows every field the action
+   claimed, refusing the stop when the evidence is missing or partial.
+
+</Steps>
+
+This is a **gate**: it wakes at turn-end and refuses the `Stop` when the claimed
+work has no real proof behind it.
+
+## The actual configuration
+
+This is the real example shipped at `examples/action-proof/`. One nature, a
+directory under `.sloprail/` — a `gate.yaml` declaration plus the checks it names:
+
+<FileTree>
+
+- .sloprail/
+  - gate/
+    - screenshot-proves-fields/
+      - gate.yaml
+      - find-action-and-proof.sh
+      - screenshot-shows-all-fields.md.j2
+
+</FileTree>
+
+### gate
+
+Wakes on every `Stop`. The prepare step extracts the action and its proof from
+the trajectory; the judge rules on whether the proof is genuine and covers all
+the fields.
+
+<Code code={gateYaml} lang="yaml" title=".sloprail/gate/screenshot-proves-fields/gate.yaml" />
+<Code code={findSh} lang="bash" title=".sloprail/gate/screenshot-proves-fields/find-action-and-proof.sh" />
+<Code code={judgeJ2} lang="jinja" title=".sloprail/gate/screenshot-proves-fields/screenshot-shows-all-fields.md.j2" />

@@ -2,6 +2,10 @@
 title: The refusal contract
 description: How a check says no, and why a check that cannot run is itself a refusal.
 kind: explanation
+related:
+  - authoring/prove-it-fires
+  - concepts/grounding
+  - guides
 ---
 
 Every guardrail exists to do one thing: **refuse an agent action**. How that
@@ -56,8 +60,3 @@ only if refusal is *guaranteed* when the condition holds, including when the
 guardrail itself is having a bad day. Fail-closed is what makes the
 guarantee real.
 
-## See also
-
-- [Guides →](/guides) — refusals in action, one real failure at a time.
-- [Authoring & testing →](/guardrails/rule-kinds/file-guard) — how to prove
-  a rule fires.

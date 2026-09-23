@@ -1,25 +1,18 @@
 #!/usr/bin/env bash
 # For every CREATED person this cycle: at least one link from elsewhere
-# (updates/decisions) must exist. For every DELETED person: no dangling
-# links to them should remain. Reads the full registry the paired context's
-# enter accumulated — not just one file, however many were touched this
-# cycle.
+# (updates/decisions) must exist. For every DELETED person: no dangling links
+# to them should remain. Reads the full registry the paired context's enter
+# accumulated — every file touched this cycle, not just one.
 #
-# 2026-08-20: reads the people-linked context's registry via `state list
-# --owner people-linked` (the read-only cross-guardrail read merged in
-# b8608c3). The gate's own `require: [{context: people-linked}]` guarantees
-# that context entered THIS cycle before this read, so the entries are
-# current. Two fixes went in with that read:
-#   - `state list` emits JSON-LINES (one {key,value} object per line), not a
-#     JSON array, so every jq that treats the stream as an array must slurp
-#     it first with `-s`. An earlier draft piped the lines through `jq '.[]'`
-#     / `jq 'length'`, which iterate a single object's field values rather
-#     than the stream — it read nothing and the gate passed everything.
-#   - the link greps run with cwd = this guardrail's own folder, NOT the repo
-#     root, so a bare `updates/ decisions/` looked in the wrong tree. They are
-#     anchored on $SR_WORKSPACE (the tree being guarded), matching the working
-#     eval-loop-maxing example's `${SR_WORKSPACE:-.}` pattern; the fallback to
-#     `.` keeps it runnable if the variable is somehow unset.
+# Reads the people-linked context's registry via `state list --owner
+# people-linked`; the gate's own `require: [{context: people-linked}]`
+# guarantees that context entered THIS cycle first, so the entries are current.
+# Two things to watch:
+#   - `state list` emits JSON-LINES (one {key,value} per line), not a JSON
+#     array, so any jq treating the stream as an array must slurp it with `-s`.
+#   - the link greps run with cwd = this guardrail's own folder, not the repo
+#     root, so a bare `updates/ decisions/` would look in the wrong tree — they
+#     are anchored on $SR_WORKSPACE (the tree being guarded), with `.` fallback.
 set -uo pipefail
 
 ws="${SR_WORKSPACE:-.}"

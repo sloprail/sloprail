@@ -1,16 +1,13 @@
-# This gate checks the people the paired context logged this cycle. It must
-# only run when a person actually changed — and it must SKIP, not refuse, the
-# turns where none did.
+# This gate checks the people the paired context logged this cycle. It must run
+# only when a person actually changed — and SKIP, not refuse, turns where none
+# did.
 #
-# 2026-08-20: `match: context["people-linked"].active` is what makes it skip.
-# An earlier version relied on `require: [{context: people-linked}]` alone to
-# scope the gate, but an unmet `{context}` prerequisite REFUSES (it is the
-# engine's ordering guarantee, not a filter), so with require alone this gate
-# blocked EVERY turn that touched no people file. The match is the filter
-# (fire only while the context is active); the require is the ordering
-# (the context entered this cycle before the check reads its registry). Both
-# are needed, and both are kept — the same pairing keyword-coverage's gate
-# already uses.
+# `match: context["people-linked"].active` is what makes it skip. An unmet
+# `{context}` prerequisite REFUSES (it is the engine's ordering guarantee, not a
+# filter), so require alone would block every turn that touched no people file.
+# The match is the filter (fire only while the context is active); the require
+# is the ordering (the context entered this cycle before the check reads its
+# registry). Both are needed.
 on:
   - event: Stop
     match: context["people-linked"].active

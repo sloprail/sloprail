@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# The deterministic half of unit 17, reworked (his 2026-08-20) to ground "asked"
-# in the user's actual words rather than grep for deletion keywords:
+# The deterministic half. Grounds "asked" in the user's actual words rather
+# than grepping for deletion keywords:
 #   - newContent absent  -> BLOCK (fail-closed): the write's result is unknowable
 #     (a `sed -i`, an env-dependent command), so no-loss cannot be established.
 #   - no removed lines   -> PASS: pure additions is "append, not rewrite".
 #   - removed lines, but NO sr:asked quote-marker on the file
 #                        -> BLOCK: a removal with no declared authorizing quote
-#     is exactly the unasked rewrite this rule catches (the incident: 27 lines
-#     gone, nothing recorded as the ask).
+#     is exactly the unasked rewrite this rule catches.
 #   - removed lines WITH an sr:asked marker whose quote does NOT resolve in the
 #     trajectory -> BLOCK: a fabricated ask. `sr-session trajectory cite` is the
 #     authority — the quote must be the user's own words (a message, or an
@@ -35,7 +34,7 @@ fi
 new="$(printf '%s' "$input" | jq -r '.event.newContent')"
 
 # Any line present in old but absent in new. (Order/whitespace refinements are
-# the exception-rule layer unit 12 shares; elided in this sample.)
+# elided in this sample.)
 removed="$(comm -23 <(printf '%s' "$old" | sort -u) <(printf '%s' "$new" | sort -u) | grep -c . || true)"
 
 if [ "${removed:-0}" -eq 0 ]; then

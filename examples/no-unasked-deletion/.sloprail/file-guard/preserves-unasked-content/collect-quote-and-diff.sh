@@ -10,18 +10,16 @@
 # present on macOS and Linux. All nested under additionalContext, alongside the
 # standard payload.
 #
-# WHY THE ENVELOPE. cite resolves a quote to a `<path>:<line>` and stops there —
-# the location is all a citation needs. But the answer alone ("the second option")
-# is not something a judge can weigh: it cannot tell WHAT WAS ASKED, nor which of
-# several sibling answers the user meant, without the question beside it (PR-19
-# review, cite.go:251). So this prepare, having a grounded quote, resolves it and
-# fetches the whole envelope at that line in ONE call with
-# `cite --include-envelope` (which prints the citation, then the envelope from
-# internal/transcript EnvelopeAt) — the full
-# `The user answered: "<question>"="<answer>". ...` string, question
+# WHY THE ENVELOPE. cite resolves a quote to a `<path>:<line>` and stops there.
+# But the answer alone ("the second option") is not something a judge can weigh:
+# it cannot tell WHAT WAS ASKED, nor which of several sibling answers the user
+# meant, without the question beside it. So this prepare, having a grounded
+# quote, resolves it and fetches the whole envelope at that line in ONE call
+# with `cite --include-envelope` (which prints the citation, then the envelope)
+# — the full `The user answered: "<question>"="<answer>". ...` string, question
 # included. A message-grounded quote (a plain user message, not an
-# AskUserQuestion answer) has no envelope, and that is fine: asked_envelope is then
-# empty and the judge weighs the quote and the diff alone.
+# AskUserQuestion answer) has no envelope, and that is fine: asked_envelope is
+# then empty and the judge weighs the quote and the diff alone.
 set -uo pipefail
 
 input="$(cat)"

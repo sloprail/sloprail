@@ -1,0 +1,75 @@
+---
+// SectionCards — auto-generated card list for a section overview page.
+//
+// Reads the docs collection and renders a LinkCard per page under a given path
+// prefix, grouped by the immediate subfolder (so a Guardrails overview lists its
+// rule-kinds / checks / anchors groups, each with its pages). The list never
+// drifts: adding a page under the section makes a card appear with no edit to
+// the overview.
+//
+// Usage on an overview page (e.g. docs/guardrails/index.md):
+//   import SectionCards from '../_components/SectionCards.astro';
+//   <SectionCards base="guardrails" />
+//
+// `base` is the section's top folder (no leading/trailing slash). The overview
+// pages themselves (index) and the current page are excluded.
+import { getCollection } from 'astro:content';
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+interface Props {
+  base: string;
+}
+const { base } = Astro.props;
+
+const all = await getCollection('docs');
+
+// Title-case a folder segment for a group heading ("rule-kinds" -> "Rule kinds").
+function humanize(seg: string): string {
+  const s = seg.replace(/-/g, ' ');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Pages under this section, excluding index pages (the overviews themselves).
+const prefix = `${base}/`;
+const pages = all
+  .filter((e) => e.id.startsWith(prefix))
+  .filter((e) => e.id !== base && !e.id.endsWith('/index') && e.id !== `${base}/index`)
+  .map((e) => {
+    const rest = e.id.slice(prefix.length);        // e.g. "rule-kinds/file-guard"
+    const parts = rest.split('/');
+    const group = parts.length > 1 ? parts[0] : ''; // "" = directly under section
+    return {
+      id: e.id,
+      href: `/${e.id.replace(/\/index$/, '')}`,
+      title: e.data.title,
+      description: e.data.description ?? '',
+      group,
+      order: e.data.sidebar?.order ?? 999,
+    };
+  })
+  .sort((a, b) => a.order - b.order || a.title.localeCompare(b.title));
+
+// Group by immediate subfolder; ungrouped (direct children) come first.
+const groups = new Map<string, typeof pages>();
+for (const p of pages) {
+  const key = p.group;
+  if (!groups.has(key)) groups.set(key, []);
+  groups.get(key)!.push(p);
+}
+const ordered = [...groups.entries()].sort(([a], [b]) => {
+  if (a === '') return -1;
+  if (b === '') return 1;
+  return a.localeCompare(b);
+});
+---
+
+{ordered.map(([group, items]) => (
+  <section class="section-cards">
+    {group !== '' && <h2>{humanize(group)}</h2>}
+    <CardGrid>
+      {items.map((p) => (
+        <LinkCard title={p.title} description={p.description} href={p.href} />
+      ))}
+    </CardGrid>
+  </section>
+))}
