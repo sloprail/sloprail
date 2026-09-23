@@ -3,7 +3,12 @@ title: gate
 description: A checkpoint on an event that blocks — the only nature that stops a turn.
 kind: explanation
 sidebar:
+  label: Gate
   order: 2
+related:
+  - guides/gate
+  - use-cases/tasks/done-no-proof
+  - concepts/precondition
 ---
 
 A **gate** is a [nature](/concepts): a one-shot checkpoint on an event that lets an action through or **blocks** it. It is the only nature that can stop a turn.

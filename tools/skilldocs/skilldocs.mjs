@@ -21,7 +21,7 @@ const ROUTE = '/guides';
 
 // Order + friendly labels for the pages (SKILL is the overview/index).
 const ORDER = [
-  'SKILL', 'file-guard', 'gate', 'context', 'matchers',
+  'SKILL', 'file-guard', 'gate', 'context', 'structure-gate', 'matchers',
   'script-checks', 'judge-checks', 'events', 'state-management', 'environment',
 ];
 

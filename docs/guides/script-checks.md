@@ -2,7 +2,7 @@
 title: A script check
 kind: reference
 sidebar:
-  order: 5
+  order: 6
 ---
 
 <!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->

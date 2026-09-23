@@ -2,7 +2,7 @@
 title: The check environment
 kind: reference
 sidebar:
-  order: 9
+  order: 10
 ---
 
 <!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->

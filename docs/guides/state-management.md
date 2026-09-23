@@ -2,7 +2,7 @@
 title: State across cycles
 kind: reference
 sidebar:
-  order: 8
+  order: 9
 ---
 
 <!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->

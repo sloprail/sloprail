@@ -2,7 +2,7 @@
 title: Matchers
 kind: reference
 sidebar:
-  order: 4
+  order: 5
 ---
 
 <!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->

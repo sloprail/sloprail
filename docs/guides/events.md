@@ -2,7 +2,7 @@
 title: Event structures
 kind: reference
 sidebar:
-  order: 7
+  order: 8
 ---
 
 <!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->

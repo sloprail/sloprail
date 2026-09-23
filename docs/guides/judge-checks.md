@@ -2,7 +2,7 @@
 title: A judge check
 kind: reference
 sidebar:
-  order: 6
+  order: 7
 ---
 
 <!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->

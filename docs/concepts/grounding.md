@@ -3,7 +3,12 @@ title: grounding
 description: A produced fact carries a link to its source — verified true, not just present.
 kind: explanation
 sidebar:
+  label: Grounding
   order: 4
+related:
+  - use-cases/tasks/research-unverifiable
+  - use-cases/tasks/done-no-proof
+  - guides/script-checks
 ---
 
 **Grounding** requires that a produced artifact or action carries a reference to the specific source it derives from, and that the reference is verified **true**, not merely present. It catches fluent invention — plausible output tied to nothing real.
