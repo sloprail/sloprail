@@ -1,12 +1,7 @@
-# This guard is relevant ONLY while the refactoring context is active — that
-# is the guard→context link, expressed as a variable in the match expression,
-# not a flat active_in. A context is reached as `context[<name>]` in the file
-# scope, and a marker test is a quantifier over the `markers` list — so "inside
-# the refactor context, for a file carrying an sr:moved-from marker" is
-# `context["refactoring"].active and any(markers, .kind == "moved-from")`. A
-# file carrying that marker is reconciled against its origin, but only inside a
-# declared refactor: the same marker outside the context is not this guard's
-# business.
+# Reconcile a moved file against its origin — but only inside a declared refactor
+# (the context link is a variable in the match, not a flat active_in) and only
+# for a file carrying an sr:moved-from marker. The same marker outside the
+# context is not this guard's business.
 match: context["refactoring"].active and any(markers, .kind == "moved-from")
 preventive: true
 checks:

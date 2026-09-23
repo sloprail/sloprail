@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# A file carrying an sr:moved-from marker must be byte-identical to its origin
-# at the pinned commit, minus the declared exceptions (import lines,
-# whitespace) — the reconciliation unit 12 describes. Receives CheckPayload;
-# the marker's fqn carries <path>@<sha>:<start>-<end>.
-#
-# This only runs inside the refactoring context (the match saw to that), so it
-# can assume it is looking at a declared move, not an incidental marker.
+# A file carrying an sr:moved-from marker must be byte-identical to its origin at
+# the pinned commit, minus imports and whitespace. The marker's fqn carries
+# <path>@<sha>:<start>-<end>.
 set -uo pipefail
 
 input="$(cat)"
@@ -33,9 +29,8 @@ EOF
   exit 1
 }
 
-# Reconcile: drop import lines and normalize whitespace on both sides before
-# comparing, so a legitimate import rewrite is not read as slop (unit 12's
-# exception rules).
+# Drop imports and normalize whitespace on both sides, so a legitimate import
+# rewrite is not read as a rewrite of the moved code.
 normalize() { grep -vE '^\s*(import|from)\b' | sed 's/[[:space:]]\+/ /g;s/^ //;s/ $//'; }
 moved_body="$(printf '%s' "$new" | grep -vE '^\s*//\s*sr:' | normalize)"
 origin_body="$(printf '%s' "$origin" | normalize)"

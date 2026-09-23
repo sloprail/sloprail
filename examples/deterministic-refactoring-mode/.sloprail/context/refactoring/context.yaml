@@ -1,20 +1,11 @@
-# The `refactoring` context TRACKS a declared refactor; it does not block (a
-# context's exit is pure lifecycle). The blocking completeness check is the
-# paired Stop gate `gate/refactor-complete`, which reads the declared_markers
-# this context's enter writes into the payload.
-#
-# Two triggers, because the two readers need the context at two different moments:
-#
-#   - PreToolUse: so the context is ACTIVE before a marked write, which is what
-#     the reconcile file-guard's `match: context["refactoring"].active` reads at
-#     that write's PreToolUse. (At this moment the CURRENT assistant turn is not
-#     yet persisted to the transcript, so enter cannot read the #refactor scope
-#     here — it activates the scope; the scope is captured at the tag trigger.)
-#   - PostTagWrite: fires at Stop, once the turn IS settled in the transcript, so
-#     enter can read the `#refactor scope=...` declaration and populate
-#     declared_markers BEFORE the Stop gate reads it (enters run before gates in
-#     the Stop cycle). Recognising a refactor needs the trajectory, which is
-#     enter's job; a bare per-event match cannot read prose written this turn.
+# Tracks a declared refactor; never blocks (the blocking is the paired Stop
+# gate `refactor-complete`, which reads the declared_markers this context's
+# enter writes). Two triggers:
+#   - PreToolUse: activate the scope before a marked write, so the reconcile
+#     file-guard's `match: context["refactoring"].active` is true at that write.
+#   - PostTagWrite: fires at Stop once the turn is settled, so enter can read the
+#     `#refactor scope=...` declaration and populate declared_markers before the
+#     gate reads it (enters run before gates).
 on:
   - event: PreToolUse
   - event: PostTagWrite

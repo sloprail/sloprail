@@ -1,0 +1,132 @@
+---
+title: Stop refactors that regenerate instead of move
+description: An agent asked to move code regenerates it and silently drops detail. Here's the guardrail that forces a mechanical move — shown with its real, shipped config.
+kind: guide
+---
+
+import { FileTree, Code, CardGrid, LinkCard, Aside, Steps } from '@astrojs/starlight/components';
+import UseCase from '../../_components/UseCase.astro';
+
+{/*
+  Config blocks below are the real shipped example, loaded from source via Vite
+  `?raw` imports (never copied inline). Paths are sibling-relative — docs/ and
+  examples/ are siblings, a layout the website's build preserves when it clones
+  this tree. The <UseCase> slot is filled with the animated trajectory by the
+  website; in this repo it renders a link to the use-case page.
+*/}
+import contextYaml    from '../../../examples/deterministic-refactoring-mode/.sloprail/context/refactoring/context.yaml?raw';
+import enterSh        from '../../../examples/deterministic-refactoring-mode/.sloprail/context/refactoring/enter.sh?raw';
+import exitSh         from '../../../examples/deterministic-refactoring-mode/.sloprail/context/refactoring/exit.sh?raw';
+import fileGuardYaml  from '../../../examples/deterministic-refactoring-mode/.sloprail/file-guard/moved-content-reconciles/file-guard.yaml?raw';
+import reconcileSh    from '../../../examples/deterministic-refactoring-mode/.sloprail/file-guard/moved-content-reconciles/reconciles-against-origin.sh?raw';
+import gateYaml       from '../../../examples/deterministic-refactoring-mode/.sloprail/gate/refactor-complete/gate.yaml?raw';
+import verifySh       from '../../../examples/deterministic-refactoring-mode/.sloprail/gate/refactor-complete/verify-declared-moves-landed.sh?raw';
+
+## The failure
+
+Ask an agent to move code and it often doesn't *carry* it — it reads what the
+code does and **regenerates** something equivalent at the destination. On large
+code that silently drops whatever it judged incidental: a comment kept on
+purpose, an exact type, an edge case. Nothing errors; the diff reads as a clean
+move. The fix is to make a move be a move — the destination must carry the
+origin's bytes, not a reconstruction of them.
+
+<UseCase id="refactor-regenerated" label="Watch a move regenerate — then get refused" />
+
+## How it works
+
+The agent declares intent (`#refactor`) and a **scope** — the moves it commits
+to. Then two things are checked independently:
+
+<Steps>
+
+1. A move that regenerated instead of carrying the bytes — caught *preventively*
+   by the **file-guard**, before the write lands.
+
+2. A declared move that never happened — caught at turn-end by the **gate**,
+   which refuses the `Stop`.
+
+</Steps>
+
+A **context** ties them together, tracking the scope until every move lands. A
+context can only track; only a gate blocks a turn.
+
+## The actual configuration
+
+This is the real, working example shipped in the sloprail repo at
+`examples/deterministic-refactoring-mode/`. Three natures, each a directory
+under `.sloprail/` — a `*.yaml` declaration plus the scripts it names:
+
+<FileTree>
+
+- .sloprail/
+  - context/
+    - refactoring/
+      - context.yaml
+      - enter.sh
+      - exit.sh
+  - file-guard/
+    - moved-content-reconciles/
+      - file-guard.yaml
+      - reconciles-against-origin.sh
+  - gate/
+    - refactor-complete/
+      - gate.yaml
+      - verify-declared-moves-landed.sh
+- README.md
+
+</FileTree>
+
+### context
+
+Tracks the refactor; never refuses. On a marked write it activates the scope;
+at `Stop` its `enter` reads the `#refactor scope=…` declaration and records the
+declared moves. Its `exit` closes the context once the gate says the refactor
+is complete — which is what carries a multi-turn refactor.
+
+<Code code={contextYaml} lang="yaml" title=".sloprail/context/refactoring/context.yaml" />
+<Code code={enterSh} lang="bash" title=".sloprail/context/refactoring/enter.sh" />
+<Code code={exitSh} lang="bash" title=".sloprail/context/refactoring/exit.sh" />
+
+### file-guard
+
+Runs *before* a marked write lands, only while the context is active. It
+reconciles the moved bytes against their pinned origin; anything that doesn't
+reconcile is a rewrite, and a rewrite is refused.
+
+<Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/moved-content-reconciles/file-guard.yaml" />
+<Code code={reconcileSh} lang="bash" title=".sloprail/file-guard/moved-content-reconciles/reconciles-against-origin.sh" />
+
+### gate
+
+The piece that *blocks*. It wakes at `Stop` when a refactor is active, reads the
+declared scope, and searches the tree for the `sr:moved-from` marker each move
+should have left. Any missing → the turn is refused.
+
+<Code code={gateYaml} lang="yaml" title=".sloprail/gate/refactor-complete/gate.yaml" />
+<Code code={verifySh} lang="bash" title=".sloprail/gate/refactor-complete/verify-declared-moves-landed.sh" />
+
+## Related
+
+<CardGrid>
+  <LinkCard
+    title="The refusal contract"
+    description="Why a check that cannot run is itself a refusal, and where the reason comes from."
+    href="/concepts/refusal-contract"
+  />
+  <LinkCard
+    title="Rule kinds: file-guard, gate, context"
+    description="The three natures this guide composes, one reference page each."
+    href="/guardrails/rule-kinds/file-guard"
+  />
+  <LinkCard
+    title="Prove it fires"
+    description="Loading is not firing — how to watch a guardrail refuse at least once."
+    href="/guardrails/authoring/prove-it-fires"
+  />
+  <LinkCard
+    title="Markers"
+    description="How sr:moved-from anchors a move to a line and survives renames."
+    href="/guardrails/anchors/markers"
+  />
+</CardGrid>
