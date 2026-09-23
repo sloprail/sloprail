@@ -6,7 +6,7 @@ sidebar:
   order: 9
 related:
   - concepts/marker
-  - concepts/context
+  - guides/context
   - concepts/grounding
 ---
 
@@ -23,7 +23,7 @@ one is for the static half of the world, one for the temporal half.
 ## What a tag anchors
 
 - A **scope declaration** — `#refactor scope=…` opens a
-  [context](/concepts/context); the context's `enter` reads the tag out of the
+  [context](/guides/context); the context's `enter` reads the tag out of the
   trajectory and records what the agent committed to.
 - An **intent** the rest of a rule keys on — "the agent said it was doing X," read
   from the record rather than asserted.

@@ -6,7 +6,7 @@ sidebar:
   order: 8
 related:
   - concepts/tag
-  - concepts/file-guard
+  - guides/file-guard
   - reference/cli
 ---
 
@@ -17,7 +17,7 @@ survives edits and renames so the rule keeps pointing at the right place.
 A marker sits in content that **persists**. The check can re-read the file
 whenever it wants; the question a marker answers is "is this marker present in the
 tree right now?" That is what makes it the anchor for a
-[file-guard](/concepts/file-guard), which reads a file's markers to decide whether
+[file-guard](/guides/file-guard), which reads a file's markers to decide whether
 it applies.
 
 ## What a marker anchors

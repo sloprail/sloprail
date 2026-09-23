@@ -71,6 +71,6 @@ exists to prevent.
 
 ## Next
 
-- [The three rule kinds →](/concepts/file-guard) — file-guard,
+- [The three rule kinds →](/guides/file-guard) — file-guard,
   gate, context, and when to use each.
 - [Guides →](/guides) — real failures and the guardrails that catch them.

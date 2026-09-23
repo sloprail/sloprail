@@ -5,9 +5,9 @@ kind: explanation
 sidebar:
   order: 6
 related:
-  - concepts/gate
+  - guides/gate
   - concepts/marker
-  - reference/nature-shapes
+  - guides/file-guard
 ---
 
 A **structure-gate** is a list of paths where writing *is* allowed; everything
@@ -18,7 +18,7 @@ write lands anywhere except inside this structure," always.
 
 ## Structure-gate vs. gate
 
-Despite the name, this is distinct from a plain [gate](/concepts/gate). A gate is
+Despite the name, this is distinct from a plain [gate](/guides/gate). A gate is
 a momentary, one-shot checkpoint on an event — abstract, general. A structure-gate
 is the specific, standing rule over the tree: the set of allowed write locations.
 One is a checkpoint you pass; the other is a map that's always in force.
@@ -44,4 +44,4 @@ You want a tree with a fixed shape — memories, tasks, a knowledge base — whe
 writing outside the sanctioned layout is a mistake, and the agent should be made
 to place things deliberately.
 
-For the exact configuration, see [Nature YAML shapes](/reference/nature-shapes).
+For the exact configuration, see [Nature YAML shapes](/guides/file-guard).

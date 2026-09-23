@@ -4,24 +4,24 @@ description: The vocabulary of sloprail, in one place.
 kind: reference
 related:
   - concepts
-  - reference/nature-shapes
+  - guides/file-guard
 ---
 
 **check** — the thing that produces a verdict inside a guardrail. Either a
 *script* (exit code is the verdict) or a *judge* (a Jinja2 template sent to a
-model). See [Checks](/reference/check-patterns).
+model). See [Checks](/concepts).
 
 **context** — a [nature](#nature): an activatable scope the agent is inside, which
-tracks state while active and never blocks. See [context](/concepts/context).
+tracks state while active and never blocks. See [context](/guides/context).
 
 **event** — a flat fact a guardrail binds to (a tool about to run, a turn about to
-end). See [the event vocabulary](/reference/event-vocabulary).
+end). See [the event vocabulary](/guides/events).
 
 **file-guard** — a [nature](#nature) bound to a file's state, re-checked every
-cycle, optionally preventive. See [file-guard](/concepts/file-guard).
+cycle, optionally preventive. See [file-guard](/guides/file-guard).
 
 **gate** — a [nature](#nature): a one-shot checkpoint on an event that passes or
-blocks. The only nature that blocks a turn. See [gate](/concepts/gate).
+blocks. The only nature that blocks a turn. See [gate](/guides/gate).
 
 **grounding** — a check that a produced fact's link to its source is true, not
 just present. See [grounding](/concepts/grounding).

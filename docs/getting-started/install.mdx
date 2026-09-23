@@ -1,0 +1,59 @@
+---
+title: Install
+description: Get sloprail into your agent as a plugin, and confirm it loaded.
+kind: tutorial
+related:
+  - getting-started/quickstart
+  - guides
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+sloprail runs inside your agent as a **plugin**. Installing it registers the
+hooks the engine needs; from then on, every tool call and turn-end runs through
+sloprail.
+
+## Install the plugin
+
+<Tabs>
+  <TabItem label="Claude Code">
+    ```bash
+    /plugin install sloprail@sloprail-marketplace
+    ```
+
+    That's it — the hooks are registered. A project with a `.sloprail/` directory
+    is now guarded; a project with none is an ordinary project until its first
+    rule.
+  </TabItem>
+</Tabs>
+
+More harnesses will get their own tab as they go live. The engine's contract —
+hook points in, events out — isn't specific to one, so the rules a project writes
+don't change between them.
+
+## Confirm it loaded
+
+The load check validates every declaration and reports the event vocabulary this
+build produces:
+
+```bash
+sr-session start < /dev/null
+```
+
+Bind a rule to an event this build doesn't produce and it's named here rather than
+silently ignored. A clean load check means your declarations parsed and bound —
+but *loaded is not fired*. Confirming a rule actually refuses is what the
+[Quickstart](/getting-started/quickstart) walks you through.
+
+## Installing the binaries directly
+
+If you're working on sloprail itself, or need the `sr` binaries on your `$PATH`
+outside an agent:
+
+```bash
+go install ./services/...      # the standard path
+make distribute-local          # when a copy is already installed (re-signs on macOS)
+```
+
+Both land the whole set in one directory, which is what the binaries' sibling
+resolution needs. See the [CLI reference](/reference/cli) for the command surface.

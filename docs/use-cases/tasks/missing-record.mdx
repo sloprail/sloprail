@@ -1,0 +1,112 @@
+---
+title: Decision left no record
+description: A required record silently never gets made
+kind: guide
+related:
+  - guides/context
+  - guides/gate
+  - concepts/reconciliation
+  - concepts/structure-gate
+---
+
+import { FileTree, Code, Steps } from '@astrojs/starlight/components';
+import UseCase from '../../_components/UseCase.astro';
+
+{/*
+  Config blocks below are the real shipped example, loaded from source via Vite
+  `?raw` imports (never copied inline). docs/ and examples/ are siblings.
+*/}
+import contextYaml   from '../../../examples/completeness-artifact-on-trigger/.sloprail/context/tag-declared/context.yaml?raw';
+import enterSh       from '../../../examples/completeness-artifact-on-trigger/.sloprail/context/tag-declared/enter.sh?raw';
+import exitSh        from '../../../examples/completeness-artifact-on-trigger/.sloprail/context/tag-declared/exit.sh?raw';
+import structureYaml from '../../../examples/completeness-artifact-on-trigger/.sloprail/file-guard/structure.yaml?raw';
+import tagGateYaml   from '../../../examples/completeness-artifact-on-trigger/.sloprail/gate/tag-required/gate.yaml?raw';
+import refuseSh      from '../../../examples/completeness-artifact-on-trigger/.sloprail/gate/tag-required/refuse.sh?raw';
+import verifyGateYaml from '../../../examples/completeness-artifact-on-trigger/.sloprail/gate/verify-artifact-produced/gate.yaml?raw';
+import verifySh      from '../../../examples/completeness-artifact-on-trigger/.sloprail/gate/verify-artifact-produced/verify-tag-and-artifact.sh?raw';
+
+## The failure
+
+A situation that should have produced a record — a decision made, a memory worth
+keeping — produces nothing. Nobody notices the absence, because there is nothing
+there to notice. The record that should exist and the record that was never made
+look identical from the outside: empty. The cost lands later, when the reasoning
+behind a choice is needed and was never written down.
+
+<UseCase id="missing-record" label="Watch it happen — then get refused" />
+
+## How it works
+
+The trigger and the record are tied together: when a situation calls for a record,
+the turn must declare it and produce the artifact. Two gates enforce the two
+halves — that a record was declared at all, and that the declared record actually
+landed.
+
+<Steps>
+
+1. A **context** wakes on the declaring tag or a touch under the record's paths,
+   and accumulates what showed up, so the gates can read it back at `Stop`.
+
+2. A **structure** file-guard holds the record files to their allowed layout, so
+   a record can only land where it belongs.
+
+3. Two **gates** at `Stop`: one refuses when the situation called for a record and
+   none was declared; the other refuses when a record was declared but the
+   artifact never landed.
+
+</Steps>
+
+A context can only track; the gates are what refuse the turn.
+
+## The actual configuration
+
+This is the real example shipped at
+`examples/completeness-artifact-on-trigger/`. Three natures under `.sloprail/` —
+each a `*.yaml` declaration plus the scripts it names:
+
+<FileTree>
+
+- .sloprail/
+  - context/
+    - tag-declared/
+      - context.yaml
+      - enter.sh
+      - exit.sh
+  - file-guard/
+    - structure.yaml
+  - gate/
+    - tag-required/
+      - gate.yaml
+      - refuse.sh
+    - verify-artifact-produced/
+      - gate.yaml
+      - verify-tag-and-artifact.sh
+
+</FileTree>
+
+### context
+
+Wakes on the declaring tag or a touch under the record paths, and logs what
+appeared into its registry so both gates can read it at `Stop`.
+
+<Code code={contextYaml} lang="yaml" title=".sloprail/context/tag-declared/context.yaml" />
+<Code code={enterSh} lang="bash" title=".sloprail/context/tag-declared/enter.sh" />
+<Code code={exitSh} lang="bash" title=".sloprail/context/tag-declared/exit.sh" />
+
+### file-guard
+
+A structure file-guard: an allow-list of the paths a record may occupy. Anything
+outside it is disallowed.
+
+<Code code={structureYaml} lang="yaml" title=".sloprail/file-guard/structure.yaml" />
+
+### gate
+
+Two gates. One refuses the stop when no record was declared for a situation that
+needed one; the other refuses when a record was declared but its artifact never
+landed.
+
+<Code code={tagGateYaml} lang="yaml" title=".sloprail/gate/tag-required/gate.yaml" />
+<Code code={refuseSh} lang="bash" title=".sloprail/gate/tag-required/refuse.sh" />
+<Code code={verifyGateYaml} lang="yaml" title=".sloprail/gate/verify-artifact-produced/gate.yaml" />
+<Code code={verifySh} lang="bash" title=".sloprail/gate/verify-artifact-produced/verify-tag-and-artifact.sh" />

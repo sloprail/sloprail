@@ -5,9 +5,9 @@ kind: explanation
 sidebar:
   order: 7
 related:
-  - concepts/gate
+  - guides/gate
   - concepts/grounding
-  - reference/nature-shapes
+  - guides/file-guard
 ---
 
 A **precondition** requires that, before an action is allowed, some context has
@@ -28,7 +28,7 @@ is not "loaded"; the precondition checks the real event, not the intent.
 
 ## Where it lives
 
-A precondition is expressed as a [gate](/concepts/gate)'s `require`. When the rule
+A precondition is expressed as a [gate](/guides/gate)'s `require`. When the rule
 is purely "this must have happened first," the `require` is the whole gate — no
 check needed:
 
@@ -43,4 +43,4 @@ the trajectory. That's on purpose: a raw trajectory-query is too low-level to
 expose directly, so preconditions are narrow, named abstractions, each added as a
 new need appears. You ask the specific question, not build it from primitives.
 
-For the exact `require` syntax, see [Nature YAML shapes](/reference/nature-shapes).
+For the exact `require` syntax, see [Nature YAML shapes](/guides/file-guard).

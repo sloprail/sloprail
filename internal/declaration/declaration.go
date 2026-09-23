@@ -1,4 +1,3 @@
-//go:generate go run ../../tools/docsgen -out ../../docs/reference/generated
 
 // Package declaration reads the rule declarations a project keeps under its
 // `.sloprail/` directory into typed, validated Go values.

@@ -1,0 +1,73 @@
+---
+title: "The 'why' is lost"
+description: Meaning erodes as an artifact drifts from its source
+kind: guide
+related:
+  - guides/file-guard
+  - concepts/grounding
+  - concepts/reconciliation
+---
+
+import { FileTree, Code, Steps } from '@astrojs/starlight/components';
+import UseCase from '../../_components/UseCase.astro';
+
+{/*
+  Config blocks below are the real shipped example, loaded from source via Vite
+  `?raw` imports (never copied inline). docs/ and examples/ are siblings.
+*/}
+import fileGuardYaml from '../../../examples/content-de-layering/.sloprail/file-guard/one-fact-one-home/file-guard.yaml?raw';
+import judgeJ2       from '../../../examples/content-de-layering/.sloprail/file-guard/one-fact-one-home/fact-lives-in-one-home.md.j2?raw';
+
+## The failure
+
+A long input carries details that mattered. Each time the agent restates it —
+into a summary, then a summary of the summary — a detail that wasn't needed in
+that moment quietly drops. No single restatement looks lossy, but the layers
+compound, and there's no pointer back to the original to recover what fell away.
+The meaning erodes the further the artifact drifts from its source, until what's
+left is confidently wrong about what the source actually said.
+
+<UseCase id="meaning-lost" label="Watch it happen — then get refused" />
+
+## How it works
+
+The rule refuses the drift at its root: a fact belongs in one home, stated once,
+rather than re-layered into derived copies that erode. A judge reads the write and
+rules on whether it re-states a fact that already has a home elsewhere.
+
+<Steps>
+
+1. The guardrail matches writes under the paths where this de-layering tends to
+   happen.
+
+2. A judge rules on whether the content keeps each fact in a single home rather
+   than restating it into a drifting layer.
+
+</Steps>
+
+This is a **file-guard** with a single judge check: whether a restatement erodes
+meaning is a judgment only a model reading both can make.
+
+## The actual configuration
+
+This is the real example shipped at `examples/content-de-layering/`. One nature,
+a directory under `.sloprail/` — a `file-guard.yaml` declaration plus the judge it
+names:
+
+<FileTree>
+
+- .sloprail/
+  - file-guard/
+    - one-fact-one-home/
+      - file-guard.yaml
+      - fact-lives-in-one-home.md.j2
+
+</FileTree>
+
+### file-guard
+
+Matches writes under the paths where a fact tends to get re-layered. The judge
+rules on whether each fact keeps a single home.
+
+<Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/one-fact-one-home/file-guard.yaml" />
+<Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/one-fact-one-home/fact-lives-in-one-home.md.j2" />

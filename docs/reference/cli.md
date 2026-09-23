@@ -3,8 +3,8 @@ title: CLI reference
 description: Every sloprail command binary and its subcommands.
 kind: reference
 related:
-  - reference/event-vocabulary
-  - reference/nature-shapes
+  - guides/events
+  - guides/file-guard
   - concepts/marker
 ---
 

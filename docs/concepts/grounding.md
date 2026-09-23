@@ -7,7 +7,7 @@ sidebar:
 related:
   - concepts/reconciliation
   - concepts/refusal-contract
-  - reference/check-patterns
+  - concepts
 ---
 
 **Grounding** is the requirement that a produced artifact — or a performed action
@@ -54,4 +54,4 @@ and completeness verify a link *exists* — every item accounted for somewhere,
 mechanically, without judging whether any one link is correct. Two different
 questions; see the reconciliation page for the boundary.
 
-For how grounding is expressed as a check, see [Guardrails](/reference/check-patterns).
+For how grounding is expressed as a check, see [Guardrails](/concepts).

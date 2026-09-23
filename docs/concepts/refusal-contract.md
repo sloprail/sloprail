@@ -3,7 +3,7 @@ title: The refusal contract
 description: How a check says no, and why a check that cannot run is itself a refusal.
 kind: explanation
 related:
-  - authoring/prove-it-fires
+  - guides
   - concepts/grounding
   - guides
 ---

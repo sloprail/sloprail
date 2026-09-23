@@ -1,0 +1,81 @@
+---
+title: Dilutes the goal
+description: Task rewritten to match the partial work that got done
+kind: guide
+related:
+  - guides/file-guard
+  - concepts/grounding
+  - concepts/refusal-contract
+  - concepts/marker
+---
+
+import { FileTree, Code, Steps } from '@astrojs/starlight/components';
+import UseCase from '../../_components/UseCase.astro';
+
+{/*
+  Config blocks below are the real shipped example, loaded from source via Vite
+  `?raw` imports (never copied inline). docs/ and examples/ are siblings.
+*/}
+import fileGuardYaml from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/file-guard.yaml?raw';
+import hasRefSh      from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/has-message-reference.sh?raw';
+import resolveSh     from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/resolve-referenced-message.sh?raw';
+import judgeJ2       from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/reference-is-true-and-only-this.md.j2?raw';
+
+## The failure
+
+An agent implements part of an ask, then quietly edits the task to describe only
+the part it did. The spec now matches the work instead of the other way around,
+so every later check passes — the tests cover what's written, the "done" is
+honest against a goal that was diluted to fit. The original ask is gone, and
+nothing records that it shrank. The goal drifts toward whatever was easy to
+finish.
+
+<UseCase id="task-rewritten" label="Watch it happen — then get refused" />
+
+## How it works
+
+The task's ask has to stay tied to its human-authored source. The guardrail
+grounds the written ask against the actual message that prompted it, so the ask
+can't be rewritten into something the user never said.
+
+<Steps>
+
+1. A script confirms the ask carries a reference to the message it came from —
+   no reference, no valid ask.
+
+2. That referenced message is resolved, and a judge rules that the ask is true to
+   it and describes only that message — not a narrowed rewrite.
+
+</Steps>
+
+This is a **preventive file-guard**: it runs before the write to the task's ask
+lands, so a diluting edit is refused rather than caught after the fact.
+
+## The actual configuration
+
+This is the real example shipped at `examples/task-management/`. One nature, a
+directory under `.sloprail/` — a `file-guard.yaml` declaration plus the checks it
+names:
+
+<FileTree>
+
+- .sloprail/
+  - file-guard/
+    - ask-is-human-authored/
+      - file-guard.yaml
+      - has-message-reference.sh
+      - resolve-referenced-message.sh
+      - reference-is-true-and-only-this.md.j2
+
+</FileTree>
+
+### file-guard
+
+Matches the task ask file and runs preventively. The script gates the judge: the
+reference must exist, then the resolved message is handed to the model, which
+rules that the ask is faithful to it and scoped to only it.
+
+<Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/ask-is-human-authored/file-guard.yaml" />
+<Code code={hasRefSh} lang="bash" title=".sloprail/file-guard/ask-is-human-authored/has-message-reference.sh" />
+<Code code={resolveSh} lang="bash" title=".sloprail/file-guard/ask-is-human-authored/resolve-referenced-message.sh" />
+<Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/ask-is-human-authored/reference-is-true-and-only-this.md.j2" />

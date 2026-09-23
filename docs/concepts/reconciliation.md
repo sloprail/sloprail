@@ -6,8 +6,8 @@ sidebar:
   order: 5
 related:
   - concepts/grounding
-  - guides/coding/refactor-regenerated
-  - reference/check-patterns
+  - use-cases/coding/refactor-regenerated
+  - concepts
 ---
 
 **Completeness** is the requirement that every member of a set is linked, mapped,
@@ -55,4 +55,4 @@ is a rewrite wearing the shape of a move, and it's refused.
 - **Completeness** — every intake message processed and linked somewhere; every
   entity in a set interlinked; no orphan left unmapped.
 
-For how these are expressed as checks, see [Guardrails](/reference/check-patterns).
+For how these are expressed as checks, see [Guardrails](/concepts).
