@@ -1,14 +1,11 @@
 ---
 title: The check environment
-description: The check environment — from the authoring-guardrails skill.
 kind: reference
 sidebar:
   order: 9
-related:
-  - guides/script-checks
 ---
 
-<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
 Every executable a rule runs — a **check script**, a **`prepare`**, a context's
 **`enter`** and **`exit`** — is run by the engine with a set of `SR_*` variables
 on its environment. They are cross-cutting: every guardrail script sees them,

@@ -1,0 +1,315 @@
+[
+  {
+    "path": "sr",
+    "use": "sr <command>",
+    "short": "Declarative contracts that keep an agent's output honest",
+    "long": "Declarative contracts that keep an agent's output honest.\n\nA project declares guardrails under .sloprail/guardrails/; a harness calls the\nsession hook points, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\nEach command below is a separate binary — `sr session start` and\n`sr-session start` do the same thing. This root exists so there is one name\nto learn; the hooks a project installs name the service binaries directly.\n\nThe event kinds a guardrail may bind to are per-build and are reported by the\nload check: `sr session start` names every kind this build produces, and\nevery field a kind carries, when a declaration binds to one it does not have.\nTo write a guardrail, use the authoring-guardrails skill.",
+    "children": [
+      {
+        "path": "sr agent",
+        "use": "agent ...",
+        "short": "Run an agent, whichever harness is running",
+        "long": "Run an agent, whichever harness is running.\n\nRuns sr-agent, passing everything after `agent` to it unchanged.\nRun `sr-agent --help` — or `sr agent --help` — for its own help."
+      },
+      {
+        "path": "sr file",
+        "use": "file ...",
+        "short": "Checks over a file's contents",
+        "long": "Checks over a file's contents.\n\nRuns sr-file, passing everything after `file` to it unchanged.\nRun `sr-file --help` — or `sr file --help` — for its own help."
+      },
+      {
+        "path": "sr mark",
+        "use": "mark ...",
+        "short": "Write // sr:<kind> <fqn> enforcement markers into impl files",
+        "long": "Write // sr:<kind> <fqn> enforcement markers into impl files.\n\nRuns sr-mark, passing everything after `mark` to it unchanged.\nRun `sr-mark --help` — or `sr mark --help` — for its own help."
+      },
+      {
+        "path": "sr session",
+        "use": "session ...",
+        "short": "Session lifecycle — the hook points a harness calls",
+        "long": "Session lifecycle — the hook points a harness calls.\n\nRuns sr-session, passing everything after `session` to it unchanged.\nRun `sr-session --help` — or `sr session --help` — for its own help."
+      }
+    ]
+  },
+  {
+    "path": "sr-session",
+    "use": "sr-session",
+    "short": "Session lifecycle — the hook points a harness calls",
+    "long": "Enforce a project's declared guardrails at the moments a harness can pause.\n\nA project declares guardrails under .sloprail/guardrails/; the harness calls the\nhook points below, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\n  sr-session start          a session is beginning\n  sr-session pre-tool       a tool is about to run — the refusable moment\n  sr-session stop           a turn has ended\n  sr-session subagent-stop  a subagent's turn has ended\n\n  sr-session id | query | state   what a hook asks about the session so far\n  sr-session trajectory ...        read a trajectory — describe it, cite into it\n\nThere is no setup command. The guardrails directory is created by whatever\nwrites the first declaration, and a project with none is an ordinary project —\nthe engine loads cleanly and no session sees a difference.\n\nThe hook subcommands are invoked by a harness with a payload on stdin, not\ntyped by a person. The event kinds a guardrail may bind to are per-build, and\n`sr-session start` reports them: a declaration binding to a kind this\nbuild does not produce is refused by name, and the refusal lists every kind it\ndoes produce. To write a guardrail, use the authoring-guardrails skill.",
+    "children": [
+      {
+        "path": "sr-session id",
+        "use": "id",
+        "short": "The identity this conversation keeps, whatever id the harness now reports"
+      },
+      {
+        "path": "sr-session pre-tool",
+        "use": "pre-tool",
+        "short": "Before a tool call: run the guardrails bound to what it would do"
+      },
+      {
+        "path": "sr-session query",
+        "use": "query",
+        "short": "What the agent did — the part of the session not yet judged",
+        "long": "What the agent did — the part of the session not yet judged.\n\nReads from where the last completed cycle stopped. A session's record only\ngrows, so a turn already judged has not changed, and judging it again both\nwastes the reading and invites a judge — a model call, not a function — to\nreach a different verdict on a turn the agent can no longer reach to fix.\n\nThe position moves only when a cycle finishes. A cycle that was interrupted may\nhave judged nothing, so the next one reads those turns again: re-reading a turn\ncosts a second look, skipping one loses a violation for good. The first cycle of\na session, and any session whose position cannot be read, gets the whole record\nfor the same reason.\n\n--whole-session ignores the position and reads the entire record, for a rule\nasking about the session as a whole rather than about this cycle's work.\n\nEntries belonging to sub-agents are left out unless asked for: a rule asking\nwhat the agent did usually means the main line of work.\n\nThe answer is entries as JSON, for whatever the hook already uses to read JSON.",
+        "flags": [
+          {
+            "name": "include-sidechains",
+            "default": "false",
+            "usage": "Include entries belonging to sub-agents"
+          },
+          {
+            "name": "where",
+            "usage": "Narrow which entries come back, over the same expression language a guardrail's matcher uses"
+          },
+          {
+            "name": "whole-session",
+            "default": "false",
+            "usage": "Read the entire record, not just the part no cycle has judged yet"
+          }
+        ]
+      },
+      {
+        "path": "sr-session start",
+        "use": "start",
+        "short": "Session start: record the baseline and report the project's declarations"
+      },
+      {
+        "path": "sr-session state",
+        "use": "state",
+        "short": "What this guardrail remembers within this session",
+        "long": "What this guardrail remembers within this session.\n\nA rule spanning more than one cycle needs somewhere to keep what it knows: a\nrefactor declared before it happens and reconciled after, a trigger seen in one\ncycle and answered in the next. None of that fits in an event.\n\nNeither the guardrail nor the session is an argument. Both come from the\nenvironment the engine sets when it runs a hook — SR_GUARDRAIL,\nSR_SESSION_ID, SR_WORKSPACE — because a hook able to name either\ncould read a rule it was never told about, or reach into another session.\n\nOutside a hook there is no guardrail in scope, and these commands say so rather\nthan guessing which rule is asking.",
+        "children": [
+          {
+            "path": "sr-session state get",
+            "use": "get <key>",
+            "short": "Read back what this guardrail stored under a key",
+            "long": "Read back what this guardrail stored under a key.\n\nA key that was never written is empty output and exit 0, not an error. A rule\nasking whether it has seen something before should not have to tell \"no\" apart\nfrom \"broken\", and a hook running under `set -e` would abort on the\nordinary first-time case if this failed.\n\nWhich guardrail is asking is never an argument — it comes from SR_GUARDRAIL,\nwhich the engine sets when it runs a hook. Outside a hook there is no guardrail\nin scope and this says so rather than guessing."
+          },
+          {
+            "path": "sr-session state list",
+            "use": "list [prefix]",
+            "short": "The entries a guardrail stored under a prefix (this one, or --owner's)",
+            "long": "The entries this guardrail stored under a prefix.\n\nOne JSON object per line, each with \"key\" and \"value\". No prefix means\neverything this guardrail has stored.\n\nThe value is the text that was stored, carried as a JSON string, so reading it\nback means asking for it raw:\n\n  sr-session state list pending/ | jq -r .value\n\nWithout -r the value arrives escaped — a stored JSON document comes back as a\nquoted string rather than as an object. To work with each value as JSON:\n\n  sr-session state list pending/ | jq -r .value | jq .done\n\n--owner <guardrail> reads a DIFFERENT guardrail's entries instead of this one's.\nIt is the one read that crosses the per-guardrail boundary, and it is read-only:\nget and set stay this guardrail's own. Its use is a gate that reads the registry\na sibling context accumulated —\n\n  sr-session state list --owner scanner-declared scanner:\n\n— where that context wrote each subject under its own name and the gate reads\nthe group back by naming it.\n\nReading another guardrail's list does not tell you WHEN it wrote: a gate that\ndepends on the owner having run THIS cycle declares require: [{context: <owner>}]\non it, which holds the check until the owner has entered. The read supplies the\nentries; require supplies the ordering. --owner reads across guardrails only,\nwithin this same session and workspace — it selects which guardrail's rows to\nreturn, never another session's or another tree's.",
+            "flags": [
+              {
+                "name": "owner",
+                "usage": "read this named guardrail's entries instead of the calling guardrail's (read-only, same session; establish ordering with require: [{context}])"
+              }
+            ]
+          },
+          {
+            "path": "sr-session state set",
+            "use": "set <key> [value]",
+            "short": "Store a value under a key, replacing what was there",
+            "long": "Store a value under a key, replacing what was there.\n\nThe value is the second argument, or standard input when it is omitted. A\ntrailing newline from a pipeline is dropped, so a value written through a pipe\nequals the same value written directly.\n\nIt REPLACES; it does not merge. Every merge policy is a guess about what the\nrule meant, and a rule wanting the other answer could not get it. Compose\ninstead, with the tool a hook already reaches for:\n\n  sr-session state get x | jq '.done = true' | sr-session state set x\n\nWhich guardrail is asking is never an argument — it comes from SR_GUARDRAIL,\nwhich the engine sets when it runs a hook. Outside a hook there is no guardrail\nin scope and this says so rather than guessing."
+          }
+        ]
+      },
+      {
+        "path": "sr-session stop",
+        "use": "stop",
+        "short": "End of a cycle: run the guardrails bound to what it changed"
+      },
+      {
+        "path": "sr-session subagent-stop",
+        "use": "subagent-stop",
+        "short": "End of a SUB-AGENT's cycle: run the guardrails bound to what it changed"
+      },
+      {
+        "path": "sr-session trajectory",
+        "use": "trajectory",
+        "short": "Read a trajectory — facts about it, a citation into it, its normalized entries",
+        "long": "Read a trajectory: the record of one session's turns.\n\n  sr-session trajectory describe    facts about a trajectory — whether it is a\n                                    sub-agent's, its parent, the sub-agents it spawned\n  sr-session trajectory cite        turn a substring of the user's own words into\n                                    a resolvable <path>:<line> citation\n                                    (--include-envelope also prints the whole\n                                    AskUserQuestion answer envelope at that line)\n  sr-session trajectory tool-result whether a cited --line is a tool_result, and\n                                    its content — for a delivery observation that\n                                    names a transcript line as proof of work\n\ndescribe answers \"what IS this file\"; cite mints a citation an agent can write,\nand with --include-envelope reads back the question+answers at that citation's\nline in the same call; tool-result confirms a line an observation names is a real\ntool-call result. All default to the trajectory the hook was invoked for, and all\naccept --path to read another — the parent or a sibling that describe named.",
+        "children": [
+          {
+            "path": "sr-session trajectory cite",
+            "use": "cite <quote>",
+            "short": "Turn a substring of the user's own words into a <path>:<line> citation",
+            "long": "Turn a remembered quote into a resolvable citation.\n\nGiven a substring of the user's own words — a plain message, or the answer the\nuser selected to an AskUserQuestion — find the single line it sits on in the\ncurrent trajectory and print it as <path>:<line>. The user's words only, by\ndefault: not the agent's prior output, and not an ordinary tool result that\nmerely contains the substring.\n\n--source-types selects WHICH pool(s) of a trajectory the quote is resolved\nagainst, comma-separated:\n\n  user          the user's own words (the default): a typed message, or an\n                AskUserQuestion answer. Harness-injected user-role messages\n                (<system-reminder>, <task-notification>, a slash-command\n                envelope) are excluded, and a tool result's body is not\n                searched. This is what a task's ASK is cited against.\n  tool_result   the body a tool_result produced — a command's output, a test\n                that came back green. This is the pool the default REFUSES, and\n                what a delivery OBSERVATION is cited against: proof the work\n                happened. A quote of the user's words will NOT resolve here.\n  user,tool_result   either is acceptable.\n\nThe default is \"user\" alone, so a call with no --source-types behaves exactly as\nbefore. The two pools are mirror images: a quote of a command's result grounds\nunder tool_result and is refused under user; a quote of the user's ask grounds\nunder user and is refused under tool_result.\n\nThe exit code carries the outcome, so a script branches on it without parsing\nstdout:\n\n  exactly one match   the resolvable <path>:<line> on stdout, exit 0\n  several matches     every candidate <path>:<line>, one per line, exit 2\n  no match            nothing on stdout, exit 1\n  in a sub-agent      refused on stderr, exit 3\n\ncite is not available inside a sub-agent: there the \"user\" messages are the\nPARENT agent's dispatch prompt, not the end user's own words, so a citation into\nthem would ground a claim in something the user never said. It refuses with exit\n3 rather than mint that false citation. This holds whatever --source-types names\n— a sub-agent's records are the parent's dispatch in every pool.\n\nThe trajectory is auto-detected from the environment — the common case takes no\n--path. Pass --path to cite into a sibling or the parent that `describe` named.",
+            "flags": [
+              {
+                "name": "include-envelope",
+                "default": "false",
+                "usage": "On a single match, also print the whole answer envelope at the resolved line (the AskUserQuestion question + its answers), separated from the <path>:<line> by a blank line. Lets a caller ground a quote AND read the question it answered in ONE call instead of a cite followed by a separate `envelope --line`. Orthogonal to --source-types: it reads the answer envelope at whatever line resolved, so it is only ever non-empty for an answer-grounded (user-pool) match and prints nothing for a tool_result-grounded one."
+              },
+              {
+                "name": "path",
+                "usage": "Which trajectory to search; defaults to the current one from the environment"
+              },
+              {
+                "name": "source-types",
+                "default": "user",
+                "usage": "Comma-separated pool(s) to resolve the quote against: `user` (the user's own words — the default), `tool_result` (a tool's output, proof the work happened), or `user,tool_result` for either. Defaults to user alone, today's behaviour."
+              }
+            ]
+          },
+          {
+            "path": "sr-session trajectory describe",
+            "use": "describe",
+            "short": "Facts about a trajectory — is it a sub-agent's, its parent, its sub-agents",
+            "long": "Facts about a trajectory, not what is in it.\n\nAnswers \"what IS this file\" — whether it belongs to a sub-agent, which\ntrajectory spawned it, and which other trajectories belong to the same run.\nSettled by the path and the session's own records, not by walking the entries.\n\n  isSubagent      whether this trajectory is a sub-agent's\n  parentPath      the immediate parent trajectory, when this is a sub-agent's\n  subagentPaths   the sub-agent trajectories this session spawned\n\nThe paths feed back into `trajectory cite --path` and `trajectory normalize\n--path`: the root read from inside a sub-agent, or the sub-agents enumerated\nfrom the root and each re-read.\n\nDefaults to the trajectory the hook was invoked for; --path describes another.",
+            "flags": [
+              {
+                "name": "path",
+                "usage": "Which trajectory to describe; defaults to the one the hook was invoked for"
+              }
+            ]
+          },
+          {
+            "path": "sr-session trajectory normalize",
+            "use": "normalize",
+            "short": "The trajectory as normalized entries, each carrying the events re-derived from it",
+            "long": "Read a trajectory as normalized entries, each enriched with the events\nre-derived from it.\n\nEach entry is the normalized Entry (spread whole — type, uuid, isSidechain,\nmessage and the rest) plus two fields: its 1-based physical line in the file,\nand the events re-derived FROM it. One assistant entry with three tool calls\nyields three events; an entry that yields none carries an empty array.\n\nOnly what can be RE-DERIVED from the record populates events — the pre-action\nfile and command events, and tags (PostTagWrite). Not the git-observed Post file\nevents, not PreToolUse, not Stop.\n\n  --path <PATH>          which trajectory to read; defaults to the hooked-in one\n  --events <Kind,...>    which event kinds populate each entry's events, named by\n                         the event's own kind (PreCommandInvoke, PostTagWrite,\n                         PreFileCreate, PreFileUpdate, PreFileDelete). Absent\n                         means every re-derivable kind; a kind normalize cannot\n                         re-derive is refused here.\n  --whole-session        read the entire record, not just the part no cycle has\n                         judged yet\n\nThe answer is NormalizedEntry[] as JSON, for whatever the hook already uses to\nread JSON.",
+            "flags": [
+              {
+                "name": "events",
+                "default": "[]",
+                "usage": "Comma-separated event kinds to populate each entry's events (default: every re-derivable kind)"
+              },
+              {
+                "name": "path",
+                "usage": "Which trajectory to read; defaults to the one the hook was invoked for"
+              },
+              {
+                "name": "whole-session",
+                "default": "false",
+                "usage": "Read the entire record, not just the part no cycle has judged yet"
+              }
+            ]
+          },
+          {
+            "path": "sr-session trajectory tool-result",
+            "use": "tool-result",
+            "short": "Report whether a cited line is a tool_result, and print its content",
+            "long": "Report whether a cited line of a trajectory is a tool_result.\n\nA delivery OBSERVATION cites a line of the session transcript as proof the work\nhappened — a test that came back green, a command whose output is the evidence.\nGiven --line, this confirms the entry at that line IS a tool_result (not the\nuser's words, not the agent's narration) and prints the result's content:\n\n  the line is a tool_result       its content on stdout, exit 0\n  the line is not a tool_result   nothing on stdout, exit 1\n  in a sub-agent                  refused on stderr, exit 3\n\nIt is the line-oriented counterpart to `cite --source-types tool_result`,\nwhich takes a quote; this takes the line an observation already names. Built on the\nsame tool_result classification, so the two agree on what a tool_result is.\n\nThe trajectory is auto-detected from the environment — the common case takes no\n--path. Pass --path to read a sibling or the parent that `describe` named.",
+            "flags": [
+              {
+                "name": "line",
+                "default": "0",
+                "usage": "The 1-based physical line of the transcript entry to classify (required)"
+              },
+              {
+                "name": "path",
+                "usage": "Which trajectory to read; defaults to the current one from the environment"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "path": "sr-file",
+    "use": "sr-file <command>",
+    "short": "Checks over a file's contents",
+    "children": [
+      {
+        "path": "sr-file declarations",
+        "use": "declarations <dir>",
+        "short": "Load and validate the .sloprail declarations under a directory",
+        "long": "Load and validate the new-format declarations a project keeps under its\n.sloprail directory — file-guards, gates, contexts, and the structure\ngate — reporting what loaded and, for anything that did not, the faults by name.\n\nThis is an inspection surface over the declaration loader, not part of the live\nhook dispatch: it proves a project's declaration files parse and validate before\nany event is dispatched against them.\n\nTHE ARGUMENT is a directory. A path ending in .sloprail is loaded as the root\nitself; any other path is treated as a project root whose .sloprail subdirectory\nis loaded — so `declarations .` and `declarations ./.sloprail` name the same tree.\n\nEXIT STATUS is 0 when every declaration loaded and 1 when any was invalid, so a\nhook or a CI step can read it. Invalid declarations are printed one fault per line.\n\nEXAMPLES:\n  sr-file declarations .\n  sr-file declarations examples/eval-loop-maxing\n  sr-file declarations examples/eval-loop-maxing/.sloprail"
+      },
+      {
+        "path": "sr-file validate",
+        "use": "validate <path> --schema <schema.cue>",
+        "short": "Check a file against a CUE schema",
+        "long": "Check a file against a CUE schema.\n\nWHICH BYTES ARE THE DOCUMENT is decided by the file's extension: the frontmatter of a\n.md, the whole of a .yaml, .yml or .json. A markdown file is a YAML document wearing\nprose below it, so handing the whole file to a schema checker gets an error about the\nprose. An extension outside that set is an error rather than a guess.\n\nTHE SCHEMA IS CUE, unmodified — the same file `cue vet` would take. Exit status is 0\nwhen the document satisfies the schema and 1 when it does not, so a hook can read it.\n\nFailures name the file, the field, and what was expected, one line per problem, and\nevery problem is reported rather than only the first.\n\nBYTES ON STDIN, with '-' as the path, for a hook holding content that is not on disk:\nat a Pre event the write has not happened, so the pending bytes are in the event and\nthe file either does not exist or still holds the old ones. --as says how to read them,\nand is required, because a pipe carries no name to take the format from.\n\n--emit prints the validated document as JSON on success, so a caller can take a field\nout of it with jq instead of parsing the same bytes a second time. Nothing is printed\nfor a document that failed.\n\nEXAMPLES:\n  sr-file validate memories/note.md --schema .sloprail/schemas/note.cue\n  sr-file validate config.yaml --schema schema.cue --path '#Config'\n  jq -r .event.fields.newContent event.json | sr-file validate - --as .md --schema s.cue\n  sr-file validate DECISION.md --schema s.cue --emit | jq -r .transcript_path",
+        "flags": [
+          {
+            "name": "as",
+            "usage": "How to read bytes on stdin: .md, .yaml or .json. Required with '-', and refused with a path"
+          },
+          {
+            "name": "concrete",
+            "short": "c",
+            "default": "true",
+            "usage": "Require all fields to be concrete — a missing required field fails (cue vet's -c)"
+          },
+          {
+            "name": "emit",
+            "default": "false",
+            "usage": "On success, print the validated document as JSON on stdout"
+          },
+          {
+            "name": "path",
+            "short": "d",
+            "usage": "Schema definition to check against, e.g. '#Config' (cue vet's -d)"
+          },
+          {
+            "name": "schema",
+            "short": "s",
+            "usage": "The CUE schema to check against (required)"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "path": "sr-mark",
+    "use": "sr-mark <command> <kind> ...",
+    "short": "Write // sr:<kind> <fqn> enforcement markers into impl files",
+    "flags": [
+      {
+        "name": "root",
+        "usage": "Impl tree root for relative paths (default: $SLOPRAIL_GIT_ROOT, else cwd)"
+      }
+    ],
+    "children": [
+      {
+        "path": "sr-mark apply",
+        "use": "apply <kind> --<fqn>=<path>:<line> [--<fqn>=<path>:<line> ...]",
+        "short": "Write // sr:<kind> <fqn> markers into impl files",
+        "long": "Write `// sr:<kind> <fqn>` enforcement markers into impl source files.\n\nKIND is the first argument and is free-form — the marker vocabulary is the project's,\nnot this tool's, so any kind works with no code change. It must be alphanumeric, and may\nuse `:` to namespace itself (e.g. `blueprint:test`), `_`, `-` and `.`.\n\nEach marker pair is a flag whose NAME is the invariant fqn and whose value is\n<path>:<line> — i.e. `--<fqn>=<path>:<line>`. Pass many pairs in one call to write many\nmarkers. An fqn may use any character a URL admits, but must contain NO whitespace: a\nmarker is one line of text, so a name with a space in it would write cleanly and then be\nunreadable — the marker reader is line-anchored and would not match it at all.\n\nPaths are resolved against --root (default $SLOPRAIL_GIT_ROOT, else cwd); line is 1-based.\nWriting is idempotent and uses the right comment leader for the file's language. All\npairs are validated before any file is written.\n\nEXAMPLES:\n  sr-mark apply blueprint --user.email_unique=src/auth/user.ts:42\n  sr-mark apply blueprint:test --user.email_unique=src/auth/user_test.ts:9\n  sr-mark apply docs --order.Cart.total=src/order.ts:13 --user.email_unique=src/user.ts:42"
+      },
+      {
+        "path": "sr-mark delete",
+        "use": "delete <kind> <fqn> [<fqn> ...]",
+        "short": "Remove // sr:<kind> <fqn> marker comments for the given fqns, wherever found",
+        "long": "Scan the impl tree (--root, default $SLOPRAIL_GIT_ROOT or cwd) for `// sr:<kind> <fqn>`\n(or `# …` / `-- …` for SQL) comments naming any of the given fqns, and remove each matching\ncomment LINE. A marker that also carries other text on the same line is left untouched\n(the scanner only matches lines that ARE a marker comment, mirroring how sr-mark writes\nthem on their own line). Silently no-ops for an fqn with no marker anywhere.\n\nKIND is the first argument and is free-form, same as for `apply`; the fqns follow.\n\nEXAMPLE:\n  sr-mark delete blueprint order.cancel_only_pending order.cancel_only_from_early_status"
+      }
+    ]
+  },
+  {
+    "path": "sr-agent",
+    "use": "sr-agent [flags] <prompt>",
+    "short": "Run an agent, whichever harness is running",
+    "long": "Run an agent without naming the harness that will run it.\n\nThe prompt is positional, as every harness takes it. --prompt is accepted\ninstead, for when the prompt comes from a file or a pipe and a positional\nwould be awkward.\n\n  sr-agent --model size-md \"does this uphold the invariant?\"\n  sr-agent --model claude-opus-5,size-lg --prompt \"$(cat question.txt)\"\n\nMODEL SETS\n\n--model takes preferences in order, first match wins. Two kinds of entry:\n\n  size-xs size-sm size-md size-lg size-xl size-xxl\n      A size, not a model. Every harness maps every one of them, so an alias\n      ALWAYS resolves — which means anything after an alias in a set can never\n      be reached. Writing size-md,claude-opus-5 probably meant the other order.\n\n  claude-opus-5, sonnet, ...\n      One harness's own model. Matches only under that harness, so a set may\n      name several harnesses' models and mean \"the best available here\".\n\nA set matching nothing under the running harness is REFUSED, not quietly run\non a default. A verdict from a model the author did not choose is one nobody\ncan account for.\n\nHARNESS\n\nWhich harness is running is read from the environment, not asked for. An\nenvironment naming no known harness is refused rather than guessed at; pass\n--harness for a hook running outside any harness at all.",
+    "flags": [
+      {
+        "name": "allowed-tools",
+        "usage": "Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")"
+      },
+      {
+        "name": "claude-args",
+        "usage": "Claude Code's own settings as a JSON object, passed through untouched (e.g. '{\"permission-mode\":\"plan\"}')"
+      },
+      {
+        "name": "dry-run",
+        "default": "false",
+        "usage": "Print the command that would run, and do not run it"
+      },
+      {
+        "name": "harness",
+        "usage": "Run this harness instead of the one the environment names (claude-code)"
+      },
+      {
+        "name": "model",
+        "usage": "Comma-separated preferences, first match wins: size aliases (size-xs…size-xxl) and/or model names"
+      },
+      {
+        "name": "prompt",
+        "usage": "The prompt, when a positional would be awkward (from a file or a pipe)"
+      },
+      {
+        "name": "verify",
+        "usage": "A script that decides whether the agent's answer is acceptable; the agent is asked again if not"
+      },
+      {
+        "name": "verify-attempts",
+        "default": "2",
+        "usage": "How many times the agent may be asked before --verify reports failure (1-20)"
+      }
+    ]
+  }
+]

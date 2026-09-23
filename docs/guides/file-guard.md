@@ -1,16 +1,11 @@
 ---
 title: The file-guard nature
-description: The file-guard nature — from the authoring-guardrails skill.
 kind: reference
 sidebar:
   order: 1
-related:
-  - concepts/file-guard
-  - guides/matchers
-  - guides/script-checks
 ---
 
-<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
 A file-guard judges **one file's state**: what a file holds after a change, and —
 when it is `preventive` — what a write is about to make it hold. Its whole job is
 to answer "is this file OK?", and to keep re-firing until it is.

@@ -1,12 +1,11 @@
 ---
 title: Authoring guardrails
-description: Write a guardrail, prove it fires, and turn one off — sourced from the plugin's authoring-guardrails skill.
 kind: explanation
 sidebar:
   order: 0
 ---
 
-<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
 
 # Authoring Guardrails
 

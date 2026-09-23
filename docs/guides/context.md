@@ -1,15 +1,11 @@
 ---
 title: The context nature
-description: The context nature — from the authoring-guardrails skill.
 kind: reference
 sidebar:
   order: 3
-related:
-  - concepts/context
-  - guides/state-management
 ---
 
-<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
 A context is an **activatable scope**. It is not a check that refuses — it is a
 *mode* that turns on and off as the session goes, accumulates what it sees while
 on, and exists so that **other rules can depend on it**: a gate `require`s it, or

@@ -1,29 +1,12 @@
 ---
 title: The primitives
-description: The pieces sloprail is built from — three natures and the checks they run — each one a distinct, real mechanism.
+description: The pieces sloprail is built from — each a distinct mechanism.
 kind: explanation
 ---
 
 import SectionCards from '../_components/SectionCards.astro';
 
-sloprail is not a framework with one big idea. It is a small set of **primitives**
-— distinct mechanisms, each doing one thing — that you compose into a guardrail.
-Understanding the pieces is understanding the product.
-
-Two of them decide *when a rule runs and what it can do* — the **natures**. The
-rest are the **checks** a rule runs to reach a verdict. They combine freely: the
-[refactor guide](/use-cases/coding/refactor-regenerated) is a context (a nature)
-that runs a reconciliation (a check) and a completeness gate.
-
-## The one rule that shapes everything
-
-Only a **gate** blocks a turn. A **file-guard** refuses a write. A **context**
-only tracks — it never blocks. Get that straight and the rest follows.
-
-## The pieces
+The pieces sloprail is built from. Each is a distinct mechanism — what it *is*
+and *why*; for how to build with it, follow through to its guide.
 
 <SectionCards base="concepts" />
-
-Each page says what the primitive *is* and *why* it exists. For the exact syntax
-— the YAML shapes, the marker format, the CLI — see [Reference](/reference). For
-building and testing a guardrail out of these, see [Authoring](/guides/).

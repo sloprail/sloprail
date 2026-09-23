@@ -73,21 +73,16 @@ function rewriteLinks(src) {
   });
 }
 
+// Minimal frontmatter — just enough for routing and the sidebar. The body is
+// the skill's own prose, untouched beyond link rewriting. No injected
+// descriptions or related lists: this is the skill, verbatim, as docs.
 function frontmatter(name, title) {
   const isIndex = name === 'SKILL';
   const order = ORDER.indexOf(name);
   const lines = ['---', `title: ${title.replace(/"/g, '\\"')}`];
-  lines.push('description: ' + (isIndex
-    ? 'Write a guardrail, prove it fires, and turn one off — sourced from the plugin\'s authoring-guardrails skill.'
-    : `${title} — from the authoring-guardrails skill.`));
   lines.push(`kind: ${isIndex ? 'explanation' : 'reference'}`);
   lines.push('sidebar:', `  order: ${order < 0 ? 99 : order}`);
-  const rel = RELATED[name];
-  if (rel && rel.length) {
-    lines.push('related:');
-    for (const r of rel) lines.push(`  - ${r}`);
-  }
-  lines.push('---', '', '<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->', '');
+  lines.push('---', '', '<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->', '');
   return lines.join('\n');
 }
 

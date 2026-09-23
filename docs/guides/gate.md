@@ -1,16 +1,11 @@
 ---
 title: The gate nature
-description: The gate nature — from the authoring-guardrails skill.
 kind: reference
 sidebar:
   order: 2
-related:
-  - concepts/gate
-  - guides/matchers
-  - concepts/precondition
 ---
 
-<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
 A gate is a **checkpoint on an event**. It wakes on the events its `on:` names,
 optionally requires some precondition, runs its checks, and **blocks** if they
 refuse. Unlike a file-guard it is **one-shot** — it fires on the event, decides,

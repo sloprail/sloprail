@@ -1,15 +1,11 @@
 ---
 title: A script check
-description: A script check — from the authoring-guardrails skill.
 kind: reference
 sidebar:
   order: 5
-related:
-  - guides/judge-checks
-  - concepts/refusal-contract
 ---
 
-<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
 A check is what a rule runs to reach a verdict, and every nature uses checks the
 same way: `checks:` is a list, run in declared order, first refusal ending it. A
 check is a **script** or a **judge** — exactly one; a check naming neither is

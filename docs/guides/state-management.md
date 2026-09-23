@@ -1,14 +1,11 @@
 ---
 title: State across cycles
-description: State across cycles — from the authoring-guardrails skill.
 kind: reference
 sidebar:
   order: 8
-related:
-  - guides/context
 ---
 
-<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
 `sr-session state get|set|list` is a key-value store a rule can write in one
 cycle and read in another. It is what a rule uses when the thing it must check is
 not visible in the event in front of it — a trigger seen in one cycle and

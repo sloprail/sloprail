@@ -1,15 +1,11 @@
 ---
 title: Event structures
-description: Event structures — from the authoring-guardrails skill.
 kind: reference
 sidebar:
   order: 7
-related:
-  - reference/event-vocabulary
-  - guides/matchers
 ---
 
-<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
 Every check and every match reads an **event**. This is the single reference for
 what each event kind carries and how it is shaped on the wire — the other docs
 point here rather than re-listing the fields. Ground truth is the engine

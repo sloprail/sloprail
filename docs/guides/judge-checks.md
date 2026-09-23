@@ -1,15 +1,11 @@
 ---
 title: A judge check
-description: A judge check — from the authoring-guardrails skill.
 kind: reference
 sidebar:
   order: 6
-related:
-  - guides/script-checks
-  - concepts/grounding
 ---
 
-<!-- GENERATED from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
+<!-- Sourced verbatim from the authoring-guardrails skill by tools/skilldocs — do not hand-edit. -->
 A judge asks a model the question a script cannot decide — "is this change clean
 and targeted?", "does the code still uphold the invariant its comment pins?". It
 is a Jinja2 prompt **template** (`.md.j2`) beside the rule, rendered against the

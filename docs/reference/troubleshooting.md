@@ -4,7 +4,7 @@ description: A rule didn't fire, a refusal you didn't expect, or two rules colli
 kind: guide
 related:
   - guides
-  - concepts/refusal-contract
+  - guides/script-checks
   - guides
 ---
 
@@ -36,7 +36,7 @@ refusal carries one (`{"reason": …}`, plain output, or a fallback). Then:
   rule came with a plugin, not your project. Decide whether it should apply, and
   [disable it](/guides/) if not.
 - If a check **couldn't run** — a missing dependency, a judge timeout — that's a
-  refusal by design ([fail-closed](/concepts/refusal-contract)). Fix what broke;
+  refusal by design ([fail-closed](/guides/script-checks)). Fix what broke;
   don't work around it by loosening the rule.
 
 ## Rule shadowing / resolution
