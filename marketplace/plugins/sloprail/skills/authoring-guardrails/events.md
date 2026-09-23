@@ -1,4 +1,4 @@
-# Event structures
+# The events a rule binds to
 
 Every check and every match reads an **event**. This is the single reference for
 what each event kind carries and how it is shaped on the wire — the other docs

@@ -1,4 +1,4 @@
-# Matchers
+# Writing a match
 
 A `match` narrows a rule to the occurrences it is about. It is an expression that
 must evaluate to a **boolean**, over the variables its scope exposes — no

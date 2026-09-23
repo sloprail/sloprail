@@ -1,9 +1,8 @@
 ---
-title: context
+title: Context
 description: An activatable scope the agent is inside — it tracks, and never blocks.
 kind: explanation
 sidebar:
-  label: Context
   order: 3
 related:
   - guides/context
@@ -15,4 +14,4 @@ A **context** is a [nature](/concepts): a scope the agent is *inside*, which tra
 
 Reach for it when a rule must remember something across a turn to check later.
 
-→ [Authoring: the context nature](/guides/context)
+→ [Writing a context](/guides/context)

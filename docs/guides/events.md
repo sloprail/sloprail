@@ -1,5 +1,5 @@
 ---
-title: Event structures
+title: The events a rule binds to
 kind: reference
 sidebar:
   order: 8

@@ -1,5 +1,5 @@
 ---
-title: The structure gate
+title: Configuring the structure gate
 kind: reference
 sidebar:
   order: 4

@@ -1,5 +1,5 @@
 ---
-title: The file-guard nature
+title: Writing a file-guard
 kind: reference
 sidebar:
   order: 1

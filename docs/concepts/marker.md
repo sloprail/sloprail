@@ -1,9 +1,8 @@
 ---
-title: marker
+title: Marker
 description: A durable label on a static artifact that anchors a rule to a position.
 kind: explanation
 sidebar:
-  label: Marker
   order: 8
 related:
   - guides/matchers
@@ -14,4 +13,4 @@ A **marker** is a `// sr:<kind> <fqn>` label on a static artifact — a file, a 
 
 Its counterpart is the [tag](/concepts/tag) — same idea, opposite host.
 
-→ [Authoring: matchers](/guides/matchers)
+→ [Writing a match](/guides/matchers)

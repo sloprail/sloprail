@@ -1,5 +1,5 @@
 ---
-title: State across cycles
+title: Keeping state across cycles
 kind: reference
 sidebar:
   order: 9

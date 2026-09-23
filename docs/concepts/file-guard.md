@@ -1,9 +1,8 @@
 ---
-title: file-guard
+title: File-guard
 description: A rule bound to a file's state, re-checked until the file is right.
 kind: explanation
 sidebar:
-  label: File-guard
   order: 1
 related:
   - guides/file-guard
@@ -15,4 +14,4 @@ A **file-guard** is a [nature](/concepts) bound to a file's **state**, not to an
 
 Reach for it when the thing you're protecting is a property of a **file**.
 
-→ [Authoring: the file-guard nature](/guides/file-guard)
+→ [Writing a file-guard](/guides/file-guard)

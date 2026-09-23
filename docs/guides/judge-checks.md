@@ -1,5 +1,5 @@
 ---
-title: A judge check
+title: Writing a judge check
 kind: reference
 sidebar:
   order: 7

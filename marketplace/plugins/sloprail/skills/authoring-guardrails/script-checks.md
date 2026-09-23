@@ -1,4 +1,4 @@
-# A script check
+# Writing a script check
 
 A check is what a rule runs to reach a verdict, and every nature uses checks the
 same way: `checks:` is a list, run in declared order, first refusal ending it. A

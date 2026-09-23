@@ -1,4 +1,4 @@
-# The structure gate
+# Configuring the structure gate
 
 The structure gate is a single, tree-wide **allowlist**: a list of paths where
 writing is allowed, with everything outside denied. Deny-by-default over the

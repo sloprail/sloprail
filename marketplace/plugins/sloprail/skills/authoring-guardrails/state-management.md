@@ -1,4 +1,4 @@
-# State across cycles
+# Keeping state across cycles
 
 `sr-session state get|set|list` is a key-value store a rule can write in one
 cycle and read in another. It is what a rule uses when the thing it must check is

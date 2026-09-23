@@ -1,5 +1,5 @@
 ---
-title: Matchers
+title: Writing a match
 kind: reference
 sidebar:
   order: 5

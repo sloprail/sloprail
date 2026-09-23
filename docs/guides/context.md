@@ -1,5 +1,5 @@
 ---
-title: The context nature
+title: Writing a context
 kind: reference
 sidebar:
   order: 3

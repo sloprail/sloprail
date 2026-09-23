@@ -1,4 +1,4 @@
-# A judge check
+# Writing a judge check
 
 A judge asks a model the question a script cannot decide — "is this change clean
 and targeted?", "does the code still uphold the invariant its comment pins?". It

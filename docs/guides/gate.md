@@ -1,5 +1,5 @@
 ---
-title: The gate nature
+title: Writing a gate
 kind: reference
 sidebar:
   order: 2

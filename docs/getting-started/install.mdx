@@ -1,6 +1,6 @@
 ---
 title: Install
-description: Get sloprail into your agent as a plugin, and confirm it loaded.
+description: Get sloprail into your agent as a plugin.
 kind: tutorial
 related:
   - getting-started/quickstart
@@ -11,7 +11,7 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 sloprail runs inside your agent as a **plugin**. Installing it registers the
 hooks the engine needs; from then on, every tool call and turn-end runs through
-sloprail.
+sloprail — you don't run anything by hand.
 
 ## Install the plugin
 
@@ -31,29 +31,7 @@ More harnesses will get their own tab as they go live. The engine's contract —
 hook points in, events out — isn't specific to one, so the rules a project writes
 don't change between them.
 
-## Confirm it loaded
+## Next
 
-The load check validates every declaration and reports the event vocabulary this
-build produces:
-
-```bash
-sr-session start < /dev/null
-```
-
-Bind a rule to an event this build doesn't produce and it's named here rather than
-silently ignored. A clean load check means your declarations parsed and bound —
-but *loaded is not fired*. Confirming a rule actually refuses is what the
-[Quickstart](/getting-started/quickstart) walks you through.
-
-## Installing the binaries directly
-
-If you're working on sloprail itself, or need the `sr` binaries on your `$PATH`
-outside an agent:
-
-```bash
-go install ./services/...      # the standard path
-make distribute-local          # when a copy is already installed (re-signs on macOS)
-```
-
-Both land the whole set in one directory, which is what the binaries' sibling
-resolution needs. See the [CLI reference](/reference/cli) for the command surface.
+Write your first guardrail and watch it refuse — the
+[Quickstart](/getting-started/quickstart).

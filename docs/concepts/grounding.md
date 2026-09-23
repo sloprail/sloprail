@@ -1,9 +1,8 @@
 ---
-title: grounding
+title: Grounding
 description: A produced fact carries a link to its source — verified true, not just present.
 kind: explanation
 sidebar:
-  label: Grounding
   order: 4
 related:
   - use-cases/tasks/research-unverifiable

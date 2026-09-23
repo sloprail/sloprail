@@ -1,9 +1,8 @@
 ---
-title: reconciliation & completeness
+title: Reconciliation & completeness
 description: Every item accounted for — a before/after that must reduce to nothing.
 kind: explanation
 sidebar:
-  label: Reconciliation & completeness
   order: 5
 related:
   - use-cases/coding/refactor-regenerated

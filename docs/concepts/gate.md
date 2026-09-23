@@ -1,9 +1,8 @@
 ---
-title: gate
+title: Gate
 description: A checkpoint on an event that blocks — the only nature that stops a turn.
 kind: explanation
 sidebar:
-  label: Gate
   order: 2
 related:
   - guides/gate
@@ -15,4 +14,4 @@ A **gate** is a [nature](/concepts): a one-shot checkpoint on an event that lets
 
 Reach for it when the check is about the **turn** — did a promised action land, was a required skill loaded.
 
-→ [Authoring: the gate nature](/guides/gate)
+→ [Writing a gate](/guides/gate)

@@ -1,9 +1,8 @@
 ---
-title: tag
+title: Tag
 description: A durable label in the trajectory — the agent's own message — marking a moment.
 kind: explanation
 sidebar:
-  label: Tag
   order: 9
 related:
   - guides/context
@@ -14,4 +13,4 @@ A **tag** is a label in the trajectory, in the agent's own message (`#refactor`)
 
 Its counterpart is the [marker](/concepts/marker) — same idea, opposite host (static vs. temporal).
 
-→ [Authoring: the context nature](/guides/context)
+→ [Writing a context](/guides/context)

@@ -1,5 +1,5 @@
 ---
-title: A script check
+title: Writing a script check
 kind: reference
 sidebar:
   order: 6
