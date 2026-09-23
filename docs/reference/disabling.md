@@ -3,7 +3,7 @@ title: Disabling rules
 description: How a project switches a guardrail off — its own, or one a plugin shipped.
 kind: reference
 related:
-  - configuration/resolution
+  - reference/resolution
   - authoring/disable-a-guardrail
 ---
 
@@ -26,4 +26,4 @@ making it pass loosely: a rule that loads but never refuses is worse than no rul
 because it looks like protection. Turn it off explicitly, or fix it.
 
 See [Disable a guardrail](/authoring/disable-a-guardrail) for the workflow, and
-[resolution](/configuration/resolution) for how project and plugin rules combine.
+[resolution](/reference/resolution) for how project and plugin rules combine.

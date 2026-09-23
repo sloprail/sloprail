@@ -4,8 +4,8 @@ description: Switch a rule off — your own, or one a plugin shipped — with th
 kind: guide
 related:
   - concepts/refusal-contract
-  - configuration/config
-  - configuration/resolution
+  - reference/disabling
+  - reference/resolution
 ---
 
 Sometimes a rule needs to be off — temporarily, or because it doesn't apply to
@@ -25,8 +25,8 @@ project that installed the plugin, with no remedy but uninstalling.
 
 Turning a guardrail off removes a guarantee. That's a real choice — record why in
 your project's configuration so the next person (or the next you) knows it was
-deliberate, not an accident. See [Configuration](/configuration/config) for where
-the disable is written and [resolution](/configuration/resolution) for how project
+deliberate, not an accident. See [Configuration](/reference/disabling) for where
+the disable is written and [resolution](/reference/resolution) for how project
 and plugin rules combine.
 
 ## What you don't do

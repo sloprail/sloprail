@@ -3,7 +3,7 @@ title: Rule resolution & precedence
 description: How a project's rules combine with those a plugin ships, and who wins when they collide.
 kind: reference
 related:
-  - configuration/config
+  - reference/disabling
   - concepts/refusal-contract
 ---
 
@@ -45,5 +45,5 @@ rules, so it fails closed, the same stance as [the refusal
 contract](/concepts/refusal-contract), and tells you exactly which plugin went
 missing.
 
-See [Configuration](/configuration/config) for where enabling and disabling are
+See [Configuration](/reference/disabling) for where enabling and disabling are
 written.

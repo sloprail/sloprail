@@ -5,7 +5,7 @@ kind: guide
 related:
   - authoring/prove-it-fires
   - concepts/refusal-contract
-  - configuration/resolution
+  - reference/resolution
 ---
 
 Three things go wrong with a guardrail. Here's how to tell which, and what to do.
@@ -44,5 +44,5 @@ refusal carries one (`{"reason": …}`, plain output, or a fallback). Then:
 A project rule and a plugin rule share a name, and you're not sure which is
 running. **The project wins**, and the shadowing is **reported** — the displaced
 plugin rule is surfaced, not silent. If that's not what you want, rename yours or
-disable theirs explicitly. See [resolution](/configuration/resolution) for the
+disable theirs explicitly. See [resolution](/reference/resolution) for the
 full precedence.

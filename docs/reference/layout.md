@@ -4,7 +4,7 @@ description: Where rules live on disk — a folder per rule, grouped by nature.
 kind: reference
 related:
   - reference/nature-shapes
-  - configuration/config
+  - reference/disabling
 ---
 
 A project declares its guardrails under `.sloprail/`. The layout is a folder per
@@ -46,7 +46,7 @@ what makes it a guarded one. There's nothing to opt into beyond writing a rule.
 
 A plugin ships rules the same way, in its own `guardrails/` directory at its root.
 Installing the plugin puts them into force; they load through the same engine as a
-project's. See [resolution](/configuration/resolution) for how the two combine.
+project's. See [resolution](/reference/resolution) for how the two combine.
 
 For the fields inside each `<nature>.yaml`, see
 [Nature YAML shapes](/reference/nature-shapes).
