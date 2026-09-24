@@ -45,6 +45,14 @@ type Entry struct {
 	// main line; one asking whether work was delegated means precisely this.
 	IsSidechain bool `json:"isSidechain"`
 
+	// IsMeta reports a user-typed entry the HARNESS wrote rather than the person:
+	// Claude Code records a Stop hook's refusal ("Stop hook feedback: …"), a
+	// skill's already-loaded notice and similar as `type: "user"` with string
+	// content, indistinguishable by shape from something the person typed. A rule
+	// counting the person's turns needs to leave these out; one finding where the
+	// agent's latest reply begins needs to keep them. Omitted when false.
+	IsMeta bool `json:"isMeta,omitempty"`
+
 	// Message is what was said or done — the message content for a turn, the
 	// invocation for a tool call. Left undecoded: what is inside is the
 	// harness's shape, and a rule that wants to reach into it is better served
