@@ -174,6 +174,28 @@ func (s *session) dispatched(stopHookActive bool) (stdout, stderr string) {
 	return s.withDispatch(true, func() (string, string) { return s.stop(stopHookActive) })
 }
 
+// endedUnjudged ends a cycle the one way a Stop can end without being judged:
+// a retry (stop_hook_active) arriving once the project's stop_hook_block_cap is
+// reached. The project here caps at 1 and one refusal is already counted, so
+// this Stop is let through. The dispatch is stood in as PERMITTING, so a Stop
+// that wrongly judged here would complete the cycle and move the mark — which is
+// what the tests using this assert does not happen.
+//
+// It stands where "an interrupted cycle" used to: every Stop carrying
+// stop_hook_active once ended un-judged, and these tests used that as their
+// cycle-that-did-not-finish. A retry is judged now; the cap is what remains.
+func (s *session) endedUnjudged() (stdout, stderr string) {
+	s.t.Helper()
+	cfg := filepath.Join(s.dir, ".sloprail", "config.yaml")
+	require.NoError(s.t, os.MkdirAll(filepath.Dir(cfg), 0o755))
+	require.NoError(s.t, os.WriteFile(cfg, []byte("stop_hook_block_cap: 1\n"), 0o644))
+	store, err := openEngineState(HookPayload{TranscriptPath: s.transcriptPath, Cwd: s.dir})
+	require.NoError(s.t, err)
+	require.NoError(s.t, store.SetMeta(sessionstate.MetaStopRefusals, "1"))
+	require.NoError(s.t, store.Close())
+	return s.dispatched(true)
+}
+
 // notDispatched ends a cycle with the judging step standing in as NOT having
 // run — a cycle that reached the end without dispatching anything.
 //
@@ -294,7 +316,7 @@ func TestReadMark_ACycleThatNeverReadInheritsNothingFromAnInterruptedOne(t *test
 
 	// Cycle one reads, then is interrupted. The mark correctly does not move.
 	require.NotEmpty(t, uuidsOf(s.query()))
-	s.dispatched(true)
+	s.endedUnjudged()
 	require.Empty(t, s.mark())
 
 	// Turns land that nothing has been shown.
@@ -322,7 +344,7 @@ func TestReadMark_AnInterruptedCycleDoesNotHandItsPositionToTheNextOne(t *testin
 	require.NotEmpty(t, uuidsOf(s.query()))
 	require.NotEmpty(t, s.offered(), "the read position is recorded while the cycle runs")
 
-	s.dispatched(true)
+	s.endedUnjudged()
 	assert.Empty(t, s.offered(), "the position is spent when the cycle ends, interrupted or not")
 }
 
@@ -587,7 +609,7 @@ func TestReadMark_DoesNotAdvanceOnAnInterruptedCycle(t *testing.T) {
 	// A second cycle reads its work, and is then interrupted.
 	unjudged := s.turn()
 	s.query()
-	s.dispatched(true)
+	s.endedUnjudged()
 
 	assert.Equal(t, first, s.mark(), "an interrupted cycle must not move the mark")
 	assert.Equal(t, []string{unjudged}, uuidsOf(s.query()),
@@ -605,7 +627,7 @@ func TestReadMark_InterruptedCycleDoesNotLoseTurnsAtAll(t *testing.T) {
 		written = append(written, s.turn())
 	}
 	s.query()
-	s.dispatched(true)
+	s.endedUnjudged()
 
 	assert.Equal(t, written, uuidsOf(s.query()))
 }
@@ -694,7 +716,7 @@ func TestStop_InterruptedCycleDoesNotTakeANewBaselineEither(t *testing.T) {
 
 	// The agent switches branches, and the cycle is interrupted.
 	runGit(t, s.dir, "checkout", "feature")
-	s.dispatched(true)
+	s.endedUnjudged()
 
 	store, err = openEngineState(HookPayload{TranscriptPath: s.transcriptPath, Cwd: s.dir})
 	require.NoError(t, err)
@@ -799,7 +821,7 @@ func TestReadMark_ClearingAnInterruptedPositionCostsARereadAndNotATurn(t *testin
 
 	// A cycle reads both turns and is then interrupted.
 	require.Equal(t, []string{s.uuid(0), a, b}, uuidsOf(s.query()))
-	s.dispatched(true)
+	s.endedUnjudged()
 	require.Empty(t, s.offered(), "the position is discarded")
 
 	// Every turn it saw is offered again, plus whatever arrived since.

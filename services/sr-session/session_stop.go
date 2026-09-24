@@ -20,23 +20,11 @@ func newSessionStopCmd() *cobra.Command {
 		Short: "End of a cycle: run the guardrails bound to what it changed",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			p := readPayload(cmd)
-			if p.StopHookActive {
-				// Already refused once this cycle. Refusing again would be a
-				// loop the agent cannot leave.
-				//
-				// The mark does not move and the point does not move. The cycle
-				// did not finish, so the mark must not move past turns nothing
-				// judged; and a refusal outstanding is exactly the work that
-				// must remain inside the next cycle's difference.
-				//
-				// The read position IS discarded, which is the one thing this
-				// path writes. See discardOffered: a position is a fact about a
-				// cycle's reading, and this cycle is over.
-				discardOffered(cmd, p)
-				return nil
-			}
-			return completeCycle(cmd, p)
+			// A retry after a refusal (stop_hook_active) is judged like any other
+			// Stop: a reply does not pass a rule by being sent twice. What ends a
+			// refusal loop is the project's stop_hook_block_cap — see
+			// stopHookBlockCapReached.
+			return completeCycle(cmd, readPayload(cmd))
 		},
 	}
 }
@@ -59,6 +47,16 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 		return nil
 	}
 	defer store.Close()
+
+	// The refusal loop's escape valve, checked before anything else so a Stop
+	// let through un-judged changes nothing: the mark does not move past turns
+	// nothing judged, the point does not move (an outstanding refusal is work
+	// that must stay inside the next difference), and only the read position is
+	// discarded — see discardOffered.
+	if stopHookBlockCapReached(cmd, store, p) {
+		discardOffered(cmd, p)
+		return nil
+	}
 
 	// The tree may have moved to another line of history during the cycle. If
 	// it did, the recorded point describes a history it no longer has and the
@@ -104,9 +102,11 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 		if err := block(cmd, reason); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		}
+		countStopRefusal(cmd, store)
 		discardOffered(cmd, p)
 		return nil
 	}
+	resetStopRefusals(cmd, store)
 
 	// Where this cycle's reading ended, for the next one to resume after, and
 	// then the position is spent. Only on this path: a cycle that was

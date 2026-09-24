@@ -37,6 +37,47 @@ type config struct {
 	// booleans, so there is no way to write the confusing `x: true` that would read
 	// as a second, weaker enabling mechanism competing with the declaration itself.
 	Disabled []string `yaml:"disabled"`
+
+	// StopHookBlockCap is how many times in a row a Stop may be refused before
+	// the engine lets the turn end un-judged. A pointer so "absent" (the default)
+	// is told apart from an explicit 0 (no cap). See StopHookBlockCap.
+	StopHookBlockCap *int `yaml:"stop_hook_block_cap"`
+}
+
+// DefaultStopHookBlockCap mirrors Claude Code's own CLAUDE_CODE_STOP_HOOK_BLOCK_CAP
+// default: after 8 consecutive blocks the harness overrides the hook and ends the
+// turn anyway, so a cap the engine sets any higher is one the harness never lets
+// it reach unless the operator raises that variable too.
+const DefaultStopHookBlockCap = 8
+
+// StopHookBlockCap reads the project's `stop_hook_block_cap` from the config in
+// root (a `.sloprail` directory): how many consecutive refusals a Stop may take
+// before the engine stops judging it and lets the turn end.
+//
+// A refused Stop is judged again on every retry, so an agent cannot end a turn by
+// replying twice — it loops until its reply passes. The cap is the escape valve,
+// and it is a PROJECT decision, written where the project's other overrides are
+// rather than in an environment variable nobody reviews:
+//
+//	stop_hook_block_cap: 8   # default — refuse up to 8 times in a row
+//	stop_hook_block_cap: 1   # refuse once, then let the retry end un-judged
+//	stop_hook_block_cap: 0   # no engine cap (the harness's own cap still applies)
+//
+// Absent means DefaultStopHookBlockCap. A negative value is an error, and so is a
+// config that exists and cannot be read; the caller decides what an error costs.
+func StopHookBlockCap(root string) (int, error) {
+	c, err := loadConfig(root)
+	if err != nil {
+		return DefaultStopHookBlockCap, err
+	}
+	if c.StopHookBlockCap == nil {
+		return DefaultStopHookBlockCap, nil
+	}
+	if *c.StopHookBlockCap < 0 {
+		return DefaultStopHookBlockCap, fmt.Errorf("declaration: %s: stop_hook_block_cap must be 0 or more, got %d",
+			filepath.Join(root, configFile), *c.StopHookBlockCap)
+	}
+	return *c.StopHookBlockCap, nil
 }
 
 // loadConfig reads a project's config, returning the zero value when there is

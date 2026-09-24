@@ -98,22 +98,9 @@ func newSessionSubagentStopCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			p := readPayload(cmd)
-			if p.StopHookActive {
-				// Already refused once this cycle. Refusing again would be a
-				// loop the sub-agent cannot leave — and a sub-agent has less
-				// recourse than a root, since the person is not watching it.
-				//
-				// Nothing else happens here, not even discarding the read
-				// position the way stop's own interrupted path does. That
-				// asymmetry is deliberate and is pinned by
-				// TestSubagentStopHonoursStopHookActive: discarding means
-				// opening the session's store, and a sub-agent whose record
-				// cannot be opened would then report a failure on a path whose
-				// whole purpose is to do nothing. Adding the discard here was
-				// tried and broke that test, which is the contract stating it —
-				// a cycle already refused once is left alone entirely.
-				return nil
-			}
+			// A retry after a refusal (stop_hook_active) is judged like any
+			// other Stop; the project's stop_hook_block_cap is what ends a
+			// refusal loop, counted in the sub-agent's own store (completeCycle).
 
 			// Never act as the wrong session. A payload reaching this command
 			// names a sub-agent by definition, so one that does not is a harness
