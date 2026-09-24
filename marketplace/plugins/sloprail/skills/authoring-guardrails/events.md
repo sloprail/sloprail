@@ -54,10 +54,13 @@ trigger's `on`, not a kind the engine emits.
 | `PreFileCreate` | `path`, `newContent`, `resultKnown`, `newMarkers` |
 | `PreFileUpdate` | `path`, `oldContent`, `newContent`, `resultKnown`, `oldMarkers`, `newMarkers` |
 | `PreFileDelete` | `path`, `oldContent`, `oldMarkers` |
-| `PostFileCreate` | `path`, `newContent`, `newMarkers` |
-| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `oldMarkers`, `newMarkers` |
-| `PostFileDelete` | `path`, `oldContent`, `oldMarkers` |
+| `PostFileCreate` | `path`, `newContent`, `newMarkers`, `seen` |
+| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `oldMarkers`, `newMarkers`, `seen` |
+| `PostFileDelete` | `path`, `oldContent`, `oldMarkers`, `seen` |
 
+- `seen` — bool, Post kinds only. `true` when an earlier Stop was already
+  handed this file with the same content: the event is a re-send, not a change
+  since the previous Stop (see [Re-sent events: `seen`](#re-sent-events-seen)).
 - `path` — string, repository-relative. Prepend `$SR_WORKSPACE`
   ([environment.md](environment.md)) to reach the file on disk.
 - `oldContent` — string, the file's bytes **before** the change. On a `Pre`
@@ -157,7 +160,7 @@ events.
 
 | field | type |
 |---|---|
-| `tags` | list of `{label}` — every distinct tag written this cycle, in order |
+| `tags` | list of `{label, seen}` — every distinct tag written this cycle, in order |
 
 A bulk event, not one per tag: a message often holds `#update #decision`, and a
 context deciding whether **its** tag showed up should see the whole set at once.
@@ -166,9 +169,33 @@ Duplicates are dropped, first-occurrence order kept. An empty `tags` is a real
 answer ("nothing tagged this cycle") a context can react to. A `Post` fact only —
 there is nothing to scan before the agent writes.
 
+`.seen` is `true` when the tag is only in text an earlier Stop already read — a
+refused reply's text, re-sent with the retry. A tag the agent wrote again since
+the previous Stop is `seen: false`.
+
 ```
-any(event.tags, .label == "research")
+any(event.tags, .label == "research")                  # said at any point this cycle
+any(event.tags, .label == "skip" and not .seen)        # said in the reply being judged
 ```
+
+### Re-sent events: `seen`
+
+A cycle stays open until a Stop passes. When a Stop is refused, the retry's Post
+events deliver again what the refused reply already did — its tags, and every
+file still differing from the session's baseline (which stays in the difference,
+and is delivered on every Stop, until committed). That is deliberate: a rule
+whose obligation must survive a refusal (a context entered on `#research`) keeps
+seeing it even if the retry does not repeat the tag.
+
+A rule that judges only what happened **since the previous Stop** reads `seen`:
+
+- on a **tag**, `seen: true` = only in text an earlier Stop read;
+- on a **Post file event**, `seen: true` = same content an earlier Stop was handed.
+
+"Earlier Stop" means the previous Stop that ran the rules, whatever it decided. A
+Stop let through un-judged at `stop_hook_block_cap`, or a turn interrupted before
+any Stop, records nothing — what it covered is delivered unseen again, so it is
+re-judged rather than skipped.
 
 ### `Stop` — a work cycle ended
 
@@ -228,7 +255,7 @@ upstream context left behind.
 ### ContextEnterPayload — a context's `enter`
 
 ```json
-{"event":{"kind":"PostTagWrite","tags":[{"label":"research"}]},
+{"event":{"kind":"PostTagWrite","tags":[{"label":"research","seen":false}]},
  "transcriptPath":"/abs/…session.jsonl",
  "gates":{"depth-check":{"status":"pass"}},
  "currentContext":{"active":false,"payload":{…}}}

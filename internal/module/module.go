@@ -193,6 +193,14 @@ const (
 	// is exactly the growth the map shape exists to allow: a module added later
 	// wanting an input the others do not.
 	InputMessages = "messages"
+
+	// InputSeenMessages is the part of this cycle's settled message text that an
+	// EARLIER Stop in the same still-open cycle was already shown, as a []string,
+	// oldest first. A cycle stays open until a Stop passes, so a refused reply's
+	// text is delivered again with the retry; the tag module marks the tags found
+	// only here as `seen`, so a rule can tell a re-sent tag from one the agent
+	// wrote since the previous Stop. InputMessages then holds just the new text.
+	InputSeenMessages = "seenMessages"
 )
 
 // Phase values for InputPhase.

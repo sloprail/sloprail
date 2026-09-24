@@ -20,6 +20,8 @@ var (
 	Turns = harness.Turns
 	Say   = harness.Say
 	Write = harness.Write
+
+	SayWrite = harness.SayWrite
 )
 
 // TestMain removes the binary build dir when this package's tests finish.

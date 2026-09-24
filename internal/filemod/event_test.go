@@ -285,15 +285,15 @@ func TestModule_FieldsPerKind(t *testing.T) {
 		fieldsOf[KindPreDelete],
 		"a delete carries only the bytes about to be lost")
 
-	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldNewMarkers},
+	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldNewMarkers, FieldSeen},
 		fieldsOf[KindPostCreate],
-		"a Post create mirrors PreFileCreate")
-	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldOldMarkers, FieldNewMarkers},
+		"a Post create mirrors PreFileCreate, plus seen")
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldOldMarkers, FieldNewMarkers, FieldSeen},
 		fieldsOf[KindPostUpdate],
-		"a Post update carries both settled contents and no resultKnown")
-	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers},
+		"a Post update carries both settled contents, seen, and no resultKnown")
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers, FieldSeen},
 		fieldsOf[KindPostDelete],
-		"a Post delete mirrors PreFileDelete")
+		"a Post delete mirrors PreFileDelete, plus seen")
 }
 
 // TestModule_ResultKnownOnPreCreateAndUpdate: the companion boolean exists to

@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -38,7 +40,13 @@ import (
 // truthful "no tags seen" for a cycle whose text could not be read — the same
 // direction every other read in this dispatch errs in, and never a reason to
 // refuse the agent's work.
-func cycleAgentMessages(cmd *cobra.Command, store sessionstate.Store, p HookPayload) []string {
+//
+// The messages come back in two parts. seen is the text an EARLIER Stop in this
+// still-open cycle already read — up to MetaStopSeenRecord — which a refused
+// reply's retry delivers again; fresh is the text written since. The tag module
+// marks tags found only in seen as `seen`. end is where this read stopped, for
+// the caller to record once the Stop has been judged.
+func cycleAgentMessages(cmd *cobra.Command, store sessionstate.Store, p HookPayload) (seen, fresh []string, end string) {
 	path, err := p.record()
 	if err != nil || path == "" {
 		// No record to read, or a path this must not read (a guessed file
@@ -46,14 +54,15 @@ func cycleAgentMessages(cmd *cobra.Command, store sessionstate.Store, p HookPayl
 		if err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: tags not scanned: %v\n", err)
 		}
-		return nil
+		return nil, nil, ""
 	}
 
-	entries, err := transcript.Read(path)
+	record, err := transcript.Read(path)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: tags not scanned: %v\n", err)
-		return nil
+		return nil, nil, ""
 	}
+	end = recordPosition(record)
 
 	// From the last completed cycle's mark, the same position session query
 	// reads from. A mark that cannot be read leaves this at "" — the whole record
@@ -63,19 +72,36 @@ func cycleAgentMessages(cmd *cobra.Command, store sessionstate.Store, p HookPayl
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: reading the whole session for tags: %v\n", err)
 		mark = ""
 	}
-	entries = transcript.Since(entries, mark)
+	entries := transcript.Since(record, mark)
+	// Since returns a suffix, so an entry's place in the whole record is offset+i.
+	offset := len(record) - len(entries)
 
-	var messages []string
-	for _, e := range entries {
+	// How much of the record the previous judged Stop had read. Entries before
+	// that were already shown to a Stop. Absent or not matching this record means
+	// nothing was — every tag is fresh, which is the behaviour before this
+	// existed and the safe direction: a tag wrongly marked seen is one a rule may
+	// ignore.
+	seenCount := 0
+	if last, ok, err := store.Meta(sessionstate.MetaStopSeenRecord); err == nil && ok {
+		seenCount = seenThrough(last, record)
+	}
+
+	for i, e := range entries {
 		if e.Type != transcript.EntryAssistant || e.IsSidechain {
 			// Not the agent's own words on the main line of work.
 			continue
 		}
-		if text := assistantText(e.Message); text != "" {
-			messages = append(messages, text)
+		text := assistantText(e.Message)
+		if text == "" {
+			continue
+		}
+		if offset+i < seenCount {
+			seen = append(seen, text)
+		} else {
+			fresh = append(fresh, text)
 		}
 	}
-	return messages
+	return seen, fresh, end
 }
 
 // assistantText pulls the prose out of an assistant message, whatever shape the
@@ -135,4 +161,35 @@ func assistantText(raw json.RawMessage) string {
 		out += b.Text
 	}
 	return out
+}
+
+// recordPosition is how far a read of the record reached, as "<count>:<uuid>" —
+// how many entries it held, and the uuid of the last.
+//
+// The count, not the uuid alone, is the position: a uuid can repeat in a real
+// record (a harness re-emitting an entry on a retry writes the same uuid again),
+// and the first match of a repeated uuid names the wrong place. The record only
+// grows, so a count is unambiguous; the uuid beside it checks the record is still
+// the one that was counted.
+func recordPosition(record []transcript.Entry) string {
+	if len(record) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%s", len(record), record[len(record)-1].UUID)
+}
+
+// seenThrough reads a recordPosition back against the record as it is now: how
+// many leading entries an earlier Stop had read. 0 — nothing seen — when the
+// position is empty, malformed, past the end, or names a different entry at that
+// count (the record was rewritten underneath).
+func seenThrough(position string, record []transcript.Entry) int {
+	countText, uuid, ok := strings.Cut(position, ":")
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(countText)
+	if err != nil || n <= 0 || n > len(record) || record[n-1].UUID != uuid {
+		return 0
+	}
+	return n
 }
