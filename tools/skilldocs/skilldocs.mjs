@@ -7,18 +7,28 @@
  * re-writing (and drifting from) it, the docs render it: this copies the skill's
  * markdown into docs/guides/, adding doc frontmatter (title from the
  * H1, kind, related) and rewriting the skill-relative `[x.md](x.md)` links to
- * doc routes. Re-run whenever the skill changes; the output is generated, not
- * hand-edited.
+ * doc routes.
  *
- *   node tools/skilldocs/skilldocs.mjs
+ * The output is NOT committed. The skill is the only copy in this repo; the docs
+ * site (the website repo's scripts/pull-docs.mjs) runs this at build time against
+ * the pinned sloprail commit, so the rendered guides can never lag the skill.
+ * docs/guides/ is gitignored here; run it locally to preview:
+ *
+ *   node tools/skilldocs/skilldocs.mjs [out-dir]     # default: docs/guides
+ *
+ * Paths into the skill are resolved from this script's own location, so it can
+ * be run from any directory — the site calls it from outside this checkout and
+ * passes its own content folder as out-dir.
  */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const PLUGIN_DIR = 'marketplace/plugins/sloprail';
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const PLUGIN_DIR = join(REPO_ROOT, 'marketplace/plugins/sloprail');
 const SKILL_NAME = 'authoring-guardrails';
-const SKILL_DIR = `${PLUGIN_DIR}/skills/${SKILL_NAME}`;
-const OUT_DIR = 'docs/guides';
+const SKILL_DIR = join(PLUGIN_DIR, 'skills', SKILL_NAME);
+const OUT_DIR = resolve(process.argv[2] || join(REPO_ROOT, 'docs/guides'));
 const ROUTE = '/guides';
 
 // The user-facing invocation is `/<plugin>:<skill>` — plugin name from the

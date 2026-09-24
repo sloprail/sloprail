@@ -34,3 +34,8 @@
 # (gofmt, go vet, a CI lint step) sees every file twice and reports the copy's
 # path as though it were ours.
 /.claude/worktrees/
+
+# The authoring guides are generated from the authoring-guardrails skill by
+# tools/skilldocs at docs-site build time (website: scripts/pull-docs.mjs), so the
+# skill is the only copy in this repo. A local preview run lands here.
+/docs/guides/
