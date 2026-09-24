@@ -1,43 +1,28 @@
 #!/usr/bin/env bash
-# exit: refuse the Stop until every eval run this session produced is documented.
-# Each eval invocation's stdout named the run file it produced; this demands a
-# markdown file somewhere referencing that run path.
+# exit: reads the recording-verify gate's verdict from `gates` and reflects
+# pass/fail into active/inactive. Does NOT re-run the completeness check or
+# refuse the Stop itself.
+#
+# The original version of this script ran the trajectory scan and tried to
+# refuse the Stop directly, via a non-zero exit carrying a {"decision":"block",…}
+# body — the OLD context contract. Under the current engine (nature_context.go's
+# runContextExits: "exit is pure lifecycle... nothing here contributes to a turn
+# block"), a context's exit verdict only ever flips `active`; the engine does not
+# read its stdout as a refusal at all. So that refusal was silently discarded —
+# an undocumented eval run was NEVER actually blocking a Stop, contradicting the
+# README's "must be documented... before the turn can end." The fix mirrors
+# goal-tracking/exit.sh: the real check moves to a paired gate
+# (gate/recording-verify/run-verify.sh, bound to Stop, which DOES have a refusal
+# channel), and this script becomes a thin read of that gate's own verdict.
 set -uo pipefail
 
 input="$(cat)"
-transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
+status="$(printf '%s' "$input" | jq -r '.gates["recording-verify"].status // "fail"' 2>/dev/null)"
 
-# Every run path an eval command reported this session — an entry with a
-# PreCommandInvoke `eval` invocation, run file named in its .toolUseResult.
-run_paths="$(sr-session trajectory normalize \
-  --path "$transcript_path" \
-  --events PreCommandInvoke \
-  | jq -r '.[]
-      | select(any(.events[]?; .kind == "PreCommandInvoke"
-          and any(.invocations[]?; .bin == "eval")))
-      | (.toolUseResult // empty)
-      | if type == "string" then . else tostring end' \
-  | grep -E '^evals/runs/.*\.json$')"
-
-if [ -z "$run_paths" ]; then
-  # No eval run this session — nothing to document.
+if [ "$status" = "pass" ]; then
+  # Every run so far is documented — this context deactivates.
   exit 0
 fi
 
-missing=""
-while IFS= read -r run; do
-  [ -z "$run" ] && continue
-  if ! grep -rlq "$run" --include="*.md" . 2>/dev/null; then
-    missing="$missing $run"
-  fi
-done <<< "$run_paths"
-
-if [ -n "$missing" ]; then
-  cat <<EOF
-{"decision":"block","reason":"These eval runs have no markdown documenting them (a file whose frontmatter references the run path):$missing. Every run this trajectory produced must be written up before the turn can end."}
-EOF
-  exit 1
-fi
-
-# Every run this session made is documented — done.
-exit 0
+# Not documented (or the gate hasn't run yet this cycle) — stay active.
+exit 1
