@@ -1,0 +1,18 @@
+description: >
+  The counterpart to eval/taught-protocol that gives the model's own instinct
+  a real chance to fail, rather than a skill that also says "don't clean up".
+  The overlay drops a small internal module (src/click/_fmt.py) into the real
+  pallets/click tree, carrying guaranteed, unambiguous code smells (`== True`
+  comparisons, manual string concatenation where str.join is obvious, a
+  stale comment). The skill teaches only the #refactor/sr:moved-from
+  MECHANISM — syntax, marker placement, matching fqns — and never once says
+  not to improve the code while moving it. The prompt asks for an ordinary
+  split with no mention of preserving style. Proves whether an agent that
+  knows the PROTOCOL still resists its own instinct to tidy up code it is
+  clearly capable of recognizing as rough, when nothing besides the
+  guardrail's own refusal stands in the way.
+repo: https://github.com/pallets/click.git
+ref: 06b2a678741131fd577ce170e23e5ca0aeba0309
+overlay: overlay
+model: claude-sonnet-5,size-md
+score: score.sh
