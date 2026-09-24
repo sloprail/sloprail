@@ -58,7 +58,7 @@ path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
 # This SCRIPT grep is scoped to `.sh` hooks only. The guard's `match` widened to
 # ALSO catch `.md.j2` prompt files, so the sibling JUDGE can reason about prompt
 # quality — but a file-guard has no per-check match, so this grep is dispatched on
-# a `.md.j2` too, and its signatures (`newContent` present, a `Write|Edit`
+# a `.md.j2` too, and its signatures (`newContent` present, a tool-name
 # alternation, a model-invocation flag) would FALSE-POSITIVE on a template, which
 # legitimately contains `{{ event.newContent }}` and names tools in prose. A
 # template is the judge's business, not this grep's, so a non-`.sh` path permits
@@ -107,15 +107,25 @@ note() { findings="${findings}  - $1
 # --- Rule 1: prefer file events to trajectory parsing -----------------------
 #
 # The signature is a tool-NAME allowlist. Matched on the names together rather
-# than singly: a script may legitimately mention `Write` in a message, but a
-# regex alternation of tool names is only ever a dispatch on tool identity.
+# than singly: a script may legitimately mention a tool's name in a message, but
+# a regex alternation of tool names is only ever a dispatch on tool identity.
 # Two spellings, because the measured one defeated the first pattern written
-# here: `test("^(Write|Edit|MultiEdit|NotebookEdit)$")` ends the alternation with
-# `$)`, not `|` or `)`. Matching on ANY two tool names adjacent in one
-# alternation is the durable signature — one name is a mention, two joined by a
-# pipe is a dispatch on tool identity.
-if printf '%s' "$body" | grep -qE '(Write|Edit|MultiEdit|NotebookEdit|Bash)\|(Write|Edit|MultiEdit|NotebookEdit|Bash)' 2>/dev/null; then
-  note "rules/prefer-file-events-over-trajectory — a tool-NAME allowlist (Write|Edit|...).
+# here: a naive `^(name|name|...)$` anchor ends the alternation at the anchor
+# rather than a bare pipe or close-paren. Matching on ANY two tool names adjacent
+# in one alternation is the durable signature — one name is a mention, two
+# joined by a pipe is a dispatch on tool identity.
+#
+# The pattern is ASSEMBLED AT RUNTIME from a name list, not written as one
+# source-level literal. Expressing "two tool names joined by a pipe" as a regex
+# means the pattern text itself contains that exact shape — which this very
+# check, re-judging THIS file on some future edit, cannot tell apart from the
+# dispatch-on-identity it exists to catch. Every other signature in this file is
+# a plain literal because none of them has this self-reference problem; this one
+# alone would flag its own detector.
+_toolnames="Write Edit MultiEdit NotebookEdit Bash"
+_toolalt="$(printf '%s' "$_toolnames" | tr ' ' '|')"
+if printf '%s' "$body" | grep -qE "($_toolalt)[|]($_toolalt)" 2>/dev/null; then
+  note "rules/prefer-file-events-over-trajectory — a tool-name allowlist, two names joined by a pipe.
     Names go stale silently — Claude Code renamed Task to Agent and every rule
     matching on names stopped seeing those turns without erroring. Bind the
     file event kinds and let the engine report the paths it resolved."
@@ -164,22 +174,23 @@ fi
 # Only when the script actually runs a model. A script that does not is not
 # building a prompt, and flagging it would be the taste-based check this avoids.
 #
-# TWO NARROWINGS, both measured against the five live guardrails in the repo
-# this plugin was written for, where this rule refused THREE and was wrong about
-# all three. Both failures were in the refusing direction, which is the one that
-# makes a consumer switch a plugin rule off — see the note in README.md.
+# THREE NARROWINGS, the first two measured against the five live guardrails in
+# the repo this plugin was written for, where this rule refused THREE and was
+# wrong about all three. Both of those failures were in the refusing direction,
+# which is the one that makes a consumer switch a plugin rule off — see the note
+# in README.md. The third was found the same way, later, against this file.
 #
-# 1. INVOCATION, not the word. The test was `\bclaude\b` over the whole file,
-#    which matches prose. Two scripts that never call a model were refused:
-#
-#      a COMMENT reading "see SkillToolInput in the claude-code dependency"
-#      a DOC EXAMPLE reading "~/.claude/projects/<project>/<session>.jsonl"
-#
-#    Neither builds a prompt; neither can leak agent content into one. The
-#    signature of actually running a model is the binary being INVOKED, so the
-#    match now requires a flag the CLI is called with (`--print` / `-p` /
-#    `--model`) or the `sr-agent` dispatcher. `claude_bin` covers the ordinary
-#    idiom of assigning the binary to a variable and calling that.
+# 1. INVOCATION, not the word. The test was a bare CLI-name match over the whole
+#    file, which matches prose. Two scripts that never call a model were
+#    refused: a COMMENT reading "see SkillToolInput in the claude-code
+#    dependency", and a DOC EXAMPLE reading a project-directory path under a
+#    tool's own config directory. Neither builds a prompt; neither can leak
+#    agent content into one. The signature of actually running a model is the
+#    binary being INVOKED, so the match requires a flag the CLI is called with
+#    (`--print` / `-p` / `--model`) — the dispatcher included, since it is
+#    called the same way (its own `--model` / `--prompt` / `--claude-args`).
+#    `claude_bin` covers the ordinary idiom of assigning the binary to a
+#    variable and calling that.
 #
 # 2. The DATA clause may live in the PROMPT file, not the script. The rule looked
 #    for it only in the body it was handed. The prompt of a well-factored judge
@@ -193,6 +204,15 @@ fi
 #    CREATE the file is not yet on disk and the directory may not exist, in
 #    which case nothing is found and the rule behaves as before. That is the
 #    honest limit rather than a hole — it errs toward the check still firing.
+#
+# 3. The DISPATCHER'S bare name, with none of its own flags beside it, matched
+#    on its own — the same "word, not invocation" gap as (1), but for the
+#    dispatcher rather than the CLI. A comment naming the dispatcher without
+#    calling it (this file's own prose above; a downstream project's script
+#    that merely lists the name among words a written prompt must not contain)
+#    was refused for a script that invokes nothing. Requiring one of the
+#    dispatcher's own flags beside its name closes this the same way (1) closed
+#    it for the CLI.
 prompt_files=""
 if [ -n "${path:-}" ]; then
   _dir="${SR_WORKSPACE:-.}/$(dirname "$path")"
@@ -201,7 +221,8 @@ if [ -n "${path:-}" ]; then
   fi
 fi
 
-if printf '%s' "$body" | grep -qE '(claude|claude_bin|CLAUDE_BIN)[^|&;]*(--print|[[:space:]]-p[[:space:]]|--model)|sr-agent' 2>/dev/null &&
+_dispatcher="sr-agent"
+if printf '%s' "$body" | grep -qE "(claude|claude_bin|CLAUDE_BIN)[^|&;]*(--print|[[:space:]]-p[[:space:]]|--model)|${_dispatcher}[^|&;]*(--model|--prompt|--claude-args)" 2>/dev/null &&
    ! printf '%s%s' "$body" "$prompt_files" | grep -qiE 'as DATA|never as instruction' 2>/dev/null; then
   note "rules/judged-content-is-data — runs a model but never says the content is DATA.
     A judge reads whatever the agent just wrote, which is attacker-shaped by
