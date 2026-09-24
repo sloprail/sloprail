@@ -1,12 +1,19 @@
 # An eval fixture's score.sh must actually inspect what the agent-under-test
 # did, not just return a verdict. sr-eval's own run.go already refuses to SCORE
 # a run with no transcript at all (a Go-level, non-sloprail check); this guards
-# the other half — a scorer that DOES run but never reads SR_EVAL_TRANSCRIPT is
-# indistinguishable from `exit 0` unconditionally, and would report every run a
-# pass regardless of what the guardrail under test actually did. preventive:
-# catch this while the fixture is being written, not after a run silently
-# "passes" against nothing.
+# the other half — a scorer whose EXIT CODE does not genuinely depend on the
+# transcript's content is indistinguishable from a fixed `exit 0`/`exit 1`,
+# and would report every run the same way regardless of what the guardrail
+# under test actually did. preventive: catch this while the fixture is being
+# written, not after a run silently "passes" against nothing.
 match: path matches "^examples/.+/eval/.+/score\\.sh$"
 preventive: true
 checks:
-  - script: ./reads-transcript.sh
+  # "Does the transcript's value ever reach a decision" is a data-flow
+  # question, not a structural fact — grepping for the literal string
+  # SR_EVAL_TRANSCRIPT anywhere in the file passes a script that reads it
+  # into a variable and never consults it, the same shape as any other
+  # keyword-proxy-for-meaning mistake. Hand it to a judge instead.
+  - judge: ./judge.md.j2
+    model: size-md
+    timeout: 30s
