@@ -1,0 +1,11 @@
+# The completeness half: every declared move must actually land. This is the
+# piece that blocks — a context cannot, only a gate does. Match on the context's
+# active flag skips the check when no refactor was declared; `require` orders the
+# context first, so the gate reads its settled declared_markers.
+on:
+  - event: Stop
+    match: context["refactoring"].active
+require:
+  - context: refactoring
+checks:
+  - script: ./verify-declared-moves-landed.sh

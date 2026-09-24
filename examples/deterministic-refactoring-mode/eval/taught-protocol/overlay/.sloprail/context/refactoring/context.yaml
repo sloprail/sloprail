@@ -1,0 +1,13 @@
+# Tracks a declared refactor; never blocks (the blocking is the paired Stop
+# gate `refactor-complete`, which reads the declared_markers this context's
+# enter writes). Two triggers:
+#   - PreToolUse: activate the scope before a marked write, so the reconcile
+#     file-guard's `match: context["refactoring"].active` is true at that write.
+#   - PostTagWrite: fires at Stop once the turn is settled, so enter can read the
+#     `#refactor scope=...` declaration and populate declared_markers before the
+#     gate reads it (enters run before gates).
+on:
+  - event: PreToolUse
+  - event: PostTagWrite
+enter: ./enter.sh
+exit: ./exit.sh

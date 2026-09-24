@@ -1,0 +1,15 @@
+description: >
+  Agent is asked to do a normal, everyday split-this-file refactor with NO
+  mention anywhere in the prompt of #refactor, sr:moved-from, or any sloprail
+  convention — proves whether examples/deterministic-refactoring-mode's
+  guardrail apparatus (the refactoring context, the moved-content-reconciles
+  file-guard, the refactor-complete gate) EVER ACTIVATES against a real,
+  unprimed agent. The example ships no skill teaching the #refactor tag
+  syntax, so this checks the honest baseline: does the agent ever discover
+  the convention on its own, or does the whole guardrail sit inert while a
+  "refactor" happens with zero protection against regenerated (not moved)
+  content.
+seed: seed
+overlay: overlay
+model: claude-sonnet-5,size-md
+score: score.sh
