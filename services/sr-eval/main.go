@@ -13,7 +13,7 @@
 // high-level sloprail command: one binary per command, with a root `sr` that
 // proxies to them.
 //
-//	sr-eval run --fixture examples/required-context-precondition/eval/require-skill-decisions
+//	sr-eval run --fixture examples/required-context-precondition/eval/require-skill-tests
 //
 // A FIXTURE is a directory: fixture.yaml (what to seed, what to ask, how to
 // score) beside prompt.md (the exact words the agent-under-test receives) and
@@ -29,6 +29,15 @@
 // case: the whole point is for the project's real .sloprail/ gate to fire. So
 // sr-eval overrides that isolation explicitly via --claude-args, rather than
 // bypassing sr-agent to get hooks back. See run.go.
+//
+// EVERY RUN IS ARCHIVED, by default, into a local git repository under
+// ~/.local/share/sloprail/eval-runs/<fixture>/<run-id>/ (or
+// $SLOPRAIL_EVAL_RUNS_DIR) — a structured run.json, the agent-under-test's
+// transcript (and any sub-agent transcripts), and the scorer's raw output,
+// one git commit per run. This is what makes "did this fixture start failing
+// on this model" an ordinary `git log`/`git diff` question instead of
+// something only the last run's stdout could answer. See archive.go.
+// --no-archive skips it for throwaway iteration.
 package main
 
 import (

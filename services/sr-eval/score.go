@@ -31,7 +31,20 @@ import (
 // must not read as a guardrail's approval: an eval nobody could actually score
 // proves nothing, and reporting that as a pass would be worse than reporting
 // nothing.
-func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDir string) (passed bool, reason string, err error) {
+//
+// scoreResult carries the raw streams alongside the verdict — not just the
+// derived reason — because the archive (archive.go's archiveRun) keeps the
+// scorer's own stdout/stderr verbatim beside each run, and re-deriving them
+// from the reason string would lose whatever the scorer printed that was not
+// the reason (a debug trace, intermediate jq output on a failed run).
+type scoreResult struct {
+	Passed bool
+	Reason string // empty on a pass
+	Stdout []byte
+	Stderr []byte
+}
+
+func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDir string) (scoreResult, error) {
 	cmd := exec.CommandContext(ctx, fx.ScorePath())
 	cmd.Dir = fx.Dir
 	cmd.Env = append(os.Environ(),
@@ -46,8 +59,10 @@ func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDi
 	cmd.Stderr = &stderr
 
 	runErr := cmd.Run()
+	res := scoreResult{Stdout: []byte(stdout.String()), Stderr: []byte(stderr.String())}
 	if runErr == nil {
-		return true, "", nil
+		res.Passed = true
+		return res, nil
 	}
 
 	if _, ok := runErr.(*exec.ExitError); !ok {
@@ -55,10 +70,11 @@ func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDi
 		// interpreter, timeout) — that is the "scorer could not run" case
 		// the caller reports as exit 2, distinct from a script that ran and
 		// said no.
-		return false, "", runErr
+		return res, runErr
 	}
 
-	return false, scorerReason(stdout.String(), stderr.String()), nil
+	res.Reason = scorerReason(stdout.String(), stderr.String())
+	return res, nil
 }
 
 // scorerReason picks the reason to report, in the same order a guardrail

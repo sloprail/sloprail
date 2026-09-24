@@ -32,6 +32,7 @@ could not be completed (nothing to score at all).`,
 	cmd.Flags().String("fixture", "", "Path to the fixture directory (fixture.yaml + prompt.md + score script)")
 	cmd.Flags().String("model", "", "Override the fixture's own model set — run the same fixture against a different model without editing fixture.yaml")
 	cmd.Flags().Bool("keep", false, "Do not remove the isolated workspace after scoring — print its path instead")
+	cmd.Flags().Bool("no-archive", false, "Do not record this run in the local eval-run archive (~/.local/share/sloprail/eval-runs, or $SLOPRAIL_EVAL_RUNS_DIR)")
 	_ = cmd.MarkFlagRequired("fixture")
 	return cmd
 }
@@ -39,10 +40,12 @@ could not be completed (nothing to score at all).`,
 func runFixture(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
+	startedAt := time.Now()
 
 	fixtureDir, _ := cmd.Flags().GetString("fixture")
 	modelOverride, _ := cmd.Flags().GetString("model")
 	keep, _ := cmd.Flags().GetBool("keep")
+	noArchive, _ := cmd.Flags().GetBool("no-archive")
 
 	fx, err := LoadFixture(fixtureDir)
 	if err != nil {
@@ -98,8 +101,10 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(out, "sr-eval: project %s\n", ws.project)
 	fmt.Fprintf(out, "sr-eval: launching agent-under-test (model %q)...\n", fx.Model)
 
-	if err := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, prompt); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error: %v\n", err)
+	var agentErrText string
+	if agentErr := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, prompt); agentErr != nil {
+		agentErrText = agentErr.Error()
+		fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error: %v\n", agentErr)
 		// Not returned yet: a refusal or a crash mid-run still leaves a
 		// transcript worth scoring — the scorer is what decides whether an
 		// early stop is itself the pass condition (a gate that never let the
@@ -114,16 +119,45 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(out, "sr-eval: transcript %s\n", transcriptPath)
 
-	passed, reason, err := score(ctx, fx, ws, transcriptPath, binDir)
-	if err != nil {
-		fmt.Fprintf(out, "sr-eval: FAIL (scorer could not run: %v)\n", err)
+	sr, scoreErr := score(ctx, fx, ws, transcriptPath, binDir)
+
+	rec := runRecord{
+		Fixture:    filepath.Base(fx.Dir),
+		FixtureDir: fx.Dir,
+		Model:      fx.Model,
+		Harness:    "claude-code",
+		Passed:     sr.Passed,
+		Reason:     sr.Reason,
+		AgentError: agentErrText,
+		Transcript: transcriptPath,
+		StartedAt:  startedAt,
+		FinishedAt: time.Now(),
+	}
+	if scoreErr != nil {
+		rec.Reason = fmt.Sprintf("scorer could not run: %v", scoreErr)
+	}
+
+	if !noArchive {
+		if archiveDir, archErr := archiveRun(rec, transcriptPath, sr.Stdout, sr.Stderr); archErr != nil {
+			// Archiving failure is reported, not fatal — the scorer's own
+			// verdict already ran and is the thing exit status carries.
+			// Losing the archive of a run is a worse day than losing the
+			// run itself.
+			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: warning: could not archive this run: %v\n", archErr)
+		} else {
+			fmt.Fprintf(out, "sr-eval: archived %s\n", archiveDir)
+		}
+	}
+
+	if scoreErr != nil {
+		fmt.Fprintf(out, "sr-eval: FAIL (scorer could not run: %v)\n", scoreErr)
 		return &evalFailure{code: 2}
 	}
-	if passed {
+	if sr.Passed {
 		fmt.Fprintf(out, "sr-eval: PASS\n")
 		return nil
 	}
-	fmt.Fprintf(out, "sr-eval: FAIL — %s\n", reason)
+	fmt.Fprintf(out, "sr-eval: FAIL — %s\n", sr.Reason)
 	return &evalFailure{code: 1}
 }
 
