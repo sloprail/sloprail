@@ -419,11 +419,23 @@ func fileMatchScopeEvent(e event.Event, contextMap map[string]natures.ContextSta
 //
 // The NEW markers are the file's own settled markers on a Post event and the
 // would-be result's on a Pre. A create/update declares `newMarkers`; a delete
-// declares none (a deleted file carries no state to guard), so this is an empty
-// (non-nil) list there — the same "always a list" discipline the event keeps, so
-// `any(markers, …)` evaluates to false rather than erroring on a missing field.
+// declares none — filemod puts what the file carried on `oldMarkers` instead
+// (module.go's KindPreDelete/KindPostDelete field lists have no `newMarkers` at
+// all). Falling back to `oldMarkers` when `newMarkers` is absent is what lets a
+// marker-based match (`any(markers, .kind == "invariant")`) still select a
+// delete of a file that carried the marker being deleted WITH: a rule whose match
+// is a `markers` quantifier is a rule about the file's state, and a delete is a
+// state change like any other, not an exemption. Without this, every marker-based
+// file-guard's match silently evaluates false on every delete, regardless of what
+// the deleted file held — the guard's checks (a script's own `oldMarkers`
+// fallback, if it has one, or a judge template) never even run. The "always a
+// list" discipline is kept either way, so `any(markers, …)` evaluates to false
+// (never errors) when a file truly carries no markers of either kind.
 func fileMarkers(e event.Event) []any {
 	if v, ok := e.Fields[filemod.FieldNewMarkers].([]any); ok {
+		return v
+	}
+	if v, ok := e.Fields[filemod.FieldOldMarkers].([]any); ok {
 		return v
 	}
 	return []any{}
