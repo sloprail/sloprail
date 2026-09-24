@@ -31,6 +31,13 @@ const (
 	// whole point. Deriving the read position afresh at the end of a cycle would
 	// mark that turn judged by a cycle that was never shown it.
 	MetaTranscriptOffered = "transcript_offered"
+
+	// MetaStopRefusals is how many times in a row a Stop has been refused in the
+	// current sequence — the first Stop of a turn and every retry the harness
+	// sends after a refusal. Counted so the project's stop_hook_block_cap can end
+	// a refusal loop after a set number of blocks; reset when a Stop completes or
+	// a new sequence begins.
+	MetaStopRefusals = "stop_refusals"
 )
 
 // Meta reads a session fact.

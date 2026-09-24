@@ -31,6 +31,7 @@ type claudeRecord struct {
 	LogicalParentUUID *string         `json:"logicalParentUuid"`
 	Timestamp         string          `json:"timestamp"`
 	IsSidechain       bool            `json:"isSidechain"`
+	IsMeta            bool            `json:"isMeta"`
 	Message           json.RawMessage `json:"message"`
 	ToolUseResult     json.RawMessage `json:"toolUseResult"`
 
@@ -52,6 +53,7 @@ func (r claudeRecord) entry() Entry {
 		UUID:          r.UUID,
 		Timestamp:     r.Timestamp,
 		IsSidechain:   r.IsSidechain,
+		IsMeta:        r.IsMeta,
 		Message:       r.Message,
 		ToolUseResult: r.ToolUseResult,
 	}

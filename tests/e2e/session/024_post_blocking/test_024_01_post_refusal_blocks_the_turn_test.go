@@ -248,30 +248,16 @@ checks:
 
 // T024_04: a session whose every cycle refuses still terminates.
 //
-// WHAT THIS DOES AND DOES NOT ESTABLISH, stated plainly because the obvious
-// reading is wrong and a test named for StopHookActive would be claiming
-// coverage that does not exist.
-//
-// The engine has a re-entry guard: `session stop` returns early when the
-// payload carries stop_hook_active, on the reasoning that a cycle already
-// refused once must not refuse again and trap the agent in a loop it cannot
-// leave. That guard is NOT exercised here. Measured against this harness by
-// dumping every payload the cycle handed a hook: the mock re-runs the refused
-// turn eight times and the flag never arrives set, so completeCycle takes the
-// ordinary path every time and the rule is asked again on each pass. A test
-// asserting "the guard stopped the loop" would pass on an engine with the guard
-// deleted.
-//
-// So what is asserted is the weaker thing that IS observable through the real
-// wiring: a session where the rule refuses on every pass terminates rather than
-// running forever, and the bound comes from the harness's own retry cap. The
-// count is logged rather than asserted exactly — it is the harness's behaviour,
-// not the engine's contract.
-//
-// The re-entry guard itself is a unit-level claim (`session stop` returning
-// early on stop_hook_active) and belongs where the payload can be constructed
-// directly; it cannot be reached from here until the mock sets the flag on a
-// re-run.
+// A refused Stop is judged again on every retry; what ends a loop is the
+// project's stop_hook_block_cap (default 8) or, failing that, the harness's own
+// cap. Measured against this harness: the mock re-runs the refused turn and does
+// not set stop_hook_active on a root re-run, so each pass here is a fresh
+// sequence and the bound comes from the harness's retry cap. So what is asserted
+// is the observable thing: a session where the rule refuses on every pass
+// terminates rather than running forever. The count is logged rather than
+// asserted exactly — it is the harness's behaviour, not the engine's contract.
+// The engine's cap is covered at unit level (TestStopHookBlockCap_*), where the
+// payload can be constructed directly.
 func TestT024_04_ARefusingSessionStillTerminates(t *testing.T) {
 	e, proj := project(t)
 	ranLog := refusingGuardrail(t, e, proj, "looper", "still not acceptable")
