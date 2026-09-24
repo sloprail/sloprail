@@ -71,8 +71,22 @@ checks:
   # SLOPRAIL_LAUNCHED_BY.
   #
   # model is size-md; the sibling judges' exact pin) — an unpinned model
-  # resolves larger and this can fire several times per turn. timeout 25s sits
-  # under the engine's 30s check bound so the judge's own limit fires first.
+  # resolves larger and this can fire several times per turn.
+  #
+  # timeout was 25s, deliberately under the ENGINE's own 30s check-timeout
+  # default (dispatch/exec.go's defaultCheckTimeout) so this judge's bound
+  # fired before that fallback could. That reasoning is sound on its own
+  # terms, but 25s (and even the engine's 30s) is tight relative to the
+  # REAL outer bound: Claude Code's own hook timeout is 600s (confirmed
+  # against the hooks reference), and this judge fires on every write to a
+  # guardrail's own .sh/.md.j2 — under real load (a nested sr-agent call
+  # competing with an already-running session, several checks queued in one
+  # turn) 25s was measured to time out repeatedly, refusing a clean write
+  # for a reason that has nothing to do with the write's own content. 90s
+  # keeps the same "fire before the engine's own default, fire well before
+  # Claude Code's 600s ceiling" ordering, with real headroom for a judge
+  # call under load instead of none.
+  #
   # allowed_tools: [Read] — the rules and the file content are both IN the prompt,
   # so the judge needs no tools to reason; Read is the one conservative grant that
   # lets it corroborate the file on disk if it chooses. The Write the verdict file
@@ -81,5 +95,5 @@ checks:
   - prepare: ./prepare.sh
     judge: ./judge.md.j2
     model: size-md
-    timeout: 25s
+    timeout: 90s
     allowed_tools: [Read]

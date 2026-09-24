@@ -17,7 +17,10 @@ checks:
   # instrument" test says this belongs to a judge; prepare.sh hands it the
   # fixture's own rule/skill bodies so it can recognize a paraphrase, not
   # just a literal match.
+  # timeout: was 30s (the engine's own default, restated). Claude Code's own
+  # hook timeout is 600s — 30s left little headroom for a judge call under
+  # real load, and was measured to time out. 90s keeps real margin.
   - prepare: ./prepare.sh
     judge: ./judge.md.j2
     model: size-md
-    timeout: 30s
+    timeout: 90s

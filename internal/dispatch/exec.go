@@ -28,17 +28,26 @@ import (
 // it is killed and read as a refusal, when the check names no timeout of its
 // own.
 //
-// Generous because a judge is a model call. It is the same 30s the old dispatch
-// uses for one hook, and it sits under the harness's own deadline for the same
-// reason: whichever bound fires first decides what the user sees, and only this
-// one can name the rule.
+// Was 30s (the old dispatch's own bound for one hook), on the reasoning that
+// it "sits under the harness's own deadline": whichever bound fires first
+// decides what the user sees, and only this one can name the rule. That
+// reasoning was sound but the harness's actual deadline was never measured —
+// Claude Code's own hook timeout is 600s (confirmed against the hooks
+// reference), twenty times this bound. Under real load (a nested sr-agent
+// judge call competing with an already-running session, several checks
+// queued in one turn) 30s was measured to time out repeatedly, refusing a
+// clean write for a reason that has nothing to do with its content — the
+// exact "a check that could not run must refuse" failure mode this bound
+// exists to produce ON PURPOSE for a genuinely wedged check, firing instead
+// on an ordinary one that was simply slow. 90s keeps real margin under the
+// true 600s ceiling while still firing well before it.
 //
 // A judge check may OVERRIDE this with its own `timeout` (dot-dir-file-store/
 // main.tsp Check.timeout) — a hard invariant-checking rubric can legitimately
 // take longer than a quick one, so the bound is per-judge. runShell takes the
 // resolved timeout as a parameter and falls back to this when it is zero; a
 // script/prepare has no `timeout` field and always runs under this default.
-const defaultCheckTimeout = 30 * time.Second
+const defaultCheckTimeout = 90 * time.Second
 
 // checkKillGrace caps how long Wait may block after the process group is killed.
 // SIGKILL cannot be caught, so this is only reached by a descendant wedged in an

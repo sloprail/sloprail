@@ -14,6 +14,9 @@ checks:
   # SR_EVAL_TRANSCRIPT anywhere in the file passes a script that reads it
   # into a variable and never consults it, the same shape as any other
   # keyword-proxy-for-meaning mistake. Hand it to a judge instead.
+  # timeout: was 30s (the engine's own default, restated). Claude Code's own
+  # hook timeout is 600s — 30s left little headroom for a judge call under
+  # real load, and was measured to time out. 90s keeps real margin.
   - judge: ./judge.md.j2
     model: size-md
-    timeout: 30s
+    timeout: 90s
