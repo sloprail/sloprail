@@ -45,6 +45,23 @@ if [ -z "$path" ]; then
   exit 1
 fi
 
+# A delete carries oldContent, never newContent, and has no resultKnown
+# field either (events.md: "a delete has none — nothing remains") —
+# judge.md.j2 interpolates event.newContent with no per-kind dispatch, so
+# an undetected delete rendered an EMPTY <judged-file> block, and the model
+# correctly reported it could verify nothing against primitive-usage rules
+# — read by the engine as a refusal of a file that, by the time anyone
+# could act on it, no longer exists to fix. There is nothing left to judge
+# for primitive usage once a file is gone, so this abstains (skip: true)
+# rather than asking the model to judge nothing.
+kind="$(printf '%s' "$payload" | jq -r '.event.kind // empty' 2>/dev/null)"
+case "$kind" in
+  PreFileDelete|PostFileDelete)
+    echo '{"skip": true}'
+    exit 0
+    ;;
+esac
+
 # The guard's own directory, so judge-rules/ resolves under it. The engine sets
 # SR_GUARDRAIL_DIR on every check dispatch (internal/dispatch/exec.go). Absent
 # means the payload did not come from the engine — a hand-made invocation — and a
