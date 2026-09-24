@@ -1,0 +1,13 @@
+description: >
+  Agent is asked to add a regression test in a real, ~1100-file open-source
+  repo (pydantic/pydantic-ai) that has never mentioned the gate, the required
+  skill, or any process — proves examples/required-context-precondition's
+  gate/require-skill-tests actually blocks a real agent's first write under
+  tests/ and that the agent recovers by loading write-model-mocked-tests,
+  against a real (non-mocked) harness and a tree large enough that stumbling
+  onto the skill by luck is not the explanation for a pass.
+repo: https://github.com/pydantic/pydantic-ai.git
+ref: 6c01b5258fb37f82386b1668a4f4a98f1b56f257
+overlay: overlay
+model: claude-sonnet-5,size-md
+score: score.sh

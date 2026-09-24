@@ -1,0 +1,10 @@
+# An eval fixture's prompt.md must not name the very thing it exists to test.
+# sr-eval proves a guardrail changes a REAL agent's behavior; a prompt that
+# names the required skill, the gate, or the .sloprail/ machinery hands the
+# agent the answer instead of letting the guardrail supply it, and a pass
+# proves nothing. preventive: refuse the write before the hint lands, not
+# after — a fixture author should learn this while still writing the prompt.
+match: path matches "^examples/.+/eval/.+/prompt\\.md$"
+preventive: true
+checks:
+  - script: ./no-hints.sh

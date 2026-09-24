@@ -19,7 +19,7 @@
 # copies to `/` when the shell substitution comes back empty. See INSTALL_DIR.
 
 BIN_DIR  := bin
-SERVICES := sr sr-session sr-file sr-mark sr-agent
+SERVICES := sr sr-session sr-file sr-mark sr-agent sr-eval
 BINARIES := $(addprefix $(BIN_DIR)/,$(SERVICES))
 
 # Where distribute-local installs.

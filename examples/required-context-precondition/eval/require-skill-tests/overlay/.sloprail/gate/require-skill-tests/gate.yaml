@@ -1,0 +1,10 @@
+# Writing under tests/ is blocked until write-model-mocked-tests was loaded.
+# This project's own tests must never make real model calls (ALLOW_MODEL_REQUESTS
+# is set False globally) — a test written without that convention in hand is a
+# test that can silently start hitting a real API. `PreFileWrite` expands to
+# create + update.
+on:
+  - event: PreFileWrite
+    match: event.path startsWith "tests/" and event.path endsWith ".py"
+require:
+  - skill: write-model-mocked-tests
