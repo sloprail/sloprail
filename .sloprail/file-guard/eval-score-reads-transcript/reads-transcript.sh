@@ -7,11 +7,27 @@ set -uo pipefail
 
 payload="$(cat)"
 
-result_known=$(printf '%s' "$payload" | jq -r '.event.resultKnown')
-if [ "$result_known" != "true" ]; then
-  echo '{"reason":"the engine could not derive what this write would leave behind, so this cannot be checked before it lands — rerun after the write to get the after-check instead"}'
-  exit 1
-fi
+# resultKnown exists ONLY on PreFileCreate/PreFileUpdate — a Post kind (the
+# settled-file after-check this preventive guard also fires at Stop) carries
+# no such field at all, so reading it unconditionally read Post's absent
+# field as "unknown" and refused every settled write outright. Dispatch on
+# kind first: Post always has settled bytes to read; only the Pre kinds ever
+# need the resultKnown guard.
+kind=$(printf '%s' "$payload" | jq -r '.event.kind')
+case "$kind" in
+  PostFileCreate|PostFileUpdate)
+    ;;
+  PreFileCreate|PreFileUpdate)
+    result_known=$(printf '%s' "$payload" | jq -r '.event.resultKnown')
+    if [ "$result_known" != "true" ]; then
+      echo '{"reason":"the engine could not derive what this write would leave behind, so this cannot be checked before it lands — rerun after the write to get the after-check instead"}'
+      exit 1
+    fi
+    ;;
+  *)
+    exit 0
+    ;;
+esac
 
 content=$(printf '%s' "$payload" | jq -r '.event.newContent')
 
