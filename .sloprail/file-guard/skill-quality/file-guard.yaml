@@ -58,12 +58,10 @@ checks:
   # check that named no allowed_tools would still get Write alone. (The
   # `--allowed-tools "Write Read"` merge is pinned end-to-end by the
   # TestJudgeConfigReachesTheHarness e2e in tests/e2e/engine_repo_judges/.)
-  # timeout: was 25s. Claude Code's own hook timeout is 600s — 25s left almost
-  # no headroom for a judge call under real load (a nested sr-agent call
-  # competing with an already-running session), and was measured to time out
-  # repeatedly, refusing a clean SKILL.md for a reason unrelated to its content.
+  # No explicit timeout: runs under the engine's own default
+  # (internal/dispatch/exec.go's defaultCheckTimeout), so this tracks that
+  # value rather than needing to be kept in sync with it by hand.
   - prepare: ./prepare.sh
     judge: ./judge-skill.md.j2
     model: size-md
-    timeout: 90s
     allowed_tools: [Read]
