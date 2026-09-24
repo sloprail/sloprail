@@ -115,28 +115,34 @@ func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg
 // the module does the scanning. Errors gathering the messages are reported and
 // swallowed inside cycleAgentMessages, which yields an empty list rather than
 // failing — a truthful "no tags seen" for a cycle whose text could not be read.
-func tagEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg *module.Registry, bound []string) []event.Event {
+//
+// end is where the record was read to, for the Stop to record once judged so the
+// next Stop in a still-open cycle can mark what this one saw (seen.go). "" when
+// nothing was read.
+func tagEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg *module.Registry, bound []string) (evs []event.Event, end string) {
 	m, ok := reg.Lookup(tagmod.KindPostTagWrite)
 	if !ok {
 		// No module owns the kind — an impossible state in this build, since
 		// tagmod is registered, but handled rather than assumed.
-		return nil
+		return nil, ""
 	}
 	if !boundTo(bound, tagmod.KindPostTagWrite) {
 		// Nothing binds to it, so the scan is work done to be discarded — and its
 		// cost is a whole-transcript read. Skip it, transcript included.
-		return nil
+		return nil, ""
 	}
 
+	seen, fresh, end := cycleAgentMessages(cmd, store, p)
 	in := module.Input{
-		module.InputPhase:    module.PhasePost,
-		module.InputMessages: cycleAgentMessages(cmd, store, p),
+		module.InputPhase:        module.PhasePost,
+		module.InputSeenMessages: seen,
+		module.InputMessages:     fresh,
 	}
 	evs, err := m.Extract(in)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: module %q: %v\n", m.Name(), err)
 	}
-	return evs
+	return evs, end
 }
 
 // boundTo reports whether a kind is among those something in this project binds

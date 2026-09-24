@@ -49,6 +49,12 @@ const (
 	// the kind: a matcher reads it off an element of the list, and the
 	// declaration describes the list itself.
 	KeyTagLabel = "label"
+
+	// KeyTagSeen is true when the tag was only in text an earlier Stop in this
+	// still-open cycle was already shown — the tag is being re-sent, not newly
+	// written. A tag the agent wrote since the previous Stop is `seen: false`,
+	// even if it had also been written before. See module.InputSeenMessages.
+	KeyTagSeen = "seen"
 )
 
 // tagPattern matches one `#tag`-shaped token.
@@ -162,6 +168,7 @@ func (*Module) Kinds() []module.KindDecl {
 						Type: module.TypeMap,
 						Fields: []module.FieldDecl{
 							{Name: KeyTagLabel, Type: module.TypeString},
+							{Name: KeyTagSeen, Type: module.TypeBool},
 						},
 					},
 				},
@@ -206,7 +213,8 @@ func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 		return nil, nil
 	}
 
-	return []event.Event{TagEvent{Tags: scan(messages)}.Event()}, nil
+	seenMessages, _ := in[module.InputSeenMessages].([]string)
+	return []event.Event{TagEvent{Tags: scan(seenMessages, messages)}.Event()}, nil
 }
 
 // scan finds every `#tag` in the messages, deduplicated by label with
@@ -224,19 +232,31 @@ func (m *Module) Extract(in module.Input) ([]event.Event, error) {
 // noise. This is a judgment call the spec leaves open: it names order and "every
 // tag" but not repetition, and the set-with-order reading is what serves the one
 // consumer the spec describes.
-func scan(messages []string) []Tag {
-	seen := map[string]bool{}
+//
+// Text an earlier Stop was already shown (seenMessages) is scanned first, and
+// its tags are marked Seen. A label that turns up again in the new text is not a
+// re-send — the agent wrote it again — so it is un-marked, keeping its first
+// position. Seen therefore means "only in re-sent text".
+func scan(seenMessages, messages []string) []Tag {
+	index := map[string]int{}
 	var tags []Tag
-	for _, msg := range messages {
-		msg = stripQuoted(msg)
-		for _, match := range tagPattern.FindAllStringSubmatch(msg, -1) {
-			label := match[2]
-			if seen[label] {
-				continue
+	add := func(msgs []string, seen bool) {
+		for _, msg := range msgs {
+			msg = stripQuoted(msg)
+			for _, match := range tagPattern.FindAllStringSubmatch(msg, -1) {
+				label := match[2]
+				if i, ok := index[label]; ok {
+					if !seen {
+						tags[i].Seen = false
+					}
+					continue
+				}
+				index[label] = len(tags)
+				tags = append(tags, Tag{Label: label, Seen: seen})
 			}
-			seen[label] = true
-			tags = append(tags, Tag{Label: label})
 		}
 	}
+	add(seenMessages, true)
+	add(messages, false)
 	return tags
 }

@@ -34,66 +34,117 @@ func TestModule_DeclaresPostTagWriteWithATagsList(t *testing.T) {
 	assert.Equal(t, module.TypeList, tags.Type)
 	require.NotNil(t, tags.Elem, "a nil Elem leaves a predicate over tags unchecked")
 	assert.Equal(t, module.TypeMap, tags.Elem.Type)
-	require.Len(t, tags.Elem.Fields, 1)
+	require.Len(t, tags.Elem.Fields, 2)
 	assert.Equal(t, KeyTagLabel, tags.Elem.Fields[0].Name)
 	assert.Equal(t, module.TypeString, tags.Elem.Fields[0].Type)
+	assert.Equal(t, KeyTagSeen, tags.Elem.Fields[1].Name)
+	assert.Equal(t, module.TypeBool, tags.Elem.Fields[1].Type)
+}
+
+// --- seen: a tag re-sent from text an earlier Stop already saw ---------------
+
+// A refused reply's text is delivered again with the retry. Its tags are marked
+// seen; the retry's own tags are not.
+func TestScan_TagsOnlyInSeenTextAreSeen(t *testing.T) {
+	got := scan([]string{"Done. #skip"}, []string{"Saved. #preference"})
+	assert.Equal(t, []Tag{{Label: "skip", Seen: true}, {Label: "preference"}}, got)
+}
+
+// Written again since the previous Stop, a tag is not a re-send — even though
+// it was also in the seen text. It keeps its first position.
+func TestScan_ATagWrittenAgainIsNotSeen(t *testing.T) {
+	got := scan([]string{"#skip #decision"}, []string{"still #skip"})
+	assert.Equal(t, []Tag{{Label: "skip"}, {Label: "decision", Seen: true}}, got)
+}
+
+// Seen text is stripped of quoted forms like any other: a quoted tag in it is
+// no tag at all, seen or not.
+func TestScan_SeenTextIsStrippedToo(t *testing.T) {
+	assert.Empty(t, scan([]string{"`#skip`"}, nil))
+}
+
+// Through Extract and the wire form: seen rides on each tag, and a caller that
+// offers no seen text gets every tag unseen — the pre-existing behaviour.
+func TestExtract_CarriesSeenOnTheWire(t *testing.T) {
+	evs, err := New().Extract(module.Input{
+		module.InputPhase:        module.PhasePost,
+		module.InputSeenMessages: []string{"#skip"},
+		module.InputMessages:     []string{"#preference"},
+	})
+	require.NoError(t, err)
+	require.Len(t, evs, 1)
+	assert.Equal(t, []any{
+		map[string]any{KeyTagLabel: "skip", KeyTagSeen: true},
+		map[string]any{KeyTagLabel: "preference", KeyTagSeen: false},
+	}, evs[0].Fields[FieldTags])
+
+	back, err := FromEvent(evs[0])
+	require.NoError(t, err)
+	assert.Equal(t, []Tag{{Label: "skip", Seen: true}, {Label: "preference"}}, back.Tags)
+
+	evs, err = New().Extract(module.Input{
+		module.InputPhase:    module.PhasePost,
+		module.InputMessages: []string{"#skip"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []any{map[string]any{KeyTagLabel: "skip", KeyTagSeen: false}}, evs[0].Fields[FieldTags])
 }
 
 // --- the scanner ------------------------------------------------------------
 
 func TestScan_FindsASingleTag(t *testing.T) {
-	assert.Equal(t, []string{"update"}, labels(scan([]string{"#update"})))
+	assert.Equal(t, []string{"update"}, labels(scan(nil, []string{"#update"})))
 }
 
 // multiple tags in one message — the bulk case the event exists for.
 func TestScan_MultipleTagsInOneMessage(t *testing.T) {
 	assert.Equal(t, []string{"update", "decision"},
-		labels(scan([]string{"#update #decision"})),
+		labels(scan(nil, []string{"#update #decision"})),
 		"a message commonly carries more than one tag")
 }
 
 // tags mid-sentence, not only at the start of a line.
 func TestScan_TagsMidSentence(t *testing.T) {
 	assert.Equal(t, []string{"refactor"},
-		labels(scan([]string{"I did a #refactor here"})))
+		labels(scan(nil, []string{"I did a #refactor here"})))
 	assert.Equal(t, []string{"a", "b"},
-		labels(scan([]string{"start #a middle #b end"})))
+		labels(scan(nil, []string{"start #a middle #b end"})))
 }
 
 // no tags at all — the scanner returns nothing, and the module still emits an
 // empty event (tested separately).
 func TestScan_NoTags(t *testing.T) {
-	assert.Empty(t, scan([]string{"nothing tagged here", "still nothing"}))
-	assert.Empty(t, scan(nil))
-	assert.Empty(t, scan([]string{""}))
+	assert.Empty(t, scan(nil, []string{"nothing tagged here", "still nothing"}))
+	assert.Empty(t, scan(nil, nil))
+	assert.Empty(t, scan(nil, []string{""}))
 }
 
 // dedup: the same label twice yields one tag, first-occurrence order kept.
 func TestScan_DedupsByLabelKeepingOrder(t *testing.T) {
 	assert.Equal(t, []string{"update", "decision"},
-		labels(scan([]string{"#update then #decision then #update again"})),
+		labels(scan(nil, []string{"#update then #decision then #update again"})),
 		"a repeated tag is the same tag; the set is what a context checks membership against")
 }
 
 // dedup spans messages: a tag in message 1 and again in message 3 is one tag.
 func TestScan_DedupAcrossMessages(t *testing.T) {
 	assert.Equal(t, []string{"decision", "update"},
-		labels(scan([]string{"#decision", "untagged", "#update and #decision"})),
+		labels(scan(nil, []string{"#decision", "untagged", "#update and #decision"})),
 		"order is first-appearance across the whole cycle")
 }
 
 // A markdown heading is `#` followed by a space — punctuation, not a tag.
 func TestScan_MarkdownHeadingIsNotATag(t *testing.T) {
-	assert.Empty(t, scan([]string{"# Heading", "## Subheading", "###"}),
+	assert.Empty(t, scan(nil, []string{"# Heading", "## Subheading", "###"}),
 		"# followed by whitespace is a heading, not a tag")
 }
 
 // A `#` mid-token — `foo#bar`, a URL fragment — is not a tag: the `#` must sit
 // at a word boundary.
 func TestScan_HashMidTokenIsNotATag(t *testing.T) {
-	assert.Empty(t, scan([]string{"see example.com#section"}),
+	assert.Empty(t, scan(nil, []string{"see example.com#section"}),
 		"a URL fragment's # is inside a token, not at a word boundary")
-	assert.Empty(t, scan([]string{"path/to/thing#anchor"}),
+	assert.Empty(t, scan(nil, []string{"path/to/thing#anchor"}),
 		"a # after a non-space character is not a tag")
 
 	// A `#` that IS at a word boundary and starts with a letter matches, even
@@ -101,22 +152,22 @@ func TestScan_HashMidTokenIsNotATag(t *testing.T) {
 	// and reading it out of a documentation example is visible (the rule fires
 	// and someone looks) rather than silent. Asserted so the boundary rule is
 	// exact rather than assumed.
-	assert.Equal(t, []string{"ffffff"}, labels(scan([]string{"the color is #ffffff"})))
+	assert.Equal(t, []string{"ffffff"}, labels(scan(nil, []string{"the color is #ffffff"})))
 }
 
 // A tag may not start with a digit — that tells it from an issue reference.
 func TestScan_IssueReferenceIsNotATag(t *testing.T) {
-	assert.Empty(t, scan([]string{"fixes #42", "see PR #1234"}),
+	assert.Empty(t, scan(nil, []string{"fixes #42", "see PR #1234"}),
 		"#<digits> is an issue reference, not a tag")
 	// but a tag whose FIRST char is a letter and which contains digits is fine.
-	assert.Equal(t, []string{"v2"}, labels(scan([]string{"ship #v2"})))
+	assert.Equal(t, []string{"v2"}, labels(scan(nil, []string{"ship #v2"})))
 }
 
 // Hyphens and underscores are part of a tag; a trailing period is not.
 func TestScan_TagBodyCharacters(t *testing.T) {
-	assert.Equal(t, []string{"no-slop"}, labels(scan([]string{"the #no-slop rule"})))
-	assert.Equal(t, []string{"no_slop"}, labels(scan([]string{"the #no_slop rule"})))
-	assert.Equal(t, []string{"done"}, labels(scan([]string{"we are #done."})),
+	assert.Equal(t, []string{"no-slop"}, labels(scan(nil, []string{"the #no-slop rule"})))
+	assert.Equal(t, []string{"no_slop"}, labels(scan(nil, []string{"the #no_slop rule"})))
+	assert.Equal(t, []string{"done"}, labels(scan(nil, []string{"we are #done."})),
 		"a trailing period ends the tag and stays in the prose")
 }
 
@@ -132,22 +183,22 @@ func TestScan_TagBodyCharacters(t *testing.T) {
 
 // A fenced example showing what to reply is not the agent replying.
 func TestScan_FencedCodeBlockIsNotATag(t *testing.T) {
-	assert.Empty(t, scan([]string{"Here's an example:\n```\nreply with #skip if nothing to record\n```\nThat's the mechanism."}),
+	assert.Empty(t, scan(nil, []string{"Here's an example:\n```\nreply with #skip if nothing to record\n```\nThat's the mechanism."}),
 		"a #tag inside a fenced block is being SHOWN, not declared")
-	assert.Empty(t, scan([]string{"~~~\nsome code #decision in a comment\n~~~"}),
+	assert.Empty(t, scan(nil, []string{"~~~\nsome code #decision in a comment\n~~~"}),
 		"the tilde fence strips the same way as the backtick fence")
 }
 
 // An inline code span naming a tag while explaining it is not using it.
 func TestScan_InlineCodeSpanIsNotATag(t *testing.T) {
-	assert.Empty(t, scan([]string{"The token `#skip` means nothing here, explaining it."}),
+	assert.Empty(t, scan(nil, []string{"The token `#skip` means nothing here, explaining it."}),
 		"an inline span is a mention, not a declaration")
 }
 
 // A blockquote of a rule's own refusal — which necessarily CONTAINS the literal
 // tag it is telling the agent to use — is not the agent using it.
 func TestScan_BlockquotedLineIsNotATag(t *testing.T) {
-	assert.Empty(t, scan([]string{"> MEMORY GUARDRAIL: ... use #skip if nothing needs recording.\nI read the above."}),
+	assert.Empty(t, scan(nil, []string{"> MEMORY GUARDRAIL: ... use #skip if nothing needs recording.\nI read the above."}),
 		"a quoted line is not the agent's own words")
 }
 
@@ -155,10 +206,10 @@ func TestScan_BlockquotedLineIsNotATag(t *testing.T) {
 // removes only the quoted/shown forms, not the tag pattern's own reach.
 func TestScan_UnquotedTagStillMatchesAlongsideStrippedOnes(t *testing.T) {
 	assert.Equal(t, []string{"skip"},
-		labels(scan([]string{"Nothing to record. #skip"})),
+		labels(scan(nil, []string{"Nothing to record. #skip"})),
 		"genuine, unquoted use is unaffected")
 	assert.Equal(t, []string{"real"},
-		labels(scan([]string{"`#fake` is just an example; #real is what I mean."})),
+		labels(scan(nil, []string{"`#fake` is just an example; #real is what I mean."})),
 		"a quoted mention and a genuine use in the SAME message: only the genuine one counts")
 }
 

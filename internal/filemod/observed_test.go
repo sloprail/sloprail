@@ -180,6 +180,7 @@ func TestObserved_DeleteCarriesTheBytesAboutToBeLost(t *testing.T) {
 		FieldOldMarkers: []any{
 			map[string]any{KeyMarkerKind: "doc", KeyMarkerFQN: "gone.thing", KeyMarkerLine: 1},
 		},
+		FieldSeen: false, // the module never knows; the session sets it
 	}, events[0].Fields,
 		"a delete carries the baseline bytes and their markers, and no result fields")
 	assert.NotContains(t, events[0].Fields, FieldNewContent, "a delete leaves no result")
@@ -265,6 +266,7 @@ func TestObserved_OneEventPerFile(t *testing.T) {
 			FieldPath:       "a.md",
 			FieldNewContent: "content of a.md\n",
 			FieldNewMarkers: []any{},
+			FieldSeen:       false,
 		}},
 		{Kind: KindPostUpdate, Fields: map[string]any{
 			FieldPath:       "b.md",
@@ -272,11 +274,13 @@ func TestObserved_OneEventPerFile(t *testing.T) {
 			FieldNewContent: "content of b.md\n",
 			FieldOldMarkers: []any{},
 			FieldNewMarkers: []any{},
+			FieldSeen:       false,
 		}},
 		{Kind: KindPostDelete, Fields: map[string]any{
 			FieldPath:       "c.md",
 			FieldOldContent: "",
 			FieldOldMarkers: []any{},
+			FieldSeen:       false,
 		}},
 	}, events)
 }

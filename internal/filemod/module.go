@@ -82,6 +82,16 @@ const (
 	// kinds are settled, their bytes read off disk.
 	FieldResultKnown = "resultKnown"
 
+	// FieldSeen is true on a Post file event when an earlier Stop was already
+	// handed this file with the same content: the event is a re-send, not a
+	// change since the previous Stop. The Post events are the tree difference
+	// against the session's baseline, so a file stays in it — and is delivered
+	// on every Stop — until committed; `seen` is how a rule tells the two apart.
+	// Declared on the three Post kinds. This module always emits it false: which
+	// Stop saw what is the session's knowledge, and the service sets it (see
+	// services/sr-session/seen.go).
+	FieldSeen = "seen"
+
 	// Keys within one entry of a markers list. Not fields of the kind: a matcher
 	// reads them off an element of the list, and the declaration describes the
 	// list itself.
@@ -116,6 +126,7 @@ func (*Module) Kinds() []module.KindDecl {
 	oldContent := module.FieldDecl{Name: FieldOldContent, Type: module.TypeString}
 	newContent := module.FieldDecl{Name: FieldNewContent, Type: module.TypeString}
 	resultKnown := module.FieldDecl{Name: FieldResultKnown, Type: module.TypeBool}
+	seen := module.FieldDecl{Name: FieldSeen, Type: module.TypeBool}
 
 	// A markers list declares its element's shape, and that is the whole point
 	// of the Elem field. A list whose Elem is nil has its collection checked and
@@ -237,8 +248,8 @@ func (*Module) Kinds() []module.KindDecl {
 		// be predicted, so there is no resultKnown here. oldContent comes from
 		// the session baseline (the prior bytes are no longer on disk); newContent
 		// is read from disk as it now sits.
-		{Name: KindPostCreate, Fields: []module.FieldDecl{path, newContent, newMarkers}},
-		{Name: KindPostUpdate, Fields: []module.FieldDecl{path, oldContent, newContent, oldMarkers, newMarkers}},
-		{Name: KindPostDelete, Fields: []module.FieldDecl{path, oldContent, oldMarkers}},
+		{Name: KindPostCreate, Fields: []module.FieldDecl{path, newContent, newMarkers, seen}},
+		{Name: KindPostUpdate, Fields: []module.FieldDecl{path, oldContent, newContent, oldMarkers, newMarkers, seen}},
+		{Name: KindPostDelete, Fields: []module.FieldDecl{path, oldContent, oldMarkers, seen}},
 	}
 }
