@@ -60,12 +60,35 @@ func TestEntryCarriesNothingBeyondTheShape(t *testing.T) {
 
 	allowed := map[string]bool{
 		"type": true, "uuid": true, "parentUuid": true, "logicalParentUuid": true,
-		"timestamp": true, "isSidechain": true, "message": true, "toolUseResult": true,
+		"timestamp": true, "isSidechain": true, "isMeta": true, "message": true, "toolUseResult": true,
 	}
 	for k := range got {
 		assert.True(t, allowed[k],
 			"an entry carries %q, which no rule asks about — every field kept is one each new harness must be normalised into", k)
 	}
+}
+
+// TestReadCarriesIsMeta: a Stop hook's refusal is recorded as a user entry with
+// string content, the same shape as something the person typed; only isMeta
+// tells them apart. A rule counting the person's turns (tag-the-turn scopes a
+// memory write to the user's turn, not to one reply of it) cannot do so without
+// it. Omitted when false, so an ordinary entry's shape is unchanged.
+func TestReadCarriesIsMeta(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		`{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"go"}}`,
+		`{"type":"user","uuid":"u2","parentUuid":"u1","isMeta":true,`+
+			`"message":{"role":"user","content":"Stop hook feedback:\nno tag"}}`,
+	)
+	entries, err := Read(path)
+	require.NoError(t, err, "Read")
+	require.Len(t, entries, 2)
+	assert.False(t, entries[0].IsMeta, "what the person typed is not meta")
+	assert.True(t, entries[1].IsMeta, "the harness's own Stop feedback must be told apart from the person")
+
+	blob, err := json.Marshal(entries[0])
+	require.NoError(t, err)
+	assert.NotContains(t, string(blob), "isMeta", "false is omitted, so an ordinary entry is unchanged")
 }
 
 // TestReadSkipsRecordsWithoutAUUID: Claude Code writes preamble and bookkeeping

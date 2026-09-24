@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,12 +66,10 @@ exit 0
 //   - the sub-agent goes round again — the retry loop is driven;
 //   - and it FINISHES, rather than running to the harness's cap.
 //
-// MEASURED, and it is the part worth knowing: on the retry the guardrail runs
-// exactly ONCE more in total, not once per file. `stop_hook_active` is set on
-// the re-fired stop and subagent-stop returns immediately without judging
-// anything — so the cycle that follows a refusal does no work at all. That is
-// the documented behaviour of the StopHookActive branch, and this is what it
-// looks like from outside.
+// On the retry the re-fired stop carries `stop_hook_active` and IS judged — a
+// retry is not a pass — and this rule relents on its second look, so the cycle
+// completes. The cap on how many times a retry may be refused is the project's
+// stop_hook_block_cap (T015_08 / T015_08b).
 func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -137,40 +136,34 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 			"sending the agent round again:\n%s", res.Output)
 	}
 
-	// The guardrail ran twice in total across the two cycles — once to refuse,
-	// and once more. Not once per file on the retry: the re-fired stop carries
-	// stop_hook_active and subagent-stop returns without judging, which is the
-	// StopHookActive branch doing exactly what it documents.
+	// The guardrail ran a bounded number of times: it refused once and relented
+	// on the judged retry, so the sub-agent did not loop.
 	lines := subLedger(t, proj, theWorktree(t, proj), "onceonly", "log")
 	if len(lines) == 0 {
 		t.Fatalf("the guardrail never ran at the sub-agent's cycle at all")
 	}
 	if len(lines) > 4 {
-		t.Fatalf("the guardrail ran %d times (%v). A cycle already refused once must not be "+
-			"judged again and again — that is the loop the sub-agent cannot leave", len(lines), lines)
+		t.Fatalf("the guardrail ran %d times (%v). It relents on its second look, so the "+
+			"judged retry should have passed and ended the loop", len(lines), lines)
 	}
 }
 
-// T015_08: the same refusal, re-fired, does nothing — the StopHookActive guard,
-// observed from outside.
+// T015_08: under `stop_hook_block_cap: 1`, the same refusal re-fired judges
+// nothing — the project's opt-in to the old one-refusal behaviour, observed from
+// outside.
 //
 // Its own test because the property is not "the sub-agent finished" but "the
 // second stop judged NOTHING". A rule that refuses EVERY time is the shape that
 // separates them: the first cycle refuses, the stop re-fires with
-// stop_hook_active set, and subagent-stop must return immediately rather than
-// refuse a second time.
+// stop_hook_active set, the cap of 1 is reached, and subagent-stop lets it end
+// rather than refuse a second time.
 //
-// If it did not, the sub-agent would be refused on every retry until the
-// harness's cap — which is what the guard exists to prevent and what this test
-// would then see.
-//
-// The engine-side contract is TestSubagentStopHonoursStopHookActive; this is the
-// same claim through a user's own wiring, where the retry is real rather than a
-// payload field set by hand.
-func TestT015_08_AReFiredSubagentStopJudgesNothingAgain(t *testing.T) {
+// The config is written before GitInit so the sub-agent's worktree carries it.
+func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysScript})
+	writeBlockCap(t, proj, 1)
 	e.GitInit(proj)
 
 	sub := subScenario(t, harness.Turns("sub done",
@@ -208,8 +201,50 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgain(t *testing.T) {
 	}
 	if len(lines) > 2 {
 		t.Fatalf("the guardrail ran %d times (%v) against one file. A cycle already refused once "+
-			"is left alone entirely; judging it again is the retry loop this guard exists to "+
-			"prevent", len(lines), lines)
+			"under stop_hook_block_cap: 1 is left alone; judging it again ignores the project's "+
+			"cap", len(lines), lines)
+	}
+}
+
+// T015_08b: by DEFAULT a re-fired stop is judged — an agent does not pass a rule
+// by being sent round again. An always-refusing rule is therefore asked on the
+// retry too, and the loop still ends: the engine's default cap (8, the harness's
+// own) lets the turn end once it is reached, before the harness has to override.
+func TestT015_08b_ByDefaultAReFiredSubagentStopIsJudged(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysScript})
+	e.GitInit(proj)
+
+	sub := subScenario(t, harness.Turns("sub done",
+		Bash("sb1", "echo x > refused-work.md"),
+	))
+	res := e.Run(proj, "s-015-08b", "delegate work that is always refused", Turns("root done",
+		Dispatch("d1", "do the job", sub, "worktree"),
+	))
+
+	if !res.Saw("root done") {
+		t.Fatalf("the dispatching session never completed — the refusal loop did not end:\n%s", res.Output)
+	}
+	if hitRetryCap(res.Output) {
+		t.Fatalf("the harness had to override the hook; the engine's own cap should have ended the loop first:\n%s", res.Output)
+	}
+	lines := subLedger(t, proj, theWorktree(t, proj), "always", "log")
+	if len(lines) < 2 {
+		t.Fatalf("the guardrail ran %d time(s) (%v): the re-fired stop was not judged, so a "+
+			"rule gave way to the sub-agent simply being sent round again", len(lines), lines)
+	}
+}
+
+// writeBlockCap sets the project's stop_hook_block_cap in .sloprail/config.yaml.
+func writeBlockCap(t *testing.T, proj string, n int) {
+	t.Helper()
+	cfg := filepath.Join(proj, ".sloprail", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte(fmt.Sprintf("stop_hook_block_cap: %d\n", n)), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

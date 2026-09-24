@@ -11,6 +11,10 @@ type Tag struct {
 	// Label is the tag's own text, without the leading `#` — `update` for
 	// `#update`.
 	Label string
+
+	// Seen is true when the tag was only in text an earlier Stop in this
+	// still-open cycle was already shown. See KeyTagSeen.
+	Seen bool
 }
 
 // TagEvent is what this module's own code passes around.
@@ -33,7 +37,7 @@ type TagEvent struct {
 func (t TagEvent) Event() event.Event {
 	tags := make([]any, 0, len(t.Tags))
 	for _, tag := range t.Tags {
-		tags = append(tags, map[string]any{KeyTagLabel: tag.Label})
+		tags = append(tags, map[string]any{KeyTagLabel: tag.Label, KeyTagSeen: tag.Seen})
 	}
 	return event.Event{
 		Kind:   KindPostTagWrite,
@@ -61,7 +65,8 @@ func FromEvent(e event.Event) (TagEvent, error) {
 			continue
 		}
 		if label, ok := m[KeyTagLabel].(string); ok {
-			t.Tags = append(t.Tags, Tag{Label: label})
+			seen, _ := m[KeyTagSeen].(bool)
+			t.Tags = append(t.Tags, Tag{Label: label, Seen: seen})
 		}
 	}
 	return t, nil

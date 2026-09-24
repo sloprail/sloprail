@@ -83,38 +83,18 @@ func TestSubagentStopStandsDownRatherThanActingAsTheParent(t *testing.T) {
 	assert.Contains(t, stderr, "rather than judging it as the session that dispatched it")
 }
 
-// TestSubagentStopHonoursStopHookActive: already refused once this cycle, so
-// refusing again would be a loop the sub-agent cannot leave.
-//
-// The command's own doc cites this test as the contract for doing NOTHING here
-// — not even discarding the read position the way stop's interrupted path does
-// — so it is worth being precise about what the test actually pins, and what it
-// leaves open.
-//
-// Pinned: no second refusal, and nothing on the block channel. Those are the
-// deadlock conditions, and they are what the assertions below check.
-//
-// NOT pinned, and deliberately no longer implied: silence. An earlier version
-// asserted an empty stderr, which quietly asserted that this path does no
-// bookkeeping at all — a much stronger claim than the deadlock one, and the
-// reason a later attempt to add the discard here read as a regression rather
-// than as a decision to weigh.
-//
-// The open consequence, named rather than left implicit: a sub-agent whose
-// cycle was refused leaves MetaTranscriptOffered standing. On the root that
-// stale position is cleared precisely because a later cycle which queries
-// nothing would otherwise take the mark from it and declare turns judged that
-// nothing read. The same hazard exists for a sub-agent that goes round again
-// after a refusal. It is not closed here because closing it means opening the
-// store on a path whose whole purpose is to do nothing — a real trade rather
-// than an oversight, and one worth revisiting if a sub-agent is ever observed
-// advancing its mark over turns it never saw.
-func TestSubagentStopHonoursStopHookActive(t *testing.T) {
+// TestSubagentStopRetryIsNotABlockOnPlumbing: a sub-agent's retry
+// (stop_hook_active) is judged like any other Stop now — the project's
+// stop_hook_block_cap, not the flag, is what ends a refusal loop. What must
+// still hold on a retry is the plumbing rule every path here keeps: a record
+// that cannot be opened is reported and the cycle ends, never a block the
+// sub-agent cannot clear by retrying. (The judging itself is covered for the
+// root by the TestStopHookBlockCap_* tests; both commands share completeCycle.)
+func TestSubagentStopRetryIsNotABlockOnPlumbing(t *testing.T) {
 	stdout, _, err := runSubagentStop(t,
 		`{"transcript_path":"/nowhere/s.jsonl","agent_id":"abc","stop_hook_active":true}`)
-	require.NoError(t, err, "a second refusal would be a loop the sub-agent cannot leave")
-	assert.Empty(t, stdout,
-		"nothing may be written to the block channel on a cycle that was already refused once")
+	require.NoError(t, err, "an unopenable record must not become a block the sub-agent cannot leave")
+	assert.Empty(t, stdout, "nothing may be written to the block channel over plumbing")
 }
 
 // subagentSession builds a real parent transcript with a sub-agent's record

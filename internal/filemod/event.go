@@ -42,6 +42,10 @@ type FileEvent struct {
 	// NewMarkers are the `sr:` annotations the NEW text carries — the markers of
 	// NewContent. Set on the create and update kinds; a delete has none.
 	NewMarkers []Marker
+
+	// Seen says a Post event re-sends a file an earlier Stop was already handed
+	// with this content. See FieldSeen; set by the session, not this module.
+	Seen bool
 }
 
 // Event converts to the wire form under the given kind.
@@ -79,6 +83,9 @@ func (f FileEvent) Event(kind string) event.Event {
 	// defect this pair exists to avoid.
 	if kindDeclares(kind, FieldResultKnown) {
 		fields[FieldResultKnown] = f.ResultKnown
+	}
+	if kindDeclares(kind, FieldSeen) {
+		fields[FieldSeen] = f.Seen
 	}
 	if kindDeclares(kind, FieldOldMarkers) {
 		fields[FieldOldMarkers] = markerFields(f.OldMarkers)
@@ -142,6 +149,7 @@ func FromEvent(e event.Event) (FileEvent, error) {
 	if v, ok := e.Fields[FieldNewContent].(string); ok {
 		f.NewContent = v
 	}
+	f.Seen, _ = e.Fields[FieldSeen].(bool)
 	f.OldMarkers = markersFromField(e.Fields[FieldOldMarkers])
 	f.NewMarkers = markersFromField(e.Fields[FieldNewMarkers])
 	if f.Path == "" {

@@ -67,13 +67,16 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	if root == "" {
 		root = p.Cwd
 	}
+	// Which of those files an earlier Stop was already handed with this content
+	// (`seen`), before any rule reads them. See seen.go.
+	fileSnapshot := markSeenFiles(cmd, store, postFileEvents, root)
 
 	// The cycle's PostTagWrite events too, for a context that recognises itself from
 	// a tag the agent wrote (research-rigor enters on #research). Gathered separately
 	// from the tree difference — a tag lives in prose, not a file change — the same
 	// split the old Post dispatch keeps. File-guards do not trigger on tags (they are
 	// file-STATE), so these go only to the context enters below.
-	tagWriteEvents := tagEvents(cmd, store, p, reg, bound)
+	tagWriteEvents, recordEnd := tagEvents(cmd, store, p, reg, bound)
 
 	// revalidation over the SAME store the caller opened, so a file-guard's verdict
 	// lands where the re-fire reads it. Constructed inline rather than opened afresh
@@ -107,6 +110,11 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// 4. context exits, AFTER gates decided. Pure lifecycle: flips active/inactive,
 	//    never blocks the turn.
 	runContextExits(cmd, loaded.Contexts, stop, scope, store, contextMap, gatesMap)
+
+	// What this Stop was shown, so the next Stop — if this cycle is still open —
+	// can mark the same text and files `seen`. Recorded whether or not a rule
+	// refused: a refused reply is exactly what the retry re-sends.
+	recordStopSeen(cmd, store, fileSnapshot, recordEnd)
 
 	return joinRefusals(refusals)
 }

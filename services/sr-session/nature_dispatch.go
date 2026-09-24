@@ -87,8 +87,19 @@ func natureDispatchStop(cmd *cobra.Command, p HookPayload, reg *module.Registry)
 // identified yields an empty SessionID, which is not a reason to refuse: a gate
 // deciding on the event's own facts still works, and a `{skill}` prerequisite that
 // needs the transcript fails closed on its own if the record is absent.
+//
+// The workspace is the tree's anchor (its git root), not the raw cwd. It reaches
+// every script as SR_WORKSPACE, documented as "the repository root — prepend it
+// to a `.event.path`", and event paths ARE repository-relative; after an agent's
+// `cd memories/tasks`, the raw cwd made `$SR_WORKSPACE/$path` name a file that
+// does not exist. An empty cwd stays empty so workspaceEnv still sets the
+// unresolved sentinel rather than an anchor guessed from this process's own
+// directory.
 func natureHookScope(cmd *cobra.Command, p HookPayload) hookScope {
-	scope := hookScope{Workspace: p.Cwd}
+	scope := hookScope{}
+	if p.Cwd != "" {
+		scope.Workspace = workspaceAnchor(p.Cwd)
+	}
 	if id, err := stableID(p); err == nil {
 		scope.SessionID = id
 	} else {

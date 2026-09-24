@@ -31,6 +31,26 @@ const (
 	// whole point. Deriving the read position afresh at the end of a cycle would
 	// mark that turn judged by a cycle that was never shown it.
 	MetaTranscriptOffered = "transcript_offered"
+
+	// MetaStopRefusals is how many times in a row a Stop has been refused in the
+	// current sequence — the first Stop of a turn and every retry the harness
+	// sends after a refusal. Counted so the project's stop_hook_block_cap can end
+	// a refusal loop after a set number of blocks; reset when a Stop completes or
+	// a new sequence begins.
+	MetaStopRefusals = "stop_refusals"
+
+	// MetaStopSeenRecord is how far the previous judged Stop read the record for
+	// tags, as "<entry count>:<uuid of the last entry>". Text up to there was
+	// already shown to a Stop; while the cycle is still open it is delivered
+	// again, and its tags are marked `seen`. A count because a uuid can repeat.
+	MetaStopSeenRecord = "stop_seen_record"
+
+	// MetaStopSeenFiles is the content fingerprint of every file the previous
+	// judged Stop was handed a Post file event for, as a JSON object of path to
+	// fingerprint. A file whose fingerprint is unchanged at the next Stop is
+	// being re-sent (the difference is taken against the session's baseline, so
+	// it is delivered on every Stop until committed) and is marked `seen`.
+	MetaStopSeenFiles = "stop_seen_files"
 )
 
 // Meta reads a session fact.
