@@ -138,7 +138,7 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	}
 
 	if !noArchive {
-		if archiveDir, archErr := archiveRun(rec, transcriptPath, sr.Stdout, sr.Stderr); archErr != nil {
+		if archiveDir, archErr := archiveRun(rec, transcriptPath, sr.Stdout, sr.Stderr, sr.Verdict); archErr != nil {
 			// Archiving failure is reported, not fatal — the scorer's own
 			// verdict already ran and is the thing exit status carries.
 			// Losing the archive of a run is a worse day than losing the

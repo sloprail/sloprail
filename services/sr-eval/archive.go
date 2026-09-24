@@ -117,7 +117,7 @@ func runID(now time.Time) (string, error) {
 // project directory (a real user's ordinary session history), and sr-eval
 // has no business relocating it out from under whatever else might read it
 // from there.
-func archiveRun(rec runRecord, transcriptPath string, scoreStdout, scoreStderr []byte) (string, error) {
+func archiveRun(rec runRecord, transcriptPath string, scoreStdout, scoreStderr []byte, verdict *Verdict) (string, error) {
 	root, err := archiveRoot()
 	if err != nil {
 		return "", err
@@ -157,6 +157,18 @@ func archiveRun(rec runRecord, transcriptPath string, scoreStdout, scoreStderr [
 	}
 	if err := os.WriteFile(filepath.Join(scoreDir, "stderr.txt"), scoreStderr, 0o644); err != nil {
 		return "", fmt.Errorf("write score stderr: %w", err)
+	}
+	if verdict != nil {
+		// Layout mirrors a10n-eval's own scores/<scorer>/verdict.json beside
+		// result.jsonl — the structured evidence lives next to the raw
+		// streams, not instead of them.
+		vBody, err := json.MarshalIndent(verdict, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("encode verdict.json: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(scoreDir, "verdict.json"), vBody, 0o644); err != nil {
+			return "", fmt.Errorf("write verdict.json: %w", err)
+		}
 	}
 
 	body, err := json.MarshalIndent(rec, "", "  ")
