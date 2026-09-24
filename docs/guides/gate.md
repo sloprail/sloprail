@@ -84,21 +84,6 @@ A Stop refusal is reported to the agent as a blocking error on the cycle, and th
 cycle's read mark does not advance — so the next Stop judges the same span again,
 and a rule that stays unsatisfied stays reported rather than scrolling away.
 
-The agent's corrected reply fires `Stop` again, and that retry is **judged like
-any other Stop**: replying twice does not get the agent past a rule. A reply that
-still breaks the rule is refused again, so the loop runs until a reply passes.
-The project caps how many refusals in a row it will take, in `.sloprail/config.yaml`:
-
-```yaml
-stop_hook_block_cap: 8   # the default, matching Claude Code's own cap
-# 1 — refuse once, then let the retry end un-judged
-# 0 — no engine cap (Claude Code's CLAUDE_CODE_STOP_HOOK_BLOCK_CAP still applies)
-```
-
-When the cap is reached the turn ends with the refusal still standing, and the
-engine says so on stderr. Nothing is marked judged, so the next cycle sees the same
-work again.
-
 `Stop` carries **no fields** — the end of a cycle is about the cycle, not one
 file. So a Stop gate has nothing on the event to narrow on; it establishes its
 subject another way:
