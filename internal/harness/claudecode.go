@@ -326,7 +326,7 @@ func Resolve(projectDir, home string) (Resolution, error) {
 			continue
 		}
 
-		dir, tried, err := locate(plugin, marketplaces, home)
+		dir, tried, err := locate(plugin, marketplaces, home, projectDir)
 		if err != nil {
 			res.Unresolved = append(res.Unresolved, Unresolved{
 				Plugin: plugin, Key: key, Tried: tried, Reason: err.Error(),
@@ -434,7 +434,7 @@ func resolveEnabled(projectDir string) ([]string, map[string]marketplace, error)
 //
 // The order below is the order Claude Code itself resolves in, and each step is
 // answerable.
-func locate(p Plugin, marketplaces map[string]marketplace, home string) (string, []string, error) {
+func locate(p Plugin, marketplaces map[string]marketplace, home, projectDir string) (string, []string, error) {
 	var tried []string
 
 	// 1. A marketplace sourced from a local DIRECTORY is loaded from that
@@ -448,10 +448,27 @@ func locate(p Plugin, marketplaces map[string]marketplace, home string) (string,
 	//    plugin as unresolvable. It is also the case a plugin AUTHOR is always
 	//    in, so getting it wrong would break the people most likely to notice.
 	if m, ok := marketplaces[p.Marketplace]; ok && m.Source.Source == "directory" && m.Source.Path != "" {
+		// A RELATIVE path (".", "./", "../sibling") is resolved against the
+		// PROJECT root — the directory holding the .claude/settings.json that
+		// declared it — not against whatever the calling process's own OS
+		// working directory happens to be. Without this, `path: "./"` (the
+		// shape this repo's own settings.json uses) is silently at the mercy
+		// of the resolving process's ambient cwd: a hook subprocess spawned
+		// from a different directory than the project root — measured to
+		// happen for a nested/child session — resolves "./" to somewhere that
+		// is not the project at all, and the plugin (and every guardrail it
+		// ships) goes quietly unresolved. An ABSOLUTE path is untouched, so
+		// TestResolve_ADirectoryMarketplaceSourceIsHonouredAsWritten's
+		// boundary — a project may point a marketplace anywhere, even outside
+		// its own tree — still holds; only a relative one gains a base.
+		sourcePath := m.Source.Path
+		if !filepath.IsAbs(sourcePath) {
+			sourcePath = filepath.Join(projectDir, sourcePath)
+		}
 		// The plugin's own subdirectory within the marketplace, then the
 		// marketplace root itself — a single-plugin marketplace commonly IS the
 		// plugin, which is the shape this repo's own marketplace uses.
-		for _, dir := range pluginDirsInMarketplace(m.Source.Path, p.Name) {
+		for _, dir := range pluginDirsInMarketplace(sourcePath, p.Name) {
 			tried = append(tried, dir)
 			if isDir(dir) {
 				return dir, tried, nil
