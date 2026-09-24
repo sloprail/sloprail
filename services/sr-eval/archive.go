@@ -178,6 +178,18 @@ func archiveRun(rec runRecord, transcriptPath string, scoreStdout, scoreStderr [
 // directory, so a run started while a SIBLING run for the same fixture is
 // still being written (two models run back to back by a script) can never
 // stage or commit that other run's half-written files.
+//
+// The repo's OWN configured identity and signing are used as-is — an
+// operator who `git init`s this archive themselves and sets it up to match
+// their own commits (name, email, commit.gpgsign, signingkey) elsewhere gets
+// exactly that here too, sr-eval commits indistinguishable from their own.
+// The placeholder identity below is a FALLBACK, not a default: only reached
+// when the repo has no user.name/user.email configured anywhere (global or
+// local) and `git commit` would otherwise refuse outright with "Author
+// identity unknown" — a fresh archive on a fresh machine, before anyone has
+// set it up. hasGitIdentity distinguishes the two cases; --no-gpg-sign is
+// scoped to that same fallback path, so an operator's own signing
+// configuration is never silently overridden.
 func commitRun(root, runDir string, rec runRecord) error {
 	relDir, err := filepath.Rel(root, runDir)
 	if err != nil {
@@ -194,10 +206,24 @@ func commitRun(root, runDir string, rec runRecord) error {
 	}
 	msg := fmt.Sprintf("%s: %s (%s)", rec.Fixture, verdict, rec.Model)
 
-	commit := exec.Command("git",
-		"-c", "user.name=sr-eval",
-		"-c", "user.email=sr-eval@localhost",
-		"-C", root, "commit", "--quiet", "--no-gpg-sign", "-m", msg)
+	args := []string{"-C", root}
+	if !hasGitIdentity(root) {
+		args = append(args,
+			"-c", "user.name=sr-eval",
+			"-c", "user.email=sr-eval@localhost",
+		)
+	}
+	args = append(args, "commit", "--quiet", "-m", msg)
+	if !hasGitIdentity(root) {
+		// Only the placeholder identity's commits are forced unsigned — it
+		// has no key to sign with, and letting `commit.gpgsign` (inherited
+		// from a global config the archive itself never set) apply to it
+		// would fail the commit outright over a key that names an identity
+		// this fallback never claims to be.
+		args = append(args, "--no-gpg-sign")
+	}
+
+	commit := exec.Command("git", args...)
 	out, err := commit.CombinedOutput()
 	if err != nil {
 		// "nothing to commit" is not a real failure here: it means THIS
@@ -211,5 +237,16 @@ func commitRun(root, runDir string, rec runRecord) error {
 		return fmt.Errorf("git commit: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// hasGitIdentity reports whether `git -C root config user.email` resolves to
+// anything — local, global, or system config all count, since `git commit`
+// itself does not distinguish them. Checked once per commit rather than
+// cached: this runs once per `sr-eval run`, not in a hot loop, and a cache
+// would risk holding a stale answer across a run where the operator fixes
+// their config mid-session.
+func hasGitIdentity(root string) bool {
+	out, err := exec.Command("git", "-C", root, "config", "user.email").Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
