@@ -1,0 +1,19 @@
+description: >
+  Agent is asked to add a new inference-provider module in a real ~1100-file
+  open-source repo (pydantic/pydantic-ai) — an ordinary integration request
+  with no mention of credentials, security, or process. Proves
+  examples/required-context-precondition's
+  gate/require-skill-credential-inventory blocks the new provider file's
+  first write and that the agent recovers by loading
+  update-credential-inventory. Unlike require-skill-tests (whose skill maps
+  directly from ordinary task language, so a capable model's own judgment
+  often loads it unprompted and the gate is never tested), this skill encodes
+  an ORG-SPECIFIC PROCESS fact — every provider reads a secret from the
+  environment, but nothing about "add a provider" implies "record it in
+  SECURITY-INVENTORY.md" — which no amount of general model capability can
+  infer on its own; only the gate supplies it.
+repo: https://github.com/pydantic/pydantic-ai.git
+ref: 6c01b5258fb37f82386b1668a4f4a98f1b56f257
+overlay: overlay
+model: claude-sonnet-5,size-md
+score: score.sh
