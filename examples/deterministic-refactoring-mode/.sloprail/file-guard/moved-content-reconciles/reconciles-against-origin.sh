@@ -5,6 +5,27 @@
 set -uo pipefail
 
 input="$(cat)"
+
+# resultKnown, not has("newContent") — newContent is ALWAYS a present key on
+# PreFileCreate/PreFileUpdate (the flat-event-fields discipline), so
+# has("newContent") is always true and reading an absent value as "" is
+# indistinguishable from a write that genuinely empties the file. The actual
+# "this engine could not predict the result" signal is resultKnown, which was
+# never consulted. This guard is preventive, so the engine's own dispatch
+# already refuses any underivable Pre write before this script ever runs
+# (services/sr-session/nature_fileguard.go's isUnderivablePreWrite) — this
+# check is real defense in depth, not the only line of defense, but a check
+# script must not trust its caller unconditionally.
+kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
+case "$kind" in
+  PreFileCreate|PreFileUpdate)
+    known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
+    if [ "$known" != "true" ]; then
+      exit 0
+    fi
+    ;;
+esac
+
 new="$(printf '%s' "$input" | jq -r 'if .event | has("newContent") then .event.newContent else null end')"
 markers="$(printf '%s' "$input" | jq -c '.event.newMarkers // []')"
 
