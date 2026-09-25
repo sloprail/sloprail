@@ -13,7 +13,7 @@ import (
 )
 
 // This file is the pre-tool half of the new nature dispatch: gates on pre-action
-// events, and the structure gate on file-write paths. It is called from
+// events, and the combined structure gates on file-write paths. It is called from
 // runSessionPreTool BEFORE the old-format dispatch, so both run and a refusal from
 // either blocks the tool call.
 //
@@ -45,7 +45,7 @@ type natureVerdict struct {
 func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
 	preventiveGuards := preventiveFileGuards(loaded.FileGuards)
-	if len(loaded.Gates) == 0 && loaded.Structure == nil && len(loaded.Contexts) == 0 && len(preventiveGuards) == 0 {
+	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && len(preventiveGuards) == 0 {
 		// Nothing new-format can act at pre-tool: no gate to block, no structure
 		// gate, no context to enter, no preventive file-guard to pre-check.
 		// (Non-preventive file-guards act only at Stop.)
@@ -64,12 +64,13 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// A context does not block; this only populates the map (and persists it).
 	runContextEnters(cmd, reg, loaded.Contexts, events, scope, store, contextMap, gatesMap)
 
-	// The structure gate next: a write outside the allowlist is refused before any
-	// gate or file-guard is consulted — the cheapest "may you write here at all"
-	// question, and a forbidden path should not also pay for a check. Blocks
-	// immediately on a refusal.
-	if loaded.Structure != nil {
-		if reason := checkStructureGate(cmd, loaded.Structure, events); reason != "" {
+	// The structure gates next: a write outside the allowlist is refused before
+	// any gate or file-guard is consulted — the cheapest "may you write here at
+	// all" question, and a forbidden path should not also pay for a check. Every
+	// loaded structure (the project's and each plugin's) is combined by scope.
+	// Blocks immediately on a refusal.
+	if len(loaded.Structures) > 0 {
+		if reason := checkStructureGate(cmd, loaded.Structures, events); reason != "" {
 			return natureVerdict{Blocked: reason}
 		}
 	}
@@ -105,24 +106,31 @@ func preventiveFileGuards(guards []declaration.FileGuard) []declaration.FileGuar
 }
 
 // checkStructureGate refuses the first file-write event whose target path the
-// structure gate does not allow, and returns the refusal reason (or "").
+// combined structure gates do not permit, and returns the refusal reason (or "").
 //
-// The structure gate is deny-by-default over the tree, so it is checked against
-// every path a file-write pre-event names — a create or an update (a delete does
-// not write NEW content under a path, so it is not gated by an allowlist of where
-// writes may go; the spec frames the structure gate as "is writing HERE allowed").
-// The compiled gate is built once per dispatch; a compile failure (unreachable for
-// a loaded structure gate) is reported and treated as permitting, since a gate the
-// engine could not compile has not established that any path is forbidden — the
-// same "an unloadable rule blocks nothing" the rest of the dispatch keeps.
-func checkStructureGate(cmd *cobra.Command, sg *declaration.StructureGate, events []event.Event) string {
-	compiled, err := dispatchcore.CompileStructureGate(*sg)
+// Every loaded structure gate — the project's, which covers the whole tree, and
+// each plugin's, which covers only its declared scope — is compiled into one
+// dispatchcore.StructureSet, and each written path is decided by ownership
+// (StructureSet.Decide): a path in two plugins' scopes is an ownership conflict,
+// a path in one plugin's scope is that plugin's to decide (the project's deny
+// still vetoes), and every other path is the project's.
+//
+// It is checked against every path a file-write pre-event names — a create or an
+// update (a delete does not write NEW content under a path, so it is not gated by
+// an allowlist of where writes may go; the spec frames the structure gate as "is
+// writing HERE allowed"). The set is built once per dispatch; a compile failure
+// (unreachable for loaded structure gates) is reported and treated as permitting,
+// since a gate the engine could not compile has not established that any path is
+// forbidden — the same "an unloadable rule blocks nothing" the rest of the
+// dispatch keeps.
+func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGate, events []event.Event) string {
+	compiled, err := dispatchcore.CompileStructureSet(structures)
 	if err != nil {
-		// A structure gate that loaded but will not compile is a disagreement
+		// Structure gates that loaded but will not compile are a disagreement
 		// between the loader and the runtime. Reported, not enforced: refusing on a
 		// gate the engine could not build would blame the author for the engine's
 		// gap, and this rule blocks nothing until it compiles.
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: structure gate could not be compiled, so it is NOT enforced: %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: structure gates could not be compiled, so they are NOT enforced: %v\n", err)
 		return ""
 	}
 	for _, e := range events {
@@ -130,7 +138,7 @@ func checkStructureGate(cmd *cobra.Command, sg *declaration.StructureGate, event
 		if !ok {
 			continue
 		}
-		if allowed, reason := compiled.Allows(path); !allowed {
+		if allowed, reason := compiled.Decide(path); !allowed {
 			return reason
 		}
 	}
@@ -203,7 +211,7 @@ func natureBoundKinds(loaded declaration.Loaded) []string {
 			bound = append(bound, kinds...)
 		}
 	}
-	if loaded.Structure != nil {
+	if len(loaded.Structures) > 0 {
 		bound = append(bound, declaration.KindPreFileCreate, declaration.KindPreFileUpdate)
 	}
 	return bound

@@ -151,6 +151,20 @@ var (
 	// that silently became `skip` would switch off exactly the deletions the
 	// author wrote the key to catch. Declaration fault.
 	ErrBadValue = errors.New("declaration: field value is not one of its allowed values")
+
+	// ErrBadScope: a structure gate's `scope` is wrong for where it was found or
+	// for what a scope is — a project's own structure declaring one (the
+	// project's covers the whole tree), a scope entry that is a regex (glob-only
+	// for now), a glob that does not name a folder (no trailing `/`), or one that
+	// covers the whole tree (`**/`, `*/`, `/`). Declaration fault.
+	ErrBadScope = errors.New("declaration: structure scope is not a folder a plugin may own")
+
+	// ErrOutsideScope: a plugin's structure gate allows or denies a path outside
+	// the literal folders its `scope` names. The entry could never decide
+	// anything (a plugin's structure is inert outside its scope), so it can only
+	// be a mistake — most likely a scope and an entry that disagree about where
+	// the plugin's files live. Declaration fault.
+	ErrOutsideScope = errors.New("declaration: structure entry lies outside the plugin's scope")
 )
 
 // Disabling reports whether these problems stop the rule loading. Environment

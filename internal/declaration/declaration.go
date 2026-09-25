@@ -10,7 +10,7 @@
 //   - file-guard/<name>/file-guard.yaml  → FileGuard      (a rule on a file's state)
 //   - gate/<name>/gate.yaml              → Gate           (a checkpoint on an event)
 //   - context/<name>/context.yaml        → Context        (an activatable scope)
-//   - file-guard/structure.yaml          → StructureGate  (one tree-wide allowlist)
+//   - file-guard/structure.yaml          → StructureGate  (a path allowlist per root)
 //
 // A GOAL is deliberately NOT among them. A goal is a higher-level COMPOSITE — a
 // project-level `goal/<name>/goal.yaml` (a sibling of `.sloprail/`, maintained by
@@ -52,6 +52,8 @@
 // them together with load-time diagnostics.
 package declaration
 
+import "path/filepath"
+
 // Nature names which of the rule natures a declaration is, so a loaded
 // declaration says what it is without a caller having to type-switch on the
 // concrete struct. The three file-backed natures plus the structure primitive
@@ -69,10 +71,11 @@ const (
 	// NatureContext is an activatable scope with a lifecycle.
 	NatureContext Nature = "context"
 
-	// NatureStructure is the tree-wide structure gate — one path allowlist for
-	// the whole project, deny by default. A primitive, not a fourth nature; it
-	// has no per-name folder and is loaded from the singleton
-	// `file-guard/structure.yaml`.
+	// NatureStructure is the structure gate — a path allowlist, deny by
+	// default. A primitive, not a fourth nature; it has no per-name folder and is
+	// loaded from each root's one `file-guard/structure.yaml`: the project's
+	// covers the whole tree, each plugin's covers only the `scope` it declares,
+	// and all of them combine (see StructureGate).
 	NatureStructure Nature = "structure"
 )
 
@@ -332,18 +335,45 @@ func (c Context) Attribution() string { return quoteName(c.Name) + c.Origin.Desc
 // context and `context/<name>` for a project's own.
 func (c Context) Qualified() string { return c.Origin.Qualified(NatureContext, c.Name) }
 
-// StructureGate is the tree-wide structure gate (dot-dir-file-store/main.tsp
-// StructureGateDeclaration): an allowlist of paths a project may write under,
-// deny by default. `deny` only carves exceptions out of `allow` — a `deny` entry
-// matching nothing in `allow` is a no-op. A primitive, not a rule nature, and a
-// singleton: one file for the whole project, `file-guard/structure.yaml`, sibling
-// of the per-guard subfolders.
+// StructureGate is one structure gate (dot-dir-file-store/main.tsp
+// StructureGateDeclaration): an allowlist of paths that may be written, deny by
+// default. `deny` carves exceptions out of `allow`. A primitive, not a rule
+// nature: one file per ROOT, `file-guard/structure.yaml`, sibling of the
+// per-guard subfolders.
+//
+// # Combined, not a singleton
+//
+// Every root may declare one — the project's own AND each enabled plugin's — and
+// all of them load together; none shadows another. What keeps them from fighting
+// is OWNERSHIP:
+//
+//   - the PROJECT's structure covers the whole tree and must not declare a
+//     `scope`;
+//   - a PLUGIN's structure must declare a `scope` — the folders it owns — and
+//     its allow/deny only ever decide paths inside that scope.
+//
+// A written path inside exactly one plugin's scope is decided by that plugin
+// (the project's `allow` does not widen it, but a project `deny` still vetoes);
+// a path inside two plugins' scopes is refused as an ownership conflict; a path
+// in no plugin's scope is decided by the project's structure, or permitted when
+// the project declares none. The runtime order lives in internal/dispatch
+// (StructureSet.Decide); the load rules in ValidateStructureGate.
 type StructureGate struct {
+	// Scope is the part of the tree a PLUGIN's structure gate owns: a list of
+	// folders, each a `glob` ending in `/` (".mdmap/", "**/.adr/"). Required for a
+	// plugin's structure.yaml and forbidden in a project's (the project's covers
+	// the whole tree implicitly). Glob-only for now; the object shape leaves room
+	// for `regex` later. A scope may not cover the whole tree (`**/`, `*/`, `/`).
+	Scope []StructureEntry `yaml:"scope"`
+
 	// Allow is the allowlist. Each entry is a glob or a regex (exactly one set).
+	// In a plugin's structure every entry must lie inside its scope when the
+	// scope is a literal folder.
 	Allow []StructureEntry `yaml:"allow"`
 
 	// Deny carves exceptions out of Allow. Optional. Each entry is a glob or a
-	// regex (exactly one set).
+	// regex (exactly one set). A PROJECT deny also vetoes writes inside a
+	// plugin's scope.
 	Deny []StructureEntry `yaml:"deny"`
 
 	// Dir is the folder the structure.yaml sits in — `.sloprail/file-guard`. Not
@@ -352,9 +382,8 @@ type StructureGate struct {
 
 	// Origin is where this structure gate was found — the project's own
 	// `.sloprail`, or a plugin that ships it. Not a YAML field; the loader fills it.
-	// The zero value is a project's own structure gate. See the loader for why a
-	// project's own structure gate wins over a plugin's (the singleton is claimed
-	// project-first, like every other name).
+	// The zero value is a project's own structure gate. It decides which rules
+	// apply: a plugin's must carry a scope, a project's must not.
 	Origin Origin `yaml:"-"`
 }
 
@@ -366,6 +395,30 @@ func (sg StructureGate) Attribution() string { return sg.Origin.Describe() }
 // Qualified is the structure gate's disable key, `<plugin>/structure` for a
 // shipped one and `structure` for a project's own.
 func (sg StructureGate) Qualified() string { return sg.Origin.Qualified(NatureStructure, "") }
+
+// Path is the structure.yaml this gate was read from, for a diagnostic that
+// sends an author to the file.
+func (sg StructureGate) Path() string { return filepath.Join(sg.Dir, fileStructure) }
+
+// Describe names this structure gate for a person — "this project's structure
+// gate" or "plugin \"x\"'s structure gate" — the one wording refusals and
+// reports use.
+func (sg StructureGate) Describe() string {
+	if !sg.Origin.FromPlugin() {
+		return "this project's structure gate"
+	}
+	return "plugin " + quoteName(sg.Origin.Plugin) + "'s structure gate"
+}
+
+// ScopeGlobs are the scope entries as written (each ending in `/`), in order —
+// what a report lists as the folders a plugin owns.
+func (sg StructureGate) ScopeGlobs() []string {
+	out := make([]string, 0, len(sg.Scope))
+	for _, e := range sg.Scope {
+		out = append(out, e.Glob)
+	}
+	return out
+}
 
 // Prerequisite is a precondition that must hold before a rule's own check runs
 // (dot-dir-file-store/main.tsp Prerequisite). A single list carrying two kinds,

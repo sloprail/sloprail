@@ -75,7 +75,7 @@ func (o Origin) FromPlugin() bool { return o.Plugin != "" }
 // ship a file-guard called `no-secrets` and a disable list that could not tell
 // them apart would switch off a rule the consumer did not mean.
 func (o Origin) Qualified(nature Nature, name string) string {
-	// The structure singleton has no per-name folder, so its base is the bare
+	// A structure gate has no per-name folder, so its base is the bare
 	// nature — the same shape Invalid.Qualified uses for an empty name, so the two
 	// keys agree for the one declaration that has no name.
 	base := string(nature)

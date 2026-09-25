@@ -20,7 +20,7 @@ import (
 // that could not be loaded (rather than failing on the first bad one), and an
 // Invalid carrying every fault so one typo cannot disarm a project — but reads
 // the new declaration formats (file-guard, gate, context, and the structure
-// singleton) rather than the old one-folder-per-guardrail GUARDRAIL.md.
+// gates) rather than the old one-folder-per-guardrail GUARDRAIL.md.
 //
 // The YAML library is gopkg.in/yaml.v3, the same the old loader and the rest of
 // the repo use (see go.mod and internal/guardrail/store.go). The declarations are
@@ -54,6 +54,11 @@ type Store struct {
 	// which plugins a project installed is internal/harness's job, and this package
 	// takes the set of places to read from as an input. See NewWithPlugins.
 	plugins []Origin
+
+	// pluginOnly is set by NewPlugin: there is no project root, only one plugin's
+	// declarations, read (and validated) exactly as a consuming project would read
+	// them — so a plugin author can check what they ship.
+	pluginOnly bool
 }
 
 // New returns a store rooted at a project's `.sloprail` directory, reading only
@@ -81,6 +86,15 @@ func NewWithPlugins(projectRoot string, plugins []Origin) *Store {
 	return &Store{root: projectRoot, plugins: plugins}
 }
 
+// NewPlugin returns a store that reads ONE plugin's declarations and no project's
+// — the inspection a plugin author runs on what they ship. The plugin's
+// declarations are tagged with its Origin and validated by the plugin rules
+// (a plugin's structure gate must declare a `scope`, for one), exactly as they
+// would be once installed. There is no project, so no project config applies.
+func NewPlugin(plugin Origin) *Store {
+	return &Store{plugins: []Origin{plugin}, pluginOnly: true}
+}
+
 // Directory names beneath `.sloprail`, one per file-backed nature. The store owns
 // these — a caller never spells them.
 const (
@@ -89,7 +103,7 @@ const (
 	dirContext   = "context"
 )
 
-// File names within a per-name folder, and the structure singleton. Named
+// File names within a per-name folder, and each root's structure gate. Named
 // constants so the loader and any test agree on the on-disk spelling.
 const (
 	fileFileGuard = "file-guard.yaml"
@@ -104,9 +118,7 @@ const (
 // One field per nature rather than a single heterogeneous list, because the
 // dispatch slice consumes them by nature — it matches file events against
 // file-guards, wakes gates on their triggers, enters contexts on theirs — and a
-// typed field per nature is what lets it take each without a type switch. The
-// structure gate is a single optional value, not a slice: there is at most one
-// per project.
+// typed field per nature is what lets it take each without a type switch.
 type Loaded struct {
 	// FileGuards are the loaded file-guard declarations, sorted by name.
 	FileGuards []FileGuard
@@ -117,11 +129,18 @@ type Loaded struct {
 	// Contexts are the loaded context declarations, sorted by name.
 	Contexts []Context
 
-	// Structure is the tree-wide structure gate, or nil when the project declares
-	// none. A pointer rather than a value with a "present" flag, so "no structure
-	// gate" and "an empty structure gate" are distinct — the first is nil, the
-	// second is a non-nil value the validator would already have refused.
-	Structure *StructureGate
+	// Structures are the loaded structure gates — the project's own first (when
+	// it declares one), then each enabled plugin's in precedence order. They are
+	// COMBINED, not resolved: none shadows another. The project's covers the
+	// whole tree; each plugin's covers only its declared `scope`. How they combine
+	// on a written path is internal/dispatch's StructureSet.Decide.
+	Structures []StructureGate
+
+	// ScopeOverlaps are pairs of loaded plugin structures whose LITERAL scopes
+	// overlap. Both stay loaded (a write in the overlap is refused at write time
+	// as an ownership conflict); the overlap is reported so it is seen before an
+	// agent meets it.
+	ScopeOverlaps []ScopeOverlap
 
 	// Invalid are the declarations that could not be loaded, across every nature,
 	// sorted by their qualified name. Reported rather than fatal: the engine loads
@@ -129,7 +148,7 @@ type Loaded struct {
 	Invalid []Invalid
 
 	// Shadowed are plugin declarations a declaration of the same (nature, name)
-	// displaced — the project's own, or an earlier-listed plugin's. Returned rather
+	// displaced (never a structure gate — those combine rather than shadow) — the project's own, or an earlier-listed plugin's. Returned rather
 	// than applied silently, for the reason guardrail.Resolution.Shadowed is: a
 	// project that believes it has two protections and has one is the failure this
 	// product exists to prevent. The precedence IS applied (the winner is what
@@ -185,7 +204,7 @@ func (sh Shadow) Qualified() string {
 }
 
 // describeName renders the shadowed (nature, name) for a message — "file-guard
-// \"x\"" for a named nature, or bare "structure" for the singleton.
+// \"x\"" for a named nature, or bare "structure" for a structure gate.
 func (sh Shadow) describeName() string {
 	if sh.Name == "" {
 		return string(sh.Nature)
@@ -227,8 +246,8 @@ type Invalid struct {
 	// context may both be named `people-linked`).
 	Nature Nature
 
-	// Name is the declaration's name, from its folder. Empty for the structure
-	// singleton, which has no per-name folder.
+	// Name is the declaration's name, from its folder. Empty for a structure gate,
+	// which has no per-name folder.
 	Name string
 
 	// Origin says where this unloadable declaration was found. A broken rule needs
@@ -293,7 +312,7 @@ func (iv Invalid) Qualified() string {
 // guardrail.Invalid.Attribution.
 func (iv Invalid) Attribution() string {
 	if iv.Name == "" {
-		// The structure singleton has no name to quote; the origin alone says
+		// A structure gate has no name to quote; the origin alone says
 		// where it came from.
 		return string(iv.Nature) + iv.Origin.Describe()
 	}
@@ -301,7 +320,7 @@ func (iv Invalid) Attribution() string {
 }
 
 // describeName renders this broken declaration's (nature, name) for a message —
-// "gate \"x\"" for a named nature, bare "structure" for the singleton — the same
+// "gate \"x\"" for a named nature, bare "structure" for a structure gate — the same
 // shape Shadow.describeName uses, so the invalid and shadow reports name a rule
 // the one way.
 func (iv Invalid) describeName() string {
@@ -402,7 +421,9 @@ func (iv Invalid) Remedy() string {
 //  3. RESOLVE precedence: the project's declarations claim their (nature, name)
 //     first, so they win; between two plugins the earlier-listed wins. A
 //     displaced declaration is recorded as Shadowed rather than loaded — first
-//     writer wins, and it is never loaded even briefly.
+//     writer wins, and it is never loaded even briefly. Structure gates are the
+//     exception: they do not compete for a name, so every sound one loads and
+//     they combine by scope (see StructureGate).
 //  4. DISABLE: the project's own config (`.sloprail/config.yaml` `disabled:`) is
 //     applied last, filtering both the loaded set and the Invalid set — the
 //     consumer's final say over everything above, and the only way to switch off
@@ -418,9 +439,13 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 	// parsed refuses the whole load rather than silently re-enabling every rule the
 	// project switched off — the fail-closed guardrail.LoadConfig takes, for the
 	// same reason.
-	cfg, err := loadConfig(s.root)
-	if err != nil {
-		return Loaded{}, err
+	var cfg config
+	if !s.pluginOnly {
+		c, err := loadConfig(s.root)
+		if err != nil {
+			return Loaded{}, err
+		}
+		cfg = c
 	}
 
 	// -- 1. parse every root, project first, tagging origin --
@@ -434,7 +459,7 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 		parsedFileGuards []FileGuard
 		parsedGates      []Gate
 		parsedContexts   []Context
-		parsedStructures []StructureGate // at most one per root; precedence picks the winner
+		parsedStructures []StructureGate // at most one per root; all sound ones load together
 		parseInvalid     []Invalid
 	)
 	for _, r := range roots {
@@ -521,10 +546,15 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 	resolveFileGuards(&out, soundFileGuards)
 	resolveGates(&out, soundGates)
 	resolveContexts(&out, soundContexts)
-	resolveStructure(&out, soundStructures)
+	// Structure gates are not resolved: every sound one loads, project first.
+	out.Structures = soundStructures
 
 	// -- 4. apply the project's disable list to loaded AND invalid --
 	applyDisable(&out, cfg)
+
+	// -- 5. report literal scope overlaps among the plugin structures still in
+	// force (after disabling, so switching one off silences its overlap) --
+	out.ScopeOverlaps = literalScopeOverlaps(out.Structures)
 
 	sortLoaded(&out)
 	return out, nil
@@ -544,7 +574,10 @@ type rootHandle struct {
 // why the caller must NOT sort the plugins after resolving which one wins — the
 // resolver sorts nothing.
 func (s *Store) rootsInPrecedenceOrder() []rootHandle {
-	roots := []rootHandle{{dir: s.root, origin: Origin{}}}
+	var roots []rootHandle
+	if !s.pluginOnly {
+		roots = append(roots, rootHandle{dir: s.root, origin: Origin{}})
+	}
 	for _, p := range s.plugins {
 		roots = append(roots, rootHandle{dir: pluginDotDir(p.Root), origin: p})
 	}
@@ -672,7 +705,7 @@ func parseContexts(root string, origin Origin) ([]Context, []Invalid, error) {
 	return decls, invalid, nil
 }
 
-// parseStructure reads one root's structure singleton, if present. Absent is nil,
+// parseStructure reads one root's structure gate, if present. Absent is nil,
 // not an error — most projects (and plugins) declare no structure gate. Unlike the
 // per-name natures it is one fixed file, so there are no names to enumerate.
 func parseStructure(root string, origin Origin) (*StructureGate, []Invalid, error) {
@@ -817,23 +850,6 @@ func resolveContexts(out *Loaded, sound []Context) {
 	}
 }
 
-// resolveStructure claims the single structure gate. The structure gate is a
-// singleton per root, so the FIRST root that declares one wins — the project's own
-// over any plugin's, and an earlier plugin's over a later one's — and every other
-// is Shadowed. This is the same "first writer wins" the per-name natures use,
-// applied to the one nature that has no name.
-func resolveStructure(out *Loaded, sound []StructureGate) {
-	for _, sg := range sound {
-		if out.Structure != nil {
-			prior := out.Structure
-			out.Shadowed = append(out.Shadowed, shadowOf(NatureStructure, "", sg.Origin, sg.Dir, prior.Origin, prior.Dir))
-			continue
-		}
-		winner := sg
-		out.Structure = &winner
-	}
-}
-
 // shadowOf builds the Shadow record for a displaced declaration: what was
 // displaced (loser's origin/dir) and what displaced it (winner's origin/dir). The
 // winner may be the project (empty WinnerPlugin) or an earlier plugin — the two
@@ -893,9 +909,14 @@ func applyDisable(out *Loaded, cfg config) {
 	}
 	out.Contexts = contexts
 
-	if out.Structure != nil && cfg.isDisabled(out.Structure.Qualified()) {
-		out.Structure = nil
+	structures := out.Structures[:0]
+	for _, sg := range out.Structures {
+		if cfg.isDisabled(sg.Qualified()) {
+			continue
+		}
+		structures = append(structures, sg)
 	}
+	out.Structures = structures
 
 	invalid := out.Invalid[:0]
 	for _, iv := range out.Invalid {
@@ -905,4 +926,26 @@ func applyDisable(out *Loaded, cfg config) {
 		invalid = append(invalid, iv)
 	}
 	out.Invalid = invalid
+}
+
+// ProjectStructure is the project's own structure gate, or nil when the project
+// declares none (or disabled it).
+func (l Loaded) ProjectStructure() *StructureGate {
+	for i := range l.Structures {
+		if !l.Structures[i].Origin.FromPlugin() {
+			return &l.Structures[i]
+		}
+	}
+	return nil
+}
+
+// PluginStructures are the loaded plugin structure gates, in precedence order.
+func (l Loaded) PluginStructures() []StructureGate {
+	var out []StructureGate
+	for _, sg := range l.Structures {
+		if sg.Origin.FromPlugin() {
+			out = append(out, sg)
+		}
+	}
+	return out
 }

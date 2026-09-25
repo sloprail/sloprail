@@ -208,6 +208,7 @@ func newNatureDeclarations(cmd *cobra.Command, cwd string, reg *module.Registry)
 	}
 	reportNatureInvalid(cmd, loaded.Invalid)
 	reportNatureShadowed(cmd, loaded.Shadowed)
+	reportScopeOverlaps(cmd, loaded.ScopeOverlaps)
 	return loaded
 }
 
@@ -291,6 +292,17 @@ func reportNatureInvalid(cmd *cobra.Command, invalid []declaration.Invalid) {
 func reportNatureShadowed(cmd *cobra.Command, shadowed []declaration.Shadow) {
 	for _, sh := range shadowed {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s\n", sh.Message())
+	}
+}
+
+// reportScopeOverlaps names every pair of plugin structure gates whose literal
+// scopes overlap. Both stay loaded and a write inside the overlap is refused as
+// an ownership conflict; this report is what lets a person see the conflict and
+// switch one off before an agent meets it. Stderr, with the shadow report, for
+// the same reason: it is a warning about configuration, not a refusal.
+func reportScopeOverlaps(cmd *cobra.Command, overlaps []declaration.ScopeOverlap) {
+	for _, o := range overlaps {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s\n", o.Message())
 	}
 }
 

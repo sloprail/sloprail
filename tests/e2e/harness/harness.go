@@ -576,11 +576,7 @@ type extraPlugin struct {
 func (e *Env) EnablePluginShippingFileGuard(projDir, pluginName, name, guardYAML string, files map[string]string) string {
 	e.t.Helper()
 
-	root, err := os.MkdirTemp("", "slop-plugin-")
-	if err != nil {
-		e.t.Fatalf("harness: temp plugin: %v", err)
-	}
-	e.t.Cleanup(func() { os.RemoveAll(root) })
+	root := e.newSyntheticPlugin(projDir, pluginName, "e2e synthetic plugin shipping a new-format file-guard")
 
 	// The guard under the plugin's own `.sloprail`, the SAME relative layout a
 	// project uses — <root>/.sloprail/file-guard/<name>/file-guard.yaml.
@@ -596,6 +592,44 @@ func (e *Env) EnablePluginShippingFileGuard(projDir, pluginName, name, guardYAML
 			e.t.Fatalf("harness: write plugin file-guard file %s: %v", file, err)
 		}
 	}
+	return root
+}
+
+// EnablePluginShippingStructure installs a synthetic plugin named pluginName that
+// ships a STRUCTURE gate — `<root>/.sloprail/file-guard/structure.yaml` with the
+// given body — and enables it in the project, returning the plugin's install
+// root. A plugin's structure gate governs only the `scope` it declares, and is
+// COMBINED with the project's own (see internal/dispatch StructureSet.Decide).
+//
+// Nothing is written into the project's `.sloprail`, so a refusal naming the
+// plugin proves the structure was discovered inside it. Must be called BEFORE
+// Run/RunFrom; call once per plugin.
+func (e *Env) EnablePluginShippingStructure(projDir, pluginName, structureYAML string) string {
+	e.t.Helper()
+
+	root := e.newSyntheticPlugin(projDir, pluginName, "e2e synthetic plugin shipping a structure gate")
+	dir := filepath.Join(root, ".sloprail", "file-guard")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir plugin file-guard: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "structure.yaml"), []byte(structureYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write plugin structure.yaml: %v", err)
+	}
+	return root
+}
+
+// newSyntheticPlugin creates a throwaway plugin directory with a well-formed
+// `.claude-plugin/plugin.json`, registers it in its own directory-sourced
+// marketplace, and rewrites the project's settings so it is enabled. Returns the
+// plugin's install root (the directory that will hold its `.sloprail/`).
+func (e *Env) newSyntheticPlugin(projDir, pluginName, description string) string {
+	e.t.Helper()
+
+	root, err := os.MkdirTemp("", "slop-plugin-")
+	if err != nil {
+		e.t.Fatalf("harness: temp plugin: %v", err)
+	}
+	e.t.Cleanup(func() { os.RemoveAll(root) })
 
 	// A `.claude-plugin/plugin.json` so the plugin is a well-formed one a
 	// directory-sourced marketplace can load, named as the user enables it.
@@ -603,7 +637,7 @@ func (e *Env) EnablePluginShippingFileGuard(projDir, pluginName, name, guardYAML
 	if err := os.MkdirAll(pluginMeta, 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir plugin meta: %v", err)
 	}
-	meta := fmt.Sprintf(`{"name":%q,"version":"0.0.1","description":"e2e synthetic plugin shipping a new-format file-guard"}`, pluginName)
+	meta := fmt.Sprintf(`{"name":%q,"version":"0.0.1","description":%q}`, pluginName, description)
 	if err := os.WriteFile(filepath.Join(pluginMeta, "plugin.json"), []byte(meta), 0o644); err != nil {
 		e.t.Fatalf("harness: write plugin.json: %v", err)
 	}
@@ -1062,11 +1096,11 @@ func (e *Env) GateLedgerLines(projDir, name, file string) []string {
 	return lines
 }
 
-// StructureGate writes the NEW-FORMAT structure gate — one tree-wide path
-// allowlist — at `.sloprail/file-guard/structure.yaml`.
+// StructureGate writes the project's own NEW-FORMAT structure gate — its
+// tree-wide path allowlist — at `.sloprail/file-guard/structure.yaml`.
 //
-// A singleton for the whole project (there is at most one structure.yaml), so this
-// takes only the yaml. It sits beside the per-guard subfolders in file-guard/,
+// One per project (a plugin ships its own scoped one — see
+// EnablePluginShippingStructure), so this takes only the yaml. It sits beside the per-guard subfolders in file-guard/,
 // where the loader reads it.
 func (e *Env) StructureGate(projDir, structureYAML string) {
 	e.t.Helper()
@@ -1124,7 +1158,7 @@ func (e *Env) GateState(projDir, sessionID, gateName string) string {
 // checked after a write settles and — when `preventive: true` — before it lands.
 // Scripts (a check's `./verify.sh`, a `prepare`, a judge template) are written as
 // siblings of file-guard.yaml, executable, where the guard's own relative paths
-// resolve them. It shares the file-guard/ directory with the structure singleton.
+// resolve them. It shares the file-guard/ directory with the structure gate (structure.yaml).
 func (e *Env) FileGuard(projDir, name, guardYAML string, files map[string]string) {
 	e.t.Helper()
 	dir := filepath.Join(projDir, ".sloprail", "file-guard", name)
