@@ -1,6 +1,18 @@
 {
   "name": "sloprail-marketplace",
-  "description": "sloprail plugin marketplace (in-repo) — maps a harness's lifecycle onto sloprail's session subcommands",
+  "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Claude Code guardrails with a Stop gate.",
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "claude-code-hooks",
+    "guardrails",
+    "coding-agents",
+    "agentic-coding",
+    "ai-agents",
+    "hooks",
+    "claude-md",
+    "stop-hook"
+  ],
   "owner": {
     "name": "sloprail",
     "email": "nikita.sviridenko@voypost.com"
@@ -8,7 +20,19 @@
   "plugins": [
     {
       "name": "sloprail",
-      "description": "Enforces a project's declared guardrails at the moments its harness can pause. The only Claude-Code-specific part of sloprail: it maps that harness's lifecycle names onto sr-session's subcommands, so nothing inside the engine knows whose lifecycle it is running under.",
+      "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Claude Code guardrails with a Stop gate.",
+      "keywords": [
+        "claude-code",
+        "claude-code-plugin",
+        "claude-code-hooks",
+        "guardrails",
+        "coding-agents",
+        "agentic-coding",
+        "ai-agents",
+        "hooks",
+        "claude-md",
+        "stop-hook"
+      ],
       "version": "0.0.2",
       "source": "./marketplace/plugins/sloprail",
       "author": {
@@ -19,6 +43,13 @@
     {
       "name": "sloprail-tasks",
       "description": "Guardrails for a memories/tasks/ workflow: a task's body must be the human's ask (cited, and nothing else), its evidence must resolve, its in_review claim is judged, and a turn may not end with open work. Four use-case guardrails in the nature format, shipped as a self-testing plugin. Requires the sloprail plugin (it installs the engine hooks).",
+      "keywords": [
+        "claude-code",
+        "claude-code-plugin",
+        "guardrails",
+        "agentic-coding",
+        "code-quality"
+      ],
       "version": "0.0.2",
       "source": "./marketplace/plugins/sloprail-tasks",
       "author": {

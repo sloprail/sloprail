@@ -1,5 +1,17 @@
 {
   "name": "sloprail",
   "version": "0.0.2",
-  "description": "Enforces a project's declared guardrails at the moments its harness can pause. This plugin is the whole of what is Claude-Code-specific: it maps that harness's lifecycle names onto sloprail's own session subcommands, so nothing inside the engine has to know whose lifecycle it is running under."
+  "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Claude Code guardrails with a Stop gate.",
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "claude-code-hooks",
+    "guardrails",
+    "coding-agents",
+    "agentic-coding",
+    "ai-agents",
+    "hooks",
+    "claude-md",
+    "stop-hook"
+  ]
 }
