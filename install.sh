@@ -3,7 +3,7 @@
 # command, with nothing beyond what Claude Code already needs: POSIX sh, curl
 # (or wget), and tar. No Go toolchain required.
 #
-#   curl -fsSL https://sloprail.com/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
 #
 # What it does:
 #   1. detects the platform (darwin/linux, amd64/arm64)

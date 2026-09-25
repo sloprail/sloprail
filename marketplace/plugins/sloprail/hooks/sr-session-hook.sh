@@ -56,7 +56,7 @@ set -eu
 subcommand="$1"
 shift
 
-install_hint='curl -fsSL https://sloprail.com/install.sh | sh'
+install_hint='curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh'
 
 # find_sr_session looks past bare $PATH, in the fixed order documented above,
 # and prints the resolved path on stdout if found. It does not modify $PATH —
