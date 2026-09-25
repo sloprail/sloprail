@@ -1,0 +1,7 @@
+# The marker anchors the rule, not the path — matches any file carrying an
+# endpoint marker. Script checks the file-name pattern; judge checks the code
+# uses the required libs / ORM / naming.
+match: any(markers, .kind == "endpoint")
+checks:
+  - script: ./file-name-matches-pattern.sh
+  - judge: ./endpoint-uses-required-libs.md.j2
