@@ -1,16 +1,17 @@
 description: >
   Agent is asked to split the exception classes in a real, ~14k-line open
   source repo (pallets/click) into two files, WITH a skill teaching the
-  #refactor scope=/sr:moved-from protocol the guardrail enforces (the
-  taught-protocol counterpart to eval/activation-gap, which proves the
-  guardrail is inert with no skill at all). Proves whether a real agent, once
-  it KNOWS the convention, actually follows it correctly: declares the move
-  BEFORE making it, marks the destination files with matching fqns, and
-  copies the origin's bytes rather than regenerating them — on a codebase
-  large enough that finding and reading the actual code (not just editing a
-  50-line toy file) is part of the task.
+  #refactor scope=/sr:moved-from protocol the guardrail enforces.
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24), not on whether the agent
+  specifically followed the taught protocol: a clean, working refactor with
+  no stuck retry loop is a PASS whether or not the agent used the tag
+  convention exactly right. Whether the guardrail fired, and whether the
+  moved code reconciled against its origin, are recorded as secondary,
+  informational signals from a real run of a real, non-trivial refactor —
+  not the bar itself.
 repo: https://github.com/pallets/click.git
 ref: 06b2a678741131fd577ce170e23e5ca0aeba0309
 overlay: overlay
-model: claude-sonnet-5,size-md
+model: haiku
 score: score.sh
