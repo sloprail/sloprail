@@ -206,6 +206,43 @@ func (r *revalidation) Record(guardrail string, s subject, passed bool) error {
 	return nil
 }
 
+// goneFingerprint is what a verdict settled by deletion is recorded at. Not a
+// fingerprint of any content — fingerprint.Of is always 40 hex digits, which
+// this can never equal — so the pass it carries cannot license skipping real
+// bytes: Skippable looks a row up BY fingerprint, and no content hashes to this.
+const goneFingerprint = "gone"
+
+// SettleGone ends a guardrail's outstanding refusal on a path whose file no
+// longer exists, and reports any error that stopped it.
+//
+// It records a PASS at goneFingerprint, but only when the guardrail's most recent
+// verdict on the path is a refusal — a path it never refused, or already passed,
+// is left exactly as it is, so a delete does not scatter rows for every guard it
+// passes by. A pass becoming the latest verdict is what takes the pair out of
+// OutstandingRefusals, which is the whole effect: the path stops being re-added
+// to every later cycle's difference on this guard's account.
+//
+// The refused rows are not deleted. The history stays true — this content was
+// refused — and if the same bytes come back (the file restored, re-created) their
+// row still refuses to license a skip, so they are judged afresh on the ordinary
+// create event rather than exempted.
+//
+// Safe on a nil revalidation and a nil store, like every method here: losing the
+// record costs a refusal re-added to the difference, never enforcement.
+func (r *revalidation) SettleGone(guardrail, path string) error {
+	if r == nil || r.store == nil || path == "" {
+		return nil
+	}
+	v, ok, err := r.store.FileCheck(path, guardrail)
+	if err != nil {
+		return fmt.Errorf("sloprail: read verdict for %s: %w", path, err)
+	}
+	if !ok || v.Passed {
+		return nil
+	}
+	return r.Record(guardrail, subject{Path: path, Fingerprint: goneFingerprint}, true)
+}
+
 // resolve turns an event's path into one the filesystem will accept.
 //
 // Paths on file events are the project's own — relative to where the session

@@ -152,8 +152,10 @@ func TestFileMatchScopeEvent_Flat(t *testing.T) {
 	assert.Equal(t, true, entry["active"])
 }
 
-// A delete event carries no newMarkers; fileMarkers yields an empty (non-nil)
-// list so `any(markers, …)` evaluates false rather than erroring.
+// A delete event carries no newMarkers, and one carrying no oldMarkers either
+// leaves fileMarkers nothing to read; it yields an empty (non-nil) list so
+// `any(markers, …)` evaluates false rather than erroring. (A delete that DOES
+// carry oldMarkers reads them — TestFileMarkers_DeleteReadsOldMarkers.)
 func TestFileMarkers_DeleteHasEmptyList(t *testing.T) {
 	del := event.Event{Kind: declaration.KindPostFileDelete, Fields: map[string]any{filemod.FieldPath: "gone.md"}}
 	markers := fileMarkers(del)
