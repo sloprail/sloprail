@@ -146,3 +146,70 @@ jobs:
             exit 1
           }
           make test-e2e-shard SHARD=${{ matrix.shard }}
+
+  # install-sh proves the stranger install path works, on every push — not only
+  # on a tagged release. It builds real release archives (make release, the
+  # same target .github/workflows/release.yml uses) and runs install.sh against
+  # them served from a local HTTP server, so a regression in either the archive
+  # shape or the script's download/verify/unpack logic fails CI instead of
+  # surfacing on the next actual release, which is what the smoke test in the
+  # strategy repo's distribution/soft-launch-pain-priorities task found missing
+  # entirely.
+  install-sh:
+    name: install.sh (stranger install path)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: shellcheck
+        run: |
+          brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
+          shellcheck install.sh marketplace/plugins/sloprail/hooks/sr-session-hook.sh
+
+      - name: build release archives
+        run: make release
+
+      - name: serve the archives like a GitHub Release would
+        run: |
+          python3 -m http.server 8931 --directory dist --bind 127.0.0.1 &
+          echo $! > /tmp/http-server.pid
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8931/checksums.txt >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+
+      # The real install.sh, unmodified, pointed at the local server instead of
+      # GitHub via base_url substitution — proving the SHIPPED script's
+      # download → checksum verify → unpack → install sequence actually works,
+      # not a rewritten stand-in.
+      - name: run install.sh end to end
+        run: |
+          sed 's#base_url="https://github.com/${REPO}/releases/latest/download"#base_url="http://127.0.0.1:8931"#' install.sh > /tmp/install-under-test.sh
+          chmod +x /tmp/install-under-test.sh
+          SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-installed" /tmp/install-under-test.sh
+
+      - name: installed binaries actually run
+        run: |
+          "$RUNNER_TEMP/sloprail-installed/sr-session" start </dev/null >/dev/null
+          echo "sr-session runs after install.sh"
+
+      - name: tampered download is rejected
+        run: |
+          cp dist/sloprail-darwin-arm64.tar.gz /tmp/original.tar.gz
+          printf 'corruption' >> dist/sloprail-darwin-arm64.tar.gz
+          rm -rf "$RUNNER_TEMP/sloprail-tampered"
+          if SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-tampered" /tmp/install-under-test.sh; then
+            echo "install.sh accepted a tampered archive — checksum verification is broken"
+            exit 1
+          fi
+          echo "tampered archive was correctly rejected"
+          cp /tmp/original.tar.gz dist/sloprail-darwin-arm64.tar.gz
+
+      - name: stop local server
+        if: always()
+        run: kill "$(cat /tmp/http-server.pid)" 2>/dev/null || true

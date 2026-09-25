@@ -91,6 +91,39 @@ distribute-local: build
 		*) echo; echo "NOTE: $(INSTALL_DIR) is not on your \$$PATH — add it, or the hooks will not find sr-session.";; \
 	esac
 
+# release cross-compiles the whole service set for every (GOOS,GOARCH) a
+# stranger's machine is likely to be, and packages each platform's set into one
+# tar.gz — install.sh's whole job is picking the right one and unpacking it.
+#
+# One archive PER PLATFORM, not per binary: sibling resolution
+# (internal/subbin) requires the set to land in one directory together, so
+# shipping them separately would make install.sh reassemble what this target
+# could just ship pre-assembled.
+#
+# No CGO: sqlite (modernc.org/sqlite) is already pure Go, so CGO_ENABLED=0 is
+# free and is what makes a linux/arm64 binary buildable from a darwin/amd64 CI
+# runner with no cross toolchain installed.
+RELEASE_DIR := dist
+RELEASE_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
+
+.PHONY: release
+release:
+	@rm -rf $(RELEASE_DIR)
+	@mkdir -p $(RELEASE_DIR)
+	@for plat in $(RELEASE_PLATFORMS); do \
+		os=$${plat%/*}; arch=$${plat#*/}; \
+		outdir=$(RELEASE_DIR)/sloprail-$$os-$$arch; \
+		mkdir -p "$$outdir"; \
+		echo "building $$os/$$arch"; \
+		for s in $(SERVICES); do \
+			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -o "$$outdir/$$s" ./services/$$s || exit 1; \
+		done; \
+		tar -C $(RELEASE_DIR) -czf $(RELEASE_DIR)/sloprail-$$os-$$arch.tar.gz sloprail-$$os-$$arch; \
+		rm -rf "$$outdir"; \
+	done
+	@( cd $(RELEASE_DIR) && shasum -a 256 *.tar.gz > checksums.txt )
+	@echo "release archives in $(RELEASE_DIR)/"
+
 # check is what has to be clean before anything is committed.
 check:
 	go build ./...

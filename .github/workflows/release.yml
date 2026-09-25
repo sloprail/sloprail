@@ -1,0 +1,62 @@
+# Builds the sr* binaries for every platform `make release` targets and
+# attaches them to a GitHub Release, so install.sh has something to download.
+#
+# Triggered by a pushed tag matching v*, which is the ordinary way a maintainer
+# marks a version — this workflow does not decide versions, it packages
+# whatever commit was tagged. A tag push is also how a maintainer can dry-run
+# a release build without publishing (delete the tag and the draft release
+# after inspecting the artifacts).
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # macos-latest, not ubuntu, for the SAME reason distribute-local
+      # re-signs every binary it copies: a darwin binary built without
+      # `codesign` behind it is flagged by Gatekeeper on first run in a way
+      # that reads like a corrupt download rather than an unsigned one. The
+      # linux/* binaries cross-compile identically from either runner
+      # (CGO_ENABLED=0), so building all four platforms here costs nothing
+      # extra.
+      - name: build release archives
+        run: make release
+
+      - name: release archives are what install.sh expects
+        run: |
+          test -f dist/sloprail-darwin-amd64.tar.gz
+          test -f dist/sloprail-darwin-arm64.tar.gz
+          test -f dist/sloprail-linux-amd64.tar.gz
+          test -f dist/sloprail-linux-arm64.tar.gz
+          test -f dist/checksums.txt
+          # Each archive must unpack to the full service set in one directory —
+          # the shape internal/subbin's sibling resolution requires.
+          mkdir -p /tmp/verify
+          tar -C /tmp/verify -xzf dist/sloprail-darwin-arm64.tar.gz
+          for bin in sr sr-session sr-file sr-mark sr-agent; do
+            test -x "/tmp/verify/sloprail-darwin-arm64/$bin" || { echo "missing or not executable: $bin"; exit 1; }
+          done
+          /tmp/verify/sloprail-darwin-arm64/sr-session start </dev/null >/dev/null
+          echo "darwin-arm64 sr-session runs"
+
+      - name: publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          generate_release_notes: true
