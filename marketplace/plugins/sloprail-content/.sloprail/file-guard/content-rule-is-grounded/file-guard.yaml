@@ -1,0 +1,25 @@
+# A writing RULE must be traceable to a human ask, and a SCRIPT rule must be
+# capable of refusing — see check-rule.sh's header for the full mechanism.
+# This guard protects the RULE SET itself, the same role
+# task-body-is-human-authored plays for a task's ask: without it, an agent
+# could invent a rule nobody asked for and have it silently start gating every
+# future unit, or ship a script rule that is an unconditional permit dressed
+# up as an enforcement.
+#
+# match: EITHER rule location — project-wide RULE.md or topic-scoped
+# CONSTRAINT.md, the same two paths rules-lib.sh collects from.
+match: path matches "^\\.sloprail/content-rules/[^/]+/RULE\\.md$" or path matches "^memories/topics/[^/]+/constraints/[^/]+/CONSTRAINT\\.md$"
+
+# PREVENTIVE: true — an ungrounded or trivially-permissive rule should never
+# land in the first place; refusing it after the fact would mean it already
+# had a chance to gate a unit write before being caught. Mirrors
+# task-body-is-human-authored's own preventive binding for the identical
+# reason (protecting the oracle, not an artifact).
+preventive: true
+
+checks:
+  # Deterministic, fail-closed throughout — no model call for either check:
+  # citation grounding is exactly as decidable here as it is for a task body's
+  # ask citation, and the script-triviality check is a structural grep, not a
+  # judgement call.
+  - script: ./check-rule.sh
