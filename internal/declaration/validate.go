@@ -156,18 +156,20 @@ func ValidateContext(c Context, env Env) []Problem {
 	return problems
 }
 
-// ValidateStructureGate reports everything wrong with the structure gate.
+// ValidateStructureGate reports everything wrong with a structure gate.
 //
 // Its rules: `allow` must be present (an absent allowlist denies everything,
-// which is a structure gate that locks the whole project out — a mistake worth
-// refusing rather than a deliberate empty allowlist), and every allow/deny entry
-// is exactly-one-of glob/regex, with the pattern compiling.
+// which is a structure gate that locks the whole project — or the whole of a
+// plugin's scope — out: a mistake worth refusing rather than a deliberate empty
+// allowlist), and every allow/deny entry is exactly-one-of glob/regex, with the
+// pattern compiling. Then the `scope` rules, which depend on WHO declared it
+// (validateStructureScope).
 func ValidateStructureGate(s StructureGate, _ Env) []Problem {
 	var problems []Problem
 
 	if len(s.Allow) == 0 {
 		problems = append(problems, prob(ErrMissingField, "allow",
-			"a structure gate must allow at least one path — an empty allowlist denies the whole project"))
+			"a structure gate must allow at least one path — an empty allowlist denies everything it covers"))
 	}
 	for i, e := range s.Allow {
 		problems = append(problems, validateStructureEntry(e, fmt.Sprintf("allow %d", i))...)
@@ -175,6 +177,7 @@ func ValidateStructureGate(s StructureGate, _ Env) []Problem {
 	for i, e := range s.Deny {
 		problems = append(problems, validateStructureEntry(e, fmt.Sprintf("deny %d", i))...)
 	}
+	problems = append(problems, validateStructureScope(s)...)
 
 	return problems
 }

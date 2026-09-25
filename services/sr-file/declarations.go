@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -54,17 +55,24 @@ func newDeclarationsCmd() *cobra.Command {
 			"THE ARGUMENT is a directory. A path ending in .sloprail is loaded as the root\n" +
 			"itself; any other path is treated as a project root whose .sloprail subdirectory\n" +
 			"is loaded — so `declarations .` and `declarations ./.sloprail` name the same tree.\n\n" +
+			"--plugin NAME loads the directory as the root of an installed plugin named NAME\n" +
+			"instead of a project, validating what a plugin ships by the plugin rules — a\n" +
+			"plugin's structure gate must declare a `scope`, a project's must not.\n\n" +
+			"STRUCTURE GATES are listed one per root: the project's (the whole tree) and each\n" +
+			"plugin's with the scope it owns.\n\n" +
 			"EXIT STATUS is 0 when every declaration loaded and 1 when any was invalid, so a\n" +
 			"hook or a CI step can read it. Invalid declarations are printed one fault per line.\n\n" +
 			"EXAMPLES:\n" +
 			"  sr-file declarations .\n" +
 			"  sr-file declarations examples/eval-loop-maxing\n" +
-			"  sr-file declarations examples/eval-loop-maxing/.sloprail",
+			"  sr-file declarations examples/eval-loop-maxing/.sloprail\n" +
+			"  sr-file declarations --plugin mdmap path/to/plugins/mdmap",
 		Args:          cobra.ExactArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE:          runDeclarations,
 	}
+	cmd.Flags().String("plugin", "", "load the directory as the root of the plugin with this name, not a project")
 	return cmd
 }
 
@@ -92,7 +100,14 @@ func runDeclarations(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("sr-file declarations: %w", err)
 	}
 
-	loaded, err := declaration.New(root).Load(reg)
+	store := declaration.New(root)
+	plugin, _ := cmd.Flags().GetString("plugin")
+	if plugin != "" {
+		// A plugin's root is the directory HOLDING its `.sloprail`.
+		store = declaration.NewPlugin(declaration.Origin{Plugin: plugin, Root: filepath.Dir(root)})
+	}
+
+	loaded, err := store.Load(reg)
 	if err != nil {
 		// A hard error is the loader unable to READ the tree (a permissions
 		// failure on a directory), distinct from a declaration being invalid —
@@ -105,16 +120,15 @@ func runDeclarations(cmd *cobra.Command, args []string) error {
 	// The loaded declarations, by nature, so a person sees what is in force. Names
 	// only — the point of this surface is "did they load", and the detail lives in
 	// the files.
-	fmt.Fprintf(out, "Loaded from %s:\n", root)
+	if plugin != "" {
+		fmt.Fprintf(out, "Loaded from %s (as plugin %q):\n", root, plugin)
+	} else {
+		fmt.Fprintf(out, "Loaded from %s:\n", root)
+	}
 	printNature(out, "file-guards", fileGuardNames(loaded))
 	printNature(out, "gates", gateNames(loaded))
 	printNature(out, "contexts", contextNames(loaded))
-	if loaded.Structure != nil {
-		fmt.Fprintf(out, "  structure gate: present (%d allow, %d deny)\n",
-			len(loaded.Structure.Allow), len(loaded.Structure.Deny))
-	} else {
-		fmt.Fprintln(out, "  structure gate: none")
-	}
+	printStructures(out, loaded)
 
 	if len(loaded.Invalid) == 0 {
 		return nil
@@ -132,6 +146,27 @@ func runDeclarations(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return errRefused
+}
+
+// printStructures prints every loaded structure gate, one line each: the
+// project's (the whole tree) and each plugin's with the scope it owns, then any
+// overlap between two plugins' literal scopes.
+func printStructures(out io.Writer, l declaration.Loaded) {
+	if len(l.Structures) == 0 {
+		fmt.Fprintln(out, "  structure gate: none")
+		return
+	}
+	for _, sg := range l.Structures {
+		if !sg.Origin.FromPlugin() {
+			fmt.Fprintf(out, "  structure gate: present (%d allow, %d deny)\n", len(sg.Allow), len(sg.Deny))
+			continue
+		}
+		fmt.Fprintf(out, "  structure gate from plugin %q: owns %s (%d allow, %d deny)\n",
+			sg.Origin.Plugin, strings.Join(sg.ScopeGlobs(), ", "), len(sg.Allow), len(sg.Deny))
+	}
+	for _, o := range l.ScopeOverlaps {
+		fmt.Fprintf(out, "  warning: %s\n", o.Message())
+	}
 }
 
 // printNature prints one nature's loaded names, or "none" when it declared none.

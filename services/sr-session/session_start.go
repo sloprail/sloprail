@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/module/modules"
 )
 
@@ -43,11 +45,13 @@ func newSessionStartCmd() *cobra.Command {
 			}
 
 			// Load and report. newNatureDeclarations reports every declaration that
-			// could not load, every shadowed one, and every unresolved plugin — the
-			// load check an author runs, and the one place a person is reliably
-			// watching. The loaded set is not used here; session start enforces
-			// nothing, by design.
-			newNatureDeclarations(cmd, p.Cwd, reg)
+			// could not load, every shadowed one, every overlapping pair of plugin
+			// structure scopes, and every unresolved plugin — the load check an
+			// author runs, and the one place a person is reliably watching. Session
+			// start enforces nothing, by design; the loaded set is used only to say
+			// which part of the tree each plugin's structure gate owns.
+			loaded := newNatureDeclarations(cmd, p.Cwd, reg)
+			reportStructureScopes(cmd, loaded)
 			return nil
 		},
 	}
@@ -72,5 +76,17 @@ func recordBaseline(cmd *cobra.Command, p HookPayload) {
 
 	if _, err := ensureBaseline(store, p.Cwd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)
+	}
+}
+
+// reportStructureScopes says, once per session, which part of the tree each
+// plugin's structure gate owns — so a person learns at the start that writes
+// under `.mdmap/` answer to plugin mdmap rather than discovering it at a refusal.
+// Stderr, beside the load report: SessionStart's stdout is context for the agent,
+// and this is for the person.
+func reportStructureScopes(cmd *cobra.Command, loaded declaration.Loaded) {
+	for _, sg := range loaded.PluginStructures() {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s owns %s\n",
+			sg.Describe(), strings.Join(sg.ScopeGlobs(), ", "))
 	}
 }

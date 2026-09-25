@@ -208,7 +208,13 @@
         "path": "sr-file declarations",
         "use": "declarations <dir>",
         "short": "Load and validate the .sloprail declarations under a directory",
-        "long": "Load and validate the new-format declarations a project keeps under its\n.sloprail directory — file-guards, gates, contexts, and the structure\ngate — reporting what loaded and, for anything that did not, the faults by name.\n\nThis is an inspection surface over the declaration loader, not part of the live\nhook dispatch: it proves a project's declaration files parse and validate before\nany event is dispatched against them.\n\nTHE ARGUMENT is a directory. A path ending in .sloprail is loaded as the root\nitself; any other path is treated as a project root whose .sloprail subdirectory\nis loaded — so `declarations .` and `declarations ./.sloprail` name the same tree.\n\nEXIT STATUS is 0 when every declaration loaded and 1 when any was invalid, so a\nhook or a CI step can read it. Invalid declarations are printed one fault per line.\n\nEXAMPLES:\n  sr-file declarations .\n  sr-file declarations examples/eval-loop-maxing\n  sr-file declarations examples/eval-loop-maxing/.sloprail"
+        "long": "Load and validate the new-format declarations a project keeps under its\n.sloprail directory — file-guards, gates, contexts, and the structure\ngate — reporting what loaded and, for anything that did not, the faults by name.\n\nThis is an inspection surface over the declaration loader, not part of the live\nhook dispatch: it proves a project's declaration files parse and validate before\nany event is dispatched against them.\n\nTHE ARGUMENT is a directory. A path ending in .sloprail is loaded as the root\nitself; any other path is treated as a project root whose .sloprail subdirectory\nis loaded — so `declarations .` and `declarations ./.sloprail` name the same tree.\n\n--plugin NAME loads the directory as the root of an installed plugin named NAME\ninstead of a project, validating what a plugin ships by the plugin rules — a\nplugin's structure gate must declare a `scope`, a project's must not.\n\nSTRUCTURE GATES are listed one per root: the project's (the whole tree) and each\nplugin's with the scope it owns.\n\nEXIT STATUS is 0 when every declaration loaded and 1 when any was invalid, so a\nhook or a CI step can read it. Invalid declarations are printed one fault per line.\n\nEXAMPLES:\n  sr-file declarations .\n  sr-file declarations examples/eval-loop-maxing\n  sr-file declarations examples/eval-loop-maxing/.sloprail\n  sr-file declarations --plugin mdmap path/to/plugins/mdmap",
+        "flags": [
+          {
+            "name": "plugin",
+            "usage": "load the directory as the root of the plugin with this name, not a project"
+          }
+        ]
       },
       {
         "path": "sr-file validate",

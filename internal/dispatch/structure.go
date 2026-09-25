@@ -3,6 +3,7 @@ package dispatch
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
@@ -10,12 +11,17 @@ import (
 )
 
 // This file is the STRUCTURE-GATE primitive (dot-dir-file-store/main.tsp
-// StructureGateDeclaration): one tree-wide allowlist of paths a project may write
-// under, DENY BY DEFAULT. It is a primitive rather than a rule nature — a single
-// `structure.yaml` for the whole project, not a per-name folder — so it lives here
-// as a small path-matcher rather than going through the require/checks runner.
+// StructureGateDeclaration): allowlists of paths that may be written, DENY BY
+// DEFAULT. It is a primitive rather than a rule nature — one `structure.yaml` per
+// root, not a per-name folder — so it lives here as a small path-matcher rather
+// than going through the require/checks runner.
 //
-// The rule, exactly:
+// Two layers. StructureGate is ONE compiled structure.yaml and its allow/deny
+// rule; StructureSet combines every loaded one — the project's (whole tree) and
+// each plugin's (its declared `scope` only) — and decides a written path by
+// ownership (see StructureSet.Decide).
+//
+// One structure gate's rule, exactly:
 //
 //   - a write to a path that matches NO `allow` entry is DENIED (deny by default);
 //   - a write to a path that matches an `allow` entry is ALLOWED;
@@ -169,6 +175,29 @@ func (sg *StructureGate) Allows(path string) (allowed bool, reason string) {
 	return true, ""
 }
 
+// matchesDeny reports whether any `deny` entry matches path. A deny entry that
+// errors is treated as matching — fail-closed, as in Allows.
+func (sg *StructureGate) matchesDeny(path string) bool {
+	for _, m := range sg.deny {
+		ok, err := m.matches(path)
+		if err != nil || ok {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesAllow reports whether any `allow` entry matches path. An allow entry
+// that errors establishes nothing — fail-closed, as in Allows.
+func (sg *StructureGate) matchesAllow(path string) bool {
+	for _, m := range sg.allow {
+		if ok, err := m.matches(path); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
 // structureDenyReason is the refusal for a path allowed by nothing.
 func structureDenyReason(path string) string {
 	return fmt.Sprintf(
@@ -183,4 +212,177 @@ func structureDenyExceptionReason(path string) string {
 	return fmt.Sprintf(
 		"writing to %q is blocked by a `deny` exception in this project's structure gate (.sloprail/file-guard/structure.yaml) — the path is under an allowed area but explicitly excluded from it.",
 		path)
+}
+
+// -- combining every loaded structure gate --
+
+// StructureSet is every loaded structure gate compiled together: the project's
+// own (whole tree), if any, and each plugin's with the folders its `scope` owns.
+type StructureSet struct {
+	project *StructureGate
+	plugins []pluginStructure
+}
+
+// pluginStructure is one plugin's compiled structure gate and its scope.
+type pluginStructure struct {
+	decl   declaration.StructureGate
+	gate   *StructureGate
+	scopes []scopeMatcher
+}
+
+// scopeMatcher is one compiled scope entry: the glob as the plugin wrote it (for
+// messages) and a matcher over FOLDER paths (the glob less its trailing `/`).
+type scopeMatcher struct {
+	glob   string
+	folder pathMatcher
+}
+
+// CompileStructureSet compiles every loaded structure gate. A project gate is the
+// one with no plugin origin; every other one must carry a scope (the loader
+// already refused any that do not).
+func CompileStructureSet(gates []declaration.StructureGate) (*StructureSet, error) {
+	set := &StructureSet{}
+	for _, d := range gates {
+		g, err := CompileStructureGate(d)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", d.Describe(), err)
+		}
+		if !d.Origin.FromPlugin() {
+			set.project = g
+			continue
+		}
+		ps := pluginStructure{decl: d, gate: g}
+		for i, e := range d.Scope {
+			m, err := guardrail.CompileFileMatch(declaration.ScopeFolder(e.Glob))
+			if err != nil {
+				return nil, fmt.Errorf("%s: scope entry %d: %w", d.Describe(), i, err)
+			}
+			ps.scopes = append(ps.scopes, scopeMatcher{glob: e.Glob, folder: globMatcher{m: m}})
+		}
+		set.plugins = append(set.plugins, ps)
+	}
+	return set, nil
+}
+
+// Empty reports whether the set holds no structure gate at all.
+func (s *StructureSet) Empty() bool { return s.project == nil && len(s.plugins) == 0 }
+
+// owner is a plugin whose scope a path lies in, and the scope entry that matched.
+type owner struct {
+	p     *pluginStructure
+	scope string
+}
+
+// ownerOf reports the scope entry of this plugin that owns path, or "" if none:
+// path lies under a folder the scope glob denotes when one of its ANCESTOR
+// folders matches the folder glob. The path itself is not a folder here — a file
+// named `.mdmap` is not inside `.mdmap/`.
+//
+// A scope matcher that errors counts as owning the path: then the plugin's
+// stricter, scoped rule applies rather than the path escaping it.
+func (p *pluginStructure) ownerOf(path string) string {
+	for i := 1; i < len(path); i++ {
+		if path[i] != '/' {
+			continue
+		}
+		folder := path[:i]
+		for _, sc := range p.scopes {
+			if ok, err := sc.folder.matches(folder); err != nil || ok {
+				return sc.glob
+			}
+		}
+	}
+	return ""
+}
+
+// Decide reports whether a write to path is permitted by the combined structure
+// gates, and on a refusal why — naming the source that decided.
+//
+// The order, exactly:
+//
+//  1. OWNERS are the plugins whose scope the path lies in. More than one → refuse,
+//     naming every owner (an ownership conflict: nobody can say which rule is
+//     meant, so neither is guessed).
+//  2. Exactly one owner: the project's `deny` still VETOES (the project always
+//     keeps the last word on its own tree); otherwise the owner decides — its
+//     `allow` must match and its `deny` must not. The project's `allow` does NOT
+//     widen an owned scope.
+//  3. No owner: the project's structure decides exactly as it always has (allow
+//     must match, deny must not); with no project structure the write is
+//     permitted — a plugin can lock down only its own scope.
+func (s *StructureSet) Decide(path string) (bool, string) {
+	var owners []owner
+	for i := range s.plugins {
+		if sc := s.plugins[i].ownerOf(path); sc != "" {
+			owners = append(owners, owner{p: &s.plugins[i], scope: sc})
+		}
+	}
+
+	switch {
+	case len(owners) > 1:
+		return false, ownershipConflictReason(path, owners)
+	case len(owners) == 1:
+		o := owners[0]
+		if s.project != nil && s.project.matchesDeny(path) {
+			return false, projectVetoReason(path, o)
+		}
+		if !o.p.gate.matchesAllow(path) {
+			return false, pluginDenyReason(path, o)
+		}
+		if o.p.gate.matchesDeny(path) {
+			return false, pluginDenyExceptionReason(path, o)
+		}
+		return true, ""
+	case s.project != nil:
+		return s.project.Allows(path)
+	default:
+		return true, ""
+	}
+}
+
+// describeOwner names a plugin structure and the scope that matched, for a
+// refusal: `plugin "mdmap"'s structure gate (scope ".mdmap/", <path>)`.
+func describeOwner(o owner) string {
+	return fmt.Sprintf("%s (scope %q, %s)", o.p.decl.Describe(), o.scope, o.p.decl.Path())
+}
+
+// ownershipConflictReason is the refusal for a path two or more plugins' scopes
+// claim.
+func ownershipConflictReason(path string, owners []owner) string {
+	names := make([]string, 0, len(owners))
+	keys := make([]string, 0, len(owners))
+	for _, o := range owners {
+		names = append(names, describeOwner(o))
+		keys = append(keys, o.p.decl.Qualified())
+	}
+	return fmt.Sprintf(
+		"writing to %q is refused: ownership conflict — it lies in the scope of more than one plugin's structure gate: %s. "+
+			"No single rule can decide it; disable all but one of them in .sloprail/config.yaml (`disabled: [%s]`).",
+		path, strings.Join(names, "; "), strings.Join(keys, ", "))
+}
+
+// projectVetoReason is the refusal for a path inside a plugin's scope that the
+// project's own structure gate denies.
+func projectVetoReason(path string, o owner) string {
+	return fmt.Sprintf(
+		"writing to %q is blocked by a `deny` entry in this project's structure gate (.sloprail/file-guard/structure.yaml) — "+
+			"the path is owned by %s, but the project's deny always has the last word.",
+		path, describeOwner(o))
+}
+
+// pluginDenyReason is the refusal for a path inside a plugin's scope that its
+// allowlist does not cover.
+func pluginDenyReason(path string, o owner) string {
+	return fmt.Sprintf(
+		"writing to %q is not allowed by %s, which owns this part of the tree — it is deny-by-default there, and this path matches no `allow` entry. "+
+			"Write where that plugin's structure allows; the project's own `allow` does not widen a plugin's scope.",
+		path, describeOwner(o))
+}
+
+// pluginDenyExceptionReason is the refusal for a path a plugin's allow covers but
+// its deny carves back out.
+func pluginDenyExceptionReason(path string, o owner) string {
+	return fmt.Sprintf(
+		"writing to %q is blocked by a `deny` exception in %s — the path is under an allowed area but explicitly excluded from it.",
+		path, describeOwner(o))
 }
