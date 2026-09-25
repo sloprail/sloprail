@@ -1,6 +1,6 @@
 {
   "name": "sloprail-marketplace",
-  "description": "Claude Code guardrails: turn CLAUDE.md into rules checked against the agent's real diff, and block Stop until they pass.",
+  "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Claude Code guardrails with a Stop gate.",
   "keywords": [
     "claude-code",
     "claude-code-plugin",
@@ -20,7 +20,7 @@
   "plugins": [
     {
       "name": "sloprail",
-      "description": "Claude Code guardrails: turn CLAUDE.md into rules checked against the agent's real diff, and block Stop until they pass.",
+      "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Claude Code guardrails with a Stop gate.",
       "keywords": [
         "claude-code",
         "claude-code-plugin",
