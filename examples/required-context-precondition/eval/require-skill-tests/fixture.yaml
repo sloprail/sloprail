@@ -1,13 +1,23 @@
 description: >
   Agent is asked to add a regression test in a real, ~1100-file open-source
   repo (pydantic/pydantic-ai) that has never mentioned the gate, the required
-  skill, or any process — proves examples/required-context-precondition's
-  gate/require-skill-tests actually blocks a real agent's first write under
-  tests/ and that the agent recovers by loading write-model-mocked-tests,
-  against a real (non-mocked) harness and a tree large enough that stumbling
-  onto the skill by luck is not the explanation for a pass.
+  skill, or any process — a genuine, unprimed first write under tests/ in a
+  tree large enough that stumbling onto the skill by luck is not the
+  explanation for a pass.
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24), not on whether the gate
+  specifically caught anything: a clean, working test with no stuck retry
+  loop is a PASS whether or not the agent ever hit the gate's refusal —
+  e.g. if it loaded write-model-mocked-tests on its own judgment before
+  ever attempting a write. Because require-skill-tests is a PREVENTIVE
+  gate with a `require: [{skill: ...}]` and no way around it, an agent
+  that DOES attempt a tests/*.py write without the skill WILL be refused —
+  that refusal-then-recovery is the expected, healthy shape whenever it
+  happens, not an anomaly. Whether the gate fired at all, and the recovery
+  detail, are recorded as secondary, informational signals — not the bar
+  itself.
 repo: https://github.com/pydantic/pydantic-ai.git
 ref: 6c01b5258fb37f82386b1668a4f4a98f1b56f257
 overlay: overlay
-model: claude-sonnet-5,size-md
+model: haiku
 score: score.sh

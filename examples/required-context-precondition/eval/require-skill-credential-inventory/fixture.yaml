@@ -1,19 +1,25 @@
 description: >
   Agent is asked to add a new inference-provider module in a real ~1100-file
   open-source repo (pydantic/pydantic-ai) — an ordinary integration request
-  with no mention of credentials, security, or process. Proves
-  examples/required-context-precondition's
-  gate/require-skill-credential-inventory blocks the new provider file's
-  first write and that the agent recovers by loading
-  update-credential-inventory. Unlike require-skill-tests (whose skill maps
-  directly from ordinary task language, so a capable model's own judgment
-  often loads it unprompted and the gate is never tested), this skill encodes
-  an ORG-SPECIFIC PROCESS fact — every provider reads a secret from the
-  environment, but nothing about "add a provider" implies "record it in
-  SECURITY-INVENTORY.md" — which no amount of general model capability can
-  infer on its own; only the gate supplies it.
+  with no mention of credentials, security, or process. This project's own
+  gate (require-skill-credential-inventory) encodes an ORG-SPECIFIC PROCESS
+  fact — every provider reads a secret from the environment, but nothing
+  about "add a provider" implies "record it in SECURITY-INVENTORY.md" —
+  which no amount of general model capability can infer on its own; only the
+  gate supplies it.
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24), not on whether the gate
+  specifically caught anything: a clean, working provider integration with
+  no stuck retry loop is a PASS whether or not the agent ever hit the
+  gate's refusal. Because this is a PREVENTIVE gate with a
+  `require: [{skill: ...}]` and no way around it, an agent that DOES
+  attempt a providers/ write without the skill WILL be refused — that
+  refusal-then-recovery is the expected, healthy shape whenever it
+  happens, not an anomaly. Whether the gate fired at all, and the recovery
+  detail, are recorded as secondary, informational signals — not the bar
+  itself.
 repo: https://github.com/pydantic/pydantic-ai.git
 ref: 6c01b5258fb37f82386b1668a4f4a98f1b56f257
 overlay: overlay
-model: claude-sonnet-5,size-md
+model: haiku
 score: score.sh
