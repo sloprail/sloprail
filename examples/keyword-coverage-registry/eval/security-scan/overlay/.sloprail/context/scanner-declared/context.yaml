@@ -1,0 +1,13 @@
+# Owns "were the keywords written down as a real file"; the sibling gate
+# (verify-scanner-coverage) owns "did a search cover them", checked against what
+# this context logged.
+#
+# scanners/<name>/scanner.yaml declares one scanner: { active: bool,
+# keywords: str[] }. Its keywords must ALL appear together in ONE gh call.
+on:
+  - event: PostFileCreate
+    match: event.path startsWith "scanners/" and event.path endsWith "/scanner.yaml"
+  - event: PostFileUpdate
+    match: event.path startsWith "scanners/" and event.path endsWith "/scanner.yaml"
+enter: ./enter.sh
+exit: ./exit.sh
