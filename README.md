@@ -1,28 +1,48 @@
 # sloprail
 
-Declarative contracts that keep an agent's output honest.
+Your agents slop. Take control.
+
+Skills get skipped. Prompts get ignored. Everything drifts into slop and
+dies there. sloprail is the layer that holds the line — structure the agent
+can't wander out of, checked against what actually happened, not what it
+claimed.
 
 <!-- HERO GIF -->
 
-<!-- USE-CASE GRID -->
+## Skills aren't enough
+
+A skill is a request, not a guarantee — and it might not even
+[load](https://sloprail.com/docs/use-cases/knowledge/acted-without-context).
+sloprail is the check that runs no matter what the agent does, and reads the
+real result, not the agent's word for it.
 
 ## Install
 
-sloprail runs inside your agent as a plugin.
+sloprail installs as a plugin. Once it's in, every tool call and turn-end
+runs through it — you don't run anything by hand.
 
-```
-/plugin marketplace add sloprail/sloprail
-/plugin install sloprail@sloprail-marketplace
-```
+| Harness | Command |
+|---|---|
+| Claude Code | `/plugin install sloprail@sloprail-marketplace` |
+| Cursor | soon |
+| Codex | soon |
 
-That registers the hooks the engine needs; from then on, every tool call and
-turn-end runs through sloprail. There is no setup command beyond that:
-`.sloprail/guardrails/` is created by whatever writes the first declaration,
-and a project with none is an ordinary project.
+Don't see your harness? [We integrate it fast](https://github.com/sloprail/sloprail/issues/new?title=Harness+request%3A+%3Cyour+harness%3E&labels=harness-request).
 
-See the [Install guide](docs/getting-started/install.mdx) and
-[Quickstart](docs/getting-started/quickstart.md) for writing your first
-guardrail.
+Get started: [Quickstart](https://sloprail.com/docs/getting-started/quickstart).
+
+## You've seen these happen
+
+<!-- USE-CASE GRID -->
+
+- [The task gets rewritten to match the work](https://sloprail.com/docs/use-cases/tasks/task-rewritten)
+- [After enough compaction, it games the score instead of doing the work](https://sloprail.com/docs/use-cases/long-runs/compaction-gaming)
+- [A request fell through the cracks](https://sloprail.com/docs/use-cases/tasks/request-fell-through)
+- [The same fact, copied into two files, now disagreeing](https://sloprail.com/docs/use-cases/knowledge/duplicated-knowledge)
+- [It acted without loading what it needed first](https://sloprail.com/docs/use-cases/knowledge/acted-without-context)
+- [The "mechanical" refactor silently rewrote your code](https://sloprail.com/docs/use-cases/coding/refactor-regenerated)
+
+[View all use cases](https://sloprail.com/use-cases).
 
 ## Guardrails that arrive with a plugin
 
@@ -156,6 +176,21 @@ and drives a mock agent, and a parallel `-race ./...` across the 46 of them ran
 the disk out of space.
 
 ## How it works
+
+### What sloprail is made of
+
+| Piece | What it does |
+|---|---|
+| [Grounding](https://sloprail.com/docs/concepts/grounding) | The claim, checked against the artifact. Did the diff really contain the change; does the cited source line actually resolve — not whether a rule merely fired. |
+| [Reconciliation](https://sloprail.com/docs/concepts/reconciliation) | A move that has to add up to nothing. The before and after cancel out once known-legit differences are set aside — the empty residue is the proof it was mechanical, not regenerated. |
+| [File-guard](https://sloprail.com/docs/concepts/file-guard) | Bound to a file, not a moment. It keeps failing and feeding the error back until the code actually satisfies it — not a one-shot reject. |
+| [Gate](https://sloprail.com/docs/concepts/gate) | A checkpoint on one action. It reads what the action requires and either lets it through or blocks it — once, at the moment it matters. |
+| [Context](https://sloprail.com/docs/concepts/context) | A scope the agent enters on its own — detected from what's happening, not a step it has to remember. Enforced only while it's active. |
+| [Structure-gate](https://sloprail.com/docs/concepts/structure-gate) | A standing map of where writes are even allowed. Deny by default — a path outside the structure never lands. |
+| [Marker](https://sloprail.com/docs/concepts/marker) | A durable label pinned on the artifact — a comment in the code that later checks anchor to, surviving renames and moves. |
+| [Tag](https://sloprail.com/docs/concepts/tag) | The same idea in the run — a label the agent drops in its own trajectory, that a later check can read back. |
+
+### The engine
 
 A project declares guardrails under `.sloprail/guardrails/`; the harness calls
 the session hook points, and the engine runs whichever guardrails bind to what
