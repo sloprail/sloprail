@@ -10,7 +10,7 @@ import (
 // this closes that gap: given a substring of what the user said, find the single
 // line it sits on in the trajectory.
 //
-// What counts as "the user's own words" is the whole subtlety, and it is two
+// What counts as "the user's own words" is the whole subtlety, and it is three
 // things, not one:
 //
 //   - a plain user message — content that is a string, or a list of text blocks;
@@ -18,11 +18,17 @@ import (
 //     NOT arrive as a plain message. It lands as a `user` entry carrying a
 //     tool_result whose content reads `The user answered: "<question>"="<answer>".
 //     ...`, and the answer is extracted from that envelope.
+//   - a message the person sends WHILE a turn is already running — Claude Code
+//     folds it into the running turn instead of opening a new one, and records
+//     it as an `attachment` entry (`attachment.type: "queued_command"`) rather
+//     than a `type:"user"` message. See queuedCommandAttachment for how a
+//     genuinely human one is told apart from the same attachment shape the
+//     harness uses for its own background-task notices.
 //
-// A prompted answer is the person's own words the same as a spontaneous message,
-// so a quote landing on either resolves. Nothing else does — not the agent's own
-// prior output, and not the text of an ordinary tool_result that merely happens
-// to contain the substring.
+// A prompted answer, and a message sent mid-turn, are the person's own words the
+// same as a spontaneous message, so a quote landing on any of the three resolves.
+// Nothing else does — not the agent's own prior output, and not the text of an
+// ordinary tool_result that merely happens to contain the substring.
 //
 // # Two searchable pools, selected by SourceType
 //
@@ -59,7 +65,8 @@ import (
 type SourceType string
 
 const (
-	// SourceUser is the user's own words: the typed message text, and the answer
+	// SourceUser is the user's own words: the typed message text, a message sent
+	// mid-turn (a human-typed queued_command attachment), and the answer
 	// selected to an AskUserQuestion. Harness-injected user-role messages
 	// (<system-reminder>, <task-notification>, a slash-command envelope) are
 	// excluded, and an ordinary tool_result's body is not searched — grounding a
@@ -176,11 +183,22 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 	}
 	var matches []CitationMatch
 	for _, e := range entries {
-		if e.Type != EntryUser {
-			continue
-		}
-		if entryContains(e.Entry, quote, sources) {
-			matches = append(matches, CitationMatch{Path: path, Line: e.Line})
+		switch e.Type {
+		case EntryUser:
+			if entryContains(e.Entry, quote, sources) {
+				matches = append(matches, CitationMatch{Path: path, Line: e.Line})
+			}
+		case EntryAttachment:
+			// A queued-command attachment is the ONLY attachment kind that is ever
+			// the user's own words (see queuedCommandText); every other attachment
+			// — environment, model identity, a completed task's notification — is
+			// the harness's own bookkeeping, the same reasoning harnessInjected
+			// applies to a `user`-typed record. It only ever belongs to SourceUser:
+			// there is no tool_result concept on an attachment record for
+			// SourceToolResult to read.
+			if wants(sources, SourceUser) && queuedCommandContains(e.Entry, quote) {
+				matches = append(matches, CitationMatch{Path: path, Line: e.Line})
+			}
 		}
 	}
 	return matches, nil
@@ -328,6 +346,91 @@ func harnessInjected(text string) bool {
 		}
 	}
 	return false
+}
+
+// queuedCommandAttachment is the fields of a `queued_command` attachment that
+// decide whether its prompt is genuinely the person's own words.
+//
+// Claude Code writes a message the person sends WHILE a turn is already running
+// this way — not as a `type:"user"` record, but as an `attachment` one — because
+// it is folded into the running turn rather than opened as a new one. Left out
+// of the search, a rule grounding a claim in the user's words silently refuses
+// everything the person typed mid-turn, which is the bug this type exists to
+// close.
+//
+// Not every `queued_command` is the person typing, though: Claude Code queues a
+// background task's completion notice — a <task-notification> — through the
+// exact same attachment shape, and that is the harness speaking, not the person.
+// Across the real transcripts this was checked against (~1,900 queued_command
+// attachments spanning several projects), the two are told apart cleanly by
+// CommandMode alone:
+//
+//   - CommandMode == "prompt" is every genuinely human-typed message observed —
+//     ordinary prose, a message that happens to start with "/" (which is just
+//     text the person typed, not a slash-command invocation — those arrive as
+//     the <command-name>/<command-message> envelope harnessInjected already
+//     excludes), non-English text, image attachments. Origin.Kind, when
+//     present, is always "human" on these and never present on the other mode —
+//     confirming, not deciding, the classification.
+//   - CommandMode == "task-notification" is every <task-notification> observed,
+//     with no other CommandMode value seen for it.
+//
+// HumanTurn is NOT the gate: it is `true` on a healthy fraction of genuine
+// "prompt" records but absent on plenty of others (older client versions did
+// not write it), so requiring it would silently drop real mid-turn messages
+// from otherwise-identical sessions. Origin is similarly present only
+// sometimes. CommandMode is the one field written on every queued_command
+// record in the corpus and never ambiguous, so it is the sole gate; the other
+// two are read only to confirm the classification within tests, not to narrow
+// it further.
+type queuedCommandAttachment struct {
+	Type        string          `json:"type"`
+	Prompt      json.RawMessage `json:"prompt"`
+	CommandMode string          `json:"commandMode"`
+}
+
+// isHumanQueuedCommand reports whether raw — an EntryAttachment's Attachment
+// field — is a `queued_command` the person actually typed, as against one the
+// harness queued on its own behalf (a background task's <task-notification>).
+// See queuedCommandAttachment for how CommandMode decides this.
+func isHumanQueuedCommand(raw json.RawMessage) (queuedCommandAttachment, bool) {
+	if len(raw) == 0 {
+		return queuedCommandAttachment{}, false
+	}
+	var att queuedCommandAttachment
+	if json.Unmarshal(raw, &att) != nil {
+		return queuedCommandAttachment{}, false
+	}
+	if att.Type != "queued_command" || att.CommandMode != "prompt" {
+		return queuedCommandAttachment{}, false
+	}
+	return att, true
+}
+
+// queuedCommandText returns the plain text of a human-typed queued-command
+// attachment's prompt — empty for anything else (not a queued_command, queued by
+// the harness rather than the person, or a non-text prompt such as an image
+// attachment, which carries a block list rather than a string and has no text to
+// search).
+func queuedCommandText(raw json.RawMessage) string {
+	att, ok := isHumanQueuedCommand(raw)
+	if !ok {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(att.Prompt, &text) != nil {
+		return ""
+	}
+	return text
+}
+
+// queuedCommandContains reports whether quote appears in a human-typed
+// queued-command attachment's prompt text. The mirror, at attachment shape, of
+// userWordsContain at user-entry shape: both ask "is this the person's own
+// words", each against the field the two record types actually carry it in.
+func queuedCommandContains(e Entry, quote string) bool {
+	text := queuedCommandText(e.Attachment)
+	return text != "" && strings.Contains(text, quote)
 }
 
 // answerPrefix is what a harness writes at the head of an AskUserQuestion answer

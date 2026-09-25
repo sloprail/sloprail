@@ -63,6 +63,13 @@ type Entry struct {
 	// ToolUseResult is what a tool returned. This is where evidence of what an
 	// action actually produced lives, as against what was claimed of it.
 	ToolUseResult json.RawMessage `json:"toolUseResult,omitempty"`
+
+	// Attachment is the payload of an EntryAttachment record — Claude Code writes
+	// it in a top-level `attachment` field, a sibling of `message` rather than a
+	// shape inside it, so it needs its own field: an attachment entry's Message
+	// is empty. Left undecoded for the same reason Message is: what is inside is
+	// the harness's own shape, per `attachment.type`.
+	Attachment json.RawMessage `json:"attachment,omitempty"`
 }
 
 // EntryType is what kind of entry an entry is.
@@ -85,4 +92,14 @@ const (
 	// EntrySystem is a record the harness wrote about the session itself rather
 	// than about the work.
 	EntrySystem EntryType = "system"
+
+	// EntryAttachment is something the harness attached to the conversation
+	// outside the ordinary user/assistant exchange — Claude Code writes a
+	// person's mid-turn message this way (a `queued_command` attachment) as well
+	// as bookkeeping the person never typed (an `environment` snapshot, a
+	// `model` identity notice, a completed background task's notification). Which
+	// of those a given attachment is lives in its own `attachment.type` field,
+	// inside Message — see cite.go's queued-command handling for the one kind a
+	// rule grounding a claim in the user's own words must still recognise.
+	EntryAttachment EntryType = "attachment"
 )
