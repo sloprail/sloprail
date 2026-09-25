@@ -2,25 +2,27 @@
 
 Declarative contracts that keep an agent's output honest.
 
-A project declares guardrails under `.sloprail/guardrails/`; the harness calls
-the session hook points, and the engine runs whichever guardrails bind to what
-is about to happen.
+<!-- HERO GIF -->
 
-    sr-session start < /dev/null    the load check — and the event vocabulary
+<!-- USE-CASE GRID -->
 
-The event kinds a guardrail may bind to are per-build, and the load check is
-what reports them: bind to a kind this build does not produce and it names every
-kind it does; misspell a field and it names that kind's real fields with their
-types. Both come from the same module registry the enforcement runs on, so they
-cannot drift from what the engine does. Ask it rather than trusting a list
-written here.
+## Install
 
-That is the vocabulary, not the format. How to write a guardrail — the
-declaration's shape, the matcher operators, the hook contract — is the
-`authoring-guardrails` skill the plugin ships.
+sloprail runs inside your agent as a plugin.
 
-There is no setup command. `.sloprail/guardrails/` is created by whatever writes
-the first declaration, and a project with none is an ordinary project.
+```
+/plugin marketplace add sloprail/sloprail
+/plugin install sloprail@sloprail-marketplace
+```
+
+That registers the hooks the engine needs; from then on, every tool call and
+turn-end runs through sloprail. There is no setup command beyond that:
+`.sloprail/guardrails/` is created by whatever writes the first declaration,
+and a project with none is an ordinary project.
+
+See the [Install guide](docs/getting-started/install.mdx) and
+[Quickstart](docs/getting-started/quickstart.md) for writing your first
+guardrail.
 
 ## Guardrails that arrive with a plugin
 
@@ -152,6 +154,25 @@ because a hook that cannot find `sr-session` is the failure this causes.
 `-p 1` is a constraint, not a preference: each e2e package builds the binaries
 and drives a mock agent, and a parallel `-race ./...` across the 46 of them ran
 the disk out of space.
+
+## How it works
+
+A project declares guardrails under `.sloprail/guardrails/`; the harness calls
+the session hook points, and the engine runs whichever guardrails bind to what
+is about to happen.
+
+    sr-session start < /dev/null    the load check — and the event vocabulary
+
+The event kinds a guardrail may bind to are per-build, and the load check is
+what reports them: bind to a kind this build does not produce and it names every
+kind it does; misspell a field and it names that kind's real fields with their
+types. Both come from the same module registry the enforcement runs on, so they
+cannot drift from what the engine does. Ask it rather than trusting a list
+written here.
+
+That is the vocabulary, not the format. How to write a guardrail — the
+declaration's shape, the matcher operators, the hook contract — is the
+`authoring-guardrails` skill the plugin ships.
 
 ## Adding a module
 
