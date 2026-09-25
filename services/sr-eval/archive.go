@@ -21,14 +21,14 @@ const AppName = "sloprail"
 // alongside the archived transcripts. Field names are stable — a future
 // `sr-eval report` (or any other consumer) reads this file, not stdout.
 type runRecord struct {
-	Fixture      string    `json:"fixture"`       // the fixture directory's own name (basename)
-	FixtureDir   string    `json:"fixture_dir"`   // absolute path, for reproducing the run
-	Model        string    `json:"model"`         // the resolved --model (fixture default or override)
-	Harness      string    `json:"harness"`       // "claude-code" today; sr-agent's own resolution, once it reports one
+	Fixture      string    `json:"fixture"`     // the fixture directory's own name (basename)
+	FixtureDir   string    `json:"fixture_dir"` // absolute path, for reproducing the run
+	Model        string    `json:"model"`       // the resolved --model (fixture default or override)
+	Harness      string    `json:"harness"`     // "claude-code" today; sr-agent's own resolution, once it reports one
 	Passed       bool      `json:"passed"`
-	Reason       string    `json:"reason"`         // empty on a pass
-	AgentError   string    `json:"agent_error"`    // the agent-under-test's own exit error, if any — a run can still be scored after this
-	Transcript   string    `json:"transcript"`     // the SOURCE path this run's transcript was copied from
+	Reason       string    `json:"reason"`      // empty on a pass
+	AgentError   string    `json:"agent_error"` // the agent-under-test's own exit error, if any — a run can still be scored after this
+	Transcript   string    `json:"transcript"`  // the SOURCE path this run's transcript was copied from
 	HasSubagents bool      `json:"has_subagents"`
 	StartedAt    time.Time `json:"started_at"`
 	FinishedAt   time.Time `json:"finished_at"`
@@ -261,4 +261,3 @@ func hasGitIdentity(root string) bool {
 	out, err := exec.Command("git", "-C", root, "config", "user.email").Output()
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
-
