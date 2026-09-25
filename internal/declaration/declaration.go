@@ -106,6 +106,21 @@ type FileGuard struct {
 	// too), and they nest.
 	Preventive bool `yaml:"preventive"`
 
+	// Deletions says whether a DELETED file is this guard's business: `skip`
+	// (the default, and what an absent key means), `include`, or `only`. See
+	// Deletions for the three values.
+	//
+	// One axis with three values, NOT a list of events — the same reasoning that
+	// makes Preventive a boolean rather than an array. A file-guard binds to a
+	// file's STATE, not to events; the one place the state question genuinely
+	// forks is a file that no longer exists, which has no end state, no
+	// newContent and no newMarkers. Most guards validate content and have nothing
+	// to say about a file that is gone (so they skip it); a few exist precisely
+	// to catch the loss (so they include it, or look at nothing else). An `on:`
+	// list would reopen every create/update/delete combination a state rule has
+	// no use for, so it is deliberately not offered.
+	Deletions Deletions `yaml:"deletions"`
+
 	// Require are preconditions that must hold before a guarded write is
 	// permitted — see Prerequisite. Optional.
 	Require []Prerequisite `yaml:"require"`
@@ -126,6 +141,88 @@ type FileGuard struct {
 	// read the guard from, so a refusal can name the plugin a shipped guard came
 	// from (see Origin). The zero value is a project's own guard.
 	Origin Origin `yaml:"-"`
+}
+
+// Deletions is a file-guard's `deletions:` value — whether the guard is asked
+// about a file that was deleted. The three values are the whole vocabulary; the
+// loader refuses anything else (ErrBadValue), so a typo cannot quietly become
+// the default.
+type Deletions string
+
+const (
+	// DeletionsSkip: a deleted file is not this guard's business. It is not run
+	// on PreFileDelete or PostFileDelete — only on creates and updates. The
+	// DEFAULT, and what an absent key means: a guard that validates content has
+	// nothing to validate once the content is gone, and asking it anyway hands
+	// it an event with no newContent that each guard would otherwise have to
+	// recognise and wave through on its own.
+	DeletionsSkip Deletions = "skip"
+
+	// DeletionsInclude: creates, updates AND deletes. For a guard whose rule
+	// covers losing the file as well as changing it — "nothing under memories/
+	// is removed without an ask", "an invariant-pinned file may not silently
+	// disappear".
+	DeletionsInclude Deletions = "include"
+
+	// DeletionsOnly: deletes only. The guard is not run on creates or updates —
+	// for a rule that exists purely to catch a file going away. On a delete a
+	// check reads `oldContent` / `oldMarkers` (what is being or was lost); there
+	// is no `newContent`.
+	DeletionsOnly Deletions = "only"
+)
+
+// deletionsValues is the admitted vocabulary, in the order a diagnostic lists it.
+var deletionsValues = []Deletions{DeletionsSkip, DeletionsInclude, DeletionsOnly}
+
+// valid reports whether this is one of the admitted values — the empty string
+// (an absent key, meaning the default) included.
+func (d Deletions) valid() bool {
+	if d == "" {
+		return true
+	}
+	for _, v := range deletionsValues {
+		if d == v {
+			return true
+		}
+	}
+	return false
+}
+
+// Mode is the effective value: the one written, or DeletionsSkip when the key
+// was absent.
+func (d Deletions) Mode() Deletions {
+	if d == "" {
+		return DeletionsSkip
+	}
+	return d
+}
+
+// IsFileDeleteKind reports whether an event kind is one of the two file-delete
+// kinds, PreFileDelete or PostFileDelete.
+func IsFileDeleteKind(kind string) bool {
+	return kind == KindPreFileDelete || kind == KindPostFileDelete
+}
+
+// Covers reports whether this guard is asked about a file event of the given
+// kind, as its `deletions:` value decides: a delete kind only when the guard
+// includes deletions (include / only), and a create or update kind unless the
+// guard is deletions-only. Any other kind is not a file event and is answered
+// true — this filter has no opinion on it; whether a guard runs on it at all is
+// the dispatch's to decide.
+//
+// The ONE place the filter is written, so the preventive (Pre) path, the
+// after-check (Post) path, and the event-extraction binding cannot disagree
+// about which events a guard sees.
+func (g FileGuard) Covers(kind string) bool {
+	mode := g.Deletions.Mode()
+	if IsFileDeleteKind(kind) {
+		return mode == DeletionsInclude || mode == DeletionsOnly
+	}
+	switch kind {
+	case KindPreFileCreate, KindPreFileUpdate, KindPostFileCreate, KindPostFileUpdate:
+		return mode != DeletionsOnly
+	}
+	return true
 }
 
 // Attribution is this guard's name as a refusal should carry it — the bare name

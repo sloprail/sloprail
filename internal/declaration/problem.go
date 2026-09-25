@@ -144,6 +144,13 @@ var (
 	// blank tool name grants nothing and can only be a stray or trailing list
 	// item. Mirrors ErrBadModel's empty-entry refusal. Declaration fault.
 	ErrBadAllowedTools = errors.New("declaration: judge allowed_tools has an empty entry")
+
+	// ErrBadValue: a field that takes one of a fixed set of values names
+	// something outside it — a file-guard's `deletions:` other than skip /
+	// include / only. Refused rather than read as the default, because a typo
+	// that silently became `skip` would switch off exactly the deletions the
+	// author wrote the key to catch. Declaration fault.
+	ErrBadValue = errors.New("declaration: field value is not one of its allowed values")
 )
 
 // Disabling reports whether these problems stop the rule loading. Environment

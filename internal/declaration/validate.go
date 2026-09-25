@@ -50,9 +50,10 @@ type Env struct {
 // validation environment. An empty result means the guard can do what it says.
 //
 // The order mirrors the struct: the required `match` compiles against the file
-// scope, each prerequisite is exactly-one-of and resolves, each check is
-// exactly-one-of with a well-placed prepare. A file-guard has no `on` list (it
-// binds to a file's state, not to events). It carries the SAME at-least-one rule
+// scope, `deletions` is one of its three values (or absent), each prerequisite
+// is exactly-one-of and resolves, each check is exactly-one-of with a
+// well-placed prepare. A file-guard has no `on` list (it binds to a file's
+// state, not to events). It carries the SAME at-least-one rule
 // a gate does — `require` and `checks` are each optional individually, but a
 // guard with NEITHER would select a file and decide nothing, so that is refused
 // (a file-guard whose whole enforcement is a `require:` precondition is
@@ -68,6 +69,15 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 	} else if _, err := guardrail.CompileFileMatch(g.Match); err != nil {
 		problems = append(problems, prob(ErrBadMatch, "match",
 			"%s — a file-guard's match reads a file's own facts (path, markers, context)", oneLine(err.Error())))
+	}
+
+	// `deletions:` is a closed enum. An unknown value is refused, not read as
+	// the default: `deletions: inlcude` quietly becoming `skip` would switch off
+	// the very deletions the author wrote the key to catch.
+	if !g.Deletions.valid() {
+		problems = append(problems, prob(ErrBadValue, "deletions",
+			"%q is not a deletions value — use one of %s (absent means %s)",
+			string(g.Deletions), deletionsValueList(), DeletionsSkip))
 	}
 
 	problems = append(problems, validatePrerequisites(g.Require, env)...)
@@ -454,6 +464,15 @@ func fieldList(decl module.KindDecl) string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// deletionsValueList renders the admitted `deletions:` values for a diagnostic.
+func deletionsValueList() string {
+	out := make([]string, 0, len(deletionsValues))
+	for _, v := range deletionsValues {
+		out = append(out, string(v))
+	}
+	return strings.Join(out, ", ")
 }
 
 // availableContexts names the declared contexts, so an author who mistyped one in
