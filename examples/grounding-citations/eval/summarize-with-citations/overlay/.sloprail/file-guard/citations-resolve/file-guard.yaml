@@ -1,0 +1,9 @@
+# Every citation in a written file references a REAL chunk of the
+# trajectory/source — referenced, not regenerated. Script settles the cheap
+# half (does the link exist); judge settles the expensive half (does the
+# quote actually approximate the source).
+match: "**/*.md"
+checks:
+  - script: ./citation-links-resolve.sh
+  - prepare: ./fetch-cited-source.sh
+    judge: ./quote-approximates-source.md.j2
