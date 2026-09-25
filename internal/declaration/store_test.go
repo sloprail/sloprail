@@ -102,7 +102,7 @@ func TestLoad_NoDotDir(t *testing.T) {
 	assert.Empty(t, loaded.FileGuards)
 	assert.Empty(t, loaded.Gates)
 	assert.Empty(t, loaded.Contexts)
-	assert.Nil(t, loaded.Structure)
+	assert.Empty(t, loaded.Structures)
 	assert.Empty(t, loaded.Invalid)
 }
 
@@ -883,11 +883,12 @@ deny:
   - glob: "memories/updates/secret.md"
 `,
 	})
-	require.NotNil(t, loaded.Structure)
-	assert.Len(t, loaded.Structure.Allow, 2)
-	assert.Len(t, loaded.Structure.Deny, 1)
-	assert.True(t, loaded.Structure.Allow[0].isGlob())
-	assert.True(t, loaded.Structure.Allow[1].isRegex())
+	require.Len(t, loaded.Structures, 1)
+	sg := loaded.Structures[0]
+	assert.Len(t, sg.Allow, 2)
+	assert.Len(t, sg.Deny, 1)
+	assert.True(t, sg.Allow[0].isGlob())
+	assert.True(t, sg.Allow[1].isRegex())
 }
 
 func TestLoad_Structure_EntryBothGlobAndRegex(t *testing.T) {
@@ -946,7 +947,7 @@ checks:
   - script: ./s.sh
 `,
 	})
-	require.NotNil(t, loaded.Structure)
+	require.Len(t, loaded.Structures, 1)
 	require.Len(t, loaded.FileGuards, 1)
 	assert.Equal(t, "pinned", loaded.FileGuards[0].Name)
 }

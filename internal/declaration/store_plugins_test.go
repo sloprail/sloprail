@@ -155,45 +155,59 @@ func TestNewWithPlugins_ProjectShadowsPlugin(t *testing.T) {
 	assert.Contains(t, sh.Message(), "takes precedence")
 }
 
-// A plugin-shipped STRUCTURE gate is loaded when the project ships none, and the
-// project's own structure gate takes precedence over a plugin's — the structure
-// gate is the one singleton nature, so "project shadows plugin" is the whole of
-// its precedence, and the displaced plugin gate is reported Shadowed, not dropped.
-func TestNewWithPlugins_ProjectShadowsPluginStructure(t *testing.T) {
-	const structureYAML = `
+// A plugin-shipped STRUCTURE gate is loaded when the project ships none, and a
+// plugin's structure gate stays loaded even when the project ALSO ships one —
+// the structure gate COMPOSES rather than picking one winner (see
+// resolveStructures), so nothing about a plugin's own piece is ever Shadowed.
+func TestNewWithPlugins_PluginStructureComposesWithProjects(t *testing.T) {
+	// The plugin's own is SCOPED, as ValidateStructureGate now requires of every
+	// plugin structure gate.
+	const pluginStructureYAML = `
+scope:
+  - glob: "memories/updates/**"
 allow:
   - glob: "memories/updates/*.md"
+`
+	const projectStructureYAML = `
+allow:
+  - glob: "src/**"
 `
 	// First: a project with NO structure gate loads the plugin's.
 	projectNone := projectDotDir(t, nil)
 	plugin := pluginRoot(t, map[string]string{
-		"file-guard/structure.yaml": structureYAML,
+		"file-guard/structure.yaml": pluginStructureYAML,
 	})
 	store := NewWithPlugins(projectNone, []Origin{{Plugin: "sloprail", Root: plugin}})
 	loaded, err := store.Load(testRegistry(t))
 	require.NoError(t, err)
 	require.Empty(t, loaded.Invalid, "invalid: %v", invalidReasons(loaded))
-	require.NotNil(t, loaded.Structure, "the plugin's structure gate was not loaded")
-	assert.True(t, loaded.Structure.Origin.FromPlugin(), "the loaded structure gate is not tagged as from a plugin")
-	assert.Equal(t, "sloprail", loaded.Structure.Origin.Plugin)
+	require.Len(t, loaded.Structures, 1, "the plugin's structure gate was not loaded")
+	assert.True(t, loaded.Structures[0].Origin.FromPlugin(), "the loaded structure gate is not tagged as from a plugin")
+	assert.Equal(t, "sloprail", loaded.Structures[0].Origin.Plugin)
 	assert.Empty(t, loaded.Shadowed, "nothing should be shadowed when the project ships no structure gate")
 
-	// Then: a project that DOES ship one wins, and the plugin's is shadowed.
+	// Then: a project that ALSO ships one keeps BOTH in force — composed, not
+	// one displacing the other.
 	projectOwn := projectDotDir(t, map[string]string{
-		"file-guard/structure.yaml": structureYAML,
+		"file-guard/structure.yaml": projectStructureYAML,
 	})
 	store = NewWithPlugins(projectOwn, []Origin{{Plugin: "sloprail", Root: plugin}})
 	loaded, err = store.Load(testRegistry(t))
 	require.NoError(t, err)
-	require.NotNil(t, loaded.Structure)
-	assert.False(t, loaded.Structure.Origin.FromPlugin(), "the plugin's structure gate won, not the project's")
+	require.Len(t, loaded.Structures, 2, "both the project's own and the plugin's structure gate must be in force")
+	assert.Empty(t, loaded.Shadowed, "a structure gate is never shadowed by another — see resolveStructures")
 
-	require.Len(t, loaded.Shadowed, 1)
-	sh := loaded.Shadowed[0]
-	assert.Equal(t, NatureStructure, sh.Nature)
-	assert.Equal(t, "sloprail", sh.Plugin)
-	assert.Empty(t, sh.WinnerPlugin, "the project won, so WinnerPlugin must be empty")
-	assert.Contains(t, sh.Message(), "takes precedence")
+	var sawProject, sawPlugin bool
+	for _, sg := range loaded.Structures {
+		if sg.Origin.FromPlugin() {
+			sawPlugin = true
+			assert.Equal(t, "sloprail", sg.Origin.Plugin)
+		} else {
+			sawProject = true
+		}
+	}
+	assert.True(t, sawProject, "the project's own structure gate must still be in force")
+	assert.True(t, sawPlugin, "the plugin's structure gate must still be in force")
 }
 
 // Between two plugins that ship the same (nature, name), the EARLIER-listed one

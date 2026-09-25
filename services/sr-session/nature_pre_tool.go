@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -45,7 +47,7 @@ type natureVerdict struct {
 func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
 	preventiveGuards := preventiveFileGuards(loaded.FileGuards)
-	if len(loaded.Gates) == 0 && loaded.Structure == nil && len(loaded.Contexts) == 0 && len(preventiveGuards) == 0 {
+	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && len(preventiveGuards) == 0 {
 		// Nothing new-format can act at pre-tool: no gate to block, no structure
 		// gate, no context to enter, no preventive file-guard to pre-check.
 		// (Non-preventive file-guards act only at Stop.)
@@ -68,8 +70,8 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// gate or file-guard is consulted — the cheapest "may you write here at all"
 	// question, and a forbidden path should not also pay for a check. Blocks
 	// immediately on a refusal.
-	if loaded.Structure != nil {
-		if reason := checkStructureGate(cmd, loaded.Structure, events); reason != "" {
+	if len(loaded.Structures) > 0 {
+		if reason := checkStructureGate(cmd, loaded.Structures, events); reason != "" {
 			return natureVerdict{Blocked: reason}
 		}
 	}
@@ -105,18 +107,22 @@ func preventiveFileGuards(guards []declaration.FileGuard) []declaration.FileGuar
 }
 
 // checkStructureGate refuses the first file-write event whose target path the
-// structure gate does not allow, and returns the refusal reason (or "").
+// COMPOSED structure gate does not allow, and returns the refusal reason (or
+// "").
 //
-// The structure gate is deny-by-default over the tree, so it is checked against
-// every path a file-write pre-event names — a create or an update (a delete does
-// not write NEW content under a path, so it is not gated by an allowlist of where
-// writes may go; the spec frames the structure gate as "is writing HERE allowed").
-// The compiled gate is built once per dispatch; a compile failure (unreachable for
-// a loaded structure gate) is reported and treated as permitting, since a gate the
-// engine could not compile has not established that any path is forbidden — the
-// same "an unloadable rule blocks nothing" the rest of the dispatch keeps.
-func checkStructureGate(cmd *cobra.Command, sg *declaration.StructureGate, events []event.Event) string {
-	compiled, err := dispatchcore.CompileStructureGate(*sg)
+// Every loaded structure gate — the project's own and each enabled plugin's —
+// composes into one decision per path (dispatchcore.CompileStructureGates), so
+// this checks each write against all of them at once rather than one at a time.
+// It is checked against every path a file-write pre-event names — a create or an
+// update (a delete does not write NEW content under a path, so it is not gated
+// by an allowlist of where writes may go; the spec frames the structure gate as
+// "is writing HERE allowed"). The compiled gate is built once per dispatch; a
+// compile failure (unreachable for loaded structure gates) is reported and
+// treated as permitting, since a gate the engine could not compile has not
+// established that any path is forbidden — the same "an unloadable rule blocks
+// nothing" the rest of the dispatch keeps.
+func checkStructureGate(cmd *cobra.Command, sgs []declaration.StructureGate, events []event.Event) string {
+	compiled, err := dispatchcore.CompileStructureGates(sgs)
 	if err != nil {
 		// A structure gate that loaded but will not compile is a disagreement
 		// between the loader and the runtime. Reported, not enforced: refusing on a
@@ -138,21 +144,68 @@ func checkStructureGate(cmd *cobra.Command, sg *declaration.StructureGate, event
 }
 
 // writePath returns the target path of a file-write pre-event, and whether the
-// event is one.
+// event is one the structure gate has any business judging.
 //
 // Only PreFileCreate and PreFileUpdate are file WRITES to a path the structure
 // gate governs. A PreFileDelete removes a path rather than writing content under
 // one, so it is not subject to the write-allowlist — the structure gate answers
 // "may a write go here", and a delete is not a write. The path is read off the
 // event's `path` field, the flat field filemod declares.
+//
+// A path OUTSIDE the project root is excluded here, before any gate's scope is
+// even consulted — the structure gate (project's own or any plugin's) has NO
+// OPINION on a path that does not resolve inside the project's own tree.
+//
+// # Why this matters
+//
+// filemod's reportable() (internal/filemod/extract.go) already canonicalises
+// every in-workspace path to be workspace-relative, and — deliberately — leaves
+// an OUT-of-workspace path in a spelling no project-relative matcher can admit:
+// absolute, or a lexically-outside relative spelling (`.`, `..`, or a path
+// starting `../`). That guarantee is what a NARROWED rule (`path startsWith
+// "secret/"`) relies on to never accidentally admit an outside path. The
+// structure gate's OWN allow entries are also project-relative globs/regexes
+// authored the same way (`memories/**`, never `/Users/...`), so they were
+// already unable to ADMIT an outside path — but deny-by-default means an
+// unmatched path is REFUSED, not ignored, and a structure gate's refusal had no
+// such exemption: a session whose project root is one repo but whose agent (or a
+// hook it launched) writes to an absolute path in a SIBLING repo was refused by
+// a structure gate that was never meant to have an opinion about that sibling
+// tree at all. isOutsideProject makes that refusal impossible at the source: the
+// structure gate is asked about a path only when that path is actually one it
+// could be authored against.
 func writePath(e event.Event) (string, bool) {
 	switch e.Kind {
 	case declaration.KindPreFileCreate, declaration.KindPreFileUpdate:
-		if p, ok := e.Fields["path"].(string); ok && p != "" {
-			return p, true
+		p, ok := e.Fields["path"].(string)
+		if !ok || p == "" {
+			return "", false
 		}
+		if isOutsideProject(p) {
+			return "", false
+		}
+		return p, true
 	}
 	return "", false
+}
+
+// isOutsideProject reports whether a reported path names something outside the
+// project's own tree — the spelling filemod.reportable() leaves an out-of-
+// workspace path in: absolute, or a relative path that lexically climbs out
+// (`.`, `..`, or starting with `../`).
+//
+// A path already inside the project is ALWAYS reported relative and cleaned
+// (see filemod's reportable doc), so any of these spellings is conclusive: no
+// in-project path is ever reported this way. Checked lexically rather than by
+// re-resolving against the project root, because reportable() already did that
+// resolution once (including the symlink-escape and macOS /tmp-vs-/private/tmp
+// cases) and its OUTPUT spelling is the one signal this needs — re-deriving it
+// here would be a second, potentially disagreeing, containment check.
+func isOutsideProject(path string) bool {
+	if filepath.IsAbs(path) {
+		return true
+	}
+	return path == "." || path == ".." || strings.HasPrefix(path, "../")
 }
 
 // extractPreEvents produces the pre-action events for the new dispatch from the
@@ -203,7 +256,7 @@ func natureBoundKinds(loaded declaration.Loaded) []string {
 			bound = append(bound, kinds...)
 		}
 	}
-	if loaded.Structure != nil {
+	if len(loaded.Structures) > 0 {
 		bound = append(bound, declaration.KindPreFileCreate, declaration.KindPreFileUpdate)
 	}
 	return bound

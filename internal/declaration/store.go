@@ -117,11 +117,27 @@ type Loaded struct {
 	// Contexts are the loaded context declarations, sorted by name.
 	Contexts []Context
 
-	// Structure is the tree-wide structure gate, or nil when the project declares
-	// none. A pointer rather than a value with a "present" flag, so "no structure
-	// gate" and "an empty structure gate" are distinct — the first is nil, the
-	// second is a non-nil value the validator would already have refused.
-	Structure *StructureGate
+	// Structures are every structure gate in force — the project's own (if it
+	// ships one) and every enabled plugin's, COMPOSED rather than one winner
+	// picked. Empty when nothing declares a structure gate. Sorted by Qualified.
+	//
+	// # Why composed, not resolved to one
+	//
+	// The structure gate used to be a singleton nature: a plugin's structure.yaml
+	// SHADOWED the project's if both existed, so only one was ever enforced (see
+	// git history's resolveStructure). That meant a plugin's own allowlist was
+	// useless unless the project happened to have none — installing a plugin with
+	// opinions about its own folder silently lost them the moment the project
+	// also declared a structure gate, which is the opposite of what a plugin
+	// author wants: they want the paths THEY defined (say, their own
+	// `memories/tasks/**` shape) to be permitted regardless of what else the
+	// project allows.
+	//
+	// So the structure gate stopped being one-per-project and became one-per-
+	// covering-file, keyed by that file's Scope (see StructureGate.Scope and
+	// dispatch.CompileStructureGates for how a write is decided across them).
+	// Every sound structure gate loads; none is Shadowed.
+	Structures []StructureGate
 
 	// Invalid are the declarations that could not be loaded, across every nature,
 	// sorted by their qualified name. Reported rather than fatal: the engine loads
@@ -434,7 +450,7 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 		parsedFileGuards []FileGuard
 		parsedGates      []Gate
 		parsedContexts   []Context
-		parsedStructures []StructureGate // at most one per root; precedence picks the winner
+		parsedStructures []StructureGate // at most one per root; every sound one COMPOSES rather than one winning
 		parseInvalid     []Invalid
 	)
 	for _, r := range roots {
@@ -515,13 +531,15 @@ func (s *Store) Load(reg *module.Registry) (Loaded, error) {
 		soundStructures = append(soundStructures, sg)
 	}
 
-	// -- 3. resolve precedence; a displaced declaration is Shadowed, not loaded --
+	// -- 3. resolve precedence; a displaced declaration is Shadowed, not loaded.
+	// Structure gates are the one exception: every sound one COMPOSES (see
+	// resolveStructures), so there is nothing for a structure gate to shadow. --
 	var out Loaded
 	out.Invalid = invalid
 	resolveFileGuards(&out, soundFileGuards)
 	resolveGates(&out, soundGates)
 	resolveContexts(&out, soundContexts)
-	resolveStructure(&out, soundStructures)
+	resolveStructures(&out, soundStructures)
 
 	// -- 4. apply the project's disable list to loaded AND invalid --
 	applyDisable(&out, cfg)
@@ -758,6 +776,7 @@ func sortLoaded(l *Loaded) {
 	sort.Slice(l.FileGuards, func(i, j int) bool { return l.FileGuards[i].Name < l.FileGuards[j].Name })
 	sort.Slice(l.Gates, func(i, j int) bool { return l.Gates[i].Name < l.Gates[j].Name })
 	sort.Slice(l.Contexts, func(i, j int) bool { return l.Contexts[i].Name < l.Contexts[j].Name })
+	sort.Slice(l.Structures, func(i, j int) bool { return l.Structures[i].Qualified() < l.Structures[j].Qualified() })
 	sort.Slice(l.Invalid, func(i, j int) bool { return l.Invalid[i].Qualified() < l.Invalid[j].Qualified() })
 	sort.Slice(l.Shadowed, func(i, j int) bool { return l.Shadowed[i].Qualified() < l.Shadowed[j].Qualified() })
 }
@@ -817,21 +836,20 @@ func resolveContexts(out *Loaded, sound []Context) {
 	}
 }
 
-// resolveStructure claims the single structure gate. The structure gate is a
-// singleton per root, so the FIRST root that declares one wins — the project's own
-// over any plugin's, and an earlier plugin's over a later one's — and every other
-// is Shadowed. This is the same "first writer wins" the per-name natures use,
-// applied to the one nature that has no name.
-func resolveStructure(out *Loaded, sound []StructureGate) {
-	for _, sg := range sound {
-		if out.Structure != nil {
-			prior := out.Structure
-			out.Shadowed = append(out.Shadowed, shadowOf(NatureStructure, "", sg.Origin, sg.Dir, prior.Origin, prior.Dir))
-			continue
-		}
-		winner := sg
-		out.Structure = &winner
-	}
+// resolveStructures loads every sound structure gate — the project's own, if it
+// ships one, and each enabled plugin's. Unlike every other nature there is no
+// claiming here and nothing is ever Shadowed: a structure gate is no longer a
+// singleton the project and its plugins compete over, but a COVERING FILE whose
+// Scope says which paths it has an opinion on (see StructureGate.Scope and
+// dot-dir-file-store.internal/dispatch.CompileStructureGates for how a write is
+// decided across every gate that covers it).
+//
+// This is the one place the new-format loader does NOT mirror
+// guardrail.Store.Resolve's per-name claim loop, because the requirement this
+// closes is exactly that a plugin's structure gate must NOT be displaced by the
+// project's — both must be able to speak about the paths they respectively own.
+func resolveStructures(out *Loaded, sound []StructureGate) {
+	out.Structures = append(out.Structures, sound...)
 }
 
 // shadowOf builds the Shadow record for a displaced declaration: what was
@@ -893,9 +911,14 @@ func applyDisable(out *Loaded, cfg config) {
 	}
 	out.Contexts = contexts
 
-	if out.Structure != nil && cfg.isDisabled(out.Structure.Qualified()) {
-		out.Structure = nil
+	structures := out.Structures[:0]
+	for _, sg := range out.Structures {
+		if cfg.isDisabled(sg.Qualified()) {
+			continue
+		}
+		structures = append(structures, sg)
 	}
+	out.Structures = structures
 
 	invalid := out.Invalid[:0]
 	for _, iv := range out.Invalid {

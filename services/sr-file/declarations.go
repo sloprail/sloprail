@@ -109,11 +109,18 @@ func runDeclarations(cmd *cobra.Command, args []string) error {
 	printNature(out, "file-guards", fileGuardNames(loaded))
 	printNature(out, "gates", gateNames(loaded))
 	printNature(out, "contexts", contextNames(loaded))
-	if loaded.Structure != nil {
-		fmt.Fprintf(out, "  structure gate: present (%d allow, %d deny)\n",
-			len(loaded.Structure.Allow), len(loaded.Structure.Deny))
-	} else {
+	if len(loaded.Structures) == 0 {
 		fmt.Fprintln(out, "  structure gate: none")
+	} else {
+		fmt.Fprintf(out, "  structure gate: %d file(s) in force\n", len(loaded.Structures))
+		for _, sg := range loaded.Structures {
+			scope := "whole tree"
+			if len(sg.Scope) > 0 {
+				scope = fmt.Sprintf("%d scope entries", len(sg.Scope))
+			}
+			fmt.Fprintf(out, "    - %s: %s (%d allow, %d deny)\n",
+				sg.Qualified(), scope, len(sg.Allow), len(sg.Deny))
+		}
 	}
 
 	if len(loaded.Invalid) == 0 {

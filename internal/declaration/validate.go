@@ -158,16 +158,29 @@ func ValidateContext(c Context, env Env) []Problem {
 
 // ValidateStructureGate reports everything wrong with the structure gate.
 //
-// Its rules: `allow` must be present (an absent allowlist denies everything,
-// which is a structure gate that locks the whole project out — a mistake worth
-// refusing rather than a deliberate empty allowlist), and every allow/deny entry
-// is exactly-one-of glob/regex, with the pattern compiling.
+// Its rules: `allow` must be present (an absent allowlist denies everything
+// within this gate's scope, which is worth refusing rather than treating as a
+// deliberate empty allowlist); every allow/deny/scope entry is exactly-one-of
+// glob/regex, with the pattern compiling; and a PLUGIN's structure gate must
+// declare `scope` — unlike a project's own, which may leave it empty to mean
+// the whole tree, a plugin shipping an unscoped structure gate would lock the
+// whole consuming project's tree the moment it is installed, so that is refused
+// here rather than discovered by every consumer the hard way.
 func ValidateStructureGate(s StructureGate, _ Env) []Problem {
 	var problems []Problem
 
+	if s.Origin.FromPlugin() && !s.isScoped() {
+		problems = append(problems, prob(ErrMissingField, "scope",
+			"a structure gate shipped in a plugin must declare `scope` — the paths it owns — "+
+				"or installing the plugin would lock the whole consuming project's tree"))
+	}
+	for i, e := range s.Scope {
+		problems = append(problems, validateStructureEntry(e, fmt.Sprintf("scope %d", i))...)
+	}
+
 	if len(s.Allow) == 0 {
 		problems = append(problems, prob(ErrMissingField, "allow",
-			"a structure gate must allow at least one path — an empty allowlist denies the whole project"))
+			"a structure gate must allow at least one path — an empty allowlist denies everything within its scope"))
 	}
 	for i, e := range s.Allow {
 		problems = append(problems, validateStructureEntry(e, fmt.Sprintf("allow %d", i))...)

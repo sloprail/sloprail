@@ -9,16 +9,29 @@ import (
 	"github.com/sloprail/sloprail/internal/declaration"
 )
 
-// The structure gate is deny-by-default over the tree, with `deny` carving
-// exceptions out of `allow`. These pin each half: an allowed path passes, an
-// unlisted path is refused, a deny exception subtracts from allow, and both entry
-// kinds (glob and regex) work.
+// The structure gate is deny-by-default over the paths it COVERS, with `deny`
+// carving exceptions out of `allow`. These pin each half: an allowed path
+// passes, an unlisted (but covered) path is refused, a deny exception subtracts
+// from allow, and both entry kinds (glob and regex) work — first over a single
+// UNSCOPED gate (the project's own, or the historical single-file shape), then
+// over several gates COMPOSED together (a project's plus a plugin's).
 
-func compile(t *testing.T, allow, deny []declaration.StructureEntry) *StructureGate {
+// compile builds a composed gate from one UNSCOPED declaration — the shape a
+// project's own structure.yaml takes, and the shape every test in this file
+// used before composition existed. Kept so the single-gate tests below read
+// exactly as they did; compileMany below is the multi-gate counterpart.
+func compile(t *testing.T, allow, deny []declaration.StructureEntry) *ComposedStructureGate {
 	t.Helper()
-	sg, err := CompileStructureGate(declaration.StructureGate{Allow: allow, Deny: deny})
+	return compileMany(t, declaration.StructureGate{Allow: allow, Deny: deny})
+}
+
+// compileMany composes several structure declarations at once — a project's
+// alongside one or more plugins'.
+func compileMany(t *testing.T, sgs ...declaration.StructureGate) *ComposedStructureGate {
+	t.Helper()
+	c, err := CompileStructureGates(sgs)
 	require.NoError(t, err)
-	return sg
+	return c
 }
 
 func glob(p string) declaration.StructureEntry  { return declaration.StructureEntry{Glob: p} }
@@ -129,4 +142,143 @@ func TestStructure_RegexDeny(t *testing.T) {
 
 	allowed, _ = sg.Allows("docs/DRAFT_wip.md")
 	assert.False(t, allowed, "the regex deny carves out draft files")
+}
+
+// ---------------------------------------------------------------------------
+// Composition across several covering files
+// ---------------------------------------------------------------------------
+
+// scoped builds a StructureGate with a scope, allow and origin — the shape a
+// plugin's structure gate takes (scope required, per ValidateStructureGate).
+func scoped(scope []declaration.StructureEntry, allow []declaration.StructureEntry, deny []declaration.StructureEntry, origin declaration.Origin, dir string) declaration.StructureGate {
+	return declaration.StructureGate{Scope: scope, Allow: allow, Deny: deny, Origin: origin, Dir: dir}
+}
+
+// A plugin's scoped allow permits a path inside its scope that the PROJECT's
+// own allowlist does not list — the headline composition property: the
+// project's global allowlist does not need to name a plugin-owned shape.
+func TestComposed_PluginScopeAllowsWhatProjectDoesNot(t *testing.T) {
+	project := declaration.StructureGate{
+		Allow: []declaration.StructureEntry{glob("src/**")},
+	}
+	plugin := scoped(
+		[]declaration.StructureEntry{glob("memories/tasks/**")},
+		[]declaration.StructureEntry{regex(`^memories/tasks/[a-z0-9-]+/[a-z0-9-]+/.*$`)},
+		nil,
+		declaration.Origin{Plugin: "sloprail-tasks"},
+		"plugin/.sloprail/file-guard",
+	)
+	c := compileMany(t, project, plugin)
+
+	allowed, _ := c.Allows("memories/tasks/eng/fix-bug/notes.md")
+	assert.True(t, allowed, "the plugin's own allow covers a path its scope owns, "+
+		"even though the project's allowlist never mentions memories/")
+
+	allowed, _ = c.Allows("src/main.go")
+	assert.True(t, allowed, "the project's own allow still works")
+}
+
+// A path outside EVERY covering gate's scope is unaffected by the plugin: no
+// gate has an opinion, so nothing is refused for a reason the plugin invented.
+func TestComposed_PathOutsideEveryScopeIsUnaffectedByPlugin(t *testing.T) {
+	project := declaration.StructureGate{
+		Allow: []declaration.StructureEntry{glob("src/**")},
+	}
+	plugin := scoped(
+		[]declaration.StructureEntry{glob("memories/tasks/**")},
+		[]declaration.StructureEntry{glob("memories/tasks/**")},
+		nil,
+		declaration.Origin{Plugin: "sloprail-tasks"},
+		"plugin/.sloprail/file-guard",
+	)
+	c := compileMany(t, project, plugin)
+
+	// docs/ is outside BOTH the project's allow-scope (unscoped, so it covers
+	// docs/ too, but does not allow it) — pick a path outside the PROJECT's
+	// coverage by using an unscoped project gate would still cover everything,
+	// so use a SCOPED project instead to prove "no covering gate => no opinion".
+	scopedProject := scoped(
+		[]declaration.StructureEntry{glob("src/**")},
+		[]declaration.StructureEntry{glob("src/**")},
+		nil,
+		declaration.Origin{},
+		"project/.sloprail/file-guard",
+	)
+	c = compileMany(t, scopedProject, plugin)
+
+	allowed, reason := c.Allows("docs/readme.md")
+	assert.True(t, allowed, "a path outside every covering gate's scope has no opinion from any gate: %s", reason)
+}
+
+// A `deny` in a covering plugin refuses, even though the project's own gate
+// (which does not cover this path) would have nothing to say.
+func TestComposed_DenyInCoveringPluginRefuses(t *testing.T) {
+	project := scoped(
+		[]declaration.StructureEntry{glob("src/**")},
+		[]declaration.StructureEntry{glob("src/**")},
+		nil,
+		declaration.Origin{},
+		"project/.sloprail/file-guard",
+	)
+	plugin := scoped(
+		[]declaration.StructureEntry{glob("memories/tasks/**")},
+		[]declaration.StructureEntry{glob("memories/tasks/**")},
+		[]declaration.StructureEntry{glob("memories/tasks/secret/**")},
+		declaration.Origin{Plugin: "sloprail-tasks"},
+		"plugin/.sloprail/file-guard",
+	)
+	c := compileMany(t, project, plugin)
+
+	allowed, _ := c.Allows("memories/tasks/eng/fix-bug/notes.md")
+	assert.True(t, allowed, "allowed by the plugin's own allow")
+
+	allowed, reason := c.Allows("memories/tasks/secret/x.md")
+	assert.False(t, allowed, "the plugin's own deny exception refuses a path under its scope")
+	assert.Contains(t, reason, "sloprail-tasks/structure")
+}
+
+// Two covering gates: the UNION of their allows, minus the UNION of their
+// denies. A path allowed by one covering gate and denied by ANOTHER covering
+// gate is refused — deny from any covering file wins.
+func TestComposed_UnionOfAllowsMinusUnionOfDenies(t *testing.T) {
+	a := scoped(
+		[]declaration.StructureEntry{glob("shared/**")},
+		[]declaration.StructureEntry{glob("shared/**")},
+		nil,
+		declaration.Origin{Plugin: "plugin-a"},
+		"a/.sloprail/file-guard",
+	)
+	b := scoped(
+		[]declaration.StructureEntry{glob("shared/**")},
+		nil,
+		[]declaration.StructureEntry{glob("shared/blocked/**")},
+		declaration.Origin{Plugin: "plugin-b"},
+		"b/.sloprail/file-guard",
+	)
+	c := compileMany(t, a, b)
+
+	allowed, _ := c.Allows("shared/ok.md")
+	assert.True(t, allowed, "plugin a's allow covers it, and plugin b's deny does not match")
+
+	allowed, reason := c.Allows("shared/blocked/x.md")
+	assert.False(t, allowed, "plugin b's deny carves this path back out even though plugin a's allow matched it")
+	assert.Contains(t, reason, "plugin-b/structure")
+}
+
+// The refusal reason names the covering file(s) so a reader knows where to add
+// an allow.
+func TestComposed_RefusalNamesCoveringFiles(t *testing.T) {
+	plugin := scoped(
+		[]declaration.StructureEntry{glob("memories/tasks/**")},
+		[]declaration.StructureEntry{glob("memories/tasks/only-this/**")},
+		nil,
+		declaration.Origin{Plugin: "sloprail-tasks"},
+		"plugin/.sloprail/file-guard",
+	)
+	c := compileMany(t, plugin)
+
+	allowed, reason := c.Allows("memories/tasks/elsewhere/x.md")
+	require.False(t, allowed)
+	assert.Contains(t, reason, "sloprail-tasks/structure", "the refusal names the covering plugin's qualified key")
+	assert.Contains(t, reason, "plugin/.sloprail/file-guard/structure.yaml", "the refusal names the file to edit")
 }

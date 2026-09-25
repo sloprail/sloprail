@@ -332,14 +332,35 @@ func (c Context) Attribution() string { return quoteName(c.Name) + c.Origin.Desc
 // context and `context/<name>` for a project's own.
 func (c Context) Qualified() string { return c.Origin.Qualified(NatureContext, c.Name) }
 
-// StructureGate is the tree-wide structure gate (dot-dir-file-store/main.tsp
+// StructureGate is one structure gate declaration (dot-dir-file-store/main.tsp
 // StructureGateDeclaration): an allowlist of paths a project may write under,
-// deny by default. `deny` only carves exceptions out of `allow` — a `deny` entry
-// matching nothing in `allow` is a no-op. A primitive, not a rule nature, and a
-// singleton: one file for the whole project, `file-guard/structure.yaml`, sibling
-// of the per-guard subfolders.
+// deny by default over the paths it COVERS. `deny` only carves exceptions out of
+// `allow` — a `deny` entry matching nothing in `allow` is a no-op. A primitive,
+// not a rule nature, stored at `file-guard/structure.yaml`, sibling of the
+// per-guard subfolders.
+//
+// # Composition, not a singleton
+//
+// A project may declare at most one structure.yaml (there is still only one
+// `file-guard/structure.yaml` per `.sloprail` root), but a PROJECT loads one
+// alongside every PLUGIN's own — so a load can produce several StructureGate
+// values in force at once, each owning the slice of the tree its Scope names.
+// See Loaded.Structures for how a write is decided across all of them.
 type StructureGate struct {
-	// Allow is the allowlist. Each entry is a glob or a regex (exactly one set).
+	// Scope is the set of paths this structure gate OWNS — the paths it has an
+	// opinion on. A glob or regex entry, same shape as Allow/Deny. Empty means
+	// "the whole tree", which is the historical meaning for a PROJECT's own
+	// structure gate (unscoped = tree-wide) but is INVALID for a plugin's: a
+	// plugin shipping an unscoped structure gate would lock the whole consuming
+	// project's tree the moment it is installed, so the loader refuses it (see
+	// ValidateStructureGate). A plugin's structure gate names the paths it means
+	// to own — typically the folder its own content lives under — and owns
+	// nothing else: a path outside every covering gate's Scope has no opinion
+	// from this gate at all.
+	Scope []StructureEntry `yaml:"scope"`
+
+	// Allow is the allowlist over paths within Scope (or the whole tree, when
+	// Scope is empty). Each entry is a glob or a regex (exactly one set).
 	Allow []StructureEntry `yaml:"allow"`
 
 	// Deny carves exceptions out of Allow. Optional. Each entry is a glob or a
@@ -352,9 +373,7 @@ type StructureGate struct {
 
 	// Origin is where this structure gate was found — the project's own
 	// `.sloprail`, or a plugin that ships it. Not a YAML field; the loader fills it.
-	// The zero value is a project's own structure gate. See the loader for why a
-	// project's own structure gate wins over a plugin's (the singleton is claimed
-	// project-first, like every other name).
+	// The zero value is a project's own structure gate.
 	Origin Origin `yaml:"-"`
 }
 
@@ -496,6 +515,11 @@ func (e StructureEntry) isGlob() bool { return e.Glob != "" }
 
 // isRegex reports whether this entry is the regex half of the union.
 func (e StructureEntry) isRegex() bool { return e.Regex != "" }
+
+// isScoped reports whether this structure gate names a Scope, as opposed to
+// covering the whole tree. Used by validation (a plugin's must be scoped) and by
+// the dispatch-side compiler (an unscoped gate covers every path).
+func (sg StructureGate) isScoped() bool { return len(sg.Scope) > 0 }
 
 // -- the trigger types follow --
 

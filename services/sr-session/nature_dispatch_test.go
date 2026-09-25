@@ -74,7 +74,7 @@ func TestNatureBoundKinds_ExpandsAlias(t *testing.T) {
 // The structure gate binds the two file-write kinds so its paths are extracted even
 // when no gate names them.
 func TestNatureBoundKinds_StructureBindsWriteKinds(t *testing.T) {
-	loaded := declaration.Loaded{Structure: &declaration.StructureGate{}}
+	loaded := declaration.Loaded{Structures: []declaration.StructureGate{{}}}
 	bound := natureBoundKinds(loaded)
 	assert.Contains(t, bound, declaration.KindPreFileCreate)
 	assert.Contains(t, bound, declaration.KindPreFileUpdate)
