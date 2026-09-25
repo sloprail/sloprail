@@ -77,6 +77,14 @@ trajectory_health_check() {
   condensed_text="$(head -c 60000 "$condensed_file")"
   rm -f "$condensed_file"
 
+  # The transcript is an AGENT'S OWN OUTPUT wrapped in <transcript> tags in the
+  # template so the judge can tell reviewed content apart from its own
+  # instructions (defense against a transcript that quotes or invents text
+  # aimed at the judge). A transcript containing a literal "</transcript>"
+  # could otherwise forge that boundary and inject text the judge would read
+  # as outside the reviewed content — neutralize it before substitution.
+  condensed_text="$(printf '%s' "$condensed_text" | sed 's#</transcript>#< /transcript>#g')"
+
   # Simple placeholder substitution, not a real template engine: each
   # placeholder is replaced by the CONTENTS OF A FILE, not an awk -v string —
   # awk -v cannot hold a value with an embedded newline (scenario_desc,
