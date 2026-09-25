@@ -29,7 +29,7 @@
 # gate faithfully; it makes NO judgement about whether a gate is a meaningful
 # test of anything (a bare `exit 0` gate would pass here). That is
 # task-gate-is-grounded's job, at WRITE time: a gate that tests nothing
-# traceable to the task's own cited ask is refused before it ever lands, so a
+# traceable to the task itself is refused before it ever lands, so a
 # trivial gate never reaches this script to be faithfully "passed". This
 # script trusts that every gate under gates/ already cleared that bar.
 #
@@ -145,7 +145,7 @@ if [ -n "$problems" ]; then
   refuse "GATES NOT SATISFIED: $path cannot move to $new_status — a deterministic gate failed.
 
 $problems
-Fix the underlying condition each gate tests. Do not edit or delete a gate to get past it — a change to a gates/*.sh or gates/*.md file is itself refused unless it stays grounded in the task's own cited ask (see task-gate-is-grounded)."
+Fix the underlying condition each gate tests. Do not edit or delete a gate to get past it — a change to a gates/*.sh or gates/*.md file is itself refused unless it stays derived from the task (see task-gate-is-grounded). This SAME set of gates/*.sh files is also re-checked when the task later reaches in_review (task-review) — see run-sh-gates.sh."
 fi
 
 exit 0

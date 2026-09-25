@@ -26,8 +26,12 @@
 #
 # Output nests under `additionalContext` — the one key the engine reads. Emits
 # .task_body (the whole task, the stated claim), .observations and .artifacts (the
-# expanded evidence), and .evidence_ok (whether any evidence was assembled). All are
-# agent- and tool-shaped text and are framed as DATA in the template.
+# expanded evidence), .judgment_gates (every gates/*.md file's text — the task's
+# own start conditions, re-weighed HERE at the in_review claim rather than a
+# second judge call; gates/*.sh gates are NOT here, review-preflight.sh already
+# ran them deterministically before this check is reached), and .evidence_ok
+# (whether any evidence was assembled). All are agent- and tool-shaped text and
+# are framed as DATA in the template.
 #
 # THE PREPARE CONTRACT: a non-zero exit fails the check closed. Exit 0 with
 # `additionalContext` proceeds to the judge; exit 0 with `{"skip": true}` ABSTAINS —
@@ -192,6 +196,27 @@ done <<EOF
 $art_lines
 EOF
 
+# ------------------------------------------- collect the JUDGMENT gates ----
+#
+# gates/*.md files, verbatim, so the SAME judge call that weighs the delivery
+# evidence also decides whether each judgment gate still holds — one model
+# call, not two. .sh gates are NOT here: review-preflight.sh already ran them
+# deterministically above and refused the write if any failed, so a judgment
+# gate is the only kind left for a judge to weigh.
+task_dir="$(dirname "$path")"
+gates_dir="$root/$task_dir/gates"
+judgment_gates=""
+if [ -d "$gates_dir" ]; then
+  while IFS= read -r -d '' g; do
+    gname="$(basename "$g")"
+    gbody="$(cat "$g" 2>/dev/null || true)"
+    judgment_gates="${judgment_gates}### gates/${gname}
+${gbody}
+
+"
+  done < <(find "$gates_dir" -maxdepth 1 -name '*.md' -type f -print0 2>/dev/null | sort -z)
+fi
+
 evidence_ok=false
 { [ -n "$observations" ] || [ -n "$artifacts" ]; } && evidence_ok=true
 
@@ -199,5 +224,6 @@ jq -n \
   --arg body "$task_body" \
   --arg obs "$observations" \
   --arg art "$artifacts" \
+  --arg gates "$judgment_gates" \
   --argjson ok "$evidence_ok" \
-  '{additionalContext: {task_body: $body, observations: $obs, artifacts: $art, evidence_ok: $ok}}'
+  '{additionalContext: {task_body: $body, observations: $obs, artifacts: $art, judgment_gates: $gates, evidence_ok: $ok}}'

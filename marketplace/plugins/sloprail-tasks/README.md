@@ -92,7 +92,9 @@ hops) is refused at write time.
 **`gates/`** — an optional sibling directory,
 `memories/tasks/<group>/<name>/gates/<gate-name>.{sh,md}`, one file per START
 CONDITION that must hold before the task may leave `backlog`/`blocked` for
-`to_do`/`in_progress`:
+`to_do`/`in_progress` — AND that must STILL hold when the task later claims
+`in_review`, since a condition true at the start is not guaranteed to still be
+true at completion (see "Gates hold twice" under `task-review` below):
 
 ```
 memories/tasks/web/launch-page/
@@ -102,13 +104,14 @@ memories/tasks/web/launch-page/
     └── launch-video-exists.md # judgment: a prompt describing the condition
 ```
 
-A `.sh` gate is an ordinary executable — `task-gates-hold` runs it and treats
-`exit 0` as the condition holding, no special grammar, no frontmatter
-indirection. A `.md` gate is a judge prompt in plain language ("the launch
-video exists and shows a block") — `task-gates-hold`'s judge check decides,
-by actually looking (it may Read files), whether it currently holds; the
-task's own claim that it holds is not evidence. Every gate must pass before
-the transition; the first failing one is named in the refusal.
+A `.sh` gate is an ordinary executable — `task-gates-hold` (at the start) and
+`task-review` (at the completion claim) both run it and treat `exit 0` as the
+condition holding, no special grammar, no frontmatter indirection. A `.md`
+gate is a judge prompt in plain language ("the launch video exists and shows
+a block") — a judge decides, by actually looking (it may Read files), whether
+it currently holds; the task's own claim that it holds is not evidence. Every
+gate must pass before the transition, and every gate must still pass at the
+`in_review` claim; the first failing one is named in the refusal.
 
 Why files and not a `ready_when:` frontmatter list: a `.sh` gate IS the
 deterministic check, run literally, in the plugin's own native executable
@@ -122,11 +125,14 @@ describes a condition the user never asked for (or, worse, a `.md` that
 describes something LESS than what they actually need to hold). Both are the
 same failure `task-body-is-human-authored` exists to prevent for the ask
 itself — a spec quietly softened until every later check passes against the
-softened version — relocated to gate files. `task-gate-is-grounded` is the
-protection: a gate must be TRACEABLE to the task's own cited ask, must not
-CONTRADICT it, must not INVENT a condition the ask does not support, and (for
-a `.sh` gate specifically) must not be TRIVIAL — a check that can never
-actually fail. See that guard's own section below.
+softened version — relocated to gate files. A gate carries no citations of
+its own; only `TASK.md` cites the user's words, and that citation's grounding
+is validated separately, every time `TASK.md` is written. `task-gate-is-
+grounded` is the protection: a judge is handed the gate file and the task's
+own content (as it stands) and decides whether the gate is DERIVED from that
+task — TRACEABLE to it, not CONTRADICTING it, not INVENTING a condition it
+does not support, and (for a `.sh` gate specifically) not TRIVIAL — a check
+that can never actually fail. See that guard's own section below.
 
 ## The eight guardrails
 
@@ -183,22 +189,42 @@ Stop only, never Pre — a judged rule evadable by writing the file a different 
 would be worse than none), it reads the task's stated outcome and its **delivery
 evidence** and asks a model whether the evidence **substantiates** the claim.
 
-- A **script pre-flight** gates on `in_review` (most task writes cost nothing) and
-  refuses deterministically if an observation is not a tool_result or an artifact
-  does not resolve — there is nothing to review until the evidence resolves.
+- A **script pre-flight** gates on `in_review` (most task writes cost nothing),
+  re-runs every `gates/*.sh` under the task (the SAME start conditions
+  `task-gates-hold` held at the beginning of work — see "Gates hold twice"
+  below), and refuses deterministically if a gate fails or an observation is
+  not a tool_result or an artifact does not resolve — there is nothing to
+  review until the evidence resolves and the gates still hold.
 - The **prepare** gates on `in_review` a **second** time — it is a separate check
   from the pre-flight, and a passing pre-flight does not stop it, so without its own
   gate a to_do task would still pay for the model call. For a non-in_review task it
   emits `{"skip": true}` and the judge check **abstains** (no model call, no verdict).
   For an in_review task it expands the frontmatter evidence to the bytes: each
   observation to the **tool_result content** at its cited line, each artifact to the
-  **cited tree lines**. The **judge** weighs that delivered evidence against the claim — a task
-  claiming X with evidence showing X *happening* is approved even if X was a poor
-  idea; the judge checks the gap between what the task says was done and what the
-  evidence shows. Not substantiated → the turn is refused (the task stays
-  `in_review`; a Post refusal does not advance the read mark, so it is re-judged next
-  cycle until fixed). Substantiated → the write is permitted, and the accepted task
-  is deleted by the agent in a commit of its own.
+  **cited tree lines** — and collects every `gates/*.md` judgment gate's text. The
+  **judge** weighs the delivered evidence against the claim AND decides whether
+  every judgment gate still holds, in the SAME model call — a task claiming X
+  with evidence showing X *happening* is approved even if X was a poor idea; the
+  judge checks the gap between what the task says was done and what the
+  evidence shows, and whether each gate's condition is still true right now. Not
+  substantiated, or a gate no longer holding → the turn is refused (the task
+  stays `in_review`; a Post refusal does not advance the read mark, so it is
+  re-judged next cycle until fixed). Substantiated, gates holding → the write is
+  permitted, and the accepted task is deleted by the agent in a commit of its
+  own.
+
+**Gates hold twice: at the start, and again at completion.** A task's `gates/`
+files are its own declared preconditions. `task-gates-hold` holds them once,
+at the moment work BEGINS (`backlog`/`blocked` → `to_do`/`in_progress`) — but
+a condition true then is not guaranteed to still be true when the agent later
+claims `in_review`: a repo made private again, a dependency that regressed. So
+`task-review` holds the SAME gates a second time, at the completion claim —
+`gates/*.sh` deterministically in its pre-flight (the identical faithful run
+`task-gates-hold` performs), `gates/*.md` folded into the SAME judge call that
+weighs the delivery evidence, costing no second model call. `depends_on` is
+NOT re-held here: it names *other* tasks' completion, not a condition of this
+task's own that could regress, so it stays a start-only check
+(`task-dependencies-resolve`).
 
   *Migration note:* the old-format rule refused **both** verdicts — REJECTED to fix
   the evidence, and APPROVED with an instruction to delete the folder. The engine's
@@ -252,7 +278,7 @@ whether a gate is a *meaningful* test. That is `task-gate-is-grounded`'s job,
 at write time, so a trivial or fabricated gate never reaches this guard to be
 faithfully "passed."
 
-### task-gate-is-grounded — file-guard, preventive (script + judge)
+### task-gate-is-grounded — file-guard, preventive (judge)
 
 The protection against weakening, rubber-stamping, or fabricating a gate.
 Fires on a write to any `gates/*.sh` or `gates/*.md` file — the same failure
@@ -260,18 +286,20 @@ Fires on a write to any `gates/*.sh` or `gates/*.md` file — the same failure
 files: nothing else re-checks a gate's *content* once it exists, only whether
 it currently passes.
 
-1. **Script**: the gate's sibling `TASK.md` must carry at least one grounded
-   `[quote](jsonl)` body citation — without a cited ask there is nothing to
-   trace a gate against, refused before the judge is paid for.
-2. **Prepare + judge**: assembles the cited ask (ground truth) and the gate's
-   own content and kind. The judge rejects a gate that is not **traceable**
-   to the cited ask, that **contradicts** it, that **invents** a condition
-   the ask does not support, or — for a `.sh` gate specifically — that is
-   **trivial**: a script whose control flow can never actually fail (a bare
-   `exit 0`, or one shaped to look like a check but never reaches a failing
-   exit). The trivial-gate rejection is what stops a `.sh` gate — an ordinary
-   agent-writable executable `task-gates-hold` will literally run and trust —
-   from being a rubber stamp.
+A gate carries **no citations of its own** — only `TASK.md` cites the user's
+words, and that citation's grounding is `task-body-is-human-authored`'s
+subject, validated separately every time `TASK.md` is written. So this guard
+is **one check, no script stage**: prepare hands the judge the gate file's
+own content and kind, and the sibling `TASK.md`'s full content as it stands
+(frontmatter and body together) — no second citation-extraction pipeline
+duplicating what already validated the task body. The judge rejects a gate
+that is not **traceable** to the task, that **contradicts** it, that
+**invents** a condition the task does not support, or — for a `.sh` gate
+specifically — that is **trivial**: a script whose control flow can never
+actually fail (a bare `exit 0`, or one shaped to look like a check but never
+reaches a failing exit). The trivial-gate rejection is what stops a `.sh`
+gate — an ordinary agent-writable executable `task-gates-hold` will literally
+run and trust — from being a rubber stamp.
 
 Reusable deterministic helpers a `.sh` gate may source (`file_exists`,
 `task_is_done`, `unit_has_status`, `gh_repo_visibility_is`) live in

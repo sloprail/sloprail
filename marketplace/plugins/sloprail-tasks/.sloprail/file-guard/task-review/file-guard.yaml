@@ -6,6 +6,15 @@
 # can write about its own work and nothing ever tests. The full argument lives in
 # README.md, migrated from the old-format rule doc.
 #
+# THIS ALSO RE-HOLDS THE TASK'S OWN gates/. A gate is the task's declared
+# precondition, held once at the START of work by task-gates-hold; a condition
+# true then is not guaranteed to still be true at the COMPLETION claim, so this
+# guard holds every gate AGAIN: gates/*.sh deterministically in the pre-flight
+# (review-preflight.sh), gates/*.md as part of the SAME judge call that weighs
+# the delivery evidence (no second model call). depends_on is unaffected — it
+# stays a START-only check (task-dependencies-resolve), since it names OTHER
+# tasks' completion, not a condition of this task's own that could regress.
+#
 # THIS PROVES DELIVERY, NOT THE ASK. An earlier cut of this guard re-cited the
 # USER's own words — a duplicate of task-body-is-human-authored, and conceptually
 # wrong: a review proves the work was DONE. The evidence it weighs is the delivery
@@ -37,17 +46,22 @@
 # TWO checks, cheap first — the same shape the old script ran internally (a
 # deterministic pre-flight, then the model):
 #
-#   1. SCRIPT (review-preflight.sh): the GATE and the pre-flight. Only `in_review`
-#      is reviewed (most task writes are to_do/in_progress and must cost nothing),
-#      and every delivery citation must RESOLVE before a judge is shown anything —
-#      each observation line must be a tool_result, each artifact must exist in the
-#      tree. Evidence that does not resolve leaves nothing real to review, so it is
-#      refused here without a model call. task-evidence-resolves normally refuses
-#      these first; this handles the case it was bypassed.
+#   1. SCRIPT (review-preflight.sh): the GATE, the RE-HELD gates/*.sh, and the
+#      pre-flight. Only `in_review` is reviewed (most task writes are
+#      to_do/in_progress and must cost nothing); every gates/*.sh under the
+#      task must STILL pass (run faithfully, the same way task-gates-hold runs
+#      them at the start); and every delivery citation must RESOLVE before a
+#      judge is shown anything — each observation line must be a tool_result,
+#      each artifact must exist in the tree. Evidence that does not resolve
+#      leaves nothing real to review, so it is refused here without a model
+#      call. task-evidence-resolves normally refuses these first; this handles
+#      the case it was bypassed.
 #   2. PREPARE + JUDGE: prepare (expand-evidence.sh) expands the frontmatter evidence
 #      to the bytes — each observation to the tool_result content at its cited line,
-#      each artifact to the cited tree lines; review-task.md.j2 asks the model
-#      whether that delivered evidence substantiates the claim the task makes.
+#      each artifact to the cited tree lines — and collects every gates/*.md
+#      file's text; review-task.md.j2 asks the model whether that delivered
+#      evidence substantiates the claim the task makes AND whether every
+#      judgment gate still holds.
 #
 # THE APPROVE/REJECT MAPPING — the one behaviour the binary judge model changes,
 # flagged not hidden. The old rule NEVER permitted an in_review task: REJECTED

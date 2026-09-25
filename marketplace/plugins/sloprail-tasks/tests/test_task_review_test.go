@@ -247,3 +247,146 @@ func TestReview_ObservationNotAToolResultRefusedByPreflight(t *testing.T) {
 		t.Errorf("the refusal was not the not-a-tool_result reason:\n%s", res.Output)
 	}
 }
+
+// reviewGateTaskPath and its gate, a group distinct from taskPath's so these
+// tests never collide with another test file's task.
+const (
+	reviewGateTaskPath = "memories/tasks/web/ship-it/TASK.md"
+	reviewGateShPath   = "memories/tasks/web/ship-it/gates/repo-is-public.sh"
+	reviewGateMdPath   = "memories/tasks/web/ship-it/gates/launch-video-exists.md"
+)
+
+// TestReview_ShGateNoLongerHoldingBlocksAtStop: a gates/*.sh that PASSED at
+// the start (so the task legitimately reached in_progress) is rewritten to
+// FAIL before the task is claimed in_review -- proving task-review re-holds
+// the SAME gate at the completion claim, not just task-gates-hold at the
+// start. The delivery evidence itself is real and would otherwise pass, so
+// the gate is isolated as what refuses.
+func TestReview_ShGateNoLongerHoldingBlocksAtStop(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installPluginTree(t, e, proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	sess := "s-review-gate-regressed"
+	tp := e.TranscriptPath(proj, sess)
+	body := "Migrated the auth module. The user asked to " + cite("migrate the auth module", tp, 1) + "."
+	backlogDoc := "---\nstatus: backlog\npriority: P1\n---\n\n" + body + "\n"
+
+	// Land the task and a PASSING gate together, then move to_do -- the gate
+	// held at the start, so this transition is legitimate.
+	res0 := e.Run(proj, sess, authPrompt, Turns("done",
+		Write("w0", reviewGateTaskPath, backlogDoc),
+		Write("w1", reviewGateShPath, passingGate),
+	))
+	if res0.Refused() {
+		t.Fatalf("landing the task and its passing gate was refused (setup broken):\n%s", res0.Output)
+	}
+	toDoDoc := "---\nstatus: to_do\npriority: P1\n---\n\n" + body + "\n"
+	res1 := e.Run(proj, sess, authPrompt, Turns("done",
+		Write("w2", reviewGateTaskPath, toDoDoc),
+	))
+	if res1.Refused() {
+		t.Fatalf("moving to to_do with a passing gate was refused (setup broken):\n%s", res1.Output)
+	}
+
+	// The gate REGRESSES -- rewritten to fail, after the task has already
+	// started. This write itself must be admitted (the judge is stubbed
+	// PASS), so a later attempt to claim in_review is what this test targets.
+	res2 := e.Run(proj, sess, authPrompt, Turns("done",
+		Write("w3", reviewGateShPath, failingGate),
+	))
+	if res2.Refused() {
+		t.Fatalf("rewriting the gate to fail was itself refused (setup broken):\n%s", res2.Output)
+	}
+
+	artifactRel := "src/auth.go"
+	line := prepareDelivery(t, e, proj, sess, "PASS", artifactRel)
+	obs := []string{tp + ":" + itoa(line)}
+	art := []string{artifactRel + ":3-5"}
+	inReviewDoc := taskWithEvidence("in_review", "P1", body, obs, art)
+
+	res3 := e.Run(proj, sess, authPrompt, Turns("done",
+		Write("w4", reviewGateTaskPath, inReviewDoc),
+	))
+	if res3.Refused() {
+		t.Fatalf("the in_review write itself was refused at Pre (setup broken):\n%s", res3.Output)
+	}
+
+	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
+	if len(blocks) == 0 {
+		t.Fatalf("a task claiming in_review with a gate that no longer holds was not blocked at Stop:\n%s", res3.Output)
+	}
+	joined := strings.Join(blocks, "\n")
+	if !containsStr(joined, "GATES NO LONGER HOLD") {
+		t.Errorf("the Stop block was not the gates-no-longer-hold reason:\n%s", joined)
+	}
+}
+
+// TestReview_MdGateJudgeRejectionBlocksAtStop: a gates/*.md judgment gate
+// exists, and task-review's OWN judge call (the same one that weighs the
+// delivery evidence) rejects it -- proving a judgment gate is folded into the
+// review judge rather than needing a separate model call. The stub applies to
+// every judge in the run, so this isolates task-review's judge the same way
+// TestReview_SubstantiatedPermits's siblings do: task-body is disabled and
+// the delivery evidence is real, leaving the gate as the only thing that
+// could make the (single, stubbed) verdict a FAIL.
+func TestReview_MdGateJudgeRejectionBlocksAtStop(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installPluginTree(t, e, proj)
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored")
+
+	// SETUP needs every OTHER judge in the run (task-gate-is-grounded's on the
+	// gate write, task-gates-hold's on the to_do transition) to PASS; only
+	// the FINAL in_review write's stub is flipped to FAIL, below.
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	sess := "s-review-gate-judge-reject"
+	backlogDoc := "---\nstatus: backlog\npriority: P1\n---\n\nShip the launch page.\n"
+
+	res0 := e.Run(proj, sess, authPrompt, Turns("done",
+		Write("w0", reviewGateTaskPath, backlogDoc),
+		Write("w1", reviewGateMdPath, "The launch video exists and shows a working demo.\n"),
+	))
+	if res0.Refused() {
+		t.Fatalf("landing the task and its judgment gate was refused (setup broken):\n%s", res0.Output)
+	}
+	toDoDoc := "---\nstatus: to_do\npriority: P1\n---\n\nShip the launch page.\n"
+	res1 := e.Run(proj, sess, authPrompt, Turns("done",
+		Write("w2", reviewGateTaskPath, toDoDoc),
+	))
+	if res1.Refused() {
+		t.Fatalf("moving to to_do was refused (setup broken):\n%s", res1.Output)
+	}
+
+	artifactRel := "src/launch.go"
+	tp := e.TranscriptPath(proj, sess)
+	line := prepareDelivery(t, e, proj, sess, "PASS", artifactRel)
+	obs := []string{tp + ":" + itoa(line)}
+	art := []string{artifactRel + ":3-5"}
+	inReviewDoc := taskWithEvidence("in_review", "P1", "Shipped the launch page.", obs, art)
+
+	// The single stubbed verdict for this run's judges is FAIL -- since
+	// task-body is disabled, the only judge left in play is task-review's,
+	// which now also weighs the gates/*.md file gathered by expand-evidence.sh.
+	e.InstallJudgeClaude(`{"pass": false, "reasoning": "REVIEW REJECTED: the launch video gate does not hold -- no evidence the video exists."}`)
+
+	res2 := e.Run(proj, sess, authPrompt, Turns("done",
+		Write("w3", reviewGateTaskPath, inReviewDoc),
+	))
+	if res2.Refused() {
+		t.Fatalf("the in_review write itself was refused at Pre (setup broken):\n%s", res2.Output)
+	}
+
+	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
+	if len(blocks) == 0 {
+		t.Fatalf("an in_review task whose judgment gate the judge rejects was not blocked at Stop:\n%s", res2.Output)
+	}
+	joined := strings.Join(blocks, "\n")
+	if !containsStr(joined, "the launch video gate does not hold") {
+		t.Errorf("the judge's rejection reasoning did not reach the agent at Stop:\n%s", joined)
+	}
+}

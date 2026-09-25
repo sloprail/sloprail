@@ -10,6 +10,11 @@
 #                                                          condition — a
 #                                                          judge prompt
 #
+# GATES ARE ALSO RE-HELD AT COMPLETION. This guard is the START check only —
+# task-review holds the SAME gates again when the task reaches `in_review`,
+# because a condition true at the start is not guaranteed to still be true
+# when the agent claims done. See task-review/file-guard.yaml.
+#
 # TWO checks, cheap first, the same shape every guard in this plugin uses:
 #
 #   1. SCRIPT (gates-hold.sh): the transition gate (only backlog/blocked ->
@@ -25,7 +30,7 @@
 # THIS GUARD TRUSTS THAT EVERY GATE FILE UNDER gates/ ALREADY CLEARED THE
 # GROUNDING BAR. It runs/judges gates faithfully; it makes no judgement about
 # whether a gate is a MEANINGFUL test (a bare `exit 0` .sh, or a .md that
-# contradicts or invents beyond the task's own cited ask). That is
+# contradicts or invents beyond the task itself). That is
 # task-gate-is-grounded's job, at WRITE time — a gate that fails that bar
 # never lands, so it never reaches this guard to be faithfully "passed". The
 # two guards are deliberately separate: this one is about the MOMENT (does a

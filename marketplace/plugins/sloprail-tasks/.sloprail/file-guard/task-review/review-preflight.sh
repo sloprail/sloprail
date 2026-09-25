@@ -6,7 +6,20 @@
 #      in_progress and must cost nothing, so this is asked first and cheaply. A
 #      non-in_review task (or a malformed one — task-evidence-resolves owns that,
 #      with a better message) permits here without a model.
-#   2. PRE-FLIGHT: the DELIVERY evidence must resolve — every observation must
+#   2. START GATES, RE-HELD: every gates/*.sh under the task must STILL pass. A
+#      task's gates are its own declared preconditions — task-gates-hold holds
+#      them at the START of work; a condition true then is not guaranteed to
+#      still be true when the agent claims DONE (a repo made private again, a
+#      dependency regressed), so an in_review claim is only as honest as the
+#      conditions it still rests on. Deterministic, no model — the same faithful
+#      run task-gates-hold performs, duplicated here rather than shared via a
+#      sourced library (this plugin's own authoring guardrail judges a big
+#      refactor of this file's neighbour more harshly than a small, self-
+#      contained addition; two short, identical loops are the simpler choice).
+#      gates/*.md judgment gates are NOT re-run here — they are folded into the
+#      JUDGE call below instead, alongside the delivery evidence, so a
+#      judgment gate costs no second model call.
+#   3. PRE-FLIGHT: the DELIVERY evidence must resolve — every observation must
 #      ground against the tool_result pool, and every artifact must exist in the
 #      tree. Evidence that does not resolve leaves NOTHING REAL to put in front of a
 #      judge, so it is refused here, naming what failed — cheap gates expensive.
@@ -67,6 +80,34 @@ fi
 doc="$(sr-file validate "$abs" --schema "$schema" --emit 2>/dev/null)"
 status="$(printf '%s' "$doc" | jq -r '.status // empty' 2>/dev/null)"
 [ "$status" = "in_review" ] || exit 0
+
+# ------------------------------------------------------------- start gates ---
+#
+# Every gates/*.sh must STILL pass. Run in name order, faithfully, the same
+# way task-gates-hold runs them — a gate this rule could not actually run, or
+# that fails, is a refusal (fail-closed); an absent gates/ directory is
+# nothing to hold on (fail-open on the plumbing, not the logic).
+task_dir="$(dirname "$path")"
+gates_dir="$root/$task_dir/gates"
+gate_problems=""
+if [ -d "$gates_dir" ]; then
+  while IFS= read -r -d '' g; do
+    gname="$(basename "$g")"
+    gout="$(cd "$root" && SR_WORKSPACE="$root" bash "$g" 2>&1)"
+    grc=$?
+    if [ "$grc" -ne 0 ]; then
+      gate_problems="${gate_problems}  gates/${gname}: FAILED — ${gout:-exited $grc with no message}
+"
+    fi
+  done < <(find "$gates_dir" -maxdepth 1 -name '*.sh' -type f -print0 2>/dev/null | sort -z)
+fi
+
+if [ -n "$gate_problems" ]; then
+  refuse "GATES NO LONGER HOLD: $path claims in_review, but a start condition that held when work began no longer does.
+
+$gate_problems
+A task's gates are its own declared preconditions, and an in_review claim rests on them still being true. Fix the underlying condition, or explain in the body why the gate no longer applies and remove it (a gate removal is judged by task-gate-is-grounded like any other change to a gates/ file)."
+fi
 
 # ------------------------------------------------------- the pre-flight gate ---
 lib="$gdir/../task-evidence-resolves/cite-links.sh"
