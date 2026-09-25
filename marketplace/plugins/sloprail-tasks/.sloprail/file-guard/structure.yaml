@@ -1,0 +1,7 @@
+scope:
+  - glob: "memories/tasks/**"
+allow:
+  - regex: '^memories/tasks/README\.md$'
+  - regex: '^memories/tasks/[a-z0-9-]+/[a-z0-9-]+/TASK\.md$'
+  - regex: '^memories/tasks/[a-z0-9-]+/[a-z0-9-]+/gates/[a-z0-9-]+\.(md|sh)$'
+  - regex: '^memories/tasks/[a-z0-9-]+/[a-z0-9-]+/[^/].*$'

@@ -79,6 +79,13 @@ const authPrompt = "Please migrate the auth module to the new token format."
 // memories/tasks/<category>/<name>/TASK.md.
 const taskPath = "memories/tasks/auth/migrate-tokens/TASK.md"
 
+// pluginStructureGatePath is the plugin's OWN piece of the structure gate,
+// .sloprail/file-guard/structure.yaml, deliberately EXCLUDED by
+// installPluginTree — see the skip in the walk below for why. RELATIVE TO
+// src (the plugin's .sloprail dir itself, not the plugin root), matching what
+// filepath.Rel(src, path) produces in the walk below.
+var pluginStructureGatePath = filepath.Join("file-guard", "structure.yaml")
+
 // installPluginTree copies the plugin's OWN .sloprail tree (file-guard/, gate/,
 // schemas/) into the project, verbatim, preserving each file's mode — the scripts
 // MUST keep their execute bit or the engine refuses them as unrunnable. This is
@@ -86,13 +93,18 @@ const taskPath = "memories/tasks/auth/migrate-tokens/TASK.md"
 // project; here it is done from the plugin's committed tree so the e2e drive the
 // real shipped machinery, not a copy.
 //
-// The tree is then committed (commitInstalledTree) so it is part of the session
-// BASELINE rather than the first cycle's diff. The base sloprail plugin ships
-// authoring-slop, a preventive file-guard whose Stop after-check judges a
-// guardrail's own .sh/.md.j2 machinery; an uncommitted guard tree reads as this
-// cycle's writes, so that after-check would judge these scripts and, with no model
-// in the e2e, fail closed. Production installs before the session (baseline), so it
-// is never in the cycle diff — this reproduces that.
+// EXCEPT structure.yaml. It carries a `scope: [{glob: "memories/tasks/**"}]` so
+// a real installation composes it with the CONSUMER's own structure gate (and
+// any other plugin's) — but as of this writing the engine does not yet apply
+// that composition: an installed structure.yaml is read as an UNSCOPED,
+// project-wide deny-by-default gate. Copying it into this suite's throwaway
+// projects would then refuse every fixture write OUTSIDE memories/tasks/ (the
+// artifact files task-evidence/task-review's own tests write to src/…), which
+// is not what this guard is FOR and not what a real install does once
+// composition lands. sr-file declarations still proves the file itself loads
+// and parses (a plain call in TestPluginStructureGateParses); this is the one
+// deliberate carve-out in an otherwise-verbatim install, and it goes away
+// once composition ships.
 func installPluginTree(t *testing.T, projDir string) {
 	t.Helper()
 	src := filepath.Join(pluginRoot(t), ".sloprail")
@@ -109,6 +121,9 @@ func installPluginTree(t *testing.T, projDir string) {
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
+		}
+		if rel == pluginStructureGatePath {
+			return nil
 		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
