@@ -154,14 +154,22 @@ test-e2e-shard:
 # Plugin-local e2e modules. Each marketplace plugin that ships its own tests/ Go
 # module (its own go.mod, importing the shared harness via a replace) is a
 # SELF-CONTAINED suite — the "each plugin self-tests" model. They are NOT part of
-# `go list ./tests/...` (a separate module), so they are run explicitly here, one
-# `go test` per module dir. Add a plugin's tests dir to PLUGIN_TEST_DIRS when it
-# grows one.
-PLUGIN_TEST_DIRS := marketplace/plugins/sloprail-tasks/tests
-
+# `go list ./tests/...` (a separate module), so they are run explicitly here.
+#
+# DISCOVERED, not hand-listed: every marketplace/plugins/*/tests directory
+# that has its own go.mod is picked up automatically, one `go test` per
+# module dir. A new plugin growing a tests/ module needs no edit here — the
+# alternative (a hand-maintained list) is exactly what silently drops a
+# plugin's suite from CI the day someone forgets to add a line to it.
 .PHONY: test-plugins-e2e
 test-plugins-e2e:
-	@set -e; for d in $(PLUGIN_TEST_DIRS); do \
+	@set -e; \
+	dirs="$$(find marketplace/plugins -mindepth 2 -maxdepth 2 -type d -name tests -exec test -f '{}/go.mod' \; -print | sort)"; \
+	if [ -z "$$dirs" ]; then \
+	  echo "test-plugins-e2e: no marketplace/plugins/*/tests module found" >&2; \
+	  exit 1; \
+	fi; \
+	for d in $$dirs; do \
 	  echo "== plugin e2e: $$d =="; \
 	  ( cd "$$d" && go test -p 1 -count=1 -timeout 30m ./... ); \
 	done
