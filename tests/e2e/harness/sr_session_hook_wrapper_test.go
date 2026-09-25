@@ -38,15 +38,77 @@ func hookScriptPath(t *testing.T) string {
 	return p
 }
 
+// goEnvPassthrough is the Go toolchain's own RESOLVED environment variables
+// (GOPATH, GOMODCACHE, GOCACHE, GOENV, GOTOOLCHAIN), carried through as
+// explicit KEY=value pairs into every hook-script subprocess this file runs.
+//
+// WHY THIS EXISTS: the wrapper script's fallback lookup (added for the
+// reviewer's ~/.local/bin gap) runs `go env GOPATH` to find go install's
+// default bin directory. A test here isolates HOME to a t.TempDir() so it can
+// construct a fake install location — but a bare HOME override with nothing
+// else makes the Go toolchain fall back to ITS OWN defaults relative to that
+// fake HOME (GOPATH defaults to $HOME/go, GOMODCACHE to $GOPATH/pkg/mod, and
+// so on), and a subprocess `go` invocation that needs a toolchain matching
+// this repo's go.mod directive can then populate a REAL module cache —
+// toolchain binaries included — inside the very t.TempDir() being torn down.
+// Measured directly in CI: "TempDir RemoveAll cleanup: unlinkat
+// .../go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/lib/wasm/
+// go_wasip1_wasm_exec: permission denied" — Go's module cache ships read-only
+// files, and t.TempDir()'s cleanup cannot remove those on every
+// filesystem/runner, hence a CI-only failure with no test assertion ever
+// actually failing.
+//
+// This is resolved via `go env`, NOT read from os.Environ(): these variables
+// are normally unset in a real environment (Go computes them from GOPATH/HOME
+// on the fly), so a plain os.Environ() filter would find nothing to pass
+// through and the bug would persist. Calling `go env` here, in the OUTER test
+// process — before any HOME override — gets the values this machine's Go
+// toolchain is ACTUALLY using, and setting them explicitly in the subprocess
+// pins the module cache there regardless of what HOME says. The subprocess's
+// Go toolchain, if invoked at all, then keeps using the outer test run's
+// already-warm, real cache — never a location inside a t.TempDir() this file
+// created. Only HOME (and PATH, the property under test) are isolated.
+var goEnvPassthrough = resolveGoEnv(
+	"GOPATH", "GOMODCACHE", "GOCACHE", "GOENV", "GOTOOLCHAIN")
+
+// resolveGoEnv runs `go env <names...>` once and returns each as a "KEY=value"
+// pair, in the same order. A name `go env` reports empty for is included as
+// "KEY=" (explicitly empty, not omitted) so it still overrides whatever the
+// subprocess's own defaulting would otherwise compute from an isolated HOME.
+// If `go` itself cannot be found or run — this package's own tests already
+// require it, so this is not expected — the zero-value (nil) is used and
+// runHookScript's isolated-HOME tests fall back to whatever the subprocess's
+// Go toolchain would compute on its own, same as before this fix.
+func resolveGoEnv(names ...string) []string {
+	out, err := exec.Command("go", append([]string{"env"}, names...)...).Output()
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != len(names) {
+		return nil
+	}
+	pairs := make([]string, len(names))
+	for i, name := range names {
+		pairs[i] = name + "=" + strings.Trim(lines[i], `"`)
+	}
+	return pairs
+}
+
 // runHookScript runs sr-session-hook.sh with the given subcommand and PATH,
 // returning combined output and the exit code. It never has sr-session's real
 // directory on PATH unless withBinDir is set, so "missing" is constructed by
 // omission rather than by hiding a real binary.
+//
+// The subprocess's environment isolates only PATH (the property under test)
+// and HOME (so a fake ~/.local/bin can be constructed without touching the
+// real one) — see goEnvPassthrough for why the Go toolchain's own variables
+// ride along unchanged rather than being isolated too.
 func runHookScript(t *testing.T, subcommand, path string) (output string, code int) {
 	t.Helper()
 	script := hookScriptPath(t)
 	cmd := exec.Command(script, subcommand)
-	cmd.Env = []string{"PATH=" + path, "HOME=" + t.TempDir()}
+	cmd.Env = append([]string{"PATH=" + path, "HOME=" + t.TempDir()}, goEnvPassthrough...)
 	cmd.Stdin = strings.NewReader("")
 	out, err := cmd.CombinedOutput()
 	code = 0
@@ -170,8 +232,12 @@ func TestSrSessionHookWrapper_FindsBinaryInLocalBinWhenNotOnPATH(t *testing.T) {
 	cmd := exec.Command(script2, "pre-tool")
 	// PATH deliberately excludes localBin — this is the whole point: install.sh
 	// put the binary in ~/.local/bin, but the hook's own $PATH does not carry
-	// it, the exact gap the reviewer found.
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home}
+	// it, the exact gap the reviewer found. GOPATH/GOMODCACHE/GOCACHE/etc ride
+	// along unchanged (goEnvPassthrough) so `go env GOPATH`, which the
+	// wrapper's fallback lookup runs, never points the Go toolchain's module
+	// cache at this HOME-isolated t.TempDir() — see that var's doc comment for
+	// the CI failure this prevents.
+	cmd.Env = append([]string{"PATH=/usr/bin:/bin", "HOME=" + home}, goEnvPassthrough...)
 	cmd.Stdin = strings.NewReader("")
 	out, err := cmd.CombinedOutput()
 	code := 0
