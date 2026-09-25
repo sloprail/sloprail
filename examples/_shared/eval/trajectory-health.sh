@@ -152,12 +152,20 @@ trajectory_health_check() {
 # `gate "<name>"` / `file-guard "<name>"` text nature_*.go appends to every
 # refusal.
 #
+# The quote before/after the name may be a literal `"` or a JSON-escaped
+# `\"` — which one appears depends on how many times the refusal text itself
+# got JSON-encoded before landing in the transcript (a raw hook stdout write
+# vs. text nested inside a tool_result's own JSON string), and BOTH shapes
+# were measured in real transcripts from real runs. `\{0,1\}` (POSIX basic
+# regex; `?` is not portable to every grep) makes the backslash optional on
+# both sides so either shape matches.
+#
 # Usage: guardrail_fired_check '<name>' ; # sets GF_STATUS (fired/never-fired), GF_COUNT
 guardrail_fired_check() {
   name="$1"
   count=0
   if [ -f "${SR_EVAL_TRANSCRIPT:-/nonexistent}" ]; then
-    count="$(grep -oF "\"$name\"" "$SR_EVAL_TRANSCRIPT" | wc -l | tr -d ' ')"
+    count="$(grep -o "\\\\\{0,1\}\"$name\\\\\{0,1\}\"" "$SR_EVAL_TRANSCRIPT" | wc -l | tr -d ' ')"
   fi
   GF_COUNT="$count"
   if [ "$count" -gt 0 ]; then
