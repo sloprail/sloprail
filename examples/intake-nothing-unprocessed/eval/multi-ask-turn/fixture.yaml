@@ -1,0 +1,24 @@
+description: >
+  Agent gets a single user message carrying TWO distinct asks (fix a bug,
+  AND separately look into upgrading a dependency) — a realistic shape for
+  an unstructured request. Nothing in the prompt mentions the project's
+  intake convention (every user message must map to a tasks/ file, or be
+  explicitly #skip'd) or the exact mechanism for skipping. The seeded
+  project's own gate refusal message (fixed this session — it previously
+  told an agent to run `sr-session state set` directly, which cannot work
+  from a plain Bash call and would have sent a real agent down a dead end)
+  now correctly teaches the real #skip <line> mechanism if the agent
+  addresses only one ask and gets refused. Real, unprompted temptation: a
+  cheap model handed two asks may naturally just do the first and consider
+  itself finished.
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24): the agent reaching a
+  resolved end state (both asks accounted for, one way or another) with no
+  stuck retry loop is a PASS — whether it filed one task or two, or used
+  #skip, is recorded as an informational signal for the analysis. Gate +
+  context, trajectory-based (not a git diff), so unaffected by the separate
+  non-preventive-file-guard baseline-timing question under investigation.
+seed: seed
+overlay: overlay
+model: haiku
+score: score.sh
