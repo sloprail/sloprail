@@ -103,11 +103,16 @@ func resolveGoEnv(names ...string) []string {
 // The subprocess's environment isolates only PATH (the property under test)
 // and HOME (so a fake ~/.local/bin can be constructed without touching the
 // real one) — see goEnvPassthrough for why the Go toolchain's own variables
-// ride along unchanged rather than being isolated too.
+// ride along unchanged rather than being isolated too. cmd.Dir is likewise
+// moved OUT of this module (see noModuleDir) so a `go env` the wrapper script
+// runs never sees this repo's go.mod at all, which is the second half of that
+// same isolation: with no go.mod in view there is nothing for GOTOOLCHAIN's
+// auto-resolution to react to, module directive or not.
 func runHookScript(t *testing.T, subcommand, path string) (output string, code int) {
 	t.Helper()
 	script := hookScriptPath(t)
 	cmd := exec.Command(script, subcommand)
+	cmd.Dir = noModuleDir(t)
 	cmd.Env = append([]string{"PATH=" + path, "HOME=" + t.TempDir()}, goEnvPassthrough...)
 	cmd.Stdin = strings.NewReader("")
 	out, err := cmd.CombinedOutput()
@@ -118,6 +123,28 @@ func runHookScript(t *testing.T, subcommand, path string) (output string, code i
 		t.Fatalf("run hook script: %v\n%s", err, out)
 	}
 	return string(out), code
+}
+
+// noModuleDir returns a t.TempDir() with no go.mod in it or above it, for use
+// as a subprocess's working directory.
+//
+// WHY THIS MATTERS, and why goEnvPassthrough's explicit GOPATH/GOMODCACHE/
+// GOCACHE/GOENV/GOTOOLCHAIN values were not the whole fix: this repo's own
+// go.mod (go 1.25.0) is visible from this test binary's own working
+// directory, which a subprocess inherits by default. `go env GOPATH` run
+// from THERE still resolves go.mod's directive and, on a runner whose
+// installed toolchain does not already satisfy it, can still touch the
+// module cache to check/fetch a matching one — even with every cache
+// variable pointed at the real, already-populated locations. Measured in CI
+// after the first (environment-only) fix: cleanup failed differently,
+// "unlinkat .../001: directory not empty" rather than the original
+// permission-denied — the write moved, it did not stop. Running the
+// subprocess from a directory with no go.mod anywhere above it removes what
+// GOTOOLCHAIN=auto would otherwise react to, so `go env` (an operation that
+// needs no toolchain resolution at all) has nothing prompting it to try.
+func noModuleDir(t *testing.T) string {
+	t.Helper()
+	return t.TempDir()
 }
 
 // TestSrSessionHookWrapper_PreToolBlocksLoudlyWhenBinaryMissing is the
@@ -233,10 +260,16 @@ func TestSrSessionHookWrapper_FindsBinaryInLocalBinWhenNotOnPATH(t *testing.T) {
 	// PATH deliberately excludes localBin — this is the whole point: install.sh
 	// put the binary in ~/.local/bin, but the hook's own $PATH does not carry
 	// it, the exact gap the reviewer found. GOPATH/GOMODCACHE/GOCACHE/etc ride
-	// along unchanged (goEnvPassthrough) so `go env GOPATH`, which the
-	// wrapper's fallback lookup runs, never points the Go toolchain's module
-	// cache at this HOME-isolated t.TempDir() — see that var's doc comment for
-	// the CI failure this prevents.
+	// along unchanged (goEnvPassthrough) AND cmd.Dir is moved out of this
+	// module (noModuleDir) so `go env GOPATH` — which find_sr_session's
+	// fallback runs unconditionally, even though this test's ~/.local/bin
+	// already satisfies the search before that candidate is ever checked —
+	// neither points the Go toolchain's module cache at this HOME-isolated
+	// t.TempDir() nor triggers a toolchain-resolution check against this
+	// repo's go.mod. See both vars' doc comments for the two-stage CI
+	// failure this prevents (permission-denied, then directory-not-empty
+	// once the first stage alone was fixed).
+	cmd.Dir = noModuleDir(t)
 	cmd.Env = append([]string{"PATH=/usr/bin:/bin", "HOME=" + home}, goEnvPassthrough...)
 	cmd.Stdin = strings.NewReader("")
 	out, err := cmd.CombinedOutput()
