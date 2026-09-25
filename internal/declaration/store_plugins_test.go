@@ -210,6 +210,61 @@ allow:
 	assert.True(t, sawPlugin, "the plugin's structure gate must still be in force")
 }
 
+// A plugin's structure gate WITHOUT `scope` is invalid — unlike a project's own,
+// which may leave scope empty to mean the whole tree, a plugin shipping an
+// unscoped structure gate would lock the whole consuming project's tree the
+// moment it is installed.
+func TestNewWithPlugins_UnscopedPluginStructureIsInvalid(t *testing.T) {
+	project := projectDotDir(t, nil)
+	plugin := pluginRoot(t, map[string]string{
+		"file-guard/structure.yaml": `
+allow:
+  - glob: "memories/updates/*.md"
+`,
+	})
+	store := NewWithPlugins(project, []Origin{{Plugin: "sloprail-tasks", Root: plugin}})
+	loaded, err := store.Load(testRegistry(t))
+	require.NoError(t, err)
+
+	assert.Empty(t, loaded.Structures, "an invalid plugin structure gate must not load")
+	require.Len(t, loaded.Invalid, 1)
+	iv := loaded.Invalid[0]
+	assert.Equal(t, NatureStructure, iv.Nature)
+	assert.True(t, iv.Origin.FromPlugin())
+	assert.Equal(t, "sloprail-tasks", iv.Origin.Plugin)
+	assert.True(t, hasKind(iv, ErrMissingField), "an unscoped plugin structure gate is refused: %v", iv.Reason)
+	assert.Contains(t, iv.Reason, "scope")
+}
+
+// A project's own structure gate may still leave `scope` empty — unscoped means
+// the whole tree, the historical (pre-composition) meaning, and that is NOT an
+// error for a project's own declaration.
+func TestLoad_Structure_ProjectMayOmitScope(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/structure.yaml": `
+allow:
+  - glob: "memories/**"
+`,
+	})
+	require.Len(t, loaded.Structures, 1)
+	assert.Empty(t, loaded.Structures[0].Scope)
+	assert.False(t, loaded.Structures[0].Origin.FromPlugin())
+}
+
+// A malformed `scope` entry (bad regex, or neither glob nor regex) is refused
+// the same way a malformed allow/deny entry is.
+func TestLoad_Structure_MalformedScopeEntryRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/structure.yaml": `
+scope:
+  - regex: "^[unterminated"
+allow:
+  - glob: "x/*.md"
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadMatch), "a scope entry with a malformed regex is refused: %v", iv.Reason)
+}
+
 // Between two plugins that ship the same (nature, name), the EARLIER-listed one
 // wins and the later is shadowed — so the order the resolver is handed is the
 // precedence, and it must not be re-sorted.
@@ -255,6 +310,37 @@ func TestNewWithPlugins_DisablePluginDeclaration(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, loaded.FileGuards, "the disabled plugin file-guard is still in force")
+}
+
+// Disabling `<plugin>/structure` removes JUST that plugin's structure gate —
+// every other covering file (the project's own, and any other plugin's) stays
+// in force. This is the composition-era version of what used to be "disable the
+// one winner"; now there can be several pieces, and disabling one must not touch
+// the rest.
+func TestNewWithPlugins_DisablePluginStructureLeavesOthersComposed(t *testing.T) {
+	project := projectDotDir(t, map[string]string{
+		"file-guard/structure.yaml": `
+allow:
+  - glob: "src/**"
+`,
+		"config.yaml": "disabled:\n  - sloprail-tasks/structure\n",
+	})
+	plugin := pluginRoot(t, map[string]string{
+		"file-guard/structure.yaml": `
+scope:
+  - glob: "memories/tasks/**"
+allow:
+  - glob: "memories/tasks/*.md"
+`,
+	})
+
+	store := NewWithPlugins(project, []Origin{{Plugin: "sloprail-tasks", Root: plugin}})
+	loaded, err := store.Load(testRegistry(t))
+	require.NoError(t, err)
+
+	require.Len(t, loaded.Structures, 1, "only the project's own structure gate should remain")
+	assert.False(t, loaded.Structures[0].Origin.FromPlugin())
+	assert.Equal(t, "structure", loaded.Structures[0].Qualified())
 }
 
 // Disabling is per RULE and keyed on the qualified name: disabling a plugin's

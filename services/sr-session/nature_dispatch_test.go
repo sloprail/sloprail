@@ -258,6 +258,44 @@ func TestWritePath(t *testing.T) {
 	del := event.Event{Kind: declaration.KindPreFileDelete, Fields: map[string]any{"path": "c.md"}}
 	_, ok = writePath(del)
 	assert.False(t, ok, "a delete is not a write the structure gate governs")
+
+	// A path OUTSIDE the project — the spelling filemod.reportable() leaves an
+	// out-of-workspace path in (absolute here) — is excluded before the structure
+	// gate is even asked. See isOutsideProject and its doc for why: a session
+	// whose project root is one repo must not have its structure gate refuse a
+	// write to an unrelated sibling repo just because that absolute path matches
+	// no project-relative allow entry.
+	outside := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{"path": "/Users/x/other-repo/a.md"}}
+	_, ok = writePath(outside)
+	assert.False(t, ok, "a path outside the project has no opinion from the structure gate")
+}
+
+// isOutsideProject recognises every spelling filemod.reportable() leaves an
+// out-of-workspace path in, and admits every spelling an in-workspace path is
+// always reported as (relative and cleaned).
+func TestIsOutsideProject(t *testing.T) {
+	outside := []string{
+		"/Users/x/other-repo/a.md", // absolute — reportable()'s answer for any out-of-workspace path
+		"/",                        // absolute root
+		"..",                       // climbs out, lexically
+		".",                        // names the project root itself, not a file in it
+		"../sibling/secret.md",     // climbs out then descends elsewhere
+		"../../etc/passwd",         // climbs out further
+	}
+	for _, p := range outside {
+		assert.True(t, isOutsideProject(p), "expected %q to be outside the project", p)
+	}
+
+	inside := []string{
+		"memories/updates/note.md",
+		"a.md",
+		"src/main.go",
+		"deeply/nested/path/file.txt",
+		"..hidden-but-not-a-climb.md", // starts with ".." as text but is not the "../" prefix or bare ".."
+	}
+	for _, p := range inside {
+		assert.False(t, isOutsideProject(p), "expected %q to be treated as inside the project", p)
+	}
 }
 
 // The gates[] map round-trips through the store: a verdict recorded under a gate's
