@@ -36,10 +36,11 @@ file-guard. Is it about **whether an event may happen / whether a turn is done**
 → gate. Is it a **mode that other rules depend on** → context.
 
 One more thing lives alongside the three, and it is **not** a nature: the
-**structure gate** — a single, project-wide allowlist of paths that may be
-written, everything else denied. Reach for it when the rule is "writes only land
-inside this shape", not a per-file or per-event check. It is one `structure.yaml`
-for the whole project, not a per-name folder.
+**structure gate** — an allowlist of paths that may be written, everything else
+denied. Reach for it when the rule is "writes only land inside this shape", not a
+per-file or per-event check. It is one `structure.yaml` per root, not a per-name
+folder: the project's covers the whole tree, and a plugin's covers only the
+`scope` (folders) it declares it owns — all of them combine.
 → [structure-gate.md](structure-gate.md)
 
 ## Where each nature lives
