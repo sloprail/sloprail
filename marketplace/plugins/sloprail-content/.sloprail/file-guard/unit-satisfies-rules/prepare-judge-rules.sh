@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
-# prepare for stage 2 of unit-satisfies-rules: collect every JUDGE rule that
-# applies to this unit (rules-lib.sh; script rules are stage 1's business and
-# are excluded here) and hand them to the judge template as the rubric —
-# exactly the shape unit-satisfies-constraints's prepare.sh hands its
-# constraints, generalized from "this topic's constraints" to "every rule
-# (project-wide + this unit's topic) this unit's taxonomy selects".
+# prepare for unit-satisfies-rules's single check: collect every rule that
+# applies to this unit (rules-lib.sh, by tags) and hand them to the judge
+# template as the rubric — exactly the shape unit-satisfies-constraints's
+# prepare.sh hands its constraints, generalized from "this topic's
+# constraints" to "every rule (project-wide + this unit's topic) this unit's
+# tags select".
 #
-# Reached only once stage 1 (check-script-rules.sh) passed, so every script
-# rule already holds; this prepare's ONE job is to assemble the judge rules'
-# text as ground truth for the model, plus the size gate this repo's other
-# judge-fed guards already carry.
+# EVERY rule is a judge rule now — there is no separate deterministic script
+# stage (see file-guard.yaml's header for why: a rule that needs a
+# measurement, like a character limit, is a PROMPT telling the judge to run
+# `wc -c`/similar itself via the Bash tool granted through allowed_tools,
+# not a shipped script). This prepare's job is to assemble every applicable
+# rule's text as ground truth for the model, the unit's own file path (so a
+# Bash-run measurement targets the real file on disk), and the size gate
+# this repo's other judge-fed guards already carry.
 #
 # EXIT 0 with additionalContext on stdout: the judge runs. EXIT 1: a REFUSAL
 # (a prepare failure fails closed), carrying this script's own reason.
 #
-# THE "NO JUDGE RULES APPLY" CASE, same shape as unit-satisfies-constraints's
+# THE "NO RULE APPLIES" CASE, same shape as unit-satisfies-constraints's
 # "topic has no constraints": a judge: check's prepare has only two outcomes
-# (refuse or proceed-to-judge), so when NO judge rule applies this still
-# proceeds with the sentinel "NONE", and the judge template passes trivially on
-# it — the same behavioural note that guard's file-guard.yaml documents.
+# (refuse or proceed-to-judge), so when NO rule applies this still proceeds
+# with the sentinel "NONE", and the judge template passes trivially on it —
+# the same behavioural note that guard's file-guard.yaml documents.
 set -uo pipefail
 
 payload="$(cat)"
@@ -29,7 +33,7 @@ refuse() {
 }
 
 proceed() {
-  jq -n --arg r "$1" '{additionalContext: {judge_rules: $r}}'
+  jq -n --arg r "$1" --arg p "$2" '{additionalContext: {judge_rules: $r, unit_path: $p}}'
   exit 0
 }
 
@@ -76,9 +80,7 @@ while IFS= read -r rf; do
   [ -n "$rf" ] || continue
   # collect_applicable_rules already validated this file once to decide it
   # applies; a second failure here (a race, or a future bug upstream) is
-  # surfaced rather than silently dropped — see check-script-rules.sh's own
-  # identical comment for why a rule this script cannot parse must not just
-  # vanish from the rubric unremarked.
+  # surfaced rather than silently dropped, not silently skipped.
   if ! rdoc="$(sr-file validate "$rf" --schema "$rule_schema" --emit 2>&1)"; then
     judge_rules="${judge_rules}### $(basename "$(dirname "$rf")") [UNREADABLE]
 This rule's frontmatter failed schema validation on re-read and could not be included: ${rdoc}
@@ -87,8 +89,6 @@ This rule's frontmatter failed schema validation on re-read and could not be inc
     count=$((count + 1))
     continue
   fi
-  sname="$(printf '%s' "$rdoc" | jq -r '.script.name // empty' 2>/dev/null)"
-  [ -z "$sname" ] || continue   # a SCRIPT rule — stage 1 already ran it.
 
   rule_name="$(basename "$(dirname "$rf")")"
   level="$(printf '%s' "$rdoc" | jq -r '.level // "must"' 2>/dev/null)"
@@ -104,7 +104,7 @@ $rule_files
 EOF
 
 if [ "$count" -eq 0 ]; then
-  proceed "NONE"
+  proceed "NONE" "$root/$path"
 fi
 
 # THE SIZE GATE — same threshold and reasoning as unit-satisfies-constraints's
@@ -118,4 +118,4 @@ if [ -n "$body_bytes" ] && [ "$body_bytes" -gt "$max_bytes" ] 2>/dev/null; then
 This is refused rather than permitted because a unit this size cannot be checked against its writing rules at all. Split it into the units it is actually made of, and each will be judged normally."
 fi
 
-proceed "$judge_rules"
+proceed "$judge_rules" "$root/$path"

@@ -16,60 +16,37 @@ close({
 // unit MUST NOT). A "should" that cannot refuse is a comment, not a rule.
 level!: "must" | "must_not"
 
-// WHERE THIS RULE CAME FROM — traceable, exactly like CONSTRAINT.md's existing
-// transcript_paths. Not grounded/verified by any guardrail (unlike a task body's
-// citation or the publish gate's approved:) — this is PROVENANCE, an audit trail
-// for "why does this rule exist", not a claim this plugin checks.
-transcript_paths?: [...string]
-
 created?: string
 
 // ============================================================ THE TAXONOMY ===
 //
-// applies_to SELECTS which units this rule is checked against, over the SAME
-// three axes unit.cue's frontmatter carries: channels, type, tags. NO selector
-// at all (applies_to entirely absent) means GLOBAL — every unit, regardless of
-// its own frontmatter. Each axis present in applies_to is OR'd within itself and
-// AND'd across axes: `applies_to: {channels: [x, reddit], type: [post]}` means
-// "a unit whose channels include x OR reddit, AND whose type is post". An axis
-// unit-satisfies-rules cannot find a value for is a SUBSET test: the rule's
-// listed values must intersect the unit's own list (channels/tags) or equal its
-// scalar (type).
+// tags SELECTS which units this rule is checked against — a unit's frontmatter
+// tags. NO tags at all (tags entirely absent) means GLOBAL — every unit,
+// regardless of its own tags. Present, it is a SUBSET test: the rule's listed
+// tags must intersect the unit's own tags.
 //
-// A rule with applies_to.channels: [x] is exactly "the X rules"; one with no
-// applies_to at all is exactly "the global style rules" from the task's own
-// framing. Topic-scoped rules (the migrated constraints/) carry NO applies_to
-// at all — their scope is already the topic they live under (see
-// unit-satisfies-rules/prepare.sh), so the selector would be redundant; if one
-// is present anyway it is honoured as an ADDITIONAL filter within that topic.
-applies_to?: close({
-	channels?: [...string]
-	type?: [...("post" | "thread" | "wedge" | "video")]
-	tags?: [...string]
-})
-
-// ============================================================ THE MECHANISM ===
-//
-// A rule is EITHER a judge rule (the rule text below is put to a model — style,
-// tone, positioning, anything that is a judgement call) OR a script rule (a
-// NAMED script the plugin or the project ships, plus its arguments — for
-// anything deterministic, because an LLM is bad at counting characters). Never
-// both, and never inline shell: a script rule names a script, it does not carry
-// one.
-//
-// script ABSENT means this is a JUDGE rule: the body (rule text + PASS/FAIL,
-// read off the .md by unit-satisfies-rules, not this schema) is the judge's
-// rubric for this one rule.
-//
-// script PRESENT means this is a SCRIPT rule: `name` is one of the scripts this
-// plugin ships under scripts/ (see scripts/README.md — char-limit, hn-title-
-// limit, reddit-title-limit, banned-phrases) or a project-local one under the
-// consumer's own `.sloprail/content-rules/scripts/`, resolved the same way;
-// `args` are passed to it verbatim. The body of a script rule's .md is
-// documentation for a human, never executed.
-script?: close({
-	name!: string
-	args?: [...string]
-})
+// Simplified from an earlier channels/type/tags selector to just tags: a
+// channel is a tag like any other ("x", "reddit", "hn"), and a unit's `type`
+// is not itself a taxonomy axis a rule selects on — tag the unit if a rule
+// should apply to it. `applies_to: [x]` is exactly "the X rules"; no
+// `applies_to` at all is exactly "the global style rules". Topic-scoped rules
+// (the migrated constraints/) carry NO applies_to at all — their scope is
+// already the topic they live under (see unit-satisfies-rules/prepare.sh), so
+// the selector would be redundant; if one is present anyway it is honoured as
+// an ADDITIONAL filter within that topic.
+applies_to?: [...string]
 
 })
+
+// ================================================================ GROUNDING ===
+//
+// A rule's ORIGIN is not a frontmatter field (an earlier draft's
+// transcript_paths was dropped — see the plugin README's migration note). A
+// rule grounds itself the SAME WAY a task's body grounds its ask
+// (sloprail-tasks's task-body-is-human-authored): the RULE'S BODY carries at
+// least one `[quote](jsonl)` markdown link whose quote is the user's own
+// words and resolves via `sr-session trajectory cite --source-types user`,
+// checked by content-rule-is-grounded's script stage, then a judge confirms
+// the rule states only what the cited quote(s) say and nothing invented. No
+// separate schema field for this — the body IS the citation, exactly as a
+// task body's ask citation is.

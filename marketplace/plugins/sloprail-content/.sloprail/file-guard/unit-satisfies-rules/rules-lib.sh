@@ -1,13 +1,13 @@
-# The rule-collection library, sourced by both of unit-satisfies-rules's checks
-# (the script-rule dispatcher and the judge prepare) so the two agree exactly on
-# which rules are IN SCOPE for a given unit — one place understands the
-# taxonomy, not two copies that can drift.
+# The rule-collection library, sourced by unit-satisfies-rules's judge
+# prepare (the only check left — see file-guard.yaml's header for why the
+# script-rule stage was removed) so a rule's applicability is answered in one
+# place.
 #
 # A RULE LIVES IN ONE OF TWO PLACES (see the plugin README's "where rules live"):
 #
 #   1. PROJECT-WIDE   $SR_WORKSPACE/.sloprail/content-rules/<NN_name>/RULE.md
-#      Selected by applies_to: (channels/type/tags) against the unit's own
-#      frontmatter. No applies_to at all = global, every unit.
+#      Selected by applies_to: (a list of tags) against the unit's own tags.
+#      No applies_to at all = global, every unit.
 #   2. TOPIC-SCOPED    memories/topics/<topic>/constraints/<NN_name>/CONSTRAINT.md
 #      The pre-existing shape (unit-satisfies-constraints, migrated in place —
 #      see the README). Scope is implicit: only a unit UNDER that topic sees it.
@@ -26,10 +26,8 @@
 #
 # collect_applicable_rules "<unit-path>" "<root>" "<unit-bytes>"  ->  one rule
 # FILE PATH per line, for every rule (project-wide or topic-scoped) whose
-# applies_to matches the unit. Reads the unit's OWN frontmatter via `sr-file
-# validate --emit` against unit.cue to get its channels/type/tags — the same
-# schema unit-publish-approved reads, so "what taxonomy does this unit carry" is
-# answered identically everywhere.
+# applies_to matches the unit's tags. Reads the unit's OWN frontmatter via
+# `sr-file validate --emit` against unit.cue to get its tags.
 collect_applicable_rules() {
   unit_path="$1"
   root="$2"
@@ -39,18 +37,16 @@ collect_applicable_rules() {
   rule_schema="$root/.sloprail/schemas/rule.cue"
 
   unit_doc="$(printf '%s' "$unit_bytes" | sr-file validate - --as .md --schema "$unit_schema" --emit 2>/dev/null)" || return 1
-  u_channels="$(printf '%s' "$unit_doc" | jq -c '.channels // []' 2>/dev/null)"
-  u_type="$(printf '%s' "$unit_doc" | jq -r '.type // ""' 2>/dev/null)"
   u_tags="$(printf '%s' "$unit_doc" | jq -c '.tags // []' 2>/dev/null)"
 
   # PROJECT-WIDE rules: every .sloprail/content-rules/*/RULE.md, filtered by
-  # applies_to against the unit's taxonomy.
+  # applies_to against the unit's tags.
   rules_dir="$root/.sloprail/content-rules"
   if [ -d "$rules_dir" ]; then
     for rf in "$rules_dir"/*/RULE.md; do
       [ -f "$rf" ] || continue
       rdoc="$(sr-file validate "$rf" --schema "$rule_schema" --emit 2>/dev/null)" || continue
-      if rule_applies "$rdoc" "$u_channels" "$u_type" "$u_tags"; then
+      if rule_applies "$rdoc" "$u_tags"; then
         printf '%s\n' "$rf"
       fi
     done
@@ -66,7 +62,7 @@ collect_applicable_rules() {
       for cf in "$constraints_dir"/*/CONSTRAINT.md; do
         [ -f "$cf" ] || continue
         cdoc="$(sr-file validate "$cf" --schema "$rule_schema" --emit 2>/dev/null)" || continue
-        if rule_applies "$cdoc" "$u_channels" "$u_type" "$u_tags"; then
+        if rule_applies "$cdoc" "$u_tags"; then
           printf '%s\n' "$cf"
         fi
       done
@@ -74,45 +70,21 @@ collect_applicable_rules() {
   fi
 }
 
-# rule_applies "<rule-json>" "<unit-channels-json>" "<unit-type>" "<unit-tags-json>"
-# -> 0 if the rule's applies_to (absent = global) matches, 1 otherwise.
+# rule_applies "<rule-json>" "<unit-tags-json>"  -> 0 if the rule's applies_to
+# (absent = global) matches, 1 otherwise.
 #
-# Each axis PRESENT in applies_to is a SUBSET/intersection test against the
-# unit's own value; an axis ABSENT from applies_to imposes no constraint. No
-# applies_to at all (jq's `// {}` reads it as empty) matches everything —
-# EVERY axis absent, so every per-axis test below is vacuously true.
+# applies_to PRESENT is a SUBSET/intersection test against the unit's own
+# tags; applies_to ABSENT (global) matches everything.
 rule_applies() {
   rule_json="$1"
-  u_channels="$2"
-  u_type="$3"
-  u_tags="$4"
+  u_tags="$2"
 
-  jq -en --argjson rule "$rule_json" \
-        --argjson uch "$u_channels" \
-        --arg utype "$u_type" \
-        --argjson utags "$u_tags" \
-    '
-    ($rule.applies_to // {}) as $sel
-    | (
-        # channels: absent -> true; present -> the rule list and the unit
-        # list intersect.
-        ($sel.channels == null) or
-        (($sel.channels // []) as $rc | ($uch // []) as $uc |
-          ($rc - ($rc - $uc)) | length > 0)
-      )
-      and (
-        # type: absent -> true; present -> the unit type is one of the listed.
-        ($sel.type == null) or
-        (($sel.type // []) | index($utype) != null)
-      )
-      and (
-        # tags: absent -> true; present -> intersect.
-        ($sel.tags == null) or
-        (($sel.tags // []) as $rt | ($utags // []) as $ut |
-          ($rt - ($rt - $ut)) | length > 0)
-      )
+  jq -en --argjson rule "$rule_json" --argjson utags "$u_tags" '
+    ($rule.applies_to == null) or
+    (($rule.applies_to // []) as $rt | ($utags // []) as $ut |
+      ($rt - ($rt - $ut)) | length > 0)
     ' >/dev/null 2>&1
-  # jq -en: no stdin needed (every fact arrives via --arg/--argjson); its EXIT
-  # CODE is the verdict (the top-level expression is truthy -> 0, falsy -> 1),
+  # jq -en: no stdin needed (every fact arrives via --argjson); its EXIT CODE
+  # is the verdict (the top-level expression is truthy -> 0, falsy -> 1),
   # which this function returns as-is.
 }

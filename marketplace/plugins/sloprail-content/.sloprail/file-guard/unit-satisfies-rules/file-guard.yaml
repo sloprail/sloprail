@@ -1,15 +1,27 @@
-# A content unit must satisfy the writing rules its OWN TAXONOMY selects. A
-# unit's frontmatter (channels, type, tags) decides which rules apply — a unit
-# tagged channels: [x] gets the X rules, a Reddit post the Reddit rules, and
+# A content unit must satisfy the writing rules its OWN TAGS select. A unit
+# tagged x gets the X rules, one tagged reddit gets the Reddit rules, and
 # every unit gets the global rules (a rule with no applies_to selector). See
-# scripts/README.md and the plugin README for the taxonomy and the rule format.
+# the plugin README for the taxonomy and the rule format.
 #
 # GENERALIZES AND REPLACES the consumer project's topic-local
 # unit-satisfies-constraints guard: a topic's own constraints/ still work
 # unchanged (rules-lib.sh collects them by the unit's topic, exactly as that
 # guard's prepare.sh did), but this guard ALSO collects project-wide rules
-# selected by channel/type/tag, which the old guard had no way to express — see
-# the plugin README's migration note.
+# selected by tag, which the old guard had no way to express — see the plugin
+# README's migration note.
+#
+# ONE CHECK, NOT TWO. An earlier version of this guard ran a deterministic
+# SCRIPT stage first (shipped .sh scripts for character limits, a banned-
+# phrase list) ahead of the judge. That machinery is GONE: a rule whose
+# check is mechanical — a character limit, a title-length cap, a banned-
+# phrase/regex match — is now written as a RULE TEXT that tells the judge
+# what to measure and how (see judge-rules.md.j2), and the judge is granted
+# Bash to actually run the measurement (`wc -c`, `grep`, …) against the real
+# file rather than estimate it. There is no scripts/ folder to install, no
+# script-name resolution, and no separate script-rule dispatch — every rule
+# is a judge rule, and "deterministic" is a property of how precisely the
+# rule's own text is written plus the judge's tool access, not of a second
+# check kind. See the plugin README's "The mechanism" section.
 #
 # match: BOTH a unit's own frontmatter (UNIT.md) and its actual copy
 # (02_draft.md) are covered — a writing rule is about what will SHIP, which is
@@ -21,35 +33,25 @@
 match: path matches "^memories/topics/[^/]+/units/[^/]+/(UNIT|02_draft)\\.md$"
 
 # NOT preventive — same reasoning as unit-satisfies-constraints: a writing-rule
-# judgement (especially the judge half) is inherently after-the-fact, and the
-# Stop after-check on the settled file is where it belongs. The deterministic
-# script-rule half (stage 1) COULD be preventive on its own, but splitting
-# preventive-ness across stages of the same guard would mean a script-rule
-# failure blocks at Pre while a judge-rule failure on the identical write does
-# not — a confusing asymmetry for no real gain, since a caught violation is
-# still reported before the agent's next turn either way. If a project wants
-# the character-limit/banned-phrase checks enforced before the write lands,
-# that is exactly what a SEPARATE preventive file-guard wrapping the same
-# scripts is for; this guard's job is the full taxonomy-selected rule set,
-# judged together.
+# judgement is inherently after-the-fact, and the Stop after-check on the
+# settled file is where it belongs.
 checks:
-  # Stage 1 — deterministic, fail-closed, cheap. Refuses with `{"reason": "..."}`
-  # on stdout if any applicable SCRIPT rule fails.
-  - script: ./check-script-rules.sh
-
-  # Stage 2 — reached only once stage 1 passed. Collects the applicable JUDGE
-  # rules and asks one model call to weigh the unit against all of them
-  # together (not one call per rule — the constraints guard's own pattern).
-  # model: size-md is the engine default judge modelset, the "cheapest adequate
-  # model" the task calls for — a judgement over authored prose is a real
-  # reasoning task, not a formatting one, so the smallest alias is not
-  # reached for, but the largest is not the default either. timeout 25s sits
-  # under the engine's 30s check bound so the judge's own limit fires first
-  # (mirrors every judge check in this repo). allowed_tools: [Read] — the
-  # rules and the unit are both already IN the prompt; Read is the one
-  # conservative grant, matching unit-satisfies-constraints.
+  # Collects the applicable rules and asks one model call to weigh the unit
+  # against all of them together (not one call per rule — the constraints
+  # guard's own pattern). model: size-md is the engine default judge
+  # modelset, the "cheapest adequate model" the task calls for — a judgement
+  # over authored prose (and now, deterministic measurements run via Bash)
+  # is a real reasoning task, not a formatting one, so the smallest alias is
+  # not reached for, but the largest is not the default either. timeout 25s
+  # sits under the engine's 30s check bound so the judge's own limit fires
+  # first (mirrors every judge check in this repo). allowed_tools:
+  # [Read, Bash] — Read for the rules/unit text (already in the prompt, but
+  # a rule may point the judge at a related file), Bash so the judge can run
+  # the actual measurement a deterministic rule's text asks for (wc, grep,
+  # …) against the real unit file at additionalContext.unit_path, rather
+  # than estimate it.
   - prepare: ./prepare-judge-rules.sh
     judge: ./judge-rules.md.j2
     model: size-md
     timeout: 25s
-    allowed_tools: [Read]
+    allowed_tools: [Read, Bash]
