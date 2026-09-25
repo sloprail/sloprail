@@ -1,0 +1,9 @@
+# Not a full-repo scan every cycle — incremental. One `enter`, fired on EVERY
+# people/*.md touch this cycle. Post, not Pre: Pre doesn't always fire.
+on:
+  - event: PostFileCreate
+    match: event.path startsWith "people/" and event.path endsWith ".md"
+  - event: PostFileDelete
+    match: event.path startsWith "people/" and event.path endsWith ".md"
+enter: ./enter.sh
+exit: ./exit.sh

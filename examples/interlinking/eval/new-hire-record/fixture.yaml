@@ -1,0 +1,16 @@
+description: >
+  Agent is asked to record that a new team member joined, WITH a skill
+  teaching this project's own people/updates interlinking convention the
+  guardrail enforces (a new people/<name>.md must be referenced by an
+  updates/ or decisions/ file in the same turn).
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24), not on whether the agent
+  linked the record: a clean, complete record with no stuck retry loop is
+  a PASS whether or not the agent cross-linked it correctly on the first
+  try. Whether the gate fired, and whether the person ended up linked, are
+  recorded as secondary, informational signals from a real run — not the
+  bar itself.
+seed: seed
+overlay: overlay
+model: haiku
+score: score.sh

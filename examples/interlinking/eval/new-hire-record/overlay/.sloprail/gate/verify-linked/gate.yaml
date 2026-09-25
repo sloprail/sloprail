@@ -1,0 +1,12 @@
+# Checks the people the paired context logged this cycle, and must SKIP (not
+# refuse) turns that touched no people file. Both keys are needed: `match` is
+# the filter (fire only while the context is active), `require` is the ordering
+# guarantee (context entered before the check reads its registry). require alone
+# would refuse every people-free turn, since an unmet {context} refuses.
+on:
+  - event: Stop
+    match: context["people-linked"].active
+require:
+  - context: people-linked
+checks:
+  - script: ./verify-changed-file-linked.sh
