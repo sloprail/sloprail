@@ -130,6 +130,35 @@ func TestExtractAnswersNeverLeaksQuestionEvenWhenAnswerHasCommaQuote(t *testing.
 	assert.Contains(t, got, "clean answer", "the following answer must still be extracted")
 }
 
+// TestIsHumanQueuedCommand pins the classification decision: `commandMode` is
+// the sole gate. `"prompt"` is the person typing (verbatim shape from a real
+// transcript, humanTurn/origin included as they actually appear — confirming,
+// not deciding), `"task-notification"` is the harness's own background-task
+// notice, and anything not a queued_command attachment at all is neither.
+func TestIsHumanQueuedCommand(t *testing.T) {
+	human := `{"type":"queued_command","prompt":"do the thing","source_uuid":"s1",` +
+		`"commandMode":"prompt","origin":{"kind":"human"},"humanTurn":true,"timestamp":"2026-09-25T10:07:21.363Z"}`
+	_, ok := isHumanQueuedCommand(json.RawMessage(human))
+	assert.True(t, ok, "commandMode:prompt is the person typing")
+
+	// humanTurn is often absent on genuine human messages (older client
+	// versions did not write it) — it must not be required.
+	humanNoTurnFlag := `{"type":"queued_command","prompt":"do the other thing","source_uuid":"s2","commandMode":"prompt"}`
+	_, ok = isHumanQueuedCommand(json.RawMessage(humanNoTurnFlag))
+	assert.True(t, ok, "commandMode:prompt resolves even without humanTurn or origin present")
+
+	notification := `{"type":"queued_command","prompt":"<task-notification>...</task-notification>","commandMode":"task-notification"}`
+	_, ok = isHumanQueuedCommand(json.RawMessage(notification))
+	assert.False(t, ok, "commandMode:task-notification is the harness, never the person")
+
+	other := `{"type":"environment","snapshot":{}}`
+	_, ok = isHumanQueuedCommand(json.RawMessage(other))
+	assert.False(t, ok, "a non-queued_command attachment is not this at all")
+
+	assert.False(t, func() bool { _, ok := isHumanQueuedCommand(nil); return ok }(),
+		"no attachment payload is not a human queued command")
+}
+
 // TestUserWordsPlainStringMessage: the ordinary typed message — content as a bare
 // string — is the user's words.
 func TestUserWordsPlainStringMessage(t *testing.T) {
@@ -240,6 +269,68 @@ func TestCiteExcludesHarnessInjectedUserMessages(t *testing.T) {
 	// harness-injected messages carrying the same word are excluded.
 	require.Len(t, matches, 1, "only the genuinely typed user message is citable")
 	assert.Equal(t, 4, matches[0].Line)
+}
+
+// TestCiteResolvesAMidTurnQueuedCommand is the regression for the bug this
+// change fixes: a message the person sends WHILE a turn is already running
+// arrives as an `attachment` entry (`attachment.type: "queued_command"`,
+// `commandMode: "prompt"`), not a `type:"user"` message — and before this fix,
+// cite's walk only ever looked at `type:"user"` entries, so it found nothing and
+// silently refused every guardrail grounded in a mid-turn message.
+func TestCiteResolvesAMidTurnQueuedCommand(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "start the task"),               // line 1
+		record("a1", "u1"),                            // line 2
+		toolResultMsg("u2", "a1", "some tool output"), // line 3
+		queuedCommandMsg("q1", "u2", "also automatically detect the intent of the user"), // line 4
+	)
+
+	matches, err := Cite(path, "automatically detect the intent of the user")
+	require.NoError(t, err)
+	require.Len(t, matches, 1, "a genuinely human-typed mid-turn message resolves")
+	assert.Equal(t, 4, matches[0].Line, "it cites the attachment line itself, not a queue-operation line")
+}
+
+// TestCiteQueuedCommandNotUnderToolResult: a human-typed queued_command resolves
+// under the `user` pool, and must NOT resolve under `tool_result` — it is the
+// person's own words, not a tool's output, and the two pools stay disjoint the
+// same way an ordinary typed message never resolves under tool_result.
+func TestCiteQueuedCommandNotUnderToolResult(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "start the task"),
+		queuedCommandMsg("q1", "u1", "please add a UNIQUEMARKER feature"),
+	)
+
+	userMatches, err := CiteWithSources(path, "UNIQUEMARKER", []SourceType{SourceUser})
+	require.NoError(t, err)
+	require.Len(t, userMatches, 1, "resolves under the user pool")
+	assert.Equal(t, 2, userMatches[0].Line)
+
+	toolResultMatches, err := CiteWithSources(path, "UNIQUEMARKER", []SourceType{SourceToolResult})
+	require.NoError(t, err)
+	assert.Empty(t, toolResultMatches, "a queued command is the user's words, not a tool_result — must not resolve here")
+}
+
+// TestCiteExcludesTaskNotificationQueuedCommand: a background task's completion
+// notice is queued through the SAME queued_command attachment shape as a
+// genuine mid-turn message, distinguished only by `commandMode`
+// ("task-notification" vs "prompt"). It is the harness speaking, not the
+// person, so it must not resolve — the same reasoning harnessInjected applies
+// to a `<task-notification>` carried on a `type:"user"` record.
+func TestCiteExcludesTaskNotificationQueuedCommand(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "start the task"),
+		taskNotificationAttachment("q1", "u1", "Background command MYTASKMARKER completed"),
+		queuedCommandMsg("q2", "q1", "the real MYTASKMARKER message from me"), // the only genuine line
+	)
+
+	matches, err := Cite(path, "MYTASKMARKER")
+	require.NoError(t, err)
+	require.Len(t, matches, 1, "only the human-typed queued command is citable")
+	assert.Equal(t, 3, matches[0].Line)
 }
 
 // TestCiteMatchesAnAnswer: a quote landing on an AskUserQuestion answer resolves
@@ -563,6 +654,26 @@ func toolUseMsg(uuid, parent, name, input string) string {
 func assistantText(uuid, parent, text string) string {
 	return `{"type":"assistant","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
 		`"message":{"role":"assistant","content":[{"type":"text","text":` + jsonQuote(text) + `}]}}`
+}
+
+// queuedCommandMsg is a message the person sent WHILE a turn was already
+// running — the shape verbatim from a real transcript (line 2721 of a captured
+// session): an `attachment` entry whose `attachment.type` is `queued_command`
+// and whose `commandMode` is `"prompt"`, which is what tells this one apart from
+// a harness-queued <task-notification> (see taskNotificationAttachment).
+func queuedCommandMsg(uuid, parent, prompt string) string {
+	return `{"type":"attachment","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
+		`"attachment":{"type":"queued_command","prompt":` + jsonQuote(prompt) +
+		`,"source_uuid":"src-` + uuid + `","commandMode":"prompt","origin":{"kind":"human"},"humanTurn":true}}`
+}
+
+// taskNotificationAttachment is a background task's completion notice, queued
+// through the SAME `queued_command` attachment shape as a genuine mid-turn
+// message but with `commandMode: "task-notification"` — the harness speaking on
+// its own behalf, never the person. cite must not resolve a quote against it.
+func taskNotificationAttachment(uuid, parent, prompt string) string {
+	return `{"type":"attachment","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
+		`"attachment":{"type":"queued_command","prompt":` + jsonQuote(prompt) + `,"commandMode":"task-notification"}}`
 }
 
 // jsonQuote renders s as a JSON string literal for embedding in a fixture line.
