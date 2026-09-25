@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -191,7 +192,36 @@ func (w *workspace) writeSettings(repoRoot string) error {
 		return fmt.Errorf("claude plugin install %s: %w: %s", pluginKey, err, strings.TrimSpace(string(out)))
 	}
 
-	return nil
+	return w.disableAutoMemory()
+}
+
+// disableAutoMemory sets autoMemoryEnabled: false in the project's
+// .claude/settings.json (the CLI install just wrote), merged in rather than
+// overwritten. Without this, the agent-under-test's cross-session
+// auto-memory can write real memories about a fixture's own throwaway
+// content into the operator's ~/.claude/projects memory store — the same
+// pattern that already caused two real fixtures this session (interlinking,
+// no-unasked-deletion) to have the agent confidently claim work it never
+// actually did in the project tree, because it wrote to its OWN memory tool
+// instead. The setting name and shape are the ones already in use for the
+// same purpose in this org's other repos (e.g. strategy's own
+// .claude/settings.json: "autoMemoryEnabled": false).
+func (w *workspace) disableAutoMemory() error {
+	settingsPath := filepath.Join(w.project, ".claude", "settings.json")
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return fmt.Errorf("read settings.json written by claude plugin install: %w", err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return fmt.Errorf("parse settings.json written by claude plugin install: %w", err)
+	}
+	settings["autoMemoryEnabled"] = false
+	body, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode settings.json with autoMemoryEnabled: %w", err)
+	}
+	return os.WriteFile(settingsPath, body, 0o644)
 }
 
 // repoRoot finds the sloprail checkout that is running this binary — the
