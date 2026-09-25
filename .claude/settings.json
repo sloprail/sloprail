@@ -1,6 +1,7 @@
 {
   "enabledPlugins": {
-    "sloprail@sloprail-marketplace": true
+    "sloprail@sloprail-marketplace": true,
+    "sloprail-tasks@sloprail-marketplace": true
   },
   "extraKnownMarketplaces": {
     "sloprail-marketplace": {
