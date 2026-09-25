@@ -36,10 +36,12 @@ file-guard. Is it about **whether an event may happen / whether a turn is done**
 → gate. Is it a **mode that other rules depend on** → context.
 
 One more thing lives alongside the three, and it is **not** a nature: the
-**structure gate** — a single, project-wide allowlist of paths that may be
-written, everything else denied. Reach for it when the rule is "writes only land
-inside this shape", not a per-file or per-event check. It is one `structure.yaml`
-for the whole project, not a per-name folder.
+**structure gate** — an allowlist of paths that may be written, everything it
+covers denied by default. Reach for it when the rule is "writes only land
+inside this shape", not a per-file or per-event check. It is one
+`structure.yaml` per `.sloprail` root, not a per-name folder — a project's own
+(optionally scoped) plus, optionally, one per installed plugin, each SCOPED to
+the paths it owns and composed together rather than one displacing the other.
 → [structure-gate.md](structure-gate.md)
 
 ## Where each nature lives
