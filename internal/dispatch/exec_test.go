@@ -1,6 +1,8 @@
 package dispatch
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -120,4 +122,63 @@ func TestRunScriptExec_CannotStartRefuses(t *testing.T) {
 		"the refusal must say the check could not be run")
 	assert.Contains(t, res.Reason, "refused because a check that cannot run must not be read as approval",
 		"the refusal must state why a check that cannot run is not approval")
+}
+
+// SR_GUARDRAIL_DIR must be ABSOLUTE, per its own doc comment on scriptCall.env
+// ("so a script can find its siblings by absolute path"). Measured in a real
+// dispatch to arrive RELATIVE at least once — Go's exec.Cmd.Dir silently
+// resolves a relative directory against the PARENT process's own cwd at spawn
+// time, so a relative scriptCall.Dir placed the child in the right directory
+// by coincidence (the parent happened to already be there) while the env var
+// carried that same relative string into a process with no way to reconstruct
+// what the parent's cwd had been — authoring-slop's judge prepare read a
+// relative SR_GUARDRAIL_DIR, joined it onto its own (already-correct) cwd, and
+// searched a doubled path that matched nothing, refusing every real edit with
+// "judge-rules/ contains no rule with 'enforced: true'" regardless of content.
+//
+// This pins the fix at the seam: scriptCall.Dir passed RELATIVE (resolvable
+// only because the test's own process cwd is chdir'd to Dir's parent first,
+// mirroring the coincidence that masked the bug in production), and the
+// script echoes $SR_GUARDRAIL_DIR back out — asserted to equal the real
+// absolute directory, not the relative string that was passed in.
+func TestRunScriptExec_GuardrailDirEnvIsAlwaysAbsolute(t *testing.T) {
+	absDir := t.TempDir()
+	// macOS reports /var where the filesystem holds /private/var; filepath.Abs
+	// (what the fix under test calls) does not resolve that symlink, so this
+	// test's own comparison must not either — otherwise it would fail on a
+	// correct result, the same class of mismatch workspaceAnchor's own doc
+	// comment (services/sr-session/statedir.go) already names.
+	if resolved, err := filepath.EvalSymlinks(absDir); err == nil {
+		absDir = resolved
+	}
+	parent := filepath.Dir(absDir)
+	relDir := filepath.Base(absDir)
+
+	origWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(parent))
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+
+	res, err := runScriptExec(scriptCall{
+		Dir:    relDir, // relative, resolvable only against the parent's cwd above
+		Script: `echo "$SR_GUARDRAIL_DIR"`,
+	})
+	require.NoError(t, err)
+	require.True(t, res.Passed, "echo must succeed: %q", res.Reason)
+
+	// scriptResult carries no stdout field for a passing check (only Reason, on
+	// refusal), so the env var is proven via a second call that fails on
+	// purpose whenever the value is not the expected absolute path — turning
+	// "what the child actually saw" into the refusal reason runScriptExec
+	// already surfaces.
+	verify, err := runScriptExec(scriptCall{
+		Dir: relDir,
+		Script: `if [ "$SR_GUARDRAIL_DIR" != "` + absDir + `" ]; then
+			echo "SR_GUARDRAIL_DIR was '$SR_GUARDRAIL_DIR', want '` + absDir + `'" >&2
+			exit 1
+		fi`,
+	})
+	require.NoError(t, err)
+	assert.True(t, verify.Passed,
+		"SR_GUARDRAIL_DIR must be absolute even when scriptCall.Dir is relative: %s", verify.Reason)
 }

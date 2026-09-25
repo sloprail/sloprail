@@ -244,7 +244,26 @@ func (s scriptCall) env() []string {
 		env = append(env, "SR_GUARDRAIL="+s.GuardName)
 	}
 	if s.Dir != "" {
-		env = append(env, "SR_GUARDRAIL_DIR="+s.Dir)
+		// Absolute, per this variable's own documented promise above — measured
+		// to matter: s.Dir reached here RELATIVE at least once in practice
+		// (traced to a declaration's Dir being built by filepath.Join against a
+		// relative base somewhere upstream of the plugin/project resolution
+		// chain), and Go's exec.Cmd.Dir silently resolves a relative directory
+		// against the PARENT process's own cwd at spawn time — so the spawned
+		// child was placed in the right directory by coincidence (the parent
+		// happened to already be there), while this env var carried the same
+		// relative string verbatim into a process that has no way to know what
+		// the parent's cwd was. filepath.Abs is a no-op when s.Dir is already
+		// absolute (the ordinary case), so this only changes behavior for the
+		// case that was already broken. A resolution failure here (only
+		// possible if the process's own cwd cannot be read) falls back to the
+		// original string rather than silently dropping the variable — still
+		// wrong in that one scenario, but no worse than before this fix.
+		dir := s.Dir
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+		env = append(env, "SR_GUARDRAIL_DIR="+dir)
 	}
 	// The session facts, mirroring the old-format hook env so a new-format check
 	// reaches its workspace and state the same way. Appended AFTER os.Environ() so
