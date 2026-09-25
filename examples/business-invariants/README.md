@@ -32,10 +32,6 @@ spec moved underneath it stays failing every cycle until either the code
 catches up or the marker is re-pinned; it does not matter which event last
 touched the file.
 
-That includes deleting it: the guard sets `deletions: include` (a file-guard
-skips deleted files by default), so removing a file whose pin has gone stale is
-checked too — the match reads the markers the deleted file carried.
-
 ## What the two checks divide
 
 1. **Script (cheap, first):** does the pin even resolve (real commit, real

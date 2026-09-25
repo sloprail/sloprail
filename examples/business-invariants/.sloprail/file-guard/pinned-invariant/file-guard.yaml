@@ -1,14 +1,7 @@
 # A file-guard's scope exposes the file's markers as a LIST (`markers`), so a
 # marker test is a quantifier over it — `any(markers, .kind == "invariant")` —
 # not a singular `marker.kind`.
-#
-# deletions: include — the rule is about the file's state whichever event last
-# touched it (README, "Why file-guard"), and deleting an invariant-pinned file is
-# a state change too: code that carried a stale pin must not escape the check by
-# being removed. On a delete the match reads the markers the file carried
-# (oldMarkers), and both checks already fall back to oldMarkers / oldContent.
 match: any(markers, .kind == "invariant")
-deletions: include
 checks:
   - script: ./pin-still-matches-head.sh
   - judge: ./code-upholds-invariant.md.j2
