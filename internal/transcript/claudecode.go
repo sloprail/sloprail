@@ -34,6 +34,7 @@ type claudeRecord struct {
 	IsMeta            bool            `json:"isMeta"`
 	Message           json.RawMessage `json:"message"`
 	ToolUseResult     json.RawMessage `json:"toolUseResult"`
+	Attachment        json.RawMessage `json:"attachment"`
 
 	// SessionID is the id the harness wrote this record under. Kept only so
 	// that a path GUESSED from a session id can be checked against what the
@@ -56,6 +57,7 @@ func (r claudeRecord) entry() Entry {
 		IsMeta:        r.IsMeta,
 		Message:       r.Message,
 		ToolUseResult: r.ToolUseResult,
+		Attachment:    r.Attachment,
 	}
 	if r.ParentUUID != nil {
 		e.ParentUUID = *r.ParentUUID
