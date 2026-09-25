@@ -77,12 +77,16 @@ trajectory_health_check() {
   condensed_text="$(head -c 60000 "$condensed_file")"
   rm -f "$condensed_file"
 
-  # The transcript is an AGENT'S OWN OUTPUT wrapped in <transcript> tags in the
-  # template so the judge can tell reviewed content apart from its own
-  # instructions (defense against a transcript that quotes or invents text
-  # aimed at the judge). A transcript containing a literal "</transcript>"
-  # could otherwise forge that boundary and inject text the judge would read
-  # as outside the reviewed content — neutralize it before substitution.
+  # All three inputs are wrapped in their own XML-ish tags in the template so
+  # the judge can tell reviewed content apart from its own instructions
+  # (defense against text that quotes or invents instructions aimed at the
+  # judge — the transcript is an AGENT'S OWN OUTPUT, and scenario/guardrail
+  # text ultimately comes from a fixture file too). Any of the three
+  # containing a literal closing tag could otherwise forge that boundary and
+  # inject text the judge would read as outside the reviewed content —
+  # neutralize all three before substitution.
+  scenario_desc="$(printf '%s' "$scenario_desc" | sed 's#</scenario>#< /scenario>#g')"
+  guardrail_desc="$(printf '%s' "$guardrail_desc" | sed 's#</guardrail_description>#< /guardrail_description>#g')"
   condensed_text="$(printf '%s' "$condensed_text" | sed 's#</transcript>#< /transcript>#g')"
 
   # Simple placeholder substitution, not a real template engine: each
