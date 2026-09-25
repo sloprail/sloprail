@@ -38,24 +38,31 @@ func hookScriptPath(t *testing.T) string {
 	return p
 }
 
-// goEnvPassthrough is the Go toolchain's own RESOLVED environment variables
-// (GOPATH, GOMODCACHE, GOCACHE, GOENV, GOTOOLCHAIN), carried through as
-// explicit KEY=value pairs into every hook-script subprocess this file runs.
+// goEnvPassthrough is the Go toolchain's own RESOLVED environment variables,
+// carried through as explicit KEY=value pairs into every hook-script
+// subprocess this file runs.
 //
 // WHY THIS EXISTS: the wrapper script's fallback lookup (added for the
 // reviewer's ~/.local/bin gap) runs `go env GOPATH` to find go install's
 // default bin directory. A test here isolates HOME to a t.TempDir() so it can
 // construct a fake install location — but a bare HOME override with nothing
 // else makes the Go toolchain fall back to ITS OWN defaults relative to that
-// fake HOME (GOPATH defaults to $HOME/go, GOMODCACHE to $GOPATH/pkg/mod, and
-// so on), and a subprocess `go` invocation that needs a toolchain matching
-// this repo's go.mod directive can then populate a REAL module cache —
-// toolchain binaries included — inside the very t.TempDir() being torn down.
-// Measured directly in CI: "TempDir RemoveAll cleanup: unlinkat
-// .../go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/lib/wasm/
-// go_wasip1_wasm_exec: permission denied" — Go's module cache ships read-only
-// files, and t.TempDir()'s cleanup cannot remove those on every
-// filesystem/runner, hence a CI-only failure with no test assertion ever
+// fake HOME, and Go keeps more than one kind of state under HOME: the module
+// cache (GOPATH/GOMODCACHE — GOPATH defaults to $HOME/go, GOMODCACHE to
+// $GOPATH/pkg/mod), the build cache (GOCACHE), its own config file (GOENV),
+// toolchain selection (GOTOOLCHAIN), AND, separately, its telemetry counters
+// (GOTELEMETRY, GOTELEMETRYDIR — a newer subsystem, unrelated to the module
+// cache, that `go env` itself touches on every invocation once
+// GOTELEMETRY=local, Go's own default). A subprocess `go` invocation that
+// writes ANY of these into the fake HOME populates a REAL, persistent
+// directory inside the very t.TempDir() being torn down. Measured in CI
+// across two DIFFERENT such writes as each was fixed in turn: first the
+// module cache ("unlinkat .../go/pkg/mod/golang.org/toolchain@.../lib/wasm/
+// go_wasip1_wasm_exec: permission denied" — the module cache ships read-only
+// files), then telemetry ("unlinkat .../.config/go/telemetry: directory not
+// empty" — a live counter file was still open/pending when RemoveAll ran).
+// t.TempDir()'s cleanup cannot reliably remove either on every
+// filesystem/runner, hence CI-only failures with no test assertion ever
 // actually failing.
 //
 // This is resolved via `go env`, NOT read from os.Environ(): these variables
@@ -64,12 +71,17 @@ func hookScriptPath(t *testing.T) string {
 // through and the bug would persist. Calling `go env` here, in the OUTER test
 // process — before any HOME override — gets the values this machine's Go
 // toolchain is ACTUALLY using, and setting them explicitly in the subprocess
-// pins the module cache there regardless of what HOME says. The subprocess's
-// Go toolchain, if invoked at all, then keeps using the outer test run's
-// already-warm, real cache — never a location inside a t.TempDir() this file
-// created. Only HOME (and PATH, the property under test) are isolated.
+// pins every one of these locations there regardless of what HOME says. The
+// subprocess's Go toolchain, if invoked at all, then keeps using the outer
+// test run's already-warm, real state — never a location inside a
+// t.TempDir() this file created. Only HOME (and PATH, the property under
+// test) are isolated. Paired with cmd.Dir (see noModuleDir): together they
+// remove both what a subprocess `go` command would read (this repo's
+// go.mod, invisible from outside the module) and where it would write
+// (every HOME-relative state directory, pinned to the real ones).
 var goEnvPassthrough = resolveGoEnv(
-	"GOPATH", "GOMODCACHE", "GOCACHE", "GOENV", "GOTOOLCHAIN")
+	"GOPATH", "GOMODCACHE", "GOCACHE", "GOENV", "GOTOOLCHAIN",
+	"GOTELEMETRY", "GOTELEMETRYDIR")
 
 // resolveGoEnv runs `go env <names...>` once and returns each as a "KEY=value"
 // pair, in the same order. A name `go env` reports empty for is included as
