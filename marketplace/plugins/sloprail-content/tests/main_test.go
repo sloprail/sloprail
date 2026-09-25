@@ -10,26 +10,29 @@
 // engine deciding, and the refusal travelling back all run as production
 // would.
 //
-// The four guardrails and what each test file covers:
+// The three guardrails and what each test file covers:
 //
-//   - unit-satisfies-rules (file-guard, Stop after-check, script+judge): a
-//     global judge rule applies to a unit with no channels; a channel rule
-//     applies only when the channel matches; an over-limit X thread is
-//     refused by the script rule and an in-limit one passes; a banned phrase
-//     is refused.
+//   - unit-satisfies-rules (file-guard, Stop after-check, one judge check): a
+//     global rule applies to a unit with no tags; a tag-scoped rule applies
+//     only when the tag matches; a rule written to ask for a deterministic
+//     measurement (character limit) is judged (via a stub — see
+//     test_unit_rules_test.go's header for what this can and cannot prove,
+//     now that there is no separate script-rule stage).
 //   - unit-publish-approved (file-guard, preventive, script): status:
-//     published without approved: is refused; an approved: citation of the
-//     agent's own output is refused; a valid approval plus published_url
-//     passes.
-//   - content-rule-is-grounded (file-guard, preventive, script): a rule with
-//     no grounded transcript_paths is refused; a script rule with no real
-//     refusal path is refused.
+//     published without a grounded approval quote IN THE BODY is refused; an
+//     approval citation of the agent's own output is refused; a valid
+//     approval plus published_urls (a list) passes.
+//   - content-rule-is-grounded (file-guard, preventive, script+judge): a rule
+//     whose BODY carries no citation is refused by the deterministic script;
+//     one whose citation does not ground is refused; a grounded rule the
+//     judge accepts passes; one the judge rejects as adding untraceable
+//     scope ("and nothing else") is refused.
 //
 // The judge verdict is a fixed stub (InstallJudgeClaude) exactly as the main
 // suite's judge e2e do — the model call is the one thing a mock cannot supply
 // for sr-agent's judge path (the mock refuses sr-agent's --model/--settings
-// flags). The DETERMINISTIC halves — the script rules, the citation
-// grounding, the schema validation — are NOT stubbed and run for real.
+// flags). The DETERMINISTIC halves — the citation-grounding scripts, the
+// schema validation — are NOT stubbed and run for real.
 package e2e
 
 import (
@@ -192,8 +195,8 @@ func pluginRoot(t *testing.T) string {
 }
 
 // cite builds a [quote](transcriptPath:line) markdown link — the citation
-// format unit-publish-approved's approved: and (indirectly) a task body both
-// ground with `sr-session trajectory cite`.
+// format unit-publish-approved's body approval, a rule's body citation, and
+// (indirectly) a task body all ground with `sr-session trajectory cite`.
 func cite(quote, transcriptPath string, line int) string {
 	if line > 0 {
 		return "[" + quote + "](" + transcriptPath + ":" + itoa(line) + ")"
@@ -218,7 +221,8 @@ func itoa(n int) string {
 // unitFrontmatter assembles a UNIT.md/02_draft.md with the given frontmatter
 // fields and body. fields is rendered as raw YAML lines (already formatted by
 // the caller), so a test can build exactly the shape it needs — a plain unit,
-// one with channels/tags, or one carrying approved:/published_url:.
+// one with tags, or one carrying published_urls: in frontmatter plus an
+// approval citation in the body (unit-publish-approved's own subject).
 func unitFrontmatter(fields, body string) string {
 	return "---\n" + fields + "---\n\n" + body + "\n"
 }
