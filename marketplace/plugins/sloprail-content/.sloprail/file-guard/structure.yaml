@@ -15,9 +15,8 @@
 #                                folder shape, so this scope is exactly the
 #                                one document-topic already claims)
 #   .sloprail/content-rules/    the NEW location this plugin adds: project-
-#                                wide rules, selected by applies_to rather
-#                                than by topic, plus their scripts and any
-#                                banned-phrase list
+#                                wide rules, selected by applies_to tags
+#                                rather than by topic
 scope:
   - glob: "memories/topics/"
   - glob: ".sloprail/content-rules/"
@@ -43,15 +42,5 @@ allow:
   - regex: '^memories/topics/[0-9]{8}_[a-z0-9-]+/distribution/[0-9]{2}_[a-z0-9_-]+\.md$'
 
   # A project-wide rule (RULE.md) — the NEW location this plugin adds,
-  # selected by applies_to rather than by topic.
+  # selected by applies_to tags rather than by topic.
   - regex: '^\.sloprail/content-rules/[0-9]{2}_[a-z0-9-]+/RULE\.md$'
-
-  # A project-local script rule's script — the extension point
-  # .sloprail/scripts/README.md documents (script.name resolved here when
-  # not one of this plugin's own shipped scripts).
-  - regex: '^\.sloprail/content-rules/scripts/[a-z0-9_-]+\.sh$'
-
-  # A project-supplied banned-phrase (or similar) list file a banned-phrases
-  # script rule's args names — free-form filename, so this is deliberately
-  # permissive within content-rules/ rather than pinned to one name.
-  - regex: '^\.sloprail/content-rules/[a-z0-9_.-]+\.(txt|list)$'
