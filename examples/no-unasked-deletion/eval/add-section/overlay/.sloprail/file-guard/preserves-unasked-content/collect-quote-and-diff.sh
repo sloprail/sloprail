@@ -6,10 +6,22 @@
 # WHAT WAS ASKED or which sibling answer was meant; `cite --include-envelope`
 # resolves the quote and prints its envelope in one call. A message-grounded
 # quote has no envelope — asked_envelope stays empty, which is fine.
+#
+# This only runs once removal-has-a-grounded-ask.sh has already permitted the
+# write (resultKnown true), but reads resultKnown again here too rather than
+# trust that ordering silently: a prepare step is not exempt from the same
+# underivable-write trap its sibling script exists to guard against, and an
+# empty additionalContext (rather than a misleading "the file became empty")
+# is the correct output if this is ever reached with an unresolved write.
 set -uo pipefail
 
 input="$(cat)"
 old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
+known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
+if [ "$known" != "true" ]; then
+  jq -n '{additionalContext: {asked_quote: "", change_diff: "", asked_envelope: ""}}'
+  exit 0
+fi
 new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath // ""')"
 quote="$(printf '%s' "$input" \

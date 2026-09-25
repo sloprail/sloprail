@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The deterministic half. Grounds "asked" in the user's actual words, not a
 # deletion-keyword grep:
-#   - newContent absent      -> BLOCK (fail-closed): result unknowable, no-loss
+#   - result not derivable    -> BLOCK (fail-closed): result unknowable, no-loss
 #     cannot be established.
 #   - no removed lines       -> PASS: pure additions.
 #   - removed, no sr:asked    -> BLOCK: an unasked rewrite.
@@ -16,12 +16,19 @@ old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
 # explicitly: with none it fails closed and would refuse every removal.
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
-# Absent newContent (not empty — absent) means the result is unknowable.
-if ! printf '%s' "$input" | jq -e '.event | has("newContent")' >/dev/null 2>&1; then
+# resultKnown, not merely whether newContent is present: an underivable write
+# (a sed -i, an env-dependent command, a fresh-.ipynb NotebookEdit) still
+# carries newContent="" — present but not derived — which reads identically
+# to a genuinely-empty file if only presence is checked. resultKnown is the
+# one field that tells the two apart; without it this check would silently
+# treat "we could not compute the result" as "the result is empty", which is
+# NOT the fail-closed behavior the comment above claims.
+known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
+if [ "$known" != "true" ]; then
   echo "Refusing the write to $path: its result cannot be computed (an in-place or environment-dependent command), so it cannot be shown NOT to drop content. Write the file directly." >&2
   exit 1
 fi
-new="$(printf '%s' "$input" | jq -r '.event.newContent')"
+new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
 
 # Any line present in old but absent in new. (Order/whitespace refinements are
 # elided in this sample.)
