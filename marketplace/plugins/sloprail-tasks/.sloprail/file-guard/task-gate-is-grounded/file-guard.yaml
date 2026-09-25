@@ -1,0 +1,61 @@
+# A gate file — memories/tasks/<group>/<name>/gates/<gate-name>.(sh|md) — must
+# be GROUNDED in the task's own cited ask before it is allowed to land. This is
+# the protection against an agent weakening or rubber-stamping a start
+# condition on one side (a trivial `exit 0` .sh, or a toothless .md) and
+# against an agent INVENTING a hurdle the user never asked for on the other —
+# the same failure mode task-body-is-human-authored guards for the ask itself,
+# relocated to gate files, because task-gates-hold TRUSTS every gate under
+# gates/ to already be a meaningful, honestly authorized test (see its own
+# header) and nothing else re-checks a gate's content once it exists.
+#
+# TWO checks, cheap first, the same shape every guard in this plugin uses:
+#
+#   1. SCRIPT (has-cited-body.sh): deterministic, no model. The gate's sibling
+#      TASK.md must carry at least one grounded `[quote](jsonl)` body citation
+#      — without ANY cited ask there is nothing to trace a gate against, so
+#      this refuses before the judge is ever paid for.
+#   2. PREPARE + JUDGE: only reached once stage 1 passed. prepare
+#      (resolve-gate-context.sh) assembles the cited ask (ground truth) and the
+#      gate's own content and kind; judge-gate.md.j2 asks the model whether the
+#      gate is TRACEABLE to the ask, does not CONTRADICT it, does not INVENT
+#      beyond it, and — for a `.sh` gate specifically — is not TRIVIAL (a
+#      script that can never actually fail, e.g. an unconditional `exit 0`).
+#      The trivial-gate check matters because `.sh` gates are agent-writable
+#      scripts task-gates-hold will run and trust; this judge is what stops a
+#      rubber-stamp script from ever landing in the first place.
+#
+# WHY A JUDGE AND NOT A DETERMINISTIC "IS THIS TRIVIAL" SCRIPT. Whether a
+# script's logic can ever fail, and whether a prompt's condition is
+# traceable to / contradicts / invents beyond a cited ask, are judgment
+# calls over arbitrary shell and prose — not decidable by a fixed pattern
+# without both false positives (a legitimate check shaped unusually) and
+# false negatives (a disguised rubber stamp). This is exactly the shape
+# task-body-is-human-authored already uses for the same class of problem
+# (a script for the cheap grounding gate, a judge for the "does the content
+# actually hold to the ask" call).
+#
+# match: any gates/*.sh or gates/*.md file under a task, three levels below
+# memories/tasks/ (group/name/gates/file), mirroring the task file guards'
+# own two-level regex plus the gates/ segment and the two extensions.
+match: path matches "^memories/tasks/[^/]+/[^/]+/gates/[^/]+\\.(sh|md)$"
+
+# preventive: true — a gate that fails the grounding bar must never land, the
+# same Pre/Post shape every other guard in this plugin uses; the Stop
+# after-check backstops a write the engine cannot derive at Pre.
+preventive: true
+
+checks:
+  # Deterministic, fail-closed. Refuses with `{"reason": "..."}` on stdout.
+  - script: ./has-cited-body.sh
+
+  # The judge, reached only once stage 1 passed. model is size-md (engine
+  # default judge modelset), matching the plugin's other judges; timeout 25s
+  # sits under the engine's 30s check bound. allowed_tools: [Read] ADDS Read
+  # on top of the engine-granted Write for the verdict file — the cited
+  # messages and the gate content are both already IN the prompt, but Read
+  # lets the judge corroborate against the file on disk if useful.
+  - prepare: ./resolve-gate-context.sh
+    judge: ./judge-gate.md.j2
+    model: size-md
+    timeout: 25s
+    allowed_tools: [Read]
