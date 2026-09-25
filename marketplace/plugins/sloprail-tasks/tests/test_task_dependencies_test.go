@@ -36,7 +36,7 @@ func TestDeps_UnfinishedDependencyBlocksThenPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	// The dependency: a real task folder, committed as part of the baseline so
@@ -85,7 +85,7 @@ func TestDeps_CycleRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-deps-cycle"
@@ -128,7 +128,7 @@ func TestDeps_UnknownIdIsRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-deps-unknown"

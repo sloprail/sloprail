@@ -26,7 +26,7 @@ func TestDangling_DeleteWithoutStrippingRefusesAtStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	// Baseline: the dependency task AND the dependent, already correctly
@@ -76,7 +76,7 @@ func TestDangling_DeleteWithStripPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	e.WriteFile(proj, danglingDepPath, task("to_do", "P1", "Set up CI."))

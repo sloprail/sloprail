@@ -31,7 +31,7 @@ func TestBody_HumanAuthoredPasses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-body-ok"
@@ -59,7 +59,7 @@ func TestBody_SlopBodyRefusedByJudge(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "TASK BODY: the body adds acceptance criteria and a suggested approach the user never stated"}`)
 
 	sess := "s-body-slop"
@@ -92,7 +92,7 @@ func TestBody_NoCitationRefusedByScript(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-body-nocite"

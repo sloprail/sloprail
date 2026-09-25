@@ -36,7 +36,7 @@ func TestGateGrounded_UngroundedTaskBodyRefusedBeforeJudge(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 
 	sess := "s-gate-grounded-nobody"
 
@@ -55,8 +55,12 @@ func TestGateGrounded_UngroundedTaskBodyRefusedBeforeJudge(t *testing.T) {
 	e2 := New(t)
 	proj2 := e2.Project()
 	e2.GitInit(proj2)
-	installPluginTree(t, proj2)
-	e2.DisableFileGuard(proj2, "task-body-is-human-authored")
+	installPluginTree(t, e2, proj2)
+	// The guard is now PLUGIN-shipped (see installPluginTree), so disabling it
+	// needs the qualified form <plugin>/<nature>/<name> — the project-local
+	// DisableFileGuard writes an unqualified file-guard/<name>, which names a
+	// project's OWN rule, not this plugin's.
+	e2.DisablePluginGuardrail(proj2, pluginName+"/file-guard/task-body-is-human-authored")
 
 	sess2 := "s-gate-grounded-nobody-2"
 	res2 := e2.Run(proj2, sess2, authPrompt, Turns("done",
@@ -89,7 +93,7 @@ func TestGateGrounded_JudgeRefusesUngroundedOrTrivialGate(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 
 	// The harness gives ONE stubbed verdict to EVERY judge in a run. Landing
 	// the task body fires task-body-is-human-authored's OWN judge, so setup
@@ -135,7 +139,7 @@ func TestGateGrounded_JudgePermitsGroundedGate(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-gate-grounded-ok"

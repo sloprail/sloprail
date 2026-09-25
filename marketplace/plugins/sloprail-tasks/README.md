@@ -340,35 +340,47 @@ refusals and permits. See `tests/README.md`.
 ## The plugin's own structure gate
 
 `.sloprail/file-guard/structure.yaml` is this plugin's piece of the structure
-gate — the allowlist for what may be written under `memories/tasks/`, scoped
-to that subtree with `scope: [{glob: "memories/tasks/**"}]` so it composes
-with a project's own structure gate (and any other plugin's) rather than
-replacing it. It allows exactly the shapes this README describes:
+gate — the allowlist for what may be written under `memories/tasks/`. It
+declares that folder as its `scope` (a literal folder, ending in `/` — a
+plugin's structure gate must name what it owns, per
+`structure-gate.md`), and its `allow`/`deny` decide only paths inside it. It
+composes with the project's own structure gate and any other plugin's rather
+than replacing them — see "How a write is decided" in
+`marketplace/plugins/sloprail/skills/authoring-guardrails/structure-gate.md`
+for the full ownership/veto rules.
 
 ```yaml
 scope:
-  - glob: "memories/tasks/**"
+  - glob: "memories/tasks/"
 allow:
-  - regex: '^memories/tasks/README\.md$'
+  - glob: "memories/tasks/README.md"
   - regex: '^memories/tasks/[a-z0-9-]+/[a-z0-9-]+/TASK\.md$'
   - regex: '^memories/tasks/[a-z0-9-]+/[a-z0-9-]+/gates/[a-z0-9-]+\.(md|sh)$'
-  - regex: '^memories/tasks/[a-z0-9-]+/[a-z0-9-]+/[^/].*$'
+  - regex: '^memories/tasks/[a-z0-9-]+/[a-z0-9-]+/[^/]+$'
 ```
 
 In order: an optional top-level `memories/tasks/README.md`; a task's own
 `TASK.md`; a gate file under its `gates/` directory (`.md` or `.sh`, the two
 kinds `task-gates-hold` and `task-gate-is-grounded` recognize); and, last and
-broadest, anything else directly under a task's own folder — supporting
+broadest, any file sitting DIRECTLY under a task's own folder — supporting
 material a task keeps beside its `TASK.md` (notes, a linked spec) that is not
-itself a gate. The gate-name segment is deliberately the SAME
-`[a-z0-9-]+` character class the group/task-name segments use, for one
-convention across the whole tree rather than a bespoke one per level.
+itself a gate. `[^/]+`, not `.*`: a dot in a regex matches a `/` too, so the
+naive `[^/].*` this used to read let ANY depth under a task folder through
+(measured); the fix is one more level of nesting refused, not permitted. The
+gate-name segment is deliberately the SAME `[a-z0-9-]+` character class the
+group/task-name segments use, for one convention across the whole tree rather
+than a bespoke one per level.
 
-**Composition note.** The engine composes a project's own structure gate with
-each installed plugin's `scope`d piece — each plugin owns the allowlist for
-its own subtree, so installing this plugin does not require a consumer to
-hand-copy its shapes into their own `structure.yaml`. As of this writing, the
-engine on `main` does not yet apply a plugin's structure gate when the
-CONSUMER project has one of its own (composition is landing separately); this
-file is still correct and self-checking (`sr-file declarations` parses it) —
-only the cross-plugin composition step is pending elsewhere.
+Because the plugin's `allow` decides everything inside its scope — the
+project's `allow` does not widen it, only its `deny` can veto inside — a
+write to `memories/tasks/<group>/<task>/random/deep/file.bin` is refused by
+THIS plugin even if a project's own structure would otherwise have allowed
+it: nested more than one level below the task folder matches none of the
+four entries above.
+
+Validate what this file ships before installing it, the same way a consumer
+would:
+
+```
+sr-file declarations --plugin sloprail-tasks marketplace/plugins/sloprail-tasks
+```

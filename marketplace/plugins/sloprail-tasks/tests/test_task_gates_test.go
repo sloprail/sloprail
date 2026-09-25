@@ -44,7 +44,7 @@ func TestGates_FailingScriptGateBlocksThenPassingPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-gates-sh"
@@ -103,7 +103,7 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		e := New(t)
 		proj := e.Project()
 		e.GitInit(proj)
-		installPluginTree(t, proj)
+		installPluginTree(t, e, proj)
 
 		// The harness gives ONE stubbed verdict to EVERY judge in a run (see
 		// tests/README.md, "What is stubbed, and why"). Landing the task body
@@ -149,7 +149,7 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		e := New(t)
 		proj := e.Project()
 		e.GitInit(proj)
-		installPluginTree(t, proj)
+		installPluginTree(t, e, proj)
 		e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 		sess := "s-gates-md-pass"

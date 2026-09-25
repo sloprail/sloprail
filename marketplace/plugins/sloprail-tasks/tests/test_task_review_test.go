@@ -87,7 +87,7 @@ func TestReview_SubstantiatedPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-review-ok"
@@ -126,8 +126,8 @@ func TestReview_UnsubstantiatedBlocksAtStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
-	e.DisableFileGuard(proj, "task-body-is-human-authored")
+	installPluginTree(t, e, proj)
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored")
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "REVIEW REJECTED: observations[0] shows the test command but its output does not mention the auth token work the task claims"}`)
 
 	sess := "s-review-reject"
@@ -170,7 +170,7 @@ func TestReview_NotInReviewSkipsTheJudge(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	// task-body-is-human-authored guards this same path at Pre, and its stage-1 script
 	// requires a grounding `[quote](jsonl)` link in the body — the bare to_do body below
 	// has none, so with task-body enabled the write would be REFUSED at Pre and never
@@ -180,7 +180,7 @@ func TestReview_NotInReviewSkipsTheJudge(t *testing.T) {
 	// capture a prompt is task-review's — so an empty capture proves the REVIEW judge
 	// specifically did not run. task-evidence-resolves stays enabled (deterministic, no
 	// judge); it requires no evidence for a non-in_review task, so the to_do write lands.
-	e.DisableFileGuard(proj, "task-body-is-human-authored")
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored")
 	// A capturing judge: it records its prompt to a file, so a non-empty prompt is proof
 	// the model was invoked. Stubbed PASS so that IF it wrongly ran it would not itself
 	// refuse — the only signal read is whether a prompt was captured.
@@ -218,7 +218,7 @@ func TestReview_ObservationNotAToolResultRefusedByPreflight(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-review-notresult"

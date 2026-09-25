@@ -1,34 +1,18 @@
 // Package e2e is the sloprail-tasks plugin's OWN end-to-end suite — the first
 // instance of the "each use-case plugin self-tests" model. It drives the
 // a10n-claude-mock through the SHARED harness (the same one tests/e2e/session/*
-// and tests/e2e/examples/* use), installing THIS plugin's four guardrails into a
-// project and asserting they refuse and permit the right writes and turn-ends.
+// and tests/e2e/examples/* use), ENABLING this plugin as a real, discovered
+// plugin (installPluginTree -> harness.EnableRealPlugin) and asserting its
+// guardrails refuse and permit the right writes and turn-ends.
 //
 // What fires during a test is exactly what a user installing this plugin gets:
-// the base `sloprail` plugin's hooks (enabled by the harness's Project()) run the
-// nature dispatch, which loads this plugin's .sloprail tree. A test controls only
-// what the mock tries to do; the hook firing, the engine deciding, and the refusal
-// travelling back all run as production would. See README.md for the model.
-//
-// The four guardrails and what each test covers:
-//
-//   - task-body-is-human-authored (file-guard, preventive, script+judge): a body
-//     citing the human's ASK with a grounded [quote](jsonl) link (the `user` pool)
-//     PASSES; a slop body the judge rejects is REFUSED; a body with no citation is
-//     refused by the deterministic script before the judge.
-//   - task-evidence-resolves (file-guard, preventive, script): the DETERMINISTIC
-//     floor. An in_review task whose FRONTMATTER delivery evidence resolves — each
-//     observation line is a tool_result, each repo-relative artifact exists —
-//     PASSES; a non-tool_result observation, a missing/absolute artifact, an
-//     invalid frontmatter, or a missing evidence kind is REFUSED.
-//   - task-review (file-guard, after-check, script+judge): the JUDGED half. It
-//     proves DELIVERY, not the ask. An in_review task whose delivery evidence
-//     SUBSTANTIATES the claim permits (review runs at the Post/Stop after-check); a
-//     not-substantiated one is BLOCKED with the judge's rejection reaching the
-//     agent; a non-tool_result observation is refused by the pre-flight.
-//   - no-unfinished-work-at-turn-end (gate, Stop, script): a turn ending with an
-//     open (to_do/in_progress) task is BLOCKED at Stop; a turn with all tasks at a
-//     resting status PERMITS.
+// the base `sloprail` plugin's hooks (enabled by the harness's Project()) run
+// the nature dispatch, which discovers this plugin from its OWN root — nothing
+// is copied into the project — and loads its .sloprail tree: six file-guards, two
+// gates, and (since sloprail#29 landed composition) a structure gate scoped to
+// memories/tasks/. A test controls only what the mock tries to do; the hook
+// firing, the engine deciding, and the refusal travelling back all run as
+// production would. See README.md for the model.
 //
 // The judge verdict is a fixed stub (InstallJudgeClaude) exactly as the main
 // suite's judge e2e do — the model call is the one thing a mock cannot supply for
@@ -39,9 +23,7 @@
 package e2e
 
 import (
-	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -79,93 +61,61 @@ const authPrompt = "Please migrate the auth module to the new token format."
 // memories/tasks/<category>/<name>/TASK.md.
 const taskPath = "memories/tasks/auth/migrate-tokens/TASK.md"
 
-// pluginStructureGatePath is the plugin's OWN piece of the structure gate,
-// .sloprail/file-guard/structure.yaml, deliberately EXCLUDED by
-// installPluginTree — see the skip in the walk below for why. RELATIVE TO
-// src (the plugin's .sloprail dir itself, not the plugin root), matching what
-// filepath.Rel(src, path) produces in the walk below.
-var pluginStructureGatePath = filepath.Join("file-guard", "structure.yaml")
+// pluginName is what this plugin is enabled BY — must match
+// .claude-plugin/plugin.json's own "name", since that is what a refusal
+// attributes to ("… from plugin \"sloprail-tasks\"") and what the structure
+// gate reports as the owner of its scope.
+const pluginName = "sloprail-tasks"
 
-// installPluginTree copies the plugin's OWN .sloprail tree (file-guard/, gate/,
-// schemas/) into the project, verbatim, preserving each file's mode — the scripts
-// MUST keep their execute bit or the engine refuses them as unrunnable. This is
-// what a consumer does when they install the plugin's guardrails into their own
-// project; here it is done from the plugin's committed tree so the e2e drive the
-// real shipped machinery, not a copy.
+// installPluginTree enables THIS plugin's own, already-on-disk .sloprail tree
+// (file-guard/, gate/, and now structure.yaml) as a REAL, discovered plugin —
+// harness.EnableRealPlugin, pointed at pluginRoot(t) — rather than copying its
+// files into the project's own .sloprail. This is what a consumer installing
+// the plugin gets: the guardrails, INCLUDING the structure gate, are found
+// inside the plugin, never inside the project.
 //
-// EXCEPT structure.yaml. It carries a `scope: [{glob: "memories/tasks/**"}]` so
-// a real installation composes it with the CONSUMER's own structure gate (and
-// any other plugin's) — but as of this writing the engine does not yet apply
-// that composition: an installed structure.yaml is read as an UNSCOPED,
-// project-wide deny-by-default gate. Copying it into this suite's throwaway
-// projects would then refuse every fixture write OUTSIDE memories/tasks/ (the
-// artifact files task-evidence/task-review's own tests write to src/…), which
-// is not what this guard is FOR and not what a real install does once
-// composition lands. sr-file declarations still proves the file itself loads
-// and parses (a plain call in TestPluginStructureGateParses); this is the one
-// deliberate carve-out in an otherwise-verbatim install, and it goes away
-// once composition ships.
-func installPluginTree(t *testing.T, projDir string) {
+// EXCEPT task.cue. The schema is the one piece the plugin's own README and the
+// schema file's own header both say is installed INTO the consumer's project
+// — "$SR_WORKSPACE/.sloprail/schemas/task.cue — installing the plugin means
+// placing this file there, the same as any project schema" — because a task
+// lives in the CONSUMER's tree, not the plugin's, and every guard script
+// resolves the schema under $SR_WORKSPACE for exactly that reason. So this is
+// the one file still copied, into the project, mirroring the one manual step
+// a real install performs; everything else the plugin ships is discovered,
+// never copied.
+//
+// Nothing else is copied and nothing is committed. The old copy-then-commit
+// shape existed for two reasons, both gone now that discovery is real for the
+// guardrails:
+//   - the scripts' execute bits had to survive a copy — moot for the
+//     guardrails, since nothing but the schema is copied, and the schema
+//     carries no execute bit to lose;
+//   - a freshly copied, UNCOMMITTED tree inside the project read as this
+//     session's own diff to authoring-slop's after-check, which would judge
+//     the guard scripts with no model in the e2e and fail closed — moot too,
+//     since the guardrails are never part of the PROJECT's diff at all, the
+//     same property 026_guardrails_from_plugins relies on for the real
+//     shipped authoring-slop. The lone copied schema file is inert prose to
+//     that check (no .sh/.md.j2 shape), so it needs no such protection.
+//
+// The plugin's structure gate is no longer excluded (see the git history for
+// when it was): composition landed (sloprail#29), so an installed
+// structure.yaml now correctly governs only its own `scope`
+// (memories/tasks/) rather than the whole project — see
+// TestStructureGate_* for the enforcement-level proof.
+func installPluginTree(t *testing.T, e *Env, projDir string) {
 	t.Helper()
-	src := filepath.Join(pluginRoot(t), ".sloprail")
-	dst := filepath.Join(projDir, ".sloprail")
-	info, err := os.Stat(src)
-	if err != nil || !info.IsDir() {
-		t.Fatalf("install plugin tree: %s is not a directory (%v)", src, err)
+	root := pluginRoot(t)
+	if _, err := os.Stat(filepath.Join(root, ".sloprail")); err != nil {
+		t.Fatalf("install plugin tree: %s has no .sloprail (%v)", root, err)
 	}
-	copied := 0
-	err = filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		if rel == pluginStructureGatePath {
-			return nil
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		fi, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		copied++
-		return os.WriteFile(target, body, fi.Mode().Perm())
-	})
-	if err != nil {
-		t.Fatalf("install plugin tree: %v", err)
-	}
-	if copied == 0 {
-		t.Fatalf("install plugin tree: %s held no files", src)
-	}
-	commitInstalledTree(t, projDir)
-}
+	e.EnableRealPlugin(projDir, pluginName, root)
 
-// commitInstalledTree stages and commits everything in proj so a freshly installed
-// guardrail tree is part of the session baseline rather than the first cycle's
-// diff. A no-op when proj is not a git repository.
-func commitInstalledTree(t *testing.T, proj string) {
-	t.Helper()
-	if err := exec.Command("git", "-C", proj, "rev-parse", "--is-inside-work-tree").Run(); err != nil {
-		return
+	schema, err := os.ReadFile(filepath.Join(root, ".sloprail", "schemas", "task.cue"))
+	if err != nil {
+		t.Fatalf("install plugin tree: read task.cue: %v", err)
 	}
-	if out, err := exec.Command("git", "-C", proj, "add", "-A").CombinedOutput(); err != nil {
-		t.Fatalf("commitInstalledTree: git add: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", proj, "commit", "--allow-empty", "-m", "install sloprail-tasks guardrails").CombinedOutput(); err != nil {
-		t.Fatalf("commitInstalledTree: git commit: %v\n%s", err, out)
-	}
+	e.WriteFile(projDir, filepath.Join(".sloprail", "schemas", "task.cue"), string(schema))
 }
 
 // pluginRoot is this plugin's install root — the directory holding .claude-plugin
