@@ -50,6 +50,20 @@ type Fixture struct {
 	// need of it, since Seed already IS the whole tree the fixture wants.
 	Overlay string `yaml:"overlay"`
 
+	// ExampleSloprail, when true, copies the SHIPPED example's own .sloprail/
+	// (examples/<name>/.sloprail/, two directories up from this fixture) into
+	// the project BEFORE Overlay is applied — so a fixture proving the exact
+	// shipped guardrail, unmodified, does not need its own byte-identical
+	// copy of it under overlay/.sloprail/ (measured: ~13 fixtures were
+	// carrying exactly that copy with zero delta from the shipped file,
+	// pure duplication a change to the shipped guardrail would silently not
+	// reach). Overlay is still applied on top and wins on any path collision
+	// — a fixture proving a VARIANT or an unrelated new rule (a different
+	// guardrail entirely, not a copy) leaves this false and supplies its own
+	// overlay/.sloprail/ exactly as today, with no inherited shipped rules
+	// at all.
+	ExampleSloprail bool `yaml:"exampleSloprail"`
+
 	// Model is the sr-agent --model set for the agent-under-test, e.g.
 	// "claude-sonnet-5,size-md". Empty lets sr-agent's own default resolve —
 	// which sr-agent refuses rather than silently picking one, so this is
@@ -113,6 +127,24 @@ func LoadFixture(dir string) (Fixture, error) {
 			return Fixture{}, fmt.Errorf("%s/fixture.yaml: overlay %q: %w", abs, f.Overlay, err)
 		}
 	}
+	if f.ExampleSloprail {
+		if _, err := os.Stat(f.exampleSloprailDir()); err != nil {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: exampleSloprail is true but %s: %w", abs, f.exampleSloprailDir(), err)
+		}
+		// The whole point of exampleSloprail is that the fixture stops
+		// carrying its own copy of the shipped .sloprail/ — a fixture that
+		// sets the flag AND still has overlay/.sloprail/ is exactly the
+		// duplication this field exists to remove, now silently doubled
+		// instead: the shipped copy applies first, then the overlay's stale
+		// copy applies on top and wins the collision, so a fix to the
+		// shipped guardrail would stop reaching this fixture and nobody
+		// would notice. Refuse to load rather than let that drift back in.
+		if f.Overlay != "" {
+			if _, err := os.Stat(filepath.Join(f.OverlayDir(), ".sloprail")); err == nil {
+				return Fixture{}, fmt.Errorf("%s/fixture.yaml: exampleSloprail is true but %s/.sloprail still exists — delete it, the shipped example's .sloprail/ already covers it", abs, f.OverlayDir())
+			}
+		}
+	}
 	if _, err := os.Stat(filepath.Join(abs, f.Score)); err != nil {
 		return Fixture{}, fmt.Errorf("%s/fixture.yaml: score %q: %w", abs, f.Score, err)
 	}
@@ -149,3 +181,30 @@ func (f Fixture) OverlayDir() string {
 
 // ScorePath is the absolute path to the scorer script.
 func (f Fixture) ScorePath() string { return filepath.Join(f.Dir, f.Score) }
+
+// exampleSloprailDir is the shipped example's own .sloprail/ —
+// examples/<name>/.sloprail/, two directories up from a fixture at
+// examples/<name>/eval/<case>/ (Dir). Computed by path shape, not read from
+// anywhere else, since a fixture always lives at exactly that depth.
+func (f Fixture) exampleSloprailDir() string {
+	return filepath.Join(f.Dir, "..", "..", ".sloprail")
+}
+
+// ExampleSloprailDir is exampleSloprailDir, exported for newWorkspace. Empty
+// when the fixture does not declare ExampleSloprail.
+//
+// copyTree copies a source's CONTENTS into the destination (the convention
+// OverlayDir relies on: overlay/ contains .sloprail/, .claude/, etc. as
+// children, so copying overlay/'s contents into project/ correctly places
+// project/.sloprail/). This path is .sloprail/ itself, so newWorkspace must
+// NOT copyTree it straight into project/ — that would flatten its own
+// children (file-guard/, gate/, …) into the project ROOT instead of under
+// project/.sloprail/. newWorkspace copies it to a project/.sloprail/
+// destination explicitly instead of reusing the plain copyTree(src, project)
+// call Overlay uses.
+func (f Fixture) ExampleSloprailDir() string {
+	if !f.ExampleSloprail {
+		return ""
+	}
+	return f.exampleSloprailDir()
+}

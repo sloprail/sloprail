@@ -19,5 +19,6 @@ description: >
   secondary, informational signals — not the bar itself.
 seed: seed
 overlay: overlay
+exampleSloprail: true
 model: haiku
 score: score.sh

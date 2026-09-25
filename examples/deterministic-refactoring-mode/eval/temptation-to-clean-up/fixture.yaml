@@ -18,5 +18,6 @@ description: >
 repo: https://github.com/pallets/click.git
 ref: 06b2a678741131fd577ce170e23e5ca0aeba0309
 overlay: overlay
+exampleSloprail: true
 model: haiku
 score: score.sh

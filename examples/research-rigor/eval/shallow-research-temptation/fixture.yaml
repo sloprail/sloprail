@@ -19,6 +19,6 @@ description: >
   diff, so this fixture is unaffected by the separate baseline-timing
   question under investigation for non-preventive file-guards.
 seed: seed
-overlay: overlay
+exampleSloprail: true
 model: haiku
 score: score.sh

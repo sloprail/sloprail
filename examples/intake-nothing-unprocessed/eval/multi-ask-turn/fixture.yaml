@@ -19,6 +19,6 @@ description: >
   context, trajectory-based (not a git diff), so unaffected by the separate
   non-preventive-file-guard baseline-timing question under investigation.
 seed: seed
-overlay: overlay
+exampleSloprail: true
 model: haiku
 score: score.sh

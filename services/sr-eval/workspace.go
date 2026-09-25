@@ -79,6 +79,24 @@ func newWorkspace(ctx context.Context, fx Fixture) (*workspace, error) {
 		}
 	}
 
+	// ExampleSloprail, when declared, goes on BEFORE Overlay — a fixture's own
+	// overlay/.sloprail/ (a variant, or new rules the fixture adds) must win
+	// on any path collision with the shipped example, never the reverse.
+	//
+	// The destination is project/.sloprail EXPLICITLY, not project/ — unlike
+	// OverlayDir (whose source already contains a .sloprail/ child to land at
+	// project/.sloprail/), ExampleSloprailDir IS .sloprail/ itself, so
+	// copyTree-ing it straight into w.project would flatten its own children
+	// into the project root instead of nesting them under .sloprail/. See
+	// ExampleSloprailDir's doc comment.
+	if exampleSloprail := fx.ExampleSloprailDir(); exampleSloprail != "" {
+		dest := filepath.Join(w.project, ".sloprail")
+		if err := copyTree(exampleSloprail, dest); err != nil {
+			os.RemoveAll(root)
+			return nil, fmt.Errorf("apply example .sloprail/ from %s: %w", exampleSloprail, err)
+		}
+	}
+
 	if overlay := fx.OverlayDir(); overlay != "" {
 		if err := copyTree(overlay, w.project); err != nil {
 			os.RemoveAll(root)

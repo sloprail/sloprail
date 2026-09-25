@@ -1,7 +1,0 @@
-# Only tracks turns declared #research. `match` filters declaratively, so
-# enter never runs on a turn that tagged something else.
-on:
-  - event: PostTagWrite
-    match: any(event.tags, .label == "research")
-enter: ./enter.sh
-exit: ./exit.sh

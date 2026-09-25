@@ -20,5 +20,6 @@ description: >
 repo: git@github.com:sloprail/harness-mocks.git
 ref: 4ddaa6d460beb14502d25b8689255500a4206c92
 overlay: overlay
+exampleSloprail: true
 model: haiku
 score: score.sh

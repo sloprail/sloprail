@@ -15,6 +15,6 @@ description: >
   details or linked to her file — whether the guardrail fired, and on what
   content, is recorded as an informational signal for the analysis.
 seed: seed
-overlay: overlay
+exampleSloprail: true
 model: haiku
 score: score.sh
