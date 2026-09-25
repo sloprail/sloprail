@@ -8,11 +8,13 @@ import (
 // sr-agent's claude-flag surface for this path; today the proven InstallJudgeClaude
 // stub supplies the model verdict (the same substitution T034_09/10 make).
 //
-// doc-conformance is a file-guard matched by an `sr:conforms-to-doc` marker whose
-// fqn is a remote doc URL. Its one check is a judge (no prepare, no script tier):
-// the model visits the URL and rules on whether the marked code conforms. The
-// marker is what SELECTS the file; the template renders the marker's URL and the
-// marked file's content into the prompt.
+// doc-conformance is a file-guard matched by an `sr:docs` marker whose fqn is a
+// remote doc URL — mirroring the a10n-cli convention of citing a doc section as
+// `a10n:docs <URL>` in a comment, spelled as an sr: marker so sloprail's own
+// tooling can bind a rule to it. Its one check is a judge (no prepare, no script
+// tier): the model visits the URL and rules on whether the marked code conforms.
+// The marker is what SELECTS the file; the template renders the marker's URL and
+// the marked file's content into the prompt.
 //
 // The scenarios prove: a non-conforming marked file BLOCKS at Stop and the judge's
 // reasoning reaches the agent (violation); a conforming marked file ADMITS (happy);
@@ -25,12 +27,12 @@ import (
 const docURL = "https://docs.example.invalid/claude-code/trajectory-jsonl"
 const otherDocURL = "https://docs.example.invalid/claude-code/hooks"
 
-// markedMock is a mock-emulator file carrying the conforms-to-doc marker. The `//`
-// leader and a bare-URL fqn are a well-formed marker (kind `conforms-to-doc`), so
-// the scan selects this file. Its body stands in for code that claims to follow the
-// doc at that URL.
+// markedMock is a mock-emulator file carrying the docs marker. The `//` leader
+// and a bare-URL fqn are a well-formed marker (kind `docs`), so the scan selects
+// this file. Its body stands in for code that claims to follow the doc at that
+// URL.
 func markedMock(url, body string) string {
-	return "// sr:conforms-to-doc " + url + "\npackage mock\n\n" + body + "\n"
+	return "// sr:docs " + url + "\npackage mock\n\n" + body + "\n"
 }
 
 // T044_01: a marked file whose code the judge finds non-conforming BLOCKS at Stop,
@@ -84,8 +86,8 @@ func TestT044_02_ConformingMarkedFileAdmits(t *testing.T) {
 	}
 }
 
-// T044_03: a file WITHOUT the conforms-to-doc marker — or carrying a marker of a
-// DIFFERENT kind — is never judged.
+// T044_03: a file WITHOUT the docs marker — or carrying a marker of a DIFFERENT
+// kind — is never judged.
 //
 // The match control, and the one that matters most: the judge is stubbed to FAIL,
 // so any firing would block. A plain unmarked file is left alone; a file carrying
@@ -101,12 +103,12 @@ func TestT044_03_UnmarkedOrWrongKindIsNeverJudged(t *testing.T) {
 	e.Run(proj, "s-044-03", "write unmarked and wrong-kind files", Turns("done",
 		// No marker at all.
 		Write("w1", "internal/mock/plain.go", "package mock\n\nfunc Emit() string { return \"{}\" }\n"),
-		// A well-formed marker of a DIFFERENT kind — must not match conforms-to-doc.
+		// A well-formed marker of a DIFFERENT kind — must not match docs.
 		Write("w2", "internal/mock/other.go", "// sr:invariant Mock.id\npackage mock\n"),
 	))
 
 	if blocks := e.BlockingErrorsFrom(proj, "s-044-03", "Stop"); len(blocks) != 0 {
-		t.Errorf("the guard fired on a file with no conforms-to-doc marker:\n%v", blocks)
+		t.Errorf("the guard fired on a file with no docs marker:\n%v", blocks)
 	}
 	if !e.Exists(proj, "internal/mock/plain.go") || !e.Exists(proj, "internal/mock/other.go") {
 		t.Errorf("the unguarded writes did not land at all")

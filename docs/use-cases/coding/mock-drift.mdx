@@ -39,7 +39,7 @@ across.
 
 <Steps>
 
-1. The guardrail fires on any code carrying a `conforms-to-doc` marker.
+1. The guardrail fires on any code carrying a `docs` marker.
 
 2. A judge opens the doc the marker names and rules on whether the marked code
    still follows the same contract.
@@ -67,8 +67,8 @@ names:
 
 ### file-guard
 
-Matches any file carrying a `conforms-to-doc` marker. The marker's target is a
-remote URL, so the judge visits it directly rather than a prepared local copy.
+Matches any file carrying a `docs` marker. The marker's target is a remote URL,
+so the judge visits it directly rather than a prepared local copy.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/mock-matches-doc/file-guard.yaml" />
 <Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/mock-matches-doc/code-conforms-to-linked-doc.md.j2" />
