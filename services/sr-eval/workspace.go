@@ -151,6 +151,24 @@ func (w *workspace) commitSetup() error {
 	return nil
 }
 
+// ambientPluginsToDisable names plugins, enabled at USER scope on the
+// operator's own machine, that were measured to silently steal sloprail's own
+// Stop hook. Confirmed empirically: with a10n-impl-checks@a10n-marketplace
+// enabled (as it is on this repo's own dev machine, for unrelated a10n work),
+// Claude Code's own Stop hookCount is 1 and only a10n-impl-checks' hook runs
+// — sr-session stop never fires at all, no error, nothing in hookErrors.
+// Explicitly disabling it at project scope here (which a project-level
+// settings.json is documented to be able to override) brings hookCount to 2
+// and sr-session stop fires normally. Without this, every context/gate-nature
+// guardrail (which lives entirely on the Stop dispatch, unlike a file-guard's
+// git-diff path) silently never fires in a real sr-eval run on this machine,
+// which was mistaken for a baseline-timing race in several fixtures before
+// being traced here. If a future ambient plugin is found to collide the same
+// way, add it here.
+var ambientPluginsToDisable = []string{
+	"a10n-impl-checks@a10n-marketplace",
+}
+
 // writeSettings wires the project to load this repo's sloprail plugin the way
 // a user actually installs it: a directory-sourced marketplace and one
 // enabled plugin, not a hand-written hooks block. This is what makes what
@@ -166,8 +184,12 @@ func (w *workspace) writeSettings(repoRoot string) error {
 	if err := os.MkdirAll(filepath.Join(w.project, ".claude"), 0o755); err != nil {
 		return fmt.Errorf("mkdir .claude: %w", err)
 	}
+	enabledPlugins := map[string]any{pluginKey: true}
+	for _, p := range ambientPluginsToDisable {
+		enabledPlugins[p] = false
+	}
 	settings := map[string]any{
-		"enabledPlugins": map[string]any{pluginKey: true},
+		"enabledPlugins": enabledPlugins,
 		"extraKnownMarketplaces": map[string]any{
 			marketplaceName: map[string]any{
 				"source": map[string]any{"source": "directory", "path": repoRoot},
