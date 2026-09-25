@@ -7,7 +7,7 @@ dies there. sloprail is the layer that holds the line — structure the agent
 can't wander out of, checked against what actually happened, not what it
 claimed.
 
-![What sloprail is made of](docs/assets/bento.png)
+<img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
 
 <!-- HERO GIF -->
 
