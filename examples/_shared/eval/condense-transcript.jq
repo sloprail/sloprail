@@ -22,7 +22,22 @@ if $m.role == "user" and ($m.content | type) == "array" then
 elif $m.role == "assistant" and ($m.content | type) == "array" then
   ($m.content[]? |
     if .type == "tool_use" then
-      "TOOL_USE " + (.name // "?") + ": " + ((.input // {}) | tostring | .[0:250])
+      # A plain `tostring | .[0:250]` on the WHOLE input truncates a
+      # Write/Edit's file `content` field mid-string — the cut lands inside
+      # the file body itself, which then reads exactly like the agent's
+      # write got interrupted mid-sentence (measured: a trajectory-health
+      # judge flagged a genuinely complete, well-formed file write as "the
+      # Write tool call was truncated mid-content", when the actual on-disk
+      # file was fine — the truncation was only in what the judge was shown).
+      # Truncate the noisy bulk fields (content/new_string/old_string) on
+      # their own, generously, with an explicit marker, and keep every other
+      # input field (path, etc.) intact and untruncated.
+      ((.input // {}) | with_entries(
+        if (.key == "content" or .key == "new_string" or .key == "old_string")
+           and (.value | type) == "string" and (.value | length) > 500
+        then .value = (.value[0:500] + "...(truncated, " + ((.value | length) - 500 | tostring) + " more chars)")
+        else . end)) as $shown_input |
+      "TOOL_USE " + (.name // "?") + ": " + ($shown_input | tostring | .[0:1200])
     elif .type == "text" then
       "ASSISTANT: " + ((.text // "") | .[0:800])
     else empty end)
