@@ -11,8 +11,14 @@
 # Two checks, cheap-gates-expensive: the script passes appends, refuses a removal
 # lacking a grounded quote, and hands a grounded removal to the judge, which
 # rules the model-only properties (change is clean and stated absolutely).
+#
+# deletions: include — deleting a memory is the largest removal there is, so the
+# rule covers it as well as edits. A delete has no newContent, so the script
+# fails it closed at PreFileDelete: a whole-file loss cannot be shown to be asked
+# for line by line. (The default, skip, would hand every `rm` a free pass.)
 match: 'path startsWith "memories/" and path endsWith ".md"'
 preventive: true
+deletions: include
 checks:
   - script: ./removal-has-a-grounded-ask.sh
   - judge: ./change-is-clean-and-absolute.md.j2

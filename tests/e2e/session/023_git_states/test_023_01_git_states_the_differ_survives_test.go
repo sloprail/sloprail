@@ -55,6 +55,9 @@ import (
 // re-observing its own bookkeeping every cycle, the same skip 015's fixture keeps
 // for the same reason under a broad binding.
 const recordEverything = `match: path != ""
+# deletions: include — this guard observes EVERY change, and a file-guard
+# skips deleted files unless it says so.
+deletions: include
 checks:
   - script: ./record.sh
 `

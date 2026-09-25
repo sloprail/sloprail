@@ -51,6 +51,9 @@ import (
 // them. `match: "**/*.md"` selects every markdown file at the repository root or
 // any depth (`**/` compiles to an OPTIONAL leading directory).
 const recordFileEvent = `match: "**/*.md"
+# deletions: include — this guard observes EVERY change, and a file-guard
+# skips deleted files unless it says so.
+deletions: include
 checks:
   - script: ./record.sh
 `

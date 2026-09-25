@@ -96,6 +96,10 @@ checks:
 - The three old kinds (`PostFileCreate/Update/Delete`) collapse into the ONE file-guard,
   which fires on whichever Post kind the change produced. A re-added outstanding refusal
   arrives as **`PostFileUpdate`** (see 015 T015_04) — assert that kind if the test does.
+- A file-guard is NOT handed deletes by default (`deletions:` absent means `skip`). An
+  old rule that bound `PostFileDelete` — or a test that observes a delete through a
+  guard's ledger — adds `deletions: include` (creates, updates and deletes) or
+  `deletions: only` (deletes alone).
 
 ### 3. Script: OLD nested wire form + `$PWD` ledger → FLAT payload + `$SR_GUARDRAIL_DIR` ledger
 

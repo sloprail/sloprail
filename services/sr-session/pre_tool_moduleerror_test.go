@@ -100,11 +100,13 @@ func TestPreTool_ModuleErrorDoesNotDiscardItsEvents(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "guarded.md"), []byte("x"), 0o644))
 
 	// A preventive file-guard that refuses every markdown write or deletion. A
-	// preventive guard fires on PreFileDelete (it may refuse an unasked deletion —
-	// nature_fileguard.go isPreFileEvent), so the `rm` of guarded.md is exactly
-	// the event it must receive.
+	// preventive guard that includes deletions fires on PreFileDelete (it may
+	// refuse an unasked deletion — nature_fileguard.go isPreFileEvent, and
+	// `deletions: include`, since a guard skips deleted files by default), so the
+	// `rm` of guarded.md is exactly the event it must receive.
 	writeFileGuardYAML(t, proj, "nodelete", `match: "**/*.md"
 preventive: true
+deletions: include
 checks:
   - script: ./refuse.sh
 `, map[string]string{"refuse.sh": alwaysRefuse})
