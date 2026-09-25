@@ -59,9 +59,9 @@ fi
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
-    abs="$root/$path"
-    [ -f "$abs" ] || exit 0
-    content="$(cat "$abs" 2>/dev/null)" || exit 0
+    # A Post kind carries the SETTLED bytes directly on the flat event — no
+    # disk re-read.
+    content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PreFileCreate|PreFileUpdate)
     known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"

@@ -51,8 +51,8 @@ fi
 kind="$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
-    abs="$root/$path"
-    content="$(cat "$abs" 2>/dev/null || true)"
+    # A Post kind carries the SETTLED bytes directly on the flat event.
+    content="$(printf '%s' "$payload" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PreFileCreate|PreFileUpdate)
     known="$(printf '%s' "$payload" | jq -r '.event.resultKnown // false' 2>/dev/null)"
@@ -74,7 +74,19 @@ judge_rules=""
 count=0
 while IFS= read -r rf; do
   [ -n "$rf" ] || continue
-  rdoc="$(sr-file validate "$rf" --schema "$rule_schema" --emit 2>/dev/null)" || continue
+  # collect_applicable_rules already validated this file once to decide it
+  # applies; a second failure here (a race, or a future bug upstream) is
+  # surfaced rather than silently dropped — see check-script-rules.sh's own
+  # identical comment for why a rule this script cannot parse must not just
+  # vanish from the rubric unremarked.
+  if ! rdoc="$(sr-file validate "$rf" --schema "$rule_schema" --emit 2>&1)"; then
+    judge_rules="${judge_rules}### $(basename "$(dirname "$rf")") [UNREADABLE]
+This rule's frontmatter failed schema validation on re-read and could not be included: ${rdoc}
+
+"
+    count=$((count + 1))
+    continue
+  fi
   sname="$(printf '%s' "$rdoc" | jq -r '.script.name // empty' 2>/dev/null)"
   [ -z "$sname" ] || continue   # a SCRIPT rule — stage 1 already ran it.
 

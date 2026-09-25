@@ -61,7 +61,15 @@ body="$(printf '%s' "$content" | perl -0777 -ne '
 # Split on the literal delimiter (perl index(), not a regex — a delimiter
 # containing regex metacharacters, e.g. "---", must split literally). No
 # delimiter: the whole body is segment 1.
-report="$(perl -e '
+#
+# `--` ahead of the positional args is LOAD-BEARING, not decoration: perl's
+# own argv parsing treats a leading `-` specially even after `-e`, so a
+# delimiter like the documented "---" was read as an UNRECOGNIZED SWITCH and
+# perl exited non-zero with nothing on stdout — which this script's caller
+# read as "no violations" (empty report), a measured FAIL-OPEN on exactly the
+# delimiter this plugin's own README recommends. `--` stops option parsing so
+# every following argument is positional regardless of its spelling.
+if ! report="$(perl -e '
   my $body  = do { local $/; <STDIN> };
   my $delim = $ARGV[0];
   my $limit = $ARGV[1] + 0;
@@ -79,7 +87,12 @@ report="$(perl -e '
       print "  segment $n is $len characters, over the $limit limit\n";
     }
   }
-' "$delim" "$limit" <<<"$body")"
+' -- "$delim" "$limit" <<<"$body" 2>&1)"; then
+  # perl itself failed (a bad delimiter, an interpreter fault, …) — FAIL
+  # CLOSED, not silently permit. An empty report from a script that could not
+  # even run is not evidence the content is fine.
+  refuse "char-limit: could not check the character limit — the checking script itself failed: ${report}"
+fi
 
 if [ -n "$report" ]; then
   refuse "CHAR LIMIT: over the $limit-character limit —

@@ -46,9 +46,11 @@ fi
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
-    abs="$root/$path"
-    [ -f "$abs" ] || exit 0
-    content="$(cat "$abs" 2>/dev/null)" || exit 0
+    # A Post kind carries the SETTLED bytes directly on the flat event — no
+    # disk re-read needed (and none wanted: a disk read that failed would have
+    # to be its own refusal, not a silent exit 0, and the event already has
+    # what is needed).
+    content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PreFileCreate|PreFileUpdate)
     known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
@@ -70,31 +72,59 @@ if [ -z "$rule_files" ]; then
 fi
 
 rule_schema="$root/.sloprail/schemas/rule.cue"
-scripts_dir_plugin="$gdir/../../../scripts"
+# THIS PLUGIN'S OWN SHIPPED SCRIPTS live under .sloprail/scripts/ — INSIDE the
+# .sloprail tree, not beside it — specifically so they travel with the rest of
+# the guardrail tree when a project installs this plugin (a scripts/ folder
+# living beside .sloprail/ would never be copied in). $gdir is THIS guard's
+# own folder (.sloprail/file-guard/unit-satisfies-rules/), so two levels up is
+# .sloprail/, then scripts/.
+scripts_dir_plugin="$gdir/../../scripts"
 scripts_dir_project="$root/.sloprail/content-rules/scripts"
 
 problems=""
 while IFS= read -r rf; do
   [ -n "$rf" ] || continue
-  rdoc="$(sr-file validate "$rf" --schema "$rule_schema" --emit 2>/dev/null)" || continue
+  rule_name="$(basename "$(dirname "$rf")")"
+  # collect_applicable_rules ALREADY validated this file once to decide it
+  # applies; re-validating here is normally a formality. But this is NOT read
+  # as permission to skip silently on a second failure (a race with a
+  # concurrent edit, or a future bug in that first pass): a rule this script
+  # cannot even parse is a rule this script cannot know is satisfied, so a
+  # revalidation failure is surfaced as a NAMED problem — the same refuse-or-
+  # report discipline every check in this plugin keeps — rather than a bare
+  # `continue` that would make a broken rule file silently stop enforcing.
+  if ! rdoc="$(sr-file validate "$rf" --schema "$rule_schema" --emit 2>&1)"; then
+    problems="${problems}  ${rule_name}: this rule's frontmatter failed schema validation on re-read and could not be checked — ${rdoc}
+"
+    continue
+  fi
   sname="$(printf '%s' "$rdoc" | jq -r '.script.name // empty' 2>/dev/null)"
   [ -n "$sname" ] || continue   # a judge rule — stage 2's business
 
-  # Resolve the named script: this plugin's scripts/ first, then the project's
-  # own .sloprail/content-rules/scripts/ (see scripts/README.md).
+  # Resolve the named script: this plugin's own .sloprail/scripts/ first, then
+  # the project's .sloprail/content-rules/scripts/ (see .sloprail/scripts/README.md).
   spath="$scripts_dir_plugin/$sname.sh"
   [ -x "$spath" ] || spath="$scripts_dir_project/$sname.sh"
-  rule_name="$(basename "$(dirname "$rf")")"
   if [ ! -x "$spath" ]; then
     problems="${problems}  ${rule_name}: script '${sname}' not found (looked under this plugin's scripts/ and the project's .sloprail/content-rules/scripts/)
 "
     continue
   fi
 
-  # Args, one per line so a value containing a space survives; readarray/mapfile
-  # is not POSIX sh but this project's scripts already assume bash (#!/usr/bin/env
-  # bash, matching every sibling script).
-  mapfile -t sargs < <(printf '%s' "$rdoc" | jq -r '(.script.args // [])[]' 2>/dev/null)
+  # Args, one per line so a value containing a space survives. A `while read`
+  # loop rather than `mapfile`/`readarray`: those are bash-4-only builtins and
+  # macOS ships bash 3.2 as /bin/bash (and as whatever #!/usr/bin/env bash
+  # resolves to first on a stock Mac) — mapfile there is silently
+  # "command not found", which left sargs empty and every script rule call
+  # missing its arguments (measured: char-limit ran with no limit argument and
+  # refused everything). A `while read` loop is bash-3-compatible.
+  sargs=()
+  while IFS= read -r a; do
+    [ -n "$a" ] || continue
+    sargs+=("$a")
+  done <<SARGS_EOF
+$(printf '%s' "$rdoc" | jq -r '(.script.args // [])[]' 2>/dev/null)
+SARGS_EOF
 
   level="$(printf '%s' "$rdoc" | jq -r '.level // "must"' 2>/dev/null)"
 

@@ -53,7 +53,15 @@ body="$(printf '%s' "$content" | perl -0777 -ne '
 # is used as-is (case-insensitive, /i, matching the "AI tells" use case — a
 # banned word is banned regardless of case). One report line per matched
 # pattern, so the refusal names everything at once.
-report="$(perl -e '
+#
+# `--` ahead of "$list" is LOAD-BEARING: perl's own argv parsing treats a
+# leading `-` specially even after `-e`, so a list path starting with `-`
+# (unlikely but not forbidden by this script's own contract) would be read as
+# an unrecognized switch and perl would exit non-zero with nothing on
+# stdout — silently read by a naive caller as "no matches" (measured as a real
+# fail-open bug in the sibling char-limit.sh's identical pattern). `--` stops
+# option parsing unconditionally.
+if ! report="$(perl -e '
   my $body = do { local $/; <STDIN> };
   my $list_path = $ARGV[0];
   open(my $fh, "<", $list_path) or die "cannot open $list_path: $!";
@@ -74,7 +82,11 @@ report="$(perl -e '
       print "  matches \"$line\" ($n occurrence" . ($n == 1 ? "" : "s") . ")\n";
     }
   }
-' "$list" <<<"$body")"
+' -- "$list" <<<"$body" 2>&1)"; then
+  # perl itself failed (could not open the list, an interpreter fault, …) —
+  # FAIL CLOSED, not silently permit.
+  refuse "banned-phrases: could not check the banned-phrase list — the checking script itself failed: ${report}"
+fi
 
 if [ -n "$report" ]; then
   refuse "BANNED PHRASE: the content matches patterns from $list_rel —
