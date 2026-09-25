@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# A unit may not reach `status: published` on its own say-so. The frontmatter
-# must carry BOTH:
-#   - approved:      a [quote](jsonl) citation LINK — the SAME shape and the
-#                     SAME grounding mechanism sloprail-tasks's task body uses
-#                     for the human's ask (has-body-citation.sh / cite_ground):
-#                     the quote must resolve, via `sr-session trajectory cite
-#                     --source-types user`, to a REAL USER MESSAGE. An agent's
-#                     own prior turn, a tool result, or a harness-injected
-#                     message (<system-reminder>, <task-notification>, …) does
-#                     NOT ground — cite excludes all three — so an agent cannot
-#                     cite its own output as the approval that authorizes
-#                     itself to publish.
-#   - published_url:  where it actually went out. A non-empty string; this
-#                     script does not validate its shape (see unit.cue).
+# A unit may not reach `status: published` on its own say-so. It must carry
+# BOTH:
+#   - a GROUNDED APPROVAL, cited in the unit's BODY (not a frontmatter field
+#     — an earlier draft's `approved:` was moved into the body, see unit.cue
+#     and the plugin README's migration note): a [quote](jsonl) citation
+#     LINK — the SAME shape and the SAME grounding mechanism sloprail-tasks's
+#     task body uses for the human's ask (has-body-citation.sh / cite_ground):
+#     the quote must resolve, via `sr-session trajectory cite --source-types
+#     user`, to a REAL USER MESSAGE. An agent's own prior turn, a tool
+#     result, or a harness-injected message (<system-reminder>,
+#     <task-notification>, …) does NOT ground — cite excludes all three — so
+#     an agent cannot cite its own output as the approval that authorizes
+#     itself to publish.
+#   - published_urls:  where it actually went out. A non-empty LIST (a unit
+#     may be distributed across several channels); this script only checks
+#     the list is present and non-empty, not each URL's shape (see unit.cue).
 #
 # THIS IS THE ONE GUARD IN THE PLUGIN THAT IS PURELY PREVENTIVE-SHAPED: publish
 # is the irreversible step (the task explicitly calls out that an agent "must
@@ -66,9 +68,8 @@ fi
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
-    abs="$root/$path"
-    [ -f "$abs" ] || exit 0
-    content="$(cat "$abs" 2>/dev/null)" || exit 0
+    # A Post kind carries the SETTLED bytes directly on the flat event.
+    content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PreFileCreate|PreFileUpdate)
     known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
@@ -89,7 +90,7 @@ if [ $? -ne 0 ]; then
   # that fails to parse as YAML frontmatter at all cannot be read for status
   # either, so treat that as nothing-to-check rather than a false publish
   # refusal. A closed-schema violation would be a different guard's job if one
-  # is ever added; this guard reads only the three fields it needs.
+  # is ever added; this guard reads only the fields it needs.
   exit 0
 fi
 
@@ -98,45 +99,51 @@ if [ "$status" != "published" ]; then
   exit 0
 fi
 
-approved="$(printf '%s' "$doc" | jq -r '.approved // empty' 2>/dev/null)"
-published_url="$(printf '%s' "$doc" | jq -r '.published_url // empty' 2>/dev/null)"
+n_urls="$(printf '%s' "$doc" | jq -r '(.published_urls // []) | length' 2>/dev/null)"
+
+# THE BODY IS THE PROSE AFTER THE FRONTMATTER — same extraction every guard
+# in this plugin uses. The approval citation lives HERE now, not in
+# frontmatter.
+body="$(printf '%s\n' "$content" | awk '
+  BEGIN { seen = 0 }
+  NR == 1 && $0 == "---" { seen = 1; next }
+  seen == 1 && $0 == "---" { seen = 2; next }
+  seen == 1 { next }
+  { print }
+')"
 
 problems=""
+any_approved=0
 
-if [ -z "$approved" ]; then
-  problems="${problems}  no approved: citation — a unit cannot be published without one
-"
-else
-  # approved: is a body-style [quote](jsonl[:line]) LINK, exactly like a task
-  # body's ask citation — parsed with the SAME extractor (cite_links_extract),
-  # so the grammar can never diverge from the one sloprail-tasks ships.
-  link_line="$(cite_links_extract "$approved")"
-  if [ -z "$link_line" ]; then
-    problems="${problems}  approved: \"$approved\" is not a [quote](jsonl) citation link — it must name the transcript it was approved in
-"
+# EVERY CITATION LINK IN THE BODY is a candidate approval — the SAME
+# extractor task bodies use. At least one must GROUND against the `user`
+# pool: a REAL USER MESSAGE approving this unit for publication. An agent
+# citing its own prior turn, a tool result, or a harness-injected message is
+# refused here, by cite itself: none of those is in the user pool.
+while IFS="$(printf '\t')" read -r href quote; do
+  [ -n "$href" ] || continue
+  cpath="$(cite_link_href_path "$href")"
+  case "$cpath" in
+    /*) : ;;
+    *)  cpath="$root/$cpath" ;;
+  esac
+  if reason="$(cite_ground user "$cpath" "$quote")"; then
+    any_approved=1
   else
-    href="$(printf '%s' "$link_line" | cut -f1)"
-    quote="$(printf '%s' "$link_line" | cut -f2-)"
-    cpath="$(cite_link_href_path "$href")"
-    case "$cpath" in
-      /*) : ;;
-      *)  cpath="$root/$cpath" ;;
-    esac
-    # THE PUBLISH GATE'S OWN SUBJECT: the quote must ground against the `user`
-    # pool — a REAL USER MESSAGE — via `sr-session trajectory cite
-    # --source-types user`, the exact call has-body-citation.sh makes for the
-    # ask. An agent citing its own prior turn, a tool result, or a
-    # harness-injected message is refused here, by cite itself: none of those
-    # is in the user pool.
-    if ! reason="$(cite_ground user "$cpath" "$quote")"; then
-      problems="${problems}  approved: ${reason}
+    problems="${problems}  approval citation \"$quote\": ${reason}
 "
-    fi
   fi
+done <<EOF
+$(cite_links_extract "$body")
+EOF
+
+if [ "$any_approved" -ne 1 ]; then
+  problems="${problems}  no approval citation in the body grounds to a real user message — a unit cannot be published without one
+"
 fi
 
-if [ -z "$published_url" ]; then
-  problems="${problems}  no published_url: — a unit cannot be published without recording where it went out
+if [ -z "$n_urls" ] || [ "$n_urls" -eq 0 ] 2>/dev/null; then
+  problems="${problems}  no published_urls: — a unit cannot be published without recording where it went out
 "
 fi
 
@@ -145,14 +152,20 @@ if [ -n "$problems" ]; then
 
 A unit reaches status: published only with BOTH:
 
-    approved: "[go ahead, ship it](/abs/session.jsonl:42)"
-    published_url: "https://x.com/you/status/…"
+    ## Approval
+    The user said: [go ahead, ship it](/abs/session.jsonl:42)
 
-approved: is a citation link whose quote must resolve, via cite, to a REAL USER
-MESSAGE approving this unit for publication — not the agent's own prior turn,
-not a tool result, not a harness-injected message. An agent cannot publish on
-its own say-so; ask the user, quote their answer, and cite it. published_url:
-records where it actually went out, after it does.
+and, in frontmatter:
+
+    published_urls: ["https://x.com/you/status/…"]
+
+The approval is a citation LINK in the BODY (not frontmatter) whose quote
+must resolve, via cite, to a REAL USER MESSAGE approving this unit for
+publication — not the agent's own prior turn, not a tool result, not a
+harness-injected message. An agent cannot publish on its own say-so; ask the
+user, quote their answer, and cite it in the body. published_urls: records
+where it actually went out, after it does — a list, since a unit may ship on
+more than one channel.
 EOF
   refuse "PUBLISH NOT APPROVED: $path claims status: published without a valid approval.
 
