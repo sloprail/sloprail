@@ -1,0 +1,20 @@
+# Writing under examples/ is blocked until document-example was loaded this
+# session — a shipped guardrail sample has four pieces that must stay in
+# sync (config, README, e2e test, eval fixture; see
+# .claude/skills/document-example/SKILL.md), and nothing about a single file
+# edit makes that obvious without having read the skill first.
+#
+# run-eval is required alongside it, not left to be discovered from
+# document-example's own link to it, because a write under examples/*/eval/
+# specifically needs run-eval's fixture.yaml/scoring/verification detail
+# immediately — document-example only covers where a fixture lives and how
+# it relates to the shipped config, not how to write or verify one.
+#
+# PreFileWrite is the alias the engine expands to PreFileCreate + PreFileUpdate,
+# so one trigger covers both.
+on:
+  - event: PreFileWrite
+    match: event.path startsWith "examples/"
+require:
+  - skill: document-example
+  - skill: run-eval
