@@ -14,7 +14,9 @@ keys, what is in scope for its match, and when it fires.
 - **file-guard** — judges a **file's state**. "Every file under `memories/`
   carries frontmatter." It fires on the file, re-fires until the file is fine,
   and by default judges the *settled* result at the end of a turn. Optionally
-  `preventive`, to also refuse the write before it lands.
+  `preventive`, to also refuse the write before it lands, and `deletions:
+  include`/`only` when losing the file is the rule's business too (by default a
+  deleted file is skipped).
   → [file-guard.md](file-guard.md)
 
 - **gate** — a **checkpoint on an event**. "Block a write under

@@ -217,7 +217,7 @@ at load** otherwise, rather than binding to something that silently never fires.
 |---|---|---|---|
 | **gate** | yes | yes | **no** |
 | **context** | yes | **no** (its `exit` is always checked on Stop anyway) | yes |
-| **file-guard** | binds to the file lifecycle by nature — names no kind at all | | |
+| **file-guard** | binds to the file lifecycle by nature — names no kind at all (`deletions:` decides whether the delete kinds reach it) | | |
 
 Alias availability follows from the table: `PreFileWrite` is admitted on both a
 gate and a context; `PostFileWrite` is **context-only** (a gate does not wake on
@@ -239,7 +239,9 @@ shapes are in `internal/declaration/payload.go`.
 ```
 
 - `event` — the file event, flat. A `Pre*` only when the guard is `preventive`,
-  otherwise a `Post*`.
+  otherwise a `Post*`. A `*FileDelete` only when the guard's `deletions:` is
+  `include` or `only`; with `only`, never a create or update
+  ([file-guard.md](file-guard.md)).
 - `transcriptPath` — the session record, for reading what the event does not carry
   (which human message grounds this write). Also on `$SR_TRANSCRIPT`.
 - `context` — every declared context by name, `{active, payload}`, at parity with
