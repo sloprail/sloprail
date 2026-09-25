@@ -20,6 +20,20 @@
 # Claude Code itself runs on, and it is the one thing standing between the
 # harness and a binary that may not exist.
 #
+# WHY THIS ALSO CHECKS BEYOND BARE $PATH. A hook's environment is the
+# harness's own, and Claude Code's hook environment is not guaranteed to
+# carry every directory a user's interactive shell profile adds to $PATH —
+# in particular install.sh's own default destination, ~/.local/bin, is a
+# common case that is NOT on a hook's PATH on a real machine. Refusing there
+# would block a user who installed correctly, indistinguishable from one who
+# never installed at all — the same silent-feeling failure this wrapper
+# exists to prevent, just one layer further in. So before concluding
+# sr-session is missing, this also tries, in order: $SLOPRAIL_INSTALL_DIR
+# (an explicit override, if the user set one), ~/.local/bin (install.sh's
+# default), and $(go env GOPATH)/bin or ~/go/bin (go install's default) —
+# every directory THIS project's own documented install paths can put the
+# binary in. Only when none of them has it does this refuse/warn.
+#
 # WHY BLOCK ON pre-tool BUT NOT ON THE OTHERS. The project's stance is
 # fail-closed, but bricking Claude Code entirely over a missing install is a
 # worse first impression than the bug being fixed — a session that cannot
@@ -44,7 +58,47 @@ shift
 
 install_hint='curl -fsSL https://sloprail.com/install.sh | sh'
 
-if ! command -v sr-session >/dev/null 2>&1; then
+# find_sr_session looks past bare $PATH, in the fixed order documented above,
+# and prints the resolved path on stdout if found. It does not modify $PATH —
+# a directory found here is used for THIS exec only, so a session that never
+# sees an interactive shell's profile still finds a correctly-installed
+# binary without this wrapper silently widening the environment for
+# anything else the hook chain runs.
+find_sr_session() {
+  if command -v sr-session >/dev/null 2>&1; then
+    command -v sr-session
+    return 0
+  fi
+
+  candidates=""
+  [ -n "${SLOPRAIL_INSTALL_DIR:-}" ] && candidates="$candidates $SLOPRAIL_INSTALL_DIR"
+  [ -n "${HOME:-}" ] && candidates="$candidates $HOME/.local/bin"
+
+  # || gobin="" matters under `set -e`: unlike a bare `[ ] && x=...` statement
+  # (exempt from -e as a non-final element of a && list), a failing command
+  # INSIDE a command substitution used as an assignment's RHS propagates its
+  # exit status to the assignment itself, and `set -e` aborts the whole
+  # script right here — silently, since nothing has been printed yet. Proven
+  # by removing this guard: with no `go` on PATH, the wrapper exits 1 before
+  # reaching its own missing-binary message, which is worse than the bug this
+  # whole script exists to fix.
+  gobin="$(command -v go >/dev/null 2>&1 && go env GOPATH 2>/dev/null)" || gobin=""
+  [ -n "$gobin" ] && candidates="$candidates $gobin/bin"
+  [ -n "${HOME:-}" ] && candidates="$candidates $HOME/go/bin"
+
+  for dir in $candidates; do
+    if [ -x "$dir/sr-session" ]; then
+      echo "$dir/sr-session"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+sr_session_bin="$(find_sr_session)" || sr_session_bin=""
+
+if [ -z "$sr_session_bin" ]; then
   message="sloprail: the sr-session binary is not installed (or not on \$PATH), so its guardrails are NOT enforcing.
 Install it:
   ${install_hint}
@@ -74,4 +128,4 @@ Then start a new session — this one will keep warning until sr-session is foun
   esac
 fi
 
-exec sr-session "$subcommand" "$@"
+exec "$sr_session_bin" "$subcommand" "$@"

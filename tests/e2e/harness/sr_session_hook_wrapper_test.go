@@ -138,3 +138,58 @@ func TestSrSessionHookWrapper_DispatchesNormallyWhenBinaryPresent(t *testing.T) 
 			"is present:\n%s", out)
 	}
 }
+
+// TestSrSessionHookWrapper_FindsBinaryInLocalBinWhenNotOnPATH is the fix for a
+// gap a reviewer found in this PR: the wrapper originally looked ONLY at bare
+// $PATH. Claude Code's hook environment is not guaranteed to carry everything
+// an interactive shell's profile adds to $PATH, and install.sh's own default
+// destination — ~/.local/bin — is exactly the kind of directory that can be
+// missing from it. Without this fallback, a user who installed CORRECTLY via
+// install.sh could still be blocked as if they had never installed at all —
+// indistinguishable from the original bug from the user's side, just one layer
+// deeper. So the wrapper now also checks $SLOPRAIL_INSTALL_DIR, ~/.local/bin,
+// and go's GOPATH/bin (in that order) before concluding sr-session is missing.
+//
+// This test pins the ~/.local/bin case specifically, since that is install.sh's
+// own default and therefore the single most common way a real user hits this:
+// the binary sits in $HOME/.local/bin, that directory is NOT on $PATH, and the
+// wrapper must still find and run it rather than refusing.
+func TestSrSessionHookWrapper_FindsBinaryInLocalBinWhenNotOnPATH(t *testing.T) {
+	home := t.TempDir()
+	localBin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(localBin, 0o755); err != nil {
+		t.Fatalf("mkdir ~/.local/bin: %v", err)
+	}
+	stub := filepath.Join(localBin, "sr-session")
+	script := "#!/bin/sh\necho \"local-bin sr-session ran: $1\"\nexit 0\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub sr-session: %v", err)
+	}
+
+	script2 := hookScriptPath(t)
+	cmd := exec.Command(script2, "pre-tool")
+	// PATH deliberately excludes localBin — this is the whole point: install.sh
+	// put the binary in ~/.local/bin, but the hook's own $PATH does not carry
+	// it, the exact gap the reviewer found.
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home}
+	cmd.Stdin = strings.NewReader("")
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		t.Fatalf("run hook script: %v\n%s", err, out)
+	}
+
+	if code != 0 {
+		t.Fatalf("a correctly-installed sr-session in ~/.local/bin (not on $PATH) was "+
+			"refused as if it were missing entirely:\n%s", out)
+	}
+	if !strings.Contains(string(out), "local-bin sr-session ran: pre-tool") {
+		t.Errorf("the wrapper did not find and dispatch to ~/.local/bin/sr-session:\n%s", out)
+	}
+	if strings.Contains(string(out), "not installed") {
+		t.Errorf("the wrapper printed its own missing-binary warning even though sr-session "+
+			"is present in ~/.local/bin:\n%s", out)
+	}
+}
