@@ -1,8 +1,11 @@
 # A mock/emulator must follow the SAME contracts as the real thing. Code is
-# annotated with an sr:conforms-to-doc marker naming the real doc's URL. The
-# marker's fqn is a REMOTE URL, not a local path, so no `prepare` fetches it
-# ahead of time; the judge template gets the URL and visits it directly, the
-# way a person checking this by hand would.
-match: any(markers, .kind == "conforms-to-doc")
+# annotated with an sr:docs marker naming the real doc's URL — mirroring the
+# a10n-cli convention of citing a doc section with `a10n:docs <URL>` in a
+# comment, spelled as an sr: marker so sloprail's own tooling can bind a rule
+# to it. The marker's fqn is a REMOTE URL, not a local path, so no `prepare`
+# fetches it ahead of time; the judge template gets the URL and visits it
+# directly, the way a person checking this by hand would.
+match: any(markers, .kind == "docs")
 checks:
   - judge: ./code-conforms-to-linked-doc.md.j2
+    allowed_tools: [WebFetch]

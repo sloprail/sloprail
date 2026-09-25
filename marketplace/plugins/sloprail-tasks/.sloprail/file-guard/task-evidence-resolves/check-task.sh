@@ -64,9 +64,13 @@ fi
 root="${SR_WORKSPACE:-.}"
 gdir="${SR_GUARDRAIL_DIR:-.}"
 
-schema="$root/.sloprail/schemas/task.cue"
+# The schema is the PLUGIN's, read from the plugin's own tree — never copied
+# into a consumer's .sloprail/schemas/. $gdir is this guard's own folder, two
+# levels under the plugin's .sloprail/, so ../../schemas/task.cue is the
+# plugin's schemas/.
+schema="$gdir/../../schemas/task.cue"
 if [ ! -f "$schema" ]; then
-  refuse "task-evidence-resolves: schema not found at $schema — the rule cannot check anything without it. Install the plugin's task.cue under the project's .sloprail/schemas/."
+  refuse "task-evidence-resolves: schema not found at $schema — the rule cannot check anything without it."
 fi
 
 lib="$gdir/cite-links.sh"

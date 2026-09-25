@@ -384,6 +384,36 @@ func TestResolve_DirectoryMarketplaceResolvesFromItsSource(t *testing.T) {
 	}
 }
 
+// TestResolve_ARelativeDirectoryMarketplacePathResolvesAgainstTheProjectRoot.
+// A relative `path` (the shape this repo's own settings.json uses: `"./"`) must
+// not be at the mercy of the resolving process's own OS working directory — a
+// hook subprocess whose cwd differs from the project root (measured to happen
+// for a nested/child session) would otherwise resolve it to the wrong place, or
+// nowhere, and every guardrail the plugin ships goes quietly unresolved.
+func TestResolve_ARelativeDirectoryMarketplacePathResolvesAgainstTheProjectRoot(t *testing.T) {
+	home := t.TempDir()
+	proj := project(t, map[string]string{
+		"settings.json": `{"enabledPlugins":{"acme@acme-marketplace":true},` +
+			`"extraKnownMarketplaces":{"acme-marketplace":{"source":{"source":"directory","path":"./"}}}}`,
+	})
+	want := filepath.Join(proj, "marketplace", "plugins", "acme")
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatalf("mkdir marketplace plugin: %v", err)
+	}
+
+	res, err := Resolve(proj, home)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(res.Roots) != 1 {
+		t.Fatalf("a plugin from a relative directory-sourced marketplace was not resolved: roots=%+v unresolved=%+v",
+			res.Roots, res.Unresolved)
+	}
+	if res.Roots[0].Dir != want {
+		t.Errorf("resolved to %q, want %q (the project root, not the test process's own cwd)", res.Roots[0].Dir, want)
+	}
+}
+
 // TestResolve_AKeyThatIsNotPluginAtMarketplaceIsReported. A malformed key is
 // still the project saying it enabled something, so it is named rather than
 // dropped.

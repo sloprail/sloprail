@@ -71,8 +71,12 @@ checks:
   # SLOPRAIL_LAUNCHED_BY.
   #
   # model is size-md; the sibling judges' exact pin) — an unpinned model
-  # resolves larger and this can fire several times per turn. timeout 25s sits
-  # under the engine's 30s check bound so the judge's own limit fires first.
+  # resolves larger and this can fire several times per turn.
+  #
+  # No explicit timeout: runs under the engine's own default
+  # (internal/dispatch/exec.go's defaultCheckTimeout), so this tracks that
+  # value rather than needing to be kept in sync with it by hand.
+  #
   # allowed_tools: [Read] — the rules and the file content are both IN the prompt,
   # so the judge needs no tools to reason; Read is the one conservative grant that
   # lets it corroborate the file on disk if it chooses. The Write the verdict file
@@ -81,5 +85,4 @@ checks:
   - prepare: ./prepare.sh
     judge: ./judge.md.j2
     model: size-md
-    timeout: 25s
     allowed_tools: [Read]

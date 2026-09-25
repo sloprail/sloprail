@@ -28,17 +28,79 @@ import (
 // it is killed and read as a refusal, when the check names no timeout of its
 // own.
 //
-// Generous because a judge is a model call. It is the same 30s the old dispatch
-// uses for one hook, and it sits under the harness's own deadline for the same
-// reason: whichever bound fires first decides what the user sees, and only this
-// one can name the rule.
+// Was 30s (the old dispatch's own bound for one hook), on the reasoning that
+// it "sits under the harness's own deadline": whichever bound fires first
+// decides what the user sees, and only this one can name the rule. That
+// reasoning was sound but the harness's actual deadline was never measured —
+// Claude Code's own hook timeout is 600s (confirmed against the hooks
+// reference), twenty times this bound. Under real load (a nested sr-agent
+// judge call competing with an already-running session, several checks
+// queued in one turn) 30s was measured to time out repeatedly, refusing a
+// clean write for a reason that has nothing to do with its content — the
+// exact "a check that could not run must refuse" failure mode this bound
+// exists to produce ON PURPOSE for a genuinely wedged check, firing instead
+// on an ordinary one that was simply slow.
+//
+// 60s, not something closer to the 600s ceiling: this is still a GUESS, not a
+// measurement — nobody has actually timed a real sr-agent judge invocation
+// end to end (the e2e suite deliberately stubs the judge via
+// InstallJudgeClaude specifically to avoid paying for and waiting on real
+// model calls, so no real-latency data exists in this repo to set the bound
+// from). The failures that motivated raising this at all were attributed to
+// resource CONTENTION — this session itself competing for the machine — not
+// to judge calls being inherently slow, so 60s (2x the 30s that failed under
+// that contention) is picked as reasonable margin without reaching for a much
+// larger number that has no more basis than this one does. Revisit with real
+// numbers if this value causes trouble either direction.
+//
+// A THIRD deadline sits between this one and Claude Code's 600s: one
+// PreToolUse (or Stop) invocation of `sr-session` can run SEVERAL checks in
+// sequence — the structure gate, every context's enter, every gate, every
+// preventive file-guard — each individually bounded by this constant, so the
+// whole invocation's wall-clock is not this constant alone. That outer,
+// per-hook-INVOCATION bound is Claude Code's own `timeout` field on a
+// hooks.json entry (marketplace/plugins/sloprail/hooks/hooks.json sets it to
+// 300s explicitly, rather than trust either side's default) — measured the
+// hard way: a10n-claude-mock, the e2e test double for Claude Code, defaults an
+// unset hook's timeout to 60s (services/claude-mock/internal/hooks/
+// invoker.go's defaultHookTimeout, in the sibling a10n-cli repo). Briefly
+// raising THIS constant to 90s, above that 60s, with hooks.json still silent
+// on `timeout`, meant the mock killed the outer hook process before this
+// constant's own deadline could ever fire — the exact "harness kills the
+// engine, which renders no verdict" failure mode this file's own package doc
+// warns about, causing a dangerous FAIL-OPEN in e2e
+// (tests/e2e/pre_tool/019_hook_failure_surface). hooks.json's explicit 300s
+// fixes the mock/Claude-Code layering regardless of this constant's own
+// value (real Claude Code would otherwise wait the full 600s default per
+// hook, and the mock's 60s default no longer applies once a value is
+// declared) — but this constant is ALSO kept at 60s, matching the mock's own
+// default, so the two stay aligned even if hooks.json's override were ever
+// dropped.
 //
 // A judge check may OVERRIDE this with its own `timeout` (dot-dir-file-store/
 // main.tsp Check.timeout) — a hard invariant-checking rubric can legitimately
 // take longer than a quick one, so the bound is per-judge. runShell takes the
 // resolved timeout as a parameter and falls back to this when it is zero; a
 // script/prepare has no `timeout` field and always runs under this default.
-const defaultCheckTimeout = 30 * time.Second
+//
+// SLOPRAIL_CHECK_TIMEOUT overrides this for the process's own lifetime — unset
+// in any production path, and read only here. It exists so an e2e test that
+// deliberately wedges a check to prove the timeout mechanism itself (rather
+// than any check's own logic) does not have to actually wait out 60 real
+// seconds per assertion: tests/e2e/pre_tool/019_hook_failure_surface sets it
+// low via the harness before launching the mock, so the SAME code path this
+// constant governs in production is exercised end to end in a few seconds
+// instead of minutes. Parsed once at package init — a malformed or absent
+// value silently keeps the 60s default rather than failing the process that
+// happens to read it first.
+var defaultCheckTimeout = func() time.Duration {
+	if v := os.Getenv("SLOPRAIL_CHECK_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 60 * time.Second
+}()
 
 // checkKillGrace caps how long Wait may block after the process group is killed.
 // SIGKILL cannot be caught, so this is only reached by a descendant wedged in an
@@ -182,7 +244,26 @@ func (s scriptCall) env() []string {
 		env = append(env, "SR_GUARDRAIL="+s.GuardName)
 	}
 	if s.Dir != "" {
-		env = append(env, "SR_GUARDRAIL_DIR="+s.Dir)
+		// Absolute, per this variable's own documented promise above — measured
+		// to matter: s.Dir reached here RELATIVE at least once in practice
+		// (traced to a declaration's Dir being built by filepath.Join against a
+		// relative base somewhere upstream of the plugin/project resolution
+		// chain), and Go's exec.Cmd.Dir silently resolves a relative directory
+		// against the PARENT process's own cwd at spawn time — so the spawned
+		// child was placed in the right directory by coincidence (the parent
+		// happened to already be there), while this env var carried the same
+		// relative string verbatim into a process that has no way to know what
+		// the parent's cwd was. filepath.Abs is a no-op when s.Dir is already
+		// absolute (the ordinary case), so this only changes behavior for the
+		// case that was already broken. A resolution failure here (only
+		// possible if the process's own cwd cannot be read) falls back to the
+		// original string rather than silently dropping the variable — still
+		// wrong in that one scenario, but no worse than before this fix.
+		dir := s.Dir
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+		env = append(env, "SR_GUARDRAIL_DIR="+dir)
 	}
 	// The session facts, mirroring the old-format hook env so a new-format check
 	// reaches its workspace and state the same way. Appended AFTER os.Environ() so

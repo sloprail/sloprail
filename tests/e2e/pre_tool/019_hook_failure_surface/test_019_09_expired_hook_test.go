@@ -39,12 +39,31 @@ import (
 // # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
 //
 // The per-check timeout and the process-group kill are the new check-runner's own
-// (internal/dispatch/exec.go: defaultCheckTimeout is 30s, and runShell runs each
-// check in its own process group so a wedged descendant is killed as a group).
+// (internal/dispatch/exec.go: defaultCheckTimeout, 60s in production — every test
+// in this file lowers it via SetCheckTimeout so the mechanism is proven without
+// each assertion actually waiting out 60 real seconds; runShell runs each check
+// in its own process group so a wedged descendant is killed as a group).
 // The vehicle is a gate on the pre-write event; the deadline and its message
 // reach the agent through the same fail-closed path.
+//
+// # Why the outer hooks.json timeout matters here too
+//
+// Claude Code (and a10n-claude-mock, its e2e test double) kills a hook's whole
+// PreToolUse invocation at ITS OWN timeout — marketplace/plugins/sloprail/
+// hooks/hooks.json now sets that to 300s explicitly (the mock otherwise defaults
+// an unset hook to 60s, which — while sloprail's production default is ALSO now
+// 60s, chosen to match rather than risk this exact ordering again — was
+// discovered by briefly raising sloprail's bound to 90s with hooks.json silent
+// on `timeout`: the mock killed the engine before its own 90s deadline could
+// fire, so a wedged check's write went through unjudged — exactly the "harness
+// kills the engine, which renders no verdict" failure this file's doc above
+// warns about). With SetCheckTimeout lowering sloprail's bound to a few seconds
+// for this test, 300s leaves enormous margin regardless.
+const testCheckTimeout = "4s"
+
 func TestT019_09_AnExpiredHookIsKilledAndRefuses(t *testing.T) {
 	e := New(t)
+	e.SetCheckTimeout(testCheckTimeout)
 	proj := e.Project()
 	e.Gate(proj, "wedged", bindEveryWrite, map[string]string{
 		// Never returns on its own: longer than any deadline in play, so
@@ -58,11 +77,12 @@ func TestT019_09_AnExpiredHookIsKilledAndRefuses(t *testing.T) {
 	))
 	elapsed := time.Since(start)
 
-	// The bound is the ENGINE's, not the harness's. The harness would also stop
-	// this run eventually (at its own, longer deadline) but with no verdict —
-	// so a run that only ends is not evidence. Ending well inside the harness's
-	// bound is what says sloprail's deadline is the one that fired.
-	require.Less(t, elapsed, 55*time.Second,
+	// The bound is the ENGINE's (testCheckTimeout), not the harness's outer
+	// hooks.json timeout (300s). The harness would also stop this run
+	// eventually but with no verdict — so a run that only ends is not
+	// evidence. Ending well inside the harness's bound is what says sloprail's
+	// deadline is the one that fired.
+	require.Less(t, elapsed, 60*time.Second,
 		"the run outlasted the engine's own deadline, so it was the harness that ended it — and a killed engine renders no verdict: %s", elapsed)
 
 	assert.True(t, res.Refused(),
@@ -87,6 +107,7 @@ func TestT019_09_AnExpiredHookIsKilledAndRefuses(t *testing.T) {
 // sends the author to debug an exit path that was never taken.
 func TestT019_09b_TheExpiryRefusalSaysWhatHappened(t *testing.T) {
 	e := New(t)
+	e.SetCheckTimeout(testCheckTimeout)
 	proj := e.Project()
 	e.Gate(proj, "silent-wedge", bindEveryWrite, map[string]string{
 		"h.sh": "#!/bin/sh\ncat >/dev/null\nsleep 600 &\nwait\n",
@@ -101,7 +122,7 @@ func TestT019_09b_TheExpiryRefusalSaysWhatHappened(t *testing.T) {
 		"the reason reports a status no process can return, sending the author to debug an exit path never taken:\n%s", res.Output)
 	assert.True(t, res.Saw("killed"),
 		"the reason must say the check was killed rather than that it decided:\n%s", res.Output)
-	assert.True(t, res.Saw("30s"),
+	assert.True(t, res.Saw(testCheckTimeout),
 		"the reason must say how long the check was given, or the author cannot tell a wedged rule from a merely slow one:\n%s", res.Output)
 }
 
@@ -126,12 +147,13 @@ func TestT019_09b_TheExpiryRefusalSaysWhatHappened(t *testing.T) {
 // survives and leaves its mark — so the file's existence IS the leak.
 func TestT019_09d_TheKillReachesTheHooksDescendants(t *testing.T) {
 	e := New(t)
+	e.SetCheckTimeout(testCheckTimeout)
 	proj := e.Project()
 	e.Gate(proj, "spawner", bindEveryWrite, map[string]string{
 		// The descendant sleeps past the engine's deadline, then reports that
 		// it outlived it. The shell then wedges so the deadline is what ends
 		// this, rather than the check returning on its own.
-		"h.sh": "#!/bin/sh\ncat >/dev/null\n(sleep 45; echo leaked > \"$SR_GUARDRAIL_DIR/leaked\") &\nsleep 600 &\nwait\n",
+		"h.sh": "#!/bin/sh\ncat >/dev/null\n(sleep 7; echo leaked > \"$SR_GUARDRAIL_DIR/leaked\") &\nsleep 600 &\nwait\n",
 	})
 
 	res := e.Run(proj, "s-019-09d", "write a note", Turns("done",
@@ -140,8 +162,10 @@ func TestT019_09d_TheKillReachesTheHooksDescendants(t *testing.T) {
 	require.True(t, res.Refused(), "the expired check must still refuse")
 
 	// Outlast the descendant's own timer. Until it has had the chance to write,
-	// its silence proves nothing.
-	time.Sleep(20 * time.Second)
+	// its silence proves nothing. e.Run already blocked until the engine's
+	// testCheckTimeout deadline killed the check; this covers the remaining
+	// gap to the descendant's own 7s sleep, plus margin.
+	time.Sleep(5 * time.Second)
 
 	assert.Empty(t, e.GateLedgerLines(proj, "spawner", "leaked"),
 		"a process the check spawned outlived the kill: the signal reached the shell but not its children, so every guarded action leaks a subprocess")
@@ -149,21 +173,21 @@ func TestT019_09d_TheKillReachesTheHooksDescendants(t *testing.T) {
 
 // T019_09c: a slow check that answers INSIDE the deadline is still obeyed.
 //
-// The control the deadline needs, and the reason the number is 30s rather than
-// something tidy. A check may legitimately be a model call — the sr-agent path
-// is exactly that — and the failure this guards against is a bound so eager
-// that a judge gets cut off mid-answer: the rule then works on an idle machine
-// and refuses on a loaded one, which is worse than having no rule, because it
-// is a refusal nobody can reproduce.
+// The control the deadline needs. A check may legitimately be a model call —
+// the sr-agent path is exactly that — and the failure this guards against is a
+// bound so eager that a judge gets cut off mid-answer: the rule then works on
+// an idle machine and refuses on a loaded one, which is worse than having no
+// rule, because it is a refusal nobody can reproduce.
 //
 // It asserts the check's own verdict governed, not merely that something
 // refused. An engine that killed every slow check would also "refuse" here, and
 // only the check's distinctive text tells the two apart.
 func TestT019_09c_ASlowHookInsideTheDeadlineStillDecides(t *testing.T) {
 	e := New(t)
+	e.SetCheckTimeout(testCheckTimeout)
 	proj := e.Project()
 	e.Gate(proj, "deliberate", bindEveryWrite, map[string]string{
-		"h.sh": "#!/bin/sh\ncat >/dev/null\nsleep 3\necho '{\"reason\":\"the slow rule thought about it and said no\"}'\nexit 1\n",
+		"h.sh": "#!/bin/sh\ncat >/dev/null\nsleep 1\necho '{\"reason\":\"the slow rule thought about it and said no\"}'\nexit 1\n",
 	})
 
 	res := e.Run(proj, "s-019-09c", "write a note", Turns("done",

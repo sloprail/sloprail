@@ -475,7 +475,6 @@ func fileMatchScopeEvent(e event.Event, contextMap map[string]natures.ContextSta
 // fileMarkers returns the markers a file-guard's `markers` scope reads for an
 // event, as the wire-form list expr's `any(markers, .kind == …)` quantifies over.
 //
-// The NEW markers are the file's own settled markers on a Post event and the
 // would-be result's on a Pre. A create/update declares `newMarkers`.
 //
 // A delete declares no `newMarkers` — nothing remains to carry any — and only
@@ -497,6 +496,9 @@ func fileMarkers(e event.Event) []any {
 		field = filemod.FieldOldMarkers
 	}
 	if v, ok := e.Fields[field].([]any); ok {
+		return v
+	}
+	if v, ok := e.Fields[filemod.FieldOldMarkers].([]any); ok {
 		return v
 	}
 	return []any{}

@@ -57,11 +57,13 @@ abs="$root/$path"
 # frontmatter as JSON on success and NOTHING on failure — so a malformed task comes
 # back with an empty status and this rule stays out of the way (correct:
 # task-evidence-resolves is already refusing that write with a better message).
-schema="$root/.sloprail/schemas/task.cue"
+# The schema is the PLUGIN's, read from the plugin's own tree — see
+# task-evidence-resolves/check-task.sh for why it is never a consumer-side copy.
+schema="$gdir/../../schemas/task.cue"
 if [ ! -f "$schema" ]; then
   # Without the schema the status cannot be read. This is the guard's own dependency
   # missing, not a model flake — refuse, naming the fix.
-  refuse "task-review: schema not found at $schema, so the task's status cannot be read. Install the plugin's task.cue under the project's .sloprail/schemas/."
+  refuse "task-review: schema not found at $schema, so the task's status cannot be read."
 fi
 
 doc="$(sr-file validate "$abs" --schema "$schema" --emit 2>/dev/null)"

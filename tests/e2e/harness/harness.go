@@ -67,6 +67,16 @@ type Env struct {
 	// must NOT lower it, so it is per-Env rather than a global default.
 	stopBlockCap int
 
+	// checkTimeout, when non-empty, sets SLOPRAIL_CHECK_TIMEOUT for this Env's
+	// mock runs — a Go duration string overriding internal/dispatch/exec.go's
+	// defaultCheckTimeout (60s in production) for the sr-session subprocess the
+	// mock launches. Empty leaves sloprail's own 60s default. Exists so a test
+	// that deliberately wedges a check to prove the timeout mechanism itself
+	// (tests/e2e/pre_tool/019_hook_failure_surface) does not have to wait out 60
+	// real seconds per assertion — it lowers this to a few seconds instead,
+	// exercising the identical code path in a fraction of the wall-clock time.
+	checkTimeout string
+
 	// extraPlugins are synthetic plugins a test installed alongside sloprail — each
 	// ships new-format DECLARATIONS (not hooks) and is enabled in the project's
 	// settings so the sloprail plugin's own dispatch discovers it. See
@@ -86,6 +96,12 @@ type Env struct {
 // SetStopBlockCap sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's subsequent
 // mock runs. Call before Run/RunFrom. See the field's doc for when to use it.
 func (e *Env) SetStopBlockCap(n int) { e.stopBlockCap = n }
+
+// SetCheckTimeout sets SLOPRAIL_CHECK_TIMEOUT (a Go duration string, e.g. "5s")
+// for this Env's subsequent mock runs, overriding sloprail's own 60s default
+// check-execution bound. Call before Run/RunFrom. See the field's doc for when
+// to use it.
+func (e *Env) SetCheckTimeout(d string) { e.checkTimeout = d }
 
 var (
 	buildOnce sync.Once
@@ -2055,6 +2071,12 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	// the mock's own default (8). See the stopBlockCap field's doc.
 	if e.stopBlockCap > 0 {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=%d", e.stopBlockCap))
+	}
+	// A test that lowered the check-execution timeout passes it through to the
+	// sr-session subprocess the mock launches for each hook. See the
+	// checkTimeout field's doc.
+	if e.checkTimeout != "" {
+		cmd.Env = append(cmd.Env, "SLOPRAIL_CHECK_TIMEOUT="+e.checkTimeout)
 	}
 
 	out, err := cmd.CombinedOutput()

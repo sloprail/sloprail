@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The deterministic half. Grounds "asked" in the user's actual words, not a
 # deletion-keyword grep:
-#   - newContent absent      -> BLOCK (fail-closed): result unknowable, no-loss
+#   - result not derivable    -> BLOCK (fail-closed): result unknowable, no-loss
 #     cannot be established.
 #   - no removed lines       -> PASS: pure additions.
 #   - removed, no sr:asked    -> BLOCK: an unasked rewrite.
@@ -16,12 +16,55 @@ old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
 # explicitly: with none it fails closed and would refuse every removal.
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
-# Absent newContent (not empty — absent) means the result is unknowable.
-if ! printf '%s' "$input" | jq -e '.event | has("newContent")' >/dev/null 2>&1; then
-  echo "Refusing the write to $path: its result cannot be computed (an in-place or environment-dependent command), so it cannot be shown NOT to drop content. Write the file directly." >&2
-  exit 1
-fi
-new="$(printf '%s' "$input" | jq -r '.event.newContent')"
+# Content by event kind. This is a PREVENTIVE guard, so both Pre and Post kinds
+# reach it: Pre before the write lands, and Post at Stop re-checking the
+# settled file (this guard has no `deletions:` restriction narrowing which
+# kinds dispatch it). resultKnown is declared ONLY on the Pre kinds — it is
+# simply ABSENT on a Post event, where the bytes are always settled and known.
+# Reading resultKnown unconditionally, as an earlier version of this script
+# did, defaults an absent field to false on EVERY Post recheck via the
+# `// false` fallback — permanently refusing an already-correct, already-
+# landed file forever. Measured directly: a real Haiku run hit this after
+# writing a genuinely correct pure-addition edit, saw "result cannot be
+# computed" on every subsequent Stop, and eventually disabled all hooks via
+# .claude/settings.json to escape it.
+kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
+case "$kind" in
+  PreFileCreate|PreFileUpdate)
+    # resultKnown, not merely whether newContent is present: an underivable
+    # write (a sed -i, an env-dependent command, a fresh-.ipynb NotebookEdit)
+    # still carries newContent="" — present but not derived — which reads
+    # identically to a genuinely-empty file if only presence is checked.
+    known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
+    if [ "$known" != "true" ]; then
+      echo "Refusing the write to $path: its result cannot be computed (an in-place or environment-dependent command), so it cannot be shown NOT to drop content. Write the file directly." >&2
+      exit 1
+    fi
+    ;;
+  PostFileCreate|PostFileUpdate)
+    # Post always carries settled, derivable content — nothing to gate on.
+    ;;
+  PreFileDelete)
+    # A delete has no newContent at all — a whole-file loss that cannot be
+    # shown NOT to drop content line by line, ever. This guard's whole
+    # README documents this as the deliberate fail-closed case ("deletions:
+    # include ... A delete has no newContent, so the script fails it closed
+    # at PreFileDelete") — NOT something to wave through as "nothing to
+    # diff against". Missed on an earlier pass through this file (which
+    # folded delete into the same catch-all as an unrecognized kind,
+    # regressing T049_05_RmDeleteFailsClosed from a real refusal to a
+    # silent permit) — deletions:include exists specifically so `rm` on a
+    # memory file reaches this guard, and it must refuse here exactly as
+    # the Pre-write branch above refuses an unverifiable result.
+    echo "Refusing the write to $path: its result cannot be computed (an in-place or environment-dependent command), so it cannot be shown NOT to drop content. Write the file directly." >&2
+    exit 1
+    ;;
+  *)
+    # An unrecognized kind this guard is not about: nothing to check.
+    exit 0
+    ;;
+esac
+new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
 
 # Any line present in old but absent in new. (Order/whitespace refinements are
 # elided in this sample.)

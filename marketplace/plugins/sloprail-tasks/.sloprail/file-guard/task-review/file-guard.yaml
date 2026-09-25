@@ -87,11 +87,22 @@ checks:
   # ABSTAINS, so the model is reached ONLY for an in_review task whose citations all
   # resolve. Without the skip a to_do/in_progress task would pay for a review it is
   # not up for.
-  # model is size-md (engine default judge modelset); timeout 25s under the engine's 30s bound;
+  # model is size-md (engine default judge modelset). No explicit timeout: this
+  # check used to set 25s, "under the engine's 30s bound" — a bound that was
+  # raised to 60s (internal/dispatch/exec.go's defaultCheckTimeout) after real
+  # judge calls under load were measured to time out repeatedly at 30s. The
+  # explicit 25s here was never revisited when that happened, so it kept
+  # refusing an unchanged, correct in_review claim as "the judge did not
+  # answer" purely from being tighter than the engine's own improved default —
+  # observed directly: two consecutive review attempts on the same task
+  # timed out (one hitting the 25s wall outright, the other returning a
+  # malformed verdict under the same time pressure) before this was traced
+  # to the stale override. Omitting timeout: lets this check inherit
+  # whatever the engine judges to be a reasonable bound going forward,
+  # instead of freezing this guard's own guess ahead of it.
   # allowed_tools: [Read] adds Read on top of the engine-granted Write for the
   # verdict file (the evidence is already expanded INTO the prompt).
   - prepare: ./expand-evidence.sh
     judge: ./review-task.md.j2
     model: size-md
-    timeout: 25s
     allowed_tools: [Read]

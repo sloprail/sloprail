@@ -68,11 +68,14 @@ tracking (context) from refusing (gate).
 ## Part 4 — recording, unrelated to the goal
 
 - **`context/recording/`** — wakes on `PreCommandInvoke` matched to an eval
-  command, re-enters on every eval invocation. `exit` is a **completeness**
-  check (a plain script): every eval run the trajectory has produced so far
-  must have a markdown documenting it, found by matching the run path a
-  `dummy-eval.sh`-shaped command prints on its own stdout — proof a run
-  happened and where, not a guess.
+  command, re-enters on every eval invocation. Pure lifecycle, same split as
+  Parts 2/3: `exit` does not run the completeness check itself, only reflects
+  `gates["recording-verify"].status`.
+- **`gate/recording-verify/`** — `on: [{event: Stop}]`,
+  `require: [{context: recording}]`. Its check is the **completeness** check: every
+  eval run the trajectory has produced so far must have a markdown documenting
+  it, found by matching the run path a `dummy-eval.sh`-shaped command prints on
+  its own stdout — proof a run happened and where, not a guess.
 
 ## What this design confirms
 

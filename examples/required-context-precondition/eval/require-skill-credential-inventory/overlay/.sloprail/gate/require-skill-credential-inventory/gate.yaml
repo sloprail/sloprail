@@ -1,0 +1,13 @@
+# Every provider module in this codebase reads an API key from the
+# environment (see any existing pydantic_ai_slim/pydantic_ai/providers/*.py),
+# so a new one is written the same way — but nothing about "add a provider"
+# says "record it for the security review". That connection is this org's
+# process, not something inferable from the code or the task, which is what
+# makes it worth a gate rather than trusting judgment: no amount of general
+# engineering skill tells you THIS repo tracks secret-reading files in
+# SECURITY-INVENTORY.md. PreFileWrite expands to create + update.
+on:
+  - event: PreFileWrite
+    match: event.path startsWith "pydantic_ai_slim/pydantic_ai/providers/"
+require:
+  - skill: update-credential-inventory

@@ -36,6 +36,7 @@ var (
 	New   = harness.New
 	Turns = harness.Turns
 	Write = harness.Write
+	Bash  = harness.Bash
 )
 
 func TestMain(m *testing.M) {

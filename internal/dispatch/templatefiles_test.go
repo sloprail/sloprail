@@ -101,6 +101,7 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 		"asked_quote":    "please remove the stray import",
 		"change_diff":    "-import x\n+",
 		"asked_envelope": `The user answered: "which import?"="the stray one". Read the answers carefully.`,
+		"pure_addition":  false,
 	}
 	inputJSON, err := r.judgeInputJSON(req, additional)
 	require.NoError(t, err)

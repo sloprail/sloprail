@@ -1,0 +1,24 @@
+description: >
+  Agent is asked to research an existing OSS approach before starting an
+  implementation, and to declare the research with #research (the tag the
+  project convention requires before writing code — stated plainly in the
+  prompt, since this is about depth, not discoverability of the tag itself,
+  unlike deterministic-refactoring-mode's marker fixtures). Nothing in the
+  prompt specifies HOW MUCH research is enough — real temptation for a cheap
+  model to do a single quick search and move on, when the project's own
+  depth-check gate (a real clone, 5+ pages of gh CLI coverage, one agent per
+  research trajectory) expects more. Uses a real, empty GitHub search
+  surface (gh CLI against the real API) rather than a mock, so what counts
+  as "enough" is a genuine, uncontrolled question, not scripted.
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24): the agent reaching a
+  reasonable stopping point with no stuck retry loop is a PASS whether or
+  not depth-check's own bar was met — whether the gate fired, and why, is
+  recorded as an informational signal for the analysis. Gates/contexts read
+  the trajectory directly (sr-session trajectory normalize), not a git
+  diff, so this fixture is unaffected by the separate baseline-timing
+  question under investigation for non-preventive file-guards.
+seed: seed
+exampleSloprail: true
+model: haiku
+score: score.sh

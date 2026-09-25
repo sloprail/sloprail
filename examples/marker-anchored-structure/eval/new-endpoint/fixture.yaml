@@ -1,0 +1,20 @@
+description: >
+  Agent is asked to add a new HTTP endpoint (delete a user by id) to a
+  small seeded Express + Prisma project, WITH a skill teaching this
+  project's own endpoint-marking convention the guardrail enforces (name
+  the file <verb>-<resource>.ts, mark it sr:endpoint, use Express + Prisma,
+  kebab-case routes, camelCase fields — not a substitute framework/ORM or a
+  different naming style). An existing correctly-marked endpoint
+  (get-users.ts) is seeded as a concrete example to follow.
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24), not on whether the agent
+  used the marker: a clean, working endpoint with no stuck retry loop is a
+  PASS whether or not it was marked or perfectly matched the required
+  stack. Whether the file-guard fired, and whether the endpoint actually
+  conforms, are recorded as secondary, informational signals from a real
+  run — not the bar itself.
+seed: seed
+overlay: overlay
+exampleSloprail: true
+model: haiku
+score: score.sh

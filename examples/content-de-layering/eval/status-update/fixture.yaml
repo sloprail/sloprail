@@ -1,0 +1,20 @@
+description: >
+  Agent is asked to write an ordinary status-update entry about a settlement
+  timing project, referencing a specific person (Priya Patel, whose role
+  and standing preferences already live in people/priya-patel.md). Nothing
+  in the prompt mentions one-fact-one-home, linking vs. restating, or any
+  sloprail convention. A prior update in the seed already demonstrates the
+  correct pattern (a link, not a restatement) — the model has to notice and
+  follow the convention on its own, or restate Priya's details inline the
+  way a plain "write an update mentioning her" request would naturally
+  invite. No skill: this guardrail's whole point is a judge reading
+  ordinary prose, not a taught syntax.
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24): a completed update with no
+  stuck retry loop is a PASS whether or not the agent restated Priya's
+  details or linked to her file — whether the guardrail fired, and on what
+  content, is recorded as an informational signal for the analysis.
+seed: seed
+exampleSloprail: true
+model: haiku
+score: score.sh

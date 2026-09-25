@@ -12,19 +12,20 @@ import (
 )
 
 // These tests drive the SHIPPED doc-conformance example — a file-guard matched by
-// a MARKER, not a path: any file carrying an `sr:conforms-to-doc` marker (its fqn a
-// remote doc URL) is judged, and the judge (no prepare, no script tier) is asked to
-// visit that URL and rule on whether the marked code conforms to what the doc
-// currently says. What fires is this repo's plugin against the example's own
-// .sloprail tree, copied in verbatim.
+// a MARKER, not a path: any file carrying an `sr:docs` marker (its fqn a remote
+// doc URL — mirroring the a10n-cli convention of citing a doc section as
+// `a10n:docs <URL>` in a comment) is judged, and the judge (no prepare, no script
+// tier) is asked to visit that URL and rule on whether the marked code conforms
+// to what the doc currently says. What fires is this repo's plugin against the
+// example's own .sloprail tree, copied in verbatim.
 //
 // The judge's model verdict is a fixed stub (InstallJudgeClaude) — pass:false
 // blocks at Stop, pass:true admits. The model is exactly where the real URL-fetch
 // and conformance judgement would happen, so in these tests that step is the stub;
 // what is NOT stubbed is everything up to it: the marker scan that selects the file
-// by its `conforms-to-doc` kind, and the template render that puts the marker's URL
-// and the marked file's content into the prompt. The capturing shim proves that
-// wiring directly (JudgePrompt) — the URL the agent WOULD visit reaches the prompt.
+// by its `docs` kind, and the template render that puts the marker's URL and the
+// marked file's content into the prompt. The capturing shim proves that wiring
+// directly (JudgePrompt) — the URL the agent WOULD visit reaches the prompt.
 //
 // TODO(D3): drive the verdict via a10n-claude-mock once a10n-cli#470 lands and the
 // new mock binary is on PATH; today the proven InstallJudgeClaude stub supplies

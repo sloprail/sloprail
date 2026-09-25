@@ -45,14 +45,50 @@ if [ -z "$path" ]; then
   exit 1
 fi
 
-# The guard's own directory, so judge-rules/ resolves under it. The engine sets
-# SR_GUARDRAIL_DIR on every check dispatch (internal/dispatch/exec.go). Absent
-# means the payload did not come from the engine — a hand-made invocation — and a
-# judge that silently permitted then would be the "looks like a pass" failure this
+# A delete carries oldContent, never newContent, and has no resultKnown
+# field either (events.md: "a delete has none — nothing remains") —
+# judge.md.j2 interpolates event.newContent with no per-kind dispatch, so
+# an undetected delete rendered an EMPTY <judged-file> block, and the model
+# correctly reported it could verify nothing against primitive-usage rules
+# — read by the engine as a refusal of a file that, by the time anyone
+# could act on it, no longer exists to fix. There is nothing left to judge
+# for primitive usage once a file is gone, so this abstains (skip: true)
+# rather than asking the model to judge nothing.
+kind="$(printf '%s' "$payload" | jq -r '.event.kind // empty' 2>/dev/null)"
+case "$kind" in
+  PreFileDelete|PostFileDelete)
+    echo '{"skip": true}'
+    exit 0
+    ;;
+esac
+
+# The guard's own directory, so judge-rules/ resolves under it.
+#
+# NOT via SR_GUARDRAIL_DIR. The engine sets it on every check dispatch
+# (internal/dispatch/exec.go), but it is not reliably ABSOLUTE — measured
+# directly with a debug probe: a real dispatch carried
+# SR_GUARDRAIL_DIR="marketplace/plugins/sloprail/.sloprail/file-guard/authoring-slop"
+# (relative) while the process's own cwd was ALREADY that exact directory
+# (this check, like every check, runs from the guard's own folder per
+# authoring-guardrails/script-checks.md: "a script's command is resolved
+# relative to that folder, and it runs with the folder as its working
+# directory"). Joining a relative SR_GUARDRAIL_DIR onto that cwd doubles the
+# path (.../authoring-slop/marketplace/plugins/sloprail/.sloprail/file-guard/
+# authoring-slop/judge-rules/*/RULE.md — never exists), so the glob below
+# silently matched nothing and every judge call refused with "judge-rules/
+# contains no rule with enforced: true" regardless of the rules on disk —
+# confirmed identical to check-rules.sh's OWN sibling script, which never hit
+# this because it already resolves judge-rules/ relative to $0, not an env
+# var. Matching that pattern here removes the double-prefix entirely; SR_
+# GUARDRAIL_DIR is no longer read.
+#
+# SR_GUARDRAIL (the guard's NAME, not its path) still stands in for "was this
+# dispatched by the engine" — absent means a hand-made invocation, and a judge
+# that silently permitted then would be the "looks like a pass" failure this
 # project has been burned by. Refuse loudly.
-guardrail_dir="${SR_GUARDRAIL_DIR:-}"
-if [ -z "$guardrail_dir" ]; then
-  echo "authoring-slop judge prepare: SR_GUARDRAIL_DIR is unset, so judge-rules/ could not be located. REFUSING — this means the check was not dispatched by the engine." >&2
+guardrail_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ -z "${SR_GUARDRAIL:-}" ]; then
+  echo "authoring-slop judge prepare: SR_GUARDRAIL is unset, so this check was not dispatched by the engine. REFUSING." >&2
   exit 1
 fi
 

@@ -1,0 +1,18 @@
+description: >
+  Agent is asked to implement a second, currently-unenforced billing
+  invariant (a refund must never exceed the original charge) in a small
+  seeded repo, WITH a skill teaching the sr:invariant pin convention the
+  guardrail enforces (pin the marker to the exact spec line + its current
+  sha, so drift is later checkable).
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24), not on whether the agent
+  used the pin convention exactly right: correct, working enforcement code
+  with no stuck retry loop is a PASS whether or not the marker's pin is
+  present or well-formed. Whether the file-guard fired, and whether a pin
+  was even attempted, are recorded as secondary, informational signals from
+  a real run — not the bar itself.
+seed: seed
+overlay: overlay
+exampleSloprail: true
+model: haiku
+score: score.sh

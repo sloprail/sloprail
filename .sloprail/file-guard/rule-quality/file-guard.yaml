@@ -63,8 +63,10 @@ checks:
   # check that named no allowed_tools would still get Write alone. (The
   # `--allowed-tools "Write Read"` merge is pinned end-to-end by the
   # TestJudgeConfigReachesTheHarness e2e in tests/e2e/engine_repo_judges/.)
+  # No explicit timeout: runs under the engine's own default
+  # (internal/dispatch/exec.go's defaultCheckTimeout), so this tracks that
+  # value rather than needing to be kept in sync with it by hand.
   - prepare: ./prepare.sh
     judge: ./judge-rule.md.j2
     model: size-md
-    timeout: 25s
     allowed_tools: [Read]

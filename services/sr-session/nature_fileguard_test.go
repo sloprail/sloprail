@@ -161,6 +161,30 @@ func TestFileMarkers_DeleteHasEmptyList(t *testing.T) {
 	markers := fileMarkers(del)
 	assert.NotNil(t, markers)
 	assert.Empty(t, markers)
+
+	delWithEmpty := event.Event{Kind: declaration.KindPostFileDelete, Fields: map[string]any{
+		filemod.FieldPath:       "gone.md",
+		filemod.FieldOldMarkers: []any{},
+	}}
+	markers = fileMarkers(delWithEmpty)
+	assert.NotNil(t, markers)
+	assert.Empty(t, markers)
+}
+
+// A create/update event whose newMarkers is genuinely empty (all markers
+// stripped, or never had any) must NOT fall back to oldMarkers — the fallback is
+// keyed on newMarkers being ABSENT (delete kinds), not merely empty, or a create/
+// update that legitimately dropped its last marker would wrongly keep matching
+// on what the file used to carry.
+func TestFileMarkers_UpdateWithEmptyNewMarkersDoesNotFallBack(t *testing.T) {
+	upd := event.Event{Kind: declaration.KindPostFileUpdate, Fields: map[string]any{
+		filemod.FieldPath:       "x.go",
+		filemod.FieldOldMarkers: []any{marker("invariant", "User.id", 4)},
+		filemod.FieldNewMarkers: []any{},
+	}}
+	markers := fileMarkers(upd)
+	assert.NotNil(t, markers)
+	assert.Empty(t, markers, "an update that stripped its last marker must read as marker-less, not fall back to the stale oldMarkers")
 }
 
 // resultKnown reads the PreFileUpdate resultKnown flag: true only when the write's

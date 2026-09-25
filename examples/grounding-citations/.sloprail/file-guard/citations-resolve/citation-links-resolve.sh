@@ -63,7 +63,28 @@ while IFS= read -r ref; do
     continue
   fi
 
-  if ! sed -n "${start},${end}p" "$file" > /dev/null 2>&1; then
+  # `sed -n "${start},${end}p"` alone is NOT enough: it exits 0 on a
+  # REVERSED range too (measured: `sed -n "3,1p"` on an existing 3-line
+  # file prints line 3 rather than erroring — a citation whose range is
+  # backwards silently resolves to the WRONG line, not to nothing), and it
+  # exits 0 with EMPTY output on a past-EOF range (prints nothing, no
+  # error) — neither is caught by an exit-code-only check. Two checks
+  # before ever touching the file: start/end must be positive integers,
+  # and start must not exceed end. Then confirm sed's OUTPUT is non-empty
+  # — the exit code alone does not prove any line was actually extracted.
+  case "$start" in
+    ''|*[!0-9]*) unresolved="$unresolved $ref"; continue ;;
+  esac
+  case "$end" in
+    ''|*[!0-9]*) unresolved="$unresolved $ref"; continue ;;
+  esac
+  if [ "$start" -eq 0 ] || [ "$start" -gt "$end" ]; then
+    unresolved="$unresolved $ref"
+    continue
+  fi
+
+  extracted="$(sed -n "${start},${end}p" "$file" 2>/dev/null)"
+  if [ -z "$extracted" ]; then
     unresolved="$unresolved $ref"
   fi
 done <<< "$citations"
