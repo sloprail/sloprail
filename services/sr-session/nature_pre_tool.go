@@ -218,8 +218,10 @@ func natureBoundKinds(loaded declaration.Loaded) []string {
 // A context's Post triggers are included harmlessly — the pre-tool extraction
 // emits no Post event, so a Post-only context contributes a kind no module here
 // produces. A preventive file-guard is bound to a file's STATE, not an event, but
-// it fires on the PRE file events, so its create/update/delete kinds are bound so
-// those events are extracted for it to match against.
+// it fires on the PRE file events, so the ones it covers are bound so those
+// events are extracted for it to match against — create/update unless it is
+// `deletions: only`, and the delete only when its `deletions:` includes it
+// (FileGuard.Covers, the same filter the dispatch applies).
 func naturePreToolBoundKinds(loaded declaration.Loaded) []string {
 	bound := natureBoundKinds(loaded)
 	for _, c := range loaded.Contexts {
@@ -229,11 +231,13 @@ func naturePreToolBoundKinds(loaded declaration.Loaded) []string {
 		}
 	}
 	for _, g := range loaded.FileGuards {
-		if g.Preventive {
-			bound = append(bound,
-				declaration.KindPreFileCreate,
-				declaration.KindPreFileUpdate,
-				declaration.KindPreFileDelete)
+		if !g.Preventive {
+			continue
+		}
+		for _, k := range []string{declaration.KindPreFileCreate, declaration.KindPreFileUpdate, declaration.KindPreFileDelete} {
+			if g.Covers(k) {
+				bound = append(bound, k)
+			}
 		}
 	}
 	return bound

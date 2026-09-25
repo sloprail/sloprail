@@ -42,12 +42,15 @@ import (
 // recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
 // file event it is handed (re-vehicled from the old GUARDRAIL.md hooks per
 // tests/e2e/REVEHICLE-PATTERN.md). `match: "**/*.md"` fires on whichever Post kind
-// each change produced — create, update or delete — so the kind assertions below
+// each change produced — create, update or delete (it sets `deletions: include`) — so the kind assertions below
 // read the SAME classification through the new dispatch. The quiet-cycle skip
 // (T022_04/05) is the file-guard's own revalidation record, the same mechanism the
 // old dispatch used. The ledger (`seen`, no `.md`) is not matched, so the guard
 // cannot re-observe its own bookkeeping.
 const recordEverything = `match: "**/*.md"
+# deletions: include — this guard observes EVERY change, and a file-guard
+# skips deleted files unless it says so.
+deletions: include
 checks:
   - script: ./record.sh
 `

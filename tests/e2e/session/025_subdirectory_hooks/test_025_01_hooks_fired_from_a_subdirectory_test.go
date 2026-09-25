@@ -68,6 +68,9 @@ import (
 // and at any depth alike. The ledger (`seen`, no `.md`) is not matched, so the
 // guard cannot re-observe its own bookkeeping.
 const recordEverything = `match: "**/*.md"
+# deletions: include — this guard observes EVERY change, and a file-guard
+# skips deleted files unless it says so.
+deletions: include
 checks:
   - script: ./record.sh
 `

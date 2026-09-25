@@ -13,17 +13,18 @@ to answer "is this file OK?", and to keep re-firing until it is.
 # asked to remove.
 match: 'path startsWith "memories/" and path endsWith ".md"'
 preventive: true
+deletions: include
 checks:
   - script: ./removal-has-a-grounded-ask.sh
   - judge: ./change-is-clean-and-absolute.md.j2
     prepare: ./collect-quote-and-diff.sh
 ```
 
-Three keys. `match` narrows to the files this rule is about (a glob or an
-expression — [matchers.md](matchers.md)). `checks` is the list of checks, run in
-order, first refusal ending it — each a script ([script-checks.md](script-checks.md))
-or a judge ([judge-checks.md](judge-checks.md)). `preventive` is the one
-nature-specific knob, below.
+`match` narrows to the files this rule is about (a glob or an expression —
+[matchers.md](matchers.md)). `checks` is the list of checks, run in order, first
+refusal ending it — each a script ([script-checks.md](script-checks.md)) or a
+judge ([judge-checks.md](judge-checks.md)). `preventive` and `deletions` are the
+two nature-specific knobs, below; both are optional.
 
 A file-guard's match sees the file's own facts **bare**: `path`, `markers`,
 `context` — not `event.path`. It reasons about a settled file, so `markers` is
@@ -61,6 +62,39 @@ itself, before the check runs**, and re-judges the settled file at Stop instead
 — so the after-check is the backstop no unusual writer slips past. Dropping
 `preventive` loses the prevention; the after-check you get either way.
 
+## Deleted files: `deletions`
+
+A deleted file has no end state — no `newContent`, no `newMarkers` — so most
+guards have nothing to judge once it is gone. `deletions` says whether a delete
+is this guard's business:
+
+| `deletions:` | the guard runs on | use it for |
+|---|---|---|
+| `skip` (**default**, also when absent) | creates and updates | a rule about what a file **holds** — frontmatter, citations, a rubric. A deleted file holds nothing. |
+| `include` | creates, updates **and** deletes | a rule that also covers **losing** the file — "no content under `memories/` is removed unasked", "an invariant-pinned file may not quietly disappear". |
+| `only` | deletes only | a rule that exists purely to catch a file **going away**. |
+
+```yaml
+deletions: include
+```
+
+It applies at both moments: with `preventive: true`, a guard that includes
+deletions is also asked on the `PreFileDelete`, so it can refuse the delete
+before it happens; every guard that includes them is asked on the
+`PostFileDelete` at Stop. A guard on the default never sees either — do not
+write a script branch to wave deletes through, leave the key off.
+
+On a delete, a check reads what was lost: `oldContent` and `oldMarkers`. The
+guard's own `match` sees the deleted file's markers too — for a delete, the
+scope's `markers` is the file's `oldMarkers` — so a marker-scoped guard
+(`any(markers, .kind == "invariant")`) that includes deletions still selects the
+file it is about.
+
+One key with three values, not a list of events: a file-guard binds to a file's
+state, and "is a file that no longer exists my business" is the one place that
+question forks. Anything other than the three values is refused when the rule
+loads (`sr-file declarations .sloprail` reports it).
+
 ## Re-fire and revalidation
 
 A refused after-check does not advance the cycle's read mark. The engine
@@ -96,7 +130,8 @@ command that empties the file.
 
 **A delete** carries `oldContent` and `oldMarkers` — the bytes about to be lost
 and their markers — but no `newContent` or `newMarkers`. Nothing remains, so
-there is no result to read.
+there is no result to read. A delete reaches only a guard whose `deletions:` is
+`include` or `only` (above).
 
 ### The resultKnown discipline
 
@@ -183,7 +218,7 @@ any(oldMarkers, .kind == "asked")         does the file already carry one
 
 Note the distinction from a **file-guard's own match scope**, which exposes the
 settled file's markers under the single name `markers` (`any(markers, .kind ==
-"invariant")`). `newMarkers`/`oldMarkers` are the **event's** fields — what a
+"invariant")`) — on a delete, the markers the deleted file carried. `newMarkers`/`oldMarkers` are the **event's** fields — what a
 `Pre`/`Post` file event carries, read by a check off `.event.newMarkers`. In a
 script, a marker's quote is on `.fqn`:
 
