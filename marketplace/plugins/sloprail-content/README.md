@@ -229,15 +229,28 @@ before this plugin existed.
 ## The structure gate piece
 
 `.sloprail/file-guard/structure.yaml` is this plugin's own contribution to the
-project-wide structure gate (a single, deny-by-default tree allowlist — see
-the `sloprail` base plugin's own docs) — the paths this plugin's guardrails
-read from or write to: `memories/topics/**` (units, their topic-scoped
-constraints, TOPIC.md, distribution/) and `.sloprail/content-rules/**`
-(project-wide rules, project-local script rules, banned-phrase lists). The
-engine composes a plugin's own structure piece into a project's structure gate
-by `scope`; until that composition is wired up, a project enforcing its own
-`structure.yaml` needs to add these paths (or an equivalent) itself for units
-and rules to be writable at all.
+structure gate: two `scope` folders it owns —
+
+```yaml
+scope:
+  - glob: "memories/topics/"
+  - glob: ".sloprail/content-rules/"
+```
+
+— plus an `allow` list naming exactly the TOPIC.md / UNIT.md / draft /
+CONSTRAINT.md / distribution shapes under `memories/topics/`, and the
+RULE.md / script / banned-phrase-list shapes under `.sloprail/content-rules/`.
+Per the base `sloprail` plugin's structure-gate composition
+(`marketplace/plugins/sloprail/skills/authoring-guardrails/structure-gate.md`):
+inside these two folders, THIS plugin alone decides what may be written — a
+project's own `allow` does not widen it, though a project's `deny` still
+vetoes — and outside them this plugin's structure has no say at all. A
+consumer project needs to do nothing extra for units and rules to be
+writable; installing the plugin is enough. Validate what a plugin ships with:
+
+```
+sr-file declarations --plugin sloprail-content path/to/sloprail-content
+```
 
 ## Tests
 

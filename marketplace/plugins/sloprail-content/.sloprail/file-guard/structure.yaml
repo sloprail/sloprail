@@ -1,15 +1,26 @@
-# sloprail-content's own piece of the project-wide structure gate — the paths
-# this plugin's guardrails read from or write to. The engine composes a
-# plugin's own structure.yaml piece by `scope` alongside the consumer
-# project's own (composition landing separately from this file — see the
-# README's "Installing" section for what a project must do until then).
+# sloprail-content's own piece of the project-wide structure gate — the
+# folders this plugin owns, and exactly which shapes may be written inside
+# them. Combines with the consumer project's own structure.yaml (if any) and
+# every other installed plugin's: inside this plugin's scope, THIS file alone
+# decides what may be written (the project's allow does not widen it; the
+# project's deny still vetoes) — outside it, this file has no say at all. See
+# marketplace/plugins/sloprail/skills/authoring-guardrails/structure-gate.md.
 #
-# scope: the paths this piece's `allow` list governs. Content units and their
-# topic-scoped rules live under memories/topics/**; project-wide rules live
-# under .sloprail/content-rules/**.
+# scope: glob-only, each entry a FOLDER (ends in "/"). Two folders this
+# plugin owns:
+#   memories/topics/            content units and their topic-scoped rules
+#                                (the pre-existing document-topic shape,
+#                                extended by this plugin's UNIT.md/
+#                                CONSTRAINT.md taxonomy fields — no new
+#                                folder shape, so this scope is exactly the
+#                                one document-topic already claims)
+#   .sloprail/content-rules/    the NEW location this plugin adds: project-
+#                                wide rules, selected by applies_to rather
+#                                than by topic, plus their scripts and any
+#                                banned-phrase list
 scope:
-  - glob: "memories/topics/**"
-  - glob: ".sloprail/content-rules/**"
+  - glob: "memories/topics/"
+  - glob: ".sloprail/content-rules/"
 
 allow:
   # TOPIC.md — the topic's own thesis/status file (document-topic's shape,

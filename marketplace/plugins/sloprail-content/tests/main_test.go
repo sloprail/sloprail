@@ -80,10 +80,19 @@ const draftPath = "memories/topics/20260101_launch/units/01_announce/02_draft.md
 // installPluginTree copies the plugin's OWN .sloprail tree (file-guard/,
 // schemas/) into the project, verbatim, preserving each file's mode — the
 // scripts MUST keep their execute bit or the engine refuses them as
-// unrunnable. Mirrors sloprail-tasks/tests's installPluginTree exactly. The
-// tree is then committed so it is part of the session BASELINE rather than
-// the first cycle's diff (the base plugin's authoring-slop after-check would
-// otherwise judge these scripts with no model and fail closed).
+// unrunnable. Mirrors sloprail-tasks/tests's installPluginTree, with ONE
+// deliberate difference: `.sloprail/file-guard/structure.yaml` is EXCLUDED
+// from this copy and installed separately, as a genuine PLUGIN structure
+// (installPluginStructure), because copying it into the project's own
+// `.sloprail/` would make it the PROJECT's structure gate — which must never
+// declare `scope` (a project structure with a `scope` is refused at load).
+// This plugin's structure.yaml DOES declare `scope` (it is a plugin's own
+// piece), so it belongs inside a plugin root, discovered as this plugin's
+// contribution — never copied flat into the project's own tree.
+//
+// The tree is then committed so it is part of the session BASELINE rather
+// than the first cycle's diff (the base plugin's authoring-slop after-check
+// would otherwise judge these scripts with no model and fail closed).
 func installPluginTree(t *testing.T, projDir string) {
 	t.Helper()
 	src := filepath.Join(pluginRoot(t), ".sloprail")
@@ -92,10 +101,16 @@ func installPluginTree(t *testing.T, projDir string) {
 	if err != nil || !info.IsDir() {
 		t.Fatalf("install plugin tree: %s is not a directory (%v)", src, err)
 	}
+	structureSrc := filepath.Join(src, "file-guard", "structure.yaml")
 	copied := 0
 	err = filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if path == structureSrc {
+			// EXCLUDED here on purpose — see the function comment. Installed
+			// as a plugin structure by installPluginStructure instead.
+			return nil
 		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
@@ -126,6 +141,23 @@ func installPluginTree(t *testing.T, projDir string) {
 		t.Fatalf("install plugin tree: %s held no files", src)
 	}
 	commitInstalledTree(t, projDir)
+}
+
+// installPluginStructure installs THIS plugin's own real
+// `.sloprail/file-guard/structure.yaml` — read verbatim off disk, not
+// reauthored inline — as a genuine plugin structure gate via the harness's
+// EnablePluginShippingStructure, so it is discovered as plugin
+// "sloprail-content"'s own scoped contribution (the exact same discovery
+// path a real install goes through), not copied flat into the project's own
+// `.sloprail/` the way installPluginTree handles the file-guards. Must be
+// called before Run/RunFrom, like installPluginTree.
+func installPluginStructure(t *testing.T, e *Env, projDir string) {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(pluginRoot(t), ".sloprail", "file-guard", "structure.yaml"))
+	if err != nil {
+		t.Fatalf("installPluginStructure: read structure.yaml: %v", err)
+	}
+	e.EnablePluginShippingStructure(projDir, "sloprail-content", string(body))
 }
 
 // commitInstalledTree stages and commits everything in proj so a freshly
