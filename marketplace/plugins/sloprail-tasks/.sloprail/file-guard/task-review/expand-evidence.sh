@@ -58,7 +58,9 @@ fi
 # shellcheck source=../task-evidence-resolves/cite-links.sh
 . "$lib"
 
-schema="$root/.sloprail/schemas/task.cue"
+# The schema is the PLUGIN's, read from the plugin's own tree — see
+# task-evidence-resolves/check-task.sh for why it is never a consumer-side copy.
+schema="$gdir/../../schemas/task.cue"
 
 # Post kind — the file is present and the validated frontmatter is where the status
 # and the two evidence lists are read.

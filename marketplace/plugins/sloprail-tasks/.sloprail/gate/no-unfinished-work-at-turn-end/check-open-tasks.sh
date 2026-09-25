@@ -61,7 +61,12 @@ if [ ! -d "$tasks_dir" ]; then
   exit 0
 fi
 
-schema="$root/.sloprail/schemas/task.cue"
+# The schema is the PLUGIN's, read from the plugin's own tree — see
+# task-evidence-resolves/check-task.sh for why it is never a consumer-side
+# copy. $SR_GUARDRAIL_DIR is this guard's own folder, two levels under the
+# plugin's .sloprail/, so ../../schemas/task.cue is the plugin's schemas/.
+gdir="${SR_GUARDRAIL_DIR:-.}"
+schema="$gdir/../../schemas/task.cue"
 if [ ! -f "$schema" ]; then
   say "no-unfinished-work-at-turn-end: PLUMBING FAIL-OPEN — schema missing at $schema, so no status can be read. Permitting."
   exit 0

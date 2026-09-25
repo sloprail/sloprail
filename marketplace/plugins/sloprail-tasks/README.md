@@ -48,10 +48,11 @@ only that the work was *requested*, never that it was *done*. The `--source-type
 mirror is what separates them — a tool-output quote grounds under `tool_result` and
 is refused under `user`, and vice versa.
 
-The frontmatter shape is pinned by `.sloprail/schemas/task.cue` (installed under
-the consumer's project), which the deterministic guards read with `sr-file
-validate`; its `observations` and `artifacts` are two **separate** citation types
-(absolute `.jsonl`; repo-relative tree path), required only in `in_review`.
+The frontmatter shape is pinned by `.sloprail/schemas/task.cue`, which the
+deterministic guards read from the plugin's own tree (via `$SR_GUARDRAIL_DIR`,
+never copied into the consumer's project) with `sr-file validate`; its
+`observations` and `artifacts` are two **separate** citation types (absolute
+`.jsonl`; repo-relative tree path), required only in `in_review`.
 
 ## The four guardrails
 
@@ -162,9 +163,10 @@ and refusing on them would wedge a session the agent cannot un-wedge.
 ## Installing
 
 The guardrails live under `.sloprail/` and load as a plugin. The schema
-(`.sloprail/schemas/task.cue`) must sit under the consumer project's own
-`.sloprail/schemas/` — the guards read it from `$SR_WORKSPACE`, because a task lives
-in the consumer's tree.
+(`.sloprail/schemas/task.cue`) ships inside the plugin's own tree — the guards
+read it via `$SR_GUARDRAIL_DIR` (their own folder), never a copy under the
+consumer project. Installing the plugin is the only step; nothing needs to be
+copied into the consumer's `.sloprail/`.
 
 ## Tests
 
