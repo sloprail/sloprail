@@ -102,12 +102,14 @@ script:
   args: ["280", "---"]
 ---
 Script rule: X post/thread character limit (280 per tweet, split on a literal
-`---` line as the thread delimiter). Deterministic — see scripts/README.md.
+`---` line as the thread delimiter). Deterministic — see .sloprail/scripts/README.md.
 ```
 
-A script rule names a script (shipped by this plugin under `scripts/`, or by
-the project under `.sloprail/content-rules/scripts/`) plus its arguments —
-**never inline shell**. See `scripts/README.md` for the shipped ones
+A script rule names a script (shipped by this plugin under
+`.sloprail/scripts/` — inside the `.sloprail` tree so it installs with the
+rest of the plugin — or by the project under
+`.sloprail/content-rules/scripts/`) plus its arguments — **never inline
+shell**. See `.sloprail/scripts/README.md` for the shipped ones
 (`char-limit`, `banned-phrases`).
 
 ### Where rules live in the consumer project
@@ -223,6 +225,19 @@ If a project (like `strategy`) already has the old, topic-only guard:
 No unit on disk needs to change: `channels`/`tags` are optional, and a unit
 with neither still gets every global rule and its topic's constraints, same as
 before this plugin existed.
+
+## The structure gate piece
+
+`.sloprail/file-guard/structure.yaml` is this plugin's own contribution to the
+project-wide structure gate (a single, deny-by-default tree allowlist — see
+the `sloprail` base plugin's own docs) — the paths this plugin's guardrails
+read from or write to: `memories/topics/**` (units, their topic-scoped
+constraints, TOPIC.md, distribution/) and `.sloprail/content-rules/**`
+(project-wide rules, project-local script rules, banned-phrase lists). The
+engine composes a plugin's own structure piece into a project's structure gate
+by `scope`; until that composition is wired up, a project enforcing its own
+`structure.yaml` needs to add these paths (or an equivalent) itself for units
+and rules to be writable at all.
 
 ## Tests
 

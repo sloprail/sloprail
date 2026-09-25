@@ -1,0 +1,46 @@
+# sloprail-content's own piece of the project-wide structure gate — the paths
+# this plugin's guardrails read from or write to. The engine composes a
+# plugin's own structure.yaml piece by `scope` alongside the consumer
+# project's own (composition landing separately from this file — see the
+# README's "Installing" section for what a project must do until then).
+#
+# scope: the paths this piece's `allow` list governs. Content units and their
+# topic-scoped rules live under memories/topics/**; project-wide rules live
+# under .sloprail/content-rules/**.
+scope:
+  - glob: "memories/topics/**"
+  - glob: ".sloprail/content-rules/**"
+
+allow:
+  # TOPIC.md — the topic's own thesis/status file (document-topic's shape,
+  # unchanged by this plugin).
+  - regex: '^memories/topics/[0-9]{8}_[a-z0-9-]+/TOPIC\.md$'
+
+  # A unit's frontmatter (UNIT.md) and its numbered content files
+  # (01_raw.md, 02_draft.md, 03_research_*.md, …) — the existing document-topic
+  # shape this plugin's unit-satisfies-rules and unit-publish-approved match.
+  - regex: '^memories/topics/[0-9]{8}_[a-z0-9-]+/units/[0-9]{2}_[a-z0-9-]+/(UNIT|[0-9]{2}_[a-z0-9_-]+)\.md$'
+
+  # A topic-scoped rule (the migrated constraints/ location — see the
+  # README's migration note). Same path the pre-existing
+  # unit-satisfies-constraints guard used.
+  - regex: '^memories/topics/[0-9]{8}_[a-z0-9-]+/constraints/[0-9]{2}_[a-z0-9-]+/CONSTRAINT\.md$'
+
+  # Distribution ideas — unrelated to this plugin's own checks, but part of
+  # the SAME topic shape and listed so this piece does not narrow what
+  # document-topic already allows within the scope it claims.
+  - regex: '^memories/topics/[0-9]{8}_[a-z0-9-]+/distribution/[0-9]{2}_[a-z0-9_-]+\.md$'
+
+  # A project-wide rule (RULE.md) — the NEW location this plugin adds,
+  # selected by applies_to rather than by topic.
+  - regex: '^\.sloprail/content-rules/[0-9]{2}_[a-z0-9-]+/RULE\.md$'
+
+  # A project-local script rule's script — the extension point
+  # .sloprail/scripts/README.md documents (script.name resolved here when
+  # not one of this plugin's own shipped scripts).
+  - regex: '^\.sloprail/content-rules/scripts/[a-z0-9_-]+\.sh$'
+
+  # A project-supplied banned-phrase (or similar) list file a banned-phrases
+  # script rule's args names — free-form filename, so this is deliberately
+  # permissive within content-rules/ rather than pinned to one name.
+  - regex: '^\.sloprail/content-rules/[a-z0-9_.-]+\.(txt|list)$'
