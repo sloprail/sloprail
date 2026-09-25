@@ -621,6 +621,56 @@ func (e *Env) EnablePluginShippingFileGuard(projDir, pluginName, name, guardYAML
 	return root
 }
 
+// EnablePluginShippingStructureGate installs a synthetic plugin that ships its
+// OWN `structure.yaml` — a SCOPED piece, as every plugin structure gate must be
+// — enables it in the project alongside sloprail, and returns the plugin's
+// install root.
+//
+// The composition mechanism under test: the plugin's structure.yaml sits at
+// `<root>/.sloprail/file-guard/structure.yaml`, the same relative layout a
+// project's own uses, and the already-firing sloprail hooks discover it through
+// declaration.NewWithPlugins exactly as EnablePluginShippingFileGuard's file-guard
+// is discovered. Nothing is copied into the project.
+//
+// structureYAML must declare `scope:` — an unscoped plugin structure gate is
+// invalid (ValidateStructureGate) and would not load at all, which is its own
+// test (see the "unscoped plugin structure is invalid" e2e case) rather than
+// something this helper should silently paper over.
+func (e *Env) EnablePluginShippingStructureGate(projDir, pluginName, structureYAML string) string {
+	e.t.Helper()
+
+	root, err := os.MkdirTemp("", "slop-plugin-")
+	if err != nil {
+		e.t.Fatalf("harness: temp plugin: %v", err)
+	}
+	e.t.Cleanup(func() { os.RemoveAll(root) })
+
+	dir := filepath.Join(root, ".sloprail", "file-guard")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir plugin file-guard: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "structure.yaml"), []byte(structureYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write plugin structure.yaml: %v", err)
+	}
+
+	pluginMeta := filepath.Join(root, ".claude-plugin")
+	if err := os.MkdirAll(pluginMeta, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir plugin meta: %v", err)
+	}
+	meta := fmt.Sprintf(`{"name":%q,"version":"0.0.1","description":"e2e synthetic plugin shipping a scoped structure gate"}`, pluginName)
+	if err := os.WriteFile(filepath.Join(pluginMeta, "plugin.json"), []byte(meta), 0o644); err != nil {
+		e.t.Fatalf("harness: write plugin.json: %v", err)
+	}
+
+	e.extraPlugins = append(e.extraPlugins, extraPlugin{
+		name:        pluginName,
+		marketplace: pluginName + "-marketplace",
+		root:        root,
+	})
+	e.writeSettings(projDir)
+	return root
+}
+
 // PluginFileGuardLedger reads the ledger a plugin-shipped file-guard's check
 // appended to, inside the PLUGIN's own folder (not the project's), counting how
 // many times the check was asked. Absent means it never ran. The pluginRoot is

@@ -63,8 +63,10 @@ allow:
 	}
 	// The report names each nature's loaded declarations. (A goal is NOT a loaded
 	// nature — it is a project-level composite the engine does not read — so no
-	// goal appears here.)
-	for _, want := range []string{"require-skill", "refactoring", "pinned", "structure gate: present"} {
+	// goal appears here.) The structure gate report now lists each COMPOSING file
+	// rather than a bare "present" — there is only the project's own here, so it
+	// names it by its qualified key.
+	for _, want := range []string{"require-skill", "refactoring", "pinned", "structure gate: 1 file(s) in force", "structure: whole tree"} {
 		if !strings.Contains(res.Output, want) {
 			t.Errorf("expected the report to mention %q:\n%s", want, res.Output)
 		}
