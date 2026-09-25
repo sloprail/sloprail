@@ -1,0 +1,57 @@
+# A content unit must satisfy the writing rules its OWN TAGS select. A unit
+# tagged x gets the X rules, one tagged reddit gets the Reddit rules, and
+# every unit gets the global rules (a rule with no applies_to selector). See
+# the plugin README for the taxonomy and the rule format.
+#
+# GENERALIZES AND REPLACES the consumer project's topic-local
+# unit-satisfies-constraints guard: a topic's own constraints/ still work
+# unchanged (rules-lib.sh collects them by the unit's topic, exactly as that
+# guard's prepare.sh did), but this guard ALSO collects project-wide rules
+# selected by tag, which the old guard had no way to express — see the plugin
+# README's migration note.
+#
+# ONE CHECK, NOT TWO. An earlier version of this guard ran a deterministic
+# SCRIPT stage first (shipped .sh scripts for character limits, a banned-
+# phrase list) ahead of the judge. That machinery is GONE: a rule whose
+# check is mechanical — a character limit, a title-length cap, a banned-
+# phrase/regex match — is now written as a RULE TEXT that tells the judge
+# what to measure and how (see judge-rules.md.j2), and the judge is granted
+# Bash to actually run the measurement (`wc -c`, `grep`, …) against the real
+# file rather than estimate it. There is no scripts/ folder to install, no
+# script-name resolution, and no separate script-rule dispatch — every rule
+# is a judge rule, and "deterministic" is a property of how precisely the
+# rule's own text is written plus the judge's tool access, not of a second
+# check kind. See the plugin README's "The mechanism" section.
+#
+# match: BOTH a unit's own frontmatter (UNIT.md) and its actual copy
+# (02_draft.md) are covered — a writing rule is about what will SHIP, which is
+# the draft file, not only the metadata wrapper. The document-topic skill's
+# fixed unit shape (memories/topics/<topic>/units/<NN_unit>/{UNIT.md,
+# 02_draft.md}) is what this regex anchors, the same "<topic>/units/" anchor
+# unit-satisfies-constraints already used, extended with an alternation over
+# the two filenames.
+match: path matches "^memories/topics/[^/]+/units/[^/]+/(UNIT|02_draft)\\.md$"
+
+# NOT preventive — same reasoning as unit-satisfies-constraints: a writing-rule
+# judgement is inherently after-the-fact, and the Stop after-check on the
+# settled file is where it belongs.
+checks:
+  # Collects the applicable rules and asks one model call to weigh the unit
+  # against all of them together (not one call per rule — the constraints
+  # guard's own pattern). model: size-md is the engine default judge
+  # modelset, the "cheapest adequate model" the task calls for — a judgement
+  # over authored prose (and now, deterministic measurements run via Bash)
+  # is a real reasoning task, not a formatting one, so the smallest alias is
+  # not reached for, but the largest is not the default either. timeout 25s
+  # sits under the engine's 30s check bound so the judge's own limit fires
+  # first (mirrors every judge check in this repo). allowed_tools:
+  # [Read, Bash] — Read for the rules/unit text (already in the prompt, but
+  # a rule may point the judge at a related file), Bash so the judge can run
+  # the actual measurement a deterministic rule's text asks for (wc, grep,
+  # …) against the real unit file at additionalContext.unit_path, rather
+  # than estimate it.
+  - prepare: ./prepare-judge-rules.sh
+    judge: ./judge-rules.md.j2
+    model: size-md
+    timeout: 25s
+    allowed_tools: [Read, Bash]

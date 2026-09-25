@@ -1,0 +1,28 @@
+# A unit may not reach `status: published` without a CITED USER APPROVAL
+# (approved:) and a published_url:. An agent must not be able to publish on its
+# own say-so — see check-publish.sh's header for the full mechanism, which
+# reuses sloprail-tasks's own `cite --source-types user` grounding verbatim
+# (vendored in cite-links.sh beside this guard, with its provenance noted).
+#
+# match: ONLY the unit's own frontmatter file, UNIT.md — status: published is a
+# UNIT.md field (see unit.cue), never 02_draft.md's. unit-satisfies-rules
+# covers both UNIT.md and 02_draft.md for the writing-rules judgement; this
+# guard's subject is narrower on purpose.
+match: path matches "^memories/topics/[^/]+/units/[^/]+/UNIT\\.md$"
+
+# PREVENTIVE: true — the one place in this plugin where prevention matters more
+# than anywhere else. Publishing is the irreversible step the task calls out
+# explicitly ("an agent must not be able to publish on its own say-so"); a
+# Post-only refusal would report the damage after status: published already
+# landed on disk (and, in the real world, after the content may already have
+# gone out under a false published_url claim). The Stop after-check remains the
+# backstop for a write the engine cannot derive at Pre (resultKnown false),
+# exactly like every other preventive guard in this repo.
+preventive: true
+
+checks:
+  # Deterministic, fail-closed throughout — no model call. Whether a citation
+  # grounds to a real user message is exactly as decidable as it is in
+  # sloprail-tasks's task-body-is-human-authored stage 1, which this check
+  # mirrors.
+  - script: ./check-publish.sh
