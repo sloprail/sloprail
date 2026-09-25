@@ -125,7 +125,10 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 // extracted here; the Stop event is synthesised by cyclemod, not by a module.
 //
 // File-guards bind to a file's STATE rather than an event, so all three Post file
-// kinds are bound whenever any file-guard exists. Contexts contribute their own
+// kinds are bound whenever any file-guard exists — the delete even when no guard
+// includes deletions, because a PostFileDelete is also how the after-check learns
+// a file it refused is gone and settles that refusal (settleIfGone). Which guard
+// is actually run on which kind is FileGuard.Covers'. Contexts contribute their own
 // Post `on` kinds. Gates bound to Stop need no extraction (the Stop event is
 // synthesised), so they add nothing here.
 func natureStopBoundKinds(loaded declaration.Loaded) []string {

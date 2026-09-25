@@ -25,6 +25,11 @@ command's result cannot be precomputed). The guard **fails closed** when it is
 absent: a write whose result cannot be shown to preserve content is refused,
 not waved through — a check that could not run has established nothing.
 
+`deletions: include`, because deleting a memory file is the whole-file form of
+the same loss. A file-guard skips deleted files by default; this one opts in, so
+an `rm memories/x.md` reaches it as a `PreFileDelete` — which carries no
+`newContent`, so it is refused on the same fail-closed path.
+
 ## "Asked" is a grounded quote-marker, not a keyword grep
 
 Grepping the turn's human messages for deletion words

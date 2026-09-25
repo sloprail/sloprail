@@ -1,0 +1,39 @@
+package e2e
+
+import (
+	"os"
+	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+)
+
+// fileguard_deletions: a file-guard's `deletions:` key, end to end through the
+// mock — which file events a guard is handed when the agent creates, edits and
+// DELETES a tracked file.
+//
+// A file-guard has no `on:`; it binds to a file's state, and before this key the
+// engine handed it every change to a matching path, delete included. A deleted
+// file has no end state and no newContent, so most guards had nothing to judge
+// and each waved deletes through on its own (or, worse, refused them for lacking
+// content). `deletions:` is one axis with three values:
+//
+//   - absent / `skip` (the default) — the guard is not run on PreFileDelete or
+//     PostFileDelete;
+//   - `include` — creates, updates and deletes (the old behaviour);
+//   - `only` — deletes only.
+//
+// Observed through a ledger each guard's check appends `<kind> <path>` to, and,
+// for a preventive guard that refuses deletes, through whether the `rm` is denied.
+var New = harness.New
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	harness.Cleanup()
+	os.Exit(code)
+}
+
+var (
+	Turns = harness.Turns
+	Write = harness.Write
+	Bash  = harness.Bash
+)

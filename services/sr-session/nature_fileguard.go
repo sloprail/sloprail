@@ -125,6 +125,14 @@ func runFileGuardsPreventive(
 			if !isPreFileEvent(e.Kind) {
 				continue
 			}
+			// The guard's `deletions:` decides whether this kind is its business at
+			// all: a PreFileDelete reaches only a guard that includes deletions
+			// (include / only), and a create or update never reaches a
+			// deletions-only guard. Filtered BEFORE the match, so a guard that does
+			// not cover the kind can neither refuse nor fail closed on it.
+			if !g.Covers(e.Kind) {
+				continue
+			}
 			selected, err := fileGuardSelects(match, e, contextMap)
 			if err != nil {
 				// The match COMPILED at load but could not be EVALUATED against this
@@ -279,6 +287,15 @@ func runFileGuardsPost(
 			if !isPostFileEvent(e.Kind) {
 				continue
 			}
+			if !g.Covers(e.Kind) {
+				// Not this guard's business (see declaration.FileGuard.Covers): a
+				// PostFileDelete for a guard that skips deletions, or a create/update
+				// for a deletions-only guard. On a delete the file is gone, and a
+				// refusal this guard left outstanding on it could never be cleared —
+				// it will never be asked about this path again — so settle it.
+				settleIfGone(cmd, rev, g, e)
+				continue
+			}
 			selected, err := fileGuardSelects(match, e, contextMap)
 			if err != nil {
 				// The match COMPILED at load but could not be EVALUATED against this
@@ -305,6 +322,10 @@ func runFileGuardsPost(
 				continue
 			}
 			if !selected {
+				// A deleted file this guard's match no longer selects (a marker or
+				// context match can stop selecting once the content is gone) is
+				// likewise one it will never be asked about again.
+				settleIfGone(cmd, rev, g, e)
 				continue
 			}
 
@@ -373,10 +394,46 @@ func runFileGuardsPost(
 				results = append(results, fileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: verdict.Reason})
 				// One refusal per (guard, file); keep judging the remaining files so
 				// the agent hears every not-fine one at once.
+				continue
 			}
+
+			// A guard that covers deletions and PASSED this delete has judged the
+			// file's last state — gone — and found it fine. A refusal it left on the
+			// content that preceded the delete is answered, so it ends here rather
+			// than re-adding the path, and re-asking about the delete, every cycle.
+			settleIfGone(cmd, rev, g, e)
 		}
 	}
 	return results
+}
+
+// settleIfGone ends a file-guard's outstanding refusal on a file that is now
+// DELETED, when the guard has not refused the delete itself — it does not cover
+// deletions, its match no longer selects the file, or it judged the delete and
+// passed it. A no-op on any other kind.
+//
+// Why this is needed. A refusal is outstanding while the latest verdict for
+// (path, guard) is a refusal, and readdOutstanding re-adds every outstanding
+// path to the tree difference each cycle; a re-added path that is no longer on
+// disk comes back as a PostFileDelete. A delete has no content to fingerprint
+// (revalidation.Subject), so nothing on the delete path ever RECORDS a verdict
+// — the refusal on the pre-delete content would stay outstanding for the rest
+// of the session, re-adding a path that no longer exists (and handing a
+// PostFileDelete to every guard that includes deletions) every cycle, with no
+// action the agent could take to clear it. For a guard that does not even see
+// deletions (the default) that is a refusal it can never clear by construction.
+//
+// A delete this guard REFUSED is left alone: the refusal is the guard's live
+// answer, and it must keep re-firing until the file is back and fine. A run
+// that errored is left alone too — nobody judged anything.
+func settleIfGone(cmd *cobra.Command, rev *revalidation, g declaration.FileGuard, e event.Event) {
+	if e.Kind != declaration.KindPostFileDelete {
+		return
+	}
+	path, _ := e.Fields[filemod.FieldPath].(string)
+	if err := rev.SettleGone(fileGuardRevKey(g.Name), path); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), err)
+	}
 }
 
 // fileGuardSelects reports whether a file-guard's compiled match selects a file
@@ -404,7 +461,8 @@ func fileGuardSelects(match *guardrail.Matcher, e event.Event, contextMap map[st
 // names: for a settled file it is exactly what the file holds; for a preventive
 // pre-check it is what the write would leave. The wire form (a list of
 // {kind,fqn,line} objects) is what filemod already puts on the event under
-// `newMarkers`, reused rather than re-scanned.
+// `newMarkers`, reused rather than re-scanned. On a delete, which has no result,
+// it is the markers the file carried — see fileMarkers.
 func fileMatchScopeEvent(e event.Event, contextMap map[string]natures.ContextState) event.Event {
 	fields := map[string]any{
 		"path":    e.Fields[filemod.FieldPath],
@@ -418,12 +476,27 @@ func fileMatchScopeEvent(e event.Event, contextMap map[string]natures.ContextSta
 // event, as the wire-form list expr's `any(markers, .kind == …)` quantifies over.
 //
 // The NEW markers are the file's own settled markers on a Post event and the
-// would-be result's on a Pre. A create/update declares `newMarkers`; a delete
-// declares none (a deleted file carries no state to guard), so this is an empty
-// (non-nil) list there — the same "always a list" discipline the event keeps, so
-// `any(markers, …)` evaluates to false rather than erroring on a missing field.
+// would-be result's on a Pre. A create/update declares `newMarkers`.
+//
+// A delete declares no `newMarkers` — nothing remains to carry any — and only
+// reaches a guard that opted into deletions (`deletions: include` / `only`).
+// For that guard the file it is being asked about is the one being removed, so
+// its `markers` are the markers that file CARRIED: `oldMarkers`. Without this a
+// marker-scoped guard (`any(markers, .kind == "invariant")`) that includes
+// deletions would never select a delete at all, whatever the lost file held.
+// Chosen by KIND, not by the absence of `newMarkers`: an update whose result
+// carries no markers must read as marker-less, not fall back to the ones it
+// just removed.
+//
+// Either way the result is a list, never nil — the same "always a list"
+// discipline the event keeps, so `any(markers, …)` evaluates to false rather
+// than erroring on a missing field.
 func fileMarkers(e event.Event) []any {
-	if v, ok := e.Fields[filemod.FieldNewMarkers].([]any); ok {
+	field := filemod.FieldNewMarkers
+	if declaration.IsFileDeleteKind(e.Kind) {
+		field = filemod.FieldOldMarkers
+	}
+	if v, ok := e.Fields[field].([]any); ok {
 		return v
 	}
 	return []any{}
@@ -484,8 +557,9 @@ func underivableKindNoun(kind string) string {
 func fileGuardRevKey(name string) string { return "file-guard:" + name }
 
 // isPreFileEvent reports whether a kind is a PRE file event a preventive guard
-// can fire on. A delete is included — a preventive guard may refuse an unasked
-// deletion — though its match sees no `newMarkers`.
+// can fire on. A delete is included — a preventive guard with `deletions:
+// include` or `only` may refuse an unasked deletion — and whether a particular
+// guard sees it is FileGuard.Covers' decision, applied next to this one.
 func isPreFileEvent(kind string) bool {
 	switch kind {
 	case declaration.KindPreFileCreate, declaration.KindPreFileUpdate, declaration.KindPreFileDelete:
