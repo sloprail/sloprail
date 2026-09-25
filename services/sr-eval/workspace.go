@@ -59,6 +59,24 @@ func newWorkspace(ctx context.Context, fx Fixture) (*workspace, error) {
 			os.RemoveAll(root)
 			return nil, fmt.Errorf("seed project from %s: %w", fx.SeedDir(), err)
 		}
+		// A Seed tree carries no .git — but the engine's own change detection
+		// (internal/gitrepo.Root/Changed) resolves a write's repository-relative
+		// path via `git rev-parse --show-toplevel`, and a NON-PREVENTIVE
+		// file-guard is judged entirely against the git-observed diff at Stop
+		// (see cloneRepoAt's doc comment: stripping .git from a Repo fixture was
+		// measured to leave a gate silently never firing). Without a .git here,
+		// EVERY after-only file-guard is unreachable regardless of what the
+		// agent does — measured on a real run (content-de-layering's
+		// one-fact-one-home, after-only, no preventive:) where the guardrail
+		// never fired even though the agent's write plainly matched its rule.
+		// `git init` gives a Seed fixture the same repository presence a Repo
+		// fixture already has; commitSetup below establishes the baseline
+		// exactly as it does for Repo.
+		initCmd := exec.CommandContext(ctx, "git", "-C", w.project, "init", "--quiet")
+		if out, err := initCmd.CombinedOutput(); err != nil {
+			os.RemoveAll(root)
+			return nil, fmt.Errorf("git init seed project: %w: %s", err, strings.TrimSpace(string(out)))
+		}
 	}
 
 	if overlay := fx.OverlayDir(); overlay != "" {

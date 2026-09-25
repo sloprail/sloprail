@@ -78,18 +78,20 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("wire project settings: %w", err)
 	}
 
-	if fx.Repo != "" {
-		// Commit the harness-written setup (.claude/settings.json, and
-		// whatever the overlay added — .sloprail/, .claude/skills/) so the
-		// tree is CLEAN before the agent's first turn. Without this, `git
-		// status` shows these as the agent's own uncommitted changes from the
-		// first tool call, and the engine's own baseline diff (which the
-		// gate's path matching and the settled-file judging both read off)
-		// would count sr-eval's setup as part of what the agent did. A local
-		// Seed fixture has no .git at all, so there is nothing to commit.
-		if err := ws.commitSetup(); err != nil {
-			return fmt.Errorf("commit harness setup: %w", err)
-		}
+	// Commit the harness-written setup (.claude/settings.json, and whatever
+	// the overlay added — .sloprail/, .claude/skills/) so the tree is CLEAN
+	// before the agent's first turn. Without this, `git status` shows these
+	// as the agent's own uncommitted changes from the first tool call, and
+	// the engine's own baseline diff (which the gate's path matching and the
+	// settled-file judging both read off) would count sr-eval's setup as
+	// part of what the agent did. Unconditional now: newWorkspace's Seed
+	// branch runs `git init` too (a Seed tree used to have no .git at all,
+	// which left every non-preventive file-guard unreachable — measured on a
+	// real run where a guardrail never fired despite the agent's write
+	// plainly matching its rule), so both branches now have a repository to
+	// commit into.
+	if err := ws.commitSetup(); err != nil {
+		return fmt.Errorf("commit harness setup: %w", err)
 	}
 
 	binDir, err := siblingBinDir()

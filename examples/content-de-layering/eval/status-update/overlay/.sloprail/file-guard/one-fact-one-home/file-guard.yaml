@@ -1,0 +1,9 @@
+# A file-guard's `match` is either a BARE glob or a full expression — a
+# glob-or-glob is neither, so this is an expression over the file's `path`.
+# Matching an `updates/` segment at any depth (root included) takes two clauses:
+# `path contains "/updates/"` for a nested segment, `path startsWith "updates/"`
+# for the root-level one. Same for `branding/`; the alternatives compose with
+# `or`.
+match: path contains "/updates/" or path startsWith "updates/" or path contains "/branding/" or path startsWith "branding/"
+checks:
+  - judge: ./fact-lives-in-one-home.md.j2
