@@ -503,6 +503,56 @@ func TestPayload_CopyingNamesItsSourceRatherThanReadingIt(t *testing.T) {
 	}
 }
 
+// TestPayload_ACdBeforeACopyMovesTheSourceReferenceToo pins the half of the
+// cd fix that is easy to miss: PayloadCopyOf.From is a path the SAME statement
+// named, exactly as much as the destination Path is, and filemod's
+// resolvePayload reads it with a bare os.ReadFile that has no cwd of its own
+// at all.
+//
+// Resolving only Path and leaving From relative would report `b.md`'s correct
+// absolute destination while still claiming its content comes from `a.md`
+// read relative to whatever directory the FILE MODULE happens to be running
+// in — which is not the directory the command line actually copied from, and
+// is either a different file entirely or nothing at all.
+func TestPayload_ACdBeforeACopyMovesTheSourceReferenceToo(t *testing.T) {
+	for _, line := range []string{"cd /abs && cp a.md b.md", "cd /abs && mv a.md b.md"} {
+		t.Run(line, func(t *testing.T) {
+			var dst FileTarget
+			for _, tg := range FileTargets(line) {
+				if tg.Effect == Write {
+					dst = tg
+				}
+			}
+			require.Equal(t, "/abs/b.md", dst.Path)
+			assert.Equal(t, PayloadCopyOf, dst.Payload.Kind)
+			assert.Equal(t, []string{"/abs/a.md"}, dst.Payload.From,
+				"the source reference moves with the cd exactly as the destination does")
+		})
+	}
+}
+
+// TestPayload_ACdBeforeAConcatenationMovesEverySourceReference is the
+// multi-source form of the same fix: `cat a.md b.md > c.md` names several
+// sources in order, and every one of them has to move with the cd, not just
+// the first.
+func TestPayload_ACdBeforeAConcatenationMovesEverySourceReference(t *testing.T) {
+	p := payloadFor(t, "cd /abs && cat a.md b.md > c.md")
+	assert.Equal(t, PayloadCopyOf, p.Kind)
+	assert.Equal(t, []string{"/abs/a.md", "/abs/b.md"}, p.From)
+}
+
+// TestPayload_AnUnresolvableCdWithdrawsACopyClaimRatherThanMisnamingIt covers
+// what happens when the cd itself could not be resolved: the destination's
+// PATH is dropped by the same rule every other cd-affected target follows
+// (FileTargets_AnUnresolvableCdMakesEveryLaterRelativeTargetUnknown in
+// filetarget_test.go), so there is no target left here to carry a wrong
+// source reference at all — this pins that the whole target vanishes rather
+// than surviving with a Path resolveTargetAt declined to fill in.
+func TestPayload_AnUnresolvableCdWithdrawsACopyClaimRatherThanMisnamingIt(t *testing.T) {
+	targets := FileTargets(`cd "$WHERE" && cp a.md b.md`)
+	assert.Empty(t, targets, "an unresolvable cd must not leave behind a target naming the wrong file")
+}
+
 // TestPayload_MovingStillRemovesItsSource holds the half a payload must not
 // displace. `mv a.md b.md` is a removal AND a write, and the removal carries no
 // payload because a deleted file has no resulting content.

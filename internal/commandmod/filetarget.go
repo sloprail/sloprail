@@ -142,6 +142,14 @@ func fileTargetsAt(raw string, depth int) (targets []FileTarget) {
 
 	cfg := newConfig()
 
+	// The effective directory at every statement in this file, threaded through
+	// however many `cd`s precede it — see cwd.go. Computed once, up front, as
+	// its own traversal rather than folded into the syntax.Walk below: that
+	// walk is pre-order with no exit callback, which cannot express a
+	// subshell's own `cd` reverting once its statements are behind it, where
+	// cwdFor's recursion gets that for free. See cwdFor's doc comment.
+	cwds := cwdFor(f)
+
 	// Two node types, because the two sources live at different levels of the
 	// tree and a traversal matching one would miss the other entirely.
 	//
@@ -166,14 +174,21 @@ func fileTargetsAt(raw string, depth int) (targets []FileTarget) {
 	// visited the walk has already left. The failure mode if that reasoning is
 	// ever wrong is an UNCLAIMED payload rather than a wrong one, because
 	// stmtHdoc is consulted only for a program known to consume stdin.
+	//
+	// It is also what resolves a target against the RIGHT effective directory:
+	// every target found while `stmt` is current — its own redirections and its
+	// CallExpr's known-binary operands alike — ran with the same cwd, the one
+	// cwds recorded for that statement, so resolving the whole batch against it
+	// right after building it is exactly as precise as resolving each one
+	// individually would be.
 	var stmt *syntax.Stmt
 	syntax.Walk(f, func(n syntax.Node) bool {
 		switch node := n.(type) {
 		case *syntax.Stmt:
 			stmt = node
-			targets = append(targets, fromRedirs(cfg, node)...)
+			targets = append(targets, resolveAgainst(fromRedirs(cfg, node), stmtAt(cwds, stmt))...)
 		case *syntax.CallExpr:
-			targets = append(targets, fromCall(cfg, node, depth, stmtHdoc(stmt))...)
+			targets = append(targets, resolveAgainst(fromCall(cfg, node, depth, stmtHdoc(stmt)), stmtAt(cwds, stmt))...)
 		}
 		return true
 	})

@@ -558,3 +558,138 @@ func TestFileTargets_OneFilePerLineHoweverOftenItIsNamed(t *testing.T) {
 		t.Errorf("FileTargets reported %d targets; this layer reports what the line says and the file module dedupes", got)
 	}
 }
+
+// TestFileTargets_ACdEarlierInTheLineMovesARelativeTarget is the defect this
+// file's cwd.go exists for, stated as a test.
+//
+// Before cwd.go existed, a relative target was reported exactly as the line
+// spelled it regardless of any `cd` before it — `notes.md`, whether or not the
+// line had just `cd`'d somewhere else entirely — and the caller (filemod's
+// reportable) resolved that bare spelling against the SESSION's project root,
+// because commandmod never told it otherwise. So `cd /elsewhere && printf x >
+// rel.txt` was reported as a write to `rel.txt`, read by every downstream
+// consumer as a file inside the CURRENT project, when the line names a file in
+// a completely different tree.
+//
+// An absolute `cd` target turns a later relative one absolute — the spelling
+// filemod's reportable already resolves correctly for a tool call naming an
+// absolute path, inside the project or outside it (see
+// TestExtractCommand_AnAbsolutePathInsideTheWorkspaceIsReportedRelative and
+// TestExtractCommand_APathOutsideTheWorkspaceKeepsItsAbsoluteSpelling in
+// filemod), so this package does not need to know where the project root is to
+// get the outside case right.
+func TestFileTargets_ACdEarlierInTheLineMovesARelativeTarget(t *testing.T) {
+	check(t, "cd /abs && echo x > rel", "write:/abs/rel")
+	// The absolute `cd` composes onto every relative target that follows it in
+	// the same sequence, not just the first.
+	check(t, "cd /abs && touch a && touch b", "write:/abs/a write:/abs/b")
+	// A `cd` with an absolute-looking but non-literal argument does not resolve
+	// either — the same certainty rule this package applies to every other
+	// word.
+	check(t, `cd "$DIR" && echo x > rel`, "(nothing)")
+}
+
+// TestFileTargets_ARelativeCdComposesOntoWhereverTheLineStarted is the other
+// half: a `cd` whose OWN argument is relative does not, and must not, resolve
+// against any root — this package still has none — but it does keep composing
+// onto itself, one level deeper each time.
+//
+// `cd rel && echo x > rel2` names the same file `cd rel/rel2 && echo x` would:
+// composed, and left exactly as relative as it was before cwd.go existed,
+// which is what keeps this package a pure function of the string alone. The
+// caller resolves it against the session root afterwards, exactly the way it
+// already resolves any other bare relative path.
+func TestFileTargets_ARelativeCdComposesOntoWhereverTheLineStarted(t *testing.T) {
+	check(t, "cd rel && echo x > rel2", "write:rel/rel2")
+	check(t, "cd a/b && cd ../c && echo x > f", "write:a/c/f")
+}
+
+// TestFileTargets_ASubshellsCdDoesNotEscapeIt is the scoping half.
+//
+// `( cd /abs && touch a ) && touch b` runs its `cd` in a SUBPROCESS — a real
+// shell forks for `( … )` — so the parent shell's own directory is exactly
+// where it was before the subshell opened. `a`, inside the subshell, is
+// affected; `b`, after it, is not.
+func TestFileTargets_ASubshellsCdDoesNotEscapeIt(t *testing.T) {
+	check(t, "(cd /abs && touch a) && touch b", "write:/abs/a write:b")
+	// Nested one level deeper: the inner subshell's `cd` does not escape to the
+	// outer subshell's sequence either.
+	check(t, "(cd /a && (cd /b && touch x) && touch y) && touch z",
+		"write:/a/y write:/b/x write:z")
+}
+
+// TestFileTargets_ABlocksCdDoesEscapeIt is the shape that must NOT be scoped
+// like a subshell: `{ … ; }` runs in the CURRENT shell, so a `cd` inside it
+// really does move the directory for whatever comes after the block, in
+// contrast to TestFileTargets_ASubshellsCdDoesNotEscapeIt one test above.
+func TestFileTargets_ABlocksCdDoesEscapeIt(t *testing.T) {
+	check(t, "{ cd /abs; } && touch after", "write:/abs/after")
+}
+
+// TestFileTargets_AnUnresolvableCdMakesEveryLaterRelativeTargetUnknown pins the
+// UNKNOWN half: a `cd` this package cannot resolve statically must not be
+// treated as "no change" (which would report a relative target against the
+// wrong directory with false confidence) or as "back at the start" (an
+// equally confident guess in the other direction). Both are declined, the same
+// answer this package already gives an uncertain redirection target or
+// program word — see TestFileTargets_AnUncertainPathIsNotGuessedAt.
+//
+// A target named with an ABSOLUTE path is unaffected either way: `cd` going
+// unknown says nothing about a path the line names outright.
+func TestFileTargets_AnUnresolvableCdMakesEveryLaterRelativeTargetUnknown(t *testing.T) {
+	// No argument: home, which this package does not resolve without an
+	// environment.
+	check(t, "cd && echo x > rel", "(nothing)")
+	// `cd -`: the previous directory, which this package never tracked even
+	// when the forward direction was known.
+	check(t, "cd - && echo x > rel", "(nothing)")
+	// An argument this package cannot resolve without guessing at an
+	// environment it does not have.
+	check(t, `cd "$SOME_VAR" && echo x > rel`, "(nothing)")
+	check(t, "cd $(pwd) && echo x > rel", "(nothing)")
+	// Unknown stays unknown for every later relative target in the same
+	// sequence, not just the one immediately after it.
+	check(t, "cd && touch a && touch b", "(nothing)")
+	// An absolute target is untouched by an unresolvable `cd` before it.
+	check(t, "cd && rm /abs/notes.md", "remove:/abs/notes.md")
+}
+
+// TestFileTargets_ARegularWriteWithNoCdIsUnaffected is the regression the whole
+// change must not cause: the ordinary case, no `cd` anywhere in the line,
+// reports a bare relative target exactly as it always has. Every other test in
+// this file that does not mention `cd` already exercises this, but it is
+// pinned here explicitly, next to the `cd`-aware cases it must not disturb.
+func TestFileTargets_ARegularWriteWithNoCdIsUnaffected(t *testing.T) {
+	check(t, "echo x > rel.txt", "write:rel.txt")
+	check(t, "rm notes.md", "remove:notes.md")
+	check(t, "cp a.md b.md", "write:b.md")
+}
+
+// TestFileTargets_DirectoryFlagsOnUnmodelledBinariesStayUnmodelled pins a
+// deliberate scope decision rather than an oversight.
+//
+// git, make and npm are not in knownBins at all — none of git's write
+// subcommands, make's targets, or npm's own file effects are modelled as
+// FileTargets today, `cd`-aware or not (TestFileTargets_ReadingCommandsProduceNoEvent
+// already covers `git status`/`make build`/`npm run build` producing nothing).
+// So `git -C DIR add file`, `make -C DIR`, and `npm --prefix DIR ...` all
+// report NOTHING, exactly as `git add file`, `make`, and `npm ...` already did
+// without any `-C`/`--prefix` flag at all — the directory flag changes nothing
+// here because there was no write-target modelling for these binaries to make
+// directory-aware in the first place.
+//
+// The task behind this fix asked, correctly, to be pragmatic about this: only
+// a directory-flag idiom on a binary ALREADY modelled for write targets is in
+// scope, because teaching this package git's, make's or npm's own file effects
+// from nothing is a separate, much larger undertaking than making an existing
+// model cd-aware. If git (or make, or npm) is ever added to knownBins, its `-C`
+// (or `-C`, or `--prefix`) flag will need the same treatment cd.go gives `cd`
+// itself — composed onto the effective directory in place at that statement,
+// exactly the way resolveAgainst already does for every target this package
+// builds. Recorded here so that day's author finds the boundary already
+// explained rather than rediscovering it.
+func TestFileTargets_DirectoryFlagsOnUnmodelledBinariesStayUnmodelled(t *testing.T) {
+	check(t, "git -C /elsewhere add somefile", "(nothing)")
+	check(t, "make -C /elsewhere build", "(nothing)")
+	check(t, "npm --prefix /elsewhere run build", "(nothing)")
+}

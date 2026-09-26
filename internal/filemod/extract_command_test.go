@@ -1248,3 +1248,80 @@ func TestExtractCommand_APathOutsideTheWorkspaceKeepsItsAbsoluteSpelling(t *test
 	assert.Equal(t, outside, events[0].Fields[FieldPath],
 		"a path outside the workspace must not be given a relative spelling a project matcher could admit")
 }
+
+// TestExtractCommand_ACdIntoAnotherTreeIsResolvedThere is the module-level
+// pin of the bug this task fixes: a command that `cd`s into a completely
+// different directory and then writes a RELATIVE path must be reported as a
+// write THERE, not as a write to the session's own root joined with that
+// relative spelling.
+//
+// Before commandmod's cwd.go existed, `cd <other> && printf x > rel.txt`
+// reported the bare path `rel.txt`, which THIS module (having no idea a `cd`
+// preceded it) resolved against `root` exactly as it resolves any other
+// relative command target — reportable() had no way to know the line meant a
+// file in an entirely different tree. Measured before the fix: the event's
+// path was `root/rel.txt`, a file inside the session's own project, for a
+// command that never wrote there.
+func TestExtractCommand_ACdIntoAnotherTreeIsResolvedThere(t *testing.T) {
+	root := t.TempDir()
+	other := t.TempDir()
+
+	t.Run("a create", func(t *testing.T) {
+		events, err := extractForIn(t, "cd "+other+" && mkdir -p sub && printf x > sub/new.md", root)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, KindPreCreate, events[0].Kind)
+		assert.Equal(t, filepath.ToSlash(filepath.Join(other, "sub/new.md")), events[0].Fields[FieldPath],
+			"the relative target must resolve inside the directory the command cd'd into, not the session root")
+	})
+
+	t.Run("an update", func(t *testing.T) {
+		existing := filepath.Join(other, "existing.md")
+		require.NoError(t, os.WriteFile(existing, []byte("body\n"), 0o644))
+
+		events, err := extractForIn(t, "cd "+other+" && printf x >> existing.md", root)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, KindPreUpdate, events[0].Kind)
+		assert.Equal(t, filepath.ToSlash(existing), events[0].Fields[FieldPath])
+	})
+
+	t.Run("a delete", func(t *testing.T) {
+		existing := filepath.Join(other, "gone.md")
+		require.NoError(t, os.WriteFile(existing, []byte("body\n"), 0o644))
+
+		events, err := extractForIn(t, "cd "+other+" && rm gone.md", root)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, KindPreDelete, events[0].Kind)
+		assert.Equal(t, filepath.ToSlash(existing), events[0].Fields[FieldPath])
+	})
+
+	// The regression this must not cause: a plain relative write with NO `cd`
+	// anywhere in the line still resolves against root exactly as before.
+	t.Run("no cd at all is unaffected", func(t *testing.T) {
+		events, err := extractForIn(t, "printf x > plain.md", root)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, "plain.md", events[0].Fields[FieldPath])
+	})
+}
+
+// TestExtractCommand_ACdWithinTheSameWorkspaceIsStillReportedProjectRelative
+// is the sibling case: a `cd` that stays INSIDE the session's own project
+// must still report the project-relative spelling every Pre-kind rule is
+// written against, exactly as an absolute in-workspace path already does (see
+// TestExtractCommand_AnAbsolutePathInsideTheWorkspaceIsReportedRelative
+// above). The fix must not turn every cd-affected path absolute; only one that
+// resolves outside stays that way.
+func TestExtractCommand_ACdWithinTheSameWorkspaceIsStillReportedProjectRelative(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "memories"), 0o755))
+
+	events, err := extractForIn(t, "cd "+filepath.Join(root, "memories")+" && printf x > new.md", root)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, KindPreCreate, events[0].Kind)
+	assert.Equal(t, "memories/new.md", events[0].Fields[FieldPath],
+		"a cd that stays inside the project must still report the project-relative spelling a rule's author can write")
+}
