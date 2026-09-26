@@ -1,6 +1,6 @@
 {
   "name": "sloprail-tasks",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Guardrails for a memories/tasks/ workflow: a task's body must be the human's ask (cited, and nothing else), its evidence must resolve, its in_review claim is judged, and a turn may not end with open work. Four use-case guardrails in the nature format, shipped as a self-testing plugin.",
   "keywords": [
     "claude-code",
