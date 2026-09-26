@@ -145,8 +145,9 @@ func (r Runner) checkContext(req Request, name string) Verdict {
 }
 
 // skillLoadedInTrajectory is the production skillLoaded: it reads the session's
-// record and reports whether a Skill tool_use naming the skill was made on the
-// main line of work.
+// own record — the record for the SESSION now doing the writing, be that the
+// root or a sub-agent — and reports whether a Skill tool_use naming the skill was
+// made on that record's own line of work.
 //
 // This is the native form of what the deprecated require-skill.sh did with
 // `sr-session query` and jq. The mechanics it settled are kept:
@@ -158,8 +159,30 @@ func (r Runner) checkContext(req Request, name string) Verdict {
 //     outright: the spec declares SkillToolInput and the measurement behind it
 //     (664 Skill calls, `skill` on every one) settles that there is no second
 //     field name to hedge against.
-//   - SUB-AGENT entries excluded (IsSidechain) — a skill loaded inside a delegated
-//     sub-agent was not loaded on the writing line of work.
+//
+// # Whose entries count as "the writing line of work"
+//
+// A root session's Stop reads its OWN transcript, and IsSidechain there marks
+// entries belonging to a DELEGATED sub-agent — a different line of work than the
+// one now writing, so those are excluded. A sub-agent's SubagentStop reads a
+// DIFFERENT file: its OWN transcript (HookPayload.record() resolves to
+// AgentTranscriptPath for that call), and every entry a harness writes there
+// carries IsSidechain true — that is simply how a harness marks "this file is a
+// sub-agent's", not a marker that some entries in it belong to a further-delegated
+// child. Measured in transcript.SubagentTranscriptPath's own survey: "every
+// record carried isSidechain true" for the 331 sub-agent files sampled, with none
+// carrying a LogicalParentUUID that would identify a nested grandchild.
+//
+// So IsSidechain cannot be read the same way in both files. Excluding it
+// unconditionally emptied a sub-agent's OWN Skill tool_use from its OWN
+// trajectory — the record a SubagentStop check is actually asked about — which
+// made `require: [{skill: ...}]` unsatisfiable there no matter how many times or
+// how recently the sub-agent invoked the Skill tool. The fix is to key the
+// exclusion on the FILE, not the flag: skip sidechain entries only when reading a
+// trajectory that is not itself a sub-agent's own record (transcript.
+// IsSubagentTranscript decides which file this is, once, before the walk). Inside
+// a sub-agent's own file every entry already belongs to the line of work now
+// writing, so nothing is excluded there.
 //
 // The record is read whole via transcript.Read, which already skips the harness's
 // bookkeeping lines. An unreadable record is an error the caller turns into a
@@ -170,13 +193,20 @@ func skillLoadedInTrajectory(transcriptPath, skill string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// Decided once, from the FILE, not per entry: a sub-agent's own transcript
+	// marks every entry IsSidechain, so treating that flag as "belongs to a
+	// delegated child" inside that very file would exclude everything in it. See
+	// the note above.
+	excludeSidechain := !transcript.IsSubagentTranscript(transcriptPath)
 	for _, e := range entries {
 		if e.Type != transcript.EntryAssistant {
 			continue
 		}
-		// The main line of work only. A skill loaded inside a sub-agent's own
-		// record is not one the writing agent loaded.
-		if e.IsSidechain {
+		// The main line of work only, WITHIN this trajectory. A skill loaded
+		// inside a sub-agent's own record, when THIS trajectory is a root's, was
+		// not loaded on the writing line of work; when THIS trajectory IS that
+		// sub-agent's own record, its entries are exactly that line of work.
+		if excludeSidechain && e.IsSidechain {
 			continue
 		}
 		for _, call := range transcript.ToolCalls(e) {
