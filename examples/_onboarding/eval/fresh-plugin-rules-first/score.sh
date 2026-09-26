@@ -78,16 +78,14 @@ if [ -n "$bin" ] && (cd "$P" && HOME="$H" "$bin" start </dev/null >/dev/null 2>&
 fi
 inst_bin="fail"
 [ -n "$bin" ] && [ "$from_release" = yes ] && [ "$bin_runs" = yes ] && inst_bin="pass"
-# Which build landed: the checkout's (install.sh honouring SLOPRAIL_RELEASE_URL,
-# the archive sr-eval built beside this HOME) or something else (a published
-# GitHub release fetched around install.sh).
+# Which build landed. Not by comparing bytes: install.sh re-signs every binary
+# on macOS (codesign --force), so an installed copy never matches its archive.
+# The announcement names the tag instead, and "checkout" is the tag only
+# sr-eval's local release of this checkout carries (SLOPRAIL_INSTALL_TAG).
 build="none"
-archive="$(ls "$H/../release/"*.tar.gz 2>/dev/null | head -1)"
-if [ -n "$bin" ] && [ -n "$archive" ]; then
-  want="$(tar -xzOf "$archive" "$(basename "$archive" .tar.gz)/sr-session" | shasum -a 256 | awk '{print $1}')"
-  got="$(shasum -a 256 "$bin" | awk '{print $1}')"
+if [ -n "$bin" ]; then
   build="other"
-  [ "$want" = "$got" ] && build="checkout"
+  grep -q 'sloprail: installed checkout' "$T" && build="checkout"
 fi
 [ "$build" = checkout ] || inst_bin="fail"
 
