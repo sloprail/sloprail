@@ -202,10 +202,16 @@ func abstain() Verdict { return Verdict{Abstained: true} }
 // zero-value Runner is used, so a caller that wants the real thing writes
 // `dispatch.Runner{}.Run(req)`.
 type Runner struct {
-	// skillLoaded reports whether a Skill tool_use for the named skill is in the
-	// session's own trajectory (excluding sub-agents). Defaults to the transcript
-	// reader; a test supplies its own.
-	skillLoaded func(transcriptPath, skill string) (bool, error)
+	// skillLoaded reports whether the named skill counts as loaded on the
+	// session's own trajectory (excluding sub-agents): a real Skill tool_use
+	// naming it, OR evidence that its own SKILL.md was read directly — a Read
+	// tool_use on the file, or a Bash command (cat, head, …) reading it.
+	// workspace is the tree the session runs against, threaded through so the
+	// skill name can be resolved to the file(s) it could be loaded from (see
+	// SkillFilePaths); "" degrades to the Skill-tool-use check alone, since no
+	// project root means no candidate path to look for. Defaults to the
+	// transcript reader; a test supplies its own.
+	skillLoaded func(transcriptPath, workspace, skill string) (bool, error)
 
 	// runJudge invokes the judge substrate and reports its verdict. Defaults to the
 	// sr-agent path; a test supplies its own so no model is called.
@@ -287,7 +293,7 @@ func (r Runner) CheckRequire(req Request) (Verdict, error) {
 // zero-value Runner is the real one and a test overrides exactly what it must.
 func (r Runner) withDefaults() Runner {
 	if r.skillLoaded == nil {
-		r.skillLoaded = skillLoadedInTrajectory
+		r.skillLoaded = skillLoaded
 	}
 	if r.runScript == nil {
 		r.runScript = runScriptExec

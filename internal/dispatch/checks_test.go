@@ -21,7 +21,7 @@ import (
 func TestPrepareFeedsAdditionalContext(t *testing.T) {
 	var judgeInput []byte
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(s scriptCall) (scriptResult, error) {
 			// This is the prepare step. Return the additionalContext envelope.
 			assert.Equal(t, "prep.sh", s.Script)
@@ -63,7 +63,7 @@ func TestPrepareFeedsAdditionalContext(t *testing.T) {
 func TestPrepareSkip_OnlyCheck_PermitsWithoutModelCall(t *testing.T) {
 	judgeAsked := false
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(scriptCall) (scriptResult, error) {
 			return scriptResult{Passed: true, Stdout: []byte(`{"skip":true}`)}, nil
 		},
@@ -84,7 +84,7 @@ func TestPrepareSkip_OnlyCheck_PermitsWithoutModelCall(t *testing.T) {
 // so the check-loop can tell "reached no verdict" from "passed".
 func TestPrepareSkip_RunJudgeCheckAbstains(t *testing.T) {
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(scriptCall) (scriptResult, error) {
 			return scriptResult{Passed: true, Stdout: []byte(`{"skip":true}`)}, nil
 		},
@@ -104,7 +104,7 @@ func TestPrepareSkip_DoesNotMaskALaterRefusal(t *testing.T) {
 	judgeAsked := false
 	secondRan := false
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(s scriptCall) (scriptResult, error) {
 			switch s.Script {
 			case "prep.sh":
@@ -139,7 +139,7 @@ func TestPrepareSkip_DoesNotMaskALaterRefusal(t *testing.T) {
 func TestPrepareSkip_FollowedByAPass_Permits(t *testing.T) {
 	secondRan := false
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(s scriptCall) (scriptResult, error) {
 			if s.Script == "ok.sh" {
 				secondRan = true
@@ -163,7 +163,7 @@ func TestPrepareSkip_FollowedByAPass_Permits(t *testing.T) {
 func TestPrepareSkipFalse_JudgeRuns(t *testing.T) {
 	judgeAsked := false
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(scriptCall) (scriptResult, error) {
 			return scriptResult{Passed: true, Stdout: []byte(`{"skip":false}`)}, nil
 		},
@@ -183,7 +183,7 @@ func TestPrepareSkipFalse_JudgeRuns(t *testing.T) {
 func TestPrepareEmptyOutput_NoAdditionalContext(t *testing.T) {
 	var judgeInput []byte
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript:   func(scriptCall) (scriptResult, error) { return scriptResult{Passed: true, Stdout: nil}, nil },
 		runJudge: func(j judgeCall) (Verdict, error) {
 			judgeInput = j.InputJSON
@@ -204,7 +204,7 @@ func TestPrepareEmptyOutput_NoAdditionalContext(t *testing.T) {
 func TestPrepareFailure_FailsCheckClosed(t *testing.T) {
 	judgeAsked := false
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(scriptCall) (scriptResult, error) {
 			return scriptResult{Passed: false, Reason: "prepare blew up"}, nil
 		},
@@ -225,7 +225,7 @@ func TestPrepareFailure_FailsCheckClosed(t *testing.T) {
 // a half-prepared prompt must not reach the model.
 func TestPrepareBadShape_FailsClosed(t *testing.T) {
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(scriptCall) (scriptResult, error) {
 			return scriptResult{Passed: true, Stdout: []byte(`not json at all`)}, nil
 		},
@@ -281,7 +281,7 @@ func TestParsePreparedContext(t *testing.T) {
 func TestPreparePayload_IsCheckPayload(t *testing.T) {
 	var prepStdin []byte
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(s scriptCall) (scriptResult, error) {
 			prepStdin = s.Stdin
 			return scriptResult{Passed: true}, nil

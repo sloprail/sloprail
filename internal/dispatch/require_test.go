@@ -76,7 +76,7 @@ func TestSkillLoadedInTrajectory_SubagentOwnRecord_SkillCounts(t *testing.T) {
 		skillToolUseEntry("sub-skill", "sub-origin", "document-decision", true),
 	)
 
-	loaded, err := skillLoadedInTrajectory(subPath, "document-decision")
+	loaded, err := skillLoadedInTrajectory(subPath, "", "document-decision")
 	require.NoError(t, err)
 	assert.True(t, loaded,
 		"a sub-agent's own Skill tool_use, in its own transcript, must count toward its own require: [{skill}] check")
@@ -93,7 +93,7 @@ func TestSkillLoadedInTrajectory_SubagentOwnRecord_NoSkillRefuses(t *testing.T) 
 		originEntry("sub-origin", true),
 	)
 
-	loaded, err := skillLoadedInTrajectory(subPath, "document-decision")
+	loaded, err := skillLoadedInTrajectory(subPath, "", "document-decision")
 	require.NoError(t, err)
 	assert.False(t, loaded, "no Skill tool_use anywhere in the record: the requirement is not met")
 }
@@ -117,7 +117,7 @@ func TestSkillLoadedInTrajectory_RootExcludesExitedChildSubagent(t *testing.T) {
 		skillToolUseEntry("child-skill", "root-origin", "document-decision", true),
 	)
 
-	loaded, err := skillLoadedInTrajectory(rootPath, "document-decision")
+	loaded, err := skillLoadedInTrajectory(rootPath, "", "document-decision")
 	require.NoError(t, err)
 	assert.False(t, loaded,
 		"a skill loaded on a delegated child's line of work, inside the ROOT's own transcript, "+
@@ -135,7 +135,7 @@ func TestSkillLoadedInTrajectory_RootOwnSkillStillCounts(t *testing.T) {
 		skillToolUseEntry("root-skill", "root-origin", "document-decision", false),
 	)
 
-	loaded, err := skillLoadedInTrajectory(rootPath, "document-decision")
+	loaded, err := skillLoadedInTrajectory(rootPath, "", "document-decision")
 	require.NoError(t, err)
 	assert.True(t, loaded, "the root's own Skill tool_use in its own transcript must count")
 }

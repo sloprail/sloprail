@@ -1,8 +1,10 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"fmt"
 
+	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -65,13 +67,15 @@ func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verd
 	return pass(), nil
 }
 
-// checkSkill refuses unless a real Skill tool_use for this skill is in the
-// session's own trajectory.
+// checkSkill refuses unless the session's own trajectory holds either a real
+// Skill tool_use for this skill, or evidence that its own SKILL.md was read
+// directly (a Read tool_use on the file, or a file-reading Bash command) — see
+// skillLoadedInTrajectory for both halves.
 //
 // "In the session's own trajectory" excludes sub-agents, which is what
-// skillLoaded does — a skill loaded inside a delegated sub-agent was not loaded
-// on the line of work doing the writing, the same default the deprecated
-// require-skill.sh took by excluding sidechains.
+// skillLoaded does — a skill loaded (or its file read) inside a delegated
+// sub-agent was not loaded on the line of work doing the writing, the same
+// default the deprecated require-skill.sh took by excluding sidechains.
 //
 // A transcript that cannot be read, or that was never named (TranscriptPath ==
 // ""), is a REFUSAL, not a permit — a precondition that could not be checked is
@@ -89,7 +93,7 @@ func (r Runner) checkSkill(req Request, skill string) (Verdict, error) {
 			skill)), nil
 	}
 
-	loaded, err := r.skillLoaded(req.TranscriptPath, skill)
+	loaded, err := r.skillLoaded(req.TranscriptPath, req.Workspace, skill)
 	if err != nil {
 		// The record could not be read. Same fail-closed answer as an absent path:
 		// a precondition that could not be checked has not passed.
@@ -109,12 +113,17 @@ func (r Runner) checkSkill(req Request, skill string) (Verdict, error) {
 //
 // It names the skill and says the check reads the RECORD, not a claim, because
 // the whole value of a native skill prerequisite over prose is that "I read the
-// skill" is not what is checked. Carried word-for-word from require-skill.sh's own
-// refusal, which had been tuned against real agents.
+// skill" is not what is checked. The Skill-tool-use wording is carried
+// word-for-word from require-skill.sh's own refusal, which had been tuned
+// against real agents; the second sentence names the read-detection half
+// (skillLoadedInTrajectory) so a refusal does not describe only one of the two
+// ways to clear it.
 func skillRemedy(skill string) string {
 	return fmt.Sprintf(
-		"SKILL REQUIRED: this action requires the %q skill to have been loaded first, and this session's record holds no Skill tool_use naming it. "+
-			"Invoke the Skill tool with skill %q, then retry. Stating that you have read it is not what is checked — the session's own record is.",
+		"SKILL REQUIRED: this action requires the %q skill to have been loaded first, and this session's record holds no Skill tool_use naming it, "+
+			"and no Read or file-reading Bash command (cat, head, …) on its SKILL.md either. "+
+			"Invoke the Skill tool with skill %q, then retry — or read the skill's own SKILL.md file directly. "+
+			"Stating that you have read it is not what is checked — the session's own record is.",
 		skill, skill)
 }
 
@@ -188,11 +197,39 @@ func (r Runner) checkContext(req Request, name string) Verdict {
 // bookkeeping lines. An unreadable record is an error the caller turns into a
 // fail-closed refusal, not a false — "could not read" and "was not loaded" are
 // different facts and only the second is an answer.
-func skillLoadedInTrajectory(transcriptPath, skill string) (bool, error) {
+//
+// # The second way to satisfy this: reading the skill's own file directly
+//
+// A Skill tool_use is not the only trajectory evidence that a skill was
+// genuinely consulted. An agent that opened the skill's own SKILL.md — with the
+// Read tool, or with a Bash command that reads it whole (`cat`, `head`, `less`,
+// …, see commandmod.ReadsFile) — has looked at exactly the same content loading
+// the skill would have shown it, through a channel the record can verify just as
+// concretely as a Skill tool_use: the file path is either named on a Read
+// tool_use's `file_path`, or found by commandmod's own command-line parser
+// inside a Bash tool_use's `command`. Neither is a claim — both are the kind of
+// native, record-grounded fact `{skill}` exists to check instead of prose.
+//
+// This is why the walk below checks BOTH per entry in one pass, rather than two
+// separate trajectory reads: same entries, same sidechain-exclusion rule, same
+// tool-call extraction, so the two ways to satisfy the prerequisite cannot
+// disagree about which entries are "this line of work".
+//
+// workspace resolves the skill NAME to the file path(s) it could be loaded
+// from (SkillFilePaths) — a Read or Bash tool_use names a PATH, not a skill
+// name, so the connection has to be made before any entry is read. An empty
+// workspace (no project root resolvable) yields no candidate paths, and the
+// read-file half of this check then finds nothing to match — degrading to the
+// Skill-tool-use check alone, never a refusal of its own: a workspace that
+// could not be resolved is a fact about the session, already surfaced
+// elsewhere, and is not this function's fact to refuse a second time.
+func skillLoadedInTrajectory(transcriptPath, workspace, skill string) (bool, error) {
 	entries, err := transcript.Read(transcriptPath)
 	if err != nil {
 		return false, err
 	}
+	skillPaths := SkillFilePaths(workspace, skill)
+
 	// Decided once, from the FILE, not per entry: a sub-agent's own transcript
 	// marks every entry IsSidechain, so treating that flag as "belongs to a
 	// delegated child" inside that very file would exclude everything in it. See
@@ -210,13 +247,81 @@ func skillLoadedInTrajectory(transcriptPath, skill string) (bool, error) {
 			continue
 		}
 		for _, call := range transcript.ToolCalls(e) {
-			if call.Name != "Skill" {
-				continue
-			}
-			if skillNameOf(call) == skill {
-				return true, nil
+			switch call.Name {
+			case "Skill":
+				if skillNameOf(call) == skill {
+					return true, nil
+				}
+			case "Read":
+				if len(skillPaths) > 0 && pathReadByReadTool(call, skillPaths) {
+					return true, nil
+				}
+			default:
+				if len(skillPaths) > 0 && commandReadsAnyOf(call, skillPaths) {
+					return true, nil
+				}
 			}
 		}
 	}
 	return false, nil
+}
+
+// pathReadByReadTool reports whether a Read tool_use's `file_path` is exactly
+// one of the candidate skill paths.
+//
+// `file_path` is the same key filemod's own write-tool reading uses
+// (pendingshape.go's FilePath) — one field name, one convention, across every
+// tool that names a file directly rather than through a command line.
+func pathReadByReadTool(call transcript.ToolCall, skillPaths []string) bool {
+	var in struct {
+		FilePath string `json:"file_path"`
+	}
+	if json.Unmarshal(call.Input, &in) != nil || in.FilePath == "" {
+		return false
+	}
+	for _, p := range skillPaths {
+		if in.FilePath == p {
+			return true
+		}
+	}
+	return false
+}
+
+// commandReadsAnyOf reports whether a tool_use carrying a shell command
+// (`command`, the shape any Bash-like tool uses — see commandmod's own Pending)
+// reads any of the candidate skill paths whole.
+//
+// Read the same way commandmod's own module reads a pending command's
+// arguments: decode `command` and hand it to the parser. Not gated on the tool
+// NAME the way commandmod's Extract is (HarnessCommandTools) — a name allowlist
+// exists there to bound which tools produce a PreCommandInvoke event system-wide,
+// a much bigger surface than this one prerequisite check. Here a tool_use naming
+// no `command` field simply contributes nothing, which is the same "not a
+// shape this reads" answer arrived at without a name gate at all — no drift risk
+// results, because the failure mode of skipping the gate is a wasted parse on an
+// unrelated tool's input, not a wrongly-satisfied prerequisite.
+func commandReadsAnyOf(call transcript.ToolCall, skillPaths []string) bool {
+	var in struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(call.Input, &in) != nil || in.Command == "" {
+		return false
+	}
+	for _, p := range skillPaths {
+		if commandmod.ReadsFile(in.Command, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// skillLoaded is the production Runner.skillLoaded: skillLoadedInTrajectory
+// under the name Runner.withDefaults assigns to the zero-value Runner.
+//
+// A thin wrapper rather than assigning skillLoadedInTrajectory directly so the
+// two names read distinctly at each call site — skillLoaded is what a Runner
+// calls, skillLoadedInTrajectory is what does the work — the same split
+// dispatch.go's own doc comment on the Runner field describes.
+func skillLoaded(transcriptPath, workspace, skill string) (bool, error) {
+	return skillLoadedInTrajectory(transcriptPath, workspace, skill)
 }

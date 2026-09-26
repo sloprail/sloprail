@@ -23,7 +23,7 @@ import (
 func TestJudgeCheck_ModelAndTimeoutThreadToJudgeCall(t *testing.T) {
 	var got judgeCall
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runJudge: func(j judgeCall) (Verdict, error) {
 			got = j
 			return pass(), nil
@@ -47,7 +47,7 @@ func TestJudgeCheck_ModelAndTimeoutThreadToJudgeCall(t *testing.T) {
 func TestJudgeCheck_UnsetModelTimeoutAreZeroOnJudgeCall(t *testing.T) {
 	var got judgeCall
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runJudge: func(j judgeCall) (Verdict, error) {
 			got = j
 			return pass(), nil
@@ -67,7 +67,7 @@ func TestJudgeCheck_UnsetModelTimeoutAreZeroOnJudgeCall(t *testing.T) {
 func TestJudgeCheck_MalformedTimeoutFailsClosed(t *testing.T) {
 	judgeAsked := false
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runJudge: func(judgeCall) (Verdict, error) {
 			judgeAsked = true
 			return pass(), nil
