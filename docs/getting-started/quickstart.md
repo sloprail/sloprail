@@ -10,9 +10,11 @@ but never refuses is worse than no rule at all.
 
 ## Before you start
 
-You need sloprail installed as a plugin in your harness. If you haven't:
+You need both the `sr*` binaries and the plugin — see
+[Install](/getting-started/install) for the full sequence. In short:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
 # Claude Code
 /plugin install sloprail@sloprail-marketplace
 ```

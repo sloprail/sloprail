@@ -176,6 +176,31 @@ func runFileGuardsPreventive(
 			// including a genuinely-empty one) has resultKnown true and is judged
 			// normally, so this refuses only the truly-underivable write.
 			if isUnderivablePreWrite(e) {
+				// require FIRST, even here. `{skill}`/`{context}` need no content at
+				// all — they read the trajectory, not the write — so when BOTH a
+				// missing prerequisite and an unverifiable write are true of this
+				// event, the missing prerequisite is the reason worth giving: it names
+				// exactly what to fix ("load the skill"), where "could not verify this
+				// write" is true of a Bash-derived write to this path REGARDLESS of the
+				// skill, and does not tell the agent what would have made it pass. This
+				// was the smoke test's P2 finding — a raw Bash write refused for the
+				// generic content-unverifiable reason even though require was the rule
+				// that actually applied. Same fail-closed direction either way: a
+				// missing require still refuses, so this is a message improvement, not
+				// a change in what is enforced.
+				reqReq := dispatchcore.Request{
+					Require:        g.Require,
+					TranscriptPath: scope.Transcript,
+					Context:        contextMap,
+				}
+				if v, err := runner.CheckRequire(reqReq); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %s require: %v\n", g.Attribution(), err)
+					return fmt.Sprintf(
+						"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval (file-guard %s)",
+						g.Name, err, g.Attribution())
+				} else if v.Refused {
+					return fmt.Sprintf("%s (file-guard %s)", v.Reason, g.Attribution())
+				}
 				return fmt.Sprintf(
 					"the %q file-guard is preventive and could not verify this write before it lands: the engine could not compute the result of this %s "+
 						"(a change whose settled bytes are not known ahead of time — a command-derived edit, or a notebook create whose cell source is not the document), "+

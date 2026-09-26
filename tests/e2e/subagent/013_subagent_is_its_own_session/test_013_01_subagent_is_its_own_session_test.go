@@ -106,7 +106,7 @@ func TestT013_01_PluginBindsSubagentStop(t *testing.T) {
 	if len(commands) == 0 {
 		t.Fatalf("the plugin binds nothing to SubagentStop — a sub-agent's cycle ends with no guardrail running")
 	}
-	if !slices.Contains(commands, "sr-session subagent-stop") {
+	if !slices.Contains(commands, `"${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh" subagent-stop`) {
 		t.Fatalf("SubagentStop is bound to %v, not to the command that ends a sub-agent's cycle", commands)
 	}
 
@@ -308,7 +308,7 @@ func TestT013_04_ASharedTreeSubagentCompletesToo(t *testing.T) {
 // still pass.
 func TestT013_05_PluginStillBindsTheRootStop(t *testing.T) {
 	commands := boundCommands(t, "Stop")
-	if !slices.Contains(commands, "sr-session stop") {
+	if !slices.Contains(commands, `"${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh" stop`) {
 		t.Fatalf("Stop is bound to %v, not to the command that ends a root session's cycle", commands)
 	}
 }

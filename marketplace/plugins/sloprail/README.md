@@ -24,16 +24,32 @@ has enabled `sloprail@sloprail-marketplace` gets
 `.sloprail/file-guard/authoring-slop/` from inside this installation, without
 copying anything and without this plugin telling the engine where it lives.
 
-So `hooks.json` maps lifecycle names to subcommands and does nothing else:
+So `hooks.json` maps lifecycle names to subcommands and does nothing else,
+through a small wrapper (`hooks/sr-session-hook.sh`, resolved via
+`${CLAUDE_PLUGIN_ROOT}` since a plugin's hook command is not run from its own
+directory) that exists for exactly one reason: `/plugin install` registers
+these hooks whether or not the `sr*` binaries are anywhere on the consumer's
+machine, and calling `sr-session` bare made that gap silent — the session ran
+completely unguarded, no error, no warning. The wrapper checks for `sr-session`
+first; if it is missing, `pre-tool` (the one moment that is actually a guarded
+action) refuses with the install command, and `start`/`stop`/`subagent-stop`
+warn loudly rather than brick the session outright. See the script's own header
+comment for the full reasoning, and
+`../../../docs/getting-started/install.mdx` for the consumer-facing install
+sequence this exists to make unmissable if it's ever skipped.
 
-    sr-session pre-tool
+    "${CLAUDE_PLUGIN_ROOT}/hooks/sr-session-hook.sh" pre-tool
 
 ### Why discovery is not done from here
 
-An earlier design had each hook pass its own `${CLAUDE_PLUGIN_ROOT}` to the
-engine in an environment variable. It kept the engine free of any Claude Code
-paths, and it was wrong for a reason no amount of isolation fixes: **it only
-discovers a plugin that fired a hook.**
+**This `${CLAUDE_PLUGIN_ROOT}` use is unrelated to the one rejected below** — it
+only locates a file inside this plugin's own installation to exec, and is never
+passed to the engine or used to discover anything. The design rejected here is
+a different one: an earlier attempt had each hook pass `${CLAUDE_PLUGIN_ROOT}`
+*to the engine* in an environment variable, as the mechanism for finding a
+plugin's *guardrails*. It kept the engine free of any Claude Code paths, and it
+was wrong for a reason no amount of isolation fixes: **it only discovers a
+plugin that fired a hook.**
 
 A plugin that ships guardrails and registers no hooks would be invisible. Worse,
 discovery became a property of what happened to RUN rather than of what the repo

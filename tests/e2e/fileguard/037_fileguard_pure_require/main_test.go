@@ -40,6 +40,7 @@ var (
 	Turns = harness.Turns
 	Write = harness.Write
 	Skill = harness.Skill
+	Bash  = harness.Bash
 )
 
 // commitGuards commits the project's `.sloprail` tree so a guard installed after
