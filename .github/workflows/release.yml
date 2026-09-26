@@ -70,12 +70,16 @@ jobs:
       # Notes for THIS tag alone (--latest), grouped by conventional-commit
       # type (feat/fix/docs/...) per cliff.toml — replaces GitHub's own
       # generate_release_notes (a flat PR list with no grouping).
+      # --github-repo resolves each commit's PR author via the GitHub API
+      # (cliff.toml's `commit.remote.username`, rendered as `` `by @user` ``)
+      # — the action already forwards github.token as GITHUB_TOKEN, which
+      # git-cliff reads on its own, so no separate token wiring is needed.
       - name: generate changelog
         uses: orhun/git-cliff-action@v4
         id: changelog
         with:
           config: cliff.toml
-          args: --latest --strip header
+          args: --latest --strip header --github-repo ${{ github.repository }}
         env:
           OUTPUT: CHANGES.md
 
