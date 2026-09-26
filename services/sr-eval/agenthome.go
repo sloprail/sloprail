@@ -29,50 +29,59 @@ var sloprailRemotes = []string{
 	"https://github.com/sloprail/sloprail",
 }
 
-// freshEnv is how a FreshMachine agent-under-test is launched: its HOME, the
-// environment it runs in, and where its harness keeps transcripts.
-type freshEnv struct {
+// agentEnv is how an agent-under-test is launched: its HOME, the environment
+// it runs in, and where its harness keeps transcripts. releaseURL is set only
+// for a FreshMachine run.
+type agentEnv struct {
 	home       string
 	env        []string
 	configDir  string
 	releaseURL string
 }
 
-// freshHome builds a HOME on which sloprail was never installed, and the
-// environment that runs the agent-under-test inside it.
+// agentHome builds the HOME every agent-under-test runs in, and the
+// environment that runs it there. Every run gets one, not only a FreshMachine
+// run: the plugin install (writeSettings) and the agent both write Claude
+// Code's user-level state — known_marketplaces.json, installed_plugins.json,
+// memory, transcripts — and in the operator's real HOME that repointed their
+// own sloprail-marketplace at whichever checkout last ran an eval, and let
+// their own user-scope plugins load into the agent-under-test. Here all of it
+// lands inside the workspace and is removed with it; the real HOME is never
+// written.
 //
-// What a developer's machine has is carried over, because an onboarding a
-// stranger could not complete without it would be testing the sandbox:
+// What a developer's machine has is carried over, because a run that could
+// not work without it would be testing the sandbox:
 //
 //   - ~/Library is linked (macOS): the login keychain lives there, and it
 //     holds both Claude Code's own login and gh's token. Without it the agent
-//     cannot even start ("Not logged in"), measured.
+//     cannot even start ("Not logged in"), measured. (CLAUDE_CONFIG_DIR is
+//     cleared, not repointed: setting it changes the keychain entry Claude
+//     Code reads, measured the same way.)
 //   - ~/.ssh is linked: SSH to GitHub. (OpenSSH reads the passwd home, not
 //     $HOME, so it works either way; linked so `ls ~/.ssh` agrees.)
 //   - ~/.gitconfig and ~/.config/gh are COPIED, not linked: an agent that runs
 //     `git config --global` or re-logs gh must not reach the real ones.
 //
-// The plugin is installed into this HOME afterwards, by writeSettings with
-// this environment — the one thing a newcomer has done. What an install of the
-// binaries leaves behind is not there: no ~/.local/bin, no ~/go/bin, no
-// ~/.claude (so no known marketplaces, no installed plugins, no memory), and
-// PATH loses every directory that holds a sloprail binary. The real HOME is
-// never written.
-func (w *workspace) freshHome(ctx context.Context, repoRoot string) (freshEnv, error) {
+// An ordinary run keeps this build's binaries first on PATH (binDir), exactly
+// as before. A FreshMachine run instead gets a PATH with no sloprail binary on
+// it and nothing in ~/.local/bin or ~/go/bin, install.sh pointed at this
+// checkout's build (SLOPRAIL_RELEASE_URL), and sloprail's git remote
+// redirected to this checkout.
+func (w *workspace) agentHome(ctx context.Context, repoRoot, binDir string, fresh bool) (agentEnv, error) {
 	realHome, err := os.UserHomeDir()
 	if err != nil {
-		return freshEnv{}, fmt.Errorf("locate the real HOME: %w", err)
+		return agentEnv{}, fmt.Errorf("locate the real HOME: %w", err)
 	}
 	home := filepath.Join(w.root, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
-		return freshEnv{}, err
+		return agentEnv{}, err
 	}
 
 	for _, name := range []string{"Library", ".ssh"} {
 		src := filepath.Join(realHome, name)
 		if _, err := os.Stat(src); err == nil {
 			if err := os.Symlink(src, filepath.Join(home, name)); err != nil {
-				return freshEnv{}, fmt.Errorf("link ~/%s: %w", name, err)
+				return agentEnv{}, fmt.Errorf("link ~/%s: %w", name, err)
 			}
 		}
 	}
@@ -89,8 +98,40 @@ func (w *workspace) freshHome(ctx context.Context, repoRoot string) (freshEnv, e
 			err = copyFile(src, dst)
 		}
 		if err != nil {
-			return freshEnv{}, fmt.Errorf("copy ~/%s: %w", name, err)
+			return agentEnv{}, fmt.Errorf("copy ~/%s: %w", name, err)
 		}
+	}
+
+	// Its own temp dir too, so a clone or download made through mktemp or
+	// $TMPDIR is removed with the workspace instead of outliving the run.
+	tmp := filepath.Join(w.root, "tmp")
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		return agentEnv{}, err
+	}
+
+	env := make([]string, 0, len(os.Environ())+6)
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		switch {
+		case key == "HOME", key == "PATH", key == "TMPDIR", key == "CLAUDE_CONFIG_DIR",
+			key == "XDG_CONFIG_HOME", key == "XDG_DATA_HOME":
+			continue
+		case fresh && (key == "GOBIN" || key == "GOPATH" || strings.HasPrefix(key, "SLOPRAIL_")):
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "HOME="+home, "TMPDIR="+tmp)
+
+	ae := agentEnv{home: home, configDir: filepath.Join(home, ".claude")}
+	if !fresh {
+		// Go's module cache defaults to $HOME/go: keep it the real one rather
+		// than re-downloading every module into the workspace.
+		if os.Getenv("GOPATH") == "" {
+			env = append(env, "GOPATH="+filepath.Join(realHome, "go"))
+		}
+		ae.env = append(env, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		return ae, nil
 	}
 
 	gitconfig := filepath.Join(home, ".gitconfig")
@@ -99,42 +140,22 @@ func (w *workspace) freshHome(ctx context.Context, repoRoot string) (freshEnv, e
 			set := exec.Command("git", "config", "--file", gitconfig, "--add",
 				"url."+repoRoot+".insteadOf", spelling)
 			if out, err := set.CombinedOutput(); err != nil {
-				return freshEnv{}, fmt.Errorf("redirect %s: %w: %s", spelling, err, strings.TrimSpace(string(out)))
+				return agentEnv{}, fmt.Errorf("redirect %s: %w: %s", spelling, err, strings.TrimSpace(string(out)))
 			}
 		}
 	}
-
 	path, err := freshPath(home)
 	if err != nil {
-		return freshEnv{}, err
-	}
-
-	env := make([]string, 0, len(os.Environ())+3)
-	for _, kv := range os.Environ() {
-		key, _, _ := strings.Cut(kv, "=")
-		switch {
-		case key == "HOME", key == "PATH", key == "TMPDIR", key == "CLAUDE_CONFIG_DIR",
-			key == "XDG_CONFIG_HOME", key == "XDG_DATA_HOME", key == "GOBIN", key == "GOPATH",
-			strings.HasPrefix(key, "SLOPRAIL_"):
-			continue
-		}
-		env = append(env, kv)
-	}
-	// Its own temp dir too, so a clone or download made through mktemp or
-	// $TMPDIR is removed with the workspace instead of outliving the run.
-	tmp := filepath.Join(w.root, "tmp")
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		return freshEnv{}, err
+		return agentEnv{}, err
 	}
 	releaseDir := filepath.Join(w.root, "release")
 	if err := buildRelease(ctx, repoRoot, releaseDir); err != nil {
-		return freshEnv{}, fmt.Errorf("build this checkout's release: %w", err)
+		return agentEnv{}, fmt.Errorf("build this checkout's release: %w", err)
 	}
-	releaseURL := "file://" + releaseDir
-	env = append(env, "HOME="+home, "PATH="+path, "TMPDIR="+tmp,
-		"SLOPRAIL_RELEASE_URL="+releaseURL, "SLOPRAIL_INSTALL_TAG=checkout")
-
-	return freshEnv{home: home, env: env, configDir: filepath.Join(home, ".claude"), releaseURL: releaseURL}, nil
+	ae.releaseURL = "file://" + releaseDir
+	ae.env = append(env, "PATH="+path,
+		"SLOPRAIL_RELEASE_URL="+ae.releaseURL, "SLOPRAIL_INSTALL_TAG=checkout")
+	return ae, nil
 }
 
 // buildRelease builds this host's release archive from the checkout into dir,

@@ -76,6 +76,12 @@ Everything is copied or cloned fresh, never symlinked — the agent-under-test
 mutates the tree, and neither the fixture's own `seed/` under `examples/` nor
 an operator's local clone of a `repo:` may be touched by a run.
 
+The agent runs in a HOME of its own inside the workspace (`home/`), where the
+plugin is installed for it. Your real `~/.claude` (marketplaces, installed
+plugins, memory) is never written, and your user-scope plugins do not load
+into the agent. Its transcript is under `home/.claude/projects/`; the scorer
+gets that HOME as `SR_EVAL_AGENT_HOME`.
+
 ## `LoadFixture` refuses to load when
 
 - neither `seed` nor `repo` is set, or both are (exactly one, always)
