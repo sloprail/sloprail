@@ -52,7 +52,7 @@ type recordingRunner struct {
 
 func (rr *recordingRunner) runner() Runner {
 	return Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(s scriptCall) (scriptResult, error) {
 			rr.scriptOrder = append(rr.scriptOrder, s.Script)
 			passed := true
@@ -122,7 +122,7 @@ func TestRun_RequireRefusesBeforeChecks(t *testing.T) {
 	rr := &recordingRunner{}
 	r := rr.runner()
 	// A skill require that is not met.
-	r.skillLoaded = func(string, string) (bool, error) { return false, nil }
+	r.skillLoaded = func(string, string, string) (bool, error) { return false, nil }
 	v, err := r.Run(gateReq(
 		[]declaration.Check{scriptCheck("a.sh")},
 		[]declaration.Prerequisite{{Skill: "document-topic"}}))
@@ -144,7 +144,7 @@ func TestRun_PureRequireMet_Admits(t *testing.T) {
 
 func TestCheckSkill_LoadedAdmits_MissingRefuses(t *testing.T) {
 	// Loaded.
-	r := Runner{skillLoaded: func(_ string, s string) (bool, error) {
+	r := Runner{skillLoaded: func(_ string, _ string, s string) (bool, error) {
 		return s == "document-topic", nil
 	}}
 	v, err := r.Run(gateReq(nil, []declaration.Prerequisite{{Skill: "document-topic"}}))
@@ -163,7 +163,7 @@ func TestCheckSkill_LoadedAdmits_MissingRefuses(t *testing.T) {
 // A skill require fails CLOSED when the transcript cannot be read — a precondition
 // that could not be checked is not one that passed.
 func TestCheckSkill_UnreadableTranscript_FailsClosed(t *testing.T) {
-	r := Runner{skillLoaded: func(string, string) (bool, error) {
+	r := Runner{skillLoaded: func(string, string, string) (bool, error) {
 		return false, assertAnError{}
 	}}
 	v, err := r.Run(gateReq(nil, []declaration.Prerequisite{{Skill: "document-topic"}}))
@@ -214,7 +214,7 @@ func TestCheckContext_ActiveAdmits_InactiveRefuses(t *testing.T) {
 func TestScriptPayload_GateShape(t *testing.T) {
 	var captured []byte
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(s scriptCall) (scriptResult, error) {
 			captured = s.Stdin
 			return scriptResult{Passed: true}, nil
@@ -251,7 +251,7 @@ func TestScriptPayload_GateShape(t *testing.T) {
 func TestScriptPayload_ContextAlwaysObject(t *testing.T) {
 	var captured []byte
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(s scriptCall) (scriptResult, error) {
 			captured = s.Stdin
 			return scriptResult{Passed: true}, nil
@@ -269,7 +269,7 @@ func TestScriptPayload_ContextAlwaysObject(t *testing.T) {
 func TestScriptPayload_FileGuardShape(t *testing.T) {
 	var captured []byte
 	r := Runner{
-		skillLoaded: func(string, string) (bool, error) { return true, nil },
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
 		runScript: func(s scriptCall) (scriptResult, error) {
 			captured = s.Stdin
 			return scriptResult{Passed: true}, nil
