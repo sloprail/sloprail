@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sr_session_hook_wrapper_test.go proves the fix for the clean-install smoke
@@ -50,20 +51,12 @@ func hookScriptPath(t *testing.T) string {
 // fake HOME, and Go keeps more than one kind of state under HOME: the module
 // cache (GOPATH/GOMODCACHE — GOPATH defaults to $HOME/go, GOMODCACHE to
 // $GOPATH/pkg/mod), the build cache (GOCACHE), its own config file (GOENV),
-// toolchain selection (GOTOOLCHAIN), AND, separately, its telemetry counters
-// (GOTELEMETRY, GOTELEMETRYDIR — a newer subsystem, unrelated to the module
-// cache, that `go env` itself touches on every invocation once
-// GOTELEMETRY=local, Go's own default). A subprocess `go` invocation that
+// and toolchain selection (GOTOOLCHAIN). A subprocess `go` invocation that
 // writes ANY of these into the fake HOME populates a REAL, persistent
-// directory inside the very t.TempDir() being torn down. Measured in CI
-// across two DIFFERENT such writes as each was fixed in turn: first the
-// module cache ("unlinkat .../go/pkg/mod/golang.org/toolchain@.../lib/wasm/
+// directory inside the very t.TempDir() being torn down. Measured in CI:
+// "unlinkat .../go/pkg/mod/golang.org/toolchain@.../lib/wasm/
 // go_wasip1_wasm_exec: permission denied" — the module cache ships read-only
-// files), then telemetry ("unlinkat .../.config/go/telemetry: directory not
-// empty" — a live counter file was still open/pending when RemoveAll ran).
-// t.TempDir()'s cleanup cannot reliably remove either on every
-// filesystem/runner, hence CI-only failures with no test assertion ever
-// actually failing.
+// files, so t.TempDir()'s cleanup cannot remove it.
 //
 // This is resolved via `go env`, NOT read from os.Environ(): these variables
 // are normally unset in a real environment (Go computes them from GOPATH/HOME
@@ -74,14 +67,75 @@ func hookScriptPath(t *testing.T) string {
 // pins every one of these locations there regardless of what HOME says. The
 // subprocess's Go toolchain, if invoked at all, then keeps using the outer
 // test run's already-warm, real state — never a location inside a
-// t.TempDir() this file created. Only HOME (and PATH, the property under
-// test) are isolated. Paired with cmd.Dir (see noModuleDir): together they
-// remove both what a subprocess `go` command would read (this repo's
-// go.mod, invisible from outside the module) and where it would write
+// t.TempDir() this file created. Paired with cmd.Dir (see noModuleDir):
+// together they remove both what a subprocess `go` command would read (this
+// repo's go.mod, invisible from outside the module) and where it would write
 // (every HOME-relative state directory, pinned to the real ones).
+//
+// # Why GOTELEMETRY/GOTELEMETRYDIR are NOT here
+//
+// They used to be, and it was a confidently wrong fix rather than a working
+// one — `go env` lists both under the read-only "non-settable" set
+// (cmd/go/internal/envcmd/env.go's switch naming GOTOOLDIR, GOVERSION,
+// GOTELEMETRY, GOTELEMETRYDIR and others as computed, never accepted as
+// input), and the actual telemetry directory a running `go` binary writes to
+// is a package-level global computed ONCE, at process init, straight from
+// os.UserConfigDir() (golang.org/x/telemetry/internal/telemetry's `init()`).
+// Nothing in that path consults an environment variable named
+// GOTELEMETRYDIR at all. So setting it here changed what `go env
+// GOTELEMETRYDIR` PRINTS in a later `go env` call, and changed nothing about
+// where telemetry's counter files, upload token, and mode-tracking file are
+// actually written — which is exactly the directory-not-empty failure this
+// task chased down: a `go env GOPATH` subprocess quietly wrote real
+// telemetry state under the fake, about-to-be-removed HOME regardless of
+// this slice, because the slice's GOTELEMETRYDIR entry was never read by
+// anything that mattered. Verified directly: even `HOME=<fake>
+// GOTELEMETRY=off GOTELEMETRYDIR=<real> go env GOPATH` still creates
+// <fake>/Library/Application Support/go/telemetry/local/*.count (darwin) —
+// the env vars are accepted by the shell and ignored by the toolchain.
+//
+// xdgConfigHomeOverride (below) is what actually redirects it, on the one
+// platform this fix can reach at all — see its own doc comment for why
+// darwin is a separate story and hookHOME's retrying cleanup is the backstop
+// for it.
 var goEnvPassthrough = resolveGoEnv(
-	"GOPATH", "GOMODCACHE", "GOCACHE", "GOENV", "GOTOOLCHAIN",
-	"GOTELEMETRY", "GOTELEMETRYDIR")
+	"GOPATH", "GOMODCACHE", "GOCACHE", "GOENV", "GOTOOLCHAIN")
+
+// xdgConfigHomeOverride is the REAL user config directory, resolved once in
+// the outer test process, to be passed into every hook-script subprocess as
+// an explicit $XDG_CONFIG_HOME.
+//
+// On Linux (the CI runner every one of these tests actually runs on),
+// os.UserConfigDir() — which is what golang.org/x/telemetry's package-level
+// `Default` is built from at process init — checks $XDG_CONFIG_HOME BEFORE
+// $HOME/.config (os/file.go's UserConfigDir, the `default:` / Unix case).
+// Pinning it to the value this machine's REAL config directory already
+// resolves to means a subprocess whose $HOME points at a fake, about-to-be-
+// removed t.TempDir() still computes its telemetry directory (and anything
+// else that goes through os.UserConfigDir) from the real, already-existing,
+// never-torn-down location — so nothing gets WRITTEN under the fake HOME for
+// this to race against in the first place. This is the actual fix for the
+// measured CI failure ("unlinkat .../.config/go/telemetry/local: directory
+// not empty"): .config is exactly the path XDG_CONFIG_HOME redirects away
+// from HOME on Linux.
+//
+// On darwin, os.UserConfigDir() is hard-wired to
+// "$HOME/Library/Application Support" (file.go's `darwin, ios` case) and
+// does not consult XDG_CONFIG_HOME at all — there is no environment variable
+// that redirects it, which is the same dead end GOTELEMETRYDIR turned out to
+// be. This override is therefore a real fix on Linux and a harmless no-op
+// everywhere else; hookHOME's retry is what covers the residual local-dev
+// risk on darwin, where this whole class of bug was always going to be
+// possible to hit at low frequency rather than something an environment
+// variable can close off entirely.
+func resolveXDGConfigHomeOverride() string {
+	if dir, err := os.UserConfigDir(); err == nil {
+		return dir
+	}
+	return ""
+}
+
+var xdgConfigHomeOverride = resolveXDGConfigHomeOverride()
 
 // resolveGoEnv runs `go env <names...>` once and returns each as a "KEY=value"
 // pair, in the same order. A name `go env` reports empty for is included as
@@ -107,6 +161,52 @@ func resolveGoEnv(names ...string) []string {
 	return pairs
 }
 
+// hookHOME returns a fresh directory for a subprocess's isolated $HOME, with
+// a cleanup that tolerates the one race none of the environment-variable
+// pinning above can close off on every platform.
+//
+// WHY A RETRY, on top of goEnvPassthrough and xdgConfigHomeOverride rather
+// than instead of them: those two remove the CAUSE for everything they can
+// reach — the module cache, build cache, GOENV, GOTOOLCHAIN resolution
+// outright, and (via XDG_CONFIG_HOME) the telemetry directory on Linux, which
+// is where CI actually runs and where this bug was actually measured. What
+// remains is darwin's telemetry path specifically: os.UserConfigDir() is
+// hard-wired there to $HOME/Library/Application Support with no environment
+// variable able to redirect it (see xdgConfigHomeOverride's own doc comment),
+// and golang.org/x/telemetry's counter file is mmap'd by the `go` subprocess
+// and can still be mid-write, via a background goroutine, in the brief window
+// around that subprocess's own exit — a genuine, narrow TOCTOU race between
+// "a new file appears in a directory" and "RemoveAll's readdir already
+// finished listing it," not something any input this test controls can
+// sequence away.
+//
+// A single retry is the right size for that race rather than a symptom of
+// giving up on finding the real cause: a file that appeared mid-teardown is
+// simply THERE by the time a second attempt walks the directory a moment
+// later, so removing it needs no more than trying again once. Not spent on
+// Linux, where xdgConfigHomeOverride already means nothing gets written under
+// the fake HOME for a retry to ever be needed.
+func hookHOME(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sr-hook-home-")
+	if err != nil {
+		t.Fatalf("hookHOME: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			// One retry, after giving whatever async writer is still mid-flight
+			// a brief moment to finish. See this function's own doc comment for
+			// why a SECOND attempt is expected to succeed rather than needing a
+			// loop: the write that raced this one is not itself repeating.
+			time.Sleep(20 * time.Millisecond)
+			if err := os.RemoveAll(dir); err != nil {
+				t.Errorf("hookHOME cleanup: %v", err)
+			}
+		}
+	})
+	return dir
+}
+
 // runHookScript runs sr-session-hook.sh with the given subcommand and PATH,
 // returning combined output and the exit code. It never has sr-session's real
 // directory on PATH unless withBinDir is set, so "missing" is constructed by
@@ -114,18 +214,24 @@ func resolveGoEnv(names ...string) []string {
 //
 // The subprocess's environment isolates only PATH (the property under test)
 // and HOME (so a fake ~/.local/bin can be constructed without touching the
-// real one) — see goEnvPassthrough for why the Go toolchain's own variables
-// ride along unchanged rather than being isolated too. cmd.Dir is likewise
-// moved OUT of this module (see noModuleDir) so a `go env` the wrapper script
-// runs never sees this repo's go.mod at all, which is the second half of that
-// same isolation: with no go.mod in view there is nothing for GOTOOLCHAIN's
-// auto-resolution to react to, module directive or not.
+// real one) — see goEnvPassthrough and xdgConfigHomeOverride for why the Go
+// toolchain's own variables and its telemetry directory ride along pinned to
+// the real ones rather than being isolated too, and hookHOME for the retry
+// that covers what neither can reach. cmd.Dir is likewise moved OUT of this
+// module (see noModuleDir) so a `go env` the wrapper script runs never sees
+// this repo's go.mod at all, which is the second half of that same isolation:
+// with no go.mod in view there is nothing for GOTOOLCHAIN's auto-resolution
+// to react to, module directive or not.
 func runHookScript(t *testing.T, subcommand, path string) (output string, code int) {
 	t.Helper()
 	script := hookScriptPath(t)
 	cmd := exec.Command(script, subcommand)
 	cmd.Dir = noModuleDir(t)
-	cmd.Env = append([]string{"PATH=" + path, "HOME=" + t.TempDir()}, goEnvPassthrough...)
+	cmd.Env = append([]string{
+		"PATH=" + path,
+		"HOME=" + hookHOME(t),
+		"XDG_CONFIG_HOME=" + xdgConfigHomeOverride,
+	}, goEnvPassthrough...)
 	cmd.Stdin = strings.NewReader("")
 	out, err := cmd.CombinedOutput()
 	code = 0
@@ -256,7 +362,7 @@ func TestSrSessionHookWrapper_DispatchesNormallyWhenBinaryPresent(t *testing.T) 
 // the binary sits in $HOME/.local/bin, that directory is NOT on $PATH, and the
 // wrapper must still find and run it rather than refusing.
 func TestSrSessionHookWrapper_FindsBinaryInLocalBinWhenNotOnPATH(t *testing.T) {
-	home := t.TempDir()
+	home := hookHOME(t)
 	localBin := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(localBin, 0o755); err != nil {
 		t.Fatalf("mkdir ~/.local/bin: %v", err)
@@ -272,17 +378,23 @@ func TestSrSessionHookWrapper_FindsBinaryInLocalBinWhenNotOnPATH(t *testing.T) {
 	// PATH deliberately excludes localBin — this is the whole point: install.sh
 	// put the binary in ~/.local/bin, but the hook's own $PATH does not carry
 	// it, the exact gap the reviewer found. GOPATH/GOMODCACHE/GOCACHE/etc ride
-	// along unchanged (goEnvPassthrough) AND cmd.Dir is moved out of this
-	// module (noModuleDir) so `go env GOPATH` — which find_sr_session's
-	// fallback runs unconditionally, even though this test's ~/.local/bin
-	// already satisfies the search before that candidate is ever checked —
-	// neither points the Go toolchain's module cache at this HOME-isolated
-	// t.TempDir() nor triggers a toolchain-resolution check against this
-	// repo's go.mod. See both vars' doc comments for the two-stage CI
-	// failure this prevents (permission-denied, then directory-not-empty
-	// once the first stage alone was fixed).
+	// along unchanged (goEnvPassthrough), XDG_CONFIG_HOME is pinned to the real
+	// one (xdgConfigHomeOverride) so nothing under `home` gets telemetry state
+	// written into it on Linux, AND cmd.Dir is moved out of this module
+	// (noModuleDir) so `go env GOPATH` — which find_sr_session's fallback runs
+	// unconditionally, even though this test's ~/.local/bin already satisfies
+	// the search before that candidate is ever checked — neither points the Go
+	// toolchain's module cache at this HOME-isolated directory nor triggers a
+	// toolchain-resolution check against this repo's go.mod. hookHOME's own
+	// retrying cleanup is the backstop for whatever none of the above can
+	// reach (darwin's telemetry path specifically). See each's own doc comment
+	// for the CI failures this prevents.
 	cmd.Dir = noModuleDir(t)
-	cmd.Env = append([]string{"PATH=/usr/bin:/bin", "HOME=" + home}, goEnvPassthrough...)
+	cmd.Env = append([]string{
+		"PATH=/usr/bin:/bin",
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + xdgConfigHomeOverride,
+	}, goEnvPassthrough...)
 	cmd.Stdin = strings.NewReader("")
 	out, err := cmd.CombinedOutput()
 	code := 0
