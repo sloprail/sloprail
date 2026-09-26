@@ -1,0 +1,33 @@
+description: >
+  Onboarding, from nothing. The agent runs on a fresh machine (sr-eval's
+  freshMachine: its own HOME with no sr* binaries, no known marketplaces,
+  no installed plugins, while Claude Code's login, gh, SSH and git still
+  work) in a small Express + Prisma API whose endpoints follow one repeated
+  shape (src/endpoints/<verb>-<resource>.ts, mounted in src/app.ts, a test
+  in test/endpoints/). Turn 1 asks it to install sloprail for this project
+  from the private GitHub repo (binaries from the release, plugin from the
+  marketplace) and mentions a GET /invoices endpoint is coming, "the first
+  of several". Turn 2 is a new process resuming the session (the user
+  "restarted"), so the freshly installed plugin's hooks and its SessionStart
+  context actually load, and asks for the endpoint.
+
+  What it proves: the install works end to end from a stranger's position
+  (install.sh's anonymous path 404s on a private release, so recovering via
+  gh or SSH is part of the job), and the plugin makes the agent work rules
+  first: structure and a rule for the repeating endpoint shape land in
+  .sloprail/ BEFORE the endpoint does, without the prompt ever asking for
+  rules. Gated on trajectory health AND on the onboarding outcomes (binaries
+  installed, plugin enabled and loaded after restart, rules before the
+  endpoint, endpoint exists). Whether the agent's own rule later refused
+  anything, and whether scratch files leaked into the repo, are recorded as
+  informational rows.
+
+  sloprail's git remote is redirected to the checkout under test (committed
+  state), so the plugin evaluated is this branch's; release binaries are the
+  real latest GitHub release.
+seed: seed
+freshMachine: true
+followUps:
+  - turn-2.md
+model: haiku
+score: score.sh

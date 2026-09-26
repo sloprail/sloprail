@@ -61,6 +61,16 @@ fetch() {
   fi
 }
 
+# gh_ok: is an authenticated GitHub CLI available? The fallback for a release
+# plain HTTP cannot see — while sloprail/sloprail is private, an anonymous
+# curl of its release (or its "latest" redirect) is a 404, and the one
+# credential a developer's machine reliably has for a private repo is gh's
+# (or SSH, which serves git, not release assets). Tried only after the
+# anonymous path fails, so a public release never needs gh at all.
+gh_ok() {
+  command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1
+}
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -87,6 +97,11 @@ else
   latest_url="https://github.com/${REPO}/releases/latest"
   resolved="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$latest_url" 2>/dev/null || true)"
   tag="${resolved##*/tag/}"
+  if { [ -z "$tag" ] || [ "$tag" = "$resolved" ]; } && gh_ok; then
+    say "sloprail install: anonymous release lookup failed — resolving the latest tag through gh"
+    tag="$(gh release view --repo "$REPO" --json tagName --jq .tagName 2>/dev/null || true)"
+    resolved="gh:${tag}"
+  fi
   if [ -z "$tag" ] || [ "$tag" = "$resolved" ]; then
     die "could not resolve the latest release tag from ${latest_url} (check https://github.com/${REPO}/releases exists and has at least one release)"
   fi
@@ -95,11 +110,20 @@ fi
 base_url="https://github.com/${REPO}/releases/download/${tag}"
 archive="sloprail-${platform}.tar.gz"
 
-say "sloprail install: downloading ${archive} from release ${tag}"
-fetch "${base_url}/${archive}" "${tmp}/${archive}" ||
-  die "download failed — ${base_url}/${archive} (check https://github.com/${REPO}/releases for a build of your platform)"
+# fetch_asset NAME: one release asset into $tmp — anonymously first, then
+# through gh (see gh_ok) when the anonymous download is refused.
+fetch_asset() {
+  fetch "${base_url}/$1" "${tmp}/$1" 2>/dev/null && return 0
+  gh_ok || return 1
+  say "sloprail install: anonymous download of $1 failed — retrying through gh"
+  gh release download "$tag" --repo "$REPO" --pattern "$1" --dir "$tmp" --clobber
+}
 
-fetch "${base_url}/checksums.txt" "${tmp}/checksums.txt" ||
+say "sloprail install: downloading ${archive} from release ${tag}"
+fetch_asset "${archive}" ||
+  die "download failed — ${base_url}/${archive} (check https://github.com/${REPO}/releases for a build of your platform; for a private repo, log in with 'gh auth login' first)"
+
+fetch_asset checksums.txt ||
   die "download failed — ${base_url}/checksums.txt"
 
 # --- verify -------------------------------------------------------------------

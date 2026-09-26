@@ -64,6 +64,32 @@ type Fixture struct {
 	// at all.
 	ExampleSloprail bool `yaml:"exampleSloprail"`
 
+	// FreshMachine, when true, runs the agent-under-test as on a machine
+	// sloprail has never touched — the onboarding case every other fixture
+	// skips past by installing the plugin for it. Nothing is installed into
+	// the project, and the agent gets a HOME of its own (see
+	// workspace.freshHome): no sr* binaries anywhere it or the plugin's hook
+	// wrapper would look, no known marketplaces, no installed plugins — while
+	// the machine's own credentials (Claude Code's login, gh, SSH, git
+	// identity) still work, since a developer's machine has those. Getting
+	// sloprail onto it is the agent's job, and what such a fixture scores.
+	//
+	// sloprail's own git remote is redirected to the checkout under test
+	// (git's url.insteadOf, in that HOME only), so an agent that clones or
+	// adds the marketplace gets the plugin being evaluated — committed state
+	// only, as any clone would — rather than whatever main happens to hold.
+	// Release binaries are NOT redirected: they come from the real GitHub
+	// release, exactly as a stranger gets them.
+	FreshMachine bool `yaml:"freshMachine"`
+
+	// FollowUps are further user turns, each a file relative to Dir, sent in
+	// order after prompt.md's turn ends — each as a NEW harness process
+	// resuming the same session. A new process is the point: plugins, hooks
+	// and SessionStart context load at process start, so a follow-up is how
+	// a fixture models "the user restarted after installing" and sees the
+	// session a freshly installed plugin actually produces.
+	FollowUps []string `yaml:"followUps"`
+
 	// Model is the sr-agent --model set for the agent-under-test, e.g.
 	// "claude-sonnet-5,size-md". Empty lets sr-agent's own default resolve —
 	// which sr-agent refuses rather than silently picking one, so this is
@@ -145,6 +171,11 @@ func LoadFixture(dir string) (Fixture, error) {
 			}
 		}
 	}
+	for _, fu := range f.FollowUps {
+		if _, err := os.Stat(filepath.Join(abs, fu)); err != nil {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: followUps %q: %w", abs, fu, err)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(abs, f.Score)); err != nil {
 		return Fixture{}, fmt.Errorf("%s/fixture.yaml: score %q: %w", abs, f.Score, err)
 	}
@@ -159,6 +190,19 @@ func (f Fixture) Prompt() (string, error) {
 		return "", fmt.Errorf("read %s: %w", f.promptPath(), err)
 	}
 	return string(body), nil
+}
+
+// FollowUpPrompts returns each follow-up turn's exact text, in order.
+func (f Fixture) FollowUpPrompts() ([]string, error) {
+	out := make([]string, 0, len(f.FollowUps))
+	for _, fu := range f.FollowUps {
+		body, err := os.ReadFile(filepath.Join(f.Dir, fu))
+		if err != nil {
+			return nil, fmt.Errorf("read follow-up %s: %w", fu, err)
+		}
+		out = append(out, string(body))
+	}
+	return out, nil
 }
 
 // SeedDir is the absolute path to the local tree copied into the isolated

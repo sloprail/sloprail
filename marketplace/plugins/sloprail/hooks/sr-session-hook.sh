@@ -98,6 +98,18 @@ find_sr_session() {
 
 sr_session_bin="$(find_sr_session)" || sr_session_bin=""
 
+# At session start, stdout is context for the AGENT (stderr is for the person).
+# rules-first.md is the one standing instruction this plugin gives the agent:
+# repeating work gets its structure and rules before the work, one-offs get
+# none and keep their scratch files out of the repo. It is printed here, before
+# sr-session runs, and whether or not sr-session is installed — a session on a
+# half-finished install is exactly the one that most needs to hear it.
+# sr-session start itself writes nothing to stdout (session_start.go), so the
+# two never interleave.
+if [ "$subcommand" = "start" ]; then
+  cat "$(dirname "$0")/rules-first.md" 2>/dev/null || true
+fi
+
 if [ -z "$sr_session_bin" ]; then
   message="sloprail: the sr-session binary is not installed (or not on \$PATH), so its guardrails are NOT enforcing.
 Install it:
@@ -123,6 +135,10 @@ Then start a new session — this one will keep warning until sr-session is foun
     # session continue — a missing install must not brick Claude Code
     # entirely, only block the actions sloprail would have been guarding.
     echo "$message" >&2
+    # At start the agent hears it too (stdout is its context): it is the one
+    # that can finish the install, and otherwise learns of it only from its
+    # first blocked tool call.
+    [ "$subcommand" = "start" ] && echo "$message"
     exit 0
     ;;
   esac
