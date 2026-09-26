@@ -50,3 +50,42 @@ func TestT033_09_AbsolutePathInsideTheProjectIsStillGated(t *testing.T) {
 		t.Errorf("the forbidden write LANDED")
 	}
 }
+
+// T033_10: a write into ANOTHER project that has its own .sloprail/ is decided
+// by that project's structure — each project's structure governs its own tree.
+// Not refused by this project's (it has no say there), and not let through
+// unchecked either (the other project's rules still hold when written into
+// from outside).
+func TestT033_10_AnotherProjectsStructureGovernsItsTree(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.StructureGate(proj, structureYAML)
+
+	other := e.Project()
+	e.GitInit(other)
+	e.StructureGate(other, "allow:\n  - glob: \"docs/**\"\n")
+
+	res := e.Run(proj, "s-033-10a", "write into the other project", Turns("done",
+		Write("w1", filepath.Join(other, "src", "main.go"), "package main"),
+	))
+	if !res.Refused() {
+		t.Errorf("a write into another project, outside ITS structure, was not refused:\n%s", res.Output)
+	}
+	if _, err := os.Stat(filepath.Join(other, "src", "main.go")); err == nil {
+		t.Errorf("the write into the other project landed despite its structure")
+	}
+	if !res.Saw(other) && !res.Saw("its own structure governs its tree") {
+		t.Errorf("the refusal does not say which project's structure refused it:\n%s", res.Output)
+	}
+
+	res = e.Run(proj, "s-033-10b", "write into the other project", Turns("done",
+		Write("w1", filepath.Join(other, "docs", "note.md"), "# note"),
+	))
+	if res.Refused() {
+		t.Errorf("a write the other project's structure allows was refused:\n%s", res.Output)
+	}
+	if _, err := os.Stat(filepath.Join(other, "docs", "note.md")); err != nil {
+		t.Errorf("the allowed write into the other project did not land: %v", err)
+	}
+}
