@@ -1,4 +1,4 @@
-# Configuring the structure gate
+# Structure-gate
 
 The structure gate is an **allowlist** of paths where writing is allowed, with
 everything else it covers denied — deny-by-default. It is not a per-rule check
