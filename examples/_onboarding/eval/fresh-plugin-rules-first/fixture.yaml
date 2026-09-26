@@ -1,0 +1,25 @@
+description: >
+  A newcomer's first session after `/plugin install sloprail@sloprail-marketplace`
+  and nothing else. sr-eval's freshMachine gives the agent its own HOME with
+  the plugin installed and enabled for the project but no sr* binaries
+  anywhere (Claude Code's login, gh, SSH and git still work). The project is
+  a small Express + Prisma API whose endpoints follow one repeated shape
+  (src/endpoints/<verb>-<resource>.ts, mounted in src/app.ts, a test in
+  test/endpoints/), and the prompt is only the task: add GET /invoices, "the
+  first of several new resources". It never mentions sloprail.
+
+  What it proves: the plugin alone gets the agent from nothing to working
+  rules. Its session-start context has to tell the agent the binaries are
+  missing and how to install them, and then to work rules first. The agent
+  must install the binaries (install.sh, whose release is this checkout's
+  build via SLOPRAIL_RELEASE_URL; the repo is private, so the documented
+  curl one-liner 404s and recovering through SSH or gh is part of the job),
+  then put a structure the engine actually loads in .sloprail/ BEFORE the
+  endpoint, then build. Gated on trajectory health AND those outcomes, plus
+  nothing of sloprail copied into the repo. Proof rules beyond the
+  structure, which rules refused, disabled rules and stray files are
+  informational rows.
+seed: seed
+freshMachine: true
+model: haiku
+score: score.sh

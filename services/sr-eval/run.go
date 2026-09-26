@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -75,18 +74,22 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 		defer ws.Close()
 	}
 
-	// A FreshMachine fixture gets no plugin install — that is what it tests —
-	// and a HOME of its own; every other fixture starts with the plugin in.
+	// A FreshMachine fixture runs in a HOME of its own, with the plugin
+	// installed there (as the user's `/plugin install` would) and the sr*
+	// binaries not; every other fixture runs in the operator's environment.
 	var fresh *freshEnv
+	var settingsEnv []string
 	if fx.FreshMachine {
-		fe, err := ws.freshHome(root)
+		fe, err := ws.freshHome(ctx, root)
 		if err != nil {
 			return fmt.Errorf("build fresh-machine HOME: %w", err)
 		}
 		fresh = &fe
-		fmt.Fprintf(out, "sr-eval: fresh machine: HOME %s (no sr binaries, no plugins; github.com/sloprail/sloprail redirected to %s)\n",
-			fe.home, root)
-	} else if err := ws.writeSettings(root); err != nil {
+		settingsEnv = fe.env
+		fmt.Fprintf(out, "sr-eval: fresh machine: HOME %s — plugin installed, no sr binaries; install.sh's release is this checkout's build (%s)\n",
+			fe.home, fe.releaseURL)
+	}
+	if err := ws.writeSettings(root, settingsEnv); err != nil {
 		return fmt.Errorf("wire project settings: %w", err)
 	}
 
@@ -115,17 +118,13 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(out, "sr-eval: project %s\n", ws.project)
 	fmt.Fprintf(out, "sr-eval: launching agent-under-test (model %q)...\n", fx.Model)
 
-	followUps, err := fx.FollowUpPrompts()
-	if err != nil {
-		return err
-	}
 	configDir := transcript.ConfigDir()
 	if fresh != nil {
 		configDir = fresh.configDir
 	}
 
 	var agentErrText string
-	if agentErr := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, prompt, fresh, ""); agentErr != nil {
+	if agentErr := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, prompt, fresh); agentErr != nil {
 		agentErrText = agentErr.Error()
 		fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error: %v\n", agentErr)
 		// Not returned yet: a refusal or a crash mid-run still leaves a
@@ -133,21 +132,6 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 		// early stop is itself the pass condition (a gate that never let the
 		// agent past its first refusal, say). Only the ABSENCE of a
 		// transcript below is unrecoverable.
-	}
-
-	// Each follow-up is a new process resuming the session the previous turn
-	// wrote, so whatever the agent installed loads the way a restart loads it.
-	for i, followUp := range followUps {
-		prev := findTranscript(ws.project, configDir)
-		if prev == "" {
-			return fmt.Errorf("follow-up %d: no transcript to resume under %s/projects", i+1, configDir)
-		}
-		sessionID := strings.TrimSuffix(filepath.Base(prev), ".jsonl")
-		fmt.Fprintf(out, "sr-eval: follow-up %d/%d (new process resuming %s)...\n", i+1, len(followUps), sessionID)
-		if agentErr := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, followUp, fresh, sessionID); agentErr != nil {
-			agentErrText = strings.TrimPrefix(fmt.Sprintf("%s; follow-up %d: %v", agentErrText, i+1, agentErr), "; ")
-			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test (follow-up %d) exited with error: %v\n", i+1, agentErr)
-		}
 	}
 
 	transcriptPath := findTranscript(ws.project, configDir)
@@ -267,22 +251,11 @@ func siblingBinDir() (string, error) {
 // the directory sr-agent was found in (which is why sr-agent is exec'd by
 // absolute path). Its HOME links the real ~/Library, which is where the login
 // keychain the desktop-app auth reads actually lives, so it stays logged in.
-//
-// resume, when set, continues that session in this new process (a follow-up
-// turn).
-func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir, model, prompt string, fresh *freshEnv, resume string) error {
+func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir, model, prompt string, fresh *freshEnv) error {
 	agentBin := filepath.Join(binDir, "sr-agent")
-	claudeArgs := map[string]string{"settings": "{}", "permission-mode": "bypassPermissions"}
-	if resume != "" {
-		claudeArgs["resume"] = resume
-	}
-	rawArgs, err := json.Marshal(claudeArgs)
-	if err != nil {
-		return err
-	}
 	args := []string{
 		"--model", model,
-		"--claude-args", string(rawArgs),
+		"--claude-args", `{"settings":"{}","permission-mode":"bypassPermissions"}`,
 		"--prompt", prompt,
 	}
 

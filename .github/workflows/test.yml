@@ -172,19 +172,19 @@ jobs:
           done
 
       # The real install.sh, unmodified, pointed at the local server instead of
-      # GitHub via base_url substitution — proving the SHIPPED script's
+      # GitHub via SLOPRAIL_RELEASE_URL — proving the SHIPPED script's
       # download → checksum verify → unpack → install sequence actually works,
       # not a rewritten stand-in.
       - name: run install.sh end to end
         run: |
-          sed 's#base_url="https://github.com/${REPO}/releases/download/${tag}"#base_url="http://127.0.0.1:8931"#' install.sh > /tmp/install-under-test.sh
+          cp install.sh /tmp/install-under-test.sh
           chmod +x /tmp/install-under-test.sh
           # SLOPRAIL_INSTALL_TAG skips the real GitHub "latest" redirect
           # resolution — the local server above serves flat files with no
           # GitHub-shaped redirect to resolve, and a stranger's CI run has
           # no auth to reach a private repo's real release anyway. The value
           # is arbitrary; this test's mock doesn't care which tag it says.
-          SLOPRAIL_INSTALL_TAG="v0.0.0-ci-mock" SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-installed" /tmp/install-under-test.sh
+          SLOPRAIL_RELEASE_URL="http://127.0.0.1:8931" SLOPRAIL_INSTALL_TAG="v0.0.0-ci-mock" SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-installed" /tmp/install-under-test.sh
 
       - name: installed binaries actually run
         run: |
@@ -196,7 +196,7 @@ jobs:
           cp dist/sloprail-darwin-arm64.tar.gz /tmp/original.tar.gz
           printf 'corruption' >> dist/sloprail-darwin-arm64.tar.gz
           rm -rf "$RUNNER_TEMP/sloprail-tampered"
-          if SLOPRAIL_INSTALL_TAG="v0.0.0-ci-mock" SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-tampered" /tmp/install-under-test.sh; then
+          if SLOPRAIL_RELEASE_URL="http://127.0.0.1:8931" SLOPRAIL_INSTALL_TAG="v0.0.0-ci-mock" SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-tampered" /tmp/install-under-test.sh; then
             echo "install.sh accepted a tampered archive — checksum verification is broken"
             exit 1
           fi

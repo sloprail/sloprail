@@ -151,7 +151,6 @@ release:
 		for s in $(SERVICES); do \
 			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -o "$$outdir/$$s" ./services/$$s || exit 1; \
 		done; \
-		cp scripts/release-INSTALL.md "$$outdir/INSTALL.md"; \
 		tar -C $(RELEASE_DIR) -czf $(RELEASE_DIR)/sloprail-$$os-$$arch.tar.gz sloprail-$$os-$$arch; \
 		rm -rf "$$outdir"; \
 	done

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -28,9 +32,10 @@ var sloprailRemotes = []string{
 // freshEnv is how a FreshMachine agent-under-test is launched: its HOME, the
 // environment it runs in, and where its harness keeps transcripts.
 type freshEnv struct {
-	home      string
-	env       []string
-	configDir string
+	home       string
+	env        []string
+	configDir  string
+	releaseURL string
 }
 
 // freshHome builds a HOME on which sloprail was never installed, and the
@@ -47,11 +52,13 @@ type freshEnv struct {
 //   - ~/.gitconfig and ~/.config/gh are COPIED, not linked: an agent that runs
 //     `git config --global` or re-logs gh must not reach the real ones.
 //
-// What an install leaves behind is not: no ~/.local/bin, no ~/go/bin, no
+// The plugin is installed into this HOME afterwards, by writeSettings with
+// this environment — the one thing a newcomer has done. What an install of the
+// binaries leaves behind is not there: no ~/.local/bin, no ~/go/bin, no
 // ~/.claude (so no known marketplaces, no installed plugins, no memory), and
 // PATH loses every directory that holds a sloprail binary. The real HOME is
 // never written.
-func (w *workspace) freshHome(repoRoot string) (freshEnv, error) {
+func (w *workspace) freshHome(ctx context.Context, repoRoot string) (freshEnv, error) {
 	realHome, err := os.UserHomeDir()
 	if err != nil {
 		return freshEnv{}, fmt.Errorf("locate the real HOME: %w", err)
@@ -119,9 +126,50 @@ func (w *workspace) freshHome(repoRoot string) (freshEnv, error) {
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
 		return freshEnv{}, err
 	}
-	env = append(env, "HOME="+home, "PATH="+path, "TMPDIR="+tmp)
+	releaseDir := filepath.Join(w.root, "release")
+	if err := buildRelease(ctx, repoRoot, releaseDir); err != nil {
+		return freshEnv{}, fmt.Errorf("build this checkout's release: %w", err)
+	}
+	releaseURL := "file://" + releaseDir
+	env = append(env, "HOME="+home, "PATH="+path, "TMPDIR="+tmp,
+		"SLOPRAIL_RELEASE_URL="+releaseURL, "SLOPRAIL_INSTALL_TAG=checkout")
 
-	return freshEnv{home: home, env: env, configDir: filepath.Join(home, ".claude")}, nil
+	return freshEnv{home: home, env: env, configDir: filepath.Join(home, ".claude"), releaseURL: releaseURL}, nil
+}
+
+// buildRelease builds this host's release archive from the checkout into dir,
+// in exactly the shape `make release` publishes and install.sh consumes:
+// sloprail-<os>-<arch>.tar.gz unpacking to sloprail-<os>-<arch>/<binaries>,
+// plus checksums.txt. Host platform only — the agent runs here.
+func buildRelease(ctx context.Context, repoRoot, dir string) error {
+	platform := "sloprail-" + runtime.GOOS + "-" + runtime.GOARCH
+	stage := filepath.Join(dir, platform)
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		return err
+	}
+	for _, name := range sloprailBinaries {
+		build := exec.CommandContext(ctx, "go", "build", "-o", filepath.Join(stage, name), "./services/"+name)
+		build.Dir = repoRoot
+		build.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if out, err := build.CombinedOutput(); err != nil {
+			return fmt.Errorf("go build %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+		}
+	}
+	archive := platform + ".tar.gz"
+	tar := exec.CommandContext(ctx, "tar", "-C", dir, "-czf", filepath.Join(dir, archive), platform)
+	if out, err := tar.CombinedOutput(); err != nil {
+		return fmt.Errorf("tar: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if err := os.RemoveAll(stage); err != nil {
+		return err
+	}
+	body, err := os.ReadFile(filepath.Join(dir, archive))
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(body)
+	return os.WriteFile(filepath.Join(dir, "checksums.txt"),
+		[]byte(hex.EncodeToString(sum[:])+"  "+archive+"\n"), 0o644)
 }
 
 // freshPath is the caller's PATH minus every directory holding a sloprail

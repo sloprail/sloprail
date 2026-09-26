@@ -68,6 +68,7 @@ fetch() {
 # (or SSH, which serves git, not release assets). Tried only after the
 # anonymous path fails, so a public release never needs gh at all.
 gh_ok() {
+  [ -z "${SLOPRAIL_RELEASE_URL:-}" ] || return 1 # an explicit source is never swapped for GitHub
   command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1
 }
 
@@ -87,6 +88,8 @@ trap 'rm -rf "$tmp"' EXIT
 # step below.
 if [ -n "${SLOPRAIL_INSTALL_TAG:-}" ]; then
   tag="$SLOPRAIL_INSTALL_TAG"
+elif [ -n "${SLOPRAIL_RELEASE_URL:-}" ]; then
+  tag="custom" # no GitHub "latest" to resolve for a release served elsewhere
 else
   # github.com/OWNER/REPO/releases/latest is a redirect to
   # .../releases/tag/vX.Y.Z; curl -w reports the FINAL url it landed on
@@ -107,7 +110,12 @@ else
   fi
 fi
 
-base_url="https://github.com/${REPO}/releases/download/${tag}"
+# SLOPRAIL_RELEASE_URL points the download at another place holding the same
+# files a release has (the platform archives + checksums.txt): a local mock
+# server in CI, a file:// directory of archives built from a checkout in the
+# onboarding eval. Nothing else changes — the checksum verify and install
+# below run exactly as they do against GitHub.
+base_url="${SLOPRAIL_RELEASE_URL:-https://github.com/${REPO}/releases/download/${tag}}"
 archive="sloprail-${platform}.tar.gz"
 
 # fetch_asset NAME: one release asset into $tmp — anonymously first, then
@@ -170,9 +178,3 @@ case ":$PATH:" in
 esac
 
 say "Done. Verify with: sr-session start < /dev/null"
-say
-say "Next, if you have not yet: install the Claude Code plugin in your project,"
-say "then start a new session (plugins load at session start):"
-say
-say "  claude plugin marketplace add sloprail/sloprail"
-say "  claude plugin install sloprail@sloprail-marketplace --scope project"

@@ -24,24 +24,13 @@ curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh |
 /plugin install sloprail@sloprail-marketplace
 ```
 
-Or from a shell (this is also the form an agent can run for you):
-
-```
-claude plugin marketplace add sloprail/sloprail
-claude plugin install sloprail@sloprail-marketplace --scope project
-```
-
-Pick the project scope: sloprail reads which plugins a project enables from
-its `.claude/settings.json`. Then start a new session, since plugins load when
-a session starts.
-
 `install.sh` downloads the right prebuilt archive for your platform (macOS or
 Linux, Intel or Apple Silicon/arm64), verifies its checksum, and installs
 `sr`, `sr-session`, `sr-file`, `sr-mark`, `sr-agent` into `~/.local/bin` — no
 Go toolchain needed. Already have Go? `go install ./services/...` from a
 checkout is an equivalent fallback.
 
-Once both steps are done and the session is restarted, every tool call and turn-end runs through sloprail
+Once both steps are done, every tool call and turn-end runs through sloprail
 — you don't run anything by hand.
 
 ## Rules first.

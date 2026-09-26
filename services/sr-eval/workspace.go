@@ -197,15 +197,17 @@ func (w *workspace) commitSetup() error {
 // by hand would test sr-eval's own arrangement rather than the product: the
 // whole point is that what fires is the plugin a real install gets, discovered
 // through hooks.json, not a hook this binary invented for the occasion.
-func (w *workspace) writeSettings(repoRoot string) error {
+func (w *workspace) writeSettings(repoRoot string, env []string) error {
 	add := exec.Command("claude", "plugin", "marketplace", "add", repoRoot)
 	add.Dir = w.project
+	add.Env = env
 	if out, err := add.CombinedOutput(); err != nil {
 		return fmt.Errorf("claude plugin marketplace add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	install := exec.Command("claude", "plugin", "install", pluginKey, "--scope", "project", "-y")
 	install.Dir = w.project
+	install.Env = env
 	if out, err := install.CombinedOutput(); err != nil {
 		return fmt.Errorf("claude plugin install %s: %w: %s", pluginKey, err, strings.TrimSpace(string(out)))
 	}

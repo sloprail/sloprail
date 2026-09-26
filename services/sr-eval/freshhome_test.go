@@ -3,30 +3,17 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// A follow-up turn names a file; one that does not exist is a load error, the
-// same as a missing prompt.md, not a turn silently dropped from the run.
-func TestLoadFixture_MissingFollowUpRefuses(t *testing.T) {
+func TestLoadFixture_FreshMachineParses(t *testing.T) {
 	dir := newTestFixtureTree(t, false)
 	mustWriteFile(t, filepath.Join(dir, "fixture.yaml"),
-		"seed: seed\nmodel: haiku\nscore: score.sh\nfreshMachine: true\nfollowUps: [turn-2.md]\n")
+		"seed: seed\nmodel: haiku\nscore: score.sh\nfreshMachine: true\n")
 
-	_, err := LoadFixture(dir)
-	if err == nil || !strings.Contains(err.Error(), "turn-2.md") {
-		t.Fatalf("a missing follow-up must refuse, naming it; got: %v", err)
-	}
-
-	mustWriteFile(t, filepath.Join(dir, "turn-2.md"), "now the task\n")
 	fx, err := LoadFixture(dir)
-	if err != nil {
-		t.Fatalf("with the follow-up present the fixture must load, got: %v", err)
-	}
-	turns, err := fx.FollowUpPrompts()
-	if err != nil || len(turns) != 1 || turns[0] != "now the task\n" || !fx.FreshMachine {
-		t.Fatalf("follow-ups must read back verbatim, freshMachine parsed; got %q, %v, fresh=%v", turns, err, fx.FreshMachine)
+	if err != nil || !fx.FreshMachine {
+		t.Fatalf("freshMachine must parse; got fresh=%v, err=%v", fx.FreshMachine, err)
 	}
 }
 
