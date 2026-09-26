@@ -47,7 +47,10 @@ after a failure, then turn 2 writing rules, possibly getting refused by its own
 new rules (including for writing a file its new structure does not allow) and
 fixing the rule or the file, then the endpoint. Unhealthy: repeating the same
 failing install command 4+ times, giving up on the install, looping on the
-same refusal, or ending turn 2 with the endpoint unwritten."
+same refusal, or ending turn 2 with the endpoint unwritten. Also unhealthy,
+as wasted or nonsensical work: copying sloprail's binaries or a clone of its
+repo INTO the project (they belong on the machine), or inventing
+configuration files sloprail does not read instead of reading its docs."
 
 trajectory_health_check "$SCENARIO" "$GUARDRAIL"
 
@@ -99,12 +102,20 @@ grep -q 'sloprail is active in this project' "$T" && inst_loaded="pass"
 
 # --- RULES-001: rules in .sloprail/ written before the endpoint, and still there. ---
 rule_files="$(find "$P/.sloprail" -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null | wc -l | tr -d ' ')"
+# A rule the engine refuses to load is not a rule: the load check (this
+# build's sr-session, against the agent's HOME so its enabled plugins resolve)
+# must name none of the agent's declarations as not loaded.
+load_report="$(cd "$P" && HOME="$H" "$SR_EVAL_BIN_DIR/sr-session" start </dev/null 2>&1 >/dev/null || true)"
+not_loaded="$(printf '%s\n' "$load_report" | grep 'not loaded' | sed 's/^sloprail: //' | tr '\n' ' ')"
 rules_first="fail"
-if [ "$rule_idx" -gt 0 ] && [ "$rule_files" -gt 0 ] && { [ "$endpoint_idx" -eq 0 ] || [ "$rule_idx" -lt "$endpoint_idx" ]; }; then
+if [ "$rule_idx" -gt 0 ] && [ "$rule_files" -gt 0 ] && [ -z "$not_loaded" ] &&
+  { [ "$endpoint_idx" -eq 0 ] || [ "$rule_idx" -lt "$endpoint_idx" ]; }; then
   rules_first="pass"
 fi
 has_structure="no"
 [ -f "$P/.sloprail/file-guard/structure.yaml" ] && has_structure="yes"
+proof_rules="$(find "$P/.sloprail/file-guard" "$P/.sloprail/gate" -mindepth 2 -maxdepth 2 \( -name file-guard.yaml -o -name gate.yaml \) 2>/dev/null |
+  sed "s#^$P/.sloprail/##; s#/[^/]*\$##" | tr '\n' ' ')"
 
 # --- TASK-001: the endpoint exists and is mounted. ---
 endpoint_file="$(find "$P/src" -iname '*invoice*' -type f 2>/dev/null | head -1)"
@@ -143,20 +154,22 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
     --arg task "$task" --arg ef "${endpoint_file:-none}" \
     --arg refusals "${own_refusals:-none}" --arg stray "${stray:-none}" \
     --arg hyg "$hygiene" --arg polluted "${polluted:-none}" \
+    --arg nl "${not_loaded:-none}" --arg proof "${proof_rules:-none}" \
     '{subject: "_onboarding/fresh-install-rules-first", status: $status, rows: [
        {check_id: "TRAJ-001-trajectory_health", status: $th, reasoning: $th_reason},
        {check_id: "INST-001-binaries_from_release", status: $ib, reasoning: ("sr-session: " + $bin + "; release used: " + $rel + "; runs: " + $runs)},
        {check_id: "INST-002-plugin_enabled", status: $ip, reasoning: ("enabled at scope: " + $scope)},
        {check_id: "INST-003-plugin_loaded_after_restart", status: $il, reasoning: "SessionStart rules-first context present in the transcript"},
-       {check_id: "RULES-001-rules_before_endpoint", status: $rf, reasoning: ("first .sloprail/ write at call " + $ri + ", first invoice endpoint write at call " + $ei + "; rule yaml files: " + $rn + "; structure.yaml: " + $st)},
+       {check_id: "RULES-001-rules_before_endpoint", status: $rf, reasoning: ("first .sloprail/ write at call " + $ri + ", first invoice endpoint write at call " + $ei + "; rule yaml files: " + $rn + "; structure.yaml: " + $st + "; not loaded: " + $nl)},
        {check_id: "TASK-001-endpoint_written", status: $task, reasoning: ("endpoint file: " + $ef)},
        {check_id: "HYG-001-sloprail_not_installed_into_repo", status: $hyg, reasoning: ("sloprail files inside the project: " + $polluted)},
+       {check_id: "INFO-003-proof_rules_for_the_shape", status: "info", reasoning: ("file-guard/gate rules beyond structure: " + $proof)},
        {check_id: "INFO-001-rules_that_refused", status: "info", reasoning: ("refusals cited: " + $refusals)},
        {check_id: "INFO-002-stray_files_in_repo", status: "info", reasoning: ("changed paths outside the project layout: " + $stray)}
      ]}' > "$SR_EVAL_VERDICT_OUT"
 fi
 
-echo "overall=$overall traj=$TH_STATUS ($TH_REASON) bin=$inst_bin[$bin release=$from_release runs=$bin_runs] plugin=$inst_plugin[$scope] loaded=$inst_loaded rules_first=$rules_first[rule@$rule_idx endpoint@$endpoint_idx files=$rule_files structure=$has_structure] task=$task hygiene=$hygiene[${polluted:-none}] refusals=[${own_refusals:-none}] stray=[${stray:-none}]" >&2
+echo "overall=$overall traj=$TH_STATUS ($TH_REASON) bin=$inst_bin[$bin release=$from_release runs=$bin_runs] plugin=$inst_plugin[$scope] loaded=$inst_loaded rules_first=$rules_first[rule@$rule_idx endpoint@$endpoint_idx files=$rule_files structure=$has_structure not_loaded=${not_loaded:-none} proof=${proof_rules:-none}] task=$task hygiene=$hygiene[${polluted:-none}] refusals=[${own_refusals:-none}] stray=[${stray:-none}]" >&2
 
 [ "$overall" = pass ] && exit 0
 exit 1

@@ -144,4 +144,28 @@ Then start a new session — this one will keep warning until sr-session is foun
   esac
 fi
 
+# At start, the load report (a rule that did not load, a shadowed one, an
+# unresolved plugin) is written to stderr, for the person. But in a rules-first
+# session the AGENT wrote those rules, and a rule that silently failed to load
+# is one it believes is enforcing. So at start only, the report is repeated on
+# stdout — the agent's context — under a line saying what it means. stdin (the
+# hook payload) passes straight through; the exit status is sr-session's.
+if [ "$subcommand" = "start" ]; then
+  report="$(mktemp)"
+  status=0
+  "$sr_session_bin" start "$@" 2>"$report" || status=$?
+  cat "$report" >&2
+  # Everything but the two lines that are bookkeeping, not a problem with a
+  # rule: which plugin owns which folders, and a baseline that could not be
+  # recorded.
+  problems="$(grep -v ' owns \|no baseline recorded' "$report" 2>/dev/null || true)"
+  if [ -n "$problems" ]; then
+    echo
+    echo "sloprail load check: what follows is NOT in force until fixed (the sloprail:authoring-guardrails skill has the format; re-check with: sr-session start < /dev/null)"
+    printf '%s\n' "$problems"
+  fi
+  rm -f "$report"
+  exit "$status"
+fi
+
 exec "$sr_session_bin" "$subcommand" "$@"
