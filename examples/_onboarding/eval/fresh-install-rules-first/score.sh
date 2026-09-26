@@ -115,11 +115,21 @@ fi
 
 # --- Informational rows. ---
 own_refusals="$(grep -Eo '(file-guard|gate) \\?"[a-z0-9-]+\\?"' "$T" 2>/dev/null | sort -u | tr '\n' ' ')"
-stray="$(git -C "$P" status --porcelain --untracked-files=all 2>/dev/null | awk '{print $NF}' |
-  grep -Ev '^(src/|test/|\.sloprail/|\.claude/|prisma/|node_modules/|package(-lock)?\.json$|tsconfig\.json$|vitest\.config\.|README\.md$)' | tr '\n' ' ')"
+# Measured against the harness's setup commit, so what the agent COMMITTED
+# counts the same as what it left lying around.
+setup="$(git -C "$P" rev-list --max-parents=0 HEAD 2>/dev/null | tail -1)"
+changed="$( { git -C "$P" diff --name-only "$setup" 2>/dev/null; git -C "$P" ls-files --others --exclude-standard 2>/dev/null; } | sort -u)"
+stray="$(printf '%s\n' "$changed" |
+  grep -Ev '^(src/|test/|\.sloprail/|\.claude/|prisma/|node_modules/|package(-lock)?\.json$|tsconfig\.json$|vitest\.config\.|README\.md$|$)' | tr '\n' ' ')"
+
+# --- HYG-001: sloprail itself was not installed INTO the project (its
+# binaries or a clone of its repo belong on the machine, not in the repo). ---
+polluted="$(printf '%s\n' "$changed" | grep -E '(^|/)(sr|sr-session|sr-file|sr-mark|sr-agent|sr-eval)$|(^|/)install\.sh$|(^|/)marketplace/plugins/' | tr '\n' ' ')"
+hygiene="pass"
+[ -n "$polluted" ] && hygiene="fail"
 
 overall="pass"
-for s in "$TH_STATUS" "$inst_bin" "$inst_plugin" "$inst_loaded" "$rules_first" "$task"; do
+for s in "$TH_STATUS" "$inst_bin" "$inst_plugin" "$inst_loaded" "$rules_first" "$task" "$hygiene"; do
   [ "$s" = pass ] || overall="fail"
 done
 
@@ -132,6 +142,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
     --arg rf "$rules_first" --arg ri "$rule_idx" --arg ei "$endpoint_idx" --arg rn "$rule_files" --arg st "$has_structure" \
     --arg task "$task" --arg ef "${endpoint_file:-none}" \
     --arg refusals "${own_refusals:-none}" --arg stray "${stray:-none}" \
+    --arg hyg "$hygiene" --arg polluted "${polluted:-none}" \
     '{subject: "_onboarding/fresh-install-rules-first", status: $status, rows: [
        {check_id: "TRAJ-001-trajectory_health", status: $th, reasoning: $th_reason},
        {check_id: "INST-001-binaries_from_release", status: $ib, reasoning: ("sr-session: " + $bin + "; release used: " + $rel + "; runs: " + $runs)},
@@ -139,12 +150,13 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
        {check_id: "INST-003-plugin_loaded_after_restart", status: $il, reasoning: "SessionStart rules-first context present in the transcript"},
        {check_id: "RULES-001-rules_before_endpoint", status: $rf, reasoning: ("first .sloprail/ write at call " + $ri + ", first invoice endpoint write at call " + $ei + "; rule yaml files: " + $rn + "; structure.yaml: " + $st)},
        {check_id: "TASK-001-endpoint_written", status: $task, reasoning: ("endpoint file: " + $ef)},
+       {check_id: "HYG-001-sloprail_not_installed_into_repo", status: $hyg, reasoning: ("sloprail files inside the project: " + $polluted)},
        {check_id: "INFO-001-rules_that_refused", status: "info", reasoning: ("refusals cited: " + $refusals)},
        {check_id: "INFO-002-stray_files_in_repo", status: "info", reasoning: ("changed paths outside the project layout: " + $stray)}
      ]}' > "$SR_EVAL_VERDICT_OUT"
 fi
 
-echo "overall=$overall traj=$TH_STATUS ($TH_REASON) bin=$inst_bin[$bin release=$from_release runs=$bin_runs] plugin=$inst_plugin[$scope] loaded=$inst_loaded rules_first=$rules_first[rule@$rule_idx endpoint@$endpoint_idx files=$rule_files structure=$has_structure] task=$task refusals=[${own_refusals:-none}] stray=[${stray:-none}]" >&2
+echo "overall=$overall traj=$TH_STATUS ($TH_REASON) bin=$inst_bin[$bin release=$from_release runs=$bin_runs] plugin=$inst_plugin[$scope] loaded=$inst_loaded rules_first=$rules_first[rule@$rule_idx endpoint@$endpoint_idx files=$rule_files structure=$has_structure] task=$task hygiene=$hygiene[${polluted:-none}] refusals=[${own_refusals:-none}] stray=[${stray:-none}]" >&2
 
 [ "$overall" = pass ] && exit 0
 exit 1
