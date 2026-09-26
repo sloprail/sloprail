@@ -102,6 +102,15 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 		"change_diff":    "-import x\n+",
 		"asked_envelope": `The user answered: "which import?"="the stray one". Read the answers carefully.`,
 		"pure_addition":  false,
+		// eval-loop-maxing (goal-verify): goal-covers-ask.md.j2 and
+		// no-hardcoding.md.j2.
+		"ok":              true,
+		"cited_quote":     "improve the classifier without hardcoding the eval",
+		"goal_yaml":       "enabled: true\nscript: verify.sh\ntarget: 0.75\n",
+		"classify_source": "def classify(text):\n    return \"bug\", \"P1\"\n",
+		"visible_cases": []any{
+			map[string]any{"text": "it crashes", "intent": "bug"},
+		},
 	}
 	inputJSON, err := r.judgeInputJSON(req, additional)
 	require.NoError(t, err)

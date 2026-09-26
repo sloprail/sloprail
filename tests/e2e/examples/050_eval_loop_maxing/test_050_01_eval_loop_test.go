@@ -1,8 +1,17 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+// readFileT reads a file, returning its content as a string.
+func readFileT(t *testing.T, path string) (string, error) {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	return string(body), err
+}
 
 // This file drives the SHIPPED eval-loop-maxing example end to end — the whole
 // .sloprail tree installed verbatim, exactly what a user lifts. The engine
@@ -28,54 +37,61 @@ import (
 
 const goalName = "accuracy-target"
 
-// goalYAML is what an agent writes the moment it commits to a target: enabled,
-// pointing at verify.sh as the goal's condition. Exactly the shape the shipped
-// enter.sh reads (`^enabled:` must be true) and run-verify.sh resolves
-// (`^script:` names the script it runs).
-const goalYAML = "enabled: true\nscript: verify.sh\n"
+// askQuote is the user's own prompt, cited verbatim in goal.yaml's cited_ask —
+// grounded by goal-cites-ask.sh against the real transcript e.Run wrote it to.
+const askQuote = "improve the classifier until accuracy is at least 0.75, without hardcoding the eval's own tickets — the rules must generalize"
 
-// goalVerify is the goal's fixed condition, laid into goal/<name>/verify.sh as an
-// executable. It passes only once the target-met marker exists in the workspace —
-// the deterministic stand-in for "the measured metric now meets the threshold",
-// flipped by the agent writing that marker. It reads $SR_WORKSPACE the same way
-// the shipped verify.sh does, so it resolves the marker from the project root
-// regardless of the check's cwd.
-const goalVerify = `#!/bin/sh
-if [ -f "${SR_WORKSPACE:-.}/target-met" ]; then
-  exit 0
-fi
-echo "accuracy below target" >&2
-exit 1
-`
+// goalYAMLFor is what an agent writes the moment it commits to a target: the
+// current schema (target as a bare number, cited_ask quoting the prompt in the
+// [quote](jsonl-path) grammar goal-cites-ask.sh grounds). transcriptPath is
+// filled in per test/session, since each session's transcript is its own file.
+func goalYAMLFor(transcriptPath string) string {
+	return "enabled: true\nscript: verify.sh\ntarget: 0.75\ncited_ask: \"[" + askQuote + "](" + transcriptPath + ":1)\"\n"
+}
 
-// keepIterating is the sentence the SHIPPED run-verify.sh refuses a premature
-// Stop with. Matched on rather than on the word "block", so the test cannot pass
+// goalVerify is the goal's own verify.sh, laid into goal/<name>/verify.sh as an
+// executable. Its exit code is irrelevant to what the gate actually decides
+// (run-verify.sh recomputes accuracy itself via score-held-out.sh and compares
+// against goal.yaml's own `target:` — see run-verify.sh's own doc comment) —
+// kept trivial here for that reason.
+const goalVerify = "#!/bin/sh\nexit 0\n"
+
+// keepIterating is the substring the SHIPPED run-verify.sh refuses a premature
+// Stop with when the runner's own recomputed accuracy misses goal.yaml's
+// target. Matched on rather than on the word "block", so the test cannot pass
 // on a refusal that came from anywhere else in the engine.
-const keepIterating = "keep iterating until verify.sh passes"
+const keepIterating = "target not yet met"
 
 // T050_01: the shipped example drives the loop — an unmet goal BLOCKS the Stop
-// and RE-FIRES on the next Stop still unmet, then a met goal ADMITS.
+// and RE-FIRES on the next Stop still unmet, then a genuinely met goal ADMITS.
 //
 // One session, three cycles, because the loop is a property of the session's
-// accumulated state:
+// accumulated state. Both judge checks (goal-covers-ask, no-hardcoding) are
+// stubbed to PASS via InstallJudgeClaude — this test isolates the DETERMINISTIC
+// path (goal-cites-ask.sh's grounding, run-verify.sh's independent target and
+// gap comparisons), which is what actually decides these three cycles:
 //
 //   - Cycle 1 (violation): the agent authors goal/accuracy-target/goal.yaml
-//     (enabled) with the marker absent. The context enters and activates carrying
-//     the goal; the goal-verify gate reads it, runs verify.sh, it fails, and the
-//     Stop is blocked with "keep iterating". GateState is fail.
-//   - Cycle 2 (re-fire): the agent does more work but STILL does not meet the
-//     target. The same gate wakes on this Stop, its require is still met (context
-//     still active), verify.sh still fails, and the Stop is blocked AGAIN — proof
-//     the gate re-fires rather than blocking only the first time. GateState is
-//     still fail.
-//   - Cycle 3 (fix): the agent writes the target-met marker. verify.sh now
-//     passes, the gate admits the Stop, GateState flips to pass, and the context's
-//     exit reads that pass and deactivates.
+//     (enabled, citing the real prompt) with the seeded classifier's accuracy
+//     (0.7) below target (0.75). The context enters and activates carrying the
+//     goal; the goal-verify gate reads it, the runner recomputes 0.7, and the
+//     Stop is blocked with "target not yet met". GateState is fail.
+//   - Cycle 2 (re-fire): the agent does unrelated work; accuracy is STILL 0.7.
+//     The same gate wakes on this Stop, its require is still met (context
+//     still active), the runner still reads 0.7, and the Stop is blocked
+//     AGAIN — proof the gate re-fires rather than blocking only the first
+//     time. GateState is still fail.
+//   - Cycle 3 (fix): the agent generalizes the seeded bug (adds "crash" to
+//     BUG_KEYWORDS) — a real fix, not a marker file — reaching 1.0 on both
+//     visible and held-out accuracy. The gate admits the Stop, GateState
+//     flips to pass, and the context's exit deactivates.
 func TestT050_01_ShippedExampleDrivesTheLoop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj) // a Stop dispatch establishes a baseline; give it a repo
 	installExampleTree(t, proj)
+	installClassifierSeed(t, proj)
+	e.InstallJudgeClaude(passJudge)
 
 	// The goal's verify.sh is laid down before the run (the agent authors goal.yaml
 	// during the trajectory; verify.sh is the goal's fixed condition it points at).
@@ -83,9 +99,9 @@ func TestT050_01_ShippedExampleDrivesTheLoop(t *testing.T) {
 
 	sess := "s-050-01"
 
-	// ---- Cycle 1: declare the goal (enabled) with the target unmet. ----
-	res1 := e.Run(proj, sess, "commit to the accuracy target", Turns("done",
-		Write("g1", "goal/"+goalName+"/goal.yaml", goalYAML),
+	// ---- Cycle 1: declare the goal (enabled, cited) with the target unmet. ----
+	res1 := e.Run(proj, sess, askQuote, Turns("done",
+		Write("g1", "goal/"+goalName+"/goal.yaml", goalYAMLFor(e.TranscriptPath(proj, sess))),
 	))
 
 	// The shipped context entered on the settled goal.yaml write and activated,
@@ -145,12 +161,20 @@ func TestT050_01_ShippedExampleDrivesTheLoop(t *testing.T) {
 			blocksAfter1, blocksAfter2)
 	}
 
-	// ---- Cycle 3: meet the target — the gate must ADMIT and the context deactivate. ----
+	// ---- Cycle 3: a real, generalizing fix — the gate must ADMIT and the context deactivate. ----
 	//
 	// The verdict is read from GateState (the LAST verdict) and the context's active
 	// flag, NOT from BlockingErrorsFrom, which still holds the earlier blocks.
-	e.Run(proj, sess, "hit the target at last", Turns("done",
-		Write("m3", "target-met", "accuracy=0.96"),
+	seedBody, err := readFileT(t, filepath.Join(proj, "classify.py"))
+	if err != nil {
+		t.Fatalf("read seeded classify.py: %v", err)
+	}
+	fixed := replaceOnce(t, seedBody,
+		`BUG_KEYWORDS = ["bug", "broken", "error", "not working", "doesn't work", "fails"]`,
+		`BUG_KEYWORDS = ["bug", "broken", "error", "not working", "doesn't work", "fails", "crash"]`,
+	)
+	e.Run(proj, sess, "generalize the bug rule to cover crash-shaped tickets", Turns("done",
+		Write("m3", "classify.py", fixed),
 	))
 	if status := e.GateState(proj, sess, "goal-verify"); status != "pass" {
 		t.Fatalf("the goal-verify gate recorded %q after the target was met, want pass — the shipped verify.sh should admit the Stop", status)

@@ -22,22 +22,34 @@ import recContextYaml  from '../../../examples/eval-loop-maxing/.sloprail/contex
 import recEnterSh      from '../../../examples/eval-loop-maxing/.sloprail/context/recording/enter.sh?raw';
 import recExitSh       from '../../../examples/eval-loop-maxing/.sloprail/context/recording/exit.sh?raw';
 import gateYaml        from '../../../examples/eval-loop-maxing/.sloprail/gate/goal-verify/gate.yaml?raw';
+import citesAskSh      from '../../../examples/eval-loop-maxing/.sloprail/gate/goal-verify/goal-cites-ask.sh?raw';
 import verifySh        from '../../../examples/eval-loop-maxing/.sloprail/gate/goal-verify/run-verify.sh?raw';
+import noHardcodingJ2  from '../../../examples/eval-loop-maxing/.sloprail/gate/goal-verify/no-hardcoding.md.j2?raw';
 
 ## The failure
 
 A long run keeps only so much in context. After enough compaction the original
 constraints stop being re-read, and the run drifts toward whatever moves the
-score — not what the score was standing in for. The metric climbs while the
-actual goal recedes. Because the loop optimizes the number in front of it, the
-gaming looks like progress right up until someone reads the output.
+score — not what the score was standing in for. A stalled ticket classifier's
+accuracy can climb to 1.0 the moment an agent stops fixing the rules and starts
+special-casing the eval's own tickets instead. The metric climbs while the
+actual task recedes, and the gaming looks like progress right up until someone
+reads the code.
 
 <UseCase id="compaction-gaming" label="Watch it happen — then get refused" />
 
+The animation above shows the block happening at the moment of the edit — an
+agent typing a lookup table keyed on the eval's own tickets, refused as it
+writes. The actual guardrail below refuses at `Stop`, once the trajectory
+claims to be done, not at the edit itself — a deliberate difference the
+animation does not yet reflect; see the note at the end of this page.
+
 ## How it works
 
-The goal is held outside the agent's context, where compaction can't erode it.
-Two contexts track the run, and a gate reads their verdict at turn-end.
+The goal is held outside the agent's context, where compaction can't erode
+it — including the part of the ask that is easy to quietly drop: not just the
+number, but the condition that the number must be hit honestly. Two contexts
+track the run, and a gate reads their verdict at turn-end.
 
 <Steps>
 
@@ -49,12 +61,43 @@ Two contexts track the run, and a gate reads their verdict at turn-end.
    across all runs so far, not just the latest.
 
 3. A **gate** at `Stop` refuses to let the run end while a declared goal is still
-   unmet — and skips entirely when no goal was declared, so a goal-free session
-   is free to stop.
+   unmet, while the goal has narrowed the user's original ask, or while the
+   classifier's own rules look special-cased to the eval — and skips entirely
+   when no goal was declared, so a goal-free session is free to stop.
 
 </Steps>
 
 A context can only track; only the gate refuses a turn.
+
+## The goal must keep the whole ask, not just the number
+
+"No overfit" is part of the user's own prompt, not something the guardrail
+invents on its own — see [the shipped fixture's
+prompt](https://github.com/sloprail/sloprail/blob/main/examples/eval-loop-maxing/eval/converging-goal/prompt.md).
+The agent writes `goal/<name>/goal.yaml` from that prompt, and the goal is
+checked at `Stop` two ways: a script for the target (does a `target:` field
+exist and does the runner's own recomputed accuracy meet it), a judge for the
+no-overfit half (does the goal's declaration still preserve the "don't
+hardcode the eval" condition the user actually stated, cited verbatim in
+`cited_ask:`). Reusing the citation pattern
+[`task-body-is-human-authored`](https://github.com/sloprail/sloprail/tree/main/marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-body-is-human-authored)
+already uses for a task's ask: a `[quote](jsonl-path)` link, grounded via
+`sr-session trajectory cite` against the user's own words, so the goal can be
+checked against what was actually asked rather than what an agent later
+claims was asked.
+
+<Code code={citesAskSh} lang="bash" title=".sloprail/gate/goal-verify/goal-cites-ask.sh" />
+
+Target verification deliberately does not trust an agent-written `verify.sh`'s
+exit code — a `verify.sh` that always `exit 0`s would otherwise pass. Instead
+the gate's own runner script recomputes accuracy itself, against both the
+visible eval cases and a held-out set the prompt and skill never point at (a
+deterrent, not a secret — see the example's own README for why), and refuses
+if the runner's own number misses the target or if held-out accuracy trails
+visible accuracy by too wide a gap. A second judge separately reads the
+classifier's rules against the visible cases for per-case special-casing:
+
+<Code code={noHardcodingJ2} lang="text" title=".sloprail/gate/goal-verify/no-hardcoding.md.j2" />
 
 ## The actual configuration
 
@@ -77,7 +120,14 @@ names:
   - gate/
     - goal-verify/
       - gate.yaml
+      - goal-cites-ask.sh
+      - prepare-goal-covers-ask.sh
+      - goal-covers-ask.md.j2
       - run-verify.sh
+      - score-held-out.sh
+      - prepare-no-hardcoding.sh
+      - no-hardcoding.md.j2
+      - ask-citation.sh
 
 </FileTree>
 
@@ -97,7 +147,25 @@ every run so far is documented.
 ### gate
 
 The piece that blocks. It wakes at `Stop` only while a goal is active, and
-refuses the stop until the goal is verified met.
+refuses the stop until the goal is grounded in the user's own ask, that ask's
+target AND no-overfit condition both survive in the goal's own declaration,
+the runner's own recomputed accuracy meets the target, and the classifier's
+rules do not look special-cased to the eval.
 
 <Code code={gateYaml} lang="yaml" title=".sloprail/gate/goal-verify/gate.yaml" />
 <Code code={verifySh} lang="bash" title=".sloprail/gate/goal-verify/run-verify.sh" />
+
+## A note on the animation above
+
+The animation shows the refusal landing at the moment of the edit — mid
+keystroke, as the agent types the hardcoded lookup table. This design refuses
+later, at `Stop`: the agent can write whatever it wants mid-turn, and the
+gate only wakes when the trajectory claims to be done. That is a real gap
+between the story the animation tells and what ships here, not a simplification
+of the same thing — a `preventive` file-guard on `classify.py` catching the
+edit itself is a different, additional piece this example does not yet have.
+Follow-up: [`sloprail/website`](https://github.com/sloprail/website)'s
+`src/components/use-cases/compaction-gaming/Trajectory.tsx` needs updating (or
+captioning) to make that difference honest, or the example needs a preventive
+half added to match the animation — tracked as follow-up work, not resolved
+by this page.
