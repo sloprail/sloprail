@@ -52,11 +52,19 @@ if [ -z "$path" ]; then
   refuse "task-dependencies-resolve: the event named no path, so there is nothing to check"
 fi
 
+# $SR_WORKSPACE is the project root the engine names; $SR_GUARDRAIL_DIR is this
+# guard's own folder. Both are set by the engine (internal/dispatch/exec.go) —
+# never guessed from $PWD.
 root="${SR_WORKSPACE:-.}"
-schema="$root/.sloprail/schemas/task.cue"
+gdir="${SR_GUARDRAIL_DIR:-.}"
 
+# The schema is the PLUGIN's, read from the plugin's own tree — never copied
+# into a consumer's .sloprail/schemas/ (see task-evidence-resolves/check-task.sh
+# for the same pattern). $gdir is this guard's own folder, two levels under the
+# plugin's .sloprail/, so ../../schemas/task.cue is the plugin's schemas/.
+schema="$gdir/../../schemas/task.cue"
 if [ ! -f "$schema" ]; then
-  refuse "task-dependencies-resolve: schema not found at $schema — install the plugin's task.cue under the project's .sloprail/schemas/."
+  refuse "task-dependencies-resolve: schema not found at $schema — the rule cannot check anything without it."
 fi
 
 # THIS task's own id, derived from its path:
