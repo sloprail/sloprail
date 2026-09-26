@@ -45,14 +45,14 @@ const ORDER = [
   'script-checks', 'judge-checks', 'events', 'state-management', 'environment',
 ];
 
-// A short related set per page — points at the concept idea + siblings.
+// A short related set per page — points at its siblings.
 const RELATED = {
-  'file-guard': ['concepts/file-guard', 'guides/matchers', 'guides/script-checks'],
-  'gate': ['concepts/gate', 'guides/matchers', 'concepts/precondition'],
-  'context': ['concepts/context', 'guides/state-management'],
+  'file-guard': ['guides/matchers', 'guides/script-checks'],
+  'gate': ['guides/matchers', 'guides/script-checks'],
+  'context': ['guides/state-management'],
   'matchers': ['guides/events', 'guides/file-guard'],
-  'script-checks': ['guides/judge-checks', 'concepts/refusal-contract'],
-  'judge-checks': ['guides/script-checks', 'concepts/grounding'],
+  'script-checks': ['guides/judge-checks'],
+  'judge-checks': ['guides/script-checks'],
   'events': ['reference/event-vocabulary', 'guides/matchers'],
   'state-management': ['guides/context'],
   'environment': ['guides/script-checks'],

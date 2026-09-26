@@ -61,12 +61,11 @@ checks:
   # backlog/blocked -> to_do/in_progress transition, and only when a
   # gates/*.md file exists (prepare-judgment-gates.sh's own gate).
   # model is size-md (engine default judge modelset), matching the plugin's
-  # other judges; timeout 25s sits under the engine's 30s check bound.
+  # other judges; no explicit timeout — it runs under the engine's own default.
   # allowed_tools: [Read] lets the judge actually GO LOOK at a file a gate
   # names (an artifact, a memories/topics unit) rather than judge blind — the
   # plugin's other judges grant Read for the same reason.
   - prepare: ./prepare-judgment-gates.sh
     judge: ./judge-gates.md.j2
     model: size-md
-    timeout: 25s
     allowed_tools: [Read]

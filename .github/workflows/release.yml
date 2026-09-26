@@ -90,3 +90,59 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/checksums.txt
+
+      # The docs site (website repo) pins the exact sloprail commit it builds
+      # docs from in docs-source.json (see that file's own $comment). A tagged
+      # release is the signal that main has moved to a commit worth shipping,
+      # so open a PR there bumping `ref` to this tag's commit — a human still
+      # reviews and merges it (the docs review already happened on the sloprail
+      # PR that landed this commit; this is only the "roll it out" step).
+      # WEBSITE_DOCS_BUMP_TOKEN is a fine-grained PAT, repo secret ON THIS
+      # (sloprail) repo — the default GITHUB_TOKEN here is scoped to this repo
+      # alone and cannot push to or open a PR against a different one. Create
+      # it at github.com/settings/personal-access-tokens (fine-grained, NOT a
+      # classic token): Resource owner = sloprail org, Repository access =
+      # Only select repositories -> sloprail/website, Permissions =
+      # Contents: Read and write, Pull requests: Read and write. Add it here
+      # as Settings -> Secrets and variables -> Actions -> New repository
+      # secret, name WEBSITE_DOCS_BUMP_TOKEN. Mirrors website's own DOCS_TOKEN
+      # (same fine-grained-PAT-as-repo-secret pattern, opposite direction and
+      # read-only instead of read-write — see website's build.yml).
+      - name: open a docs-ref bump PR against sloprail/website
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DOCS_BUMP_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::WEBSITE_DOCS_BUMP_TOKEN is not set — skipping the website docs-ref bump PR. Bump docs-source.json's ref in sloprail/website by hand for this release." >&2
+            exit 0
+          fi
+
+          sha="${{ github.sha }}"
+          tag="${{ github.ref_name }}"
+          branch="docs-ref-bump/$tag"
+
+          work="$(mktemp -d)"
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/sloprail/website.git" "$work"
+          cd "$work"
+          git checkout -b "$branch"
+
+          jq --arg sha "$sha" '.ref = $sha' docs-source.json > docs-source.json.tmp
+          mv docs-source.json.tmp docs-source.json
+
+          if git diff --quiet -- docs-source.json; then
+            echo "docs-source.json already pins $sha — nothing to open"
+            exit 0
+          fi
+
+          git config user.name "sloprail-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git add docs-source.json
+          git commit -m "docs: bump ref to sloprail@${sha:0:12} ($tag)"
+          git push origin "$branch"
+
+          gh pr create \
+            --repo sloprail/website \
+            --title "docs: bump ref to sloprail@${sha:0:12} ($tag)" \
+            --body "Rolls out the docs as of the $tag release (sloprail@$sha)." \
+            --head "$branch" \
+            --base main

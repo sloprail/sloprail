@@ -42,9 +42,9 @@ checks:
   # modelset, the "cheapest adequate model" the task calls for — a judgement
   # over authored prose (and now, deterministic measurements run via Bash)
   # is a real reasoning task, not a formatting one, so the smallest alias is
-  # not reached for, but the largest is not the default either. timeout 25s
-  # sits under the engine's 30s check bound so the judge's own limit fires
-  # first (mirrors every judge check in this repo). allowed_tools:
+  # not reached for, but the largest is not the default either. No explicit
+  # timeout — it runs under the engine's own default (internal/dispatch/
+  # exec.go's defaultCheckTimeout). allowed_tools:
   # [Read, Bash] — Read for the rules/unit text (already in the prompt, but
   # a rule may point the judge at a related file), Bash so the judge can run
   # the actual measurement a deterministic rule's text asks for (wc, grep,
@@ -53,5 +53,4 @@ checks:
   - prepare: ./prepare-judge-rules.sh
     judge: ./judge-rules.md.j2
     model: size-md
-    timeout: 25s
     allowed_tools: [Read, Bash]

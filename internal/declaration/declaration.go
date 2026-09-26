@@ -493,7 +493,7 @@ type Check struct {
 	Model string `yaml:"model"`
 
 	// Timeout is how long a Judge may take before it is killed and read as a
-	// refusal, overriding the engine's default (30s). A Go duration string
+	// refusal, overriding the engine's default (defaultCheckTimeout, 600s). A Go duration string
 	// (`45s`, `2m`, `1m30s`) parsed with time.ParseDuration; the validator
 	// refuses one that does not parse or is <= 0. Only meaningful alongside a
 	// Judge — a script's own runtime is the author's to bound — so Timeout set
