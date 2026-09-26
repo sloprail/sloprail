@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="128" height="128">
+  <!-- sloprail favicon — the 2x2 mark (green square, red triangle / $ >) on a
+       black tile. Glyphs are JetBrains Mono Bold outlines baked as PATHS (no
+       font dependency). Regenerate via scripts/gen-favicon.mjs; geometry from
+       src/components/marketing/logo-geometry.mjs. -->
+  <rect width="64" height="64" rx="14" fill="#0A0A0A"/>
+  <rect x="10.5" y="10.5" width="17" height="17" rx="2" fill="#2FB36B"/>
+  <polygon points="45,11.5 52.5,26.5 37.5,26.5" fill="#E5484D" stroke="#E5484D" stroke-width="2" stroke-linejoin="round"/>
+  <path fill="#FFFFFF" transform="translate(19 45) scale(0.023100000000000002 -0.023100000000000002) translate(-300 -365)" d="M269 -140L269 -8Q171 0 114.5 54.5Q58 109 57 196L182 196Q182 159 205 134.5Q228 110 269 102L269 314L251 319Q165 341 118.5 398Q72 455 72 536Q72 621 125 675.5Q178 730 269 738L269 870L331 870L331 739Q423 731 477 677.5Q531 624 532 539L407 539Q407 575 387.5 598Q368 621 331 628L331 426L364 417Q451 395 497 338.5Q543 282 543 199Q543 112 485.5 55.5Q428 -1 331 -9L331 -140ZM331 101Q372 107 395 131.5Q418 156 418 194Q418 238 387 267Q356 296 302 299L331 337ZM269 388L269 628Q234 621 215.5 599.5Q197 578 197 543Q197 498 227.5 468.5Q258 439 313 437Z"/>
+  <path fill="#FFFFFF" transform="translate(45 45) scale(0.023100000000000002 -0.023100000000000002) translate(-300 -329.5)" d="M76 56L76 171L366 305Q386 314 405.5 320.5Q425 327 436 329Q425 331 405 336.5Q385 342 366 351L76 486L76 603L524 392L524 267Z"/>
+</svg>
