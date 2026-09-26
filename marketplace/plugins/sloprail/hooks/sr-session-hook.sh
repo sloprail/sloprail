@@ -141,12 +141,32 @@ Then start a new session — this one will keep warning until sr-session is foun
     # be read as having permitted, so this blocks rather than warns — the
     # engine's own philosophy applied one layer up, to the engine's own
     # absence.
-    echo "$message" >&2
-    echo "BLOCKED: sloprail cannot enforce its guardrails because sr-session is missing. ${install_hint}" >&2
-    # Non-zero refuses (script-checks.md: "exit 0 permits ... echo \"…\" >&2;
-    # exit 1 is an ordinary refusal"). This wrapper follows that same
-    # convention rather than inventing a different one.
-    exit 1
+    #
+    # HOW it blocks is Claude Code's hook contract, not the engine's check
+    # contract: a PreToolUse hook refuses only by exiting 2, and only then is
+    # stderr fed to the agent. Any other non-zero is a "non-blocking error" —
+    # the tool runs and the agent never sees why. This used to exit 1, and a
+    # real fresh-install run showed every tool call going through with the
+    # message shown to nobody: the silent no-op this wrapper exists to prevent.
+    #
+    # WHAT it blocks is file writes (Write/Edit/MultiEdit/NotebookEdit), not
+    # every tool: refusing Bash too would refuse the very command that
+    # installs sr-session, a session that can never repair itself. A write is
+    # where the rules would have applied, so that is where the agent hears it.
+    payload="$(cat)"
+    tool="$(printf '%s' "$payload" | tr -d '\n' | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    case "$tool" in
+    Write | Edit | MultiEdit | NotebookEdit)
+      echo "BLOCKED: sloprail cannot check this write because its sr-session binary is not installed. Install it (from a shell), then retry:" >&2
+      echo "  ${install_hint}" >&2
+      echo "(sloprail/sloprail may be private: if that URL 404s, fetch install.sh with your git/gh access and run it.)" >&2
+      exit 2
+      ;;
+    *)
+      echo "$message" >&2
+      exit 0
+      ;;
+    esac
     ;;
   *)
     # start / stop / subagent-stop: not a guarded action by itself. Warn

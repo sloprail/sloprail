@@ -224,6 +224,12 @@ func hookHOME(t *testing.T) string {
 // to react to, module directive or not.
 func runHookScript(t *testing.T, subcommand, path string) (output string, code int) {
 	t.Helper()
+	return runHookScriptWith(t, subcommand, path, "")
+}
+
+// runHookScriptWith is runHookScript with a hook payload on stdin.
+func runHookScriptWith(t *testing.T, subcommand, path, stdin string) (output string, code int) {
+	t.Helper()
 	script := hookScriptPath(t)
 	cmd := exec.Command(script, subcommand)
 	cmd.Dir = noModuleDir(t)
@@ -232,7 +238,7 @@ func runHookScript(t *testing.T, subcommand, path string) (output string, code i
 		"HOME=" + hookHOME(t),
 		"XDG_CONFIG_HOME=" + xdgConfigHomeOverride,
 	}, goEnvPassthrough...)
-	cmd.Stdin = strings.NewReader("")
+	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.CombinedOutput()
 	code = 0
 	if exitErr, ok := err.(*exec.ExitError); ok {
@@ -276,12 +282,15 @@ func noModuleDir(t *testing.T) string {
 func TestSrSessionHookWrapper_PreToolBlocksLoudlyWhenBinaryMissing(t *testing.T) {
 	// /usr/bin:/bin only — no Go tooling, no dev machine's ~/.local/bin. This is
 	// exactly the PATH the smoke test used to reproduce the silent no-op.
-	out, code := runHookScript(t, "pre-tool", "/usr/bin:/bin")
+	out, code := runHookScriptWith(t, "pre-tool", "/usr/bin:/bin", `{"tool_name":"Write","tool_input":{"file_path":"a.ts"}}`)
 
-	if code == 0 {
-		t.Fatalf("pre-tool exited 0 with sr-session missing — this is the exact silent "+
-			"no-op the smoke test found: a hook that could not run must not be read as "+
-			"having permitted:\n%s", out)
+	// 2 specifically: Claude Code's PreToolUse refuses only on exit 2, and
+	// only then shows stderr to the agent. Exit 1 is a "non-blocking error"
+	// — the write lands and nobody is told, measured in a real fresh-install
+	// eval run where this wrapper used to exit 1.
+	if code != 2 {
+		t.Fatalf("a write with sr-session missing exited %d, want 2 — anything else is the exact "+
+			"silent no-op the smoke test found: the harness lets the write through:\n%s", code, out)
 	}
 	if !strings.Contains(out, "sr-session") {
 		t.Errorf("the refusal does not name the missing binary:\n%s", out)
@@ -289,6 +298,16 @@ func TestSrSessionHookWrapper_PreToolBlocksLoudlyWhenBinaryMissing(t *testing.T)
 	if !strings.Contains(out, "install.sh") {
 		t.Errorf("the refusal does not give the install command, leaving a stranger with "+
 			"a blocked session and no next step:\n%s", out)
+	}
+}
+
+// TestSrSessionHookWrapper_PreToolLetsBashInstall: with sr-session missing,
+// Bash is NOT refused — it is how the agent installs sr-session. Refusing it
+// would leave a session that can never repair itself.
+func TestSrSessionHookWrapper_PreToolLetsBashInstall(t *testing.T) {
+	out, code := runHookScriptWith(t, "pre-tool", "/usr/bin:/bin", `{"tool_name":"Bash","tool_input":{"command":"sh install.sh"}}`)
+	if code != 0 {
+		t.Fatalf("Bash was refused with sr-session missing (exit %d) — the install itself runs through Bash:\n%s", code, out)
 	}
 }
 
