@@ -106,14 +106,20 @@ func (w *workspace) freshHome(repoRoot string) (freshEnv, error) {
 	for _, kv := range os.Environ() {
 		key, _, _ := strings.Cut(kv, "=")
 		switch {
-		case key == "HOME", key == "PATH", key == "CLAUDE_CONFIG_DIR",
+		case key == "HOME", key == "PATH", key == "TMPDIR", key == "CLAUDE_CONFIG_DIR",
 			key == "XDG_CONFIG_HOME", key == "XDG_DATA_HOME", key == "GOBIN", key == "GOPATH",
 			strings.HasPrefix(key, "SLOPRAIL_"):
 			continue
 		}
 		env = append(env, kv)
 	}
-	env = append(env, "HOME="+home, "PATH="+path)
+	// Its own temp dir too, so a clone or download made through mktemp or
+	// $TMPDIR is removed with the workspace instead of outliving the run.
+	tmp := filepath.Join(w.root, "tmp")
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		return freshEnv{}, err
+	}
+	env = append(env, "HOME="+home, "PATH="+path, "TMPDIR="+tmp)
 
 	return freshEnv{home: home, env: env, configDir: filepath.Join(home, ".claude")}, nil
 }
