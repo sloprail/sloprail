@@ -4,7 +4,7 @@
 > Software Foundation Individual Contributor License Agreement v2.2](https://www.apache.org/licenses/icla.pdf)
 > for use by a for-profit Delaware C-corporation rather than a non-profit
 > foundation. It has **not** been reviewed by a lawyer. Do not treat this as
-> final or binding until [COMPANY LEGAL NAME]'s counsel has reviewed and
+> final or binding until A10N, Inc.'s counsel has reviewed and
 > approved it — in particular the assignment/license model (this draft keeps
 > the Apache original's non-exclusive-license model rather than a copyright
 > assignment), the disclaimer of warranty language, and governing law/venue,
@@ -12,7 +12,7 @@
 > incorporation.
 
 Thank you for your interest in contributing to sloprail, a project of
-**[COMPANY LEGAL NAME]** ("Company"). In order to clarify the intellectual
+**A10N, Inc.** ("Company"). In order to clarify the intellectual
 property license granted with Contributions from any person, the Company
 must have on file a signed Contributor License Agreement ("CLA") from each
 Contributor, indicating agreement with the license terms below. This

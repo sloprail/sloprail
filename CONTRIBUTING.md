@@ -43,5 +43,5 @@ and gives the project a clear, durable license to use it.
   co-author of at least one commit in the PR, to prevent someone from
   opening a PR against commits they don't control.
 - Questions about the CLA itself (not the bot mechanics) should go to
-  [COMPANY LEGAL NAME] directly — see [CLA.md](./CLA.md) for the current
+  A10N, Inc. directly — see [CLA.md](./CLA.md) for the current
   legal-review status of that document.
