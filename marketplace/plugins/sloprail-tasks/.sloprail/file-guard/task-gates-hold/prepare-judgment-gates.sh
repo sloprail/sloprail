@@ -14,7 +14,8 @@ event="$(cat)"
 
 path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
 root="${SR_WORKSPACE:-.}"
-schema="$root/.sloprail/schemas/task.cue"
+gdir="${SR_GUARDRAIL_DIR:-.}"
+schema="$gdir/../../schemas/task.cue"
 
 skip() { printf '{"skip": true}\n'; exit 0; }
 
