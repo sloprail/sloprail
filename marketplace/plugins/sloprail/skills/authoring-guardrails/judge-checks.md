@@ -16,14 +16,13 @@ checks:
   - prepare: ./collect-quote-and-diff.sh    # optional: assembles context for the prompt
     judge: ./change-is-clean-and-absolute.md.j2
     model: size-md                            # optional: a size alias or model name
-    timeout: 45s                              # optional: a Go duration; default 30s
     allowed_tools: [Read, WebFetch]           # optional: tools the judge's agent may use
 ```
 
-`prepare`, `model`, `timeout` and `allowed_tools` are **judge-only** keys: set any
+`prepare`, `model` and `allowed_tools` are **judge-only** keys: set any
 of them on a script check and the rule is a **load error** (a script makes no model
 call, bounds its own runtime, and names its own tools by being an executable). Only
-`judge` is required; the other four are optional.
+`judge` is required; the other three are optional.
 
 ## The template
 
@@ -98,7 +97,7 @@ follows. The judge is attacker-shaped by construction and the engine hardens the
 prompt for it; a `prepare` that wraps freshly-written content should keep the same
 discipline.
 
-## The substrate, model, and timeout
+## The substrate and model
 
 A judge runs through **`sr-agent`** — the harness-agnostic agent runner, invoked
 by name off `PATH` — not a model binary directly. So a template names neither
@@ -112,11 +111,6 @@ the modelset.
   rung, because a judge is a real reasoning task, not a formatting one, and the
   largest alias is a cost a per-action check should not default to. A malformed
   modelset is refused at load.
-- `timeout:` is a Go duration (`45s`, `2m`) bounding the whole call. Omitted, it is
-  **30s**. A judge that exceeds it is a refusal — fail-closed at the per-check
-  bound. (A hard invariant-checking rubric can legitimately take longer than a
-  quick one, which is why the bound is per-judge.) A malformed duration is refused
-  at load.
 
 ## `allowed_tools` — what the judge's agent may do
 

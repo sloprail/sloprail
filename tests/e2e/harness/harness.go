@@ -69,7 +69,7 @@ type Env struct {
 
 	// checkTimeout, when non-empty, sets SLOPRAIL_CHECK_TIMEOUT for this Env's
 	// mock runs — a Go duration string overriding internal/dispatch/exec.go's
-	// defaultCheckTimeout (60s in production) for the sr-session subprocess the
+	// defaultCheckTimeout (600s in production) for the sr-session subprocess the
 	// mock launches. Empty leaves sloprail's own 60s default. Exists so a test
 	// that deliberately wedges a check to prove the timeout mechanism itself
 	// (tests/e2e/pre_tool/019_hook_failure_surface) does not have to wait out 60

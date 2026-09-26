@@ -40,12 +40,12 @@ checks:
   - script: ./check-rule.sh
 
   # Stage 2 — reached only because stage 1 passed. model: size-md (engine
-  # default judge modelset); timeout 25s sits under the engine's 30s check
-  # bound so the judge's own limit fires first. allowed_tools: [Read] — the
+  # default judge modelset); no explicit timeout — it runs under the engine's
+  # own default (internal/dispatch/exec.go's defaultCheckTimeout).
+  # allowed_tools: [Read] — the
   # cited messages and the body are both already IN the prompt; Read is the
   # one conservative grant, matching task-body-is-human-authored.
   - prepare: ./resolve-cited-rule-quotes.sh
     judge: ./judge-rule-body.md.j2
     model: size-md
-    timeout: 25s
     allowed_tools: [Read]

@@ -15,7 +15,7 @@ executed at all is a refusal.
 rather than the write.
 
 A deliberate fail-open is legitimate — a model judge must not wedge a session on
-a 60-second timeout — but it is a **local override**: the body must say so, say
+a timeout — but it is a **local override**: the body must say so, say
 why, and say which line to change to restore the default. An undocumented
 `exit 0` on an error path is indistinguishable from a bug.
 
