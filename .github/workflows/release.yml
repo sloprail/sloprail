@@ -83,10 +83,18 @@ jobs:
         env:
           OUTPUT: CHANGES.md
 
+      # The install steps go on top of every release's notes: `gh release view`
+      # is where someone (or an agent) holding only the release lands, and the
+      # binaries alone do nothing without the plugin. Same text as the
+      # INSTALL.md inside each archive.
+      - name: prepend install steps
+        run: |
+          { cat scripts/release-INSTALL.md; echo; echo '---'; echo; cat CHANGES.md; } > NOTES.md
+
       - name: publish release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: CHANGES.md
+          body_path: NOTES.md
           files: |
             dist/*.tar.gz
             dist/checksums.txt

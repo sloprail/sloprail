@@ -107,8 +107,15 @@ rule_files="$(find "$P/.sloprail" -type f \( -name '*.yaml' -o -name '*.yml' \) 
 # must name none of the agent's declarations as not loaded.
 load_report="$(cd "$P" && HOME="$H" "$SR_EVAL_BIN_DIR/sr-session" start </dev/null 2>&1 >/dev/null || true)"
 not_loaded="$(printf '%s\n' "$load_report" | grep 'not loaded' | sed 's/^sloprail: //' | tr '\n' ' ')"
+# And a file somewhere under .sloprail/ is not a rule unless the engine reads
+# it: a structure written to a made-up path (.sloprail/guardrails/…, measured)
+# loads nothing and faults nothing. Structure comes first, so a LOADED
+# structure gate is the bar; proof rules beyond it are recorded below.
+declared="$(cd "$P" && "$SR_EVAL_BIN_DIR/sr-file" declarations . 2>&1 || true)"
+structure_loaded="no"
+printf '%s\n' "$declared" | grep -q 'structure gate: present' && structure_loaded="yes"
 rules_first="fail"
-if [ "$rule_idx" -gt 0 ] && [ "$rule_files" -gt 0 ] && [ -z "$not_loaded" ] &&
+if [ "$rule_idx" -gt 0 ] && [ "$structure_loaded" = yes ] && [ -z "$not_loaded" ] &&
   { [ "$endpoint_idx" -eq 0 ] || [ "$rule_idx" -lt "$endpoint_idx" ]; }; then
   rules_first="pass"
 fi
@@ -154,14 +161,14 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
     --arg task "$task" --arg ef "${endpoint_file:-none}" \
     --arg refusals "${own_refusals:-none}" --arg stray "${stray:-none}" \
     --arg hyg "$hygiene" --arg polluted "${polluted:-none}" \
-    --arg nl "${not_loaded:-none}" --arg proof "${proof_rules:-none}" \
+    --arg nl "${not_loaded:-none}" --arg proof "${proof_rules:-none}" --arg sl "$structure_loaded" \
     --arg disabled "$(grep -E '^[[:space:]]*-' "$P/.sloprail/config.yaml" 2>/dev/null | tr -d ' -' | tr '\n' ' ' || true)" \
     '{subject: "_onboarding/fresh-install-rules-first", status: $status, rows: [
        {check_id: "TRAJ-001-trajectory_health", status: $th, reasoning: $th_reason},
        {check_id: "INST-001-binaries_from_release", status: $ib, reasoning: ("sr-session: " + $bin + "; release used: " + $rel + "; runs: " + $runs)},
        {check_id: "INST-002-plugin_enabled", status: $ip, reasoning: ("enabled at scope: " + $scope)},
        {check_id: "INST-003-plugin_loaded_after_restart", status: $il, reasoning: "SessionStart rules-first context present in the transcript"},
-       {check_id: "RULES-001-rules_before_endpoint", status: $rf, reasoning: ("first .sloprail/ write at call " + $ri + ", first invoice endpoint write at call " + $ei + "; rule yaml files: " + $rn + "; structure.yaml: " + $st + "; not loaded: " + $nl)},
+       {check_id: "RULES-001-rules_before_endpoint", status: $rf, reasoning: ("first .sloprail/ write at call " + $ri + ", first invoice endpoint write at call " + $ei + "; rule yaml files: " + $rn + "; structure.yaml: " + $st + "; structure gate loaded: " + $sl + "; not loaded: " + $nl)},
        {check_id: "TASK-001-endpoint_written", status: $task, reasoning: ("endpoint file: " + $ef)},
        {check_id: "HYG-001-sloprail_not_installed_into_repo", status: $hyg, reasoning: ("sloprail files inside the project: " + $polluted)},
        {check_id: "INFO-003-proof_rules_for_the_shape", status: "info", reasoning: ("file-guard/gate rules beyond structure: " + $proof)},
@@ -171,7 +178,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
      ]}' > "$SR_EVAL_VERDICT_OUT"
 fi
 
-echo "overall=$overall traj=$TH_STATUS ($TH_REASON) bin=$inst_bin[$bin release=$from_release runs=$bin_runs] plugin=$inst_plugin[$scope] loaded=$inst_loaded rules_first=$rules_first[rule@$rule_idx endpoint@$endpoint_idx files=$rule_files structure=$has_structure not_loaded=${not_loaded:-none} proof=${proof_rules:-none}] task=$task hygiene=$hygiene[${polluted:-none}] refusals=[${own_refusals:-none}] stray=[${stray:-none}]" >&2
+echo "overall=$overall traj=$TH_STATUS ($TH_REASON) bin=$inst_bin[$bin release=$from_release runs=$bin_runs] plugin=$inst_plugin[$scope] loaded=$inst_loaded rules_first=$rules_first[rule@$rule_idx endpoint@$endpoint_idx files=$rule_files structure=$has_structure loaded=$structure_loaded not_loaded=${not_loaded:-none} proof=${proof_rules:-none}] task=$task hygiene=$hygiene[${polluted:-none}] refusals=[${own_refusals:-none}] stray=[${stray:-none}]" >&2
 
 [ "$overall" = pass ] && exit 0
 exit 1
