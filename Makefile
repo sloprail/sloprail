@@ -106,6 +106,39 @@ distribute-local: build
 RELEASE_DIR := dist
 RELEASE_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
+# bump-version updates every plugin.json + marketplace.json to VERSION,
+# lockstep with the repo's own release — run this BEFORE tagging (see
+# scripts/bump-version.sh's own doc comment for the full commit-then-tag
+# flow). VERSION is bare semver (0.2.0), no leading v.
+.PHONY: bump-version
+bump-version:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "make: VERSION is required — make bump-version VERSION=0.2.0" >&2; \
+		exit 1; \
+	fi
+	@./scripts/bump-version.sh "$(VERSION)"
+
+# verify-version fails if the pushed tag and the committed plugin.json/
+# marketplace.json versions disagree — the release.yml gate that catches
+# "tagged without running bump-version first", before any binary is even
+# built. TAG is the full tag (v0.2.0); the leading v is stripped to compare
+# against plugin.json's bare-semver field.
+.PHONY: verify-version
+verify-version:
+	@if [ -z "$(TAG)" ]; then \
+		echo "make: TAG is required — make verify-version TAG=v0.2.0" >&2; \
+		exit 1; \
+	fi
+	@want="$${TAG#v}"; \
+	for f in $$(find marketplace/plugins -maxdepth 3 -name plugin.json -path '*/.claude-plugin/*'); do \
+		got="$$(jq -r .version "$$f")"; \
+		if [ "$$got" != "$$want" ]; then \
+			echo "make: $$f has version $$got, tag $(TAG) wants $$want — run 'make bump-version VERSION=$$want', commit, then re-tag" >&2; \
+			exit 1; \
+		fi; \
+	done
+	@echo "verify-version: all plugin.json match $(TAG)"
+
 .PHONY: release
 release:
 	@rm -rf $(RELEASE_DIR)

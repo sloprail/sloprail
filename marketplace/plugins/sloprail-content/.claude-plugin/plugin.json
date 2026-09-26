@@ -1,6 +1,6 @@
 {
   "name": "sloprail-content",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Guardrails for a memories/topics/<topic>/units/ content workflow: a unit's frontmatter taxonomy (channels, type, tags) selects which writing rules apply, script rules catch what LLMs are bad at (character limits, banned phrases), a judge weighs the rest, and a unit cannot reach status: published without a cited user approval and a published_url. Generalizes and replaces a topic-local unit-satisfies-constraints guard.",
   "keywords": [
     "claude-code",
