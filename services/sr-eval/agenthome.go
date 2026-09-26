@@ -18,17 +18,6 @@ import (
 // stranger's machine has it.
 var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-eval"}
 
-// sloprailRemotes are the spellings of sloprail's own GitHub remote an agent
-// (or `claude plugin marketplace add`) may clone. Each is redirected to the
-// checkout under test in the fresh HOME's gitconfig. Every spelling is listed
-// with and without `.git`, since url.insteadOf is a plain prefix match and
-// the bare form alone would also catch sloprail/sloprail-eval.
-var sloprailRemotes = []string{
-	"git@github.com:sloprail/sloprail",
-	"ssh://git@github.com/sloprail/sloprail",
-	"https://github.com/sloprail/sloprail",
-}
-
 // agentEnv is how an agent-under-test is launched: its HOME, the environment
 // it runs in, and where its harness keeps transcripts. releaseURL is set only
 // for a FreshMachine run.
@@ -65,8 +54,7 @@ type agentEnv struct {
 // An ordinary run keeps this build's binaries first on PATH (binDir), exactly
 // as before. A FreshMachine run instead gets a PATH with no sloprail binary on
 // it and nothing in ~/.local/bin or ~/go/bin, install.sh pointed at this
-// checkout's build (SLOPRAIL_RELEASE_URL), and sloprail's git remote
-// redirected to this checkout.
+// checkout's build (SLOPRAIL_RELEASE_URL).
 func (w *workspace) agentHome(ctx context.Context, repoRoot, binDir string, fresh bool) (agentEnv, error) {
 	realHome, err := os.UserHomeDir()
 	if err != nil {
@@ -134,16 +122,6 @@ func (w *workspace) agentHome(ctx context.Context, repoRoot, binDir string, fres
 		return ae, nil
 	}
 
-	gitconfig := filepath.Join(home, ".gitconfig")
-	for _, remote := range sloprailRemotes {
-		for _, spelling := range []string{remote, remote + ".git"} {
-			set := exec.Command("git", "config", "--file", gitconfig, "--add",
-				"url."+repoRoot+".insteadOf", spelling)
-			if out, err := set.CombinedOutput(); err != nil {
-				return agentEnv{}, fmt.Errorf("redirect %s: %w: %s", spelling, err, strings.TrimSpace(string(out)))
-			}
-		}
-	}
 	path, err := freshPath(home)
 	if err != nil {
 		return agentEnv{}, err

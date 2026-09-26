@@ -74,9 +74,7 @@ type Fixture struct {
 	//
 	// The "release" they come from is this checkout, built: install.sh's
 	// SLOPRAIL_RELEASE_URL points at archives freshHome builds, so what lands
-	// is the code under test rather than whatever was last published. And
-	// sloprail's own git remote is redirected to this checkout, so a clone
-	// (for install.sh, say) gets this branch too.
+	// is the code under test rather than whatever was last published.
 	FreshMachine bool `yaml:"freshMachine"`
 
 	// Model is the sr-agent --model set for the agent-under-test, e.g.

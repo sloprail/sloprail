@@ -274,19 +274,19 @@ func TestCheckStructureGate_PluginScopeGatesWritesNotDeletes(t *testing.T) {
 		return []event.Event{{Kind: kind, Fields: map[string]any{"path": path}}}
 	}
 
-	reason := checkStructureGate(discard(), structures, ev(declaration.KindPreFileCreate, ".mdmap/stray.md"))
+	reason := checkStructureGate(discard(), structures, ev(declaration.KindPreFileCreate, ".mdmap/stray.md"), "")
 	assert.Contains(t, reason, `plugin "mdmap"`, "a create inside the scope that the plugin does not allow is refused, naming it")
 
-	reason = checkStructureGate(discard(), structures, ev(declaration.KindPreFileUpdate, ".mdmap/stray.md"))
+	reason = checkStructureGate(discard(), structures, ev(declaration.KindPreFileUpdate, ".mdmap/stray.md"), "")
 	assert.NotEmpty(t, reason, "an update is a write too")
 
-	reason = checkStructureGate(discard(), structures, ev(declaration.KindPreFileDelete, ".mdmap/stray.md"))
+	reason = checkStructureGate(discard(), structures, ev(declaration.KindPreFileDelete, ".mdmap/stray.md"), "")
 	assert.Empty(t, reason, "a delete is not gated by the structure gate")
 
-	reason = checkStructureGate(discard(), structures, ev(declaration.KindPreFileCreate, ".mdmap/mindmap/a/mindmap.yaml"))
+	reason = checkStructureGate(discard(), structures, ev(declaration.KindPreFileCreate, ".mdmap/mindmap/a/mindmap.yaml"), "")
 	assert.Empty(t, reason, "the allowed shape passes")
 
-	reason = checkStructureGate(discard(), structures, ev(declaration.KindPreFileCreate, "src/main.go"))
+	reason = checkStructureGate(discard(), structures, ev(declaration.KindPreFileCreate, "src/main.go"), "")
 	assert.Empty(t, reason, "outside the plugin's scope, with no project structure, a write is permitted")
 }
 

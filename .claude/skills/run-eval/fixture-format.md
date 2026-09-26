@@ -51,11 +51,9 @@ score: score.sh
   for the project, inside a HOME of the agent's own with no `sr*` binaries
   (not on PATH, not in `~/.local/bin`/`~/go/bin`). Claude Code's login (via
   a linked `~/Library` keychain), `gh`, SSH and git identity still work.
-  The "release" the agent installs from is this checkout, built:
-  `SLOPRAIL_RELEASE_URL` points install.sh at archives sr-eval builds, and
-  `github.com/sloprail/sloprail` is git-`insteadOf`-redirected here, so
-  everything the agent gets is the code under test (committed state for the
-  plugin). The scorer gets `SR_EVAL_AGENT_HOME`. See
+  The binaries the plugin installs come from this checkout, built:
+  `SLOPRAIL_RELEASE_URL` points install.sh at archives sr-eval builds, so
+  everything the agent gets is the code under test. See
   `examples/_onboarding/eval/`.
 - **`model`** — an `sr-agent --model` value (`haiku`, `claude-sonnet-5,size-md`,
   etc.). Every current fixture uses `haiku` deliberately — a cheap model is
@@ -77,7 +75,8 @@ mutates the tree, and neither the fixture's own `seed/` under `examples/` nor
 an operator's local clone of a `repo:` may be touched by a run.
 
 The agent runs in a HOME of its own inside the workspace (`home/`), where the
-plugin is installed for it. Your real `~/.claude` (marketplaces, installed
+plugin is installed for it from a snapshot of this checkout's marketplace
+(`sloprail-marketplace/`), never the checkout itself. Your real `~/.claude` (marketplaces, installed
 plugins, memory) is never written, and your user-scope plugins do not load
 into the agent. Its transcript is under `home/.claude/projects/`; the scorer
 gets that HOME as `SR_EVAL_AGENT_HOME`.

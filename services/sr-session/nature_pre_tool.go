@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -70,7 +72,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// loaded structure (the project's and each plugin's) is combined by scope.
 	// Blocks immediately on a refusal.
 	if len(loaded.Structures) > 0 {
-		if reason := checkStructureGate(cmd, loaded.Structures, events); reason != "" {
+		if reason := checkStructureGate(cmd, loaded.Structures, events, p.Root()); reason != "" {
 			return natureVerdict{Blocked: reason}
 		}
 	}
@@ -123,7 +125,7 @@ func preventiveFileGuards(guards []declaration.FileGuard) []declaration.FileGuar
 // since a gate the engine could not compile has not established that any path is
 // forbidden — the same "an unloadable rule blocks nothing" the rest of the
 // dispatch keeps.
-func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGate, events []event.Event) string {
+func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGate, events []event.Event, root string) string {
 	compiled, err := dispatchcore.CompileStructureSet(structures)
 	if err != nil {
 		// Structure gates that loaded but will not compile are a disagreement
@@ -135,7 +137,7 @@ func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGa
 	}
 	for _, e := range events {
 		path, ok := writePath(e)
-		if !ok {
+		if !ok || outsideProject(root, path) {
 			continue
 		}
 		if allowed, reason := compiled.Decide(path); !allowed {
@@ -143,6 +145,56 @@ func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGa
 		}
 	}
 	return ""
+}
+
+// outsideProject reports whether a write path lies outside the project tree
+// rooted at root. The project's structure governs its own tree, so a path
+// outside it is not its to decide: measured in the onboarding eval, where an
+// agent's new structure refused its own scratch copy under /tmp, the very place
+// the plugin tells agents to keep throwaway files.
+//
+// A path inside the tree usually arrives relative to the root (`src/app.ts`),
+// but not always: with no git root, or a root spelled through a symlink
+// (/var vs /private/var on macOS), an in-tree path can stay absolute. So an
+// absolute path is outside only when a root is known AND the path, resolved as
+// far as it exists, is not under the resolved root. With no root there is no
+// tree to be outside of, and the path stays the structure's — refused unless
+// allowed, as before.
+func outsideProject(root, path string) bool {
+	if !filepath.IsAbs(path) {
+		clean := filepath.Clean(path)
+		return clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))
+	}
+	if root == "" {
+		return false
+	}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
+	rel, err := filepath.Rel(root, resolveExistingPrefix(path))
+	if err != nil {
+		return false
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// resolveExistingPrefix resolves the deepest existing ancestor of path through
+// its symlinks and re-attaches the rest — a path being created does not exist
+// yet, so EvalSymlinks on the whole of it would fail.
+func resolveExistingPrefix(path string) string {
+	rest := ""
+	dir := path
+	for {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return path
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+	}
 }
 
 // writePath returns the target path of a file-write pre-event, and whether the

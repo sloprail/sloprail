@@ -139,6 +139,12 @@ if [ -n "$endpoint_file" ] && [ "$endpoint_idx" -gt 0 ] && grep -qi 'invoice' "$
   task="pass"
 fi
 
+# --- TASK-002: the project's own convention — one test per endpoint under
+# test/endpoints/ (its README says so, and every existing endpoint has one). ---
+test_file="$(find "$P/test" -iname '*invoice*' -type f 2>/dev/null | head -1)"
+task_test="fail"
+[ -n "$test_file" ] && task_test="pass"
+
 # --- Informational rows. ---
 own_refusals="$(grep -Eo '(file-guard|gate) \\?"[a-z0-9-]+\\?"' "$T" 2>/dev/null | sort -u | tr '\n' ' ')"
 # Measured against the harness's setup commit, so what the agent COMMITTED
@@ -155,7 +161,7 @@ hygiene="pass"
 [ -n "$polluted" ] && hygiene="fail"
 
 overall="pass"
-for s in "$TH_STATUS" "$inst_bin" "$inst_plugin" "$inst_loaded" "$rules_first" "$task" "$hygiene"; do
+for s in "$TH_STATUS" "$inst_bin" "$inst_plugin" "$inst_loaded" "$rules_first" "$task" "$task_test" "$hygiene"; do
   [ "$s" = pass ] || overall="fail"
 done
 
@@ -167,6 +173,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
     --arg il "$inst_loaded" \
     --arg rf "$rules_first" --arg ri "$rule_idx" --arg ei "$endpoint_idx" --arg rn "$rule_files" --arg st "$has_structure" \
     --arg task "$task" --arg ef "${endpoint_file:-none}" \
+    --arg tt "$task_test" --arg tf "${test_file:-none}" \
     --arg refusals "${own_refusals:-none}" --arg stray "${stray:-none}" \
     --arg hyg "$hygiene" --arg polluted "${polluted:-none}" \
     --arg nl "${not_loaded:-none}" --arg proof "${proof_rules:-none}" --arg sl "$structure_loaded" \
@@ -178,6 +185,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
        {check_id: "INST-003-plugin_loaded", status: $il, reasoning: "SessionStart rules-first context present in the transcript"},
        {check_id: "RULES-001-rules_before_endpoint", status: $rf, reasoning: ("first .sloprail/ write at call " + $ri + ", first invoice endpoint write at call " + $ei + "; rule yaml files: " + $rn + "; structure.yaml: " + $st + "; structure gate loaded: " + $sl + "; not loaded: " + $nl)},
        {check_id: "TASK-001-endpoint_written", status: $task, reasoning: ("endpoint file: " + $ef)},
+       {check_id: "TASK-002-endpoint_tested", status: $tt, reasoning: ("test file: " + $tf)},
        {check_id: "HYG-001-sloprail_not_installed_into_repo", status: $hyg, reasoning: ("sloprail files inside the project: " + $polluted)},
        {check_id: "INFO-003-proof_rules_for_the_shape", status: "info", reasoning: ("file-guard/gate rules beyond structure: " + $proof)},
        {check_id: "INFO-004-rules_disabled", status: "info", reasoning: ("config.yaml disabled: " + $disabled)},
@@ -186,7 +194,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
      ]}' > "$SR_EVAL_VERDICT_OUT"
 fi
 
-echo "overall=$overall traj=$TH_STATUS ($TH_REASON) bin=$inst_bin[$bin release=$from_release build=$build runs=$bin_runs] plugin=$inst_plugin[$scope] loaded=$inst_loaded rules_first=$rules_first[rule@$rule_idx endpoint@$endpoint_idx files=$rule_files structure=$has_structure loaded=$structure_loaded not_loaded=${not_loaded:-none} proof=${proof_rules:-none}] task=$task hygiene=$hygiene[${polluted:-none}] refusals=[${own_refusals:-none}] stray=[${stray:-none}]" >&2
+echo "overall=$overall traj=$TH_STATUS ($TH_REASON) bin=$inst_bin[$bin release=$from_release build=$build runs=$bin_runs] plugin=$inst_plugin[$scope] loaded=$inst_loaded rules_first=$rules_first[rule@$rule_idx endpoint@$endpoint_idx files=$rule_files structure=$has_structure loaded=$structure_loaded not_loaded=${not_loaded:-none} proof=${proof_rules:-none}] task=$task test=$task_test hygiene=$hygiene[${polluted:-none}] refusals=[${own_refusals:-none}] stray=[${stray:-none}]" >&2
 
 [ "$overall" = pass ] && exit 0
 exit 1
