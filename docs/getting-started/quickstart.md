@@ -16,6 +16,7 @@ You need both the `sr*` binaries and the plugin — see
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
 # Claude Code
+/plugin marketplace add sloprail/sloprail
 /plugin install sloprail@sloprail-marketplace
 ```
 

@@ -170,3 +170,9 @@ case ":$PATH:" in
 esac
 
 say "Done. Verify with: sr-session start < /dev/null"
+say
+say "Next, if you have not yet: install the Claude Code plugin in your project,"
+say "then start a new session (plugins load at session start):"
+say
+say "  claude plugin marketplace add sloprail/sloprail"
+say "  claude plugin install sloprail@sloprail-marketplace --scope project"

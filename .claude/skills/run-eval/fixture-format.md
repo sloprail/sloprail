@@ -18,6 +18,8 @@ repo: https://github.com/owner/name.git
 ref: <full commit sha>  # required alongside repo — never a branch name
 overlay: overlay        # optional
 exampleSloprail: true   # optional, examples/ fixtures only — see below
+freshMachine: true      # optional — onboarding: nothing of sloprail installed
+followUps: [turn-2.md]  # optional — further user turns, each a new process
 model: haiku             # required in practice — sr-agent refuses with none
 score: score.sh
 ```
@@ -45,6 +47,19 @@ score: score.sh
   specific (it assumes the fixture lives at `examples/<name>/eval/<case>/`,
   two directories under the shipped `.sloprail/`); a fixture outside
   `examples/` cannot use it.
+- **`freshMachine`** — `true` skips the plugin install every other fixture
+  gets, and runs the agent in a HOME of its own: no `sr*` binaries on PATH
+  or in `~/.local/bin`/`~/go/bin`, no known marketplaces, no installed
+  plugins, while Claude Code's login (via a linked `~/Library` keychain),
+  `gh`, SSH and git identity still work. `github.com/sloprail/sloprail` is
+  redirected (git `insteadOf`, in that HOME only) to the checkout under
+  test, so the plugin evaluated is this branch's COMMITTED state; release
+  binaries are the real GitHub release. The scorer gets
+  `SR_EVAL_AGENT_HOME`. See `examples/_onboarding/eval/`.
+- **`followUps`** — files beside `fixture.yaml`, each sent as a later user
+  turn in a NEW harness process resuming the same session. Plugins, hooks
+  and SessionStart context load at process start, so this is how a fixture
+  models "the user restarted" after something was installed.
 - **`model`** — an `sr-agent --model` value (`haiku`, `claude-sonnet-5,size-md`,
   etc.). Every current fixture uses `haiku` deliberately — a cheap model is
   the one likelier to take the tempting shortcut a fixture is designed to

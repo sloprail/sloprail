@@ -37,10 +37,20 @@ fallback — it lands the same five binaries in one directory, which is all
 <Tabs>
   <TabItem label="Claude Code">
     ```bash
+    /plugin marketplace add sloprail/sloprail
     /plugin install sloprail@sloprail-marketplace
     ```
 
-    That's it — the hooks are registered. A project with a `.sloprail/` directory
+    Or from a shell, which is also the form an agent can run for you:
+
+    ```bash
+    claude plugin marketplace add sloprail/sloprail
+    claude plugin install sloprail@sloprail-marketplace --scope project
+    ```
+
+    Choose the project scope: sloprail reads which plugins a project enables
+    from its `.claude/settings.json`. Start a new session afterwards, since
+    plugins load when a session starts. That's it — the hooks are registered. A project with a `.sloprail/` directory
     is now guarded; a project with none is an ordinary project until its first
     rule.
   </TabItem>

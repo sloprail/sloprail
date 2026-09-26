@@ -416,3 +416,40 @@ func TestSrSessionHookWrapper_FindsBinaryInLocalBinWhenNotOnPATH(t *testing.T) {
 			"is present in ~/.local/bin:\n%s", out)
 	}
 }
+
+// TestSrSessionHookWrapper_StartTellsTheAgentRulesFirst pins what the agent,
+// not the person, hears at session start. SessionStart's STDOUT is the agent's
+// context (stderr is for the person), so the wrapper's rules-first notice must
+// be on stdout — installed or not — and a missing install must be on stdout
+// too, since the agent is the one that can finish it. Other subcommands'
+// stdout stays clean: stop and pre-tool answer the harness there.
+func TestSrSessionHookWrapper_StartTellsTheAgentRulesFirst(t *testing.T) {
+	stubDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stubDir, "sr-session"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write stub sr-session: %v", err)
+	}
+
+	stdout := func(subcommand, path string) string {
+		t.Helper()
+		cmd := exec.Command(hookScriptPath(t), subcommand)
+		cmd.Dir = noModuleDir(t)
+		cmd.Env = append([]string{"PATH=" + path, "HOME=" + hookHOME(t), "XDG_CONFIG_HOME=" + xdgConfigHomeOverride}, goEnvPassthrough...)
+		cmd.Stdin = strings.NewReader("")
+		out, _ := cmd.Output()
+		return string(out)
+	}
+
+	installed := stdout("start", stubDir+":/usr/bin:/bin")
+	if !strings.Contains(installed, "rules first") || !strings.Contains(installed, "structure.yaml") {
+		t.Errorf("start did not give the agent the rules-first notice on stdout:\n%s", installed)
+	}
+
+	missing := stdout("start", "/usr/bin:/bin")
+	if !strings.Contains(missing, "rules first") || !strings.Contains(missing, "install.sh") {
+		t.Errorf("start with sr-session missing must give the agent both the notice and the install command on stdout:\n%s", missing)
+	}
+
+	if got := stdout("stop", stubDir+":/usr/bin:/bin"); strings.Contains(got, "rules first") {
+		t.Errorf("stop's stdout is the harness's decision channel and must not carry the notice:\n%s", got)
+	}
+}
