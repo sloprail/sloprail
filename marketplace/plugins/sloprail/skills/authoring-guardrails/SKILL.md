@@ -38,18 +38,22 @@ file-guard. Is it about **whether an event may happen / whether a turn is done**
 One more thing lives alongside the three, and it is **not** a nature: the
 **structure gate** — an allowlist of paths that may be written, everything else
 denied. Reach for it when the rule is "writes only land inside this shape", not a
-per-file or per-event check. It is one `structure.yaml` per root, not a per-name
-folder: the project's covers the whole tree, and a plugin's covers only the
+per-file or per-event check. It is one file, `.sloprail/file-guard/structure.yaml`, not a per-name folder:
+the project's covers the whole tree, and a plugin's covers only the
 `scope` (folders) it declares it owns — all of them combine.
 → [structure-gate.md](structure-gate.md)
 
 ## Where each nature lives
 
 ```
+.sloprail/file-guard/structure.yaml          # the structure gate (one file, not a folder)
 .sloprail/file-guard/<name>/file-guard.yaml
 .sloprail/gate/<name>/gate.yaml
 .sloprail/context/<name>/context.yaml
+.sloprail/config.yaml                        # project settings (disabled:, …), not a rule
 ```
+
+Nothing else under `.sloprail/` is read as a declaration.
 
 One folder per rule, under the directory named for its nature. **The folder name
 IS the rule's name** — it is not repeated in a `name:` field, because a name
@@ -85,19 +89,9 @@ Bind to a kind with a deliberately wrong field name and it names that kind's rea
 fields, **with their types** — which is everything a match reads. Do this before
 writing, every time.
 
-What you will find (names confirmed against this build, shapes are the engine's):
-
-- **File events** — `PreFileCreate` / `PreFileUpdate` / `PreFileDelete` and
-  their `PostFile*` counterparts, about one file. `PreFileWrite` is an **alias**
-  the engine expands to `PreFileCreate` + `PreFileUpdate` (and `PostFileWrite`
-  to the two Post kinds), so one trigger covers both. Fields: `path`,
-  `newContent`, `oldContent`, `newMarkers`, `oldMarkers`, `resultKnown` — see
-  [file-guard.md](file-guard.md).
-- **`PreCommandInvoke`** — a shell command line about to run, carrying the
-  flattened `invocations` it parsed out. See [gate.md](gate.md).
-- **`PreToolUse`** — a tool call about to run.
-- **`PostTagWrite`** — `#`-tags the agent wrote this turn, carrying `tags`.
-- **`Stop`** — a work cycle ended; carries no fields.
+What each kind is for, how it is shaped, and the `PreFileWrite` /
+`PostFileWrite` aliases are in [events.md](events.md) — read it there, then
+confirm against the load check.
 
 A **gate** may trigger on any pre-action kind **plus `Stop`**; a **context** may
 trigger on any pre-action kind **plus the `PostFile*` / `PostTagWrite`** kinds,
