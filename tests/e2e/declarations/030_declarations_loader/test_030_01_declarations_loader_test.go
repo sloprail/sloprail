@@ -191,27 +191,30 @@ func TestT030_05_ShippedExamplesLoadCleanThroughTheBinary(t *testing.T) {
 	}
 }
 
-// T030_06: every shipped PLUGIN's `.sloprail` tree loads clean through the binary.
-// The examples above live under examples/; a use-case plugin ships its guardrails
-// under marketplace/plugins/<name>/.sloprail and is lifted whole by a consumer, so
-// its declarations must load exactly as an example's do. sloprail-tasks is the
-// first such plugin — a file-guard trio (two preventive, one after-check) plus a
-// Stop gate — and this pins that its four new-format guardrails parse and validate,
-// the CLI-level reconciliation proof for a shipped plugin rather than a shipped
-// example.
+// T030_06: every shipped PLUGIN's `.sloprail` tree loads clean through the binary
+// under PLUGIN rules (`--plugin <name>`) — not project rules. The examples above
+// live under examples/ and load as a PROJECT's own declarations; a use-case
+// plugin ships its guardrails under marketplace/plugins/<name>/.sloprail and is
+// discovered by a consumer as a plugin, so its declarations must load the way a
+// plugin's do: a structure.yaml here is expected to declare `scope` (a project's
+// own structure must NOT — see structure-gate.md), so loading it WITHOUT
+// `--plugin` is refused by design and is not the check this test makes.
+// sloprail-tasks and sloprail-content are the shipped plugins as of this
+// writing, each with its own file-guards/gates and a scoped structure gate.
 func TestT030_06_ShippedPluginsLoadCleanThroughTheBinary(t *testing.T) {
 	e := New(t)
 	repo := repoRootForExamples(t)
 
 	for _, plugin := range []string{
 		"sloprail-tasks",
+		"sloprail-content",
 	} {
 		plugin := plugin
 		t.Run(plugin, func(t *testing.T) {
 			dir := filepath.Join(repo, "marketplace", "plugins", plugin)
-			res := e.CLIDirect(dir, "sr-file", "declarations", dir)
+			res := e.CLIDirect(dir, "sr-file", "declarations", "--plugin", plugin, dir)
 			if res.Code != 0 {
-				t.Fatalf("plugin %q must load clean through the binary, got exit %d:\n%s", plugin, res.Code, res.Output)
+				t.Fatalf("plugin %q must load clean through the binary (--plugin %s), got exit %d:\n%s", plugin, plugin, res.Code, res.Output)
 			}
 		})
 	}

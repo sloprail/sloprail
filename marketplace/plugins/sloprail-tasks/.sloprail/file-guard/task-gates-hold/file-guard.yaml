@@ -1,0 +1,72 @@
+# Every gate under a task's gates/ must hold BEFORE the task may leave
+# backlog or blocked for to_do or in_progress — checked by sloprail, never by
+# the agent's own say-so. A task's start conditions are FILES:
+#
+#   memories/tasks/<group>/<name>/gates/<gate-name>.sh   a deterministic
+#                                                          condition — a
+#                                                          script; exit 0
+#                                                          passes
+#   memories/tasks/<group>/<name>/gates/<gate-name>.md   a judgment
+#                                                          condition — a
+#                                                          judge prompt
+#
+# GATES ARE ALSO RE-HELD AT COMPLETION. This guard is the START check only —
+# task-review holds the SAME gates again when the task reaches `in_review`,
+# because a condition true at the start is not guaranteed to still be true
+# when the agent claims done. See task-review/file-guard.yaml.
+#
+# TWO checks, cheap first, the same shape every guard in this plugin uses:
+#
+#   1. SCRIPT (gates-hold.sh): the transition gate (only backlog/blocked ->
+#      to_do/in_progress is checked) and every gates/*.sh, run in name order.
+#      Any failing (or non-executable, or unrunnable) gate refuses
+#      deterministically, naming it, before any model call.
+#   2. PREPARE + JUDGE: only reached once stage 1 passed. prepare
+#      (prepare-judgment-gates.sh) gates itself on the SAME transition (its own
+#      independent gate — see its comment) and collects every gates/*.md file's
+#      text; judge-gates.md.j2 asks the model whether each one currently
+#      holds, by going and looking rather than trusting the task's own claim.
+#
+# THIS GUARD TRUSTS THAT EVERY GATE FILE UNDER gates/ ALREADY CLEARED THE
+# GROUNDING BAR. It runs/judges gates faithfully; it makes no judgement about
+# whether a gate is a MEANINGFUL test (a bare `exit 0` .sh, or a .md that
+# contradicts or invents beyond the task itself). That is
+# task-gate-is-grounded's job, at WRITE time — a gate that fails that bar
+# never lands, so it never reaches this guard to be faithfully "passed". The
+# two guards are deliberately separate: this one is about the MOMENT (does a
+# real, already-vetted gate hold right now); the other is about the CONTENT
+# (was this gate honestly authorized) at the moment it is written.
+#
+# match: the task file, TWO directory levels deep — the same regex every
+# guard in this plugin uses. (The gates/ FILES themselves are
+# task-gate-is-grounded's match, not this one's — this guard reads them off
+# disk from its own script rather than firing per gate file, because the
+# decision it makes is about the TASK's transition, one verdict per task
+# write, not one per gate file.)
+match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
+
+# preventive: true — the transition into to_do/in_progress is the moment
+# gates are about; the same Pre/Post shape every other guard in this plugin
+# uses, so a write the engine cannot derive at Pre is deferred to the
+# Post/Stop after-check on the settled bytes.
+preventive: true
+
+checks:
+  # Deterministic, fail-closed on the logic and on an unrunnable gate; fails
+  # open only on a genuinely absent gates/ directory (documented in the
+  # script). Refuses with `{"reason": "..."}` on stdout.
+  - script: ./gates-hold.sh
+
+  # The judge, reached only once stage 1 passed, only for the same
+  # backlog/blocked -> to_do/in_progress transition, and only when a
+  # gates/*.md file exists (prepare-judgment-gates.sh's own gate).
+  # model is size-md (engine default judge modelset), matching the plugin's
+  # other judges; timeout 25s sits under the engine's 30s check bound.
+  # allowed_tools: [Read] lets the judge actually GO LOOK at a file a gate
+  # names (an artifact, a memories/topics unit) rather than judge blind — the
+  # plugin's other judges grant Read for the same reason.
+  - prepare: ./prepare-judgment-gates.sh
+    judge: ./judge-gates.md.j2
+    model: size-md
+    timeout: 25s
+    allowed_tools: [Read]

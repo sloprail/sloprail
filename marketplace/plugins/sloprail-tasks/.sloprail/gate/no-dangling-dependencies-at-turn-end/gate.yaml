@@ -1,0 +1,18 @@
+# A turn may not end while any task's depends_on names a task folder that no
+# longer exists — see check-dangling.sh for the full argument. Deleting a
+# task (the reviewer approving it) and stripping that id from every
+# dependent's depends_on must happen as ONE change; this is the checkpoint
+# that enforces it, the same shape no-unfinished-work-at-turn-end uses for
+# open work.
+#
+# on: Stop, with NO match — Stop carries no fields, so there is nothing to
+# narrow on. The gate reads $SR_WORKSPACE's task tree itself.
+#
+# No `require:` — depends on nothing upstream; reads the tree directly.
+on:
+  - event: Stop
+checks:
+  # Deterministic: a dangling depends_on is a refusal (fail-closed on the
+  # logic), a missing tool or tree is a permit (fail-open on the plumbing —
+  # see the script). Refuses with `{"reason": "..."}` on stdout.
+  - script: ./check-dangling.sh

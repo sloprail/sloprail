@@ -115,4 +115,42 @@ observations?: [..._observation]
 // WHERE THE RESULT OF THE WORK IS — cited into the tree, repo-relative.
 artifacts?: [..._artifact]
 
+// DEPENDS_ON — other tasks that must be DONE (deleted, per the lifecycle above)
+// before this one may leave backlog/blocked for to_do/in_progress/in_review.
+// Checked by task-dependencies-resolve, not this schema: CUE can pin the SHAPE
+// of an id but not whether it names a real task, nor whether the graph it
+// forms is acyclic — those are filesystem questions.
+// `<group>/<task-name>` matches the two path segments between memories/tasks/
+// and /TASK.md, e.g. "auth/migrate-tokens" for
+// memories/tasks/auth/migrate-tokens/TASK.md.
+//
+// A depends_on ID MUST NEVER OUTLIVE THE TASK IT NAMES. When a task is
+// deleted (the reviewer approving it), every OTHER task's depends_on
+// referencing it must be stripped in that SAME change —
+// no-dangling-dependencies-at-turn-end (a Stop gate) refuses to let a turn
+// end while any depends_on entry names a folder that does not exist. This is
+// why task-dependencies-resolve itself does not try to distinguish "this id
+// used to be a real, now-finished task" from "this id was never real" (a
+// typo): under the no-dangling invariant, an id that resolves to nothing is
+// ALWAYS wrong to be sitting in depends_on, whichever of the two it is — the
+// fix is the same either way, strip it (or, for a genuine mistake, restore
+// the task).
+_dep_id: =~"^[^/]+/[^/]+$"
+depends_on?: [..._dep_id]
+
+// THERE IS NO ready_when FIELD. A task's start conditions are FILES, not
+// frontmatter — memories/tasks/<group>/<name>/gates/<gate-name>.md (a
+// judgment condition, a prompt) or gates/<gate-name>.sh (a deterministic
+// condition, a script; exit 0 passes). See task-gates-hold (which enforces
+// every gate before backlog/blocked -> to_do/in_progress) and
+// task-gate-is-grounded (which judges a gate file against the body's cited
+// ask on write, the protection against weakening or fabricating one). Kept
+// as files rather than a frontmatter list because a gates/ directory is
+// itself the file-guard system's native unit — a `.sh` gate is TESTED by
+// literally running it, not by a script re-interpreting a string a task
+// author wrote, and a `.md` gate IS the judge prompt, not a description of
+// one. Frontmatter still carries depends_on (a list of other tasks' ids —
+// there is no "file per dependency" shape that says anything more than the
+// id already does).
+
 })

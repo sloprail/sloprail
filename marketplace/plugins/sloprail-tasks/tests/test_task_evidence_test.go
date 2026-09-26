@@ -67,7 +67,7 @@ func TestEvidence_ResolvingEvidencePermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-evidence-ok"
@@ -101,7 +101,7 @@ func TestEvidence_ObservationNotAToolResultRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-evidence-notresult"
@@ -140,7 +140,7 @@ func TestEvidence_ObservationCitingAnswerEnvelopeRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-evidence-answerenv"
@@ -186,7 +186,7 @@ func TestEvidence_ArtifactMissingFromTreeRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-evidence-noart"
@@ -222,7 +222,7 @@ func TestEvidence_AbsoluteArtifactRefusedBySchema(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-evidence-absart"
@@ -258,7 +258,7 @@ func TestEvidence_InvalidFrontmatterRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-evidence-schema"
@@ -291,7 +291,7 @@ func TestEvidence_InReviewNeedsBothKinds(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-evidence-review-noart"

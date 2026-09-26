@@ -1,0 +1,41 @@
+# A task's `depends_on` — other tasks that must be DONE first — is enforced
+# HERE, at the moment a task tries to enter to_do, in_progress or in_review. A
+# task is DELETED when the reviewer approves it (the plugin's own lifecycle),
+# so "the dependency's folder still exists" IS "not done yet" — no separate
+# done-flag to keep in sync.
+#
+# THREE deterministic questions, no model (see check-dependencies.sh for the
+# full argument):
+#   1. every id in depends_on must resolve to a task that no longer exists —
+#      an existing dependency folder refuses the move;
+#   2. an id must name a task that EXISTS NOW or EXISTED IN GIT HISTORY (and
+#      was deleted from there) — never one that was never a task at all, which
+#      catches a typo'd id rather than treating it as "eternally unfinished";
+#   3. the depends_on graph (this task's pending edges plus every other task's
+#      on disk) must have no cycle reachable from this task's own id.
+#
+# WHY THIS IS A SEPARATE GUARD FROM task-evidence-resolves. Both are
+# deterministic, preventive, and read the same schema, but they ask
+# structurally different questions over different STATE: task-evidence-resolves
+# reads only the file being written (its own frontmatter, the transcript, the
+# tree at cited paths); this guard reads the WHOLE task tree and git history to
+# answer a question about a graph, not a single file. Folding graph-walking
+# into the per-file evidence check would blur two different failure modes
+# behind one script; keeping them apart means a dependency refusal and an
+# evidence refusal are never confused for each other.
+#
+# match: the task file, TWO directory levels deep — the same regex every guard
+# in this plugin uses.
+match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
+
+# preventive: true — refuse the move before it lands, the same Pre/Post shape
+# every other guard in this plugin uses; the Stop after-check backstops a
+# write the engine cannot derive at Pre.
+preventive: true
+
+checks:
+  # Deterministic, fail-closed throughout except the documented git-history
+  # gap noted in the script (typo detection only, when the tree is not a git
+  # repo — the unfinished-dependency question is unaffected). Refuses with
+  # `{"reason": "..."}` on stdout.
+  - script: ./check-dependencies.sh

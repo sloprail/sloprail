@@ -634,6 +634,36 @@ func (e *Env) EnablePluginShippingStructure(projDir, pluginName, structureYAML s
 	return root
 }
 
+// EnableRealPlugin registers an EXISTING, already-on-disk plugin directory
+// (root) as an enabled plugin named pluginName, alongside sloprail — the
+// non-synthetic counterpart of EnablePluginShippingFileGuard /
+// EnablePluginShippingStructure. Those two synthesize a throwaway plugin's
+// files FROM the arguments a test passes; this one points the SAME
+// registration machinery (a directory-sourced marketplace + enabledPlugins) at
+// a plugin that already exists in the repo under test — a use-case plugin
+// shipping its own `.sloprail/` (file-guards, gates, a structure gate), driven
+// from its own committed tree rather than a copy assembled by the test. root
+// must already contain a well-formed `.claude-plugin/plugin.json`; nothing is
+// written there.
+//
+// Because the plugin is discovered from root rather than copied into the
+// project, a refusal naming pluginName, and a structure gate reported as
+// "owned" by it, both prove the discovery happened inside the real plugin —
+// the same property EnablePluginShippingFileGuard documents for a synthetic
+// one. Must be called BEFORE Run/RunFrom; call once per plugin.
+func (e *Env) EnableRealPlugin(projDir, pluginName, root string) {
+	e.t.Helper()
+	if _, err := os.Stat(filepath.Join(root, ".claude-plugin", "plugin.json")); err != nil {
+		e.t.Fatalf("harness: EnableRealPlugin %s: no .claude-plugin/plugin.json at %s (%v)", pluginName, root, err)
+	}
+	e.extraPlugins = append(e.extraPlugins, extraPlugin{
+		name:        pluginName,
+		marketplace: pluginName + "-marketplace",
+		root:        root,
+	})
+	e.writeSettings(projDir)
+}
+
 // newSyntheticPlugin creates a throwaway plugin directory with a well-formed
 // `.claude-plugin/plugin.json`, registers it in its own directory-sourced
 // marketplace, and rewrites the project's settings so it is enabled. Returns the

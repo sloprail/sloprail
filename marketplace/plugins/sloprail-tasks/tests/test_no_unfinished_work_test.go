@@ -26,7 +26,7 @@ func TestUnfinished_OpenTaskBlocksAtStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-unfinished-open"
@@ -68,7 +68,7 @@ func TestUnfinished_AllRestingPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	installPluginTree(t, proj)
+	installPluginTree(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-unfinished-resting"
