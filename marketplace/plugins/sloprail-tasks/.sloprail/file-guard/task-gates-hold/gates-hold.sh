@@ -52,10 +52,14 @@ if [ -z "$path" ]; then
 fi
 
 root="${SR_WORKSPACE:-.}"
-schema="$root/.sloprail/schemas/task.cue"
+gdir="${SR_GUARDRAIL_DIR:-.}"
+
+# The schema is the PLUGIN's, read from the plugin's own tree — never a
+# consumer-side copy. See task-evidence-resolves/check-task.sh for why.
+schema="$gdir/../../schemas/task.cue"
 
 if [ ! -f "$schema" ]; then
-  refuse "task-gates-hold: schema not found at $schema — install the plugin's task.cue under the project's .sloprail/schemas/."
+  refuse "task-gates-hold: schema not found at $schema — the rule cannot check anything without it."
 fi
 
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
