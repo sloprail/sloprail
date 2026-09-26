@@ -104,6 +104,7 @@ sr_session_bin="$(find_sr_session)" || sr_session_bin=""
 # where the plugin's own authoring-slop refused every rule write until the agent
 # disabled it. So the directory the set was found in goes first on $PATH for
 # the engine — only that directory, which holds nothing but sloprail's binaries.
+saved_path="$PATH"
 if [ -n "$sr_session_bin" ]; then
   PATH="$(dirname "$sr_session_bin"):$PATH"
   export PATH
@@ -119,6 +120,13 @@ fi
 # two never interleave.
 if [ "$subcommand" = "start" ]; then
   cat "$(dirname "$0")/rules-first.md" 2>/dev/null || true
+  # The notice tells the agent to run sr-session; when the set was found off
+  # the agent's $PATH (~/.local/bin usually is), a bare `sr-session` is
+  # "command not found" — measured in most fresh-install runs. Say where it is.
+  if [ -n "$sr_session_bin" ] && [ "$(PATH="$saved_path" command -v sr-session 2>/dev/null)" != "$sr_session_bin" ]; then
+    echo
+    echo "sr-session is not on \$PATH here: it is $sr_session_bin (the whole sr* set is beside it)."
+  fi
 fi
 
 if [ -z "$sr_session_bin" ]; then

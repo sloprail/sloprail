@@ -71,7 +71,7 @@ func recordBaseline(cmd *cobra.Command, p HookPayload) {
 	// /dev/null`, which install.sh and the install docs tell a newcomer to
 	// run), not a session: there is nothing to record a baseline for, and
 	// reporting that as a failure makes a working install look broken.
-	if p.TranscriptPath == "" && p.AgentTranscriptPath == "" {
+	if p.TranscriptPath == "" && p.AgentTranscriptPath == "" && p.SessionID == "" {
 		return
 	}
 	store, err := openEngineState(p)
