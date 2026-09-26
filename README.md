@@ -13,25 +13,23 @@ suggestion in CLAUDE.md or AGENTS.md.
 
 ## Install
 
-Two steps: get the binaries onto your machine, then install the plugin.
-
-```
-curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
-```
-
 ```
 /plugin marketplace add sloprail/sloprail
 /plugin install sloprail@sloprail-marketplace
 ```
 
-`install.sh` downloads the right prebuilt archive for your platform (macOS or
-Linux, Intel or Apple Silicon/arm64), verifies its checksum, and installs
-`sr`, `sr-session`, `sr-file`, `sr-mark`, `sr-agent` into `~/.local/bin` — no
-Go toolchain needed. Already have Go? `go install ./services/...` from a
-checkout is an equivalent fallback.
+Pick the project scope. The first session after that installs the `sr*`
+binaries the hooks call, once: the release matching the plugin's version,
+checksum-verified, into `~/.local/bin`, and says so. From then on every tool
+call and turn-end runs through sloprail — you don't run anything by hand.
 
-Once both steps are done, every tool call and turn-end runs through sloprail
-— you don't run anything by hand.
+Rather install the binaries yourself? Set `SLOPRAIL_NO_AUTO_INSTALL=1` and run
+
+```
+curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
+```
+
+(or `go install ./services/...` from a checkout).
 
 ## Rules first.
 

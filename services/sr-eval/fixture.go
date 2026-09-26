@@ -70,9 +70,9 @@ type Fixture struct {
 	// workspace.freshHome) with no sr* binaries anywhere it or the plugin's
 	// hook wrapper would look. The machine's own credentials (Claude Code's
 	// login, gh, SSH, git identity) still work. Getting the binaries on is the
-	// agent's job, prompted only by what the plugin itself tells it.
+	// plugin's own job, at its first session start.
 	//
-	// The "release" it installs from is this checkout, built: install.sh's
+	// The "release" they come from is this checkout, built: install.sh's
 	// SLOPRAIL_RELEASE_URL points at archives freshHome builds, so what lands
 	// is the code under test rather than whatever was last published. And
 	// sloprail's own git remote is redirected to this checkout, so a clone

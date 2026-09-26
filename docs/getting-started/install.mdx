@@ -10,29 +10,10 @@ related:
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 sloprail runs inside your agent as a **plugin**, and its hooks call a separate
-set of binaries (`sr`, `sr-session`, `sr-file`, `sr-mark`, `sr-agent`). Both
-steps below are required — the plugin without the binaries is a session that
-runs unguarded with no warning, which is exactly the failure this page exists
-to prevent.
+set of binaries (`sr`, `sr-session`, `sr-file`, `sr-mark`, `sr-agent`). The
+plugin installs those itself, so installing the plugin is the whole install.
 
-## 1. Install the binaries
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
-```
-
-This downloads the right prebuilt archive for your platform (macOS or Linux,
-Intel or Apple Silicon/arm64) from the latest GitHub release, verifies its
-checksum, and installs the five binaries into `~/.local/bin` — set
-`SLOPRAIL_INSTALL_DIR` first to choose a different directory. No Go toolchain
-needed.
-
-Already have Go? `go install ./services/...` from a checkout of
-[sloprail/sloprail](https://github.com/sloprail/sloprail) is an equivalent
-fallback — it lands the same five binaries in one directory, which is all
-`install.sh` does too, just without needing Go.
-
-## 2. Install the plugin
+## Install the plugin
 
 <Tabs>
   <TabItem label="Claude Code">
@@ -41,15 +22,34 @@ fallback — it lands the same five binaries in one directory, which is all
     /plugin install sloprail@sloprail-marketplace
     ```
 
-    That's it — the hooks are registered. A project with a `.sloprail/` directory
-    is now guarded; a project with none is an ordinary project until its first
-    rule.
+    Pick the project scope. The hooks are registered; a project with a
+    `.sloprail/` directory is now guarded, and a project with none is an
+    ordinary project until its first rule.
   </TabItem>
 </Tabs>
 
 More harnesses will get their own tab as they go live. The engine's contract —
 hook points in, events out — isn't specific to one, so the rules a project writes
 don't change between them.
+
+## The binaries
+
+The first session after the install fetches them, once: the GitHub release
+matching the plugin's version (never "latest"), verified against the
+release's checksums, into `~/.local/bin` (set `SLOPRAIL_INSTALL_DIR` to
+choose another directory). The session says it is doing this, and says so
+loudly if it fails.
+
+To install them yourself instead, set `SLOPRAIL_NO_AUTO_INSTALL=1` and run
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
+```
+
+or, with Go, `go install ./services/...` from a checkout of
+[sloprail/sloprail](https://github.com/sloprail/sloprail). Either way, if the
+binaries are missing the next file write is refused with the install command,
+never silently let through.
 
 ## Verify it worked
 

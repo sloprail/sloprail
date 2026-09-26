@@ -10,17 +10,16 @@ but never refuses is worse than no rule at all.
 
 ## Before you start
 
-You need both the `sr*` binaries and the plugin — see
-[Install](/getting-started/install) for the full sequence. In short:
+You need the plugin — see [Install](/getting-started/install). In short, in
+Claude Code:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh
-# Claude Code
 /plugin marketplace add sloprail/sloprail
 /plugin install sloprail@sloprail-marketplace
 ```
 
-That registers the hooks. From now on, every tool call and every turn-end
+That registers the hooks, and the next session installs the `sr*` binaries
+they call. From now on, every tool call and every turn-end
 runs through sloprail.
 
 ## 1. Write the rule

@@ -8,15 +8,13 @@ description: >
   test/endpoints/), and the prompt is only the task: add GET /invoices, "the
   first of several new resources". It never mentions sloprail.
 
-  What it proves: the plugin alone gets the agent from nothing to working
-  rules. Its session-start context has to tell the agent the binaries are
-  missing and how to install them, and then to work rules first. The agent
-  must install the binaries (install.sh, whose release is this checkout's
-  build via SLOPRAIL_RELEASE_URL; the repo is private, so the documented
-  curl one-liner 404s and recovering through SSH or gh is part of the job),
-  then put a structure the engine actually loads in .sloprail/ BEFORE the
-  endpoint, then build. Gated on trajectory health AND those outcomes, plus
-  nothing of sloprail copied into the repo. Proof rules beyond the
+  What it proves: the plugin alone gets a newcomer from nothing to working
+  rules. At session start it must install its own sr* binaries (pinned,
+  checksum-verified; here the "release" is this checkout's build via
+  SLOPRAIL_RELEASE_URL) and tell the agent to work rules first. The agent
+  must then put a structure the engine actually loads in .sloprail/ BEFORE
+  the endpoint, and build. Gated on trajectory health AND those outcomes,
+  plus nothing of sloprail copied into the repo. Proof rules beyond the
   structure, which rules refused, disabled rules and stray files are
   informational rows.
 seed: seed

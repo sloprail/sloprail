@@ -1,9 +1,12 @@
 package harness
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -237,6 +240,9 @@ func runHookScriptWith(t *testing.T, subcommand, path, stdin string) (output str
 		"PATH=" + path,
 		"HOME=" + hookHOME(t),
 		"XDG_CONFIG_HOME=" + xdgConfigHomeOverride,
+		// No network from a test: the start-time auto-install has its own
+		// test below, against a local release.
+		"SLOPRAIL_NO_AUTO_INSTALL=1",
 	}, goEnvPassthrough...)
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.CombinedOutput()
@@ -452,7 +458,7 @@ func TestSrSessionHookWrapper_StartTellsTheAgentRulesFirst(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command(hookScriptPath(t), subcommand)
 		cmd.Dir = noModuleDir(t)
-		cmd.Env = append([]string{"PATH=" + path, "HOME=" + hookHOME(t), "XDG_CONFIG_HOME=" + xdgConfigHomeOverride}, goEnvPassthrough...)
+		cmd.Env = append([]string{"PATH=" + path, "HOME=" + hookHOME(t), "XDG_CONFIG_HOME=" + xdgConfigHomeOverride, "SLOPRAIL_NO_AUTO_INSTALL=1"}, goEnvPassthrough...)
 		cmd.Stdin = strings.NewReader("")
 		out, _ := cmd.Output()
 		return string(out)
@@ -470,5 +476,90 @@ func TestSrSessionHookWrapper_StartTellsTheAgentRulesFirst(t *testing.T) {
 
 	if got := stdout("stop", stubDir+":/usr/bin:/bin"); strings.Contains(got, "rules first") {
 		t.Errorf("stop's stdout is the harness's decision channel and must not carry the notice:\n%s", got)
+	}
+}
+
+// TestSrSessionHookWrapper_ShipsTheRepositoryInstallScript: the plugin can
+// only run what it ships, so it carries a copy of install.sh for the
+// start-time install. A copy that drifts is a second installer nobody tests.
+func TestSrSessionHookWrapper_ShipsTheRepositoryInstallScript(t *testing.T) {
+	hooks := filepath.Dir(hookScriptPath(t))
+	shipped, err := os.ReadFile(filepath.Join(hooks, "install.sh"))
+	if err != nil {
+		t.Fatalf("the plugin ships no install.sh: %v", err)
+	}
+	root, err := os.ReadFile(filepath.Join(hooks, "..", "..", "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatalf("read the repository's install.sh: %v", err)
+	}
+	if string(shipped) != string(root) {
+		t.Fatal("marketplace/plugins/sloprail/hooks/install.sh differs from install.sh — copy it over: cp install.sh marketplace/plugins/sloprail/hooks/install.sh")
+	}
+}
+
+// TestSrSessionHookWrapper_StartInstallsThePinnedRelease: the first session
+// after /plugin install installs the binaries itself — the release pinned to
+// the plugin's version, checksum-verified by install.sh — tells the agent,
+// and then runs the freshly installed sr-session. A local release (stub
+// binaries, real archive + checksums shape) stands in for GitHub.
+func TestSrSessionHookWrapper_StartInstallsThePinnedRelease(t *testing.T) {
+	platform := "sloprail-" + runtime.GOOS + "-" + runtime.GOARCH
+	release := t.TempDir()
+	stage := filepath.Join(release, platform)
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, bin := range []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent"} {
+		body := "#!/bin/sh\nexit 0\n"
+		if bin == "sr-session" {
+			body = "#!/bin/sh\necho \"installed sr-session ran: $1\"\n"
+		}
+		if err := os.WriteFile(filepath.Join(stage, bin), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive := platform + ".tar.gz"
+	if out, err := exec.Command("tar", "-C", release, "-czf", filepath.Join(release, archive), platform).CombinedOutput(); err != nil {
+		t.Fatalf("tar: %v: %s", err, out)
+	}
+	body, err := os.ReadFile(filepath.Join(release, archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	checksums := hex.EncodeToString(sum[:]) + "  " + archive + "\n"
+	if err := os.WriteFile(filepath.Join(release, "checksums.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(extra ...string) (string, string) {
+		t.Helper()
+		home := hookHOME(t)
+		cmd := exec.Command(hookScriptPath(t), "start")
+		cmd.Dir = noModuleDir(t)
+		cmd.Env = append(append([]string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + xdgConfigHomeOverride,
+			"SLOPRAIL_RELEASE_URL=file://" + release}, extra...), goEnvPassthrough...)
+		cmd.Stdin = strings.NewReader("")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("start failed: %v\n%s", err, out)
+		}
+		return string(out), home
+	}
+
+	out, home := run()
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "sr-session")); err != nil {
+		t.Fatalf("start did not install sr-session into ~/.local/bin: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "installing the sr binaries (v") || !strings.Contains(out, "installed v") {
+		t.Errorf("the install was not announced to the agent, pinned to the plugin's version:\n%s", out)
+	}
+	if !strings.Contains(out, "installed sr-session ran: start") {
+		t.Errorf("the freshly installed sr-session was not run for this start:\n%s", out)
+	}
+
+	out, home = run("SLOPRAIL_NO_AUTO_INSTALL=1")
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "sr-session")); err == nil {
+		t.Fatalf("SLOPRAIL_NO_AUTO_INSTALL=1 still installed:\n%s", out)
 	}
 }

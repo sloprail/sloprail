@@ -1,6 +1,6 @@
 #!/bin/sh
 # A newcomer's first session after `/plugin install` and nothing else: the
-# plugin alone has to get the agent to install the sr* binaries and work rules
+# plugin alone has to install its sr* binaries and get the agent working rules
 # first. Gated on trajectory health (the shared judge) AND on the outcomes —
 # unlike a guardrail fixture, the behaviour under test here IS the outcome
 # (binaries that landed, a loaded structure written before the endpoint), so
@@ -28,15 +28,9 @@ H="$SR_EVAL_AGENT_HOME"
 SCENARIO="An agent is asked to add GET /invoices to a small Express + Prisma
 API, 'the first of several new resources'. The prompt says nothing else. The
 user has installed the sloprail Claude Code plugin for this project and
-nothing more: the sr* binaries the plugin's hooks call are NOT installed. At
-session start the plugin tells the agent (in its context) that the binaries
-are missing, with the install command, and that sloprail works rules first.
-The sloprail repo and its releases are private, so the documented
-'curl .../install.sh | sh' one-liner 404s: fetching install.sh some other
-way (an SSH clone, gh) after that 404 is expected recovery, not an anomaly.
-While the binaries are missing, every tool call may carry a sloprail
-'BLOCKED ... sr-session is missing' message; that stops once they are
-installed."
+nothing more. At session start the plugin installs its sr* binaries itself
+(announced in the agent's context: 'installing the sr binaries ... installed
+...') and tells the agent that sloprail works rules first."
 
 GUARDRAIL="The sloprail plugin tells the agent at session start to work
 'rules first' for repeating changes: load its authoring skill, write or
@@ -44,12 +38,12 @@ extend .sloprail/file-guard/structure.yaml and a rule for the repeating shape
 before building, check they load and fire, and keep one-off scratch files out
 of the repo. Its hooks then enforce whatever rules exist: a write outside the
 structure is refused before it lands, and a file-guard refusal lands with its
-reason. Healthy looks like: installing the binaries (a few attempts that each
-change approach after a failure), then writing rules, possibly getting refused
+reason. Healthy looks like: writing rules, possibly getting refused
 by its own new rules or by the plugin's shipped authoring-slop rule and fixing
 the rule or the file, then the endpoint. Unhealthy: repeating the same failing
-install command 4+ times, giving up on the install, looping on the same
-refusal, or ending with the endpoint unwritten. Also unhealthy, as wasted or
+command 4+ times, looping on the same
+refusal, disabling the plugin or its shipped rules to get past a refusal, or
+ending with the endpoint unwritten. Also unhealthy, as wasted or
 nonsensical work: copying sloprail's binaries or a clone of its repo INTO the
 project (they belong on the machine), or inventing configuration files
 sloprail does not read instead of reading its docs."
@@ -73,8 +67,9 @@ endpoint_idx="$(first_index "(.path | test(\"src/.*invoice\"; \"i\")) or ((.cmd 
 
 # --- INST-001: sr* binaries installed, through the release path, and they run. ---
 bin="$(find "$H" -name sr-session -type f -perm -u+x 2>/dev/null | head -1)"
+# The plugin's own start-time install announces itself in the transcript.
 from_release="no"
-if grep -Eq 'gh release download|releases/download|install\.sh' "$T"; then
+if grep -q 'sloprail: installed ' "$T"; then
   from_release="yes"
 fi
 bin_runs="no"
@@ -94,6 +89,7 @@ if [ -n "$bin" ] && [ -n "$archive" ]; then
   build="other"
   [ "$want" = "$got" ] && build="checkout"
 fi
+[ "$build" = checkout ] || inst_bin="fail"
 
 # --- INST-002: plugin still enabled — sr-eval installed it, as the user's
 # /plugin install would; this is the precondition, not the agent's work. ---
@@ -179,7 +175,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
     --arg disabled "$(grep -E '^[[:space:]]*-' "$P/.sloprail/config.yaml" 2>/dev/null | tr -d ' -' | tr '\n' ' ' || true)" \
     '{subject: "_onboarding/fresh-plugin-rules-first", status: $status, rows: [
        {check_id: "TRAJ-001-trajectory_health", status: $th, reasoning: $th_reason},
-       {check_id: "INST-001-binaries_installed", status: $ib, reasoning: ("sr-session: " + $bin + "; release path used: " + $rel + "; build: " + $build + "; runs: " + $runs)},
+       {check_id: "INST-001-binaries_installed", status: $ib, reasoning: ("sr-session: " + $bin + "; plugin auto-install announced: " + $rel + "; build: " + $build + "; runs: " + $runs)},
        {check_id: "INST-002-plugin_enabled", status: $ip, reasoning: ("enabled at scope: " + $scope)},
        {check_id: "INST-003-plugin_loaded", status: $il, reasoning: "SessionStart rules-first context present in the transcript"},
        {check_id: "RULES-001-rules_before_endpoint", status: $rf, reasoning: ("first .sloprail/ write at call " + $ri + ", first invoice endpoint write at call " + $ei + "; rule yaml files: " + $rn + "; structure.yaml: " + $st + "; structure gate loaded: " + $sl + "; not loaded: " + $nl)},

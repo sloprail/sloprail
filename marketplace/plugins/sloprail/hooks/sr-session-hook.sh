@@ -96,6 +96,41 @@ find_sr_session() {
 
 sr_session_bin="$(find_sr_session)" || sr_session_bin=""
 
+# First session after `/plugin install`: the plugin installs the sr* binaries
+# itself, once, so installing the plugin is the whole install. Asking the agent
+# to do it was measured to fail both ways: a careful model (rightly) will not
+# pipe a script from a hook's message into sh without asking, and a careless
+# one disables the plugin to get past the refusal.
+#
+# It is the pattern package tools use for a runtime they fetch on first use
+# (Prisma's engines, Playwright's browsers), and it is held to the same bar:
+#   pinned    — the release matching THIS plugin's version (they are bumped in
+#               lockstep, scripts/bump-version.sh), never "latest";
+#   verified  — install.sh checks the archive against the release's
+#               checksums.txt and refuses a mismatch;
+#   visible   — announced in the session, success or failure;
+#   opt-out   — SLOPRAIL_NO_AUTO_INSTALL=1 leaves it to a manual install.sh.
+# Only at start: it is the one hook point with time for a download, and the
+# session learns the result before its first tool call. install.sh here is a
+# byte-identical copy of the repository's (a test holds them equal), since a
+# plugin can only run what it ships.
+if [ -z "$sr_session_bin" ] && [ "$subcommand" = "start" ] && [ -z "${SLOPRAIL_NO_AUTO_INSTALL:-}" ]; then
+  version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$(dirname "$0")/../.claude-plugin/plugin.json" 2>/dev/null | head -1)"
+  tag="${SLOPRAIL_INSTALL_TAG:-v${version}}"
+  echo "sloprail: installing the sr binaries (${tag}) into ${SLOPRAIL_INSTALL_DIR:-~/.local/bin}, one time. Set SLOPRAIL_NO_AUTO_INSTALL=1 to install by hand instead." | tee /dev/stderr
+  install_log="$(mktemp)"
+  if SLOPRAIL_INSTALL_TAG="$tag" sh "$(dirname "$0")/install.sh" </dev/null >"$install_log" 2>&1; then
+    sr_session_bin="$(find_sr_session)" || sr_session_bin=""
+  fi
+  if [ -n "$sr_session_bin" ]; then
+    echo "sloprail: installed ${tag}: ${sr_session_bin}" | tee /dev/stderr
+  else
+    echo "sloprail: the automatic install failed; guardrails are NOT enforcing until it is fixed:" | tee /dev/stderr
+    tail -5 "$install_log" | tee /dev/stderr
+  fi
+  rm -f "$install_log"
+fi
+
 # The engine runs its sibling binaries BY NAME — a judge check execs `sr-agent`,
 # and a shipped check script may too. find_sr_session may have found the set in
 # a directory that is not on the hook's $PATH (~/.local/bin, the install.sh
