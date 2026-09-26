@@ -24,11 +24,16 @@ structure gate never gates one.
 ```yaml
 # .sloprail/file-guard/structure.yaml — only these places may be written.
 allow:
+  - glob: ".sloprail/**"
   - glob: "memories/**/*.md"
   - glob: "tasks/**"
 deny:
   - regex: '\.tmp$'
 ```
+
+Allow `.sloprail/**` unless the rules are deliberately frozen. The gate covers
+`.sloprail/` like any other path, so a structure that leaves it out refuses the
+next edit to itself and to every rule beside it.
 
 Two keys. `allow` is the allowlist — a write lands only if it matches one of its
 entries. `deny` carves exceptions back out of `allow` (optional). Each entry is

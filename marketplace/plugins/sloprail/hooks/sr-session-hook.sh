@@ -59,11 +59,9 @@ shift
 install_hint='curl -fsSL https://raw.githubusercontent.com/sloprail/sloprail/main/install.sh | sh'
 
 # find_sr_session looks past bare $PATH, in the fixed order documented above,
-# and prints the resolved path on stdout if found. It does not modify $PATH —
-# a directory found here is used for THIS exec only, so a session that never
-# sees an interactive shell's profile still finds a correctly-installed
-# binary without this wrapper silently widening the environment for
-# anything else the hook chain runs.
+# and prints the resolved path on stdout if found. It does not itself modify
+# $PATH; the one directory it finds is added below, for the engine's own
+# siblings, and nothing else is widened.
 find_sr_session() {
   if command -v sr-session >/dev/null 2>&1; then
     command -v sr-session
@@ -97,6 +95,19 @@ find_sr_session() {
 }
 
 sr_session_bin="$(find_sr_session)" || sr_session_bin=""
+
+# The engine runs its sibling binaries BY NAME — a judge check execs `sr-agent`,
+# and a shipped check script may too. find_sr_session may have found the set in
+# a directory that is not on the hook's $PATH (~/.local/bin, the install.sh
+# default, usually is not), and then every judge failed with "sr-agent: command
+# not found" while sr-session itself ran fine: measured on a fresh install,
+# where the plugin's own authoring-slop refused every rule write until the agent
+# disabled it. So the directory the set was found in goes first on $PATH for
+# the engine — only that directory, which holds nothing but sloprail's binaries.
+if [ -n "$sr_session_bin" ]; then
+  PATH="$(dirname "$sr_session_bin"):$PATH"
+  export PATH
+fi
 
 # At session start, stdout is context for the AGENT (stderr is for the person).
 # rules-first.md is the one standing instruction this plugin gives the agent:

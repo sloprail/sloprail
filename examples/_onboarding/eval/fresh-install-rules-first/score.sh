@@ -155,6 +155,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
     --arg refusals "${own_refusals:-none}" --arg stray "${stray:-none}" \
     --arg hyg "$hygiene" --arg polluted "${polluted:-none}" \
     --arg nl "${not_loaded:-none}" --arg proof "${proof_rules:-none}" \
+    --arg disabled "$(grep -E '^[[:space:]]*-' "$P/.sloprail/config.yaml" 2>/dev/null | tr -d ' -' | tr '\n' ' ' || true)" \
     '{subject: "_onboarding/fresh-install-rules-first", status: $status, rows: [
        {check_id: "TRAJ-001-trajectory_health", status: $th, reasoning: $th_reason},
        {check_id: "INST-001-binaries_from_release", status: $ib, reasoning: ("sr-session: " + $bin + "; release used: " + $rel + "; runs: " + $runs)},
@@ -164,6 +165,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
        {check_id: "TASK-001-endpoint_written", status: $task, reasoning: ("endpoint file: " + $ef)},
        {check_id: "HYG-001-sloprail_not_installed_into_repo", status: $hyg, reasoning: ("sloprail files inside the project: " + $polluted)},
        {check_id: "INFO-003-proof_rules_for_the_shape", status: "info", reasoning: ("file-guard/gate rules beyond structure: " + $proof)},
+       {check_id: "INFO-004-rules_disabled", status: "info", reasoning: ("config.yaml disabled: " + $disabled)},
        {check_id: "INFO-001-rules_that_refused", status: "info", reasoning: ("refusals cited: " + $refusals)},
        {check_id: "INFO-002-stray_files_in_repo", status: "info", reasoning: ("changed paths outside the project layout: " + $stray)}
      ]}' > "$SR_EVAL_VERDICT_OUT"
