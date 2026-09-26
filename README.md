@@ -1,11 +1,11 @@
-# sloprail
+# <img src="docs/assets/logo.svg" alt="" width="28"> sloprail
 
 Your agents slop. Take control.
 
-Skills get skipped. Prompts get ignored. Everything drifts into slop and
-dies there. sloprail is the layer that holds the line — structure the agent
-can't wander out of, checked against what actually happened, not what it
-claimed.
+Deterministic project rules for your coding agent. They kick in when it
+touches a file or runs a command, and hold until met: files only where you
+allow, right skills loaded first, work proven by diff or logs. Not a
+suggestion in CLAUDE.md or AGENTS.md.
 
 <img alt="What sloprail is made of" src="docs/assets/bento.png" width="760">
 
@@ -32,12 +32,17 @@ checkout is an equivalent fallback.
 Once both steps are done, every tool call and turn-end runs through sloprail
 — you don't run anything by hand.
 
-## Skills aren't enough
+## Rules first.
 
-A skill is a request, not a guarantee — and it might not even
-[load](https://sloprail.com/docs/use-cases/knowledge/acted-without-context).
-sloprail is the check that runs no matter what the agent does, and reads the
-real result, not the agent's word for it.
+Usually the agent writes first and you fix it after. With sloprail the rules
+come first, and they stay.
+
+|   | Usually | With sloprail |
+|---|---|---|
+| 1 | You ask | You ask |
+| 2 | Agent writes it all | **Agent writes the rules first** |
+| 3 | You correct it | Agent builds inside them |
+| 4 | Added to CLAUDE.md / SKILL.md, if you ask | Checked on every change; the rules stay |
 
 ## You've seen these happen
 
@@ -54,9 +59,12 @@ real result, not the agent's word for it.
 
 ## How it works
 
-A project declares guardrails under `.sloprail/guardrails/`; the harness
-calls the session hook points, and the engine runs whichever guardrails bind
-to what is about to happen.
+A project declares guardrails under `.sloprail/`, one folder per rule, in the
+directory named for its kind: `file-guard/` (what a file must hold), `gate/`
+(a checkpoint on an action), `context/` (a mode other rules depend on), plus
+one `file-guard/structure.yaml` listing where writes may land at all. The
+harness calls the session hook points, and the engine runs whichever
+guardrails bind to what is about to happen.
 
 Full docs, including how to write a guardrail:
 [sloprail.com/docs](https://sloprail.com/docs).
