@@ -2,6 +2,7 @@ package commandmod
 
 import (
 	"path"
+	"strings"
 
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
@@ -92,6 +93,17 @@ type cwd struct {
 // scope is seeded with on entry (COPIED, not shared — see cwdForSequence).
 var startCwd = cwd{}
 
+// ptr returns a pointer to a copy of v.
+//
+// Used wherever a scope needs its OWN pointer to a value it will not write
+// back through — a pipeline's two sides (cwdForStmt's BinaryCmd case), each
+// of which gets a fresh copy of the cwd in effect so neither can leak a `cd`
+// to the other or to whatever follows the pipeline. `&v` on a local variable
+// would do the same thing at each call site; this exists so that intent —
+// "a copy, not the original" — is named once rather than re-typed at every
+// site that needs it.
+func ptr[T any](v T) *T { return &v }
+
 // advance returns the cwd after a `cd` invocation whose resolved, literal
 // argument is target — or the unknown cwd, when isCdTarget could not offer one.
 //
@@ -158,17 +170,40 @@ func resolveTargetAt(p string, at cwd) (string, bool) {
 	return path.Clean(path.Join(at.dir, p)), true
 }
 
-// cdTargetOf reads a `cd` invocation's own argument, and reports whether this
-// call is a `cd` at all.
+// dirChangingBuiltins are the shell builtins this package knows change the
+// CURRENT shell's directory, beyond plain `cd`.
 //
-// Only the shape this package can be sure of is resolved: exactly one operand,
-// itself a single literal word that expanded to exactly one field. Everything
-// else — no operand, `cd -`, more than one operand (which real cd also
-// rejects, but a non-literal one is refused for the same reason literalWord
-// refuses everywhere else in this package: guessing at an environment this
-// does not have), or an operand that is not certain — reports ok=false, which
-// callers read as "this cd could not be resolved" rather than "this is not a
-// cd".
+// `pushd`/`popd` genuinely move the shell's cwd — that is their entire
+// purpose — but resolving WHERE they move it to means modelling a whole
+// directory STACK (pushd's argument, or none — meaning "swap with the top of
+// the stack" — or popd, which needs to know what an EARLIER pushd on this
+// same line already pushed), a much larger undertaking than the single
+// current-directory cd tracks. So neither is resolved; both are recognised
+// by name, here, ONLY so that seeing one can mark the scope unknown rather
+// than silently doing nothing and leaving `current` exactly where it was —
+// which would be the wrong-direction guess this package refuses everywhere
+// else: `pushd /elsewhere && touch a` DOES move the shell, and reporting `a`
+// as unaffected would be confidently wrong, not merely incomplete.
+var dirChangingBuiltins = map[string]bool{"pushd": true, "popd": true}
+
+// cdTargetOf reads a `cd`/`pushd`/`popd` invocation, and reports whether this
+// call changes the current shell's directory at all.
+//
+// Only `cd`'s own shape is ever resolved to a concrete target — see the
+// isCd-but-not-ok branches below. `pushd` and `popd` are recognised by name
+// alone: isCd is true and ok is always false for them, which callers read as
+// "this call changes the directory, but not to anywhere this package can
+// name" — see dirChangingBuiltins for why resolving them is out of scope
+// rather than merely skipped.
+//
+// For `cd` itself: only the shape this package can be sure of is resolved —
+// exactly one operand, itself a single literal word that expanded to exactly
+// one field. Everything else — no operand, `cd -`, more than one operand
+// (which real cd also rejects, but a non-literal one is refused for the same
+// reason literalWord refuses everywhere else in this package: guessing at an
+// environment this does not have), or an operand that is not certain —
+// reports ok=false, which callers read as "this cd could not be resolved"
+// rather than "this is not a cd".
 //
 // cfg is the same expansion FileTargets already builds once per call and
 // passes down; a `cd` argument is resolved exactly the way any other operand
@@ -178,7 +213,14 @@ func cdTargetOf(cfg *expand.Config, call *syntax.CallExpr) (target string, isCd 
 		return "", false, false
 	}
 	got, err := expand.Fields(cfg, call.Args[0])
-	if err != nil || len(got) != 1 || got[0] != "cd" {
+	if err != nil || len(got) != 1 {
+		return "", false, false
+	}
+	if dirChangingBuiltins[got[0]] {
+		// pushd/popd: recognised, never resolved. See dirChangingBuiltins.
+		return "", true, false
+	}
+	if got[0] != "cd" {
 		return "", false, false
 	}
 	isCd = true
@@ -207,6 +249,31 @@ func cdTargetOf(cfg *expand.Config, call *syntax.CallExpr) (target string, isCd 
 		// even when it was known, because recording it would mean keeping a
 		// SECOND cwd alongside the first for a spelling that is rare in
 		// agent-written command lines. Refused rather than guessed at.
+		return "", isCd, false
+	}
+	if hasGlob(argFields[0]) {
+		// `cd /a/*` — the shell expands this against the FILESYSTEM into
+		// whichever single directory matches (cd rejects more than one), and
+		// safeConfig deliberately disables globbing so this package never
+		// reads the tree to find out which. The same word passes every
+		// certainty test up to here — isLiteral agrees a `*` is a plain
+		// Lit — and looks resolved without being resolved to anything real,
+		// exactly the hazard targetsFor's own hasGlob check exists to name
+		// for an ordinary operand. Refused rather than guessed at.
+		return "", isCd, false
+	}
+	if strings.HasPrefix(argFields[0], "~") {
+		// `cd ~`, `cd ~/x`, `cd ~user` — tilde expansion needs a real $HOME
+		// (or a real password database, for `~user`), neither of which this
+		// package has. isLiteral treats `~` as a plain Lit (mvdan/sh does not
+		// give it its own node type the way a parameter expansion gets one),
+		// so expand.Fields under the empty environment returns it completely
+		// UNEXPANDED — `cd ~/x` resolves to the literal three-character string
+		// "~/x", not a real path. Composing that onto anything, or reporting
+		// it as an absolute-looking target, would be exactly the
+		// confidently-wrong answer this package refuses everywhere else: a
+		// cwd that LOOKS resolved and names no real directory. Refused here
+		// rather than guessed at, the same as `cd -` one branch above.
 		return "", isCd, false
 	}
 	return argFields[0], isCd, true
@@ -287,23 +354,41 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 		// the subshell did to itself.
 		cwdForSequence(cfg, cmd.Stmts, *current, out)
 	case *syntax.BinaryCmd:
-		// `&&`, `||` and `|` all reach here; syntax gives no separate node for
-		// a pipeline, and mvdan/sh represents `a | b` as a BinaryCmd too. A
-		// pipe's two sides do not run in the same shell as each other in a real
-		// shell (each is its own subprocess), but neither side can `cd` the
-		// PARENT shell either way, and what this package cares about is only
-		// the SEQUENCE `cd` itself appears in — `&&`/`||`/`;` — so treating a
-		// pipeline identically costs nothing: `cd` is never usefully one side
-		// of a pipe, and if it appears there its effect is scoped to that
-		// subprocess exactly the way a subshell's is, which recursing here
-		// already gives it.
+		// `&&`, `||` and `|`/`|&` all reach here; syntax gives no separate node
+		// for a pipeline, and mvdan/sh represents `a | b` as a BinaryCmd too —
+		// but the two operator families do NOT belong to the same case. This
+		// was measured wrong before the split below existed: `cd /elsewhere |
+		// touch y` resolved `y` to `/elsewhere/y`, because X and Y were both
+		// threaded through the SAME `current` pointer regardless of which
+		// operator joined them.
 		//
-		// X first, then Y — the left-to-right order BinaryCmd's own left
-		// associativity already puts them in (see the doc comment on this
-		// file's tests), so `a && b && c` parsed as `(a && b) && c` still
-		// visits a, b, c in the order they actually run.
-		cwdForStmt(cfg, cmd.X, current, out)
-		cwdForStmt(cfg, cmd.Y, current, out)
+		// `&&`/`||` are true sequencing in the current shell: X really does
+		// run, THEN Y, in the same process, so a `cd` in X is exactly as real
+		// for Y as one before a `;` would be. `|`/`|&` are not sequencing at
+		// all — a real shell forks BOTH sides into their own subprocesses and
+		// connects them with a pipe, running them CONCURRENTLY, so neither
+		// side's `cd` can reach the other side, and — the half the wrong
+		// version above missed — neither can reach anything AFTER the
+		// pipeline either, since the parent shell that continues past it
+		// never ran either side's `cd` itself.
+		switch cmd.Op {
+		case syntax.Pipe, syntax.PipeAll:
+			// Each side gets its OWN copy of current, exactly as a Subshell's
+			// body does, and neither copy is written back — current, the
+			// caller's own variable, is left exactly where it was for
+			// whatever statement follows this one.
+			cwdForStmt(cfg, cmd.X, ptr(*current), out)
+			cwdForStmt(cfg, cmd.Y, ptr(*current), out)
+		default:
+			// `&&`, `||`: X first, then Y — the left-to-right order
+			// BinaryCmd's own left associativity already puts them in (see
+			// the doc comment on this file's tests), so `a && b && c` parsed
+			// as `(a && b) && c` still visits a, b, c in the order they
+			// actually run. Both share `current` because both really do run
+			// in the one shell this function is tracking.
+			cwdForStmt(cfg, cmd.X, current, out)
+			cwdForStmt(cfg, cmd.Y, current, out)
+		}
 	case *syntax.Block:
 		// `{ cd /a; }` in the CURRENT shell — a Block is not a new process,
 		// unlike a Subshell, so its `cd` really does change the enclosing
@@ -313,7 +398,185 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 		// current, so a statement after the block sees whatever `cd` happened
 		// inside it.
 		*current = cwdForSequence(cfg, cmd.Stmts, *current, out)
+	case *syntax.IfClause:
+		// `if`/`elif`/`else` all run in the CURRENT shell — none of them fork,
+		// unlike a Subshell — so a `cd` in any branch is exactly as real
+		// afterward as one before a `;` would be. What is NOT knowable
+		// statically is WHICH branch ran, and that is the whole difficulty:
+		// unlike a Block, where every statement unconditionally runs, at most
+		// ONE arm's body executes, chosen by a condition this package does
+		// not evaluate. See cwdForIfChain for how the whole elif/else chain
+		// is walked and reconciled — this case is just its entry point, from
+		// the cwd already in effect here.
+		*current = cwdForIfChain(cfg, cmd, *current, out)
+	case *syntax.WhileClause:
+		// `while`/`until`: the condition (Cond) runs at least the first time
+		// unconditionally, so its own `cd`s are sequenced like a Block's. The
+		// body (Do) may then run ZERO or more times — a static reader cannot
+		// know how many without evaluating Cond repeatedly, which this
+		// package refuses to do (the same refusal that keeps it from reading
+		// the filesystem or running command substitutions) — so what the
+		// directory is AFTER the loop depends on an iteration count nothing
+		// here can name.
+		//
+		// mergeBranches is reused for exactly the same reason an IfClause
+		// needs it: "the loop body might not run at all" and "it might run"
+		// are two branches, and if they agree — because the body has no cd in
+		// it, the ordinary case — the shared answer is correct regardless of
+		// how many times it actually ran; the recursion inside cwdForSequence
+		// already makes a SECOND iteration agree with the first for the same
+		// reason (a body with no cd leaves current unchanged, so running it
+		// twice is the same as running it once, is the same as not running it
+		// at all).
+		*current = cwdForSequence(cfg, cmd.Cond, *current, out)
+		zeroTimes := *current
+		onceOrMore := cwdForSequence(cfg, cmd.Do, *current, out)
+		*current = mergeBranches(zeroTimes, onceOrMore)
+	case *syntax.ForClause:
+		// `for`/`select`: the body (Do) runs zero or more times, over a list
+		// this package does not enumerate (WordIter's Items may themselves be
+		// unresolvable, and a CStyleLoop's iteration count is an arithmetic
+		// expression). Same shape as WhileClause's Do, and the same merge:
+		// zero iterations (current unchanged) against one-or-more (the body
+		// run once, which is what any FURTHER iteration would also see if the
+		// body's own cd's are idempotent from a fixed starting point — and if
+		// they are not, i.e. two different iterations could leave two
+		// different directories, mergeBranches's disagreement rule already
+		// answers unknown, which is the honest reflection of that).
+		zeroTimes := *current
+		onceOrMore := cwdForSequence(cfg, cmd.Do, *current, out)
+		*current = mergeBranches(zeroTimes, onceOrMore)
+	case *syntax.CaseClause:
+		*current = cwdForCase(cfg, cmd, *current, out)
 	}
+}
+
+// cwdForCase reconciles a case clause's items the same way cwdForIfChain
+// reconciles an if/elif/else chain: each item's Stmts is its own mutually
+// exclusive path from entry, chosen by matching Word against a pattern this
+// package does not evaluate, plus the always-possible path where NO item
+// matches at all (case, unlike if, has no implicit final "else" — an
+// unmatched value simply runs nothing).
+//
+// Every item is included in the merge regardless of its terminator (`;;`,
+// `;&`, `;;&`) — which is a simplification, and a deliberately conservative
+// one rather than an oversight. `;&` falls through into the NEXT item's
+// Stmts unconditionally and `;;&` falls through into testing the next
+// pattern, so a matched item's true successor set is sometimes wider than
+// "just its own Stmts." Treating every item as independent, ignoring
+// fallthrough, still gives the RIGHT answer whenever it matters in practice:
+// if none of the items anywhere in the clause contain a cd, every path
+// (fallthrough or not) trivially agrees with unchanged, and the common case
+// is unaffected. Where fallthrough could actually change the answer — one
+// item cd's and a `;&`/`;;&` before it could route execution through it
+// unconditionally from an item that did NOT itself cd — mergeBranches's
+// disagreement rule already answers unknown for the case that contains the
+// cd, which only widens how far that unknown could honestly have reached
+// rather than reporting a wrong answer as a right one. Modelling fallthrough
+// precisely would mean tracking which items chain into which, for a shape
+// rare enough in agent-written command lines that the cost is not owed here.
+func cwdForCase(cfg *expand.Config, cmd *syntax.CaseClause, entry cwd, out map[*syntax.Stmt]cwd) cwd {
+	branches := make([]cwd, 0, len(cmd.Items)+1)
+	// The always-possible "nothing matched" path.
+	branches = append(branches, entry)
+	for _, item := range cmd.Items {
+		branches = append(branches, cwdForSequence(cfg, item.Stmts, entry, out))
+	}
+	return mergeBranches(branches...)
+}
+
+// cwdForIfChain walks one if/elif/.../else chain and returns the cwd in
+// effect once it has finished, reconciling every arm that could have run.
+//
+// mvdan/sh represents the whole chain as NESTED IfClauses: `if a; then b;
+// elif c; then d; else e; fi` is one IfClause (Cond=a, Then=b) whose Else is
+// ANOTHER IfClause (Cond=c, Then=d) whose OWN Else is a THIRD IfClause with
+// an EMPTY Cond and Then=e — see this file's own doc comment on the
+// grammar's Else field ("if non-nil, an elif or an else"). Telling those two
+// shapes apart matters: an elif is itself conditional, so its own Then and
+// whatever follows IT need the same merge this function is doing; a plain
+// else is NOT conditional GIVEN that every earlier condition already failed
+// — its Then runs unconditionally along that path, and running it through
+// this same merge machinery a second time (treating its own absent Else as
+// "an empty branch that might disagree") is what a first version of this
+// function got wrong, measured: `if true; then cd sub; else cd sub; fi`
+// reported unknown even though both arms agree on the exact same directory,
+// because the else-body's OWN (nonexistent) else was compared against it and
+// manufactured a disagreement that was never really there.
+//
+// So a plain else is handled directly, inline, rather than by recursing into
+// this function on a synthetic wrapper: entry is the cwd before entering this
+// chain (already past its Cond, which the caller sequences), and env is
+// walked straight through as the else-body's own answer, with no merge
+// against anything.
+func cwdForIfChain(cfg *expand.Config, cmd *syntax.IfClause, entry cwd, out map[*syntax.Stmt]cwd) cwd {
+	entry = cwdForSequence(cfg, cmd.Cond, entry, out)
+	afterThen := cwdForSequence(cfg, cmd.Then, entry, out)
+
+	switch {
+	case cmd.Else == nil:
+		// No further arm at all — `if a; then b; fi` with no else. The
+		// implicit "condition was false" path leaves the directory exactly
+		// where entry already has it: nothing ran.
+		return mergeBranches(afterThen, entry)
+	case len(cmd.Else.Cond) == 0:
+		// A plain else: unconditional GIVEN this path, not itself a further
+		// branch to reconcile. Its Then is exactly as real as this IfClause's
+		// own Then would have been, from the same entry point.
+		afterElse := cwdForSequence(cfg, cmd.Else.Then, entry, out)
+		return mergeBranches(afterThen, afterElse)
+	default:
+		// An elif: itself conditional, so its own chain (which may end in
+		// ANOTHER elif, or a plain else, or nothing) is resolved by the same
+		// function, recursively, from this same entry point — `cmd.Else.Cond`
+		// running unconditionally along THIS path exactly as `cmd.Cond` does
+		// for the outer IfClause, which is what makes the recursive call
+		// correct rather than merely convenient.
+		afterElifChain := cwdForIfChain(cfg, cmd.Else, entry, out)
+		return mergeBranches(afterThen, afterElifChain)
+	}
+}
+
+// mergeBranches reconciles what two OR MORE mutually exclusive execution
+// paths leave the effective directory at, into the one answer a statement
+// AFTER all of them must be resolved against.
+//
+// Two callers pass exactly two: an if's Then vs. its Else (a loop's body
+// always exists, but "the condition was false from the start" is its own
+// path, structurally identical to an empty Else), and a loop's
+// zero-iterations path vs. its one-or-more path. cwdForCase passes one per
+// CaseItem plus the implicit "nothing matched" path, which is why this takes
+// a slice rather than a fixed pair — a case clause can have any number of
+// patterns, and each is exactly as mutually exclusive with the others as an
+// if's two arms are with each other.
+//
+// Agreement is the only thing that survives: if every path is known AND
+// lands on the identical directory, that shared answer is correct no matter
+// which path actually ran, which is what lets the overwhelmingly common
+// case — a branch, loop body, or case item containing no `cd` at all — pass
+// straight through unaffected rather than being blurred to unknown on every
+// `if`/`for`/`while`/`case` a line happens to contain. Any disagreement, in
+// any direction (one unknown, or two known but different), means which path
+// ran decides the directory, and this package does not evaluate conditions,
+// count iterations, or match case patterns, so the honest answer is unknown.
+//
+// Called with zero branches by nothing today, and the empty case is answered
+// honestly anyway rather than left to panic on branches[0]: no branches ran
+// is not evidence of a directory, known or otherwise.
+func mergeBranches(branches ...cwd) cwd {
+	if len(branches) == 0 {
+		return cwd{unknown: true}
+	}
+	first := branches[0]
+	if first.unknown {
+		return cwd{unknown: true}
+	}
+	for _, b := range branches[1:] {
+		if b.unknown || b.dir != first.dir {
+			return cwd{unknown: true}
+		}
+	}
+	return first
 }
 
 // stmtAt is the reverse index fileTargetsAt needs: given the *syntax.Stmt the
