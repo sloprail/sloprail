@@ -148,7 +148,6 @@ checks:
   - prepare: ./assemble-context.sh      # optional, feeds the judge
     judge: ./is-it-good.md.j2
     model: size-md                       # optional; a size alias or model name
-    timeout: 45s                         # optional; default 30s
     allowed_tools: [Read, WebFetch]      # optional; judge-only, tools its agent may use
 ```
 
@@ -162,7 +161,7 @@ checks:
 
 The two check kinds are documented separately because their contracts differ — a
 script's `reason`/exit-code verdict and fail-closed-on-cannot-run, versus a
-judge's `reasoning` verdict, `prepare` + `.md.j2` + `model`/`timeout`/`allowed_tools`,
+judge's `reasoning` verdict, `prepare` + `.md.j2` + `model`/`allowed_tools`,
 and the fail-open-via-a-script escape hatch.
 
 ## The refusal contract
@@ -282,7 +281,7 @@ file. Naming it here is the way out that does not mean uninstalling the plugin.
   reading the flat event off stdin, the exit-code verdict, and fail-closed-on-
   cannot-run.
 - [judge-checks.md](judge-checks.md) — the model check: `prepare` + the `.md.j2`
-  template + `additionalContext`, the `sr-agent` substrate, `model`/`timeout`/
+  template + `additionalContext`, the `sr-agent` substrate, `model`/
   `allowed_tools`, and the fail-open escape hatch.
 - [state-management.md](state-management.md) — `sr-session state` across cycles,
   the `--owner` cross-guardrail read a gate uses to read a context's registry,

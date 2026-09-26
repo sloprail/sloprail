@@ -49,13 +49,12 @@ checks:
   # when the Pre write's result is underivable, deferring to the settled
   # Post/Stop bytes — the same underivable-Pre defer every guard in this
   # plugin uses. model is size-md (engine default judge modelset), matching
-  # the plugin's other judges; timeout 25s sits under the engine's 30s check
-  # bound. allowed_tools: [Read] ADDS Read on top of the engine-granted Write
+  # the plugin's other judges; no explicit timeout — it runs under the
+  # engine's own default. allowed_tools: [Read] ADDS Read on top of the engine-granted Write
   # for the verdict file — the task and gate content are both already IN the
   # prompt, but Read lets the judge corroborate against the file on disk if
   # useful.
   - prepare: ./resolve-gate-context.sh
     judge: ./judge-gate.md.j2
     model: size-md
-    timeout: 25s
     allowed_tools: [Read]

@@ -41,17 +41,11 @@ import (
 // exists to produce ON PURPOSE for a genuinely wedged check, firing instead
 // on an ordinary one that was simply slow.
 //
-// 60s, not something closer to the 600s ceiling: this is still a GUESS, not a
-// measurement — nobody has actually timed a real sr-agent judge invocation
-// end to end (the e2e suite deliberately stubs the judge via
-// InstallJudgeClaude specifically to avoid paying for and waiting on real
-// model calls, so no real-latency data exists in this repo to set the bound
-// from). The failures that motivated raising this at all were attributed to
-// resource CONTENTION — this session itself competing for the machine — not
-// to judge calls being inherently slow, so 60s (2x the 30s that failed under
-// that contention) is picked as reasonable margin without reaching for a much
-// larger number that has no more basis than this one does. Revisit with real
-// numbers if this value causes trouble either direction.
+// Now 600s — Claude Code's own per-hook default. 60s (itself a guess, 2x the
+// 30s that failed under contention) still refused ordinary slow judges in
+// real sessions, and every such refusal is a guardrail misfiring on a reason
+// unrelated to the change it was judging. The per-check bound now exists only
+// to catch a genuinely wedged check, not to pace a slow one.
 //
 // A THIRD deadline sits between this one and Claude Code's 600s: one
 // PreToolUse (or Stop) invocation of `sr-session` can run SEVERAL checks in
@@ -60,7 +54,7 @@ import (
 // whole invocation's wall-clock is not this constant alone. That outer,
 // per-hook-INVOCATION bound is Claude Code's own `timeout` field on a
 // hooks.json entry (marketplace/plugins/sloprail/hooks/hooks.json sets it to
-// 300s explicitly, rather than trust either side's default) — measured the
+// 3600s explicitly, rather than trust either side's default) — measured the
 // hard way: a10n-claude-mock, the e2e test double for Claude Code, defaults an
 // unset hook's timeout to 60s (services/claude-mock/internal/hooks/
 // invoker.go's defaultHookTimeout, in the sibling a10n-cli repo). Briefly
@@ -69,13 +63,14 @@ import (
 // constant's own deadline could ever fire — the exact "harness kills the
 // engine, which renders no verdict" failure mode this file's own package doc
 // warns about, causing a dangerous FAIL-OPEN in e2e
-// (tests/e2e/pre_tool/019_hook_failure_surface). hooks.json's explicit 300s
+// (tests/e2e/pre_tool/019_hook_failure_surface). hooks.json's explicit 3600s
 // fixes the mock/Claude-Code layering regardless of this constant's own
 // value (real Claude Code would otherwise wait the full 600s default per
 // hook, and the mock's 60s default no longer applies once a value is
-// declared) — but this constant is ALSO kept at 60s, matching the mock's own
-// default, so the two stay aligned even if hooks.json's override were ever
-// dropped.
+// declared). This constant MUST stay under hooks.json's bound: a harness that
+// kills the hook renders no verdict, which is fail-OPEN, whereas this bound
+// firing is a refusal. 600s leaves room for several slow judges in one
+// invocation before the 3600s outer bound is reached.
 //
 // A judge check may OVERRIDE this with its own `timeout` (dot-dir-file-store/
 // main.tsp Check.timeout) — a hard invariant-checking rubric can legitimately
@@ -86,12 +81,12 @@ import (
 // SLOPRAIL_CHECK_TIMEOUT overrides this for the process's own lifetime — unset
 // in any production path, and read only here. It exists so an e2e test that
 // deliberately wedges a check to prove the timeout mechanism itself (rather
-// than any check's own logic) does not have to actually wait out 60 real
+// than any check's own logic) does not have to actually wait out 600 real
 // seconds per assertion: tests/e2e/pre_tool/019_hook_failure_surface sets it
 // low via the harness before launching the mock, so the SAME code path this
 // constant governs in production is exercised end to end in a few seconds
 // instead of minutes. Parsed once at package init — a malformed or absent
-// value silently keeps the 60s default rather than failing the process that
+// value silently keeps the 600s default rather than failing the process that
 // happens to read it first.
 var defaultCheckTimeout = func() time.Duration {
 	if v := os.Getenv("SLOPRAIL_CHECK_TIMEOUT"); v != "" {
@@ -99,7 +94,7 @@ var defaultCheckTimeout = func() time.Duration {
 			return d
 		}
 	}
-	return 60 * time.Second
+	return 600 * time.Second
 }()
 
 // checkKillGrace caps how long Wait may block after the process group is killed.
@@ -330,7 +325,7 @@ const launchedByEnv = "SLOPRAIL_LAUNCHED_BY"
 // The timeout is a PER-RUN parameter rather than the const it once was, so a
 // judge check can carry its own (dot-dir-file-store/main.tsp Check.timeout). A
 // zero or negative value falls back to defaultCheckTimeout — the script path and
-// any judge without an override run under the same 30s as before. Whatever bound
+// any judge without an override run under the same defaultCheckTimeout. Whatever bound
 // applies, an expiry is still a refusal at the call site: fail-closed is
 // preserved at the per-check bound exactly as it was at the const one.
 //

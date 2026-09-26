@@ -39,9 +39,9 @@ import (
 // # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
 //
 // The per-check timeout and the process-group kill are the new check-runner's own
-// (internal/dispatch/exec.go: defaultCheckTimeout, 60s in production — every test
+// (internal/dispatch/exec.go: defaultCheckTimeout, 600s in production — every test
 // in this file lowers it via SetCheckTimeout so the mechanism is proven without
-// each assertion actually waiting out 60 real seconds; runShell runs each check
+// each assertion actually waiting out 600 real seconds; runShell runs each check
 // in its own process group so a wedged descendant is killed as a group).
 // The vehicle is a gate on the pre-write event; the deadline and its message
 // reach the agent through the same fail-closed path.

@@ -49,8 +49,7 @@ checks:
   # prepare loads the meta-rules; the judge renders them against the file and asks
   # the model for a verdict. model is size-md — the engine's default judge
   # modelset, so the tier is the engine's to choose (the old script pinned
-  # claude-haiku-4-5-20251001 directly). timeout 25s is the old script's bound,
-  # under the engine's own 30s check timeout so the judge's own limit fires first.
+  # claude-haiku-4-5-20251001 directly).
   #
   # allowed_tools: [Read] is ADDITIVE, not the judge's whole tool set — it does
   # NOT disallow Write. The engine's judge substrate ALWAYS grants Write for the
