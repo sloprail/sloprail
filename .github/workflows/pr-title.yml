@@ -1,0 +1,48 @@
+# A squash-merged PR's title becomes the commit on main (GitHub's default
+# squash behavior), so enforcing conventional commits here — rather than on
+# every individual commit inside the PR — is the one check that actually
+# controls what lands in history. cliff.toml (git-cliff's config, used by
+# release.yml to generate changelogs) groups commits by this same type
+# vocabulary; a title this check accepts is guaranteed to land in a real
+# group there instead of the "Other" catch-all.
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Matches cliff.toml's commit_parsers exactly (feat/fix/docs/perf/
+          # refactor/style/test/chore/ci/revert) so an accepted title always
+          # lands in a real changelog group, never "Other" from a typo'd type.
+          types: |
+            feat
+            fix
+            docs
+            perf
+            refactor
+            style
+            test
+            chore
+            ci
+            revert
+          # Scope is optional — most of this repo's history uses it
+          # (fix(commandmod): ...) but plenty of legitimate titles don't
+          # (docs: foundation — four exemplars). requireScope stays false.
+          # No subjectPattern beyond the default (non-empty): this repo's
+          # subjects often name a proper noun or code identifier right after
+          # the colon (fix(install): Missing sr-session ...), so a
+          # lowercase-start rule would fight real, legitimate titles for no
+          # benefit — only the type(scope): prefix is what cliff.toml
+          # actually keys its grouping on.
+          requireScope: false

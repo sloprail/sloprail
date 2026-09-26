@@ -20,7 +20,12 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
+      # fetch-depth: 0 — git-cliff (below) needs the full commit history and
+      # every tag to render a changelog; the default shallow clone (depth 1)
+      # would leave it nothing to work with.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -53,10 +58,22 @@ jobs:
           /tmp/verify/sloprail-darwin-arm64/sr-session start </dev/null >/dev/null
           echo "darwin-arm64 sr-session runs"
 
+      # Notes for THIS tag alone (--latest), grouped by conventional-commit
+      # type (feat/fix/docs/...) per cliff.toml — replaces GitHub's own
+      # generate_release_notes (a flat PR list with no grouping).
+      - name: generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: changelog
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGES.md
+
       - name: publish release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: CHANGES.md
           files: |
             dist/*.tar.gz
             dist/checksums.txt
-          generate_release_notes: true
