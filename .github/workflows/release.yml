@@ -31,6 +31,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Catches "tagged without running `make bump-version` first" before any
+      # binary is built — plugin.json/marketplace.json are lockstepped with
+      # the repo's own release, bumped and committed to main BEFORE the tag
+      # is cut (see scripts/bump-version.sh's own doc comment for the full
+      # flow); a tag pushed without that commit would ship plugins claiming
+      # a stale version.
+      - name: verify plugin versions match this tag
+        run: make verify-version TAG=${{ github.ref_name }}
+
       # macos-latest, not ubuntu, for the SAME reason distribute-local
       # re-signs every binary it copies: a darwin binary built without
       # `codesign` behind it is flagged by Gatekeeper on first run in a way

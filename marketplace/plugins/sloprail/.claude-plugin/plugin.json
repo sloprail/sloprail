@@ -1,6 +1,6 @@
 {
   "name": "sloprail",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "description": "Verifies the agent's claim against the real diff, not just that a rule fired. Claude Code guardrails with a Stop gate.",
   "keywords": [
     "claude-code",

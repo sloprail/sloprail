@@ -64,10 +64,38 @@ fetch() {
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-base_url="https://github.com/${REPO}/releases/latest/download"
+# Resolve "latest" to the actual tag BEFORE downloading, so this script (and
+# the user) knows exactly what version landed rather than trusting a
+# redirect silently — the tag is what plugin.json/marketplace.json are
+# lockstepped with (scripts/bump-version.sh), so this is also what a user
+# would cite when reporting a bug against a specific version.
+#
+# SLOPRAIL_INSTALL_TAG skips resolution entirely when already known — the
+# stranger-install-path CI test sets it, since its local mock HTTP server
+# (plain static files, no GitHub-shaped redirect) has no "latest" to
+# resolve; a real user never sets it and always goes through the resolve
+# step below.
+if [ -n "${SLOPRAIL_INSTALL_TAG:-}" ]; then
+  tag="$SLOPRAIL_INSTALL_TAG"
+else
+  # github.com/OWNER/REPO/releases/latest is a redirect to
+  # .../releases/tag/vX.Y.Z; curl -w reports the FINAL url it landed on
+  # after following redirects (-L), which is where the resolved tag is read
+  # from — no GitHub API call needed (the API's own /releases/latest needs
+  # auth on a private repo; this plain redirect works the same either way
+  # since it is the identical authenticated fetch the download itself uses).
+  latest_url="https://github.com/${REPO}/releases/latest"
+  resolved="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$latest_url" 2>/dev/null || true)"
+  tag="${resolved##*/tag/}"
+  if [ -z "$tag" ] || [ "$tag" = "$resolved" ]; then
+    die "could not resolve the latest release tag from ${latest_url} (check https://github.com/${REPO}/releases exists and has at least one release)"
+  fi
+fi
+
+base_url="https://github.com/${REPO}/releases/download/${tag}"
 archive="sloprail-${platform}.tar.gz"
 
-say "sloprail install: downloading ${archive} from the latest release"
+say "sloprail install: downloading ${archive} from release ${tag}"
 fetch "${base_url}/${archive}" "${tmp}/${archive}" ||
   die "download failed — ${base_url}/${archive} (check https://github.com/${REPO}/releases for a build of your platform)"
 
@@ -103,7 +131,7 @@ for bin in sr sr-session sr-file sr-mark sr-agent; do
   command -v codesign >/dev/null 2>&1 && codesign --sign - --force "${INSTALL_DIR}/${bin}" 2>/dev/null || true
 done
 
-say "sloprail install: installed sr, sr-session, sr-file, sr-mark, sr-agent into ${INSTALL_DIR}"
+say "sloprail install: installed ${tag} (sr, sr-session, sr-file, sr-mark, sr-agent) into ${INSTALL_DIR}"
 
 case ":$PATH:" in
 *":${INSTALL_DIR}:"*) ;;
