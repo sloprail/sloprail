@@ -46,9 +46,11 @@ if [ -z "$path" ]; then
 fi
 
 root="${SR_WORKSPACE:-.}"
-schema="$root/.sloprail/schemas/unit.cue"
+# The schema is the PLUGIN's, read from its own tree — this guard's folder is two
+# levels under the plugin's .sloprail/ — never a consumer-side copy.
+schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/unit.cue"
 if [ ! -f "$schema" ]; then
-  refuse "unit-publish-approved: schema not found at $schema — install the plugin's unit.cue under the project's .sloprail/schemas/."
+  refuse "unit-publish-approved: schema not found at $schema — the plugin's own unit.cue is missing, so no unit can be checked."
 fi
 
 # WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on

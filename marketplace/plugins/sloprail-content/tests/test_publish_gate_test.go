@@ -93,6 +93,9 @@ func TestPublish_UncitedTransitionRefused(t *testing.T) {
 	if body := readProj(t, proj, unitPath); !strings.Contains(body, "status: drafting") {
 		t.Errorf("the refused transition landed:\n%s", body)
 	}
+	if !res.Saw("Only the user publishes") || !res.Saw("--old-string 'status: drafting' --new-string 'status: published") {
+		t.Errorf("the refusal does not carry the rule's hint:\n%s", res.Output)
+	}
 	if !res.Saw("must be grounded in a citation of the user's own words") || !res.Saw("sr-file edit "+unitPath) {
 		t.Errorf("the refusal does not hand back the cited edit to make:\n%s", res.Output)
 	}

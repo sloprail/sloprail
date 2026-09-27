@@ -32,8 +32,10 @@ collect_applicable_rules() {
   root="$2"
   unit_bytes="$3"
 
-  unit_schema="$root/.sloprail/schemas/unit.cue"
-  rule_schema="$root/.sloprail/schemas/rule.cue"
+  # The schemas are the PLUGIN's, read from its own tree — this guard's folder
+  # is two levels under the plugin's .sloprail/ — never a consumer-side copy.
+  unit_schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/unit.cue"
+  rule_schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/rule.cue"
 
   unit_doc="$(printf '%s' "$unit_bytes" | sr-file validate - --as .md --schema "$unit_schema" --emit 2>/dev/null)" || return 1
   u_tags="$(printf '%s' "$unit_doc" | jq -c '.tags // []' 2>/dev/null)"

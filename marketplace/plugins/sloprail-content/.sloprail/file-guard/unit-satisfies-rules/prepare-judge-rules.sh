@@ -92,7 +92,7 @@ ${draft_text}"
 fi
 
 rule_files="$(collect_applicable_rules "$path" "$root" "$content")"
-rule_schema="$root/.sloprail/schemas/rule.cue"
+rule_schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/rule.cue"
 
 judge_rules=""
 count=0

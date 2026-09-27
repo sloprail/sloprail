@@ -3,6 +3,7 @@ package dispatch
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -82,5 +83,34 @@ func TestRequireWhen(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.refuse, v.Refused, "reason: %s", v.Reason)
 		})
+	}
+}
+
+// A `when` script that applies its prerequisite may say, on stdout, how to meet
+// it in this case; the refusal carries that after the engine's own remedy.
+func TestRequireWhenHint(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hint.sh"),
+		[]byte("#!/bin/sh\necho '{\"hint\": \"Run the tests, then cite a line of their output.\"}'\nexit 0\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prose.sh"),
+		[]byte("#!/bin/sh\necho 'not json'\nexit 0\n"), 0o755))
+
+	for script, want := range map[string]string{
+		"./hint.sh":  "Run the tests, then cite a line of their output.",
+		"./prose.sh": "",
+	} {
+		p := declaration.Prerequisite{
+			Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"tool_result"}},
+			When:     script,
+		}
+		v, err := Runner{}.Run(Request{Nature: NatureFileGuard, Dir: dir, Require: []declaration.Prerequisite{p}, Event: citedEvent("PreFileUpdate")})
+		require.NoError(t, err)
+		require.True(t, v.Refused)
+		assert.Contains(t, v.Reason, "sr-file edit", "the engine's remedy stays")
+		if want != "" {
+			assert.True(t, strings.HasSuffix(v.Reason, "\n"+want), "the hint follows the remedy: %s", v.Reason)
+		} else {
+			assert.NotContains(t, v.Reason, "not json")
+		}
 	}
 }

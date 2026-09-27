@@ -2,8 +2,8 @@ description: >
   The sloprail-content plugin end to end, on a real agent. The user states a
   new writing rule for X posts and approves publishing a drafted launch unit,
   giving the URL it went out at. A skill teaches where rules live and how a
-  unit is published; the seed holds one existing rule, the topic, the drafted
-  unit, and the project-side unit.cue/rule.cue the plugin reads.
+  unit is published; the seed holds one existing rule, the topic and the
+  drafted unit (the schemas are the plugin's own).
 
   Exercises all three of the plugin's guards: content-rule-is-grounded
   (every RULE.md write cites the user — require, unconditional — and a judge

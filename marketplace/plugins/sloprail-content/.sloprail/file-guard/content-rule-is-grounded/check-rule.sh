@@ -30,9 +30,11 @@ fi
 
 root="${SR_WORKSPACE:-.}"
 
-schema="$root/.sloprail/schemas/rule.cue"
+# The schema is the PLUGIN's, read from its own tree — this guard's folder is two
+# levels under the plugin's .sloprail/ — never a consumer-side copy.
+schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/rule.cue"
 if [ ! -f "$schema" ]; then
-  refuse "content-rule-is-grounded: schema not found at $schema — install the plugin's rule.cue under the project's .sloprail/schemas/."
+  refuse "content-rule-is-grounded: schema not found at $schema — the plugin's own rule.cue is missing, so no rule can be checked."
 fi
 
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"

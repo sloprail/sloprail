@@ -115,6 +115,10 @@ func TestEvidence_UncitedToolEditTransitionRefused(t *testing.T) {
 	if !res.Saw("must be grounded in a citation of an entry of this session's record in the tool_result pool") {
 		t.Errorf("the refusal was not the missing-proof requirement:\n%s", res.Output)
 	}
+	// The rule's own hint, from its `when` script: what proof is, and the edit.
+	if !res.Saw("Run what proves the work") || !res.Saw("--old-string 'status: in_progress' --new-string 'status: in_review'") {
+		t.Errorf("the refusal does not carry the rule's hint:\n%s", res.Output)
+	}
 }
 
 // TestEvidence_AnswerEnvelopeIsNotToolOutput is the adversarial case: an

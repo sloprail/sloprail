@@ -323,11 +323,14 @@ A judge renders against the payload **spread flat at the template's top level**
 own `prepare` returned one:
 
 ```markdown
-## The change
-```diff
-{{ additionalContext.change_diff }}
+## The rules it must follow
+<rules>
+{{ additionalContext.rules }}
+</rules>
 ```
-```
+
+A file-guard's judge also gets `{{ change }}`, the unified diff of the event's
+`oldContent` to its `newContent` ([judge-checks.md](judge-checks.md)).
 
 `additionalContext` is additive — it never replaces the payload, and a `prepare`
 key cannot collide with `event` or `transcriptPath` (it renders under the single

@@ -53,7 +53,7 @@ func TestRealExampleTemplatesRender(t *testing.T) {
 			// Agent-written and quoted text reaches the prompt escaped: a value
 			// carrying a closing tag must never close the tag it sits in.
 			for _, raw := range []string{"import </message>", "m </message>", "the ask </body>",
-				"old rule </body_before>", "no hype </rules>", "the task </task>", "PASS </cited_results>",
+				"no hype </rules>", "the task </task>", "PASS </cited_results>",
 				"a.go:3 </artifacts>", "public </judgment_gates>", "public </gate>", "public </gates>", "echo </call>", "draft </unit>"} {
 				assert.NotContains(t, out, raw, "an injected closing tag reached the prompt unescaped")
 			}
@@ -99,15 +99,12 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 		"action":       "fill_form",
 		"action_input": "{}",
 		"proof":        "a screenshot",
-		// no-unasked-deletion
-		"change_diff": "-import x\n+",
 		// sloprail-tasks task-body-is-human-authored: the user-pool citations
 		"asks": []any{map[string]any{
 			"quote": "q", "sourceTypes": []any{"user"}, "path": "/s.jsonl", "line": 4, "message": "m </message>",
 		}},
 		"body": "the ask </body>",
 		// sloprail-content content-rule-is-grounded / unit-satisfies-rules
-		"old_body":    "the old rule </body_before>",
 		"judge_rules": "Rule: no hype </rules>",
 		"unit_path":   "memories/topics/20260920_launch/units/01_announce/UNIT.md",
 		"unit_text":   "the draft </unit>",
@@ -188,4 +185,26 @@ func findTemplates(t *testing.T, root string) []string {
 	})
 	require.NoError(t, err)
 	return out
+}
+
+// {{ change }} is the diff of the event's own old and new content — what the
+// change did, which a grounded change's judge rules on.
+func TestTemplate_ChangeIsTheEventsDiff(t *testing.T) {
+	vars := assembledJudgeVars(t)
+	out, err := renderTemplate("{{ change }}", vars)
+	require.NoError(t, err)
+	assert.Contains(t, out, "--- a/some/file.md")
+	assert.Contains(t, out, "-the old content")
+	assert.Contains(t, out, "+the new content")
+}
+
+// A create diffs from nothing, a delete to nothing, and an unchanged file is no
+// change at all.
+func TestFileChangeShapes(t *testing.T) {
+	create := fileChange(eventEvent("PreFileCreate", map[string]any{"path": "a.md", "newContent": "one\ntwo\n"}))
+	assert.Contains(t, create, "+one")
+	assert.NotContains(t, create, "\n-")
+	del := fileChange(eventEvent("PreFileDelete", map[string]any{"path": "a.md", "oldContent": "gone\n"}))
+	assert.Contains(t, del, "-gone")
+	assert.Empty(t, fileChange(eventEvent("PostFileUpdate", map[string]any{"path": "a.md", "oldContent": "x\n", "newContent": "x\n"})))
 }

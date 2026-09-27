@@ -72,9 +72,10 @@ require:
     never became a citation).
   - a result the engine could not compute → **applies** (fail-closed).
 
-- **`collect-quote-and-diff.sh`** (prepare) + **`change-is-clean-and-absolute.md.j2`**
+- **`skip-pure-addition.sh`** (prepare) + **`change-is-clean-and-absolute.md.j2`**
   (judge) — reached only when a real removal cites the user's words (the
-  prepare skips the judge on a pure addition). The judge
+  prepare skips the judge on a pure addition). The judge reads the change's
+  diff and its citations straight off its input, and
   rules the two things only a model can: (1) the change is **clean and
   targeted** — only what the cited words asked, nothing else dropped alongside
   it; and (2) it is

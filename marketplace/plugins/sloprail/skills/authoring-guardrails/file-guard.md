@@ -19,7 +19,7 @@ require:
     when: ./removes-content.sh
 checks:
   - judge: ./change-is-clean-and-absolute.md.j2
-    prepare: ./collect-quote-and-diff.sh
+    prepare: ./skip-pure-addition.sh
 ```
 
 `match` narrows to the files this rule is about (a glob or an expression —

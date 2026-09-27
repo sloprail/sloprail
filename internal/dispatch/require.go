@@ -60,15 +60,28 @@ func (r Runner) checkRequire(req Request) (Verdict, error) {
 // tried first only because it is the field listed first in the spec; the two are
 // mutually exclusive so order is immaterial.
 func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verdict, error) {
+	hint := ""
 	if p.When != "" {
-		applies, err := r.prerequisiteApplies(req, p.When)
+		applies, h, err := r.prerequisiteApplies(req, p.When)
 		if err != nil {
 			return Verdict{}, err
 		}
 		if !applies {
 			return pass(), nil
 		}
+		hint = h
 	}
+	v, err := r.checkUnconditional(req, p)
+	if err == nil && v.Refused && hint != "" {
+		// The rule's own words on how to meet it here — the engine's remedy is
+		// generic, the `when` script knows the case (which status, which ask).
+		v.Reason += "\n" + hint
+	}
+	return v, err
+}
+
+// checkUnconditional evaluates a prerequisite that applies.
+func (r Runner) checkUnconditional(req Request, p declaration.Prerequisite) (Verdict, error) {
 	if p.Skill != "" {
 		return r.checkSkill(req, p.Skill, p.Files)
 	}
@@ -87,10 +100,14 @@ func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verd
 // payload. Only exit 1 waives the prerequisite; every other outcome — exit 0,
 // another code, a script that could not run or did not answer — applies it,
 // so a condition that could not be decided never lifts a requirement.
-func (r Runner) prerequisiteApplies(req Request, when string) (bool, error) {
+//
+// A script that applies it may print `{"hint": "..."}` on stdout: the rule's
+// own advice for meeting the requirement in this case, appended to the refusal.
+// Anything else on stdout is ignored.
+func (r Runner) prerequisiteApplies(req Request, when string) (bool, string, error) {
 	payload, err := r.checkPayloadJSON(req)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	res, err := r.runScript(scriptCall{
 		Dir:            req.Dir,
@@ -103,9 +120,18 @@ func (r Runner) prerequisiteApplies(req Request, when string) (bool, error) {
 		LaunchedBy:     req.LaunchedBy,
 	})
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	return res.Passed || res.Code != 1, nil
+	if !res.Passed && res.Code == 1 {
+		return false, "", nil
+	}
+	var out struct {
+		Hint string `json:"hint"`
+	}
+	if res.Passed && json.Unmarshal(trimSpace(res.Stdout), &out) == nil {
+		return true, strings.TrimSpace(out.Hint), nil
+	}
+	return true, "", nil
 }
 
 // checkSkill refuses unless the session's own trajectory holds either a real

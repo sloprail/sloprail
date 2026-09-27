@@ -170,8 +170,8 @@ func TestRuleGrounded_InvalidFrontmatterRefusedByScript(t *testing.T) {
 // TestRuleGrounded_LegacyLinkRuleEditPasses: a rule written before the
 // migration still carries a transcript link in its body. Editing it with a
 // cited sr-file edit is permitted — the old link is neither required nor
-// refused — and the judge is handed the body BEFORE the change, so it weighs
-// what the edit added rather than the carried-over text.
+// refused — and the judge is handed the change's diff, so it weighs what the
+// edit added rather than the carried-over text.
 func TestRuleGrounded_LegacyLinkRuleEditPasses(t *testing.T) {
 	legacy := "---\nlevel: must_not\ncreated: 2026-01-01\n---\nRule: no hype. The user said [no hype](/Users/someone/.claude/projects/x/abc.jsonl:42).\n"
 	e, proj := installRuleProject(t, legacy)
@@ -187,7 +187,7 @@ func TestRuleGrounded_LegacyLinkRuleEditPasses(t *testing.T) {
 		t.Fatalf("the cited edit did not apply:\n%s", body)
 	}
 	prompt := e.JudgePrompt(proj, judgePromptFile)
-	if !strings.Contains(prompt, "<body_before") || !strings.Contains(prompt, ruleQuote) {
-		t.Errorf("the judge of an update was not handed the prior body and the cited quote:\n%s", prompt)
+	if !strings.Contains(prompt, "-Rule: no hype. The user said") || !strings.Contains(prompt, "+Rule: no hype language.") || !strings.Contains(prompt, ruleQuote) {
+		t.Errorf("the judge of an update was not handed the change and the cited quote:\n%s", prompt)
 	}
 }

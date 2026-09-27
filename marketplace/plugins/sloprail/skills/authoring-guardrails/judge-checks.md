@@ -13,7 +13,7 @@ are the same for both and are covered in [script-checks.md](script-checks.md).
 
 ```yaml
 checks:
-  - prepare: ./collect-quote-and-diff.sh    # optional: assembles context for the prompt
+  - prepare: ./skip-pure-addition.sh       # optional: assembles context, or skips the model
     judge: ./change-is-clean-and-absolute.md.j2
     model: size-md                            # optional: a size alias or model name
     allowed_tools: [Read, WebFetch]           # optional: tools the judge's agent may use
@@ -27,26 +27,35 @@ call, bounds its own runtime, and names its own tools by being an executable). O
 ## The template
 
 The template renders against the same facts a script's stdin carries — the payload
-spread flat at the template's top level — plus `additionalContext` when a `prepare`
-assembled one:
+spread flat at the template's top level — plus, on a file-guard, `change`: the
+unified diff of this change (the event's `oldContent` to its `newContent`; at Stop,
+everything since the session baseline). Wrap what the model judges in tags:
 
 ```markdown
-## What the user asked
-> {{ additionalContext.asked_quote }}
-
 ## The change
-```diff
-{{ additionalContext.change_diff }}
-```
+<change path="{{ event.path }}">
+{{ change }}
+</change>
+
+## The rules it must follow
+<rules>
+{{ additionalContext.rules }}
+</rules>
 ```
 
-Available at the top level: `{{ event.newContent }}`, `{{ event.path }}`,
-`{{ event.kind }}` and the rest of the event's flat fields; `{{ transcriptPath }}`;
-`{{ context }}`; and `{{ additionalContext.* }}` when `prepare` ran. The full field
-set and the `FileJudgeInput` / `GateJudgeInput` envelope are in
-[events.md](events.md). `additionalContext` is **additive** — always alongside the
-payload, never replacing it, and a `prepare` key cannot overwrite `event` or
-`transcriptPath` (it renders only under the single `additionalContext` field).
+Available at the top level: `{{ change }}` (file-guards), `{{ event.newContent }}`,
+`{{ event.path }}`, `{{ event.kind }}` and the rest of the event's flat fields;
+`{{ transcriptPath }}`; `{{ context }}`; and `{{ additionalContext.* }}` when
+`prepare` ran. The full field set and the `FileJudgeInput` / `GateJudgeInput`
+envelope are in [events.md](events.md). `additionalContext` is **additive** —
+always alongside the payload, never replacing it, and a `prepare` key cannot
+overwrite `event` or `transcriptPath` (it renders only under the single
+`additionalContext` field).
+
+Every value renders escaped: the engine breaks `</` to `<\/`, so a value cannot
+close the tag it sits in, and changes nothing else. `| raw` undoes it for a value
+meant as markup. A rule grounded in citations judges `change` against them —
+[grounding.md](grounding.md).
 
 The template is **just the rubric and the material** — it does not tell the model
 how to format its answer. The engine appends the verdict instruction itself (below).
@@ -54,14 +63,14 @@ how to format its answer. The engine appends the verdict instruction itself (bel
 ## `prepare` — assemble what the prompt needs
 
 `prepare` is an optional script that runs **first**, before the model is asked, to
-assemble context the template needs — pulling a cited source, computing a diff. It
+assemble context the template needs — the rules that apply, a file the change
+names — or to skip the model when there is nothing to judge (`{"skip": true}`). It
 receives the same check payload on stdin ([script-checks.md](script-checks.md)),
 and **only** the `additionalContext` key of its stdout is read, merged alongside
 the standard payload:
 
 ```bash
-jq -n --arg quote "$quote" --arg diff "$change_diff" \
-  '{additionalContext: {asked_quote: $quote, change_diff: $diff}}'
+jq -n --arg rules "$rules" '{additionalContext: {rules: $rules}}'
 ```
 
 `prepare` runs **unconditionally** when set and is **not a pass/fail gate of its

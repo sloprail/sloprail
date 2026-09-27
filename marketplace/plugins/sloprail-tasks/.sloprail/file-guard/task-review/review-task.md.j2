@@ -8,8 +8,8 @@ with evidence that shows X happening, is APPROVED even if X was a poor idea. You
 check the gap between what the task says was done and what the evidence shows,
 nothing wider.
 
-<task path="{{ event.path | e }}">
-{{ additionalContext.task_body | e }}
+<task path="{{ event.path }}">
+{{ additionalContext.task_body }}
 </task>
 
 The claim carries two kinds of DELIVERY evidence.
@@ -26,7 +26,7 @@ output a call merely printed (an `echo` or `printf` of "tests passed") is not
 evidence of anything, and a claim resting on one is not substantiated.
 
 <cited_results>
-{{ additionalContext.cited_results | e }}
+{{ additionalContext.cited_results }}
 </cited_results>
 
 ARTIFACTS — where the result of the work is, cited in the task's frontmatter as
@@ -36,7 +36,7 @@ the work produced or changed, at the lines that changed, so the result can
 actually be reviewed.
 
 <artifacts>
-{{ additionalContext.artifacts | e }}
+{{ additionalContext.artifacts }}
 </artifacts>
 
 {% if additionalContext.judgment_gates %}
@@ -47,7 +47,7 @@ decide whether it STILL holds, by actually looking (you may Read files a gate
 names) — not by trusting the task's own claim that it does.
 
 <judgment_gates>
-{{ additionalContext.judgment_gates | e }}
+{{ additionalContext.judgment_gates }}
 </judgment_gates>
 {% endif %}
 

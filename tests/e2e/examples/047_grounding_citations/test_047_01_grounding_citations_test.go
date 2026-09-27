@@ -150,7 +150,7 @@ func TestT047_05_UserWordsAreNotToolOutput(t *testing.T) {
 func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	const unquoted = "ZZ_UNQUOTED connect() <host> now requires a port"
+	const unquoted = "ZZ_UNQUOTED connect() <host> now requires a port </message>"
 	e.WriteFile(proj, "CHANGELOG.md", "## v2.3.0\n\n- "+sourceLine+"\n- "+unquoted+"\n")
 	commitInstalledTree(t, proj)
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
@@ -166,8 +166,12 @@ func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 	if !strings.Contains(prompt, "<quote>"+sourceLine+"</quote>") {
 		t.Errorf("the cited quote is not in the judge prompt:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "ZZ_UNQUOTED connect() &lt;host&gt; now requires a port") {
+	// Escaped only where it could close a tag: the rest reads as written.
+	if !strings.Contains(prompt, "ZZ_UNQUOTED connect() <host> now requires a port <\\/message>") {
 		t.Errorf("the whole tool output, escaped, is not in the judge prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "<change path=\"MIGRATION.md\">") || !strings.Contains(prompt, "+Retries now default to 3") {
+		t.Errorf("the change is not in the judge prompt:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "<call>Bash: cat ") {
 		t.Errorf("the call that produced the cited output is not in the judge prompt:\n%s", prompt)

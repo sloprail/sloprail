@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# prepare: hand the judge the unified DIFF it rules on (not two full blobs, so
-# it sees the changed lines directly). The cited words need no preparing: the
-# judge template reads them straight off `.event.citations`.
+# prepare: decide whether the judge is asked at all. What it rules on — the
+# change's unified diff and the cited words — needs no preparing: the template
+# reads `change` and `.event.citations` straight off its input.
 #
 # SKIPS THE JUDGE on a PURE ADDITION — REQUIRED, not cosmetic. When
 # removes-content.sh waives the citation for an append, this judge would still
@@ -17,7 +17,7 @@ input="$(cat)"
 old="$(printf '%s' "$input" | jq -r 'if (.event.kind // "" | endswith("Create")) then "" else .event.oldContent end')"
 
 empty() {
-  jq -n '{additionalContext: {change_diff: ""}}'
+  jq -n '{additionalContext: {}}'
   exit 0
 }
 
@@ -51,7 +51,4 @@ if [ "${removed_count:-0}" -eq 0 ]; then
   exit 0
 fi
 
-# Unified diff, before -> after. diff exits 1 when they differ, so guard it.
-change_diff="$(diff -u <(printf '%s' "$old") <(printf '%s' "$new") | tail -n +3 || true)"
-
-jq -n --arg diff "$change_diff" '{additionalContext: {change_diff: $diff}}'
+jq -n '{additionalContext: {}}'

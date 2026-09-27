@@ -15,7 +15,7 @@ stdout.
 
 ## The taxonomy
 
-A unit's frontmatter (`.sloprail/schemas/unit.cue`) carries one selector:
+A unit's frontmatter (the plugin's `.sloprail/schemas/unit.cue`) carries one selector:
 `tags`, an open string list, backward compatible with the pre-existing
 `UNIT.md` shape — a unit with no `tags` still validates and still gets every
 rule whose selector is empty. A channel is just a tag (`x`, `reddit`, `hn`,
@@ -51,7 +51,7 @@ not itself a selector a rule matches on.)
 ## The rule format, and where rules live
 
 A rule is a `RULE.md` (project-wide) or `CONSTRAINT.md` (topic-scoped, see
-Migration below), frontmatter validated against `.sloprail/schemas/rule.cue`:
+Migration below), frontmatter validated against the plugin's `.sloprail/schemas/rule.cue`:
 
 ```yaml
 ---
@@ -245,8 +245,8 @@ exactly what stage 2's "traceable and substantive" judgement already catches.
 
 If a project (like `strategy`) already has the old, topic-only guard:
 
-1. Install this plugin — `unit.cue` and `rule.cue` under the project's
-   `.sloprail/schemas/`.
+1. Install this plugin. Its `unit.cue` and `rule.cue` ship in the plugin's own
+   `.sloprail/schemas/` and are read from there; the project copies nothing.
 2. **`constraints/` needs no changes to its location or filename.**
    `unit-satisfies-rules`'s `rules-lib.sh` collects a unit's topic
    constraints the exact same way the old guard's `prepare.sh` did (same

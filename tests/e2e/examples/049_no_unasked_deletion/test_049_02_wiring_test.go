@@ -6,11 +6,10 @@ package e2e
 //
 // PREPARE -> TEMPLATE WIRING for no-unasked-deletion. The judge-tier behavioural
 // tests (test_049_01) key on the stub's reasoning, which proves the verdict path
-// but NOT that the shipped prepare (collect-quote-and-diff.sh) reached the judge
-// TEMPLATE: the renderer treats an undefined variable as empty, so
-// change-is-clean-and-absolute.md.j2's `{{ additionalContext.change_diff }}` /
-// `{{ additionalContext.asked_quote }}` render fine whether prepare produced them
-// or nothing. These tests close that: they capture the rendered prompt and assert
+// but NOT that the change's diff and its citations reached the judge TEMPLATE:
+// change-is-clean-and-absolute.md.j2 renders `{{ change }}` (the engine's diff of
+// the event's old and new content) and `event.citations`, and a template reading
+// a value nobody supplied would render it empty. These tests close that: they capture the rendered prompt and assert
 // the unified DIFF (including the collaterally-removed line, as a `-` line) AND the
 // grounded quote are in it, and that a DIFFERENT removal yields a DIFFERENT prompt.
 //
@@ -37,10 +36,9 @@ func seedCommittedMemory(t *testing.T, e *env, proj, rel, body string) {
 
 // T049_11: the cited quote AND the unified diff reach the judge's prompt. A
 // grounded-ask removal reaches the judge; the template renders the quote off
-// `.event.citations`, and collect-quote-and-diff.sh hands it a `diff -u` of
-// old->new under additionalContext. Both the quote and the diff's collaterally-removed line must
-// appear in the rendered prompt — only possible if prepare ran AND the template
-// interpolated its output. (A passing verdict here, so the point is the PROMPT, not
+// `.event.citations` and the engine's `change` diff of old->new. Both the quote and
+// the diff's collaterally-removed line must appear in the rendered prompt — only
+// possible if the template interpolated both. (A passing verdict here, so the point is the PROMPT, not
 // the block; the block path with the same real diff is T049_09.)
 func TestT049_11_PreparedQuoteAndDiffReachJudgePrompt(t *testing.T) {
 	e := newEnv(t)
@@ -71,10 +69,10 @@ func TestT049_11_PreparedQuoteAndDiffReachJudgePrompt(t *testing.T) {
 		t.Fatalf("the asked_quote did not reach the judge prompt — prepare/template wiring is broken:\n%s", captured)
 	}
 	// The unified DIFF, including the collaterally-removed line as a `-` line:
-	// present only if prepare computed the diff AND the template rendered
-	// additionalContext.change_diff. This is the diff the judge rules "clean" on.
+	// present only if the engine computed the change AND the template rendered
+	// it. This is the diff the judge rules "clean" on.
 	if !strings.Contains(captured, "-"+collateral) {
-		t.Fatalf("the removed collateral line did not reach the judge prompt as a diff `-` line — the change_diff wiring is broken:\n%s", captured)
+		t.Fatalf("the removed collateral line did not reach the judge prompt as a diff `-` line — the change wiring is broken:\n%s", captured)
 	}
 }
 

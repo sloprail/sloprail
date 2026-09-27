@@ -1,7 +1,7 @@
 // The frontmatter every memories/topics/<topic>/units/<NN_unit>/UNIT.md may
-// carry. SHIPPED BY THE PLUGIN but read from the CONSUMER's project at
-// $SR_WORKSPACE/.sloprail/schemas/unit.cue — installing the plugin means placing
-// this file there, the same as sloprail-tasks's task.cue.
+// carry. Shipped by the plugin and read from the plugin's own tree (each guard
+// resolves it from its folder, $SR_GUARDRAIL_DIR/../../schemas/unit.cue), the same
+// as sloprail-tasks's task.cue: a consumer project copies nothing.
 //
 // BACKWARD COMPATIBLE with the pre-existing UNIT.md shape
 // (memories/topics/<topic>/units/<NN_unit>/UNIT.md: transcript_path, created,
