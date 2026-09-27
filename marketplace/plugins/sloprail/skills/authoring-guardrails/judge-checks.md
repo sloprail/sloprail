@@ -221,7 +221,7 @@ Two things `allowed_tools` can still widen, so name them deliberately:
   can write elsewhere on disk. A judge never needs them for its verdict.
 - **A scoped `Bash(...)` rule** grants that command family with all its
   flags, and the flags the rule forgets to deny (see `disallowed_tools`).
-  Measured: under `Bash(curl:*)`, `curl -o <path>` wrote a file inside a
+  Measured: under `Bash(curl:*)`, curl's `-o` option wrote a file inside a
   readonly project and `-X POST -d @file` sent a file out. `awk` wrote a file
   anywhere under `Bash(awk:*)`, and so did `sed -n 'w <file>'` under
   `Bash(sed:*)`. `grep` and `head` have no writing forms.
