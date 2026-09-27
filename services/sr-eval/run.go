@@ -192,7 +192,6 @@ func exitCode(err error) int {
 	return 1
 }
 
-
 // launchAgent runs the agent-under-test through sr-agent, in the seeded
 // project, with the project's real .sloprail/ guardrails and the sloprail
 // plugin's hooks ACTIVE — the opposite of sr-agent's own default, which
