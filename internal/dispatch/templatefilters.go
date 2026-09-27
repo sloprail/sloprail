@@ -11,22 +11,37 @@ import (
 	"github.com/aisbergg/gonja/pkg/gonja/parse"
 )
 
-// This gonja does not fail on a filter it cannot apply. A filter name it does
-// not have renders as the error object's name (`<*errors.errorString>`) with no
-// error returned, and a few of its own filters (slice, sum, unique, urlize)
-// RETURN an error as their value instead of raising it, with the same result. In
-// a judge prompt that is a fail-open: a typo hands the model garbage and the
-// judge rules on it anyway. So an unknown filter name is caught before rendering
-// (CheckTemplate), and an error a filter returns is raised as a render error
-// (raiseFilterErrors) — both refuse, fail-closed, like any other render error.
+// This gonja does not fail cleanly on a filter or test it cannot apply:
+//
+//   - a filter name it does not have renders as the error object's name
+//     (`<*errors.errorString>`) with no error returned — also when the name is an
+//     ARGUMENT, as in `map("nosuch")`, where the error lands inside the list;
+//   - a few of its own filters (slice, sum, unique, urlize) RETURN an error as
+//     their value instead of raising it, with the same result;
+//   - a test name it does not have (`is nosuchtest`, `select("nosuchtest")`)
+//     panics with a value that panics again when printed, which takes the whole
+//     process down.
+//
+// In a judge prompt the first two are a fail-open (a typo hands the model
+// garbage and the judge rules on it anyway) and the third wedges the hook. So a
+// literal filter or test name is checked before rendering (CheckTemplate), an
+// error a filter returns — at any depth of the value — is raised as a render
+// error (raiseFilterErrors), and a panic during rendering is recovered into one
+// (renderTemplate). All of them refuse, fail-closed, naming what failed.
 
 // CheckTemplate reports whether a judge template can be rendered by this engine:
-// it parses, and every filter it names — in an expression, a `{% filter %}`
-// block or a `{% set %}`, in a branch that runs or one that does not — is one
-// this engine has. The load check runs it on every judge template, and every
-// render runs it first, so a template that cannot render is refused with its own
-// positions, before anything is rewritten.
-func CheckTemplate(src string) error {
+// it parses, and every filter and test it names — in an expression, a
+// `{% filter %}` block, a `{% set %}`, an `is` test, or as the literal name
+// map/select/reject/selectattr/rejectattr apply; in a branch that runs or one
+// that does not — is one this engine has. The load check runs it on every judge
+// template, and every render runs it first, so a template that cannot render is
+// refused with its own positions, before anything is rewritten.
+func CheckTemplate(src string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("template: parse: %s", panicText(r))
+		}
+	}()
 	env := newTemplateEnv()
 	tpl, err := env.FromString(src)
 	if err != nil {
@@ -34,36 +49,68 @@ func CheckTemplate(src string) error {
 	}
 	var unknown []string
 	seen := map[string]bool{}
-	for _, fc := range filterCalls(tpl.Root) {
-		if env.Filters.Exists(fc.name) || seen[fc.name] {
+	for _, n := range namedCalls(tpl.Root) {
+		known := env.Filters.Exists(n.name)
+		if n.test {
+			known = env.Tests.Exists(n.name)
+		}
+		if known || seen[n.kind()+n.name] {
 			continue
 		}
-		seen[fc.name] = true
-		unknown = append(unknown, fmt.Sprintf("%q (line %d)", fc.name, fc.line))
+		seen[n.kind()+n.name] = true
+		unknown = append(unknown, fmt.Sprintf("%s %q (line %d)", n.kind(), n.name, n.line))
 	}
 	if len(unknown) == 0 {
 		return nil
 	}
 	sort.Strings(unknown)
-	return fmt.Errorf("template: unknown filter %s — this engine has no such filter, so the template cannot be rendered; fix the name",
+	return fmt.Errorf("template: unknown %s — this engine has no such filter or test, so the template cannot be rendered; fix the name",
 		strings.Join(unknown, ", "))
 }
 
-// filterCall is one filter a template names, and the line it sits on.
-type filterCall struct {
+// namedCall is one filter or test a template names, and the line it sits on.
+type namedCall struct {
 	name string
+	test bool
 	line int
 }
 
-var filterCallType = reflect.TypeOf(parse.FilterCall{})
+func (n namedCall) kind() string {
+	if n.test {
+		return "test"
+	}
+	return "filter"
+}
 
-// filterCalls finds every parse.FilterCall in a parsed template. gonja's own
+// argNamed says which filters take the name of another filter or test as an
+// argument: the position of that argument, the keyword it may be passed by, and
+// whether it names a test.
+var argNamed = map[string]struct {
+	pos     int
+	keyword string
+	test    bool
+}{
+	"map":        {0, "filter", false},
+	"select":     {0, "", true},
+	"reject":     {0, "", true},
+	"selectattr": {1, "", true},
+	"rejectattr": {1, "", true},
+}
+
+var (
+	filterCallType = reflect.TypeOf(parse.FilterCall{})
+	testCallType   = reflect.TypeOf(parse.TestCall{})
+	stringNodeType = reflect.TypeOf(parse.StringNode{})
+)
+
+// namedCalls finds every filter and test a parsed template names. gonja's own
 // Walk visits only a template's top-level wrappers, and a statement keeps its
-// filters in unexported fields (a `{% filter %}` block's chain), so this walks
-// the node graph by reflection — reading, never writing, and visiting each
-// pointer once.
-func filterCalls(root any) []filterCall {
-	var out []filterCall
+// parts in unexported fields (a `{% filter %}` block's chain), so this walks the
+// node graph by reflection — reading, never writing, visiting each pointer once.
+// A name passed as a variable cannot be known here; renderTemplate catches it
+// when it runs.
+func namedCalls(root any) []namedCall {
+	var out []namedCall
 	seen := map[uintptr]bool{}
 	var walk func(v reflect.Value)
 	walk = func(v reflect.Value) {
@@ -79,12 +126,17 @@ func filterCalls(root any) []filterCall {
 				walk(v.Elem())
 			}
 		case reflect.Struct:
-			if v.Type() == filterCallType {
-				fc := filterCall{name: v.FieldByName("Name").String()}
-				if tok := v.FieldByName("Token"); !tok.IsNil() {
-					fc.line = int(tok.Elem().FieldByName("Line").Int())
-				}
+			switch v.Type() {
+			case filterCallType:
+				fc := namedCall{name: v.FieldByName("Name").String(), line: tokenLine(v.FieldByName("Token"))}
 				out = append(out, fc)
+				if spec, ok := argNamed[fc.name]; ok {
+					if arg, ok := literalArg(v, spec.pos, spec.keyword); ok && arg != "" {
+						out = append(out, namedCall{name: arg, test: spec.test, line: fc.line})
+					}
+				}
+			case testCallType:
+				out = append(out, namedCall{name: v.FieldByName("Name").String(), test: true, line: tokenLine(v.FieldByName("Token"))})
 			}
 			for i := 0; i < v.NumField(); i++ {
 				walk(v.Field(i))
@@ -105,15 +157,44 @@ func filterCalls(root any) []filterCall {
 	return out
 }
 
-// raiseFilterErrors wraps every filter in fs so an error it returns as its
-// value is raised instead — a render error naming the filter, never the error
-// object's name printed into the prompt.
+// literalArg is a call's argument at pos (or passed by keyword), when it is a
+// string literal.
+func literalArg(call reflect.Value, pos int, keyword string) (string, bool) {
+	var arg reflect.Value
+	if args := call.FieldByName("Args"); pos < args.Len() {
+		arg = args.Index(pos)
+	} else if keyword != "" {
+		if kw := call.FieldByName("Kwargs"); !kw.IsNil() {
+			arg = kw.MapIndex(reflect.ValueOf(keyword))
+		}
+	}
+	for arg.IsValid() && (arg.Kind() == reflect.Interface || arg.Kind() == reflect.Pointer) && !arg.IsNil() {
+		arg = arg.Elem()
+	}
+	if !arg.IsValid() || arg.Kind() != reflect.Struct || arg.Type() != stringNodeType {
+		return "", false
+	}
+	return arg.FieldByName("Val").String(), true
+}
+
+// tokenLine is the line of a *parse.Token field, or 0 without one.
+func tokenLine(tok reflect.Value) int {
+	if !tok.IsValid() || tok.IsNil() {
+		return 0
+	}
+	return int(tok.Elem().FieldByName("Line").Int())
+}
+
+// raiseFilterErrors wraps every filter in fs so an error it returns — as its
+// value, or anywhere inside the list or map it returns — is raised instead: a
+// render error naming the filter, never the error object's name printed into
+// the prompt.
 func raiseFilterErrors(fs *exec.FilterSet) {
 	for name, fn := range *fs {
 		name, fn := name, fn
 		(*fs)[name] = func(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
 			out := fn(e, in, params)
-			if err, ok := errorValue(out); ok {
+			if err := errorIn(out, 0); err != nil {
 				errors.ThrowTemplateRuntimeError("filter %q failed: %s", name, err)
 			}
 			return out
@@ -121,17 +202,83 @@ func raiseFilterErrors(fs *exec.FilterSet) {
 	}
 }
 
-// errorValue reports whether v holds an error. Some gonja values cannot be
-// turned into an interface at all (they panic); those hold no error.
-func errorValue(v exec.Value) (err error, ok bool) {
+// maxValueDepth bounds how deep errorIn looks into a value.
+const maxValueDepth = 64
+
+// errorIn returns the first error held by v, at any depth: v itself, or an
+// element of a list or map it holds (a gonja Value is unwrapped to what it
+// holds). Some gonja values cannot be turned into an interface at all (they
+// panic); those hold no error.
+func errorIn(v any, depth int) (found error) {
+	if v == nil || depth > maxValueDepth {
+		return nil
+	}
 	defer func() {
 		if recover() != nil {
-			err, ok = nil, false
+			found = nil
 		}
 	}()
-	if v == nil {
-		return nil, false
+	switch t := v.(type) {
+	case error:
+		return t
+	case exec.Value:
+		return errorIn(t.Interface(), depth+1)
 	}
-	err, ok = v.Interface().(error)
-	return err, ok
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < rv.Len(); i++ {
+			if err := errorIn(rv.Index(i).Interface(), depth+1); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		iter := rv.MapRange()
+		for iter.Next() {
+			if err := errorIn(iter.Value().Interface(), depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// panicText is a recovered panic value as text, even when printing it panics
+// too: gonja's unknown-test panic is an error whose Error() dereferences a
+// position it was never given, so its message is read from the error's own
+// `msg` field instead.
+func panicText(r any) (text string) {
+	defer func() {
+		if recover() != nil {
+			text = fmt.Sprintf("%T", r)
+			if msg := messageField(reflect.ValueOf(r), 0); msg != "" {
+				text = msg
+			}
+		}
+	}()
+	if err, ok := r.(error); ok {
+		return err.Error()
+	}
+	return fmt.Sprint(r)
+}
+
+// messageField finds a string field named msg in v or a struct it embeds.
+func messageField(v reflect.Value, depth int) string {
+	for depth < 8 && v.IsValid() && (v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface) && !v.IsNil() {
+		v = v.Elem()
+	}
+	if depth >= 8 || !v.IsValid() || v.Kind() != reflect.Struct {
+		return ""
+	}
+	if f := v.FieldByName("msg"); f.IsValid() && f.Kind() == reflect.String {
+		return f.String()
+	}
+	for i := 0; i < v.NumField(); i++ {
+		if v.Type().Field(i).Anonymous {
+			if msg := messageField(v.Field(i), depth+1); msg != "" {
+				return msg
+			}
+		}
+	}
+	return ""
 }

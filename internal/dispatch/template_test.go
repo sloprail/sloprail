@@ -177,6 +177,41 @@ func TestTemplate_UnknownFilterFailsClosed(t *testing.T) {
 	assert.NoError(t, CheckTemplate(`{{ p | upper | tojson }} {% filter lower %}X{% endfilter %}`))
 }
 
+// FAIL-CLOSED on a filter or test named as an ARGUMENT — map's filter, the test
+// select/reject/selectattr/rejectattr apply — and on an unknown `is` test. A
+// literal name is checked before rendering; a name that only exists at render
+// time (a variable) is caught when it runs. Either way the render is an error
+// naming it, and the process survives (an unknown test is a panic gonja cannot
+// print, which used to take the whole hook down).
+func TestTemplate_UnknownFilterOrTestInAnArgumentFailsClosed(t *testing.T) {
+	vars := map[string]any{"p": "v", "list": []any{map[string]any{"x": "a"}}, "f": "nosuch", "tst": "nosuchtest"}
+	for src, name := range map[string]string{
+		`{{ list | map("nosuch") | join(",") }}`:            "nosuch",
+		`{{ list | map(filter="nosuch") | join(",") }}`:     "nosuch",
+		`{% if p is nosuchtest %}x{% endif %}`:              "nosuchtest",
+		`{{ list | select("nosuchtest") | join(",") }}`:     "nosuchtest",
+		`{{ list | reject("nosuch") | join(",") }}`:         "nosuch",
+		`{{ list | selectattr("x", "nosuchtest") | list }}`: "nosuchtest",
+		`{{ list | rejectattr("x", "nosuchtest") | list }}`: "nosuchtest",
+		`{{ list | map(f) | join(",") }}`:                   "nosuch",
+		`{{ list | map(f) | list }}`:                        "nosuch",
+		`{{ list | select(tst) | list }}`:                   "nosuchtest",
+		`<c k="{{ list | selectattr("x", tst) | list }}">`:  "nosuchtest",
+	} {
+		out, err := renderTemplate(src, vars)
+		if assert.Error(t, err, "%s rendered %q", src, out) {
+			assert.Contains(t, err.Error(), name, "the error must name %q: %s", name, src)
+		}
+	}
+	for _, src := range []string{
+		`{{ list | map("nosuch") | join(",") }}`, `{% if p is nosuchtest %}x{% endif %}`,
+		`{{ list | select("nosuchtest") | list }}`, `{{ list | selectattr("x", "nosuchtest") | list }}`,
+	} {
+		assert.Error(t, CheckTemplate(src), "CheckTemplate must report it: %s", src)
+	}
+	assert.NoError(t, CheckTemplate(`{{ list | map("upper") | select("defined") | selectattr("x", "defined") | list }} {% if p is string %}{% endif %}`))
+}
+
 // FAIL-CLOSED on a filter that returns an error instead of raising one — gonja's
 // own slice, sum, unique and urlize do — which would otherwise print the error
 // object's name into the prompt.

@@ -158,6 +158,13 @@ func renderTemplate(src string, vars map[string]any) (string, error) {
 	done := make(chan result, 1)
 	escaped, _ := escapeStrings(vars).(map[string]any)
 	go func() {
+		// A panic while rendering — gonja's unknown test is one, and its value
+		// panics again when printed — is a render error, not a dead process.
+		defer func() {
+			if r := recover(); r != nil {
+				done <- result{"", fmt.Errorf("template: render: %s", panicText(r))}
+			}
+		}()
 		out, err := renderJudgeTemplate(src, escaped)
 		done <- result{out, err}
 	}()
