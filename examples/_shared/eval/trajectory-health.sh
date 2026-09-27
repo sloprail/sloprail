@@ -26,6 +26,49 @@
 # that needs a frontier model.
 TRAJECTORY_HEALTH_MODEL="${TRAJECTORY_HEALTH_MODEL:-size-sm}"
 
+# subagent_records prints the path of every sub-agent record the run's session
+# left, one per line, sorted: <session>/subagents/agent-*.jsonl and those a
+# harness nests deeper (subagents/workflows/wf_<id>/agent-*.jsonl — a workflow's
+# agents). A flat `subagents/*.jsonl` glob misses the nested ones, and with them
+# every refusal a workflow's agent met.
+subagent_records() {
+  find "${SR_EVAL_TRANSCRIPT%.jsonl}/subagents" -type f -name 'agent-*.jsonl' 2>/dev/null | sort
+}
+
+# cat_subagent_records prints every sub-agent record's content, for a grep.
+cat_subagent_records() {
+  subagent_records | while IFS= read -r rec; do cat "$rec"; done
+}
+
+# trajectory_condense prints the condensed trajectory a judge reads: the root
+# record's condensed text (from condensed_file, already produced with
+# condense_jq), then each sub-agent record's, under its own header.
+#
+# Work the agent dispatched to sub-agents is part of the trajectory: a
+# sub-agent's refusals, retries and evasions are in ITS record, not the root's,
+# so a judge shown only the root misses them (measured 2026-09-27: a
+# security-scan sub-agent deleted its declared scanner to escape the coverage
+# gate, and a root-only judge scored the run healthy). Each sub-agent record is
+# condensed the same way and appended under its own header. The root keeps the
+# larger share of the budget; the sub-agents split the rest, each getting at
+# least enough to show its refusals and what it did about them.
+trajectory_condense() {
+  tc_jq="$1"
+  tc_root="$2"
+  tc_n="$(subagent_records | grep -c . || true)"
+  if [ "${tc_n:-0}" -eq 0 ]; then
+    head -c 60000 "$tc_root"
+    return
+  fi
+  tc_per=$((24000 / tc_n))
+  [ "$tc_per" -ge 6000 ] || tc_per=6000
+  head -c 36000 "$tc_root"
+  subagent_records | while IFS= read -r tc_sub; do
+    printf '\n=== SUB-AGENT %s: a separate agent the agent above dispatched; its own steps follow ===\n' "$(basename "$tc_sub" .jsonl)"
+    jq -r -f "$tc_jq" "$tc_sub" 2>/dev/null | head -c "$tc_per"
+  done
+}
+
 trajectory_health_check() {
   scenario_desc="$1"
   guardrail_desc="$2"
@@ -73,31 +116,8 @@ trajectory_health_check() {
   # single tool result (e.g. a test suite dumping thousands of lines despite
   # the per-line truncation above) could still blow the budget. 60000 chars
   # is comfortably under any judge model's context at the truncation lengths
-  # condense-transcript.jq already applies.
-  #
-  # Work the agent dispatched to sub-agents is part of the trajectory: a
-  # sub-agent's refusals, retries and evasions are in ITS record, not the
-  # root's, so a judge shown only the root misses them (measured 2026-09-27: a
-  # security-scan sub-agent deleted its declared scanner to escape the coverage
-  # gate, and a root-only judge scored the run healthy). Each sub-agent record
-  # is condensed the same way and appended under its own header. The root keeps
-  # the larger share of the budget; the sub-agents split the rest, each getting
-  # at least enough to show its refusals and what it did about them.
-  subagent_dir="${SR_EVAL_TRANSCRIPT%.jsonl}/subagents"
-  set -- "$subagent_dir"/*.jsonl
-  [ -f "$1" ] || set --
-  if [ "$#" -eq 0 ]; then
-    condensed_text="$(head -c 60000 "$condensed_file")"
-  else
-    per_sub=$((24000 / $#))
-    [ "$per_sub" -ge 6000 ] || per_sub=6000
-    condensed_text="$(head -c 36000 "$condensed_file")"
-    for sub in "$@"; do
-      condensed_text="$condensed_text
-=== SUB-AGENT $(basename "$sub" .jsonl): a separate agent the agent above dispatched; its own steps follow ===
-$(jq -r -f "$condense_jq" "$sub" 2>/dev/null | head -c "$per_sub")"
-    done
-  fi
+  # condense-transcript.jq already applies. Sub-agents: see trajectory_condense.
+  condensed_text="$(trajectory_condense "$condense_jq" "$condensed_file")"
   rm -f "$condensed_file"
 
   # All three inputs are wrapped in their own XML-ish tags in the template so
@@ -210,7 +230,7 @@ guardrail_fired_check() {
   if [ -f "${SR_EVAL_TRANSCRIPT:-/nonexistent}" ]; then
     # The sub-agents' records too: a rule refusing inside a sub-agent (at its
     # SubagentStop, or a tool call it made) is written there, not in the root.
-    count="$(cat "$SR_EVAL_TRANSCRIPT" "${SR_EVAL_TRANSCRIPT%.jsonl}"/subagents/*.jsonl 2>/dev/null \
+    count="$({ cat "$SR_EVAL_TRANSCRIPT"; cat_subagent_records; } 2>/dev/null \
       | grep -o "\\\\\{0,1\}\"$name\\\\\{0,1\}\"" | wc -l | tr -d ' ')"
   fi
   GF_COUNT="$count"
