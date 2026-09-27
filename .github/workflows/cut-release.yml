@@ -1,0 +1,73 @@
+# Cuts a release with no manual `make bump-version` step: run this by hand
+# (Actions tab -> "cut release" -> Run workflow, or `gh workflow run`), give
+# it the bare semver to ship, and it does the whole sequence
+# scripts/bump-version.sh's own doc comment used to ask a person to run:
+#
+#   scripts/bump-version.sh $VERSION
+#   git commit -m "chore(release): bump plugins to v$VERSION"
+#   git push origin main
+#   git tag v$VERSION && git push origin v$VERSION
+#
+# The pushed tag is what actually ships anything — it triggers release.yml
+# (on: push: tags: v*), which builds the archives and publishes the GitHub
+# Release. This workflow's only job is making sure the commit that tag points
+# at already has plugin.json/marketplace.json saying the right version, which
+# is exactly what release.yml's own verify-version gate demands.
+name: cut release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Bare semver to release, no leading v (e.g. 0.2.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  bump-and-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: reject a leading v
+        run: |
+          case "${{ inputs.version }}" in
+          v*) echo "::error::pass bare semver, no leading v (got '${{ inputs.version }}')"; exit 1 ;;
+          esac
+
+      - name: bump plugin.json + marketplace.json
+        run: ./scripts/bump-version.sh "${{ inputs.version }}"
+
+      # A no-op input (the version already committed) is a mistake worth
+      # stopping on rather than tagging a commit identical to the last
+      # release — the same commit would then carry two tags, and
+      # verify-version would pass for either one, which is not the same as
+      # the input having done anything.
+      - name: commit the bump
+        run: |
+          if git diff --quiet; then
+            echo "::error::nothing changed — plugin.json/marketplace.json already say ${{ inputs.version }}"
+            exit 1
+          fi
+          git config user.name "sloprail-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(release): bump plugins to v${{ inputs.version }}"
+          git push origin main
+
+      # verify-version re-run against the commit just pushed: the same gate
+      # release.yml runs, here BEFORE the tag exists, so a mistake is caught
+      # as a failed workflow run rather than as a tag that has to be deleted
+      # and re-pushed.
+      - name: verify-version
+        run: make verify-version TAG=v${{ inputs.version }}
+
+      - name: tag and push
+        run: |
+          git tag "v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"

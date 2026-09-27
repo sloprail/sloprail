@@ -124,9 +124,12 @@ RELEASE_DIR := dist
 RELEASE_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
 # bump-version updates every plugin.json + marketplace.json to VERSION,
-# lockstep with the repo's own release — run this BEFORE tagging (see
-# scripts/bump-version.sh's own doc comment for the full commit-then-tag
-# flow). VERSION is bare semver (0.2.0), no leading v.
+# lockstep with the repo's own release. The ordinary way to cut a release is
+# the "cut release" GitHub Action (.github/workflows/cut-release.yml,
+# workflow_dispatch) — it runs this, commits, and tags in one run, so nobody
+# has to do it by hand. This target (and scripts/bump-version.sh directly)
+# stays for a local dry run of what that workflow would write. VERSION is
+# bare semver (0.2.0), no leading v.
 .PHONY: bump-version
 bump-version:
 	@if [ -z "$(VERSION)" ]; then \
@@ -136,10 +139,16 @@ bump-version:
 	@./scripts/bump-version.sh "$(VERSION)"
 
 # verify-version fails if the pushed tag and the committed plugin.json/
-# marketplace.json versions disagree — the release.yml gate that catches
-# "tagged without running bump-version first", before any binary is even
-# built. TAG is the full tag (v0.2.0); the leading v is stripped to compare
-# against plugin.json's bare-semver field.
+# marketplace.json versions disagree — the release.yml gate that catches a
+# tag pushed by hand, outside cut-release.yml, before its bump landed. TAG is
+# the full tag (v0.2.0); the leading v is stripped to compare against
+# plugin.json's bare-semver field.
+#
+# marketplace.json is checked too, not just marketplace/plugins/*/plugin.json:
+# it carries its OWN copy of each plugin's version (bump-version.sh writes
+# both), and a tag whose plugin.json files matched but whose marketplace.json
+# was left stale would ship a marketplace listing lying about what it points
+# to — the exact gap this loop closes.
 .PHONY: verify-version
 verify-version:
 	@if [ -z "$(TAG)" ]; then \
@@ -150,11 +159,18 @@ verify-version:
 	for f in $$(find marketplace/plugins -maxdepth 3 -name plugin.json -path '*/.claude-plugin/*'); do \
 		got="$$(jq -r .version "$$f")"; \
 		if [ "$$got" != "$$want" ]; then \
-			echo "make: $$f has version $$got, tag $(TAG) wants $$want — run 'make bump-version VERSION=$$want', commit, then re-tag" >&2; \
+			echo "make: $$f has version $$got, tag $(TAG) wants $$want — run the cut-release GitHub Action instead of tagging by hand" >&2; \
 			exit 1; \
 		fi; \
 	done
-	@echo "verify-version: all plugin.json match $(TAG)"
+	@want="$${TAG#v}"; \
+	for got in $$(jq -r '.plugins[].version' .claude-plugin/marketplace.json); do \
+		if [ "$$got" != "$$want" ]; then \
+			echo "make: .claude-plugin/marketplace.json has a plugin at version $$got, tag $(TAG) wants $$want — run the cut-release GitHub Action instead of tagging by hand" >&2; \
+			exit 1; \
+		fi; \
+	done
+	@echo "verify-version: all plugin.json and marketplace.json match $(TAG)"
 
 .PHONY: release
 release:
