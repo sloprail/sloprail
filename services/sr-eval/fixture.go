@@ -215,10 +215,11 @@ func LoadFixture(dir string) (Fixture, error) {
 // toolRulePattern is the shape of one disallowedTools entry: a tool name, and
 // optionally a rule in parentheses. It is what keeps an entry from being split
 // or merged on its way to the harness (the list is joined with commas; see
-// harnessArgs) — an empty entry, a stray space, or two names in one would each
-// remove something other than what the fixture says. It cannot tell a typo in a
+// harnessArgs) — an empty entry, a stray space, two names in one, or a comma
+// inside a rule's parentheses (which the join would split) would each remove
+// something other than what the fixture says. It cannot tell a typo in a
 // tool's name from a tool this harness has.
-var toolRulePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*(\([^()]*\))?$`)
+var toolRulePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*(\([^(),]*\))?$`)
 
 // Prompt returns the exact text handed to the agent-under-test.
 func (f Fixture) Prompt() (string, error) {

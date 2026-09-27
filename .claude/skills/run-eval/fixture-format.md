@@ -74,8 +74,9 @@ score: score.sh
 - **`disallowedTools`** — harness tools the agent-under-test does not have
   (`[WebSearch, WebFetch]`), passed as the harness's own `--disallowed-tools`,
   comma-joined. Each entry is one tool name, optionally with a rule in
-  parentheses (`Bash(gh search:*)`); any other shape is a load error. A
-  misspelled tool name still loads and removes nothing.
+  parentheses (`Bash(gh search:*)`); any other shape — including a comma inside
+  the parentheses, which the join would split — is a load error. A misspelled
+  tool name still loads and removes nothing.
   An eval must reproduce the behaviour its guardrail governs — a run in which
   the guard never engaged proves nothing about it. Prefer rules that steer the
   agent themselves over removing tools: removing one hides the hole a real
@@ -122,8 +123,8 @@ gets that HOME as `SR_EVAL_AGENT_HOME`.
 - `score` is missing, or `prompt.md` is missing beside `fixture.yaml`
 - `seed`/`overlay`/`setup` is declared but the path doesn't exist, or
   `setup` is not executable
-- a `disallowedTools` entry is empty, or has a comma or a space outside its
-  parentheses
+- a `disallowedTools` entry is empty, has a comma or a space outside its
+  parentheses, or a comma inside them
 - `exampleSloprail: true` AND `overlay/.sloprail/` both exist — the exact
   duplication the field exists to remove, now silently doubled (the shipped
   copy would apply first, the stale overlay copy would win the collision,

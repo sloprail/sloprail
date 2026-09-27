@@ -52,6 +52,11 @@ func TestT046_08_EventContentReachesJudgePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "ZZ_GUARD never negative") {
 		t.Fatalf("the marked code body did not reach the judge prompt:\n%s", prompt)
 	}
+	// The Fail section tells the judge to say what to do, not only what is wrong:
+	// a real run bounced off Stop seven times on reasons that never said "undo it".
+	if !strings.Contains(prompt, "undo that code") || !strings.Contains(prompt, "The turn cannot end while the file breaks the") {
+		t.Errorf("the judge is not asked to name the remedy:\n%s", prompt)
+	}
 	// The pinned spec line, read by the prepare at the marker's pin, so the judge
 	// rules on it without having to read the spec itself.
 	if !strings.Contains(prompt, "<pinned fqn=\""+fqn+"\"") ||

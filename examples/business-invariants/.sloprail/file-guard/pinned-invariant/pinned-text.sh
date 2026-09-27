@@ -9,8 +9,8 @@
 # <pinned> to rule against.
 #
 # Reads only the markers from the event, never the file's content, so it needs
-# no per-kind resultKnown dispatch: a marker list is what the settled file (or,
-# for a delete under `deletions: include`, the file it replaced) carried.
+# no per-kind resultKnown dispatch: a marker list is what the settled file
+# carried. A delete is skipped (below).
 set -uo pipefail
 
 refuse() {
@@ -22,6 +22,18 @@ refuse() {
 . "${SR_GUARDRAIL_DIR:-.}/pin.sh" || refuse "pin.sh, which reads a pin, is missing beside this prepare."
 
 input="$(cat)"
+
+# A deleted file holds no code left to uphold anything, so there is nothing for
+# the judge to rule on: skip it. pin-still-matches-head.sh has already checked
+# the deleted file's pins, and whether the delete may drop them at all is
+# pinned-spec-holds' question (it needs the user's words, unless another file
+# carries the same pin).
+case "$(printf '%s' "$input" | jq -r '.event.kind // ""')" in
+  PreFileDelete | PostFileDelete)
+    printf '{"skip": true}\n'
+    exit 0
+    ;;
+esac
 
 # A delete carries its markers as oldMarkers; every other kind as newMarkers.
 markers="$(printf '%s' "$input" | jq -c '

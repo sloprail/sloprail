@@ -121,6 +121,7 @@ func TestLoadFixture_DisallowedToolsShape(t *testing.T) {
 		{" WebSearch", false},
 		{"WebSearch,WebFetch", false},
 		{"Web Search", false},
+		{"Bash(gh search:*,gh api:*)", false},
 	} {
 		dir := newTestFixtureTree(t, false)
 		mustWriteFile(t, filepath.Join(dir, "fixture.yaml"),

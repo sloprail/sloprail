@@ -141,7 +141,7 @@ func TestT046_16b_MarkerDroppedUnseenStillPinnedAtHead(t *testing.T) {
 		Write("w1", "SPEC.md", relaxedSpec),
 	))
 	if strings.Contains(readFile(t, proj, "src/charge.go"), "sr:invariant") {
-		t.Skipf("the engine refused or undid the unseen drop, so it is not unseen: %s", res.Output)
+		t.Fatalf("the drop was refused or undone, so this no longer tests an unseen drop — find another command the engine does not see as a write: %s", res.Output)
 	}
 	if !res.Refused() || !res.Saw("rewrites SPEC.md L3-3") {
 		t.Fatalf("with the marker gone from the working tree, the rewrite of the rule it pins at HEAD was not refused:\n%s", res.Output)
@@ -225,10 +225,10 @@ func TestT046_19_RepinToSameWordingNeedsNothing(t *testing.T) {
 }
 
 // T046_27: a marker whose pin is not a real one — the placeholder in a skill's
-// example, as the goodwill-refund eval's overlay carries — cannot say which lines
-// it pins, so a change to its path needs the citation. But when a real pinned
-// line changed too, the refusal names that line, not the placeholder: a real run
-// was told only about the placeholder and never learned rule 2 was pinned.
+// example, as the goodwill-refund eval's overlay carries — pins nothing: it
+// cannot pass pinned-invariant. So it neither hides a real pinned line that
+// changed (a real run was told only about the placeholder and never learned rule
+// 2 was pinned) nor makes an edit of an unpinned line need the user's words.
 func TestT046_27_UnreadablePinDoesNotHideTheRealOne(t *testing.T) {
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
@@ -245,11 +245,17 @@ func TestT046_27_UnreadablePinDoesNotHideTheRealOne(t *testing.T) {
 		t.Fatalf("the refusal did not name the pinned line that changed:\n%s", res.Output)
 	}
 
+	// An unparseable pin cannot pass pinned-invariant, so it protects nothing, and
+	// it must not make every edit of the spec need the user's words: rule 1, which
+	// no real marker pins, is reworded freely.
 	edited := strings.Replace(billingSpec, "never be negative", "never be below zero", 1)
 	res = e.Run(proj, "s-046-27b", "reword rule 1", Turns("done",
 		Write("w1", "SPEC.md", edited),
 	))
-	if !res.Refused() || !res.Saw("not a real one") {
-		t.Fatalf("with an unreadable pin on SPEC.md, a change to it was not refused as undecidable:\n%s", res.Output)
+	if res.Refused() {
+		t.Fatalf("an unparseable pin made an edit of an unpinned line need a citation:\n%s", res.Output)
+	}
+	if got := readSpec(t, proj); got != edited {
+		t.Errorf("the unpinned edit did not land:\n%s", got)
 	}
 }

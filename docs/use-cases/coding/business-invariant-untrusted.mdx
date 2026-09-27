@@ -92,8 +92,9 @@ checks it names:
 
 Matches any file carrying an `invariant` marker. Two checks in order: the script
 gates the judge, so the model only runs once the pin is known to be real and
-current. `pin.sh` is the pin reader both scripts share: it checks the sha and the
-line range an agent wrote before git reads anything with them. `pinned-text.sh`
+current. `pin.sh` is the pin reader both scripts share: it checks the sha, the
+path and the line range an agent wrote before git reads anything with them, and
+holds the path to the spec convention. `pinned-text.sh`
 is the judge's `prepare`.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/pinned-invariant/file-guard.yaml" />
@@ -104,11 +105,16 @@ is the judge's `prepare`.
 
 ### pinned-spec-holds: a pinned rule changes only when the user asks
 
-Matches every write, and is preventive. `changes-pinned-lines.sh` is the `when`
-of a user citation: it applies the requirement when the write changes a spec line
-a marker pins (in the working tree or at HEAD) or moves a marker off the wording
-it pinned, and waives it only when it has decided the write changes neither.
-`only-when-pinned.sh` asks the judge about exactly those writes.
+Preventive, and matches only the files a pin can involve: specs (`SPEC.md`, or a
+`.md` file under `specs/`, the convention `pin.sh` holds every pin to) and files
+carrying an `invariant` marker before or after the write. A preventive guard
+refuses a shell edit it cannot work out ahead on every file it matches, so
+matching every path would refuse every `sed -i` in the project.
+`changes-pinned-lines.sh` is the `when` of a user citation: it applies the
+requirement when the write changes a spec line a marker pins (in the working tree
+or at HEAD) or moves a marker off the wording it pinned — marked code moved to
+another file keeps its pin — and waives it only when it has decided the write
+changes neither. `only-when-pinned.sh` asks the judge about exactly those writes.
 
 <Code code={holdsYaml} lang="yaml" title=".sloprail/file-guard/pinned-spec-holds/file-guard.yaml" />
 <Code code={changesSh} lang="bash" title=".sloprail/file-guard/pinned-spec-holds/changes-pinned-lines.sh" />
