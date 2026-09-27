@@ -34,6 +34,16 @@ the whole entry it was taken from, so weigh the quote in its context.
 {% endfor %}</citations>{% else %}**This write cites nothing.** Every write to ASK.md must cite the user's own
 words; treat this as a fail.{% endif %}
 
+## What an ask is
+
+ASK.md holds everything the user wants from this task, not what gets done
+today. Words about timing or order ("not today", "just that part for now",
+"later") defer work and leave it in the ask; what was done and what was
+deferred go in RESULT.md. So a part the user asked for belongs in ASK.md even
+when the same message defers it, and removing a deferred part narrows the ask.
+Only the user's own words dropping something ("forget X", "we don't need X")
+take it out of the ask.
+
 ## Pass
 
 Both hold:

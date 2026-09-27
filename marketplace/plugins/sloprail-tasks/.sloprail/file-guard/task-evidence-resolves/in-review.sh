@@ -61,11 +61,15 @@ if [ "${1:-}" = "--entering" ] && [ "$old_status" = "in_review" ]; then
   exit 1
 fi
 
-# It applies. The hint the refusal carries: what proof is, and the exact edit.
+# It applies. The hint the refusal carries: what proof is, and the exact command —
+# an edit of the status, or for a task created in review, a write.
 path="$(field '.event.path // ""')"
-jq -n --arg path "$path" --arg from "${old_status:-in_progress}" '{hint: (
+case "$kind" in
+  *Create) how="  sr-file write $path --cite:tool_result '<exact line of the output>' <<'TASK' ... TASK" ;;
+  *) how="  sr-file edit $path --old-string 'status: ${old_status:-in_progress}' --new-string 'status: in_review' --cite:tool_result '<exact line of the output>'" ;;
+esac
+jq -n --arg how "$how" '{hint: (
   "An in_review task claims the work is finished, so it must cite the tool output that proves it. " +
-  "Run what proves the work (the tests, the build), then make the status change citing a line of that output:\n" +
-  "  sr-file edit " + $path + " --old-string '\''status: " + $from + "'\'' --new-string '\''status: in_review'\'' --cite:tool_result '\''<exact line of the output>'\''\n" +
-  "Your own summary, the user'\''s words, or an answer to a question are not tool output.")}'
+  "Run what proves the work (the tests, the build), then make the change citing a line of that output:\n" +
+  $how + "\nYour own summary, the user'\''s words, or an answer to a question are not tool output.")}'
 exit 0

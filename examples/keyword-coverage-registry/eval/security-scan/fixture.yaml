@@ -17,5 +17,9 @@ description: >
 seed: seed
 overlay: overlay
 exampleSloprail: true
+# The project offers no web search, so GitHub research goes through gh — the
+# one path the scanner gate governs. Without this, measured 2026-09-27, Haiku
+# searched with WebSearch in 4 of 5 runs and the gate never engaged.
+disallowedTools: [WebSearch, WebFetch]
 model: haiku
 score: score.sh
