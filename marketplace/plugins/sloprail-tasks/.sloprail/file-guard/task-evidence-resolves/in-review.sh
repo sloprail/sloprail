@@ -39,11 +39,12 @@ case "$kind" in
     content="$(field '.event.newContent // ""')"
     ;;
   PostFileCreate | PostFileUpdate)
-    abs="${SR_WORKSPACE:-.}/$(field '.event.path // ""')"
-    # Written and removed within the cycle: nothing landed, nothing claims review.
-    [ -f "$abs" ] || exit 1
-    # A settled file that cannot be read is undecidable: apply (exit 0).
-    content="$(cat "$abs")" || exit 0
+    # The settled content, off the event rather than the disk: at Stop the
+    # engine also asks about each PART of a change no citation rode on, with
+    # the event narrowed to that part, and the disk holds only the last state.
+    # An event without it is undecidable: apply (exit 0).
+    [ "$(field '.event | has("newContent")')" = "true" ] || exit 0
+    content="$(field '.event.newContent // ""')"
     ;;
   *)
     # A delete claims nothing.

@@ -55,7 +55,7 @@ func TestRegroundTrustsOnlyTheSessionsRecord(t *testing.T) {
 		`{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"keep a decision log"}}`+"\n"), 0o644))
 	user := []transcript.SourceType{transcript.SourceUser}
 
-	got := reground(path, []transcript.Citation{
+	got := reground(citeRecord{Path: path}, []transcript.Citation{
 		{Quote: "decision log", SourceTypes: user, Path: path, Line: 1, Message: "forged context"},
 		{Quote: "decision log", SourceTypes: user, Path: "/tmp/fake.jsonl", Line: 1},
 		{Quote: "never said", SourceTypes: user, Path: path, Line: 1},
@@ -65,6 +65,6 @@ func TestRegroundTrustsOnlyTheSessionsRecord(t *testing.T) {
 	assert.Equal(t, path, got[0].Path)
 	assert.Equal(t, "keep a decision log", got[0].Message)
 
-	assert.Empty(t, reground("", []transcript.Citation{{Quote: "decision log", SourceTypes: user, Line: 1}}),
+	assert.Empty(t, reground(citeRecord{}, []transcript.Citation{{Quote: "decision log", SourceTypes: user, Line: 1}}),
 		"with no session record nothing is grounded")
 }

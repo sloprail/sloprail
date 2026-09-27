@@ -52,11 +52,20 @@ const (
 	// it is delivered on every Stop until committed) and is marked `seen`.
 	MetaStopSeenFiles = "stop_seen_files"
 
-	// MetaCitations is, per file path, the citations a permitted pre-tool call
-	// grounded its change to that file in, as a JSON object of path to a list
-	// of citations. The Post events at Stop come from the tree difference, which
-	// knows nothing of the commands that made it; this is how they carry the
-	// citations the change was made with.
+	// MetaCitedPending is the cited changes permitted pre-tool calls are about
+	// to make, not yet known to have landed: a JSON list of {path, abs, change}.
+	// The next hook of the same session settles each — kept in
+	// MetaCitedChanges when the file now holds what the change produces,
+	// dropped when it does not (the call failed, was denied, or never ran).
+	MetaCitedPending = "cited_pending"
+
+	// MetaCitations is, per file path, every cited change that LANDED this
+	// session, in order: the citations it rode on and the file's state before
+	// and after it, as a JSON object of path to a list of changes. The Post
+	// events at Stop come from the tree difference, which knows nothing of the
+	// commands that made it; this is how they carry the citations the change
+	// was made with — and how the parts of the change no citation rode on are
+	// told apart from the parts one did.
 	MetaCitations = "citations"
 )
 

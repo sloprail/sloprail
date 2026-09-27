@@ -26,13 +26,20 @@ sr-session trajectory cite --source-types tool_result '0 failures' && git push
 
 The pool says what the quote must be: `user` (the user's own words, a message
 or an AskUserQuestion answer) or `tool_result` (a tool's output, proof that work
-happened). `--cite:` repeats for several citations. The quote's words must
+happened). Neither pool holds model-written text: a compaction summary is not
+the user's words, and these are not tool output — a sub-agent's reply (the
+Agent tool's result), a background agent's reply read through TaskOutput, an
+AskUserQuestion answer (cite it as `user`), and a result whose call is not in
+the record — a quote found only in one of these fails and says which it was —
+nor a hook's refusal. `--cite:` repeats for several citations. The quote's words must
 match exactly **one** entry of the session's record (whitespace, such as a line
 break, need not match). `sr-session trajectory cite '<quote>'` checks a quote
 before using it.
 
 In a sub-agent: its own tool output is citable as `tool_result` (the records of
-the sub-agents a session dispatched are searched beside its own). Its prompt is
+the sub-agents a session dispatched are searched beside its own). A quote is
+looked for in the caller's own record first, so output the root and a
+sub-agent both printed resolves to the caller's own. Its prompt is
 the parent agent's, not the user's, so `user` resolves only against the user's
 messages in the main conversation, quoted exactly as the user wrote them. When
 dispatching work that must cite the user, paste the user's exact words into the
@@ -42,8 +49,9 @@ Run `sr-file` **on its own** in the command line: only `sr-file` calls, `&&`,
 `||`, `;`, `echo` and a stdin heredoc, with every value quoted verbatim
 (`'…'`, `<<'BODY'`). Such a line is dry-run before it executes, so its event
 carries the exact result (`resultKnown: true`). Mixed with any other program,
-`cd`, a `VAR=…` prefix, or any `$` expansion (`$VAR`, `$(…)`, `$((…))`, an
-unquoted heredoc delimiter), it is never run ahead of time. Its result is then
+`cd`, a `VAR=…` prefix, any `$` expansion (`$VAR`, `$(…)`, `$((…))`, an
+unquoted heredoc delimiter), or an unquoted glob or brace (`*`, `?`, `[`, `{`,
+which bash and zsh expand differently), it is never run ahead of time. Its result is then
 unknown, and a preventive rule refuses it (`sr-file write` creates missing
 directories, so no `mkdir` is needed). Harness Write/Edit tools, `sed` and `rm`
 cannot carry a citation at all.
@@ -59,9 +67,13 @@ own call.
 
 - An `sr-file` citation lands on that file's events and on the command event. A
   chained `cite` lands on every event the command produces.
-- A `Post` file event at Stop carries every citation its path's changes were
-  made with this session. A rule that must refuse each uncited change is
-  `preventive`, so it refuses that change at pre-tool.
+- A `Post` file event at Stop carries the citations of the cited changes that
+  **landed** on its path this session: a cited call that failed, was denied, or
+  never ran grounds nothing. A citation grounds only the change it rode on, so
+  any part of the file's change since the baseline that no cited change made —
+  a Write, an Edit or a command before, between or after them — must be one the
+  prerequisite's `when` waives (run on that part alone), or the requirement
+  refuses. Without `when`, every change to the file must be cited.
 
 ## Requiring one
 
@@ -91,22 +103,28 @@ require:
 
 ```bash
 # removes-content.sh: exit 0 when a line present before is gone after.
+input="$(cat)"
+old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
+new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
 removed="$(comm -23 <(printf '%s' "$old" | sort -u) <(printf '%s' "$new" | sort -u) | grep -c . || true)"
 [ "${removed:-0}" -eq 0 ] && exit 1
 exit 0
 ```
 
 The engine's refusal says what must be cited and with which flag ("must cite a
-tool's output from this session (`--cite:tool_result`)"), then how: the generic
-`sr-file` forms, or — when a `when` script that applies the requirement prints
-`{"hint": "…"}` on stdout — that hint in their place. A hint is the rule's own
-advice for this case (which status to move from, what counts as proof), so give
-the exact command in it, for a create as well as an edit.
+tool's output from this session (`--cite:tool_result`)"), then how: the
+`sr-file` forms. A `when` script that applies the requirement may print
+`{"hint": "…"}` on stdout: the rule's own advice for this case (which status to
+move from, what counts as proof). A hint that spells the exact command (an
+`sr-file ` line, or a `trajectory cite` chain for a command) takes the generic
+forms' place; one that only advises follows the form for this kind of change,
+so a refusal always carries a command the agent can run.
 
 On `Post` kinds `oldContent` is the session baseline, so a transition such as
 "status became `published` this session" reads the same at both moments. Keep
 such a guard `preventive`: an unknown result is refused before it lands, and the
-after-check still refuses a change that reached the tree without a citation.
+after-check still refuses a change that reached the tree without a citation
+(one `when` does not waive).
 `when` works on any prerequisite, on every nature.
 
 ## Judging it

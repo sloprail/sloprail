@@ -65,21 +65,31 @@ func TestSubagentPreToolAndStopShareOneStore(t *testing.T) {
 	assert.Equal(t, stopID, preID, "the sub-agent's pre-tool call and its SubagentStop keyed to different sessions")
 	assert.NotEqual(t, rootID, preID, "the sub-agent's pre-tool call keyed to the root session")
 
-	// What a pre-tool call records is what the sub-agent's cycle end reads.
-	cited := map[string][]transcript.Citation{"memories/a.md": {{Quote: "q", SourceTypes: []transcript.SourceType{transcript.SourceUser}, Path: root, Line: 1}}}
+	// What a pre-tool call records is what the sub-agent's cycle end reads —
+	// once the change it rode on has landed.
+	cites := []transcript.Citation{{Quote: "q", SourceTypes: []transcript.SourceType{transcript.SourceUser}, Path: root, Line: 1}}
+	abs := filepath.Join(tree, "memories", "a.md")
+	change := citedChange{Cites: cites, After: fileState{Exists: true, Content: "x"}, At: 1}
 	store, err := openEngineState(preTool)
 	require.NoError(t, err)
-	require.NoError(t, recordCitations(store, cited))
+	require.NoError(t, recordPending(store, []pendingChange{{Path: "memories/a.md", Abs: abs, Change: change}}))
 	require.NoError(t, store.Close())
+
+	// The root's Stop, whose difference holds the sub-agent's change in a
+	// shared tree, reads it as delegated — landed or not yet settled alike,
+	// but only once the file holds what the change produces.
+	assert.Empty(t, delegatedCitedChanges(rootStop, root), "a change that has not landed grounds nothing")
+	require.NoError(t, os.MkdirAll(filepath.Dir(abs), 0o755))
+	require.NoError(t, os.WriteFile(abs, []byte("x"), 0o644))
+	want := map[string][]citedChange{"memories/a.md": {change}}
+	assert.Equal(t, want, delegatedCitedChanges(rootStop, root))
 
 	store, err = openEngineState(subStop)
 	require.NoError(t, err)
 	defer store.Close()
-	assert.Equal(t, cited, recordedCitations(store))
-
-	// And the root's Stop, whose difference holds the sub-agent's change in a
-	// shared tree, reads it as delegated.
-	assert.Equal(t, cited, delegatedCitations(rootStop, root))
+	require.NoError(t, settleCitedChanges(store))
+	assert.Equal(t, want, citedChangesIn(store, true))
+	assert.Equal(t, want, delegatedCitedChanges(rootStop, root))
 }
 
 func TestDelegatedCitationsNeverCreateAStore(t *testing.T) {
@@ -91,7 +101,7 @@ func TestDelegatedCitationsNeverCreateAStore(t *testing.T) {
 
 	// A sub-agent that recorded nothing under this tree (none, or isolated in
 	// its own worktree): nothing is read, and no store is opened into being.
-	assert.Empty(t, delegatedCitations(HookPayload{Cwd: tree, TranscriptPath: root}, root))
+	assert.Empty(t, delegatedCitedChanges(HookPayload{Cwd: tree, TranscriptPath: root}, root))
 	id, err := stableID(HookPayload{Cwd: tree, AgentTranscriptPath: sub})
 	require.NoError(t, err)
 	db, err := sessionDBPath(tree, id)

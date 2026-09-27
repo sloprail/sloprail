@@ -65,8 +65,8 @@ case "$kind" in
     ;;
 esac
 
-# .asks is the event's citations in the user pool only: a path's citations
-# accumulate across its changes, and the tool output a later in_review move cited
+# .asks is the event's citations in the user pool only: a path's citations are
+# those of every cited change that landed on it, and the tool output a later in_review move cited
 # is not the ask, so the judge is never shown it as if it were.
 printf '%s' "$payload" | jq --arg body "$body" \
   '{additionalContext: {body: $body, asks: [(.event.citations // [])[] | select(((.sourceTypes // []) | index("user")) != null)]}}'

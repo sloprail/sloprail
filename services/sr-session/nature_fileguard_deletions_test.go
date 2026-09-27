@@ -113,7 +113,7 @@ func TestRunFileGuardsPreventive_DeletionsFilter(t *testing.T) {
 			t.Run(string(mode.Mode())+"/"+kind, func(t *testing.T) {
 				g, ledger := refusingGuard(t, mode, true)
 				reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{g},
-					[]event.Event{preEvent(kind, "docs/a.md")}, hookScope{}, map[string]natures.ContextState{}, "")
+					[]event.Event{preEvent(kind, "docs/a.md")}, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
 				if wantRuns(mode, kind) {
 					assert.Contains(t, reason, "REFUSED-"+kind, "deletions=%q must run on %s", mode, kind)
 					assert.Equal(t, []string{kind}, ledgerLines(t, ledger))
@@ -136,7 +136,7 @@ func TestRunFileGuardsPost_DeletionsFilter(t *testing.T) {
 				root := t.TempDir()
 				rev := newRevalidation(t)
 				results := runFileGuardsPost(discard(), []declaration.FileGuard{g},
-					[]event.Event{postFileEvent(kind, "docs/a.md")}, rev, hookScope{}, root, map[string]natures.ContextState{})
+					[]event.Event{postFileEvent(kind, "docs/a.md")}, rev, hookScope{}, root, map[string]natures.ContextState{}, nil)
 				if wantRuns(mode, kind) {
 					require.Len(t, results, 1, "deletions=%q must run on %s", mode, kind)
 					assert.True(t, results[0].Refused)
@@ -163,7 +163,7 @@ func TestRunFileGuardsPost_MarkerMatchSelectsDeleteByOldMarkers(t *testing.T) {
 		filemod.FieldOldMarkers: []any{marker("invariant", "x", 1)},
 	}}
 	results := runFileGuardsPost(discard(), []declaration.FileGuard{g}, []event.Event{del},
-		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{})
+		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)
 	require.Len(t, results, 1, "a delete of a marker-carrying file is selected by its oldMarkers")
 	assert.Equal(t, []string{declaration.KindPostFileDelete}, ledgerLines(t, ledger))
 }
@@ -248,7 +248,7 @@ func TestRunFileGuardsPost_SkipGuardSettlesRefusalOnDeletedFile(t *testing.T) {
 			seedRefusal(t, rev, g.Name, "docs/a.md")
 
 			results := runFileGuardsPost(discard(), []declaration.FileGuard{g},
-				[]event.Event{postFileEvent(declaration.KindPostFileDelete, "docs/a.md")}, rev, hookScope{}, t.TempDir(), map[string]natures.ContextState{})
+				[]event.Event{postFileEvent(declaration.KindPostFileDelete, "docs/a.md")}, rev, hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)
 
 			assert.Empty(t, results, "the skip guard does not run on the delete")
 			assert.Empty(t, ledgerLines(t, ledger))
@@ -268,7 +268,7 @@ func TestRunFileGuardsPost_IncludeGuardPassingDeleteSettlesRefusal(t *testing.T)
 	seedRefusal(t, rev, g.Name, "docs/a.md")
 
 	results := runFileGuardsPost(discard(), []declaration.FileGuard{g},
-		[]event.Event{postFileEvent(declaration.KindPostFileDelete, "docs/a.md")}, rev, hookScope{}, t.TempDir(), map[string]natures.ContextState{})
+		[]event.Event{postFileEvent(declaration.KindPostFileDelete, "docs/a.md")}, rev, hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)
 
 	assert.Empty(t, results)
 	assert.Empty(t, outstandingFor(t, rev, g.Name))
@@ -283,7 +283,7 @@ func TestRunFileGuardsPost_IncludeGuardRefusingDeleteKeepsRefusal(t *testing.T) 
 	seedRefusal(t, rev, g.Name, "docs/a.md")
 
 	results := runFileGuardsPost(discard(), []declaration.FileGuard{g},
-		[]event.Event{postFileEvent(declaration.KindPostFileDelete, "docs/a.md")}, rev, hookScope{}, t.TempDir(), map[string]natures.ContextState{})
+		[]event.Event{postFileEvent(declaration.KindPostFileDelete, "docs/a.md")}, rev, hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)
 
 	require.Len(t, results, 1)
 	assert.True(t, results[0].Refused)

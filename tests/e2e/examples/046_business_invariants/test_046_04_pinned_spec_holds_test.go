@@ -54,6 +54,9 @@ func TestT046_11_UncitedPinnedRuleChangeRefused(t *testing.T) {
 	if !res.Saw("must cite the user's own words (--cite:user)") || !res.Saw("rewrites SPEC.md L3-3") || !res.Saw("tell the user about the conflict") {
 		t.Errorf("the refusal does not say what to cite, which lines are pinned, or what to do instead:\n%s", res.Output)
 	}
+	if !res.Saw("sr-file edit SPEC.md") {
+		t.Errorf("the refusal carries no runnable sr-file command:\n%s", res.Output)
+	}
 	if got := readSpec(t, proj); got != billingSpec {
 		t.Errorf("the refused change reached SPEC.md:\n%s", got)
 	}

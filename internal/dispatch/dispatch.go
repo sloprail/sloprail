@@ -148,6 +148,26 @@ type Request struct {
 	// name is the only entry. Not load-bearing for THIS request's verdict; it
 	// governs the verdict of the dispatch one exec down.
 	LaunchedBy string
+
+	// Uncited is, for a Post file event at Stop whose path has citations
+	// recorded this session, each part of its change since the session
+	// baseline that NO cited change made: an uncited write before the first
+	// cited one, between two, or after the last. A citation grounds the change
+	// it rode on and nothing else, so a `citation` prerequisite holds only when
+	// its `when` waives every one of these (with no `when`, none may exist).
+	// Nil for every other event — a Pre event IS one change, and its citations
+	// ride on it.
+	Uncited []UncitedChange
+}
+
+// UncitedChange is one stretch of a file's history that no citation rode on:
+// the file as it stood before (From, absent when !FromExists) and after (To,
+// absent when !ToExists).
+type UncitedChange struct {
+	FromExists bool
+	From       string
+	ToExists   bool
+	To         string
 }
 
 // Verdict is what the check-runner concluded about one fired event.

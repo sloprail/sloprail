@@ -88,6 +88,11 @@ func TestT049_02_RemovalWithoutMarkerBlocks(t *testing.T) {
 	if !res.Saw("must cite the user's own words (--cite:user)") {
 		t.Fatalf("the uncited-removal reason did not reach the agent:\n%s", res.Output)
 	}
+	// The rule's hint advises (append, or cite the ask) but names no command:
+	// the refusal must still carry one the agent can run.
+	if !res.Saw("sr-file edit memories/topic.md") {
+		t.Errorf("the refusal carries no runnable sr-file command:\n%s", res.Output)
+	}
 	// The write was denied, so the file still holds its original content.
 	if !e.Exists(proj, "memories/topic.md") {
 		t.Fatalf("a preventive deny should leave the original file on disk")

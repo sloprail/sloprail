@@ -89,7 +89,7 @@ func runFileGuardsPreventive(
 	events []event.Event,
 	scope hookScope,
 	contextMap map[string]natures.ContextState,
-	resolveNote string,
+	notes resolveNotes,
 ) string {
 	runner := dispatchcore.Runner{}
 
@@ -179,6 +179,9 @@ func runFileGuardsPreventive(
 			// including a genuinely-empty one) has resultKnown true and is judged
 			// normally, so this refuses only the truly-underivable write.
 			if isUnderivablePreWrite(e) {
+				// What sr-file's dry run said about THIS file, never another's.
+				path, _ := e.Fields[filemod.FieldPath].(string)
+				resolveNote := notes.For(path)
 				// require FIRST, even here. `{skill}`/`{context}` need no content at
 				// all — they read the trajectory, not the write — so when BOTH a
 				// missing prerequisite and an unverifiable write are true of this
@@ -307,6 +310,7 @@ func runFileGuardsPost(
 	scope hookScope,
 	root string,
 	contextMap map[string]natures.ContextState,
+	uncited map[string][]dispatchcore.UncitedChange,
 ) []fileGuardResult {
 	if len(guards) == 0 {
 		return nil
@@ -405,6 +409,7 @@ func runFileGuardsPost(
 				}
 			}
 
+			path, _ := e.Fields[filemod.FieldPath].(string)
 			verdict, err := runner.Run(dispatchcore.Request{
 				Nature:         dispatchcore.NatureFileGuard,
 				Require:        g.Require,
@@ -416,6 +421,10 @@ func runFileGuardsPost(
 				GuardName:      g.Name,
 				Workspace:      scope.Workspace,
 				SessionID:      scope.SessionID,
+				// The parts of this file's change no citation rode on: a
+				// `citation` prerequisite must see each waived. See
+				// cited_changes.go.
+				Uncited: uncited[path],
 				// Re-entry provenance for an after-check that spawns sr-agent: this
 				// guard appended to any launched checks already on the stack, so the
 				// launched agent's own Write does not re-fire this guard on itself

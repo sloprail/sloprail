@@ -58,6 +58,14 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 		return natureVerdict{}
 	}
 
+	// The call before this one has run (or never will), so the cited changes it
+	// left pending are settled now — before anything this call records.
+	if grounds {
+		if err := settleCitedChanges(store); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
+	}
+
 	bound := naturePreToolBoundKinds(loaded)
 	if grounds {
 		// A rule requires citations, so every change this call makes must be
@@ -75,14 +83,20 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// handed, so this names the CALLER's own record where it is on disk: for a
 	// sub-agent's call, that is what lets a citation that does not resolve say
 	// "you are a sub-agent" (transcript.UnresolvedUserHint).
-	citeIn := scope.Transcript
-	if fi, err := os.Stat(citeIn); citeIn == "" || err != nil || fi.IsDir() {
-		citeIn = p.TranscriptPath
+	//
+	// A sub-agent's own record is named as such (citeRecord.Subagent): its
+	// payload says it is one, so it is never read as a root even when nothing
+	// in or around the file says so — the user pool then resolves in the root
+	// climbed to from it, or is refused.
+	cite := citeRecord{Path: scope.Transcript}
+	if fi, err := os.Stat(cite.Path); cite.Path == "" || err != nil || fi.IsDir() {
+		cite.Path = p.TranscriptPath
 	}
-	if citeIn == "" {
-		citeIn = scope.Transcript
+	if cite.Path == "" {
+		cite.Path = scope.Transcript
 	}
-	events, grounded, resolveNote := groundPreEvents(cmd, p, citeIn, events)
+	cite.Subagent = p.IsSubagent() && cite.Path != "" && cite.Path != p.TranscriptPath
+	events, resolveNotes := groundPreEvents(cmd, p, cite, events)
 
 	// The state maps, loaded once so contexts/gates/guards this dispatch runs read
 	// one consistent world. Contexts enter FIRST, so a gate or a preventive
@@ -108,7 +122,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// Preventive file-guards next: a `preventive: true` guard whose match selects a
 	// pre-write file refuses a not-fine write before it lands. Blocks on the first
 	// refusal.
-	if reason := runFileGuardsPreventive(cmd, preventiveGuards, events, scope, contextMap, resolveNote); reason != "" {
+	if reason := runFileGuardsPreventive(cmd, preventiveGuards, events, scope, contextMap, resolveNotes); reason != "" {
 		return natureVerdict{Blocked: reason}
 	}
 
@@ -119,7 +133,9 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 			return natureVerdict{Blocked: fmt.Sprintf("%s (gate %s)", r.Reason, r.Attribution)}
 		}
 	}
-	if err := recordCitations(store, grounded); err != nil {
+	// Permitted: the cited changes this call makes are pending until the next
+	// hook finds them landed (settleCitedChanges).
+	if err := recordPending(store, pendingChanges(events, p.Root(), nowNano())); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 	}
 	return natureVerdict{}

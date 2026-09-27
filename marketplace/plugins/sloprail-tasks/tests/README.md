@@ -137,8 +137,9 @@ stubbed verdict is the one under test. This is noted in each such test.
   permits — and the reviewer is handed the FULL tool output, not only the quote
 - ✓ unsubstantiated in_review task blocked at Stop (judge FAIL), rejection reaches
   the agent — the evidence is there but does not show the claimed thing
-- ✓ a cited transition followed by an uncited edit in the same session still
-  reaches the reviewer with its tool output (citations accumulate)
+- ✓ a cited transition followed by an uncited edit of the in_review task is
+  refused at Stop (a citation grounds only the change it rode on); followed by
+  a cited edit, it reaches the reviewer with the transition's tool output
 - ✓ a task already in_review at session start, edited with no tool output cited,
   is refused by the pre-flight at Stop (nothing on record), naming how to cite it
 - ✓ a gates/*.sh that regressed, and a gates/*.md the review judge rejects, block

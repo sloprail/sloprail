@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -70,9 +71,13 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// Which of those files an earlier Stop was already handed with this content
 	// (`seen`), before any rule reads them. See seen.go.
 	fileSnapshot := markSeenFiles(cmd, store, postFileEvents, root)
-	// And which citations each file's change was made with, as recorded when the
-	// pre-tool call that made it was permitted. See grounding.go.
-	attachRecordedCitations(store, postFileEvents, delegatedCitations(p, scope.Transcript))
+	// And which citations each file's change was made with: the cited changes
+	// that landed this session (the last call's settled now), and the parts of
+	// each file's change no citation rode on. See cited_changes.go.
+	if err := settleCitedChanges(store); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+	}
+	uncited := attachCitedChanges(store, postFileEvents, delegatedCitedChanges(p, scope.Transcript))
 
 	// The cycle's PostTagWrite events too, for a context that recognises itself from
 	// a tag the agent wrote (research-rigor enters on #research). Gathered separately
@@ -90,7 +95,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 
 	// 1. file-guard after-checks on the Post FILE events. Records verdicts
 	//    (re-fire), collects refusals.
-	for _, r := range runFileGuardsPost(cmd, loaded.FileGuards, postFileEvents, rev, scope, root, contextMap) {
+	for _, r := range runFileGuardsPost(cmd, loaded.FileGuards, postFileEvents, rev, scope, root, contextMap, uncited) {
 		if r.Refused {
 			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
 		}
