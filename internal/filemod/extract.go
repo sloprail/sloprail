@@ -504,7 +504,8 @@ func Reportable(path, root string) string {
 //
 //	Remove, file present   PreFileDelete. The path is named, nothing else is
 //	                       needed, and this is the case the whole defect was
-//	                       about.
+//	                       about. A RECURSIVE remove of a directory is one of
+//	                       these per file inside it (expandRemovedDirectories).
 //	Write, file present    PreFileUpdate. Carries no pending content for a tool
 //	                       write either, so a command's inability to name the
 //	                       resulting bytes costs the rule nothing.
@@ -582,9 +583,12 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 	// before the loop so each resulting file is classified by exactly the same
 	// code every other target is — see expandIntoDirectories.
 	targets = expandIntoDirectories(targets)
+	// A recursive removal of a DIRECTORY removes every file inside it, and
+	// only a walk can name them — see expandRemovedDirectories.
+	targets, walkProblems := expandRemovedDirectories(targets)
 
 	var events []event.Event
-	var problems []error
+	problems := walkProblems
 	// One command may name a path twice — `rm a.md a.md`, or a redirection onto
 	// a file the same line also touches. One file is one event, and the first
 	// effect named wins: a rule should be asked once about a file, and asking
@@ -728,6 +732,75 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 	}
 
 	return events, errors.Join(problems...)
+}
+
+// maxRemovedDirectoryFiles bounds how many files one recursive directory
+// removal is expanded into. Each becomes a PreFileDelete carrying the file's
+// bytes, read here, inside a hook the agent is waiting on — and `rm -rf
+// node_modules` is an ordinary command. Past the bound the directory is named
+// as a problem and predicted as nothing; the tree diff still reports every
+// tracked file it removed, afterwards.
+const maxRemovedDirectoryFiles = 1000
+
+// ErrRemovedDirectoryTooLarge is a recursive removal whose directory holds more
+// files than maxRemovedDirectoryFiles, so none of them was predicted.
+var ErrRemovedDirectoryTooLarge = errors.New("a recursively removed directory holds too many files to predict each deletion")
+
+// expandRemovedDirectories resolves the ambiguity a recursive removal carries:
+// whether its operand is a file or a directory whose every file goes with it.
+//
+// `rm -rf scanners/x` deletes scanners/x/scanner.yaml when scanners/x is a
+// directory, and a rule guarding that file must see the deletion. Before this,
+// the directory reached the loop as presentNotAFile and was dropped, so the
+// line named no file at all — deleting the folder a guarded file sits in was a
+// way straight past every delete rule. commandmod states that the line WOULD
+// reach inside (FileTarget.Recursive); this side stats and walks.
+//
+// Each file found becomes its own Remove target, spelled as the directory was
+// spelled plus the file's path inside it, so it is classified by exactly the
+// same code as `rm scanners/x/scanner.yaml` — the same bytes read, the same
+// canonical path reported.
+//
+// The walk does not follow links, as `rm -r` does not: a link inside the
+// directory is removed as a link (and lookAt sees the link), and a link AT the
+// operand is not a directory (isDirectory uses Lstat), so what it points at is
+// never listed. A non-recursive target, or one that is not a directory now,
+// passes through untouched; an empty directory expands to nothing, which is the
+// truth — no file stops existing.
+func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.FileTarget, []error) {
+	var out []commandmod.FileTarget
+	var problems []error
+	for _, t := range targets {
+		if t.Effect != commandmod.Remove || !t.Recursive || !isDirectory(t.Path) {
+			out = append(out, t)
+			continue
+		}
+		var files []commandmod.FileTarget
+		tooMany := false
+		err := filepath.WalkDir(t.Path, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if len(files) == maxRemovedDirectoryFiles {
+				tooMany = true
+				return filepath.SkipAll
+			}
+			files = append(files, commandmod.FileTarget{Path: p, Effect: commandmod.Remove})
+			return nil
+		})
+		switch {
+		case err != nil:
+			problems = append(problems, fmt.Errorf("%w: %s: %w", ErrUnreadableTree, t.Path, err))
+		case tooMany:
+			problems = append(problems, fmt.Errorf("%w: %s (more than %d)", ErrRemovedDirectoryTooLarge, t.Path, maxRemovedDirectoryFiles))
+		default:
+			out = append(out, files...)
+		}
+	}
+	return out, problems
 }
 
 // expandIntoDirectories resolves the one ambiguity a copy's last operand
