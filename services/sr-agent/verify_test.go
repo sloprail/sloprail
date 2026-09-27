@@ -68,7 +68,7 @@ func runVerifyHarnessWithStdin(
 	t.Setenv(outputDirEnv, outputDir)
 	t.Setenv("SR_TEST_OUTPUT", filepath.Join(outputDir, "answer"))
 
-	err = runVerified(cmd, spec, "fake-model", nil, nil, nil, prompt, verifier, attempts, false, false)
+	err = runVerified(cmd, spec, "fake-model", nil, nil, nil, nil, prompt, verifier, attempts, false, false)
 	return out.String(), errOut.String(), err
 }
 

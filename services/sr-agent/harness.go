@@ -294,6 +294,31 @@ var claudeCodeSpec = harnessSpec{
 		if len(allow) > 0 {
 			args = append(append(args, "--allowed-tools"), allow...)
 		}
+		// The caller's own denies join the readonly-dir denies in ONE
+		// --disallowed-tools group, each rule its own argument.
+		//
+		// No DEFAULT deny set is added for a command family the caller grants
+		// (e.g. curl's writing flags whenever Bash(curl:*) is allowed), on
+		// measurement rather than taste. On 2026-09-27 (claude 2.1.282, haiku),
+		// with Bash(curl:*) granted, a 20-pattern deny set (`Bash(curl * -o *)`,
+		// `--output`, `-O`, `--remote-name*`, `--output-dir`, `-D`, `-c`,
+		// `--trace*`, `-K`, `-d @*`, `--data*@*`, `-T`, `--upload-file`,
+		// `-F *@*`, `--json @*`, `-X`) refused every form it names and still let
+		// `curl -sL <url> | grep …` run, but these got through:
+		//   - combined short flags: `curl -sLo <file> <url>` wrote the file;
+		//   - curl's long tail: `--etag-save`, `--stderr`, `--hsts`,
+		//     `--dump-header`, `--cookie-jar` each wrote a file;
+		//   - `-H @<file>` sent a file's contents as headers.
+		// And under Bash(sed:*), `sed -n 'w <file>'` wrote a file. A pattern list
+		// cannot enumerate a tool's option grammar, so an engine default would
+		// promise a confinement it does not deliver. What a rule grants, and
+		// takes back, stays in the rule, where its author can see the trade.
+		// The shape that measured SOUND is a rule's own: pin the whole command
+		// (`Bash(curl -sL https://code.claude.com/docs/*)`) and deny any extra
+		// word after it (`Bash(curl -sL https://code.claude.com/docs/* *)`,
+		// claude's `*` crossing spaces). Every appended flag, file or URL was
+		// refused, and the one-argument fetch piped into grep still ran.
+		deny = append(deny, g.DenyTools...)
 		if len(deny) > 0 {
 			args = append(append(args, "--disallowed-tools"), deny...)
 		}
@@ -324,6 +349,11 @@ type accessGrant struct {
 	// Tools are the caller's own requested tools (`--allowed-tools`), passed
 	// through in the harness's own spelling.
 	Tools []string
+
+	// DenyTools are the caller's own denied tool rules (`--disallowed-tools`),
+	// passed through in the harness's own spelling beside the grant's own
+	// readonly-dir denies.
+	DenyTools []string
 }
 
 // holdsWritable reports whether a writable dir of this grant lies inside dir

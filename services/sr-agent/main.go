@@ -137,6 +137,8 @@ environment naming no known harness is refused rather than guessed at; pass
 		`Claude Code's own settings as a JSON object, passed through untouched (e.g. '{"permission-mode":"plan"}')`)
 	cmd.Flags().String("allowed-tools", "",
 		"Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")")
+	cmd.Flags().String("disallowed-tools", "",
+		"Tool rules the agent is denied, in the same form; a deny beats every allow (e.g. \"Bash(curl * -o *)\")")
 	// One repeatable flag per --add-dir mode: `--add-dir`, `--add-dir:readonly`.
 	for _, m := range addDirModes {
 		cmd.Flags().StringArray(addDirFlagName(m.suffix), nil, m.usage)
@@ -163,6 +165,7 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	harnessFlag, _ := cmd.Flags().GetString("harness")
 	claudeArgs, _ := cmd.Flags().GetString("claude-args")
 	allowedToolsFlag, _ := cmd.Flags().GetString("allowed-tools")
+	disallowedToolsFlag, _ := cmd.Flags().GetString("disallowed-tools")
 	// Read through the flag's own slice, not GetStringArray: that one round-trips
 	// the values through CSV and loses an empty `--add-dir:readonly=`, which
 	// must be refused, not dropped.
@@ -231,6 +234,12 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The same parser: a deny rule is a tool rule, and `Bash(curl * -o *)` must
+	// reach the harness as the one rule it is, not as four words.
+	disallowedTools, err := ParseAllowedTools(disallowedToolsFlag)
+	if err != nil {
+		return fmt.Errorf("--disallowed-tools: %w", err)
+	}
 
 	// The directories the agent is given, each in its mode, made absolute and
 	// checked to exist BEFORE anything runs: a harness permission rule is matched
@@ -252,13 +261,13 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	// because it OWNS the prompt — it appends the output path, and on a retry
 	// appends the objection too.
 	if cmd.Flags().Changed("verify") {
-		return runVerified(cmd, spec, resolution.Model, harnessArgs, allowedTools, addDirs, prompt,
+		return runVerified(cmd, spec, resolution.Model, harnessArgs, allowedTools, disallowedTools, addDirs, prompt,
 			verifyFlag, verifyAttempts, false, dryRun)
 	}
 
 	// Outside --verify there is no answer file: the grant carries only the
 	// caller's own dirs and tools.
-	grantArgs, err := harnessGrant(spec, accessGrant{Dirs: addDirs, Tools: allowedTools})
+	grantArgs, err := harnessGrant(spec, accessGrant{Dirs: addDirs, Tools: allowedTools, DenyTools: disallowedTools})
 	if err != nil {
 		return err
 	}

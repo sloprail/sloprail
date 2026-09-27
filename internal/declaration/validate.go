@@ -3,6 +3,7 @@ package declaration
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -443,6 +444,10 @@ func validateJudgeTuning(c Check, where string) []Problem {
 		problems = append(problems, prob(ErrStrayAllowedTools, where,
 			"sets allowed_tools without a judge — it grants tools to a judge's agent, and a script check names its own tools by being an executable"))
 	}
+	if c.hasDisallowedTools() && !c.isJudge() {
+		problems = append(problems, prob(ErrStrayDisallowedTools, where,
+			"sets disallowed_tools without a judge — it denies tools to a judge's agent, and a script check has none"))
+	}
 	if !c.isJudge() {
 		return problems
 	}
@@ -460,26 +465,73 @@ func validateJudgeTuning(c Check, where string) []Problem {
 		}
 	}
 	if c.hasAllowedTools() {
-		if err := validateAllowedTools(c.AllowedTools); err != nil {
+		if err := validateToolRules(c.AllowedTools); err != nil {
 			problems = append(problems, prob(ErrBadAllowedTools, where,
 				"allowed_tools %s", err.Error()))
+		}
+	}
+	if c.hasDisallowedTools() {
+		if err := validateToolRules(c.DisallowedTools); err != nil {
+			problems = append(problems, prob(ErrBadDisallowedTools, where,
+				"disallowed_tools %s", err.Error()))
 		}
 	}
 	return problems
 }
 
-// validateAllowedTools checks a judge's allowed-tools list carries no empty
-// entry — a blank tool name would reach sr-agent as an empty `--allowed-tools`
-// argument, which names no tool and can only be a stray or trailing list item.
-// Mirrors validateModelSet's empty-entry refusal.
-func validateAllowedTools(tools []string) error {
+// validateToolRules checks that every entry of a judge's allowed_tools or
+// disallowed_tools list is ONE harness permission rule: a tool name
+// (`Read`, `mcp__srv__tool`), optionally followed by one parenthesised scope
+// (`Bash(git show:*)`, `WebFetch(domain:code.claude.com)`) that closes at the
+// entry's end.
+//
+// Each list item reaches the harness as one rule (sr-agent keeps a scope's
+// spaces and commas inside it), so the shapes refused here are the ones that
+// would not: an empty item names nothing; `Read WebFetch` in one item is two
+// rules the author meant as one; `Bash(git show:*` never closes, and
+// `Bash(x) y` trails text after the scope. Whether the harness HAS a tool by
+// that name is the harness's to answer, as with a concrete model name — the
+// shape is what this loader can know.
+func validateToolRules(tools []string) error {
 	for i, t := range tools {
-		if strings.TrimSpace(t) == "" {
-			return fmt.Errorf("entry %d is empty (a blank tool name grants nothing)", i+1)
+		if err := validateToolRule(t); err != nil {
+			return fmt.Errorf("entry %d (%q) %s", i+1, t, err.Error())
 		}
 	}
 	return nil
 }
+
+func validateToolRule(t string) error {
+	if strings.TrimSpace(t) == "" {
+		return fmt.Errorf("is empty (a blank tool name names no tool)")
+	}
+	name, scope, scoped := strings.Cut(t, "(")
+	if !toolNameRE.MatchString(name) {
+		return fmt.Errorf("does not start with a tool name (letters, digits and underscores, like Read or Bash); put each rule in its own list item")
+	}
+	if !scoped {
+		return nil
+	}
+	depth := 1
+	for i, r := range scope {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(scope)-1 {
+				return fmt.Errorf("has text after its closing ')'; put each rule in its own list item")
+			}
+		}
+	}
+	if depth != 0 {
+		return fmt.Errorf("opens a '(' that never closes")
+	}
+	return nil
+}
+
+// toolNameRE is a harness tool name: `Read`, `WebFetch`, `mcp__server__tool`.
+var toolNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 
 // validateModelSet checks a judge model is a well-formed modelset, mirroring
 // what sr-agent's ParseModelSet refuses: a non-empty set whose every

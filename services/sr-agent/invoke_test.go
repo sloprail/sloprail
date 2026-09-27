@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -528,6 +529,47 @@ func TestHarnessGrant_NoPermissionModelRefusesReadonly(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"--allowed-tools", "Read WebFetch"}, got)
+}
+
+// A harness with no permission model cannot deny a tool, so a deny list is
+// refused rather than dropped — dropping it would run the agent with less
+// confinement than the caller asked for.
+func TestHarnessGrant_NoPermissionModelRefusesDenies(t *testing.T) {
+	bare := harnessSpec{name: "bare", binary: "bare"}
+	_, err := harnessGrant(bare, accessGrant{DenyTools: []string{"Bash(curl * -o *)"}})
+	require.ErrorIs(t, err, ErrModeUnsupported)
+	assert.Contains(t, err.Error(), "--disallowed-tools")
+}
+
+// Through the CLI: --disallowed-tools reaches the harness as whole rules, in the
+// same --disallowed-tools group as the readonly project's deny, after the flag.
+func TestCLI_DisallowedToolsReachTheHarnessWhole(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+	t.Setenv(outputDirEnv, dir)
+	project := filepath.Join(dir, "project")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir:readonly", project,
+		"--allowed-tools", "Bash(curl:*)",
+		"--disallowed-tools", "Bash(curl * -o *), Bash(curl * -d @*)",
+		"--verify", script, "q")
+	require.NoError(t, err)
+	flags, _, _ := strings.Cut(stdout, " -- ")
+	assert.Equal(t, 1, strings.Count(flags, "--disallowed-tools"), "one deny group")
+	assert.Contains(t, flags, `--disallowed-tools "Edit(/`+project+`/**)"`)
+	assert.True(t, strings.HasSuffix(flags, `"Bash(curl * -o *)" "Bash(curl * -d @*)"`),
+		"the caller's denies follow the readonly deny as whole rules: %s", flags)
+}
+
+// An unbalanced deny rule is refused before anything runs.
+func TestCLI_MalformedDisallowedToolsIsRefused(t *testing.T) {
+	_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--disallowed-tools", "Bash(curl * -o *", "q")
+	require.ErrorIs(t, err, ErrBadAllowedTools)
+	assert.Contains(t, err.Error(), "--disallowed-tools")
 }
 
 // A permission rule's parentheses and `**` would break a pasted command.

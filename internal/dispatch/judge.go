@@ -101,6 +101,12 @@ type judgeCall struct {
 	// it and no rule that does not is handed it.
 	AllowedTools []string
 
+	// DisallowedTools are the check's own `disallowed_tools` — harness rules the
+	// judge's agent is denied, passed to sr-agent's `--disallowed-tools`. A deny
+	// beats every allow, so a rule that grants a command family takes back the
+	// forms of it the judge must not use.
+	DisallowedTools []string
+
 	// Workspace is the project being judged (Request.Workspace — the tree the
 	// guard protects), handed to sr-agent as `--add-dir:readonly`: the judge may READ it
 	// with its file tools and may not write it. Without it the judge's agent,
@@ -222,7 +228,7 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// "exit -1" it replaces was the regression.
 	stdout, stderr, code, expired, _, startErr := runShell(
 		j.Dir,
-		judgeCommand(verifier, j.model(), j.AllowedTools, j.Workspace),
+		judgeCommand(verifier, j.model(), j.AllowedTools, j.DisallowedTools, j.Workspace),
 		nil,
 		judgeEnv(j, prompt),
 		j.Timeout,
@@ -272,12 +278,19 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 // that grants its judge Bash has granted it a shell, which no permission rule
 // confines; the project stays denied to the shell's recognised write commands
 // (redirection, touch, rm), but not to every program a shell can run.
-func judgeCommand(verifier, model string, allowedTools []string, workspace string) string {
+//
+// disallowed_tools, when the check named any, is sr-agent's `--disallowed-tools`
+// in the same joined form; sr-agent splits both lists paren-aware, so a scoped
+// rule's spaces (`Bash(curl * -o *)`) stay inside it.
+func judgeCommand(verifier, model string, allowedTools, disallowedTools []string, workspace string) string {
 	cmd := fmt.Sprintf(
 		`sr-agent --model %s --verify %s`,
 		shSingleQuote(model), shSingleQuote(verifier))
 	if len(allowedTools) > 0 {
 		cmd += " --allowed-tools " + shSingleQuote(strings.Join(allowedTools, " "))
+	}
+	if len(disallowedTools) > 0 {
+		cmd += " --disallowed-tools " + shSingleQuote(strings.Join(disallowedTools, " "))
 	}
 	if workspace != "" {
 		cmd += " --add-dir:readonly " + shSingleQuote(workspace)

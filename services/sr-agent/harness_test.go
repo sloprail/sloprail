@@ -240,6 +240,27 @@ func TestClaudeGrant_MixedModesShareOneFlagEach(t *testing.T) {
 	assert.Empty(t, claudeCodeSpec.grant(accessGrant{}), "no access asked for, no flags")
 }
 
+// The caller's own deny rules join the readonly-dir denies in ONE
+// --disallowed-tools group, each rule whole.
+func TestClaudeGrant_CallerDeniesJoinTheReadonlyDenies(t *testing.T) {
+	project := realDir(t, "project")
+
+	got := claudeCodeSpec.grant(accessGrant{
+		Dirs:      []dirGrant{readonly(project)},
+		Tools:     []string{"Bash(curl:*)"},
+		DenyTools: []string{"Bash(curl * -o *)", "Bash(curl * -d @*)"},
+	})
+
+	assert.Equal(t, []string{
+		"--add-dir", project,
+		"--allowed-tools", "Bash(curl:*)",
+		"--disallowed-tools", "Edit(/" + project + "/**)", "Bash(curl * -o *)", "Bash(curl * -d @*)",
+	}, got)
+
+	onlyDenies := claudeCodeSpec.grant(accessGrant{DenyTools: []string{"WebSearch"}})
+	assert.Equal(t, []string{"--disallowed-tools", "WebSearch"}, onlyDenies)
+}
+
 // A writable dir NESTED in a readonly one stays writable: the readonly dir's
 // deny would beat the nested allow, so it is not emitted.
 func TestClaudeGrant_WritableNestedInReadonlyStaysWritable(t *testing.T) {

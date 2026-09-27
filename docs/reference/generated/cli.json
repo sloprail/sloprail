@@ -325,6 +325,10 @@
         "usage": "Claude Code's own settings as a JSON object, passed through untouched (e.g. '{\"permission-mode\":\"plan\"}')"
       },
       {
+        "name": "disallowed-tools",
+        "usage": "Tool rules the agent is denied, in the same form; a deny beats every allow (e.g. \"Bash(curl * -o *)\")"
+      },
+      {
         "name": "dry-run",
         "default": "false",
         "usage": "Print the command that would run, and do not run it"

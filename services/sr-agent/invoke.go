@@ -298,6 +298,10 @@ func harnessGrant(spec harnessSpec, g accessGrant) ([]string, error) {
 	if spec.grant != nil {
 		return spec.grant(g), nil
 	}
+	if len(g.DenyTools) > 0 {
+		return nil, fmt.Errorf("%w: %s has no permission model to deny tools in; drop --disallowed-tools or run a harness that has one",
+			ErrModeUnsupported, spec.name)
+	}
 	for _, d := range g.Dirs {
 		if d.Mode == dirReadonly {
 			return nil, fmt.Errorf("%w: %s has no permission model to express --%s in; drop it or run a harness that has one",

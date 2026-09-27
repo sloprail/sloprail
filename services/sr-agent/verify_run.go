@@ -40,6 +40,7 @@ func runVerified(
 	model string,
 	harnessArgs []string,
 	allowedTools []string,
+	disallowedTools []string,
 	addDirs []dirGrant,
 	prompt string,
 	verifier string,
@@ -79,7 +80,7 @@ func runVerified(
 	// variadic groups. See claudeCodeSpec.grant for what each grants and what was
 	// measured.
 	dirs := append(append([]dirGrant{}, addDirs...), dirGrant{Path: filepath.Dir(outputPath), Mode: dirWritable})
-	grantArgs, err := harnessGrant(spec, accessGrant{Dirs: dirs, Tools: allowedTools})
+	grantArgs, err := harnessGrant(spec, accessGrant{Dirs: dirs, Tools: allowedTools, DenyTools: disallowedTools})
 	if err != nil {
 		return err
 	}

@@ -17,12 +17,13 @@ checks:
     judge: ./change-is-clean-and-absolute.md.j2
     model: size-md                            # optional: a size alias or model name
     allowed_tools: [WebFetch]                 # optional: tools beyond reading the project
+    disallowed_tools: [WebSearch]             # optional: tool rules taken back
 ```
 
-`prepare`, `model` and `allowed_tools` are **judge-only** keys: set any
-of them on a script check and the rule is a **load error** (a script makes no model
-call, bounds its own runtime, and names its own tools by being an executable). Only
-`judge` is required; the other three are optional.
+`prepare`, `model`, `allowed_tools` and `disallowed_tools` are **judge-only**
+keys: set any of them on a script check and the rule is a **load error** (a
+script makes no model call, bounds its own runtime, and names its own tools by
+being an executable). Only `judge` is required; the others are optional.
 
 ## The template
 
@@ -136,14 +137,65 @@ The substrate always grants the judge whatever it needs to **write its verdict**
 tools here **only** when the judge must do more than read files and reason: `WebFetch`
 a cited URL, say. It is a **judge-only key**: set on a script check it
 is a load error (`allowed_tools` grants tools to a judge's agent; a script names
-its own by being an executable), and an **empty-string entry** in the list is
-refused at load (a blank name grants nothing).
+its own by being an executable). Each entry must be **one rule**: a tool name,
+optionally followed by one parenthesised scope. An empty entry, two rules in one
+item (`"Read WebFetch"`), or a scope that never closes is refused at load,
+naming the entry.
 
 An entry may be a **scoped rule** in Claude Code's own syntax, and each list item
 reaches the harness whole, spaces included: `"Bash(curl -sL:*)"` lets the judge
 run commands that start with `curl -sL` and no other shell command, and
 `"WebFetch(domain:code.claude.com)"` limits fetches to one host. Quote such an
 entry in YAML, because its colon would otherwise start a mapping.
+
+## `disallowed_tools` — what the judge's agent may not do
+
+`disallowed_tools:` lists rules the judge is **denied**, threaded to `sr-agent`'s
+`--disallowed-tools` (claude's own). A deny beats every allow, including the
+substrate's own grants, so this is how a rule takes back part of what it
+granted:
+
+```yaml
+allowed_tools: ["Bash(curl:*)"]
+disallowed_tools: ["Bash(curl * -o *)", "Bash(curl * -d @*)"]
+```
+
+It is judge-only and checked at load like `allowed_tools`. A harness with no
+permission model refuses it rather than running the judge unconfined.
+
+A deny list closes the **forms it names**, and no more. Measured with
+`Bash(curl:*)` granted: 20 patterns denied every form they named, including
+`-o`, `--output`, `-O`, `-D`, `-c`, `-K`, `-d @`, `-T` and `-F @`, while
+`curl -sL <url> | grep …` still ran. These still got through:
+
+- combined short flags: `curl -sLo <file>` wrote a file;
+- curl's other file-writing options: `--etag-save`, `--stderr`, `--hsts`,
+  `--dump-header`, `--cookie-jar`;
+- `-H @<file>`, which sent a file's contents out.
+
+A pattern list cannot enumerate a command's option grammar. So the engine adds
+no default deny set, and a grant of a general-purpose command stays as wide as
+that command.
+
+What does hold is to **pin the whole command and deny any extra word**: allow
+the exact command, flags and host, and deny that same prefix followed by a
+space. Claude Code's `*` matches across spaces, so the deny catches every flag,
+file or second URL appended after the one argument you meant:
+
+```yaml
+allowed_tools: ["Bash(curl -sL https://code.claude.com/docs/*)", "Bash(grep:*)", "Bash(head:*)"]
+disallowed_tools: ["Bash(curl -sL https://code.claude.com/docs/* *)"]
+```
+
+Measured through `sr-agent` (claude 2.1.282, haiku, project readonly):
+
+- **ran:** `curl -sL <docs url>.md | grep -n -A12 …` and `… | head`;
+- **refused:** everything else tried, namely:
+  - `-o` into the project, into `/tmp`, and attached (`-o/tmp/x`);
+  - `-O`, `-sLo`, `--output`;
+  - `-d @`, `-T`, `-F f=@`, `-H @`;
+  - a second URL, `$(…)` in the URL, `>` redirection;
+  - any other host.
 
 ## What a judge can read and write
 
@@ -168,10 +220,11 @@ Two things `allowed_tools` can still widen, so name them deliberately:
 - **`Write` / `Edit`** are granted unscoped: they cannot touch the project, but
   can write elsewhere on disk. A judge never needs them for its verdict.
 - **A scoped `Bash(...)` rule** grants that command family with all its
-  flags. Measured: under `Bash(curl:*)`, `curl -o <path>` wrote a file inside a
-  readonly project and `-X POST -d @file` sent a file out. Under `Bash(awk:*)`,
-  `awk` wrote a file anywhere. Scope to the command and flags you mean, and
-  prefer a pipe (`curl -sL <url> | grep …`) in the rubric.
+  flags, and the flags the rule forgets to deny (see `disallowed_tools`).
+  Measured: under `Bash(curl:*)`, `curl -o <path>` wrote a file inside a
+  readonly project and `-X POST -d @file` sent a file out. `awk` wrote a file
+  anywhere under `Bash(awk:*)`, and so did `sed -n 'w <file>'` under
+  `Bash(sed:*)`. `grep` and `head` have no writing forms.
 - **`Bash`** is a shell. The project stays denied to the writes Claude Code
   recognises, but a shell can run any program, and no permission rule sandboxes
   what that program does. Grant it only when the judge must *run* something, and

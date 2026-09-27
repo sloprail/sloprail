@@ -104,12 +104,12 @@ func TestJudgeCheck_MalformedTimeoutFailsClosed(t *testing.T) {
 
 // judgeCommand carries the check's model to sr-agent as `--model <that>`, quoted.
 func TestJudgeCommand_CarriesCustomModel(t *testing.T) {
-	cmd := judgeCommand("/tmp/verify.sh", "size-xxl", nil, "")
+	cmd := judgeCommand("/tmp/verify.sh", "size-xxl", nil, nil, "")
 	assert.Contains(t, cmd, "--model 'size-xxl'",
 		"the check's model must be the --model sr-agent is invoked with")
 	// A concrete, comma-separated set passes straight through (sr-agent's --model
 	// takes exactly this format).
-	cmd = judgeCommand("/tmp/verify.sh", "claude-opus-5,size-md", nil, "")
+	cmd = judgeCommand("/tmp/verify.sh", "claude-opus-5,size-md", nil, nil, "")
 	assert.Contains(t, cmd, "--model 'claude-opus-5,size-md'")
 }
 
@@ -117,12 +117,12 @@ func TestJudgeCommand_CarriesCustomModel(t *testing.T) {
 // space-joined and quoted; a check that named none omits the flag so sr-agent
 // grants only the Write its own verdict file needs.
 func TestJudgeCommand_CarriesAllowedTools(t *testing.T) {
-	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Read", "WebFetch"}, "")
+	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Read", "WebFetch"}, nil, "")
 	assert.Contains(t, cmd, "--allowed-tools 'Read WebFetch'",
 		"the check's allowed_tools must reach sr-agent's --allowed-tools")
 
 	// None named: the flag is absent entirely.
-	bare := judgeCommand("/tmp/verify.sh", "size-md", nil, "")
+	bare := judgeCommand("/tmp/verify.sh", "size-md", nil, nil, "")
 	assert.NotContains(t, bare, "--allowed-tools",
 		"a judge that named no tools must not pass an empty --allowed-tools")
 }
@@ -131,10 +131,10 @@ func TestJudgeCommand_CarriesAllowedTools(t *testing.T) {
 // path may hold a space), so the judge can read the project it judges and never
 // write it; a judge with no workspace gets no project access.
 func TestJudgeCommand_CarriesTheWorkspaceAsAReadonlyDir(t *testing.T) {
-	cmd := judgeCommand("/tmp/verify.sh", "size-md", nil, "/work/my proj")
+	cmd := judgeCommand("/tmp/verify.sh", "size-md", nil, nil, "/work/my proj")
 	assert.Contains(t, cmd, "--add-dir:readonly '/work/my proj'")
 
-	bare := judgeCommand("/tmp/verify.sh", "size-md", nil, "")
+	bare := judgeCommand("/tmp/verify.sh", "size-md", nil, nil, "")
 	assert.NotContains(t, bare, "--add-dir", "no workspace, no project access")
 }
 
@@ -153,8 +153,32 @@ func TestWorkspaceNote(t *testing.T) {
 // into one single-quoted --allowed-tools argument, which sr-agent splits back
 // paren-aware, so `Bash(git show:*)` arrives whole.
 func TestJudgeCommand_ScopedToolRulesSurviveTheCommandLine(t *testing.T) {
-	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Bash(git show:*)", "WebFetch(domain:code.claude.com)"}, "")
+	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Bash(git show:*)", "WebFetch(domain:code.claude.com)"}, nil, "")
 	assert.Contains(t, cmd, "--allowed-tools 'Bash(git show:*) WebFetch(domain:code.claude.com)'")
+}
+
+// A check's disallowed_tools reach sr-agent as --disallowed-tools, joined and
+// quoted like allowed_tools, scoped rules whole; none named, no flag.
+func TestJudgeCommand_CarriesDisallowedTools(t *testing.T) {
+	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Bash(curl:*)"}, []string{"Bash(curl * -o *)", "Bash(curl * -d @*)"}, "")
+	assert.Contains(t, cmd, "--disallowed-tools 'Bash(curl * -o *) Bash(curl * -d @*)'")
+	assert.NotContains(t, judgeCommand("/tmp/verify.sh", "size-md", nil, nil, ""), "--disallowed-tools")
+}
+
+// The check's disallowed_tools reach the judgeCall the runner builds.
+func TestJudgeCheck_DisallowedToolsThreadToJudgeCall(t *testing.T) {
+	var got judgeCall
+	r := Runner{
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
+		runJudge: func(j judgeCall) (Verdict, error) {
+			got = j
+			return pass(), nil
+		},
+	}
+	req := gateReq([]declaration.Check{{Judge: "j.md.j2", DisallowedTools: []string{"Bash(curl * -o *)"}}}, nil)
+	_, err := r.Run(req)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bash(curl * -o *)"}, got.DisallowedTools)
 }
 
 // judgeCall.model() resolves the default when the check named none, so
@@ -165,7 +189,7 @@ func TestJudgeCall_ModelDefaultsToSizeMD(t *testing.T) {
 	assert.Equal(t, "size-lg", judgeCall{Model: "size-lg"}.model(), "a set model wins over the default")
 
 	// And the default reaches the command line when the check set no model.
-	cmd := judgeCommand("/tmp/verify.sh", judgeCall{}.model(), nil, "")
+	cmd := judgeCommand("/tmp/verify.sh", judgeCall{}.model(), nil, nil, "")
 	assert.Contains(t, cmd, "--model 'size-md'")
 }
 
