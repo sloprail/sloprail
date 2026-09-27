@@ -2,7 +2,7 @@ package harness
 
 import "testing"
 
-// Refused reads the harness's refusal marker, not the presence of a word.
+// Refused reads the real refusal tool_result, not the presence of a word.
 //
 // The helper this replaced substring-scanned the whole mock stream for
 // "deny"/"denied"/"block"/"blocked". The stream contains the agent's own tool
@@ -11,8 +11,8 @@ import "testing"
 // shipped, in 013 and 014, and every test asserting a refusal would have passed
 // on a permitted write as soon as a fixture used such a path.
 //
-// The streams below are real: captured from runs through the mock, trimmed to
-// the lines that carry the verdict.
+// The refusal streams below are the shape real Claude Code writes (harness-mocks
+// EVIDENCE.md: 67 such tool_results in real transcripts, all is_error).
 func TestRefused_ReadsTheMarkerNotAWord(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -36,17 +36,38 @@ func TestRefused_ReadsTheMarkerNotAWord(t *testing.T) {
 		},
 		{
 			// The channel this engine uses: permissionDecision "deny", exit 0.
+			// Real Claude Code answers the call with this tool_result.
 			name:    "refused via permissionDecision",
-			output:  `{"message":{"content":[{"content":"[{\"text\":\"Tool call blocked by a PreToolUse hook: guarded/ is off limits\",\"type\":\"text\"}]","is_error":true,"tool_use_id":"w1","type":"tool_result"}],"role":"user"},"type":"user"}`,
+			output:  `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"PreToolUse:Write hook error: guarded/ is off limits","is_error":true}]}}`,
 			refused: true,
 		},
 		{
-			// The other delivering channel: stderr at exit 2. It never becomes a
-			// tool_result, so it carries a different marker — which is why
-			// Refused knows both.
+			// Exit 2: the same tool_result, the reason quoted as
+			// "[<command>]: <stderr>".
 			name:    "refused via exit 2 on stderr",
-			output:  "claude-mock: PreToolUse hook blocked: hooks: command blocked: guarded/ is off limits\nhooks: command blocked: guarded/ is off limits\n",
+			output:  `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"PreToolUse:Write hook error: [sr-session pre-tool]: guarded/ is off limits","is_error":true}]}}`,
 			refused: true,
+		},
+		{
+			// The refusal's words in the agent's own tool input are not a
+			// refusal.
+			name: "the agent writes the refusal text into a file",
+			output: `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"w1","name":"Write","input":{"file_path":"a.md","content":"PreToolUse:Write hook error: nope"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"File written successfully to a.md","is_error":false}]}}`,
+			refused: false,
+		},
+		{
+			// Nor is a tool's successful output that happens to quote one.
+			name:    "a successful tool result quoting a refusal",
+			output:  `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b1","content":"PreToolUse:Bash hook error: from a log file","is_error":false}]}}`,
+			refused: false,
+		},
+		{
+			// The mock's former invented text is not a real refusal and must
+			// not count as one.
+			name:    "the mock's old invented marker",
+			output:  `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"Tool call blocked by a PreToolUse hook: x","is_error":true}]}}`,
+			refused: false,
 		},
 		{
 			name:    "a clean permitted write",

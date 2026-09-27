@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/sessionstate"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 const (
@@ -51,9 +52,14 @@ type Env struct {
 	home      string
 	configDir string // an isolated stand-in for ~/.claude
 	pluginDir string
-	repoRoot  string
-	mock      string
-	shimDir   string // a `claude` that is really the mock, ahead of the real one on PATH
+
+	// tmpDir is the mock's CLAUDE_CODE_TMPDIR: where it writes a background
+	// task's output file (<tmpdir>/claude-<uid>/<cwd>/<session>/tasks/), as real
+	// Claude Code does. Per test, so no run writes into the shared /tmp.
+	tmpDir   string
+	repoRoot string
+	mock     string
+	shimDir  string // a `claude` that is really the mock, ahead of the real one on PATH
 
 	// stopBlockCap, when > 0, sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's
 	// mock runs — how many times the mock re-runs the agent when a Stop hook
@@ -264,11 +270,12 @@ func New(t *testing.T) *Env {
 		home:         filepath.Join(root, "home"),
 		configDir:    filepath.Join(root, "claude-cfg"),
 		pluginDir:    filepath.Join(root, "plugins"),
+		tmpDir:       filepath.Join(root, "tmp"),
 		repoRoot:     repoRoot(t),
 		mock:         mock,
 		seenSessions: map[string]bool{},
 	}
-	for _, d := range []string{e.home, e.configDir, e.pluginDir} {
+	for _, d := range []string{e.home, e.configDir, e.pluginDir, e.tmpDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatalf("harness: mkdir %s: %v", d, err)
 		}
@@ -1910,55 +1917,89 @@ type Result struct {
 // refusal travels back in, or the agent's own output.
 func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) }
 
-// blockedMarkers are what the harness emits when a PreToolUse hook refused the
-// call. Measured through this harness, one channel per run, rather than guessed:
-// the two delivering channels do NOT share a marker.
+// Refusals returns the reason of every PreToolUse refusal in a run's stream, in
+// order.
 //
-//   - `permissionDecision: "deny"` at exit 0 — the channel this engine uses, see
-//     deny in hookio.go — turns the tool call into a tool_result with is_error
-//     true whose content is
+// Real Claude Code refuses a tool call by answering it with a tool_result whose
+// content is "PreToolUse:<Tool> hook error: <reason>" and is_error true — the
+// reason being "[<command>]: <stderr>" when the hook exited 2, and its
+// permissionDecisionReason when it denied in JSON at exit 0 (the channel this
+// engine uses, see deny in hookio.go). No attachment is written and the turn
+// goes on. The mock writes exactly that, on the stream and in the transcript
+// (harness-mocks EVIDENCE.md, "A PreToolUse refusal is the tool_result …").
+// The recogniser is the production one, transcript.HookRefusalReason, so the
+// harness and the engine cannot disagree about what a refusal looks like.
 //
-//     [{"text":"Tool call blocked by a PreToolUse hook: <reason>","type":"text"}]
-//
-//   - Exiting 2 with the reason on stderr never becomes a tool_result at all.
-//     The harness reports it on its own line, "claude-mock: PreToolUse hook
-//     blocked: ...", and the run carries no tool result for that call.
-//
-// Both are listed because a refusal is a refusal whichever channel carried it,
-// and a predicate that knew only the engine's current channel would silently
-// start answering "permitted" the day that changed. See refuseForBroken in
-// services/sr-session for the full measured table, including the channels that
-// deliver nothing.
-var blockedMarkers = []string{
-	"Tool call blocked by a PreToolUse hook",
-	"PreToolUse hook blocked",
-}
-
-// Refused reports whether the action was stopped before it happened.
-//
-// It reads the harness's own refusal marker rather than scanning the stream for
-// words. Two copies of a helper that scanned for "deny"/"denied"/"block"/
-// "blocked" anywhere in the output shipped in 013 and 014, and the stream
-// contains the agent's own tool input — the path it asked to write, and the
-// content. So a guardrail permitting EVERYTHING, writing to `deny/notes.md`,
-// produced "File written successfully" and a helper that answered "refused".
-//
-// That is not a cosmetic flaw. Every test asserting a refusal would pass on a
-// fully permitted write as soon as a trigger word appeared in the fixture, which
-// is precisely the reading a suite about fail-open must never get wrong. The
-// eight refusal-asserting tests in 013 and 014 were non-vacuous only by the
-// accident of using clean paths.
-//
-// One definition, in the harness, because both packages need the same answer and
-// two copies of a predicate are two chances to be wrong about it.
-func (r Result) Refused() bool {
-	for _, marker := range blockedMarkers {
-		if strings.Contains(r.Output, marker) {
-			return true
+// Read from the tool_result records, not by scanning the stream for words: the
+// stream also carries the agent's own tool input — the path it asked to write,
+// and the content — so a helper that scanned for "deny"/"blocked" anywhere
+// reported a fully PERMITTED write to `deny/notes.md` as refused. Two copies of
+// such a helper shipped in 013 and 014; every test asserting a refusal would
+// have passed on a permitted write as soon as a fixture used such a path.
+func (r Result) Refusals() []string {
+	var out []string
+	for _, line := range strings.Split(r.Output, "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		var blocks []struct {
+			Type    string          `json:"type"`
+			IsError bool            `json:"is_error"`
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_result" || !b.IsError {
+				continue
+			}
+			for _, body := range resultTexts(b.Content) {
+				if reason, ok := transcript.HookRefusalReason(body); ok {
+					out = append(out, reason)
+				}
+			}
 		}
 	}
-	return false
+	return out
 }
+
+// resultTexts is a tool_result's content as text: a plain string, or the text
+// of each text block in a list.
+func resultTexts(raw json.RawMessage) []string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return []string{s}
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil
+	}
+	var out []string
+	for _, b := range blocks {
+		if b.Type == "text" {
+			out = append(out, b.Text)
+		}
+	}
+	return out
+}
+
+// Refused reports whether a tool call in the run was stopped before it
+// happened by a PreToolUse hook. See Refusals.
+//
+// One definition, in the harness, because every package asserting a refusal
+// needs the same answer and two copies of a predicate are two chances to be
+// wrong about it.
+func (r Result) Refused() bool { return len(r.Refusals()) > 0 }
 
 // Permitted reports whether the action went through.
 //
@@ -2190,6 +2231,7 @@ func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ..
 		"HOME="+e.home,
 		"CLAUDE_CONFIG_DIR="+e.configDir,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
+		"CLAUDE_CODE_TMPDIR="+e.tmpDir,
 		// The session-identifying and harness-naming variables are the MOCK's to
 		// present, not the harness's: the mock takes --session-id (above) and sets
 		// CLAUDE_CODE_SESSION_ID on every hook/script env from it, and sets

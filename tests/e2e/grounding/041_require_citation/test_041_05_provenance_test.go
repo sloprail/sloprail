@@ -10,11 +10,15 @@ import (
 
 // What a tool_result citation may ground in is decided by the call the result
 // answers: a result whose call is not in the record is of unknown provenance,
-// and TaskOutput's result is tool output only for a background Bash — for a
-// background agent it is the agent's own reply. The mock runs Bash and Agent
-// calls in the background the way Claude Code does — the receipt naming the
-// task, the <task-notification> when it finishes, TaskOutput reading it back —
-// so these drive the real shapes rather than emitting them.
+// and a background agent's reply is model-written wherever it arrives. The mock
+// runs Bash and Agent calls in the background the way Claude Code does — the
+// receipt naming the task and its output file, the <task-notification> when it
+// finishes — so these drive the real shapes rather than emitting them.
+//
+// There is no TaskOutput here: real transcripts hold no call to it (harness-mocks
+// EVIDENCE.md), and the mock no longer answers it. A background command's output
+// reaches the record the way it reaches a real agent — by reading the output
+// file the receipt names.
 
 func provenanceProject(t *testing.T) (*harness.Env, string) {
 	t.Helper()
@@ -45,16 +49,16 @@ func TestT041_28_ResultOfUnknownProvenanceIsNotCitable(t *testing.T) {
 	}
 }
 
-// T041_29: TaskOutput reading a background Bash returns that command's output,
-// which grounds a tool_result citation.
-func TestT041_29_TaskOutputOfABackgroundBashIsCitable(t *testing.T) {
+// T041_29: a background Bash's output, read from the output file its receipt
+// names, is the Read tool's output and grounds a tool_result citation.
+func TestT041_29_ABackgroundBashsOutputReadFromItsFileIsCitable(t *testing.T) {
 	e, proj := provenanceProject(t)
 	e.Run(proj, "s-041-29", prompt, Turns("done",
 		harness.Background("bg1", "Bash", map[string]string{"command": "echo 'TASKBASH-3311 12 passed'", "description": "run the suite"}),
-		harness.TaskOutputOfLaunched("to1"),
+		harness.ReadLaunchedOutput("r1"),
 	))
 	record := readFile(t, e.TranscriptPath(proj, "s-041-29"))
-	for _, want := range []string{"Command running in background with ID: ", "<task-notification>", "TASKBASH-3311 12 passed"} {
+	for _, want := range []string{"Command running in background with ID: ", "TASKBASH-3311 12 passed"} {
 		if !strings.Contains(record, want) {
 			t.Fatalf("%q is not in the record, so this would not test it", want)
 		}
@@ -63,42 +67,34 @@ func TestT041_29_TaskOutputOfABackgroundBashIsCitable(t *testing.T) {
 		Bash("b1", `sr-file write memories/results.md --cite:tool_result 'TASKBASH-3311 12 passed' --content '# results'`),
 	))
 	if !e.Exists(proj, "memories/results.md") {
-		t.Fatalf("a background Bash's output read through TaskOutput did not ground a write:\n%s", res.Output)
+		t.Fatalf("a background Bash's output read from its output file did not ground a write:\n%s", res.Output)
 	}
 }
 
-// T041_30: TaskOutput reading a background agent returns the agent's reply —
-// model-written text — which does not ground a tool_result citation; nor does
-// a TaskOutput whose task nothing in the record launched. That last one the
-// mock cannot produce — it answers TaskOutput of an unknown task with an error,
-// as it should — so its result is emitted by the scenario.
-func TestT041_30_TaskOutputOfABackgroundAgentIsNotCitable(t *testing.T) {
+// T041_30: a background agent's reply — model-written text — arrives in the
+// <task-notification> that hands the finished task back (its <result>). That is
+// a harness-injected user turn, not a tool's output, and does not ground a
+// tool_result citation.
+func TestT041_30_ABackgroundAgentsReplyIsNotCitable(t *testing.T) {
 	e, proj := provenanceProject(t)
 	reply := subagentScript(t, harness.Turns("TASKAGENT-7702 all 40 tests pass"))
-	stray, strayOut := harness.CallWithOutput("to2", "TaskOutput", map[string]string{"task_id": "never-launched"}, "TASKSTRAY-1188 all green")
 	e.Run(proj, "s-041-30", prompt, Turns("done",
 		harness.Background("ag1", "Agent", map[string]string{"prompt": "run the suite", "description": "background", "script": reply}),
-		harness.TaskOutputOfLaunched("to1"),
 	))
-	e.Run(proj, "s-041-30", "read the other", Turns("done", stray, strayOut))
 	record := readFile(t, e.TranscriptPath(proj, "s-041-30"))
-	for _, want := range []string{"Async agent launched successfully.", "agentId: ", "TASKAGENT-7702", "TASKSTRAY-1188"} {
+	for _, want := range []string{"Async agent launched successfully.", "<task-notification>", "TASKAGENT-7702"} {
 		if !strings.Contains(record, want) {
 			t.Fatalf("%q is not in the record, so this would not test it", want)
 		}
 	}
-	res := e.Run(proj, "s-041-30", "write them down", Turns("done",
+	res := e.Run(proj, "s-041-30", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/agent.md --cite:tool_result 'TASKAGENT-7702 all 40 tests pass' --content '# results'`),
-		Bash("b2", `sr-file write memories/stray.md --cite:tool_result 'TASKSTRAY-1188 all green' --content '# results'`),
 	))
-	if !res.Saw("b2") {
-		t.Fatalf("the citing calls never ran:\n%s", res.Output)
+	if !res.Saw("b1") {
+		t.Fatalf("the citing call never ran:\n%s", res.Output)
 	}
 	if e.Exists(proj, "memories/agent.md") {
-		t.Errorf("a background agent's reply read through TaskOutput grounded a write:\n%s", res.Output)
-	}
-	if e.Exists(proj, "memories/stray.md") {
-		t.Errorf("TaskOutput of a task nothing launched grounded a write:\n%s", res.Output)
+		t.Errorf("a background agent's reply grounded a write:\n%s", res.Output)
 	}
 }
 

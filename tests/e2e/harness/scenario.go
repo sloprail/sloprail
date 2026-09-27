@@ -21,15 +21,16 @@ type Scenario struct {
 // Turn is one assistant action.
 type Turn struct {
 	jsonl string
-	// launchedTask marks a turn whose jsonl names the most recently launched
-	// background task as @@LAUNCHED_TASK@@, filled in when the turn is emitted —
-	// the id is minted by the mock at launch and only its receipt says what it is.
-	launchedTask bool
+	// launchedOutput marks a turn whose jsonl names the output file of the most
+	// recently launched background command as @@LAUNCHED_OUTPUT@@, filled in when
+	// the turn is emitted — the mock picks the file at launch, and only its
+	// receipt says where it is, as it does for a real agent.
+	launchedOutput bool
 }
 
-// launchedTaskPlaceholder is replaced by the id of the most recently launched
-// background task when a launchedTask turn is emitted.
-const launchedTaskPlaceholder = "@@LAUNCHED_TASK@@"
+// launchedOutputPlaceholder is replaced by the output file of the most recently
+// launched background command when a launchedOutput turn is emitted.
+const launchedOutputPlaceholder = "@@LAUNCHED_OUTPUT@@"
 
 // Turns builds a scenario ending in the given assistant text.
 func Turns(finalText string, turns ...Turn) Scenario {
@@ -396,16 +397,16 @@ func (s Scenario) script() string {
 	for i, t := range s.turns {
 		marker := fmt.Sprintf("slop-turn-%d-%s", i, turnID(t.jsonl))
 		line := injectMarker(t.jsonl, marker)
-		if t.launchedTask {
-			// The receipt a background launch was answered with names its id:
-			// "Command running in background with ID: <id>" for a Bash,
-			// "agentId: <id>" for an Agent. The latest one is the task meant.
+		if t.launchedOutput {
+			// A background command's receipt names its output file: "Output is
+			// being written to: <file>. You will be notified …". The latest one
+			// is the command meant.
 			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
-  TASK="$(printf '%%s' "$SESS" | grep -o 'running in background with ID: [A-Za-z0-9_-]*\|agentId: [A-Za-z0-9_-]*' | tail -1 | sed 's/.*: //')"
-  printf '%%s\n' %s | sed "s/%s/$TASK/"
+  OUT="$(printf '%%s' "$SESS" | grep -o 'Output is being written to: [^ ]*\.output' | tail -1 | sed 's/.*: //')"
+  printf '%%s\n' %s | sed "s|%s|$OUT|"
   exit 0
 fi
-`, marker, shQuote(line), launchedTaskPlaceholder)
+`, marker, shQuote(line), launchedOutputPlaceholder)
 			continue
 		}
 		fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
@@ -605,7 +606,9 @@ func CompactNamingUnwrittenParent(id string) Turn {
 // run_in_background — which the mock answers the way real Claude Code does: at
 // once, with a receipt naming the task ("Command running in background with
 // ID: …" / "Async agent launched successfully. … agentId: …"), and later with a
-// <task-notification> turn when the task finishes.
+// <task-notification> when the task finishes. The harness gives every run its
+// own CLAUDE_CODE_TMPDIR, so the task's output file is inside the test's
+// sandbox, not the shared /tmp.
 func Background(id, name string, input map[string]string) Turn {
 	in := map[string]string{"run_in_background": "true"}
 	for k, v := range input {
@@ -614,9 +617,12 @@ func Background(id, name string, input map[string]string) Turn {
 	return Turn{jsonl: toolUse(id, name, in)}
 }
 
-// TaskOutputOfLaunched reads the most recently launched background task back
-// through TaskOutput, which the mock answers with the task's output (a Bash's
-// output, an Agent's reply).
-func TaskOutputOfLaunched(id string) Turn {
-	return Turn{jsonl: toolUse(id, "TaskOutput", map[string]string{"task_id": launchedTaskPlaceholder}), launchedTask: true}
+// ReadLaunchedOutput reads the output file of the most recently launched
+// background command with the Read tool — the way a real agent gets a
+// background command's output: its receipt says "To check interim output, use
+// Read on that file path", and the <task-notification> that follows carries
+// only a summary, never the output. (There is no TaskOutput tool: real
+// transcripts hold no call to it.)
+func ReadLaunchedOutput(id string) Turn {
+	return Turn{jsonl: toolUse(id, "Read", map[string]string{"file_path": launchedOutputPlaceholder}), launchedOutput: true}
 }
