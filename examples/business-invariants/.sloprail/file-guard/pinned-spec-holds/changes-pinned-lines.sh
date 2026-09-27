@@ -165,20 +165,29 @@ if [ "$has_head" = 1 ]; then
 fi
 all_fqns="$({ printf '%s\n' "$tree" "$committed"; printf '%s\n' "$old"; } | fqns_in | sort -u)"
 
+# A pin this cannot decide applies the citation, but only after every other pin
+# was compared: when a real pinned line changed, the refusal says so, rather than
+# naming an unreadable marker (a placeholder in a skill's example, say).
 changed=""
+undecided=""
 while IFS= read -r fqn; do
   [ -n "$fqn" ] || continue
   parse "$fqn"
   valid=$?
   [ "$f_path" = "$npath" ] || continue
-  [ "$valid" = 0 ] || apply "This change touches $path, which the sr:invariant marker '$fqn' pins with a sha or line range that is not a real one, so which lines it pins cannot be told."
+  if [ "$valid" != 0 ]; then
+    : "${undecided:=This change touches $path, which the sr:invariant marker '$fqn' pins with a sha or line range that is not a real one, so which lines it pins cannot be told.}"
+    continue
+  fi
   [ "$new_known" = 1 ] || apply "This change touches $path, which code in this project pins as a business rule (L$f_start-$f_end), and what it would leave cannot be worked out before it runs."
   if [ "$had_old" = 1 ]; then
     before="$(lines "$old" "$f_start" "$f_end")"
   else
     # Created where HEAD has nothing: what it must still say is the pinned text.
-    blob="$(git -C "$workspace" cat-file blob "$f_sha:$f_path" 2>/dev/null)" \
-      || apply "This change creates $path, which code in this project pins as a business rule (L$f_start-$f_end), and the pinned text could not be read to compare."
+    if ! blob="$(git -C "$workspace" cat-file blob "$f_sha:$f_path" 2>/dev/null)"; then
+      : "${undecided:=This change creates $path, which code in this project pins as a business rule (L$f_start-$f_end), and the pinned text could not be read to compare.}"
+      continue
+    fi
     before="$(lines "$blob" "$f_start" "$f_end")"
   fi
   after="$(lines "$new" "$f_start" "$f_end")"
@@ -221,7 +230,10 @@ $old_fqns
 EOF
 fi
 
-[ -n "$changed$moved" ] || exit 1
+if [ -z "$changed$moved" ]; then
+  [ -n "$undecided" ] && apply "$undecided"
+  exit 1
+fi
 
 # It applies. The hint the refusal carries: a pinned rule is the user's decision.
 what=""

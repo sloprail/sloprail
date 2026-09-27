@@ -223,3 +223,33 @@ func TestT046_19_RepinToSameWordingNeedsNothing(t *testing.T) {
 		t.Errorf("the same-wording re-pin did not land")
 	}
 }
+
+// T046_27: a marker whose pin is not a real one — the placeholder in a skill's
+// example, as the goodwill-refund eval's overlay carries — cannot say which lines
+// it pins, so a change to its path needs the citation. But when a real pinned
+// line changed too, the refusal names that line, not the placeholder: a real run
+// was told only about the placeholder and never learned rule 2 was pinned.
+func TestT046_27_UnreadablePinDoesNotHideTheRealOne(t *testing.T) {
+	e := newEnv(t)
+	proj := pinnedSpecProject(t, e)
+	e.WriteFile(proj, ".claude/skills/pin/SKILL.md",
+		"Add, as its own line:\n\n```\n// sr:invariant \"<repo>@<sha>:SPEC.md#L<start>-<end>\"\n```\n")
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "a skill with a placeholder marker")
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	res := e.Run(proj, "s-046-27", "allow goodwill refunds", Turns("done",
+		Write("w1", "SPEC.md", relaxedSpec),
+	))
+	if !res.Refused() || !res.Saw("rewrites SPEC.md L3-3") {
+		t.Fatalf("the refusal did not name the pinned line that changed:\n%s", res.Output)
+	}
+
+	edited := strings.Replace(billingSpec, "never be negative", "never be below zero", 1)
+	res = e.Run(proj, "s-046-27b", "reword rule 1", Turns("done",
+		Write("w1", "SPEC.md", edited),
+	))
+	if !res.Refused() || !res.Saw("not a real one") {
+		t.Fatalf("with an unreadable pin on SPEC.md, a change to it was not refused as undecidable:\n%s", res.Output)
+	}
+}
