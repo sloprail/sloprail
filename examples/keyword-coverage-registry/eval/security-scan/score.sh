@@ -38,7 +38,9 @@ also doing a genuinely useful search and writing an accurate summary."
 GUARDRAIL="A gate (verify-scanner-coverage) fires at Stop only when a
 scanner was declared this session (context match skips otherwise). It
 refuses if no single gh call's query text contained every one of the
-declared scanner's keywords together. A second guard (scanner-keywords-hold)
+declared scanner's keywords together — ONE such call anywhere in the run
+satisfies it, however many narrower searches ran besides, and a gate that stays
+silent at Stop was satisfied, not skipped. A second guard (scanner-keywords-hold)
 refuses a write that DROPS a declared keyword unless it cites the user asking
 for it: the healthy answer to a coverage refusal is a search covering every
 keyword, not a scanner weakened to fit the search already run. A markdown file written with NO
