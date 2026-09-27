@@ -108,10 +108,21 @@ them, not by the file name.
 
 ### What it refuses
 
-A write changes what a marker pins in either of two ways, and the predicate
-refuses to waive the citation for both:
+A write needs the user's words in any of three cases, and the predicate refuses
+to waive the citation for each:
 
-- **It changes a pinned spec line** — an edit, a delete, or a create at a path
+- **It changes a spec some marker pins, anywhere in it.** A pinned spec holds
+  the user's business rules, like an ask: a new rule, a rewording, an exception
+  on a line of its own all need the user's words asking for that change, and the
+  judge checks the cited words ask for it. A real run added an uncited "3. A
+  goodwill refund may include a $5 courtesy credit on top of the charge." beside
+  the pinned "2. A refund must never exceed the original charge amount." and left
+  the spec contradicting itself (goodwill-refund-commits, 231517Z). A spec no
+  pin names is edited freely.
+
+- **It changes a pinned spec line** — the stronger case: the judge checks the
+  user asked for the rule itself to change, not only for a feature that
+  conflicts with it. An edit, a delete, or a create at a path
   HEAD still holds (`git mv SPEC.md SPEC.old` is not seen as a delete, so the
   Write that puts a relaxed SPEC.md back is a create). The pinned lines are read
   from every marker in the working tree **and at HEAD**, so dropping or moving
@@ -137,10 +148,16 @@ marker onto something that is not the code does not help: `pinned-invariant`
 judges the marked code wherever the marker lands.
 
 **An exception on a line of its own** ("3a. Goodwill refunds are exempt from rule
-2") is admitted: no pin names that line, and the code's pin still names rule 2
-alone, which `pinned-invariant` keeps judging it against. The risk is the next
-step — re-pinning the code to take the exception in — and that is refused
-without the user's words.
+2") is a change to the pinned spec, so it needs the user's words; and the judge
+fails a line that narrows or carves an exception out of a pinned rule unless the
+cited words ask for that rule to change. Re-pinning the code to take such a line
+in is refused without them as well.
+
+**A refused cited change is refused again.** The judge rules on the change and
+the words it cites; sending the same change with the same words gets the same
+verdict. Every refusal says so, and says what to do instead: keep the rule, undo
+any code that breaks it, tell the user. (A real run re-sent the same refused
+`sr-file edit` before stopping; the eval scorers fail a run that does.)
 
 ### What it cannot decide
 
@@ -172,7 +189,10 @@ all (a script rewriting the file) is caught at Stop, against the session's
 baseline. So is one command touching several files: the engine asks a
 preventive guard about the first file a command touches and not again, so `rm
 a.go b.go` of two files carrying the same pin is let through (each sees the
-other still holding it) and both deletes are refused at Stop.
+other still holding it) and both deletes are refused at Stop. That pre-write gap
+is the engine's (its preventive dispatch stops after a command's first file) and
+is scheduled as an engine follow-up; until then the Stop check is the guard for
+it (T046_47).
 
 **A known gap: rewriting history.** The Stop check measures from the commit the
 session started on, and the engine takes a new starting point when that commit

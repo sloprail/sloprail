@@ -6,11 +6,12 @@
 # must never exceed the original charge" and re-pinned its code to the new line.
 #
 # The requirement is declared, conditionally: `when` changes-pinned-lines.sh says
-# the write changes a pinned line, or moves code's pin off the wording it pinned
-# (the marker removed, or re-pinned to different text). An uncited change is
-# refused before any check, with the script's hint. A cited one goes to the judge,
-# which checks the cited words ask for the rule to change, not merely for a
-# feature that conflicts with it.
+# the write changes a spec some pin names (anywhere in it: a pinned spec holds the
+# user's business rules), or moves code's pin off the wording it pinned (the
+# marker removed, or re-pinned to different text). An uncited change is refused
+# before any check, with the script's hint. A cited one goes to the judge, which
+# checks the cited words ask for that change — for a pinned line, for the rule
+# itself to change, not merely for a feature that conflicts with it.
 #
 # Matches only the files a pin can involve, not every path. A preventive guard
 # refuses any write whose result the engine cannot work out ahead (`sed -i`, `>`,

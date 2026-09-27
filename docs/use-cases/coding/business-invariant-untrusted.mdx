@@ -56,10 +56,12 @@ that marker, not off a path, so it fires wherever the marked code lives.
 
 Pinning the code to the spec opens a second way out: rewrite the spec line to
 agree with the code, or re-pin the code to looser wording. A second file-guard,
-`pinned-spec-holds`, closes it. A write that changes a pinned spec line, or that
-moves or removes a pin, must cite the user's own words, and a judge checks that
-those words ask for the rule to change rather than for a feature that conflicts
-with it.
+`pinned-spec-holds`, closes it. A spec that code pins holds the user's business
+rules, so any change to it — a pinned line, a new rule, an exception on a line of
+its own — and any write that moves or removes a pin, must cite the user's own
+words, and a judge checks that those words ask for that change; for a pinned
+line, that they ask for the rule itself to change rather than for a feature that
+conflicts with it.
 
 Both are **file-guards**: they run against the write itself, and the markers
 decide which files carry an invariant and which spec lines are pinned.
@@ -111,10 +113,10 @@ carrying an `invariant` marker before or after the write. A preventive guard
 refuses a shell edit it cannot work out ahead on every file it matches, so
 matching every path would refuse every `sed -i` in the project.
 `changes-pinned-lines.sh` is the `when` of a user citation: it applies the
-requirement when the write changes a spec line a marker pins (in the working tree
-or at HEAD) or moves a marker off the wording it pinned — marked code moved to
-another file keeps its pin — and waives it only when it has decided the write
-changes neither. `only-when-pinned.sh` asks the judge about exactly those writes.
+requirement when the write changes a spec some marker pins (in the working tree
+or at HEAD) — any line of it — or moves a marker off the wording it pinned —
+marked code moved to another file keeps its pin — and waives it only when it has
+decided the write does neither. `only-when-pinned.sh` asks the judge about exactly those writes.
 
 <Code code={holdsYaml} lang="yaml" title=".sloprail/file-guard/pinned-spec-holds/file-guard.yaml" />
 <Code code={changesSh} lang="bash" title=".sloprail/file-guard/pinned-spec-holds/changes-pinned-lines.sh" />
