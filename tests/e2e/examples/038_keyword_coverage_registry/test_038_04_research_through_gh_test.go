@@ -147,7 +147,7 @@ func TestT038_16_SearchWithoutScannerRefused(t *testing.T) {
 			if !res.Refused() {
 				t.Fatalf("an undeclared gh search was not refused: %s\n%s", command, res.Output)
 			}
-			if !res.Saw(searchRefusal) || !res.Saw("/scanner.yaml with the Write tool") || !res.Saw("search-needs-declared-scanner") {
+			if !res.Saw(searchRefusal) || !res.Saw("scanners/token-leaks/scanner.yaml") || !res.Saw("search-needs-declared-scanner") {
 				t.Errorf("the refusal does not carry the remedy and gate name:\n%s", res.Output)
 			}
 			if res.Saw("stub-gh search") {
@@ -302,4 +302,38 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+// T038_26: the search refusal names a near-miss scanner and says where a
+// scanner must be. Found on a real unprimed run: the agent wrote
+// `.sloprail/scanners/auth-token-logs.yaml`, was refused with the generic text
+// three times, and gave up on searching. And a scanner in the right place that
+// this session never registered is named with the fix for it.
+func TestT038_26_SearchRefusalNamesTheNearMiss(t *testing.T) {
+	t.Run("wrong path", func(t *testing.T) {
+		e, proj := researchProject(t)
+		res := e.Run(proj, "s-038-26a", "research auth token leaks", Turns("done",
+			Write("w1", ".sloprail/scanners/auth-token-logs.yaml", activeScanner),
+			Bash("b1", stubbed(`gh search issues "auth token leaked logs"`)),
+		))
+		if !res.Refused() {
+			t.Fatalf("a search after a misplaced scanner was not refused:\n%s", res.Output)
+		}
+		if !res.Saw("Not a scanner: .sloprail/scanners/auth-token-logs.yaml") || !res.Saw("named exactly scanner.yaml") {
+			t.Errorf("the refusal does not name the misplaced file and the right shape:\n%s", res.Output)
+		}
+	})
+
+	t.Run("right path, not registered", func(t *testing.T) {
+		e, proj := researchProject(t)
+		e.WriteFile(proj, "scanners/mine/scanner.yaml", activeScanner)
+		e.Git(proj, "add", "-A")
+		e.Git(proj, "commit", "-m", "scanner")
+		res := e.Run(proj, "s-038-26b", "research guardrails", Turns("done",
+			Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
+		))
+		if !res.Refused() || !res.Saw("scanners/mine/scanner.yaml is in the right place but was not registered") {
+			t.Fatalf("the refusal does not explain the unregistered scanner:\n%s", res.Output)
+		}
+	})
 }

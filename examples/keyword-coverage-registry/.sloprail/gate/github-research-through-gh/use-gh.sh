@@ -33,7 +33,7 @@ esac
 
 jq -n --arg why "$why" '{reason: (
   $why + " "
-  + "To search GitHub: declare the scanner first — write scanners/<name>/scanner.yaml with the Write tool (active: true, and a keywords: list naming every keyword the topic requires) — "
+  + "To search GitHub: declare the scanner first — with the Write tool, write a file named exactly scanner.yaml in its own folder under scanners/ (e.g. scanners/token-leaks/scanner.yaml) holding active: true and a keywords: list naming every keyword the topic requires — "
   + "then run ONE gh search whose query contains all of those keywords, e.g. gh search issues \"<keyword> <keyword>\" (or gh search code / gh search repos)."
 )}'
 exit 1
