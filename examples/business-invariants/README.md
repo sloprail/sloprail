@@ -113,6 +113,10 @@ refuses to waive the citation for both:
 - **It moves the code off the wording it was pinned to** — a marker removed (or
   its file deleted), or re-pinned to different text. A re-pin to the same text at
   a new place (a line inserted above the rule) changes nothing and needs nothing.
+  Only the pins the file held before the session's work count — HEAD's before a
+  write, the session baseline's at Stop — so a pin the agent wrote this session
+  can be corrected freely, and so can a pin that is not a real one (it pinned
+  nothing).
 
 **Moving marked code is not dropping its pin.** A pin that leaves one file while
 another file in the working tree carries it (the same fqn, or a pin to the same
