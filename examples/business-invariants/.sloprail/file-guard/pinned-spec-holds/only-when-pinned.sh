@@ -18,5 +18,7 @@ fi
 
 what="$(printf '%s' "$out" | jq -r '.what // .hint // empty' 2>/dev/null)"
 [ -n "$what" ] || what="Whether this change touches a pinned rule could not be decided (the check deciding it exited $rc). Judge it as a change to a pinned rule."
+# The template reads additionalContext.what, and an undefined key fails the render
+# closed, so even the fallback carries it.
 jq -n --arg what "$what" '{additionalContext: {what: $what}}' 2>/dev/null \
-  || printf '{"additionalContext": {}}\n'
+  || printf '{"additionalContext": {"what": "What this change does to a pinned rule could not be described. Judge it as a change to a pinned rule."}}\n'

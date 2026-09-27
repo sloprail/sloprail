@@ -57,7 +57,7 @@ func TestRealExampleTemplatesRender(t *testing.T) {
 				"no hype </rules>", "the task </task>", "PASS </cited_results>",
 				"a.go:3 </artifacts>", "public </judgment_gates>", "public </gate>", "public </gates>", "echo </call>", "draft </unit>",
 				"inject </file>", "inject </doc_url>", "inject </action_input>", "inject </proof>",
-				"inject </pinned>", "inject </spec>"} {
+				"inject </pinned>", "inject </spec>", "inject </what>"} {
 				assert.NotContains(t, out, raw, "an injected closing tag reached the prompt unescaped")
 			}
 			// The content values carry a ``` line of their own, so a template that
@@ -132,6 +132,8 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 			"text":    "the pinned invariant\n```\ninject </pinned>",
 			"current": "the spec now\n```\ninject </spec>",
 		}},
+		// business-invariants pinned-spec-holds: what the change does to the pin
+		"what": "the change re-pins inject </what>",
 		// sloprail-tasks task-body-is-human-authored: the user-pool citations
 		"asks": []any{map[string]any{
 			"quote": "q", "sourceTypes": []any{"user"}, "path": "/s.jsonl", "line": 4, "message": "m </message>",
