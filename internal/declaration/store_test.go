@@ -597,6 +597,33 @@ checks:
 	assert.Contains(t, iv.Reason, "paht")
 }
 
+// A gate comparing a flag's value to a string is refused at load: every
+// `.flags.X` is the list of that flag's occurrences, so `.flags.tag == "next"`
+// could never match — the gate loaded and permitted `--tag=next` in silence.
+// The list spelling of the same rule loads.
+func TestLoad_Gate_FlagComparedToAStringRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/next-tag/gate.yaml": `
+on:
+  - event: PreCommandInvoke
+    match: any(event.invocations, .bin == "npm" and .flags.tag == "next")
+checks:
+  - script: ./s.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadMatch), "a gate comparing a list-valued flag to a string is refused: %v", iv.Reason)
+
+	loadOK(t, map[string]string{
+		"gate/next-tag/gate.yaml": `
+on:
+  - event: PreCommandInvoke
+    match: any(event.invocations, .bin == "npm" and "next" in .flags.tag)
+checks:
+  - script: ./s.sh
+`,
+	})
+}
+
 // A gate on Stop is legal (the one non-file/command event a gate carries).
 func TestLoad_Gate_StopIsValid(t *testing.T) {
 	loadOK(t, map[string]string{

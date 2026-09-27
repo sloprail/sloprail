@@ -136,7 +136,11 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
   of every occurrence, in order — `--tag=a --tag=b` is `["a", "b"]`, a flag given
   once is a one-element list, and a valueless flag carries `""`. Only the inline
   `--flag=value` form carries a value; a separated `--flag value` is `[""]` with
-  `value` left in `.argv`.
+  `value` left in `.argv`. The keys are open but the values are declared, so a
+  comparison a list can never satisfy (`.flags.tag == "next"`, `.flags.tag
+  startsWith "n"`) is refused when the rule loads: write `"next" in .flags.tag`.
+  `len(.flags.access) > 0` means the flag was given at all; "given a non-empty
+  value" is `any(.flags.access, # != "")`.
 - `.cwd` — string, the directory the program runs in as far as the line says,
   threaded through every `cd` ahead of it (a subshell's `cd` stays inside the
   subshell): `"."` is where the line started, `"sub/dir"` is relative to that,

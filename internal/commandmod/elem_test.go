@@ -117,17 +117,56 @@ func TestArgvStringPredicatesStillLoad(t *testing.T) {
 // everything" change. A flag name belongs to the command being run, so
 // enumerating them here would refuse `--access` because this engine has not
 // heard of npm — the checker punishing an author for our missing vocabulary
-// rather than for their mistake. fieldType leaves such a map at types.Any for
-// exactly this reason.
+// rather than for their mistake. The KEYS stay open; every VALUE is declared a
+// list of strings (TestFlagValueIsAListAtLoad), so the reads here are the list
+// spellings.
 func TestFlagsStayOpen(t *testing.T) {
 	k := kindDecl(t, commandmod.KindPreInvoke)
 
 	for _, src := range []string{
-		`any(invocations, .flags.access == "public")`,
+		`any(invocations, "public" in .flags.access)`,
 		`any(invocations, "force" in .flags)`,
-		`any(invocations, .flags.anythingAtAll == "")`,
+		`any(invocations, "" in .flags.anythingAtAll)`,
+		`any(invocations, len(.flags.access) > 0)`,
+		`any(invocations, .flags.tag[0] == "next")`,
+		`any(invocations, .flags.tag[-1] startsWith "n")`,
+		`any(invocations, any(.flags.tag, # == "next"))`,
 	} {
 		_, err := guardrail.CompileMatcherFor(src, k)
 		assert.NoErrorf(t, err, "a flag name is the command's, not this module's: %s", src)
 	}
+}
+
+// TestFlagValueIsAListAtLoad.
+//
+// Every `.flags.X` value is the list of that flag's occurrences, so a rule
+// comparing one to a string — the spelling from when a flag was one string —
+// could never match again. That fails OPEN, silently: a gate on
+// `.flags.tag == "next"` loaded and permitted `--tag=next`. Declaring the
+// values a list makes the checker refuse the comparison when the rule loads, so
+// the rule is reported instead of quietly guarding nothing.
+func TestFlagValueIsAListAtLoad(t *testing.T) {
+	k := kindDecl(t, commandmod.KindPreInvoke)
+
+	for _, src := range []string{
+		`any(invocations, .bin == "npm" and .flags.tag == "next")`,
+		`any(invocations, .flags.tag != "next")`,
+		`any(invocations, .flags["tag"] == "next")`,
+		`any(invocations, .flags.tag startsWith "n")`,
+		`any(invocations, .flags.tag endsWith "t")`,
+		`any(invocations, .flags.tag contains "ex")`,
+		`any(invocations, .flags.tag matches "^n")`,
+		`any(invocations, lower(.flags.tag) == "next")`,
+		`any(invocations, .flags.access == "")`,
+	} {
+		_, err := guardrail.CompileMatcherFor(src, k)
+		assert.Errorf(t, err, "a flag's value is a list; comparing it to a string must be refused at load: %s", src)
+	}
+
+	// And what such a rule meant still loads, and matches.
+	m, err := guardrail.CompileMatcherFor(`any(invocations, .bin == "npm" and "next" in .flags.tag)`, k)
+	require.NoError(t, err)
+	ok, err := m.Match(commandmod.ExtractCommand(`npm publish --tag=next`).Event())
+	require.NoError(t, err)
+	assert.True(t, ok, "the list spelling matches the flag it names")
 }

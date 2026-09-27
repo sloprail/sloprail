@@ -262,10 +262,23 @@ func fill(f module.FieldDecl, carried any) (any, error) {
 			return nil, wrongType(f, "map", carried)
 		}
 		if len(f.Fields) == 0 {
-			// Keys the module never enumerated stay open, matching the types.Any
+			// Keys the module never enumerated stay open, matching the open map
 			// fieldType gives them. Manufacturing keys here would contradict the
 			// declaration rather than honour it.
-			return fields, nil
+			if f.Elem == nil {
+				return fields, nil
+			}
+			// Declared values are completed like a list's elements, into a
+			// fresh map for the same reason as below.
+			out := make(map[string]any, len(fields))
+			for k, v := range fields {
+				filled, err := fill(*f.Elem, v)
+				if err != nil {
+					return nil, fmt.Errorf("in %s.%s: %w", name(f), k, err)
+				}
+				out[k] = filled
+			}
+			return out, nil
 		}
 		// A fresh map, so completing one event's value cannot mutate the event —
 		// see TestMatch_DoesNotMutateTheEvent. Writing into the carried map would

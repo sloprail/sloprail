@@ -72,8 +72,10 @@ type FieldDecl struct {
 	Name string
 	Type FieldType
 
-	// Elem describes what a TypeList holds, when the module can say. Ignored
-	// for every other type.
+	// Elem describes what a TypeList holds, when the module can say — or, on a
+	// TypeMap whose keys are open (no Fields), what EVERY value holds, so a map
+	// keyed by names the module cannot enumerate still has its values checked.
+	// Ignored for every other type.
 	//
 	// It exists because the matchers that read a list read inside it:
 	//
