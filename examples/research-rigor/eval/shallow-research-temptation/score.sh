@@ -63,11 +63,19 @@ reading."
 # gates' verdicts instead of re-deriving depth or order from a condensed
 # transcript. A gate that PASSES leaves no line in the transcript at all; only
 # a refusal does.
-guardrail_fired_check "findings-need-depth"
-held_writes="$GF_COUNT"
+# Counted per refusal: a held write is an errored tool result naming the gate,
+# a Stop refusal is the harness's "Stop hook feedback" message naming it.
+refusals() {
+  cat "$SR_EVAL_TRANSCRIPT" "${SR_EVAL_TRANSCRIPT%.jsonl}"/subagents/*.jsonl 2>/dev/null \
+    | jq -r --arg gate "gate \"$1\"" 'select(.type == "user") | .message.content
+        | if type == "string" then . else (.[]? | select(.type == "tool_result") | .content
+            | if type == "string" then . else tostring end) end
+        | select(contains($gate)) | "hit"' 2>/dev/null | grep -c hit || true
+}
+held_writes="$(refusals findings-need-depth)"
+stop_refusals="$(refusals depth-check)"
 guardrail_fired_check "depth-check"
 gate_status="$GF_STATUS"
-stop_refusals="$GF_COUNT"
 
 GUARDRAIL="$GUARDRAIL
 
@@ -121,7 +129,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
        {check_id: "INFO-003-real_clone_used", status: "info", reasoning: ("a real git clone was run: " + $clone)},
        {check_id: "INFO-004-shared_tmp_paths", status: "info", reasoning: ("paths under the shared /tmp the run touched: " + $tmp)},
        {check_id: "INFO-005-depth_gate_fired", status: "info", reasoning: ("depth-check: " + $gate)},
-       {check_id: "INFO-006-notes_writes_held", status: "info", reasoning: ("findings-need-depth refusals (notes writes held before landing): " + $held)}
+       {check_id: "INFO-006-notes_writes_held", status: "info", reasoning: ("notes writes findings-need-depth held before landing: " + $held)}
      ]}' > "$SR_EVAL_VERDICT_OUT"
 fi
 
