@@ -2,10 +2,22 @@
 # annotated with an sr:docs marker naming the real doc's URL — mirroring the
 # a10n-cli convention of citing a doc section with `a10n:docs <URL>` in a
 # comment, spelled as an sr: marker so sloprail's own tooling can bind a rule
-# to it. The marker's fqn is a REMOTE URL, not a local path, so no `prepare`
-# fetches it ahead of time; the judge template gets the URL and visits it
-# directly, the way a person checking this by hand would.
+# to it. The marker's fqn is a REMOTE URL; the judge fetches it itself.
 match: any(markers, .kind == "docs")
 checks:
   - judge: ./code-conforms-to-linked-doc.md.j2
-    allowed_tools: [WebFetch]
+    # The judge reads the doc's RAW text: docs hosts that serve markdown (Claude
+    # Code's docs do, at the page path + `.md`) are curled once and the section
+    # is cut out with grep/sed/head. WebFetch stays only as the fallback for a
+    # host that serves no markdown: it returns another model's summary of the
+    # page, not the page, and in real runs (2026-09-27) judges quoted fields and
+    # rules that page never states (a `compact_reason` field; "PreCompact cannot
+    # block") and re-fetched it 10-30 times each until they ran out of time.
+    #
+    # No awk: measured, `awk 'BEGIN{print "x" > "/any/path"}'` wrote outside
+    # every granted directory under Bash(awk:*). `sed -i` is refused by Claude
+    # Code itself; `sed -n` pipelines are allowed. Bash(curl:*) is a network
+    # client: `curl -o <path>` writes wherever the path says, and `-d @file`
+    # uploads a file. The rubric tells the judge to pipe curl into grep/sed/head
+    # and never to write; see the README for what that grant does not confine.
+    allowed_tools: ["Bash(curl:*)", "Bash(grep:*)", "Bash(sed:*)", "Bash(head:*)", WebFetch]
