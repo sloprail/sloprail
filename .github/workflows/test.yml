@@ -30,8 +30,81 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # changes decides whether this push touched anything unit/e2e/install-sh
+  # could actually catch a regression in. Two kinds of diff are exempt:
+  #
+  #   - the version files cut-release.yml's bump commit writes (plugin.json/
+  #     marketplace.json) — a version string in already-shipped JSON, no Go,
+  #     no shell.
+  #   - any OTHER workflow file (.github/workflows/*.yml except this one) —
+  #     unit/e2e/install-sh exercise Go code and install.sh, not workflow
+  #     YAML; a change to release.yml or cut-release.yml is proven (or not)
+  #     by actually running IT, which is a different job's concern
+  #     (actionlint, or the workflow's own next real run), not by re-running
+  #     a test suite that never reads workflow files at all. THIS file
+  #     (test.yml) is excluded from that exemption on purpose: a bug in the
+  #     job that decides what to skip, or in any job below it, has to be
+  #     proven by the very matrix it controls, so a self-change always runs
+  #     everything.
+  #
+  # Either way, code-changed downstream turns "nothing worth testing changed"
+  # into a skip: fast, green, and every required context still REPORTS for
+  # the commit (a skipped job's conclusion still satisfies a required status
+  # check), so a bump or workflow-only PR is never stuck waiting on a check
+  # that never ran.
+  #
+  # A single-commit push is compared against its own parent (github.event.
+  # before) rather than against main, so this reads the SAME question
+  # cut-release.yml's own `git diff --quiet` asks when deciding whether the
+  # bump changed anything — "did this push change more than the exempt
+  # files" — not "does this branch differ from main" (nearly always true on
+  # any working branch, which would defeat the skip entirely).
+  changes:
+    name: which files changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code-changed: ${{ steps.diff.outputs.code-changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: diff
+        run: |
+          before="${{ github.event.before }}"
+          # A new branch's first push (or force-push) has no real parent to
+          # diff against — github.event.before is all-zeros or an unreachable
+          # SHA. Fail open (treat as code-changed) rather than risk skipping
+          # real changes because history was rewritten.
+          if [ -z "$before" ] || ! git cat-file -e "$before" 2>/dev/null; then
+            echo "code-changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$before" "${{ github.sha }}")"
+          # Exempt: the two version files, and any workflow file except this
+          # one (test.yml — see the job's own doc comment for why it is the
+          # one exception). POSIX grep has no negative lookahead, so rather
+          # than one pattern encoding "workflow file, but NOT this specific
+          # name", the workflow-file check runs only once test.yml is
+          # already known absent from the diff — a changed test.yml must
+          # never be filtered out by the broader workflows/*.yml pattern
+          # below it, or it would silently exempt itself.
+          exempt="$(printf '%s\n' "$changed" | grep -vE '^(marketplace/plugins/[^/]+/\.claude-plugin/plugin\.json|\.claude-plugin/marketplace\.json)$' || true)"
+          if printf '%s\n' "$exempt" | grep -qx '\.github/workflows/test\.yml'; then
+            other="$exempt"
+          else
+            other="$(printf '%s\n' "$exempt" | grep -vE '^\.github/workflows/[^/]+\.ya?ml$' || true)"
+          fi
+          if [ -z "$other" ]; then
+            echo "code-changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code-changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
   unit:
     name: unit + services
+    needs: changes
+    if: needs.changes.outputs.code-changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -68,6 +141,8 @@ jobs:
 
   e2e:
     name: e2e (${{ matrix.shard }})
+    needs: changes
+    if: needs.changes.outputs.code-changed == 'true'
     runs-on: ubuntu-latest
     # The e2e suite runs -p 1 (one test binary at a time — a disk-space
     # constraint, see the Makefile), which made the whole suite a single long
@@ -145,6 +220,8 @@ jobs:
   # entirely.
   install-sh:
     name: install.sh (stranger install path)
+    needs: changes
+    if: needs.changes.outputs.code-changed == 'true'
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
