@@ -47,10 +47,11 @@ ASK
    a write carrying none that resolves (a Write or Edit tool call, a shell
    redirect, a quote the user never said) is refused before any check runs.
    Unconditional, because ASK.md holds nothing but the ask.
-2. **Prepare + judge:** `prepare` (`resolve-cited-messages.sh`) hands the judge
-   the cited words off `event.citations`, each with where it sits in the
-   record. The judge then answers what existence cannot: is the ask TRUE to
-   those words, and does it hold **that and nothing else**? The "and nothing
+2. **Judge (no prepare):** the judge template reads the resolved citations
+   straight off `event.citations` — each cited quote, the whole message it was
+   taken from, and where it sits in the record — beside the change to ASK.md.
+   It answers what existence cannot: is the ask TRUE to those words, and does
+   it hold **that and nothing else**? The "and nothing
    else" clause is the anti-slop half a naive implementation drops: a valid
    citation wrapped in agent-authored elaboration is still content slopped
    around a legitimate citation.
