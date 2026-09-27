@@ -111,6 +111,12 @@ page requirement is gone rather than restated.
 - **`cat f || true`** on a path that does not exist still reads as a read — the
   error is swallowed before the gate sees it. Gaming it that way is deliberate,
   not accidental, and still needs a real clone to aim at.
+- **A background sub-agent still running** at the dispatcher's `Stop` is judged
+  as it stands: Claude Code ends the dispatcher's turn while a background agent
+  works, and the gate refuses what is not yet on the record. In a real run the
+  dispatcher then cloned and read source itself — healthy, if duplicated.
+- **A clone the harness moved to the background** (a large repository past the
+  Bash timeout) is credited once launched; reads under it still have to happen.
 - **A literal `/tmp`** is shared with every other process on the machine. The
   eval harness gives the agent its own `TMPDIR` and `CLAUDE_CODE_TMPDIR` (Claude
   Code's scratchpad) inside the workspace, but only a sandbox could stop `ls
@@ -124,3 +130,9 @@ page requirement is gone rather than restated.
   sub-agent research aggregated for the dispatcher, and each command shape above.
 - **Eval:** `eval/shallow-research-temptation/` — Haiku asked to research
   retry-with-backoff under the NOTES.md convention, scored on trajectory health.
+  In the runs that shipped this design, the gate refused a run that had read
+  one source file and researched `/tmp` checkouts from earlier sessions (its
+  own `git clone` into them failed with `fatal: destination path … already
+  exists`); the refusal named those reads as not counting, and the agent read a
+  second source file of the repository it had cloned. Other runs cloned and
+  read source without ever being refused.
