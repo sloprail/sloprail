@@ -52,6 +52,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	"github.com/sloprail/sloprail/internal/version"
 )
 
 func main() {
@@ -71,6 +73,7 @@ func newRoot() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "sr-file <command>",
 		Short:         "Checks over a file's contents",
+		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

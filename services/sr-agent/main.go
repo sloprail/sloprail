@@ -27,6 +27,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/sloprail/sloprail/internal/version"
 )
 
 func main() {
@@ -98,6 +100,7 @@ HARNESS
 Which harness is running is read from the environment, not asked for. An
 environment naming no known harness is refused rather than guessed at; pass
 --harness for a hook running outside any harness at all.`,
+		Version:       version.Version,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,

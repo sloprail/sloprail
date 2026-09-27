@@ -68,6 +68,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/subbin"
+	"github.com/sloprail/sloprail/internal/version"
 )
 
 func main() {
@@ -129,6 +130,7 @@ The event kinds a guardrail may bind to are per-build and are reported by the
 load check: ` + "`sr session start`" + ` names every kind this build produces, and
 every field a kind carries, when a declaration binds to one it does not have.
 To write a guardrail, use the authoring-guardrails skill.`,
+		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

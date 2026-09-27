@@ -27,6 +27,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/sloprail/sloprail/internal/version"
 )
 
 func main() {
@@ -63,6 +65,7 @@ typed by a person. The event kinds a guardrail may bind to are per-build, and
 ` + "`sr-session start`" + ` reports them: a declaration binding to a kind this
 build does not produce is refused by name, and the refusal lists every kind it
 does produce. To write a guardrail, use the authoring-guardrails skill.`,
+		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
