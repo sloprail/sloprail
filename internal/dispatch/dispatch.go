@@ -213,6 +213,15 @@ type Runner struct {
 	// transcript reader; a test supplies its own.
 	skillLoaded func(transcriptPath, workspace, skill string) (bool, error)
 
+	// subpageRead reports whether a FILE inside skill `skill` (file, relative
+	// to the skill's own directory — a `require: [{skill, files}]`
+	// prerequisite's own entry, e.g. "script-checks.md") counts as read on the
+	// session's own trajectory (excluding sub-agents) — the same Read-tool-use
+	// or file-reading-Bash-command evidence skillLoaded accepts for a skill's
+	// own SKILL.md, generalized to any other page inside it. Defaults to the
+	// transcript reader; a test supplies its own.
+	subpageRead func(transcriptPath, workspace, skill, file string) (bool, error)
+
 	// runJudge invokes the judge substrate and reports its verdict. Defaults to the
 	// sr-agent path; a test supplies its own so no model is called.
 	runJudge func(j judgeCall) (Verdict, error)
@@ -294,6 +303,9 @@ func (r Runner) CheckRequire(req Request) (Verdict, error) {
 func (r Runner) withDefaults() Runner {
 	if r.skillLoaded == nil {
 		r.skillLoaded = skillLoaded
+	}
+	if r.subpageRead == nil {
+		r.subpageRead = subpageRead
 	}
 	if r.runScript == nil {
 		r.runScript = runScriptExec

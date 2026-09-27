@@ -20,7 +20,7 @@ clone_count="$(sr-session trajectory normalize \
   --events PreCommandInvoke \
   | jq '[ .[]
       | select(any(.events[]?; .kind == "PreCommandInvoke"
-          and any(.fields.invocations[]?; .bin == "git" and any(.argv[]?; . == "clone"))))
+          and any(.invocations[]?; .bin == "git" and any(.argv[]?; . == "clone"))))
     ] | length')"
 
 if [ "${clone_count:-0}" -eq 0 ]; then
@@ -28,13 +28,12 @@ if [ "${clone_count:-0}" -eq 0 ]; then
 fi
 
 # 2. Page count from gh CLI invocations, which carry it as an argument
-# (--limit N, --paginate). Invocations sit under `.fields.invocations` (event
-# wire form is {kind, fields}).
+# (--limit N, --paginate). Events are flat: `.invocations` sits beside `.kind`.
 gh_invocations="$(sr-session trajectory normalize \
   --path "$transcript_path" \
   --events PreCommandInvoke \
   | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke")
-             | .fields.invocations[]? | select(.bin == "gh") ]')"
+             | .invocations[]? | select(.bin == "gh") ]')"
 
 if [ "$(printf '%s' "$gh_invocations" | jq 'length')" -eq 0 ]; then
   block "No gh CLI calls found in this research run — nothing establishes how many pages were actually covered."

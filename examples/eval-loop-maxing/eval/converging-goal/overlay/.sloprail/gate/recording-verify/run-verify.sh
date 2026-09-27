@@ -19,11 +19,9 @@ transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 # `.toolUseResult` here (the original version's bug, and the same mistake
 # research-rigor's depth-check/verify-depth.sh already documents fixing) finds
 # nothing for every real eval run, so this gate always read "no runs" and
-# admitted the Stop regardless of whether one had actually run. A second,
-# independent bug in the original: `.invocations` bare, not `.fields.invocations`
-# — every event's own fields sit under `.fields` in a normalized entry (see any
-# entry's `.events[].fields`), so that filter never selected a PreCommandInvoke
-# event either, masked by the toolUseResult bug always short-circuiting first.
+# admitted the Stop regardless of whether one had actually run. Each normalized
+# entry's `.events[]` are flat — `.invocations` sits beside `.kind`, the same
+# shape a live check reads under `.event`.
 normalized="$(sr-session trajectory normalize --path "$transcript_path" 2>&1)"
 normalize_status=$?
 if [ "$normalize_status" -ne 0 ]; then
@@ -33,7 +31,7 @@ fi
 
 filtered="$(printf '%s' "$normalized" | jq -r '
   [ .[] | select(any(.events[]?; .kind == "PreCommandInvoke"
-        and any(.fields.invocations[]?; .bin == "eval")))
+        and any(.invocations[]?; .bin == "eval")))
       | (.message | objects | .content // [] | if type == "array" then .[] else empty end)
       | select(.type == "tool_use") | .id ] as $eval_ids
   | .[] | (.message | objects | .content // [] | if type == "array" then .[] else empty end)

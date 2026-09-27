@@ -135,6 +135,11 @@ func runVerified(
 		}
 
 		lastRejection = err
+		var rej *verifyRejection
+		if errors.As(err, &rej) && rej.final() {
+			// A well-formed "no" (FinalRejectionExit): the answer is the answer.
+			return err
+		}
 		if attempt < attempts {
 			ask = prompt + verifyPromptSuffix(outputPath) +
 				retryPromptSuffix(outputPath, err.Error())

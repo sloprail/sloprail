@@ -34,9 +34,11 @@ import (
 )
 
 var (
-	New   = harness.New
-	Turns = harness.Turns
-	Write = harness.Write
+	New     = harness.New
+	Turns   = harness.Turns
+	Write   = harness.Write
+	Skill   = harness.Skill
+	ToolUse = harness.ToolUse
 )
 
 func TestMain(m *testing.M) {

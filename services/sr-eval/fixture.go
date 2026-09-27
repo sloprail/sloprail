@@ -64,6 +64,19 @@ type Fixture struct {
 	// at all.
 	ExampleSloprail bool `yaml:"exampleSloprail"`
 
+	// FreshMachine, when true, runs the agent-under-test as a newcomer who has
+	// just run `/plugin install` and nothing else: the plugin is installed and
+	// enabled for the project, but the agent gets a HOME of its own (see
+	// workspace.freshHome) with no sr* binaries anywhere it or the plugin's
+	// hook wrapper would look. The machine's own credentials (Claude Code's
+	// login, gh, SSH, git identity) still work. Getting the binaries on is the
+	// plugin's own job, at its first session start.
+	//
+	// The "release" they come from is this checkout, built: install.sh's
+	// SLOPRAIL_RELEASE_URL points at archives freshHome builds, so what lands
+	// is the code under test rather than whatever was last published.
+	FreshMachine bool `yaml:"freshMachine"`
+
 	// Model is the sr-agent --model set for the agent-under-test, e.g.
 	// "claude-sonnet-5,size-md". Empty lets sr-agent's own default resolve —
 	// which sr-agent refuses rather than silently picking one, so this is

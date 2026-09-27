@@ -802,6 +802,80 @@ require:
 	})
 }
 
+// A files entry alongside skill loads — its contents are a runtime fact
+// (whether that page was read), not something the loader checks against disk,
+// the same reasoning TestLoad_Prerequisite_UnknownSkillIsFine gives for the
+// skill name itself.
+func TestLoad_Prerequisite_FilesWithSkillIsFine(t *testing.T) {
+	loadOK(t, map[string]string{
+		"gate/skillgate/gate.yaml": `
+on:
+  - event: PreToolUse
+require:
+  - skill: authoring-guardrails
+    files: [script-checks.md, file-guard.md]
+`,
+	})
+}
+
+// files without skill is refused — it names a subpage of a skill, and has no
+// meaning without one.
+func TestLoad_Prerequisite_FilesWithoutSkillRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/orphan/gate.yaml": `
+on:
+  - event: PreToolUse
+require:
+  - files: [script-checks.md]
+checks:
+  - script: ./s.sh
+`,
+	})
+	assert.True(t, hasKind(iv, ErrBadFilesEntry), "files without skill is refused: %v", iv.Reason)
+}
+
+// files without skill is refused even when a context is set instead — files
+// is not one half of the skill/context exactly-one-of pair, so setting it
+// alongside context does not satisfy it.
+func TestLoad_Prerequisite_FilesWithContextRefused(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"gate/mixed/gate.yaml": `
+on:
+  - event: Stop
+require:
+  - context: goal-tracking
+    files: [script-checks.md]
+checks:
+  - script: ./s.sh
+`,
+		"context/goal-tracking/context.yaml": validContextYAML,
+	})
+	assert.True(t, hasKind(iv, ErrBadFilesEntry), "files alongside context (no skill) is refused: %v", iv.Reason)
+}
+
+// A files entry must be a plain relative path inside the skill's own
+// directory — no absolute path, no escaping with "..".
+func TestLoad_Prerequisite_BadFilesEntryRefused(t *testing.T) {
+	for name, entry := range map[string]string{
+		"empty":    `""`,
+		"absolute": `/etc/passwd`,
+		"climbs":   `../../etc/passwd`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			iv := loadOneInvalid(t, map[string]string{
+				"gate/bad/gate.yaml": `
+on:
+  - event: PreToolUse
+require:
+  - skill: authoring-guardrails
+    files: [` + entry + `]
+`,
+			})
+			assert.True(t, hasKind(iv, ErrBadFilesEntry), "%s: bad files entry is refused: %v", name, iv.Reason)
+		})
+	}
+}
+
 // A context prerequisite naming a context that resolves loads.
 func TestLoad_Prerequisite_KnownContextResolves(t *testing.T) {
 	loadOK(t, map[string]string{

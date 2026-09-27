@@ -1,0 +1,14 @@
+# A new provider module (see any existing pydantic_ai_slim/pydantic_ai/
+# providers/*.py) is inert until infer_provider's elif chain in
+# providers/__init__.py can resolve it by name — a step nothing about "add
+# a provider" implies, and a bare `{skill}` on register-new-provider is not
+# enough: its SKILL.md itself says nothing beyond "see REGISTRATION.md",
+# so loading the skill alone leaves the actual step unread. `files` closes
+# that gap — the precondition is not just the skill, but that specific
+# page. PreFileWrite expands to create + update.
+on:
+  - event: PreFileWrite
+    match: event.path startsWith "pydantic_ai_slim/pydantic_ai/providers/"
+require:
+  - skill: register-new-provider
+    files: [REGISTRATION.md]

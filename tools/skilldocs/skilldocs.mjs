@@ -21,8 +21,9 @@
  * passes its own content folder as out-dir.
  */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { join, basename, dirname, resolve } from 'node:path';
+import { join, basename, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const PLUGIN_DIR = join(REPO_ROOT, 'marketplace/plugins/sloprail');
@@ -30,6 +31,23 @@ const SKILL_NAME = 'authoring-guardrails';
 const SKILL_DIR = join(PLUGIN_DIR, 'skills', SKILL_NAME);
 const OUT_DIR = resolve(process.argv[2] || join(REPO_ROOT, 'docs/guides'));
 const ROUTE = '/guides';
+
+// The commit this checkout is actually at, for a stable (never-moving)
+// GitHub blob URL — pull-docs.mjs runs this with cwd set to a real clone of
+// sloprail pinned at docs-source.json's ref, so `git rev-parse HEAD` there
+// answers exactly that ref, not a moving branch. Falls back to `main` for a
+// local preview run (this script's own docstring: `node tools/skilldocs/
+// skilldocs.mjs` from an ordinary working copy, possibly with uncommitted
+// changes HEAD can't speak for anyway).
+function resolveCommit() {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
+  } catch {
+    return 'main';
+  }
+}
+const COMMIT = resolveCommit();
+const GITHUB_BLOB_BASE = `https://github.com/sloprail/sloprail/blob/${COMMIT}`;
 
 // The user-facing invocation is `/<plugin>:<skill>` — plugin name from the
 // plugin manifest, skill from its directory. Read them so the command in the
@@ -45,14 +63,14 @@ const ORDER = [
   'script-checks', 'judge-checks', 'events', 'state-management', 'environment',
 ];
 
-// A short related set per page — points at the concept idea + siblings.
+// A short related set per page — points at its siblings.
 const RELATED = {
-  'file-guard': ['concepts/file-guard', 'guides/matchers', 'guides/script-checks'],
-  'gate': ['concepts/gate', 'guides/matchers', 'concepts/precondition'],
-  'context': ['concepts/context', 'guides/state-management'],
+  'file-guard': ['guides/matchers', 'guides/script-checks'],
+  'gate': ['guides/matchers', 'guides/script-checks'],
+  'context': ['guides/state-management'],
   'matchers': ['guides/events', 'guides/file-guard'],
-  'script-checks': ['guides/judge-checks', 'concepts/refusal-contract'],
-  'judge-checks': ['guides/script-checks', 'concepts/grounding'],
+  'script-checks': ['guides/judge-checks'],
+  'judge-checks': ['guides/script-checks'],
   'events': ['reference/event-vocabulary', 'guides/matchers'],
   'state-management': ['guides/context'],
   'environment': ['guides/script-checks'],
@@ -84,13 +102,23 @@ function niceLabel(name) {
 // text — the skill often uses the bare filename as the text ([matchers.md](matchers.md)),
 // which would otherwise render a literal ".md". SKILL.md maps to the section index.
 function rewriteLinks(src) {
-  return src.replace(/\[([^\]]+)\]\(([a-z-]+)\.md(#[a-z0-9-]+)?\)/gi, (_, text, name, hash) => {
+  src = src.replace(/\[([^\]]+)\]\(([a-z-]+)\.md(#[a-z0-9-]+)?\)/gi, (_, text, name, hash) => {
     const slug = name === 'SKILL' ? '' : `/${name}`;
     // If the link text was just the filename, replace it with a readable label.
     const cleanText = /^[a-z-]+\.md$/i.test(text)
       ? (name === 'SKILL' ? 'Authoring guardrails' : niceLabel(name))
       : text;
     return `[${cleanText}](${ROUTE}${slug}${hash || ''})`;
+  });
+  // A sibling that is NOT a rendered doc page — check-template.sh, say — has no
+  // route of its own; the generated site never copies it alongside the page.
+  // Point it at the file's actual GitHub source instead of leaving a relative
+  // link that 404s the moment this prose is republished somewhere that isn't
+  // a checkout of the skill directory. Text is left as the reader wrote it
+  // ("check-template.sh" already reads fine, unlike a bare ".md" filename).
+  return src.replace(/\[([^\]]+)\]\(([a-z0-9_-]+\.[a-z0-9]+)\)/gi, (_, text, filename) => {
+    const relPath = relative(REPO_ROOT, join(SKILL_DIR, filename));
+    return `[${text}](${GITHUB_BLOB_BASE}/${relPath})`;
   });
 }
 

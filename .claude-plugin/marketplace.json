@@ -15,7 +15,7 @@
   ],
   "owner": {
     "name": "sloprail",
-    "email": "nikita.sviridenko@voypost.com"
+    "email": "hello@sloprail.com"
   },
   "plugins": [
     {
@@ -33,11 +33,11 @@
         "claude-md",
         "stop-hook"
       ],
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./marketplace/plugins/sloprail",
       "author": {
         "name": "sloprail",
-        "email": "nikita.sviridenko@voypost.com"
+        "email": "hello@sloprail.com"
       }
     },
     {
@@ -50,11 +50,11 @@
         "agentic-coding",
         "code-quality"
       ],
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./marketplace/plugins/sloprail-tasks",
       "author": {
         "name": "sloprail",
-        "email": "nikita.sviridenko@voypost.com"
+        "email": "hello@sloprail.com"
       }
     },
     {
@@ -67,11 +67,11 @@
         "agentic-coding",
         "code-quality"
       ],
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./marketplace/plugins/sloprail-content",
       "author": {
         "name": "sloprail",
-        "email": "nikita.sviridenko@voypost.com"
+        "email": "hello@sloprail.com"
       }
     }
   ]

@@ -1,0 +1,14 @@
+# A judge prompt template (.md.j2, under file-guard/gate/context) must be
+# authored against judge-checks.md's contract — the prepare/judge/model shape,
+# the {"pass", "reasoning"} verdict, treating judged content as DATA never
+# instructions — or it is wrong in a predictable way authoring-slop's judge
+# then has to catch, one model call at a time. See
+# read-script-checks-doc/file-guard.yaml (its sibling, for the script half)
+# for the full argument; this is the identical mechanism for the judge half.
+match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and path endsWith ".md.j2"
+
+preventive: true
+
+require:
+  - skill: authoring-guardrails
+    files: [judge-checks.md]

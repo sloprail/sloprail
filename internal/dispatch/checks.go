@@ -335,6 +335,34 @@ func skillNameOf(call transcript.ToolCall) string {
 	return in.Skill
 }
 
+// skillNameMatches reports whether a Skill tool_use's own `input.skill` names
+// the skill a `require: [{skill: <name>}]` prerequisite declares.
+//
+// A PROJECT's own skill is invoked bare (`document-decision`); a PLUGIN's is
+// invoked plugin-qualified (`sloprail:authoring-guardrails`) — real Claude
+// Code prepends the owning plugin's name whenever the skill did not come from
+// the project's own `.claude/skills/`, confirmed against real transcripts
+// (both forms occur; never the reverse — a project skill is never seen
+// prefixed). A declaration names the BARE skill either way — the same name
+// SkillFilePaths resolves against both a project's `.claude/skills/<name>/`
+// and a plugin's `<pluginRoot>/skills/<name>/` — so this check must accept
+// either spelling of the same tool_use, or it can only ever match a
+// project-owned skill and refuses every plugin-shipped one's own
+// precondition even after the agent genuinely invoked it. Found by a real,
+// unscripted agent run (sr-eval): the mock's own Skill() test helper writes
+// whatever bare string a test passes it and never generates the qualified
+// form, so this gap was invisible to the whole e2e suite.
+func skillNameMatches(call transcript.ToolCall, skill string) bool {
+	name := skillNameOf(call)
+	if name == skill {
+		return true
+	}
+	if _, suffix, found := strings.Cut(name, ":"); found && suffix == skill {
+		return true
+	}
+	return false
+}
+
 // trimSpace trims leading/trailing ASCII whitespace from a byte slice without a
 // string round-trip, for reading a script's stdout.
 func trimSpace(b []byte) []byte {

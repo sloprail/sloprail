@@ -18,17 +18,17 @@ checks:
 
 - **`exit 0` permits.** Print nothing; silence is consent.
 - **Non-zero refuses**, carrying whatever the script said as the reason.
-- **A script that cannot run at all** — missing, not executable, an internal
-  error, a timeout, killed by a signal — is a **refusal**. This is fail-closed and
-  deliberate: a rule that could not be checked must not read as approval.
-  `chmod +x` the script; one that is not executable refuses every occurrence it is
-  bound to, with a message saying so.
+- **A script that cannot run at all** — missing, an internal error, a timeout,
+  killed by a signal — is a **refusal**. This is fail-closed and deliberate: a
+  rule that could not be checked must not read as approval. (A script without
+  the execute bit is not in this list: the engine runs it through its `#!`
+  interpreter, or `sh`, so no `chmod` is needed.)
 
 The last point is the whole reason a check runs inside the engine rather than
 being trusted to signal for itself: every way it can fail lands on the safe side
-without the author arranging it. A missing script (exit 127), a non-executable one
-(exit 126), a crash, an OOM kill, a hang past the 30s bound — each becomes a
-refusal that names the fix.
+without the author arranging it. A missing script (exit 127), a crash, an OOM
+kill, a hang past the engine's per-check limit — each becomes a refusal that
+names the fix.
 
 ## The refusal contract
 
@@ -111,11 +111,9 @@ a trajectory read given no path fails closed rather than guess which session it 
 in. `sr-session query --where '<expr>'` filters the raw entries (its expression
 language is over an **entry's** fields, not the event's — run `--help`).
 
-Note the shape difference: `sr-session trajectory normalize` emits each historical
-event in the **`{kind, fields}`** wire form, so a past command's invocations sit
-under `.fields.invocations`. That is the *normalized-history* shape — **not** the
-live check stdin, which is flat (`.event.invocations`). Do not conflate the two
-([events.md](events.md), "The normalized-history exception").
+Each normalized entry carries its events under `.events[]`, flat like the live
+event: a past command's invocations are `.events[].invocations`, just as the
+current one's are `.event.invocations` ([events.md](events.md), "Past events").
 
 ## Recording across cycles
 

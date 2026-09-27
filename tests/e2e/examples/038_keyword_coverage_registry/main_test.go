@@ -24,7 +24,7 @@ import (
 // scanner-declared` (the read-only cross-guardrail read the engine gained),
 // slurping the JSON-lines with `jq -s`; and it collects the run's gh invocations
 // off `sr-session trajectory normalize`, reading them from each event's
-// `.fields.invocations` (an earlier draft read `.invocations` and matched none).
+// flat `.invocations` — the same shape a live check reads under `.event`.
 //
 // So these tests prove: the context activates on a scanner.yaml write, logs the
 // keyword set to its registry, ignores an inactive scanner, and narrows to

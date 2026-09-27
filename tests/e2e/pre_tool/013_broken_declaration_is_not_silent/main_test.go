@@ -8,10 +8,12 @@ import (
 )
 
 var (
-	New   = harness.New
-	Turns = harness.Turns
-	Write = harness.Write
-	Bash  = harness.Bash
+	New     = harness.New
+	Turns   = harness.Turns
+	Write   = harness.Write
+	Bash    = harness.Bash
+	Skill   = harness.Skill
+	ToolUse = harness.ToolUse
 )
 
 // TestMain removes the binary build dir when this package's tests finish.

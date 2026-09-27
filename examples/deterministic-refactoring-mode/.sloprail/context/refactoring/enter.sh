@@ -12,7 +12,7 @@ transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 # The declaration is one message with the #refactor tag and a scope list, e.g.
 #   #refactor scope=src/beta.go@<sha>:10-24,src/gamma.go@<sha>:3-9
 # Take the last entry carrying the tag and read its text. The tag lives at
-# .events[].fields.tags[].label on a normalized entry.
+# .events[].tags[].label on a normalized entry (events are flat).
 decl="$(sr-session trajectory normalize \
   --path "$transcript_path" \
   --events PostTagWrite \
@@ -24,7 +24,7 @@ decl="$(sr-session trajectory normalize \
         else "" end;
       [ .[]
         | select(any(.events[]?;
-            .kind == "PostTagWrite" and any(.fields.tags[]?; .label == "refactor")))
+            .kind == "PostTagWrite" and any(.tags[]?; .label == "refactor")))
       ][-1] // {}
       | .message | msgtext')"
 

@@ -193,19 +193,31 @@ func (w *workspace) commitSetup() error {
 // then (wrongly) for an ambient-plugin Stop-hook collision, before being
 // traced to this.
 //
+// The marketplace added is a SNAPSHOT of this checkout's (snapshotMarketplace),
+// not the checkout itself: a directory-sourced plugin is served from its source
+// path, so adding the live checkout put the real repository's path in front of
+// every agent-under-test — every onboarding transcript named it, and one agent
+// read its skill from there — and let an agent edit sloprail itself.
+//
 // There is deliberately no way to add a lifecycle hook from here. Wiring one
 // by hand would test sr-eval's own arrangement rather than the product: the
 // whole point is that what fires is the plugin a real install gets, discovered
 // through hooks.json, not a hook this binary invented for the occasion.
-func (w *workspace) writeSettings(repoRoot string) error {
-	add := exec.Command("claude", "plugin", "marketplace", "add", repoRoot)
+func (w *workspace) writeSettings(repoRoot string, env []string) error {
+	source, err := w.snapshotMarketplace(repoRoot)
+	if err != nil {
+		return fmt.Errorf("snapshot the marketplace: %w", err)
+	}
+	add := exec.Command("claude", "plugin", "marketplace", "add", source)
 	add.Dir = w.project
+	add.Env = env
 	if out, err := add.CombinedOutput(); err != nil {
 		return fmt.Errorf("claude plugin marketplace add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	install := exec.Command("claude", "plugin", "install", pluginKey, "--scope", "project", "-y")
 	install.Dir = w.project
+	install.Env = env
 	if out, err := install.CombinedOutput(); err != nil {
 		return fmt.Errorf("claude plugin install %s: %w: %s", pluginKey, err, strings.TrimSpace(string(out)))
 	}
@@ -299,4 +311,18 @@ func copyFile(src, dst string) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// snapshotMarketplace copies what `claude plugin marketplace add` reads — the
+// marketplace manifest and the plugins it points at — into the workspace, and
+// returns that copy's root. Uncommitted edits are included, as they were when
+// the checkout itself was added; only the location changes.
+func (w *workspace) snapshotMarketplace(repoRoot string) (string, error) {
+	dst := filepath.Join(w.root, "sloprail-marketplace")
+	for _, dir := range []string{".claude-plugin", "marketplace"} {
+		if err := copyTree(filepath.Join(repoRoot, dir), filepath.Join(dst, dir)); err != nil {
+			return "", err
+		}
+	}
+	return dst, nil
 }

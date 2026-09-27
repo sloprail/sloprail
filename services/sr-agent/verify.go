@@ -270,6 +270,18 @@ type verifyRejection struct {
 	code      int
 }
 
+// FinalRejectionExit is the verifier exit code for "the answer is well formed
+// and it is a no": sr-agent reports the rejection at once instead of asking
+// again. Every other non-zero exit means the answer itself was unusable and is
+// worth re-asking. A judge needs the difference: its verifier used to exit 1
+// for a clean "fail" verdict too, so every legitimate refusal was sent back to
+// the judge as REJECTED with "fix exactly that" — two model runs per refusal,
+// and a prompt pushing the judge to reverse a correct verdict.
+const FinalRejectionExit = 3
+
+// final reports whether the verifier said this rejection is not worth a retry.
+func (e *verifyRejection) final() bool { return e.code == FinalRejectionExit }
+
 func (e *verifyRejection) Error() string {
 	detail := strings.TrimSpace(e.complaint)
 	if detail == "" {

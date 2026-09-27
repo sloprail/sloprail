@@ -68,6 +68,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/subbin"
+	"github.com/sloprail/sloprail/internal/version"
 )
 
 func main() {
@@ -115,9 +116,11 @@ func newRoot() *cobra.Command {
 		Short: "Declarative contracts that keep an agent's output honest",
 		Long: `Declarative contracts that keep an agent's output honest.
 
-A project declares guardrails under .sloprail/guardrails/; a harness calls the
-session hook points, and the engine runs whichever guardrails bind to what is
-about to happen.
+A project declares guardrails under .sloprail/, one folder per rule, in the
+directory named for its kind: file-guard/, gate/ or context/, plus one
+file-guard/structure.yaml listing where writes may land at all. A harness
+calls the session hook points, and the engine runs whichever guardrails bind
+to what is about to happen.
 
 Each command below is a separate binary — ` + "`sr session start`" + ` and
 ` + "`sr-session start`" + ` do the same thing. This root exists so there is one name
@@ -127,6 +130,7 @@ The event kinds a guardrail may bind to are per-build and are reported by the
 load check: ` + "`sr session start`" + ` names every kind this build produces, and
 every field a kind carries, when a declaration binds to one it does not have.
 To write a guardrail, use the authoring-guardrails skill.`,
+		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

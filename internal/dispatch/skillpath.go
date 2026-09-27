@@ -8,7 +8,10 @@ import (
 )
 
 // This file resolves a skill NAME to the SKILL.md file(s) it could live at, on
-// disk, from the perspective of a session running against a given workspace.
+// disk, from the perspective of a session running against a given workspace —
+// and, via SkillSubpagePaths, the same for any OTHER file inside that skill's
+// own directory, for a `require: [{skill, files}]` prerequisite naming a
+// subpage.
 //
 // It exists for one caller: checkSkill's read-detection half (see require.go),
 // which must know WHICH FILE to look for a Read tool_use or a `cat`-shaped Bash
@@ -73,12 +76,33 @@ import (
 // because a plugin skill this cannot find is not a reason to also stop looking
 // for the project's OWN skill file, which needs no plugin resolution at all.
 func SkillFilePaths(workspace, name string) []string {
-	if workspace == "" || name == "" {
+	return skillCandidatePaths(workspace, name, "SKILL.md")
+}
+
+// SkillSubpagePaths returns every path a FILE INSIDE skill `name` — file,
+// relative to the skill's own directory (the one holding its SKILL.md), e.g.
+// "script-checks.md" — could live at, in the same resolution order
+// SkillFilePaths uses for the skill itself.
+//
+// This is the `require: [{skill, files}]` prerequisite's read-detection half
+// (see require.go): a `files` entry names a page relative to the skill, and
+// this connects that name to the concrete path(s) a Read tool_use or a
+// file-reading Bash command would name — the identical join SkillFilePaths
+// itself does with the one hardcoded name "SKILL.md".
+func SkillSubpagePaths(workspace, name, file string) []string {
+	return skillCandidatePaths(workspace, name, file)
+}
+
+// skillCandidatePaths is the shared walk both SkillFilePaths and
+// SkillSubpagePaths run: every directory a skill named `name` could live in,
+// each joined with rel (its own SKILL.md, or a subpage relative to it).
+func skillCandidatePaths(workspace, name, rel string) []string {
+	if workspace == "" || name == "" || rel == "" {
 		return nil
 	}
 
 	paths := []string{
-		filepath.Join(workspace, ".claude", "skills", name, "SKILL.md"),
+		filepath.Join(workspace, ".claude", "skills", name, rel),
 	}
 
 	home, err := os.UserHomeDir()
@@ -90,7 +114,7 @@ func SkillFilePaths(workspace, name string) []string {
 		return paths
 	}
 	for _, root := range res.Roots {
-		paths = append(paths, filepath.Join(root.Dir, "skills", name, "SKILL.md"))
+		paths = append(paths, filepath.Join(root.Dir, "skills", name, rel))
 	}
 	return paths
 }

@@ -18,6 +18,7 @@ repo: https://github.com/owner/name.git
 ref: <full commit sha>  # required alongside repo — never a branch name
 overlay: overlay        # optional
 exampleSloprail: true   # optional, examples/ fixtures only — see below
+freshMachine: true      # optional — onboarding: plugin in, binaries not
 model: haiku             # required in practice — sr-agent refuses with none
 score: score.sh
 ```
@@ -45,6 +46,15 @@ score: score.sh
   specific (it assumes the fixture lives at `examples/<name>/eval/<case>/`,
   two directories under the shipped `.sloprail/`); a fixture outside
   `examples/` cannot use it.
+- **`freshMachine`** — `true` runs the agent as a newcomer who has just run
+  `/plugin install` and nothing else: the plugin is installed and enabled
+  for the project, inside a HOME of the agent's own with no `sr*` binaries
+  (not on PATH, not in `~/.local/bin`/`~/go/bin`). Claude Code's login (via
+  a linked `~/Library` keychain), `gh`, SSH and git identity still work.
+  The binaries the plugin installs come from this checkout, built:
+  `SLOPRAIL_RELEASE_URL` points install.sh at archives sr-eval builds, so
+  everything the agent gets is the code under test. See
+  `examples/_onboarding/eval/`.
 - **`model`** — an `sr-agent --model` value (`haiku`, `claude-sonnet-5,size-md`,
   etc.). Every current fixture uses `haiku` deliberately — a cheap model is
   the one likelier to take the tempting shortcut a fixture is designed to
@@ -63,6 +73,13 @@ score: score.sh
 Everything is copied or cloned fresh, never symlinked — the agent-under-test
 mutates the tree, and neither the fixture's own `seed/` under `examples/` nor
 an operator's local clone of a `repo:` may be touched by a run.
+
+The agent runs in a HOME of its own inside the workspace (`home/`), where the
+plugin is installed for it from a snapshot of this checkout's marketplace
+(`sloprail-marketplace/`), never the checkout itself. Your real `~/.claude` (marketplaces, installed
+plugins, memory) is never written, and your user-scope plugins do not load
+into the agent. Its transcript is under `home/.claude/projects/`; the scorer
+gets that HOME as `SR_EVAL_AGENT_HOME`.
 
 ## `LoadFixture` refuses to load when
 

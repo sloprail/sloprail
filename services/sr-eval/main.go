@@ -45,6 +45,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/sloprail/sloprail/internal/version"
 )
 
 func main() {
@@ -67,6 +69,7 @@ A fixture directory names a seed, a prompt, and a scorer. sr-eval seeds an
 isolated project, launches a real agent-under-test through sr-agent (so this
 stays harness-agnostic), and scores what the transcript shows actually
 happened — not what a mock was scripted to produce.`,
+		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

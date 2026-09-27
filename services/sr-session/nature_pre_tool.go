@@ -2,12 +2,17 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/declaration"
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
@@ -70,7 +75,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// loaded structure (the project's and each plugin's) is combined by scope.
 	// Blocks immediately on a refusal.
 	if len(loaded.Structures) > 0 {
-		if reason := checkStructureGate(cmd, loaded.Structures, events); reason != "" {
+		if reason := checkStructureGate(cmd, loaded.Structures, events, p.Root(), reg); reason != "" {
 			return natureVerdict{Blocked: reason}
 		}
 	}
@@ -123,7 +128,7 @@ func preventiveFileGuards(guards []declaration.FileGuard) []declaration.FileGuar
 // since a gate the engine could not compile has not established that any path is
 // forbidden — the same "an unloadable rule blocks nothing" the rest of the
 // dispatch keeps.
-func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGate, events []event.Event) string {
+func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGate, events []event.Event, root string, reg *module.Registry) string {
 	compiled, err := dispatchcore.CompileStructureSet(structures)
 	if err != nil {
 		// Structure gates that loaded but will not compile are a disagreement
@@ -138,11 +143,129 @@ func checkStructureGate(cmd *cobra.Command, structures []declaration.StructureGa
 		if !ok {
 			continue
 		}
+		if outsideProject(root, path) {
+			if reason := checkForeignStructure(root, path, reg); reason != "" {
+				return reason
+			}
+			continue
+		}
 		if allowed, reason := compiled.Decide(path); !allowed {
 			return reason
 		}
 	}
 	return ""
+}
+
+// outsideProject reports whether a write path lies outside the project tree
+// rooted at root. The project's structure governs its own tree, so a path
+// outside it is not its to decide: measured in the onboarding eval, where an
+// agent's new structure refused its own scratch copy under /tmp, the very place
+// the plugin tells agents to keep throwaway files.
+//
+// A path inside the tree usually arrives relative to the root (`src/app.ts`),
+// but not always: with no git root, or a root spelled through a symlink
+// (/var vs /private/var on macOS), an in-tree path can stay absolute. So an
+// absolute path is outside only when a root is known AND the path, resolved as
+// far as it exists, is not under the resolved root. With no root there is no
+// tree to be outside of, and the path stays the structure's — refused unless
+// allowed, as before.
+func outsideProject(root, path string) bool {
+	if !filepath.IsAbs(path) {
+		clean := filepath.Clean(path)
+		return clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))
+	}
+	if root == "" {
+		return false
+	}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
+	rel, err := filepath.Rel(root, resolveExistingPrefix(path))
+	if err != nil {
+		return false
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// checkForeignStructure decides a write outside this project by the structure
+// of the project that DOES own the path, if any. Each project's structure
+// governs its own tree: this one's has no say over /tmp or a sibling checkout,
+// but a sibling checkout with its own .sloprail/ keeps its rules when written
+// into from here. A path under no git repository, or under one with no
+// declarations, is nobody's to refuse. The owner's declarations load quietly
+// (their load report belongs to that project's own sessions); if they cannot
+// be read at all the write is refused, since a structure that may exist was
+// not consulted.
+func checkForeignStructure(root, path string, reg *module.Registry) string {
+	if reg == nil {
+		return ""
+	}
+	owner := owningRepo(path)
+	if owner == "" {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(root); err == nil && real == owner {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(owner, ".sloprail")); err != nil {
+		return ""
+	}
+	quiet := &cobra.Command{}
+	quiet.SetOut(io.Discard)
+	quiet.SetErr(io.Discard)
+	store, _ := natureDeclarationStore(quiet, owner)
+	loaded, err := store.Load(reg)
+	if err != nil {
+		return fmt.Sprintf("writing to %q, inside %s: that project's sloprail declarations could not be read, so whether its structure allows this write is unknown. Refusing.", path, owner)
+	}
+	if len(loaded.Structures) == 0 {
+		return ""
+	}
+	compiled, err := dispatchcore.CompileStructureSet(loaded.Structures)
+	if err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(owner, resolveExistingPrefix(path))
+	if err != nil {
+		return ""
+	}
+	if allowed, reason := compiled.Decide(filepath.ToSlash(rel)); !allowed {
+		return fmt.Sprintf("in the project at %s (its own structure governs its tree): %s", owner, reason)
+	}
+	return ""
+}
+
+// owningRepo is the resolved root of the git repository containing path — or
+// its deepest existing ancestor, for a file not yet created — or "".
+func owningRepo(path string) string {
+	dir := filepath.Dir(resolveExistingPrefix(path))
+	for {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+	r, err := gitrepo.Root(dir)
+	if err != nil || r == "" {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(r); err == nil {
+		return real
+	}
+	return r
+}
+
+// resolveExistingPrefix is dispatchcore.ResolveExistingPrefix under the local
+// name this file's own callers already use — see its doc comment for why this
+// exists and why it is now shared (internal/dispatch's `{skill, files}`
+// prerequisite needed the identical symlink-resolution fix this file already
+// carried).
+func resolveExistingPrefix(path string) string {
+	return dispatchcore.ResolveExistingPrefix(path)
 }
 
 // writePath returns the target path of a file-write pre-event, and whether the

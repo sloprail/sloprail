@@ -30,10 +30,14 @@ through a small wrapper (`hooks/sr-session-hook.sh`, resolved via
 directory) that exists for exactly one reason: `/plugin install` registers
 these hooks whether or not the `sr*` binaries are anywhere on the consumer's
 machine, and calling `sr-session` bare made that gap silent — the session ran
-completely unguarded, no error, no warning. The wrapper checks for `sr-session`
-first; if it is missing, `pre-tool` (the one moment that is actually a guarded
-action) refuses with the install command, and `start`/`stop`/`subagent-stop`
-warn loudly rather than brick the session outright. See the script's own header
+completely unguarded, no error, no warning. So the wrapper checks for
+`sr-session` first. If it is missing, `start` installs it: the release matching
+this plugin's version, checksum-verified, via the `hooks/install.sh` copy of
+the repository's installer, announced in the session (`SLOPRAIL_NO_AUTO_INSTALL=1`
+opts out). If it is still missing, `pre-tool` refuses file writes with the
+install command (exit 2, the only code Claude Code treats as a refusal) and
+lets Bash through so it can be installed, and `start`/`stop`/`subagent-stop`
+warn rather than brick the session outright. See the script's own header
 comment for the full reasoning, and
 `../../../docs/getting-started/install.mdx` for the consumer-facing install
 sequence this exists to make unmissable if it's ever skipped.

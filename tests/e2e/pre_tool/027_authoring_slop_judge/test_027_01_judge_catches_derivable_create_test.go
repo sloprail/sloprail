@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // The fixture path a slop hook lands at — a NEW-format guardrail's own script
@@ -161,7 +163,14 @@ func TestT027_03_CorrectDispatchHookPassesBothGrepAndJudge(t *testing.T) {
 	// The judge passes it (the shape is correct, so a real judge would too).
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
+	// The shipped read-script-checks-doc guard (from the enabled plugin, not
+	// this test's project-level authoring-slop copy) requires the skill and
+	// both its script-checks.md and check-template.sh pages read before any
+	// .sh write under file-guard/.
 	got := e.Run(proj, "s-027-03", "write a correct guardrail hook", Turns("done",
+		Skill("s1", "authoring-guardrails"),
+		ToolUse("r1", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "script-checks.md")}),
+		ToolUse("r1b", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "check-template.sh")}),
 		Write("w1", fixtureHookPath, correctDispatchHook),
 	))
 
