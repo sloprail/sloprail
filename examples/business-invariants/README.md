@@ -37,13 +37,16 @@ touched the file.
    path, real line range), and does the pinned text still match HEAD? Pure
    byte comparison — no model needed to catch spec drift. The fqn is written
    by the agent being judged, so `pin.sh` checks it before git reads anything
-   with it: the sha must be hex (an fqn whose "sha" is `--output=<file>` would
-   have git write that file) and a prefix of the commit it resolves to (a
-   branch named like a short sha would otherwise shadow it); the path must be a
-   spec (`SPEC.md`, or a `.md` under `specs/` — the files pinned-spec-holds
-   guards); and the range must be `L<start>-<end>` with start ≤ end, inside the
-   file, holding text (a pin past the end of the spec pins nothing, and a judge
-   handed an empty `<pinned>` rules against nothing).
+   with it: the sha must be a full commit id, read as an object id only (a
+   short sha resolves through branch and tag names first, and an fqn whose
+   "sha" is `--output=<file>` would have git write that file); the repository
+   must be this project's; the path must be a spec (`SPEC.md`, or a `.md` under
+   `specs/`, case-insensitively — the files pinned-spec-holds guards); and the
+   range must be `L<start>-<end>` with start ≤ end, inside the file, holding
+   text (a pin past the end of the spec pins nothing, and a judge handed an
+   empty `<pinned>` rules against nothing). Scripts set
+   `GIT_NO_REPLACE_OBJECTS=1`, so a replace ref cannot swap the object a pin
+   names.
 2. **Judge (only once the pin is confirmed live):** given the pinned text,
    does the marked code actually enforce what it says? A `prepare`
    (`pinned-text.sh`) reads each pin and hands the judge the pinned lines and
@@ -85,10 +88,17 @@ the files a pin can involve — matching every path refused every shell edit in
 the project:
 
 - **Specs, by convention:** `SPEC.md` at any depth, or a `.md` file under a
-  `specs/` directory. `pinned-invariant` holds pins to the same convention
-  (`pin.sh` refuses a pin into any other file), so no accepted pin names a file
-  this guard does not watch. To use another layout, change the guard's `match`
-  and `SPEC_PATH_RE` in `pin.sh` together.
+  `specs/` directory, case-insensitively (`spec.md` is the same file on a macOS
+  disk). `pinned-invariant` holds pins to the same convention (`pin.sh` refuses
+  a pin into any other file), so no accepted pin names a file this guard does
+  not watch. To use another layout, change the guard's `match` and
+  `SPEC_PATH_RE` in `pin.sh` together; T046_46 fails if they disagree.
+
+**Upgrading:** if your code already pins rules in a file outside this
+convention (say `docs/rules.md`), `pinned-invariant` now refuses those pins at
+Stop. Either move the rules into `SPEC.md` or `specs/`, or widen both statements
+of the convention to take your layout in. Pins with a short sha are refused too:
+re-pin with the full sha (`git log -1 --format=%H -- <spec>`).
 - **Files carrying an `sr:invariant` marker, before or after the write** —
   `any(oldMarkers, …)` is what sees a write that removes the marker, which
   `any(markers, …)` alone reads as a file with none.
@@ -137,14 +147,39 @@ without the user's words.
 Everything the predicate cannot decide applies the citation: it is a `when`, and
 only a decided waiver exits 1 (with a `{"waived": …}` sentinel on stdout; any
 other exit 1, such as a crash, is turned into 0). The judge's `prepare` skips the
-model only on that sentinel. So: a shell edit of a pinned spec or a marked file
-is refused before it lands (and one the engine does not see as a write at all —
-a script rewriting the file — is refused at Stop); missing `jq` or `git` applies
-the citation. Some answers are decided, and waive:
+model only on that sentinel. So:
+
+- A shell edit of a pinned spec or a marked file (`sed -i`, `>`) is refused
+  before it lands, and the refusal leads with making it checkable — the same
+  edit made with Edit, Write or `sr-file edit` needs no citation when it keeps
+  every pinned line and pin.
+- A delete the engine did not read (`oldContentKnown: false` on a
+  PreFileDelete, e.g. `rm -r` past its byte budget) of a pinned spec is a change
+  to it; a marked file's pins are read from HEAD, never from the unread content.
+- Missing `jq` or `git` applies the citation.
+- A pin whose sha does not resolve — no such commit, or a short sha more than
+  one commit shares — still pins its lines: its range names lines of its path.
+
+Some answers are decided, and waive:
 
 - **Not a git work tree:** a pin names `<repo>@<sha>`, so nothing can be pinned.
-- **A pin that is not a real one** — a placeholder in a skill's example, a sha
-  that is not hex or that a branch of the same name shadows, a range that is not
-  `1 <= start <= end` — pins nothing: it cannot pass `pinned-invariant`.
+- **A marker without a pin's shape** — a placeholder in a skill's example, a
+  sha that is not hex, a range that is not `1 <= start <= end` — pins nothing:
+  it cannot pass `pinned-invariant`.
+
+**What happens only at Stop.** An edit the engine does not see as a write at
+all (a script rewriting the file) is caught at Stop, against the session's
+baseline. So is one command touching several files: the engine asks a
+preventive guard about the first file a command touches and not again, so `rm
+a.go b.go` of two files carrying the same pin is let through (each sees the
+other still holding it) and both deletes are refused at Stop.
+
+**A known gap: rewriting history.** The Stop check measures from the commit the
+session started on, and the engine takes a new starting point when that commit
+stops being reachable from HEAD. So a spec line rewritten by a script and then
+folded into the starting commit with `git commit --amend` leaves the session's
+difference: the Stop check no longer sees it. A follow-up to the engine's
+baseline handling will close this; until then, the pre-write refusal of every
+edit it can see is the guard.
 
 Markers inside a git submodule are not seen (`git grep` does not enter one).

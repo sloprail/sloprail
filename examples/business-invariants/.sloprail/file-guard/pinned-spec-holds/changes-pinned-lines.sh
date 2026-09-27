@@ -298,31 +298,13 @@ EOF
 moved=""
 if [ -n "$old_fqns" ]; then
   [ "$new_known" = 1 ] || apply "This change touches $path, which carries sr:invariant markers, and $unknown_result." "$unknown_remedy"
-  elsewhere="$(git -C "$workspace" grep --untracked -I -E "$MARKER_RE" -- . ":(exclude,literal)$npath" 2>/dev/null)"
+  elsewhere="$(git -C "$workspace" grep --untracked -h -I -E "$MARKER_RE" -- . ":(exclude,literal)$npath" 2>/dev/null)"
   [ $? -le 1 ] || exit 0
   # One command deleting two files that carry the same pin (`rm a.go b.go`) is
-  # checked one file at a time, before either is gone, so each would see the other
-  # still holding the pin. Every file a pre-write delete was asked about is
-  # recorded for the session, and a recorded file holds no pin for a later delete:
-  # the second of the two is refused, and with it the command.
-  record_ok=0
-  [ -n "${SR_GUARDRAIL:-}" ] && command -v sr-session >/dev/null 2>&1 && record_ok=1
-  if [ "$kind" = PreFileDelete ] && [ "$record_ok" = 1 ]; then
-    sr-session state set "predelete:$npath" 1 >/dev/null 2>&1
-  fi
-  holders=""
-  while IFS= read -r hit; do
-    [ -n "$hit" ] || continue
-    hfile="${hit%%:*}"
-    if [ "$kind" = PreFileDelete ] && [ "$record_ok" = 1 ] &&
-      [ -n "$(sr-session state get "predelete:$hfile" 2>/dev/null)" ]; then
-      continue
-    fi
-    holders="$holders${hit#*:}"$'\n'
-  done <<EOF
-$elsewhere
-EOF
-  elsewhere="$holders"
+  # not caught here: the engine asks a preventive guard about the first file a
+  # command touches and not again, and that file sees the other still holding
+  # the pin. At Stop both files are gone, neither holds it, and both deletes are
+  # refused — the after-check is the backstop.
   held="$({ printf '%s\n' "$new_fqns"; printf '%s\n' "$elsewhere" | fqns_in; } | sort -u)"
   held_texts=""
   while IFS= read -r hfqn; do

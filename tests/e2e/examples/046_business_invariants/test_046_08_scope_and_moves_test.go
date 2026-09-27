@@ -160,8 +160,8 @@ func TestT046_32_PinOutsideTheSpecsIsRefused(t *testing.T) {
 }
 
 // T046_33: a short sha that a branch of the same name shadows resolves to that
-// branch's commit, not to the one the code was pinned against. The pin must be a
-// prefix of the commit it resolves to.
+// branch's commit, not to the one the code was pinned against. A pin must name
+// its commit by its full id, read as an object id only.
 func TestT046_33_ShortShaShadowedByARefIsRefused(t *testing.T) {
 	e := newEnv(t)
 	proj := biProject(t, e)
@@ -176,8 +176,8 @@ func TestT046_33_ShortShaShadowedByARefIsRefused(t *testing.T) {
 		Write("w1", "src/charge.go", invariantCode(proj+"@"+short+":SPEC.md#L2-2", "func charge(total int) {}\n")),
 	))
 	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
-	if !containsAll(joined, "shadows the sha", "pinned-invariant") {
-		t.Fatalf("a short sha a branch shadows was read through the branch:\n%s", joined)
+	if !containsAll(joined, "full commit sha", "pinned-invariant") {
+		t.Fatalf("a short sha a branch shadows was not refused:\n%s", joined)
 	}
 }
 

@@ -234,9 +234,11 @@ any(oldMarkers, .kind == "asked")         does the file already carry one
 ```
 
 Note the distinction from a **file-guard's own match scope**, which exposes the
-settled file's markers under the single name `markers` (`any(markers, .kind ==
-"invariant")`) — on a delete, the markers the deleted file carried. `newMarkers`/`oldMarkers` are the **event's** fields — what a
-`Pre`/`Post` file event carries, read by a check off `.event.newMarkers`. In a
+settled file's markers as `markers` (`any(markers, .kind == "invariant")`) — on a
+delete, the markers the deleted file carried — and the markers it carried before
+the change as `oldMarkers` (empty on a create; the session baseline's at Stop).
+`newMarkers`/`oldMarkers` are also the **event's** fields — what a `Pre`/`Post`
+file event carries, read by a check off `.event.newMarkers`. In a
 script, a marker's quote is on `.fqn`:
 
 ```bash

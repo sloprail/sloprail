@@ -92,8 +92,9 @@ quote="$(printf '%s' "$payload" \
 ```
 
 Full treatment of the create/update/delete distinction, the pending-bytes reads,
-and markers in a file-guard's own **match scope** (where they appear under the
-single name `markers`, not `newMarkers`/`oldMarkers`): [file-guard.md](file-guard.md).
+and markers in a file-guard's own **match scope** (where they appear as `markers`,
+the file's markers after the change, and `oldMarkers`, before it — not
+`newMarkers`): [file-guard.md](file-guard.md).
 
 #### The resultKnown discipline
 

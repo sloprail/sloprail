@@ -1,0 +1,182 @@
+package e2e
+
+// The third review of the business-invariants rules (#82): a pin's sha is read
+// as an object id, never through a ref; the unknown-result remedy leads with
+// making the edit checkable; a pin must name this project's repository; the two
+// statements of the spec convention agree; and one command deleting two files
+// that carry the same pin does not let each vouch for the other.
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/guardrail"
+)
+
+// T046_43: a short-sha pin still pins its lines when a branch named like the sha
+// is created, and when its sha names no commit at all: a pin's range names lines
+// of its path, and the citation applies to changing them. Before, a pin whose sha
+// did not resolve (or resolved through the branch to another commit) was taken
+// to pin nothing, so the rewrite went through uncited.
+func TestT046_43_UnresolvedShaStillPinsItsLines(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		sha   func(sha string) string
+		setup string
+	}{
+		{"short-sha-shadowed-by-a-branch", func(sha string) string { return sha[:7] }, "git branch %s HEAD"},
+		{"sha-naming-no-commit", func(string) string { return "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			var short string
+			proj, _ := pinnedSpecProjectMarker(t, e, func(proj, sha string) string {
+				short = c.sha(sha)
+				return "// sr:invariant \"" + proj + "@" + short + ":SPEC.md#L3-3\""
+			})
+			e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+			turns := []Turn{}
+			if c.setup != "" {
+				turns = append(turns, Bash("b0", strings.ReplaceAll(c.setup, "%s", short)))
+			}
+			turns = append(turns, Write("w1", "SPEC.md", relaxedSpec))
+			sess := "s-046-43-" + c.name
+			res := e.Run(proj, sess, "allow goodwill refunds", Turns("done", turns...))
+			if !res.Refused() || !res.Saw("rewrites SPEC.md L3-3") {
+				t.Fatalf("an uncited rewrite of a line pinned by an unresolved sha was not refused:\n%s", res.Output)
+			}
+			if got := readSpec(t, proj); got != billingSpec {
+				t.Errorf("the rewrite reached SPEC.md:\n%s", got)
+			}
+		})
+	}
+}
+
+// T046_44: a shell rename in a marked file is refused (its result cannot be
+// checked first), and the refusal leads with making the edit checkable — which
+// needs no citation when it keeps the pin — rather than with citing the user,
+// whose words a rename would never have.
+func TestT046_44_UnknownResultRemedyLeadsWithACheckableEdit(t *testing.T) {
+	e := newEnv(t)
+	proj, sha := pinnedSpecProjectMarker(t, e, func(proj, sha string) string {
+		return "// sr:invariant \"" + proj + "@" + sha + ":SPEC.md#L3-3\""
+	})
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	renamed := invariantCode(proj+"@"+sha+":SPEC.md#L3-3",
+		"func Refund(chargedCents, amount int) bool { return amount <= chargedCents }\n")
+	res := e.Run(proj, "s-046-44", "rename charged to chargedCents", Turns("done",
+		Bash("b1", "sed -i.bak 's/charged/chargedCents/g' src/charge.go"),
+		Write("w1", "src/charge.go", renamed),
+	))
+	i := strings.Index(res.Output, "Make this edit with Edit or Write")
+	j := strings.Index(res.Output, "cite their words")
+	if i < 0 || (j >= 0 && j < i) {
+		t.Fatalf("the refusal of a shell edit did not lead with making it checkable:\n%s", res.Output)
+	}
+	if !strings.Contains(readFile(t, proj, "src/charge.go"), "chargedCents") {
+		t.Errorf("the same rename made with Write, keeping the pin, did not land")
+	}
+}
+
+// T046_45: a pin into another repository names text nothing in this project
+// guards, and pinned-invariant refuses it.
+func TestT046_45_PinIntoAnotherRepositoryIsRefused(t *testing.T) {
+	other := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"}} {
+		if out, err := exec.Command("git", append([]string{"-C", other}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	writeExec(t, other, "SPEC.md", billingSpec)
+	if out, err := exec.Command("sh", "-c", "cd "+other+" && git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm spec").CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v %s", err, out)
+	}
+	otherSha, _ := exec.Command("git", "-C", other, "rev-parse", "HEAD").Output()
+
+	e := newEnv(t)
+	proj := biProject(t, e)
+	commitSpec(t, e, proj, "SPEC.md", billingSpec, "spec")
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+	sess := "s-046-45"
+	e.Run(proj, sess, "pin to the other repo", Turns("done",
+		Write("w1", "src/charge.go", invariantCode(other+"@"+strings.TrimSpace(string(otherSha))+":SPEC.md#L3-3", refundBody)),
+	))
+	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
+	if !containsAll(joined, "not this project's", "pinned-invariant") {
+		t.Fatalf("a pin into another repository was not refused:\n%s", joined)
+	}
+}
+
+// T046_46: the spec convention is stated twice — pinned-spec-holds' match (what
+// the guard watches) and pin.sh's SPEC_PATH_RE (where a pin may point). If they
+// disagree, a pin can name a file the guard does not watch. Both are run over the
+// same paths and must agree.
+func TestT046_46_SpecConventionAgrees(t *testing.T) {
+	root := filepath.Join(repoRoot(t), "examples", "business-invariants", ".sloprail", "file-guard")
+	raw, err := os.ReadFile(filepath.Join(root, "pinned-spec-holds", "file-guard.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var guard struct {
+		Match string `yaml:"match"`
+	}
+	if err := yaml.Unmarshal(raw, &guard); err != nil {
+		t.Fatal(err)
+	}
+	match, err := guardrail.CompileFileMatch(guard.Match)
+	if err != nil {
+		t.Fatalf("compile the guard's match: %v", err)
+	}
+
+	paths := map[string]bool{
+		"SPEC.md": true, "a/SPEC.md": true, "spec.md": true, "specs/x/y.md": true, "specs/billing.md": true,
+		"docs/rules.md": false, "SPEC.markdown": false, "specs.md": false, "src/charge.go": false, "specs/notes.txt": false,
+	}
+	pinSh := filepath.Join(root, "pinned-invariant", "pin.sh")
+	for p, want := range paths {
+		watched, err := match.Match(event.Event{Fields: map[string]any{
+			"path": p, "markers": []any{}, "oldMarkers": []any{}, "context": map[string]any{},
+		}})
+		if err != nil {
+			t.Fatalf("%s: match: %v", p, err)
+		}
+		err = exec.Command("bash", "-c", `. "$1"; printf '%s' "$2" | grep -Eiq "$SPEC_PATH_RE"`, "_", pinSh, p).Run()
+		pinnable := err == nil
+		if watched != want || pinnable != want {
+			t.Errorf("%s: the guard watches it: %v, a pin may name it: %v, want both %v", p, watched, pinnable, want)
+		}
+	}
+}
+
+// T046_47: `rm a.go b.go`, both carrying the same pin. The engine asks a
+// preventive guard about the first file a command touches and not again, and that
+// file sees the other still holding the pin, so the command runs. At Stop both
+// are gone, neither holds the pin, and both deletes are refused: the after-check
+// is the backstop, and names both files.
+func TestT046_47_DeletingTwoHoldersOfOnePinInOneCommand(t *testing.T) {
+	e := newEnv(t)
+	proj := biProject(t, e)
+	sha := commitSpec(t, e, proj, "SPEC.md", billingSpec, "spec")
+	marked := invariantCode(proj+"@"+sha+":SPEC.md#L3-3", refundBody)
+	e.WriteFile(proj, "src/a.go", marked)
+	e.WriteFile(proj, "src/b.go", marked)
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "two holders of one pin")
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	sess := "s-046-47"
+	e.Run(proj, sess, "clean up", Turns("done",
+		Bash("b1", "rm src/a.go src/b.go"),
+	))
+	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
+	if !containsAll(joined, "moves src/a.go off", "moves src/b.go off", "pinned-spec-holds") {
+		t.Fatalf("deleting both holders of a pin in one command was not refused at Stop for both:\n%s", joined)
+	}
+}

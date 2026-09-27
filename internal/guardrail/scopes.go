@@ -82,7 +82,7 @@ func CompileFileMatch(src string) (*Matcher, error) {
 //
 // The scope's variables are `event` and `context`, so those are the top-level
 // keys the returned Matcher reads at run time. This differs from a file-guard,
-// whose variables are a file's own flat facts (path, markers, context) and
+// whose variables are a file's own flat facts (path, markers, oldMarkers, context) and
 // which therefore reads an event's Fields directly. A gate NESTS: the event
 // handed to Match carries the kind's own fields under an `event` key and the
 // context map under `context` —
