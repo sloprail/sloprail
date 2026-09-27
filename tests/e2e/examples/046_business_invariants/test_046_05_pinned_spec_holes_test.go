@@ -128,6 +128,29 @@ func TestT046_16_DroppingOrMovingTheMarkerFirstDoesNotUnpin(t *testing.T) {
 	}
 }
 
+// T046_16b: a marker dropped by a command the engine does not see as a write (a
+// script rewriting the file) lands before anything can refuse it. The rule stays
+// pinned by the marker at HEAD, so the rewrite of it after is still refused.
+func TestT046_16b_MarkerDroppedUnseenStillPinnedAtHead(t *testing.T) {
+	e := newEnv(t)
+	proj := pinnedSpecProject(t, e)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	res := e.Run(proj, "s-046-16b", "allow goodwill refunds", Turns("done",
+		Bash("b1", `python3 -c "open('src/charge.go','w').write('func Refund(charged, amount int) bool { return true }\\n')"`),
+		Write("w1", "SPEC.md", relaxedSpec),
+	))
+	if strings.Contains(readFile(t, proj, "src/charge.go"), "sr:invariant") {
+		t.Skipf("the engine refused or undid the unseen drop, so it is not unseen: %s", res.Output)
+	}
+	if !res.Refused() || !res.Saw("rewrites SPEC.md L3-3") {
+		t.Fatalf("with the marker gone from the working tree, the rewrite of the rule it pins at HEAD was not refused:\n%s", res.Output)
+	}
+	if got := readSpec(t, proj); got != billingSpec {
+		t.Errorf("rule 2 was rewritten:\n%s", got)
+	}
+}
+
 // T046_17: `git mv SPEC.md SPEC.old` is not seen as a delete, so the Write that
 // puts a relaxed SPEC.md back is a create. A create at a path HEAD holds is a
 // change to what HEAD held, and rewriting its pinned line is refused.
