@@ -389,3 +389,33 @@ func TestT039_39_ScorerSettlesWhatTheRecordSettles(t *testing.T) {
 		}
 	})
 }
+
+// T039_40: the proposal opens research only in the trajectory that WROTE it.
+// A sub-agent that did not write NOTES.md — but whose Stop sees it changed,
+// because its dispatcher wrote it (a real run: a background research agent was
+// refused for its dispatcher's proposal) — is not asked for research it was
+// never given.
+func TestT039_40_ProposalOpensResearchOnlyForItsWriter(t *testing.T) {
+	e, proj := notesProject(t)
+	src := sourceRepo(t, e, "retry-lib")
+	dst := filepath.Join(scratch(t), "retry-lib")
+	sess := "s-039-40"
+	res := e.Run(proj, sess, "propose retry", Turns("done",
+		Bash("b1", "git clone "+src+" "+dst),
+		Read("r1", filepath.Join(dst, "lib", "retry.js")),
+		Read("r2", filepath.Join(dst, "lib", "backoff.js")),
+		harness.Write("w1", filepath.Join(proj, "NOTES.md"), proposal),
+		dispatch(t, "d1", "summarise what the notes say", Say("s1", "The notes propose backoff.")),
+	))
+	if got := notes(t, proj); got != proposal {
+		t.Fatalf("setup: the researched proposal did not land:\n%s", got)
+	}
+	var all []string
+	for _, rec := range append([]string{e.TranscriptPath(proj, sess)}, e.SubagentRecordPaths(proj, sess)...) {
+		b, _ := os.ReadFile(rec)
+		all = append(all, string(b))
+	}
+	if joined := strings.Join(all, "\n"); strings.Contains(joined, "now holds a Proposed approach") {
+		t.Errorf("a trajectory that did not write the proposal was refused for it:\n%s", res.Output)
+	}
+}

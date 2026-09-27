@@ -187,7 +187,10 @@ approach, an edit of a file that already had the section. A proposal whose
 result the engine cannot know before it lands (an interpreter writing it) is
 caught at Stop instead: the research-run context also wakes on the settled
 file (`PostFileWrite`) when it gained the section, and depth-check refuses the
-Stop, naming the proposal.
+Stop, naming the proposal — in the trajectory that wrote it only (a tool call
+on its own record writes that path). A Stop sees every file that changed in
+the session, and a real run's background research sub-agent was refused for
+its dispatcher's proposal until this was so.
 
 ## The mechanism
 
