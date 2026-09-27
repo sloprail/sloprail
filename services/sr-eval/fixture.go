@@ -84,6 +84,13 @@ type Fixture struct {
 	// listed in .claude-plugin/marketplace.json.
 	Plugins []string `yaml:"plugins"`
 
+	// DisallowedTools names harness tools the agent-under-test does not have,
+	// e.g. [WebSearch, WebFetch] — passed as the harness's own
+	// --disallowed-tools. For a fixture whose rule governs one way of doing a
+	// thing (research through gh), in a project that offers no other: the
+	// environment steers the agent, the prompt never has to.
+	DisallowedTools []string `yaml:"disallowedTools"`
+
 	// Model is the sr-agent --model set for the agent-under-test, e.g.
 	// "claude-sonnet-5,size-md". Empty lets sr-agent's own default resolve —
 	// which sr-agent refuses rather than silently picking one, so this is
