@@ -1,4 +1,3 @@
-is_rate_limited() in src/rate_limit.py is supposed to check request_count
-against limit within a rolling window, but it looks like it's ignoring
-window_seconds entirely. Please investigate and fix it, then let me know
-what you found and what you changed.
+Let's pick the rate-limit work back up. I also want burst limits as part of it:
+a short spike of requests shouldn't trip the limiter. I only have time for the
+rolling-window fix today, so just do that part for now.

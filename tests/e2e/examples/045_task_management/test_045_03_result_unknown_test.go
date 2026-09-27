@@ -27,7 +27,7 @@ func TestT045_11_CommandDerivedEditRefusedAsUnderivable(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("a command-derived (resultKnown:false) edit to ASK.md was not refused:\n%s", res.Output)
 	}
-	if !res.Saw("must be grounded in a citation") || !res.Saw(askPath) || !res.Saw("sr-file edit") {
+	if !res.Saw("must cite the user's own words") || !res.Saw(askPath) || !res.Saw("sr-file edit") {
 		t.Errorf("the refusal is not the citation requirement's, naming ASK.md and the sr-file form:\n%s", res.Output)
 	}
 }

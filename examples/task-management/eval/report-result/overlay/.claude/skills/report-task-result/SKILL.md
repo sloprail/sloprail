@@ -22,7 +22,10 @@ The quote must match exactly one of the user's messages; check it first with
 
 Once the work is done, write
 `memories/tasks/<category>/<short-name>/RESULT.md` describing what was
-done. **Never edit ASK.md once it exists** — a task's ask must stay
-exactly what was originally asked, so it stays a real check on whether the
-result actually matches it. Report progress, findings, or a revised
-understanding of scope in RESULT.md, never by rewriting ASK.md.
+done.
+
+**ASK.md changes only when the user changes the ask** — they add to it, or
+take something out of it — and then with `sr-file edit`, citing their words for
+the change. It is never edited to match the work: an ask stays what was asked, so
+it stays a real check on whether the result matches it. Progress, findings, what
+was deferred, or a revised understanding of scope go in RESULT.md.

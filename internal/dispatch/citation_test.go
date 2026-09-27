@@ -3,7 +3,6 @@ package dispatch
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,7 +38,7 @@ func TestRequireCitation(t *testing.T) {
 		"user citation meets the default":   {userOnly, citedEvent("PreFileUpdate", transcript.SourceUser), false, ""},
 		"no citation on a file change":      {userOnly, citedEvent("PreFileUpdate"), true, "sr-file edit memories/a.md"},
 		"no citation on a command":          {userOnly, citedEvent("PreCommandInvoke"), true, "sr-session trajectory cite"},
-		"no citation after the fact":        {userOnly, citedEvent("PostFileUpdate"), true, "was changed without a citation"},
+		"no citation after the fact":        {userOnly, citedEvent("PostFileUpdate"), true, "was changed without citing the user's own words (--cite:user)"},
 		"user citation, tool_result wanted": {toolOnly, citedEvent("PreCommandInvoke", transcript.SourceUser), true, "tool_result"},
 		"tool_result citation meets it":     {toolOnly, citedEvent("PreCommandInvoke", transcript.SourceToolResult), false, ""},
 	} {
@@ -106,10 +105,14 @@ func TestRequireWhenHint(t *testing.T) {
 		v, err := Runner{}.Run(Request{Nature: NatureFileGuard, Dir: dir, Require: []declaration.Prerequisite{p}, Event: citedEvent("PreFileUpdate")})
 		require.NoError(t, err)
 		require.True(t, v.Refused)
-		assert.Contains(t, v.Reason, "sr-file edit", "the engine's remedy stays")
+		assert.Contains(t, v.Reason, "must cite a tool's output from this session (--cite:tool_result)", "what to cite, always")
+		assert.Contains(t, v.Reason, "ON ITS OWN", "how to run sr-file, always")
 		if want != "" {
-			assert.True(t, strings.HasSuffix(v.Reason, "\n"+want), "the hint follows the remedy: %s", v.Reason)
+			// The hint is the how: it takes the generic forms' place.
+			assert.Contains(t, v.Reason, "\n"+want+"\n")
+			assert.NotContains(t, v.Reason, "sr-file delete", "a hint replaces the generic forms: %s", v.Reason)
 		} else {
+			assert.Contains(t, v.Reason, "sr-file delete", "without a hint the generic forms stay")
 			assert.NotContains(t, v.Reason, "not json")
 		}
 	}

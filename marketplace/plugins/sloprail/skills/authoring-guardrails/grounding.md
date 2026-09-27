@@ -89,10 +89,12 @@ removed="$(comm -23 <(printf '%s' "$old" | sort -u) <(printf '%s' "$new" | sort 
 exit 0
 ```
 
-The engine's refusal is generic: it names the `sr-file` forms. A `when` script
-that applies the requirement may add the rule's own advice for this case by
-printing `{"hint": "…"}` on stdout (which status to move from, what counts as
-proof); the refusal carries it after the remedy.
+The engine's refusal says what must be cited and with which flag ("must cite a
+tool's output from this session (`--cite:tool_result`)"), then how: the generic
+`sr-file` forms, or — when a `when` script that applies the requirement prints
+`{"hint": "…"}` on stdout — that hint in their place. A hint is the rule's own
+advice for this case (which status to move from, what counts as proof), so give
+the exact command in it, for a create as well as an edit.
 
 On `Post` kinds `oldContent` is the session baseline, so a transition such as
 "status became `published` this session" reads the same at both moments. Keep
