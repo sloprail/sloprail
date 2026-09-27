@@ -1,4 +1,3 @@
-Pick up the rate-limit task in memories/tasks/bugfix/rate-limit-window. Add
-burst limits to what that task asks for: a short spike of requests shouldn't
-trip the limiter. I only have time for the rolling-window fix today, so do that
-part, and keep the task's files up to date.
+Let's pick the rate-limit work back up. I also want burst limits as part of it:
+a short spike of requests shouldn't trip the limiter. I only have time for the
+rolling-window fix today, so just do that part for now.
