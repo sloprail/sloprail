@@ -20,7 +20,15 @@ The convention it enforces is the one a project writes down (the eval seed's
 `NOTES.md`: "clone at least one real repo that implements retry/backoff logic,
 not just a README"). The gate measures that sentence and nothing it does not say.
 
-## Why a context + a Stop gate
+And the finding comes **after** the reading. While a research run is open, a
+write of the research notes is refused before it lands until the run has depth,
+with the same remedy prefixed by what was held:
+
+> Writing NOTES.md now would record this #research run's findings before the
+> research has depth — do the reading first, then write it. This #research run
+> cloned … (gate "findings-need-depth")
+
+## Why a context + two gates
 
 - **The context (`research-run`)** is the declaration. It activates on a
   `#research` tag the agent writes (`PostTagWrite`), or on an `Agent`/`Task`
@@ -35,6 +43,15 @@ not just a README"). The gate measures that sentence and nothing it does not say
   `Stop` is the one moment the whole run is on the record. `match:
   context["research-run"].active` keeps ordinary turns out of it, and `require:
   context: research-run` orders the context's enter before the check.
+- **The gate (`findings-need-depth`, on `PreFileWrite`)** is the order. A Stop
+  gate can refuse a turn but not what happened inside it: in two of three real
+  runs that passed the Stop gate alone, the agent wrote the "Proposed approach"
+  into NOTES.md first, was refused at Stop, and read one more source file only to
+  get past it — the conclusion was written before the reading and never
+  revisited. Refusing the write itself, before it lands, is the only point where
+  "research before proposing" can be enforced. The Stop gate stays as the
+  backstop for a run that never writes notes, or writes them in a way this gate
+  cannot see.
 
 ## What "depth" means here, and why
 
@@ -82,6 +99,31 @@ was refused again at 3 < 5, and ended with the refusal unresolved. A proxy that 
 satisfied by padding and unexplained by the convention is worse than none; the
 page requirement is gone rather than restated.
 
+## Which writes are "the research notes"
+
+The example's convention: **research findings are prose, kept in Markdown in the
+project** — NOTES.md is where this project keeps them. So the gate matches any
+`*.md` write inside the project outside a dot-directory (`event.path endsWith
+".md"`, not absolute, not under `.claude/`, `.sloprail/`, …). Matching NOTES.md
+alone would let the proposal move to `PROPOSAL.md` and be linked later; code
+files are not matched, because a clone into the project (`mkdir vendor && git
+clone …`) is part of doing the research, and "no code before research" is a
+different rule.
+
+`PreFileWrite` covers the Write and Edit tools and every shell write the engine
+parses (`cat > NOTES.md <<EOF`, `echo … >> NOTES.md`, `sed -i`, `tee`). A write
+through an interpreter (`python -c "open('NOTES.md','w')…"`) is not visible to
+it; the Stop gate still refuses that turn.
+
+**When research is open.** The research-run context is active — or the record
+already declares `#research` (a tag in the agent's text, a sub-agent dispatch
+carrying it, or a sub-agent's own dispatch prompt). The second half matters: a
+tag reaches the context only at Stop, but the agent's text is on the record
+before its next tool call, so a proposal written in the same turn as the
+declaration is caught. With no `#research` anywhere, NOTES.md is an ordinary
+file and nothing here touches it. Once a session's research has depth, later
+notes writes pass: depth is judged over the whole session.
+
 ## The mechanism
 
 - **`gate/depth-check/research-facts.jq`** — per trajectory, over `sr-session
@@ -95,6 +137,10 @@ page requirement is gone rather than restated.
   what the run cloned, what source it read there, what it read elsewhere, and
   what to do. It keeps the older check that a research sub-agent ran as its own
   agent, not in a trajectory shared with siblings.
+- **`gate/findings-need-depth/findings-after-depth.sh`** — decides whether a
+  research run is open, and if so runs `../depth-check/verify-depth.sh` with
+  `DEPTH_FOR_WRITE=<path>`: the same depth rule and remedy, one copy, with the
+  held write named first and the sibling-trajectory check left to Stop.
 
 ## What it does not catch, and the tradeoffs
 
@@ -124,7 +170,10 @@ page requirement is gone rather than restated.
 
 ## Proof
 
-- **E2e:** `tests/e2e/examples/039_research_rigor/` — activation, a shallow run
+- **E2e:** `tests/e2e/examples/039_research_rigor/` — a proposal written before
+  depth refused before it lands, after depth landing, NOTES.md with no research
+  untouched, and the evasions (a shell heredoc or append into NOTES.md, the
+  proposal in another Markdown file) refused; activation, a shallow run
   refused, clone + source reads admitted, README/docs-only refused, reads of an
   uncloned checkout refused, a failed clone into an existing directory refused,
   sub-agent research aggregated for the dispatcher, and each command shape above.

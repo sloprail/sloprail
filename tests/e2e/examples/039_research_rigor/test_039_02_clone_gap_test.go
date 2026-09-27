@@ -64,7 +64,7 @@ func TestT039_05_CloneButReadmeOnlyRefused(t *testing.T) {
 	joined := strings.Join(blocks, "\n")
 	for _, want := range []string{
 		"This #research run cloned " + dst,
-		"only 1 source file(s)",
+		"but read only one source file in it (" + filepath.Join(dst, "lib", "retry.js") + "), and 2 are needed",
 		"a README or docs file does not count",
 		whatToDo,
 	} {
@@ -107,5 +107,26 @@ func TestT039_06_ReadsOfUnclonedDirectoryRefused(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("the refusal is missing %q:\n%s", want, joined)
 		}
+	}
+}
+
+// T039_23: with several clones the refusal counts across them, in grammar that
+// fits several — not "inside it".
+func TestT039_23_SeveralClonesWording(t *testing.T) {
+	e, proj := research(t)
+	src := sourceRepo(t, e, "retry-lib")
+	s := scratch(t)
+	a, b := filepath.Join(s, "a"), filepath.Join(s, "b")
+
+	sess := "s-039-23"
+	res := e.Run(proj, sess, "clone two, read one", Turns("done",
+		SayBash("b1", "Cloning. #research", "git clone "+src+" "+a+" && git clone "+src+" "+b),
+		Read("r1", filepath.Join(b, "lib", "retry.js")),
+	))
+
+	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	want := "This #research run cloned " + a + ", " + b + " but read only one source file across them (" + filepath.Join(b, "lib", "retry.js") + "), and 2 are needed"
+	if !strings.Contains(joined, want) {
+		t.Errorf("the refusal is missing %q:\n%s\n%s", want, joined, res.Output)
 	}
 }

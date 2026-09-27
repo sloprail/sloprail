@@ -21,6 +21,8 @@ import exitSh      from '../../../examples/research-rigor/.sloprail/context/rese
 import gateYaml    from '../../../examples/research-rigor/.sloprail/gate/depth-check/gate.yaml?raw';
 import verifySh    from '../../../examples/research-rigor/.sloprail/gate/depth-check/verify-depth.sh?raw';
 import factsJq     from '../../../examples/research-rigor/.sloprail/gate/depth-check/research-facts.jq?raw';
+import findingsYaml from '../../../examples/research-rigor/.sloprail/gate/findings-need-depth/gate.yaml?raw';
+import findingsSh  from '../../../examples/research-rigor/.sloprail/gate/findings-need-depth/findings-after-depth.sh?raw';
 
 ## The failure
 
@@ -51,6 +53,12 @@ the agent's summary of it.
    sub-agent did as well, does not credit a checkout that was already on disk,
    and says exactly what is missing and what to do.
 
+3. A second **gate** holds the conclusion until the reading is done: while a
+   research run is open, a write of the research notes (Markdown in the
+   project) is refused before it lands until the run has depth — by the same
+   rule, with the same remedy. A `Stop` gate can refuse a turn, but only a gate
+   on the write can keep the proposal from being written first.
+
 </Steps>
 
 A context can only track; the gate is what refuses the shallow run.
@@ -73,6 +81,9 @@ a directory under `.sloprail/` — a `*.yaml` declaration plus the scripts it na
       - gate.yaml
       - verify-depth.sh
       - research-facts.jq
+    - findings-need-depth/
+      - gate.yaml
+      - findings-after-depth.sh
 
 </FileTree>
 
@@ -94,3 +105,9 @@ research was declared, it skips.
 <Code code={gateYaml} lang="yaml" title=".sloprail/gate/depth-check/gate.yaml" />
 <Code code={verifySh} lang="bash" title=".sloprail/gate/depth-check/verify-depth.sh" />
 <Code code={factsJq} lang="jq" title=".sloprail/gate/depth-check/research-facts.jq" />
+
+The write-time half: the same depth rule, checked before a research-notes write
+lands.
+
+<Code code={findingsYaml} lang="yaml" title=".sloprail/gate/findings-need-depth/gate.yaml" />
+<Code code={findingsSh} lang="bash" title=".sloprail/gate/findings-need-depth/findings-after-depth.sh" />

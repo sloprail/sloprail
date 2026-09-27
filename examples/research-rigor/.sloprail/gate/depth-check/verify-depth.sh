@@ -3,6 +3,11 @@
 # at least MIN_SOURCE_FILES distinct files (or searched directories) inside a
 # directory THIS run cloned, beyond its README and docs. See the example's
 # README.md for why depth means reading what was cloned, not counting searches.
+#
+# Shared: the depth-check Stop gate runs it as its check, and the
+# findings-need-depth gate runs it before a research-notes write with
+# DEPTH_FOR_WRITE=<path>, so both judge depth by the same rule and word the
+# remedy the same way.
 set -uo pipefail
 
 # Two distinct source reads. One file can be an entry point that only
@@ -77,9 +82,11 @@ if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
        + (if .unresolved > 0 then " into a directory that can be located — clone into a literal path, not one built from a variable or reached through an unresolvable cd" else "" end)
        + "."
      else
-       "This #research run cloned " + list(.dirs) + " but read "
-       + (if (.source | length) == 0 then "none of its source files"
-          else "only " + (.source | length | tostring) + " source file(s) inside it (" + list(.source) + ")" end)
+       (if (.dirs | length) == 1 then "its" else "their" end) as $its
+       | "This #research run cloned " + list(.dirs) + " but read "
+       + (if (.source | length) == 0 then "none of " + $its + " source files"
+          else "only one source file " + (if (.dirs | length) == 1 then "in it" else "across them" end)
+               + " (" + list(.source) + "), and \($min) are needed" end)
        + " — a README or docs file does not count."
      end)
     + " To finish the research: git clone a real repository that implements what you are researching, then read at least \($min) of its source files (not only the README or docs) with Read, Grep, cat, sed, grep or rg."
@@ -87,8 +94,17 @@ if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
          " Reads of directories this run did not clone do not count (e.g. " + list(.elsewhere) + ") — a checkout already on disk is not research this run did."
        else " Reads of directories this run did not clone do not count." end)
   ')"
+  # Invoked by findings-need-depth before a research-notes write: say why the
+  # write is held, so the agent reads first and writes after.
+  if [ -n "${DEPTH_FOR_WRITE:-}" ]; then
+    reason="Writing $DEPTH_FOR_WRITE now would record this #research run's findings before the research has depth — do the reading first, then write it. $reason"
+  fi
   block "$reason"
 fi
+
+# A write is judged on depth alone; the trajectory-shape check below is about
+# how the research ran, which the Stop gate answers.
+[ -z "${DEPTH_FOR_WRITE:-}" ] || exit 0
 
 # Each research trajectory must be its own agent. Only meaningful inside a
 # subagent run: refuse when this ran as a subagent (.isSubagent) that carries
