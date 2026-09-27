@@ -1,8 +1,11 @@
 package transcript
 
 import (
+	"bufio"
 	"encoding/json"
-	"regexp"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // Which tool_result blocks are a TOOL's output — the tool_result pool — is
@@ -16,11 +19,19 @@ import (
 //     final message, model-written: a sub-agent told "reply exactly: all 40
 //     tests pass" returns exactly that. What the sub-agent's own tools printed is
 //     in its own record, and grounds from there.
-//   - A TaskOutput result for a task that is not a background Bash (taskReaders).
-//     TaskOutput returns a background task's output: genuine for a background
-//     Bash, the agent's own reply for a background agent. The task is classified
-//     by what launched it, in this record; a task it cannot classify is not
-//     citable.
+//   - A TaskOutput result. TaskOutput returned a background task's output — a
+//     background agent's reply as readily as a command's — and no harness
+//     version this was measured against (Claude Code 2.1.170–2.1.282) calls it
+//     any more; a background task's output is a file now (below). It is kept
+//     uncitable, not classified, so a legacy record cannot launder an agent's
+//     reply through it.
+//   - A result of a call that READ AN AGENT TRANSCRIPT (readsTranscript): a Read,
+//     a Grep or a command whose target is a Claude Code record — any .jsonl
+//     under the harness's projects directory (a sub-agent's record, the
+//     session's own), or a file that reads as one, including a background
+//     agent's `tasks/<id>.output`, which is a symbolic link to that agent's
+//     record. Its text is model-written; read back through a tool it would
+//     otherwise ground as the tool's output.
 //   - A result whose call is NOT in the record at all. Its provenance is unknown
 //     — it could answer a dispatch as easily as a command — so it fails closed.
 //     The cost: a call and its result split across files (a restart or a
@@ -39,32 +50,18 @@ import (
 // launch receipt: Agent, and Task, its former name (still accepted as an alias).
 var delegationTools = map[string]bool{"Agent": true, "Task": true}
 
-// taskReaders are the harness tools that return a background task's output,
-// named by the task's id in their input.
+// taskReaders are the harness tools that returned a background task's output.
 var taskReaders = map[string]bool{"TaskOutput": true}
 
-// The launch receipts that name a background task, as Claude Code writes them
-// (measured against real records): a Bash run with run_in_background answers
-// "Command running in background with ID: <id>. Output is being written to: …",
-// and an Agent run in the background answers "Async agent launched
-// successfully. … agentId: <id> (internal ID …". A foreground Agent's reply
-// carries "agentId: <id>" too, which classifies the same way.
-var (
-	backgroundBashID = regexp.MustCompile(`Command running in background with ID: ([A-Za-z0-9_-]+)`)
-	agentTaskID      = regexp.MustCompile(`agentId: ([A-Za-z0-9_-]+)`)
-)
-
-type taskKind int
-
-const (
-	taskUnknown taskKind = iota
-	taskBash
-	taskAgent
-)
+// recordCall is a tool call in the record and the directory it ran in.
+type recordCall struct {
+	assistantContentBlock
+	cwd string
+}
 
 // recordCalls is every tool call in the record, by its tool_use id.
-func recordCalls(entries []LinedEntry) map[string]assistantContentBlock {
-	calls := map[string]assistantContentBlock{}
+func recordCalls(entries []LinedEntry) map[string]recordCall {
+	calls := map[string]recordCall{}
 	for _, e := range entries {
 		if e.Type != EntryAssistant || len(e.Message) == 0 {
 			continue
@@ -76,7 +73,7 @@ func recordCalls(entries []LinedEntry) map[string]assistantContentBlock {
 		}
 		for _, b := range blocks {
 			if b.Type == "tool_use" && b.ID != "" {
-				calls[b.ID] = b
+				calls[b.ID] = recordCall{b, e.Cwd}
 			}
 		}
 	}
@@ -88,74 +85,100 @@ func recordCalls(entries []LinedEntry) map[string]assistantContentBlock {
 // in the record — is not.
 func citableResults(entries []LinedEntry) map[string]bool {
 	calls := recordCalls(entries)
-	tasks := backgroundTasks(entries, calls)
 	citable := map[string]bool{}
-	for id, b := range calls {
-		switch {
-		case delegationTools[b.Name]:
-		case taskReaders[b.Name]:
-			citable[id] = tasks[taskIDOf(b.Input)] == taskBash
-		default:
-			citable[id] = true
-		}
+	for id, c := range calls {
+		citable[id] = !delegationTools[c.Name] && !taskReaders[c.Name] && !readsTranscript(c)
 	}
 	return citable
 }
 
-// backgroundTasks classifies each background task launched in the record by
-// the receipt its launching call got back: a Bash's receipt names a Bash task,
-// an Agent's or Task's names an agent. A task named both ways is an agent's —
-// the classification fails toward not citable.
-func backgroundTasks(entries []LinedEntry, calls map[string]assistantContentBlock) map[string]taskKind {
-	tasks := map[string]taskKind{}
-	for _, e := range entries {
-		if e.Type != EntryUser || len(e.Message) == 0 {
-			continue
+// readsTranscript reports whether a call's target is an agent's transcript: a
+// path in its input (file_path, path, notebook_path) or, for a shell command,
+// any word of it, that resolves — through symbolic links — to a Claude Code
+// record or into the harness's projects directory; or a command that names
+// that directory at all (a glob over it cannot be resolved ahead of time).
+func readsTranscript(c recordCall) bool {
+	var in struct {
+		FilePath     string `json:"file_path"`
+		Path         string `json:"path"`
+		NotebookPath string `json:"notebook_path"`
+		Command      string `json:"command"`
+	}
+	_ = json.Unmarshal(c.Input, &in)
+	candidates := []string{in.FilePath, in.Path, in.NotebookPath}
+	if in.Command != "" {
+		if strings.Contains(in.Command, ".claude/projects") {
+			return true
 		}
-		var msg userMessage
-		var blocks []userContentBlock
-		if json.Unmarshal(e.Message, &msg) != nil || json.Unmarshal(msg.Content, &blocks) != nil {
-			continue
-		}
-		for _, b := range blocks {
-			if b.Type != "tool_result" || len(b.Content) == 0 {
-				continue
-			}
-			call, ok := calls[b.ToolUseID]
-			if !ok {
-				continue
-			}
-			for _, body := range toolResultStrings(b.Content) {
-				switch {
-				case call.Name == "Bash":
-					for _, m := range backgroundBashID.FindAllStringSubmatch(body, -1) {
-						if tasks[m[1]] != taskAgent {
-							tasks[m[1]] = taskBash
-						}
-					}
-				case delegationTools[call.Name]:
-					for _, m := range agentTaskID.FindAllStringSubmatch(body, -1) {
-						tasks[m[1]] = taskAgent
-					}
-				}
-			}
+		for _, w := range strings.Fields(in.Command) {
+			candidates = append(candidates, strings.Trim(w, `'"();|&<>`))
 		}
 	}
-	return tasks
+	for _, p := range candidates {
+		if p != "" && isTranscriptPath(p, c.cwd) {
+			return true
+		}
+	}
+	return false
 }
 
-// taskIDOf is the task a TaskOutput call reads: its task_id, or the bash_id an
-// older harness named it by.
-func taskIDOf(input json.RawMessage) string {
-	var in struct {
-		TaskID string `json:"task_id"`
-		BashID string `json:"bash_id"`
+// isTranscriptPath reports whether path, as a call in cwd would read it, is an
+// agent's transcript or lies in the harness's projects directory.
+func isTranscriptPath(path, cwd string) bool {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
 	}
-	_ = json.Unmarshal(input, &in)
-	if in.TaskID != "" {
-		return in.TaskID
+	if !filepath.IsAbs(path) {
+		if cwd == "" {
+			return false
+		}
+		path = filepath.Join(cwd, path)
 	}
-	return in.BashID
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	if projects := ConfigDir(); projects != "" {
+		if root, err := filepath.EvalSymlinks(filepath.Join(projects, "projects")); err == nil {
+			if real == root || strings.HasPrefix(real, root+string(filepath.Separator)) {
+				return true
+			}
+		}
+	}
+	return readsAsTranscript(real)
+}
+
+// readsAsTranscript reports whether the file at path is a harness record: its
+// first lines are records carrying a uuid, a conversational type and a message.
+// A copy of a transcript moved out of the projects directory is still one.
+func readsAsTranscript(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
+	for i := 0; i < 20 && sc.Scan(); i++ {
+		var rec struct {
+			UUID    string          `json:"uuid"`
+			Type    string          `json:"type"`
+			Message json.RawMessage `json:"message"`
+		}
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec.UUID != "" && (rec.Type == "user" || rec.Type == "assistant") && len(rec.Message) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // excludedResultHint says why quote, which did not resolve as tool output in
@@ -175,7 +198,6 @@ func excludedResultHint(path, quote string, subagent bool) string {
 			continue
 		}
 		calls := recordCalls(entries)
-		tasks := backgroundTasks(entries, calls)
 		for _, e := range entries {
 			if e.Type != EntryUser || len(e.Message) == 0 {
 				continue
@@ -193,7 +215,7 @@ func excludedResultHint(path, quote string, subagent bool) string {
 					if !containsWords(body, quote) && !containsWords(withoutLineNumbers(body), quote) {
 						continue
 					}
-					if hint := whyExcluded(body, calls, tasks, b.ToolUseID); hint != "" {
+					if hint := whyExcluded(body, calls, b.ToolUseID); hint != "" {
 						return hint
 					}
 				}
@@ -205,7 +227,7 @@ func excludedResultHint(path, quote string, subagent bool) string {
 
 // whyExcluded names the kind of text an excluded tool_result body is, and what
 // to cite instead; "" for a body the tool-output pool does read.
-func whyExcluded(body string, calls map[string]assistantContentBlock, tasks map[string]taskKind, id string) string {
+func whyExcluded(body string, calls map[string]recordCall, id string) string {
 	call, ok := calls[id]
 	switch {
 	case isHookRefusal(body):
@@ -214,8 +236,10 @@ func whyExcluded(body string, calls map[string]assistantContentBlock, tasks map[
 		return "Those words are in a tool result whose call is not in the record (the call that produced it is not in the record), so where they came from is unknown and they are not citable as tool output; run the command again so its output lands with its call, and cite that"
 	case delegationTools[call.Name]:
 		return "Those words are in a sub-agent's reply (model-written), which is not tool output; cite what the sub-agent's own tools printed — its record is searched too"
-	case taskReaders[call.Name] && tasks[taskIDOf(call.Input)] != taskBash:
-		return "Those words are a background agent's reply read through " + call.Name + " (model-written), which is not tool output; cite what that agent's own tools printed"
+	case taskReaders[call.Name]:
+		return "Those words are what " + call.Name + " returned — a background task's output, which may be an agent's model-written reply — so they are not citable as tool output; cite what that task's own tools printed"
+	case readsTranscript(call):
+		return "Those words were read out of an agent transcript (the file is an agent's record — its text is model-written), which is not tool output; cite what the tools in that record printed — sub-agents' records are searched too"
 	case len(extractAnswers(body)) > 0:
 		return "Those words are an AskUserQuestion answer — the user's own words, not a tool's output; cite them with --cite:user"
 	}

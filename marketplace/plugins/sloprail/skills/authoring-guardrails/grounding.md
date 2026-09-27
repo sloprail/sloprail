@@ -28,7 +28,9 @@ The pool says what the quote must be: `user` (the user's own words, a message
 or an AskUserQuestion answer) or `tool_result` (a tool's output, proof that work
 happened). Neither pool holds model-written text: a compaction summary is not
 the user's words, and these are not tool output — a sub-agent's reply (the
-Agent tool's result), a background agent's reply read through TaskOutput, an
+Agent tool's result), whatever TaskOutput returned, what a tool read out of an
+agent transcript (a Read, Grep or command whose target is a Claude Code record,
+including a background agent's `tasks/<id>.output`, which links to one), an
 AskUserQuestion answer (cite it as `user`), and a result whose call is not in
 the record — a quote found only in one of these fails and says which it was —
 nor a hook's refusal. `--cite:` repeats for several citations. The quote's words must

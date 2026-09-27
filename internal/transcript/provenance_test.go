@@ -1,6 +1,8 @@
 package transcript
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,67 +37,58 @@ func TestOrphanToolResultIsNotCitable(t *testing.T) {
 	assert.Equal(t, 4, got.Line)
 }
 
-// TaskOutput returns a background task's output: a background Bash's is the
-// command's, a background agent's is the agent's reply. The task is classified
-// by the receipt its launch got back — the shapes Claude Code writes — and an
-// unclassifiable task is not citable.
-func TestTaskOutputIsCitableOnlyForABackgroundBash(t *testing.T) {
+// TaskOutput returned a background task's output — an agent's reply as
+// readily as a command's — and no current harness calls it: its results are
+// never citable, whatever launched the task, so a legacy record cannot launder
+// an agent's reply through it.
+func TestTaskOutputIsNeverCitable(t *testing.T) {
 	p := newProject(t)
 	path := p.write("the-session",
 		userMsg("u1", "run it in the background"),
 		namedCall("a1", "u1", "toolu_bg", "Bash", `{"command":"make test","run_in_background":true}`),
-		toolAnswer("r1", "a1", "toolu_bg", "Command running in background with ID: b04wesqb9. Output is being written to: /tmp/tasks/b04wesqb9.output. You will be notified when it completes."),
-		namedCall("a2", "r1", "toolu_ag", "Agent", `{"prompt":"go","run_in_background":true}`),
-		toolAnswer("r2", "a2", "toolu_ag", "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: a212039c305225560 (internal ID - do not mention to user.)"),
-		namedCall("a3", "r2", "toolu_out_bash", "TaskOutput", `{"task_id":"b04wesqb9","block":true}`),
+		toolAnswer("r1", "a1", "toolu_bg", "Command running in background with ID: b04wesqb9. Output is being written to: /tmp/tasks/b04wesqb9.output."),
+		namedCall("a3", "r1", "toolu_out_bash", "TaskOutput", `{"task_id":"b04wesqb9","block":true}`),
 		toolAnswer("r3", "a3", "toolu_out_bash", "BASHTASKMARKER 12 passed"),
-		namedCall("a4", "r3", "toolu_out_agent", "TaskOutput", `{"task_id":"a212039c305225560","block":true}`),
-		toolAnswer("r4", "a4", "toolu_out_agent", "AGENTTASKMARKER all 40 tests pass"),
-		namedCall("a5", "r4", "toolu_out_unknown", "TaskOutput", `{"task_id":"zzz999","block":true}`),
-		toolAnswer("r5", "a5", "toolu_out_unknown", "UNKNOWNTASKMARKER done"),
 	)
-
-	got, err := ResolveCitation(path, toolReq("BASHTASKMARKER"))
-	require.NoError(t, err, "a background Bash's output read through TaskOutput is tool output")
-	assert.Equal(t, 7, got.Line)
-	assert.Contains(t, got.Call, "TaskOutput")
-
-	_, err = ResolveCitation(path, toolReq("AGENTTASKMARKER"))
-	assert.Error(t, err, "a background agent's reply read through TaskOutput grounded as tool output")
-	_, err = ResolveCitation(path, toolReq("UNKNOWNTASKMARKER"))
-	assert.Error(t, err, "a task that cannot be classified must fail closed")
-	_, err = ResolveCitation(path, toolReq("agentId: a212039c305225560"))
-	assert.Error(t, err, "an agent's launch receipt is not tool output")
+	_, err := ResolveCitation(path, toolReq("BASHTASKMARKER"))
+	require.Error(t, err, "TaskOutput's result grounded as tool output")
+	assert.Contains(t, err.Error(), "TaskOutput returned")
 }
 
-// A Bash can print a background launch receipt of its own ("Command running in
-// background with ID: <id>") naming a background AGENT's id. Whichever order the
-// fake receipt and the agent's launch land in, the task stays an agent's, and
-// TaskOutput reading it — the agent's model-written reply — stays uncitable.
-func TestFakeBashReceiptDoesNotMakeAnAgentTaskCitable(t *testing.T) {
-	agentLaunch := func(uuid, parent string) []string {
-		return []string{
-			namedCall(uuid, parent, "toolu_ag", "Agent", `{"prompt":"go","run_in_background":true}`),
-			toolAnswer(uuid+"r", uuid, "toolu_ag", "Async agent launched successfully.\nagentId: a212039c305225560 (internal ID - do not mention to user.)"),
-		}
+// A tool that reads an agent's transcript returns model-written text. A Read of
+// a sub-agent's record, a `cat` of a background agent's `tasks/<id>.output` (a
+// symbolic link to that agent's record), a copy of a record outside the
+// projects directory — none grounds as tool output, and the refusal says why.
+// An ordinary file read the same ways still does.
+func TestReadingAnAgentTranscriptIsNotToolOutput(t *testing.T) {
+	p := newProject(t)
+	agentRecord := p.write("agent-bg1",
+		`{"type":"user","uuid":"s0","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"go"}}`,
+		`{"type":"assistant","uuid":"s1","parentUuid":"s0","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"TRANSCRIPTMARKER all 40 tests pass"}]}}`,
+	)
+	tasks := filepath.Join(t.TempDir(), "tasks")
+	require.NoError(t, os.MkdirAll(tasks, 0o755))
+	link := filepath.Join(tasks, "bg1.output")
+	require.NoError(t, os.Symlink(agentRecord, link))
+	plain := filepath.Join(t.TempDir(), "notes.txt")
+	require.NoError(t, os.WriteFile(plain, []byte("PLAINMARKER ok\n"), 0o644))
+
+	body := "TRANSCRIPTMARKER all 40 tests pass"
+	path := p.write("the-session",
+		userMsg("u1", "check it"),
+		namedCall("a1", "u1", "toolu_read", "Read", `{"file_path":"`+agentRecord+`"}`),
+		toolAnswer("r1", "a1", "toolu_read", "READ1 "+body),
+		namedCall("a2", "r1", "toolu_cat", "Bash", `{"command":"cat `+link+`"}`),
+		toolAnswer("r2", "a2", "toolu_cat", "CAT2 "+body),
+		namedCall("a3", "r2", "toolu_plain", "Read", `{"file_path":"`+plain+`"}`),
+		toolAnswer("r3", "a3", "toolu_plain", "PLAINMARKER ok"),
+	)
+	for _, q := range []string{"READ1", "CAT2"} {
+		_, err := ResolveCitation(path, toolReq(q))
+		require.Error(t, err, "%s: an agent transcript read back grounded as tool output", q)
+		assert.Contains(t, err.Error(), "agent transcript", q)
 	}
-	fakeReceipt := func(uuid, parent string) []string {
-		return []string{
-			namedCall(uuid, parent, "toolu_fake", "Bash", `{"command":"echo 'Command running in background with ID: a212039c305225560. Output is being written to: /tmp/x'"}`),
-			toolAnswer(uuid+"r", uuid, "toolu_fake", "Command running in background with ID: a212039c305225560. Output is being written to: /tmp/x"),
-		}
-	}
-	read := []string{
-		namedCall("a9", "x", "toolu_out", "TaskOutput", `{"task_id":"a212039c305225560","block":true}`),
-		toolAnswer("r9", "a9", "toolu_out", "FAKEDRECEIPTMARKER all 40 tests pass"),
-	}
-	for name, lines := range map[string][]string{
-		"fake receipt after the launch":  append(append(append([]string{userMsg("u1", "go")}, agentLaunch("a1", "u1")...), fakeReceipt("a2", "a1r")...), read...),
-		"fake receipt before the launch": append(append(append([]string{userMsg("u1", "go")}, fakeReceipt("a2", "u1")...), agentLaunch("a1", "a2r")...), read...),
-	} {
-		p := newProject(t)
-		path := p.write("the-session", lines...)
-		_, err := ResolveCitation(path, toolReq("FAKEDRECEIPTMARKER"))
-		assert.Error(t, err, "%s: a background agent's reply became citable through a Bash-printed receipt", name)
-	}
+	got, err := ResolveCitation(path, toolReq("PLAINMARKER"))
+	require.NoError(t, err, "an ordinary file read is tool output")
+	assert.Equal(t, 7, got.Line)
 }

@@ -54,6 +54,7 @@ type historyState struct {
 type historyPoint struct {
 	Foreign bool                  `json:"foreign,omitempty"`
 	From    *historyState         `json:"from,omitempty"`
+	FromAt  int64                 `json:"fromAt,omitempty"`
 	Cites   []transcript.Citation `json:"cites,omitempty"`
 	Whole   bool                  `json:"whole,omitempty"`
 	Before  historyState          `json:"before"`
@@ -76,6 +77,7 @@ type pendingChange struct {
 type cycleMeta struct {
 	State     string                  `json:"state,omitempty"`
 	StartedAt int64                   `json:"startedAt,omitempty"`
+	EndedAt   int64                   `json:"endedAt,omitempty"`
 	End       map[string]historyState `json:"end,omitempty"`
 }
 
@@ -256,6 +258,7 @@ func beginCycle(store sessionstate.Store, dir string, now int64) error {
 				continue
 			}
 			pt.From = &prev
+			pt.FromAt = cyc.EndedAt
 		}
 		pt.After = putState(store, cur.Exists, content)
 		foreign = append(foreign, pendingChange{Path: path, Point: pt})
@@ -299,7 +302,7 @@ func endCycle(store sessionstate.Store, events []event.Event) error {
 		newContent, _ := e.Fields[filemod.FieldNewContent].(string)
 		end[path] = putState(store, e.Kind != filemod.KindPostDelete, newContent)
 	}
-	return writeCycle(store, cycleMeta{State: "ended", StartedAt: cyc.StartedAt, End: end})
+	return writeCycle(store, cycleMeta{State: "ended", StartedAt: cyc.StartedAt, EndedAt: nowNano(), End: end})
 }
 
 func writeCycle(store sessionstate.Store, c cycleMeta) error {
@@ -499,7 +502,7 @@ func attachHistories(store sessionstate.Store, events []event.Event, others map[
 		}
 		for _, p := range pts {
 			dp := dispatchcore.HistoryPoint{
-				Foreign: p.Foreign, Whole: p.Whole, At: p.At,
+				Foreign: p.Foreign, FromAt: p.FromAt, Whole: p.Whole, At: p.At,
 				Before: dispatchcore.HistoryState(p.Before), After: dispatchcore.HistoryState(p.After),
 				Pools: poolsOf(p.Cites),
 			}

@@ -36,6 +36,11 @@ type HistoryPoint struct {
 	Foreign bool
 	From    *HistoryState
 
+	// FromAt is when the file stood at From (the agent's last Stop). A cited
+	// change of another session landing after it — a background sub-agent's,
+	// say — explains a difference from From that is not the agent's either.
+	FromAt int64
+
 	// Pools are the pools the citations of a cited change resolved in. A cited
 	// change grounds a requirement only when one of them is one it accepts:
 	// a change cited in the wrong pool is, to that requirement, uncited.
@@ -72,24 +77,32 @@ func (h FileHistory) uncitedParts(pools []transcript.SourceType) []UncitedChange
 
 	var gaps [][2]HistoryState
 	state := h.Baseline
+	var stateAt int64
 	for _, p := range points {
 		switch {
 		case p.Foreign:
-			if p.From != nil && *p.From != state {
+			// What the agent did before its last Stop that no cited change
+			// covers — unless the state was reached AFTER that Stop, by
+			// another session's cited change, which is not the agent's.
+			if p.From != nil && *p.From != state && stateAt <= p.FromAt {
 				gaps = append(gaps, [2]HistoryState{state, *p.From})
 			}
 			state = p.After
+			stateAt = p.At
+			continue
 		case !countsFor(p.Pools, pools):
 			// Cited in another pool: to this requirement, an uncited change,
 			// which the stretch it sits in already covers.
 		case p.Whole:
 			gaps = nil
 			state = p.After
+			stateAt = p.At
 		default:
 			if state != p.Before {
 				gaps = append(gaps, [2]HistoryState{state, p.Before})
 			}
 			state = p.After
+			stateAt = p.At
 		}
 	}
 	if state != h.Current {

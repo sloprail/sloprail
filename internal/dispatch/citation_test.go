@@ -282,7 +282,11 @@ exit 0
 		"a foreign change is not charged": {"", hist(todo, done,
 			HistoryPoint{Foreign: true, After: other, At: 1}, cited(other, done, user, false, 2)), false},
 		"an uncited change before a foreign one still is": {"", hist(todo, done,
-			HistoryPoint{Foreign: true, From: &other, After: other, At: 2}, cited(other, done, user, false, 3)), true},
+			HistoryPoint{Foreign: true, From: &other, FromAt: 1, After: other, At: 2}, cited(other, done, user, false, 3)), true},
+		// A background sub-agent's cited write landing after the agent's last
+		// Stop explains the difference from how the agent left the file.
+		"another session's cited change after the agent's Stop is not charged": {"", hist(absent, todo,
+			cited(absent, todo, user, true, 5), HistoryPoint{Foreign: true, From: &absent, FromAt: 4, After: todo, At: 6}), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ev := citedEvent("PostFileUpdate", transcript.SourceUser)

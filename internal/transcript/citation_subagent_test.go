@@ -400,7 +400,7 @@ func TestUnresolvedToolResultSaysWhyAnExcludedResultIsNot(t *testing.T) {
 	for quote, want := range map[string]string{
 		"REPLYMARKER":   "a sub-agent's reply",
 		"ORPHANMARKER":  "the call that produced it is not in the record",
-		"BGREPLYMARKER": "a background agent's reply",
+		"BGREPLYMARKER": "TaskOutput returned",
 		"ANSWERMARKER":  "--cite:user",
 	} {
 		_, err := ResolveCitation(path, toolReq(quote))
