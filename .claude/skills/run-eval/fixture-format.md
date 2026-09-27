@@ -21,6 +21,10 @@ exampleSloprail: true   # optional, examples/ fixtures only — see below
 freshMachine: true      # optional — onboarding: plugin in, binaries not
 model: haiku             # required in practice — sr-agent refuses with none
 score: score.sh
+user:                   # optional — makes the run multi-turn, see below
+  brief: user.md
+  maxTurns: 3
+  model: size-sm        # optional, the default
 ```
 
 - **`seed`** — a directory, relative to the fixture dir, copied wholesale into
@@ -65,6 +69,23 @@ score: score.sh
   the one likelier to take the tempting shortcut a fixture is designed to
   offer. Overridable per run with `sr-eval run --model`.
 
+- **`user`** — makes the run **multi-turn**. `prompt.md` is still the first
+  user turn. After each of the agent's replies, a **simulated user** — another
+  agent, launched the way the trajectory-health judge is: through `sr-agent`'s
+  default isolation (no hooks, no plugins, no MCP servers), from an empty temp
+  directory, with no filesystem or shell tools, on `model` (default
+  `size-sm`) — reads `brief` (a file beside `fixture.yaml`: who the user is and
+  how they respond) and the conversation so far (each user message and the
+  agent's final reply), and writes the next user message, or says it is done.
+  That message goes to the agent-under-test in the **same session**
+  (`--session-id` on the first turn, `--resume` after), so the transcript holds
+  real, separate user turns. `maxTurns` (required, 2–10) caps the user turns,
+  `prompt.md` included. Use it when the rule under test depends on WHICH user
+  message said something (a guardrail about the user's latest message cannot
+  be tested by one prompt that narrates a conversation). The simulated user
+  never sees the project, the guardrails or the transcript, so a brief must
+  not coach the agent on the guardrail either.
+
 ## The copy order, precisely
 
 1. Seed (copied) or Repo (cloned at `ref`) — `git init` is run afterward for
@@ -91,6 +112,7 @@ gets that HOME as `SR_EVAL_AGENT_HOME`.
 - neither `seed` nor `repo` is set, or both are (exactly one, always)
 - `repo` is set without `ref`
 - `score` is missing, or `prompt.md` is missing beside `fixture.yaml`
+- `user` is set without an existing `brief`, or with `maxTurns` outside 2–10
 - `seed`/`overlay` is declared but the path doesn't exist
 - `exampleSloprail: true` AND `overlay/.sloprail/` both exist — the exact
   duplication the field exists to remove, now silently doubled (the shipped
