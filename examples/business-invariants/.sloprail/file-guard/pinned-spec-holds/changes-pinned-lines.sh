@@ -27,6 +27,10 @@
 # Markers inside a git submodule are not seen (git grep does not enter one).
 set -uo pipefail
 
+# A replace ref (refs/replace/<sha>) would make git read another object in place
+# of the one a pin names; pins name objects, so read the objects themselves.
+export GIT_NO_REPLACE_OBJECTS=1
+
 waived=""
 trap 'rc=$?; if [ "$rc" = 1 ] && [ "$waived" != 1 ]; then exit 0; fi' EXIT
 waive() {
@@ -147,38 +151,74 @@ if [ -z "$old_fqns$new_fqns" ]; then
   [ "$hit" = 1 ] || waive "nothing pins $npath"
 fi
 
-# parse <fqn>: <repo>@<sha>:<path>#L<start>-<end> into f_repo, f_sha (the full
-# commit it resolves to), f_path (normalized), f_start, f_end. Returns 1 when the
-# pin is not a real one: a sha that is not hex, or that resolves to a commit it is
-# not a prefix of (a short sha a ref of that name shadows), or a range that is not
-# 1 <= start <= end. Such a pin cannot pass pinned-invariant, so it pins nothing.
+# parse <fqn>: <repo>@<sha>:<path>#L<start>-<end> into f_repo, f_hex, f_path
+# (normalized), f_start, f_end. Returns 1 only when the fqn does not have the
+# shape of a pin at all — a sha that is not hex, a range that is not
+# 1 <= start <= end (a placeholder in a skill's example, say). Such a marker
+# cannot pass pinned-invariant and pins nothing. A pin that HAS the shape pins its
+# lines whether or not its sha resolves: its range names lines of its path.
 parse() {
-  local fqn="$1" rest range sha
+  local fqn="$1" rest range
   f_repo="${fqn%%@*}"
   rest="${fqn#*@}"
-  sha="${rest%%:*}"
+  f_hex="${rest%%:*}"
   rest="${rest#*:}"
   f_path="$(norm "${rest%%#*}")"
   range="${rest#*#L}"
   f_start="${range%-*}"
   f_end="${range#*-}"
-  f_sha=""
   [ "$f_repo" != "$fqn" ] || return 1
-  printf '%s' "$sha" | grep -Eq '^[0-9a-f]{7,64}$' || return 1
+  printf '%s' "$f_hex" | grep -Eq '^[0-9a-f]{7,64}$' || return 1
   printf '%s' "$range" | grep -Eq '^[0-9]{1,9}-[0-9]{1,9}$' || return 1
   [ "$f_start" -ge 1 ] && [ "$f_start" -le "$f_end" ] || return 1
-  f_sha="$(git -C "$f_repo" rev-parse -q --verify "$sha^{commit}" 2>/dev/null)" || return 1
-  case "$f_sha" in "$sha"*) ;; *) return 1 ;; esac
+}
+
+# A per-run memo, so a sha or a blob named by several pins is read from git once.
+memo="$(mktemp -d "${TMPDIR:-/tmp}/pinned-spec-holds.XXXXXX")" || exit 0
+trap 'rc=$?; rm -rf "$memo"; if [ "$rc" = 1 ] && [ "$waived" != 1 ]; then exit 0; fi' EXIT
+memo_key() { printf '%s' "$*" | cksum | tr ' ' '-'; }
+
+# resolve: sets f_commit to the one commit f_hex names in f_repo, by object id
+# only — never through a ref, so a branch or tag named like the sha cannot stand
+# in for it. Returns 1 when no commit, or more than one, has that prefix.
+resolve() {
+  local key f
+  key="$memo/sha-$(memo_key "$f_repo" "$f_hex")"
+  if [ ! -e "$key" ]; then
+    : >"$key"
+    if printf '%s' "$f_hex" | grep -Eq '^([0-9a-f]{40}|[0-9a-f]{64})$'; then
+      [ "$(git -C "$f_repo" cat-file -t "$f_hex" 2>/dev/null)" = commit ] && printf '%s' "$f_hex" >"$key"
+    else
+      git -C "$f_repo" rev-parse --disambiguate="$f_hex" 2>/dev/null | while IFS= read -r o; do
+        [ "$(git -C "$f_repo" cat-file -t "$o" 2>/dev/null)" = commit ] && printf '%s\n' "$o"
+      done >"$key.all"
+      [ "$(grep -c . "$key.all")" = 1 ] && tr -d '\n' <"$key.all" >"$key"
+    fi
+  fi
+  f_commit="$(cat "$key")"
+  [ -n "$f_commit" ]
+}
+
+# blob_at <commit> <path>: the file at that commit, memoized.
+blob_at() {
+  local key
+  key="$memo/blob-$(memo_key "$f_repo" "$1" "$2")"
+  if [ ! -e "$key" ]; then
+    git -C "$f_repo" cat-file blob "$1:$2" >"$key" 2>/dev/null || { rm -f "$key"; return 1; }
+  fi
+  cat "$key"
 }
 
 lines() { printf '%s\n' "$1" | sed -n "${2},${3}p"; }
 
 # pinned_text <fqn>: the pin's path and the text it names, read at its own sha.
-# Returns 1 when it cannot be read, or the range runs past the file or is blank.
+# Returns 1 when it cannot be read: the fqn is not a pin's shape, its sha names no
+# single commit, or the range runs past the file or is blank.
 pinned_text() {
   local blob total text
   parse "$1" || return 1
-  blob="$(git -C "$f_repo" cat-file blob "$f_sha:$f_path" 2>/dev/null)" || return 1
+  resolve || return 1
+  blob="$(blob_at "$f_commit" "$f_path")" || return 1
   total="$(printf '%s\n' "$blob" | awk 'END { print NR }')"
   [ "$total" -ge "$f_end" ] || return 1
   text="$(lines "$blob" "$f_start" "$f_end")"
@@ -197,11 +237,15 @@ remedy="If what you were asked for conflicts with the rule, keep the rule: undo 
 # the change does, then what to do); `what` alone is for the judge, which
 # only-when-pinned.sh hands it. The engine reads `hint` and ignores the rest.
 apply() {
-  jq -n --arg what "$1" --arg remedy "$remedy" '{hint: ($what + " " + $remedy), what: $what}'
+  jq -n --arg what "$1" --arg remedy "${2:-$remedy}" '{hint: ($what + " " + $remedy), what: $what}'
   exit 0
 }
 
+# When the result is unknown the change is most likely harmless — a rename by
+# `sed -i` that keeps every pin — and needs no citation at all once it can be
+# checked. So the first advice is to make it checkable; citing comes second.
 unknown_result="what it would leave cannot be worked out before it runs (a shell command that edits it, or an sr-file call whose dry run failed — if sr-file said why, fix that first)"
+unknown_remedy="Make this edit with Edit or Write, or with sr-file edit on its own in the command, so what it leaves can be checked first: no citation is needed when it keeps every pinned line and every pin. $remedy"
 
 # 1. Spec lines. Every marker in the project, in the working tree (tracked or not)
 # AND at HEAD, and in what this file held: a marker dropped or moved in the working
@@ -220,7 +264,7 @@ while IFS= read -r fqn; do
   [ -n "$fqn" ] || continue
   parse "$fqn" || continue
   [ "$f_path" = "$npath" ] || continue
-  [ "$new_known" = 1 ] || apply "This change touches $path, which code in this project pins as a business rule (L$f_start-$f_end), and $unknown_result."
+  [ "$new_known" = 1 ] || apply "This change touches $path, which code in this project pins as a business rule (L$f_start-$f_end), and $unknown_result." "$unknown_remedy"
   # A PreFileDelete the engine did not read (oldContentKnown false — an `rm -r`
   # past its byte budget, say) carries an empty oldContent, which would read as
   # "the pinned lines were already empty": unchanged. Deleting a pinned spec is a
@@ -230,7 +274,10 @@ while IFS= read -r fqn; do
     before="$(lines "$old" "$f_start" "$f_end")"
   else
     # Created where HEAD has nothing: what it must still say is the pinned text.
-    blob="$(git -C "$f_repo" cat-file blob "$f_sha:$f_path" 2>/dev/null)" || continue
+    # A pin whose sha names no single commit leaves that unknowable.
+    if ! resolve || ! blob="$(blob_at "$f_commit" "$f_path")"; then
+      apply "This change creates $path, which the sr:invariant pin '$fqn' pins (L$f_start-$f_end), and the pinned text could not be read to compare: its sha names no single commit in $f_repo."
+    fi
     before="$(lines "$blob" "$f_start" "$f_end")"
   fi
   after="$(lines "$new" "$f_start" "$f_end")"
@@ -250,9 +297,32 @@ EOF
 # wording it answered to.
 moved=""
 if [ -n "$old_fqns" ]; then
-  [ "$new_known" = 1 ] || apply "This change touches $path, which carries sr:invariant markers, and $unknown_result."
-  elsewhere="$(git -C "$workspace" grep --untracked -h -I -E "$MARKER_RE" -- . ":(exclude,literal)$npath" 2>/dev/null)"
+  [ "$new_known" = 1 ] || apply "This change touches $path, which carries sr:invariant markers, and $unknown_result." "$unknown_remedy"
+  elsewhere="$(git -C "$workspace" grep --untracked -I -E "$MARKER_RE" -- . ":(exclude,literal)$npath" 2>/dev/null)"
   [ $? -le 1 ] || exit 0
+  # One command deleting two files that carry the same pin (`rm a.go b.go`) is
+  # checked one file at a time, before either is gone, so each would see the other
+  # still holding the pin. Every file a pre-write delete was asked about is
+  # recorded for the session, and a recorded file holds no pin for a later delete:
+  # the second of the two is refused, and with it the command.
+  record_ok=0
+  [ -n "${SR_GUARDRAIL:-}" ] && command -v sr-session >/dev/null 2>&1 && record_ok=1
+  if [ "$kind" = PreFileDelete ] && [ "$record_ok" = 1 ]; then
+    sr-session state set "predelete:$npath" 1 >/dev/null 2>&1
+  fi
+  holders=""
+  while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    hfile="${hit%%:*}"
+    if [ "$kind" = PreFileDelete ] && [ "$record_ok" = 1 ] &&
+      [ -n "$(sr-session state get "predelete:$hfile" 2>/dev/null)" ]; then
+      continue
+    fi
+    holders="$holders${hit#*:}"$'\n'
+  done <<EOF
+$elsewhere
+EOF
+  elsewhere="$holders"
   held="$({ printf '%s\n' "$new_fqns"; printf '%s\n' "$elsewhere" | fqns_in; } | sort -u)"
   held_texts=""
   while IFS= read -r hfqn; do
@@ -264,13 +334,18 @@ EOF
   while IFS= read -r ofqn; do
     [ -n "$ofqn" ] || continue
     printf '%s\n' "$held" | grep -Fxq -- "$ofqn" && continue
-    # A pin that is not a real one pinned nothing (pinned-invariant refuses it),
-    # so correcting or removing it drops nothing.
-    otext="$(pinned_text "$ofqn")" || continue
-    case "$held_texts" in
-      "$otext"$'\n\x1e\n'* | *$'\n\x1e\n'"$otext"$'\n\x1e\n'*) continue ;;
-    esac
-    moved="${moved:+$moved, }'$ofqn' (\"${otext#*$'\n'}\")"
+    # A marker without a pin's shape pinned nothing (pinned-invariant refuses it),
+    # so correcting or removing it drops nothing. One with the shape whose text
+    # cannot be read is still dropped: what it pinned cannot be shown kept.
+    parse "$ofqn" || continue
+    if otext="$(pinned_text "$ofqn")"; then
+      case "$held_texts" in
+        "$otext"$'\n\x1e\n'* | *$'\n\x1e\n'"$otext"$'\n\x1e\n'*) continue ;;
+      esac
+      moved="${moved:+$moved, }'$ofqn' (\"${otext#*$'\n'}\")"
+    else
+      moved="${moved:+$moved, }'$ofqn' (its pinned text could not be read)"
+    fi
   done <<EOF
 $old_fqns
 EOF

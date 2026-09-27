@@ -2,18 +2,24 @@
 # same way. An sr:invariant marker's fqn is a pinned spec reference:
 #   <repo>@<sha>:<path>#L<start>-<end>
 # The fqn is written by the agent being judged, so nothing in it reaches git
-# unchecked: the sha must be a hex object name (an fqn whose "sha" is
-# `--output=<file>` would otherwise have git write that file), and the range must
-# be a real one inside the file (a range past its end pins no text, and a judge
-# handed an empty <pinned> rules against nothing). The sha is resolved to the
-# commit it names and must be a prefix of it: a short sha that a branch or tag of
-# the same name shadows would otherwise read that ref's file.
+# unchecked:
 #
-# A pin must point into a spec: `SPEC.md` at any depth, or a `.md` file under a
-# `specs/` directory. pinned-spec-holds, which keeps a pinned line from changing
-# without the user's words, matches exactly those files, so a pin anywhere else
-# would name a rule nothing guards. Change the two together.
-SPEC_PATH_RE='^(.*/)?SPEC\.md$|^(.*/)?specs/.+\.md$'
+#   - The sha must be a FULL commit id (40 hex digits, or 64 in a SHA-256
+#     repository), and it is read as an object id only. A short sha resolves
+#     through refs first, so a branch or tag named like it would stand in for it;
+#     and an option in its place (`--output=<file>`) would have git write a file.
+#   - <repo> must be this project's own repository: a pin into another checkout
+#     names text nothing here guards.
+#   - The path must be a spec: `SPEC.md` at any depth, or a `.md` file under a
+#     `specs/` directory, case-insensitively (macOS file systems are). That is
+#     what pinned-spec-holds matches, so a pin anywhere else would name a rule
+#     nothing guards. Change the two together (a test holds them in step).
+#   - The range must be a real one inside the file: a range past its end pins no
+#     text, and a judge handed an empty <pinned> rules against nothing.
+SPEC_PATH_RE='^(.*/)?spec\.md$|^(.*/)?specs/.+\.md$'
+
+# Pins name objects; a replace ref (refs/replace/<sha>) must not swap another in.
+export GIT_NO_REPLACE_OBJECTS=1
 
 # parse_pin <fqn>: sets pin_repo, pin_sha, pin_path, pin_start, pin_end; or sets
 # pin_error to why the fqn does not parse and returns 1. Globals, not output, so a
@@ -33,8 +39,8 @@ parse_pin() {
     pin_error="Invariant marker '$fqn' does not parse as <repo>@<sha>:<path>#L<start>-<end>."
     return 1
   fi
-  if ! printf '%s' "$pin_sha" | grep -Eq '^[0-9a-f]{7,64}$'; then
-    pin_error="Invariant marker '$fqn' names '$pin_sha' where a commit sha belongs (7 to 64 hex digits)."
+  if ! printf '%s' "$pin_sha" | grep -Eq '^([0-9a-f]{40}|[0-9a-f]{64})$'; then
+    pin_error="Invariant marker '$fqn' names '$pin_sha' where a full commit sha belongs (40 hex digits: git log -1 --format=%H -- <spec>). A short sha resolves through branch and tag names first."
     return 1
   fi
   if ! printf '%s' "$range" | grep -Eq '^[0-9]{1,9}-[0-9]{1,9}$' || [ "$pin_start" -lt 1 ] || [ "$pin_start" -gt "$pin_end" ]; then
@@ -48,32 +54,36 @@ parse_pin() {
       return 1
       ;;
   esac
-  if ! printf '%s' "$pin_path" | grep -Eq "$SPEC_PATH_RE"; then
+  if ! printf '%s' "$pin_path" | grep -Eiq "$SPEC_PATH_RE"; then
     pin_error="Invariant marker '$fqn' pins '$pin_path', which is not a spec file. Pin the rule where this project keeps its specs — SPEC.md, or a .md file under specs/ — the only files whose pinned lines are guarded from changing."
     return 1
   fi
 }
 
-# resolve_pin_sha: sets pin_commit to the full commit pin_sha names; or sets
-# pin_error and returns 1 when it names none, or resolves to a commit it is not a
-# prefix of (a ref of that name shadowing the sha).
+# resolve_pin_sha: checks pin_repo is this project's repository and pin_sha names
+# a commit in it, read as an object id; sets pin_commit. Otherwise sets pin_error
+# and returns 1.
 resolve_pin_sha() {
-  pin_commit="$(git -C "$pin_repo" rev-parse -q --verify "$pin_sha^{commit}" 2>/dev/null)"
-  case "$pin_commit" in
-    "$pin_sha"*) [ -n "$pin_commit" ] && return 0 ;;
-  esac
-  if [ -n "$pin_commit" ]; then
-    pin_error="'$pin_sha' resolves to $pin_commit, not a commit it is a prefix of (a branch or tag of that name shadows the sha); use the full sha"
-  else
-    pin_error="$pin_repo has no commit $pin_sha"
+  local here there
+  here="$(git -C "${SR_WORKSPACE:-.}" rev-parse --show-toplevel 2>/dev/null)"
+  there="$(git -C "$pin_repo" rev-parse --show-toplevel 2>/dev/null)"
+  here="$(cd "$here" 2>/dev/null && pwd -P)"
+  there="$(cd "$there" 2>/dev/null && pwd -P)"
+  if [ -z "$there" ] || [ "$here" != "$there" ]; then
+    pin_error="the pin names the repository '$pin_repo', which is not this project's ($here); pin this project's own spec"
+    return 1
   fi
-  return 1
+  if [ "$(git -C "$pin_repo" cat-file -t "$pin_sha" 2>/dev/null)" != commit ]; then
+    pin_error="$pin_repo has no commit $pin_sha"
+    return 1
+  fi
+  pin_commit="$pin_sha"
 }
 
 # pin_lines <rev>: sets pin_text to lines pin_start..pin_end of pin_path at <rev>
-# (pin_sha is resolved first, see resolve_pin_sha);
-# or sets pin_error to why they cannot be read and returns 1 — the path is missing
-# at <rev>, the file ends before pin_end, or the range holds no text.
+# (pin_sha is checked first, see resolve_pin_sha); or sets pin_error to why they
+# cannot be read and returns 1 — the path is missing at <rev>, the file ends
+# before pin_end, or the range holds no text.
 pin_lines() {
   local rev="$1" blob total
   pin_text=""

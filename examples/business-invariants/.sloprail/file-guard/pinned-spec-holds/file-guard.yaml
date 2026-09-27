@@ -17,7 +17,8 @@
 # `cp`, `tee`) on a file it matches, so matching every path refused every shell
 # edit in the project. Two kinds of file can be involved:
 #
-#   - A spec: `SPEC.md` at any depth, or a `.md` file under a `specs/` directory.
+#   - A spec: `SPEC.md` at any depth, or a `.md` file under a `specs/` directory,
+#     case-insensitively (`spec.md` is the same file on a macOS disk).
 #     That is this example's convention, and pinned-invariant holds pins to it
 #     (pin.sh refuses a pin into any other file), so no accepted pin names a file
 #     this guard does not match. Change both together.
@@ -32,7 +33,7 @@
 # it and tell the user. deletions: include — deleting the spec drops every rule in
 # it at once.
 match: >-
-  path matches "(^|/)SPEC\\.md$" or path matches "(^|/)specs/.+\\.md$"
+  path matches "(?i)(^|/)spec\\.md$" or path matches "(?i)(^|/)specs/.+\\.md$"
   or any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")
 preventive: true
 deletions: include
