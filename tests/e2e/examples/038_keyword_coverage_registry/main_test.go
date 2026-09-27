@@ -31,7 +31,12 @@ import (
 // scanners/<name>/scanner.yaml [test_038_01]; a declared-but-unsearched scanner is
 // REFUSED with the gate's own words, keywords covered in ONE gh call ADMIT,
 // keywords split across two calls are REFUSED (the "all keywords in 1 call" rule),
-// and a no-scanner turn is skipped by the gate's match [test_038_02].
+// and a no-scanner turn is skipped by the gate's match [test_038_02]; a scanner's
+// keywords hold [test_038_03]; GitHub research outside gh (WebSearch, WebFetch or
+// curl of GitHub) and a gh search before any scanner is declared are refused,
+// however the command line wraps it [test_038_04]; and deleting a declared
+// scanner is refused, while one deleted unseen stays owed its search
+// [test_038_05].
 var (
 	New   = harness.New
 	Turns = harness.Turns

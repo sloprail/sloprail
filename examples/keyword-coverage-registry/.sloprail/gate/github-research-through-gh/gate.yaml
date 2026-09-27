@@ -1,0 +1,44 @@
+# GitHub research goes through gh, where the registry can see it. A WebSearch,
+# or a WebFetch of GitHub's own content, is refused with a remedy pointing at
+# `gh search` against a declared scanner: neither is a gh call, so
+# verify-scanner-coverage cannot count it, and search-needs-declared-scanner
+# never sees it — research done that way escapes the registry entirely.
+# Measured 2026-09-27: with WebSearch available, Haiku researched through it in
+# 4 of 5 security-scan runs and never declared a scanner.
+#
+# WebSearch is refused OUTRIGHT, not only when the query mentions GitHub: this
+# example project is a GitHub-research registry, a web search's results are
+# mostly GitHub pages anyway, and a query cannot be told apart by its words
+# ("auth token leak logs" is a GitHub search in all but name). The cost — no web
+# search for anything else in this project — is the README's stated tradeoff.
+#
+# WebFetch is refused only for the hosts that serve repositories, issues, code
+# and gists — what a scanner's search is about:
+#   github.com, www.github.com, api.github.com, gist.github.com,
+#   codeload.github.com, and any *.githubusercontent.com (raw., gist., objects.)
+# Other GitHub-owned hosts (docs.github.com, github.blog, *.github.io Pages
+# sites) are documentation and project sites, not the research gh covers, and
+# stay fetchable — as does every non-GitHub URL. The host is matched anchored at
+# the start of the URL, case-insensitive, with an optional scheme, userinfo and
+# port, so `https://example.com/?u=github.com` and `github.com.evil.example`
+# are not GitHub.
+#
+# The same hosts fetched from the SHELL — curl, wget, httpie/xh — are refused
+# the same way: once WebSearch was refused, a real Haiku run (2026-09-27) read
+# issues with `curl https://api.github.com/repos/…` and files with `curl
+# https://raw.githubusercontent.com/…`, and a curl of api.github.com/search is a
+# search no scanner governs. Matched on the parsed invocations (any argument of
+# the program anchored as a GitHub URL), so wrapping or quoting does not hide it.
+on:
+  - event: PreToolUse
+    match: event.tool == "WebSearch"
+  - event: PreToolUse
+    match: >-
+      event.tool == "WebFetch" and
+      string(event.input.url) matches "(?i)^([a-z][a-z0-9+.-]*://)?([^/?#@]*@)?(((www|api|gist|codeload)\\.)?github\\.com|([a-z0-9-]+\\.)*githubusercontent\\.com)(:[0-9]+)?([/?#]|$)"
+  - event: PreCommandInvoke
+    match: >-
+      any(event.invocations, .bin in ["curl", "wget", "http", "https", "xh", "xhs"] and
+        any(.argv, # matches "(?i)^(--url=)?([a-z][a-z0-9+.-]*://)?([^/?#@]*@)?(((www|api|gist|codeload)\\.)?github\\.com|([a-z0-9-]+\\.)*githubusercontent\\.com)(:[0-9]+)?([/?#]|$)"))
+checks:
+  - script: ./use-gh.sh
