@@ -60,7 +60,8 @@ its own; the engine sees the attribute and does this itself. A non-string value 
 a map or list a `prepare` handed over as JSON — renders `| tojson`
 (`{{ additionalContext.action_input | tojson }}`): printed bare, its numbers and
 nested values come out as Go placeholders the judge cannot read. Wrap a value in a
-named tag, never a ``` fence: a value with a fence line of its own would close it.
+named tag, never a markdown code fence: a value with a fence line of its own would
+close it.
 A rule grounded in citations judges `change` against them —
 [grounding.md](grounding.md).
 
