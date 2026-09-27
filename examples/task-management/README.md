@@ -2,10 +2,13 @@
 
 ## The rule
 
-An agent may append a result to a task; it may never edit the ask. Every write
-to the ask must **cite** the human message that authorised it — checked
-deterministically for existence, then by a judge for truth and for containing
-**that and nothing else**.
+An agent may append a result to a task; it may never edit the ask to match the
+work. The ask changes only when the user changes it — adds scope, or drops it in
+their own words ("forget X") — and every write to the ask must **cite** the human
+message that authorised it: checked deterministically for existence, then by a
+judge for truth and for containing **that and nothing else**. Deferring part of
+the ask ("not today", "later") is not dropping it: the deferred part stays in the
+ask, and what was done and what was deferred go in the result.
 
 This is the sharpest form of the no-slop thesis, because every other unit
 protects an artifact — this one protects the **oracle**, the thing the other
@@ -19,12 +22,13 @@ because the spec was rewritten to match the work.
 The guard binds `ASK.md` specifically — not the whole task folder — because
 the engine has no notion of "which region of a file changed", only that a
 path changed. Splitting the ask and the result into separate files, with only
-the ask guarded, turns "don't edit the ask" back into a plain path rule
+the ask guarded, turns "no uncited edit to the ask" back into a plain path rule
 rather than needing a diff-region distinction the engine does not have.
 
-`preventive: true`: an edit to task content must be refused **before** it
+`preventive: true`: an ungrounded edit to the ask must be refused **before** it
 lands. A post-write refusal reports damage already done to the oracle, and
-the agent's remedy would be to edit ASK.md again — the exact prohibited act.
+the agent's remedy would be to edit ASK.md again — another edit the user never
+asked for.
 
 ## What the requirement and the judge divide
 
