@@ -139,6 +139,8 @@ func TestResolveCitationSubagentSafetyPropertiesHold(t *testing.T) {
 	rootPath := p.write("the-session", userMsg("u1", "go"))
 	p.writeSubagent("the-session", "a1b2",
 		`{"type":"user","uuid":"s0","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"dispatch"}}`,
+		sidechainCall("c1", "s0", "toolu_a", "sr-file write"),
+		sidechainCall("c2", "c1", "toolu_b", "make"),
 		// A hook refusal quoting the agent's own words back.
 		sidechainAnswer("s1", "s0", "toolu_a", `PreToolUse:Bash hook error: citation tool_result "SUBREFUSED" does not resolve`),
 		// An AskUserQuestion answer envelope is the user's, never tool output.
@@ -156,7 +158,7 @@ func TestResolveCitationSubagentSafetyPropertiesHold(t *testing.T) {
 
 	got, err := ResolveCitation(rootPath, toolReq("build finished WRAPMARKER"))
 	require.NoError(t, err, "whitespace-insensitive in a sub-agent's record too")
-	assert.Equal(t, 4, got.Line)
+	assert.Equal(t, 6, got.Line)
 }
 
 // CiteInSession is what `trajectory cite` runs: the same records per pool as
@@ -187,14 +189,15 @@ func TestCiteInSessionOrphanRefusesOnlyTheUserPool(t *testing.T) {
 	p := newProject(t)
 	sub := p.writeSubagent("gone-session", "a1b2",
 		`{"type":"user","uuid":"s0","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"ORPHANPROMPT"}}`,
-		sidechainAnswer("s1", "s0", "toolu_sub", "ORPHANOUTPUT"),
+		sidechainCall("s1", "s0", "toolu_sub", "echo hi"),
+		sidechainAnswer("s2", "s1", "toolu_sub", "ORPHANOUTPUT"),
 	)
 	_, err := CiteInSession(sub, "ORPHANPROMPT", []SourceType{SourceUser})
 	require.ErrorIs(t, err, ErrNoSessionRoot)
 
 	got, err := CiteInSession(sub, "ORPHANOUTPUT", []SourceType{SourceToolResult})
 	require.NoError(t, err)
-	assert.Equal(t, []CitationMatch{{Path: sub, Line: 2}}, got)
+	assert.Equal(t, []CitationMatch{{Path: sub, Line: 3}}, got)
 }
 
 // agentDispatch and agentReply are a root's sub-agent dispatch and the reply it

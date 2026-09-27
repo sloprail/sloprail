@@ -304,7 +304,7 @@ func entryCalls(path string, line int) (string, error) {
 		return "", err
 	}
 	calls := map[string]assistantContentBlock{}
-	delegated := delegationCalls(entries)
+	citable := citableResults(entries)
 	var ids []string
 	for _, e := range entries {
 		switch {
@@ -319,7 +319,7 @@ func entryCalls(path string, line int) (string, error) {
 				}
 			}
 		case e.Line == line:
-			ids = genuineToolResultIDs(e.Message, delegated)
+			ids = genuineToolResultIDs(e.Message, citable)
 		}
 	}
 	var out []string
@@ -385,7 +385,7 @@ func entryText(path string, line int, pools []SourceType) (string, error) {
 				parts = append(parts, answerEnvelopes(own.Message)...)
 			}
 			if wants(pools, SourceToolResult) {
-				parts = append(parts, genuineToolResultText(e.Message, delegationCalls(entries))...)
+				parts = append(parts, genuineToolResultText(e.Message, citableResults(entries))...)
 			}
 		case EntryAttachment:
 			if t := queuedCommandText(e.Attachment); t != "" && wants(pools, SourceUser) {
