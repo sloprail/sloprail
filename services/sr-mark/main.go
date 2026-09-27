@@ -43,6 +43,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/sloprail/sloprail/internal/version"
 )
 
 func main() {
@@ -59,6 +61,7 @@ func newRoot() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "sr-mark <command> <kind> ...",
 		Short:         "Write // sr:<kind> <fqn> enforcement markers into impl files",
+		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

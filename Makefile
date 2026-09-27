@@ -22,6 +22,23 @@ BIN_DIR  := bin
 SERVICES := sr sr-session sr-file sr-mark sr-agent sr-eval
 BINARIES := $(addprefix $(BIN_DIR)/,$(SERVICES))
 
+# VERSION is what `sr-session --version` (etc.) reports, and what the plugin's
+# installation check compares against plugin.json's own version to decide
+# whether an installed binary needs upgrading — see internal/version.Version's
+# doc comment. Bare semver, no leading v, matching plugin.json's own field.
+#
+# Default: derive it from the nearest reachable tag (git describe), stripping
+# the "v" release.yml's tags carry — this makes a local `make build` off a
+# tagged commit report the real version with no extra step. `make release`
+# always runs in CI right after a tag push, where this resolves to exactly
+# that tag; a caller building a specific version (or with no tags reachable,
+# e.g. a shallow clone) can still override: `make build VERSION=0.2.1`.
+VERSION := $(patsubst v%,%,$(shell git describe --tags --match 'v*' --abbrev=0 2>/dev/null))
+ifeq ($(VERSION),)
+VERSION := dev
+endif
+LDFLAGS := -X github.com/sloprail/sloprail/internal/version.Version=$(VERSION)
+
 # Where distribute-local installs.
 #
 #   1. PREFIX, if the caller set it   — make distribute-local PREFIX=~/bin
@@ -51,8 +68,8 @@ endif
 build:
 	@mkdir -p $(BIN_DIR)
 	@for s in $(SERVICES); do \
-		echo "go build -o $(BIN_DIR)/$$s ./services/$$s"; \
-		go build -o $(BIN_DIR)/$$s ./services/$$s || exit 1; \
+		echo "go build -ldflags \"$(LDFLAGS)\" -o $(BIN_DIR)/$$s ./services/$$s"; \
+		go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$$s ./services/$$s || exit 1; \
 	done
 
 # where prints the install destination and why, without touching anything. Run
@@ -149,7 +166,7 @@ release:
 		mkdir -p "$$outdir"; \
 		echo "building $$os/$$arch"; \
 		for s in $(SERVICES); do \
-			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -o "$$outdir/$$s" ./services/$$s || exit 1; \
+			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o "$$outdir/$$s" ./services/$$s || exit 1; \
 		done; \
 		tar -C $(RELEASE_DIR) -czf $(RELEASE_DIR)/sloprail-$$os-$$arch.tar.gz sloprail-$$os-$$arch; \
 		rm -rf "$$outdir"; \
