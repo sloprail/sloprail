@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestLoadFixture_FreshMachineParses(t *testing.T) {
@@ -47,5 +50,44 @@ func TestFreshPath_DropsSloprailKeepsHarness(t *testing.T) {
 	}
 	if target, err := os.Readlink(filepath.Join(dirs[0], "claude")); err != nil || target != filepath.Join(shared, "claude") {
 		t.Fatalf("the harness binary must be linked back first, got %q, %v", target, err)
+	}
+}
+
+// TestBuildRelease_StagedBinariesSurvive pins the regression this fixed: the
+// staged sloprail-<os>-<arch>/ directory buildRelease builds into must still
+// exist once it returns, with every sr* binary directly inside it — an
+// ordinary (non-FreshMachine) run's agentHome hands this exact directory back
+// as agentEnv.binDir for the HOST to launch sr-agent through, and for a score
+// script's SR_EVAL_BIN_DIR. buildRelease used to delete this directory right
+// after archiving it (correct while only the FreshMachine path, which only
+// needs the .tar.gz, called it); reusing it for an ordinary run's own launch
+// broke the moment that directory was gone — "fork/exec ...: no such file or
+// directory", measured on a real run.
+func TestBuildRelease_StagedBinariesSurvive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds every sr* binary from source; slow")
+	}
+	root, err := repoRoot()
+	if err != nil {
+		t.Skipf("not inside a sloprail checkout: %v", err)
+	}
+
+	dir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if err := buildRelease(ctx, root, dir); err != nil {
+		t.Fatalf("buildRelease: %v", err)
+	}
+
+	stage := filepath.Join(dir, "sloprail-"+runtime.GOOS+"-"+runtime.GOARCH)
+	for _, name := range sloprailBinaries {
+		p := filepath.Join(stage, name)
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("%s must survive buildRelease, and be directly inside the staged dir: %v", p, err)
+		}
+		if info.Mode().Perm()&0o100 == 0 {
+			t.Fatalf("%s exists but is not executable: %v", p, info.Mode())
+		}
 	}
 }

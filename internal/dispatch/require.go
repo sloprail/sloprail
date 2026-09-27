@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/declaration"
@@ -115,6 +116,7 @@ func (r Runner) checkSkill(req Request, skill string, files []string) (Verdict, 
 		return refuse(skillRemedy(skill)), nil
 	}
 
+	var missing []string
 	for _, file := range files {
 		read, err := r.subpageRead(req.TranscriptPath, req.Workspace, skill, file)
 		if err != nil {
@@ -124,8 +126,11 @@ func (r Runner) checkSkill(req Request, skill string, files []string) (Verdict, 
 				file, skill, err)), nil
 		}
 		if !read {
-			return refuse(subpageRemedy(skill, file, req.Workspace)), nil
+			missing = append(missing, file)
 		}
+	}
+	if len(missing) > 0 {
+		return refuse(subpagesRemedy(skill, missing, req.Workspace)), nil
 	}
 	return pass(), nil
 }
@@ -149,32 +154,51 @@ func skillRemedy(skill string) string {
 		skill, skill)
 }
 
-// subpageRemedy is what a missing-subpage refusal tells the agent — the one
-// instruction that clears it. Unlike skillRemedy, it names a concrete path: the
-// point of a `files` entry is a specific page the agent has almost certainly
-// never opened (the skill's own load does not surface it), so the remedy names
-// exactly where to find it rather than making the agent go looking a second
-// time. The first candidate that actually exists on disk is named (a project
-// skill outranks a plugin-shipped one of the same name, the same resolution
-// order SkillSubpagePaths returns them in); with none resolvable, the first
+// subpagesRemedy is what a missing-subpage refusal tells the agent — the one
+// message that clears it, for EVERY unmet files entry at once rather than one
+// at a time.
+//
+// Refusing on only the first missing file (the earlier shape) meant an agent
+// that read file[0] after a first refusal hit file[1]'s refusal on its very
+// next write attempt, and so on — the same total number of refusals as
+// naming them all up front, just spread across turns instead of listed once,
+// each one costing a full write-refuse-retry cycle. Naming every missing
+// file in one message lets the agent clear all of them before its next
+// attempt.
+//
+// Each file gets a concrete path, the same way the single-file remedy did:
+// the first candidate that actually exists on disk (a project skill outranks
+// a plugin-shipped one of the same name, the same resolution order
+// SkillSubpagePaths returns them in); with none resolvable, the first
 // candidate is named anyway — a path to try beats no path at all.
-func subpageRemedy(skill, file, workspace string) string {
-	path := file
-	candidates := SkillSubpagePaths(workspace, skill, file)
-	if len(candidates) > 0 {
-		path = candidates[0]
-		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				path = c
-				break
+func subpagesRemedy(skill string, files []string, workspace string) string {
+	lines := make([]string, 0, len(files))
+	for _, file := range files {
+		path := file
+		candidates := SkillSubpagePaths(workspace, skill, file)
+		if len(candidates) > 0 {
+			path = candidates[0]
+			for _, c := range candidates {
+				if _, err := os.Stat(c); err == nil {
+					path = c
+					break
+				}
 			}
 		}
+		lines = append(lines, fmt.Sprintf("  - %s: %s", file, path))
+	}
+	if len(files) == 1 {
+		return fmt.Sprintf(
+			"READ REQUIRED: this action requires %q (inside the %q skill) to have been read first, and this session's record holds no "+
+				"Read or file-reading Bash command (cat, head, …) on it. Read it directly:\n%s\n"+
+				"Stating that you have read it is not what is checked — the session's own record is.",
+			files[0], skill, lines[0])
 	}
 	return fmt.Sprintf(
-		"READ REQUIRED: this action requires %q (inside the %q skill) to have been read first, and this session's record holds no Read "+
-			"or file-reading Bash command (cat, head, …) on it. Read it directly: %s. "+
-			"Stating that you have read it is not what is checked — the session's own record is.",
-		file, skill, path)
+		"READ REQUIRED: this action requires the following pages inside the %q skill to have been read first, and this session's "+
+			"record holds no Read or file-reading Bash command (cat, head, …) on any of them:\n%s\n"+
+			"Read all of them directly, at the paths above. Stating that you have read them is not what is checked — the session's own record is.",
+		skill, strings.Join(lines, "\n"))
 }
 
 // checkContext refuses unless the named context is active in the state map the
