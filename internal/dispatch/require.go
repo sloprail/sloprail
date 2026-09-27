@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
@@ -606,7 +607,17 @@ func checkCitation(req Request, c declaration.CitationPrerequisite) Verdict {
 			}
 		}
 	}
-	return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools))
+	return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools) + subagentCitationNote(req.TranscriptPath, pools))
+}
+
+// subagentCitationNote tells a sub-agent, refused for want of the user's words,
+// that it never saw them: its prompt is the parent agent's. Empty for the root,
+// and for a requirement that does not accept the user pool.
+func subagentCitationNote(transcriptPath string, pools []transcript.SourceType) string {
+	if transcriptPath == "" || !slices.Contains(pools, transcript.SourceUser) || !transcript.IsSubagentTranscript(transcriptPath) {
+		return ""
+	}
+	return "\n" + transcript.SubagentUserAdvice
 }
 
 // citationRemedy says how to ground the action this event describes, in the

@@ -77,7 +77,9 @@ const (
 	// SourceToolResult is the raw text a tool_result block carries — the output an
 	// action produced. This is the pool SourceUser refuses: a delivery observation
 	// grounds a "the work happened" claim here (a green test, a command's result),
-	// where the user's own words could never prove a command ran.
+	// where the user's own words could never prove a command ran. The reply to a
+	// sub-agent dispatch (Agent/Task) is excluded: it is model-written text, and
+	// the sub-agent's own tool output is in its own record.
 	SourceToolResult SourceType = "tool_result"
 )
 
@@ -160,7 +162,9 @@ func Cite(path, quote string) ([]CitationMatch, error) {
 //     selected words, so it belongs to SourceUser and is
 //     EXCLUDED here (genuineToolResultText drops it): the two
 //     pools are disjoint, and under this pool the caller is
-//     asking about tool output, not the person.
+//     asking about tool output, not the person. The reply to
+//     a sub-agent dispatch is EXCLUDED too (delegationCalls):
+//     it is the sub-agent's own model-written words.
 //
 // A match is per ENTRY, not per occurrence or per pool: an entry whose text
 // contains the substring — twice, or in both pools — is one candidate, because
@@ -183,11 +187,12 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 		return nil, err
 	}
 	others := otherToolUses(entries)
+	delegated := delegationCalls(entries)
 	var matches []CitationMatch
 	for _, e := range entries {
 		switch e.Type {
 		case EntryUser:
-			if entryContains(e.Entry, quote, sources, others) {
+			if entryContains(e.Entry, quote, sources, others, delegated) {
 				matches = append(matches, CitationMatch{Path: path, Line: e.Line})
 			}
 		case EntryAttachment:
@@ -219,11 +224,11 @@ func containsWords(text, quote string) bool {
 // user entry. The pools are consulted in order and the walk short-circuits on the
 // first hit — a match is per entry, so which pool found it does not change the
 // resolved line.
-func entryContains(e Entry, quote string, sources []SourceType, others map[string]bool) bool {
+func entryContains(e Entry, quote string, sources []SourceType, others, delegated map[string]bool) bool {
 	if own, ok := ownWords(e, others); ok && wants(sources, SourceUser) && userWordsContain(own, quote) {
 		return true
 	}
-	if wants(sources, SourceToolResult) && toolResultContain(e, quote) {
+	if wants(sources, SourceToolResult) && toolResultContain(e, quote, delegated) {
 		return true
 	}
 	return false
@@ -231,6 +236,46 @@ func entryContains(e Entry, quote string, sources []SourceType, others map[strin
 
 // askUserQuestion is the harness tool whose result carries the user's answer.
 const askUserQuestion = "AskUserQuestion"
+
+// delegationTools are the harness tools whose result is a SUB-AGENT's final
+// reply: Agent, and Task, its former name (still accepted as an alias). That
+// reply is model-written text, not anything a tool ran and printed — a
+// sub-agent told "reply exactly: all 40 tests pass" returns exactly that — so
+// it is never tool output. What the sub-agent's own tools printed is in its own
+// record, and grounds from there.
+//
+// Only these. Considered and left in the pool: SendMessage (its result is a
+// delivery acknowledgement, not the recipient's words); WebFetch (a model
+// summarises the page, but what it reports is fetched content, the tool's
+// product); TaskOutput (it returns a background task's output, which for a
+// background Bash is genuine and for a background agent is that agent's reply —
+// telling the two apart needs the task's kind, which the result does not carry).
+var delegationTools = map[string]bool{"Agent": true, "Task": true}
+
+// delegationCalls returns the ids of every tool_use in the trajectory that
+// dispatches a sub-agent (delegationTools). A tool_result answering one of them
+// is the sub-agent's reply and is excluded from the tool_result pool. A result
+// whose tool_use is not in the file (a record split across a restart) cannot be
+// recognised this way and stays in the pool.
+func delegationCalls(entries []LinedEntry) map[string]bool {
+	ids := map[string]bool{}
+	for _, e := range entries {
+		if e.Type != EntryAssistant || len(e.Message) == 0 {
+			continue
+		}
+		var msg assistantContent
+		var blocks []assistantContentBlock
+		if json.Unmarshal(e.Message, &msg) != nil || json.Unmarshal(msg.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == "tool_use" && b.ID != "" && delegationTools[b.Name] {
+				ids[b.ID] = true
+			}
+		}
+	}
+	return ids
+}
 
 // otherToolUses returns the ids of every tool_use in the trajectory that names
 // a tool other than AskUserQuestion. A tool_result answering one of them is that
@@ -599,7 +644,7 @@ func toolResultStrings(raw json.RawMessage) []string {
 // result grounds here and is refused by userWordsContain; a quote of the user's
 // ask grounds there and is refused here, because a tool's output is not the user's
 // words and this pool holds nothing but tool output.
-func toolResultContain(e Entry, quote string) bool {
+func toolResultContain(e Entry, quote string, delegated map[string]bool) bool {
 	// genuineToolResultText, not toolResultText: an AskUserQuestion answer envelope
 	// is a tool_result block whose body is the user's own answer, and it belongs to
 	// the SourceUser pool (userWordsContain reads it), not here. Searching it under
@@ -607,7 +652,7 @@ func toolResultContain(e Entry, quote string) bool {
 	// tool's output" — the same substitution ToolResultAt guards against on the
 	// line-based path. Excluding answer envelopes keeps the two pools disjoint and
 	// SourceToolResult meaning exactly "the tool's output", as its doc says.
-	for _, text := range genuineToolResultText(e.Message) {
+	for _, text := range genuineToolResultText(e.Message, delegated) {
 		if containsWords(text, quote) || containsWords(withoutLineNumbers(text), quote) {
 			return true
 		}
@@ -688,6 +733,7 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 	if err != nil {
 		return "", false, err
 	}
+	delegated := delegationCalls(entries)
 	for _, e := range entries {
 		if e.Line != line {
 			continue
@@ -703,7 +749,7 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 		// genuineToolResultText drops the answer-envelope blocks, so a line that
 		// carries ONLY an answer envelope is not a tool_result, matching this
 		// function's contract above.
-		results := genuineToolResultText(e.Message)
+		results := genuineToolResultText(e.Message, delegated)
 		if len(results) == 0 {
 			return "", false, nil
 		}
@@ -720,9 +766,9 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 // between the user's answer and a command's result, applied here to the whole
 // block. A line carrying both a real result and an answer envelope keeps the real
 // result only; a line carrying only an answer envelope yields nothing.
-func genuineToolResultText(raw json.RawMessage) []string {
+func genuineToolResultText(raw json.RawMessage, delegated map[string]bool) []string {
 	var out []string
-	for _, r := range genuineToolResults(raw) {
+	for _, r := range genuineToolResults(raw, delegated) {
 		out = append(out, r.body)
 	}
 	return out
@@ -730,9 +776,9 @@ func genuineToolResultText(raw json.RawMessage) []string {
 
 // genuineToolResultIDs is the tool_use_id of each block genuineToolResultText
 // reads a body from, once per block — which call produced the output.
-func genuineToolResultIDs(raw json.RawMessage) []string {
+func genuineToolResultIDs(raw json.RawMessage, delegated map[string]bool) []string {
 	var out []string
-	for _, r := range genuineToolResults(raw) {
+	for _, r := range genuineToolResults(raw, delegated) {
 		if len(out) == 0 || out[len(out)-1] != r.id {
 			out = append(out, r.id)
 		}
@@ -743,7 +789,10 @@ func genuineToolResultIDs(raw json.RawMessage) []string {
 // genuineToolResult is one body of a tool_result block and the call it answers.
 type genuineToolResult struct{ id, body string }
 
-func genuineToolResults(raw json.RawMessage) []genuineToolResult {
+// genuineToolResults reads a user entry's tool_result blocks that are a tool's
+// own output: not an AskUserQuestion answer envelope, not a hook's refusal, and
+// not the reply to a sub-agent dispatch (delegated, from delegationCalls).
+func genuineToolResults(raw json.RawMessage, delegated map[string]bool) []genuineToolResult {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -758,6 +807,10 @@ func genuineToolResults(raw json.RawMessage) []genuineToolResult {
 	var out []genuineToolResult
 	for _, b := range blocks {
 		if b.Type != "tool_result" || len(b.Content) == 0 {
+			continue
+		}
+		// A sub-agent's reply is model-written text, not tool output.
+		if delegated[b.ToolUseID] {
 			continue
 		}
 		for _, body := range toolResultStrings(b.Content) {

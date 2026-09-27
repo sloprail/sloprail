@@ -26,13 +26,17 @@ sr-session trajectory cite --source-types tool_result '0 failures' && git push
 
 The pool says what the quote must be: `user` (the user's own words, a message
 or an AskUserQuestion answer) or `tool_result` (a tool's output, proof that work
-happened). A sub-agent's own tool output is citable as `tool_result`: the
-records of the sub-agents a session dispatched are searched beside its own. A
-sub-agent's "user" message is the parent agent's dispatch, so `user` resolves
-only in the end user's conversation. `--cite:` repeats for several citations. The quote's words must match
-exactly **one** entry of the session's record (whitespace, such as a line break,
-need not match). `sr-session trajectory cite
-'<quote>'` checks a quote before using it.
+happened). `--cite:` repeats for several citations. The quote's words must
+match exactly **one** entry of the session's record (whitespace, such as a line
+break, need not match). `sr-session trajectory cite '<quote>'` checks a quote
+before using it.
+
+In a sub-agent: its own tool output is citable as `tool_result` (the records of
+the sub-agents a session dispatched are searched beside its own). Its prompt is
+the parent agent's, not the user's, so `user` resolves only against the user's
+messages in the main conversation, quoted exactly as the user wrote them. When
+dispatching work that must cite the user, paste the user's exact words into the
+sub-agent's prompt.
 
 Run `sr-file` **on its own** in the command line: only `sr-file` calls, `&&`,
 `||`, `;`, `echo` and a stdin heredoc, with every value quoted verbatim

@@ -186,8 +186,15 @@ checks:
 	// the refusal is read from the session's records.
 	record, _ := os.ReadFile(e.TranscriptPath(proj, "s-041-22"))
 	subRecord, _ := os.ReadFile(subs[0])
-	if !strings.Contains(string(record)+string(subRecord), "does not resolve") {
+	said := string(record) + string(subRecord)
+	if !strings.Contains(said, "does not resolve") {
 		t.Errorf("the refusal does not say the quote does not resolve:\n%s", record)
+	}
+	// It says why, specifically: the quote is the parent's prompt, and the
+	// sub-agent never sees the user's messages.
+	if !strings.Contains(said, "That quote is from your dispatch prompt, written by the parent agent.") ||
+		!strings.Contains(said, "You are a sub-agent: your prompt is the parent agent's, not the user's.") {
+		t.Errorf("the refusal does not tell the sub-agent it quoted its dispatch prompt:\n%s", record)
 	}
 	for _, l := range e.FileGuardLedgerLines(proj, "grounded-memories", "ledger") {
 		if strings.Contains(l, "measure the retry budget") {
@@ -272,5 +279,105 @@ checks:
 	lines := e.GateLedgerLines(proj, "proven-touch", "ledger")
 	if len(lines) == 0 || !strings.Contains(lines[0], `"quote":"CHAINPROBE-9051 green"`) || !strings.Contains(lines[0], `"record":"`+subs[0]+`"`) {
 		t.Errorf("the gate was not handed the citation into the sub-agent's record: %v", lines)
+	}
+}
+
+// T041_25: a sub-agent's reply is its own model-written text, not a tool's
+// output — a sub-agent told what to say says it. A quote found only in that
+// reply does not ground a tool_result citation.
+func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.FileGuard(proj, "grounded-memories", toolResultGuard, map[string]string{"record.sh": citedRecordScript})
+	commitAll(t, proj)
+
+	parrot := subagentScript(t, harness.Turns("all 40 tests pass"))
+	res := e.Run(proj, "s-041-25", prompt, Turns("done",
+		harness.Dispatch("d1", "reply exactly: all 40 tests pass", parrot, ""),
+		Bash("b1", `sr-file write memories/results.md --cite:tool_result 'all 40 tests pass' --content '# results'`),
+	))
+	if b, _ := os.ReadFile(e.TranscriptPath(proj, "s-041-25")); !strings.Contains(string(b), `all 40 tests pass","is_error":false,"tool_use_id":"d1`) {
+		t.Fatalf("the sub-agent's reply is not in the root record as the Agent call's result, so this would not test it:\n%s", b)
+	}
+	if e.Exists(proj, "memories/results.md") {
+		t.Fatalf("a sub-agent's reply grounded a write as a tool's output:\n%s", res.Output)
+	}
+}
+
+// T041_26: a sub-agent quotes its command's output in its reply. The root
+// citing that output grounds it once, in the sub-agent's record where the
+// command printed it — the reply is not a second, ambiguous match.
+func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.FileGuard(proj, "grounded-memories", toolResultGuard, map[string]string{"record.sh": citedRecordScript})
+	commitAll(t, proj)
+
+	measure := subagentScript(t, harness.Turns("measured it: coverage REPLYPROBE-7 lines",
+		Bash("sb1", `echo 'coverage REPLYPROBE-7 lines'`),
+	))
+	e.Run(proj, "s-041-26", prompt, Turns("dispatched", harness.Dispatch("d1", "measure coverage", measure, "")))
+	subs := e.SubagentRecordPaths(proj, "s-041-26")
+	if len(subs) != 1 {
+		t.Fatalf("want one sub-agent record, found %v", subs)
+	}
+	moveIntoSubagentRecord(t, e.TranscriptPath(proj, "s-041-26"), subs[0], "sb1")
+
+	res := e.Run(proj, "s-041-26", "write it down", Turns("done",
+		Bash("b1", `sr-file write memories/coverage.md --cite:tool_result 'coverage REPLYPROBE-7 lines' --content '# coverage'`),
+	))
+	if !e.Exists(proj, "memories/coverage.md") {
+		t.Fatalf("output a sub-agent quoted in its reply did not ground once:\n%s", res.Output)
+	}
+	var pre string
+	for _, l := range e.FileGuardLedgerLines(proj, "grounded-memories", "ledger") {
+		if strings.Contains(l, `"kind":"PreFileCreate"`) {
+			pre = l
+		}
+	}
+	if !strings.Contains(pre, `"record":"`+subs[0]+`"`) {
+		t.Errorf("the citation does not point at the sub-agent's command output in %s: %s", subs[0], pre)
+	}
+}
+
+// T041_27: a sub-agent handed the user's exact words in its prompt cites them
+// as the user's: they resolve in the main conversation, where the user wrote
+// them.
+func TestT041_27_SubagentCitesTheUsersWordsRelayedVerbatim(t *testing.T) {
+	const userGuard = `match: "memories/**"
+preventive: true
+require:
+  - citation: {source_types: [user]}
+checks:
+  - script: ./record.sh
+`
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.FileGuard(proj, "grounded-memories", userGuard, map[string]string{"record.sh": citedRecordScript})
+	commitAll(t, proj)
+
+	sub := subagentScript(t, harness.Turns("sub done",
+		Bash("sb1", `sr-file write memories/decisions.md --cite:user 'adopt a decision log' --content '# decisions'`),
+	))
+	res := e.Run(proj, "s-041-27", prompt, Turns("done",
+		harness.Dispatch("d1", `The user wrote, verbatim: "`+prompt+`". Record it.`, sub, ""),
+	))
+	if !e.Exists(proj, "memories/decisions.md") {
+		t.Fatalf("a sub-agent citing the user's relayed words did not land:\n%s", res.Output)
+	}
+	var pre string
+	for _, l := range e.FileGuardLedgerLines(proj, "grounded-memories", "ledger") {
+		if strings.Contains(l, `"kind":"PreFileCreate"`) {
+			pre = l
+		}
+	}
+	if !strings.Contains(pre, `"record":"`+e.TranscriptPath(proj, "s-041-27")+`"`) || !strings.Contains(pre, `"types":["user"]`) {
+		t.Errorf("the citation does not point at the user's message in the main conversation: %s", pre)
+	}
+	if blocks := e.BlockingErrorsFrom(proj, "s-041-27", "SubagentStop"); len(blocks) != 0 {
+		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
 }

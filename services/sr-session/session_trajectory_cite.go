@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -176,8 +177,8 @@ func runSessionTrajectoryCite(cmd *cobra.Command, args []string) error {
 	matches, err := transcript.CiteInSession(path, quote, sources)
 	if errors.Is(err, transcript.ErrNoSessionRoot) {
 		fmt.Fprintf(cmd.ErrOrStderr(),
-			"sloprail: cite is not available in a sub-agent for the user's words — its user messages are the parent agent's dispatch, not the end user's own words, and the session it was dispatched from is not found, so a citation into them would ground a claim in something the user never said (trajectory %s is a sub-agent's)\n",
-			path)
+			"sloprail: cite is not available in a sub-agent for the user's words — its user messages are the parent agent's dispatch, not the end user's own words, and the session it was dispatched from is not found, so a citation into them would ground a claim in something the user never said (trajectory %s is a sub-agent's). %s\n",
+			path, transcript.SubagentUserAdvice)
 		os.Exit(citeInSubagent)
 	}
 	if err != nil {
@@ -191,7 +192,13 @@ func runSessionTrajectoryCite(cmd *cobra.Command, args []string) error {
 	case 0:
 		// No match: nothing on stdout, exit 1. Silent on stdout is the contract —
 		// a script tests the exit code, and printing a candidate here would be a
-		// false citation.
+		// false citation. stderr may say why a sub-agent's quote of "the user"
+		// is not there: it quoted its parent's prompt, or never saw the user.
+		if slices.Contains(sources, transcript.SourceUser) {
+			if hint := transcript.UnresolvedUserHint(path, quote); hint != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: the quote is not in the user's messages. "+hint)
+			}
+		}
 		os.Exit(citeNoMatch)
 	case 1:
 		fmt.Fprintf(cmd.OutOrStdout(), "%s:%d\n", matches[0].Path, matches[0].Line)

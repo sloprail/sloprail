@@ -35,11 +35,16 @@ import (
 const groundedHelp = `Citations: --cite:<source-types> <quote>, repeatable. <source-types> is
 user (the user's own words), tool_result (a tool's output), or both
 comma-separated. Each quote must resolve to exactly one entry of the session's
-trajectory, or nothing is written. user resolves in the end user's own
-conversation only; tool_result also in the records of the sub-agents it
-dispatched, so a sub-agent can cite its own tools' output. The words must match exactly; whitespace
+trajectory, or nothing is written. The words must match exactly; whitespace
 need not (a line break in the message matches a space in the quote). Quote with
 single quotes so the shell leaves it verbatim.
+
+tool_result also resolves in the records of the sub-agents the session
+dispatched, so a sub-agent can cite its own tools' output. user resolves only
+in the user's messages in the main conversation: a sub-agent's prompt is the
+parent agent's, so a sub-agent quotes the user's words exactly as the user
+wrote them, and a parent dispatching work that must cite the user pastes the
+user's exact words into the prompt.
 
 Flags take their value as the next word or after '='. '--' ends the flags.`
 

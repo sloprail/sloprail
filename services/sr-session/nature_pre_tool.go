@@ -67,14 +67,18 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 			declaration.KindPreFileDelete, declaration.KindPreCommandInvoke)
 	}
 	events := extractPreEvents(cmd, p, reg, bound)
-	// Citations are grounded in the session's records, named here by the
-	// session's transcript: the user pool resolves in the END USER's (root)
-	// record only — never a sub-agent's, whose "user" messages are the parent's
-	// dispatch — and the tool_result pool in the root's and every sub-agent's,
-	// so a sub-agent can cite what its own tools printed. ResolveCitation climbs
-	// to the root from whichever record this names (a harness may report the
-	// sub-agent's own path here).
-	citeIn := p.TranscriptPath
+	// Citations are grounded in the session's records: the user pool resolves
+	// in the END USER's (root) record only — never a sub-agent's, whose "user"
+	// messages are the parent's dispatch — and the tool_result pool in the
+	// root's and every sub-agent's, so a sub-agent can cite what its own tools
+	// printed. ResolveCitation climbs to the root from whichever record it is
+	// handed, so this names the CALLER's own record where it is on disk: for a
+	// sub-agent's call, that is what lets a citation that does not resolve say
+	// "you are a sub-agent" (transcript.UnresolvedUserHint).
+	citeIn := scope.Transcript
+	if fi, err := os.Stat(citeIn); citeIn == "" || err != nil || fi.IsDir() {
+		citeIn = p.TranscriptPath
+	}
 	if citeIn == "" {
 		citeIn = scope.Transcript
 	}

@@ -105,6 +105,10 @@ func TestT029_25_UserPoolIsTheRootsFromASubagent(t *testing.T) {
 		if res.Code != 1 {
 			t.Errorf("--source-types %s: citing the dispatch prompt exited %d, want 1 (not the user's words, not tool output):\n%s", sources, res.Code, res.Output)
 		}
+		// And says why, on stderr: the quote is the parent's prompt.
+		if !res.Saw("That quote is from your dispatch prompt, written by the parent agent.") || !res.Saw("You are a sub-agent:") {
+			t.Errorf("--source-types %s: the miss does not tell the sub-agent it quoted its dispatch prompt:\n%s", sources, res.Output)
+		}
 	}
 }
 

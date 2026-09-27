@@ -101,7 +101,7 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	for _, st := range req.SourceTypes {
 		matches, err := CiteInSession(path, req.Quote, []SourceType{st})
 		if errors.Is(err, ErrNoSessionRoot) {
-			return Citation{}, fmt.Errorf("citation %s cannot resolve in a sub-agent's trajectory (%s) whose session record is not found: its user messages are the parent agent's dispatch, not the end user's own words", req, path)
+			return Citation{}, fmt.Errorf("citation %s cannot resolve in a sub-agent's trajectory (%s) whose session record is not found: its user messages are the parent agent's dispatch, not the end user's own words. %s", req, path, SubagentUserAdvice)
 		}
 		if err != nil {
 			return Citation{}, fmt.Errorf("citation %s: %w", req, err)
@@ -117,7 +117,13 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	}
 	switch {
 	case len(hits) == 0:
-		return Citation{}, fmt.Errorf("citation %s does not resolve in %s: the quote is not there word for word in that pool (only whitespace may differ)", req, path)
+		msg := fmt.Sprintf("citation %s does not resolve in %s: the quote is not there word for word in that pool (only whitespace may differ)", req, path)
+		if wants(req.SourceTypes, SourceUser) {
+			if hint := UnresolvedUserHint(path, req.Quote); hint != "" {
+				msg += ". " + hint
+			}
+		}
+		return Citation{}, errors.New(msg)
 	case len(hits) > 1:
 		where := make([]string, len(hits))
 		for i, h := range hits {
@@ -199,6 +205,76 @@ func CiteInSession(path, quote string, sources []SourceType) ([]CitationMatch, e
 	return out, nil
 }
 
+// subagentUserRule is what a sub-agent must know about citing the user: it
+// never sees the user's messages, only the parent agent's dispatch prompt.
+const subagentUserRule = "your prompt is the parent agent's, not the user's. " +
+	"--cite:user resolves only against the user's messages in the main conversation — " +
+	"quote them exactly as the user wrote them (the parent must pass them to you verbatim), " +
+	"or cite --cite:tool_result for a tool's output."
+
+// SubagentUserAdvice is said to a sub-agent whose citation of the user's words
+// does not resolve.
+const SubagentUserAdvice = "You are a sub-agent: " + subagentUserRule
+
+// UnresolvedUserHint is what to add when quote does not resolve in the user
+// pool of the session whose record is at path, or "" when there is nothing
+// specific to say.
+//
+// A sub-agent never sees the user's messages — only the prompt its parent
+// wrote — so its commonest miss is quoting that prompt as the user. When quote
+// is in a sub-agent's dispatch prompt, the hint says so; when path is a
+// sub-agent's own record (the caller is known to be one), it says how
+// --cite:user works for a sub-agent. From the root's record the caller is not
+// known, so a dispatch-prompt match is named without assuming who is asking.
+func UnresolvedUserHint(path, quote string) string {
+	sub := IsSubagentTranscript(path)
+	inPrompt := dispatchPromptContains(path, quote)
+	switch {
+	case inPrompt && sub:
+		return "That quote is from your dispatch prompt, written by the parent agent. " + SubagentUserAdvice
+	case inPrompt:
+		return "That quote is from a sub-agent's dispatch prompt, written by the parent agent, not by the user. If you are that sub-agent: " + subagentUserRule
+	case sub:
+		return SubagentUserAdvice
+	}
+	return ""
+}
+
+// dispatchPromptContains reports whether quote is in the words a parent agent
+// wrote to one of the session's sub-agents: a user message in a sub-agent's
+// record, all of which the parent wrote (the dispatch prompt, and any message
+// it sent the sub-agent later). An unreadable record answers false; this only
+// shapes a message.
+func dispatchPromptContains(path, quote string) bool {
+	top := SessionRootOf(path)
+	var records []string
+	if top == "" {
+		top = path
+		records = append(records, path)
+	}
+	subs, err := DescendantSubagentPaths(top)
+	if err != nil {
+		return false
+	}
+	for _, r := range append(records, subs...) {
+		entries, err := ReadLines(r)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.Type != EntryUser || e.IsMeta {
+				continue
+			}
+			for _, text := range messageText(e.Message) {
+				if containsWords(text, quote) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // citationRecords is where a citation into the session whose record is at path
 // may resolve: userIn, the one record the user pool is searched in (the
 // session's root; "" when path is a sub-agent's record whose root is not on
@@ -228,6 +304,7 @@ func entryCalls(path string, line int) (string, error) {
 		return "", err
 	}
 	calls := map[string]assistantContentBlock{}
+	delegated := delegationCalls(entries)
 	var ids []string
 	for _, e := range entries {
 		switch {
@@ -242,7 +319,7 @@ func entryCalls(path string, line int) (string, error) {
 				}
 			}
 		case e.Line == line:
-			ids = genuineToolResultIDs(e.Message)
+			ids = genuineToolResultIDs(e.Message, delegated)
 		}
 	}
 	var out []string
@@ -308,7 +385,7 @@ func entryText(path string, line int, pools []SourceType) (string, error) {
 				parts = append(parts, answerEnvelopes(own.Message)...)
 			}
 			if wants(pools, SourceToolResult) {
-				parts = append(parts, genuineToolResultText(e.Message)...)
+				parts = append(parts, genuineToolResultText(e.Message, delegationCalls(entries))...)
 			}
 		case EntryAttachment:
 			if t := queuedCommandText(e.Attachment); t != "" && wants(pools, SourceUser) {

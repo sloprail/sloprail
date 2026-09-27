@@ -196,3 +196,88 @@ func TestCiteInSessionOrphanRefusesOnlyTheUserPool(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []CitationMatch{{Path: sub, Line: 2}}, got)
 }
+
+// agentDispatch and agentReply are a root's sub-agent dispatch and the reply it
+// got back — the sub-agent's own model-written final message.
+func agentDispatch(uuid, parent, id, tool string) string {
+	return `{"type":"assistant","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
+		`"message":{"role":"assistant","content":[{"type":"tool_use","id":"` + id + `","name":"` + tool + `","input":{"prompt":"go"}}]}}`
+}
+
+func agentReply(uuid, parent, id, body string) string {
+	return toolAnswer(uuid, parent, id, body)
+}
+
+// A sub-agent's reply is not tool output: a sub-agent told what to say says it,
+// and citing that as a tool's output would launder its words into evidence.
+func TestResolveCitationExcludesASubagentsReply(t *testing.T) {
+	for _, tool := range []string{"Agent", "Task"} {
+		t.Run(tool, func(t *testing.T) {
+			p := newProject(t)
+			path := p.write("the-session",
+				userMsg("u1", "run the tests"),
+				agentDispatch("a1", "u1", "toolu_agent", tool),
+				agentReply("r1", "a1", "toolu_agent", "all 40 tests pass"),
+			)
+			_, err := ResolveCitation(path, toolReq("all 40 tests pass"))
+			assert.Error(t, err, "a sub-agent's reply grounded as tool output")
+
+			got, err := CiteInSession(path, "all 40 tests pass", []SourceType{SourceToolResult})
+			require.NoError(t, err)
+			assert.Empty(t, got)
+
+			_, isToolResult, err := ToolResultAt(path, 3)
+			require.NoError(t, err)
+			assert.False(t, isToolResult, "a sub-agent's reply is not a tool_result the session produced")
+		})
+	}
+}
+
+// A sub-agent that quotes its own command's output in its reply: the quote
+// grounds once, in the sub-agent's record where the command printed it — not
+// ambiguously, and not in the reply.
+func TestResolveCitationOfOutputASubagentQuotedInItsReply(t *testing.T) {
+	p := newProject(t)
+	rootPath, sub := dispatchedSession(t, p, []string{
+		agentDispatch("a1", "u1", "toolu_dispatch", "Agent"),
+		agentReply("r1", "a1", "toolu_dispatch", "Done. The config says: retries: 5 with QUOTEDMARKER backoff"),
+	}, "retries: 5 with QUOTEDMARKER backoff")
+
+	got, err := ResolveCitation(rootPath, toolReq("QUOTEDMARKER backoff"))
+	require.NoError(t, err, "the output a sub-agent quoted back must not become ambiguous")
+	assert.Equal(t, sub, got.Path)
+	assert.Equal(t, 3, got.Line)
+	assert.Equal(t, "Bash: cat retry.yaml", got.Call)
+}
+
+// A sub-agent never sees the user's messages. Quoting its dispatch prompt as the
+// user is its commonest miss, and the refusal says so — and how --cite:user
+// works for it.
+func TestUnresolvedUserCitationTellsASubagentWhy(t *testing.T) {
+	p := newProject(t)
+	rootPath, sub := dispatchedSession(t, p, nil, "out")
+
+	_, err := ResolveCitation(sub, userReq("DISPATCHMARKER: read the retry config"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "That quote is from your dispatch prompt, written by the parent agent.")
+	assert.Contains(t, err.Error(), SubagentUserAdvice)
+
+	_, err = ResolveCitation(sub, userReq("never said by anyone"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), SubagentUserAdvice, "a sub-agent is told how --cite:user works for it")
+	assert.NotContains(t, err.Error(), "dispatch prompt")
+
+	// From the root's record the caller is not known: the prompt is named, the
+	// caller is not assumed.
+	_, err = ResolveCitation(rootPath, userReq("DISPATCHMARKER"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "from a sub-agent's dispatch prompt, written by the parent agent, not by the user")
+	_, err = ResolveCitation(rootPath, userReq("never said by anyone"))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "sub-agent", "the root is told nothing about sub-agents")
+
+	// Only the user pool: a tool_result miss is not about the user's words.
+	_, err = ResolveCitation(sub, toolReq("DISPATCHMARKER"))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "sub-agent")
+}
