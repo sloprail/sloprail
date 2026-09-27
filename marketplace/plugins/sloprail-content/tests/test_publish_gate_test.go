@@ -336,6 +336,12 @@ func TestPublish_UncitedPublishSpellingsRefused(t *testing.T) {
 		"fence with a trailing space":       "--- \ntype: [\nstatus: published\n---\n",
 		"byte order mark":                   "\ufeff---\nstatus: published\npublished_urls: [\"u\"]\n---\n",
 		"fence trailed by a no-break space": "---\u00a0\ntype: [\nstatus: published\n---\n",
+		"fence never closed":                "---\ntype: post\nstatus: published\npublished_urls: [\"https://x\"]\n",
+		"fence never closed, then a body":   "---\ntype: post\nstatus: published\npublished_urls: [\"https://x\"]\n\nAnnouncing the launch.\n",
+		"fence never closed, CRLF":          "---\r\ntype: post\r\nstatus: published\r\npublished_urls: [\"https://x\"]\r\n",
+		"fence never closed, ... ended":     "---\ntype: post\nstatus: published\npublished_urls: [\"https://x\"]\n...\n",
+		"a second YAML document":            "---\nstatus: drafting\n...\nstatus: published\npublished_urls: [\"u\"]\n---\n",
+		"two merge keys":                    "---\n<<: {status: drafting}\n<<: {status: published}\npublished_urls: [\"u\"]\n---\n",
 		"capitalised":                       "---\ntype: post\nstatus: Published\npublished_urls: [\"u\"]\n---\n",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -361,15 +367,18 @@ func TestPublish_UncitedPublishSpellingsRefused(t *testing.T) {
 // guard's business — an uncited write of it lands.
 func TestPublish_InvalidNonPublishedUnitPermitted(t *testing.T) {
 	for name, unit := range map[string]string{
-		"invalid type, drafting":          "---\ncreated: 2026-09-25\ntype: article\nstatus: drafting\n---\n\nAnnouncing the launch.\n",
-		"status unpublished":              "---\ntype: post\nstatus: unpublished\n---\n",
-		"comment naming publish":          "---\ntype: post\nstatus: drafting # not published yet\n---\n",
-		"no frontmatter at all":           "Announcing the launch; status: published later.\n",
-		"integer key":                     "---\ntype: post\nstatus: drafting\n1: x\n---\n",
-		"null key and custom tag":         "---\nnull: x\nx: !custom foo\nstatus: drafting\n---\n",
-		"complex key":                     "---\n? [a, b]\n: c\nstatus: drafting\n---\n",
-		"inf, nan and a huge int":         "---\na: .inf\nb: .nan\nn: 123456789012345678901234567890\nstatus: drafting\n---\n",
-		"horizontal rule, no frontmatter": "---\n\nAnnouncing the launch.\n",
+		"invalid type, drafting":           "---\ncreated: 2026-09-25\ntype: article\nstatus: drafting\n---\n\nAnnouncing the launch.\n",
+		"status unpublished":               "---\ntype: post\nstatus: unpublished\n---\n",
+		"comment naming publish":           "---\ntype: post\nstatus: drafting # not published yet\n---\n",
+		"no frontmatter at all":            "Announcing the launch; status: published later.\n",
+		"integer key":                      "---\ntype: post\nstatus: drafting\n1: x\n---\n",
+		"null key and custom tag":          "---\nnull: x\nx: !custom foo\nstatus: drafting\n---\n",
+		"complex key":                      "---\n? [a, b]\n: c\nstatus: drafting\n---\n",
+		"inf, nan and a huge int":          "---\na: .inf\nb: .nan\nn: 123456789012345678901234567890\nstatus: drafting\n---\n",
+		"horizontal rule, no frontmatter":  "---\n\nAnnouncing the launch.\n",
+		"drafting after a byte-order mark": "\ufeff---\nstatus: drafting\n---\n",
+		"drafting after a blank line":      "\n---\nstatus: drafting\n---\n",
+		"drafting, fence never closed":     "---\ntype: post\nstatus: drafting\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			e, proj := installPublishProject(t, draftingUnit)
@@ -408,5 +417,39 @@ func TestPublish_EditLeavingPublishedUnitInvalidRefused(t *testing.T) {
 	}
 	if res.Saw("must cite the user's own words") {
 		t.Errorf("an edit to an already-published unit asked for a new approval:\n%s", res.Output)
+	}
+}
+
+// TestPublish_OlderSRFileAsksForTheUpgrade: against an sloprail binary set whose
+// sr-file has no `field` command (older than this plugin needs), a plain
+// drafting edit is refused — nothing can be read — and the refusal names the
+// upgrade, not a frontmatter to fix nor a publish to approve. The hook runs
+// checks with the sr-file beside sr-session, so the stale set is both: an
+// sr-session that forwards to the real engine, beside an sr-file that lacks
+// the command.
+func TestPublish_OlderSRFileAsksForTheUpgrade(t *testing.T) {
+	e, proj := installPublishProject(t, draftingUnit)
+	e.InstallShim("sr-session", "#!/bin/sh\nexec "+shq(e.BinPath("sr-session"))+` "$@"
+`)
+	e.InstallShim("sr-file", `#!/bin/sh
+if [ "$1" = "field" ]; then
+  echo 'Error: unknown command "field" for "sr-file"' >&2
+  exit 1
+fi
+exec `+shq(e.BinPath("sr-file"))+` "$@"
+`)
+
+	edited := strings.Replace(draftingUnit, "Announcing the launch.", "Announcing the launch, today.", 1)
+	res := e.Run(proj, "s-publish-old-srfile", publishPrompt, Turns("done",
+		Write("w1", unitPath, edited),
+	))
+	if !res.Refused() {
+		t.Fatalf("with no way to read the status, a unit write was not refused:\n%s", res.Output)
+	}
+	if !res.Saw("sloprail-content needs `sr-file field`") || !res.Saw("upgrade the sloprail binaries") {
+		t.Errorf("the refusal does not name the upgrade:\n%s", res.Output)
+	}
+	if res.Saw("fix the frontmatter") || res.Saw("Only the user publishes") {
+		t.Errorf("the refusal blames the frontmatter or asks for an approval instead of the upgrade:\n%s", res.Output)
 	}
 }

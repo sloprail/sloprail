@@ -207,12 +207,20 @@ would reject (an integer key, a custom tag) still answers.
 - **Any** write that leaves a unit at `status: published` with frontmatter
   invalid against `unit.cue` is refused, including an edit to a unit that was
   already published (which needs no new approval, but must stay valid).
-- Frontmatter that cannot be read — YAML that does not parse, `status` defined
-  twice, or a fence placed after a byte-order mark or blank lines — cannot be
-  read for a status, so it is treated as a claim to publish: the approval is
-  required, and the write is refused until the frontmatter reads. A file with no
-  frontmatter at all (including one whose body opens with a `---` rule that is
-  never closed) claims nothing.
+- Frontmatter that cannot be read — YAML that does not parse, more than one
+  YAML document, `status` (or a `<<` merge key) defined twice — cannot be read
+  for a status, so it is treated as a claim to publish: the approval is
+  required, and the write is refused until the frontmatter reads.
+- A `---` fence that is never closed is read too: if the text under it is YAML
+  claiming `status: published`, or does not parse, it is treated as a claim to
+  publish (a reader that tolerates a missing close would publish it); prose
+  under a horizontal rule claims nothing. A frontmatter placed after a
+  byte-order mark or blank lines is treated the same way: harmless unless it
+  claims published. A file with no frontmatter at all claims nothing.
+- The status is read with `sr-file field`, so the sloprail binaries must be a
+  release newer than 0.2.1. Against an older `sr-file` every unit write is
+  refused with a message naming the upgrade (`install.sh`, or
+  `make distribute-local`).
 - A unit that is not published is not this guard's business, valid or not.
 
 A broken field is never a way to publish unchecked.

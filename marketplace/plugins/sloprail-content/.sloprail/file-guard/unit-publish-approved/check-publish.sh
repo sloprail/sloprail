@@ -98,6 +98,9 @@ case "$claim" in
     refuse "UNREADABLE FRONTMATTER: $path's frontmatter cannot be read, so whether it claims status: published cannot be told — fix the frontmatter so it reads:
 $claim_why"
     ;;
+  unsupported)
+    refuse "$claim_why"
+    ;;
 esac
 
 if ! new_doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)"; then

@@ -49,6 +49,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -63,12 +65,59 @@ func main() {
 		if !errors.Is(err, errRefused) {
 			fmt.Fprintln(os.Stderr, err)
 		}
-		var coded *exitCodeError
-		if errors.As(err, &coded) {
-			os.Exit(coded.code)
-		}
-		os.Exit(1)
+		os.Exit(exitStatus(err))
 	}
+}
+
+// exitUsage is the exit status of a usage error — an unknown command, flag or
+// argument count — kept apart from 1 ("the input was refused" or "unreadable")
+// so a caller can tell "this sr-file cannot do that" from an answer about the
+// document. 64 is sysexits' EX_USAGE.
+const exitUsage = 64
+
+// usageError is a command line sr-file could not use.
+type usageError struct{ err error }
+
+func (e usageError) Error() string { return e.err.Error() }
+func (e usageError) Unwrap() error { return e.err }
+
+// exitStatus is the status main exits with for err: a command's own
+// (exitCodeError), 64 for a usage error, otherwise 1.
+func exitStatus(err error) int {
+	var coded *exitCodeError
+	if errors.As(err, &coded) {
+		return coded.code
+	}
+	var usage usageError
+	if errors.As(err, &usage) {
+		return exitUsage
+	}
+	// Cobra's own unknown-command and required-flag errors are not typed.
+	if m := err.Error(); strings.HasPrefix(m, "unknown command ") || strings.HasPrefix(m, "required flag(s) ") {
+		return exitUsage
+	}
+	return 1
+}
+
+// markUsageErrors makes every argument-count and flag error under root a
+// usageError.
+func markUsageErrors(root *cobra.Command) {
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if args := c.Args; args != nil {
+			c.Args = func(cmd *cobra.Command, a []string) error {
+				if err := args(cmd, a); err != nil {
+					return usageError{err}
+				}
+				return nil
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
 }
 
 // newRoot is the `sr-file` root. It carries no behaviour of its own — it hosts
@@ -86,6 +135,7 @@ func newRoot() *cobra.Command {
 	cmd.AddCommand(newFieldCmd())
 	cmd.AddCommand(newDeclarationsCmd())
 	cmd.AddCommand(newWriteCmd(), newEditCmd(), newDeleteCmd())
+	markUsageErrors(cmd)
 	return cmd
 }
 
@@ -163,7 +213,7 @@ func readInput(cmd *cobra.Command, verb, path, as string) (Document, error) {
 		if as != "" {
 			return Document{}, fmt.Errorf("sr-file %s: --as applies to bytes read from stdin ('-'), but a path was given: %s already says what it is", verb, path)
 		}
-		data, err := os.ReadFile(path)
+		data, err := readRegular(path)
 		if err != nil {
 			return Document{}, fmt.Errorf("sr-file %s: read %s: %w", verb, path, err)
 		}
@@ -181,7 +231,7 @@ func readInput(cmd *cobra.Command, verb, path, as string) (Document, error) {
 	if as == "" {
 		return Document{}, fmt.Errorf("sr-file %s: reading from stdin needs --as to say how (.md, .yaml or .json) — which bytes are the document is decided by the format, and there is no file name here to read one from", verb)
 	}
-	data, err := io.ReadAll(cmd.InOrStdin())
+	data, err := readCapped(cmd.InOrStdin())
 	if err != nil {
 		return Document{}, fmt.Errorf("sr-file %s: read stdin: %w", verb, err)
 	}
@@ -192,6 +242,43 @@ func readInput(cmd *cobra.Command, verb, path, as string) (Document, error) {
 		return Document{}, fmt.Errorf("sr-file %s: %w", verb, err)
 	}
 	return doc, nil
+}
+
+// maxInputBytes caps what readInput reads: a document a hook checks is
+// frontmatter or a config file, and a larger input is refused rather than read
+// without bound.
+const maxInputBytes = 8 << 20
+
+// readRegular reads path, which must be a regular file, up to the cap. It opens
+// non-blocking and checks the OPENED file, so a FIFO (or a path swapped for one)
+// is refused at once instead of blocking the hook on a writer that never comes.
+// A symlink is followed to what it names, which must itself be regular.
+func readRegular(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file (%s)", info.Mode().Type())
+	}
+	return readCapped(f)
+}
+
+// readCapped reads r to its end, refusing input larger than maxInputBytes.
+func readCapped(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxInputBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxInputBytes {
+		return nil, fmt.Errorf("the input is larger than %d bytes, the most sr-file reads", maxInputBytes)
+	}
+	return data, nil
 }
 
 // emitDocument prints the validated document as one JSON value.

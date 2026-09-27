@@ -40,6 +40,12 @@ esac
 # Only a decided "not published" waives; yes and undecidable both apply.
 publish_claim "$(field '.event.newContent // ""')"
 [ "$claim" = "no" ] && exit 1
+# The sr-file on PATH cannot read a status at all: apply, and the refusal's
+# hint is the upgrade (check-publish.sh refuses with the same words).
+if [ "$claim" = "unsupported" ]; then
+  jq -n --arg why "$claim_why" '{hint: $why}'
+  exit 0
+fi
 
 # Already published before this write: not a transition. Only a DECIDED
 # published counts — an old document no reader can parse is not a published one,

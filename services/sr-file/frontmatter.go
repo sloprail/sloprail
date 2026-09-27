@@ -41,7 +41,7 @@ func isFence(line []byte) bool {
 func splitFrontmatter(data []byte) (front, body []byte, err error) {
 	lines := bytes.SplitAfter(data, []byte("\n"))
 	if len(lines) == 0 || !isFence(lines[0]) {
-		return nil, nil, noFrontmatterError("no frontmatter: a document begins with a --- fence")
+		return nil, nil, splitError{"no frontmatter: a document begins with a --- fence", errNoFrontmatter}
 	}
 
 	for i := 1; i < len(lines); i++ {
@@ -51,17 +51,27 @@ func splitFrontmatter(data []byte) (front, body []byte, err error) {
 			return front, body, nil
 		}
 	}
-	return nil, nil, noFrontmatterError("unterminated frontmatter: no closing --- fence")
+	return nil, nil, splitError{"unterminated frontmatter: no closing --- fence", errUnterminatedFrontmatter}
 }
 
-// errNoFrontmatter is what both split failures are: the file carries no
-// frontmatter document — no opening fence, or an opening `---` with no closing
-// one, which is a horizontal rule at the top of prose rather than a fence. Test
-// with errors.Is; the messages stay the split's own.
-var errNoFrontmatter = errors.New("no frontmatter")
+// The two ways a split fails, told apart with errors.Is (the messages stay the
+// split's own):
+//
+//   - errNoFrontmatter: no opening fence — the file carries no frontmatter.
+//   - errUnterminatedFrontmatter: an opening `---` never closed. That is either
+//     a horizontal rule at the top of prose, or a frontmatter someone forgot to
+//     close; which one only the text after it can say, so a caller that must
+//     know (`sr-file field`) reports it apart rather than guessing.
+var (
+	errNoFrontmatter           = errors.New("no frontmatter")
+	errUnterminatedFrontmatter = errors.New("unterminated frontmatter")
+)
 
-// noFrontmatterError is a split failure that is errNoFrontmatter.
-type noFrontmatterError string
+// splitError is a split failure: its message, and which of the two it is.
+type splitError struct {
+	msg  string
+	kind error
+}
 
-func (e noFrontmatterError) Error() string        { return string(e) }
-func (e noFrontmatterError) Is(target error) bool { return target == errNoFrontmatter }
+func (e splitError) Error() string        { return e.msg }
+func (e splitError) Is(target error) bool { return target == e.kind }

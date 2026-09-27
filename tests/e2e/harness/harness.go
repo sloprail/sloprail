@@ -386,6 +386,20 @@ exit 0
 	}
 }
 
+// InstallShim puts an executable named name, holding script, on the PATH a
+// session's hooks run with — ahead of the build under test — so a test can stand
+// in for one binary (an older sr-file, say). BinPath names the real one, for a
+// shim that forwards what it does not replace.
+func (e *Env) InstallShim(name, script string) {
+	e.t.Helper()
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write %s shim: %v", name, err)
+	}
+}
+
+// BinPath is the path of a service binary of the build under test.
+func (e *Env) BinPath(name string) string { return filepath.Join(e.binDir, name) }
+
 // InstallJudgeClaudeRecordingArgv is InstallJudgeClaude plus a recording of the
 // argv the harness (`claude`) was invoked with, written one-argument-per-line to
 // argvFile. It exists to let a test assert the judge's own `model` reached the

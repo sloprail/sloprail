@@ -27,6 +27,7 @@ import (
 const (
 	fieldExitUnreadable    = 1
 	fieldExitNoFrontmatter = 2
+	fieldExitUnterminated  = 3
 )
 
 // exitCodeError carries the exit status a command wants, for main to use.
@@ -52,8 +53,13 @@ func newFieldCmd() *cobra.Command {
 			"The value is printed when it is a scalar (aliases and merge keys followed); an absent\n" +
 			"field, or one whose value is a list or a map, prints nothing. Exit status:\n" +
 			"  0  the document was read (the value, or nothing, is on stdout)\n" +
-			"  1  the document cannot be read: it does not parse as YAML, or defines the field twice\n" +
-			"  2  the file has no frontmatter: no opening --- fence, or one never closed\n\n" +
+			"  1  the document cannot be read: it does not parse as YAML, holds more than one YAML\n" +
+			"     document, or defines the field (or a merge key) twice; or the input is not a\n" +
+			"     regular file, or is larger than the cap\n" +
+			"  2  the file has no frontmatter: no opening --- fence\n" +
+			"  3  an opening --- fence is never closed: a forgotten close, or a rule above prose\n" +
+			"     (the caller reads the text after it to tell which)\n" +
+			"  64 a usage error: an unknown command, flag or argument count\n\n" +
 			"EXAMPLES:\n" +
 			"  sr-file field memories/topics/a/units/01/UNIT.md status\n" +
 			"  jq -r .event.newContent payload.json | sr-file field - status --as .md",
@@ -70,8 +76,11 @@ func runFieldCmd(cmd *cobra.Command, args []string) error {
 	as, _ := cmd.Flags().GetString("as")
 	doc, err := readInput(cmd, "field", args[0], as)
 	if err != nil {
-		if errors.Is(err, errNoFrontmatter) {
+		switch {
+		case errors.Is(err, errNoFrontmatter):
 			return &exitCodeError{fieldExitNoFrontmatter, err}
+		case errors.Is(err, errUnterminatedFrontmatter):
+			return &exitCodeError{fieldExitUnterminated, err}
 		}
 		return &exitCodeError{fieldExitUnreadable, err}
 	}
@@ -91,11 +100,18 @@ func runFieldCmd(cmd *cobra.Command, args []string) error {
 // that took either would be guessing).
 func documentField(doc Document, key string) (*string, error) {
 	var root yaml.Node
-	if err := yaml.NewDecoder(bytes.NewReader(doc.Data)).Decode(&root); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(doc.Data))
+	if err := dec.Decode(&root); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, nil // an empty document holds no field
 		}
 		return nil, fmt.Errorf("the document does not parse as YAML: %w", err)
+	}
+	// One document only: a reader that stops at the first and one that reads
+	// the last would give two answers (`...` then a second status).
+	var next yaml.Node
+	if err := dec.Decode(&next); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("the frontmatter holds more than one YAML document, so which one's %q counts is not decidable", key)
 	}
 	node := &root
 	if node.Kind == yaml.DocumentNode {
@@ -104,7 +120,7 @@ func documentField(doc Document, key string) (*string, error) {
 		}
 		node = node.Content[0]
 	}
-	found, err := lookupKey(node, key, 0)
+	found, err := lookupKey(node, key, 0, map[*yaml.Node]bool{})
 	if err != nil || found == nil || found.Kind != yaml.ScalarNode {
 		return nil, err
 	}
@@ -115,24 +131,32 @@ func documentField(doc Document, key string) (*string, error) {
 }
 
 // lookupKey finds key among a mapping's own pairs, then in anything it merges
-// (`<<:`), and returns its value with aliases followed.
-func lookupKey(m *yaml.Node, key string, depth int) (*yaml.Node, error) {
+// (`<<:`), and returns its value with aliases followed. visited holds every
+// mapping already searched in this lookup: a merge chain that names the same
+// mapping many times (`<<: [*a, *a, …]` at every level) searches it once, so
+// the lookup is linear in the document, never exponential in its aliases.
+func lookupKey(m *yaml.Node, key string, depth int, visited map[*yaml.Node]bool) (*yaml.Node, error) {
 	if depth > maxAliasDepth {
 		return nil, fmt.Errorf("aliases or merge keys nest deeper than %d", maxAliasDepth)
 	}
 	m = deref(m)
-	if m == nil || m.Kind != yaml.MappingNode {
+	if m == nil || m.Kind != yaml.MappingNode || visited[m] {
 		return nil, nil
 	}
-	var found *yaml.Node
-	var merges []*yaml.Node
+	visited[m] = true
+	var found, merge *yaml.Node
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		k, v := deref(m.Content[i]), m.Content[i+1]
 		if k == nil || k.Kind != yaml.ScalarNode {
 			continue
 		}
 		if k.Tag == "!!merge" {
-			merges = append(merges, v)
+			// Two merge keys in one mapping are a key defined twice, the same as
+			// two `status:` keys: readers disagree about which one wins.
+			if merge != nil {
+				return nil, fmt.Errorf("the merge key << is defined more than once")
+			}
+			merge = v
 			continue
 		}
 		if k.Value != key {
@@ -143,19 +167,17 @@ func lookupKey(m *yaml.Node, key string, depth int) (*yaml.Node, error) {
 		}
 		found = deref(v)
 	}
-	if found != nil {
+	if found != nil || merge == nil {
 		return found, nil
 	}
-	for _, mv := range merges {
-		mv = deref(mv)
-		sources := []*yaml.Node{mv}
-		if mv != nil && mv.Kind == yaml.SequenceNode {
-			sources = mv.Content
-		}
-		for _, src := range sources {
-			if v, err := lookupKey(src, key, depth+1); err != nil || v != nil {
-				return v, err
-			}
+	merge = deref(merge)
+	sources := []*yaml.Node{merge}
+	if merge != nil && merge.Kind == yaml.SequenceNode {
+		sources = merge.Content
+	}
+	for _, src := range sources {
+		if v, err := lookupKey(src, key, depth+1, visited); err != nil || v != nil {
+			return v, err
 		}
 	}
 	return nil, nil
