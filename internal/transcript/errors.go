@@ -11,6 +11,12 @@ import "errors"
 // distinguish is WHICH thing was wrong, so a hook can say so; none of them
 // offers a way to carry on regardless.
 var (
+	// ErrNoSessionRoot: the user's own words were asked of a sub-agent's record
+	// whose session's root record is not where the layout puts it. A sub-agent's
+	// "user" message is the parent agent's dispatch, so without the root there
+	// is nothing of the end user's to search.
+	ErrNoSessionRoot = errors.New("a sub-agent's record whose session root is not found holds none of the end user's words")
+
 	// ErrNoTranscriptPath: nothing was named to read. A hook runs where the
 	// harness's record exists, so this is the caller's own omission.
 	ErrNoTranscriptPath = errors.New("no transcript path given")

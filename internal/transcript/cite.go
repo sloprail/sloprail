@@ -77,7 +77,9 @@ const (
 	// SourceToolResult is the raw text a tool_result block carries — the output an
 	// action produced. This is the pool SourceUser refuses: a delivery observation
 	// grounds a "the work happened" claim here (a green test, a command's result),
-	// where the user's own words could never prove a command ran.
+	// where the user's own words could never prove a command ran. The reply to a
+	// sub-agent dispatch (Agent/Task) is excluded: it is model-written text, and
+	// the sub-agent's own tool output is in its own record.
 	SourceToolResult SourceType = "tool_result"
 )
 
@@ -160,7 +162,10 @@ func Cite(path, quote string) ([]CitationMatch, error) {
 //     selected words, so it belongs to SourceUser and is
 //     EXCLUDED here (genuineToolResultText drops it): the two
 //     pools are disjoint, and under this pool the caller is
-//     asking about tool output, not the person.
+//     asking about tool output, not the person. Only a
+//     result whose call is in the record and produced tool
+//     output is read (citableResults): not a sub-agent's reply,
+//     not a result of unknown provenance.
 //
 // A match is per ENTRY, not per occurrence or per pool: an entry whose text
 // contains the substring — twice, or in both pools — is one candidate, because
@@ -183,11 +188,12 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 		return nil, err
 	}
 	others := otherToolUses(entries)
+	citable := citableResults(entries)
 	var matches []CitationMatch
 	for _, e := range entries {
 		switch e.Type {
 		case EntryUser:
-			if entryContains(e.Entry, quote, sources, others) {
+			if entryContains(e.Entry, quote, sources, others, citable) {
 				matches = append(matches, CitationMatch{Path: path, Line: e.Line})
 			}
 		case EntryAttachment:
@@ -219,11 +225,11 @@ func containsWords(text, quote string) bool {
 // user entry. The pools are consulted in order and the walk short-circuits on the
 // first hit — a match is per entry, so which pool found it does not change the
 // resolved line.
-func entryContains(e Entry, quote string, sources []SourceType, others map[string]bool) bool {
+func entryContains(e Entry, quote string, sources []SourceType, others, citable map[string]bool) bool {
 	if own, ok := ownWords(e, others); ok && wants(sources, SourceUser) && userWordsContain(own, quote) {
 		return true
 	}
-	if wants(sources, SourceToolResult) && toolResultContain(e, quote) {
+	if wants(sources, SourceToolResult) && toolResultContain(e, quote, citable) {
 		return true
 	}
 	return false
@@ -599,7 +605,7 @@ func toolResultStrings(raw json.RawMessage) []string {
 // result grounds here and is refused by userWordsContain; a quote of the user's
 // ask grounds there and is refused here, because a tool's output is not the user's
 // words and this pool holds nothing but tool output.
-func toolResultContain(e Entry, quote string) bool {
+func toolResultContain(e Entry, quote string, citable map[string]bool) bool {
 	// genuineToolResultText, not toolResultText: an AskUserQuestion answer envelope
 	// is a tool_result block whose body is the user's own answer, and it belongs to
 	// the SourceUser pool (userWordsContain reads it), not here. Searching it under
@@ -607,7 +613,7 @@ func toolResultContain(e Entry, quote string) bool {
 	// tool's output" — the same substitution ToolResultAt guards against on the
 	// line-based path. Excluding answer envelopes keeps the two pools disjoint and
 	// SourceToolResult meaning exactly "the tool's output", as its doc says.
-	for _, text := range genuineToolResultText(e.Message) {
+	for _, text := range genuineToolResultText(e.Message, citable) {
 		if containsWords(text, quote) || containsWords(withoutLineNumbers(text), quote) {
 			return true
 		}
@@ -688,6 +694,7 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 	if err != nil {
 		return "", false, err
 	}
+	citable := citableResults(entries)
 	for _, e := range entries {
 		if e.Line != line {
 			continue
@@ -703,7 +710,7 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 		// genuineToolResultText drops the answer-envelope blocks, so a line that
 		// carries ONLY an answer envelope is not a tool_result, matching this
 		// function's contract above.
-		results := genuineToolResultText(e.Message)
+		results := genuineToolResultText(e.Message, citable)
 		if len(results) == 0 {
 			return "", false, nil
 		}
@@ -720,9 +727,9 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 // between the user's answer and a command's result, applied here to the whole
 // block. A line carrying both a real result and an answer envelope keeps the real
 // result only; a line carrying only an answer envelope yields nothing.
-func genuineToolResultText(raw json.RawMessage) []string {
+func genuineToolResultText(raw json.RawMessage, citable map[string]bool) []string {
 	var out []string
-	for _, r := range genuineToolResults(raw) {
+	for _, r := range genuineToolResults(raw, citable) {
 		out = append(out, r.body)
 	}
 	return out
@@ -730,9 +737,9 @@ func genuineToolResultText(raw json.RawMessage) []string {
 
 // genuineToolResultIDs is the tool_use_id of each block genuineToolResultText
 // reads a body from, once per block — which call produced the output.
-func genuineToolResultIDs(raw json.RawMessage) []string {
+func genuineToolResultIDs(raw json.RawMessage, citable map[string]bool) []string {
 	var out []string
-	for _, r := range genuineToolResults(raw) {
+	for _, r := range genuineToolResults(raw, citable) {
 		if len(out) == 0 || out[len(out)-1] != r.id {
 			out = append(out, r.id)
 		}
@@ -743,7 +750,10 @@ func genuineToolResultIDs(raw json.RawMessage) []string {
 // genuineToolResult is one body of a tool_result block and the call it answers.
 type genuineToolResult struct{ id, body string }
 
-func genuineToolResults(raw json.RawMessage) []genuineToolResult {
+// genuineToolResults reads a user entry's tool_result blocks that are a tool's
+// own output: not an AskUserQuestion answer envelope, not a hook's refusal, and
+// and only a result answering a call citableResults admits (citable).
+func genuineToolResults(raw json.RawMessage, citable map[string]bool) []genuineToolResult {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -758,6 +768,11 @@ func genuineToolResults(raw json.RawMessage) []genuineToolResult {
 	var out []genuineToolResult
 	for _, b := range blocks {
 		if b.Type != "tool_result" || len(b.Content) == 0 {
+			continue
+		}
+		// Only a result whose call is in the record and produced tool output:
+		// not a sub-agent's reply, not a result of unknown provenance.
+		if !citable[b.ToolUseID] {
 			continue
 		}
 		for _, body := range toolResultStrings(b.Content) {
