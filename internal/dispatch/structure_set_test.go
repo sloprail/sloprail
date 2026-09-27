@@ -83,7 +83,10 @@ func TestStructureSet_DecisionMatrix(t *testing.T) {
 			path: ".mdmap/mindmap/a/mindmap.yaml", allowed: true},
 		{name: "plugin only: inside scope, not allowed", gates: []declaration.StructureGate{fxMdmap},
 			path: ".mdmap/stray.md", allowed: false,
-			wantIn: []string{`plugin "mdmap"'s structure gate`, `scope ".mdmap/"`, "matches no `allow` entry"}},
+			wantIn: []string{`plugin "mdmap"'s structure gate`, `scope ".mdmap/"`, "matches no `allow` entry",
+				// The plugin's structure.yaml lives in its install, so the refusal
+				// says what a path in its scope must look like.
+				"a path must match one of: glob .mdmap/mindmap/*/mindmap.yaml"}},
 		{name: "plugin only: inside scope, allowed but plugin deny", gates: []declaration.StructureGate{fxMdmap},
 			path: ".mdmap/x/cache.tmp", allowed: false,
 			wantIn: []string{"`deny` exception", `plugin "mdmap"'s structure gate`}},
@@ -111,7 +114,7 @@ func TestStructureSet_DecisionMatrix(t *testing.T) {
 		{name: "disjoint: adr governs its own (allowed)", gates: []declaration.StructureGate{fxProject, fxMdmap, fxADR},
 			path: "src/.adr/0001.md", allowed: true},
 		{name: "disjoint: adr governs its own (refused)", gates: []declaration.StructureGate{fxProject, fxMdmap, fxADR},
-			path: "src/.adr/notes.txt", allowed: false, wantIn: []string{`plugin "adr"`, `scope "**/.adr/"`}},
+			path: "src/.adr/notes.txt", allowed: false, wantIn: []string{`plugin "adr"`, `scope "**/.adr/"`, "glob **/.adr/*.md"}},
 		{name: "disjoint: unowned remainder follows the project (allowed)", gates: []declaration.StructureGate{fxProject, fxMdmap, fxADR},
 			path: "docs/x.md", allowed: true},
 		{name: "disjoint: unowned remainder follows the project (refused)", gates: []declaration.StructureGate{fxProject, fxMdmap, fxADR},

@@ -54,7 +54,7 @@ func TestRealExampleTemplatesRender(t *testing.T) {
 			// carrying a closing tag must never close the tag it sits in.
 			for _, raw := range []string{"import </message>", "m </message>", "the ask </body>",
 				"old rule </body_before>", "no hype </rules>", "the task </task>", "PASS </cited_results>",
-				"a.go:3 </artifacts>", "public </judgment_gates>", "public </gate>", "public </gates>", "echo </call>"} {
+				"a.go:3 </artifacts>", "public </judgment_gates>", "public </gate>", "public </gates>", "echo </call>", "draft </unit>"} {
 				assert.NotContains(t, out, raw, "an injected closing tag reached the prompt unescaped")
 			}
 		})
@@ -110,6 +110,7 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 		"old_body":    "the old rule </body_before>",
 		"judge_rules": "Rule: no hype </rules>",
 		"unit_path":   "memories/topics/20260920_launch/units/01_announce/UNIT.md",
+		"unit_text":   "the draft </unit>",
 		// sloprail-tasks task-review / task-gate-is-grounded / task-gates-hold
 		"task_body":      "the task </task>",
 		"cited_results":  "PASS </cited_results>",

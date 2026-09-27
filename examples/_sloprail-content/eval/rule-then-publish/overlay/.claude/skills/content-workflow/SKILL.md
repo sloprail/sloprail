@@ -5,18 +5,19 @@ description: Use when adding a writing rule or changing a content unit's status 
 
 # Content in this repo
 
-A **unit** is `memories/topics/<topic>/units/<NN_name>/`: `UNIT.md` holds its
+A **unit** is `memories/topics/<topic>/units/<NN>_<name>/`: `UNIT.md` holds its
 frontmatter (`status: raw | drafting | published | parked`, `tags`), and
 `02_draft.md` its text.
 
 ## Writing rules
 
-A rule is `.sloprail/content-rules/<NN_name>/RULE.md`. It records what the user
+A rule is `.sloprail/content-rules/<NN>_<name>/RULE.md`: a two-digit number, an
+underscore, then a lowercase hyphenated name (`02_no-questions`). It records what the user
 asked for, so the write cites their exact words, with `sr-file` on its own in
 the command:
 
 ```bash
-sr-file write .sloprail/content-rules/<NN_name>/RULE.md \
+sr-file write .sloprail/content-rules/<NN>_<name>/RULE.md \
   --cite:user '<exact words from the user message>' <<'EOF'
 ---
 level: must_not          # must | must_not
@@ -35,7 +36,7 @@ Only the user publishes. Once they approve, move the unit to `published`,
 record where it went out, and cite their approval:
 
 ```bash
-sr-file edit memories/topics/<topic>/units/<NN_name>/UNIT.md \
+sr-file edit memories/topics/<topic>/units/<NN>_<name>/UNIT.md \
   --old-string 'status: drafting' \
   --new-string 'status: published
 published_urls: ["<url>"]' \

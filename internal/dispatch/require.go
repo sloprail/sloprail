@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
@@ -348,7 +349,7 @@ func subpageReadInTrajectory(transcriptPath, workspace, skill, file string) (boo
 	if err != nil {
 		return false, err
 	}
-	paths := SkillSubpagePaths(workspace, skill, file)
+	paths := append(SkillSubpagePaths(workspace, skill, file), announcedSkillPaths(entries, skill, file)...)
 
 	found := false
 	err = walkWritingLineOfWork(transcriptPath, entries, func(call transcript.ToolCall) bool {
@@ -359,6 +360,49 @@ func subpageReadInTrajectory(transcriptPath, workspace, skill, file string) (boo
 		return false
 	})
 	return found, err
+}
+
+// skillBaseDirLine is how Claude Code announces where it loaded a skill from,
+// the first line of the skill body it writes into the record.
+const skillBaseDirLine = "Base directory for this skill: "
+
+// announcedSkillPaths is file inside every directory the harness announced it
+// loaded skill from. A directory-sourced marketplace serves a plugin's skill
+// from its source tree, not the plugin cache SkillSubpagePaths resolves, and
+// the agent reads the page where the skill says it lives. Only a harness-written
+// (isMeta) user entry counts: text an agent printed into a tool result cannot
+// point the check at a page it wrote itself.
+func announcedSkillPaths(entries []transcript.Entry, skill, file string) []string {
+	name := skill
+	if i := strings.LastIndex(name, ":"); i >= 0 {
+		name = name[i+1:]
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Type != transcript.EntryUser || !e.IsMeta || e.IsSidechain {
+			continue
+		}
+		var msg struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(e.Message, &msg) != nil {
+			continue
+		}
+		for _, b := range msg.Content {
+			if b.Type != "text" || !strings.HasPrefix(b.Text, skillBaseDirLine) {
+				continue
+			}
+			dir, _, _ := strings.Cut(strings.TrimPrefix(b.Text, skillBaseDirLine), "\n")
+			dir = strings.TrimSpace(dir)
+			if filepath.IsAbs(dir) && filepath.Base(dir) == name {
+				out = append(out, filepath.Join(dir, file))
+			}
+		}
+	}
+	return out
 }
 
 // walkWritingLineOfWork walks entries — already read from transcriptPath — and

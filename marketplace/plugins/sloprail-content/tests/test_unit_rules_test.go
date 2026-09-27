@@ -257,3 +257,34 @@ func TestRules_NoApplicableRulesPasses(t *testing.T) {
 		t.Fatalf("a unit with no applicable rules was blocked at Stop:\n%v", blocks)
 	}
 }
+
+// TestRules_UnitWriteJudgesTheDraft: a UNIT.md holds frontmatter, not the text a
+// writing rule is about, so a UNIT.md write (a publish, a tag change) hands the
+// judge the unit's 02_draft.md too — a rule added after the draft was written
+// still meets it.
+func TestRules_UnitWriteJudgesTheDraft(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installTaggedRule(t, e, proj, "02_x-tone", "must_not", "x",
+		"Rule: no rhetorical-question openers on X.")
+	installPluginTree(t, proj)
+	installPluginStructure(t, e, proj)
+	e.WriteFile(proj, "memories/topics/20260101_launch/units/01_announce/02_draft.md",
+		"ZZ_DRAFT Ever wonder why builds keep failing?\n")
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
+
+	res := e.Run(proj, "s-unit-draft", authPrompt, Turns("done",
+		Write("w1", unitPath, unitFrontmatter("created: 2026-09-25\ntype: post\nstatus: drafting\ntags: [x]\n", "")),
+	))
+	if res.Refused() {
+		t.Fatalf("the unit write was refused at Pre (setup broken):\n%s", res.Output)
+	}
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if !containsStr(prompt, "--- 02_draft.md ---") || !containsStr(prompt, "ZZ_DRAFT Ever wonder why builds keep failing?") {
+		t.Fatalf("the rules judge was not handed the unit's draft on a UNIT.md write:\n%s", prompt)
+	}
+	if !containsStr(prompt, "01_announce/02_draft.md`") {
+		t.Errorf("a measurement is not pointed at the draft:\n%s", prompt)
+	}
+}

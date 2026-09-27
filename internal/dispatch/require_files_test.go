@@ -348,3 +348,42 @@ func TestSubpageReadInTrajectory_SymlinkedWorkspaceStillCounts(t *testing.T) {
 	assert.True(t, read,
 		"a candidate built from a SYMLINKED workspace must still match a Read tool_use naming the file through its REAL (resolved) path")
 }
+
+// skillBaseEntry is the harness's own isMeta record of where it loaded a skill
+// from — the first line of the skill body it writes in.
+func skillBaseEntry(uuid, parentUUID, dir string, meta bool) string {
+	return `{"type":"user","uuid":"` + uuid + `","parentUuid":"` + parentUUID + `","isSidechain":false,"isMeta":` +
+		boolStr(meta) + `,"message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: ` + dir + `\n\n# Authoring"}]}}`
+}
+
+// A directory-sourced marketplace serves a plugin's skill from its source tree,
+// which is where the harness says the skill lives and where the agent reads the
+// page. That read counts; the same line printed by a tool does not.
+func TestSubpageReadInTrajectory_AnnouncedBaseDirectoryCounts(t *testing.T) {
+	workspace := t.TempDir()
+	served := filepath.Join(t.TempDir(), "marketplace", "plugins", "sloprail", "skills", "authoring-guardrails")
+	page := filepath.Join(served, "structure-gate.md")
+
+	for name, tc := range map[string]struct {
+		meta  bool
+		skill string
+		want  bool
+	}{
+		"announced by the harness":  {true, "authoring-guardrails", true},
+		"a plugin-qualified name":   {true, "sloprail:authoring-guardrails", true},
+		"text the agent put there":  {false, "authoring-guardrails", false},
+		"another skill's directory": {true, "other-skill", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			transcriptPath := filepath.Join(t.TempDir(), "session.jsonl")
+			writeJSONL(t, transcriptPath,
+				originEntry("origin", false),
+				skillBaseEntry("base", "origin", served, tc.meta),
+				readToolUseEntry("read-1", "base", page, false),
+			)
+			read, err := subpageReadInTrajectory(transcriptPath, workspace, tc.skill, "structure-gate.md")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, read)
+		})
+	}
+}
