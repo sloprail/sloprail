@@ -33,6 +33,12 @@ project="${1:?usage: bypass-probe.sh <project>}"
 unknown() { echo unknown; exit 0; }
 
 go_bin="$(command -v go)" || unknown
+# The toolchain itself, not whatever `go` on PATH is: a version-manager shim
+# (asdf, mise) execs its manager, which the emptied environment below does not
+# have on PATH.
+goroot="$("$go_bin" env GOROOT 2>/dev/null)"
+[ -x "$goroot/bin/go" ] || unknown
+go_bin="$goroot/bin/go"
 go_version="$("$go_bin" env GOVERSION 2>/dev/null | sed -n 's/^go\([0-9][0-9]*\.[0-9][0-9]*\(\.[0-9][0-9]*\)\{0,1\}\).*/\1/p')"
 [ -n "$go_version" ] || unknown
 command -v perl >/dev/null 2>&1 || unknown
