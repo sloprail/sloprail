@@ -259,23 +259,13 @@ func owningRepo(path string) string {
 	return r
 }
 
-// resolveExistingPrefix resolves the deepest existing ancestor of path through
-// its symlinks and re-attaches the rest — a path being created does not exist
-// yet, so EvalSymlinks on the whole of it would fail.
+// resolveExistingPrefix is dispatchcore.ResolveExistingPrefix under the local
+// name this file's own callers already use — see its doc comment for why this
+// exists and why it is now shared (internal/dispatch's `{skill, files}`
+// prerequisite needed the identical symlink-resolution fix this file already
+// carried).
 func resolveExistingPrefix(path string) string {
-	rest := ""
-	dir := path
-	for {
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(real, rest)
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return path
-		}
-		rest = filepath.Join(filepath.Base(dir), rest)
-		dir = parent
-	}
+	return dispatchcore.ResolveExistingPrefix(path)
 }
 
 // writePath returns the target path of a file-write pre-event, and whether the

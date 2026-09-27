@@ -18,17 +18,17 @@ checks:
 
 - **`exit 0` permits.** Print nothing; silence is consent.
 - **Non-zero refuses**, carrying whatever the script said as the reason.
-- **A script that cannot run at all** — missing, not executable, an internal
-  error, a timeout, killed by a signal — is a **refusal**. This is fail-closed and
-  deliberate: a rule that could not be checked must not read as approval.
-  `chmod +x` the script; one that is not executable refuses every occurrence it is
-  bound to, with a message saying so.
+- **A script that cannot run at all** — missing, an internal error, a timeout,
+  killed by a signal — is a **refusal**. This is fail-closed and deliberate: a
+  rule that could not be checked must not read as approval. (A script without
+  the execute bit is not in this list: the engine runs it through its `#!`
+  interpreter, or `sh`, so no `chmod` is needed.)
 
 The last point is the whole reason a check runs inside the engine rather than
 being trusted to signal for itself: every way it can fail lands on the safe side
-without the author arranging it. A missing script (exit 127), a non-executable one
-(exit 126), a crash, an OOM kill, a hang past the 30s bound — each becomes a
-refusal that names the fix.
+without the author arranging it. A missing script (exit 127), a crash, an OOM
+kill, a hang past the engine's per-check limit — each becomes a refusal that
+names the fix.
 
 ## The refusal contract
 

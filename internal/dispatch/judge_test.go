@@ -62,6 +62,25 @@ func TestVerifier_FalseIsCleanFail(t *testing.T) {
 	assert.NotContains(t, stderr, "not a boolean", "a real false must not be misread as a malformed verdict")
 }
 
+// A clean fail exits 3 — sr-agent's final rejection — so the judge is not
+// re-asked for a verdict that was already well formed.
+func TestVerifier_CleanFailIsFinal(t *testing.T) {
+	code, _ := runVerifier(t, `{"pass": false, "reasoning": "the proof is missing"}`)
+	assert.Equal(t, 3, code, "a well-formed fail must be final (exit 3), not a re-ask")
+}
+
+// A failing verdict whose reasoning quotes code with braces is still read as
+// that verdict. The flat-object pattern used to grab the quoted fragment
+// (`{kind, fqn, line}`), misread every such refusal as "not a boolean", and
+// re-ask the judge — measured on every refusal of a real onboarding run.
+func TestVerifier_BracesInReasoningAreNotTheVerdict(t *testing.T) {
+	verdict := `{"pass": false, "reasoning": "markers are {kind, fqn, line} objects; use ${payload} and .event.newContent"}`
+	code, stderr := runVerifier(t, verdict)
+	assert.Equal(t, 3, code)
+	assert.Contains(t, stderr, "markers are {kind, fqn, line} objects")
+	assert.NotContains(t, stderr, "not a boolean")
+}
+
 // A verdict whose `pass` is neither true nor false is malformed — the script asks
 // for a retry rather than guessing.
 func TestVerifier_NonBooleanAsksRetry(t *testing.T) {

@@ -33,8 +33,10 @@ func TestMain(m *testing.M) {
 }
 
 var (
-	Turns = harness.Turns
-	Write = harness.Write
+	Turns   = harness.Turns
+	Write   = harness.Write
+	Skill   = harness.Skill
+	ToolUse = harness.ToolUse
 )
 
 // containsStr is a tiny local substring helper, so a test can assert on refusal

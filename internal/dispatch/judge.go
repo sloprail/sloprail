@@ -394,8 +394,17 @@ else
   raw="$(cat 2>/dev/null)"
 fi
 
-# Strip common code-fence noise, collapse to one line, take the first flat object.
-json="$(printf '%s' "$raw" | tr -d '\r' | sed 's/` + "```json" + `//g; s/` + "```" + `//g' | tr '\n' ' ' | grep -o '{[^{}]*}' | head -1)"
+# Strip common code-fence noise. The answer is normally exactly one JSON object,
+# so parse it whole first: a failing verdict's reasoning quotes the judged code,
+# and a brace in that quote (` + "`{kind, fqn, line}`" + `, ` + "`${var}`" + `) made the
+# flat-object pattern below grab the fragment instead of the verdict — every such
+# refusal was misread as "not a boolean" and re-asked. The pattern stays as the
+# fallback for an answer with prose around the object.
+stripped="$(printf '%s' "$raw" | tr -d '\r' | sed 's/` + "```json" + `//g; s/` + "```" + `//g')"
+json="$(printf '%s' "$stripped" | jq -c 'select(type == "object")' 2>/dev/null | head -1)"
+if [ -z "$json" ]; then
+  json="$(printf '%s' "$stripped" | tr '\n' ' ' | grep -o '{[^{}]*}' | head -1)"
+fi
 if [ -z "$json" ]; then
   echo "JUDGE-REASON: the judge did not produce a JSON verdict object" >&2
   exit 1
@@ -418,12 +427,15 @@ if [ "$pass" != "false" ]; then
   exit 1
 fi
 
-# A clean fail. Surface the reasoning so the engine can show it to the agent.
+# A clean fail. Surface the reasoning so the engine can show it to the agent,
+# and exit 3 (sr-agent's final rejection): the verdict is well formed, so the
+# judge is not asked again — re-asking a correct "no" doubles the cost of every
+# refusal and invites the judge to reverse itself.
 if [ -z "$reason" ]; then
   reason="the judge found the action does not satisfy the rule, but named no specific reason"
 fi
 echo "JUDGE-REASON: $reason" >&2
-exit 1
+exit 3
 `
 
 // shSingleQuote renders a string as one single-quoted shell word.

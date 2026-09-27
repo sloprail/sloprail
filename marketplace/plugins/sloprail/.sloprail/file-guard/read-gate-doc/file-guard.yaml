@@ -1,0 +1,13 @@
+# A gate's own YAML (on/match/require/checks — the checkpoint-on-an-event
+# shape) is documented in gate.md — the page that shows the event-nested
+# match scope (`event.path`, not bare `path`), the `on:` trigger list, and
+# `require`'s ordering guarantee against a context. See
+# read-script-checks-doc/file-guard.yaml for the shared argument for why
+# `require: [{skill, files}]` is the right mechanism here.
+match: path matches "^\\.sloprail/gate/[^/]+/gate\\.ya?ml$"
+
+preventive: true
+
+require:
+  - skill: authoring-guardrails
+    files: [gate.md]

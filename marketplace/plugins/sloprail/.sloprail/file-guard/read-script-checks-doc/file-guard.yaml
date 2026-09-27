@@ -1,0 +1,28 @@
+# A check SCRIPT (.sh, under file-guard/gate/context) must be authored against
+# script-checks.md's contract — the resultKnown discipline, the flat
+# CheckPayload shape, the exit-code refusal contract — or it is wrong in one of
+# a small set of predictable ways. Loading the authoring-guardrails skill only
+# guarantees SKILL.md was read; script-checks.md is a page SKILL.md merely
+# links to, and nothing made opening it mandatory.
+#
+# Measured against a real onboarding eval run: every agent loaded the skill,
+# none of them opened script-checks.md or file-guard.md (the per-event-kind
+# skeleton lives there), and every check script was written from memory —
+# refused 3-8 times by authoring-slop's judge before it was right, minutes of
+# model time re-deriving what one page already states.
+#
+# require: [{skill, files}] (declaration.Prerequisite.Files) checks this
+# NATIVELY: not "did the agent load the skill" but "was THIS page read" — a
+# Read tool_use or a file-reading Bash command (cat, head, …) on it, the same
+# record-grounded evidence a bare {skill} already accepts for a skill's own
+# SKILL.md, extended to a named subpage. `require` is evaluated BEFORE any
+# check (checkRequire runs first in internal/dispatch), so this refuses ahead
+# of authoring-slop's own judge: cheaper (a trajectory lookup, no model call)
+# and earlier (before a turn is spent writing something wrong).
+match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and path endsWith ".sh"
+
+preventive: true
+
+require:
+  - skill: authoring-guardrails
+    files: [script-checks.md]

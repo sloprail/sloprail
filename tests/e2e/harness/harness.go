@@ -118,6 +118,18 @@ func repoRoot(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
+// ShippedSkillFile is the absolute path to a page inside the REAL sloprail
+// plugin's authoring-guardrails skill, as shipped in THIS checkout — the same
+// checkout New(t)'s project points its marketplace at (writeSettings, below),
+// so this is genuinely the file SkillFilePaths/SkillSubpagePaths resolve to
+// for a project using the real plugin, not a synthetic stand-in. file is
+// "SKILL.md" for the skill's own entry point, or a subpage's own name
+// (e.g. "structure-gate.md") for a `require: [{skill, files}]` prerequisite.
+func ShippedSkillFile(t *testing.T, file string) string {
+	t.Helper()
+	return filepath.Join(repoRoot(t), "marketplace", "plugins", "sloprail", "skills", "authoring-guardrails", file)
+}
+
 // gitDir is the repository's git directory — a real directory even when the
 // worktree's own .git is a file pointing at it.
 func gitDir(t *testing.T) string {

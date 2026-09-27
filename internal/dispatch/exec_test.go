@@ -182,3 +182,38 @@ func TestRunScriptExec_GuardrailDirEnvIsAlwaysAbsolute(t *testing.T) {
 	assert.True(t, verify.Passed,
 		"SR_GUARDRAIL_DIR must be absolute even when scriptCall.Dir is relative: %s", verify.Reason)
 }
+
+// A script written without the execute bit (an editor or a Write tool creates
+// files 0644) runs through its own #! interpreter instead of being refused with
+// "chmod +x it" — and its verdict still counts both ways.
+func TestRunScript_NonExecutableRunsThroughItsInterpreter(t *testing.T) {
+	dir := t.TempDir()
+	pass := filepath.Join(dir, "pass.sh")
+	fail := filepath.Join(dir, "fail.sh")
+	bare := filepath.Join(dir, "bare.sh")
+	if err := os.WriteFile(pass, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fail, []byte("#!/usr/bin/env sh\necho '{\"reason\":\"no\"}'\nexit 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bare, []byte("exit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		script string
+		passed bool
+	}{{"./pass.sh", true}, {"./fail.sh", false}, {"./bare.sh", true}} {
+		res, err := runScriptExec(scriptCall{Dir: dir, Script: tc.script})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.script, err)
+		}
+		if res.Passed != tc.passed {
+			t.Errorf("%s: passed=%v, want %v (reason: %s)", tc.script, res.Passed, tc.passed, res.Reason)
+		}
+		if strings.Contains(res.Reason, "not executable") {
+			t.Errorf("%s was refused as not executable instead of run: %s", tc.script, res.Reason)
+		}
+	}
+}
