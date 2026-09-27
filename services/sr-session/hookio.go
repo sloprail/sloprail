@@ -45,6 +45,12 @@ type HookPayload struct {
 	// path, and SessionStart is precisely where that happens.
 	SessionID string `json:"session_id"`
 
+	// Source is SessionStart's "startup" | "resume" | "clear" | "compact". Kept
+	// because a fresh session ("startup") has no record yet by design, and the
+	// search for a record reported where it is not (transcript.RelocateRecord)
+	// must not run for one: see sessionRecord.
+	Source string `json:"source"`
+
 	Cwd            string          `json:"cwd"`
 	ToolName       string          `json:"tool_name"`
 	ToolInput      json.RawMessage `json:"tool_input"`
@@ -137,7 +143,12 @@ type HookPayload struct {
 // is not.
 func (p HookPayload) record() (string, error) {
 	if p.AgentTranscriptPath != "" {
-		return p.AgentTranscriptPath, nil
+		// Nested under the session's record, so it moves with it when the
+		// session was resumed from another directory — found by the same
+		// lookup, or the sub-agent's hooks would key on a path that does not
+		// exist while its pre-tool calls, reconstructed from agent_id against
+		// the relocated session record, keyed on the real one.
+		return p.relocate(p.AgentTranscriptPath), nil
 	}
 	root, err := p.sessionRecord()
 	if err != nil || root == "" || p.AgentID == "" {
@@ -154,6 +165,18 @@ func (p HookPayload) record() (string, error) {
 	return transcript.SubagentTranscriptPath(root, p.AgentID)
 }
 
+// relocate finds a reported record the harness wrote somewhere other than
+// where it reported it (transcript.RelocateRecord) — except at a fresh
+// session's SessionStart, whose record does not exist yet by design: searching
+// for it there would only ever find another project's transcript that
+// happens to share a fixed --session-id.
+func (p HookPayload) relocate(path string) string {
+	if p.Source == "startup" {
+		return path
+	}
+	return transcript.RelocateRecord(transcript.ConfigDir(), path)
+}
+
 // sessionRecord is the SESSION's own record as the payload names it — its
 // transcript_path, or, failing that, reconstructed from the session id — with
 // no regard to a sub-agent: record() builds a sub-agent's path on top of it.
@@ -163,7 +186,7 @@ func (p HookPayload) sessionRecord() (string, error) {
 		// where its file is: a session resumed from another directory is
 		// reported under that directory's project folder while its record stays
 		// where it began. See transcript.RelocateRecord.
-		return transcript.RelocateRecord(transcript.ConfigDir(), p.TranscriptPath), nil
+		return p.relocate(p.TranscriptPath), nil
 	}
 	if p.SessionID == "" {
 		// No path and no id: nothing to resolve and nothing to guess from. Not a

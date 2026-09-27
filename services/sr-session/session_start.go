@@ -43,12 +43,12 @@ func newSessionStartCmd() *cobra.Command {
 			// never a reason for the session to have no point to diff against.
 			recordBaseline(cmd, p)
 
-			// A resume or a compaction is where a session most often turns out
-			// to continue a transcript that is gone; say so here, once, rather
-			// than leave it to the first tool call.
-			if !isLoadCheck(p) {
+			// A session running under a fallback identity is told so here, the
+			// one hook whose output is seen, once per harness session. See
+			// noteDegradedIdentity.
+			if !isLoadCheck(p) && !recordNotYetWritten(p) {
 				if id, err := stableIdentity(p); err == nil {
-					noteDegradedIdentity(cmd.ErrOrStderr(), p, id)
+					noteDegradedIdentity(cmd.OutOrStdout(), cmd.ErrOrStderr(), p, id)
 				}
 			}
 
