@@ -16,5 +16,7 @@ description: >
 seed: seed
 overlay: overlay
 exampleSloprail: true
-model: haiku
+# sonnet, not haiku: measured 2026-09-27, Haiku found the task's ASK.md but never
+# loaded the skill, so it never touched ASK.md and the guard never engaged.
+model: sonnet
 score: score.sh
