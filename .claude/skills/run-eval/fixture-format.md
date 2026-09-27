@@ -70,10 +70,13 @@ score: score.sh
   with a marker pinned to SPEC.md.
 - **`disallowedTools`** — harness tools the agent-under-test does not have
   (`[WebSearch, WebFetch]`), passed as the harness's own `--disallowed-tools`.
-  For a fixture whose rule governs one way of doing a thing (research through
-  `gh`): the project offers no other, so the environment steers the agent
-  where a prompt must not. An eval must reproduce the behaviour its guardrail
-  governs — a run in which the guard never engaged proves nothing about it.
+  An eval must reproduce the behaviour its guardrail governs — a run in which
+  the guard never engaged proves nothing about it. Prefer rules that steer the
+  agent themselves over removing tools: removing one hides the hole a real
+  project has (the agent there DOES have the tool).
+  `keyword-coverage-registry` used this to force research through `gh`, then
+  replaced it with gates refusing the other routes; reach for the field only
+  when the tool genuinely does not exist in the setting being modelled.
 - **`model`** — an `sr-agent --model` value (`haiku`, `claude-sonnet-5,size-md`,
   etc.). Every current fixture uses `haiku` deliberately — a cheap model is
   the one likelier to take the tempting shortcut a fixture is designed to

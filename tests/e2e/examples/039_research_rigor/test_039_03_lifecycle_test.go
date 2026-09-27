@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -28,26 +29,24 @@ import (
 // deactivation from cycle 1 must still hold, not merely have been true
 // momentarily within cycle 1's own Stop.
 func TestT039_07_DeactivatedContextStaysInactiveNextCycle(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e, proj := research(t)
 
 	sess := "s-039-07"
 
 	// Cycle 1: deep research — passes, deactivates (T039_04's scenario).
+	src := sourceRepo(t, e, "retry-lib")
+	dst := filepath.Join(scratch(t), "retry-lib")
 	e.Run(proj, sess, "deep research", Turns("done",
-		SayBash("b1", "Cloning to study it. #research", "git clone https://github.com/owner/repo /tmp/study"),
-		Bash("b2", "gh search repos guardrail llm agent --paginate"),
+		SayBash("b1", "Cloning to study it. #research", "git clone "+src+" "+dst),
+		Read("r1", filepath.Join(dst, "lib", "retry.js")),
+		Read("r2", filepath.Join(dst, "lib", "backoff.js")),
 	))
 	if active, _ := e.ContextState(proj, sess, "research-run"); active {
 		t.Fatalf("cycle 1: the research context did not deactivate after the depth gate passed — " +
 			"the two-cycle assertion below would be meaningless if this did not hold first")
 	}
 
-	// Cycle 2: unrelated work, no #research tag, no clone, no gh call — exactly
+	// Cycle 2: unrelated work, no #research tag, no clone, no reads — exactly
 	// what a shallow research run would ALSO look like. If the context's
 	// inactivity did not persist, this would be wrongly refused by depth-check.
 	res := e.Run(proj, sess, "do something unrelated", Turns("done",
@@ -73,12 +72,7 @@ func TestT039_07_DeactivatedContextStaysInactiveNextCycle(t *testing.T) {
 // the next turn did not re-declare research; the run is still open and still
 // shallow until it is fixed or abandoned.
 func TestT039_08_ActiveContextStaysActiveAndReFiresNextCycle(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e, proj := research(t)
 
 	sess := "s-039-08"
 

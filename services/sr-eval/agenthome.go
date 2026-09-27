@@ -110,24 +110,14 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 
 	// Its own temp dir too, so a clone or download made through mktemp or
 	// $TMPDIR is removed with the workspace instead of outliving the run.
+	// Private (0700): Claude Code refuses a shared temp root for its own
+	// per-uid directory.
 	tmp := filepath.Join(w.root, "tmp")
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return agentEnv{}, err
 	}
 
-	env := make([]string, 0, len(os.Environ())+6)
-	for _, kv := range os.Environ() {
-		key, _, _ := strings.Cut(kv, "=")
-		switch {
-		case key == "HOME", key == "PATH", key == "TMPDIR", key == "CLAUDE_CONFIG_DIR",
-			key == "XDG_CONFIG_HOME", key == "XDG_DATA_HOME":
-			continue
-		case fresh && (key == "GOBIN" || key == "GOPATH" || strings.HasPrefix(key, "SLOPRAIL_")):
-			continue
-		}
-		env = append(env, kv)
-	}
-	env = append(env, "HOME="+home, "TMPDIR="+tmp)
+	env := baseAgentEnv(os.Environ(), home, tmp, fresh)
 
 	ae := agentEnv{home: home, configDir: filepath.Join(home, ".claude")}
 
@@ -162,6 +152,40 @@ func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh boo
 	ae.env = append(env, "PATH="+path,
 		"SLOPRAIL_RELEASE_URL="+ae.releaseURL, "SLOPRAIL_INSTALL_TAG=checkout")
 	return ae, nil
+}
+
+// baseAgentEnv is the environment an agent-under-test starts from: the
+// caller's, minus what would point it at the operator's own state, with HOME
+// and every temp root moved into the workspace. PATH is left to the caller.
+//
+// Two temp roots, because Claude Code keeps two. TMPDIR is what the agent's
+// tools (mktemp, most languages' temp APIs) honour. CLAUDE_CODE_TMPDIR is
+// where Claude Code puts its own per-uid directory — including the
+// "scratchpad" it tells the agent to clone and write into — and on macOS it
+// IGNORES TMPDIR for that, using /tmp/claude-<uid>. Left there, every run's
+// scratchpad clones outlive the workspace and sit where the next run can find
+// them: a real run found /tmp repositories earlier runs had cloned and
+// "researched" those instead of its own (research-rigor, 2026-09-27).
+//
+// What this cannot isolate is a literal /tmp: an agent that writes
+// `git clone … /tmp/x` or runs `ls /tmp` reaches the machine's shared /tmp,
+// and only a sandbox could stop that. A guardrail that must not credit stale
+// state has to tell this run's work from what was already on disk itself —
+// research-rigor's depth gate counts only directories the run cloned.
+func baseAgentEnv(environ []string, home, tmp string, fresh bool) []string {
+	env := make([]string, 0, len(environ)+3)
+	for _, kv := range environ {
+		key, _, _ := strings.Cut(kv, "=")
+		switch {
+		case key == "HOME", key == "PATH", key == "TMPDIR", key == "CLAUDE_CONFIG_DIR",
+			key == "CLAUDE_CODE_TMPDIR", key == "XDG_CONFIG_HOME", key == "XDG_DATA_HOME":
+			continue
+		case fresh && (key == "GOBIN" || key == "GOPATH" || strings.HasPrefix(key, "SLOPRAIL_")):
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, "HOME="+home, "TMPDIR="+tmp, "CLAUDE_CODE_TMPDIR="+tmp)
 }
 
 // buildRelease builds this host's release archive from the checkout into dir,

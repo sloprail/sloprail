@@ -1,6 +1,7 @@
 # Owns "were the keywords written down as a real file"; the sibling gate
 # (verify-scanner-coverage) owns "did a search cover them", checked against what
-# this context logged.
+# this context logged, and search-needs-declared-scanner refuses a gh search
+# made before anything was logged here.
 #
 # scanners/<name>/scanner.yaml declares one scanner: { active: bool,
 # keywords: str[] }. Its keywords must ALL appear together in ONE gh call.
@@ -9,7 +10,18 @@
 # a real Haiku run declared one under `.claude/scanners/`, which the root-only
 # match missed — the gate then had nothing to check, so a scanner placed anywhere
 # else escaped it.
+#
+# Two moments, because the two readers need it at different times:
+#   - PreFileWrite: the scanner is logged the moment its write is about to land,
+#     so a `gh search` later in the SAME turn finds it declared. Post events are
+#     built from the tree diff at Stop only, so a Post-only context is still
+#     empty when that search runs (measured: search-needs-declared-scanner then
+#     refused every search that followed a declaration).
+#   - PostFileCreate/PostFileUpdate: the settled file, at Stop — including one
+#     written by a shell command, whose bytes a Pre event cannot know.
 on:
+  - event: PreFileWrite
+    match: event.path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"
   - event: PostFileCreate
     match: event.path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"
   - event: PostFileUpdate
