@@ -107,6 +107,9 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	// real run where a guardrail never fired despite the agent's write
 	// plainly matching its rule), so both branches now have a repository to
 	// commit into.
+	if err := ws.runSetup(ctx, fx); err != nil {
+		return fmt.Errorf("fixture setup: %w", err)
+	}
 	if err := ws.commitSetup(); err != nil {
 		return fmt.Errorf("commit harness setup: %w", err)
 	}

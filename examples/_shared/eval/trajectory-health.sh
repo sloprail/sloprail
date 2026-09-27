@@ -74,7 +74,30 @@ trajectory_health_check() {
   # the per-line truncation above) could still blow the budget. 60000 chars
   # is comfortably under any judge model's context at the truncation lengths
   # condense-transcript.jq already applies.
-  condensed_text="$(head -c 60000 "$condensed_file")"
+  #
+  # Work the agent dispatched to sub-agents is part of the trajectory: a
+  # sub-agent's refusals, retries and evasions are in ITS record, not the
+  # root's, so a judge shown only the root misses them (measured 2026-09-27: a
+  # security-scan sub-agent deleted its declared scanner to escape the coverage
+  # gate, and a root-only judge scored the run healthy). Each sub-agent record
+  # is condensed the same way and appended under its own header. The root keeps
+  # the larger share of the budget; the sub-agents split the rest, each getting
+  # at least enough to show its refusals and what it did about them.
+  subagent_dir="${SR_EVAL_TRANSCRIPT%.jsonl}/subagents"
+  set -- "$subagent_dir"/*.jsonl
+  [ -f "$1" ] || set --
+  if [ "$#" -eq 0 ]; then
+    condensed_text="$(head -c 60000 "$condensed_file")"
+  else
+    per_sub=$((24000 / $#))
+    [ "$per_sub" -ge 6000 ] || per_sub=6000
+    condensed_text="$(head -c 36000 "$condensed_file")"
+    for sub in "$@"; do
+      condensed_text="$condensed_text
+=== SUB-AGENT $(basename "$sub" .jsonl): a separate agent the agent above dispatched; its own steps follow ===
+$(jq -r -f "$condense_jq" "$sub" 2>/dev/null | head -c "$per_sub")"
+    done
+  fi
   rm -f "$condensed_file"
 
   # All three inputs are wrapped in their own XML-ish tags in the template so
@@ -185,7 +208,10 @@ guardrail_fired_check() {
   name="$1"
   count=0
   if [ -f "${SR_EVAL_TRANSCRIPT:-/nonexistent}" ]; then
-    count="$(grep -o "\\\\\{0,1\}\"$name\\\\\{0,1\}\"" "$SR_EVAL_TRANSCRIPT" | wc -l | tr -d ' ')"
+    # The sub-agents' records too: a rule refusing inside a sub-agent (at its
+    # SubagentStop, or a tool call it made) is written there, not in the root.
+    count="$(cat "$SR_EVAL_TRANSCRIPT" "${SR_EVAL_TRANSCRIPT%.jsonl}"/subagents/*.jsonl 2>/dev/null \
+      | grep -o "\\\\\{0,1\}\"$name\\\\\{0,1\}\"" | wc -l | tr -d ' ')"
   fi
   GF_COUNT="$count"
   if [ "$count" -gt 0 ]; then

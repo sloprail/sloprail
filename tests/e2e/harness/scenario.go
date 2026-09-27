@@ -148,6 +148,21 @@ func ToolUseWithResult(id, name string, input map[string]string, toolUseResultJS
 	return use, res
 }
 
+// CallWithOutput returns the TWO turns of a tool call whose output the mock
+// cannot produce itself: the tool_use, and a tool_result for the same id
+// carrying output — a background task's receipt, what TaskOutput read back.
+//
+// The mock answers the tool_use with its own result (executing it, or an error
+// for a tool it does not implement); the second turn is a later tool_result for
+// the same id, which is the one a test cites. Both records carry a throwaway
+// top-level `id` for the turn marker, so the tool_use's own id and the result's
+// tool_use_id stay equal to id and correlate — a result whose call is not in
+// the record is not tool output.
+func CallWithOutput(id, name string, input map[string]string, output string) (Turn, Turn) {
+	use, _ := ToolUseWithResult(id, name, input, "null")
+	return use, ToolResult(id, output)
+}
+
 // AnswerQuestion returns ONE turn carrying an AskUserQuestion ANSWER — the shape a
 // person's prompted answer lands as in a real trajectory: a `user` record whose
 // content is a `tool_result` block reading

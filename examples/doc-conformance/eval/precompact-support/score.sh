@@ -38,9 +38,10 @@ request in an unfamiliar codebase."
 GUARDRAIL="A file-guard (mock-matches-doc) exists to catch code that claims,
 via an sr:docs <URL> marker comment, to conform to a real doc but actually
 drifts from it. It ONLY activates if the agent writes that specific marker
-comment — a project skill teaches the marker's mechanism (how to cite a doc
-URL, nothing about what any specific doc says) but nothing tells the agent
-it must use it, and this scenario does not require it either. Whether it
+comment — the project's CLAUDE.md states that convention (sr:docs beside
+code that emulates Claude Code; the tree's a10n:docs comments are an older
+spelling) and a project skill teaches the marker's mechanism, nothing about
+what any specific doc says; the prompt itself never mentions it. Whether it
 activates or not says nothing about whether the implementation is correct;
 Claude Code's real hooks documentation is public and fetchable via
 WebFetch, which the agent has unprompted access to regardless of the
