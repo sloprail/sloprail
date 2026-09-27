@@ -1,15 +1,22 @@
-# Tags main the moment a cut-release.yml bump PR merges — the second half of
-# the same flow, split into its own workflow because the two halves cannot
-# run in the same job: cut-release.yml's PR needs a HUMAN review (main's
-# ruleset requires one; a workflow token cannot approve its own PR), so
-# nothing can tag until that approval and merge have actually happened,
-# which is a separate event this workflow reacts to rather than something
-# cut-release.yml can wait out inside one run.
+# Tags main the moment a release/vX.Y.Z bump PR merges — the second half of
+# the release flow that starts with `make cut-release VERSION=x.y.z`
+# (scripts/cut-release.sh, run locally by a person). The two halves cannot be
+# one script: the bump PR needs a HUMAN review (main's ruleset requires one),
+# so nothing can tag until that approval and merge have actually happened —
+# an event this workflow reacts to, not something the local script can wait
+# out (it opens the PR and exits; a person reviews and merges on their own
+# schedule, possibly hours or days later, likely from the GitHub UI rather
+# than back at that same terminal).
 #
-# main's ruleset targets refs/heads/main only (branch, not tag — confirmed
-# via `gh api repos/OWNER/REPO/rulesets/ID --jq .target`), so pushing a tag
-# with the plain GITHUB_TOKEN needs no PR and no bypass; only the commit TO
-# main needed one, and that already happened when the bump PR was merged.
+# THIS half stays a GitHub Action, unlike the bump-and-PR half, because
+# nothing about it runs into the restrictions that pushed that half out to a
+# local script: a `pull_request: closed` event (not a push this workflow
+# makes) is not subject to GitHub's push-from-GITHUB_TOKEN anti-recursion
+# rule, and main's ruleset targets refs/heads/main only (branch, not tag —
+# confirmed via `gh api repos/OWNER/REPO/rulesets/ID --jq .target`), so
+# pushing a TAG with the plain GITHUB_TOKEN needs no PR and no bypass; only
+# the commit TO main needed one, and that already happened when the bump PR
+# was merged.
 name: tag after release bump
 
 on:
@@ -53,7 +60,7 @@ jobs:
       # Same gate release.yml itself runs — checked again here, against the
       # actual merge commit on main, in case the PR was merged with changes
       # (a review edit, a rebase conflict resolution) that moved it away from
-      # what cut-release.yml originally verified.
+      # what scripts/cut-release.sh originally verified.
       - name: verify-version
         run: make verify-version TAG=${{ steps.version.outputs.tag }}
 
