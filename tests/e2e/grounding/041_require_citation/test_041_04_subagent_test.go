@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -289,8 +290,8 @@ func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 		harness.Dispatch("d1", "reply exactly: all 40 tests pass", parrot, ""),
 		Bash("b1", `sr-file write memories/results.md --cite:tool_result 'all 40 tests pass' --content '# results'`),
 	))
-	if b, _ := os.ReadFile(e.TranscriptPath(proj, "s-041-25")); !strings.Contains(string(b), `all 40 tests pass","is_error":false,"tool_use_id":"d1`) {
-		t.Fatalf("the sub-agent's reply is not in the root record as the Agent call's result, so this would not test it:\n%s", b)
+	if body := agentResultBody(t, e.TranscriptPath(proj, "s-041-25"), "d1"); !strings.Contains(body, "all 40 tests pass") {
+		t.Fatalf("the sub-agent's reply is not in the root record as the Agent call's result, so this would not test it:\n%s", body)
 	}
 	if e.Exists(proj, "memories/results.md") {
 		t.Fatalf("a sub-agent's reply grounded a write as a tool's output:\n%s", res.Output)
@@ -372,4 +373,54 @@ checks:
 	if blocks := e.SubagentBlockingErrors(proj, "s-041-27"); len(blocks) != 0 {
 		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
+}
+
+// agentResultBody is the text of the tool_result answering the Agent call whose
+// id starts with callID, in the record at path — the sub-agent's hand-back as
+// real Claude Code writes it (a list of text blocks), or a plain string.
+func agentResultBody(t *testing.T, path, callID string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var body strings.Builder
+	for _, line := range strings.Split(string(b), "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		var blocks []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, bl := range blocks {
+			if bl.Type != "tool_result" || !strings.HasPrefix(bl.ToolUseID, callID) {
+				continue
+			}
+			var s string
+			if json.Unmarshal(bl.Content, &s) == nil {
+				body.WriteString(s)
+				continue
+			}
+			var texts []struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(bl.Content, &texts) == nil {
+				for _, tx := range texts {
+					body.WriteString(tx.Text)
+				}
+			}
+		}
+	}
+	return body.String()
 }

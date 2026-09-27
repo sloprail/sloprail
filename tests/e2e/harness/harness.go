@@ -1805,6 +1805,67 @@ func (e *Env) blockingErrors(projDir, sessionID, hookEvent string) []string {
 	return blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent)
 }
 
+// StopContinuations returns the reason of every time a Stop hook refused to let
+// a turn end AND the agent was driven on past it, read from the session's own
+// record — in order, one per continuation.
+//
+// This is what a person sees in real Claude Code, and so what a test asks. A
+// blocked Stop is recorded as a meta user turn "Stop hook feedback:\n<reason>"
+// (the text the continued agent reads; for a decision:block it is followed by a
+// hook_blocking_error attachment, for an exit 2 it is all there is), and the
+// continued turn ends at the next Stop, which leaves its own stop_hook_summary
+// (harness-mocks EVIDENCE.md). The refused Stop's own summary comes right after
+// its feedback, so a feedback turn is counted only once the record shows the
+// agent went on past it: an assistant record, or the stop_hook_summary of a
+// LATER Stop. A refusal the harness gave up on at its stop-hook cap — feedback,
+// its own summary, then the cap's warning — is not a continuation.
+//
+// Counting the stream's result frames instead measured the mock rather than
+// the session: real Claude Code emits one result frame per continued turn, and
+// "two results" is not something a person reading the conversation ever sees.
+func (e *Env) StopContinuations(projDir, sessionID string) []string {
+	e.t.Helper()
+	return stopContinuationsIn(e.transcript(projDir, sessionID))
+}
+
+func stopContinuationsIn(record string) []string {
+	var out, pending []string
+	ownSummarySeen := false
+	for _, line := range strings.Split(record, "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			IsMeta  bool   `json:"isMeta"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		switch {
+		case rec.Type == "user" && rec.IsMeta:
+			var text string
+			if json.Unmarshal(rec.Message.Content, &text) == nil && strings.HasPrefix(text, "Stop hook feedback:\n") {
+				// A later Stop's feedback is itself a later Stop: whatever was
+				// pending (with its own summary written) was continued past.
+				if ownSummarySeen {
+					out = append(out, pending...)
+					pending = nil
+				}
+				pending = append(pending, strings.TrimPrefix(text, "Stop hook feedback:\n"))
+				ownSummarySeen = false
+			}
+		case rec.Type == "system" && rec.Subtype == "stop_hook_summary" && len(pending) > 0 && !ownSummarySeen:
+			ownSummarySeen = true // the refused Stop's own summary
+		case rec.Type == "assistant", rec.Type == "system" && rec.Subtype == "stop_hook_summary":
+			out = append(out, pending...)
+			pending = nil
+		}
+	}
+	return out
+}
+
 // SubagentBlockingErrors returns the text of every SubagentStop refusal
 // recorded in the sub-agents' OWN transcripts of a session, in order.
 //

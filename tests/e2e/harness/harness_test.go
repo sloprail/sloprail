@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/transcript"
@@ -109,6 +110,38 @@ func TestHookRefusalReasonAgreesWithTheEngine(t *testing.T) {
 		wantR, wantOK := transcript.HookRefusalReason(body)
 		if gotR != wantR || gotOK != wantOK {
 			t.Errorf("%q: harness (%q, %v), engine (%q, %v)", body, gotR, gotOK, wantR, wantOK)
+		}
+	}
+}
+
+// TestStopContinuations counts a refused Stop only once the record shows the
+// agent went on past it. The records are the order the mock writes, which is
+// real Claude Code's: feedback turn, attachment, that Stop's own summary.
+func TestStopContinuations(t *testing.T) {
+	const (
+		feedback = `{"type":"user","isMeta":true,"message":{"role":"user","content":"Stop hook feedback:\nnot acceptable"}}`
+		attach   = `{"type":"attachment","attachment":{"type":"hook_blocking_error","hookEvent":"Stop","blockingError":{"blockingError":"not acceptable"}}}`
+		summary  = `{"type":"system","subtype":"stop_hook_summary","preventedContinuation":false}`
+		capWarn  = `{"type":"system","subtype":"informational","isMeta":false}`
+		reply    = `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fixed"}]}}`
+		prompt   = `{"type":"user","message":{"role":"user","content":"go"}}`
+	)
+	join := func(ls ...string) string { return strings.Join(ls, "\n") }
+	cases := []struct {
+		name   string
+		record string
+		want   int
+	}{
+		{"a clean end", join(prompt, reply, summary), 0},
+		{"refused, then the harness gave up at its cap", join(prompt, feedback, attach, summary, capWarn), 0},
+		{"refused, continued, ended at a later Stop", join(prompt, feedback, attach, summary, summary), 1},
+		{"refused, continued with a reply", join(prompt, feedback, attach, summary, reply, summary), 1},
+		{"refused twice, the second given up", join(prompt, feedback, attach, summary, feedback, attach, summary, capWarn), 1},
+		{"a non-meta user turn saying the words is not feedback", join(`{"type":"user","message":{"role":"user","content":"Stop hook feedback:\nx"}}`, summary, summary), 0},
+	}
+	for _, tc := range cases {
+		if got := len(stopContinuationsIn(tc.record)); got != tc.want {
+			t.Errorf("%s: %d continuations, want %d", tc.name, got, tc.want)
 		}
 	}
 }
