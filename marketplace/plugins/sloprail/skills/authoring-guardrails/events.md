@@ -24,10 +24,9 @@ is what goes stale.
 An event's own fields sit **directly under `event`** — `.event.path`,
 `.event.newContent`, `.event.kind`, `.event.resultKnown`, `.event.invocations`,
 `.event.tags`. There is **no** `.event.fields.*` nesting: that nested
-`{kind, fields}` envelope is the OLD format's, and the one exception you still
-meet is `sr-session trajectory normalize`, which emits *historical* events in
-that wire form (`.fields.invocations`) — see "The normalized-history exception"
-below. Live check stdin is always flat.
+`{kind, fields}` envelope is the OLD format's. Historical events from
+`sr-session trajectory normalize` are flat the same way — see "Past events"
+below.
 
 A field the kind declares but the event omits is filled with its type's **zero
 value** (an empty string, an empty list, `false`) — never dropped — so
@@ -307,17 +306,14 @@ own `prepare` returned one:
 key cannot collide with `event` or `transcriptPath` (it renders under the single
 `additionalContext` field). See [judge-checks.md](judge-checks.md).
 
-## The normalized-history exception
+## Past events
 
-One place still uses the nested `{kind, fields}` form: `sr-session trajectory
-normalize` emits each **historical** event that way, so a past command's
-invocations sit under `.fields.invocations`, not `.invocations`. That is the
-normalized-history shape — it is **not** the live check stdin, which is flat
-(`.event.invocations`). A check that reads the trajectory to ask "did a real
-`git clone` happen this run?" meets `.fields.*`; a check reading the event in
-front of it meets `.event.*`. Do not conflate the two.
+`sr-session trajectory normalize` re-derives each entry's events and returns them
+under the entry's `.events[]`, **flat** — `kind` beside the event's own fields,
+exactly the shape of the live `.event`. A check asking "did a real `git clone`
+happen this run?" reads a past event the way it reads the one in front of it:
 
 ```bash
 sr-session trajectory normalize --path "$tp" --events PreCommandInvoke \
-  | jq '.fields.invocations[]? | select(.bin == "git")'
+  | jq '[.[] | .events[] | .invocations[]? | select(.bin == "git")]'
 ```

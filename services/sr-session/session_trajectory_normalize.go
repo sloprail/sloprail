@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
+	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/module"
@@ -396,8 +397,9 @@ type normalizedEntry struct {
 // The entry is marshaled to an object and its keys copied out, then `line` and
 // `events` are set. `events` is always an array — never null — because an entry
 // that yielded none still carries the empty one the spec promises, and each event
-// marshals in its own `{kind, fields}` wire form, the same shape a guardrail hook
-// receives, so a consumer reads an event here exactly as it reads one off a hook.
+// marshals FLAT (declaration.FlatEvent) — `kind` beside the event's own fields,
+// the shape a guardrail check reads under `.event` — so a script reads a past
+// event exactly as it reads the live one: `.invocations`, never `.fields.invocations`.
 func (n normalizedEntry) MarshalJSON() ([]byte, error) {
 	entryJSON, err := json.Marshal(n.raw)
 	if err != nil {
@@ -414,9 +416,9 @@ func (n normalizedEntry) MarshalJSON() ([]byte, error) {
 	}
 	fields["line"] = line
 
-	events := n.Events
-	if events == nil {
-		events = []event.Event{}
+	events := make([]declaration.FlatEvent, 0, len(n.Events))
+	for _, e := range n.Events {
+		events = append(events, declaration.FlatEvent(e))
 	}
 	evs, err := json.Marshal(events)
 	if err != nil {

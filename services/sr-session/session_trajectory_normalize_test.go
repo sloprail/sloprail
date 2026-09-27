@@ -253,8 +253,10 @@ func TestNormalizedEntry_SpreadsEntryAndAddsLineAndEvents(t *testing.T) {
 	// The two added fields, beside them.
 	assert.JSONEq(t, `7`, string(got["line"]))
 	require.Contains(t, string(got["events"]), `"kind":"PreCommandInvoke"`)
-	// Each event carries the {kind, fields} wire shape a guardrail hook receives.
-	assert.Contains(t, string(got["events"]), `"fields"`)
+	// Each event is FLAT — its fields beside `kind`, the shape a check reads under
+	// `.event` — never nested under `fields`.
+	assert.Contains(t, string(got["events"]), `"raw":`)
+	assert.NotContains(t, string(got["events"]), `"fields"`)
 }
 
 func TestNormalizedEntry_EmptyEventsIsAnArrayNotNull(t *testing.T) {
