@@ -185,7 +185,7 @@ func RefusedToolUseIDs(entries []Entry) map[string]bool {
 				continue
 			}
 			for _, body := range resultBodies(b.Content) {
-				if strings.HasPrefix(body, "PreToolUse:") && strings.Contains(body, " hook error: ") {
+				if isHookBlock(body) {
 					refused[b.ToolUseID] = true
 				}
 			}
@@ -194,11 +194,27 @@ func RefusedToolUseIDs(entries []Entry) map[string]bool {
 	return refused
 }
 
+// isHookBlock reports whether a tool_result body is a hook refusing the call
+// before it ran, in either spelling a harness writes it: Claude Code's
+// "PreToolUse:Bash hook error: …", and "Tool call blocked by a PreToolUse
+// hook: …" (the harness mock's, and newer releases').
+func isHookBlock(body string) bool {
+	body = strings.TrimSpace(body)
+	return (strings.HasPrefix(body, "PreToolUse:") && strings.Contains(body, " hook error: ")) ||
+		strings.HasPrefix(body, "Tool call blocked by a PreToolUse hook")
+}
+
 // resultBodies is a tool_result's content as text: a bare string, or the text
-// of each block of a list.
+// of each block of a list — including a list that arrives encoded inside the
+// string, which is how some harnesses record it.
 func resultBodies(raw json.RawMessage) []string {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
+		if inner := strings.TrimSpace(s); strings.HasPrefix(inner, "[") {
+			if texts := resultBodies(json.RawMessage(inner)); len(texts) > 0 {
+				return append(texts, s)
+			}
+		}
 		return []string{s}
 	}
 	var parts []struct {

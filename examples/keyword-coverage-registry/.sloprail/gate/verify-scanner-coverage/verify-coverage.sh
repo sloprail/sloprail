@@ -15,8 +15,9 @@ plumbing() {
   exit 1
 }
 
+[ -n "${SR_GUARDRAIL_DIR:-}" ] || plumbing "SR_GUARDRAIL_DIR is not set, so the shared scanner-lib.sh could not be found"
 # shellcheck source=../../context/scanner-declared/scanner-lib.sh
-. "${SR_GUARDRAIL_DIR:-.}/../../context/scanner-declared/scanner-lib.sh" 2>/dev/null \
+. "$SR_GUARDRAIL_DIR/../../context/scanner-declared/scanner-lib.sh" 2>/dev/null \
   || plumbing "the shared scanner-lib.sh beside scanner-declared could not be loaded"
 
 # Read scanner-declared's registry — the scanners still owed a search; `require`
@@ -47,10 +48,14 @@ while IFS= read -r traj_path; do
   [ -f "$traj_path" ] || continue
   # Flatten every PreCommandInvoke event's invocations[] down to the gh ones.
   # Events are flat: `.invocations` sits beside `.kind`, as on a live check.
+  # --ran-only: a gh call a hook REFUSED is still a tool_use in the record, and
+  # counting it credited a search that never ran — refused before any scanner
+  # was declared, then "covering" the scanner declared after it.
   calls="$(sr-session trajectory normalize \
     --path "$traj_path" \
     --events PreCommandInvoke \
     --whole-session \
+    --ran-only \
     | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke")
                | .invocations[]? | select(.bin == "gh") ]' 2>/dev/null)"
   [ -z "${calls:-}" ] && continue

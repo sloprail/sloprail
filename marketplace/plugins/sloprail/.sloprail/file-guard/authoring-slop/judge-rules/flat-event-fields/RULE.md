@@ -26,7 +26,7 @@ value, silently):
 | --- | --- |
 | `PreFileCreate` | `path`, `newContent`, `resultKnown`, `newMarkers` |
 | `PreFileUpdate` | `path`, `oldContent`, `newContent`, `resultKnown`, `oldMarkers`, `newMarkers` |
-| `PreFileDelete` | `path`, `oldContent`, `oldMarkers` |
+| `PreFileDelete` | `path`, `oldContent`, `oldContentKnown`, `oldMarkers` |
 | `PostFileCreate` | `path`, `newContent`, `newMarkers` |
 | `PostFileUpdate` | `path`, `oldContent`, `newContent`, `oldMarkers`, `newMarkers` |
 | `PostFileDelete` | `path`, `oldContent`, `oldMarkers` |

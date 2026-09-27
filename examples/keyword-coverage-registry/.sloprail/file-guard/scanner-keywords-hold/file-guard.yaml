@@ -22,11 +22,16 @@
 # engine cannot parse — does not clear the obligation: scanner-declared keeps
 # the scanner in its registry and stays open until coverage passes.)
 #
-# A delete that IS admitted — cited, and judged to be what the user asked for —
-# retires the scanner's obligation: retire-on-delete.sh, the last check, runs
-# only once the ones before it admitted the event. Without it a scanner declared
-# this session stayed owed forever after the user had it removed, and every
-# later Stop was refused.
+# What "drops" means is measured against the file before the change AND what
+# scanner-declared's registry holds owed: a write the engine cannot parse can
+# empty the file behind every rule's back, and compared against the file alone
+# the delete (or the Stop-time create) that follows dropped nothing.
+#
+# A change that IS admitted — its user citation resolved, and judged to be what
+# the user asked for — is recorded by record-admitted.sh, the last check: a
+# delete retires the scanner, a drop narrows what it owes. The registry itself
+# never shrinks; these records are the only way an obligation goes, and both
+# need the user's citation on the event.
 match: 'path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"'
 preventive: true
 deletions: include
@@ -36,4 +41,4 @@ require:
 checks:
   - prepare: ./only-when-dropped.sh
     judge: ./cited-words-ask-for-it.md.j2
-  - script: ./retire-on-delete.sh
+  - script: ./record-admitted.sh

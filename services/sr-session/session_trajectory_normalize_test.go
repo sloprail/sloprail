@@ -299,6 +299,17 @@ func TestRanOnly_ARefusedCallYieldsNothing(t *testing.T) {
 	refused := transcript.RefusedToolUseIDs([]transcript.Entry{call, results})
 	assert.Equal(t, map[string]bool{"blocked": true}, refused)
 
+	// The other spelling a harness records a refusal in, as a list encoded
+	// inside the string.
+	mockShaped := transcript.Entry{
+		Type: transcript.EntryUser,
+		UUID: "u2",
+		Message: json.RawMessage(`{"role":"user","content":[` +
+			`{"type":"tool_result","tool_use_id":"blocked","is_error":true,"content":"[{\"text\":\"Tool call blocked by a PreToolUse hook: no scanner\",\"type\":\"text\"}]"}` +
+			`]}`),
+	}
+	assert.Equal(t, map[string]bool{"blocked": true}, transcript.RefusedToolUseIDs([]transcript.Entry{call, mockShaped}))
+
 	argvs := func(events []event.Event) []string {
 		var out []string
 		for _, e := range events {

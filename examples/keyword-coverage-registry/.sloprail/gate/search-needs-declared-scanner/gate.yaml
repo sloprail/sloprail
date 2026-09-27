@@ -1,5 +1,5 @@
-# A GitHub search runs against a declared scanner: a `gh` call that is not a
-# known read of something already found is refused until a scanner has been
+# A GitHub search runs against a declared scanner: a `gh` call that searches
+# GitHub (or that this rule cannot see into) is refused until a scanner has been
 # declared this session — scanners/<name>/scanner.yaml naming the keywords the
 # search must cover. Without it, verify-scanner-coverage has nothing to hold the
 # search to (it runs at Stop, and only once a scanner is declared), so research
@@ -17,20 +17,28 @@
 # `require: context` would also refuse with the engine's generic wording, which
 # names no remedy; the script says what to write.
 #
-# The match takes EVERY gh invocation, and the check decides against an
-# ALLOWLIST of reads (see needs-declared-scanner.sh for the list). It used to
-# match a list of search spellings — `gh search`, `gh api search/…`, `gh api
-# graphql … search(` — and that list was measured short: `gh issue list
-# --search`, `-S`, `search (` with a space, a GraphQL query read from a file, a
-# gh alias and `X=search; gh $X …` all ran with no scanner. A search spelled a
-# way nobody listed must not be the way through.
+# The match takes EVERY gh invocation, and every line that merely NAMES gh, and
+# the check decides which of them search (see needs-declared-scanner.sh): the
+# search entry points — `gh search`, `gh api` search endpoints and graphql
+# (resolved, so `repos/../search/…` is one), `list --search/-S` — plus what it
+# cannot see into: an alias or extension, and a gh the parser did not find as an
+# invocation (`eval "gh search …"`, `python3 -c "os.system('gh search …')"`).
+# Everything else gh does runs with or without a scanner.
 #
-# Decided on the parsed invocations, never the raw line, so `cd x && gh …`,
-# `FOO=1 gh …`, `env …`, `command gh …`, `bash -c "gh …"` and quoted arguments
-# are all the same `gh` invocation. A program named by a variable (`$GH search`)
-# is not visible at all — see the README's "What it does not catch".
+# Two earlier versions were each wrong one way. A list of search spellings was
+# measured short (`gh issue list --search`, `search (` with a space, an alias,
+# `X=search; gh $X …` all searched with no scanner); an allowlist of reads
+# refused ordinary calls (`gh pr create`, `gh repo clone`, `gh pr checks`) and
+# called them searches.
+#
+# Decided on the parsed invocations first, so `cd x && gh …`, `FOO=1 gh …`,
+# `env …`, `command gh …`, `bash -c "gh …"` and quoted arguments are all the
+# same `gh` invocation. A program named by a variable (`$GH search`) is not
+# visible at all — see the README's "What it does not catch".
 on:
   - event: PreCommandInvoke
-    match: any(event.invocations, .bin == "gh")
+    match: >-
+      any(event.invocations, .bin == "gh") or
+      event.raw matches "(^|[^A-Za-z0-9_./-])gh([^A-Za-z0-9_.-]|$)"
 checks:
   - script: ./needs-declared-scanner.sh

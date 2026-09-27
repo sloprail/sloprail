@@ -19,42 +19,36 @@
 #   uploads.github.com, and any *.githubusercontent.com (raw., gist., objects.)
 # Other GitHub-owned hosts (docs.github.com, github.blog, *.github.io Pages
 # sites) are documentation and project sites, not the research gh covers, and
-# stay fetchable — as does every non-GitHub URL. The host is matched anchored at
-# the start of the URL, case-insensitive, with an optional scheme, userinfo,
-# trailing dot (`github.com.` is the same host, fully qualified) and port, so
-# `https://example.com/?u=github.com` and `github.com.evil.example` are not
-# GitHub.
+# stay fetchable — as does every non-GitHub URL.
+#
+# The HOST is what is compared, parsed the way a browser parses the URL
+# (use-gh.sh): tabs and newlines dropped; for http(s) any run of `/` or `\`
+# after the scheme is the start of the host (`https:github.com/…`,
+# `https:/github.com/…`, `https:\\github.com\…`); userinfo and port dropped;
+# percent-decoded (`git%68ub.com`); trailing dots dropped (`github.com.`). A
+# regex over the raw URL was evaded by each of those. `https://example.com/?u=
+# github.com` and `github.com.evil.example` are not GitHub.
 #
 # The same hosts fetched from the SHELL — curl, wget, httpie/xh — are refused
 # the same way: once WebSearch was refused, a real Haiku run (2026-09-27) read
 # issues with `curl https://api.github.com/repos/…` and files with `curl
 # https://raw.githubusercontent.com/…`, and a curl of api.github.com/search is a
-# search no scanner governs. Matched on the parsed invocations (any argument of
-# the program anchored as a GitHub URL), so wrapping or quoting does not hide it.
-#
-# A URL built from a variable is not in the parsed invocations at all: in
-# `U=https://api.github.com; curl $U/search/issues` the parser cannot resolve
-# $U and the argument reads `/search/issues`. So a fetching program is also
-# refused on a line that expands something (`$`) and puts a GitHub host into a
-# shell variable or expansion: an assignment `NAME=…github.com…` starting a
-# word, or a `$(…)` / `${…}` naming one. A GitHub URL merely inside another
-# URL's query string (`?u=https://github.com/…`), or on a line with no
-# expansion, is still decided on the parsed arguments alone.
+# search no scanner governs. Decided on the parsed invocations, so wrapping or
+# quoting does not hide it, plus two things the arguments cannot show:
+#   - `curl -K/--config file` and `wget -i/--input-file file` take their URLs
+#     from a file this rule cannot read: refused outright;
+#   - a line that names a GitHub host no fetch argument carries — the URL came
+#     from a variable (`U=https://api.github.com; curl $U/search/issues` parses
+#     as `curl /search/issues`), a substitution, or stdin (`echo URL | xargs
+#     curl`): refused. A GitHub URL inside another URL's own arguments
+#     (`?u=https://github.com/…`) is carried by that argument, and allowed.
+# What is still not caught is listed in the README ("What it does not catch").
 on:
   - event: PreToolUse
     match: event.tool == "WebSearch"
   - event: PreToolUse
-    match: >-
-      event.tool == "WebFetch" and
-      string(event.input.url) matches "(?i)^([a-z][a-z0-9+.-]*://)?([^/?#@]*@)?(((www|api|gist|codeload|raw|uploads)\\.)?github\\.com|([a-z0-9-]+\\.)*githubusercontent\\.com)\\.?(:[0-9]+)?([/?#]|$)"
+    match: event.tool == "WebFetch"
   - event: PreCommandInvoke
-    match: >-
-      any(event.invocations, .bin in ["curl", "wget", "http", "https", "xh", "xhs"] and
-        any(.argv, # matches "(?i)^(--url=)?([a-z][a-z0-9+.-]*://)?([^/?#@]*@)?(((www|api|gist|codeload|raw|uploads)\\.)?github\\.com|([a-z0-9-]+\\.)*githubusercontent\\.com)\\.?(:[0-9]+)?([/?#]|$)"))
-  - event: PreCommandInvoke
-    match: >-
-      any(event.invocations, .bin in ["curl", "wget", "http", "https", "xh", "xhs"]) and
-      event.raw matches "\\$" and
-      event.raw matches "(?i)((^|[\\s;&|(])[a-z_][a-z0-9_]*=|\\$[({])[^;&|\\n]*github(usercontent)?\\.com"
+    match: any(event.invocations, .bin in ["curl", "wget", "http", "https", "xh", "xhs"])
 checks:
   - script: ./use-gh.sh

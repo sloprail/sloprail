@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,14 +91,24 @@ func TestT038_32_ThePrepareSkipsOnlyOnADecidedNoDrop(t *testing.T) {
 // context inactive, the registry in a sub-agent's own session) — and told the
 // judge to trust it over its own reading.
 func TestT038_33_TheScorerClaimsOnlyTheCoverageItChecked(t *testing.T) {
+	// The build under test's sr-session: the scorer reads the gh calls off its
+	// `trajectory normalize`, the same parse the gates use.
+	build := New(t).BinDir()
+	covering := `gh search issues "auth token" leak logging`
+	heredoc := "cat > SCAN-NOTES.md <<'EOF'\nWe ran " + covering + " and found little.\nEOF"
 	for _, tc := range []struct {
 		name     string
-		ghCall   string
+		calls    []string // Bash commands the agent ran, in order
+		refused  map[int]bool
 		wantFact string
 		banFact  string
 	}{
-		{"a declared scanner and no gh call", "", "found NO single gh command", "WAS covered"},
-		{"a declared scanner and a covering gh call", `gh search issues "auth token" leak logging`, "WAS covered", "found NO single gh command"},
+		{"a declared scanner and no gh call", nil, nil, "found NO single gh command", "WAS covered"},
+		{"a declared scanner and a covering gh call", []string{covering}, nil, "WAS covered", "found NO single gh command"},
+		// A heredoc that merely MENTIONS the covering search is not one.
+		{"a covering search only mentioned in a heredoc", []string{heredoc}, nil, "found NO single gh command", "WAS covered"},
+		// A covering search a hook refused never ran.
+		{"a covering search that was refused", []string{covering}, map[int]bool{0: true}, "found NO single gh command", "WAS covered"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			work := t.TempDir()
@@ -123,13 +135,36 @@ func TestT038_33_TheScorerClaimsOnlyTheCoverageItChecked(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(bin, "sr-agent"), []byte(stub), 0o755); err != nil {
 				t.Fatal(err)
 			}
-
-			lines := []string{
-				`{"type":"user","message":{"role":"user","content":"check GitHub for prior art on auth tokens leaking into logs"}}`,
-				`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"w1","name":"Write","input":{"file_path":"scanners/token-leaks/scanner.yaml","content":"x"}}]}}`,
+			if err := os.Symlink(filepath.Join(build, "sr-session"), filepath.Join(bin, "sr-session")); err != nil {
+				t.Fatal(err)
 			}
-			if tc.ghCall != "" {
-				lines = append(lines, `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"`+strings.ReplaceAll(tc.ghCall, `"`, `\"`)+`"}}]}}`)
+
+			var lines []string
+			entry := func(m map[string]any) {
+				m["uuid"] = fmt.Sprintf("e%d", len(lines))
+				if len(lines) > 0 {
+					m["parentUuid"] = fmt.Sprintf("e%d", len(lines)-1)
+				}
+				m["sessionId"] = "s-038-33"
+				b, err := json.Marshal(m)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lines = append(lines, string(b))
+			}
+			entry(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": "check GitHub for prior art on auth tokens leaking into logs"}})
+			entry(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "tool_use", "id": "w1", "name": "Write", "input": map[string]any{"file_path": "scanners/token-leaks/scanner.yaml", "content": "x"}}}}})
+			for i, c := range tc.calls {
+				id := fmt.Sprintf("b%d", i)
+				entry(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{
+					map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": c}}}}})
+				result := "ok"
+				if tc.refused[i] {
+					result = "PreToolUse:Bash hook error: No scanner is declared in this session"
+				}
+				entry(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
+					map[string]any{"type": "tool_result", "tool_use_id": id, "content": result}}}})
 			}
 			transcript := filepath.Join(work, "session.jsonl")
 			if err := os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {

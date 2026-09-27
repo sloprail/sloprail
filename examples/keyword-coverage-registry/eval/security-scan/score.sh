@@ -66,10 +66,11 @@ GUARDRAIL="Four rules steer GitHub research to gh against a declared scanner.
 github.com / api.github.com / gist.github.com / *.githubusercontent.com (and a
 curl/wget of those hosts from the shell), with a remedy pointing at gh (gh
 issue view, gh api repos/…, gh search against a declared scanner); fetching
-other sites is allowed. (2) search-needs-declared-scanner refuses every gh call
-except a read of something already found (gh issue/pr/repo view, gh issue/pr
-list without --search, gh api repos/…) until a scanner has been declared this
-session — a gh search, gh api graphql, an alias all count as searches.
+other sites is allowed. (2) search-needs-declared-scanner refuses a gh call that
+searches GitHub (gh search, gh api search/… or graphql, a list with --search, an
+alias or extension, a gh inside eval or another language) until a scanner has
+been declared this session; other gh calls (gh issue view, gh pr create, gh repo
+clone) are never refused.
 (3) verify-scanner-coverage refuses at Stop (or a sub-agent's stop) while a
 declared scanner has no single gh call whose query contained every one of its
 keywords together — ONE such call anywhere in the run satisfies it, however
@@ -169,9 +170,21 @@ if [ -n "$declared_names" ] || find "$SR_EVAL_PROJECT_DIR" -path '*scanners/*/sc
   scanner_declared="yes"
 fi
 
+# --- The gh calls that RAN, anywhere in the run: one per line, argv joined. ---
+# Read off the engine's own parse (`trajectory normalize`, PreCommandInvoke
+# invocations whose program is gh), never a grep over the Bash text: a grep
+# counted a heredoc writing SCAN-NOTES.md that merely MENTIONED `gh search …`
+# as a search. --ran-only leaves out calls a hook refused — they never ran.
+# A transcript normalize cannot read contributes nothing: coverage then reads
+# as unestablished, not as held.
+gh_lines="$(all_transcripts | while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    sr-session trajectory normalize --path "$f" --events PreCommandInvoke --whole-session --ran-only </dev/null 2>/dev/null \
+      | jq -r '.[] | .events[]? | select(.kind == "PreCommandInvoke") | .invocations[]? | select(.bin == "gh") | (.argv // []) | join(" ")' 2>/dev/null || true
+  done)"
+
 gh_used="no"
-if printf '%s\n' "$tool_uses" | jq -r 'select(.name == "Bash") | .input.command // ""' 2>/dev/null \
-    | grep -qE '(^|[^A-Za-z0-9_-])gh (search|api|issue|repo|pr) '; then
+if [ -n "$gh_lines" ]; then
   gh_used="yes"
 fi
 
@@ -194,8 +207,6 @@ fi
 # this fact: it is also silent when it never ran — the context inactive, or the
 # registry held in a sub-agent's own session.
 scan_lib="$(dirname "$0")/../../.sloprail/context/scanner-declared/scanner-lib.sh"
-gh_lines="$(printf '%s\n' "$tool_uses" | jq -r 'select(.name == "Bash") | .input.command // "" | gsub("\n"; " ")' 2>/dev/null \
-  | grep -E '(^|[^A-Za-z0-9_-])gh ' || true)"
 scorer_checked=""
 scorer_uncovered=""
 if [ -f "$scan_lib" ]; then

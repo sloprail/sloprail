@@ -31,10 +31,10 @@ instead of searching — after which nothing refused it again.
 | rule | nature | fires on | refuses |
 |---|---|---|---|
 | `scanner-declared` | context | `PreFileWrite`, `PostFileCreate`, `PostFileUpdate` of `**/scanners/<name>/scanner.yaml` | nothing — it logs the scanner's keywords into its registry |
-| `github-research-through-gh` | gate | `PreToolUse`: any `WebSearch`; a `WebFetch` of a GitHub content host. `PreCommandInvoke`: `curl`/`wget`/httpie of one | GitHub research outside `gh` |
-| `search-needs-declared-scanner` | gate | `PreCommandInvoke`: any `gh` call | a gh call that is not a known read of something already found, with no scanner declared this session |
+| `github-research-through-gh` | gate | `PreToolUse`: `WebSearch`, `WebFetch`. `PreCommandInvoke`: `curl`/`wget`/httpie | any WebSearch; a fetch of a GitHub content host, of URLs from a file, or of a URL the line hides |
+| `search-needs-declared-scanner` | gate | `PreCommandInvoke`: any line running or naming `gh` | a gh call that searches GitHub (or that it cannot see into), with no scanner declared this session |
 | `verify-scanner-coverage` | gate | `Stop`, while `scanner-declared` is active | a declared scanner no single gh call covered |
-| `scanner-keywords-hold` | file-guard, preventive, `deletions: include` | the scanner file | dropping a keyword, or deleting the scanner, without the user's words |
+| `scanner-keywords-hold` | file-guard, preventive, `deletions: include` | the scanner file | dropping a keyword, or deleting the scanner, without the user's words; records what the user did ask for |
 
 ## Why a context and gates
 
@@ -85,14 +85,28 @@ Twice, because its two readers need it at different moments:
   Post event (the file never changed), so a union with the log alone registered
   the narrowed set.
 - **At the `PostFile*`** (Stop), from the settled file — including one written
-  by a shell command, whose bytes a Pre event cannot know. Here the entry
-  becomes exactly the file's keywords; anything that dropped one already got
-  past `scanner-keywords-hold`.
+  by a shell command, whose bytes a Pre event cannot know. Here too the entry
+  becomes the **union** of what is owed and the file's keywords. It used to
+  become exactly the file's keywords, trusting that anything which dropped one
+  had got past `scanner-keywords-hold` — but a write the engine cannot parse
+  (`python3 -c "open(…).write(…)"`) narrowed a scanner declared this session,
+  reached Stop as a `PostFileCreate`, and a create "drops nothing", so the
+  narrowing landed unasked and a search for the one keyword left passed.
 
-An entry is **never removed**. A scanner declared this session stays owed its
-search even if its file is later switched off, or deleted by a route no rule
-saw. The one exception is a delete the user asked for: see
-[retiring a scanner](#retiring-a-scanner-the-user-deleted).
+The registry **never shrinks** on its own. A scanner declared this session stays
+owed its search, in full, even if its file is later narrowed or switched off by
+a write no rule could read, or deleted by a route no rule saw. The only ways an
+obligation goes are what the **user** asked for, cited in their own words and
+judged to ask for it: a delete retires the scanner, a drop narrows it (see
+[what the user asked for](#retiring-or-narrowing-what-the-user-asked-for)).
+
+Keywords are read the way YAML writes a list: a block list (items at any
+indentation, quoted or plain, a plain item continued on more-indented lines,
+`>`/`|` block scalars, `'it''s'`), a flow list (`keywords: [a, "b c"]`, over
+several lines too), `keywords :` with a space, and `active: true`/`yes`/`on` in
+any case. Anything else declares no keyword, and the search refusal says so by
+name — it used to tell the agent to "write the file again unchanged", which for
+a file that can never register was a loop.
 
 ### Why the context stays open while coverage is refused
 
@@ -121,35 +135,43 @@ in one `gh search`:
   and `uploads.github.com`, and any `*.githubusercontent.com` (raw, gist,
   objects). GitHub's documentation and project sites (`docs.github.com`,
   `github.blog`, `*.github.io`) are not what a scanner searches and stay
-  fetchable, as does every other URL. The host is matched anchored at the URL's
-  start, case-insensitive, with an optional scheme, userinfo, trailing dot
-  (`github.com.` is the same host) and port — so
-  `https://example.com/?u=github.com` and `github.com.evil.example` are not
-  GitHub. **The same hosts fetched from the shell** — `curl`, `wget`,
-  httpie/`xh`, any argument anchored as such a URL — are refused too: once
-  WebSearch was refused, a real run read issues with
-  `curl https://api.github.com/repos/…` and files from `raw.githubusercontent.com`,
-  and a curl of `api.github.com/search` is a search no scanner governs. A URL
-  built from a variable (`U=https://api.github.com; curl $U/search/issues`)
-  never reaches the parsed arguments — the parser drops what it cannot
-  resolve — so a fetch is also refused on a line that expands something and
-  puts a GitHub host into a variable (`NAME=…github.com…`) or a `$(…)`/`${…}`.
+  fetchable, as does every other URL. The **host** is what is compared, parsed
+  the way a browser parses the URL: tabs and newlines dropped, any run of `/` or
+  `\` after `http(s):` taken as the start of the host (`https:github.com/…`,
+  `https:\\github.com\…`), userinfo and port dropped, percent-decoded
+  (`git%68ub.com`), trailing dots dropped (`github.com.`) — a regex over the raw
+  URL was evaded by each of those. `https://example.com/?u=github.com` and
+  `github.com.evil.example` are not GitHub. **The same hosts fetched from the
+  shell** — `curl`, `wget`, httpie/`xh` — are refused too: once WebSearch was
+  refused, a real run read issues with `curl https://api.github.com/repos/…` and
+  files from `raw.githubusercontent.com`, and a curl of `api.github.com/search`
+  is a search no scanner governs. Two things the parsed arguments cannot show
+  are refused as well: `curl -K`/`--config` and `wget -i`/`--input-file`, which
+  take their URLs from a file; and a line naming a GitHub host that none of the
+  fetch's own arguments carries — a URL built from a variable
+  (`U=https://api.github.com; curl $U/search/issues` parses as
+  `curl /search/issues`), a substitution, or piped in (`echo URL | xargs curl`).
   The remedy names the gh equivalents (`gh issue view`, `gh api repos/…/contents/…`).
-- **`search-needs-declared-scanner`** (`PreCommandInvoke`, every `gh` call).
-  Until a scanner is declared, a gh call runs only if it is a **known read** of
-  something already found: `gh --version`/`help`/`auth status`;
-  `gh issue|pr|repo|release|gist view`; the same `list` commands without
-  `--search`/`-S`; `gh api <endpoint>` where the endpoint is found and is neither
-  `graphql` nor a `search/…` path. **Everything else counts as a search.** The
-  rule used to list search spellings instead (`gh search`, `gh api search/…`, a
-  GraphQL `search(`), and the list was measured short: `gh issue list --search`,
-  `-S`, `search (` with a space, a GraphQL query read from a file
-  (`-F query=@q.graphql`), a gh alias, and `X=search; gh $X …` (the parser drops
-  the unresolvable word, leaving `gh issues …`) all ran with no scanner. It is
-  decided on the engine's **parsed invocations** (`event.invocations`), so
-  `cd x && gh …`, `FOO=1 gh …`, `env …`, `command gh …`, `bash -c "gh …"`,
-  `xargs gh …`, a full `/usr/local/bin/gh` path and quoted arguments are all the
-  same `gh` invocation. The scanner write itself is never refused.
+- **`search-needs-declared-scanner`** (`PreCommandInvoke`, every line that runs
+  or names `gh`). Until a scanner is declared, a gh call that **searches GitHub**
+  is refused: `gh search …` (not `--help`); `gh api` on a search endpoint or
+  graphql, the endpoint resolved first — host and query stripped,
+  percent-decoded, `.`/`..` collapsed, since `gh api 'repos/../search/issues?q=…'`
+  searched live — with any `..` or no visible endpoint counting as a search;
+  `gh issue|pr|label list --search/-S`; and what the rule cannot see into: an
+  alias or extension (gh does not let one shadow a built-in), and a gh the parser
+  did not find as an invocation (`eval "gh search …"`,
+  `python3 -c "os.system('gh search …')"`), counted from the raw line. All other
+  gh work — `gh pr create`, `gh repo clone`, `gh pr checks`, `gh run list`,
+  `gh issue -R o/r view 1` — runs with or without a scanner. Both earlier
+  versions were wrong one way: a list of search spellings was measured short
+  (`gh issue list --search`, `search (` with a space, a gh alias,
+  `X=search; gh $X …` all searched), and an allowlist of reads refused ordinary
+  gh calls and called them searches. Invocations are the engine's **parsed**
+  ones, so `cd x && gh …`, `FOO=1 gh …`, `env …`, `command gh …`, `bash -c "gh …"`,
+  `xargs gh …`, `caffeinate`/`script` wrappers, a full `/usr/local/bin/gh` path
+  and quoted arguments are all the same `gh` invocation. The scanner write
+  itself is never refused.
 
   Its check reads the **registry**, not `context["scanner-declared"].active` or
   a `require: context`: activity is per cycle (the context closes once coverage
@@ -185,7 +207,10 @@ refused before it lands, while the agent can still meet it with a search. The
 citation requirement is conditional: `drops-keywords.sh` (a `when`) applies it
 only when the write drops a declared keyword; an uncited drop is refused with
 its hint, a cited one goes to a judge that checks the cited words ask for
-THESE keywords to go. The judge's `prepare` skips the model only on
+THESE keywords to go. "Drops" is measured against the file before the change
+**and** what the registry holds owed: a scanner emptied behind every rule's
+back (a write the engine cannot parse) compared against the file alone dropped
+nothing on its later delete — no citation, no judge — and was retired. The judge's `prepare` skips the model only on
 `drops-keywords.sh`'s decided "drops nothing" (exit 1): a predicate that could
 not run at all — not executable, missing, crashed — used to read as "drops
 nothing" too, skip the judge, and let any quote of the user's admit the drop.
@@ -194,25 +219,35 @@ nothing" too, skip the judge, and let any quote of the user's admit the drop.
 `rm -rf scanners/<name>` — the directory, as the real run did it — reaches the
 guard as a `PreFileDelete` of the scanner file inside: the engine expands a
 recursive removal of a directory (`rm -r`/`-R`/`--recursive` or an
-abbreviation of it, or `mv` of it) into one delete per file it holds. A delete
-the engine cannot see (`find … -delete`, a script, a directory too large to
-expand — see below) still does not clear the obligation — the registry keeps
-the scanner and the context stays open.
+abbreviation of it, `git rm -r`, or `mv` of it) into one delete per file it
+holds, even past its read budget (the files it did not read carry
+`oldContentKnown: false`, and the guard, unable to see what the scanner held,
+asks for the user's words). A delete the engine cannot see at all
+(`find … -delete`, a script, a folder padded past 1000 files — see below)
+still does not clear the obligation of a scanner declared this session — the
+registry keeps it and the context stays open.
 
-### Retiring a scanner the user deleted
+### Retiring or narrowing: what the user asked for
 
-A delete the user asked for — cited, and judged to be what their words ask —
-**retires** the scanner's obligation. Without that, a scanner declared this
-session stayed in the registry forever, and every later Stop was refused,
-telling the agent to search for a scanner the user had removed.
+A change the user asked for — its citation of their own words resolved on the
+event, and judged to be what they ask — is **recorded** by the guard's last
+check, `record-admitted.sh`, which runs only once the checks before it admitted
+the event:
 
-The guard's last check, `retire-on-delete.sh`, runs only once the checks before
-it admitted the event, and records `retired:<folder>` at the declaration's
-current stamp (`stamp:<folder>`, which `scanner-declared` renews at every
-declaration). The registry's reader counts a scanner as retired only while that
-stamp still matches — declaring it again makes it owed again — and while its
-file is really gone, so a delete some other rule refused leaves it owed. A
-delete no rule saw never reaches the check and retires nothing.
+- a **delete retires** the scanner: `retired:<folder>`. Without that, a scanner
+  declared this session stayed owed forever, and every later Stop was refused,
+  telling the agent to search for a scanner the user had removed;
+- a **drop narrows** it: `narrowed:<folder>` holds what the scanner still
+  declares, and becomes what is owed.
+
+Both are recorded at the declaration's current stamp (`stamp:<folder>`, which
+`scanner-declared` renews at every declaration) and count only while it still
+matches, so declaring the scanner again makes it owed in full again; a
+retirement also needs the file really gone, so a delete some other rule refused
+leaves it owed. Neither is recorded without the user's citation on the event —
+the check does not infer "asked for" from having been reached, since a change
+that drops nothing needs no citation to reach it. A delete no rule saw never
+reaches the check and records nothing.
 
 ## What it does not catch
 
@@ -223,14 +258,24 @@ delete no rule saw never reaches the check and retires nothing.
   list. Add a trigger for it if a project has one.
 - **Parsing is a correctness aid, not a security boundary**: a program named by
   a variable (`$GH search …`) or a decoded payload is not visible to
-  `event.invocations`. A URL built from a variable is caught only when the same
-  line puts the GitHub host into a variable or an expansion; one set in an
-  earlier command (`export API=https://api.github.com`, then `curl $API/…`) is
-  not.
-- **A directory too large to expand.** The engine predicts a recursive
-  removal's deletes only up to 1000 files and 8 MiB; past either bound it
-  predicts none, so padding a scanner's folder hides its `rm -rf` from this
-  guard. The registry still holds the scanner, so it stays owed its search.
+  `event.invocations`. The search gate counts a gh it can SEE named on the line
+  but not parsed as a search (so `eval "gh search …"` is caught, and so is a
+  commit message mentioning `gh` before any scanner exists — the cost); a gh
+  whose name is itself hidden (`G=g; ${G}h search …`, base64) is not.
+- **Fetches this rule cannot see**: a GitHub host named only in an earlier
+  command (`export API=https://api.github.com`, then `curl $API/…`), a host
+  spliced from pieces (`H=git; curl https://${H}hub.com/…`), a URL a script or
+  program builds, a `Host:` header aimed at a GitHub IP address, or a fetching
+  program not in the list (`python3 -c "urllib…"`, `nc`).
+- **A folder padded past 1000 files.** The engine predicts a recursive
+  removal's deletes up to 1000 files; past that it predicts none, so padding a
+  scanner's folder with files hides its `rm -rf` from the preventive check.
+  (Padding it with BYTES no longer does: every file is still predicted, just
+  unread.) A scanner declared this session stays owed in the registry, so Stop
+  still refuses without a covering search; a committed scanner never declared
+  this session is not in the registry, and its loss surfaces only at Stop, as
+  a `PostFileDelete` the guard refuses for want of the user's words — after the
+  file is already gone.
 
 ## Proof
 
@@ -245,7 +290,12 @@ delete no rule saw never reaches the check and retires nothing.
   refusing, a refused narrowing never shrinking it, and one keyword parser for
   every rule. Scripts run directly (T038_32–33): the judge's prepare on a
   predicate that cannot run, and the eval scorer claiming only the coverage it
-  checked.
+  checked (never from a heredoc's text or a refused call). The second review
+  (T038_34–41): an emptied scanner not retired uncited, an unseen narrowing not
+  shrinking the registry, a byte-padded folder's delete still refused, a refused
+  search not counting as coverage, the near-miss hint that registers when
+  followed, `git rm -r`, a declaration whose stamp cannot be recorded not
+  entering, and every list shape the parser reads.
 - eval: `eval/security-scan/` — a real Haiku run with its full toolset
   (WebSearch and WebFetch included) and a skill teaching the convention, scored
   on trajectory health, with deterministic failures for a declared scanner

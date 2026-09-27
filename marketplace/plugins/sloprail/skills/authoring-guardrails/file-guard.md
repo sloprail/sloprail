@@ -103,7 +103,33 @@ On a delete, a check reads what was lost: `oldContent` and `oldMarkers`. The
 guard's own `match` sees the deleted file's markers too — for a delete, the
 scope's `markers` is the file's `oldMarkers` — so a marker-scoped guard
 (`any(markers, .kind == "invariant")`) that includes deletions still selects the
-file it is about.
+file it is about. On a `PreFileDelete`, read `oldContentKnown` before
+`oldContent`: it is `false`, with `oldContent` `""`, when the bytes were not
+read (below) — "the file was empty" and "the engine did not look" are otherwise
+the same string.
+
+**Which shell commands reach a `PreFileDelete`.** `rm <file>`, `mv <file> …`
+and `git rm <file>` name the file directly. A recursive removal of a DIRECTORY —
+`rm -r`/`-R`/`--recursive` (or an abbreviation, `--rec`), `git rm -r`, or `mv`
+of the directory — is expanded into one `PreFileDelete` per file inside it, so a
+guard on `scanners/x/scanner.yaml` fires on `rm -rf scanners/x`. The expansion
+has limits, and a preventive guard that must hold past them needs a backstop
+that does not depend on the prediction (the Post-phase tree diff, or state the
+rule keeps itself):
+
+- **Files:** past 1000 files the directory predicts **nothing** — the command
+  runs, and only files in the session's baseline surface afterwards as
+  `PostFileDelete` at Stop (a file created and removed in the same session
+  leaves no difference at all).
+- **Bytes:** past 8 MiB read across the directory, every file is still
+  predicted, but the rest are not read: `oldContentKnown` is `false`. The same
+  for one file over 8 MiB, and for a file that is not a regular file once links
+  are followed (a FIFO or a device is never opened for reading).
+- **Unreadable paths:** a subdirectory the walk cannot read is skipped and
+  reported on the hook's stderr; the files around it are still predicted.
+- **Unseen commands:** a delete the parser does not model — `find … -delete`, a
+  script, a program named by a variable — predicts nothing; only the tree diff
+  sees it.
 
 One key with three values, not a list of events: a file-guard binds to a file's
 state, and "is a file that no longer exists my business" is the one place that

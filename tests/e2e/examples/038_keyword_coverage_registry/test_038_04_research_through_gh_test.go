@@ -84,6 +84,12 @@ func TestT038_14_WebFetchOfGitHubRefused(t *testing.T) {
 		"https://api.github.com.:443/search/issues?q=token",
 		"https://raw.github.com/owner/repo/main/README.md",
 		"https://uploads.github.com/repos/owner/repo/releases/1/assets",
+		// Spellings a browser parses to the same host.
+		"https:github.com/owner/repo",
+		"https:/github.com/owner/repo",
+		`https:\\github.com\owner\repo`,
+		"https://git%68ub.com/owner/repo",
+		"https://GITHUB.com%2E/owner/repo",
 	} {
 		t.Run(url, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -154,6 +160,18 @@ func TestT038_16_SearchWithoutScannerRefused(t *testing.T) {
 		`gh s token`,
 		`X=search; gh $X issues token`,
 		`gh api $ENDPOINT -f q=token`,
+		// An endpoint that resolves to search/… once its dot segments and
+		// percent-encoding are undone — `repos/../search/issues` searched live.
+		`gh api 'repos/../search/issues?q=token'`,
+		`gh api repos%2F..%2Fsearch%2Fissues -f q=token`,
+		`gh api /repos/a/b/../../../search/code?q=token`,
+		`gh api https://api.github.com/repos/x/../../search/issues?q=token`,
+		// gh that the parser does not find as an invocation, or finds only
+		// through a wrapper it had to learn.
+		`eval "gh search issues token"`,
+		`python3 -c "import os; os.system('gh search issues token')"`,
+		`script -q /dev/null gh search issues token`,
+		`caffeinate -i gh search issues token`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -231,6 +249,17 @@ func TestT038_19_ScannerWriteAndNonSearchGhAllowed(t *testing.T) {
 		`gh issue list -R cli/cli --label bug --limit 5`,
 		`gh auth status`,
 		`gh api -H 'Accept: application/vnd.github.raw' repos/elastic/elasticsearch/contents/README.md`,
+		// Ordinary gh work is not searching: none of it needs a scanner.
+		`gh pr create --title fix --body done`,
+		`gh repo clone cli/cli`,
+		`gh pr diff 7 -R cli/cli`,
+		`gh pr checks 7 -R cli/cli`,
+		`gh run list -R cli/cli`,
+		`gh label list -R cli/cli`,
+		`gh status`,
+		`gh browse -R cli/cli`,
+		`gh search issues --help`,
+		`gh issue -R cli/cli view 1`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -297,6 +326,14 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 		`U=https://api.github.com; curl -s $U/search/issues?q=token`,
 		`H=api.github.com; curl -s "https://$H/repos/owner/repo"`,
 		`curl -s "$(printf https://api.github.com)/search/issues"`,
+		// URLs from a file the rule cannot read, and from stdin.
+		`curl -s -K fetch.cfg`,
+		`curl --config=fetch.cfg`,
+		`wget -qi urls.txt`,
+		`wget --input-file=urls.txt`,
+		`echo https://github.com/owner/repo | xargs curl -s`,
+		`curl -s https:github.com/owner/repo`,
+		`curl -s https://git%68ub.com/owner/repo`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -319,6 +356,7 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 		`echo https://github.com/owner/repo`,
 		`curl -s https://github.com.evil.example/owner/repo`,
 		`Q=token; curl -s "https://owasp.org/?q=$Q"`,
+		`curl -s -o out.json -H 'Accept: application/json' https://owasp.org/x`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)

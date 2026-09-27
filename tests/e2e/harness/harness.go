@@ -1093,6 +1093,11 @@ func (e *Env) WrapBinary(name, body string) {
 	}
 }
 
+// BinDir is the directory holding this run's build of every service binary —
+// for a test that runs a script outside a session (an eval scorer) against the
+// same build the hooks use.
+func (e *Env) BinDir() string { return e.binDir }
+
 // Exists reports whether a path is present in a project.
 //
 // How a test asks what actually happened to the tree, as opposed to what came
