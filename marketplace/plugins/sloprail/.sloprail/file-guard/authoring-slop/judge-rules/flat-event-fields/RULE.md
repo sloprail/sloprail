@@ -40,5 +40,22 @@ field that is never there.
 GATE's command event, not a file-guard's file event; a file-guard script reading
 them off `.event` gets nothing. Match the field to the nature.
 
-**Flag** a read of `.event.fields.*` (the old envelope), or a read of a field the
-handled kind does not carry per the table above.
+**The normalized-history exception — not this mistake.** `sr-session trajectory
+normalize` emits each *historical* event in the OLD `{kind, fields}` wire form, so
+a past command's invocations legitimately sit under `.fields.invocations`, not
+`.invocations` — this is a different JSON document from the live check's own
+stdin, not a stale read of it. A script that pipes `trajectory normalize`'s output
+through `jq` and reads `.fields.*` / matches `.kind == "..."` on THAT piped output
+is using the documented normalized-history shape correctly, even in the same
+script that also (correctly) reads the live `CheckPayload`'s own event flat as
+`.event.*`. Two different payloads, two different shapes — do not flag the
+`.fields.*` read on normalize's output as if it were a `.event.fields.*` read on
+the live event. See events.md, "The normalized-history exception", and
+`sr-session trajectory normalize --help`.
+
+**Flag** a read of `.event.fields.*` (the old envelope) on the check's OWN live
+payload, or a read of a field the handled kind does not carry per the table
+above. Do **not** flag `.fields.*` (or a bare `{kind, fields}` shape) when it is
+read from `sr-session trajectory normalize`'s piped output — check whether the
+value being read there came from `normalize` before treating `.fields.*` as a
+violation.
