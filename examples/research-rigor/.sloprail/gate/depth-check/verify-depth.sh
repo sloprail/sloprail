@@ -66,13 +66,24 @@ fi
 # 4. Each research trajectory must be its own agent. Only meaningful inside a
 # subagent run: refuse when this ran as a subagent (.isSubagent) that carries
 # sibling trajectory paths (.subagentPaths) alongside it.
-facts="$(sr-session trajectory describe --path "$transcript_path" 2>/dev/null)"
-is_subagent="$(printf '%s' "$facts" | jq -r '.isSubagent // false' 2>/dev/null)"
+if ! facts="$(sr-session trajectory describe --path "$transcript_path" 2>&1)"; then
+  block "Could not describe this research run's trajectory ($transcript_path), so whether it ran as its own agent is unknown: $facts"
+fi
+# Checked by VALUE, not jq's exit status: some jq builds exit 0 on unparseable
+# or empty input, which would read as "not a subagent" and permit.
+is_subagent="$(printf '%s' "$facts" | jq -r '.isSubagent' 2>/dev/null)"
+case "$is_subagent" in
+  true | false) ;;
+  *) block "trajectory describe did not report isSubagent for $transcript_path, so whether this research ran as its own agent is unknown." ;;
+esac
 
 if [ "$is_subagent" = "true" ]; then
-  sibling_count="$(printf '%s' "$facts" | jq '(.subagentPaths // []) | length' 2>/dev/null || echo 0)"
+  sibling_count="$(printf '%s' "$facts" | jq '(.subagentPaths // []) | length' 2>/dev/null)"
+  case "$sibling_count" in
+    '' | *[!0-9]*) block "trajectory describe returned unreadable subagentPaths for $transcript_path, so sibling trajectories could not be counted." ;;
+  esac
 
-  if [ "${sibling_count:-0}" -gt 0 ]; then
+  if [ "$sibling_count" -gt 0 ]; then
     block "This research ran in a subagent trajectory alongside ${sibling_count} sibling trajectories — each research trajectory must run as its own separate agent, not share one with others."
   fi
 fi
