@@ -228,16 +228,16 @@ func TestT046_19_RepinToSameWordingNeedsNothing(t *testing.T) {
 // example, as the goodwill-refund eval's overlay carries — pins nothing: it
 // cannot pass pinned-invariant. So it neither hides a real pinned line that
 // changed (a real run was told only about the placeholder and never learned rule
-// 2 was pinned) nor makes an edit of an unpinned line need the user's words.
+// 2 was pinned) nor makes a spec that only it names need the user's words.
 func TestT046_27_UnreadablePinDoesNotHideTheRealOne(t *testing.T) {
+	placeholder := "Add, as its own line:\n\n```\n// sr:invariant \"<repo>@<sha>:SPEC.md#L<start>-<end>\"\n```\n"
+
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
-	e.WriteFile(proj, ".claude/skills/pin/SKILL.md",
-		"Add, as its own line:\n\n```\n// sr:invariant \"<repo>@<sha>:SPEC.md#L<start>-<end>\"\n```\n")
+	e.WriteFile(proj, ".claude/skills/pin/SKILL.md", placeholder)
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "a skill with a placeholder marker")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
-
 	res := e.Run(proj, "s-046-27", "allow goodwill refunds", Turns("done",
 		Write("w1", "SPEC.md", relaxedSpec),
 	))
@@ -245,17 +245,22 @@ func TestT046_27_UnreadablePinDoesNotHideTheRealOne(t *testing.T) {
 		t.Fatalf("the refusal did not name the pinned line that changed:\n%s", res.Output)
 	}
 
-	// An unparseable pin cannot pass pinned-invariant, so it protects nothing, and
-	// it must not make every edit of the spec need the user's words: rule 1, which
-	// no real marker pins, is reworded freely.
+	// A spec only the placeholder names is not pinned: it is edited freely.
+	e2 := newEnv(t)
+	proj2 := biProject(t, e2)
+	commitSpec(t, e2, proj2, "SPEC.md", billingSpec, "spec")
+	e2.WriteFile(proj2, ".claude/skills/pin/SKILL.md", placeholder)
+	e2.Git(proj2, "add", "-A")
+	e2.Git(proj2, "commit", "-m", "a skill with a placeholder marker")
+	e2.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	edited := strings.Replace(billingSpec, "never be negative", "never be below zero", 1)
-	res = e.Run(proj, "s-046-27b", "reword rule 1", Turns("done",
+	res = e2.Run(proj2, "s-046-27b", "reword rule 1", Turns("done",
 		Write("w1", "SPEC.md", edited),
 	))
 	if res.Refused() {
-		t.Fatalf("an unparseable pin made an edit of an unpinned line need a citation:\n%s", res.Output)
+		t.Fatalf("a spec named only by an unparseable pin needed a citation:\n%s", res.Output)
 	}
-	if got := readSpec(t, proj); got != edited {
-		t.Errorf("the unpinned edit did not land:\n%s", got)
+	if got := readSpec(t, proj2); got != edited {
+		t.Errorf("the edit did not land:\n%s", got)
 	}
 }

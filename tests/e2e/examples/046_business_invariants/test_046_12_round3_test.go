@@ -201,3 +201,48 @@ func TestT046_48_ReplaceRefDoesNotStandInForThePinnedCommit(t *testing.T) {
 		t.Fatalf("a replace ref let a stale pin read the new wording:\n%s", joined)
 	}
 }
+
+// T046_49: a new line in a pinned spec — here an exception to the pinned rule 2,
+// the line a real run added uncited (231517Z) — needs the user's words, even
+// though no pinned line changes. A file that is not a spec is not affected.
+func TestT046_49_UncitedNewLineInAPinnedSpecIsRefused(t *testing.T) {
+	e := newEnv(t)
+	proj := pinnedSpecProject(t, e)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	withException := strings.Replace(billingSpec, "(end)\n", "3. A goodwill refund may include a $5 courtesy credit on top of the charge.\n(end)\n", 1)
+	res := e.Run(proj, "s-046-49", "allow goodwill refunds", Turns("done",
+		Write("w1", "SPEC.md", withException),
+		Write("w2", "NOTES.md", "goodwill refunds: ask the user\n"),
+	))
+	if !res.Refused() || !res.Saw("every rule in a pinned spec is the user's") {
+		t.Fatalf("an uncited new line in a pinned spec was not refused:\n%s", res.Output)
+	}
+	if got := readSpec(t, proj); got != billingSpec {
+		t.Errorf("the uncited line reached SPEC.md:\n%s", got)
+	}
+	if !e.Exists(proj, "NOTES.md") {
+		t.Errorf("a write to a file that is not a spec was refused")
+	}
+}
+
+// T046_50: a new rule the user asked for, cited, is admitted.
+func TestT046_50_CitedNewRuleTheUserAskedForIsAdmitted(t *testing.T) {
+	e := newEnv(t)
+	proj := pinnedSpecProject(t, e)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": "the user asked for rule 3"}`)
+
+	const ask = "add a rule 3 to the spec: a refund must be issued within 30 days of the charge"
+	res := e.Run(proj, "s-046-50", ask, Turns("done",
+		Bash("b1", "sr-file edit SPEC.md --old-string '(end)' --new-string '3. A refund must be issued within 30 days of the charge.\n(end)' --cite:user '"+ask+"'"),
+	))
+	if res.Refused() {
+		t.Fatalf("a cited new rule the user asked for was refused:\n%s", res.Output)
+	}
+	if !strings.Contains(readSpec(t, proj), "within 30 days") {
+		t.Errorf("the cited rule did not land:\n%s", readSpec(t, proj))
+	}
+	if n := e.JudgeCalls(proj, "judge-prompt.txt", ruleChangeHeading); n == 0 {
+		t.Errorf("the cited change to a pinned spec was not judged")
+	}
+}

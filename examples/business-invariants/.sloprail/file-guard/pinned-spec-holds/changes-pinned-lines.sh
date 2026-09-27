@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # `when` for the user citation a pinned rule needs. Exit 0 — this write changes
-# what some sr:invariant marker pins, so it must cite the user's words asking for
-# the rule to change. Exit 1 — it does not. Two ways a write changes a pinned rule:
+# a spec some sr:invariant marker pins, or what a marker pins, so it must cite the
+# user's words asking for that change. Exit 1 — it does not. Three ways a write
+# does:
 #
 #   1. It changes a spec line a marker pins (or deletes the spec, or puts a new
-#      file where HEAD had one).
-#   2. It moves or removes a marker so the code stops being pinned to the wording
+#      file where HEAD had one) — the rule itself changes.
+#   2. It changes any other line of a spec some marker pins: a new rule, a
+#      rewording, an exception on a line of its own. A pinned spec holds the
+#      user's business rules, like an ask: an uncited "3. Goodwill refunds may
+#      exceed the charge" beside a pinned "2. A refund must never exceed the
+#      charge" is how a real run left the spec contradicting itself (231517Z).
+#   3. It moves or removes a marker so the code stops being pinned to the wording
 #      it was pinned to: the marker dropped, or re-pinned to different text. A
 #      re-pin to the SAME text (the rule moved down a line) changes nothing, and
 #      neither does a marker that leaves this file while another file carries it
@@ -182,7 +188,7 @@ memo_key() { printf '%s' "$*" | cksum | tr ' ' '-'; }
 # only — never through a ref, so a branch or tag named like the sha cannot stand
 # in for it. Returns 1 when no commit, or more than one, has that prefix.
 resolve() {
-  local key f
+  local key
   key="$memo/sha-$(memo_key "$f_repo" "$f_hex")"
   if [ ! -e "$key" ]; then
     : >"$key"
@@ -227,11 +233,15 @@ pinned_text() {
 }
 
 case "$kind" in
-  *Delete) how="sr-file delete $path --cite:user '<their exact words asking for the rule to change>'" ;;
-  *Create) how="sr-file write $path --content '<the whole file>' --cite:user '<their exact words asking for the rule to change>'" ;;
-  *) how="sr-file edit $path --old-string '<old>' --new-string '<new>' --cite:user '<their exact words asking for the rule to change>'" ;;
+  *Delete) how="sr-file delete $path --cite:user '<their exact words asking for this change>'" ;;
+  *Create) how="sr-file write $path --content '<the whole file>' --cite:user '<their exact words asking for this change>'" ;;
+  *) how="sr-file edit $path --old-string '<old>' --new-string '<new>' --cite:user '<their exact words asking for this change>'" ;;
 esac
-remedy="If what you were asked for conflicts with the rule, keep the rule: undo any code that breaks it, then tell the user about the conflict, and stop there — the rule changes only when the user asks for that. Only if the user asked for the rule itself to change, cite their words: $how."
+# What to do next, for every refusal. A cited change the judge refused is refused
+# again when it is re-submitted with the same words: a real run (231517Z) sent the
+# same refused `sr-file edit` twice before stopping.
+remedy="If what you were asked for conflicts with the rule, keep the rule: undo any code that breaks it, then tell the user about the conflict, and stop there — the rule changes only when the user asks for that. Only if the user asked for this change to the rule, cite their words: $how. A cited change that was refused is refused again if you send it again with the same words; do not retry it — tell the user instead."
+spec_remedy="A spec that code pins holds the user's business rules: change it only when the user asked for that change — a new rule, a rewording, an exception — citing their words: $how. If they did not ask for it, leave the spec as it is and tell the user what you would change and why. A cited change that was refused is refused again if you send it again with the same words."
 
 # apply <what>: the requirement applies. `hint` is what the refusal carries (what
 # the change does, then what to do); `what` alone is for the judge, which
@@ -260,10 +270,15 @@ fi
 all_fqns="$({ printf '%s\n' "$tree" "$committed"; printf '%s\n' "$old"; } | fqns_in | sort -u)"
 
 changed=""
+pinned_here=""
 while IFS= read -r fqn; do
   [ -n "$fqn" ] || continue
   parse "$fqn" || continue
   [ "$f_path" = "$npath" ] || continue
+  case ", $pinned_here, " in
+    *", L$f_start-$f_end, "*) ;;
+    *) pinned_here="${pinned_here:+$pinned_here, }L${f_start}-${f_end}" ;;
+  esac
   [ "$new_known" = 1 ] || apply "This change touches $path, which code in this project pins as a business rule (L$f_start-$f_end), and $unknown_result." "$unknown_remedy"
   # A PreFileDelete the engine did not read (oldContentKnown false — an `rm -r`
   # past its byte budget, say) carries an empty oldContent, which would read as
@@ -291,7 +306,17 @@ done <<EOF
 $all_fqns
 EOF
 
-# 2. This file's own pins. A pin the file held stays held when this file still
+# 2. The rest of a pinned spec. Any change to a file some pin names — a new rule,
+# a rewording, an exception on a line of its own — is a change to the user's
+# business rules.
+spec_changed=0
+if [ -n "$pinned_here" ] && [ -z "$changed" ]; then
+  if [ "$had_old" = 0 ] || [ "$old" != "$new" ]; then
+    spec_changed=1
+  fi
+fi
+
+# 3. This file's own pins. A pin the file held stays held when this file still
 # carries it, or another file in the working tree does (marked code moved), by
 # the same fqn or by a pin to the same text; otherwise the code moves off the
 # wording it answered to.
@@ -333,7 +358,10 @@ $old_fqns
 EOF
 fi
 
-[ -n "$changed$moved" ] || waive "changes no pinned line and keeps every pin"
+if [ -z "$changed$moved" ]; then
+  [ "$spec_changed" = 1 ] || waive "changes no pinned spec and keeps every pin"
+  apply "This change edits $path, a spec that code in this project pins ($pinned_here). It leaves the pinned lines as they are, but every rule in a pinned spec is the user's." "$spec_remedy"
+fi
 
 # It applies. The hint the refusal carries: a pinned rule is the user's decision.
 what=""

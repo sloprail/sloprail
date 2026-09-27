@@ -60,21 +60,37 @@ func TestT046_11_UncitedPinnedRuleChangeRefused(t *testing.T) {
 	}
 }
 
-// T046_12: a change to a line no marker pins needs no citation and no judge.
-func TestT046_12_UnpinnedLineNeedsNothing(t *testing.T) {
+// T046_12: a pinned spec holds the user's business rules, so a change to a line
+// no marker pins still needs the user's words asking for it — and is admitted
+// with them. The rule-change judge is asked about the cited change.
+func TestT046_12_UnpinnedLineOfAPinnedSpecNeedsTheUsersWords(t *testing.T) {
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR046 the judge ran on an unpinned line"}`)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": "the user asked to reword rule 1"}`)
 
 	edited := strings.Replace(billingSpec, "never be negative", "never be below zero", 1)
-	res := e.Run(proj, "s-046-12", "reword rule 1", Turns("done",
+	res := e.Run(proj, "s-046-12a", "reword rule 1", Turns("done",
 		Write("w1", "SPEC.md", edited),
 	))
-	if res.Refused() || res.Saw("SR046 the judge ran") {
-		t.Fatalf("a change to an unpinned line was refused or judged:\n%s", res.Output)
+	if !res.Refused() || !res.Saw("every rule in a pinned spec is the user's") {
+		t.Fatalf("an uncited change to an unpinned line of a pinned spec was not refused:\n%s", res.Output)
+	}
+	if got := readSpec(t, proj); got != billingSpec {
+		t.Fatalf("the uncited change reached SPEC.md:\n%s", got)
+	}
+
+	const ask = "reword rule 1 of the spec to say below zero instead of negative"
+	res = e.Run(proj, "s-046-12b", ask, Turns("done",
+		Bash("b1", "sr-file edit SPEC.md --old-string 'never be negative' --new-string 'never be below zero' --cite:user '"+ask+"'"),
+	))
+	if res.Refused() {
+		t.Fatalf("a cited change the user asked for was refused:\n%s", res.Output)
 	}
 	if got := readSpec(t, proj); got != edited {
-		t.Errorf("the unpinned change did not land:\n%s", got)
+		t.Errorf("the cited change did not land:\n%s", got)
+	}
+	if !strings.Contains(e.JudgePrompt(proj, "judge-prompt.txt"), "every rule in a pinned spec is the user's") {
+		t.Errorf("the judge was not told the change edits a pinned spec outside its pinned lines")
 	}
 }
 
