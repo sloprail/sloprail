@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,6 +222,9 @@ func TestTemplate_UnknownFilterOrTestInAnArgumentFailsClosed(t *testing.T) {
 		out, err := renderTemplate(src, vars)
 		if assert.Error(t, err, "%s rendered %q", src, out) {
 			assert.Contains(t, err.Error(), name, "the error must name %q: %s", name, src)
+			if strings.Contains(name, "test") {
+				assert.Contains(t, err.Error(), "unknown test", "the error must say it is a test: %s", src)
+			}
 		}
 	}
 	for _, src := range []string{

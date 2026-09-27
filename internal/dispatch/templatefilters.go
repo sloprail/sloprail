@@ -192,15 +192,16 @@ func tokenLine(tok reflect.Value) int {
 }
 
 // raiseFilterErrors wraps every filter in fs so an error it returns — as its
-// value, or anywhere inside the list or map it returns — is raised instead: a
-// render error naming the filter, never the error object's name printed into
-// the prompt.
+// value, or as an element directly inside the list or map it returns — is raised
+// instead: a render error naming the filter, never the error object's name
+// printed into the prompt.
 func raiseFilterErrors(fs *exec.FilterSet) {
 	for name, fn := range *fs {
 		name, fn := name, fn
 		(*fs)[name] = func(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
+			checkNamedArgument(e, name, params)
 			out := fn(e, in, params)
-			if err := errorIn(out, 0); err != nil {
+			if err := errorIn(out); err != nil {
 				errors.ThrowTemplateRuntimeError("filter %q failed: %s", name, err)
 			}
 			return out
@@ -208,45 +209,94 @@ func raiseFilterErrors(fs *exec.FilterSet) {
 	}
 }
 
-// maxValueDepth bounds how deep errorIn looks into a value.
-const maxValueDepth = 64
+// checkNamedArgument raises a runtime error, before the filter runs, when a
+// filter that applies another filter or test by name (map, select, reject,
+// selectattr, rejectattr) is handed a name that does not exist — one passed as
+// a variable, which CheckTemplate cannot see. gonja's own error for an unknown
+// test garbles its message to just the name (its throw passes the format as
+// the function name) and panics with it; this says what it is.
+func checkNamedArgument(e *exec.Evaluator, filter string, params *exec.VarArgs) {
+	spec, ok := argNamed[filter]
+	if !ok || params == nil {
+		return
+	}
+	var arg exec.Value
+	if spec.pos < len(params.Args) {
+		arg = params.Args[spec.pos]
+	} else if spec.keyword != "" && params.HasKwarg(spec.keyword) {
+		arg = params.GetKwarg(spec.keyword)
+	}
+	if arg == nil || arg.IsNil() || !arg.IsString() || arg.String() == "" {
+		return
+	}
+	named := arg.String()
+	if spec.test && !e.Tests.Exists(named) {
+		errors.ThrowTemplateRuntimeError("unknown test %q (passed to %s)", named, filter)
+	}
+	if !spec.test && !e.Filters.Exists(named) {
+		errors.ThrowTemplateRuntimeError("unknown filter %q (passed to %s)", named, filter)
+	}
+}
 
-// errorIn returns the first error held by v, at any depth: v itself, or an
-// element of a list or map it holds (a gonja Value is unwrapped to what it
-// holds). Some gonja values cannot be turned into an interface at all (they
-// panic); those hold no error.
-func errorIn(v any, depth int) (found error) {
-	if v == nil || depth > maxValueDepth {
-		return nil
+// errorIn returns an error a filter returned: the value itself, or one element
+// directly inside it. That depth is enough, and keeps the check linear in what
+// the filter returned rather than in everything it holds: an error value only
+// ever comes from a filter — raised at the top of that filter's own return, by
+// this wrapper — or from map applying a filter by a name that does not exist,
+// which puts the error one level down, in map's own list. Anything deeper was
+// already some filter's output when it was produced, and was checked then.
+func errorIn(v exec.Value) error {
+	top := valueOf(v)
+	if err, ok := top.(error); ok {
+		return err
 	}
-	defer func() {
-		if recover() != nil {
-			found = nil
-		}
-	}()
-	switch t := v.(type) {
-	case error:
-		return t
-	case exec.Value:
-		return errorIn(t.Interface(), depth+1)
-	}
-	rv := reflect.ValueOf(v)
+	rv := reflect.ValueOf(top)
 	switch rv.Kind() {
 	case reflect.Slice, reflect.Array:
 		for i := 0; i < rv.Len(); i++ {
-			if err := errorIn(rv.Index(i).Interface(), depth+1); err != nil {
+			if err := elementError(rv.Index(i)); err != nil {
 				return err
 			}
 		}
 	case reflect.Map:
 		iter := rv.MapRange()
 		for iter.Next() {
-			if err := errorIn(iter.Value().Interface(), depth+1); err != nil {
+			if err := elementError(iter.Value()); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// elementError is the error an element holds, directly or as a gonja Value.
+func elementError(rv reflect.Value) error {
+	if !rv.IsValid() || !rv.CanInterface() {
+		return nil
+	}
+	switch x := rv.Interface().(type) {
+	case error:
+		return x
+	case exec.Value:
+		if err, ok := valueOf(x).(error); ok {
+			return err
+		}
+	}
+	return nil
+}
+
+// valueOf is what a gonja Value holds. Some cannot be turned into an interface
+// at all (they panic); those hold no error.
+func valueOf(v exec.Value) (out any) {
+	defer func() {
+		if recover() != nil {
+			out = nil
+		}
+	}()
+	if v == nil {
+		return nil
+	}
+	return v.Interface()
 }
 
 // panicText is a recovered panic value as text, even when printing it panics
