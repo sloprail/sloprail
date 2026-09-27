@@ -83,6 +83,14 @@ func ToolUse(id, name string, input map[string]string) Turn {
 	return Turn{jsonl: toolUse(id, name, input)}
 }
 
+// ToolUseJSON is ToolUse with the input given as a raw JSON object, for a tool
+// whose input carries numbers, nested objects or arrays — values a check must
+// carry through as JSON, which a map of strings cannot express.
+func ToolUseJSON(id, name, inputJSON string) Turn {
+	return Turn{jsonl: fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
+		"e2e-turn-"+id, id, name, inputJSON)}
+}
+
 // ToolUseWithResult returns the TWO turns that model a tool call which produced an
 // artifact a grounding check reads back: the tool_use, and a following record
 // carrying its `toolUseResult`.
