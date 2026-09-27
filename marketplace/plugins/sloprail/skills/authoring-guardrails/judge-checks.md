@@ -139,6 +139,12 @@ is a load error (`allowed_tools` grants tools to a judge's agent; a script names
 its own by being an executable), and an **empty-string entry** in the list is
 refused at load (a blank name grants nothing).
 
+An entry may be a **scoped rule** in Claude Code's own syntax, and each list item
+reaches the harness whole, spaces included: `"Bash(curl -sL:*)"` lets the judge
+run commands that start with `curl -sL` and no other shell command, and
+`"WebFetch(domain:code.claude.com)"` limits fetches to one host. Quote such an
+entry in YAML, because its colon would otherwise start a mapping.
+
 ## What a judge can read and write
 
 The judge's agent starts in the **rule's own folder**, but it can **read the whole
@@ -161,6 +167,11 @@ Two things `allowed_tools` can still widen, so name them deliberately:
 
 - **`Write` / `Edit`** are granted unscoped: they cannot touch the project, but
   can write elsewhere on disk. A judge never needs them for its verdict.
+- **A scoped `Bash(...)` rule** grants that command family with all its
+  flags. Measured: under `Bash(curl:*)`, `curl -o <path>` wrote a file inside a
+  readonly project and `-X POST -d @file` sent a file out. Under `Bash(awk:*)`,
+  `awk` wrote a file anywhere. Scope to the command and flags you mean, and
+  prefer a pipe (`curl -sL <url> | grep …`) in the rubric.
 - **`Bash`** is a shell. The project stays denied to the writes Claude Code
   recognises, but a shell can run any program, and no permission rule sandboxes
   what that program does. Grant it only when the judge must *run* something, and
