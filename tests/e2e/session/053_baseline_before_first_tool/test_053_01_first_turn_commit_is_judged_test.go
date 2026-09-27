@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -27,6 +29,42 @@ if printf '%s' "$payload" | grep -q refund; then
 fi
 exit 0
 `
+
+// requireRecordUnwrittenAtSessionStart fails the test unless the session's
+// record did not exist while SessionStart ran — the order real Claude Code
+// writes it in, and the only one in which the defect these tests exist for can
+// happen. Read off the record itself rather than trusted to the mock's default:
+// the origin record (the first with no parent) is the SessionStart hook's own
+// attachment only when nothing was written before the hook ran. If a mock ever
+// wrote the record early again, these tests would pass without testing
+// anything; this makes them fail instead.
+func requireRecordUnwrittenAtSessionStart(t *testing.T, e *Env, proj, sess string) {
+	t.Helper()
+	body, err := os.ReadFile(e.TranscriptPath(proj, sess))
+	if err != nil {
+		t.Fatalf("read the session's record: %v", err)
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		var rec struct {
+			Type       string  `json:"type"`
+			UUID       string  `json:"uuid"`
+			ParentUUID *string `json:"parentUuid"`
+			Attachment struct {
+				HookEvent string `json:"hookEvent"`
+			} `json:"attachment"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.UUID == "" || rec.ParentUUID != nil {
+			continue
+		}
+		if rec.Type != "attachment" || rec.Attachment.HookEvent != "SessionStart" {
+			t.Fatalf("the record's origin is a %q entry, not the SessionStart hook's attachment: the "+
+				"record existed before SessionStart ran, so this session is not the one real Claude "+
+				"Code runs and proves nothing", rec.Type)
+		}
+		return
+	}
+	t.Fatalf("the session's record has no origin entry at all")
+}
 
 // setUpBilling makes a repository whose billing code and guard are committed —
 // the tree a session begins on — and returns that commit.
@@ -62,6 +100,7 @@ func TestT053_01_FirstTurnCommitIsStillJudged(t *testing.T) {
 		Write("w1", "src/charge.go", "package src\n\nfunc Charge(cents int) int { return cents - refund(cents) }\n\nfunc refund(c int) int { return c / 10 }\n"),
 		Bash("b1", "git add -A && git commit -m 'goodwill refund'"),
 	))
+	requireRecordUnwrittenAtSessionStart(t, e, proj, sess)
 
 	if e.Git(proj, "log", "-1", "--format=%s", setup+"..HEAD") == "" {
 		t.Fatalf("the agent did not commit, so this proves nothing about a committed change")
@@ -97,6 +136,7 @@ func TestT053_02_FirstTurnUncommittedIsJudged(t *testing.T) {
 	e.Run(proj, sess, "add a goodwill refund to the charge path", Turns("done",
 		Write("w1", "src/charge.go", "package src\n\nfunc Charge(cents int) int { return cents - refund(cents) }\n\nfunc refund(c int) int { return c / 10 }\n"),
 	))
+	requireRecordUnwrittenAtSessionStart(t, e, proj, sess)
 
 	if got := e.Meta(proj, sess, metaBaselineCommit); got != setup {
 		t.Errorf("baseline commit = %q, want %q", got, setup)
