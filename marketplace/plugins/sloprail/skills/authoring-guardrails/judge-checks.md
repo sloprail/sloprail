@@ -54,7 +54,14 @@ overwrite `event` or `transcriptPath` (it renders only under the single
 
 Every value renders escaped: the engine breaks `</` to `<\/`, so a value cannot
 close the tag it sits in, and changes nothing else. `| raw` undoes it for a value
-meant as markup. A rule grounded in citations judges `change` against them —
+meant as markup. A value inside a tag's quoted attribute (`path="{{ event.path }}"`)
+also has its quotes and `&` escaped, so it cannot end the attribute and add one of
+its own; the engine sees the attribute and does this itself. A non-string value —
+a map or list a `prepare` handed over as JSON — renders `| tojson`
+(`{{ additionalContext.action_input | tojson }}`): printed bare, its numbers and
+nested values come out as Go placeholders the judge cannot read. Wrap a value in a
+named tag, never a ``` fence: a value with a fence line of its own would close it.
+A rule grounded in citations judges `change` against them —
 [grounding.md](grounding.md).
 
 The template is **just the rubric and the material** — it does not tell the model

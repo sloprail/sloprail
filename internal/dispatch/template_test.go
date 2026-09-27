@@ -89,6 +89,27 @@ func TestTemplate_RegisteredFilters(t *testing.T) {
 	assert.Equal(t, "TestFoo", render(t, `{{ s | funcname }}`, `{"s":"e2e.TestFoo"}`))
 }
 
+// A value rendered inside a quoted tag attribute — `<file path="{{ event.path }}">`
+// — cannot end the attribute and add one of its own: there its quotes (and `&`)
+// are escaped too, while the same value in the tag's body keeps its quotes.
+func TestTemplate_AttributeValuesEscapeQuotes(t *testing.T) {
+	vars := `{"p":"x\" evil=\"1","q":"it's & more","n":4,"list":["a","b"],"b":false}`
+	for _, tc := range []struct{ src, want string }{
+		{`<file path="{{ p }}">{{ p }}</file>`, `<file path="x&#34; evil=&#34;1">x" evil="1</file>`},
+		{`<f a='{{ q }}'>`, `<f a='it&#39;s &amp; more'>`},
+		// Two interpolations in one value, a filter with a quoted argument, a
+		// filter chain, whitespace control and a ternary all stay one expression.
+		{`<c source="{{ p }}:{{ n | int }}" pools="{{ list | join(",") }}">`, `<c source="x&#34; evil=&#34;1:4" pools="a,b">`},
+		{`<c k="{{- p -}}">`, `<c k="x&#34; evil=&#34;1">`},
+		{`<c k="{{ p if b else q }}">`, `<c k="it&#39;s &amp; more">`},
+		// Outside a tag — prose, a comparison, a tag's body — nothing changes.
+		{`a < b and x="{{ p }}"`, `a < b and x="x" evil="1"`},
+		{`<t>{{ q }}</t> {% if p == "<x a=\"" %}y{% endif %}`, `<t>it's & more</t> `},
+	} {
+		assert.Equal(t, tc.want, render(t, tc.src, vars), "template: %s", tc.src)
+	}
+}
+
 // FAIL-CLOSED: a template gonja cannot PARSE (a malformed or unclosed tag) is an
 // error, not a silent blank — the caller refuses on it. These are the malformed
 // shapes gonja rejects promptly with a parse error; the one it instead HANGS on
