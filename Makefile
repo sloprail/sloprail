@@ -125,11 +125,12 @@ RELEASE_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
 # bump-version updates every plugin.json + marketplace.json to VERSION,
 # lockstep with the repo's own release. The ordinary way to cut a release is
-# `make cut-release VERSION=0.2.1` (scripts/cut-release.sh) — it runs this,
-# commits, pushes a branch and opens the bump PR in one command, so nobody
-# has to do the sequence by hand. This target (and scripts/bump-version.sh
-# directly) stays for a local dry run of what that script would write.
-# VERSION is bare semver (0.2.0), no leading v.
+# `make cut-release VERSION=0.2.1` then, once that PR is merged, `make
+# cut-release-tag VERSION=0.2.1` (both scripts/cut-release.sh) — between them
+# they run this, commit, push, open the PR, and tag, so nobody has to do the
+# sequence by hand. This target (and scripts/bump-version.sh directly) stays
+# for a local dry run of what that script would write. VERSION is bare semver
+# (0.2.0), no leading v.
 .PHONY: bump-version
 bump-version:
 	@if [ -z "$(VERSION)" ]; then \
@@ -138,7 +139,7 @@ bump-version:
 	fi
 	@./scripts/bump-version.sh "$(VERSION)"
 
-# cut-release runs scripts/cut-release.sh: bumps, commits, pushes a
+# cut-release runs scripts/cut-release.sh open: bumps, commits, pushes a
 # release/vX.Y.Z branch and opens the PR that starts a release — see that
 # script's own header for why this has to run as a real person (you) rather
 # than as a GitHub Action.
@@ -148,7 +149,20 @@ cut-release:
 		echo "make: VERSION is required — make cut-release VERSION=0.2.1" >&2; \
 		exit 1; \
 	fi
-	@./scripts/cut-release.sh "$(VERSION)"
+	@./scripts/cut-release.sh open "$(VERSION)"
+
+# cut-release-tag runs scripts/cut-release.sh tag: once cut-release's PR has
+# been merged, this tags main — which is what actually triggers release.yml
+# to build and publish. Also has to run as a real person, for the same
+# GITHUB_TOKEN-anti-recursion reason the bump PR does; see the script's own
+# header.
+.PHONY: cut-release-tag
+cut-release-tag:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "make: VERSION is required — make cut-release-tag VERSION=0.2.1" >&2; \
+		exit 1; \
+	fi
+	@./scripts/cut-release.sh tag "$(VERSION)"
 
 # verify-version fails if the pushed tag and the committed plugin.json/
 # marketplace.json versions disagree — the release.yml gate that catches a
