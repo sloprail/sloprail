@@ -153,6 +153,40 @@ func TestTemplate_ParseErrorNamesOnlyTheAuthorsTemplate(t *testing.T) {
 	}
 }
 
+// FAIL-CLOSED on a filter this engine does not have: gonja itself renders an
+// unknown filter as its error object's name (`<*errors.errorString>`) and
+// reports no error, so a typo would hand the judge garbage. Every filter name —
+// in an expression, in a `{% filter %}` block, in a branch that does not run, in
+// an attribute value — is checked before rendering, and the error names it.
+func TestTemplate_UnknownFilterFailsClosed(t *testing.T) {
+	for _, src := range []string{
+		`{{ p | nosuch }}`,
+		`{{ p | upper | nosuch(1) }}`,
+		`{% filter nosuch %}x{% endfilter %}`,
+		`{% if b %}{{ p | nosuch }}{% endif %}`,
+		`{% for x in list %}{{ x | nosuch }}{% endfor %}`,
+		`<c k="{{ p | nosuch }}">`,
+		`{% set y = p | nosuch %}{{ y }}`,
+	} {
+		out, err := renderTemplate(src, map[string]any{"p": "v", "b": false, "list": []any{"a"}})
+		if assert.Error(t, err, "an unknown filter rendered %q from %s", out, src) {
+			assert.Contains(t, err.Error(), `"nosuch"`, "the error must name the filter: %s", src)
+		}
+		assert.Error(t, CheckTemplate(src), "CheckTemplate must report the unknown filter: %s", src)
+	}
+	assert.NoError(t, CheckTemplate(`{{ p | upper | tojson }} {% filter lower %}X{% endfilter %}`))
+}
+
+// FAIL-CLOSED on a filter that returns an error instead of raising one — gonja's
+// own slice, sum, unique and urlize do — which would otherwise print the error
+// object's name into the prompt.
+func TestTemplate_FilterErrorValueFailsClosed(t *testing.T) {
+	out, err := renderTemplate(`{{ p | slice("3") }}`, map[string]any{"p": []any{"a", "b"}})
+	if assert.Error(t, err, "a filter's error value rendered as %q", out) {
+		assert.Contains(t, err.Error(), "slice")
+	}
+}
+
 // FAIL-CLOSED: a template gonja cannot PARSE (a malformed or unclosed tag) is an
 // error, not a silent blank — the caller refuses on it. These are the malformed
 // shapes gonja rejects promptly with a parse error; the one it instead HANGS on

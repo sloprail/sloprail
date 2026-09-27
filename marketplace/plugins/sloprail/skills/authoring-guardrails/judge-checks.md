@@ -65,7 +65,10 @@ literal output and is left as written. A non-string value — a map or list a
 nested values come out as Go placeholders the judge cannot read. The engine's
 `tojson` keeps `&`, `<` and `>` as written and breaks only `</` (as JSON's own
 `<\/`), so the value reads back exactly. Wrap a value in a named tag, never a
-markdown code fence: a value with a fence line of its own would close it.
+markdown code fence: a value with a fence line of its own would close it. A filter
+name the engine does not have (a typo like `| uppper`) is not rendered as garbage:
+the judge refuses, naming the template and the filter, and the load check
+(`sr-session start < /dev/null`) reports it before any rule runs.
 A rule grounded in citations judges `change` against them —
 [grounding.md](grounding.md).
 

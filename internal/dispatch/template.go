@@ -178,13 +178,14 @@ func cheapEscape(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Va
 }
 
 // renderJudgeTemplate renders a judge's template with its attribute values
-// escaped (escapeAttributeValues). The author's template is parsed AS WRITTEN
-// first, so one that does not parse is reported in its own terms — its own
-// positions, nothing the engine injected — and only a template that parses is
-// rewritten and rendered.
+// escaped (escapeAttributeValues). The author's template is checked AS WRITTEN
+// first (CheckTemplate), so one that does not parse, or names a filter this
+// engine does not have, is reported in its own terms — its own positions,
+// nothing the engine injected — and only a template that passes is rewritten and
+// rendered.
 func renderJudgeTemplate(src string, vars map[string]any) (string, error) {
-	if _, err := newTemplateEnv().FromString(src); err != nil {
-		return "", fmt.Errorf("template: parse: %w", err)
+	if err := CheckTemplate(src); err != nil {
+		return "", err
 	}
 	return renderGonja(escapeAttributeValues(src), vars)
 }
@@ -232,6 +233,7 @@ func newTemplateEnv() *gonja.Environment {
 			return e.ValueFactory.Value(s)
 		},
 	})
+	raiseFilterErrors(env.Filters)
 	return env
 }
 
