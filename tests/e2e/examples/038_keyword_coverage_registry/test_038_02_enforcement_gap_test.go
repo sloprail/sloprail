@@ -51,6 +51,11 @@ func TestT038_04_UncoveredScannerRefused(t *testing.T) {
 	if !strings.Contains(joined, "verify-scanner-coverage") {
 		t.Errorf("the refusal did not name the gate:\n%s", joined)
 	}
+	// The remedy names the keywords to search, and that the covering call counts
+	// even when it finds nothing — a real run thrashed for want of both.
+	if !strings.Contains(joined, `mine: "guardrail" "llm" "agent"`) || !strings.Contains(joined, "even if GitHub returns nothing") {
+		t.Errorf("the refusal does not spell out the covering search:\n%s", joined)
+	}
 }
 
 // T038_06: a declared scanner whose keywords ALL appear together in ONE gh call
