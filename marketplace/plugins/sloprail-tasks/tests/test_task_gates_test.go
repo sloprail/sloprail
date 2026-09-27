@@ -48,22 +48,21 @@ func TestGates_FailingScriptGateBlocksThenPassingPermits(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-gates-sh"
-	tp := e.TranscriptPath(proj, sess)
-	body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
-	backlogDoc := "---\nstatus: backlog\npriority: P1\n---\n\n" + body + "\n"
+	body := askBody
+	backlogDoc := task("backlog", "P1", body)
 
 	// Land the task (backlog) and the failing gate in one run, so the gate
 	// write itself is judged (grounded, real content) and then the task
 	// enters backlog cleanly.
 	res0 := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w0", gatesTaskPath, backlogDoc),
+		srWrite("b0", gatesTaskPath, backlogDoc, citeUser(askQuote)),
 		Write("w1", gateShPath, failingGate),
 	))
 	if res0.Refused() {
 		t.Fatalf("landing the task and its gate at backlog was refused (setup broken):\n%s", res0.Output)
 	}
 
-	toDoDoc := "---\nstatus: to_do\npriority: P1\n---\n\n" + body + "\n"
+	toDoDoc := task("to_do", "P1", body)
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w2", gatesTaskPath, toDoDoc),
 	))
@@ -116,12 +115,11 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 		sess := "s-gates-md-fail"
-		tp := e.TranscriptPath(proj, sess)
-		body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
-		backlogDoc := "---\nstatus: backlog\npriority: P1\n---\n\n" + body + "\n"
+		body := askBody
+		backlogDoc := task("backlog", "P1", body)
 
 		res0 := e.Run(proj, sess, authPrompt, Turns("done",
-			Write("w0", gatesTaskPath, backlogDoc),
+			srWrite("b0", gatesTaskPath, backlogDoc, citeUser(askQuote)),
 			Write("w1", gateMdPath, judgmentGate),
 		))
 		if res0.Refused() {
@@ -133,7 +131,7 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		// the only one this verdict can apply to.
 		e.InstallJudgeClaude(`{"pass": false, "reasoning": "GATES: the launch video does not exist."}`)
 
-		toDoDoc := "---\nstatus: to_do\npriority: P1\n---\n\n" + body + "\n"
+		toDoDoc := task("to_do", "P1", body)
 		res := e.Run(proj, sess, authPrompt, Turns("done",
 			Write("w2", gatesTaskPath, toDoDoc),
 		))
@@ -153,19 +151,18 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 		sess := "s-gates-md-pass"
-		tp := e.TranscriptPath(proj, sess)
-		body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
-		backlogDoc := "---\nstatus: backlog\npriority: P1\n---\n\n" + body + "\n"
+		body := askBody
+		backlogDoc := task("backlog", "P1", body)
 
 		res0 := e.Run(proj, sess, authPrompt, Turns("done",
-			Write("w0", gatesTaskPath, backlogDoc),
+			srWrite("b0", gatesTaskPath, backlogDoc, citeUser(askQuote)),
 			Write("w1", gateMdPath, judgmentGate),
 		))
 		if res0.Refused() {
 			t.Fatalf("landing the task and its judgment gate was refused (setup broken):\n%s", res0.Output)
 		}
 
-		toDoDoc := "---\nstatus: to_do\npriority: P1\n---\n\n" + body + "\n"
+		toDoDoc := task("to_do", "P1", body)
 		res := e.Run(proj, sess, authPrompt, Turns("done",
 			Write("w2", gatesTaskPath, toDoDoc),
 		))

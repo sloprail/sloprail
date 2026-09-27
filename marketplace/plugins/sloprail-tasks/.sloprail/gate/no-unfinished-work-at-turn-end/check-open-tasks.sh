@@ -171,10 +171,14 @@ Each of these must reach a status that is allowed to rest before the turn ends.
 There are four ways to do that, and three of them do not require finishing the
 work:
 
-  1. FINISH IT — do the work, then set status: in_review and cite the user's own
-     words about what was asked and what proves it done, as [quote](jsonl-path)
-     links. The review guardrail judges the claim; approved tasks are deleted
-     folder and all.
+  1. FINISH IT — do the work and run what proves it (the tests, the build). Then
+     name the changed files under `artifacts:` and move the task to in_review with
+     sr-file, citing that output exactly, on its own line:
+
+       sr-file edit <task>/TASK.md --old-string 'status: in_progress' --new-string 'status: in_review' --cite:tool_result '<exact line of the output>'
+
+     The proof rides on the command, never in the file. The review guardrail
+     judges the claim; approved tasks are deleted folder and all.
 
   2. status: blocked — you cannot proceed. The body must NAME the blocker: what you
      are waiting on and who or what unblocks it. "Blocked" with no named blocker is
@@ -184,7 +188,8 @@ work:
      genuinely deferred rather than abandoned.
 
   4. status: in_review — you are already done and just had not said so. Same
-     evidence requirement as (1).
+     evidence requirement as (1): cite the tool output on the write, list the
+     artifacts.
 
 Do NOT invent a status to get past this. The schema has exactly five (backlog,
 to_do, in_progress, in_review, blocked) and there is no `done`: a task the

@@ -41,8 +41,8 @@ func TestPluginStructureGateParses(t *testing.T) {
 // the plugin's own allow list names first, lands inside memories/tasks/ -- the
 // plugin's structure gate is the ONLY thing that could refuse a bare Write at
 // a fresh path (no citation is required by the structure gate itself; the
-// task's OTHER guards run too, so the body is grounded and the judge stubbed
-// PASS to isolate the structure decision).
+// task's OTHER guards run too, so the write cites the user's words and the
+// judge is stubbed PASS to isolate the structure decision).
 func TestStructureGate_AllowedWriteInsideScopePermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -51,12 +51,8 @@ func TestStructureGate_AllowedWriteInsideScopePermits(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-structure-allowed"
-	tp := e.TranscriptPath(proj, sess)
-	body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
-	doc := task("backlog", "P1", body)
-
 	res := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w1", taskPath, doc),
+		srWrite("b1", taskPath, task("backlog", "P1", askBody), citeUser(askQuote)),
 	))
 	if res.Refused() {
 		t.Fatalf("a TASK.md write matching the plugin's own allow list was refused:\n%s", res.Output)

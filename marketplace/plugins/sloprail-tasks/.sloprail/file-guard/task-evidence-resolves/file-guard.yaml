@@ -1,30 +1,36 @@
-# A task's frontmatter is valid and its DELIVERY-evidence citations resolve — the
-# DETERMINISTIC floor of task management. It spends no model call and answers only
-# questions a schema check, a transcript lookup, or a filesystem lookup can settle:
-# every memories/tasks/<category>/<name>/TASK.md must satisfy
-# .sloprail/schemas/task.cue, and every observation/artifact citation in its
-# frontmatter must resolve to the thing its KIND promises. The full argument lives
-# in the plugin's README, migrated from the old-format rule doc.
+# A task's frontmatter is valid, its artifacts resolve, and its move into
+# in_review is grounded in tool output — the DETERMINISTIC floor of task
+# management. It spends no model call and answers only questions a schema check, a
+# filesystem lookup, or the event's own citations can settle. The full argument
+# lives in the plugin's README.
 #
-# TWO CITATION KINDS, DIFFERENT PATH BASES (2026-08-21). The delivery evidence is
-# structured FRONTMATTER, not body links (the body's ask is task-body-is-human-
-# authored's subject). The two kinds resolve differently:
-#   - an OBSERVATION `<abs-jsonl>:<ranges>` — every cited line must be a tool_result
-#     the session produced, confirmed by `sr-session trajectory tool-result --line`
-#     (the same tool_result classification cite's --source-types tool_result uses).
-#   - an ARTIFACT `<repo-relative-file>:<ranges>` — the file exists under the repo
-#     and every cited line exists, the file-citation checker task.cue cannot make.
-# The path base ROUTES each: an observation is absolute and a transcript, an artifact
-# is repo-relative and a tree file, and one wearing the other's shape is refused.
+# TWO KINDS OF DELIVERY EVIDENCE, TWO PLACES (2026-09). The repository keeps
+# derived text only, never a transcript path — a session .jsonl resolves on no
+# other machine. So:
+#   - an ARTIFACT `<repo-relative-file>:<ranges>` stays in the FRONTMATTER: it
+#     names repository content. The file exists under the repo and every cited
+#     line exists — the file-citation check task.cue cannot make.
+#   - the PROOF that the work happened is tool output (a test run that came back
+#     green), and it rides on the WRITE that moves the task into in_review:
+#     `sr-file edit …/TASK.md --old-string 'status: in_progress' --new-string
+#     'status: in_review' --cite:tool_result '<exact output>'`. The session
+#     resolves the quote against its own record before any check runs, so this
+#     script only counts `.event.citations` whose sourceTypes include tool_result.
+#     (The frontmatter `observations:` list of absolute `.jsonl:<ranges>` strings
+#     this replaced is gone from the schema.)
 #
-# THIS IS THE STRUCTURAL HALF ONLY. It answers "do the citations resolve", never
+# WHY NOT `require: [{citation: {source_types: [tool_result]}}]`. That would demand
+# tool output on EVERY write to a task — creating one, changing its priority. Only
+# the TRANSITION into in_review (old status not in_review, new status in_review)
+# is a claim of finished work, so the condition lives in the script.
+#
+# THIS IS THE STRUCTURAL HALF ONLY. It answers "is the evidence there", never
 # "does the evidence substantiate the claim" — that is task-review's model call,
 # gated behind this. The split is crisp and deliberate; see the README.
 #
-# A SCRIPT check, migrated from the old-format Pre+Post command hook (check-task.sh).
-# The detection logic is deterministic — `sr-file validate` for the schema, the
-# transcript reader and the tree checker for the two citation kinds — so it stays a
-# script; no model, so no judge: to convert to.
+# A SCRIPT check. The logic is deterministic — `sr-file validate` for the schema,
+# the tree checker for artifacts, a count over `.event.citations` for the proof —
+# so it stays a script; no model, so no judge.
 #
 # match: the task file, TWO directory levels deep —
 # `memories/tasks/<category>/<name>/TASK.md`, the old regex
@@ -35,15 +41,17 @@
 match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 
 # preventive: true reproduces the old Pre+Post binding. A preventive file-guard
-# fires on the PRE write to refuse a malformed/ungrounded TASK.md before it lands
+# fires on the PRE write to refuse a malformed or unproven TASK.md before it lands
 # (the right moment for a rule about permission to act), AND, like every guard,
 # fires the after-check at Stop on the SETTLED file. The Post after-check is the
-# backstop Pre cannot cover: a task written by a command/heredoc/sed whose result
-# the engine cannot derive reaches Pre unverifiable — a preventive guard fails
-# CLOSED engine-side there and the settled file is judged at Stop, where newContent
-# carries the settled bytes off the tree diff. check-task.sh handles both moments:
-# it dispatches on .event.kind, consulting .event.resultKnown on the Pre kinds
-# before reading .event.newContent, and reading the file on disk on Post.
+# backstop Pre cannot cover: a write whose result the engine cannot derive reaches
+# Pre unverifiable — a preventive guard fails CLOSED engine-side there — and a
+# write that reached the tree without passing pre-tool is judged at Stop, where the
+# event's oldContent is the session baseline and its citations are those recorded
+# for the path this session (cited changes accumulate). check-task.sh
+# handles both moments: it dispatches on .event.kind, consulting .event.resultKnown
+# on the Pre kinds before reading .event.newContent, and reading the file on disk
+# on Post.
 preventive: true
 
 checks:

@@ -8,10 +8,11 @@
 # gates/ to already be a meaningful, honestly authorized test (see its own
 # header) and nothing else re-checks a gate's content once it exists.
 #
-# A GATE CARRIES NO CITATIONS OF ITS OWN. Only TASK.md cites the user's
-# words, and that citation's grounding is task-body-is-human-authored's
-# subject — already validated separately, every time TASK.md is written. A
-# gate is DERIVED FROM the task, not from the transcript directly, so this
+# A GATE CARRIES NO CITATIONS OF ITS OWN. Only a write that creates a
+# TASK.md or changes its body is grounded in the user's words (cited on the
+# sr-file command), and that grounding is task-body-is-human-authored's
+# subject — already validated separately, every time TASK.md's body is
+# written. A gate is DERIVED FROM the task, not from the transcript, so this
 # guard asks one question with one check: is this gate file traceable to,
 # non-contradicting of, and non-trivial against the task's OWN content (as it
 # stands) — never a second citation-grounding pipeline duplicating what

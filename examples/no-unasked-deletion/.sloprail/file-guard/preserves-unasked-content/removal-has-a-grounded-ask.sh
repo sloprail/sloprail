@@ -14,7 +14,9 @@ set -uo pipefail
 
 input="$(cat)"
 path="$(printf '%s' "$input" | jq -r '.event.path')"
-old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
+# oldContent exists only on the update and delete kinds; a create has nothing
+# before it, so its prior content is empty by construction, not by default.
+old="$(printf '%s' "$input" | jq -r 'if (.event.kind // "" | endswith("Create")) then "" else .event.oldContent end')"
 cited="$(printf '%s' "$input" \
   | jq '[(.event.citations // [])[] | select((.sourceTypes // []) | index("user"))] | length')"
 

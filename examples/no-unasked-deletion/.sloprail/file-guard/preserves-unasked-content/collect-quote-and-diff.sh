@@ -18,7 +18,9 @@
 set -uo pipefail
 
 input="$(cat)"
-old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
+# oldContent exists only on the update and delete kinds; a create has nothing
+# before it, so its prior content is empty by construction, not by default.
+old="$(printf '%s' "$input" | jq -r 'if (.event.kind // "" | endswith("Create")) then "" else .event.oldContent end')"
 
 empty() {
   jq -n '{additionalContext: {asked_quotes: [], change_diff: "", asked_envelope: "", pure_addition: false}}'

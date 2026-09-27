@@ -1,100 +1,93 @@
 #!/usr/bin/env bash
-# prepare for stage 2 of task-body-is-human-authored: hand the judge the human's
-# own words the body cites, so judge-body.md.j2 never has to parse a transcript
-# itself. Receives the SAME CheckPayload the stage-1 script did.
+# prepare for stage 2 of task-body-is-human-authored: hand the judge the user's own
+# words the write cited, so judge-body.md.j2 never reads a transcript itself.
+# Receives the SAME CheckPayload stage 1 (body-change-is-cited.sh) did.
 #
-# Reached only once stage 1 (has-body-citation.sh) passed — so the body is known
-# to carry at least one `[quote](jsonl-path)` link, and every quote is known to
-# GROUND via cite to a real user message. This prepare's ONE job is to assemble
-# those grounded quotes (and, for an AskUserQuestion answer, the whole question +
-# answers envelope) as the judge's ground truth.
+# THE GROUND TRUTH is `.event.citations`, the `user`-pool entries: each is a quote
+# the session already resolved to exactly one message the user wrote, with the
+# transcript `path` and `line` it resolved to. The judge is shown each quote and
+# its `path:line`; for a quote that is an AskUserQuestion answer, `cite
+# --include-envelope` adds the question it answered, which the answer alone does
+# not carry (a judge cannot weigh "the second option" without the question).
 #
-# WHY THE QUOTES ARE THE GROUND TRUTH. Under the citation-link model the link TEXT
-# is the user's own words, already verbatim. cite has confirmed each resolves to a
-# real user message, so the quote itself IS what the human said — no separate
-# transcript read is needed to recover it. `cite --include-envelope` adds the
-# question behind an AskUserQuestion answer, which the answer alone does not carry
-# (the same reason no-unasked-deletion's prepare fetches it): a judge cannot weigh
-# "the second option" without the question it answered.
+# SKIPS THE JUDGE when no grounding was required — a status/frontmatter-only change
+# leaves the body byte-identical, and stage 1 permitted it without a citation — so
+# no model call is spent on a write that changed nothing the judge rules on. Also
+# skips an underivable Pre write (resultKnown false): the settled bytes are judged
+# at Stop instead.
 #
-# Output nests under `additionalContext` — the one key the engine reads from a
-# prepare's stdout. Emits .cited_messages (the assembled ground truth), .cited_ok
-# (whether any resolved) and .body (the prose the judge rules on — the FRONTMATTER
-# is another rule's subject).
-#
-# THE PREPARE CONTRACT: exit 0 with additionalContext proceeds to the judge; a
-# non-zero exit fails the check closed. The old judge FAILED OPEN if it could not
-# read the cited messages; a prepare cannot permit-without-judging, so instead it
-# reports cited_ok=false to the template, which treats absent ground truth as a
-# fail (see the FAIL-OPEN reconciliation in file-guard.yaml).
+# Output nests under `additionalContext` (the one key the engine reads from a
+# prepare): .cited_messages (the assembled ground truth), .cited_ok (whether any
+# citation was found) and .body (the prose the judge rules on). `{"skip": true}`
+# abstains. A non-zero exit fails the check closed.
 set -uo pipefail
 
-event="$(cat)"
+skip() { printf '{"skip": true}\n'; exit 0; }
 
-path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
-root="${SR_WORKSPACE:-.}"
-gdir="${SR_GUARDRAIL_DIR:-.}"
+command -v jq >/dev/null 2>&1 || {
+  echo "task-body-is-human-authored: jq is not on PATH, so the cited messages could not be assembled" >&2
+  exit 1
+}
 
-lib="$gdir/../task-evidence-resolves/cite-links.sh"
+payload="$(cat)"
+field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
+
+path="$(field '.event.path // empty')"
+kind="$(field '.event.kind // ""')"
+
+lib="${SR_GUARDRAIL_DIR:-.}/lib-body.sh"
 if [ ! -f "$lib" ]; then
-  echo "task-body-is-human-authored: cite-links.sh not found at $lib, so the cited messages could not be resolved" >&2
+  echo "task-body-is-human-authored: lib-body.sh not found at $lib, so the cited messages could not be assembled" >&2
   exit 1
 fi
-# shellcheck source=../task-evidence-resolves/cite-links.sh
+# shellcheck source=lib-body.sh
 . "$lib"
 
-# Same kind dispatch as stage 1, so the two never disagree about which bytes are
-# the body. resultKnown is consulted on both Pre kinds before newContent is read.
-kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+# The same kind dispatch as stage 1, so the two never disagree about which bytes
+# are the body. resultKnown is consulted on both Pre kinds before newContent is read.
 case "$kind" in
-  PostFileCreate|PostFileUpdate)
-    abs="$root/$path"
-    content="$(cat "$abs" 2>/dev/null || true)"
+  PreFileCreate | PreFileUpdate)
+    [ "$(field '.event.resultKnown // false')" = "true" ] || skip
+    content="$(field '.event.newContent // ""')"
     ;;
-  PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
-    if [ "$known" != "true" ]; then
-      content=""
-    else
-      content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
-    fi
+  PostFileCreate | PostFileUpdate)
+    abs="${SR_WORKSPACE:-.}/$path"
+    [ -f "$abs" ] || skip
+    content="$(cat "$abs")" || {
+      echo "task-body-is-human-authored: could not read $path to assemble the judge's input" >&2
+      exit 1
+    }
     ;;
   *)
-    content=""
+    skip
     ;;
 esac
 
-# THE BODY IS THE PROSE AFTER THE FRONTMATTER — the same extraction stage 1 uses.
-body="$(printf '%s\n' "$content" | awk '
-  BEGIN { seen = 0 }
-  NR == 1 && $0 == "---" { seen = 1; next }
-  seen == 1 && $0 == "---" { seen = 2; next }
-  seen == 1 { next }
-  { print }
-')"
+body="$(task_body "$content")"
 
-# THE CITED MESSAGES, from the grounded quotes. Each link text is the user's own
-# words; cite --include-envelope resolves it and appends the answer envelope when
-# the quote is an AskUserQuestion answer (empty for a plain message). Best-effort
-# per link: stage 1 already GROUNDED every quote, so an empty result here is this
-# prepare's own second lookup failing, not evidence about the body.
+# Grounding not required: the body is unchanged, so there is nothing to judge.
+case "$kind" in
+  PreFileUpdate | PostFileUpdate)
+    [ "$body" = "$(task_body "$(field '.event.oldContent // ""')")" ] && skip
+    ;;
+esac
+
+cites="$(user_citations "$payload")"
+
+# One block per citation: the quote, where it resolved, and — for an answer to a
+# question — the question behind it. The envelope lookup is best-effort: the quote
+# already resolved (the session did it), so an empty envelope means a plain message.
 cited_messages=""
-while IFS="$(printf '\t')" read -r href quote; do
-  [ -n "$href" ] || continue
-  cpath="$(cite_link_href_path "$href")"
-  case "$cpath" in
-    /*) : ;;
-    *)  cpath="$root/$cpath" ;;
-  esac
-  # The quote itself is the user's words. Attach the envelope if there is one.
+while IFS= read -r c; do
+  [ -n "$c" ] || continue
+  quote="$(printf '%s' "$c" | jq -r '.quote')"
+  cpath="$(printf '%s' "$c" | jq -r '.path')"
+  cline="$(printf '%s' "$c" | jq -r '.line')"
   envelope=""
   if [ -f "$cpath" ]; then
-    cite_out="$(sr-session trajectory cite --include-envelope --path "$cpath" "$quote" 2>/dev/null || true)"
-    # Drop the first line (the <path>:<line> citation) and the blank line after it;
-    # what remains is the envelope, empty for a plain user message.
-    envelope="$(printf '%s\n' "$cite_out" | tail -n +3)"
+    envelope="$(sr-session trajectory cite --include-envelope --path "$cpath" "$quote" 2>/dev/null | tail -n +3)"
   fi
-  cited_messages="${cited_messages}--- the user said (cited ${href}):
+  cited_messages="${cited_messages}--- the user said (cited ${cpath}:${cline}):
 ${quote}
 "
   if [ -n "$envelope" ]; then
@@ -105,7 +98,7 @@ ${envelope}
   cited_messages="${cited_messages}
 "
 done <<EOF
-$(cite_links_extract "$body")
+$(printf '%s' "${cites:-[]}" | jq -c '.[]' 2>/dev/null)
 EOF
 
 cited_ok=false

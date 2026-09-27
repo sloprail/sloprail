@@ -1,10 +1,10 @@
 # `in_review` is a claim; this guard is what judges it. A task whose status is
 # `in_review` asserts the work is finished and that the evidence it carries proves
-# it. This guard reads the stated outcome, reads the FRONTMATTER observations and
-# artifacts — the DELIVERY evidence — and asks a model whether that evidence
-# actually substantiates the claim. Without it, `in_review` is a status an agent
-# can write about its own work and nothing ever tests. The full argument lives in
-# README.md, migrated from the old-format rule doc.
+# it. This guard reads the stated outcome, reads the DELIVERY evidence — the tool
+# output cited on the write that made the claim, and the frontmatter artifacts —
+# and asks a model whether that evidence actually substantiates the claim. Without
+# it, `in_review` is a status an agent can write about its own work and nothing
+# ever tests. The full argument lives in README.md.
 #
 # THIS ALSO RE-HOLDS THE TASK'S OWN gates/. A gate is the task's declared
 # precondition, held once at the START of work by task-gates-hold; a condition
@@ -17,13 +17,17 @@
 #
 # THIS PROVES DELIVERY, NOT THE ASK. An earlier cut of this guard re-cited the
 # USER's own words — a duplicate of task-body-is-human-authored, and conceptually
-# wrong: a review proves the work was DONE. The evidence it weighs is the delivery
-# evidence in the task's frontmatter, recovered from the old-format RUBRIC.md:
-#   - OBSERVATIONS — <abs-jsonl>:<ranges>, each cited line a tool_result the session
-#     produced (a test that came back green). Grounded against the `tool_result`
-#     pool via `sr-session trajectory tool-result --line`.
-#   - ARTIFACTS — <repo-relative-file>:<ranges>, the produced files at the lines
-#     that changed, resolved against the working tree.
+# wrong: a review proves the work was DONE. The evidence it weighs:
+#   - CITED TOOL RESULTS — the write that moved the task into in_review carried
+#     `sr-file … --cite:tool_result '<exact output>'`; the session resolved each
+#     quote to one tool_result of its record, and the Post event at Stop carries it
+#     in `.event.citations` (`{quote, sourceTypes, path, line}` — the citations
+#     recorded for this path this session; cited changes accumulate). The
+#     reviewer is shown each quote AND the full tool result at that line, via
+#     `sr-session trajectory tool-result --path --line`. The task file itself holds
+#     no transcript path: the repository keeps derived text only.
+#   - ARTIFACTS — <repo-relative-file>:<ranges> in the frontmatter, the produced
+#     files at the lines that changed, resolved against the working tree.
 # The judge weighs these against the claim: a task claiming X with evidence showing
 # X happening is APPROVED even if X was a poor idea; it checks the gap between what
 # the task says was done and what the evidence shows.
@@ -50,17 +54,18 @@
 #      pre-flight. Only `in_review` is reviewed (most task writes are
 #      to_do/in_progress and must cost nothing); every gates/*.sh under the
 #      task must STILL pass (run faithfully, the same way task-gates-hold runs
-#      them at the start); and every delivery citation must RESOLVE before a
-#      judge is shown anything — each observation line must be a tool_result,
-#      each artifact must exist in the tree. Evidence that does not resolve
-#      leaves nothing real to review, so it is refused here without a model
-#      call. task-evidence-resolves normally refuses these first; this handles
-#      the case it was bypassed.
-#   2. PREPARE + JUDGE: prepare (expand-evidence.sh) expands the frontmatter evidence
-#      to the bytes — each observation to the tool_result content at its cited line,
-#      each artifact to the cited tree lines — and collects every gates/*.md
-#      file's text; review-task.md.j2 asks the model whether that delivered
-#      evidence substantiates the claim the task makes AND whether every
+#      them at the start); and the delivery evidence must be THERE before a
+#      judge is shown anything — at least one tool_result citation on the event,
+#      at least one artifact, every artifact existing in the tree. Evidence that
+#      is absent leaves nothing real to review, so it is refused here without a
+#      model call. task-evidence-resolves normally refuses these first on the
+#      transition; this also covers a task already in_review when the session
+#      began, edited this session with no tool output cited.
+#   2. PREPARE + JUDGE: prepare (expand-evidence.sh) expands the evidence to the
+#      bytes — each tool_result citation to its quote plus the full tool result at
+#      its line, each artifact to the cited tree lines — and collects every
+#      gates/*.md file's text; review-task.md.j2 asks the model whether that
+#      delivered evidence substantiates the claim the task makes AND whether every
 #      judgment gate still holds.
 #
 # THE APPROVE/REJECT MAPPING — the one behaviour the binary judge model changes,

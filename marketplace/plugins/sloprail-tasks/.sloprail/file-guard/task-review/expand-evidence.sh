@@ -1,31 +1,32 @@
 #!/usr/bin/env bash
 # prepare for task-review: hand the judge the task's stated CLAIM and the DELIVERY
-# evidence, EXPANDED to the actual bytes, so review-task.md.j2 never has to parse a
+# evidence, EXPANDED to the actual bytes, so review-task.md.j2 never has to read a
 # transcript or open a file itself. Receives the SAME CheckPayload the pre-flight
 # did — but is a SEPARATE check, so it runs for EVERY status (a passing pre-flight
 # does not end the chain). It gates itself on status first: a non-in_review task is
 # SKIPPED here (see the skip branch below), so by the time evidence is assembled the
-# task is in_review, every observation line is a tool_result, and every artifact
-# resolves (the pre-flight already refused an in_review task whose evidence did not).
+# task is in_review, at least one tool output is cited, and every artifact resolves
+# (the pre-flight already refused an in_review task whose evidence did not).
 #
 # THIS IS ABOUT DELIVERY, NOT THE ASK. The evidence assembled here is proof the work
-# was DONE, weighed against the claim the task makes — it is NOT a re-citation of the
-# user's request (that is task-body-is-human-authored's subject). Both kinds are
-# FRONTMATTER citation strings, exactly the old-format review's $observations and
-# $artifacts, and they differ in PATH BASE and expansion:
+# was DONE, weighed against the claim the task makes — it is NOT the user's request
+# (that is task-body-is-human-authored's subject). Two kinds, from two places:
 #
-#   OBSERVATIONS — proof the work happened. Each is `<abs-jsonl>:<ranges>` into the
-#   session transcript. For each cited LINE, `sr-session trajectory tool-result
-#   --line` returns the tool_result's content — the test that came back green, the
-#   command whose output is the evidence. Showing the tool_result content (and only
-#   a line that IS one) is what lets the judge tell a real result from a narration.
+#   CITED TOOL RESULTS — proof the work happened. The write that made the claim
+#   carried `--cite:tool_result '<exact output>'`; the session resolved each quote
+#   to one tool_result of its record and the event carries it as a citation
+#   `{quote, sourceTypes, path, line}` (at Stop: the citations recorded for this
+#   path at pre-tool). For each one whose sourceTypes include tool_result, the
+#   judge is shown the quote and the FULL tool_result at that line, fetched with
+#   `sr-session trajectory tool-result --path <path> --line <line>` — the test run
+#   the quote came from, not just the line the agent chose to quote.
 #
-#   ARTIFACTS — where the result is. Each is `<repo-relative-file>:<ranges>` into the
-#   TREE; the cited lines are read straight off disk under the repo root, so the
-#   judge reviews the produced result at the lines that changed.
+#   ARTIFACTS — where the result is. Each is `<repo-relative-file>:<ranges>` in the
+#   frontmatter; the cited lines are read straight off disk under the repo root, so
+#   the judge reviews the produced result at the lines that changed.
 #
 # Output nests under `additionalContext` — the one key the engine reads. Emits
-# .task_body (the whole task, the stated claim), .observations and .artifacts (the
+# .task_body (the whole task, the stated claim), .cited_results and .artifacts (the
 # expanded evidence), .judgment_gates (every gates/*.md file's text — the task's
 # own start conditions, re-weighed HERE at the in_review claim rather than a
 # second judge call; gates/*.sh gates are NOT here, review-preflight.sh already
@@ -36,16 +37,21 @@
 # THE PREPARE CONTRACT: a non-zero exit fails the check closed. Exit 0 with
 # `additionalContext` proceeds to the judge; exit 0 with `{"skip": true}` ABSTAINS —
 # the judge is not invoked and this check reaches no verdict, so a non-in_review task
-# never pays for a review it is not up for (see the skip branch below). An
-# evidence-read failure on an in_review task is NOT a skip: it reports
-# evidence_ok=false and lets the judge run, which the template treats as a fail
-# rather than guessing at what it contained.
+# never pays for a review it is not up for. An evidence-read failure on an in_review
+# task is NOT a skip: it is reported inline (or as evidence_ok=false) and the judge
+# runs, which the template treats as a fail rather than guessing at what it held.
 #
-# Bounded like the old review: one task citing a 10,000-line range must not build an
-# unbounded prompt. Truncation is ANNOUNCED inline so a judge looking at part of a
-# slice knows it and can say the evidence was not legible (the template's legibility
-# criterion reads that marker), rather than inventing a verdict about unseen bytes.
+# Bounded like the old review: one tool result or one artifact range of 10,000
+# lines must not build an unbounded prompt. Truncation is ANNOUNCED inline so a
+# judge looking at part of a slice knows it and can say the evidence was not
+# legible (the template's legibility criterion reads that marker), rather than
+# inventing a verdict about unseen bytes.
 set -uo pipefail
+
+command -v jq >/dev/null 2>&1 || {
+  echo "task-review: jq is not on PATH, so the evidence could not be assembled" >&2
+  exit 1
+}
 
 event="$(cat)"
 
@@ -67,27 +73,24 @@ fi
 schema="$gdir/../../schemas/task.cue"
 
 # Post kind — the file is present and the validated frontmatter is where the status
-# and the two evidence lists are read.
+# and the artifacts are read.
 task_body="$(cat "$abs" 2>/dev/null || true)"
 doc="$(sr-file validate "$abs" --schema "$schema" --emit 2>/dev/null)"
 
 # ONLY an in_review task is reviewed. The pre-flight (check 1) already exits 0 for a
 # non-in_review task — but that only PASSES check 1; this judge is a SEPARATE check
 # and would otherwise still run (a passing check does not end the chain, only a
-# refusal does). So a to_do / in_progress / blocked / backlog task would pay for a
-# full model call it is not up for. `{"skip": true}` makes this check ABSTAIN: the
-# judge is not invoked and the check reaches no verdict, the same status gate the
-# pre-flight applies, now applied to the judge too. Read from the SAME validated
-# frontmatter the pre-flight uses (--emit is empty for a malformed task, so status is
-# empty and this skips too — correct: task-evidence-resolves owns that refusal, and a
-# malformed task is not one to review).
+# refusal does). `{"skip": true}` makes this check ABSTAIN: no model call, no
+# verdict. Read from the SAME validated frontmatter the pre-flight uses (--emit is
+# empty for a malformed task, so status is empty and this skips too — correct:
+# task-evidence-resolves owns that refusal, and a malformed task is not one to
+# review).
 status="$(printf '%s' "$doc" | jq -r '.status // empty' 2>/dev/null)"
 if [ "$status" != "in_review" ]; then
   printf '{"skip": true}\n'
   exit 0
 fi
 
-obs_lines="$(printf '%s' "$doc" | jq -r '(.observations // [])[]' 2>/dev/null)"
 art_lines="$(printf '%s' "$doc" | jq -r '(.artifacts // [])[]' 2>/dev/null)"
 
 # The same bounds the old review carried, for the same reason.
@@ -112,49 +115,56 @@ clip() {
   return 0
 }
 
-# ------------------------------------------------- expand the OBSERVATIONS ----
+# --------------------------------------------- expand the CITED TOOL RESULTS ----
 #
-# Each observation's cited LINES are the tool_result content the session produced.
-# tool-result --line returns that content for a line that IS a tool_result; the
-# pre-flight already confirmed each line is one, so a miss here is this prepare's own
-# re-read failing, reported inline rather than silently dropped.
-observations=""
+# Each tool_result citation's quote, and the whole tool_result it resolved to. The
+# session already confirmed the quote lands on exactly one tool_result, so a miss
+# here is this prepare's own re-read failing — reported inline rather than
+# silently dropped, so the judge can say the evidence was not legible.
+cited_results=""
 idx=0
-while IFS= read -r obs; do
-  [ -n "$obs" ] || continue
-  opath="$(citation_path "$obs")"
-  oranges="$(citation_ranges "$obs")"
-  observations="${observations}### observations[$idx] ${obs}
+while IFS= read -r c; do
+  [ -n "$c" ] || continue
+  quote="$(printf '%s' "$c" | jq -r '.quote')"
+  cpath="$(printf '%s' "$c" | jq -r '.path')"
+  cline="$(printf '%s' "$c" | jq -r '.line')"
+  cited_results="${cited_results}### cited_results[$idx] ${cpath}:${cline}
+quoted: ${quote}
+"
+  result="$(sr-session trajectory tool-result --path "$cpath" --line "$cline" 2>/dev/null)"
+  if [ -z "$result" ]; then
+    cited_results="${cited_results}[the citation resolved when the write was made, but its tool_result could not be re-read here]
+
+"
+    idx=$((idx + 1))
+    continue
+  fi
+  cited_results="${cited_results}full tool result:
 "
   shown=0
-  for n in $(citation_lines "$oranges"); do
+  while IFS= read -r rline; do
     if [ "$shown" -ge "$MAX_LINES_PER_CITATION" ]; then
-      observations="${observations}[TRUNCATED: this citation names more lines than were shown]
+      cited_results="${cited_results}[TRUNCATED: this tool result has more lines than were shown]
 "
       break
     fi
-    result="$(sr-session trajectory tool-result --path "$opath" --line "$n" 2>/dev/null)"
-    if [ -z "$result" ]; then
-      observations="${observations}${n}: [line grounded in pre-flight but its tool_result content could not be re-read here]
-"
-      shown=$((shown + 1))
-      continue
-    fi
-    if clip "$result"; then
-      observations="${observations}${n}: ${clip_out}
+    if clip "$rline"; then
+      cited_results="${cited_results}${clip_out}
 "
     else
-      observations="${observations}[TRUNCATED: the evidence exceeded the size this reviewer can show]
+      cited_results="${cited_results}[TRUNCATED: the evidence exceeded the size this reviewer can show]
 "
       break
     fi
     shown=$((shown + 1))
-  done
-  observations="${observations}
+  done <<EOF
+$result
+EOF
+  cited_results="${cited_results}
 "
   idx=$((idx + 1))
 done <<EOF
-$obs_lines
+$(printf '%s' "$event" | jq -c '(.event.citations // [])[] | select(((.sourceTypes // []) | index("tool_result")) != null)' 2>/dev/null)
 EOF
 
 # ---------------------------------------------------- expand the ARTIFACTS ----
@@ -220,12 +230,12 @@ ${gbody}
 fi
 
 evidence_ok=false
-{ [ -n "$observations" ] || [ -n "$artifacts" ]; } && evidence_ok=true
+{ [ -n "$cited_results" ] || [ -n "$artifacts" ]; } && evidence_ok=true
 
 jq -n \
   --arg body "$task_body" \
-  --arg obs "$observations" \
+  --arg results "$cited_results" \
   --arg art "$artifacts" \
   --arg gates "$judgment_gates" \
   --argjson ok "$evidence_ok" \
-  '{additionalContext: {task_body: $body, observations: $obs, artifacts: $art, judgment_gates: $gates, evidence_ok: $ok}}'
+  '{additionalContext: {task_body: $body, cited_results: $results, artifacts: $art, judgment_gates: $gates, evidence_ok: $ok}}'

@@ -17,9 +17,9 @@
 // The judge verdict is a fixed stub (InstallJudgeClaude) exactly as the main
 // suite's judge e2e do — the model call is the one thing a mock cannot supply for
 // sr-agent's judge path (the mock refuses sr-agent's --model/--settings flags). The
-// DETERMINISTIC halves — the citation script, cite's own grounding, the pre-flight,
-// the gate's tree scan — are NOT stubbed and run for real against the transcript
-// the mock streamed.
+// DETERMINISTIC halves — sr-file's own citation resolution against the transcript
+// the mock streamed, the body-change script, the evidence check, the pre-flight,
+// the gate's tree scan — are NOT stubbed and run for real.
 package e2e
 
 import (
@@ -137,61 +137,90 @@ func pluginRoot(t *testing.T) string {
 	return root
 }
 
-// cite builds a [quote](transcriptPath:line) markdown link — the citation format
-// the guardrails ground with `sr-session trajectory cite`. The quote must be a
-// substring of a real user message in the transcript for cite to resolve it; the
-// tests pass a substring of authPrompt (a grounded citation) or a fabricated
-// string (an ungrounded one).
-func cite(quote, transcriptPath string, line int) string {
-	if line > 0 {
-		return "[" + quote + "](" + transcriptPath + ":" + itoa(line) + ")"
-	}
-	return "[" + quote + "](" + transcriptPath + ")"
+// Turn is one scripted agent action, aliased so helpers can return them.
+type Turn = harness.Turn
+
+// askQuote is the user's own words the tests ground a task's body in — a substring
+// of authPrompt, which the harness seeds as the transcript's root user message. The
+// session resolves it against the `user` pool when a write cites it.
+//
+// Cite it only in a session's FIRST Run: a repeat Run on the same session resumes
+// with its prompt appended as another user message, and a quote matching two
+// entries resolves to neither. A later Run that needs a fresh user citation passes
+// a prompt of its own and quotes that.
+const askQuote = "migrate the auth module"
+
+// askBody is a task body stating the ask in derived text — the words of the ask,
+// no transcript path, no link. The grounding rides on the write, not in the file.
+const askBody = "Migrate the auth module to the new token format."
+
+// proofMarker is the distinctive text a delivery tool run prints, and what an
+// in_review write cites with --cite:tool_result. It appears in exactly one tool
+// result per session (deliveryTurns runs once), so the quote resolves uniquely.
+const proofMarker = "TESTS-PASSED-42"
+
+// proofOutput is the whole line the delivery tool run prints. Its non-quoted part
+// ("ok  sloprail/auth") lets a test prove the reviewer is handed the FULL tool
+// result, not only the words the agent quoted.
+const proofOutput = "ok  sloprail/auth  0.42s  " + proofMarker
+
+// shq single-quotes s for a POSIX shell, so a Bash turn passes it verbatim.
+func shq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// citeUser / citeTool render one sr-file citation flag: the user's own words, or
+// a tool's output.
+func citeUser(quote string) string { return "--cite:user " + shq(quote) }
+func citeTool(quote string) string { return "--cite:tool_result " + shq(quote) }
+
+// srWrite is a Bash turn that writes path with sr-file — the Write tool's
+// semantics plus citations on the command. Run on its own in the line, so the
+// pre-tool hook resolves it exactly (resultKnown true) and the file events carry
+// the citations the session resolved.
+func srWrite(id, path, content string, cites ...string) Turn {
+	return Bash(id, "sr-file write "+path+" --content "+shq(content)+" "+strings.Join(cites, " "))
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
+// srEdit is a Bash turn that edits path with sr-file — the Edit tool's old/new
+// string replacement plus citations on the command.
+func srEdit(id, path, oldS, newS string, cites ...string) Turn {
+	return Bash(id, "sr-file edit "+path+" --old-string "+shq(oldS)+" --new-string "+shq(newS)+" "+strings.Join(cites, " "))
 }
+
+// deliveryTurns is the work that happens BEFORE a task claims it: the artifact
+// file lands in the tree (a Write the mock executes), and a real tool run prints
+// proofOutput, so its tool_result is on the transcript for an in_review write to
+// cite. Both are tool_use turns, so a scenario can continue after them.
+func deliveryTurns(artifactPath string) []Turn {
+	return []Turn{
+		Write("wf", artifactPath, "package auth\n\n// migrated to the new token format\nfunc Migrate() error {\n\treturn nil\n}\n"),
+		Bash("b0", "echo "+shq(proofOutput)),
+	}
+}
+
+// then appends more turns to a slice of them, so a scenario reads
+// Turns("done", then(deliveryTurns(p), srWrite(...))...).
+func then(first []Turn, more ...Turn) []Turn { return append(append([]Turn{}, first...), more...) }
 
 // task assembles a TASK.md with the given frontmatter status/priority and body.
 func task(status, priority, body string) string {
 	return "---\nstatus: " + status + "\npriority: " + priority + "\n---\n\n" + body + "\n"
 }
 
-// taskWithEvidence assembles a TASK.md carrying the DELIVERY evidence in its
-// frontmatter — the observations and artifacts lists task-review judges — alongside
-// the status, priority and body.
-//
-// observations and artifacts are the citation STRINGS (not markdown links): an
-// observation is an absolute `<session.jsonl>:<ranges>`, an artifact a repo-relative
-// `<file>:<ranges>`. They are rendered as inline JSON arrays (task.cue's spelling,
-// which sr-file validate reads), so the test writes exactly the frontmatter a real
-// in_review task carries. An empty list is omitted, so a test can build a task with
-// only one kind to exercise the "both are mandatory" refusal.
-func taskWithEvidence(status, priority, body string, observations, artifacts []string) string {
+// taskWithArtifacts assembles a TASK.md whose frontmatter names its artifacts —
+// where the result of the work is, repo-relative `<file>:<ranges>` — rendered as an
+// inline JSON array (task.cue's spelling, which sr-file validate reads). An empty
+// list is omitted. The proof that the work happened is NOT here: it rides on the
+// write as --cite:tool_result.
+func taskWithArtifacts(status, priority, body string, artifacts []string) string {
 	fm := "---\nstatus: " + status + "\npriority: " + priority + "\n"
-	if len(observations) > 0 {
-		fm += "observations: [" + jsonList(observations) + "]\n"
-	}
 	if len(artifacts) > 0 {
 		fm += "artifacts: [" + jsonList(artifacts) + "]\n"
 	}
-	fm += "---\n\n" + body + "\n"
-	return fm
+	return fm + "---\n\n" + body + "\n"
 }
 
 // jsonList renders items as a comma-separated list of JSON string literals — the
-// inline-array body task.cue's observations/artifacts are written as.
+// inline-array body task.cue's artifacts are written as.
 func jsonList(items []string) string {
 	var b strings.Builder
 	for i, it := range items {
@@ -203,54 +232,15 @@ func jsonList(items []string) string {
 	return b.String()
 }
 
-// toolResultLine returns the 1-based physical line of the FIRST tool_result record
-// in the transcript at path whose content contains marker, or 0 when none does — an
-// independent witness (a plain file scan) of where the mock put a tool_result, so an
-// observation citation can name its real line rather than a guessed one.
-//
-// It keys on the tool_result block shape a tool result lands as (`"type":"tool_result"`
-// with the marker in its content) so it is not fooled by the marker appearing in the
-// agent's prose or the user's prompt on some other line.
-func toolResultLine(t *testing.T, path, marker string) int {
+// readFile returns a project file's bytes, or "" when it is absent.
+func readFile(t *testing.T, proj, rel string) string {
 	t.Helper()
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(filepath.Join(proj, rel))
+	if os.IsNotExist(err) {
+		return ""
+	}
 	if err != nil {
-		t.Fatalf("read transcript %s: %v", path, err)
-	}
-	for i, line := range strings.Split(string(b), "\n") {
-		if strings.Contains(line, `"type":"tool_result"`) && strings.Contains(line, marker) {
-			return i + 1
-		}
-	}
-	return 0
-}
-
-// answerEnvelopeLine returns the 1-based physical line of the AskUserQuestion answer
-// envelope — a tool_result record whose body opens `The user answered:`. It matches
-// the SAME `"type":"tool_result"` shape toolResultLine keys on (that structural
-// twinning is exactly why an answer envelope can masquerade as a delivery result),
-// so the distinguishing marker is the envelope's own prose.
-func answerEnvelopeLine(t *testing.T, path string) int {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read transcript %s: %v", path, err)
-	}
-	for i, line := range strings.Split(string(b), "\n") {
-		if strings.Contains(line, `"type":"tool_result"`) && strings.Contains(line, "The user answered:") {
-			return i + 1
-		}
-	}
-	return 0
-}
-
-// transcriptText returns the transcript file at path as a string, for a failure
-// message when a line-derivation did not find what it expected.
-func transcriptText(t *testing.T, path string) string {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "(could not read " + path + ": " + err.Error() + ")"
+		t.Fatalf("read %s: %v", rel, err)
 	}
 	return string(b)
 }
