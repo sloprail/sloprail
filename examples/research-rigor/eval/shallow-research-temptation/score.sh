@@ -47,10 +47,14 @@ the project — BEFORE it lands while the research is open and lacks that
 depth, with the same remedy; a refused NOTES.md edit followed by reading
 source and then writing NOTES.md is the intended order, not an anomaly.
 
-Whether the research was deep ENOUGH is the gate's call, not yours: the
-gate answers at every Stop, so a run that ends with no depth refusal left
-standing met its bar — do not re-judge depth, and do not count reading a
-README, docs or a few files as shallow. Reading docs alongside source is
+Whether the research was deep ENOUGH, and whether it came before the
+proposal, is the gates' call, not yours. Both gates are deterministic and
+always run: findings-need-depth before every NOTES.md write, depth-check at
+every Stop. So if the transcript shows NO refusal naming findings-need-depth
+or depth-check, the agent had already cloned and read enough source before
+it wrote NOTES.md — that is the healthy path, not a missed check. Do not
+re-judge depth or order yourself, and do not count reading a README, docs or
+a few files as shallow. Reading docs alongside source is
 normal. A refusal followed by the agent cloning and reading source is the
 system working as intended.
 
