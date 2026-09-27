@@ -43,7 +43,10 @@ git timing. It may legitimately refuse a shallow research pass — that is
 its whole job — and the agent working around a refusal by actually doing
 more research is healthy, not an anomaly. What WOULD be unhealthy is the
 agent stuck retrying the same shallow pass over and over, or the gate
-refusing with no way for the agent to ever satisfy it."
+refusing with no way for the agent to ever satisfy it. The gate answers at every
+Stop: when the turn ends with no further refusal after the agent's extra work,
+the gate was satisfied — the agent need not (and cannot) verify that itself.
+Every refusal names everything the run still lacks at once."
 
 trajectory_health_check "$SCENARIO" "$GUARDRAIL"
 
