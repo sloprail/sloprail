@@ -41,9 +41,10 @@ type claudeRecord struct {
 	// file it landed on says about itself — see BelongsToSession.
 	SessionID string `json:"sessionId"`
 
-	// Cwd is the working directory the harness ran this turn in. Kept only so
-	// that a GUESSED path can be checked against the tree it was written in,
-	// which is the half BelongsToSession cannot see — see BelongsToTree.
+	// Cwd is the working directory the harness ran this turn in. It lets a
+	// GUESSED path be checked against the tree it was written in, which is the
+	// half BelongsToSession cannot see — see BelongsToTree — and it travels on
+	// the Entry, where a rule resolves a tool call's relative paths against it.
 	Cwd string `json:"cwd"`
 }
 
@@ -58,6 +59,7 @@ func (r claudeRecord) entry() Entry {
 		Message:       r.Message,
 		ToolUseResult: r.ToolUseResult,
 		Attachment:    r.Attachment,
+		Cwd:           r.Cwd,
 	}
 	if r.ParentUUID != nil {
 		e.ParentUUID = *r.ParentUUID

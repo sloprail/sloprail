@@ -20,6 +20,7 @@ import enterSh     from '../../../examples/research-rigor/.sloprail/context/rese
 import exitSh      from '../../../examples/research-rigor/.sloprail/context/research-run/exit.sh?raw';
 import gateYaml    from '../../../examples/research-rigor/.sloprail/gate/depth-check/gate.yaml?raw';
 import verifySh    from '../../../examples/research-rigor/.sloprail/gate/depth-check/verify-depth.sh?raw';
+import factsJq     from '../../../examples/research-rigor/.sloprail/gate/depth-check/research-facts.jq?raw';
 
 ## The failure
 
@@ -45,9 +46,10 @@ the agent's summary of it.
    actually declared as research.
 
 2. A **gate** at `Stop` runs only while that context is active and refuses the
-   stop when the declared research doesn't meet the required depth, counting
-   what any dispatched sub-agent ran as well, and naming everything still
-   missing at once.
+   stop unless the run cloned a repository itself and read at least two of that
+   clone's source files — not its README or docs. It counts what any dispatched
+   sub-agent did as well, does not credit a checkout that was already on disk,
+   and says exactly what is missing and what to do.
 
 </Steps>
 
@@ -70,6 +72,7 @@ a directory under `.sloprail/` — a `*.yaml` declaration plus the scripts it na
     - depth-check/
       - gate.yaml
       - verify-depth.sh
+      - research-facts.jq
 
 </FileTree>
 
@@ -90,3 +93,4 @@ research was declared, it skips.
 
 <Code code={gateYaml} lang="yaml" title=".sloprail/gate/depth-check/gate.yaml" />
 <Code code={verifySh} lang="bash" title=".sloprail/gate/depth-check/verify-depth.sh" />
+<Code code={factsJq} lang="jq" title=".sloprail/gate/depth-check/research-facts.jq" />

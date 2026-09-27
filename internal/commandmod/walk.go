@@ -1,6 +1,7 @@
 package commandmod
 
 import (
+	"path"
 	"strings"
 
 	"mvdan.cc/sh/v3/expand"
@@ -56,15 +57,57 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 	// matched only CallExpr at the top would see through none of them. Walk
 	// descends into every one, so the CallExpr inside arrives here regardless
 	// of what wraps it, including a command substitution's own statements.
+	//
+	// The directory each statement runs in, threaded through the `cd`s ahead of
+	// it — the same traversal FileTargets uses (see cwd.go), so a relative path
+	// a program names means the same file to both. `stmt` tracks the statement
+	// a CallExpr belongs to, exactly as fileTargetsAt does.
+	cwds := cwdFor(f)
+	var stmt *syntax.Stmt
 	syntax.Walk(f, func(n syntax.Node) bool {
-		call, ok := n.(*syntax.CallExpr)
-		if !ok {
-			return true
+		switch node := n.(type) {
+		case *syntax.Stmt:
+			stmt = node
+		case *syntax.CallExpr:
+			at := stmtAt(cwds, stmt)
+			for _, inv := range resolve(cfg, node, depth) {
+				// Every invocation resolve returns carries a Cwd relative to
+				// where ITS line started: "." for the call itself, and for an
+				// interpreter payload's programs whatever the payload's own
+				// walk resolved. Composing onto this statement's directory is
+				// what makes `cd /x && sh -c 'cd y && cat z'` report cat at
+				// /x/y.
+				inv.Cwd = composeCwd(at, inv.Cwd)
+				invs = append(invs, inv)
+			}
 		}
-		invs = append(invs, resolve(cfg, call, depth)...)
 		return true
 	})
 	return invs
+}
+
+// composeCwd places a directory relative to where a (sub-)line started onto
+// the directory that line itself runs in, in Invocation.Cwd's wire spelling.
+//
+// An unknown on either side is unknown, except that an absolute inner
+// directory does not depend on where it was reached from. A relative inner one
+// under the start of the outer sequence stays relative — this package never
+// learns the harness's working directory, and does not guess it.
+func composeCwd(at cwd, inner string) string {
+	switch {
+	case inner == "":
+		return ""
+	case path.IsAbs(inner):
+		return inner
+	case at.unknown:
+		return ""
+	case at.dir == "":
+		return inner
+	case inner == ".":
+		return at.dir
+	default:
+		return path.Clean(path.Join(at.dir, inner))
+	}
 }
 
 // newConfig builds the expansion used for a walk.

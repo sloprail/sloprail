@@ -925,6 +925,11 @@ func newInvocation(argv []word) Invocation {
 		Bin:   basename(vals[0]),
 		Argv:  vals,
 		Flags: parseFlags(vals[1:]),
+		// Where the line (or the payload being parsed) started. walkAt
+		// composes it onto the directory its statement runs in, so every
+		// invocation leaves this package with its Cwd resolved as far as the
+		// line allows — see Invocation.Cwd.
+		Cwd: ".",
 	}
 }
 

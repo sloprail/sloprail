@@ -61,6 +61,7 @@ func TestEntryCarriesNothingBeyondTheShape(t *testing.T) {
 	allowed := map[string]bool{
 		"type": true, "uuid": true, "parentUuid": true, "logicalParentUuid": true,
 		"timestamp": true, "isSidechain": true, "isMeta": true, "message": true, "toolUseResult": true,
+		"cwd": true,
 	}
 	for k := range got {
 		assert.True(t, allowed[k],
@@ -89,6 +90,27 @@ func TestReadCarriesIsMeta(t *testing.T) {
 	blob, err := json.Marshal(entries[0])
 	require.NoError(t, err)
 	assert.NotContains(t, string(blob), "isMeta", "false is omitted, so an ordinary entry is unchanged")
+}
+
+// TestReadCarriesCwd: the directory the harness ran a record in is what a tool
+// call's relative path — and a command line's starting directory — resolve
+// from, so a rule reading a past call can place the paths it names (the
+// research-rigor depth gate resolves a clone's destination this way). Omitted
+// when the harness did not say, so an entry without it is unchanged.
+func TestReadCarriesCwd(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		`{"type":"user","uuid":"u1","parentUuid":null,"cwd":"/work/proj","message":{"role":"user","content":"go"}}`,
+		`{"type":"assistant","uuid":"u2","parentUuid":"u1","message":{"role":"assistant","content":"ok"}}`,
+	)
+	entries, err := Read(path)
+	require.NoError(t, err, "Read")
+	require.Len(t, entries, 2)
+	assert.Equal(t, "/work/proj", entries[0].Cwd)
+
+	blob, err := json.Marshal(entries[1])
+	require.NoError(t, err)
+	assert.NotContains(t, string(blob), `"cwd"`, "absent is omitted, so an entry without it is unchanged")
 }
 
 // TestReadSkipsRecordsWithoutAUUID: Claude Code writes preamble and bookkeeping
