@@ -28,6 +28,7 @@ func readSkillFirst(t *testing.T, turns ...harness.Turn) []harness.Turn {
 	return append([]harness.Turn{
 		Skill("skill-setup", "authoring-guardrails"),
 		ToolUse("read-setup-1", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "script-checks.md")}),
+		ToolUse("read-setup-1b", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "check-template.sh")}),
 		ToolUse("read-setup-2", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "file-guard.md")}),
 		ToolUse("read-setup-3", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "gate.md")}),
 	}, turns...)

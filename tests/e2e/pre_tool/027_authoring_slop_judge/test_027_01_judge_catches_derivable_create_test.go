@@ -165,10 +165,12 @@ func TestT027_03_CorrectDispatchHookPassesBothGrepAndJudge(t *testing.T) {
 
 	// The shipped read-script-checks-doc guard (from the enabled plugin, not
 	// this test's project-level authoring-slop copy) requires the skill and
-	// its script-checks.md page read before any .sh write under file-guard/.
+	// both its script-checks.md and check-template.sh pages read before any
+	// .sh write under file-guard/.
 	got := e.Run(proj, "s-027-03", "write a correct guardrail hook", Turns("done",
 		Skill("s1", "authoring-guardrails"),
 		ToolUse("r1", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "script-checks.md")}),
+		ToolUse("r1b", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "check-template.sh")}),
 		Write("w1", fixtureHookPath, correctDispatchHook),
 	))
 
