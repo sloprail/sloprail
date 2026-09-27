@@ -1,0 +1,125 @@
+# no-unasked-commit (gate)
+
+## The rule
+
+`git commit` and `git push` must not run unless the user's own **latest**
+message actually asks for it. Citing an older message from earlier in the
+session — even a real one, even one that genuinely said "commit and push" —
+does not authorize a commit or push now.
+
+It exists because of a real incident:
+[anthropics/claude-code#95745](https://github.com/anthropics/claude-code/issues/95745).
+After a `/compact`, an agent committed **and pushed twice**, unasked, even
+though the project's CLAUDE.md said "Never create a commit the developer did
+not ask for" and "'Commit this' is one commit, not a licence for the
+session." Several turns earlier in the *same* session the user had said
+"commit + push" twice — and the model wrongly extrapolated that into
+standing permission for the rest of the session, including after a compact
+summarized that history back into context.
+
+## Why a gate, not a file-guard
+
+The dangerous action here is the **command invocation itself** — running
+`git commit`/`git push` — not the state of any file. A file-guard judges
+what a file holds; there is no file whose content this rule is about. A gate
+is exactly "a checkpoint on an event": it fires once, on the `PreCommandInvoke`
+event, before the command runs, and either lets it through or blocks it. That
+is the right shape for "may this action happen at all," which is the whole
+question #95745 raises.
+
+## Why citation + a latest-message check, not keyword matching
+
+The tempting shortcut is a script that greps the turn's messages for words
+like "commit" or "push". That would have done nothing for #95745: the
+message that licensed the eventual unasked commits — "commit + push" — was a
+real thing the user really said, several turns earlier. A keyword match
+finds it and calls the case authorized, because it never asks *when* it was
+said relative to *now*. The bug was never "the agent invented permission out
+of nothing" — it was "the agent reused a real permission past its shelf
+life."
+
+So the rule is grounded in two separate facts, checked cheap-first:
+
+1. **The command carries a citation of the user's own words**
+   (`require: [{citation: {source_types: [user]}}]`). The agent chains one in
+   front of the command:
+
+   ```bash
+   sr-session trajectory cite '<exact quote>' && git commit -m "..."
+   sr-session trajectory cite '<exact quote>' && git push
+   ```
+
+   The engine resolves the quote against the session's record before any
+   check runs; an uncited or unresolved quote is refused here, before either
+   check below is even reached.
+
+2. **The cited message is the user's LATEST real message in the session** —
+   not a sub-agent's turn, and not a tool result that happens to arrive as a
+   `"user"`-typed entry (a tool's output is not something a person said). This
+   is deterministic (`citation-is-latest-user-turn.sh`): it reads the whole
+   transcript via `sr-session trajectory normalize --whole-session`, finds
+   every entry that is genuinely `type: "user"`, not a sub-agent's
+   (`isSidechain: false`), and carries **plain string content** rather than an
+   array (a tool_result's shape) — that is a real, typed message, and the
+   latest such line is "now." If the cited citation's line is not that line,
+   the command is refused: a standing or earlier permission does not
+   authorize a commit/push it was never actually asked to cover.
+
+   Only once that holds does a **judge** (`asks-for-commit-or-push.md.j2`)
+   answer the one question a script cannot: does that latest message, in its
+   own words, actually ask for *this* commit or push? A message can
+   genuinely be the latest thing the user said and still not be an ask for
+   git activity at all — "please fix the null check in parser.py" is real,
+   is the latest message, and is not a commit request. The judge is reached
+   only after the deterministic recency check passes, so it is never asked
+   to adjudicate a citation that is already known to be stale.
+
+The split matters: "is this the latest message" is a fact about line numbers,
+answerable by a script; "does this message ask for a commit" is a question
+about wording, answerable only by a model. Handing the first to a judge would
+be paying a model call for something a script settles for free; handing the
+second to a script would mean hand-rolling a keyword heuristic exactly as
+blind to phrasing as the one this rule exists to replace.
+
+## The refusal
+
+The agent sees one of two things, depending on which half failed:
+
+- No citation, or one that never resolved: the engine's own generic
+  `require: citation` refusal, naming `sr-session trajectory cite`.
+- A citation that resolved but is not the latest message: *"the cited
+  message is not the user's latest message in this session — a standing or
+  earlier permission ('commit + push' from several turns back) does not
+  authorize a commit/push now; ask the user first, or cite their actual
+  latest message if it really does ask for one."*
+- A citation that is the latest message but does not ask for this: the
+  judge's own reasoning, naming the specific words (or their absence) that
+  decided the verdict.
+
+In every case the fix is the same shape: ask the user, or — if their actual
+latest message really does ask for a commit/push — cite that one.
+
+## What this does not catch
+
+This is about the **command**, not about whether the resulting commit is a
+good one; a genuinely-asked-for commit with a bad message or a broken diff is
+outside this rule's business. It also only recognizes `git commit` and
+`git push` among a command's flattened invocations (including a `git -C
+<dir> commit`, `git commit -am`, and a chained `git add . && git commit -m
+"..." && git push` — the engine flattens every program in a chain into one
+event's `invocations` list) — a commit made through some other tool wrapping
+`git` in a way the parser cannot resolve is outside the mechanism's
+resolution floor, the same limit any `PreCommandInvoke` rule has.
+
+## Installing this example
+
+Copy `.sloprail/gate/require-live-ask-for-commit/` into your project's own
+`.sloprail/gate/`, keeping the folder name (it is the rule's name, and what a
+refusal cites). Confirm it loads:
+
+```
+sr-session start < /dev/null
+```
+
+Then cause the case it guards against — an uncited `git commit` in a project
+with the rule installed — and confirm you see the refusal above.
