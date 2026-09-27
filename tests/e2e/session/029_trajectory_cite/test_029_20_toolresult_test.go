@@ -39,9 +39,8 @@ func TestT029_20_ToolResultLineExitsZeroWithContent(t *testing.T) {
 
 	// The agent ran the suite; the mock persists the result as a tool_result record
 	// with distinctive content, after the seeded prompt.
-	e.Run(proj, "s-029-16", "run the tests", Turns("done",
-		ToolResult("r1", "ok  sloprail/auth  0.42s\nPASS GREENMARKER"),
-	))
+	call, output := harness.CallWithOutput("r1", "Bash", map[string]string{"command": "true"}, "ok  sloprail/auth  0.42s\nPASS GREENMARKER")
+	e.Run(proj, "s-029-16", "run the tests", Turns("done", call, output))
 	path := e.TranscriptPath(proj, "s-029-16")
 
 	resultLine := physicalLine(t, path, "GREENMARKER")

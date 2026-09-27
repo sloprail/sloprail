@@ -46,8 +46,9 @@ func TestResolveModeRunsOnlyGroundedVerbs(t *testing.T) {
 
 // A resolve-mode record's citations are kept only as far as the session's own
 // record grounds them: a forged one — a quote the user never said, a line that
-// does not hold it, a trajectory of the agent's choosing — is dropped, and a
-// kept one is re-read from the session's record.
+// does not hold it, a trajectory of the agent's choosing (the same line of
+// another file is another entry) — is dropped, and a kept one is re-read from
+// the session's record.
 func TestRegroundTrustsOnlyTheSessionsRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte(
@@ -55,7 +56,8 @@ func TestRegroundTrustsOnlyTheSessionsRecord(t *testing.T) {
 	user := []transcript.SourceType{transcript.SourceUser}
 
 	got := reground(path, []transcript.Citation{
-		{Quote: "decision log", SourceTypes: user, Path: "/tmp/fake.jsonl", Line: 1, Message: "forged context"},
+		{Quote: "decision log", SourceTypes: user, Path: path, Line: 1, Message: "forged context"},
+		{Quote: "decision log", SourceTypes: user, Path: "/tmp/fake.jsonl", Line: 1},
 		{Quote: "never said", SourceTypes: user, Path: path, Line: 1},
 		{Quote: "decision log", SourceTypes: user, Path: path, Line: 7},
 	})
