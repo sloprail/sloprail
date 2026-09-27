@@ -44,12 +44,13 @@ parsed="$(printf '%s' "$payload" | jq -r '
   | @sh "kind=\($e.kind // "")",
     @sh "path=\($e.path // "")",
     @sh "known=\($e.resultKnown // false | tostring)",
+    @sh "old_known=\(if $e.kind == "PreFileDelete" and ($e | has("oldContentKnown")) then $e.oldContentKnown else true end | tostring)",
     @sh "old=\($e.oldContent // "")",
     @sh "new=\($e.newContent // "")",
     @sh "old_fqns=\([($e.oldMarkers // [])[] | select(.kind == "invariant") | .fqn] | join("\n"))",
     @sh "new_fqns=\([($e.newMarkers // [])[] | select(.kind == "invariant") | .fqn] | join("\n"))"
 ' 2>/dev/null)" || exit 0
-kind="" path="" known="" old="" new="" old_fqns="" new_fqns=""
+kind="" path="" known="" old_known="" old="" new="" old_fqns="" new_fqns=""
 eval "$parsed"
 [ -n "$path" ] || exit 0
 
@@ -220,6 +221,11 @@ while IFS= read -r fqn; do
   parse "$fqn" || continue
   [ "$f_path" = "$npath" ] || continue
   [ "$new_known" = 1 ] || apply "This change touches $path, which code in this project pins as a business rule (L$f_start-$f_end), and $unknown_result."
+  # A PreFileDelete the engine did not read (oldContentKnown false — an `rm -r`
+  # past its byte budget, say) carries an empty oldContent, which would read as
+  # "the pinned lines were already empty": unchanged. Deleting a pinned spec is a
+  # change to it. (Absent, the field means the content was read.)
+  [ "$old_known" = true ] || apply "This change deletes $path, which code in this project pins as a business rule (L$f_start-$f_end), and the engine did not read it before the delete."
   if [ "$had_old" = 1 ]; then
     before="$(lines "$old" "$f_start" "$f_end")"
   else
