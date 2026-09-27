@@ -117,7 +117,18 @@ MARKER_RE='^[[:space:]]*(//|#|--)[[:space:]]*sr:invariant[[:space:]]+("[^"]*"|[^
 fqns_in() {
   grep -E "$MARKER_RE" | sed -E 's#^[[:space:]]*(//|\#|--)[[:space:]]*sr:invariant[[:space:]]+##; s/[[:space:]]*$//; s/^"(.*)"$/\1/'
 }
-case "$kind" in *Create) old_fqns="$(printf '%s\n' "$old" | fqns_in)" ;; esac
+# The pins this file answered to before the session's work: on a Post kind, the
+# session baseline's (the event's oldMarkers); on a Pre kind, HEAD's — not the
+# disk's, which holds this session's own edits, so a pin the agent wrote a moment
+# ago and is now correcting is not a pin being dropped.
+case "$kind" in
+  Pre*)
+    old_fqns=""
+    if [ "$has_head" = 1 ]; then
+      old_fqns="$(git -C "$workspace" cat-file blob "HEAD:$npath" 2>/dev/null | fqns_in)"
+    fi
+    ;;
+esac
 
 # The cheap answer first. A file that carries no marker, before or after, can
 # only matter as a spec some marker pins — and every such marker names its path
@@ -247,14 +258,13 @@ EOF
   while IFS= read -r ofqn; do
     [ -n "$ofqn" ] || continue
     printf '%s\n' "$held" | grep -Fxq -- "$ofqn" && continue
-    said=""
-    if otext="$(pinned_text "$ofqn")"; then
-      case "$held_texts" in
-        "$otext"$'\n\x1e\n'* | *$'\n\x1e\n'"$otext"$'\n\x1e\n'*) continue ;;
-      esac
-      said=" (\"${otext#*$'\n'}\")"
-    fi
-    moved="${moved:+$moved, }'$ofqn'$said"
+    # A pin that is not a real one pinned nothing (pinned-invariant refuses it),
+    # so correcting or removing it drops nothing.
+    otext="$(pinned_text "$ofqn")" || continue
+    case "$held_texts" in
+      "$otext"$'\n\x1e\n'* | *$'\n\x1e\n'"$otext"$'\n\x1e\n'*) continue ;;
+    esac
+    moved="${moved:+$moved, }'$ofqn' (\"${otext#*$'\n'}\")"
   done <<EOF
 $old_fqns
 EOF

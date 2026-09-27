@@ -211,3 +211,36 @@ func bsdSeqDir(t *testing.T) string {
 	}
 	return dir
 }
+
+// T046_38: a pin the agent wrote this session, and is now correcting, is not a
+// pin being dropped. A real second-invariant run wrote `#L3` (malformed), was
+// refused by pinned-invariant, and was then refused again for fixing it to
+// `#L3-3` — "re-pinning" needed the user's words — and bounced off Stop until it
+// cited the user anyway. Only the pins the file held before the session (HEAD's,
+// or the baseline's at Stop) can be dropped.
+func TestT046_38_CorrectingAPinWrittenThisSessionNeedsNothing(t *testing.T) {
+	e := newEnv(t)
+	proj := biProject(t, e)
+	sha := commitSpec(t, e, proj, "SPEC.md", billingSpec, "spec")
+	e.WriteFile(proj, "src/charge.go", "package billing\n")
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "unpinned charge")
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
+
+	pin := proj + "@" + sha + ":SPEC.md#"
+	sess := "s-046-38"
+	res := e.Run(proj, sess, "add Refund enforcing rule 2", Turns("done",
+		Write("w1", "src/charge.go", invariantCode(pin+"L3", refundBody)),
+		Write("w2", "src/charge.go", invariantCode(pin+"L2-2", refundBody)),
+		Write("w3", "src/charge.go", invariantCode(pin+"L3-3", refundBody)),
+	))
+	if res.Refused() {
+		t.Fatalf("correcting a pin written this session was refused:\n%s", res.Output)
+	}
+	if n := e.JudgeCalls(proj, "judge-prompt.txt", ruleChangeHeading); n != 0 {
+		t.Errorf("correcting a pin written this session went to the rule-change judge %d time(s)", n)
+	}
+	if !strings.Contains(readFile(t, proj, "src/charge.go"), "#L3-3") {
+		t.Errorf("the corrected pin did not land")
+	}
+}
