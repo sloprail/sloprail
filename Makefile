@@ -266,6 +266,7 @@ test-e2e-shard:
 	              ./tests/e2e/gate/... \
 	              ./tests/e2e/context/... \
 	              ./tests/e2e/fileguard/... \
+	              ./tests/e2e/grounding/... \
 	              ./tests/e2e/structure/... \
 	              ./tests/e2e/proxy/... \
 	              ./tests/e2e/engine_repo_judges/... \
