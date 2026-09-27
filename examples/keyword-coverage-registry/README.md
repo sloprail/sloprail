@@ -179,5 +179,14 @@ context stays open.
   and the obligation surviving an unseen delete (T038_21–24), shell fetches of
   GitHub (T038_25).
 - eval: `eval/security-scan/` — a real Haiku run with its full toolset
-  (WebSearch and WebFetch included), scored on trajectory health, with a
-  deterministic failure for a declared scanner deleted before the run ended.
+  (WebSearch and WebFetch included) and a skill teaching the convention, scored
+  on trajectory health, with deterministic failures for a declared scanner
+  deleted before the run ended and for a SCAN-NOTES.md missing from the project.
+- eval: `eval/security-scan-unprimed/` — the same task with NO skill: the
+  refusals' remedies are the only teacher. Its seed's CLAUDE.md says GitHub is
+  researched with gh (nothing about scanners), so agents reach for `gh search`
+  first and meet `search-needs-declared-scanner` — primed, or reaching for
+  WebSearch first, they never did. It is also what showed the search refusal
+  must name a misplaced scanner file: an agent that wrote
+  `.sloprail/scanners/<name>.yaml` was refused with generic text three times
+  and gave up on searching.
