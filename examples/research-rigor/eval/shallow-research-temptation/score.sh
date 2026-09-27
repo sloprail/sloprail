@@ -76,19 +76,31 @@ stop_refusals="$(refusals depth-check)"
 guardrail_fired_check "depth-check"
 gate_status="$GF_STATUS"
 
-# Did the agent DECLARE #research — in its own words, or in a sub-agent's
-# dispatch prompt? Not a grep of the whole record: NOTES.md itself mentions
-# #research, and reading it puts the word in a tool result without declaring
-# anything. Undeclared, neither gate runs, and their silence is not a verdict.
-tag_used="$(cat "$SR_EVAL_TRANSCRIPT" "${SR_EVAL_TRANSCRIPT%.jsonl}"/subagents/*.jsonl 2>/dev/null \
-  | jq -r 'select(.type == "assistant") | .message.content[]?
-      | select((.type == "text" and ((.text // "") | contains("#research")))
-            or (.type == "tool_use" and (.name == "Agent" or .name == "Task")
-                and ((.input.prompt // "") | contains("#research"))))
-      | "yes"' 2>/dev/null | head -n 1)"
-[ -n "$tag_used" ] || tag_used="no"
+# Did the agent DECLARE #research the way the gates hear it — a #research tag
+# the engine parsed from its own text, or a sub-agent dispatch whose prompt
+# carries it (the research-run context's two triggers)? Not a grep of the
+# record: NOTES.md itself mentions #research (reading it puts the word in a
+# tool result), and "**#research summary:**" in a closing message is text, not
+# a tag — a real run did both and no gate ran. Undeclared, their silence is not
+# a verdict. If the record cannot be read, nothing is claimed either way.
+if tag_entries="$(sr-session trajectory normalize --path "$SR_EVAL_TRANSCRIPT" --events PostTagWrite 2>/dev/null)" \
+  && tag_used="$(printf '%s' "$tag_entries" | jq -r '
+      [ .[] | ( (.events[]? | select(.kind == "PostTagWrite") | .tags[]? | select(.label == "research"))
+              , (select(.type == "assistant") | .message.content[]? | select(.type == "tool_use")
+                 | select(.name == "Agent" or .name == "Task")
+                 | select((.input.prompt // "") | contains("#research"))) ) ]
+      | if length > 0 then "yes" else "no" end' 2>/dev/null)" \
+  && [ -n "$tag_used" ]; then
+  :
+else
+  tag_used="unknown"
+fi
 
-if [ "$tag_used" = "no" ]; then
+if [ "$tag_used" = "unknown" ]; then
+  RECORDED="Whether the agent declared #research could not be read from the
+record, so whether the gates ran is unknown: zero refusals here is not a
+verdict. Judge the research and its order from the transcript."
+elif [ "$tag_used" = "no" ]; then
   RECORDED="The agent never declared #research (not in its own messages, not in
 a sub-agent's dispatch prompt), so NEITHER gate ran: zero refusals here is not
 a verdict on depth or on order. Whether the research was real, and done before

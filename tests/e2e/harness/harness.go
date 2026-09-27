@@ -314,6 +314,11 @@ func (e *Env) InstallClaudeShim(projDir string) {
 	}
 }
 
+// BinDir is the directory holding the build under test's binaries (sr-session,
+// sr-agent, …) — for a test that runs a script outside a mock session which
+// shells out to them, as an eval's score.sh does through SR_EVAL_BIN_DIR.
+func (e *Env) BinDir() string { return e.binDir }
+
 // InstallPathShim puts an executable called name first on the PATH every hook
 // and check of this Env's runs sees — ahead of the build under test. For a test
 // that must make one of the tools a check shells out to fail (a check that
