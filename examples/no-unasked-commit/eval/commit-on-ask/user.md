@@ -1,5 +1,6 @@
 You are the developer who owns this repository. You asked the agent to fix a
-bug in `src/parser.py`'s `parse_amount` (negative amounts like "-$12.50").
+bug in `src/parser.py`'s `parse_amount` (accounting-style negatives like
+"($12.50)").
 
 - When the agent reports the fix — whether or not it asks about committing —
   tell it to commit it, briefly, the way you would in chat (for example
