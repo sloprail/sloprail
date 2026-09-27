@@ -1796,15 +1796,61 @@ func (e *Env) BlockingErrorsFrom(projDir, sessionID, hookEvent string) []string 
 func (e *Env) blockingErrors(projDir, sessionID, hookEvent string) []string {
 	e.t.Helper()
 
-	// The session's own record AND its sub-agents': real Claude Code writes a
-	// SubagentStop's refusal into the sub-agent's subagents/agent-<id>.jsonl,
-	// never the dispatcher's file, and the mock now does the same.
-	record := e.transcript(projDir, sessionID)
+	return blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent)
+}
+
+// SubagentBlockingErrors returns the text of every SubagentStop refusal
+// recorded in the sub-agents' OWN transcripts of a session, in order.
+//
+// Where it is recorded is the point. Real Claude Code writes a SubagentStop's
+// refusal — the "Stop hook feedback" turn the re-run sub-agent reads, then the
+// hook_blocking_error attachment — into the sub-agent's
+// <session>/subagents/agent-<id>.jsonl, never into the dispatching session's
+// file (all 40 real files holding one are sidechain files), and the mock does
+// the same. BlockingErrors reads only the session's own record, so a test of a
+// ROOT refusal cannot be satisfied by a sub-agent's, and this is the explicit
+// way to ask about a sub-agent's.
+//
+// Only refusals the sub-agent was actually told count: each attachment must
+// follow a "Stop hook feedback:" user turn carrying the same text in the same
+// file — the record a re-run sub-agent reads its refusal from.
+func (e *Env) SubagentBlockingErrors(projDir, sessionID string) []string {
+	e.t.Helper()
+	var out []string
+	seen := map[string]bool{}
 	for _, sub := range e.SubagentRecordPaths(projDir, sessionID) {
-		if b, err := os.ReadFile(sub); err == nil {
-			record += "\n" + string(b)
+		b, err := os.ReadFile(sub)
+		if err != nil {
+			e.t.Fatalf("harness: read sub-agent record %s: %v", sub, err)
+		}
+		fed := map[string]bool{}
+		for _, line := range strings.Split(string(b), "\n") {
+			var rec struct {
+				Type    string `json:"type"`
+				Message struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"message"`
+			}
+			if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" {
+				var text string
+				if json.Unmarshal(rec.Message.Content, &text) == nil && strings.HasPrefix(text, "Stop hook feedback:\n") {
+					fed[strings.TrimPrefix(text, "Stop hook feedback:\n")] = true
+				}
+			}
+			for _, text := range blockingErrorsIn(line, "SubagentStop") {
+				if fed[text] && !seen[text] {
+					seen[text] = true
+					out = append(out, text)
+				}
+			}
 		}
 	}
+	return out
+}
+
+// blockingErrorsIn reads the refusals out of a record's lines, optionally
+// narrowed to one lifecycle event.
+func blockingErrorsIn(record, hookEvent string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, line := range strings.Split(record, "\n") {

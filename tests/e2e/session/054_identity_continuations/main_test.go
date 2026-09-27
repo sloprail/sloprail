@@ -16,12 +16,16 @@ import (
 //
 // The observation is the store's own: harness.ControlGuard's check writes a
 // mark under its guardrail's state in one hook process and reads it back in the
-// next. "before=[yes]" can only be logged by a check that opened the SAME store
-// a previous check wrote to.
+// next. "before=[yes]" can only be logged by a check that opened a store some
+// earlier check wrote to — so each test requires EVERY probe run of the
+// continuation's cycle to read it (readsBack), since a second run within one
+// cycle would read the first's mark from a brand-new store. Each test also
+// asks the engine which identity each transcript resolves to.
 var (
 	New                          = harness.New
 	Turns                        = harness.Turns
 	Write                        = harness.Write
+	Bash                         = harness.Bash
 	Compact                      = harness.Compact
 	CompactNamingUnwrittenParent = harness.CompactNamingUnwrittenParent
 )

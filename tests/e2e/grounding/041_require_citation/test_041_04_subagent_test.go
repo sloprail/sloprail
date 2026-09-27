@@ -134,7 +134,7 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	// The change was grounded when it was made, so neither the sub-agent's own
 	// cycle end nor the root's — both of which see it in the shared tree —
 	// refuses it as uncited.
-	if blocks := e.BlockingErrorsFrom(proj, "s-041-21", "SubagentStop"); len(blocks) != 0 {
+	if blocks := e.SubagentBlockingErrors(proj, "s-041-21"); len(blocks) != 0 {
 		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
 	if blocks := e.BlockingErrorsFrom(proj, "s-041-21", "Stop"); len(blocks) != 0 {
@@ -213,7 +213,7 @@ require:
 	if !e.Exists(proj, "memories/a.md") {
 		t.Fatalf("the cited write did not land:\n%s", res.Output)
 	}
-	if blocks := e.BlockingErrorsFrom(proj, "s-041-23", "SubagentStop"); len(blocks) != 0 {
+	if blocks := e.SubagentBlockingErrors(proj, "s-041-23"); len(blocks) != 0 {
 		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
 	if blocks := e.BlockingErrorsFrom(proj, "s-041-23", "Stop"); len(blocks) != 0 {
@@ -226,7 +226,7 @@ require:
 		Bash("sb1", `mkdir -p memories && echo '# b' > memories/b.md`),
 	))
 	e2.Run(proj2, "s-041-23b", prompt, Turns("done", harness.Dispatch("d1", "write it down", uncited, "")))
-	if len(e2.BlockingErrorsFrom(proj2, "s-041-23b", "SubagentStop")) == 0 {
+	if len(e2.SubagentBlockingErrors(proj2, "s-041-23b")) == 0 {
 		t.Errorf("an uncited sub-agent write was not refused at its cycle end, so the guard never ran there")
 	}
 }
@@ -369,7 +369,7 @@ checks:
 	if !strings.Contains(pre, `"record":"`+e.TranscriptPath(proj, "s-041-27")+`"`) || !strings.Contains(pre, `"types":["user"]`) {
 		t.Errorf("the citation does not point at the user's message in the main conversation: %s", pre)
 	}
-	if blocks := e.BlockingErrorsFrom(proj, "s-041-27", "SubagentStop"); len(blocks) != 0 {
+	if blocks := e.SubagentBlockingErrors(proj, "s-041-27"); len(blocks) != 0 {
 		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
 }

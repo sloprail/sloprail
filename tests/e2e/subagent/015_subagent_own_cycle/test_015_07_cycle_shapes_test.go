@@ -97,7 +97,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	}
 
 	// The refusal really happened, at the SUB-AGENT's own stop.
-	blocking := e.BlockingErrorsFrom(proj, "s-015-07", "SubagentStop")
+	blocking := e.SubagentBlockingErrors(proj, "s-015-07")
 	if len(blocking) == 0 {
 		t.Fatalf("nothing was recorded as refused at the sub-agent's own cycle, so this test is "+
 			"about a delegation nothing ever objected to:\n%s", res.Output)
@@ -187,7 +187,7 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing
 	}
 
 	// The rule did refuse, or the guard was never exercised.
-	if len(e.BlockingErrorsFrom(proj, "s-015-08", "SubagentStop")) == 0 {
+	if len(e.SubagentBlockingErrors(proj, "s-015-08")) == 0 {
 		t.Fatalf("nothing was refused, so the re-fired stop this test is about never happened:\n%s",
 			res.Output)
 	}
@@ -370,10 +370,11 @@ func TestT015_10_ASubagentThatCommitsStillHasItsWorkJudged(t *testing.T) {
 		t.Fatalf("the sub-agent's file is not in its worktree, so the commit case was never "+
 			"exercised: %v", err)
 	}
-	// The guard's own ledger lives in the tree it guards; anything else left
-	// uncommitted means the sub-agent's work was never committed.
+	// The guard's own ledger lives in the tree it guards and is written after the
+	// commit; that one path is exempt, and anything else left uncommitted means
+	// the sub-agent's work was never committed.
 	for _, l := range strings.Split(strings.TrimSpace(e.Git(wtPath, "status", "--porcelain")), "\n") {
-		if l != "" && !strings.Contains(l, ".sloprail/") {
+		if l != "" && l != "?? .sloprail/file-guard/recorder/log" {
 			t.Fatalf("the sub-agent's worktree still has uncommitted changes (%q), so its work was "+
 				"never committed and this test is not about a committed cycle", l)
 		}
