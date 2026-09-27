@@ -221,12 +221,33 @@ func build(t *testing.T) string {
 	return builtDir
 }
 
+// findMock locates the a10n-claude-mock binary the suite drives, or "":
+// $A10N_CLAUDE_MOCK (a mock build of your own), then the repo's .bin/ where
+// `make mock` installs the pinned version, then PATH.
+func findMock(t *testing.T) string {
+	if p := os.Getenv("A10N_CLAUDE_MOCK"); p != "" {
+		return p
+	}
+	if p := filepath.Join(repoRoot(t), ".bin", "a10n-claude-mock"); fileExists(p) {
+		return p
+	}
+	if p, err := exec.LookPath("a10n-claude-mock"); err == nil {
+		return p
+	}
+	return ""
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
 // New stands up an isolated environment.
 func New(t *testing.T) *Env {
 	t.Helper()
-	mock, err := exec.LookPath("a10n-claude-mock")
-	if err != nil {
-		t.Skip("harness: a10n-claude-mock not on PATH — driving it is the whole point")
+	mock := findMock(t)
+	if mock == "" {
+		t.Skip("harness: a10n-claude-mock not found — run `make mock` to install the pinned version (tests/e2e/harness/MOCK_VERSION) into .bin/")
 	}
 	// A short root, not t.TempDir(): the encoded project-dir path below is a
 	// 1:1 non-alphanumeric substitution with no shortening, and a long test
@@ -2108,13 +2129,6 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	// the mock's environment reflects only what THIS harness constructs and
 	// never what happened to be running the test.
 	cmd.Env = append(cmd.Env, "CLAUDE_CODE_EXECPATH=")
-	// Real Claude Code exports CLAUDE_CODE_SESSION_ID into every Bash-tool
-	// subprocess; the mock sets it on hooks but runs a Bash tool call with its own
-	// process environment. Setting it here is what the tool call inherits, so an
-	// agent command that resolves "the current session" (`sr-session trajectory
-	// cite`, `sr-file --cite:`) finds this session's record — and an ambient id
-	// from a test run inside a live Claude Code session cannot stand in for it.
-	cmd.Env = append(cmd.Env, "CLAUDE_CODE_SESSION_ID="+sessionID)
 	// A test that set a blocked-Stop retry cap passes it to the mock. Appended
 	// last so it wins over any ambient value; omitted entirely when unset, leaving
 	// the mock's own default (8). See the stopBlockCap field's doc.

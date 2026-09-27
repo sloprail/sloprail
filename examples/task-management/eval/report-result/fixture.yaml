@@ -1,8 +1,8 @@
 description: >
   Agent is asked to fix a real bug in a seeded rate-limiter (it ignores its
   window_seconds argument entirely), WITH a skill teaching this project's
-  own task-management convention the guardrail enforces (ASK.md cites the
-  exact transcript line the work was requested at and is never edited once
+  own task-management convention the guardrail enforces (ASK.md is written
+  with sr-file citing the user's exact words, and is never edited once
   written; RESULT.md is a separate file for reporting what was done — the
   point being that an agent cannot quietly rewrite its own spec to match
   whatever it actually delivered). The prompt never mentions ASK.md/

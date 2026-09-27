@@ -237,8 +237,27 @@ test-unit:
 test-services:
 	go test -p 1 -count=1 ./services/...
 
+# The e2e suites drive a10n-claude-mock (github.com/sloprail/harness-mocks), a
+# stand-in `claude`, as the agent. `make mock` installs the version pinned in
+# tests/e2e/harness/MOCK_VERSION into .bin/, where the harness looks first — so
+# CI and every contributor run the same mock, and a mock bump is a reviewed
+# change to that file. Built from source by `go install`, so it works on any OS.
+# The .bin/a10n-claude-mock.<version> stamp makes a repeat run a no-op.
+MOCK_VERSION := $(shell cat tests/e2e/harness/MOCK_VERSION)
+MOCK_STAMP := .bin/a10n-claude-mock.$(MOCK_VERSION)
+
+.PHONY: mock
+mock: $(MOCK_STAMP)
+
+$(MOCK_STAMP): tests/e2e/harness/MOCK_VERSION
+	@mkdir -p .bin
+	GOBIN=$(CURDIR)/.bin go install github.com/sloprail/harness-mocks/claude-mock@$(MOCK_VERSION)
+	mv .bin/claude-mock .bin/a10n-claude-mock
+	rm -f .bin/a10n-claude-mock.v*
+	touch $@
+
 # -timeout 30m: each e2e package builds binaries and drives a mock agent.
-test-e2e:
+test-e2e: mock
 	go test -p 1 -count=1 -timeout 30m ./tests/...
 
 # Sharded e2e for CI. The whole suite run with -p 1 (the disk constraint above)
@@ -250,7 +269,7 @@ test-e2e:
 # silently never run in CI.
 #
 #   make test-e2e-shard SHARD=session
-test-e2e-shard:
+test-e2e-shard: mock
 	@case "$(SHARD)" in \
 	  session)  go test -p 1 -count=1 -timeout 30m $$(go list ./tests/e2e/session/... | grep -vE '/session/(025_subdirectory_hooks|028_trajectory_describe|029_trajectory_cite|031_trajectory_normalize)$$') ;; \
 	  session2) go test -p 1 -count=1 -timeout 30m \
@@ -288,7 +307,7 @@ test-e2e-shard:
 # alternative (a hand-maintained list) is exactly what silently drops a
 # plugin's suite from CI the day someone forgets to add a line to it.
 .PHONY: test-plugins-e2e
-test-plugins-e2e:
+test-plugins-e2e: mock
 	@set -e; \
 	dirs="$$(find marketplace/plugins -mindepth 2 -maxdepth 2 -type d -name tests -exec test -f '{}/go.mod' \; -print | sort)"; \
 	if [ -z "$$dirs" ]; then \

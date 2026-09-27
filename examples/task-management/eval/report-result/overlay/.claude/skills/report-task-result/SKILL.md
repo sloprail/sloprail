@@ -1,23 +1,24 @@
 ---
 name: report-task-result
-description: Use when starting or finishing a piece of work in this repo — every task gets its own ASK.md (what was actually asked, citing the exact transcript line) and RESULT.md (what was done), kept as separate files.
+description: Use when starting or finishing a piece of work in this repo — every task gets its own ASK.md (what was actually asked, written citing the user's exact words) and RESULT.md (what was done), kept as separate files.
 ---
 
 # Recording a Task's Ask and Result
 
 Before starting non-trivial work, create
-`memories/tasks/<category>/<short-name>/ASK.md` citing the exact line of
-this session's transcript where the request was made:
+`memories/tasks/<category>/<short-name>/ASK.md` holding the request, in the
+user's terms. Write it with `sr-file`, citing the user's exact words on the
+command (never inside the file), and run it on its own in the command:
 
+```bash
+sr-file write memories/tasks/<category>/<short-name>/ASK.md \
+  --cite:user '<a short exact quote from the user's message>' <<'ASK'
+<the request, in the user's terms>
+ASK
 ```
-jsonl:<line-number>
 
-<the request, in your own words>
-```
-
-To find the line number, resolve it with `sr-session trajectory cite
-"<a short exact quote from the user's message>"` — it prints
-`<path>:<line>`; use the line number.
+The quote must match exactly one of the user's messages; check it first with
+`sr-session trajectory cite '<quote>'`.
 
 Once the work is done, write
 `memories/tasks/<category>/<short-name>/RESULT.md` describing what was

@@ -19,7 +19,7 @@ cited="$(printf '%s' "$input" \
   | jq '[(.event.citations // [])[] | select((.sourceTypes // []) | index("user"))] | length')"
 
 how="Make the change with sr-file, citing the user's exact words, and run it ON ITS OWN in the command (nothing else in the line but sr-file calls, && and echo) so its result can be checked before it runs:
-  sr-file edit $path --old-string '<old>' --new-string '<new>' --cite:user '<the user's exact words>'
+  sr-file edit $path --old-string '<old>' --new-string '<new>' [--replace-all] --cite:user '<the user's exact words>'
   sr-file delete $path --cite:user '<the user's exact words>'
 The quote must match exactly one message of this conversation; check it with \`sr-session trajectory cite '<quote>'\`."
 

@@ -14,15 +14,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # sloprail/harness-mocks publishes a10n-claude-mock as GitHub Release
-  # assets (claude-mock was extracted there from a10n-cli, which is no
-  # longer maintained — see harness-mocks' own README). It is a separate
-  # PRIVATE repo, so the default GITHUB_TOKEN (scoped to this repo only)
-  # cannot read its releases; HARNESS_MOCKS_TOKEN is a fine-grained PAT with
-  # contents:read on sloprail/harness-mocks, added as a repo secret here.
-  HARNESS_MOCKS_REPO: sloprail/harness-mocks
-
 # A second push to the same branch cancels the first. The old run is answering a
 # question about code nobody will merge.
 concurrency:
@@ -229,28 +220,13 @@ jobs:
           git config --global user.email ci@sloprail.invalid
           git config --global user.name  sloprail CI
 
-      # Latest Release (not "latest" as a literal tag — `gh release list`
-      # sorts by creation time, and harness-mocks' releases are semver
-      # (v0.1.0, ...), never a floating tag) — mirrors the old GCP install
-      # step's own "newest by update time" resolution, just against Releases
-      # instead of Artifact Registry versions.
+      # The mock the e2e suites drive, at the version pinned in
+      # tests/e2e/harness/MOCK_VERSION — the same `make mock` a contributor
+      # runs, built from source (harness-mocks is public), so CI and local
+      # agree and a mock bump is a reviewed change to that file.
       - if: needs.changes.outputs.code-changed == 'true'
         name: install a10n-claude-mock
-        env:
-          GH_TOKEN: ${{ secrets.HARNESS_MOCKS_TOKEN }}
-        run: |
-          TAG=$(gh release list --repo "${{ env.HARNESS_MOCKS_REPO }}" \
-            --limit 1 --json tagName --jq '.[0].tagName')
-          if [ -z "$TAG" ]; then
-            echo "no release found on ${{ env.HARNESS_MOCKS_REPO }}" >&2
-            exit 1
-          fi
-          echo "downloading a10n-claude-mock @ ${TAG}"
-          gh release download "$TAG" --repo "${{ env.HARNESS_MOCKS_REPO }}" \
-            --pattern 'a10n-claude-mock-linux-amd64' --dir /tmp --clobber
-          mv /tmp/a10n-claude-mock-linux-amd64 /tmp/a10n-claude-mock
-          chmod +x /tmp/a10n-claude-mock
-          echo "/tmp" >> "${GITHUB_PATH}"
+        run: make mock
 
       # The suite SKIPS every package when the mock is absent, and a skipped
       # package reports ok — 56 packages "passing" in 38 seconds against ~30
@@ -259,8 +235,8 @@ jobs:
       - if: needs.changes.outputs.code-changed == 'true'
         name: e2e
         run: |
-          command -v a10n-claude-mock >/dev/null 2>&1 || {
-            echo "a10n-claude-mock is not on PATH — every e2e package would SKIP"
+          test -x .bin/a10n-claude-mock || {
+            echo "a10n-claude-mock is not in .bin/ — every e2e package would SKIP"
             echo "and report ok. Failing instead of running nothing."
             exit 1
           }

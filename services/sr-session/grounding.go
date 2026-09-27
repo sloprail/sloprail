@@ -341,9 +341,11 @@ func ensureFileEvents(events []event.Event, targets map[string]string, root stri
 // call grounded its change in, so the Post events at Stop — built from the tree
 // difference, which knows nothing of commands — carry them too.
 //
-// Cited changes to one file accumulate. An UNCITED change clears the file's
-// record: the file now holds a change nothing grounds, and citations recorded
-// for an earlier change must not vouch for it.
+// Cited changes to one file accumulate, and an uncited change leaves them in
+// place: a Post event carries every citation the file's changes were made with
+// this session. Clearing on an uncited change would make a grounded task lose
+// its ask the moment its status is flipped with a plain edit. A rule that must
+// refuse every uncited change does so at pre-tool, where it is preventive.
 func recordCitations(store sessionstate.Store, grounded map[string][]transcript.Citation) error {
 	if store == nil || len(grounded) == 0 {
 		return nil
@@ -358,11 +360,9 @@ func recordCitations(store sessionstate.Store, grounded map[string][]transcript.
 			_ = json.Unmarshal([]byte(old), &all)
 		}
 		for path, cs := range grounded {
-			if len(cs) == 0 {
-				delete(all, path)
-				continue
+			if len(cs) > 0 {
+				all[path] = dedupe(append(all[path], cs...))
 			}
-			all[path] = dedupe(append(all[path], cs...))
 		}
 		raw, err := json.Marshal(all)
 		if err != nil {

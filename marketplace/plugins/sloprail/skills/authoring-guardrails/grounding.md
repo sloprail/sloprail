@@ -48,8 +48,9 @@ own call.
 
 - An `sr-file` citation lands on that file's events and on the command event. A
   chained `cite` lands on every event the command produces.
-- A `Post` file event at Stop carries the citations recorded for its path at
-  pre-tool. An uncited change to the file since then clears them.
+- A `Post` file event at Stop carries every citation its path's changes were
+  made with this session. A rule that must refuse each uncited change is
+  `preventive`, so it refuses that change at pre-tool.
 
 ## Requiring one
 

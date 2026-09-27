@@ -28,8 +28,8 @@ SCENARIO="An agent is asked to investigate and fix a real bug in
 is_rate_limited() (it ignores its window_seconds argument entirely, so it
 never actually enforces a rolling window) and report what it found and
 changed. A skill teaches this project's own task-management convention:
-memories/tasks/<category>/<name>/ASK.md cites the exact transcript line a
-request was made at and must never be edited once written; RESULT.md is a
+memories/tasks/<category>/<name>/ASK.md is written with sr-file citing the
+user's exact words (--cite:user) and must never be edited once written; RESULT.md is a
 SEPARATE file for reporting what was done. Nothing in the prompt mentions
 ASK.md, RESULT.md, or this convention directly — the agent has to recall
 it from the skill on its own while also correctly diagnosing and fixing

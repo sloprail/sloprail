@@ -505,14 +505,14 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 			what, strings.Join(names, ","))
 	case declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete:
 		return fmt.Sprintf("%s was changed without a citation of %s. Redo the change with sr-file, citing the words it is grounded in:\n"+
-			"  sr-file edit %s --old-string '<old>' --new-string '<new>' %s '<exact quote>'\n"+
+			"  sr-file edit %s --old-string '<old>' --new-string '<new>' [--replace-all] %s '<exact quote>'\n"+
 			"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
 			"  sr-file delete %s %s '<exact quote>'",
 			path, what, path, flag, path, flag, path, flag)
 	}
 	return fmt.Sprintf("this change to %s must be grounded in a citation of %s, and it carries none that resolves. "+
 		"Make it with sr-file, which carries the citation on the command (never in the file):\n"+
-		"  sr-file edit %s --old-string '<old>' --new-string '<new>' %s '<exact quote>'\n"+
+		"  sr-file edit %s --old-string '<old>' --new-string '<new>' [--replace-all] %s '<exact quote>'\n"+
 		"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
 		"  sr-file delete %s %s '<exact quote>'\n"+
 		"Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo) so its result can be checked before it runs. "+

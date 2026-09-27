@@ -190,6 +190,7 @@ func runFileGuardsPreventive(
 				// a change in what is enforced.
 				reqReq := dispatchcore.Request{
 					Require:        g.Require,
+					Event:          e,
 					TranscriptPath: scope.Transcript,
 					Context:        contextMap,
 				}
