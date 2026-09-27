@@ -573,7 +573,6 @@ var interpreters = map[string]interpreter{
 	}},
 }
 
-
 // interpreterFlagsTakingValue are the interpreter's own flags that consume the
 // word after them.
 //
