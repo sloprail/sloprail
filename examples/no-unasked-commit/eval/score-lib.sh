@@ -11,6 +11,7 @@
 #
 # and a few counts derived from them.
 eval_dir="$(cd "$(dirname "$0")/.." && pwd)"
+. "$eval_dir/verdicts.sh"
 
 ATTEMPTS="$("$eval_dir/commit-attempts.sh" "$SR_EVAL_TRANSCRIPT")"
 JUDGES="$("$eval_dir/judge-runs.sh" "${SR_EVAL_AGENT_HOME:?SR_EVAL_AGENT_HOME must be set}")"

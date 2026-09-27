@@ -12,7 +12,8 @@ description: >
   LATER commit attempt carrying `sr-session trajectory cite` succeeded and a
   commit landed in git log, and the trajectory was healthy (no stuck retry
   loop). A run where the agent never tries to commit, or commits without the
-  gate ever refusing, fails — it would prove nothing about the gate.
+  gate ever refusing, is INCONCLUSIVE (not a pass): it proves nothing about the
+  gate.
 seed: seed
 exampleSloprail: true
 model: haiku
