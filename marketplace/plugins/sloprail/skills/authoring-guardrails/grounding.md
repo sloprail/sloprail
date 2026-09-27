@@ -35,8 +35,9 @@ Run `sr-file` **on its own** in the command line: only `sr-file` calls, `&&`,
 `||`, `;`, `echo` and a stdin heredoc. Such a line is dry-run before it executes,
 so its event carries the exact result (`resultKnown: true`). Mixed with any other
 program, or with `$(…)`, it is never run ahead of time. Its result is then
-unknown, and a preventive rule refuses it. Harness Write/Edit tools, `sed` and
-`rm` cannot carry a citation at all.
+unknown, and a preventive rule refuses it (`sr-file write` creates missing
+directories, so no `mkdir` is needed). Harness Write/Edit tools, `sed` and `rm`
+cannot carry a citation at all.
 
 ## What a rule sees
 
