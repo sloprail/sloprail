@@ -87,6 +87,7 @@ func runFileGuardsPreventive(
 	events []event.Event,
 	scope hookScope,
 	contextMap map[string]natures.ContextState,
+	resolveNote string,
 ) string {
 	runner := dispatchcore.Runner{}
 
@@ -200,7 +201,22 @@ func runFileGuardsPreventive(
 						"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval (file-guard %s)",
 						g.Name, err, g.Attribution())
 				} else if v.Refused {
+					if resolveNote != "" {
+						// A citation the rule required did not resolve, and sr-file
+						// said which one and why — worth more than "cites nothing".
+						return fmt.Sprintf("%s sr-file said:\n%s\n(file-guard %s)", v.Reason, resolveNote, g.Attribution())
+					}
 					return fmt.Sprintf("%s (file-guard %s)", v.Reason, g.Attribution())
+				}
+				if resolveNote != "" {
+					// The line was pure sr-file and its dry run failed: sr-file's
+					// own reason is the cause, and the generic one below would
+					// only send the agent guessing.
+					return fmt.Sprintf(
+						"the %q file-guard is preventive and could not verify this write before it lands: sr-file could not compute the change, and said:\n%s\n"+
+							"Refusing: a preventive guard must not admit a write it cannot verify. Fix what sr-file named and run it again; "+
+							"to check a quote on its own: `sr-session trajectory cite '<quote>'`. (file-guard %s)",
+						g.Name, resolveNote, g.Attribution())
 				}
 				return fmt.Sprintf(
 					"the %q file-guard is preventive and could not verify this write before it lands: the engine could not compute the result of this %s "+

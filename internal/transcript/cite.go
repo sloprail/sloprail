@@ -174,7 +174,7 @@ func Cite(path, quote string) ([]CitationMatch, error) {
 // nothing. The path having no readable record is the caller's error to surface;
 // here a read failure propagates.
 func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch, error) {
-	if quote == "" {
+	if strings.TrimSpace(quote) == "" {
 		return nil, nil
 	}
 	entries, err := ReadLines(path)
@@ -204,6 +204,15 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 	return matches, nil
 }
 
+// containsWords reports whether quote appears in text with every run of
+// whitespace treated as one space. A message wraps where the person's editor or
+// terminal wrapped it, and a pasted block reflows; a quote remembered from it
+// breaks lines in different places or not at all. The words and their order
+// must still match exactly.
+func containsWords(text, quote string) bool {
+	return strings.Contains(strings.Join(strings.Fields(text), " "), strings.Join(strings.Fields(quote), " "))
+}
+
 // entryContains reports whether quote appears in any of the requested pools on a
 // user entry. The pools are consulted in order and the walk short-circuits on the
 // first hit — a match is per entry, so which pool found it does not change the
@@ -228,7 +237,7 @@ func entryContains(e Entry, quote string, sources []SourceType) bool {
 // equally legitimate, so a quote landing on either is a match.
 func userWordsContain(e Entry, quote string) bool {
 	for _, text := range userWords(e) {
-		if strings.Contains(text, quote) {
+		if containsWords(text, quote) {
 			return true
 		}
 	}
@@ -430,7 +439,7 @@ func queuedCommandText(raw json.RawMessage) string {
 // words", each against the field the two record types actually carry it in.
 func queuedCommandContains(e Entry, quote string) bool {
 	text := queuedCommandText(e.Attachment)
-	return text != "" && strings.Contains(text, quote)
+	return text != "" && containsWords(text, quote)
 }
 
 // answerPrefix is what a harness writes at the head of an AskUserQuestion answer
@@ -521,7 +530,7 @@ func toolResultContain(e Entry, quote string) bool {
 	// line-based path. Excluding answer envelopes keeps the two pools disjoint and
 	// SourceToolResult meaning exactly "the tool's output", as its doc says.
 	for _, text := range genuineToolResultText(e.Message) {
-		if strings.Contains(text, quote) {
+		if containsWords(text, quote) {
 			return true
 		}
 	}

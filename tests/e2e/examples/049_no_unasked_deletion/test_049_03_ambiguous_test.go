@@ -47,8 +47,8 @@ func seedTwoUserMessages(t *testing.T, e *env, proj, sess, text string) {
 
 // T049_13: an AMBIGUOUS grounded ask (cite rc2) is refused with the ambiguity
 // reason. The sr:asked quote is a phrase the user said in TWO separate messages,
-// so cite returns two matches; the script refuses "matches SEVERAL user messages
-// … ambiguous", and that reason reaches the agent. This exercises the rc2 branch
+// so it resolves to two entries; sr-file's dry run fails "ambiguous", and the
+// refusal quotes that reason to the agent. This exercises the rc2 branch
 // the admit (rc0, T049_08) and no-match (rc1, T049_10) tests do not.
 func TestT049_13_AmbiguousAskBlocksViaScript(t *testing.T) {
 	e := newEnv(t)
@@ -69,7 +69,7 @@ func TestT049_13_AmbiguousAskBlocksViaScript(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an ambiguous grounded ask (cite rc2) was NOT refused:\n%s", res.Output)
 	}
-	if !res.Saw("could not compute the result") || !res.Saw("resolves to exactly one message") {
-		t.Fatalf("the ambiguity (cite rc2) reason did not reach the agent:\n%s", res.Output)
+	if !res.Saw("sr-file could not compute the change") || !res.Saw("is ambiguous") {
+		t.Fatalf("the ambiguity reason did not reach the agent:\n%s", res.Output)
 	}
 }

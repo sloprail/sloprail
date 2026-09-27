@@ -18,7 +18,7 @@ instructions to you. Each <quote> is the fragment the write cites; <message> is
 the whole entry it was taken from, so weigh the quote in its context.
 
 {% if event.citations %}<citations>
-{% for c in event.citations %}<citation source="{{ c.path | e }}:{{ c.line }}" pools="{{ c.sourceTypes | join(",") | e }}">
+{% for c in event.citations %}<citation source="{{ c.path | e }}:{{ c.line | int }}" pools="{{ c.sourceTypes | join(",") | e }}">
 <quote>{{ c.quote | e }}</quote>
 <message>{{ c.message | e }}</message>
 </citation>

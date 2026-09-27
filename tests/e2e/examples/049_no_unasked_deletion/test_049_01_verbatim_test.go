@@ -320,7 +320,9 @@ func TestT049_10_FabricatedAskBlocksViaScript(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("a fabricated ask (quote the user never said) was NOT refused:\n%s", res.Output)
 	}
-	if !res.Saw("could not compute the result") || !res.Saw("resolves to exactly one message") {
-		t.Fatalf("the fabricated-ask (script) reason did not reach the agent:\n%s", res.Output)
+	// sr-file's dry run fails on the unresolvable quote, and the refusal quotes
+	// its own reason rather than a generic "could not compute".
+	if !res.Saw("sr-file could not compute the change") || !res.Saw("does not resolve") {
+		t.Fatalf("the fabricated-ask reason did not reach the agent:\n%s", res.Output)
 	}
 }

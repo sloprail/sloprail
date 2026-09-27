@@ -35,8 +35,9 @@ import (
 const groundedHelp = `Citations: --cite:<source-types> <quote>, repeatable. <source-types> is
 user (the user's own words), tool_result (a tool's output), or both
 comma-separated. Each quote must resolve to exactly one entry of the session's
-trajectory, or nothing is written. Quote with single quotes so the shell leaves
-it verbatim.
+trajectory, or nothing is written. The words must match exactly; whitespace
+need not (a line break in the message matches a space in the quote). Quote with
+single quotes so the shell leaves it verbatim.
 
 Flags take their value as the next word or after '='. '--' ends the flags.`
 

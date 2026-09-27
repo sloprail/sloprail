@@ -119,6 +119,28 @@ func TestT041_03_UnresolvedQuoteIsRefused(t *testing.T) {
 	if e.Exists(proj, "memories/decisions.md") {
 		t.Errorf("the write landed")
 	}
+	if !res.Saw("does not resolve") {
+		t.Errorf("the refusal does not carry sr-file's own reason:\n%s", res.Output)
+	}
+}
+
+// T041_13: a pure sr-file line whose dry run fails for a reason other than its
+// citations (here an --old-string that is not in the file) is refused, and the
+// refusal quotes sr-file's own error rather than a generic "could not compute".
+func TestT041_13_DryRunFailureIsQuoted(t *testing.T) {
+	e, proj := guarded(t, preventiveGuard)
+	e.WriteFile(proj, "memories/decisions.md", "# decisions\n")
+	commitAll(t, proj)
+
+	res := e.Run(proj, "s-041-13", prompt, Turns("done",
+		Bash("b1", `sr-file edit memories/decisions.md --cite:user 'adopt a decision log' --old-string 'no such line' --new-string x`),
+	))
+	if !res.Refused() {
+		t.Fatalf("an edit sr-file cannot compute was permitted:\n%s", res.Output)
+	}
+	if !res.Saw("--old-string not found") {
+		t.Errorf("the refusal does not quote sr-file's reason:\n%s", res.Output)
+	}
 }
 
 // T041_04: sr-file mixed with another program is never run ahead of time; its

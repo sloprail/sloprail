@@ -95,7 +95,7 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 		}
 	}
 	if line == 0 {
-		return Citation{}, fmt.Errorf("citation %s does not resolve in %s: the quote is not there verbatim in that pool", req, path)
+		return Citation{}, fmt.Errorf("citation %s does not resolve in %s: the quote is not there word for word in that pool (only whitespace may differ)", req, path)
 	}
 	message, err := entryText(path, line, pools)
 	if err != nil {

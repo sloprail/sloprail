@@ -74,7 +74,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	if citeIn == "" {
 		citeIn = scope.Transcript
 	}
-	events, grounded := groundPreEvents(cmd, p, citeIn, events)
+	events, grounded, resolveNote := groundPreEvents(cmd, p, citeIn, events)
 
 	// The state maps, loaded once so contexts/gates/guards this dispatch runs read
 	// one consistent world. Contexts enter FIRST, so a gate or a preventive
@@ -100,7 +100,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// Preventive file-guards next: a `preventive: true` guard whose match selects a
 	// pre-write file refuses a not-fine write before it lands. Blocks on the first
 	// refusal.
-	if reason := runFileGuardsPreventive(cmd, preventiveGuards, events, scope, contextMap); reason != "" {
+	if reason := runFileGuardsPreventive(cmd, preventiveGuards, events, scope, contextMap, resolveNote); reason != "" {
 		return natureVerdict{Blocked: reason}
 	}
 

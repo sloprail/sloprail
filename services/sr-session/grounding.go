@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/declaration"
@@ -86,10 +88,13 @@ func requiresCitation(loaded declaration.Loaded) bool {
 }
 
 // groundPreEvents resolves and attaches citations to one pre-tool call's
-// events, returning the events to dispatch and the citations each touched file
-// path was grounded in (for recordCitations).
-func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, transcriptPath string, events []event.Event) ([]event.Event, map[string][]transcript.Citation) {
+// events, returning the events to dispatch, the citations each touched file
+// path was grounded in (for recordCitations), and — when a pure sr-file line's
+// dry run said why it could not compute a change — sr-file's own words, so a
+// refusal of the uncomputed change can name the cause instead of guessing.
+func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, transcriptPath string, events []event.Event) ([]event.Event, map[string][]transcript.Citation, string) {
 	var chain []transcript.Citation
+	var note string
 	perPath := map[string][]transcript.Citation{}
 
 	var in struct {
@@ -117,11 +122,13 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, tr
 			perPath[key] = append(perPath[key], cites...)
 		}
 		if commandmod.OnlyCalls(in.Command, isSRFileCall) {
-			if records, err := runResolve(in.Command, p.Cwd, transcriptPath); err != nil {
+			records, said, err := runResolve(in.Command, p.Cwd, transcriptPath)
+			if err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: sr-file resolve:", err)
 			} else {
 				events = replaceWithResolved(events, records, root, perPath)
 			}
+			note = said
 		}
 		events = ensureFileEvents(events, targets, root)
 	}
@@ -143,7 +150,7 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, tr
 			grounded[path] = cs
 		}
 	}
-	return events, grounded
+	return events, grounded, note
 }
 
 // resolveAll grounds each request in the session's own record, keeping those
@@ -165,11 +172,13 @@ func resolveAll(transcriptPath string, reqs []transcript.CitationRequest) []tran
 // runResolve runs a pure sr-file line in resolve mode and returns what each
 // invocation recorded. The records arrive through a directory this hook names,
 // never through the line's stdout, which is the command's own and may say
-// anything (`sr-file edit ... && echo done`).
-func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, error) {
+// anything (`sr-file edit ... && echo done`). When the line fails, it also
+// returns what it printed to stderr — sr-file's reason, e.g. a quote that
+// resolves to no message — trimmed to what a refusal can quote.
+func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, string, error) {
 	dir, err := os.MkdirTemp("", "sr-file-resolve-")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer os.RemoveAll(dir)
 
@@ -182,21 +191,25 @@ func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, error) 
 		grounding.EnvTranscript+"="+transcriptPath,
 		"PATH="+siblingPath(),
 	)
-	c.Stdout, c.Stderr = io.Discard, io.Discard
+	var stderr bytes.Buffer
+	c.Stdout, c.Stderr = io.Discard, &stderr
 	// A failing invocation is an ordinary outcome — the real run fails the
 	// same way and changes nothing — so the exit status is not an error here.
 	// What it recorded before failing is still what the line would do.
-	_ = c.Run()
+	var said string
+	if c.Run() != nil {
+		said = clip(strings.TrimSpace(stderr.String()), resolveNoteMax)
+	}
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("timed out after %s", resolveTimeout)
+		return nil, "", fmt.Errorf("timed out after %s", resolveTimeout)
 	}
 
 	f, err := os.Open(grounding.ResolvedFile(dir))
 	if os.IsNotExist(err) {
-		return nil, nil
+		return nil, said, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, said, err
 	}
 	defer f.Close()
 	var out []grounding.Resolved
@@ -205,11 +218,26 @@ func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, error) 
 	for sc.Scan() {
 		var r grounding.Resolved
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
-			return nil, fmt.Errorf("unreadable record: %w", err)
+			return nil, said, fmt.Errorf("unreadable record: %w", err)
 		}
 		out = append(out, r)
 	}
-	return out, sc.Err()
+	return out, said, sc.Err()
+}
+
+// resolveNoteMax bounds how much of a failed dry run's stderr a refusal quotes.
+const resolveNoteMax = 2000
+
+// clip cuts s to at most max bytes on a rune boundary.
+func clip(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 // siblingPath is PATH with this binary's own directory first, so resolve mode

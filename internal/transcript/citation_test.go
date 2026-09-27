@@ -122,3 +122,17 @@ func TestResolveCitationOfAnAnswerCarriesTheQuestion(t *testing.T) {
 	assert.Contains(t, got.Message, "which approach for the auth rewrite?", "the question comes with the answer")
 	assert.Contains(t, got.Message, "go with the second option please")
 }
+
+func TestResolveCitationIgnoresWhereLinesWrap(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "In this repo, drop the kubectl\ncontext prerequisite and the rollout-watch step."),
+	)
+
+	got, err := ResolveCitation(path, userReq("drop the kubectl context prerequisite"))
+	require.NoError(t, err, "a quote must not fail because the message wrapped mid-phrase")
+	assert.Equal(t, 1, got.Line)
+
+	_, err = ResolveCitation(path, userReq("drop the context kubectl prerequisite"))
+	require.Error(t, err, "the words and their order must still match")
+}
