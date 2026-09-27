@@ -192,7 +192,7 @@ func TestT031_05_ThreeToolCallsYieldThreeEvents(t *testing.T) {
 // Driven through the MOCK, with NO fixture and NO harness-seeded preamble: the mock
 // opens every fresh transcript with the no-uuid preamble records real Claude Code writes
 // (custom-title / mode / last-prompt) AHEAD of the root prompt — a10n-claude-mock's own
-// seedPreamble, prepended ahead of the root the harness pre-seeds. A transcript reader
+// seedPreamble, written ahead of the first record. A transcript reader
 // counts those physical lines but skips them as entries (they carry no uuid), so a
 // uuid-carrying entry's physical `.Line` runs PAST its entry ordinal by the number of
 // skipped preamble lines. That gap — physical line != entry ordinal — is the whole point.
@@ -230,25 +230,28 @@ func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 		t.Fatalf("normalize exited %d, want 0:\n%s", res.Code, res.Output)
 	}
 	entries := decodeEntries(t, res.Output)
-	if len(entries) != 2 {
-		t.Fatalf("only the two uuid-carrying lines are entries (root + the Say turn), got %d:\n%s",
-			len(entries), res.Output)
+	// Three entries, in the order real Claude Code writes a fresh session: the
+	// SessionStart hook's attachment (the plugin's start hook prints, and a hook
+	// that prints leaves a hook_success record — the session's origin), the
+	// prompt chained to it, and the Say turn.
+	if len(entries) != 3 {
+		t.Fatalf("only the three uuid-carrying lines are entries (SessionStart attachment, prompt, "+
+			"Say turn), got %d:\n%s", len(entries), res.Output)
 	}
-	// The root prompt is the FIRST entry, but it does not sit on physical line 1 — the
-	// preamble records occupy the opening lines, so it sits on line preamble+1. That its
-	// line is past its ordinal (1) is exactly "physical line != entry ordinal".
-	if entries[0].Type != "user" || entries[0].Line != preamble+1 {
-		t.Fatalf("the user entry sits on physical line %d (after %d preamble lines), got type %q line %d:\n%s",
+	// The first entry does not sit on physical line 1 — the preamble records
+	// occupy the opening lines, so it sits on line preamble+1. That its line is
+	// past its ordinal (1) is exactly "physical line != entry ordinal".
+	if entries[0].Type != "attachment" || entries[0].Line != preamble+1 {
+		t.Fatalf("the SessionStart attachment sits on physical line %d (after %d preamble lines), got type %q line %d:\n%s",
 			preamble+1, preamble, entries[0].Type, entries[0].Line, res.Output)
 	}
-	if entries[0].Line <= 1 {
-		t.Fatalf("the first entry's physical line must run PAST its ordinal because the preamble "+
-			"records before it are counted-but-skipped, got line %d", entries[0].Line)
-	}
-	// The assistant Say turn is the next physical line after the root.
-	if entries[1].Type != "assistant" || entries[1].Line != preamble+2 {
-		t.Fatalf("the assistant entry sits on physical line %d, got type %q line %d:\n%s",
+	if entries[1].Type != "user" || entries[1].Line != preamble+2 {
+		t.Fatalf("the user entry sits on physical line %d, got type %q line %d:\n%s",
 			preamble+2, entries[1].Type, entries[1].Line, res.Output)
+	}
+	if entries[2].Type != "assistant" || entries[2].Line != preamble+3 {
+		t.Fatalf("the assistant entry sits on physical line %d, got type %q line %d:\n%s",
+			preamble+3, entries[2].Type, entries[2].Line, res.Output)
 	}
 }
 

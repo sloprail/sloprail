@@ -322,22 +322,22 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 	}
 }
 
-// T015_10: a sub-agent that COMMITS its work leaves its cycle nothing to judge.
+// T015_10: a sub-agent that COMMITS its work still has its cycle judge it.
 //
-// Worth pinning because it is surprising and because it is the honest answer.
-// The difference a cycle judges is the tree against the session's baseline
-// commit, so work that has been committed is no longer a difference — it is
-// history. A sub-agent that commits therefore ends with an empty cycle, and the
-// guardrails bound to created files never see what it made.
+// The difference a cycle judges is the tree against the session's baseline, so
+// what matters is WHERE the baseline is. It used to be taken at the sub-agent's
+// first SubagentStop — after the commit, on the sub-agent's own commit — and a
+// sub-agent that committed ended with an empty cycle: its guardrails never saw
+// what it made. The engine now takes a sub-agent's point at its first tool
+// call, which reaches PreToolUse before anything the sub-agent does can move
+// HEAD, so committed work is inside the difference.
 //
-// MEASURED here rather than reasoned about: the sub-agent commits, and its
-// worktree's ledger is empty.
-//
-// Recorded as behaviour, not endorsed as desirable. Whether committing should
-// take work out of a guardrail's reach is a product question this test does not
-// settle; what it does is stop the answer changing silently. A change making
-// committed work visible to the cycle fails here and is noticed.
-func TestT015_10_ASubagentThatCommitsLeavesItsCycleNothingToJudge(t *testing.T) {
+// This test used to pin the old answer ("nothing to judge") and said to
+// re-derive it if that changed deliberately. It did: the first-tool baseline
+// (#76) applies to a sub-agent as much as to a root, and the mock now sends a
+// sub-agent's tool calls with transcript_path and agent_id as real Claude Code
+// does, so the sub-agent's own store is found at that first call.
+func TestT015_10_ASubagentThatCommitsStillHasItsWorkJudged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
@@ -370,17 +370,25 @@ func TestT015_10_ASubagentThatCommitsLeavesItsCycleNothingToJudge(t *testing.T) 
 		t.Fatalf("the sub-agent's file is not in its worktree, so the commit case was never "+
 			"exercised: %v", err)
 	}
-	if out := e.Git(wtPath, "status", "--porcelain"); strings.TrimSpace(out) != "" {
-		t.Fatalf("the sub-agent's worktree still has uncommitted changes (%q), so its work was "+
-			"never committed and this test is not about a committed cycle", out)
+	// The guard's own ledger lives in the tree it guards; anything else left
+	// uncommitted means the sub-agent's work was never committed.
+	for _, l := range strings.Split(strings.TrimSpace(e.Git(wtPath, "status", "--porcelain")), "\n") {
+		if l != "" && !strings.Contains(l, ".sloprail/") {
+			t.Fatalf("the sub-agent's worktree still has uncommitted changes (%q), so its work was "+
+				"never committed and this test is not about a committed cycle", l)
+		}
 	}
 
-	// The measured consequence: nothing for the cycle to judge.
-	if lines := subLedger(t, proj, wt, "recorder", "log"); len(lines) != 0 {
-		t.Fatalf("a sub-agent that COMMITTED its work still had %d verdict(s) recorded (%v). "+
-			"Measured behaviour on this branch is that a cycle's difference is the tree against "+
-			"the baseline commit, so committed work is history rather than a difference and the "+
-			"cycle judges nothing. If that has deliberately changed, this test states the old "+
-			"answer and should be re-derived rather than deleted", len(lines), lines)
+	// The consequence: the committed file is judged by the sub-agent's cycle.
+	lines := subLedger(t, proj, wt, "recorder", "log")
+	judged := false
+	for _, l := range lines {
+		if strings.Contains(l, "committed-by-the-sub.md") {
+			judged = true
+		}
+	}
+	if !judged {
+		t.Fatalf("a sub-agent that COMMITTED its work did not have it judged (ledger %v): its "+
+			"baseline was taken after the commit, so the work is history rather than a difference", lines)
 	}
 }

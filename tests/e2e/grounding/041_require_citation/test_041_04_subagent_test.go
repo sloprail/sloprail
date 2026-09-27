@@ -16,11 +16,9 @@ import (
 // root's. The user pool does not: a sub-agent's "user" message is the parent
 // agent's dispatch, never the end user's words.
 //
-// The mock (v0.1.1) writes a sub-agent's tool calls into the ROOT record instead,
-// which would let the citation resolve without the sub-agent's record ever
-// being searched. So T041_21 moves them to where Claude Code writes them before
-// the citing call runs — the one hand-arranged shape here, and the one the mock
-// provably cannot emit. T041_24 does the same for a cite chain.
+// The mock writes a sub-agent's records there too, so the citation can only
+// resolve by the sub-agent's record being searched; requireInSubagentRecord
+// checks that layout before each citing call rather than trusting it.
 //
 // A sub-agent is a session of its own, so the citations its pre-tool calls
 // record live in its own store; T041_23 pins that its cycle end reads them, and
@@ -53,36 +51,30 @@ func subagentScript(t *testing.T, s harness.Scenario) string {
 	return path
 }
 
-// moveIntoSubagentRecord moves every line of the root record mentioning the
-// sub-agent's tool call id into the sub-agent's own record, marked as a
-// sidechain — the layout Claude Code writes.
-func moveIntoSubagentRecord(t *testing.T, root, sub, callID string) {
+// requireInSubagentRecord checks that the sub-agent's tool call and its result
+// are in the sub-agent's own record and not in the root's — the layout Claude
+// Code writes, and the one that makes a citation of that output a test of the
+// sub-agent's record being searched.
+func requireInSubagentRecord(t *testing.T, root, sub, callID string) {
 	t.Helper()
-	body, err := os.ReadFile(root)
-	if err != nil {
-		t.Fatalf("read root record: %v", err)
-	}
-	var kept, moved []string
-	for _, l := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
-		if strings.Contains(l, `"`+callID+`-slop-turn`) || strings.Contains(l, `"e2e-turn-`+callID+`"`) {
-			moved = append(moved, `{"isSidechain":true,`+strings.TrimPrefix(l, "{"))
-			continue
+	count := func(path string) int {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
 		}
-		kept = append(kept, l)
+		n := 0
+		for _, l := range strings.Split(string(body), "\n") {
+			if strings.Contains(l, `"`+callID+`-slop-turn`) {
+				n++
+			}
+		}
+		return n
 	}
-	if len(moved) != 2 {
-		t.Fatalf("expected the sub-agent's call and its result in the root record, moved %d lines", len(moved))
+	if n := count(sub); n != 2 {
+		t.Fatalf("expected the sub-agent's call and its result in its own record, found %d lines", n)
 	}
-	if err := os.WriteFile(root, []byte(strings.Join(kept, "\n")+"\n"), 0o644); err != nil {
-		t.Fatalf("rewrite root record: %v", err)
-	}
-	f, err := os.OpenFile(sub, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatalf("open sub-agent record: %v", err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(strings.Join(moved, "\n") + "\n"); err != nil {
-		t.Fatalf("append to sub-agent record: %v", err)
+	if n := count(root); n != 0 {
+		t.Fatalf("the sub-agent's call is in the root record (%d lines), so this would not test the sub-agent's", n)
 	}
 }
 
@@ -108,7 +100,7 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 		t.Fatalf("want one sub-agent record, found %v:\n%s", subs, res.Output)
 	}
 	root := e.TranscriptPath(proj, "s-041-21")
-	moveIntoSubagentRecord(t, root, subs[0], "sb1")
+	requireInSubagentRecord(t, root, subs[0], "sb1")
 	if b, _ := os.ReadFile(root); strings.Contains(string(b), "SUBPROBE-4417") {
 		t.Fatalf("the output is still in the root record, so this would not test the sub-agent's")
 	}
@@ -267,7 +259,7 @@ checks:
 	if len(subs) != 1 {
 		t.Fatalf("want one sub-agent record, found %v", subs)
 	}
-	moveIntoSubagentRecord(t, e.TranscriptPath(proj, "s-041-24"), subs[0], "sb1")
+	requireInSubagentRecord(t, e.TranscriptPath(proj, "s-041-24"), subs[0], "sb1")
 
 	release := subagentScript(t, harness.Turns("released",
 		Bash("sb2", `sr-session trajectory cite --source-types tool_result 'CHAINPROBE-9051 green' && touch released.txt`),
@@ -323,7 +315,7 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 	if len(subs) != 1 {
 		t.Fatalf("want one sub-agent record, found %v", subs)
 	}
-	moveIntoSubagentRecord(t, e.TranscriptPath(proj, "s-041-26"), subs[0], "sb1")
+	requireInSubagentRecord(t, e.TranscriptPath(proj, "s-041-26"), subs[0], "sb1")
 
 	res := e.Run(proj, "s-041-26", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/coverage.md --cite:tool_result 'coverage REPLYPROBE-7 lines' --content '# coverage'`),

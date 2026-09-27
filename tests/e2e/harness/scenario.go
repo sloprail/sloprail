@@ -21,7 +21,15 @@ type Scenario struct {
 // Turn is one assistant action.
 type Turn struct {
 	jsonl string
+	// launchedTask marks a turn whose jsonl names the most recently launched
+	// background task as @@LAUNCHED_TASK@@, filled in when the turn is emitted —
+	// the id is minted by the mock at launch and only its receipt says what it is.
+	launchedTask bool
 }
+
+// launchedTaskPlaceholder is replaced by the id of the most recently launched
+// background task when a launchedTask turn is emitted.
+const launchedTaskPlaceholder = "@@LAUNCHED_TASK@@"
 
 // Turns builds a scenario ending in the given assistant text.
 func Turns(finalText string, turns ...Turn) Scenario {
@@ -388,6 +396,18 @@ func (s Scenario) script() string {
 	for i, t := range s.turns {
 		marker := fmt.Sprintf("slop-turn-%d-%s", i, turnID(t.jsonl))
 		line := injectMarker(t.jsonl, marker)
+		if t.launchedTask {
+			// The receipt a background launch was answered with names its id:
+			// "Command running in background with ID: <id>" for a Bash,
+			// "agentId: <id>" for an Agent. The latest one is the task meant.
+			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  TASK="$(printf '%%s' "$SESS" | grep -o 'running in background with ID: [A-Za-z0-9_-]*\|agentId: [A-Za-z0-9_-]*' | tail -1 | sed 's/.*: //')"
+  printf '%%s\n' %s | sed "s/%s/$TASK/"
+  exit 0
+fi
+`, marker, shQuote(line), launchedTaskPlaceholder)
+			continue
+		}
 		fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
   printf '%%s\n' %s
   exit 0
@@ -562,4 +582,41 @@ func sayWithTool(id, prose, name string, input map[string]string) string {
 	return fmt.Sprintf(
 		`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":%s},{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
 		"e2e-turn-"+id, jsonStr(prose), id, name, ib.String())
+}
+
+// Compact returns ONE turn in which the harness compacts the context, the way
+// real Claude Code does: a compact_boundary record appended to the transcript —
+// parentless, naming the last record before it as its logicalParentUuid — then
+// the summary chained to it, then SessionStart with source "compact"
+// (a10n-claude-mock's {"type":"compact"} control record).
+func Compact(id string) Turn {
+	return Turn{jsonl: fmt.Sprintf(`{"type":"compact","id":%q,"summary":"compacted"}`, id)}
+}
+
+// CompactNamingUnwrittenParent is Compact with a boundary whose logical parent
+// is a record written to no transcript — the shape a real preserved-segment
+// compaction left, where the only trace of what it continues is the boundary
+// record itself, part-way down the file the compaction happened in.
+func CompactNamingUnwrittenParent(id string) Turn {
+	return Turn{jsonl: fmt.Sprintf(`{"type":"compact","id":%q,"summary":"compacted","logical_parent":"never-written-%s"}`, id, id)}
+}
+
+// Background launches a tool call in the background — a Bash or an Agent with
+// run_in_background — which the mock answers the way real Claude Code does: at
+// once, with a receipt naming the task ("Command running in background with
+// ID: …" / "Async agent launched successfully. … agentId: …"), and later with a
+// <task-notification> turn when the task finishes.
+func Background(id, name string, input map[string]string) Turn {
+	in := map[string]string{"run_in_background": "true"}
+	for k, v := range input {
+		in[k] = v
+	}
+	return Turn{jsonl: toolUse(id, name, in)}
+}
+
+// TaskOutputOfLaunched reads the most recently launched background task back
+// through TaskOutput, which the mock answers with the task's output (a Bash's
+// output, an Agent's reply).
+func TaskOutputOfLaunched(id string) Turn {
+	return Turn{jsonl: toolUse(id, "TaskOutput", map[string]string{"task_id": launchedTaskPlaceholder}), launchedTask: true}
 }

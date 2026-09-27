@@ -1483,107 +1483,7 @@ func resolveWorkDir(dir string) string {
 	return dir
 }
 
-// seedTranscript writes a minimal valid transcript for (cwd, sessionID): a root
-// record with a uuid and a null parentUuid, which is the shape anything looking
-// for a conversation's origin scans for.
-//
-// The transcript's no-uuid PREAMBLE — the custom-title / mode / last-prompt records a
-// real session file opens with, ahead of this root — is NOT written here: the mock
-// writes it itself on a fresh session (a10n-claude-mock seedPreamble), prepending the
-// block ahead of this pre-seeded root so the head lands as [preamble..., root,
-// conversation...]. So the preamble a test relies on is the mock's, produced the same
-// way a real Claude Code session produces it, not a per-test fixture.
-func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
-	e.t.Helper()
-	dir := filepath.Join(e.configDir, "projects", encodeProjectDir(resolveWorkDir(cwd)))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		e.t.Fatalf("harness: seed transcript: %v", err)
-	}
-	body := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
-		"e2e-root-"+sessionID, cwd, prompt)
-	path := filepath.Join(dir, sessionID+".jsonl")
-	if _, err := os.Stat(path); err == nil {
-		return // already seeded, or the mock has started writing — never overwrite
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		e.t.Fatalf("harness: seed transcript: %v", err)
-	}
-}
-
-// RecordUnwrittenAtSessionStart makes a session's transcript ABSENT while its
-// SessionStart hooks run, and present again by the time the prompt is
-// submitted — the order real Claude Code writes it in, which the mock does not
-// reproduce. Call before Run; it applies to the one session id given, and
-// replaces the project's settings.local.json.
-//
-// # What real Claude Code does, measured
-//
-// A fresh session's transcript does not exist when SessionStart fires. Its
-// origin record (the first with no parent, which the engine keys a session's
-// identity on) is the attachment recording the SessionStart hooks' own result,
-// so it cannot be written before they finish. Across every real transcript on
-// one machine, all 940 `SessionStart:startup` runs of `sr-session start` failed
-// to open the record, and in all 940 the hook's attachment was the origin.
-//
-// The mock writes the root prompt first and fires SessionStart after
-// (a10n-claude-mock runner.Run), and Run seeds the file earlier still — so under
-// the mock, SessionStart always finds a record, and a defect that only exists
-// because it cannot was invisible to every e2e test.
-//
-// # Why this is not the forbidden kind of hook
-//
-// writeSettings refuses to add lifecycle hooks, because a test wiring one would
-// be arranging behaviour no user has. This arranges the OPPOSITE: it takes away
-// something the mock provides and real Claude Code does not. The two hooks
-// touch only the harness's own transcript file, call nothing in this repo, and
-// sit in settings.local.json so the project's settings.json stays exactly what
-// a user installs. The mock runs project hooks before plugin hooks, in order,
-// so the hide lands before `sr-session start` reads and the restore lands before
-// anything later does. The mock writes the transcript through a file handle it
-// opened before SessionStart, so moving the file aside loses nothing it writes.
-//
-// The restore is at UserPromptSubmit because that is the latest point it could
-// honestly be: by the first tool call a real transcript always exists — no
-// PreToolUse run of `sr-session pre-tool` in the same corpus ever failed to open
-// its record.
-func (e *Env) RecordUnwrittenAtSessionStart(projDir, sessionID string) {
-	e.t.Helper()
-	path := e.transcriptPath(projDir, sessionID)
-	held := path + ".unwritten"
-	// The marker is what lets a test prove the arrangement was in effect — see
-	// RecordWasUnwrittenAtSessionStart.
-	hide := fmt.Sprintf(`[ ! -f %s ] || { mv %s %s && : > %s; }`,
-		shellQuote(path), shellQuote(path), shellQuote(held), shellQuote(path+".hidden-at-start"))
-	restore := fmt.Sprintf(`[ ! -f %s ] || mv %s %s`, shellQuote(held), shellQuote(held), shellQuote(path))
-	hook := func(command string) []any {
-		return []any{map[string]any{
-			"matcher": "*",
-			"hooks":   []any{map[string]any{"type": "command", "command": command}},
-		}}
-	}
-	settings := map[string]any{"hooks": map[string]any{
-		"SessionStart":     hook(hide),
-		"UserPromptSubmit": hook(restore),
-	}}
-	body, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		e.t.Fatalf("harness: encode local settings: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(projDir, ".claude", "settings.local.json"), body, 0o644); err != nil {
-		e.t.Fatalf("harness: write local settings: %v", err)
-	}
-}
-
-// RecordWasUnwrittenAtSessionStart reports whether RecordUnwrittenAtSessionStart
-// actually moved the session's record aside at SessionStart. A test resting on
-// the record being absent checks this first: if the hook never ran, the session
-// had its record all along and the test proves nothing about the case it names.
-func (e *Env) RecordWasUnwrittenAtSessionStart(projDir, sessionID string) bool {
-	e.t.Helper()
-	return fileExists(e.transcriptPath(projDir, sessionID) + ".hidden-at-start")
-}
-
-// RootMessageID is the uuid seedTranscript gives a session's root user message —
+// RootMessageID is the uuid the mock gives a session's first user message (the prompt) —
 // the human prompt every Run starts from — so a test can REFERENCE that message by
 // id without hardcoding the seeding scheme.
 //
@@ -1598,29 +1498,30 @@ func (e *Env) RootMessageID(sessionID string) string {
 }
 
 // MockPreambleLines is the number of no-uuid preamble records a10n-claude-mock writes
-// at the HEAD of every fresh transcript, ahead of the root prompt (custom-title / mode
-// / last-prompt — a10n-claude-mock seedPreamble). A transcript reader counts these
-// physical lines but skips them as entries, so the root prompt does NOT sit on physical
-// line 1 — it sits on line MockPreambleLines+1. A test that must name the root message's
-// LINE up front (before the run, e.g. an agent declaring `#skip <line>` in its prose)
-// uses RootMessageLine, which is built from this. Kept as the single place the mock's
-// preamble count is mirrored, so a change to how many records the mock opens with is a
-// one-line update here rather than a hunt through every test that names a line.
+// at the HEAD of every fresh transcript (custom-title / mode / last-prompt). A
+// transcript reader counts these physical lines but skips them as entries.
 const MockPreambleLines = 3
 
-// RootMessageLine is the 1-based PHYSICAL line the root prompt record sits on in a
-// session's transcript — MockPreambleLines preamble records precede it, so it is
-// MockPreambleLines+1.
+// SessionStartAttachments is the number of records a fresh session's SessionStart
+// leaves ahead of the prompt. The mock writes a fresh transcript in the order real
+// Claude Code does: nothing while SessionStart runs, then one hook_success attachment
+// per SessionStart hook that printed anything, then the prompt. The plugin's start
+// hook always prints (rules-first.md, the one standing instruction it gives the
+// agent), so every session this harness drives opens with exactly one — and that
+// attachment, not the prompt, is the session's origin.
+const SessionStartAttachments = 1
+
+// RootMessageLine is the 1-based PHYSICAL line the prompt record sits on in a
+// session's transcript: after the preamble and the SessionStart attachment.
 //
 // This is what a test uses to name the authorising message's LINE without hardcoding
-// the preamble count: a task's ASK.md references the message by `<path>:<line>-<line>`,
+// the layout: a task's ASK.md references the message by `<path>:<line>-<line>`,
 // or an agent's prose declares `#skip <line>`, and both are authored before the run,
-// so the line must be known up front. The mock opens every fresh transcript with a
-// fixed preamble block ahead of the harness-seeded root, so the root's line is
-// deterministic. (For a line derived AFTER a run — e.g. a citation's own output — read
-// it from the file the mock wrote instead; this is the up-front constant.)
+// so the line must be known up front. (For a line derived AFTER a run — e.g. a
+// citation's own output — read it from the file the mock wrote instead; this is the
+// up-front constant.)
 func (e *Env) RootMessageLine(sessionID string) int {
-	return MockPreambleLines + 1
+	return MockPreambleLines + SessionStartAttachments + 1
 }
 
 // ControlGuard and ControlScript are the positive control every revalidation
@@ -1730,14 +1631,15 @@ func RequireSessionStore(t *testing.T) {
 	}
 }
 
-// Fork makes a NEW session id that a conversation continues under, the way a
-// harness re-forks one mid-conversation.
+// Fork makes a NEW session id that a conversation continues under, in the
+// RESTART shape: a new transcript opening on a record of its own that names,
+// as its logicalParentUuid, a record in the old one.
 //
-// This is the only way to test that state survives a re-fork, and it has to be
-// built rather than asked for: the mock has no compaction or retry path that
-// changes the id of a running session, so the transcript a fork would leave is
-// written here instead. What is written is the shape the identity walk actually
-// looks for — nothing about it is invented for the test's convenience:
+// The mock writes the shapes current Claude Code leaves — a fork opening on a
+// copied compact_boundary, or on the whole shared history (RunForked) — but not
+// this one, an older harness's restart file, so it is written here. What is
+// written is the shape the identity walk actually looks for — nothing about it
+// is invented for the test's convenience:
 //
 //   - the new transcript's own root record is parentless, so it IS a root
 //     within its file, exactly like any other transcript's first record;
@@ -1766,7 +1668,7 @@ func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
 			oldSessionID, oldPath, err)
 	}
 
-	// The record the new file continues FROM. seedTranscript's root is the one
+	// The record the new file continues FROM. The prompt record is the one
 	// record every seeded session is guaranteed to have, and it is genuinely in
 	// the old file — asserted below rather than assumed, because a fork pointing
 	// at a record that is not there resolves to nothing and the test would fail
@@ -1792,6 +1694,24 @@ func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		e.t.Fatalf("harness: fork %s: %v", oldSessionID, err)
 	}
+}
+
+// OriginRecord is the uuid of the first record in a session's transcript with no
+// parent — where that FILE begins, read straight off the file. Not the identity
+// walk: a test uses it to name what the walk should land on, and the walk is
+// asked of the engine (SessionIdentity).
+func (e *Env) OriginRecord(projDir, sessionID string) string {
+	e.t.Helper()
+	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
+		var rec struct {
+			UUID       string  `json:"uuid"`
+			ParentUUID *string `json:"parentUuid"`
+		}
+		if json.Unmarshal([]byte(line), &rec) == nil && rec.UUID != "" && rec.ParentUUID == nil {
+			return rec.UUID
+		}
+	}
+	return ""
 }
 
 // SessionIdentity is the identity the engine resolves for a session's
@@ -1876,9 +1796,18 @@ func (e *Env) BlockingErrorsFrom(projDir, sessionID, hookEvent string) []string 
 func (e *Env) blockingErrors(projDir, sessionID, hookEvent string) []string {
 	e.t.Helper()
 
+	// The session's own record AND its sub-agents': real Claude Code writes a
+	// SubagentStop's refusal into the sub-agent's subagents/agent-<id>.jsonl,
+	// never the dispatcher's file, and the mock now does the same.
+	record := e.transcript(projDir, sessionID)
+	for _, sub := range e.SubagentRecordPaths(projDir, sessionID) {
+		if b, err := os.ReadFile(sub); err == nil {
+			record += "\n" + string(b)
+		}
+	}
 	var out []string
 	seen := map[string]bool{}
-	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
+	for _, line := range strings.Split(record, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -1995,6 +1924,35 @@ func (r Result) Permitted() bool { return !r.Refused() }
 func (e *Env) Run(projDir, sessionID, prompt string, s Scenario) Result {
 	e.t.Helper()
 	return e.run(projDir, projDir, sessionID, prompt, s)
+}
+
+// RunForked drives a scenario as a NEW session id continuing the conversation
+// of fromSessionID in a new transcript — `claude --resume <from> --fork-session
+// --session-id <new>`. The mock writes the fork the way real Claude Code left
+// them: a compacted conversation's fork opens on a verbatim copy of its last
+// compact_boundary (plus the records that compaction preserved), a
+// never-compacted one's carries the whole history. So several forks of one
+// compacted conversation all open on the SAME boundary record — the shape that
+// sent the identity walk round in a circle.
+//
+// A later Run on newSessionID resumes the fork.
+func (e *Env) RunForked(projDir, fromSessionID, newSessionID, prompt string, s Scenario) Result {
+	e.t.Helper()
+	if !e.seenSessions[fromSessionID] {
+		e.t.Fatalf("harness: fork of %s: that session was never run, so there is nothing to fork", fromSessionID)
+	}
+	e.seenSessions[newSessionID] = true
+	return e.drive(projDir, projDir, prompt, s, "--resume", fromSessionID, "--fork-session", "--session-id", newSessionID)
+}
+
+// DeleteTranscript removes a session's transcript, the way Claude Code's own
+// cleanup does once a transcript is older than its retention period — while a
+// later continuation of the same conversation can still be resumed.
+func (e *Env) DeleteTranscript(projDir, sessionID string) {
+	e.t.Helper()
+	if err := os.Remove(e.transcriptPath(projDir, sessionID)); err != nil {
+		e.t.Fatalf("harness: delete transcript of %s: %v", sessionID, err)
+	}
 }
 
 // RunFrom drives a scenario as a session whose hooks fire from a SUBDIRECTORY
@@ -2143,19 +2101,12 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	// re-seeds nothing (the mock appends the prompt itself) and uses --resume. This is
 	// what lets a test build a genuine multi-human-turn transcript by Running twice.
 	resume := e.seenSessions[sessionID]
-	if !resume {
-		// Seeded where the MOCK will write it, which is keyed on the directory the
-		// session reports rather than on the repository root. See RunFrom: seeding
-		// elsewhere leaves the mock's own record without a parentless root, and the
-		// identity walk then keys the session on a tool_use uuid.
-		e.seedTranscript(workDir, sessionID, prompt)
-		e.seenSessions[sessionID] = true
-	}
-
-	scriptPath := filepath.Join(projDir, ".scenario.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
-		e.t.Fatalf("harness: write scenario: %v", err)
-	}
+	// Nothing is written ahead of the mock. It writes a fresh session's record
+	// in the order real Claude Code does — no file at all while SessionStart
+	// runs, then the SessionStart hook's attachment (when a hook printed
+	// anything) as the origin, then the prompt as `e2e-root-<session>` — so a
+	// file seeded here would hand SessionStart a record no real session has.
+	e.seenSessions[sessionID] = true
 
 	// The session flag differs by whether this id has been Run before: --session-id for
 	// the first (new session), --resume for a repeat (continuation). Everything else —
@@ -2165,7 +2116,18 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	if resume {
 		sessionFlag = "--resume"
 	}
-	cmd := exec.Command(e.mock,
+	return e.drive(projDir, workDir, prompt, s, sessionFlag, sessionID)
+}
+
+// drive runs the mock once with the given session flags — the part of run
+// shared by a plain run, a resume and a fork.
+func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ...string) Result {
+	e.t.Helper()
+	scriptPath := filepath.Join(projDir, ".scenario.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
+		e.t.Fatalf("harness: write scenario: %v", err)
+	}
+	args := []string{
 		"-p", "--output-format", "stream-json",
 		"--script", scriptPath,
 		// The directory the session reports, which RunFrom may place below the
@@ -2173,9 +2135,10 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 		"--project-dir", workDir,
 		"--config-dir", e.configDir,
 		"--plugin-cache-dir", e.pluginDir,
-		sessionFlag, sessionID,
-		prompt,
-	)
+	}
+	args = append(args, sessionFlags...)
+	args = append(args, prompt)
+	cmd := exec.Command(e.mock, args...)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"HOME="+e.home,
@@ -2244,4 +2207,21 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	}
 	e.t.Logf("mock:\n%s", out)
 	return Result{Output: string(out), Code: code}
+}
+
+// EngineErrored reports whether an sr-session answer captured with 2>&1 carries
+// an error line — a line of its own starting "sloprail:" — rather than entries.
+//
+// A line, not a substring: a session's record now carries its hooks' own output
+// (a hook that printed leaves a hook_success attachment holding its stdout and
+// stderr, as real Claude Code writes it), so an entry can legitimately CONTAIN
+// "sloprail:" inside one of its JSON strings. Only the error sr-session itself
+// prints starts a line with it.
+func EngineErrored(answer string) bool {
+	for _, l := range strings.Split(answer, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "sloprail:") {
+			return true
+		}
+	}
+	return false
 }

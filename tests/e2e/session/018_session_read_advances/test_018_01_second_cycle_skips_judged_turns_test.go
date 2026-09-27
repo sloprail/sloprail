@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
 )
@@ -104,7 +105,7 @@ exit 0
 // silent pass into a named failure.
 func answered(t *testing.T, answer string) {
 	t.Helper()
-	if strings.Contains(answer, "sloprail:") {
+	if harness.EngineErrored(answer) {
 		t.Fatalf("the engine reported an error instead of the session's entries, so every "+
 			"marker below reads as absent and no narrowing is being tested:\n%s", answer)
 	}
