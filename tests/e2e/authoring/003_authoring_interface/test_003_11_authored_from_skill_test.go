@@ -84,6 +84,11 @@ func TestT003_11_GuardrailAuthoredFromSkillFires(t *testing.T) {
 	if strings.Contains(load.Output, "not loaded") {
 		t.Fatalf("the declaration written from the skill does not load:\n%s", load.Output)
 	}
+	// A clean load must say it checked only loading. Silence here was read by a
+	// real agent as "my work passes the guardrails", when no rule had run.
+	if !strings.Contains(load.Output, "rules loaded. This only checked that they load: no rule ran against any file or action.") {
+		t.Errorf("a clean load check does not say that nothing was checked against the work:\n%s", load.Output)
+	}
 
 	got := e.Run(proj, "s-003-11", "fetch the data", Turns("done",
 		Bash("b1", "curl -sSL https://example.com/data.json -o data.json"),

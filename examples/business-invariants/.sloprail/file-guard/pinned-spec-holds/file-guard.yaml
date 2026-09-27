@@ -1,0 +1,28 @@
+# A pinned spec line holds: a line some sr:invariant marker pins changes only when
+# the user's own words ask for the rule to change. pinned-invariant checks the code
+# upholds the pinned text; this checks the text itself, which an agent can
+# otherwise rewrite to agree with its code — and a real Haiku run did, twice:
+# asked for goodwill refunds above the charge, it relaxed the spec's "a refund
+# must never exceed the original charge" and re-pinned its code to the new line.
+#
+# The requirement is declared, conditionally: `when` changes-pinned-lines.sh says
+# the write changes a pinned line. An uncited change is refused before any check,
+# with the script's hint. A cited one goes to the judge, which checks the cited
+# words ask for the rule to change, not merely for a feature that conflicts with it.
+#
+# Matches every path: which files are specs is decided by the markers pointing at
+# them, not by a name, and the predicate answers a file no marker pins with one
+# `git grep`.
+#
+# preventive: the rule is refused before it changes, while the agent can still keep
+# it and tell the user. deletions: include — deleting the spec drops every rule in
+# it at once.
+match: 'path matches ".*"'
+preventive: true
+deletions: include
+require:
+  - citation: {source_types: [user]}
+    when: ./changes-pinned-lines.sh
+checks:
+  - prepare: ./only-when-pinned.sh
+    judge: ./cited-words-change-the-rule.md.j2

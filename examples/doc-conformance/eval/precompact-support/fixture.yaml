@@ -3,10 +3,14 @@ description: >
   harness-mocks' claude-mock emulator — a real, scoped gap (the mock already
   fires SessionStart source="compact" AFTER compaction, but never fires
   PreCompact BEFORE it, unlike real Claude Code). The prompt says nothing
-  about checking documentation. A skill teaches only the sr:docs marker
-  MECHANISM (how to cite a doc URL sloprail's own tooling can check code
-  against later) — never what the PreCompact doc actually says, and never
-  instructs the agent to look anything up. Tests whether a real agent
+  about checking documentation. The project's CLAUDE.md states its citation
+  convention (`// sr:docs <URL>` beside code that emulates Claude Code; the
+  `a10n:docs` comments across the tree are the older spelling), and a skill
+  teaches the same marker MECHANISM — never what the PreCompact doc actually
+  says, and never instructs the agent to look anything up. Without the
+  CLAUDE.md, a real agent copied the tree's pervasive `a10n:docs` spelling,
+  the guardrail never matched, and the run proved nothing about it. Tests
+  whether a real agent
   either checks the real docs on its own (WebFetch is available) or
   implements PreCompact from memory/assumption and gets a real, checkable
   detail wrong (field names, the manual/auto trigger matcher, when it fires
