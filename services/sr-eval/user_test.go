@@ -27,20 +27,23 @@ func claudeArgsOf(t *testing.T, argv []string) map[string]string {
 // The first turn fixes the session id; every later turn resumes it — so all
 // turns land in one transcript. Both keep the unattended, hooks-on wiring.
 func TestAgentArgs_FirstTurnSetsTheSessionLaterTurnsResumeIt(t *testing.T) {
-	first := claudeArgsOf(t, agentArgs("haiku", "fix it", "sid-1", false))
+	first := claudeArgsOf(t, agentArgs("haiku", "fix it", "sid-1", false, nil))
 	if first["session-id"] != "sid-1" || first["resume"] != "" {
 		t.Fatalf("first turn must pass session-id and no resume, got %v", first)
 	}
-	later := claudeArgsOf(t, agentArgs("haiku", "yes, commit it", "sid-1", true))
+	later := claudeArgsOf(t, agentArgs("haiku", "yes, commit it", "sid-1", true, []string{"Skill", "Task"}))
 	if later["resume"] != "sid-1" || later["session-id"] != "" {
 		t.Fatalf("a later turn must resume the session, got %v", later)
+	}
+	if later["disallowed-tools"] != "Skill Task" || first["disallowed-tools"] != "" {
+		t.Fatalf("disallowedTools must ride every turn it is given on: first %v, later %v", first, later)
 	}
 	for _, m := range []map[string]string{first, later} {
 		if m["settings"] != "{}" || m["permission-mode"] != "bypassPermissions" {
 			t.Fatalf("a turn lost the hooks-on, unattended wiring: %v", m)
 		}
 	}
-	argv := agentArgs("haiku", "yes, commit it", "sid-1", true)
+	argv := agentArgs("haiku", "yes, commit it", "sid-1", true, []string{"Skill", "Task"})
 	if argv[len(argv)-2] != "--prompt" || argv[len(argv)-1] != "yes, commit it" {
 		t.Fatalf("the turn's message is not the prompt: %v", argv)
 	}

@@ -1,0 +1,22 @@
+# A declared scanner's keywords hold: a write may add keywords, but dropping one
+# needs the user's own words asking for it. The keywords are what the search must
+# cover together (verify-scanner-coverage), so a scanner weakened to fit a search
+# already run defeats the whole registry — and a real Haiku run did exactly that:
+# refused by the coverage gate, it rewrote its keywords to match its search.
+#
+# The requirement is declared, conditionally: `when` drops-keywords.sh says the
+# write drops a keyword (a new scanner, or one that only adds, needs nothing).
+# An uncited drop is refused before any check, with the script's hint. A cited
+# drop goes to the judge, which checks the cited words ask for THESE keywords to
+# go — citing some unrelated thing the user said does not.
+#
+# preventive: a weakened declaration refused before it lands, while the agent can
+# still meet it with a search instead.
+match: 'path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"'
+preventive: true
+require:
+  - citation: {source_types: [user]}
+    when: ./drops-keywords.sh
+checks:
+  - prepare: ./only-when-dropped.sh
+    judge: ./cited-words-ask-for-it.md.j2

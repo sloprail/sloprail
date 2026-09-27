@@ -52,6 +52,9 @@ func newSessionStartCmd() *cobra.Command {
 			// which part of the tree each plugin's structure gate owns.
 			loaded := newNatureDeclarations(cmd, p.Cwd, reg)
 			reportStructureScopes(cmd, loaded)
+			if isLoadCheck(p) {
+				reportLoadCheck(cmd, loaded)
+			}
 			return nil
 		},
 	}
@@ -71,7 +74,7 @@ func recordBaseline(cmd *cobra.Command, p HookPayload) {
 	// /dev/null`, which install.sh and the install docs tell a newcomer to
 	// run), not a session: there is nothing to record a baseline for, and
 	// reporting that as a failure makes a working install look broken.
-	if p.TranscriptPath == "" && p.AgentTranscriptPath == "" && p.SessionID == "" {
+	if isLoadCheck(p) {
 		return
 	}
 	store, err := openEngineState(p)
@@ -96,4 +99,27 @@ func reportStructureScopes(cmd *cobra.Command, loaded declaration.Loaded) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %s owns %s\n",
 			sg.Describe(), strings.Join(sg.ScopeGlobs(), ", "))
 	}
+}
+
+// isLoadCheck reports whether this start carries no session at all — the
+// documented load check (`sr-session start < /dev/null`) rather than a harness
+// starting a session.
+func isLoadCheck(p HookPayload) bool {
+	return p.TranscriptPath == "" && p.AgentTranscriptPath == "" && p.SessionID == ""
+}
+
+// reportLoadCheck ends the load check with what it did and did not do. Without
+// it a clean load prints nothing, and an agent that runs the load check after
+// its own work reads that silence as "my work passes the guardrails" — when no
+// rule ran against anything. Only for the load check: a harness's SessionStart
+// has no reader for it. Stderr, beside the rest of the load report.
+func reportLoadCheck(cmd *cobra.Command, loaded declaration.Loaded) {
+	n := len(loaded.FileGuards) + len(loaded.Gates) + len(loaded.Contexts) + len(loaded.Structures)
+	failed := ""
+	if len(loaded.Invalid) > 0 {
+		failed = fmt.Sprintf(", %d could not load (above)", len(loaded.Invalid))
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"sloprail: %d rules loaded%s. This only checked that they load: no rule ran against any file or action.\n",
+		n, failed)
 }

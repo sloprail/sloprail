@@ -84,6 +84,22 @@ type Fixture struct {
 	// listed in .claude-plugin/marketplace.json.
 	Plugins []string `yaml:"plugins"`
 
+	// Setup names a script, relative to Dir, run in the project once the seed
+	// (or repo), example rules and overlay are in place and before the
+	// baseline commit. It is for state a fixture cannot hold as files because
+	// it depends on the run: the project's absolute path, or the sha of a
+	// commit made in it (an sr:invariant marker pinned to SPEC.md needs both).
+	// It may commit; whatever it leaves uncommitted lands in the baseline
+	// commit. A failing setup fails the run before the agent starts.
+	Setup string `yaml:"setup"`
+
+	// DisallowedTools names harness tools the agent-under-test does not have,
+	// e.g. [WebSearch, WebFetch] — passed as the harness's own
+	// --disallowed-tools. For a fixture whose rule governs one way of doing a
+	// thing (research through gh), in a project that offers no other: the
+	// environment steers the agent, the prompt never has to.
+	DisallowedTools []string `yaml:"disallowedTools"`
+
 	// Model is the sr-agent --model set for the agent-under-test, e.g.
 	// "claude-sonnet-5,size-md". Empty lets sr-agent's own default resolve —
 	// which sr-agent refuses rather than silently picking one, so this is
@@ -226,6 +242,11 @@ func LoadFixture(dir string) (Fixture, error) {
 		}
 		if f.User.MaxTurns < 2 || f.User.MaxTurns > maxUserTurns {
 			return Fixture{}, fmt.Errorf("%s/fixture.yaml: user.maxTurns is %d — it counts every user turn including prompt.md, so it must be between 2 and %d", abs, f.User.MaxTurns, maxUserTurns)
+		}
+	}
+	if f.Setup != "" {
+		if _, err := os.Stat(filepath.Join(abs, f.Setup)); err != nil {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: setup %q: %w", abs, f.Setup, err)
 		}
 	}
 

@@ -107,6 +107,9 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	// real run where a guardrail never fired despite the agent's write
 	// plainly matching its rule), so both branches now have a repository to
 	// commit into.
+	if err := ws.runSetup(ctx, fx); err != nil {
+		return fmt.Errorf("fixture setup: %w", err)
+	}
 	if err := ws.commitSetup(); err != nil {
 		return fmt.Errorf("commit harness setup: %w", err)
 	}
@@ -153,7 +156,7 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 		}
 		var reply bytes.Buffer
 		if agentErr := launchAgent(ctx, io.MultiWriter(out, &reply), cmd.ErrOrStderr(), ws, binDir,
-			agentArgs(fx.Model, message, sessionID, turn > 1), agent.env); agentErr != nil {
+			agentArgs(fx.Model, message, sessionID, turn > 1, fx.DisallowedTools), agent.env); agentErr != nil {
 			agentErrs = append(agentErrs, fmt.Sprintf("turn %d: %v", turn, agentErr))
 			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error on turn %d: %v\n", turn, agentErr)
 			// Not returned yet: a refusal or a crash mid-run still leaves a

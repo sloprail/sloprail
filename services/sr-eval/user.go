@@ -30,17 +30,22 @@ type exchange struct {
 // agentArgs is the sr-agent argv for one turn of the agent-under-test. The
 // first turn fixes the session's id (`--session-id`); every later turn
 // resumes it (`--resume`), so all turns land in ONE transcript. The rest is
-// launchAgent's long-standing wiring (see its doc comment).
-func agentArgs(model, prompt, sessionID string, resume bool) []string {
+// launchAgent's long-standing wiring (see its doc comment), including the
+// fixture's disallowedTools, which every turn carries.
+func agentArgs(model, prompt, sessionID string, resume bool, disallowed []string) []string {
 	key := "session-id"
 	if resume {
 		key = "resume"
 	}
-	harness, _ := json.Marshal(map[string]string{
+	claudeArgs := map[string]string{
 		"settings":        "{}",
 		"permission-mode": "bypassPermissions",
 		key:               sessionID,
-	})
+	}
+	if len(disallowed) > 0 {
+		claudeArgs["disallowed-tools"] = strings.Join(disallowed, " ")
+	}
+	harness, _ := json.Marshal(claudeArgs)
 	return []string{"--model", model, "--claude-args", string(harness), "--prompt", prompt}
 }
 

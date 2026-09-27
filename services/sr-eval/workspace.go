@@ -143,6 +143,28 @@ func cloneRepoAt(ctx context.Context, url, ref, dest string) error {
 
 func (w *workspace) Close() error { return os.RemoveAll(w.root) }
 
+// runSetup runs the fixture's setup script, if it names one, in the project
+// directory. The git identity is set in its environment for the same reason
+// commitSetup passes one: a machine with none configured must not fail the
+// eval for a reason unrelated to it.
+func (w *workspace) runSetup(ctx context.Context, fx Fixture) error {
+	if fx.Setup == "" {
+		return nil
+	}
+	script := filepath.Join(fx.Dir, fx.Setup)
+	c := exec.CommandContext(ctx, script)
+	c.Dir = w.project
+	c.Env = append(os.Environ(),
+		"SR_EVAL_PROJECT_DIR="+w.project,
+		"GIT_AUTHOR_NAME=sr-eval", "GIT_AUTHOR_EMAIL=sr-eval@localhost",
+		"GIT_COMMITTER_NAME=sr-eval", "GIT_COMMITTER_EMAIL=sr-eval@localhost",
+	)
+	if out, err := c.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %w: %s", script, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // commitSetup commits every change sr-eval itself made to the tree (the
 // overlay, .claude/settings.json) as one commit, so the agent-under-test's
 // first turn starts on a clean tree — see the call site in run.go for why

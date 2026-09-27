@@ -64,6 +64,20 @@ user:                   # optional — makes the run multi-turn, see below
   the way a user adds one — so the plugin's own guardrails are what fires.
   A plugin's fixtures live under `examples/_<plugin>/eval/<case>/`, never in
   the plugin's tree (that is copied into the agent's install).
+- **`setup`** — a script, relative to the fixture dir, run in the project
+  after the copy order below and before the baseline commit (git identity
+  set, `SR_EVAL_PROJECT_DIR` in its environment). It is for state that only
+  exists at run time: the project's absolute path, or the sha of a commit
+  made in it. It may commit; what it leaves uncommitted goes into the
+  baseline. A failing setup fails the run before the agent starts. See
+  `examples/business-invariants/eval/goodwill-refund/`, whose seed starts
+  with a marker pinned to SPEC.md.
+- **`disallowedTools`** — harness tools the agent-under-test does not have
+  (`[WebSearch, WebFetch]`), passed as the harness's own `--disallowed-tools`.
+  For a fixture whose rule governs one way of doing a thing (research through
+  `gh`): the project offers no other, so the environment steers the agent
+  where a prompt must not. An eval must reproduce the behaviour its guardrail
+  governs — a run in which the guard never engaged proves nothing about it.
 - **`model`** — an `sr-agent --model` value (`haiku`, `claude-sonnet-5,size-md`,
   etc.). Every current fixture uses `haiku` deliberately — a cheap model is
   the one likelier to take the tempting shortcut a fixture is designed to
@@ -95,6 +109,8 @@ user:                   # optional — makes the run multi-turn, see below
 2. `exampleSloprail`'s `.sloprail/`, if declared — into `project/.sloprail/`.
 3. `overlay/`, if declared — its contents copied into `project/` as-is,
    winning any path collision with step 2.
+4. `setup`, if declared — run in `project/`, then everything is committed as
+   the baseline the agent starts from.
 
 Everything is copied or cloned fresh, never symlinked — the agent-under-test
 mutates the tree, and neither the fixture's own `seed/` under `examples/` nor
@@ -113,7 +129,7 @@ gets that HOME as `SR_EVAL_AGENT_HOME`.
 - `repo` is set without `ref`
 - `score` is missing, or `prompt.md` is missing beside `fixture.yaml`
 - `user` is set without an existing `brief`, or with `maxTurns` outside 2–10
-- `seed`/`overlay` is declared but the path doesn't exist
+- `seed`/`overlay`/`setup` is declared but the path doesn't exist
 - `exampleSloprail: true` AND `overlay/.sloprail/` both exist — the exact
   duplication the field exists to remove, now silently doubled (the shipped
   copy would apply first, the stale overlay copy would win the collision,
