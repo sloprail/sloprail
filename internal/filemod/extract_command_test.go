@@ -901,7 +901,9 @@ func TestExtractCommand_RemovingWhatIsNotThereIsNotADeletion(t *testing.T) {
 // Something is at the path and it is not a file, so no file event can honestly
 // be about it — the same judgement presentNotAFile encodes for a write aimed at
 // a directory. `rm -rf somedir` produces nothing rather than a PreFileDelete
-// naming a directory.
+// naming a directory — here the directory is EMPTY, so no file stops existing
+// either; a directory with files in it is TestExtractCommand_RemovingADirectory
+// RecursivelyDeletesEveryFileInIt.
 func TestExtractCommand_ADirectoryIsNotAFile(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "adir")

@@ -53,6 +53,7 @@ searchable_text="$(printf '%s' "$all_gh_calls" | jq -r '
 ')"
 
 missing_scanners=""
+missing_detail=""
 while IFS= read -r entry; do
   [ -z "$entry" ] && continue
   scanner_name="$(printf '%s' "$entry" | jq -r '.key | ltrimstr("scanner:")')"
@@ -99,11 +100,21 @@ while IFS= read -r entry; do
 
   if [ "$covered" != "true" ]; then
     missing_scanners="$missing_scanners $scanner_name"
+    # Name the keywords, so the remedy is one command away rather than a
+    # re-read of a file (which may be gone — the registry still holds it).
+    missing_detail="$missing_detail
+  $scanner_name: $(printf '%s' "$keywords" | sed 's/.*/"&"/' | paste -sd ' ' -)"
   fi
 done < <(printf '%s' "$declared" | jq -c '.[]')
 
+# The remedy, spelled out: measured on a real run, an agent whose covering search
+# came back empty took the refusal to mean it needed RESULTS from that search,
+# tried to drop keywords (refused), and thrashed through twenty narrower
+# searches — although its one covering call had already satisfied this gate.
 if [ -n "$missing_scanners" ]; then
-  echo "These declared scanners have no single gh call covering all their keywords:$missing_scanners" >&2
+  echo "These declared scanners have no single gh call covering all their keywords:$missing_scanners.
+Run ONE gh search whose query contains every keyword of the scanner, e.g.:$missing_detail
+That one call is what counts — it satisfies this check even if GitHub returns nothing for so specific a query. Run narrower searches besides it for actual results; they do not have to carry every keyword." >&2
   exit 1
 fi
 

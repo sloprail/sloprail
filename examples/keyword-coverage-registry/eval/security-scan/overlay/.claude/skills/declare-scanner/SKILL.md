@@ -22,4 +22,5 @@ single vague word, and not so many that they can't reasonably co-occur.
 Then run ONE `gh search` (e.g. `gh search issues` / `gh search code` /
 `gh search repos`) whose query text includes ALL of the declared keywords
 together, not split across separate searches. That single call is what
-counts as covering the scanner.
+counts as covering the scanner — even if GitHub returns nothing for it.
+Narrower searches besides it, for actual results, are fine.

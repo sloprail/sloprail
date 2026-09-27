@@ -96,6 +96,22 @@ type FileTarget struct {
 	// applies at all, and that is exactly what is deferred.
 	Into []string
 
+	// Recursive marks a Remove that takes a DIRECTORY with it, everything
+	// inside included — `rm -r`/`-R`/`--recursive`, and the source of an `mv`,
+	// which moves a directory whole without asking for a flag.
+	//
+	// The third case of one line meaning different things depending on the
+	// tree, after MTimeOnly and Into: `rm -rf scanners/x` removes one file if
+	// scanners/x is a file and every file under it if it is a directory, and
+	// only a stat can tell. So the line states that it WOULD reach inside, and
+	// filemod, which stats, lists what is inside. Without it a directory
+	// removal named no file at all, and a rule guarding a file was defeated by
+	// deleting the folder it sits in.
+	//
+	// False for a plain `rm dir`, which fails on a directory and removes
+	// nothing.
+	Recursive bool
+
 	// Grounded is the sr-file call that names this target, parsed — the one
 	// program whose line carries citations for the file it changes (see
 	// internal/grounding). Nil for every other program. It travels on the
