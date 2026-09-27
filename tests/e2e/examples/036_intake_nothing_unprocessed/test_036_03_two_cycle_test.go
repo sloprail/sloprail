@@ -1,11 +1,12 @@
 package e2e
 
 import (
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T036_06: a skip DECLARED IN A LATER CYCLE still excuses an EARLIER cycle's

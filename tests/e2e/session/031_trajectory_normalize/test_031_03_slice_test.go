@@ -1,9 +1,10 @@
 package e2e
 
 import (
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T031_09: normalize's default read is the part of the session not yet judged,

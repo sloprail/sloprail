@@ -1,9 +1,10 @@
 package e2e
 
 import (
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // session_read_advances: a hook asking what a session has done is given the part
