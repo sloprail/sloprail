@@ -80,7 +80,7 @@ func TestT047_02_UncitedWriteRefused(t *testing.T) {
 	if e.Exists(proj, "MIGRATION.md") {
 		t.Errorf("the uncited write landed")
 	}
-	if !res.Saw("in the tool_result pool") || !res.Saw("--cite:tool_result") {
+	if !res.Saw("a tool's output from this session") || !res.Saw("--cite:tool_result") {
 		t.Errorf("the refusal does not name the tool_result form:\n%s", res.Output)
 	}
 }

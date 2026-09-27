@@ -72,10 +72,14 @@ func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verd
 		}
 		hint = h
 	}
+	if p.Citation != nil {
+		// A citation's remedy places the hint itself, in place of its generic forms.
+		return checkCitation(req, *p.Citation, hint), nil
+	}
 	v, err := r.checkUnconditional(req, p)
 	if err == nil && v.Refused && hint != "" {
 		// The rule's own words on how to meet it here — the engine's remedy is
-		// generic, the `when` script knows the case (which status, which ask).
+		// generic, the `when` script knows the case.
 		v.Reason += "\n" + hint
 	}
 	return v, err
@@ -89,9 +93,7 @@ func (r Runner) checkUnconditional(req Request, p declaration.Prerequisite) (Ver
 	if p.Context != "" {
 		return r.checkContext(req, p.Context), nil
 	}
-	if p.Citation != nil {
-		return checkCitation(req, *p.Citation), nil
-	}
+
 	// Neither set: a loaded rule cannot reach here (the validator refuses an empty
 	// prerequisite), so an empty one establishes nothing to fail and passes.
 	return pass(), nil
@@ -596,7 +598,7 @@ func subpageRead(transcriptPath, workspace, skill, file string) (bool, error) {
 // grounding.go), so presence here IS existence: a quote that did not resolve
 // never became a citation. Whether it grounds THIS change is for the rule's
 // judge, which reads the same field.
-func checkCitation(req Request, c declaration.CitationPrerequisite) Verdict {
+func checkCitation(req Request, c declaration.CitationPrerequisite, hint string) Verdict {
 	pools := c.Pools()
 	for _, cit := range grounding.FromWire(req.Event.Fields[grounding.FieldCitations]) {
 		for _, got := range cit.SourceTypes {
@@ -607,7 +609,7 @@ func checkCitation(req Request, c declaration.CitationPrerequisite) Verdict {
 			}
 		}
 	}
-	return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools) + subagentCitationNote(req.TranscriptPath, pools))
+	return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools, hint) + subagentCitationNote(req.TranscriptPath, pools))
 }
 
 // subagentCitationNote tells a sub-agent, refused for want of the user's words,
@@ -620,40 +622,62 @@ func subagentCitationNote(transcriptPath string, pools []transcript.SourceType) 
 	return "\n" + transcript.SubagentUserAdvice
 }
 
-// citationRemedy says how to ground the action this event describes, in the
-// one form that works for its kind.
-func citationRemedy(kind string, fields map[string]any, pools []transcript.SourceType) string {
+// citedWhat names, in plain words, what a citation in these pools quotes.
+func citedWhat(pools []transcript.SourceType) string {
+	var user, tool bool
+	for _, p := range pools {
+		user = user || p == transcript.SourceUser
+		tool = tool || p == transcript.SourceToolResult
+	}
+	switch {
+	case user && tool:
+		return "the user's words or a tool's output from this session"
+	case tool:
+		return "a tool's output from this session"
+	}
+	return "the user's own words"
+}
+
+// citationRemedy says how to ground the action this event describes: what it
+// must cite and with which flag, then how. A rule's hint (from its `when`
+// script) is the how when there is one — the exact command for this case, which
+// the generic forms would only restate less precisely. The rules for running
+// sr-file hold either way.
+func citationRemedy(kind string, fields map[string]any, pools []transcript.SourceType, hint string) string {
 	names := make([]string, len(pools))
 	for i, p := range pools {
 		names[i] = string(p)
 	}
 	flag := "--cite:" + strings.Join(names, ",")
-	what := "the user's own words"
-	if len(pools) != 1 || pools[0] != transcript.SourceUser {
-		what = "an entry of this session's record in the " + strings.Join(names, " or ") + " pool"
-	}
+	what := citedWhat(pools)
 	path, _ := fields["path"].(string)
+
+	how := hint
+	forms := fmt.Sprintf("  sr-file edit %s --old-string '<old>' --new-string '<new>' [--replace-all] %s '<exact quote>'\n"+
+		"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
+		"  sr-file delete %s %s '<exact quote>'",
+		path, flag, path, flag, path, flag)
 
 	switch kind {
 	case declaration.KindPreCommandInvoke:
-		return fmt.Sprintf("this command must be grounded in a citation of %s, and it carries none that resolves. "+
-			"Chain one in front of it, quoting the exact words verbatim:\n"+
-			"  sr-session trajectory cite --source-types %s '<exact quote>' && <the command>\n"+
-			"The quote must match exactly one entry of this session's record; run the cite part alone first to check it.",
-			what, strings.Join(names, ","))
+		if how == "" {
+			how = fmt.Sprintf("Chain a cite in front of it, quoting the exact words:\n"+
+				"  sr-session trajectory cite --source-types %s '<exact quote>' && <the command>", strings.Join(names, ","))
+		}
+		return fmt.Sprintf("this command must cite %s, and it carries none that resolves.\n%s\n"+
+			"The quote must match exactly one entry of this session; run the cite part alone first to check it.",
+			what, how)
 	case declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete:
-		return fmt.Sprintf("%s was changed without a citation of %s. Redo the change with sr-file, citing the words it is grounded in:\n"+
-			"  sr-file edit %s --old-string '<old>' --new-string '<new>' [--replace-all] %s '<exact quote>'\n"+
-			"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
-			"  sr-file delete %s %s '<exact quote>'",
-			path, what, path, flag, path, flag, path, flag)
+		if how == "" {
+			how = "Redo the change with sr-file, citing what it rests on:\n" + forms
+		}
+		return fmt.Sprintf("%s was changed without citing %s (%s).\n%s", path, what, flag, how)
 	}
-	return fmt.Sprintf("this change to %s must be grounded in a citation of %s, and it carries none that resolves. "+
-		"Make it with sr-file, which carries the citation on the command (never in the file):\n"+
-		"  sr-file edit %s --old-string '<old>' --new-string '<new>' [--replace-all] %s '<exact quote>'\n"+
-		"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
-		"  sr-file delete %s %s '<exact quote>'\n"+
+	if how == "" {
+		how = "Make it with sr-file, which carries the citation on the command (never in the file):\n" + forms
+	}
+	return fmt.Sprintf("this change to %s must cite %s (%s), and it carries none that resolves.\n%s\n"+
 		"Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo; no cd, no VAR= prefix, no $ expansion — quote every value verbatim) so its result can be checked before it runs. "+
-		"Single-quote the quote; it must match exactly one entry of this session's record — check one with `sr-session trajectory cite '<quote>'`.",
-		path, what, path, flag, path, flag, path, flag)
+		"Single-quote the quote; it must match exactly one entry of this session — check one with `sr-session trajectory cite '<quote>'`.",
+		path, what, flag, how)
 }

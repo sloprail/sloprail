@@ -175,7 +175,7 @@ func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
 	}
 
 	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !containsStr(joined, "was changed without a citation of an entry of this session's record in the tool_result pool") {
+	if !containsStr(joined, "was changed without citing a tool's output from this session (--cite:tool_result)") {
 		t.Fatalf("an in_review claim with no cited tool output was not refused at Stop:\n%s", joined)
 	}
 	if !containsStr(joined, "--cite:tool_result") {
