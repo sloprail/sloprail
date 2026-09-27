@@ -49,7 +49,12 @@ The coverage gate reads the registry rather than deriving the obligation from
 the searches themselves, so a search that never ran is caught missing. It is a
 script, not a judge: the scanner names its own keywords, so "does one gh call
 contain every one of them" (case-insensitive, whole-word) is a structural fact,
-decided free and reproducibly.
+decided free and reproducibly. Its refusal spells the covering search out —
+each uncovered scanner's keywords, and that the one call counts even if GitHub
+returns nothing for so specific a query: a real sub-agent whose covering search
+came back empty read the refusal as "get results with all keywords", tried to
+drop keywords (refused) and thrashed through twenty narrower searches, although
+its covering call had already satisfied the gate.
 
 ### When the context logs a scanner
 

@@ -67,6 +67,6 @@ dropped="$(comm -23 <(keywords_of "$(field '.event.oldContent // ""')") <(keywor
 
 # It applies. The hint the refusal carries: meet the declaration, don't weaken it.
 jq -n --arg dropped "$dropped" '{hint: (
-  "This change drops the declared keyword(s) " + $dropped + ". A scanner'\''s keywords are what the search must cover, so cover them all in one gh search rather than weakening the scanner to fit a search already run. " +
+  "This change drops the declared keyword(s) " + $dropped + ". A scanner'\''s keywords are what the search must cover, so cover them all in one gh search rather than weakening the scanner to fit a search already run — that one search counts even if GitHub returns nothing for it; narrower searches besides it can find the results. " +
   "Drop a keyword only if the user asked for it, citing their words.")}'
 exit 0

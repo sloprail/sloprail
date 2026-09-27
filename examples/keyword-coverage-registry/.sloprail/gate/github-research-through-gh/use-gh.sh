@@ -24,7 +24,7 @@ esac
 
 case "$tool" in
   WebSearch)
-    why="WebSearch is not used in this project: it is a GitHub-research registry, and GitHub research runs through gh so every search can be checked against a declared scanner."
+    why="WebSearch is not used in this project, whatever the query — every WebSearch is refused here, so do not retry it: this is a GitHub-research registry, and GitHub research runs through gh so every search can be checked against a declared scanner."
     ;;
   *)
     why="Fetching GitHub content (${url}) with ${tool} bypasses gh, so it cannot be checked against a declared scanner. Read what you found through gh instead: gh issue view <n> -R <owner>/<repo>, gh pr view, gh repo view, or gh api repos/<owner>/<repo>/... (a file: gh api repos/<owner>/<repo>/contents/<path> -H 'Accept: application/vnd.github.raw')."
