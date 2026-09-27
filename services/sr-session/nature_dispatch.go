@@ -49,28 +49,26 @@ import (
 // harness's: deny() at pre-tool, block() at Stop — the two measured to both stop
 // the action and carry their words.
 
-// natureDispatchPreTool resolves the hook scope and session store, runs the
-// new-format pre-tool dispatch, and returns the reason to deny (or "").
+// natureDispatchPreTool resolves the hook scope, runs the new-format pre-tool
+// dispatch against the session store it is handed, and returns the reason to deny
+// (or "").
 //
-// A thin wrapper over dispatchNaturePreTool that owns the store's lifetime — opened
-// here, closed here — so the hook command calls one function and does not manage a
-// second store alongside the old path's revalidation store. The store is a
-// convenience for the gates[] map (a gate still decides without it); a store that
-// will not open is reported and the dispatch runs storeless.
-func natureDispatchPreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry) string {
+// The store is the caller's, opened once per tool call (natureStore) and shared
+// with the baseline bookkeeping runSessionPreTool does before dispatch, so a tool
+// call opens the session's database once rather than twice. It is a convenience
+// for the gates[] map (a gate still decides without it); nil — a store that would
+// not open, already reported by natureStore — runs the dispatch storeless.
+func natureDispatchPreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, store sessionstate.Store) string {
 	scope := natureHookScope(cmd, p)
-	store := natureStore(cmd, p)
-	if store != nil {
-		defer store.Close()
-	}
 	return dispatchNaturePreTool(cmd, p, reg, scope, store).Blocked
 }
 
 // natureDispatchStop resolves the scope and store, runs the new-format Stop
 // dispatch, and returns the text to block the turn with (or "").
 //
-// The Stop counterpart of natureDispatchPreTool, owning the store's lifetime the
-// same way.
+// The Stop counterpart of natureDispatchPreTool. Unlike it, this one opens and
+// closes its own store: completeCycle holds a store of its own across the
+// dispatch, and the two are kept separate as they always were.
 func natureDispatchStop(cmd *cobra.Command, p HookPayload, reg *module.Registry) string {
 	scope := natureHookScope(cmd, p)
 	store := natureStore(cmd, p)

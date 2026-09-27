@@ -12,7 +12,8 @@ import (
 //
 // Two rules, and they only work as a pair.
 //
-// The point is recorded ONCE, at session start, and not revised as the session
+// The point is recorded ONCE, where the session starts — before its first tool
+// call at the latest (ensureBaselineRecorded) — and not revised as the session
 // goes on. That is what keeps a file which failed a hook and was left unfixed
 // inside the difference rather than dropping out of it — an agent that commits
 // its unfixed work would otherwise move the point past its own violation.
@@ -84,7 +85,9 @@ const (
 // Called at session start to establish the point, and at the end of every cycle
 // to notice the tree leaving. The two are the same call because the rule is the
 // same one: the point is a commit the tree can still reach, and it is only ever
-// re-taken when the tree can no longer reach it.
+// re-taken when the tree can no longer reach it. Session start usually cannot
+// reach the store at all — a fresh session has no transcript yet — which is why
+// every tool call also asks, through ensureBaselineRecorded.
 //
 // A history that cannot be read is not a history that changed. Every failure
 // path leaves the recorded point exactly as it was, because the alternative —
@@ -178,6 +181,66 @@ func ensureBaseline(store sessionstate.Store, dir string) (baselineOutcome, erro
 		return baselineUnavailable, err
 	}
 	return baselineMoved, nil
+}
+
+// ensureBaselineRecorded takes the point if the session has none yet, and
+// otherwise does nothing at all. It is what a tool call runs, before the tool.
+//
+// # Why a tool call takes the point
+//
+// Session start cannot. Claude Code writes a session's transcript AFTER its
+// SessionStart hooks have run, and the record the conversation's identity is
+// read from (StableSessionID: the first record with no parent) is, in a fresh
+// session, the attachment recording that very hook's result. So at startup the
+// identity the store is keyed by does not exist yet, by construction rather
+// than by a race. Measured across every real transcript on one machine: all 940
+// `SessionStart:startup` runs of `sr-session start` failed to open the record,
+// and in all 940 the hook's own attachment was the transcript's origin.
+//
+// Left to the end of the cycle, the first point was taken at the first Stop —
+// AFTER the agent's first turn. An agent that committed its work during that
+// turn then had its own final commit recorded as where the session began, the
+// difference came back empty, and no file-guard ever saw the change. Found in a
+// real evaluation run, where exactly that happened and the Stop hook judged
+// nothing in 204ms.
+//
+// A tool call is the earliest moment that works, and it is early enough. The
+// record exists by then — the prompt and the assistant turn that asked for the
+// tool are written, and across the same real transcripts no PreToolUse run of
+// `sr-session pre-tool` ever failed to open it. And nothing the agent does can
+// have moved HEAD yet: a commit, a checkout, a reset all need a tool call, and
+// every tool call reaches PreToolUse before it runs. So the first call records
+// the commit the session actually began on.
+//
+// The same holds for a sub-agent. Claude Code reports agent_id on a sub-agent's
+// tool events, so its PreToolUse resolves the sub-agent's own record and store
+// (HookPayload.record), and its first tool call records where IT began — rather
+// than its SubagentStop, which is after the only cycle most sub-agents have.
+//
+// # Why this does not also move the point
+//
+// Taking the point once is all a tool call needs to do. Noticing that the tree
+// LEFT the recorded history is ensureBaseline's other job, and it stays at the
+// end of the cycle, where the difference is actually measured: a point that
+// moves mid-cycle and one that moves at Stop yield the same difference at Stop.
+// Keeping it out of here keeps this path to two reads of the already-open store
+// on every call after the first — no git process at all — and leaves one place,
+// the one that announces it, where the point ever moves.
+func ensureBaselineRecorded(store sessionstate.Store, dir string) (baselineOutcome, error) {
+	_, hadCommit, err := store.Meta(sessionstate.MetaBaselineCommit)
+	if err != nil {
+		return baselineUnavailable, err
+	}
+	_, hadBranch, err := store.Meta(sessionstate.MetaBaselineBranch)
+	if err != nil {
+		return baselineUnavailable, err
+	}
+	if hadCommit && hadBranch {
+		return baselineUnchanged, nil
+	}
+	// No point, or half of one (see writeBaseline on the order): ensureBaseline
+	// decides both the same way, by taking a fresh one.
+	return ensureBaseline(store, dir)
 }
 
 // writeBaseline records the point and the line it was taken on.
