@@ -115,9 +115,18 @@ func CompileContextMatch(src string, kind module.KindDecl) (*Matcher, error) {
 // fileMatchScope is the type environment for a file-guard's `match` —
 // FileMatchScope in the spec.
 //
-//	path    string                  the file's path
-//	markers []Marker                the sr: markers the file carries
-//	context map[string]ContextState every declared context, by name
+//	path       string                  the file's path
+//	markers    []Marker                the sr: markers the file carries
+//	oldMarkers []Marker                the sr: markers it carried before this change
+//	context    map[string]ContextState every declared context, by name
+//
+// `oldMarkers` is the one piece of the change a file scope exposes, and for one
+// reason: a rule about a marker must be able to see the marker LEAVE. With
+// `markers` alone, an update that strips a file's last marker reads as a file
+// with none, so a marker-scoped guard (`any(markers, .kind == "invariant")`)
+// never selects the very write that removes what it guards — the silent escape.
+// `any(oldMarkers, …)` selects it. On a create it is empty (nothing preceded
+// it); on a Post kind it is what the file held at the session's baseline.
 //
 // `markers` is the spec's own FileMatchScope field (singular), NOT an event
 // field. This is the seam a file-guard's scope is split for: a file-guard
@@ -153,6 +162,7 @@ func fileMatchScope() types.Map {
 	return types.Map{
 		"path":          types.String,
 		"markers":       types.Array(markerElem()),
+		"oldMarkers":    types.Array(markerElem()),
 		scopeContextKey: contextMapType(),
 	}
 }

@@ -33,7 +33,9 @@ two nature-specific knobs, below; both are optional.
 A file-guard's match sees the file's own facts **bare**: `path`, `markers`,
 `context` — not `event.path`. It reasons about a settled file, so `markers` is
 the one set of markers that file carries; test them with a quantifier,
-`any(markers, .kind == "invariant")`.
+`any(markers, .kind == "invariant")`. `oldMarkers` is the set it carried before
+this change, for a rule that must also see a marker removed:
+`any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")`.
 
 ## After-check (default) vs preventive
 
