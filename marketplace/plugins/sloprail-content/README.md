@@ -197,6 +197,12 @@ Over a unit's `UNIT.md` only. Publishing needs **both**:
   may be distributed across several channels (posted to X and cross-posted
   to Reddit, say), each with its own URL.
 
+The status is read from the frontmatter as written, not through `unit.cue`:
+a write that claims `status: published` and breaks the schema somewhere else
+(`type: article`) still needs the user's cited approval, and is then refused
+until its frontmatter satisfies `unit.cue`. A broken field is never a way to
+publish unchecked.
+
 Publishing is the irreversible step, and the task is explicit that an agent
 must not be able to publish on its own say-so — so this guard, like
 `content-rule-is-grounded` below, is bound `preventive: true`. The Stop

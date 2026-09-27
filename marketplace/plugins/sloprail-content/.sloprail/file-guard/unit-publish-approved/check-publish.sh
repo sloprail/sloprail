@@ -10,6 +10,8 @@
 #   published_urls:  where it actually went out. A non-empty LIST (a unit may
 #   be distributed across several channels); only presence is checked, not
 #   each URL's shape (see unit.cue).
+#   valid frontmatter: a unit claiming published must satisfy unit.cue — an
+#   invalid one is refused here, never read as "no status" and waved through.
 #
 # Bound preventive: true in file-guard.yaml — publish is the irreversible
 # step — with the Stop after-check as the backstop for a write the engine
@@ -78,11 +80,33 @@ case "$kind" in
     ;;
 esac
 
+# claims_published CONTENT: does the unit claim status: published in its
+# frontmatter AS WRITTEN? The same reading enters-published.sh makes: parsed
+# against no schema (/dev/null), and, for frontmatter that does not parse, a
+# status line naming published. Never read through unit.cue — a document that
+# breaks the schema elsewhere still claims its status.
+claims_published() {
+  local doc
+  if doc="$(printf '%s' "$1" | sr-file validate - --as .md --schema /dev/null --emit 2>/dev/null)"; then
+    [ "$(printf '%s' "$doc" | jq -r '.status // empty | tostring' 2>/dev/null)" = "published" ]
+    return
+  fi
+  printf '%s' "$1" | awk '
+    NR == 1 { if ($0 !~ /^---[ \t\r]*$/) exit 1; next }
+    /^---[ \t\r]*$/ { exit 1 }
+    /^[ \t]*["\047]?status["\047]?[ \t]*:.*published/ { found = 1; exit 0 }
+    END { exit found ? 0 : 1 }'
+}
+
 if ! new_doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)"; then
-  # A document that fails to parse as frontmatter cannot be read for status,
-  # so it is not a publish this guard can see — nothing to check rather than
-  # a false publish refusal. unit.cue is not close()'d; shape is not this
-  # guard's subject.
+  # The frontmatter breaks unit.cue (or does not parse). Its shape is not this
+  # guard's subject for a unit that is not published — but a unit that CLAIMS
+  # published with frontmatter no reader can trust is refused: reading it as
+  # "no status" would let a broken field carry a unit into published unchecked.
+  if claims_published "$content"; then
+    refuse "PUBLISH INVALID: $path claims status: published, but its frontmatter does not satisfy the plugin's unit.cue — fix the frontmatter before publishing:
+$new_doc"
+  fi
   exit 0
 fi
 

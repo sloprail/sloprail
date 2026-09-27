@@ -228,3 +228,49 @@ func TestPublish_UncitedEditOfPublishedUnitPermitted(t *testing.T) {
 		t.Errorf("the Stop after-check refused an edit that is not a transition: %v", blocks)
 	}
 }
+
+// TestPublish_UncitedTransitionWithInvalidFrontmatterRefused: an uncited
+// sr-file edit moves a drafting unit to status: published AND breaks the
+// schema elsewhere (type: article is not a unit type). Breaking the schema
+// must not hide the publish: the status is read from the frontmatter as
+// written, so the transition still needs the user's cited approval, and it
+// is refused before it lands.
+func TestPublish_UncitedTransitionWithInvalidFrontmatterRefused(t *testing.T) {
+	e, proj := installPublishProject(t, draftingUnit)
+
+	res := e.Run(proj, "s-publish-invalid-uncited", publishPrompt, Turns("done",
+		Bash("b1", srFileEdit(unitPath, "type: post\nstatus: drafting",
+			"type: article\nstatus: published\npublished_urls: [\"https://x.com/nikita/status/1\"]")),
+	))
+	if !res.Refused() {
+		t.Fatalf("an uncited transition into published with schema-invalid frontmatter was not refused:\n%s", res.Output)
+	}
+	if body := readProj(t, proj, unitPath); !strings.Contains(body, "status: drafting") {
+		t.Errorf("the uncited publish landed:\n%s", body)
+	}
+	if !res.Saw("must cite the user's own words (--cite:user)") {
+		t.Errorf("the refusal is not the missing publish approval:\n%s", res.Output)
+	}
+}
+
+// TestPublish_CitedTransitionWithInvalidFrontmatterRefused: even with the
+// user's approval cited, a unit may not sit at status: published with
+// frontmatter that breaks unit.cue — check-publish refuses it and names the
+// schema problem, rather than reading an invalid document as "no status".
+func TestPublish_CitedTransitionWithInvalidFrontmatterRefused(t *testing.T) {
+	e, proj := installPublishProject(t, draftingUnit)
+
+	res := e.Run(proj, "s-publish-invalid-cited", publishPrompt, Turns("done",
+		Bash("b1", srFileEdit(unitPath, "type: post\nstatus: drafting",
+			"type: article\nstatus: published\npublished_urls: [\"https://x.com/nikita/status/1\"]", approvalQuote)),
+	))
+	if !res.Refused() {
+		t.Fatalf("a published unit with schema-invalid frontmatter was not refused:\n%s", res.Output)
+	}
+	if body := readProj(t, proj, unitPath); !strings.Contains(body, "status: drafting") {
+		t.Errorf("the invalid published unit landed:\n%s", body)
+	}
+	if !res.Saw("unit.cue") || !res.Saw("type") {
+		t.Errorf("the refusal does not name the schema problem:\n%s", res.Output)
+	}
+}
