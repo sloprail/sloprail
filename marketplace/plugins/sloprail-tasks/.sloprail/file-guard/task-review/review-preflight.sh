@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The GATE and the deterministic pre-flight for task-review, run BEFORE any model
-# call. Two jobs:
+# call. Three jobs:
 #
 #   1. GATE: only an `in_review` task is reviewed. Most task writes are to_do or
 #      in_progress and must cost nothing, so this is asked first and cheaply. A
@@ -17,18 +17,20 @@
 #      refactor of this file's neighbour more harshly than a small, self-
 #      contained addition; two short, identical loops are the simpler choice).
 #      gates/*.md judgment gates are NOT re-run here — they are folded into the
-#      JUDGE call below instead, alongside the delivery evidence, so a
-#      judgment gate costs no second model call.
-#   3. PRE-FLIGHT: the DELIVERY evidence must resolve — every observation must
-#      ground against the tool_result pool, and every artifact must exist in the
-#      tree. Evidence that does not resolve leaves NOTHING REAL to put in front of a
-#      judge, so it is refused here, naming what failed — cheap gates expensive.
-#      task-evidence-resolves normally refuses these first; this handles the case it
-#      was bypassed, so an in_review task never reaches the judge with broken
-#      evidence.
+#      JUDGE call instead, alongside the delivery evidence, so a judgment gate
+#      costs no second model call.
+#   3. PRE-FLIGHT: there must be DELIVERY evidence to put in front of a judge —
+#      at least one artifact, every one resolving in the tree. Evidence that is
+#      absent or does not resolve leaves NOTHING REAL to review, so it is refused
+#      here, naming what is missing — cheap gates expensive. The proof that the
+#      work happened — a tool_result citation — is the guard's declared `require`
+#      (`when` the task is in_review), checked before this runs; it also covers a
+#      task already in_review when the session began and edited with no tool
+#      output cited, so the judge is never asked to weigh a claim with no proof.
 #
 # This is an AFTER-CHECK (the guard is not preventive), so it only ever fires on a
-# settled Post event: the bytes on disk ARE the answer.
+# settled Post event: the bytes on disk ARE the answer, and `.event.citations` are
+# the citations recorded for this path at pre-tool.
 #
 # THE REFUSAL CONTRACT: exit 0 permits; non-zero refuses with `{"reason": "..."}`
 # on stdout. Fails closed on the deterministic logic; the schema-read path stays out
@@ -119,24 +121,10 @@ fi
 # shellcheck source=../task-evidence-resolves/cite-links.sh
 . "$lib"
 
-obs_lines="$(printf '%s' "$doc" | jq -r '(.observations // [])[]' 2>/dev/null)"
 art_lines="$(printf '%s' "$doc" | jq -r '(.artifacts // [])[]' 2>/dev/null)"
-n_obs="$(printf '%s' "$doc" | jq -r '(.observations // []) | length' 2>/dev/null)"
 n_art="$(printf '%s' "$doc" | jq -r '(.artifacts // []) | length' 2>/dev/null)"
 
 problems=""
-
-i=0
-while IFS= read -r obs; do
-  [ -n "$obs" ] || continue
-  if reason="$(observation_resolve "$obs" "$root")"; then :; else
-    problems="${problems}  observations[$i] ${reason}
-"
-  fi
-  i=$((i + 1))
-done <<EOF
-$obs_lines
-EOF
 
 i=0
 while IFS= read -r art; do
@@ -150,29 +138,19 @@ done <<EOF
 $art_lines
 EOF
 
-# BOTH kinds are mandatory in in_review, and the pre-flight names the missing one
-# rather than letting the judge see half the evidence and guess.
-if [ "${n_obs:-0}" -eq 0 ]; then
-  problems="${problems}  observations — an in_review task must cite proof the work happened (a tool-call result)
-"
-fi
+# Artifacts (where the result is) are mandatory in in_review; the other half, cited
+# tool output proving the work happened, is the guard's declared `require` and
+# never reaches this script missing.
 if [ "${n_art:-0}" -eq 0 ]; then
   problems="${problems}  artifacts — an in_review task must cite where the produced result is (tree files)
 "
 fi
 
 if [ -n "$problems" ]; then
-  IFS= read -r -d '' tail <<'EOF' || true
-There is nothing to review until every citation resolves to bytes a reviewer can
-open. An OBSERVATION is <absolute-session.jsonl>:<ranges> whose every cited line is a
-tool-call result; an ARTIFACT is <repo-relative-file>:<ranges> pointing at the
-produced files in the tree. Fix the paths or the ranges. The status stays in_review;
-correct the evidence and write the task again.
-EOF
-  refuse "REVIEW CANNOT RUN: $path is in_review but its delivery evidence does not resolve.
+  refuse "REVIEW CANNOT RUN: $path is in_review but its delivery evidence is missing or does not resolve. There is nothing to review until the claim carries evidence a reviewer can open.
 
 $problems
-$tail"
+An ARTIFACT is <repo-relative-file>:<ranges> in the frontmatter, pointing at the produced files in the tree. The status stays in_review; add the evidence and write the task again."
 fi
 
 exit 0

@@ -375,8 +375,28 @@ func projectVetoReason(path string, o owner) string {
 func pluginDenyReason(path string, o owner) string {
 	return fmt.Sprintf(
 		"writing to %q is not allowed by %s, which owns this part of the tree — it is deny-by-default there, and this path matches no `allow` entry. "+
-			"Write where that plugin's structure allows; the project's own `allow` does not widen a plugin's scope.",
-		path, describeOwner(o))
+			"Write where that plugin's structure allows%s; the project's own `allow` does not widen a plugin's scope.",
+		path, describeOwner(o), allowedShapes(o))
+}
+
+// allowedShapes lists the owning plugin's `allow` entries that could lie in the
+// scope the path fell under, so the agent sees what a path there must look like
+// — the plugin's structure.yaml sits in its install, not in the project.
+func allowedShapes(o owner) string {
+	folder := strings.TrimSuffix(o.scope, "/")
+	var shapes []string
+	for _, e := range o.p.decl.Allow {
+		switch {
+		case e.Glob != "" && strings.HasPrefix(e.Glob, folder):
+			shapes = append(shapes, "glob "+e.Glob)
+		case e.Regex != "" && strings.Contains(e.Regex, regexp.QuoteMeta(folder)):
+			shapes = append(shapes, "regex "+e.Regex)
+		}
+	}
+	if len(shapes) == 0 {
+		return ""
+	}
+	return " — there, a path must match one of: " + strings.Join(shapes, ", ")
 }
 
 // pluginDenyExceptionReason is the refusal for a path a plugin's allow covers but

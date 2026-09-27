@@ -31,7 +31,7 @@ const depTaskPath = "memories/tasks/infra/setup-ci/TASK.md"
 // infra/setup-ci is refused while that task's folder exists, and permitted once
 // it is gone -- the control that isolates task-dependencies-resolve's own
 // refusal from everything else in the plugin (task-body's judge is stubbed
-// PASS so a grounded citation is the only other gate on the write).
+// PASS and the write cites the user's words, so the body is no obstacle).
 func TestDeps_UnfinishedDependencyBlocksThenPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -46,13 +46,10 @@ func TestDeps_UnfinishedDependencyBlocksThenPermits(t *testing.T) {
 	e.Git(proj, "commit", "-m", "seed the dependency task")
 
 	sess := "s-deps-unfinished"
-	tp := e.TranscriptPath(proj, sess)
-	body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
-
-	depsDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\n" + body + "\n"
+	depsDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\n" + askBody + "\n"
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w1", taskPath, depsDoc),
+		srWrite("b1", taskPath, depsDoc, citeUser(askQuote)),
 	))
 	if !res.Refused() {
 		t.Fatalf("a task depending on an unfinished task was not refused:\n%s", res.Output)
@@ -68,8 +65,11 @@ func TestDeps_UnfinishedDependencyBlocksThenPermits(t *testing.T) {
 	e.Git(proj, "rm", "-r", "memories/tasks/infra/setup-ci")
 	e.Git(proj, "commit", "-m", "dependency approved and deleted")
 
-	res2 := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w2", taskPath, depsDoc),
+	// A second human turn asks again. Its own words ground the retry: the first
+	// prompt's words now appear twice in the record (a resumed run appends its
+	// prompt), and a quote matching two messages resolves to neither.
+	res2 := e.Run(proj, sess, "CI is set up now, so file the token migration task again.", Turns("done",
+		srWrite("b2", taskPath, depsDoc, citeUser("file the token migration task again")),
 	))
 	if res2.Refused() {
 		t.Fatalf("a task whose dependency is gone was still refused:\n%s", res2.Output)
@@ -89,8 +89,6 @@ func TestDeps_CycleRefused(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-deps-cycle"
-	tp := e.TranscriptPath(proj, sess)
-	body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
 
 	// Task B (infra/setup-ci) already depends on task A (auth/migrate-tokens) --
 	// committed as baseline.
@@ -100,10 +98,10 @@ func TestDeps_CycleRefused(t *testing.T) {
 	e.Git(proj, "commit", "-m", "seed task B depending on task A")
 
 	// Now task A (this write) tries to depend on task B -- a cycle: A -> B -> A.
-	aDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\n" + body + "\n"
+	aDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\n" + askBody + "\n"
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w1", taskPath, aDoc),
+		srWrite("b1", taskPath, aDoc, citeUser(askQuote)),
 	))
 	if !res.Refused() {
 		t.Fatalf("a depends_on cycle was not refused:\n%s", res.Output)
@@ -132,15 +130,13 @@ func TestDeps_UnknownIdIsRefused(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-deps-unknown"
-	tp := e.TranscriptPath(proj, sess)
-	body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
 
 	// "nobody/never-existed" never had a task folder, in this session or in
 	// any baseline commit.
-	doc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"nobody/never-existed\"]\n---\n\n" + body + "\n"
+	doc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"nobody/never-existed\"]\n---\n\n" + askBody + "\n"
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w1", taskPath, doc),
+		srWrite("b1", taskPath, doc, citeUser(askQuote)),
 	))
 	if res.Refused() {
 		t.Fatalf("an id naming a task that never existed was refused by task-dependencies-resolve -- this guard treats a non-existent folder as \"done\" regardless of whether it was ever real; if this now refuses, the design note in check-dependencies.sh is stale and this test's expectation should be revisited together with it:\n%s", res.Output)

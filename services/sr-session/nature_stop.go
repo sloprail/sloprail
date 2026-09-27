@@ -70,6 +70,9 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// Which of those files an earlier Stop was already handed with this content
 	// (`seen`), before any rule reads them. See seen.go.
 	fileSnapshot := markSeenFiles(cmd, store, postFileEvents, root)
+	// And which citations each file's change was made with, as recorded when the
+	// pre-tool call that made it was permitted. See grounding.go.
+	attachRecordedCitations(store, postFileEvents)
 
 	// The cycle's PostTagWrite events too, for a context that recognises itself from
 	// a tag the agent wrote (research-rigor enters on #research). Gathered separately

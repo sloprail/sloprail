@@ -6,7 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pmezard/go-difflib/difflib"
+
 	"github.com/sloprail/sloprail/internal/declaration"
+	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -277,9 +280,32 @@ func (r Runner) judgeInputJSON(req Request, additional declaration.PreparedConte
 				TranscriptPath: req.TranscriptPath,
 				Context:        req.contextMap(),
 			},
+			Change:            fileChange(req.Event),
 			AdditionalContext: additional,
 		})
 	}
+}
+
+// fileChange is the unified diff of a file event's oldContent to its newContent,
+// labelled with its path: a create diffs from nothing, a delete to nothing.
+func fileChange(e event.Event) string {
+	oldContent, _ := e.Fields["oldContent"].(string)
+	newContent, _ := e.Fields["newContent"].(string)
+	if oldContent == newContent {
+		return ""
+	}
+	path, _ := e.Fields["path"].(string)
+	diff, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+		A:        difflib.SplitLines(oldContent),
+		B:        difflib.SplitLines(newContent),
+		FromFile: "a/" + path,
+		ToFile:   "b/" + path,
+		Context:  3,
+	})
+	if err != nil {
+		return ""
+	}
+	return diff
 }
 
 // contextMap returns the request's context map, never nil, so the payload always

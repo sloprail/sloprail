@@ -1,73 +1,80 @@
-# A task's BODY is the human's ask, cited, and nothing else — the guard that
+# A task's BODY is the human's ask, grounded, and nothing else — the guard that
 # protects the ORACLE rather than an artifact. Every other guard here protects
 # something the work produces; this one protects the specification all the others
 # are checked against. The failure it prevents has no detector once it happens: an
 # agent implements 70% of an ask, edits the body to describe that 70%, and from
 # then on every verification passes because the spec was rewritten to match the
-# work. The full argument lives in the plugin's README, migrated from the
-# old-format rule doc.
+# work. The full argument lives in the plugin's README.
 #
-# TWO checks, cheap first — the same script+judge shape ask-is-human-authored and
-# rule-quality use, and the old judge-body.sh's own two stages:
+# THE CITATION RIDES ON THE WRITE, NOT IN THE FILE. A task's body used to quote the
+# user as inline `[quote](/abs/session.jsonl:N)` links — a transcript path that
+# resolves on no other machine. Now the file keeps derived text only, and the write
+# that creates a task or changes its body carries the user's words as a citation:
 #
-#   1. SCRIPT (has-body-citation.sh): deterministic, no model. The body must carry
-#      at least one `[quote](jsonl-path)` citation LINK, and every quote must
-#      GROUND via `sr-session trajectory cite` to the user's own words. cite is the
-#      single validator — it excludes tool results AND harness-injected user-role
-#      messages (<system-reminder>/<task-notification>/…), which is the exact
-#      substitution this rule exists to prevent, so the script filters no tags
-#      itself. No citation, or one that does not ground: refused here, and the
-#      judge is never paid for. (The old rule hand-rolled that entry-type check in
-#      a citations.sh; it now lives in cite — internal/transcript/cite.go.)
-#   2. PREPARE + JUDGE: only reached once the script passed. prepare
-#      (resolve-cited-messages.sh) assembles the grounded quotes (the user's own
-#      words) as the judge's ground truth; judge-body.md.j2 asks the model whether
-#      the body CORRESPONDS to them and holds THAT AND NOTHING ELSE. This is the old
-#      judge-body.sh's stage 2, but the model call, timeout, isolation and verdict
-#      shape are now the engine's (via sr-agent) — a judge: check hand-rolls none.
+#   sr-file write|edit memories/tasks/<group>/<name>/TASK.md … --cite:user '<exact words>'
 #
-# WHY A JUDGE CHECK AND NOT THE OLD HAND-ROLLED CLAUDE CALL. The old script called
-# a model itself and parsed `VERDICT: PASS/FAIL`. The engine's judge substrate owns
-# that now: the template renders, sr-agent runs the model, the engine reads a
-# {"pass","reasoning"} verdict. The judging INTENT and prompt are preserved in
-# judge-body.md.j2 (the RUBRIC.md text, moved into the template where it is visible
-# and versioned).
+# run on its own line, so the pre-tool hook resolves it exactly. The session
+# resolves every quote against its record before any check runs and puts the ones
+# that resolve on `.event.citations`, so a citation a check sees EXISTS.
 #
-# FAIL-OPEN RECONCILIATION (flagged, not hidden). The old judge FAILED OPEN on its
-# own machinery (no sr-agent, a timeout, an unparseable verdict): a model flake
-# must not wedge a session. A judge: check cannot reproduce that — the model call
-# is the engine's, and the engine's judge path fails CLOSED on machinery failure by
-# deliberate design (internal/dispatch/judge.go). So those cases now REFUSE rather
-# than permit. This is the one behaviour a judge: check semantics cannot keep, and
-# it is flagged here rather than hidden. The DETERMINISTIC half (stage 1 and the
-# prepare's own resolution) already failed closed, unchanged.
+# THE REQUIREMENT IS DECLARED, CONDITIONALLY. `require` below demands a user
+# citation, but only `when` body-changed.sh says the write sets the ask: a create,
+# or a BODY change. A status/priority/depends_on edit leaves the body
+# byte-identical, so body-changed.sh exits 1 and the write needs no citation. An
+# uncited write that does set the ask is refused by the engine before any check
+# runs, naming the sr-file form.
+#
+# TWO checks, cheap first:
+#
+#   1. SCRIPT (body-is-stated.sh): deterministic, no model. The task must have a
+#      body — prose under the frontmatter.
+#   2. PREPARE + JUDGE: prepare (resolve-cited-messages.sh) SKIPS the judge when
+#      the body did not change (no model call on a status-only change); otherwise
+#      it hands the judge the body. judge-body.md.j2 renders each citation — the
+#      quote and the whole message it came from — and asks whether the body
+#      CORRESPONDS to the cited words and holds THAT AND NOTHING ELSE.
+#
+# THE POST MOMENT AND UNCITED FRONTMATTER EDITS. A Post event at Stop carries
+# every citation the path's changes were made with this session — cited changes
+# accumulate, and an uncited change (the status-only edits this guard permits)
+# leaves them in place. So a task created with a citation and then moved to
+# in_progress by a plain edit still reaches Stop with its ask's citation. Each
+# uncited BODY change is refused at pre-tool, which is why the guard is preventive.
+#
+# FAIL-OPEN RECONCILIATION (flagged, not hidden). The old judge failed OPEN on its
+# own machinery (no sr-agent, a timeout, an unparseable verdict). A judge: check
+# cannot reproduce that — the engine's judge path fails CLOSED on machinery failure
+# by deliberate design (internal/dispatch/judge.go) — so those cases refuse. The
+# deterministic half fails closed too.
 #
 # match: the task file, TWO directory levels deep —
-# `memories/tasks/<category>/<name>/TASK.md`, the old regex
-# `^memories/tasks/[^/]+/[^/]+/TASK\.md$`. A `matches` expression (not a glob): a
-# single-`*` glob is one segment and would not require two arbitrary levels
+# `memories/tasks/<category>/<name>/TASK.md`. A `matches` expression (not a glob):
+# a single-`*` glob is one segment and would not require two arbitrary levels
 # precisely. The file-match scope compiles `matches` as a regex over `path`.
 match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 
-# preventive: true reproduces the old Pre+Post binding. An edit to the ask must be
-# refused BEFORE it lands: a Post refusal reports damage already done to the oracle
-# and the agent's remedy would be to edit the task again — the prohibited act
-# itself. The Stop after-check is the backstop for a write the engine cannot derive
-# at Pre (failed closed engine-side, re-judged at Stop on the settled bytes).
+# preventive: true — an edit to the ask must be refused BEFORE it lands: a Post
+# refusal reports damage already done to the oracle, and the agent's remedy would be
+# to edit the task again — the prohibited act itself. The Stop after-check is the
+# backstop for a write that reached the tree without passing pre-tool.
 preventive: true
+
+require:
+  - citation: {source_types: [user]}
+    when: ./body-changed.sh
 
 checks:
   # Stage 1 — deterministic, fail-closed. Refuses with `{"reason": "..."}` on
   # stdout, exit non-zero.
-  - script: ./has-body-citation.sh
+  - script: ./body-is-stated.sh
 
-  # Stage 2 — the judge, reached only because stage 1 passed. model is size-md (engine default judge modelset)
-  # (an unpinned model resolves larger and this can fire several times per turn);
-  # no explicit timeout — it runs under the engine's own default (internal/
-  # dispatch/exec.go's defaultCheckTimeout). allowed_tools: [Read] ADDS Read on top of the Write the engine's
-  # judge substrate always grants for the verdict file — the one conservative grant
-  # that lets the judge corroborate the file on disk; the cited messages and the
-  # body are both already IN the prompt.
+  # Stage 2 — the judge, reached only when stage 1 passed, and skipped by its
+  # prepare when the body did not change. model is size-md (the engine default
+  # judge modelset; an unpinned model resolves larger and this can fire several
+  # times per turn); no explicit timeout — it runs under the engine's own default
+  # (internal/dispatch/exec.go's defaultCheckTimeout). allowed_tools: [Read] adds
+  # Read on top of the Write the judge substrate always grants for the verdict
+  # file, so the judge may open a cited transcript line or the file on disk.
   - prepare: ./resolve-cited-messages.sh
     judge: ./judge-body.md.j2
     model: size-md

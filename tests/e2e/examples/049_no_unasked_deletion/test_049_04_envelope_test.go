@@ -11,18 +11,12 @@ import (
 // QUESTION and every answer — reaches the judge's prompt when the ask was an
 // AskUserQuestion answer, not just the extracted answer.
 //
-// The shipped prepare (collect-quote-and-diff.sh) now, having a grounded quote,
-// resolves it and fetches the envelope at that line in one call with
-// `cite --include-envelope` (which wraps internal/transcript EnvelopeAt).
-// A judge grounded on an answer-quote needs the QUESTION to weigh the answer — an
-// answer of "the second option" authorizes only what that option, in the
-// question's own terms, covers (PR-19 review, cite.go:251). The stubbed verdict
-// path (test_049_01/02) proves the quote and the diff reach the judge, but NOT the
-// question: the renderer treats an undefined variable as empty, so the template's
-// `{{ additionalContext.asked_envelope }}` renders whether prepare produced it or
-// nothing. This closes that — it captures the rendered prompt and asserts the
-// QUESTION TEXT is in it, which is present only if prepare fetched the envelope AND
-// the template interpolated it.
+// A removal citing an answer carries, as that citation's message, the whole
+// envelope — the question with every answer given — and the judge template
+// renders it. A judge grounded on an answer-quote needs the QUESTION to weigh the
+// answer: an answer of "the second option" authorizes only what that option, in
+// the question's own terms, covers. This captures the rendered prompt and asserts
+// the QUESTION TEXT is in it.
 //
 // # Why TWO runs under one session
 //
@@ -30,15 +24,14 @@ import (
 // (harness.AnswerQuestion) — not a tool call, so it does not re-prompt the agent
 // and cannot be a non-final turn that advances to a following Write in the same
 // scenario. So the answer is emitted in its OWN Run, which leaves it in the
-// session transcript; a SECOND Run under the SAME session id then does the
-// removing Write, and the guard's cite (reading that same transcript by --path)
-// grounds the sr:asked quote to the answer envelope from the first run. This is
+// session transcript; a SECOND Run under the SAME session id then makes the
+// cited removal, whose quote resolves to the answer envelope from the first run. This is
 // the harness's documented "Run more than once under the same conversation"
 // (scenario.go), and it is how the answer and the guarded write share a trajectory.
 
 // T049_15: the QUESTION the user answered reaches the judge's prompt via the
 // envelope. Run 1 records the AskUserQuestion answer; Run 2's removal is grounded
-// in it, so the prepare fetches the whole envelope and the template renders it —
+// in it, so the citation carries the whole envelope and the template renders it —
 // the judge sees what was ASKED, not only the answer quote.
 func TestT049_15_AnsweredQuestionReachesJudgePrompt(t *testing.T) {
 	e := newEnv(t)
@@ -69,8 +62,7 @@ func TestT049_15_AnsweredQuestionReachesJudgePrompt(t *testing.T) {
 	// ANSWER. cite (in the shipped script, and again in the prepare) grounds it to
 	// the envelope from run 1; the prepare fetches the whole envelope there.
 	e.Run(proj, sess, "now make the edit", Turns("done",
-		Write("w1", "memories/topic.md",
-			"---\n# sr:asked \"remove the second line please\"\n---\nkeep this line\nprovenance: kept\n"),
+		srWrite("w1", "memories/topic.md", "keep this line\nprovenance: kept\n", "remove the second line please"),
 	))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
@@ -110,8 +102,7 @@ func TestT049_16_MessageGroundedRemovalHasNoEnvelopeButStillJudges(t *testing.T)
 	// grounds it to the prompt line; envelope finds no answer envelope there.
 	const prompt = "please remove the second line"
 	res := e.Run(proj, "s-049-16", prompt, Turns("done",
-		Write("w1", "memories/topic.md",
-			"---\n# sr:asked \"please remove the second line\"\n---\nkeep this line\n"),
+		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
 	))
 
 	if res.Refused() {

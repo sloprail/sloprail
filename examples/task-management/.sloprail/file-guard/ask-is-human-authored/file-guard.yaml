@@ -1,6 +1,17 @@
+# A task's ASK.md is the human's ask, so every write to it must be grounded in
+# the user's own words. The citation rides on the write itself — `sr-file write
+# …/ASK.md --cite:user '<their exact words>'` — never inside the file, which keeps
+# only the ask as derived text.
+#
+# require: unconditional — ASK.md holds nothing but the ask, so there is no write
+# to it that needs no grounding. The engine refuses an uncited write (Write, Edit,
+# a shell redirect) before any check runs, naming the sr-file form.
+#
+# The judge answers what existence cannot: does ASK.md say what the cited words
+# say, and nothing else?
 match: "**/tasks/*/*/ASK.md"
 preventive: true
+require:
+  - citation: {source_types: [user]}
 checks:
-  - script: ./has-message-reference.sh
-  - prepare: ./resolve-referenced-message.sh
-    judge: ./reference-is-true-and-only-this.md.j2
+  - judge: ./reference-is-true-and-only-this.md.j2

@@ -57,36 +57,33 @@ exports `CLAUDECODE` masks the gap CI does not have):
 ```
 cd marketplace/plugins/sloprail-tasks/tests
 go build ./...
-env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT go test ./... -count=1
+env -u CLAUDE_CODE_SESSION_ID -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT go test ./... -count=1
 ```
 
-## Citations are grounded, not stubbed
+## Citations are resolved for real, not stubbed
 
-Three citation kinds are resolved for real (never stubbed), each against the thing
-its kind names:
+A task file holds derived text only; its grounding rides on the **action**. The
+tests make a grounded change the way an agent does — a `Bash` turn running
+`sr-file write|edit … --cite:<pool> '<quote>'` on its own (`srWrite` / `srEdit`
+in `main_test.go`) — and the session resolves each quote against the transcript
+the mock wrote, for real, before any guard sees `.event.citations`:
 
-- **the ask** — a `[quote](jsonl)` body link, grounded via `sr-session trajectory
-  cite --source-types user`. The harness seeds the run's prompt as the transcript's
-  line-1 user message, and `cite("migrate the auth module", transcriptPath, 1)`
-  resolves against it for real. A fabricated quote exercises cite's real "no match"
-  path — including its exclusion of tool results and harness-injected user-role
-  messages (`<system-reminder>` / `<task-notification>` / …).
-- **an observation** — a frontmatter `<abs-jsonl>:<ranges>` citation, resolved via
-  `sr-session trajectory tool-result --line` against the transcript. The tests
-  **produce a real tool_result** (via `harness.ToolResult`, persisted as a genuine
-  tool_result record) in a first run, read its physical line, and cite that line —
-  so the "is this line a tool_result" check runs for real. Citing a line that is
-  the user's prompt (not a tool_result) exercises the refusal.
-- **an artifact** — a frontmatter `<repo-relative-file>:<ranges>` citation, resolved
-  against the working **tree**. The tests **write a real file** into the tree in the
-  first run and cite it repo-relative; an absent file, or an absolute/`.jsonl` path,
-  exercises the refusals.
+- **the ask** — `--cite:user 'migrate the auth module'`. The harness seeds the
+  run's prompt as the transcript's root user message, so the quote resolves in the
+  `user` pool. A test cites user words only in a session's FIRST run: a repeat Run
+  appends its prompt as another user message, and a quote matching two entries
+  resolves to neither — so a later run that needs a fresh user citation passes a
+  prompt of its own and quotes that.
+- **proof it happened** — `--cite:tool_result 'TESTS-PASSED-42'`. `deliveryTurns`
+  runs a real `Bash` turn that prints `proofOutput`, so the tool_result is on the
+  transcript before the `in_review` write cites it — the work happens, then the task
+  claims it, in one run. An AskUserQuestion answer cited as tool output exercises
+  the refusal (the answer is the user's words, never a produced result).
+- **an artifact** — a frontmatter `<repo-relative-file>:<ranges>`, resolved against
+  the working **tree**. `deliveryTurns` writes the real file; an absent file, or an
+  absolute path, exercises the refusals.
 
-**The two-run shape.** Delivery evidence must exist *before* the `in_review` task
-claims it, so a first run produces the tool_result and the artifact file, and a
-second run on the same session (a resume) writes the task citing them. This is the
-honest ordering — the work happens, then the task records it — and mirrors the cite
-suite's same-session-resume for a genuine multi-turn transcript.
+An uncited write is the plain `Write` tool, which cannot carry a citation.
 
 ## What is stubbed, and why
 
@@ -106,37 +103,54 @@ stubbed verdict is the one under test. This is noted in each such test.
 ## Per-test coverage — and what is deliberately NOT covered
 
 **task-body-is-human-authored** (file-guard, preventive; script + judge)
-- ✓ human-authored body (grounded citation + judge PASS) admits and lands
-- ✓ slop body (grounded citation + judge FAIL) refused, reasoning reaches agent
-- ✓ body with no citation refused by the deterministic script before the judge
-- *not covered:* the queued-message / envelope citation shapes; the fail-open
+- ✓ task created with a user citation (judge PASS) admits and lands; the judge is
+  handed the cited words and their `path:line`
+- ✓ slop body (cited + judge FAIL) refused, reasoning reaches agent
+- ✓ uncited create (the Write tool) refused by the script before the judge, naming
+  the `sr-file … --cite:user` form
+- ✓ uncited BODY change to an existing task refused; the file keeps its body
+- ✓ status-only change permitted with no citation, and the judge is never called
+- ✓ cited create followed by an uncited status edit is NOT refused at Stop — the
+  engine keeps the path's recorded citation through the uncited edit (asserted)
+  and the Stop judge is handed it
+- *not covered:* the AskUserQuestion envelope shown to the judge; the fail-open
   reconciliation branches (a judge-machinery failure now fails closed, which is the
   engine's behaviour, not this guard's to re-prove).
 
 **task-evidence-resolves** (file-guard, preventive; script) — the deterministic half
-- ✓ resolving delivery evidence (real tool_result observation + real repo-relative
-  artifact) permits and lands
-- ✓ observation citing a line that is NOT a tool_result (the user's prompt) refused
+- ✓ in_review write citing real tool output, with a real repo-relative artifact,
+  permits and lands (and the file carries no transcript path)
+- ✓ transition into in_review citing only the USER's words refused, naming the
+  `--cite:tool_result` form; the status stays in_progress
+- ✓ transition into in_review with the Write tool (no citation at all) refused
+- ✓ an AskUserQuestion answer cited as tool output does not move the task
 - ✓ artifact absent from the tree refused; artifact with an ABSOLUTE path refused by
-  the schema (path-base convention: artifacts are repo-relative)
+  the schema
+- ✓ the retired `observations:` field refused by the closed schema
 - ✓ invalid frontmatter (`status: done`) refused by the schema
-- ✓ in_review missing a kind of evidence (observation without artifact) refused
-- *not covered:* multi-citation tasks where some resolve and some do not; the
-  underivable-Pre defer path (unit-tested behaviour of the kind dispatch).
+- ✓ in_review with cited proof but no artifact refused
+- *not covered:* the Post-moment refusal of a transition that reached the tree
+  without passing pre-tool; the underivable-Pre defer path.
 
 **task-review** (file-guard, after-check; script + judge) — the judged half, DELIVERY
-- ✓ substantiated in_review task (real tool_result observation + real artifact,
-  judge PASS) permits — review runs at the Post/Stop after-check
+- ✓ substantiated in_review task (cited tool output + real artifact, judge PASS)
+  permits — and the reviewer is handed the FULL tool output, not only the quote
 - ✓ unsubstantiated in_review task blocked at Stop (judge FAIL), rejection reaches
-  the agent — the evidence resolves but does not show the claimed thing
-- ✓ observation that is not a tool_result refused deterministically (pre-flight / Pre)
+  the agent — the evidence is there but does not show the claimed thing
+- ✓ a cited transition followed by an uncited edit in the same session still
+  reaches the reviewer with its tool output (citations accumulate)
+- ✓ a task already in_review at session start, edited with no tool output cited,
+  is refused by the pre-flight at Stop (nothing on record), naming how to cite it
+- ✓ a gates/*.sh that regressed, and a gates/*.md the review judge rejects, block
+  the in_review claim at Stop
 - *not covered:* the re-fire-every-cycle loop across multiple cycles (the block is
   shown once); the approve-path's "delete the folder" instruction (that is agent
   workflow, and the binary judge's PASS is a permit — see the guard's file-guard.yaml
   for why that old behaviour does not survive the judge-check migration).
 
 **no-unfinished-work-at-turn-end** (gate, Stop; script)
-- ✓ a turn with an open (to_do) task blocked at Stop, naming the task and status
+- ✓ a turn with an open (to_do) task blocked at Stop, naming the task and status,
+  and teaching the cited in_review transition
 - ✓ a turn whose task is at a resting status (in_review) permits
 - *not covered:* the blocked/backlog resting statuses individually (in_review stands
   in for the resting set); the plumbing fail-open branches (a missing schema / tool

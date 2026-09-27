@@ -1258,7 +1258,7 @@ func TestExtractCommand_APathOutsideTheWorkspaceKeepsItsAbsoluteSpelling(t *test
 // Before commandmod's cwd.go existed, `cd <other> && printf x > rel.txt`
 // reported the bare path `rel.txt`, which THIS module (having no idea a `cd`
 // preceded it) resolved against `root` exactly as it resolves any other
-// relative command target — reportable() had no way to know the line meant a
+// relative command target — Reportable() had no way to know the line meant a
 // file in an entirely different tree. Measured before the fix: the event's
 // path was `root/rel.txt`, a file inside the session's own project, for a
 // command that never wrote there.

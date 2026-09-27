@@ -506,3 +506,45 @@ func TestRetryPromptSuffix_HandlesASilentVerifier(t *testing.T) {
 	suffix := retryPromptSuffix("/tmp/x/answer", "   ")
 	assert.Contains(t, suffix, "no explanation")
 }
+
+// A model asked for a verdict sometimes PRINTS it instead of writing the file.
+// A reply that is exactly one JSON object stands in for the empty file, so the
+// verifier judges it on the first attempt instead of paying for a re-ask.
+func TestVerified_PrintedJSONReplyFillsAnEmptyAnswer(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	fakeHarness := writeScript(t, dir, "fake-claude.sh", `
+printf '{"pass": true, "reasoning": ""}\n'
+exit 0
+`)
+	verifier := writeScript(t, dir, "v.sh", `grep -q '"pass": true' "$1" || { echo empty >&2; exit 1; }`)
+
+	spec := harnessSpec{name: "fake", binary: fakeHarness}
+	out, errOut, err := runVerifyHarness(t, spec, verifier, "judge this", 2, dir)
+
+	require.NoError(t, err, "stderr: %s", errOut)
+	assert.Contains(t, out, `"pass": true`)
+	assert.Contains(t, errOut, "verified on attempt 1/2")
+}
+
+// Prose, or a file the agent did write, is never replaced by the reply.
+func TestVerified_ReplyNeverOverridesAnAnswerOrStandsInForProse(t *testing.T) {
+	requireSh(t)
+	for name, script := range map[string]string{
+		"a written answer wins":  `printf 'FROM FILE' > "$SR_TEST_OUTPUT"; printf '{"pass": true}\n'`,
+		"prose is not an answer": `printf 'I think it passes: {"pass": true}\n'`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			fakeHarness := writeScript(t, dir, "fake-claude.sh", script+"\nexit 0\n")
+			verifier := writeScript(t, dir, "v.sh", `grep -q 'FROM FILE' "$1" || { echo not the file >&2; exit 1; }`)
+			spec := harnessSpec{name: "fake", binary: fakeHarness}
+			_, _, err := runVerifyHarness(t, spec, verifier, "judge this", 1, dir)
+			if name == "a written answer wins" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err, "prose must not be taken as the answer")
+			}
+		})
+	}
+}

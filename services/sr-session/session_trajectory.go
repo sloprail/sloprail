@@ -2,28 +2,11 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/transcript"
 )
-
-// SessionIDEnv is the environment variable Claude Code exports naming the
-// CURRENT session's id, to a tool call and to a hook alike.
-//
-// It is how `cite` (and the other `trajectory` reads) auto-detect "the
-// trajectory we are running in right now" when no --path is given and no hook
-// payload is on stdin — the plain case of an agent, or a guardrail's own script,
-// invoking the CLI directly. See resolveTrajectory's env fallback and
-// currentSessionTranscript.
-//
-// Note the CODE in the name: it is CLAUDE_CODE_SESSION_ID, not CLAUDE_SESSION_ID.
-// An earlier draft of this file asserted no session id reached a tool call at all;
-// that was wrong — this variable is set, and equals the session's real id.
-const SessionIDEnv = "CLAUDE_CODE_SESSION_ID"
 
 // newSessionTrajectoryCmd is the parent of the commands that read a trajectory —
 // the record of one session's turns — rather than acting on the session's own
@@ -114,7 +97,7 @@ accept --path to read another — the parent or a sibling that describe named.`,
 // Claude Code exports CLAUDE_CODE_SESSION_ID naming the current session, and the
 // transcript lives at a path derived deterministically from it —
 // <config>/projects/<encoded-cwd>/<session-id>.jsonl, the same layout
-// HookPayload.record() reconstructs from a payload's session_id. currentSessionTranscript
+// HookPayload.record() reconstructs from a payload's session_id. transcript.CurrentSessionPath
 // builds exactly that path and verifies it is the session's own file before
 // returning it.
 //
@@ -156,83 +139,11 @@ func resolveTrajectory(cmd *cobra.Command) (string, HookPayload, error) {
 		// found here is returned with the payload unchanged (its Cwd stays whatever
 		// was piped — empty in the direct-call case), so searchDirFor still derives
 		// the search directory from the path itself.
-		if env := currentSessionTranscript(p.Cwd); env != "" {
+		if env := transcript.CurrentSessionPath(p.Cwd); env != "" {
 			return env, p, nil
 		}
 	}
 	return path, p, err
-}
-
-// currentSessionTranscript resolves the CURRENT session's own transcript from the
-// environment, or "" when it cannot.
-//
-// The session id is CLAUDE_CODE_SESSION_ID, which Claude Code exports to a tool
-// call and a hook alike (see SessionIDEnv). The file is at the harness's standard
-// location, <config>/projects/<encoded-cwd>/<session-id>.jsonl, built with the
-// SAME helpers HookPayload.record() uses for a payload's session_id —
-// transcript.ProjectDir over transcript.ConfigDir — so the two agree byte for
-// byte. The encoding is Claude Code's projects-dir scheme (every non-alphanumeric
-// byte of the RESOLVED working directory becomes '-'), NOT the git-root-anchored
-// encodeWorkspace this service keys its OWN state under: the projects dir encodes
-// the process's working directory verbatim, so an agent that ran cite from a
-// subdirectory would resolve to the wrong directory under encodeWorkspace.
-//
-// cwd is the payload's reported working directory when there is one; when there is
-// not — the direct agent/CLI call, whose payload is the zero value — the process's
-// own working directory is used, which is the directory the agent is running cite
-// from and the one Claude Code filed the transcript under.
-//
-// The join is guarded for the same reasons record()'s own session-id branch is: a
-// session id is a name, and a name that carried a path separator, or a guessed file
-// colliding with an unrelated conversation, or one written in a sibling checkout
-// that encodes to the same project directory, would otherwise resolve silently to
-// the wrong record. BelongsToSession asks the file whether it is this session's;
-// BelongsToTree asks whether it was written in this tree.
-//
-// This resolution differs from record()'s in one deliberate way: it requires the
-// derived file to EXIST, and returns "" when it does not. record() is permissive
-// about a missing file because a payload's session_id is authoritative — the
-// harness handed it over — and the SessionStart case must resolve a path before its
-// record is written. Here the session id comes from an environment variable that
-// may be stale or a foreign session's (a nested process inherits its launcher's
-// CLAUDE_CODE_SESSION_ID), so a derived path with no file behind it is not "the
-// trajectory we are running in right now" — it is nothing to read. Returning "" then
-// lets the caller report a clean "no trajectory" rather than surfacing a
-// file-not-found from transcript.Cite, and makes an inherited-but-irrelevant session
-// id harmless: no matching file, no resolution.
-func currentSessionTranscript(cwd string) string {
-	sessionID := strings.TrimSpace(os.Getenv(SessionIDEnv))
-	if sessionID == "" {
-		return ""
-	}
-	// A session id is a name, never a path — the same refusal record() and
-	// sessionDBPath make. Both separators are refused because Windows accepts both;
-	// "." and ".." are named because they traverse while containing no separator.
-	if strings.ContainsAny(sessionID, `/\`) || sessionID == "." || sessionID == ".." {
-		return ""
-	}
-	if cwd == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return ""
-		}
-		cwd = wd
-	}
-	dir := transcript.ProjectDir(transcript.ConfigDir(), cwd)
-	if dir == "" {
-		return ""
-	}
-	path := filepath.Join(dir, sessionID+".jsonl")
-	if fi, err := os.Stat(path); err != nil || fi.IsDir() {
-		return ""
-	}
-	if ok, _ := transcript.BelongsToSession(path, sessionID); !ok {
-		return ""
-	}
-	if ok, _ := transcript.BelongsToTree(path, cwd); !ok {
-		return ""
-	}
-	return path
 }
 
 // errNoTrajectory is the message a subcommand prints when no trajectory could be
@@ -240,7 +151,7 @@ func currentSessionTranscript(cwd string) string {
 // no current-session transcript derivable from CLAUDE_CODE_SESSION_ID. Shared so
 // describe, cite and normalize refuse the same way.
 func errNoTrajectory() error {
-	return fmt.Errorf("sloprail: no trajectory to read — pass --path, invoke this where a transcript is on the hook payload, or run it in a session (with %s set) whose transcript exists", SessionIDEnv)
+	return fmt.Errorf("sloprail: no trajectory to read — pass --path, invoke this where a transcript is on the hook payload, or run it in a session (with %s set) whose transcript exists", transcript.SessionIDEnv)
 }
 
 // searchDirFor is where a trajectory's session keeps its OTHER trajectories — the

@@ -280,6 +280,9 @@ file. Naming it here is the way out that does not mean uninstalling the plugin.
 - [judge-checks.md](judge-checks.md) — the model check: `prepare` + the `.md.j2`
   template + `additionalContext`, the `sr-agent` substrate, `model`/
   `allowed_tools`, and the fail-open escape hatch.
+- [grounding.md](grounding.md) — changes that must trace to what the user
+  said: citing with `sr-file --cite:` or `cite && <cmd>`, `event.citations`,
+  `require: [{citation}]`, and judging a citation.
 - [state-management.md](state-management.md) — `sr-session state` across cycles,
   the `--owner` cross-guardrail read a gate uses to read a context's registry,
   and the turn-scoping trap.

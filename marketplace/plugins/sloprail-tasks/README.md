@@ -19,44 +19,72 @@ verdict is the engine's `{"pass", "reasoning"}`).
 
 ## The citation model
 
-There are **three** citation kinds, and keeping them apart is the point of the
-whole review lifecycle. Two live in the frontmatter and one in the body, and they
-resolve against different things:
+A task file holds **derived text only**. Nothing in a `TASK.md` names a session
+transcript, because a transcript path resolves on no other machine. What grounds a
+task in the session — the user's words, the tool output proving the work — rides
+on the **action** that changes the file, and sloprail verifies it there.
 
-| kind | where | shape | path base | resolves by |
-|------|-------|-------|-----------|-------------|
-| the **ask** | body | `[quote](jsonl)` link | absolute `.jsonl` | `cite --source-types user` — the quote is the user's own words |
-| an **observation** | frontmatter `observations:` | `<jsonl>:<ranges>` string | **absolute** `.jsonl` | `trajectory tool-result --line` — every cited line is a tool_result |
-| an **artifact** | frontmatter `artifacts:` | `<file>:<ranges>` string | **repo-relative** tree file | the file-citation checker — the file exists under the repo, the lines exist |
+Three things ground a task's lifecycle, and keeping them apart is the point of the
+review:
 
-The **body** cites the human's *ask* as inline `[quote](jsonl)` markdown links,
-grounded against the `user` pool: `cite --source-types user` resolves the quote to
-a real user message and refuses the agent's own output, a tool result, or a
-harness-injected user-role message (`<system-reminder>`, `<task-notification>`,
-`<local-command>`, …). This is task-body-is-human-authored's subject, and nothing
-else's.
+| what | where it lives | how it is given | checked by |
+|------|----------------|-----------------|------------|
+| the **ask** — the user's own words | on the write that creates the task or changes its body | `sr-file write\|edit … --cite:user '<exact words>'` | task-body-is-human-authored |
+| **proof it happened** — tool output | on the write that moves the task **into** `in_review` | `sr-file edit … --cite:tool_result '<exact output>'` | task-evidence-resolves (present), task-review (substantiates) |
+| **where the result is** — produced files | frontmatter `artifacts:` | `<repo-relative-file>:<ranges>` | task-evidence-resolves (resolves in the tree), task-review |
 
-The **frontmatter** carries the *delivery evidence* as two typed citation lists —
-proof the work was **done**, weighed against the `in_review` claim. An
-**observation** is proof the work happened, cited into the session transcript by
-**absolute** `.jsonl` path; each cited line must be a **tool_result** the session
-produced (a test that came back green), confirmed by `sr-session trajectory
-tool-result --line`. An **artifact** is where the result is, cited **repo-relative**
-into the working tree; the file must exist under the repo and the cited lines must
-exist. The two path bases are load-bearing: an observation is absolute and a
-transcript, an artifact is repo-relative and a tree file, and one wearing the
-other's shape is a mis-filed citation the schema or the checker refuses.
+A cited change is made with `sr-file`, which takes the Write/Edit tools' arguments
+plus `--cite:<pool> '<quote>'` (repeatable), run **on its own** in the Bash line —
+nothing else on it but `sr-file` calls, `&&` and `echo` — so the pre-tool hook can
+dry-run it and hand every rule the exact resulting bytes:
 
-Why grounding a delivery claim in the user's ask is the bug this fixes: it proves
-only that the work was *requested*, never that it was *done*. The `--source-types`
-mirror is what separates them — a tool-output quote grounds under `tool_result` and
-is refused under `user`, and vice versa.
+```bash
+sr-file write memories/tasks/auth/migrate-tokens/TASK.md --cite:user 'migrate the auth module' <<'TASK'
+---
+status: to_do
+priority: P1
+---
+
+Migrate the auth module to the new token format.
+TASK
+
+sr-file edit memories/tasks/auth/migrate-tokens/TASK.md \
+  --old-string 'status: in_progress' --new-string 'status: in_review' \
+  --cite:tool_result 'ok  sloprail/auth  0.42s'
+```
+
+Before any rule sees the event, the session resolves each quote against its own
+record — the `user` pool is the user's own messages (never the agent's output, a
+tool result, or a harness-injected `<system-reminder>`/`<task-notification>`), the
+`tool_result` pool is what tools returned (never an AskUserQuestion answer, which is
+the user's words, nor a hook's refusal) — and puts the ones that resolve on
+`.event.citations` as `{quote, sourceTypes, path, line, message}`. A quote that matches nothing, or more than one
+entry, is not a citation. So a rule sees only citations that **exist**; whether one
+actually grounds the change is the judges' question.
+
+Why the pools are kept apart: grounding a delivery claim in the user's ask proves
+only that the work was *requested*, never that it was *done*.
+
+The grounding is **conditional**, so each guard declares it with a `when:` script
+that says whether this write needs it:
+
+```yaml
+require:
+  - citation: {source_types: [user]}
+    when: ./body-changed.sh
+```
+
+A write that leaves the body byte-identical — a status, priority or `depends_on`
+change — needs no user citation; only the transition **into** `in_review` needs
+tool output (`when: ./in-review.sh --entering`). An uncited write that does need
+one is refused by the engine before any check runs, naming the `sr-file` form.
 
 The frontmatter shape is pinned by `.sloprail/schemas/task.cue`, which the
 deterministic guards read from the plugin's own tree (via `$SR_GUARDRAIL_DIR`,
-never copied into the consumer's project) with `sr-file validate`; its
-`observations` and `artifacts` are two **separate** citation types (absolute
-`.jsonl`; repo-relative tree path), required only in `in_review`.
+never copied into the consumer's project) with `sr-file validate`. It is closed:
+the old `observations:` list of absolute `.jsonl:<ranges>` strings is gone, and a
+task still carrying one is refused. Bodies that still quote the user as inline
+`[quote](path)` links are neither required nor refused.
 
 ## Dependencies and start conditions
 
@@ -127,8 +155,8 @@ describes something LESS than what they actually need to hold). Both are the
 same failure `task-body-is-human-authored` exists to prevent for the ask
 itself — a spec quietly softened until every later check passes against the
 softened version — relocated to gate files. A gate carries no citations of
-its own; only `TASK.md` cites the user's words, and that citation's grounding
-is validated separately, every time `TASK.md` is written. `task-gate-is-
+its own; only a write that sets a `TASK.md`'s body cites the user's words, and
+that grounding is validated separately, every time the body is written. `task-gate-is-
 grounded` is the protection: a judge is handed the gate file and the task's
 own content (as it stands) and decides whether the gate is DERIVED from that
 task — TRACEABLE to it, not CONTRADICTING it, not INVENTING a condition it
@@ -139,47 +167,58 @@ that can never actually fail. See that guard's own section below.
 
 ### task-body-is-human-authored — file-guard, preventive
 
-The body of a `TASK.md` is the human's ask, cited, and **nothing else**. This is
-the one guard that protects the **oracle** rather than an artifact: the
+The body of a `TASK.md` is the human's ask, grounded, and **nothing else**. This
+is the one guard that protects the **oracle** rather than an artifact: the
 specification every other check is checked against. The failure it prevents has no
 detector once it happens — an agent implements 70% of an ask, edits the body to
 describe that 70%, and from then on every verification passes because the spec was
 rewritten to match the work.
 
 Two checks, cheap first:
-1. **Script** — the body must carry a `[quote](jsonl)` link whose quote grounds via
-   `cite --source-types user` to a real user message. No citation, or one that does
-   not ground, is refused deterministically before the model. (This is the **ask**,
-   the `user` pool — distinct from the delivery evidence in the frontmatter, which
-   task-review grounds against the `tool_result` pool and the tree.)
+1. **Script** — a write that **creates** the task, or **changes its body** (the
+   prose after the frontmatter, compared with the file on disk at Pre and with the
+   session baseline at Stop), must carry at least one citation of the user's own
+   words (`--cite:user`). None is refused deterministically before the model, and
+   the refusal spells out the `sr-file` form to use. A write that leaves the body
+   byte-identical — a status change — is permitted uncited.
 2. **Judge** — the body must correspond to the cited words and hold that **and
-   nothing else**. A valid citation wrapped in agent-authored elaboration —
-   inferred requirements, a suggested approach, invented rationale — is slop around
-   a legitimate reference, and the judge rejects it. Structural restatement (a
-   heading, bullets, the ask in fewer words) is fine and the judge is told so.
+   nothing else**. It is handed each cited quote and the transcript `path:line` it
+   resolved to. A valid citation wrapped in agent-authored elaboration — inferred
+   requirements, a suggested approach, invented rationale — is slop around a
+   legitimate reference, and the judge rejects it. Structural restatement (a
+   heading, bullets, the ask in fewer words) is fine and the judge is told so. The
+   prepare skips the judge when the body did not change, so a status edit costs no
+   model call.
 
 Preventive: an edit to the ask must be refused **before** it lands, because a
 post-write refusal reports damage already done to the oracle. The Stop after-check
-backstops writes the engine cannot derive at Pre.
+backstops writes that reached the tree without passing pre-tool.
+
+*Uncited frontmatter edits and the Stop check.* The engine hands a Stop event
+every citation the path's changes were made with this session — cited changes
+accumulate, and an uncited change (such as the status edits this guard permits)
+leaves them in place. So a task created with a citation and then moved to
+`in_progress` with a plain edit still reaches Stop with its ask's citation. Each
+uncited *body* change is refused at pre-tool.
 
 ### task-evidence-resolves — file-guard, preventive
 
 The **deterministic floor** — the `in_review` split's structural half, no model.
-Every `TASK.md` must satisfy the schema, and every delivery-evidence citation in
-its frontmatter must **resolve to the thing its kind promises**:
 
-- an **observation** `<abs-jsonl>:<ranges>` — every cited transcript line is a
-  **tool_result** the session produced (via `trajectory tool-result --line`);
-- an **artifact** `<repo-relative-file>:<ranges>` — the file exists under the repo
-  and every cited line exists.
+- Every `TASK.md` must satisfy the schema (closed; no `done`, no `observations`).
+- Every **artifact** `<repo-relative-file>:<ranges>` must resolve — the file exists
+  under the repo and every cited line exists — and an `in_review` task must name
+  at least one.
+- A write that moves the task **into** `in_review` (old status not `in_review`, new
+  status `in_review`; a create straight into `in_review` counts) must carry at
+  least one citation whose `sourceTypes` include `tool_result` — the output of the
+  test run or build that proves the work, cited on the claim itself. The refusal
+  names the `sr-file edit … --cite:tool_result` form.
 
 It spends no model call and makes **no judgement** about whether the evidence
 *substantiates* the claim — that is task-review's. It also does **not** check the
-body's citation of the ask — that is task-body-is-human-authored's. An `in_review`
-task must additionally carry **both** kinds (proof it happened *and* where the
-result is) — a claim of finished work missing either is refused. The schema is
-closed and has no `done`; a task written into `done` is refused at the point of
-writing.
+body's grounding in the ask — that is task-body-is-human-authored's. A task written
+into `done` is refused at the point of writing.
 
 ### task-review — file-guard, after-check
 
@@ -193,15 +232,19 @@ evidence** and asks a model whether the evidence **substantiates** the claim.
 - A **script pre-flight** gates on `in_review` (most task writes cost nothing),
   re-runs every `gates/*.sh` under the task (the SAME start conditions
   `task-gates-hold` held at the beginning of work — see "Gates hold twice"
-  below), and refuses deterministically if a gate fails or an observation is
-  not a tool_result or an artifact does not resolve — there is nothing to
-  review until the evidence resolves and the gates still hold.
+  below), and refuses deterministically if a gate fails, if no tool output is
+  cited on record for the claim (a task already in_review when the session
+  began, edited with no tool output cited), or if an artifact is missing or
+  does not resolve — there is nothing to review until the evidence is there and
+  the gates still hold.
 - The **prepare** gates on `in_review` a **second** time — it is a separate check
   from the pre-flight, and a passing pre-flight does not stop it, so without its own
   gate a to_do task would still pay for the model call. For a non-in_review task it
   emits `{"skip": true}` and the judge check **abstains** (no model call, no verdict).
-  For an in_review task it expands the frontmatter evidence to the bytes: each
-  observation to the **tool_result content** at its cited line, each artifact to the
+  For an in_review task it expands the evidence to the bytes: each `tool_result`
+  citation on the event to its **quote and the full tool result** at its line
+  (`sr-session trajectory tool-result --path --line` — the reviewer judges the whole
+  output, not only the words the agent chose to quote), each artifact to the
   **cited tree lines** — and collects every `gates/*.md` judgment gate's text. The
   **judge** weighs the delivered evidence against the claim AND decides whether
   every judgment gate still holds, in the SAME model call — a task claiming X
@@ -235,11 +278,12 @@ task's own that could regress, so it stays a start-only check
   git either).
 
 **task-evidence-resolves vs task-review — the crisp split.** Both look at the same
-two frontmatter lists, but ask different questions. task-evidence-resolves is
-**structural**: do the citations *resolve* — is the observation line a tool_result,
-does the artifact file+lines exist. task-review is **judged**: given they resolve,
-does the delivered evidence *substantiate* the `in_review` claim. The first is a
-script; the second is a model call gated behind it.
+evidence — the tool output cited on the claim and the frontmatter artifacts — but
+ask different questions. task-evidence-resolves is **structural**: is the evidence
+*there* — does the transition cite tool output, does each artifact's file and lines
+exist. task-review is **judged**: given it is there, does the delivered evidence
+*substantiate* the `in_review` claim. The first is a script; the second is a model
+call gated behind it.
 
 ### task-dependencies-resolve — file-guard, preventive
 
@@ -287,9 +331,10 @@ Fires on a write to any `gates/*.sh` or `gates/*.md` file — the same failure
 files: nothing else re-checks a gate's *content* once it exists, only whether
 it currently passes.
 
-A gate carries **no citations of its own** — only `TASK.md` cites the user's
-words, and that citation's grounding is `task-body-is-human-authored`'s
-subject, validated separately every time `TASK.md` is written. So this guard
+A gate carries **no citations of its own** — only a write that sets a
+`TASK.md`'s body cites the user's words, and that grounding is
+`task-body-is-human-authored`'s subject, validated separately every time the
+body is written. So this guard
 is **one check, no script stage**: prepare hands the judge the gate file's
 own content and kind, and the sibling `TASK.md`'s full content as it stands
 (frontmatter and body together) — no second citation-extraction pipeline
@@ -320,8 +365,8 @@ The refusal set is exactly `{to_do, in_progress}` — `backlog`, `blocked` and
 but "may this rest unattended". The refusal names **every** open task and its
 status (a Stop refusal repeats every cycle until acted on, so it must be a work
 queue, not an alarm) and spells out all four ways to end a turn honestly: finish it
-(→ `in_review` with evidence), `blocked` with a named blocker, `backlog`, or
-`in_review`.
+(→ `in_review` via `sr-file edit … --cite:tool_result`, naming the artifacts),
+`blocked` with a named blocker, `backlog`, or `in_review`.
 
 **Fail direction:** the logic fails **closed** (an open task is a refusal); the
 plumbing fails **open** (no workspace, no tasks dir, no `sr-file`/`jq` → permit,

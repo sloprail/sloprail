@@ -1,22 +1,29 @@
 ---
 name: cite-sources
-description: Use when writing any markdown file in this repo that makes a factual claim about what another file says — every such claim must cite the exact source lines it comes from.
+description: Use when writing any markdown file in this repo — every such file restates what other files say, so the write must cite the exact source output it comes from.
 ---
 
 # Citing Sources in Markdown
 
-Any factual claim in a markdown file you write — "X now does Y", "the
-default changed to Z" — must be followed by a citation to the exact lines
-of the source file it comes from, in this format:
+Every markdown file in this repo restates what other files say. Read the source
+first (Read, or `cat`), then write the markdown with `sr-file`, citing the exact
+words of that output on the command — never inside the file, which holds only
+plain prose:
 
+```bash
+sr-file write MIGRATION.md \
+  --cite:tool_result '<exact words from the source output>' \
+  --cite:tool_result '<another exact fragment, for another claim>' <<'EOF'
+<the summary, in plain prose>
+EOF
 ```
-[the exact quoted text](/absolute/path/to/file:start-end)
-```
 
-- The path must be absolute.
-- `start-end` is the 1-based line range in that file containing the claim.
-- The quoted text should closely match what the source actually says at
-  that range — not a looser paraphrase presented as if it were exact.
+- Cite each claim's source: `--cite:tool_result` repeats.
+- Each quote must match exactly one tool output of this session; check one with
+  `sr-session trajectory cite --source-types tool_result '<quote>'`.
+- Run `sr-file` on its own in the command (nothing else in the line but
+  `sr-file` calls, `&&` and `echo`).
+- Say only what the cited output says — not a looser or sharper version of it.
 
-A claim with no citation, or a citation pointing at the wrong lines or a
-range that doesn't exist, will be flagged.
+A markdown write without a citation is refused, and so is a claim the cited
+output does not support.

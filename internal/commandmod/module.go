@@ -16,7 +16,10 @@
 // boundary.
 package commandmod
 
-import "github.com/sloprail/sloprail/internal/module"
+import (
+	"github.com/sloprail/sloprail/internal/grounding"
+	"github.com/sloprail/sloprail/internal/module"
+)
 
 // Name identifies this module. It is how the engine reports which module
 // produced an event, and how a module is switched off — not a prefix the kinds
@@ -120,6 +123,12 @@ func (*Module) Kinds() []module.KindDecl {
 						},
 					},
 				},
+				// The citations the line was grounded in — a
+				// `sr-session trajectory cite '<quote>' && ...` chained ahead of
+				// the command, or an sr-file --cite: flag. This module always
+				// emits it empty: resolving a quote reads the session's record,
+				// which is the session's business (services/sr-session).
+				grounding.CitationsDecl(),
 			},
 		},
 	}

@@ -3,6 +3,8 @@ package commandmod
 import (
 	"strings"
 
+	"github.com/sloprail/sloprail/internal/grounding"
+
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -93,6 +95,13 @@ type FileTarget struct {
 	// is not a tree question. What is a tree question is whether the rule
 	// applies at all, and that is exactly what is deferred.
 	Into []string
+
+	// Grounded is the sr-file call that names this target, parsed — the one
+	// program whose line carries citations for the file it changes (see
+	// internal/grounding). Nil for every other program. It travels on the
+	// target so its citations are keyed by the same path, resolved against the
+	// same `cd`s, as the change itself.
+	Grounded *grounding.FileCommand
 }
 
 // FileTargets finds every path a command line is about to change.

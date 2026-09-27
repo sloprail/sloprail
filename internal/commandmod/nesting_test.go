@@ -281,7 +281,7 @@ func TestNesting_WrapperArgvIsTheWrappedVector(t *testing.T) {
 	if _, ok := invs[1].Flags["u"]; ok {
 		t.Errorf("npm flags = %v, must not carry sudo's own flags", invs[1].Flags)
 	}
-	if invs[1].Flags["tag"] != "next" {
+	if !equal(invs[1].Flags["tag"], []string{"next"}) {
 		t.Errorf("npm flags = %v, want tag=next", invs[1].Flags)
 	}
 }

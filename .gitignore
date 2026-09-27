@@ -18,6 +18,9 @@
 # not gets committed.
 /bin/
 
+# Where `make mock` installs the pinned a10n-claude-mock the e2e suites drive.
+/.bin/
+
 # Where the e2e harness builds the binary it drives. Under the git directory
 # rather than the system temp dir, because macOS reaps /var/folders mid-run —
 # see tests/e2e/harness/harness.go. Listed here for the case where someone

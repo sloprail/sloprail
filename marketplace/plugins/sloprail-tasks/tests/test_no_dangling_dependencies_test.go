@@ -86,12 +86,10 @@ func TestDangling_DeleteWithStripPermits(t *testing.T) {
 	e.Git(proj, "commit", "-m", "seed dependent and dependency, both correct")
 
 	sess := "s-dangling-strip"
-	tp := e.TranscriptPath(proj, sess)
-	body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
-	// The rewritten dependent: depends_on stripped, and a grounded citation is
-	// needed now because this write DOES fire task-body-is-human-authored's
-	// Pre check (a fresh write in this session, unlike the baseline file).
-	strippedDoc := "---\nstatus: to_do\npriority: P1\n---\n\n" + body + "\n"
+	// The rewritten dependent: depends_on stripped, body untouched. Stripping an
+	// id is a frontmatter-only change, so task-body-is-human-authored needs no
+	// citation for it — the plain Write tool is enough.
+	strippedDoc := "---\nstatus: to_do\npriority: P1\n---\n\nDepends on CI. Placeholder body, no citation needed for a BASELINE file the guard never Pre-checked.\n"
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Bash("b1", "rm -rf memories/tasks/infra/setup-ci"),

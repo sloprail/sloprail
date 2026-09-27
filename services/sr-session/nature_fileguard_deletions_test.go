@@ -113,7 +113,7 @@ func TestRunFileGuardsPreventive_DeletionsFilter(t *testing.T) {
 			t.Run(string(mode.Mode())+"/"+kind, func(t *testing.T) {
 				g, ledger := refusingGuard(t, mode, true)
 				reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{g},
-					[]event.Event{preEvent(kind, "docs/a.md")}, hookScope{}, map[string]natures.ContextState{})
+					[]event.Event{preEvent(kind, "docs/a.md")}, hookScope{}, map[string]natures.ContextState{}, "")
 				if wantRuns(mode, kind) {
 					assert.Contains(t, reason, "REFUSED-"+kind, "deletions=%q must run on %s", mode, kind)
 					assert.Equal(t, []string{kind}, ledgerLines(t, ledger))

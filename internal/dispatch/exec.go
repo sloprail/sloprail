@@ -166,6 +166,11 @@ type scriptResult struct {
 	Passed bool
 	Reason string
 	Stdout []byte
+
+	// Code is the exit status of a script that ran to completion; -1 when it
+	// could not be started or was killed. Read only where an exit code other
+	// than zero carries meaning of its own (a prerequisite's `when`).
+	Code int
 }
 
 // runScriptExec is the production runScript: it runs the script as `sh -c` from
@@ -200,6 +205,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 			Reason: fmt.Sprintf(
 				"the check %q could not be run: %v. The action was refused because a check that cannot run must not be read as approval.",
 				s.Script, startErr),
+			Code: -1,
 		}, nil
 	}
 	if expired {
@@ -208,6 +214,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 			Reason: fmt.Sprintf(
 				"the check %q was killed after %s without answering, and the action was refused because a check that did not answer must not be read as approval.%s",
 				s.Script, defaultCheckTimeout, quoted(stderr)),
+			Code: -1,
 		}, nil
 	}
 	if code == 0 {
@@ -217,6 +224,7 @@ func runScriptExec(s scriptCall) (scriptResult, error) {
 		Passed: false,
 		Reason: scriptRefusalReason(s.Script, code, signal, stdout, stderr),
 		Stdout: stdout,
+		Code:   code,
 	}, nil
 }
 

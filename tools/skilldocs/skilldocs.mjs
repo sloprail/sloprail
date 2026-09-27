@@ -60,7 +60,7 @@ const SKILL_COMMAND = `/${pluginName}:${SKILL_NAME}`;
 // Order + friendly labels for the pages (SKILL is the overview/index).
 const ORDER = [
   'SKILL', 'file-guard', 'gate', 'context', 'structure-gate', 'matchers',
-  'script-checks', 'judge-checks', 'events', 'state-management', 'environment',
+  'script-checks', 'judge-checks', 'grounding', 'events', 'state-management', 'environment',
 ];
 
 // A short related set per page — points at its siblings.
@@ -71,6 +71,7 @@ const RELATED = {
   'matchers': ['guides/events', 'guides/file-guard'],
   'script-checks': ['guides/judge-checks'],
   'judge-checks': ['guides/script-checks'],
+  'grounding': ['guides/file-guard', 'guides/judge-checks'],
   'events': ['reference/event-vocabulary', 'guides/matchers'],
   'state-management': ['guides/context'],
   'environment': ['guides/script-checks'],

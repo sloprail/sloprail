@@ -24,6 +24,15 @@ var (
 	Bash   = harness.Bash
 )
 
+// srWrite is the agent replacing a file's whole content with sr-file, citing the
+// user's words — the grounded way to make a change that removes content. The
+// quote rides on the command; the file keeps only its own content.
+func srWrite(id, path, content, quote string) harness.Turn {
+	return Bash(id, "sr-file write "+path+" --cite:user "+shq(quote)+" --content "+shq(content))
+}
+
+func shq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
 // TestMain removes the binary build dir when this package's tests finish.
 func TestMain(m *testing.M) {
 	code := m.Run()

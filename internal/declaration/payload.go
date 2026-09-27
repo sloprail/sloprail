@@ -244,6 +244,14 @@ type FileJudgeInput struct {
 	// (`{{ event.newContent }}`, `{{ transcriptPath }}`, `{{ context }}`).
 	CheckPayload `json:",inline"`
 
+	// Change is the unified diff from the event's oldContent to its newContent
+	// (`{{ change }}`): what THIS change does to the file — at pre-tool the
+	// pending write, at Stop everything since the session baseline. A judge of a
+	// grounded change rules on it, not the whole file: a citation grounds the
+	// change it was made with, and lines the change leaves alone were grounded,
+	// or not, when they were written. Empty when the event carries no content.
+	Change string `json:"change"`
+
 	// AdditionalContext is present only when the check's own prepare returned one.
 	AdditionalContext PreparedContext `json:"additionalContext,omitempty"`
 }

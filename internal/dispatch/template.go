@@ -78,6 +78,42 @@ import (
 // without waiting the full production bound; nothing in production writes it.
 var renderTimeout = 5 * time.Second
 
+// # Values are escaped by default, cheaply
+//
+// A judge prompt wraps what it judges in tags (`<message>…</message>`), and the
+// wrapped value is written by the agent being judged. The one thing that must not
+// survive into the prompt is a value closing the tag it sits in, so every string a
+// template renders has `</` broken to `<\/` — before rendering, whatever the
+// template does. Nothing else changes: HTML escaping (`&#34;` for every quote)
+// would bloat a prompt of code or diffs and make it harder to read, for no gain
+// the tags do not already give. `| raw` restores a value a template means to
+// embed as markup; `| e` (and `| escape`) is the same cheap escape, a no-op on an
+// already-escaped value.
+
+// escapeClose breaks every closing-tag opener in s.
+func escapeClose(s string) string { return strings.ReplaceAll(s, "</", "<\\/") }
+
+// escapeStrings returns v with escapeClose applied to every string inside it.
+func escapeStrings(v any) any {
+	switch t := v.(type) {
+	case string:
+		return escapeClose(t)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, x := range t {
+			out[k] = escapeStrings(x)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = escapeStrings(x)
+		}
+		return out
+	}
+	return v
+}
+
 // renderTemplate renders src against vars and returns the prompt text.
 //
 // vars is the judge-input as a decoded JSON object (map[string]any) — the flat
@@ -96,8 +132,9 @@ func renderTemplate(src string, vars map[string]any) (string, error) {
 	// gave up waiting — an unbuffered send would block a would-be-leaked goroutine
 	// on a channel no one reads.
 	done := make(chan result, 1)
+	escaped, _ := escapeStrings(vars).(map[string]any)
 	go func() {
-		out, err := renderGonja(src, vars)
+		out, err := renderGonja(src, escaped)
 		done <- result{out, err}
 	}()
 
@@ -109,6 +146,11 @@ func renderTemplate(src string, vars map[string]any) (string, error) {
 			"template: render did not finish within %s (a malformed template can loop this renderer); refusing rather than wedging on it",
 			renderTimeout)
 	}
+}
+
+// cheapEscape is `| e`: the same closing-tag break every value already had.
+func cheapEscape(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
+	return e.ValueFactory.Value(escapeClose(in.String()))
 }
 
 // renderGonja is the actual gonja render: a fresh environment, the two registered
@@ -123,6 +165,11 @@ func renderGonja(src string, vars map[string]any) (string, error) {
 	//   {{ some_path | dirname }}   -> the directory of a path
 	//   {{ "e2e.TestFoo" | funcname }} -> "TestFoo"
 	env.Filters.Update(exec.FilterSet{
+		"e":      cheapEscape,
+		"escape": cheapEscape,
+		"raw": func(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
+			return e.ValueFactory.Value(strings.ReplaceAll(in.String(), "<\\/", "</"))
+		},
 		"dirname": func(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
 			return e.ValueFactory.Value(path.Dir(in.String()))
 		},

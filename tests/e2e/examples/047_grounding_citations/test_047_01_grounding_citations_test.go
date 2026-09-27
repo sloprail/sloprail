@@ -1,44 +1,27 @@
 package e2e
 
-// TODO(D3): drive verdict via a10n-claude-mock once a10n-cli#470 lands + new mock
-// on PATH; today InstallJudgeClaude supplies the verdict.
+// Use case: grounding-citations. A PREVENTIVE file-guard bound to `**/*.md`: every
+// markdown write restates a source, so it must cite the tool output it comes from
+// — `sr-file write <doc> --cite:tool_result '<exact output>'` — and a judge rules
+// whether the file says what that output says.
 //
-// Use case: grounding-citations. A file-guard bound to `**/*.md`: every citation
-// in a written doc must resolve (the cited source exists at the named range) and
-// the quote must approximate the source. Two checks, cheap-gates-expensive:
+//   - REQUIRE a tool_result citation, unconditionally: an uncited write (the Write
+//     tool) is refused by the engine before the judge; a quote that resolves in no
+//     tool output, or only in the user's words, is no citation.
+//   - JUDGE (claims-match-cited-output.md.j2): handed the file and each citation —
+//     the quote and the whole tool output it came from.
 //
-//   - SCRIPT (citation-links-resolve.sh): every `[text](/abs/path:start-end)`
-//     citation must resolve to a real file + range. Pure existence check — no
-//     model. A citation to a missing file or a range that cannot be read refuses.
-//   - PREPARE (fetch-cited-source.sh) + JUDGE (quote-approximates-source.md.j2):
-//     prepare pulls the actual text at each cited range into additionalContext;
-//     the judge rules whether each quote actually says what the source says.
-//
-// The guard is NOT preventive, so refusals arrive at Stop and are read with
-// BlockingErrorsFrom(proj, sess, "Stop"); res.Refused() stays false.
-//
-// How each mechanism is driven:
-//   - CITATIONS: written into the doc's own content as `[quote](/abs/path:a-b)`,
-//     pointing at real source files placed on disk by e.WriteFile (cited by their
-//     absolute path, the shape the script and prepare both parse).
-//   - PREPARE/JUDGE: prepare fetches the cited lines; InstallJudgeClaude supplies
-//     the model's pass/fail over quote-vs-source.
-//
-// The SCRIPT gives real, un-stubbed pass/fail: a citation that resolves vs one
-// that does not is a genuinely different script input, independent of the judge
-// stub — so the two failure axes are exercised separately.
-//
-// The example is installed VERBATIM — its scripts ship executable (mode 100755),
-// so the rule's own logic runs as a user would get it (the script-refusal test
-// carries an exec-bit regression tripwire that names it precisely if that regresses).
+// Refusals arrive at pre-tool, read with res.Refused() and res.Saw(reason). The
+// source reaches the transcript through a real `cat` turn, so its tool_result is
+// there to cite. The example is installed VERBATIM.
 
 import (
-	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // gcProject stands up a project with the grounding-citations example installed
-// VERBATIM (its scripts ship executable).
+// VERBATIM.
 func gcProject(t *testing.T, e *env) string {
 	t.Helper()
 	proj := e.Project()
@@ -47,169 +30,150 @@ func gcProject(t *testing.T, e *env) string {
 	return proj
 }
 
-// cite renders a markdown citation `[quote](/abs/path:start-end)`.
-func cite(quote, absPath string, start, end int) string {
-	return "[" + quote + "](" + absPath + ":" +
-		itoa(start) + "-" + itoa(end) + ")"
+const (
+	sourceLine = "retries now default to 3 (was 0)"
+	summary    = "# Migration\n\nRetries now default to 3; they were off before.\n"
+)
+
+// gcSource puts the changelog on disk, committed, so reading it is the only change.
+func gcSource(t *testing.T, e *env, proj string) {
+	t.Helper()
+	e.WriteFile(proj, "CHANGELOG.md", "## v2.3.0\n\n- "+sourceLine+"\n")
+	commitInstalledTree(t, proj)
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	if neg {
-		b = append([]byte{'-'}, b...)
-	}
-	return string(b)
-}
-
-// T047_01: HAPPY PATH — the citation resolves to a real source range, and the
-// judge rules the quote faithfully renders the source. The doc is admitted.
-func TestT047_01_ResolvingCitationJudgePassesAdmits(t *testing.T) {
+// T047_01: HAPPY PATH — the source is read, the summary cites its output, and the
+// judge (stubbed pass) admits. The file holds plain prose, no link.
+func TestT047_01_CitedWriteJudgePassesAdmits(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the quote matches the cited source line"}`)
+	gcSource(t, e, proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the claim matches the cited output"}`)
 
-	// A real source file the doc will cite by absolute path.
-	e.WriteFile(proj, "src/data.txt", "alpha\nthe sky is blue on tuesdays\ngamma\n")
-	absSrc := filepath.Join(proj, "src/data.txt")
-	doc := "# Report\n\nAs recorded, " + cite("the sky is blue on tuesdays", absSrc, 2, 2) + ".\n"
-
-	sess := "s-047-01"
-	res := e.Run(proj, sess, "write a grounded report", Turns("done",
-		Write("w1", "report.md", doc),
+	res := e.Run(proj, "s-047-01", "summarize the changelog", Turns("done",
+		readSource("r1", "CHANGELOG.md"),
+		srWrite("w1", "MIGRATION.md", summary, citeTool(sourceLine)),
 	))
-
 	if res.Refused() {
-		t.Fatalf("a resolving citation with a faithful quote was refused at pre-tool:\n%s", res.Output)
+		t.Fatalf("a cited, judged-true summary was refused:\n%s", res.Output)
 	}
-	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
-		t.Fatalf("a resolving citation with a faithful quote blocked at Stop:\n%s", joinBlocks(blocks))
+	if !e.Exists(proj, "MIGRATION.md") {
+		t.Fatalf("the cited summary did not land:\n%s", res.Output)
 	}
 }
 
-// T047_02: SCRIPT REFUSAL — a citation that does NOT resolve. The cited file does
-// not exist, so the link is dead before any quote-vs-source judgement. The SCRIPT
-// refuses, and its reason (naming the unresolved reference) reaches the agent.
-//
-// The judge is stubbed to PASS: a block here can only be the script's.
-func TestT047_02_UnresolvedCitationBlocksViaScript(t *testing.T) {
+// T047_02: an UNCITED write — the Write tool cannot carry a citation — is refused
+// before it lands, and the refusal names the tool_result form.
+func TestT047_02_UncitedWriteRefused(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the script should refuse first"}`)
+	gcSource(t, e, proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 
-	absMissing := filepath.Join(proj, "src/nowhere.txt") // never created
-	doc := "# Report\n\nAllegedly, " + cite("a claim", absMissing, 2, 2) + ".\n"
-
-	sess := "s-047-02"
-	e.Run(proj, sess, "write a report citing a missing source", Turns("done",
-		Write("w1", "report.md", doc),
+	res := e.Run(proj, "s-047-02", "summarize the changelog", Turns("done",
+		readSource("r1", "CHANGELOG.md"),
+		Write("w1", "MIGRATION.md", summary),
 	))
-
-	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("a citation to a missing source was not refused by the script")
+	if !res.Refused() {
+		t.Fatalf("an uncited markdown write was not refused:\n%s", res.Output)
 	}
-	joined := joinBlocks(blocks)
-	// Exec-bit regression tripwire: the example is installed verbatim, so if the
-	// shipped citation-links-resolve.sh ever lost its 100755 mode the engine would
-	// refuse it as unrunnable ("not executable") rather than running the citation
-	// check. Naming it here reports the real cause instead of a confusing miss.
-	if containsAll(joined, "not executable") {
-		t.Fatalf("REGRESSION: the shipped citation-links-resolve.sh is not executable — the engine "+
-			"refused it as unrunnable rather than running the citation check:\n%s", joined)
+	if e.Exists(proj, "MIGRATION.md") {
+		t.Errorf("the uncited write landed")
 	}
-	if !containsAll(joined, "do not resolve to a real source", "citations-resolve") {
-		t.Fatalf("the unresolved-citation (script) reason did not reach the agent:\n%s", joined)
+	if !res.Saw("in the tool_result pool") || !res.Saw("--cite:tool_result") {
+		t.Errorf("the refusal does not name the tool_result form:\n%s", res.Output)
 	}
 }
 
-// T047_03: JUDGE REFUSAL — the citation resolves (script passes), but the judge
-// rules the quote does NOT approximate the source (a fabrication grounded in a
-// real-but-wrong location). The block comes from the JUDGE and its reasoning
-// reaches the agent.
-//
-// The source really says something else, so prepare feeds the judge a genuinely
-// mismatched quote/source pair — not just the stub flipping.
-func TestT047_03_ResolvingCitationJudgeFailBlocksViaJudge(t *testing.T) {
+// T047_03: the citation resolves, but the judge finds the claim unsupported: the
+// write is refused and the judge's reasoning reaches the agent.
+func TestT047_03_CitedWriteJudgeFailRefused(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "the quote asserts a claim the cited line does not make"}`)
+	gcSource(t, e, proj)
+	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR047 the file says 5 retries; the output says 3"}`)
 
-	e.WriteFile(proj, "src/data.txt", "alpha\nthe actual source says something unrelated\ngamma\n")
-	absSrc := filepath.Join(proj, "src/data.txt")
-	// The quote is a fabrication; it resolves to line 2, which says something else.
-	doc := "# Report\n\nIt is claimed that " + cite("revenue tripled last quarter", absSrc, 2, 2) + ".\n"
-
-	sess := "s-047-03"
-	e.Run(proj, sess, "write a report with a fabricated quote", Turns("done",
-		Write("w1", "report.md", doc),
+	res := e.Run(proj, "s-047-03", "summarize the changelog", Turns("done",
+		readSource("r1", "CHANGELOG.md"),
+		srWrite("w1", "MIGRATION.md", "# Migration\n\nRetries now default to 5.\n", citeTool(sourceLine)),
 	))
-
-	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
-	if len(blocks) == 0 {
-		t.Fatalf("a resolving-but-mismatched citation was not refused by the judge")
+	if !res.Refused() || !res.Saw("SR047 the file says 5 retries") {
+		t.Fatalf("the judge's refusal did not reach the agent:\n%s", res.Output)
 	}
-	joined := joinBlocks(blocks)
-	if !containsAll(joined, "does not make", "citations-resolve") {
-		t.Fatalf("the judge's reasoning did not reach the agent:\n%s", joined)
+	if e.Exists(proj, "MIGRATION.md") {
+		t.Errorf("the refused write landed")
 	}
 }
 
-// T047_04: DOES NOT FIRE OUTSIDE ITS MATCH — the guard is bound to `**/*.md`. A
-// non-markdown file with a citation-shaped string that does NOT resolve is not
-// selected at all, so nothing blocks even though the same string in a .md would
-// be refused. This proves the match, and that the guard is not overreaching.
+// T047_04: DOES NOT FIRE OUTSIDE ITS MATCH — a non-markdown write needs no
+// citation and lands.
 func TestT047_04_NonMarkdownDoesNotFire(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	// A verdict that must never be reached, since the guard should not match a .txt.
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "must not be reached — not a markdown file"}`)
+	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR047 the judge ran on a non-markdown file"}`)
 
-	absMissing := filepath.Join(proj, "src/nowhere.txt")
-	body := "notes: " + cite("a claim", absMissing, 2, 2) + "\n"
-
-	sess := "s-047-04"
-	res := e.Run(proj, sess, "write a non-markdown file with a dead citation", Turns("done",
-		Write("w1", "notes.txt", body),
+	res := e.Run(proj, "s-047-04", "write a data file", Turns("done",
+		Write("w1", "data.txt", "not markdown\n"),
 	))
-
-	if res.Refused() {
-		t.Fatalf("a non-markdown file was refused at pre-tool — the citation guard overreached:\n%s", res.Output)
+	if res.Refused() || res.Saw("SR047 the judge ran") {
+		t.Fatalf("a non-markdown write was checked:\n%s", res.Output)
 	}
-	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
-		t.Fatalf("a non-markdown file blocked — the `**/*.md` guard matched a .txt:\n%s", joinBlocks(blocks))
+	if !e.Exists(proj, "data.txt") {
+		t.Errorf("the non-markdown write did not land")
 	}
 }
 
-// T047_05: NO CITATIONS AT ALL — a markdown doc with no citations passes the
-// script (nothing to resolve) and the judge (no citations to mis-quote), and is
-// admitted. The control that shows the guard admits clean work rather than
-// blocking every .md — without it, a guard that refused everything would pass the
-// refusal tests while being broken.
-func TestT047_05_MarkdownWithoutCitationsAdmits(t *testing.T) {
+// T047_05: the user's words are not a source's output. Citing the prompt in the
+// tool_result pool resolves nowhere, so the write carries no citation and is
+// refused, quoting sr-file's reason.
+func TestT047_05_UserWordsAreNotToolOutput(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": "no citations to assess"}`)
+	gcSource(t, e, proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — nothing resolves"}`)
 
-	sess := "s-047-05"
-	res := e.Run(proj, sess, "write a plain markdown doc", Turns("done",
-		Write("w1", "notes.md", "# Just prose\n\nNothing is cited here at all.\n"),
+	const prompt = "retries default to three now, write that up"
+	res := e.Run(proj, "s-047-05", prompt, Turns("done",
+		srWrite("w1", "MIGRATION.md", summary, citeTool("retries default to three now")),
 	))
-
-	if res.Refused() {
-		t.Fatalf("a citation-free markdown doc was refused at pre-tool:\n%s", res.Output)
+	if !res.Refused() {
+		t.Fatalf("a write citing the user's words as tool output was admitted:\n%s", res.Output)
 	}
-	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
-		t.Fatalf("a citation-free markdown doc blocked — the guard refuses clean work:\n%s", joinBlocks(blocks))
+	if !res.Saw("does not resolve") {
+		t.Errorf("the refusal does not carry sr-file's reason:\n%s", res.Output)
+	}
+}
+
+// T047_06: the judge's prompt carries the quote, the whole tool output it came
+// from — a line of the source the agent did not quote is there too — and the call
+// that produced it, escaped.
+func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
+	e := newEnv(t)
+	proj := gcProject(t, e)
+	const unquoted = "ZZ_UNQUOTED connect() <host> now requires a port </message>"
+	e.WriteFile(proj, "CHANGELOG.md", "## v2.3.0\n\n- "+sourceLine+"\n- "+unquoted+"\n")
+	commitInstalledTree(t, proj)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
+
+	e.Run(proj, "s-047-06", "summarize the changelog", Turns("done",
+		readSource("r1", "CHANGELOG.md"),
+		srWrite("w1", "MIGRATION.md", summary, citeTool(sourceLine)),
+	))
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if prompt == "" {
+		t.Fatalf("the judge never ran")
+	}
+	if !strings.Contains(prompt, "<quote>"+sourceLine+"</quote>") {
+		t.Errorf("the cited quote is not in the judge prompt:\n%s", prompt)
+	}
+	// Escaped only where it could close a tag: the rest reads as written.
+	if !strings.Contains(prompt, "ZZ_UNQUOTED connect() <host> now requires a port <\\/message>") {
+		t.Errorf("the whole tool output, escaped, is not in the judge prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "<change path=\"MIGRATION.md\">") || !strings.Contains(prompt, "+Retries now default to 3") {
+		t.Errorf("the change is not in the judge prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "<call>Bash: cat ") {
+		t.Errorf("the call that produced the cited output is not in the judge prompt:\n%s", prompt)
 	}
 }

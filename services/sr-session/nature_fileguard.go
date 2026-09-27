@@ -87,6 +87,7 @@ func runFileGuardsPreventive(
 	events []event.Event,
 	scope hookScope,
 	contextMap map[string]natures.ContextState,
+	resolveNote string,
 ) string {
 	runner := dispatchcore.Runner{}
 
@@ -189,9 +190,17 @@ func runFileGuardsPreventive(
 				// missing require still refuses, so this is a message improvement, not
 				// a change in what is enforced.
 				reqReq := dispatchcore.Request{
+					Nature:         dispatchcore.NatureFileGuard,
 					Require:        g.Require,
+					Event:          e,
 					TranscriptPath: scope.Transcript,
 					Context:        contextMap,
+					// A prerequisite's `when` script runs from the guard's folder.
+					Dir:        g.Dir,
+					GuardName:  g.Name,
+					Workspace:  scope.Workspace,
+					SessionID:  scope.SessionID,
+					LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
 				}
 				if v, err := runner.CheckRequire(reqReq); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %s require: %v\n", g.Attribution(), err)
@@ -199,13 +208,31 @@ func runFileGuardsPreventive(
 						"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval (file-guard %s)",
 						g.Name, err, g.Attribution())
 				} else if v.Refused {
+					if resolveNote != "" {
+						// A citation the rule required did not resolve, and sr-file
+						// said which one and why — worth more than "cites nothing".
+						return fmt.Sprintf("%s sr-file said:\n%s\n(file-guard %s)", v.Reason, resolveNote, g.Attribution())
+					}
 					return fmt.Sprintf("%s (file-guard %s)", v.Reason, g.Attribution())
+				}
+				if resolveNote != "" {
+					// The line was pure sr-file and its dry run failed: sr-file's
+					// own reason is the cause, and the generic one below would
+					// only send the agent guessing.
+					return fmt.Sprintf(
+						"the %q file-guard is preventive and could not verify this write before it lands: sr-file could not compute the change, and said:\n%s\n"+
+							"Refusing: a preventive guard must not admit a write it cannot verify. Fix what sr-file named and run it again; "+
+							"to check a quote on its own: `sr-session trajectory cite '<quote>'`. (file-guard %s)",
+						g.Name, resolveNote, g.Attribution())
 				}
 				return fmt.Sprintf(
 					"the %q file-guard is preventive and could not verify this write before it lands: the engine could not compute the result of this %s "+
 						"(a change whose settled bytes are not known ahead of time — a command-derived edit, or a notebook create whose cell source is not the document), "+
 						"so whether the file would still be fine is unknown. "+
-						"Refusing: a preventive guard must not admit a write it cannot verify. (file-guard %s)", g.Name, underivableKindNoun(e.Kind), g.Attribution())
+						"Refusing: a preventive guard must not admit a write it cannot verify. "+
+						"Write the file's content directly, or make the change with sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, && and echo; no cd, no VAR= prefix, no $ expansion — quote every value verbatim) "+
+						"so its result is computed before it runs — and check that each --cite: quote resolves to exactly one message: `sr-session trajectory cite '<quote>'`. (file-guard %s)",
+					g.Name, underivableKindNoun(e.Kind), g.Attribution())
 			}
 
 			verdict, err := runner.Run(dispatchcore.Request{

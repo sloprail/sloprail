@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/module"
 )
 
@@ -29,6 +30,9 @@ func TestFileEvent_Event_PathOnly(t *testing.T) {
 		// and newMarkers; this FileEvent simply has none.
 		FieldOldMarkers: []any{},
 		FieldNewMarkers: []any{},
+		// citations present and empty: the session attaches them, never this
+		// module.
+		grounding.FieldCitations: []any{},
 	}, e.Fields)
 }
 
@@ -37,10 +41,11 @@ func TestFileEvent_Event_WithContent(t *testing.T) {
 
 	assert.Equal(t, KindPreCreate, e.Kind)
 	assert.Equal(t, map[string]any{
-		FieldPath:        "memories/a.md",
-		FieldNewContent:  "# Notes\n",
-		FieldResultKnown: true,
-		FieldNewMarkers:  []any{},
+		FieldPath:                "memories/a.md",
+		FieldNewContent:          "# Notes\n",
+		FieldResultKnown:         true,
+		FieldNewMarkers:          []any{},
+		grounding.FieldCitations: []any{},
 	}, e.Fields)
 	assert.NotContains(t, e.Fields, FieldOldContent,
 		"a create has no oldContent: nothing preceded it")
@@ -61,10 +66,10 @@ func TestFileEvent_Event_EmptyContentIsCarried(t *testing.T) {
 
 	require.Contains(t, e.Fields, FieldNewContent)
 	assert.Equal(t, "", e.Fields[FieldNewContent])
-	// path, newContent, resultKnown and newMarkers — every field PreFileCreate
-	// declares. resultKnown is carried too now, so an underivable empty result is
-	// tellable from this genuinely-empty (resultKnown true) one.
-	assert.Len(t, e.Fields, 4)
+	// path, newContent, resultKnown, newMarkers and citations — every field
+	// PreFileCreate declares. resultKnown is carried too now, so an underivable
+	// empty result is tellable from this genuinely-empty (resultKnown true) one.
+	assert.Len(t, e.Fields, 5)
 	assert.Contains(t, e.Fields, FieldNewMarkers)
 	assert.Equal(t, true, e.Fields[FieldResultKnown])
 }
@@ -275,23 +280,23 @@ func TestModule_FieldsPerKind(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldResultKnown, FieldNewMarkers},
+	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldResultKnown, FieldNewMarkers, grounding.FieldCitations},
 		fieldsOf[KindPreCreate],
 		"a create has no prior bytes — newContent, its newMarkers, and resultKnown (a notebook create's bytes are not derivable, so the empty result must be tellable from a genuinely-empty one)")
-	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldResultKnown, FieldOldMarkers, FieldNewMarkers},
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldResultKnown, FieldOldMarkers, FieldNewMarkers, grounding.FieldCitations},
 		fieldsOf[KindPreUpdate],
 		"an update carries both contents; resultKnown makes an uncomputable newContent askable")
-	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers},
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers, grounding.FieldCitations},
 		fieldsOf[KindPreDelete],
 		"a delete carries only the bytes about to be lost")
 
-	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldNewMarkers, FieldSeen},
+	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldNewMarkers, FieldSeen, grounding.FieldCitations},
 		fieldsOf[KindPostCreate],
 		"a Post create mirrors PreFileCreate, plus seen")
-	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldOldMarkers, FieldNewMarkers, FieldSeen},
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldOldMarkers, FieldNewMarkers, FieldSeen, grounding.FieldCitations},
 		fieldsOf[KindPostUpdate],
 		"a Post update carries both settled contents, seen, and no resultKnown")
-	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers, FieldSeen},
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers, FieldSeen, grounding.FieldCitations},
 		fieldsOf[KindPostDelete],
 		"a Post delete mirrors PreFileDelete, plus seen")
 }

@@ -33,9 +33,10 @@ close({
 //                 live other than to_do, which would make to_do meaningless.
 //   to_do       — scheduled, not started.
 //   in_progress — being worked.
-//   in_review   — the agent claims it is finished and has attached its
-//                 evidence. NOT the agent's verdict: the claim is what this
-//                 status records, and the review guardrail is what judges it.
+//   in_review   — the agent claims it is finished: the write that set it cited
+//                 the tool output proving the work, and `artifacts` names the
+//                 result. NOT the agent's verdict: the claim is what this status
+//                 records, and the review guardrail is what judges it.
 //   blocked     — cannot proceed. The body must name the blocker.
 //
 // `done` is deliberately NOT in this list. A task the reviewer approves is
@@ -49,68 +50,46 @@ status!: "backlog" | "to_do" | "in_progress" | "in_review" | "blocked"
 // WHAT GETS DONE NEXT.
 priority!: "P0" | "P1" | "P2" | "P3"
 
-// THE DELIVERY EVIDENCE, REQUIRED ONLY IN `in_review`. Two lists, two kinds, and
-// the split is the whole point of the review lifecycle — it is NOT the body's
-// citation of the ASK.
+// THE DELIVERY EVIDENCE. A task file holds DERIVED TEXT ONLY — nothing that names
+// a session transcript, because a transcript path resolves on no other machine.
+// So of the three things a task's lifecycle is grounded in, only one lives here:
 //
-// The BODY of a TASK.md cites the user's own words for what was asked, inline as
-// `[quote](jsonl)` markdown links (guarded by task-body-is-human-authored). These
-// two FRONTMATTER lists are the opposite end of the lifecycle: they cite what the
-// agent DELIVERED, as structured citation strings, so a reviewer can weigh the
-// delivery against the claim. Conflating the two — grounding a delivery claim in
-// the user's ask — proves only that the work was requested, never that it was
-// done. So the delivery evidence is structured frontmatter, distinct from the
-// body's inline ask.
+//   the ASK                the user's own words for what was asked. Cited on the
+//                          WRITE that creates the task or changes its body —
+//                          `sr-file write|edit … --cite:user '<exact words>'` —
+//                          and checked by task-body-is-human-authored against the
+//                          event's citations. The body states the ask; it carries
+//                          no link.
+//   PROOF IT HAPPENED      tool output (a test run that came back green). Cited on
+//                          the WRITE that moves the task into in_review —
+//                          `sr-file edit … --cite:tool_result '<exact output>'` —
+//                          and checked by task-evidence-resolves, then weighed by
+//                          task-review, which is handed the full tool result.
+//   WHERE THE RESULT IS    the produced files, at the lines that changed:
+//                          `artifacts` below. Repository content, so it CAN live
+//                          in the file, and reads the same on every checkout.
 //
-// Both are OPTIONAL in the schema while being MANDATORY in in_review (enforced by
+// Keeping the ask and the proof apart is the point of the review lifecycle:
+// grounding a delivery claim in the user's ask proves only that the work was
+// requested, never that it was done.
+//
+// `artifacts` is OPTIONAL in the schema while MANDATORY in in_review (enforced by
 // task-evidence-resolves, not the schema). CUE can express the conditional, but it
-// cannot express what actually matters — that an observation's cited line is a
-// real tool_result, and that an artifact's cited lines exist in the tree. Those
-// are transcript and filesystem questions, and a schema sees a string. So the
-// SHAPE is pinned here and the SUBSTANCE is checked in the hook.
-//
-// The two citation kinds have DIFFERENT PATH BASES, and that difference is
-// load-bearing — it is what tells the resolver which mechanism to use:
-//
-//   OBSERVATION  /abs/session.jsonl:120     ABSOLUTE .jsonl transcript path,
-//                                            resolved by confirming the cited LINE
-//                                            is a tool_result the session produced.
-//   ARTIFACT     src/foo.go:10-60           REPO-RELATIVE tree path, resolved by
-//                                            confirming the file exists under the
-//                                            repo and the cited lines exist.
-//
-// An observation's path is the transcript, opened by absolute path (a reviewer's
-// working directory is nobody's business); an artifact's path is a produced file,
-// named RELATIVE to the repo root so it reads the same for anyone with the tree
-// checked out. This is a DELIBERATE divergence from the old schema, which demanded
-// an absolute `/` for both: artifacts are repo-relative now. So the two types are
-// SEPARATE definitions, not one shared citation — an observation wearing a
-// repo-relative path, or an artifact wearing an absolute .jsonl, is a mis-filed
-// citation the regex refuses at load time.
-
-// _observation — an ABSOLUTE `.jsonl` transcript citation `<path>:<ranges>`.
-//
-// A leading `/` (absolute), then a `.jsonl`, a colon, and at least one range. A
-// range is `N` or `N-M`, several comma-separated. The `.jsonl` is REQUIRED in the
-// shape: an observation is proof cited into the session record, and a path that is
-// not a transcript cannot carry a tool_result. task-evidence-resolves then confirms
-// each cited line IS a tool_result (not the agent's prose), the substance the regex
-// cannot see. Defined at the top level, outside close(): a definition is a schema
-// construct, and one written inside close() would be read as a forbidden key.
-_observation: =~"^/[^:]+\\.jsonl:[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$"
+// cannot express what actually matters — that the cited lines exist in the tree.
+// That is a filesystem question, and a schema sees a string. So the SHAPE is
+// pinned here and the SUBSTANCE is checked in the hook.
 
 // _artifact — a REPO-RELATIVE tree citation `<path>:<ranges>`.
 //
 // NO leading `/` (`[^/:]` first byte forbids it, and forbids a bare `:` too), a
-// path, a colon, and at least one range. Repo-relative so the citation is
-// reviewable from any checkout; task-evidence-resolves resolves it under the repo
-// root and confirms every cited line exists. An absolute path is refused here — an
-// absolute path is an observation's transcript, and an absolute artifact would not
-// survive a different checkout.
+// path, a colon, and at least one range. A range is `N` or `N-M`, several
+// comma-separated. Repo-relative so the citation is reviewable from any checkout;
+// task-evidence-resolves resolves it under the repo root and confirms every cited
+// line exists. An absolute path is refused here — it would not survive a
+// different checkout. Defined at the top level, outside close(): a definition is
+// a schema construct, and one written inside close() would be read as a
+// forbidden key.
 _artifact: =~"^[^/:][^:]*:[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$"
-
-// PROOF THAT THE WORK HAPPENED — cited into the session transcript.
-observations?: [..._observation]
 
 // WHERE THE RESULT OF THE WORK IS — cited into the tree, repo-relative.
 artifacts?: [..._artifact]
@@ -143,7 +122,7 @@ depends_on?: [..._dep_id]
 // judgment condition, a prompt) or gates/<gate-name>.sh (a deterministic
 // condition, a script; exit 0 passes). See task-gates-hold (which enforces
 // every gate before backlog/blocked -> to_do/in_progress) and
-// task-gate-is-grounded (which judges a gate file against the body's cited
+// task-gate-is-grounded (which judges a gate file against the task's stated
 // ask on write, the protection against weakening or fabricating one). Kept
 // as files rather than a frontmatter list because a gates/ directory is
 // itself the file-guard system's native unit — a `.sh` gate is TESTED by

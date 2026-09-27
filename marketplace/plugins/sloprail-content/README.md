@@ -4,15 +4,18 @@ Guardrails for a `memories/topics/<topic>/units/` content workflow — a unit's
 own **tags** decide which writing rules apply, a **judge** weighs every rule
 (including the mechanically countable ones — character limits, banned
 phrases — which are rules written to tell the judge exactly what to measure
-and how, using Bash), and a unit cannot reach `status: published` without a
-**cited user approval** in its body. Three guardrails, in the nature format —
+and how, using Bash), and a unit cannot move into `status: published` unless
+the change that moves it **cites the user's approval**. Rules and approvals
+are grounded on the ACTION — `sr-file write|edit ... --cite:user '<exact
+quote>'` — never by storing a transcript quote or path in the file, so the
+repository holds derived text only. Three guardrails, in the nature format —
 file-guards under `.sloprail/`, with `match:` / `checks:`, flat `.event`
 fields, and refusals delivered as a non-zero exit carrying `{"reason": …}` on
 stdout.
 
 ## The taxonomy
 
-A unit's frontmatter (`.sloprail/schemas/unit.cue`) carries one selector:
+A unit's frontmatter (the plugin's `.sloprail/schemas/unit.cue`) carries one selector:
 `tags`, an open string list, backward compatible with the pre-existing
 `UNIT.md` shape — a unit with no `tags` still validates and still gets every
 rule whose selector is empty. A channel is just a tag (`x`, `reddit`, `hn`,
@@ -23,7 +26,6 @@ Example unit frontmatter:
 
 ```yaml
 ---
-transcript_path: /Users/nikita/.claude/projects/.../abc.jsonl
 created: 2026-09-25
 type: thread
 status: drafting
@@ -49,7 +51,7 @@ not itself a selector a rule matches on.)
 ## The rule format, and where rules live
 
 A rule is a `RULE.md` (project-wide) or `CONSTRAINT.md` (topic-scoped, see
-Migration below), frontmatter validated against `.sloprail/schemas/rule.cue`:
+Migration below), frontmatter validated against the plugin's `.sloprail/schemas/rule.cue`:
 
 ```yaml
 ---
@@ -57,8 +59,7 @@ level: must_not
 created: 2026-09-25
 applies_to: [x]
 ---
-Rule: no rhetorical questions as openers ("Ever wonder why...?"). The user
-said: [never open with a rhetorical question](/abs/session.jsonl:88).
+Rule: no rhetorical questions as openers ("Ever wonder why...?").
 
 PASS: "I shipped X because Y broke in prod."
 FAIL: "Ever wonder why your builds keep failing?"
@@ -69,16 +70,35 @@ FAIL: "Ever wonder why your builds keep failing?"
 - **Every rule is a judge rule** — the body above is put to a model. There is
   no separate script-rule mechanism (see "The mechanism" below).
 
-### Grounding — the body, not a frontmatter field
+### Grounding — on the action, not in the file
 
-A rule's origin is NOT a frontmatter field. An earlier draft carried a
-`transcript_paths` list; that is gone. A rule grounds itself the same way a
-task's body grounds its ask (`sloprail-tasks`'s own
-`task-body-is-human-authored`): the rule's **body** carries at least one
-`[quote](jsonl)` markdown link whose quote is the user's own words and
-resolves via `sr-session trajectory cite --source-types user`. The
-`content-rule-is-grounded` guard checks this — see below — reusing that
-plugin's pattern exactly rather than reinventing citation grounding.
+A rule's origin is not stored in the rule. Every create or edit of a
+`RULE.md` / `CONSTRAINT.md` is made with `sr-file`, citing the user's own
+words on the command:
+
+```bash
+sr-file write .sloprail/content-rules/03_openers/RULE.md --cite:user 'never open with a rhetorical question' <<'EOF'
+---
+level: must_not
+applies_to: [x]
+---
+Rule: no rhetorical questions as openers.
+EOF
+```
+
+Run `sr-file` on its own in the command line (only `sr-file` calls, `&&`,
+`echo`, heredocs), so its result is known before it runs. The session
+resolves each quote against its own record before any guard sees the change;
+a quote the user never said is no citation. The Write and Edit tools cannot
+carry a citation, so `content-rule-is-grounded` refuses them on a rule file
+and says how to redo the change. The file keeps only the derived rule text.
+
+Earlier versions of this plugin stored the origin in the file, first as a
+`transcript_paths` frontmatter list, then as a `[quote](/abs/session.jsonl:N)`
+link in the body. Neither resolves on another machine, so both are gone. A
+rule that still carries such a link keeps working: the link is neither
+required nor refused, and the next change to that rule is grounded the new
+way.
 
 ### The mechanism — every rule is a prompt, deterministic ones included
 
@@ -150,60 +170,71 @@ passes trivially — nothing to check is not a violation.
 
 ### unit-publish-approved — file-guard, **preventive**
 
-A unit cannot reach `status: published` without **both**:
+Over a unit's `UNIT.md` only. Publishing needs **both**:
 
-- a **grounded approval quote in the body** — a `[quote](jsonl)` citation
-  link, the *exact* shape and grounding mechanism `sloprail-tasks`'s task
-  body uses for the human's ask. The quote must resolve, via `sr-session
-  trajectory cite --source-types user`, to a **real user message**. An
-  agent's own prior turn, a tool result, or a harness-injected message
-  (`<system-reminder>`, `<task-notification>`, …) does not ground — `cite`
-  excludes all three by construction — so an agent cannot cite its own
-  output as the approval that authorizes itself to publish. This is
-  deliberately in the BODY, not frontmatter (an earlier draft's `approved:`
-  field moved here): grounding lives with the prose it grounds, the same way
-  a task's ask citation does, so there is one place — the body — a reader
-  checks for "what did the human actually say."
-- `published_urls:` (frontmatter) — where it actually went out, as a
-  **list**: one unit may be distributed across several channels (posted to
-  X and cross-posted to Reddit, say), each with its own URL.
+- **The user's approval, cited on the change that publishes.** A write that
+  moves a unit INTO `status: published` — from any other status, or by
+  creating it published — must carry at least one citation in the `user`
+  pool: the user's own words approving it. Ask the user; once they approve,
+  publish with `sr-file`:
 
-```yaml
----
-type: post
-status: published
-published_urls: ["https://x.com/nikita/status/1234567890"]
----
+  ```bash
+  sr-file edit memories/topics/20260101_launch/units/01_announce/UNIT.md \
+    --old-string 'status: drafting' \
+    --new-string 'status: published
+  published_urls: ["https://x.com/nikita/status/1234567890"]' \
+    --cite:user 'ship it'
+  ```
 
-## Approval
-The user said: [go ahead, ship it](/Users/nikita/.claude/projects/.../abc.jsonl:42)
-```
+  The session resolves the quote against its own record. An agent's own
+  prior turn, a tool result, or a harness-injected message is not in the
+  `user` pool, so an agent cannot cite its own output as the approval that
+  authorizes itself to publish. The unit stores no approval text and no
+  transcript link. A write that is not a transition into published (a
+  draft edit, an edit to an already-published unit) needs no citation.
+- **`published_urls:`** (frontmatter), whenever the unit is at
+  `status: published` — where it actually went out, as a **list**: one unit
+  may be distributed across several channels (posted to X and cross-posted
+  to Reddit, say), each with its own URL.
 
 Publishing is the irreversible step, and the task is explicit that an agent
 must not be able to publish on its own say-so — so this guard, like
-`content-rule-is-grounded` below, is bound `preventive: true`. The citation
-grounding itself is not reimplemented — `unit-publish-approved/cite-links.sh`
-is `sloprail-tasks`'s own `cite-links.sh`, vendored verbatim (provenance noted
-at its top) because two independently-installed plugins cannot share a file by
-reference. Vendoring rather than reinventing keeps "does this quote ground to
-a real user message" answered identically by both plugins.
+`content-rule-is-grounded` below, is bound `preventive: true`. The Stop
+after-check is the backstop: there, "before" is the session baseline and the
+citations are every one recorded for the unit this session, so a publish that
+slipped through uncited is still refused, with the steps to redo it. The
+citation is required only on the transition, so the guard declares it with a
+`when:` script — a draft edit needs none:
+
+```yaml
+require:
+  - citation: {source_types: [user]}
+    when: ./enters-published.sh
+```
 
 ### content-rule-is-grounded — file-guard, **preventive**
 
 Protects the RULE SET itself — the same role `task-body-is-human-authored`
-plays for a task's ask, reusing its exact two-stage pattern for a rule's body
-instead of a task's:
+plays for a task's ask. Grounding is unconditional: every create or update of
+a rule must cite the user.
 
-1. **Script (`check-rule.sh`), deterministic, fail-closed.** The rule's body
-   must carry at least one `[quote](jsonl)` link whose quote GROUNDS via
-   `cite --source-types user` to the user's own words. No citation, or one
-   that does not ground, is refused here, before the judge.
+0. **`require: [{citation: {source_types: [user]}}]`.** A change carrying no citation that
+   resolves to the user's own words is refused by the engine before any
+   check runs, with a remedy naming `sr-file ... --cite:user`. The Write and
+   Edit tools, and a quote the user never said, are refused here.
+1. **Script (`check-rule.sh`), deterministic, fail-closed.** The frontmatter
+   satisfies `rule.cue` and the body is not empty.
 2. **Prepare + judge (`resolve-cited-rule-quotes.sh` +
-   `judge-rule-body.md.j2`).** The rule must correspond to the cited words and
-   hold that and nothing else — a valid citation wrapped in agent-invented
-   scope, threshold, exception or rationale the user never stated is refused,
-   the same "and nothing else" standard `task-body-is-human-authored`'s own
-   judge applies to a task's ask.
+   `judge-rule-body.md.j2`).** The prepare hands the judge the cited quotes
+   (with their transcript path and line) off `event.citations`, the rule's
+   body, and on an update the body before the change. The rule must
+   correspond to the cited words and hold that and nothing else — a valid
+   citation wrapped in agent-invented scope, threshold, exception or
+   rationale the user never stated is refused. On an update, only what the
+   change adds or alters is judged against the cited words.
+
+Deleting a rule is not guarded (`deletions` is left at its default, `skip`):
+removing a rule invents nothing.
 
 An earlier draft also checked that a rule's `script:` field named a script
 capable of refusing. That check is gone along with `script:` itself — every
@@ -214,21 +245,19 @@ exactly what stage 2's "traceable and substantive" judgement already catches.
 
 If a project (like `strategy`) already has the old, topic-only guard:
 
-1. Install this plugin — `unit.cue` and `rule.cue` under the project's
-   `.sloprail/schemas/`.
+1. Install this plugin. Its `unit.cue` and `rule.cue` ship in the plugin's own
+   `.sloprail/schemas/` and are read from there; the project copies nothing.
 2. **`constraints/` needs no changes to its location or filename.**
    `unit-satisfies-rules`'s `rules-lib.sh` collects a unit's topic
    constraints the exact same way the old guard's `prepare.sh` did (same
    directory, same filename, same `level`/PASS-FAIL shape). What DOES change
-   going forward: an existing `CONSTRAINT.md`'s old `transcript_paths:`
-   frontmatter field is no longer read for grounding — `content-rule-is-
-   grounded` reads a `[quote](jsonl)` link in the BODY instead. **This is
-   checked only on a `CONSTRAINT.md`'s next WRITE** (create or edit) —
-   installing this plugin does not retroactively walk existing files, so an
-   old `CONSTRAINT.md` with no body citation keeps working until someone
-   next edits it, at which point it must carry a real, resolving body
-   citation to pass. This is deliberate: the guard protects new authoring,
-   not a one-time migration audit.
+   going forward: nothing in a `CONSTRAINT.md` is read for grounding any
+   more (not an old `transcript_paths:` field, not a body link). Instead
+   every WRITE to one (create or edit) must be made with `sr-file ...
+   --cite:user '<exact quote>'`. Installing this plugin does not
+   retroactively walk existing files, so an old `CONSTRAINT.md` keeps working
+   as it is; its old link or field can stay. This is deliberate: the guard
+   protects new authoring, not a one-time migration audit.
 3. Add project-wide rules under `.sloprail/content-rules/` for anything that
    should apply across topics by tag — the X rules, the global style rules,
    the deterministic limits — which is the actual generalization this plugin
@@ -236,8 +265,10 @@ If a project (like `strategy`) already has the old, topic-only guard:
 4. Remove the old `.sloprail/file-guard/unit-satisfies-constraints/` folder
    once satisfied the new guard covers the same ground (or disable it via
    `.sloprail/config.yaml`'s `disabled:` list first, to compare side by side).
-5. Move any unit workflow's publish approval out of frontmatter and into the
-   unit's body as a grounded citation quote, add `published_urls:` (a list;
+5. Stop storing publish approvals in units: an approval is now cited on the
+   `sr-file` command that moves the unit to `status: published` (an earlier
+   `approved:` frontmatter field, and after it an approval link in the body,
+   are both gone; leftover ones are ignored). Add `published_urls:` (a list;
    an earlier singular `published_url:` string is gone), and install
    `unit-publish-approved`.
 

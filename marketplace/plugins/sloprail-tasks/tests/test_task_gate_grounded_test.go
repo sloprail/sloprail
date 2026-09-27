@@ -4,10 +4,10 @@ import "testing"
 
 // task-gate-is-grounded is a PREVENTIVE file-guard over
 // memories/tasks/<cat>/<name>/gates/<gate-name>.{sh,md} with ONE check: a
-// JUDGE, no script stage. A gate carries NO citations of its own -- only
-// TASK.md cites the user's words, and that citation's grounding is
-// task-body-is-human-authored's subject, validated separately every time
-// TASK.md is written. So this guard's prepare hands the judge the gate
+// JUDGE, no script stage. A gate carries NO citations of its own -- only the
+// write that creates a TASK.md or changes its body cites the user's words, and
+// that grounding is task-body-is-human-authored's subject, validated
+// separately. So this guard's prepare hands the judge the gate
 // file's own content and the sibling TASK.md's full content as it stands
 // (frontmatter and body, unmodified) -- no second citation-extraction
 // pipeline. The judge decides whether the gate is DERIVED from the task:
@@ -21,9 +21,9 @@ import "testing"
 // These prove: the judge is what refuses a gate it finds
 // untraceable/trivial/contradicting and admits one it finds derived from the
 // task -- proven by flipping the SAME stubbed verdict; and the judge is
-// invoked (and can reject) even when the task's OWN body carries no
-// citation, because the citation question belongs to a different guard
-// entirely and is not this one's business.
+// invoked (and can reject) even when the task was written with no citation,
+// because the grounding question belongs to a different guard entirely and
+// is not this one's business.
 
 const (
 	groundedTaskPath = "memories/tasks/web/launch-site/TASK.md"
@@ -31,8 +31,9 @@ const (
 )
 
 // TestGateGrounded_JudgeRunsEvenWithoutTaskBodyCitation: the sibling TASK.md
-// carries NO [quote](jsonl) citation at all -- task-body-is-human-authored is
-// disabled so that fact does not itself refuse the task write (that guard's
+// is written with NO citation at all (the plain Write tool) --
+// task-body-is-human-authored is disabled so that fact does not itself refuse
+// the task write (that guard's
 // own subject is tested elsewhere; this test isolates task-gate-is-grounded).
 // With no script stage of its own, task-gate-is-grounded's judge still runs
 // on the gate write and can refuse it based on the gate's relationship to the
@@ -75,7 +76,7 @@ func TestGateGrounded_JudgeRunsEvenWithoutTaskBodyCitation(t *testing.T) {
 }
 
 // TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate: the sibling task
-// exists (grounded ask, so task-body's own judge passes it), but the
+// exists (created with a cited ask, so task-body's own judge passes it), but the
 // task-gate-is-grounded judge rejects the gate itself (untraceable,
 // contradicting, invented, or trivial -- the judge is stubbed, so this
 // proves the REFUSAL PATH reaches the agent, not any one specific
@@ -93,12 +94,10 @@ func TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-gate-grounded-trivial"
-	tp := e.TranscriptPath(proj, sess)
-	body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
-	groundedDoc := "---\nstatus: backlog\npriority: P1\n---\n\n" + body + "\n"
+	groundedDoc := task("backlog", "P1", askBody)
 
 	res0 := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w1", groundedTaskPath, groundedDoc),
+		srWrite("b1", groundedTaskPath, groundedDoc, citeUser(askQuote)),
 	))
 	if res0.Refused() {
 		t.Fatalf("landing the grounded task was itself refused (setup broken):\n%s", res0.Output)
@@ -134,12 +133,10 @@ func TestGateGrounded_JudgePermitsDerivedGate(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-gate-grounded-ok"
-	tp := e.TranscriptPath(proj, sess)
-	body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
-	groundedDoc := "---\nstatus: backlog\npriority: P1\n---\n\n" + body + "\n"
+	groundedDoc := task("backlog", "P1", askBody)
 
 	res0 := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w1", groundedTaskPath, groundedDoc),
+		srWrite("b1", groundedTaskPath, groundedDoc, citeUser(askQuote)),
 	))
 	if res0.Refused() {
 		t.Fatalf("landing the grounded task was itself refused (setup broken):\n%s", res0.Output)

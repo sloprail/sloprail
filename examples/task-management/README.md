@@ -2,10 +2,10 @@
 
 ## The rule
 
-An agent may append a result to a task; it may never edit the ask. Task
-content must carry a reference to the human message that authorised it —
-checked deterministically for presence, then by a judge for truth and for
-containing **that and nothing else**.
+An agent may append a result to a task; it may never edit the ask. Every write
+to the ask must **cite** the human message that authorised it — checked
+deterministically for existence, then by a judge for truth and for containing
+**that and nothing else**.
 
 This is the sharpest form of the no-slop thesis, because every other unit
 protects an artifact — this one protects the **oracle**, the thing the other
@@ -26,21 +26,30 @@ rather than needing a diff-region distinction the engine does not have.
 lands. A post-write refusal reports damage already done to the oracle, and
 the agent's remedy would be to edit ASK.md again — the exact prohibited act.
 
-## What the two checks divide
+## What the requirement and the judge divide
 
-1. **Script (cheap, first):** does the content carry ANY reference to a human
-   message at all — a transcript_path, message id, or line range? No
-   reference, no model needed: refuse outright.
-2. **Prepare + judge (only once a reference exists):** `prepare`
-   (`resolve-referenced-message.sh`) resolves the reference against
-   `transcriptPath` and hands the judge template the actual message text as
-   a variable — the template never parses a transcript itself. The judge then
-   answers what a script cannot: is the reference TRUE — does the content
-   correspond to what the human actually said there — and does the content
-   hold **that and nothing else**? The "and nothing else" clause is the
-   anti-slop half a naive implementation drops: a valid reference wrapped in
-   agent-authored elaboration is still content slopped around a legitimate
-   citation.
+The citation rides on the write, never in the file, so ASK.md holds only the
+ask:
+
+```bash
+sr-file write memories/tasks/auth/token-refresh/ASK.md \
+  --cite:user 'refresh tokens before they expire' <<'ASK'
+Refresh auth tokens before they expire.
+ASK
+```
+
+1. **`require: [{citation: {source_types: [user]}}]` (first, no model):** the
+   engine resolves every `--cite:user` quote against the session's record, and
+   a write carrying none that resolves (a Write or Edit tool call, a shell
+   redirect, a quote the user never said) is refused before any check runs.
+   Unconditional, because ASK.md holds nothing but the ask.
+2. **Prepare + judge:** `prepare` (`resolve-cited-messages.sh`) hands the judge
+   the cited words off `event.citations`, each with where it sits in the
+   record. The judge then answers what existence cannot: is the ask TRUE to
+   those words, and does it hold **that and nothing else**? The "and nothing
+   else" clause is the anti-slop half a naive implementation drops: a valid
+   citation wrapped in agent-authored elaboration is still content slopped
+   around a legitimate citation.
 
 ## What this guard protects against, precisely
 

@@ -950,8 +950,14 @@ func basename(prog string) string {
 // whether a separated `--tag next` is a value or the next positional argument
 // depends on the program's own option table, which is not knowable here, and
 // guessing would report a value the command may not have.
-func parseFlags(args []string) map[string]string {
-	flags := map[string]string{}
+//
+// Every occurrence is kept, in order, rather than the last one winning: a
+// command that repeats a flag on purpose (`--cite:user "a" --cite:user "b"`)
+// needs both values reachable, and a caller after only the single-flag case
+// (most matches: `"x" in .flags.tag`, or `.flags.tag[0]`) is unaffected by a
+// flag it never repeats.
+func parseFlags(args []string) map[string][]string {
+	flags := map[string][]string{}
 	for _, arg := range args {
 		if len(arg) < 2 || !strings.HasPrefix(arg, "-") {
 			continue
@@ -979,9 +985,7 @@ func parseFlags(args []string) map[string]string {
 		if name == "" {
 			continue
 		}
-		// Last occurrence wins, which is what most programs do with a repeated
-		// flag, and matters only when one is repeated with different values.
-		flags[name] = value
+		flags[name] = append(flags[name], value)
 	}
 	return flags
 }

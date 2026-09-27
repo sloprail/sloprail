@@ -1,23 +1,16 @@
 #!/usr/bin/env bash
 # Stage 1 of content-rule-is-grounded: the DETERMINISTIC half, no model. A
 # writing RULE (`.sloprail/content-rules/<NN>/RULE.md` or a topic's
-# `constraints/<NN>/CONSTRAINT.md`) must be traceable to something a human
-# actually asked for — the rule-authoring analogue of
-# task-body-is-human-authored's own stage 1, and the SAME mechanism: the
-# rule's BODY (not a frontmatter field — an earlier draft's transcript_paths
-# was dropped, see rule.cue and the plugin README's migration note) must
-# carry at least one `[quote](jsonl)` markdown link whose quote is the user's
-# own words and resolves via `sr-session trajectory cite --source-types
-# user`. An agent inventing a rule nobody asked for — "always mention the
-# product name" — and citing nothing, or citing its own prior turn, is
-# refused here, deterministically, before the judge (stage 2,
-# resolve-cited-rule-quotes.sh + judge-rule-body.md.j2) is ever paid for.
+# `constraints/<NN>/CONSTRAINT.md`) must have frontmatter satisfying
+# .sloprail/schemas/rule.cue and a non-empty body stating the rule.
 #
-# cite-links.sh (cite_links_extract / cite_link_href_path / cite_ground) is
-# SOURCED from the sibling unit-publish-approved guard, not reimplemented —
-# the two guards must agree exactly about what a citation link IS and how it
-# grounds, the same relative-sibling-sourcing sloprail-tasks's own
-# task-body-is-human-authored uses for task-evidence-resolves's copy.
+# GROUNDING IS NOT CHECKED HERE. The guard's `require: [{citation: {source_types: [user]}}]`
+# already refused any change carrying no citation of the user's own words
+# before this script runs (the citation rides on the `sr-file ... --cite:user`
+# command, never in the file), and stage 2's judge decides whether the cited
+# words actually ground the rule. So this script reads no citation and parses
+# no link: a body may still carry an old `[quote](jsonl)` link from before the
+# migration, and that is neither required nor refused.
 #
 # REFUSAL CONTRACT: exit 0 permits; non-zero refuses with `{"reason": "..."}` on
 # stdout. `set -uo pipefail`, never `set -e`.
@@ -36,19 +29,13 @@ if [ -z "$path" ]; then
 fi
 
 root="${SR_WORKSPACE:-.}"
-gdir="${SR_GUARDRAIL_DIR:-.}"
 
-schema="$root/.sloprail/schemas/rule.cue"
+# The schema is the PLUGIN's, read from its own tree — this guard's folder is two
+# levels under the plugin's .sloprail/ — never a consumer-side copy.
+schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/rule.cue"
 if [ ! -f "$schema" ]; then
-  refuse "content-rule-is-grounded: schema not found at $schema — install the plugin's rule.cue under the project's .sloprail/schemas/."
+  refuse "content-rule-is-grounded: schema not found at $schema — the plugin's own rule.cue is missing, so no rule can be checked."
 fi
-
-lib="$gdir/../unit-publish-approved/cite-links.sh"
-if [ ! -f "$lib" ]; then
-  refuse "content-rule-is-grounded: cite-links.sh not found at $lib — the deterministic half cannot run without the sibling guard's citation library"
-fi
-# shellcheck source=../unit-publish-approved/cite-links.sh
-. "$lib"
 
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
@@ -58,6 +45,9 @@ case "$kind" in
     content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PreFileCreate|PreFileUpdate)
+    # newContent is only meaningful alongside resultKnown. Unknown: defer to
+    # the Stop after-check on the settled file (the engine already fails a
+    # preventive guard closed on an underivable pre-write).
     known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
     if [ "$known" != "true" ]; then
       exit 0
@@ -88,45 +78,7 @@ body="$(printf '%s\n' "$content" | awk '
 
 body_trimmed="$(printf '%s' "$body" | tr -d '[:space:]')"
 if [ -z "$body_trimmed" ]; then
-  refuse "RULE BODY IS EMPTY: $path has no body stating the rule and citing where it came from."
-fi
-
-# EVERY CITATION LINK IN THE BODY MUST GROUND, exactly as task-body-is-human-
-# authored's stage 1 checks a task's ask citation.
-problems=""
-n_ok=0
-while IFS="$(printf '\t')" read -r href quote; do
-  [ -n "$href" ] || continue
-  cpath="$(cite_link_href_path "$href")"
-  case "$cpath" in
-    /*) : ;;
-    *)  cpath="$root/$cpath" ;;
-  esac
-  if reason="$(cite_ground user "$cpath" "$quote")"; then
-    n_ok=$((n_ok + 1))
-  else
-    problems="${problems}  ${reason}
-"
-  fi
-done <<EOF
-$(cite_links_extract "$body")
-EOF
-
-if [ "$n_ok" -eq 0 ] && [ -z "$problems" ]; then
-  refuse "RULE NOT GROUNDED: $path carries no citation of a user message.
-
-A writing rule must be derived from something a human actually said, and must quote and link it:
-
-    Rule: no em-dashes. The user said [never use em-dashes](/abs/session.jsonl:42).
-
-The quote must resolve — via sr-session trajectory cite — to a real user message. A rule with no origin citation is indistinguishable from one an agent invented on its own."
-fi
-
-if [ -n "$problems" ]; then
-  refuse "RULE CITES SOMETHING THE USER DID NOT SAY: $path
-
-$problems
-A body citation is a markdown link [<quote>](<jsonl-path>) whose quote is the user's own words, verbatim, and whose href is the transcript they said them in. It must resolve — via cite — to a real user message. A paraphrase, a fabrication, a tool result, or a harness-injected message is not the human's ask. Cite the line where the user actually spoke."
+  refuse "RULE BODY IS EMPTY: $path has no body stating the rule. Write the rule itself after the frontmatter, in words derived from what the user said; the citation of their words goes on the sr-file command (--cite:user '<exact quote>'), not in the file."
 fi
 
 exit 0

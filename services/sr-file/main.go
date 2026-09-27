@@ -68,17 +68,19 @@ func main() {
 }
 
 // newRoot is the `sr-file` root. It carries no behaviour of its own — it hosts
-// the verbs, of which `validate` is the first.
+// the verbs: `validate` and `declarations` check a file, `write`, `edit` and
+// `delete` change one, grounded in cited words (see grounded.go).
 func newRoot() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "sr-file <command>",
-		Short:         "Checks over a file's contents",
+		Short:         "Check a file's contents, or change a file grounded in citations",
 		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	cmd.AddCommand(newValidateCmd())
 	cmd.AddCommand(newDeclarationsCmd())
+	cmd.AddCommand(newWriteCmd(), newEditCmd(), newDeleteCmd())
 	return cmd
 }
 

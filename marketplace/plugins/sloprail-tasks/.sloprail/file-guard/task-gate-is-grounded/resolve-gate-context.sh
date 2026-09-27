@@ -4,8 +4,9 @@
 # together) — so judge-gate.md.j2 never has to read the tree itself.
 #
 # NO CITATION EXTRACTION OR GROUNDING HAPPENS HERE. A gate carries no
-# citations of its own — only TASK.md does, and that citation's grounding is
-# task-body-is-human-authored's subject, already validated separately. This
+# citations of its own — only the write that sets a TASK.md's body does, and
+# that grounding is task-body-is-human-authored's subject, already validated
+# separately. This
 # guard's only question is whether the gate is DERIVED FROM the task: for
 # that, the judge is handed the task's content as it stands (whatever it
 # currently says) and decides traceability directly against it, the same way

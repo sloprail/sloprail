@@ -48,7 +48,7 @@ searchable_text="$(printf '%s' "$all_gh_calls" | jq -r '
   .[] | (
     ((.argv // []) | join(" "))
     + " "
-    + ((.flags.field // .flags.f // "") )
+    + (((.flags.field // []) + (.flags.f // [])) | join(" "))
   )
 ')"
 

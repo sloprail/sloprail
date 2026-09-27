@@ -421,8 +421,8 @@ func (sg StructureGate) ScopeGlobs() []string {
 }
 
 // Prerequisite is a precondition that must hold before a rule's own check runs
-// (dot-dir-file-store/main.tsp Prerequisite). A single list carrying two kinds,
-// exactly one field set per entry — like Check's script/judge. What differs
+// (dot-dir-file-store/main.tsp Prerequisite). A single list carrying three
+// kinds, exactly one field set per entry — like Check's script/judge. What differs
 // between them is not the shape but WHO establishes it and WHEN a violation is
 // discovered:
 //
@@ -436,6 +436,9 @@ func (sg StructureGate) ScopeGlobs() []string {
 //     both match the same event — a guarantee the engine gives by ordering, not a
 //     fact it goes looking for. Naming one that cannot resolve (unknown name) IS
 //     a configuration error caught when the rule loads.
+//   - Citation is read off the EVENT: the action must carry a citation that
+//     resolved in the session's record (see CitationPrerequisite). The agent
+//     remedies a miss by making the change the grounded way.
 //
 // The spec's Prerequisite carries no `gate` field yet — dropped deliberately, no
 // gate-depends-on-gate case exists among the units built so far.
@@ -467,15 +470,36 @@ type Prerequisite struct {
 	// this rule and that context wake on the same event in the same cycle.
 	// Optional. Validated to resolve against the loaded contexts.
 	Context string `yaml:"context"`
+
+	// Citation requires the action to carry a resolved citation. Optional.
+	Citation *CitationPrerequisite `yaml:"citation"`
+
+	// When, optional, is a script that decides whether this prerequisite
+	// applies to the action at all — for a requirement that is conditional on
+	// the change ("a citation, but only when the body changes"). Resolved
+	// relative to the rule's folder and handed the same payload on stdin as a
+	// script check. Exit 0: the prerequisite applies. Exit 1: it does not, and
+	// is skipped. Any other outcome — another exit code, a script that cannot
+	// run, a timeout — applies it: a condition that could not be decided must
+	// not waive a requirement.
+	When string `yaml:"when"`
 }
 
-// isEmpty reports whether this prerequisite sets neither field — a list entry
-// that establishes nothing, which the exactly-one-of check refuses.
-func (p Prerequisite) isEmpty() bool { return p.Skill == "" && p.Context == "" }
-
-// bothSet reports whether this prerequisite sets both fields — the other half of
-// the exactly-one-of check.
-func (p Prerequisite) bothSet() bool { return p.Skill != "" && p.Context != "" }
+// kindsSet counts how many of skill/context/citation this prerequisite sets —
+// exactly one is the only valid answer.
+func (p Prerequisite) kindsSet() int {
+	n := 0
+	if p.Skill != "" {
+		n++
+	}
+	if p.Context != "" {
+		n++
+	}
+	if p.Citation != nil {
+		n++
+	}
+	return n
+}
 
 // filesWithoutSkill reports whether Files is set on a prerequisite that does not
 // also set Skill — Files names a subpage INSIDE a skill, so it has no meaning

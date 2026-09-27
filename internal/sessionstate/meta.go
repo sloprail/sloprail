@@ -51,6 +51,13 @@ const (
 	// being re-sent (the difference is taken against the session's baseline, so
 	// it is delivered on every Stop until committed) and is marked `seen`.
 	MetaStopSeenFiles = "stop_seen_files"
+
+	// MetaCitations is, per file path, the citations a permitted pre-tool call
+	// grounded its change to that file in, as a JSON object of path to a list
+	// of citations. The Post events at Stop come from the tree difference, which
+	// knows nothing of the commands that made it; this is how they carry the
+	// citations the change was made with.
+	MetaCitations = "citations"
 )
 
 // Meta reads a session fact.

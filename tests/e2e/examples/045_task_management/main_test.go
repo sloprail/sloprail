@@ -12,26 +12,24 @@ import (
 )
 
 // These tests drive the SHIPPED task-management example — a PREVENTIVE file-guard
-// over `**/tasks/*/*/ASK.md` with TWO checks in order: a cheap script
-// (has-message-reference.sh) that refuses ASK.md content carrying no reference to a
-// human message at all, and — only once a reference exists — a prepare + judge
-// (resolve-referenced-message.sh + reference-is-true-and-only-this.md.j2) that
-// resolves the referenced message from the transcript and rules on whether the
-// content is TRUE to it and holds THAT AND NOTHING ELSE. Being preventive, it
-// refuses a not-fine write at PRE-tool, before it lands. What fires is this repo's
-// plugin against the example's own .sloprail tree, copied in verbatim.
+// over `**/tasks/*/*/ASK.md` that requires every write to cite the user's own
+// words (`require: [{citation: {source_types: [user]}}]`), then asks a judge
+// (resolve-cited-messages.sh + reference-is-true-and-only-this.md.j2) whether the
+// ask is TRUE to the cited words and holds THAT AND NOTHING ELSE. Being preventive,
+// it refuses a not-fine write at PRE-tool, before it lands. What fires is this
+// repo's plugin against the example's own .sloprail tree, copied in verbatim.
 //
 // The judge's model verdict is a fixed stub (InstallJudgeClaude) — pass:false
-// blocks the pre-tool write, pass:true admits it. What is NOT stubbed: the script
-// tier's real reference check, and the prepare's real resolution of the referenced
-// message out of the transcript the mock streamed — so a jsonl: line reference
-// resolves to the actual human prompt, which the template renders. The capturing
-// shim proves that prepare -> template wiring directly (JudgePrompt): the resolved
-// message text reaches the prompt, and changes with the reference.
+// blocks the pre-tool write, pass:true admits it. What is NOT stubbed: the engine
+// resolving each `sr-file --cite:user` quote against the transcript the mock
+// streamed, and the prepare handing the resolved words to the template. The
+// capturing shim proves that wiring directly (JudgePrompt).
 //
 // TODO(D3): drive the verdict via a10n-claude-mock once a10n-cli#470 lands and the
 // new mock binary is on PATH; today the proven InstallJudgeClaude stub supplies
 // the model verdict.
+type Turn = harness.Turn
+
 var (
 	New   = harness.New
 	Turns = harness.Turns
@@ -129,3 +127,8 @@ func repoRoot(t *testing.T) string {
 }
 
 func containsStr(haystack, needle string) bool { return strings.Contains(haystack, needle) }
+
+func readProj(proj, rel string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(proj, rel))
+	return string(b), err
+}

@@ -3,6 +3,7 @@
 package filemod
 
 import (
+	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/module"
 )
 
@@ -128,6 +129,13 @@ func (*Module) Kinds() []module.KindDecl {
 	resultKnown := module.FieldDecl{Name: FieldResultKnown, Type: module.TypeBool}
 	seen := module.FieldDecl{Name: FieldSeen, Type: module.TypeBool}
 
+	// citations are the resolved citations the action was grounded in — on
+	// every kind, because a rule that requires a change be grounded asks it of
+	// the change before it lands and of the file after. This module always
+	// emits it empty: which citations ground a change is read off the command
+	// that makes it, by the session (services/sr-session/grounding.go).
+	citations := grounding.CitationsDecl()
+
 	// A markers list declares its element's shape, and that is the whole point
 	// of the Elem field. A list whose Elem is nil has its collection checked and
 	// its predicate body left alone (see module.FieldDecl.Elem), so
@@ -187,7 +195,7 @@ func (*Module) Kinds() []module.KindDecl {
 			// bytes, `resultKnown` asks whether the engine knew them. Without it a
 			// preventive file-guard could not fail closed on an underivable create —
 			// it would judge the empty string as if it were the file and false-pass.
-			Fields: []module.FieldDecl{path, newContent, resultKnown, newMarkers},
+			Fields: []module.FieldDecl{path, newContent, resultKnown, newMarkers, citations},
 		},
 
 		// PreFileUpdate carries the bytes before AND after the change: the file
@@ -231,13 +239,13 @@ func (*Module) Kinds() []module.KindDecl {
 		//
 		// oldMarkers are the markers the file carries NOW; newMarkers are the
 		// markers the result would carry (empty when the result is unknown).
-		{Name: KindPreUpdate, Fields: []module.FieldDecl{path, oldContent, newContent, resultKnown, oldMarkers, newMarkers}},
+		{Name: KindPreUpdate, Fields: []module.FieldDecl{path, oldContent, newContent, resultKnown, oldMarkers, newMarkers, citations}},
 
 		// A delete carries the bytes about to be lost (oldContent) and the
 		// markers that go with them (oldMarkers), and nothing about a result —
 		// nothing remains. No newMarkers for the same reason: a deletion has no
 		// text to read them out of.
-		{Name: KindPreDelete, Fields: []module.FieldDecl{path, oldContent, oldMarkers}},
+		{Name: KindPreDelete, Fields: []module.FieldDecl{path, oldContent, oldMarkers, citations}},
 
 		// Post kinds are observations, established by comparing the tree against
 		// where the session started rather than by trusting what any action
@@ -248,8 +256,8 @@ func (*Module) Kinds() []module.KindDecl {
 		// be predicted, so there is no resultKnown here. oldContent comes from
 		// the session baseline (the prior bytes are no longer on disk); newContent
 		// is read from disk as it now sits.
-		{Name: KindPostCreate, Fields: []module.FieldDecl{path, newContent, newMarkers, seen}},
-		{Name: KindPostUpdate, Fields: []module.FieldDecl{path, oldContent, newContent, oldMarkers, newMarkers, seen}},
-		{Name: KindPostDelete, Fields: []module.FieldDecl{path, oldContent, oldMarkers, seen}},
+		{Name: KindPostCreate, Fields: []module.FieldDecl{path, newContent, newMarkers, seen, citations}},
+		{Name: KindPostUpdate, Fields: []module.FieldDecl{path, oldContent, newContent, oldMarkers, newMarkers, seen, citations}},
+		{Name: KindPostDelete, Fields: []module.FieldDecl{path, oldContent, oldMarkers, seen, citations}},
 	}
 }

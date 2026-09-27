@@ -1,76 +1,64 @@
 #!/usr/bin/env bash
-# prepare for stage 2 of content-rule-is-grounded: hand the judge the human's
-# own words the rule's body cites, so judge-rule-body.md.j2 never has to
-# parse a transcript itself. Mirrors sloprail-tasks's
-# resolve-cited-messages.sh exactly — same shape, same reasoning — for a
-# rule's body instead of a task's.
-#
-# Reached only once stage 1 (check-rule.sh) passed — so the body is known to
-# carry at least one grounded [quote](jsonl-path) link. This prepare's ONE
-# job is to assemble those grounded quotes as the judge's ground truth.
+# prepare for stage 2 of content-rule-is-grounded: hand the judge the rule's
+# body as it will stand, for context. What the judge rules on — the change — and
+# the cited words need no preparing: judge-rule-body.md.j2 reads `change` and
+# `.event.citations` straight off its input.
 #
 # THE PREPARE CONTRACT: exit 0 with additionalContext proceeds to the judge;
-# non-zero fails the check closed.
+# non-zero fails the check closed. Every read of the payload goes through
+# field(), which fails the prepare (and so the check) on an unreadable payload
+# rather than handing the judge an empty body as if the rule had none.
 set -uo pipefail
 
-event="$(cat)"
-
-path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
-root="${SR_WORKSPACE:-.}"
-gdir="${SR_GUARDRAIL_DIR:-.}"
-
-lib="$gdir/../unit-publish-approved/cite-links.sh"
-if [ ! -f "$lib" ]; then
-  echo "content-rule-is-grounded: cite-links.sh not found at $lib, so the cited messages could not be resolved" >&2
+fail() {
+  echo "content-rule-is-grounded: $1" >&2
   exit 1
-fi
-# shellcheck source=../unit-publish-approved/cite-links.sh
-. "$lib"
+}
 
-kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+event="$(cat)"
+printf '%s' "$event" | jq -e '.event | type == "object"' >/dev/null 2>&1 \
+  || fail "the check payload is not readable JSON with an .event object, so the cited words could not be assembled"
+
+# field FILTER — one jq read of the payload; a jq error fails the prepare.
+field() {
+  local out
+  out="$(printf '%s' "$event" | jq -r "$1")" || fail "could not read $1 from the check payload"
+  printf '%s' "$out"
+}
+
+# body_of CONTENT — the prose after the frontmatter, the same extraction every
+# guard in this plugin uses.
+body_of() {
+  printf '%s\n' "$1" | awk '
+    BEGIN { seen = 0 }
+    NR == 1 && $0 == "---" { seen = 1; next }
+    seen == 1 && $0 == "---" { seen = 2; next }
+    seen == 1 { next }
+    { print }
+  '
+}
+
+kind="$(field '.event.kind // ""')" || exit 1
+content=""
 case "$kind" in
-  PostFileCreate|PostFileUpdate)
-    content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
+  PostFileCreate)
+    content="$(field '.event.newContent // ""')" || exit 1
+    ;;
+  PostFileUpdate)
+    content="$(field '.event.newContent // ""')" || exit 1
     ;;
   PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
-    if [ "$known" != "true" ]; then
-      content=""
-    else
-      content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
+    # newContent is only meaningful alongside resultKnown; an unknown result
+    # leaves the body empty (the engine already fails a preventive guard
+    # closed on an underivable pre-write, so the judge never sees one).
+    known="$(field '.event.resultKnown // false')" || exit 1
+    if [ "$known" = "true" ]; then
+      content="$(field '.event.newContent // ""')" || exit 1
     fi
     ;;
   *)
-    content=""
+    fail "unexpected event kind '$kind'; this guard judges only rule creates and updates"
     ;;
 esac
 
-body="$(printf '%s\n' "$content" | awk '
-  BEGIN { seen = 0 }
-  NR == 1 && $0 == "---" { seen = 1; next }
-  seen == 1 && $0 == "---" { seen = 2; next }
-  seen == 1 { next }
-  { print }
-')"
-
-cited_messages=""
-while IFS="$(printf '\t')" read -r href quote; do
-  [ -n "$href" ] || continue
-  cpath="$(cite_link_href_path "$href")"
-  case "$cpath" in
-    /*) : ;;
-    *)  cpath="$root/$cpath" ;;
-  esac
-  cited_messages="${cited_messages}--- the user said (cited ${href}):
-${quote}
-
-"
-done <<EOF
-$(cite_links_extract "$body")
-EOF
-
-cited_ok=false
-[ -n "$cited_messages" ] && cited_ok=true
-
-jq -n --arg msgs "$cited_messages" --argjson ok "$cited_ok" --arg body "$body" \
-  '{additionalContext: {cited_messages: $msgs, cited_ok: $ok, body: $body}}'
+jq -n --arg body "$(body_of "$content")" '{additionalContext: {body: $body}}'

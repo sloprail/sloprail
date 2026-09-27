@@ -322,68 +322,69 @@ func TestFlags_Parsing(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		src  string
-		want map[string]string
+		want map[string][]string
 	}{
-		{"short", `npm publish -f`, map[string]string{"f": ""}},
-		{"long", `npm publish --dry-run`, map[string]string{"dry-run": ""}},
-		{"long with inline value", `npm publish --tag=next`, map[string]string{"tag": "next"}},
-		{"short with inline value", `npm publish -m=x`, map[string]string{"m": "x"}},
-		{"clustered short flags", `npm publish -abc`, map[string]string{"abc": ""}},
-		{"several flags", `npm publish --tag=next --dry-run -f`, map[string]string{"tag": "next", "dry-run": "", "f": ""}},
+		{"short", `npm publish -f`, map[string][]string{"f": {""}}},
+		{"long", `npm publish --dry-run`, map[string][]string{"dry-run": {""}}},
+		{"long with inline value", `npm publish --tag=next`, map[string][]string{"tag": {"next"}}},
+		{"short with inline value", `npm publish -m=x`, map[string][]string{"m": {"x"}}},
+		{"clustered short flags", `npm publish -abc`, map[string][]string{"abc": {""}}},
+		{"several flags", `npm publish --tag=next --dry-run -f`, map[string][]string{"tag": {"next"}, "dry-run": {""}, "f": {""}}},
 
 		// A separated value is NOT read as a value. `--tag` is present with an
 		// empty value and `next` stays a positional — a rule asks whether the
 		// flag is there without having to know whether it takes one.
-		{"long with separated value", `npm publish --tag next`, map[string]string{"tag": ""}},
-		{"short with separated value", `npm publish -t next`, map[string]string{"t": ""}},
+		{"long with separated value", `npm publish --tag next`, map[string][]string{"tag": {""}}},
+		{"short with separated value", `npm publish -t next`, map[string][]string{"t": {""}}},
 
 		// An inline value containing its own `=` keeps everything after the
 		// first one, which is what a shell hands the program.
-		{"value containing equals", `npm publish --set=a=b`, map[string]string{"set": "a=b"}},
-		{"empty inline value", `npm publish --tag=`, map[string]string{"tag": ""}},
+		{"value containing equals", `npm publish --set=a=b`, map[string][]string{"set": {"a=b"}}},
+		{"empty inline value", `npm publish --tag=`, map[string][]string{"tag": {""}}},
 
 		// `--` ends the flags. Everything after is positional by definition, so
 		// a flag-shaped word after it is not a flag — reading it as one would
 		// let a rule about `--force` fire on a line that passes the string
 		// `--force` as an argument to a program.
-		{"double dash ends flags", `npm publish --tag=next -- --force -x`, map[string]string{"tag": "next"}},
-		{"only a double dash", `npm publish --`, map[string]string{}},
-		{"double dash first", `npm -- --force`, map[string]string{}},
+		{"double dash ends flags", `npm publish --tag=next -- --force -x`, map[string][]string{"tag": {"next"}}},
+		{"only a double dash", `npm publish --`, map[string][]string{}},
+		{"double dash first", `npm -- --force`, map[string][]string{}},
 
 		// A lone `-` is conventionally stdin, not a flag.
-		{"lone dash", `npm publish -`, map[string]string{}},
+		{"lone dash", `npm publish -`, map[string][]string{}},
 
 		// A flag-shaped word that is really a path. This one IS read as a flag,
 		// because nothing here can tell them apart — the leading dash is the
 		// only signal available.
-		{"flag that looks like a path", `npm publish -/tmp/x`, map[string]string{"/tmp/x": ""}},
+		{"flag that looks like a path", `npm publish -/tmp/x`, map[string][]string{"/tmp/x": {""}}},
 
 		// A path that merely contains a dash is not a flag: the dash is not
 		// leading.
-		{"path containing a dash", `npm publish ./-notaflag`, map[string]string{}},
-		{"path with a dashed segment", `npm publish src/a-b`, map[string]string{}},
+		{"path containing a dash", `npm publish ./-notaflag`, map[string][]string{}},
+		{"path with a dashed segment", `npm publish src/a-b`, map[string][]string{}},
 
 		// Degenerate dashes. None of these names a flag, and none may produce an
 		// empty-named entry a rule could match by accident.
-		{"triple dash", `npm publish ---triple`, map[string]string{"triple": ""}},
-		{"dash equals", `npm publish -=x`, map[string]string{}},
-		{"double dash equals", `npm publish --=y`, map[string]string{}},
-		{"all dashes", `npm publish ---`, map[string]string{}},
+		{"triple dash", `npm publish ---triple`, map[string][]string{"triple": {""}}},
+		{"dash equals", `npm publish -=x`, map[string][]string{}},
+		{"double dash equals", `npm publish --=y`, map[string][]string{}},
+		{"all dashes", `npm publish ---`, map[string][]string{}},
 
-		// A repeated flag: the last occurrence wins, which is what most programs
-		// do and matters only when the values differ.
-		{"repeated flag last wins", `npm publish --tag=a --tag=b`, map[string]string{"tag": "b"}},
-		{"repeated valueless flag", `npm publish -f -f`, map[string]string{"f": ""}},
-		{"value then valueless", `npm publish --tag=a --tag`, map[string]string{"tag": ""}},
+		// A repeated flag: every occurrence is kept, in order — a caller after
+		// only the last (or the first) reads got[k][len(got[k])-1] (or [0]),
+		// and one that means "either value" reads `"a" in .flags.tag`.
+		{"repeated flag keeps every value", `npm publish --tag=a --tag=b`, map[string][]string{"tag": {"a", "b"}}},
+		{"repeated valueless flag", `npm publish -f -f`, map[string][]string{"f": {"", ""}}},
+		{"value then valueless", `npm publish --tag=a --tag`, map[string][]string{"tag": {"a", ""}}},
 
 		// The program word is never a flag, even when it is spelled like one.
-		{"program itself is dash shaped", `-npm publish`, map[string]string{}},
+		{"program itself is dash shaped", `-npm publish`, map[string][]string{}},
 
 		// Quoting does not hide a flag: expansion runs first, so a rule about
 		// `--force` fires on every spelling of it.
-		{"quoted flag", `npm publish "--force"`, map[string]string{"force": ""}},
-		{"escaped flag", `npm publish \-\-force`, map[string]string{"force": ""}},
-		{"partially quoted flag", `npm publish --for"ce"`, map[string]string{"force": ""}},
+		{"quoted flag", `npm publish "--force"`, map[string][]string{"force": {""}}},
+		{"escaped flag", `npm publish \-\-force`, map[string][]string{"force": {""}}},
+		{"partially quoted flag", `npm publish --for"ce"`, map[string][]string{"force": {""}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			invs := ExtractCommand(tc.src).Invocations
@@ -396,7 +397,7 @@ func TestFlags_Parsing(t *testing.T) {
 			}
 			for k, v := range tc.want {
 				g, ok := got[k]
-				if !ok || g != v {
+				if !ok || !equal(g, v) {
 					t.Errorf("flags[%q] = %q (present=%v), want %q", k, g, ok, v)
 				}
 			}
@@ -435,7 +436,7 @@ func TestFlags_AreNotSharedBetweenInvocations(t *testing.T) {
 	if _, ok := invs[1].Flags["E"]; ok {
 		t.Errorf("npm flags = %v, carries sudo's own flag", invs[1].Flags)
 	}
-	invs[0].Flags["injected"] = "x"
+	invs[0].Flags["injected"] = []string{"x"}
 	if _, ok := invs[1].Flags["injected"]; ok {
 		t.Error("invocations share one flag map")
 	}

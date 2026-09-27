@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -76,6 +77,12 @@ type Fixture struct {
 	// SLOPRAIL_RELEASE_URL points at archives freshHome builds, so what lands
 	// is the code under test rather than whatever was last published.
 	FreshMachine bool `yaml:"freshMachine"`
+
+	// Plugins names further plugins of this checkout's marketplace to install
+	// for the project alongside sloprail, e.g. [sloprail-tasks] — the way a
+	// user adds one, so a plugin's own guardrails are what fires. Each must be
+	// listed in .claude-plugin/marketplace.json.
+	Plugins []string `yaml:"plugins"`
 
 	// Model is the sr-agent --model set for the agent-under-test, e.g.
 	// "claude-sonnet-5,size-md". Empty lets sr-agent's own default resolve —
@@ -156,6 +163,11 @@ func LoadFixture(dir string) (Fixture, error) {
 			if _, err := os.Stat(filepath.Join(f.OverlayDir(), ".sloprail")); err == nil {
 				return Fixture{}, fmt.Errorf("%s/fixture.yaml: exampleSloprail is true but %s/.sloprail still exists — delete it, the shipped example's .sloprail/ already covers it", abs, f.OverlayDir())
 			}
+		}
+	}
+	for _, p := range f.Plugins {
+		if p == "" || p == pluginName || strings.ContainsAny(p, "@/ ") {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: plugins names %q — a plugin of this checkout's marketplace other than %s, by its bare name", abs, p, pluginName)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(abs, f.Score)); err != nil {

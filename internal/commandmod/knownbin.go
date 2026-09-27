@@ -3,6 +3,8 @@ package commandmod
 import (
 	"strings"
 
+	"github.com/sloprail/sloprail/internal/grounding"
+
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -371,6 +373,37 @@ var knownBins = map[string]binSpec{
 		}
 		return targets
 	},
+
+	// sr-file is sloprail's OWN file tool, so its vocabulary is this engine's to
+	// know rather than a vendor's to rename. Statically it claims only the
+	// target and the effect, never the content: the result depends on the file
+	// (edit) or on words this parser blanks when it cannot resolve them. A line
+	// made of nothing but sr-file is resolved exactly by running it in resolve
+	// mode (services/sr-session); this entry is the fallback for every other
+	// line, so an sr-file write mixed into one still produces its file event.
+	"sr-file": func(argv []string) []FileTarget { return srFileTargets(argv[1:]) },
+	"sr": func(argv []string) []FileTarget {
+		if len(argv) > 1 && argv[1] == "file" {
+			return srFileTargets(argv[2:])
+		}
+		return nil
+	},
+}
+
+func srFileTargets(args []string) []FileTarget {
+	fc, ok := grounding.TargetOf(args)
+	if !ok {
+		return nil
+	}
+	effect := Write
+	if fc.Verb == grounding.VerbDelete {
+		effect = Remove
+	}
+	targets := targetsFor([]string{fc.Path}, effect)
+	for i := range targets {
+		targets[i].Grounded = &fc
+	}
+	return targets
 }
 
 // ddIsAWholeCopy reports whether a dd invocation copies its input file entire,

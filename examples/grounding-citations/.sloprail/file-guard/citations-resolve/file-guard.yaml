@@ -1,9 +1,29 @@
-# Every citation in a written file references a REAL chunk of the
-# trajectory/source — referenced, not regenerated. Script settles the cheap
-# half (does the link exist); judge settles the expensive half (does the
-# quote actually approximate the source).
+# In this project a markdown file restates what other files say — a summary, a
+# migration note — so every claim must be referenced, not regenerated: grounded in
+# the tool output the agent actually read.
+#
+# The citation rides on the write, never in the file. The agent reads the source
+# (a Read, a `cat`), then writes the markdown with sr-file, quoting that output
+# exactly:
+#
+#   sr-file write MIGRATION.md --cite:tool_result '<exact words from the output>' <<'EOF' … EOF
+#
+# The engine resolves each quote against the session's record, in the tool_result
+# pool only — the user's words or the agent's own summary never resolve as source
+# output — so a citation on the event EXISTS. An in-file `[quote](/abs/path:a-b)`
+# link is gone: an absolute path resolves on no other machine.
+#
+# require: unconditional — every markdown write here restates a source, so there
+# is no write that needs no grounding. The engine refuses an uncited write (the
+# Write tool, a shell redirect) before the judge is paid for, naming the sr-file
+# form. The judge answers what existence cannot: does the file say what the cited
+# output says?
+#
+# preventive: an ungrounded claim is refused before it lands, while the agent still
+# has the source in view.
 match: "**/*.md"
+preventive: true
+require:
+  - citation: {source_types: [tool_result]}
 checks:
-  - script: ./citation-links-resolve.sh
-  - prepare: ./fetch-cited-source.sh
-    judge: ./quote-approximates-source.md.j2
+  - judge: ./claims-match-cited-output.md.j2

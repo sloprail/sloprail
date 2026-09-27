@@ -1,15 +1,15 @@
 description: >
   Agent is asked to write a short migration-notes summary of a seeded
   CHANGELOG.md's breaking/behavior changes, WITH a skill teaching this
-  project's own citation convention the guardrail enforces (every factual
-  claim about a source file must cite its exact absolute-path:line-range).
+  project's own citation convention the guardrail enforces (a markdown file
+  is written with sr-file, citing the exact tool output it restates —
+  --cite:tool_result — on the command, never in the file).
 
   Scored on TRAJECTORY HEALTH (plan-2026-09-24), not on whether the agent
-  used citations at all or got them perfectly right: a clean, accurate
-  summary with no stuck retry loop is a PASS whether or not citations were
-  used. Whether the file-guard fired, and whether any citation was even
-  attempted, are recorded as secondary, informational signals from a real
-  run — not the bar itself.
+  got the convention right first time: a clean, accurate summary with no
+  stuck retry loop is a PASS. Whether the file-guard fired, and whether a
+  tool_result citation was used, are recorded as secondary, informational
+  signals from a real run — not the bar itself.
 seed: seed
 overlay: overlay
 exampleSloprail: true

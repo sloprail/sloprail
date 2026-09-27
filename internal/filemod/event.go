@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/grounding"
 )
 
 // FileEvent is what this module's own code passes around.
@@ -92,6 +93,9 @@ func (f FileEvent) Event(kind string) event.Event {
 	}
 	if kindDeclares(kind, FieldNewMarkers) {
 		fields[FieldNewMarkers] = markerFields(f.NewMarkers)
+	}
+	if kindDeclares(kind, grounding.FieldCitations) {
+		fields[grounding.FieldCitations] = grounding.ToWire(nil)
 	}
 	return event.Event{Kind: kind, Fields: fields}
 }

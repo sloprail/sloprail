@@ -183,7 +183,7 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 	//
 	// Conflating them is what the bug was: one absolute path went to both, the
 	// stat was right and the matcher never matched.
-	f := FileEvent{Path: reportable(path, pending.Root())}
+	f := FileEvent{Path: Reportable(path, pending.Root())}
 	var kind string
 	// The lookup takes the path as the harness named it. Both arguments are
 	// that one path: the pre phase asks about the file the tool is about to
@@ -335,7 +335,7 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 // folder in the project must not be handed a spelling that could climb into
 // one. Leaving it absolute means no project-relative matcher admits it, which
 // is the honest answer — the write is outside the rule's subject.
-func reportable(path, root string) string {
+func Reportable(path, root string) string {
 	if !filepath.IsAbs(path) {
 		clean := filepath.ToSlash(filepath.Clean(path))
 		if root == "" {
@@ -611,11 +611,11 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 		// invisible in the ordinary case because the identical spelling twice,
 		// which is what the test pinned, was already caught by the raw key.
 		//
-		// reportable() is the canonical spelling and is what the event carries,
+		// Reportable() is the canonical spelling and is what the event carries,
 		// so it is the honest key. The RAW spelling is still what the filesystem
 		// is asked with below — that separation is the point, and this only
 		// decides which target is looked at, never how.
-		key := reportable(t.Path, pending.Root())
+		key := Reportable(t.Path, pending.Root())
 		if seen[key] {
 			continue
 		}
@@ -624,7 +624,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 		// The two spellings are separated here exactly as extractPending
 		// separates them, and for the same reason: the FILESYSTEM is asked with
 		// the path the command named, because that is the spelling that
-		// resolves; the RULE is shown reportable(), because a matcher is a
+		// resolves; the RULE is shown Reportable(), because a matcher is a
 		// prefix test and the only spelling an author can write is the
 		// workspace-relative one.
 		//

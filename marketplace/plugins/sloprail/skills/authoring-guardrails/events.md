@@ -50,12 +50,12 @@ trigger's `on`, not a kind the engine emits.
 
 | kind | fields |
 |---|---|
-| `PreFileCreate` | `path`, `newContent`, `resultKnown`, `newMarkers` |
-| `PreFileUpdate` | `path`, `oldContent`, `newContent`, `resultKnown`, `oldMarkers`, `newMarkers` |
-| `PreFileDelete` | `path`, `oldContent`, `oldMarkers` |
-| `PostFileCreate` | `path`, `newContent`, `newMarkers`, `seen` |
-| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `oldMarkers`, `newMarkers`, `seen` |
-| `PostFileDelete` | `path`, `oldContent`, `oldMarkers`, `seen` |
+| `PreFileCreate` | `path`, `newContent`, `resultKnown`, `newMarkers`, `citations` |
+| `PreFileUpdate` | `path`, `oldContent`, `newContent`, `resultKnown`, `oldMarkers`, `newMarkers`, `citations` |
+| `PreFileDelete` | `path`, `oldContent`, `oldMarkers`, `citations` |
+| `PostFileCreate` | `path`, `newContent`, `newMarkers`, `seen`, `citations` |
+| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `oldMarkers`, `newMarkers`, `seen`, `citations` |
+| `PostFileDelete` | `path`, `oldContent`, `oldMarkers`, `seen`, `citations` |
 
 - `seen` — bool, Post kinds only. `true` when an earlier Stop was already
   handed this file with the same content: the event is a re-send, not a change
@@ -77,6 +77,12 @@ trigger's `on`, not a kind the engine emits.
   `newMarkers` is set on the create and update kinds (the markers `newContent`
   would carry); `oldMarkers` on the update and delete kinds (the markers the file
   carries now). A create has no `oldMarkers`; a delete has no `newMarkers`.
+
+- `citations` — the citations the change was grounded in: a **list of
+  `{quote, sourceTypes, path, line, message}`** (`sourceTypes` a list of `user` /
+  `tool_result`, `path` the absolute transcript, `line` int, `message` the whole
+  entry the quote came from, `call` the tool call behind a `tool_result`). Empty unless the
+  change was made grounded — see [grounding.md](grounding.md).
 
 Read a marker's quote off `.fqn`, and test a list with a quantifier:
 
@@ -114,6 +120,7 @@ skeleton are in [file-guard.md](file-guard.md).
 |---|---|
 | `raw` | string — the command line as written |
 | `invocations` | list — every program the module parsed out of it, flattened |
+| `citations` | list of `{quote, sourceTypes, path, line, message, call}` — see [Citations](#citations-a-grounded-action) |
 
 One command line is rarely one program: a pipeline, an `&&` chain, a subshell, a
 `sudo`, an `xargs` each nest invocations. The module walks that once and emits
@@ -125,13 +132,21 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
 - `.flags` — an **open map** of parsed flags. A flag name belongs to the command,
   not the engine, so the map is untyped: a key read off `.flags` is verified
   against nothing, and a mistyped one evaluates false forever. Cause the command
-  and watch the rule fire before trusting a flags match.
+  and watch the rule fire before trusting a flags match. Each value is a **list**
+  of every occurrence, in order — `--tag=a --tag=b` is `["a", "b"]`, a flag given
+  once is a one-element list, and a valueless flag carries `""`. Only the inline
+  `--flag=value` form carries a value; a separated `--flag value` is `[""]` with
+  `value` left in `.argv`.
 
 ```
 any(event.invocations, .bin == "curl")
 any(event.invocations, .bin == "rm" and any(.argv, # == "-rf"))
+any(event.invocations, .bin == "npm" and "next" in .flags.tag)
 len(event.invocations) > 1
 ```
+
+In a script: `.flags.tag[0]` for the first value, `.flags.tag[-1]` for the last,
+`(.flags.tag // []) | join(" ")` for all of them.
 
 `.bin` and `.argv` have declared element shapes, so a mistyped key inside a
 predicate is refused at load; `.flags` is the one open map. Only what the parser
@@ -139,6 +154,18 @@ can see without running the command is emitted — a program named by a variable
 decoded-and-piped payload — is left alone rather than guessed, so this is a
 correctness aid, **never a security boundary**. There is no `Post` counterpart: a
 command that ran shows its consequences as the file events. See [gate.md](gate.md).
+
+### Citations: a grounded action
+
+`citations` (on every file kind and on `PreCommandInvoke`) lists the citations
+the action was made with, each `{quote, sourceTypes, path, line, message, call}`:
+the quote, the pool(s) it resolved in (`user`, `tool_result`), the absolute
+transcript, the line, the whole entry it came from (capped at 16KB), and — for a
+`tool_result` — the tool call that produced it. The engine resolves every quote against the session's record before
+any rule runs, so an entry always names a real entry of the record. An action
+that cited nothing carries an empty list. A `Post` file event carries the
+citations recorded for its path at pre-tool. How an agent cites, and how a rule
+requires or judges a citation: [grounding.md](grounding.md).
 
 ### `PreToolUse` — a tool call about to run
 
@@ -296,11 +323,14 @@ A judge renders against the payload **spread flat at the template's top level**
 own `prepare` returned one:
 
 ```markdown
-## The change
-```diff
-{{ additionalContext.change_diff }}
+## The rules it must follow
+<rules>
+{{ additionalContext.rules }}
+</rules>
 ```
-```
+
+A file-guard's judge also gets `{{ change }}`, the unified diff of the event's
+`oldContent` to its `newContent` ([judge-checks.md](judge-checks.md)).
 
 `additionalContext` is additive — it never replaces the payload, and a `prepare`
 key cannot collide with `event` or `transcriptPath` (it renders under the single

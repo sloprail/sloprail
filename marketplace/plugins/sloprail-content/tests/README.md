@@ -41,28 +41,29 @@ Each test:
    `e.Exists(...)` for whether a write landed, and `res.Saw(...)` for the
    reason reaching the agent.
 
-Run with `CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT` ambient-unset to reproduce CI:
+Run with the Claude Code session variables ambient-unset to reproduce CI:
 
 ```
 cd marketplace/plugins/sloprail-content/tests
 go build ./...
-env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT go test ./... -count=1
+env -u CLAUDE_CODE_SESSION_ID -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT go test ./... -count=1
 ```
 
 ## Citations are grounded, not stubbed
 
-Both citation kinds this plugin uses live in a file's BODY (frontmatter
-citation fields were dropped — see the plugin README's migration notes) and
-are resolved for real:
+A citation rides on the ACTION, never in a file: a test makes a grounded
+change with a `Bash` turn running `sr-file write|edit ... --cite:user
+'<quote>'` (built by `srFileWrite` / `srFileEdit` in `main_test.go`), and the
+harness really executes it. The quote is words from the scenario's own
+prompt, which the harness seeds as the session's root user message, so the
+session resolves it for real before any guard sees the event. A quote the
+user never said exercises the real "resolves to nothing" path; a `Write`
+turn exercises "carries no citation at all".
 
-- **a rule's body citation** — a `[quote](jsonl)` link whose quote is a real
-  user message, grounded via `sr-session trajectory cite --source-types user`
-  (`content-rule-is-grounded`'s check-rule.sh). Tests cite the harness's own
-  real root prompt (`authPrompt`, seeded as the session's line-1 human
-  message).
-- **a unit's approval citation** — the same shape and mechanism, in the
-  unit's body (`unit-publish-approved`'s vendored `cite-links.sh`). A
-  fabricated quote exercises the real "does not ground" path.
+- **a rule change** — `content-rule-is-grounded` requires a user citation on
+  every create and update (`require: [{citation: {source_types: [user]}}]`).
+- **a publish** — `unit-publish-approved` requires one on a write that moves
+  a unit into `status: published`.
 
 ## What is stubbed, and why
 
@@ -100,23 +101,30 @@ after-check, one judge check with `allowed_tools: [Read, Bash]`)
 
 **test_publish_gate_test.go — unit-publish-approved** (file-guard, preventive,
 script)
-- `status: published` with no approval citation in the BODY is refused
-- a body approval citation whose quote does not ground to a real user
-  message is refused
-- a grounded body approval + `published_urls:` passes and lands
-- a unit with two `published_urls:` entries (multi-channel) passes
-- a grounded approval with no `published_urls:` is refused
-- a non-`published` status is unaffected by the gate
+- creating a unit at `status: published` with the Write tool (no citation) is
+  refused, and the refusal names `sr-file write` and `--cite:user`
+- an uncited `sr-file edit` from drafting to published is refused, and the
+  refusal hands back the exact cited edit to make
+- a transition citing words the user never said is refused
+- a cited transition + `published_urls:` lands, the unit stores no approval
+  text, and the Stop after-check (reading the recorded citation) passes
+- a cited create with two `published_urls:` entries (multi-channel) passes
+- a cited transition with no `published_urls:` is refused
+- a drafting unit created, or edited, uncited is unaffected by the gate
+- an uncited edit of an already-published unit (not a transition) passes
 
 **test_content_rule_grounded_test.go — content-rule-is-grounded** (file-guard,
-preventive, script+judge — reuses sloprail-tasks's task-body-is-human-authored
-pattern exactly)
-- a rule with no citation in its body at all is refused by the deterministic
-  script, before the judge
-- a body citation whose quote does not ground is refused
-- a grounded body the judge accepts (PASS) passes and lands
-- a grounded body the judge rejects for adding untraceable scope (FAIL) is
+preventive, require citation + script + judge)
+- an uncited rule write (the Write tool) is refused by `require` before the
+  judge, and the refusal names `sr-file` and `--cite:user`
+- a rule citing words the user never said is refused
+- a cited rule the judge accepts (PASS) lands, and the captured judge prompt
+  holds the cited quote and its transcript path
+- a cited rule the judge rejects for adding untraceable scope (FAIL) is
   refused, with the judge's reasoning reaching the agent
+- a cited rule with invalid frontmatter is refused by the script
+- a cited edit of a rule still carrying a legacy transcript link passes, and
+  the judge is handed the body before the change
 
 **test_structure_gate_test.go — this plugin's own structure-gate piece**
 - a unit at the plugin's own allowed shape passes

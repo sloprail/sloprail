@@ -12,15 +12,16 @@ import "testing"
 // The gate itself is DETERMINISTIC (no judge). But the task WRITE that sets up each
 // test fires the preventive file guards (task-evidence, task-body) at Pre, and
 // task-body has a judge — so a passing judge stub (pass:true) is installed to let
-// the write land, isolating the gate's own Stop decision. cite grounds the body
-// citation against the seeded transcript for real.
+// the write land, isolating the gate's own Stop decision. The write is an sr-file
+// call citing the user's words, resolved against the seeded transcript for real.
 //
 // These prove: a turn ending with an open (to_do) task is BLOCKED at Stop, naming
-// the task; and a turn whose task is at a resting status (in_review) PERMITS.
+// the task and telling the agent how to finish it (the cited in_review form); and
+// a turn whose task is at a resting status (in_review) PERMITS.
 
 // TestUnfinished_OpenTaskBlocksAtStop: a turn that leaves a to_do task open is
 // blocked at Stop, and the refusal names the open task and its status. The write
-// lands at Pre (grounded body + judge PASS), so the to_do task is on disk when the
+// lands at Pre (cited body + judge PASS), so the to_do task is on disk when the
 // gate walks the tree at Stop.
 func TestUnfinished_OpenTaskBlocksAtStop(t *testing.T) {
 	e := New(t)
@@ -30,11 +31,8 @@ func TestUnfinished_OpenTaskBlocksAtStop(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-unfinished-open"
-	tp := e.TranscriptPath(proj, sess)
-	body := "The user asked to " + cite("migrate the auth module", tp, 1) + "."
-
 	res := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w1", taskPath, task("to_do", "P1", body)),
+		srWrite("b1", taskPath, task("to_do", "P1", askBody), citeUser(askQuote)),
 	))
 
 	if res.Refused() {
@@ -55,15 +53,20 @@ func TestUnfinished_OpenTaskBlocksAtStop(t *testing.T) {
 	if !containsStr(joined, taskPath) || !containsStr(joined, "status: to_do") {
 		t.Errorf("the refusal did not name the open task and its status:\n%s", joined)
 	}
+	// The way to finish it is the cited transition, not a link pasted into the file.
+	if !containsStr(joined, "--cite:tool_result") || containsStr(joined, "jsonl") {
+		t.Errorf("the refusal does not teach the cited in_review transition:\n%s", joined)
+	}
 }
 
 // TestUnfinished_AllRestingPermits: a turn whose only task is at a RESTING status
-// (in_review — the agent is done and has attached evidence, and the review guard
-// owns it now) permits at Stop. The in_review write carries REAL delivery evidence
-// (a tool_result observation + a repo-relative artifact, produced in run 1) so
-// task-evidence lets it land and task-review's judge (stubbed PASS) accepts, leaving
-// the gate as the only thing that could block the Stop — and it must not, because
-// in_review is allowed to rest. This is the control for the block test above.
+// (in_review — the agent is done, cited the tool output proving it, and the review
+// guard owns it now) permits at Stop. The in_review write carries REAL delivery
+// evidence (tool output from a Bash run in the same turn, cited on the write, and a
+// repo-relative artifact), so task-evidence lets it land and task-review's judge
+// (stubbed PASS) accepts, leaving the gate as the only thing that could block the
+// Stop — and it must not, because in_review is allowed to rest. The control for
+// the block test above.
 func TestUnfinished_AllRestingPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -72,17 +75,10 @@ func TestUnfinished_AllRestingPermits(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-unfinished-resting"
-	artifactRel := "src/auth.go"
-	line := prepareDelivery(t, e, proj, sess, "PASS", artifactRel)
-	tp := e.TranscriptPath(proj, sess)
-
-	body := "Done. The user asked to " + cite("migrate the auth module", tp, 1) + "."
-	obs := []string{tp + ":" + itoa(line)}
-	art := []string{artifactRel + ":3-5"}
-
-	res := e.Run(proj, sess, authPrompt, Turns("done",
-		Write("w1", taskPath, taskWithEvidence("in_review", "P1", body, obs, art)),
-	))
+	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
+	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
+		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
+	)...))
 
 	if res.Refused() {
 		t.Fatalf("the in_review task write was refused at Pre (setup broken):\n%s", res.Output)

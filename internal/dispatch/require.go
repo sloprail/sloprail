@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/declaration"
+	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -58,15 +60,78 @@ func (r Runner) checkRequire(req Request) (Verdict, error) {
 // tried first only because it is the field listed first in the spec; the two are
 // mutually exclusive so order is immaterial.
 func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verdict, error) {
+	hint := ""
+	if p.When != "" {
+		applies, h, err := r.prerequisiteApplies(req, p.When)
+		if err != nil {
+			return Verdict{}, err
+		}
+		if !applies {
+			return pass(), nil
+		}
+		hint = h
+	}
+	v, err := r.checkUnconditional(req, p)
+	if err == nil && v.Refused && hint != "" {
+		// The rule's own words on how to meet it here — the engine's remedy is
+		// generic, the `when` script knows the case (which status, which ask).
+		v.Reason += "\n" + hint
+	}
+	return v, err
+}
+
+// checkUnconditional evaluates a prerequisite that applies.
+func (r Runner) checkUnconditional(req Request, p declaration.Prerequisite) (Verdict, error) {
 	if p.Skill != "" {
 		return r.checkSkill(req, p.Skill, p.Files)
 	}
 	if p.Context != "" {
 		return r.checkContext(req, p.Context), nil
 	}
+	if p.Citation != nil {
+		return checkCitation(req, *p.Citation), nil
+	}
 	// Neither set: a loaded rule cannot reach here (the validator refuses an empty
 	// prerequisite), so an empty one establishes nothing to fail and passes.
 	return pass(), nil
+}
+
+// prerequisiteApplies runs a prerequisite's `when` script against the check
+// payload. Only exit 1 waives the prerequisite; every other outcome — exit 0,
+// another code, a script that could not run or did not answer — applies it,
+// so a condition that could not be decided never lifts a requirement.
+//
+// A script that applies it may print `{"hint": "..."}` on stdout: the rule's
+// own advice for meeting the requirement in this case, appended to the refusal.
+// Anything else on stdout is ignored.
+func (r Runner) prerequisiteApplies(req Request, when string) (bool, string, error) {
+	payload, err := r.checkPayloadJSON(req)
+	if err != nil {
+		return false, "", err
+	}
+	res, err := r.runScript(scriptCall{
+		Dir:            req.Dir,
+		Script:         when,
+		Stdin:          payload,
+		GuardName:      req.GuardName,
+		Workspace:      req.Workspace,
+		SessionID:      req.SessionID,
+		TranscriptPath: req.TranscriptPath,
+		LaunchedBy:     req.LaunchedBy,
+	})
+	if err != nil {
+		return false, "", err
+	}
+	if !res.Passed && res.Code == 1 {
+		return false, "", nil
+	}
+	var out struct {
+		Hint string `json:"hint"`
+	}
+	if res.Passed && json.Unmarshal(trimSpace(res.Stdout), &out) == nil {
+		return true, strings.TrimSpace(out.Hint), nil
+	}
+	return true, "", nil
 }
 
 // checkSkill refuses unless the session's own trajectory holds either a real
@@ -333,7 +398,7 @@ func subpageReadInTrajectory(transcriptPath, workspace, skill, file string) (boo
 	if err != nil {
 		return false, err
 	}
-	paths := SkillSubpagePaths(workspace, skill, file)
+	paths := append(SkillSubpagePaths(workspace, skill, file), announcedSkillPaths(entries, skill, file)...)
 
 	found := false
 	err = walkWritingLineOfWork(transcriptPath, entries, func(call transcript.ToolCall) bool {
@@ -344,6 +409,49 @@ func subpageReadInTrajectory(transcriptPath, workspace, skill, file string) (boo
 		return false
 	})
 	return found, err
+}
+
+// skillBaseDirLine is how Claude Code announces where it loaded a skill from,
+// the first line of the skill body it writes into the record.
+const skillBaseDirLine = "Base directory for this skill: "
+
+// announcedSkillPaths is file inside every directory the harness announced it
+// loaded skill from. A directory-sourced marketplace serves a plugin's skill
+// from its source tree, not the plugin cache SkillSubpagePaths resolves, and
+// the agent reads the page where the skill says it lives. Only a harness-written
+// (isMeta) user entry counts: text an agent printed into a tool result cannot
+// point the check at a page it wrote itself.
+func announcedSkillPaths(entries []transcript.Entry, skill, file string) []string {
+	name := skill
+	if i := strings.LastIndex(name, ":"); i >= 0 {
+		name = name[i+1:]
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Type != transcript.EntryUser || !e.IsMeta || e.IsSidechain {
+			continue
+		}
+		var msg struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(e.Message, &msg) != nil {
+			continue
+		}
+		for _, b := range msg.Content {
+			if b.Type != "text" || !strings.HasPrefix(b.Text, skillBaseDirLine) {
+				continue
+			}
+			dir, _, _ := strings.Cut(strings.TrimPrefix(b.Text, skillBaseDirLine), "\n")
+			dir = strings.TrimSpace(dir)
+			if filepath.IsAbs(dir) && filepath.Base(dir) == name {
+				out = append(out, filepath.Join(dir, file))
+			}
+		}
+	}
+	return out
 }
 
 // walkWritingLineOfWork walks entries — already read from transcriptPath — and
@@ -477,4 +585,64 @@ func skillLoaded(transcriptPath, workspace, skill string) (bool, error) {
 // split as skillLoaded/skillLoadedInTrajectory above.
 func subpageRead(transcriptPath, workspace, skill, file string) (bool, error) {
 	return subpageReadInTrajectory(transcriptPath, workspace, skill, file)
+}
+
+// checkCitation refuses unless the event carries at least one citation that
+// resolved in a pool the prerequisite accepts.
+//
+// It reads `citations` off the event and nothing else. The session resolved
+// every citation against its own record before dispatch (services/sr-session
+// grounding.go), so presence here IS existence: a quote that did not resolve
+// never became a citation. Whether it grounds THIS change is for the rule's
+// judge, which reads the same field.
+func checkCitation(req Request, c declaration.CitationPrerequisite) Verdict {
+	pools := c.Pools()
+	for _, cit := range grounding.FromWire(req.Event.Fields[grounding.FieldCitations]) {
+		for _, got := range cit.SourceTypes {
+			for _, want := range pools {
+				if got == want {
+					return pass()
+				}
+			}
+		}
+	}
+	return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools))
+}
+
+// citationRemedy says how to ground the action this event describes, in the
+// one form that works for its kind.
+func citationRemedy(kind string, fields map[string]any, pools []transcript.SourceType) string {
+	names := make([]string, len(pools))
+	for i, p := range pools {
+		names[i] = string(p)
+	}
+	flag := "--cite:" + strings.Join(names, ",")
+	what := "the user's own words"
+	if len(pools) != 1 || pools[0] != transcript.SourceUser {
+		what = "an entry of this session's record in the " + strings.Join(names, " or ") + " pool"
+	}
+	path, _ := fields["path"].(string)
+
+	switch kind {
+	case declaration.KindPreCommandInvoke:
+		return fmt.Sprintf("this command must be grounded in a citation of %s, and it carries none that resolves. "+
+			"Chain one in front of it, quoting the exact words verbatim:\n"+
+			"  sr-session trajectory cite --source-types %s '<exact quote>' && <the command>\n"+
+			"The quote must match exactly one entry of this session's record; run the cite part alone first to check it.",
+			what, strings.Join(names, ","))
+	case declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete:
+		return fmt.Sprintf("%s was changed without a citation of %s. Redo the change with sr-file, citing the words it is grounded in:\n"+
+			"  sr-file edit %s --old-string '<old>' --new-string '<new>' [--replace-all] %s '<exact quote>'\n"+
+			"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
+			"  sr-file delete %s %s '<exact quote>'",
+			path, what, path, flag, path, flag, path, flag)
+	}
+	return fmt.Sprintf("this change to %s must be grounded in a citation of %s, and it carries none that resolves. "+
+		"Make it with sr-file, which carries the citation on the command (never in the file):\n"+
+		"  sr-file edit %s --old-string '<old>' --new-string '<new>' [--replace-all] %s '<exact quote>'\n"+
+		"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
+		"  sr-file delete %s %s '<exact quote>'\n"+
+		"Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo; no cd, no VAR= prefix, no $ expansion — quote every value verbatim) so its result can be checked before it runs. "+
+		"Single-quote the quote; it must match exactly one entry of this session's record — check one with `sr-session trajectory cite '<quote>'`.",
+		path, what, path, flag, path, flag, path, flag)
 }

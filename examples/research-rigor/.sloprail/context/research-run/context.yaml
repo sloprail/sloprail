@@ -1,7 +1,13 @@
 # Only tracks turns declared #research. `match` filters declaratively, so
 # enter never runs on a turn that tagged something else.
+#
+# Research handed to a sub-agent is research too: a dispatch whose prompt
+# declares #research activates the context in the dispatching session, whose
+# Stop the depth gate then judges — counting what the sub-agent did as well.
 on:
   - event: PostTagWrite
     match: any(event.tags, .label == "research")
+  - event: PreToolUse
+    match: event.tool in ["Agent", "Task"] and event.input.prompt contains "#research"
 enter: ./enter.sh
 exit: ./exit.sh

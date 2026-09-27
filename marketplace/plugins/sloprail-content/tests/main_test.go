@@ -18,21 +18,30 @@
 //     measurement (character limit) is judged (via a stub — see
 //     test_unit_rules_test.go's header for what this can and cannot prove,
 //     now that there is no separate script-rule stage).
-//   - unit-publish-approved (file-guard, preventive, script): status:
-//     published without a grounded approval quote IN THE BODY is refused; an
-//     approval citation of the agent's own output is refused; a valid
-//     approval plus published_urls (a list) passes.
-//   - content-rule-is-grounded (file-guard, preventive, script+judge): a rule
-//     whose BODY carries no citation is refused by the deterministic script;
-//     one whose citation does not ground is refused; a grounded rule the
-//     judge accepts passes; one the judge rejects as adding untraceable
-//     scope ("and nothing else") is refused.
+//   - unit-publish-approved (file-guard, preventive, script): a write moving
+//     a unit INTO status: published without a citation of the user's words
+//     on the action is refused; a quote the user never said is refused; a
+//     cited transition plus published_urls (a list) passes; a write that is
+//     not a transition into published needs no citation.
+//   - content-rule-is-grounded (file-guard, preventive, require citation +
+//     script + judge): an uncited rule write (the Write tool) is refused by
+//     require, naming sr-file; a quote the user never said is refused; a
+//     cited rule the judge accepts passes, the judge having been handed the
+//     cited quote; one the judge rejects as adding untraceable scope ("and
+//     nothing else") is refused.
+//
+// CITATIONS RIDE ON THE ACTION. A grounded change is made with
+// `sr-file write|edit ... --cite:user '<exact quote>'` in a Bash turn (the
+// harness's Bash turns really execute), and the quote is words from the
+// scenario's own prompt — the harness seeds it as the session's root user
+// message, so the session resolves it for real. Nothing in a rule or unit
+// carries a transcript link.
 //
 // The judge verdict is a fixed stub (InstallJudgeClaude) exactly as the main
 // suite's judge e2e do — the model call is the one thing a mock cannot supply
 // for sr-agent's judge path (the mock refuses sr-agent's --model/--settings
-// flags). The DETERMINISTIC halves — the citation-grounding scripts, the
-// schema validation — are NOT stubbed and run for real.
+// flags). The DETERMINISTIC halves — citation resolution, the require, the
+// scripts, the schema validation — are NOT stubbed and run for real.
 package e2e
 
 import (
@@ -194,35 +203,51 @@ func pluginRoot(t *testing.T) string {
 	return root
 }
 
-// cite builds a [quote](transcriptPath:line) markdown link — the citation
-// format unit-publish-approved's body approval, a rule's body citation, and
-// (indirectly) a task body all ground with `sr-session trajectory cite`.
-func cite(quote, transcriptPath string, line int) string {
-	if line > 0 {
-		return "[" + quote + "](" + transcriptPath + ":" + itoa(line) + ")"
+// shq single-quotes s for a POSIX shell, so a quote or a string with spaces,
+// newlines or apostrophes reaches sr-file verbatim.
+func shq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// srFileWrite is the grounded way to write a guarded file: `sr-file write`
+// with the content on a quoted heredoc and one `--cite:user` per quote (none
+// when quotes is empty). The line holds nothing but the sr-file call, so the
+// pre-tool hook resolves its result exactly (resultKnown: true).
+func srFileWrite(path, content string, quotes ...string) string {
+	cmd := "sr-file write " + shq(path)
+	for _, q := range quotes {
+		cmd += " --cite:user " + shq(q)
 	}
-	return "[" + quote + "](" + transcriptPath + ")"
+	return cmd + " <<'SR_FILE_EOF'\n" + strings.TrimSuffix(content, "\n") + "\nSR_FILE_EOF"
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
+// srFileEdit is the grounded way to edit a guarded file: `sr-file edit` with
+// the Edit tool's old/new strings and one `--cite:user` per quote.
+func srFileEdit(path, oldString, newString string, quotes ...string) string {
+	cmd := "sr-file edit " + shq(path) + " --old-string " + shq(oldString) + " --new-string " + shq(newString)
+	for _, q := range quotes {
+		cmd += " --cite:user " + shq(q)
 	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
+	return cmd
 }
+
+// readProj returns a project file's bytes, failing the test when it cannot be
+// read.
+func readProj(t *testing.T, proj, rel string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(proj, rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	return string(b)
+}
+
+// judgePromptFile is where InstallJudgeClaudeCapturing records the rendered
+// judge prompt, relative to the project.
+const judgePromptFile = ".judge-prompt.txt"
 
 // unitFrontmatter assembles a UNIT.md/02_draft.md with the given frontmatter
 // fields and body. fields is rendered as raw YAML lines (already formatted by
 // the caller), so a test can build exactly the shape it needs — a plain unit,
-// one with tags, or one carrying published_urls: in frontmatter plus an
-// approval citation in the body (unit-publish-approved's own subject).
+// one with tags, or one carrying published_urls: in frontmatter.
 func unitFrontmatter(fields, body string) string {
 	return "---\n" + fields + "---\n\n" + body + "\n"
 }

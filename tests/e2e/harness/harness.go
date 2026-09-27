@@ -221,12 +221,33 @@ func build(t *testing.T) string {
 	return builtDir
 }
 
+// findMock locates the a10n-claude-mock binary the suite drives, or "":
+// $A10N_CLAUDE_MOCK (a mock build of your own), then the repo's .bin/ where
+// `make mock` installs the pinned version, then PATH.
+func findMock(t *testing.T) string {
+	if p := os.Getenv("A10N_CLAUDE_MOCK"); p != "" {
+		return p
+	}
+	if p := filepath.Join(repoRoot(t), ".bin", "a10n-claude-mock"); fileExists(p) {
+		return p
+	}
+	if p, err := exec.LookPath("a10n-claude-mock"); err == nil {
+		return p
+	}
+	return ""
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
 // New stands up an isolated environment.
 func New(t *testing.T) *Env {
 	t.Helper()
-	mock, err := exec.LookPath("a10n-claude-mock")
-	if err != nil {
-		t.Skip("harness: a10n-claude-mock not on PATH — driving it is the whole point")
+	mock := findMock(t)
+	if mock == "" {
+		t.Skip("harness: a10n-claude-mock not found — run `make mock` to install the pinned version (tests/e2e/harness/MOCK_VERSION) into .bin/")
 	}
 	// A short root, not t.TempDir(): the encoded project-dir path below is a
 	// 1:1 non-alphanumeric substitution with no shortening, and a long test
@@ -453,6 +474,9 @@ for arg in "$@"; do
       # prompt is a single clean render.
       out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | tail -1)"
       printf '%s' "$arg" > ` + shellQuote(promptPath) + `
+      # One line per judge call — the prompt's heading — so a test can count how
+      # often each judge was asked.
+      printf '%s\n' "$arg" | head -1 >> ` + shellQuote(promptPath+".calls") + `
       ;;
   esac
 done
@@ -466,6 +490,23 @@ exit 0
 	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
 		e.t.Fatalf("harness: write capturing judge claude shim: %v", err)
 	}
+}
+
+// JudgeCalls is how many times a capturing shim's judge was asked with a prompt
+// whose first line contains heading ("" counts every call).
+func (e *Env) JudgeCalls(projDir, relPromptFile, heading string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, relPromptFile+".calls"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+		if line != "" && strings.Contains(line, heading) {
+			n++
+		}
+	}
+	return n
 }
 
 // JudgePrompt returns the rendered judge prompt a capturing shim recorded, or ""

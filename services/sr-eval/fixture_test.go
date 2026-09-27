@@ -87,3 +87,31 @@ func TestLoadFixture_ExampleSloprailWithoutOverlaySloprailLoads(t *testing.T) {
 		t.Fatal("ExampleSloprailDir() must resolve when ExampleSloprail is true")
 	}
 }
+
+// plugins names further marketplace plugins by their bare name; sloprail itself
+// is always installed, and a key with a marketplace or a path is refused.
+func TestLoadFixture_Plugins(t *testing.T) {
+	for name, tc := range map[string]struct {
+		plugins string
+		ok      bool
+	}{
+		"a marketplace plugin": {"[sloprail-tasks]", true},
+		"sloprail itself":      {"[sloprail]", false},
+		"a qualified key":      {"[sloprail-tasks@sloprail-marketplace]", false},
+		"a path":               {"[../evil]", false},
+		"an empty name":        {`[""]`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := newTestFixtureTree(t, false)
+			mustWriteFile(t, filepath.Join(dir, "fixture.yaml"),
+				"seed: seed\nmodel: haiku\nscore: score.sh\nplugins: "+tc.plugins+"\n")
+			fx, err := LoadFixture(dir)
+			if tc.ok != (err == nil) {
+				t.Fatalf("plugins %s: err = %v", tc.plugins, err)
+			}
+			if tc.ok && len(fx.Plugins) != 1 {
+				t.Fatalf("plugins not parsed: %v", fx.Plugins)
+			}
+		})
+	}
+}

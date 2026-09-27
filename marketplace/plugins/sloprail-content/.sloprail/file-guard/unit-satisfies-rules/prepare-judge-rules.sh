@@ -33,7 +33,8 @@ refuse() {
 }
 
 proceed() {
-  jq -n --arg r "$1" --arg p "$2" '{additionalContext: {judge_rules: $r, unit_path: $p}}'
+  jq -n --arg r "$1" --arg p "$2" --arg t "${unit_text:-}" \
+    '{additionalContext: {judge_rules: $r, unit_path: $p, unit_text: $t}}'
   exit 0
 }
 
@@ -71,8 +72,27 @@ case "$kind" in
     ;;
 esac
 
+# WHAT IS JUDGED. A UNIT.md holds the unit's frontmatter, not its text, so on a
+# UNIT.md write (publishing, a tag change) the judge is also handed the unit's
+# draft, and a measurement runs against the draft: frontmatter alone would pass
+# every writing rule vacuously, and a rule added since the draft was last
+# written would never meet it.
+unit_text="$content"
+unit_file="$root/$path"
+draft="$root/$(dirname "$path")/02_draft.md"
+if [ "$(basename "$path")" = "UNIT.md" ] && [ -f "$draft" ]; then
+  if ! draft_text="$(cat "$draft")"; then
+    refuse "unit-satisfies-rules: could not read $(dirname "$path")/02_draft.md, the text this unit's rules judge"
+  fi
+  unit_text="${content}
+
+--- 02_draft.md ---
+${draft_text}"
+  unit_file="$draft"
+fi
+
 rule_files="$(collect_applicable_rules "$path" "$root" "$content")"
-rule_schema="$root/.sloprail/schemas/rule.cue"
+rule_schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/rule.cue"
 
 judge_rules=""
 count=0
@@ -104,18 +124,18 @@ $rule_files
 EOF
 
 if [ "$count" -eq 0 ]; then
-  proceed "NONE" "$root/$path"
+  proceed "NONE" "$unit_file"
 fi
 
 # THE SIZE GATE — same threshold and reasoning as unit-satisfies-constraints's
 # prepare.sh: the whole unit goes into the judge's prompt, and past roughly
 # 600000 bytes the request cannot be assembled or exceeds the model's context.
 max_bytes=600000
-body_bytes="$(printf '%s' "$content" | wc -c | tr -d ' ')"
+body_bytes="$(printf '%s' "$unit_text" | wc -c | tr -d ' ')"
 if [ -n "$body_bytes" ] && [ "$body_bytes" -gt "$max_bytes" ] 2>/dev/null; then
   refuse "WRITING RULE CHECK: $path is ${body_bytes} bytes, too large for this rule to judge (the whole unit goes into the judge's prompt, and past roughly ${max_bytes} bytes the prompt cannot be assembled or exceeds the model's context, and no verdict comes back).
 
 This is refused rather than permitted because a unit this size cannot be checked against its writing rules at all. Split it into the units it is actually made of, and each will be judged normally."
 fi
 
-proceed "$judge_rules" "$root/$path"
+proceed "$judge_rules" "$unit_file"
