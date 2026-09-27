@@ -77,9 +77,26 @@ jobs:
         with:
           fetch-depth: 0
       - id: diff
+        env:
+          # github.event.repository.default_branch is a field of the push
+          # EVENT payload GitHub already sent this job — no git command, no
+          # network call, no output-parsing. `git remote show origin` (the
+          # previous approach) queries the remote for its FULL branch list
+          # (60+ in this repo) just to grep one line back out of it, and
+          # failed outright in CI on the very next real run — caught by
+          # actually running it, not by reasoning about it, so this went
+          # straight to the payload field rather than to a hardened version
+          # of the same shell-out.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          default_branch="$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')"
-          base="$(git merge-base "origin/$default_branch" "${{ github.sha }}")"
+          # Explicit fetch rather than trusting origin/$DEFAULT_BRANCH to
+          # already exist locally: actions/checkout@v4's own remote-tracking
+          # refs depend on which ref it was told to check out and its exact
+          # fetch config, which is more moving parts than this needs to
+          # reason about — one direct fetch of the one ref this actually
+          # wants is unambiguous regardless.
+          git fetch origin "$DEFAULT_BRANCH"
+          base="$(git merge-base "origin/$DEFAULT_BRANCH" "${{ github.sha }}")"
           # No merge-base at all (an unrelated-history branch, or the default
           # branch itself force-pushed away from what this checkout knows) —
           # fail open rather than risk skipping real changes on a comparison
