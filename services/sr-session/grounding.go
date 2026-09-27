@@ -177,8 +177,9 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, tr
 	return events, grounded, note
 }
 
-// resolveAll grounds each request in the session's own record, keeping those
-// that resolve. One that does not is simply not a citation: the requirement
+// resolveAll grounds each request in the session's own records — the user pool
+// in the root's, the tool_result pool in the root's and its sub-agents' (see
+// transcript.ResolveCitation) — keeping those that resolve. One that does not is simply not a citation: the requirement
 // that one exist is a rule's, and a rule refusing names what is missing.
 func resolveAll(transcriptPath string, reqs []transcript.CitationRequest) []transcript.Citation {
 	if transcriptPath == "" {
@@ -194,13 +195,15 @@ func resolveAll(transcriptPath string, reqs []transcript.CitationRequest) []tran
 }
 
 // reground keeps each citation a resolve-mode record reports only if the
-// session's own record resolves its quote, in its pools, to the same line.
+// session's own records resolve its quote, in its pools, to the same entry —
+// the same line of the same file, since a tool_result may resolve in a
+// sub-agent's record rather than the root's.
 func reground(transcriptPath string, cs []transcript.Citation) []transcript.Citation {
 	var out []transcript.Citation
 	for _, c := range cs {
 		req := transcript.CitationRequest{Quote: c.Quote, SourceTypes: c.SourceTypes}
 		for _, got := range resolveAll(transcriptPath, []transcript.CitationRequest{req}) {
-			if got.Line == c.Line {
+			if got.Path == c.Path && got.Line == c.Line {
 				out = append(out, got)
 			}
 		}

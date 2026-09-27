@@ -3,6 +3,7 @@ package transcript
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -23,7 +24,8 @@ type Citation struct {
 	// is not satisfied by it.
 	SourceTypes []SourceType `json:"sourceTypes"`
 
-	// Path is the absolute trajectory path the quote resolved in.
+	// Path is the absolute trajectory path the quote resolved in — a sub-agent's
+	// own record for output a sub-agent's tool produced.
 	Path string `json:"path"`
 
 	// Line is the 1-based physical line of the resolved entry.
@@ -70,14 +72,28 @@ func (r CitationRequest) String() string {
 	return fmt.Sprintf("%s %q", strings.Join(names, ","), r.Quote)
 }
 
-// ResolveCitation grounds one request against the trajectory at path.
+// ResolveCitation grounds one request in the session whose record is at path.
+//
+// Each pool is searched in the records it may draw on (citationRecords):
+//
+//   - user        the session's ROOT record alone — the end user's own
+//     conversation. A sub-agent's "user" messages are the parent agent's
+//     dispatch, not the end user's words, so no sub-agent's record is ever
+//     searched for them. path may name a sub-agent's record; the user pool
+//     is then searched in the root it was dispatched from, and refused only
+//     when that root cannot be found.
+//   - tool_result the root record AND every sub-agent record beneath it. A
+//     sub-agent's tool output is genuine tool output of this session — the
+//     Bash it ran printed it — and it is recorded only in the sub-agent's own
+//     file, so a sub-agent grounding its work in what its tools returned
+//     needs its own record searched.
 //
 // Each named pool is searched on its own, so the Citation records which pools
-// the quote actually landed in. The quote must land on exactly ONE line across
-// all of them: none is "not said", several is ambiguous — the same outcomes
-// cite's exit codes name, reported as errors here so a caller can surface them
-// verbatim. A sub-agent's trajectory is refused outright, for cite's reason: its
-// "user" messages are the parent agent's dispatch, not the end user's words.
+// the quote actually landed in. The quote must land on exactly ONE entry across
+// every pool and every record searched: none is "not said", several — in one
+// record or in two — is ambiguous, the same outcomes cite's exit codes name,
+// reported as errors here so a caller can surface them verbatim. The Citation's
+// Path, Line, Message and Call point into the record the quote resolved in.
 func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	if req.Quote == "" {
 		return Citation{}, fmt.Errorf("an empty quote grounds nothing")
@@ -85,41 +101,86 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	if len(req.SourceTypes) == 0 {
 		return Citation{}, fmt.Errorf("citation %s names no source type", req)
 	}
-	if IsSubagentTranscript(path) {
-		return Citation{}, fmt.Errorf("citation %s cannot resolve in a sub-agent's trajectory (%s): its user messages are the parent agent's dispatch, not the end user's own words", req, path)
-	}
-
-	line := 0
-	var pools []SourceType
-	for _, st := range req.SourceTypes {
-		matches, err := CiteWithSources(path, req.Quote, []SourceType{st})
-		if err != nil {
-			return Citation{}, fmt.Errorf("citation %s: %w", req, err)
-		}
-		for _, m := range matches {
-			if line != 0 && m.Line != line {
-				return Citation{}, fmt.Errorf("citation %s is ambiguous in %s: it matches more than one entry — extend the quote until it lands on exactly one", req, path)
-			}
-			line = m.Line
-		}
-		if len(matches) > 0 {
-			pools = append(pools, st)
-		}
-	}
-	if line == 0 {
-		return Citation{}, fmt.Errorf("citation %s does not resolve in %s: the quote is not there word for word in that pool (only whitespace may differ)", req, path)
-	}
-	message, err := entryText(path, line, pools)
+	userIn, toolIn, err := citationRecords(path)
 	if err != nil {
 		return Citation{}, fmt.Errorf("citation %s: %w", req, err)
 	}
-	c := Citation{Quote: req.Quote, SourceTypes: pools, Path: path, Line: line, Message: message}
+
+	type entryAt struct {
+		path string
+		line int
+	}
+	var hits []entryAt
+	var pools []SourceType
+	for _, st := range req.SourceTypes {
+		var records []string
+		switch st {
+		case SourceUser:
+			if userIn == "" {
+				return Citation{}, fmt.Errorf("citation %s cannot resolve in a sub-agent's trajectory (%s) whose session record is not found: its user messages are the parent agent's dispatch, not the end user's own words", req, path)
+			}
+			records = []string{userIn}
+		case SourceToolResult:
+			records = toolIn
+		}
+		landed := false
+		for _, r := range records {
+			matches, err := CiteWithSources(r, req.Quote, []SourceType{st})
+			if err != nil {
+				return Citation{}, fmt.Errorf("citation %s: %w", req, err)
+			}
+			for _, m := range matches {
+				landed = true
+				if at := (entryAt{m.Path, m.Line}); !slices.Contains(hits, at) {
+					hits = append(hits, at)
+				}
+			}
+		}
+		if landed {
+			pools = append(pools, st)
+		}
+	}
+	switch {
+	case len(hits) == 0:
+		return Citation{}, fmt.Errorf("citation %s does not resolve in %s: the quote is not there word for word in that pool (only whitespace may differ)", req, path)
+	case len(hits) > 1:
+		where := make([]string, len(hits))
+		for i, h := range hits {
+			where[i] = fmt.Sprintf("%s:%d", h.path, h.line)
+		}
+		return Citation{}, fmt.Errorf("citation %s is ambiguous: it matches more than one entry (%s) — extend the quote until it lands on exactly one", req, strings.Join(where, ", "))
+	}
+	at := hits[0]
+	message, err := entryText(at.path, at.line, pools)
+	if err != nil {
+		return Citation{}, fmt.Errorf("citation %s: %w", req, err)
+	}
+	c := Citation{Quote: req.Quote, SourceTypes: pools, Path: at.path, Line: at.line, Message: message}
 	if wants(pools, SourceToolResult) {
-		if c.Call, err = entryCalls(path, line); err != nil {
+		if c.Call, err = entryCalls(at.path, at.line); err != nil {
 			return Citation{}, fmt.Errorf("citation %s: %w", req, err)
 		}
 	}
 	return c, nil
+}
+
+// citationRecords is where a citation into the session whose record is at path
+// may resolve: userIn, the one record the user pool is searched in (the
+// session's root; "" when path is a sub-agent's record whose root is not on
+// disk), and toolIn, the records the tool_result pool is searched in (the root
+// and every sub-agent record beneath it — or, for an orphaned sub-agent record,
+// that record and its own sub-agents).
+func citationRecords(path string) (userIn string, toolIn []string, err error) {
+	userIn = SessionRootOf(path)
+	top := userIn
+	if top == "" {
+		top = path
+	}
+	subs, err := DescendantSubagentPaths(top)
+	if err != nil {
+		return "", nil, err
+	}
+	return userIn, append([]string{top}, subs...), nil
 }
 
 // entryCalls renders the tool call behind each genuine tool_result on the entry

@@ -35,7 +35,9 @@ import (
 const groundedHelp = `Citations: --cite:<source-types> <quote>, repeatable. <source-types> is
 user (the user's own words), tool_result (a tool's output), or both
 comma-separated. Each quote must resolve to exactly one entry of the session's
-trajectory, or nothing is written. The words must match exactly; whitespace
+trajectory, or nothing is written. user resolves in the end user's own
+conversation only; tool_result also in the records of the sub-agents it
+dispatched, so a sub-agent can cite its own tools' output. The words must match exactly; whitespace
 need not (a line break in the message matches a space in the quote). Quote with
 single quotes so the shell leaves it verbatim.
 
@@ -173,7 +175,11 @@ func runGrounded(cmd *cobra.Command, fc grounding.FileCommand) error {
 	return nil
 }
 
-// resolveCites grounds every --cite: flag, or refuses the whole command.
+// resolveCites grounds every --cite: flag, or refuses the whole command. The
+// trajectory named is the session's; ResolveCitation searches the user pool in
+// its root record and the tool_result pool in the root's and every sub-agent's,
+// so a sub-agent's call — whose session id names the root — can ground a change
+// in its own tools' output.
 func resolveCites(fc grounding.FileCommand) ([]transcript.Citation, error) {
 	if len(fc.Cites) == 0 {
 		return []transcript.Citation{}, nil
