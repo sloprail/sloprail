@@ -6,40 +6,28 @@ package e2e
 // Use case: no-unasked-deletion (unit 17). A file-guard bound to
 // `path startsWith "memories/" and path endsWith ".md"`, PREVENTIVE (fires at
 // PreFileUpdate/PreFileDelete, refusing BEFORE the write lands — the content that
-// would be lost is still on disk at Pre time). Marker kind is `asked` (the task's
-// `sr:a`), written as `# sr:asked "<quote>"` in the file's frontmatter.
+// would be lost is still on disk at Pre time). "Asked" is a CITATION of the user's
+// words on the command that makes the change (`sr-file ... --cite:user '<quote>'`),
+// never a marker in the file.
 //
-// One SCRIPT + one JUDGE (the shipped example has a single judge; the "two judges"
-// in the batch brief does not match the built example — there is no two-verdict
-// conflict here):
-//   - SCRIPT (removal-has-a-grounded-ask.sh): pure additions pass; a removal with
-//     no sr:asked marker is refused; a removal WITH a marker whose quote grounds
-//     via `sr-session trajectory cite --path "$transcript_path"` passes to the
-//     judge; a marker whose quote resolves to nothing (a fabricated ask) is
-//     refused; an absent newContent (a delete / in-place command) fails closed.
+// One SCRIPT + one JUDGE:
+//   - SCRIPT (removal-has-a-grounded-ask.sh): pure additions pass; a removal (or a
+//     delete) citing nothing the user said is refused; one citing the user's words
+//     passes to the judge; an unknown result (a quote that does not resolve, so
+//     sr-file's dry run fails, or sr-file mixed into a longer line) fails closed.
 //   - JUDGE (change-is-clean-and-absolute.md.j2): the change is clean & targeted
-//     (only what the quote asked) and absolute (states the final content, not a
-//     delta narrative).
+//     (only what the cited words asked) and absolute (states the final content, not
+//     a delta narrative).
 //
 // Because the guard is PREVENTIVE, refusals arrive at PRE-TOOL as a deny — read
-// with res.Refused() and res.Saw(reason), NOT at Stop. (A denied write never
-// lands, so there is no settled file to re-fire at Stop; the pre-tool deny is the
-// channel.) A grounded-ask ADMIT, by contrast, lets the write land.
-//
-// The shipped script grounds the quote by extracting `transcriptPath` from the
-// CheckPayload and calling `cite --path "$transcript_path" "$quote"`, so a quote
-// that IS the user's own words resolves and the removal passes to the judge; a
-// fabricated quote resolves to nothing and is refused. The whole grounded-ask
-// path — admit, judge-over-real-diff, and fabricated-ask block — runs against the
-// shipped example verbatim (T049_08/09/10 below); no hand-corrected copy is used.
+// with res.Refused() and res.Saw(reason), NOT at Stop. A cited ADMIT lets the
+// change land.
 //
 // How each mechanism is driven:
-//   - MARKER: `# sr:asked "<quote>"` written in the new file's frontmatter, so
-//     filemod.Scan lifts it onto newMarkers as kind="asked".
-//   - GROUNDING: the quote is verbatim the user's own prompt, which the harness
-//     seeds as a user message in the session transcript, so cite resolves it.
-//   - DELETE: an `rm memories/<f>.md` Bash turn (there is no Delete turn builder),
-//     which the engine turns into a PreFileDelete whose newContent is absent.
+//   - CITATION: an `sr-file write|delete ... --cite:user '<quote>'` Bash turn run on
+//     its own, so the engine dry-runs it for the exact result and resolves the
+//     quote against the transcript (the user's prompt, seeded by the harness).
+//   - UNCITED: a plain Write turn, or an `rm` Bash turn — neither can carry one.
 //   - JUDGE verdict: InstallJudgeClaude supplies the model's pass/fail.
 
 import "testing"
@@ -100,7 +88,7 @@ func TestT049_02_RemovalWithoutMarkerBlocks(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("a removal with no sr:asked marker was NOT refused at pre-tool:\n%s", res.Output)
 	}
-	if !res.Saw("declares no sr:asked marker") {
+	if !res.Saw("cites nothing the user said") {
 		t.Fatalf("the no-marker (script) reason did not reach the agent:\n%s", res.Output)
 	}
 	// The write was denied, so the file still holds its original content.
@@ -153,12 +141,35 @@ func TestT049_05_RmDeleteFailsClosed(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an rm of a memories file was NOT refused at pre-tool:\n%s", res.Output)
 	}
-	if !res.Saw("its result cannot be computed") {
-		t.Fatalf("the delete fail-closed reason did not reach the agent:\n%s", res.Output)
+	if !res.Saw("cites nothing the user said asking for it") {
+		t.Fatalf("the uncited-delete reason did not reach the agent:\n%s", res.Output)
 	}
-	// Fail-closed at pre-tool means the delete was denied — the file survives.
+	// Refused at pre-tool means the delete was denied — the file survives.
 	if !e.Exists(proj, "memories/topic.md") {
-		t.Fatalf("a fail-closed deny should have prevented the rm — the file is gone")
+		t.Fatalf("a deny should have prevented the rm — the file is gone")
+	}
+}
+
+// T049_18: A CITED DELETE GOES TO THE JUDGE — the whole-file removal made the
+// grounded way, `sr-file delete <path> --cite:user '<quote>'`, carries the user's
+// words on the event; the script passes it and the judge (stubbed pass) admits
+// it. The file is gone. The complement of T049_05: `rm` cites nothing, this does.
+func TestT049_18_CitedDeleteAdmits(t *testing.T) {
+	e := newEnv(t)
+	proj := nudProject(t, e)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to delete this file"}`)
+
+	e.WriteFile(proj, "memories/topic.md", "some content\nmore content\n")
+
+	res := e.Run(proj, "s-049-18", "delete the memory file", Turns("done",
+		Bash("d1", "sr-file delete memories/topic.md --cite:user 'delete the memory file'"),
+	))
+
+	if res.Refused() {
+		t.Fatalf("a cited sr-file delete was refused:\n%s", res.Output)
+	}
+	if e.Exists(proj, "memories/topic.md") {
+		t.Fatalf("the cited delete was admitted but the file is still there")
 	}
 }
 
@@ -207,7 +218,7 @@ func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
 		res := e.Run(proj, sess, prompt, Turns("done",
 			Write("w1", "memories/topic.md", "keep this line\n"),
 		))
-		if !res.Refused() || !res.Saw("declares no sr:asked marker") {
+		if !res.Refused() || !res.Saw("cites nothing the user said") {
 			t.Fatalf("WITHOUT the marker, expected the no-marker refusal:\n%s", res.Output)
 		}
 	}
@@ -221,8 +232,7 @@ func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
 		e.WriteFile(proj, "memories/topic.md", "keep this line\nremove the second line\n")
 		sess := "s-049-07-with"
 		res := e.Run(proj, sess, prompt, Turns("done",
-			Write("w1", "memories/topic.md",
-				"---\n# sr:asked \"please remove the second line\"\n---\nkeep this line\n"),
+			srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
 		))
 		if res.Refused() {
 			t.Fatalf("WITH a grounded marker, the identical removal was refused — the marker did not authorize it:\n%s", res.Output)
@@ -245,8 +255,7 @@ func TestT049_08_GroundedAskAdmits(t *testing.T) {
 	prompt := "please remove the second line"
 	sess := "s-049-08"
 	res := e.Run(proj, sess, prompt, Turns("done",
-		Write("w1", "memories/topic.md",
-			"---\n# sr:asked \"please remove the second line\"\n---\nkeep this line\n"),
+		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
 	))
 
 	if res.Refused() {
@@ -276,8 +285,7 @@ func TestT049_09_GroundedAskUncleanChangeBlocksViaJudge(t *testing.T) {
 	sess := "s-049-09"
 	res := e.Run(proj, sess, prompt, Turns("done",
 		// Removes the asked line AND, collaterally, the provenance line.
-		Write("w1", "memories/topic.md",
-			"---\n# sr:asked \"please remove the second line\"\n---\nkeep this line\n"),
+		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
 	))
 
 	if !res.Refused() {
@@ -306,14 +314,13 @@ func TestT049_10_FabricatedAskBlocksViaScript(t *testing.T) {
 	prompt := "please remove the second line"
 	sess := "s-049-10"
 	res := e.Run(proj, sess, prompt, Turns("done",
-		Write("w1", "memories/topic.md",
-			"---\n# sr:asked \"delete absolutely everything in the project\"\n---\nkeep this line\n"),
+		srWrite("w1", "memories/topic.md", "keep this line\n", "delete absolutely everything in the project"),
 	))
 
 	if !res.Refused() {
 		t.Fatalf("a fabricated ask (quote the user never said) was NOT refused:\n%s", res.Output)
 	}
-	if !res.Saw("resolves to nothing the user actually said") {
+	if !res.Saw("could not compute the result") || !res.Saw("resolves to exactly one message") {
 		t.Fatalf("the fabricated-ask (script) reason did not reach the agent:\n%s", res.Output)
 	}
 }

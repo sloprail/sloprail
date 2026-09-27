@@ -81,7 +81,7 @@ trigger's `on`, not a kind the engine emits.
 - `citations` — the citations the change was grounded in: a **list of
   `{quote, sourceTypes, path, line}`** (`sourceTypes` a list of `user` /
   `tool_result`, `path` the absolute transcript, `line` int). Empty unless the
-  change was made grounded — see [Citations](#citations-a-grounded-action).
+  change was made grounded — see [grounding.md](grounding.md).
 
 Read a marker's quote off `.fqn`, and test a list with a quantifier:
 
@@ -156,44 +156,14 @@ command that ran shows its consequences as the file events. See [gate.md](gate.m
 
 ### Citations: a grounded action
 
-A citation grounds an action in something the session's record holds — the
-user's own words (`user`) or a tool's output (`tool_result`). It rides on the
-**command** that makes the change, never inside the content, so the repository
-keeps derived text only while the source stays checkable. Two commands carry one:
-
-```bash
-# a file change: sr-file write|edit|delete — the Write/Edit tools' arguments, plus --cite:<pool>
-sr-file edit memories/goal.md --old-string 'ship v1' --new-string 'ship v2' --cite:user 'move the goal to v2'
-sr-file write memories/log.md --cite:user 'keep a decision log' <<'BODY'
-...
-BODY
-sr-file delete memories/old.md --cite:user 'drop the old plan'
-
-# any other command: chain a cite in front of it
-sr-session trajectory cite 'publish it now' && npm publish
-sr-session trajectory cite --source-types tool_result '0 failures' && git push
-```
-
-Before any rule sees the event, the session resolves every quote against its own
-record (the same search `sr-session trajectory cite` does) and puts the ones that
-resolve on `citations`. A quote that resolves nowhere, or on more than one entry,
-is simply not a citation. So a citation on the event **exists** — it is a real
-entry of the named pool. Whether it actually **grounds** the change is the
-rule's own judgement: a judge reads `event.citations` (quote, transcript, line)
-and can open that line itself.
-
-- An `sr-file` citation lands on that file's events and on the command event; a
-  chained `cite` lands on every event the command produces.
-- A line made **only** of `sr-file` calls (plus `&&`, `||`, `;`, `echo`,
-  heredocs on stdin) is resolved exactly by running `sr-file` in a dry-run mode,
-  so its event carries the real `newContent` and `resultKnown: true`. `sr-file`
-  mixed with any other program, or with `$(…)`, is never run ahead of time: its
-  result is unknown (`resultKnown: false`), which a preventive rule refuses.
-- A `Post` file event carries the citations its change was made with at
-  pre-tool; a later uncited change to the same file clears them.
-
-`require: [{citation: true}]` makes a citation mandatory — see
-[file-guard.md](file-guard.md) and [gate.md](gate.md).
+`citations` (on every file kind and on `PreCommandInvoke`) lists the citations
+the action was made with, each `{quote, sourceTypes, path, line}`: the quote,
+the pool(s) it resolved in (`user`, `tool_result`), the absolute transcript and
+the line. The engine resolves every quote against the session's record before
+any rule runs, so an entry always names a real entry of the record. An action
+that cited nothing carries an empty list. A `Post` file event carries the
+citations recorded for its path at pre-tool. How an agent cites, and how a rule
+requires or judges a citation: [grounding.md](grounding.md).
 
 ### `PreToolUse` — a tool call about to run
 

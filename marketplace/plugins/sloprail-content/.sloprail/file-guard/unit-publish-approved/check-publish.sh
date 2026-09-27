@@ -1,35 +1,37 @@
 #!/usr/bin/env bash
-# A unit may not reach `status: published` on its own say-so. It must carry
-# BOTH:
-#   - a GROUNDED APPROVAL, cited in the unit's BODY (not a frontmatter field
-#     — an earlier draft's `approved:` was moved into the body, see unit.cue
-#     and the plugin README's migration note): a [quote](jsonl) citation
-#     LINK — the SAME shape and the SAME grounding mechanism sloprail-tasks's
-#     task body uses for the human's ask (has-body-citation.sh / cite_ground):
-#     the quote must resolve, via `sr-session trajectory cite --source-types
-#     user`, to a REAL USER MESSAGE. An agent's own prior turn, a tool
-#     result, or a harness-injected message (<system-reminder>,
-#     <task-notification>, …) does NOT ground — cite excludes all three — so
-#     an agent cannot cite its own output as the approval that authorizes
-#     itself to publish.
-#   - published_urls:  where it actually went out. A non-empty LIST (a unit
-#     may be distributed across several channels); this script only checks
-#     the list is present and non-empty, not each URL's shape (see unit.cue).
+# A unit may not reach `status: published` on its own say-so.
 #
-# THIS IS THE ONE GUARD IN THE PLUGIN THAT IS PURELY PREVENTIVE-SHAPED: publish
-# is the irreversible step (the task explicitly calls out that an agent "must
-# not be able to publish on its own say-so"), so it is bound preventive: true
-# in file-guard.yaml, refusing the write BEFORE status: published ever lands,
-# with a Stop after-check backstop for a write the engine could not derive at
-# Pre (see resultKnown handling below, the same shape as every other guard in
-# this repo).
+# THE APPROVAL RIDES ON THE ACTION, NOT IN THE FILE. A write that TRANSITIONS
+# a unit INTO `status: published` (the status before the change is anything
+# else, or there was no file) must carry at least one citation whose
+# sourceTypes include `user` — the user's own words approving it, e.g.
 #
-# It does NOT re-implement citation grounding — it borrows cite_ground and the
-# body-link grammar straight from the sloprail-tasks plugin's OWN
-# cite-links.sh, vendored beside this guard (see cite-links.sh in this folder,
-# copied verbatim with its provenance noted) so the two plugins' "does this
-# quote ground to a real user message" logic can never drift against each
-# other even though they ship independently.
+#   sr-file edit <UNIT.md> --old-string 'status: drafting' --new-string 'status: published' --cite:user 'ship it'
+#
+# The session resolves the quote against its own record before this runs and
+# puts it on `.event.citations` only if it is a real entry of that pool. An
+# agent's own prior turn, a tool result, or a harness-injected message is not
+# in the `user` pool, so an agent cannot cite its own output as the approval
+# that authorizes itself to publish. The unit keeps no approval text and no
+# transcript link: a `[quote](/abs/session.jsonl:N)` in a repository file
+# does not resolve on any other machine.
+#
+# "Before the change" is `oldContent`: the file on disk at a Pre kind, the
+# SESSION BASELINE at a Post kind — and at Post `.event.citations` is every
+# citation recorded for the path this session (an uncited change clears
+# them), so both moments judge the same span.
+#
+# ALSO, whenever the change leaves the unit at status: published:
+#   published_urls:  where it actually went out. A non-empty LIST (a unit may
+#   be distributed across several channels); only presence is checked, not
+#   each URL's shape (see unit.cue).
+#
+# A write that does not move the unit into published (a draft edit, an edit
+# to an already-published unit) needs no citation.
+#
+# Bound preventive: true in file-guard.yaml — publish is the irreversible
+# step — with the Stop after-check as the backstop for a write the engine
+# could not derive at Pre (resultKnown false, below).
 #
 # REFUSAL CONTRACT: exit 0 permits; non-zero refuses with `{"reason": "..."}` on
 # stdout. `set -uo pipefail`, never `set -e`.
@@ -41,22 +43,27 @@ refuse() {
 }
 
 event="$(cat)"
+printf '%s' "$event" | jq -e '.event | type == "object"' >/dev/null 2>&1 \
+  || refuse "unit-publish-approved: the check payload is not readable JSON with an .event object, so this write could not be checked"
 
-path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
+# field FILTER — one jq read of the payload. It runs inside $(…), so on a jq
+# error it says why on STDERR (stdout is being captured) and returns non-zero;
+# every caller follows it with `|| exit 1`, which refuses with that reason.
+field() {
+  local out
+  if ! out="$(printf '%s' "$event" | jq -r "$1")"; then
+    echo "unit-publish-approved: could not read $1 from the check payload, so this write could not be checked" >&2
+    return 1
+  fi
+  printf '%s' "$out"
+}
+
+path="$(field '.event.path // ""')" || exit 1
 if [ -z "$path" ]; then
   refuse "unit-publish-approved: the event named no path, so there is nothing to check"
 fi
 
 root="${SR_WORKSPACE:-.}"
-gdir="${SR_GUARDRAIL_DIR:-.}"
-
-lib="$gdir/cite-links.sh"
-if [ ! -f "$lib" ]; then
-  refuse "unit-publish-approved: cite-links.sh not found beside this hook at $lib, so no approval citation could be resolved"
-fi
-# shellcheck source=cite-links.sh
-. "$lib"
-
 schema="$root/.sloprail/schemas/unit.cue"
 if [ ! -f "$schema" ]; then
   refuse "unit-publish-approved: schema not found at $schema — install the plugin's unit.cue under the project's .sloprail/schemas/."
@@ -64,113 +71,103 @@ fi
 
 # WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on
 # BOTH Pre kinds before newContent is read — an underivable result is deferred
-# to the Post kind, checked at Stop.
-kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+# to the Post kind, checked at Stop. A create has no oldContent: nothing
+# preceded it.
+kind="$(field '.event.kind // ""')" || exit 1
+old_content=""
+has_old=false
 case "$kind" in
-  PostFileCreate|PostFileUpdate)
-    # A Post kind carries the SETTLED bytes directly on the flat event.
-    content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
-    ;;
   PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
+    known="$(field '.event.resultKnown // false')" || exit 1
     if [ "$known" != "true" ]; then
       exit 0
     fi
-    content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
+    content="$(field '.event.newContent // ""')" || exit 1
+    ;;
+  PostFileCreate|PostFileUpdate)
+    # A Post kind carries the SETTLED bytes directly on the flat event.
+    content="$(field '.event.newContent // ""')" || exit 1
+    ;;
+  PreFileDelete|PostFileDelete)
+    # Deleting a unit is not this rule's business (deletions: skip).
+    exit 0
     ;;
   *)
-    exit 0
+    refuse "unit-publish-approved: unexpected event kind '$kind' for $path; this rule only judges unit writes"
+    ;;
+esac
+case "$kind" in
+  PreFileUpdate|PostFileUpdate)
+    old_content="$(field '.event.oldContent // ""')" || exit 1
+    has_old=true
     ;;
 esac
 
-doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)"
-if [ $? -ne 0 ]; then
-  # A malformed unit is not this guard's subject (unit.cue's own shape is not
-  # even checked elsewhere today, since it is not close()'d) — but a document
-  # that fails to parse as YAML frontmatter at all cannot be read for status
-  # either, so treat that as nothing-to-check rather than a false publish
-  # refusal. A closed-schema violation would be a different guard's job if one
-  # is ever added; this guard reads only the fields it needs.
+# status_of CONTENT — the unit's frontmatter status, or nothing when the
+# frontmatter cannot be parsed or carries none.
+status_of() {
+  local doc
+  doc="$(printf '%s' "$1" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)" || return 0
+  printf '%s' "$doc" | jq -r '.status // empty' 2>/dev/null
+}
+
+if ! new_doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)"; then
+  # A document that fails to parse as frontmatter cannot be read for status,
+  # so it is not a publish this guard can see — nothing to check rather than
+  # a false publish refusal. unit.cue is not close()'d; shape is not this
+  # guard's subject.
   exit 0
 fi
 
-status="$(printf '%s' "$doc" | jq -r '.status // empty' 2>/dev/null)"
-if [ "$status" != "published" ]; then
+new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty')" \
+  || refuse "unit-publish-approved: could not read the status $path would carry"
+if [ "$new_status" != "published" ]; then
   exit 0
 fi
 
-n_urls="$(printf '%s' "$doc" | jq -r '(.published_urls // []) | length' 2>/dev/null)"
-
-# THE BODY IS THE PROSE AFTER THE FRONTMATTER — same extraction every guard
-# in this plugin uses. The approval citation lives HERE now, not in
-# frontmatter.
-body="$(printf '%s\n' "$content" | awk '
-  BEGIN { seen = 0 }
-  NR == 1 && $0 == "---" { seen = 1; next }
-  seen == 1 && $0 == "---" { seen = 2; next }
-  seen == 1 { next }
-  { print }
-')"
+old_status=""
+[ "$has_old" = "true" ] && old_status="$(status_of "$old_content")"
 
 problems=""
-any_approved=0
 
-# EVERY CITATION LINK IN THE BODY is a candidate approval — the SAME
-# extractor task bodies use. At least one must GROUND against the `user`
-# pool: a REAL USER MESSAGE approving this unit for publication. An agent
-# citing its own prior turn, a tool result, or a harness-injected message is
-# refused here, by cite itself: none of those is in the user pool.
-while IFS="$(printf '\t')" read -r href quote; do
-  [ -n "$href" ] || continue
-  cpath="$(cite_link_href_path "$href")"
-  case "$cpath" in
-    /*) : ;;
-    *)  cpath="$root/$cpath" ;;
-  esac
-  if reason="$(cite_ground user "$cpath" "$quote")"; then
-    any_approved=1
-  else
-    problems="${problems}  approval citation \"$quote\": ${reason}
-"
-  fi
-done <<EOF
-$(cite_links_extract "$body")
-EOF
-
-if [ "$any_approved" -ne 1 ]; then
-  problems="${problems}  no approval citation in the body grounds to a real user message — a unit cannot be published without one
+n_urls="$(printf '%s' "$new_doc" | jq -r '(.published_urls // []) | length')" \
+  || refuse "unit-publish-approved: could not read published_urls from $path"
+if [ -z "$n_urls" ] || [ "$n_urls" -eq 0 ] 2>/dev/null; then
+  problems="${problems}  no published_urls: in the frontmatter — a unit cannot be published without recording where it went out (a list, e.g. published_urls: [\"https://x.com/you/status/…\"])
 "
 fi
 
-if [ -z "$n_urls" ] || [ "$n_urls" -eq 0 ] 2>/dev/null; then
-  problems="${problems}  no published_urls: — a unit cannot be published without recording where it went out
+if [ "$old_status" != "published" ]; then
+  n_user="$(field '[(.event.citations // [])[] | select((.sourceTypes // []) | index("user"))] | length')" || exit 1
+  if [ "$n_user" -eq 0 ] 2>/dev/null; then
+    from="${old_status:-drafting}"
+    case "$kind" in
+      Pre*)
+        if [ "$has_old" = "true" ]; then
+          how="  sr-file edit $path --old-string 'status: $from' --new-string 'status: published' --cite:user '<exact quote>'"
+        else
+          how="  sr-file write $path --cite:user '<exact quote>' <<'EOF' ... EOF"
+        fi
+        problems="${problems}  this change moves $path to status: published and carries no citation of the user's own words approving it. An agent cannot publish on its own say-so: ask the user, and once they approve, make the change with sr-file, quoting their approval verbatim:
+$how
+  Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo) so its result can be checked before it runs. Single-quote the quote; it must match exactly one user message of this session's record — check one with \`sr-session trajectory cite '<quote>'\`. The approval rides on the command, never in the file: do not paste it or a transcript link into the unit.
 "
+        ;;
+      *)
+        problems="${problems}  $path was moved to status: published without a citation of the user's own words approving it. Take it back out of published, then, once the user approves, publish it again with sr-file, quoting their approval verbatim:
+  sr-file edit $path --old-string 'status: published' --new-string 'status: $from'
+  sr-file edit $path --old-string 'status: $from' --new-string 'status: published' --cite:user '<exact quote>'
+  The quote must match exactly one user message of this session's record — check one with \`sr-session trajectory cite '<quote>'\`. The approval rides on the command, never in the file.
+"
+        ;;
+    esac
+  fi
 fi
 
 if [ -n "$problems" ]; then
-  IFS= read -r -d '' tail <<'EOF' || true
+  refuse "PUBLISH NOT APPROVED: $path claims status: published without everything publishing needs.
 
-A unit reaches status: published only with BOTH:
-
-    ## Approval
-    The user said: [go ahead, ship it](/abs/session.jsonl:42)
-
-and, in frontmatter:
-
-    published_urls: ["https://x.com/you/status/…"]
-
-The approval is a citation LINK in the BODY (not frontmatter) whose quote
-must resolve, via cite, to a REAL USER MESSAGE approving this unit for
-publication — not the agent's own prior turn, not a tool result, not a
-harness-injected message. An agent cannot publish on its own say-so; ask the
-user, quote their answer, and cite it in the body. published_urls: records
-where it actually went out, after it does — a list, since a unit may ship on
-more than one channel.
-EOF
-  refuse "PUBLISH NOT APPROVED: $path claims status: published without a valid approval.
-
-$problems
-$tail"
+$problems"
 fi
 
 exit 0

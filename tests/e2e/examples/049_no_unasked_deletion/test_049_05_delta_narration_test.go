@@ -38,8 +38,7 @@ func TestT049_17_DeltaNarratingReplacementReachesJudgePrompt(t *testing.T) {
 	prompt := "please correct the deadline"
 	sess := "s-049-16"
 	res := e.Run(proj, sess, prompt, Turns("done",
-		Write("w1", "memories/topic.md",
-			"---\n# sr:asked \"please correct the deadline\"\n---\nkeep this line\n"+deltaNarrating+"\n"),
+		srWrite("w1", "memories/topic.md", "keep this line\n"+deltaNarrating+"\n", "please correct the deadline"),
 	))
 
 	if !res.Refused() {

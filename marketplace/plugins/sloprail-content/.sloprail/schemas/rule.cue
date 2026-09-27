@@ -40,13 +40,12 @@ applies_to?: [...string]
 
 // ================================================================ GROUNDING ===
 //
-// A rule's ORIGIN is not a frontmatter field (an earlier draft's
-// transcript_paths was dropped — see the plugin README's migration note). A
-// rule grounds itself the SAME WAY a task's body grounds its ask
-// (sloprail-tasks's task-body-is-human-authored): the RULE'S BODY carries at
-// least one `[quote](jsonl)` markdown link whose quote is the user's own
-// words and resolves via `sr-session trajectory cite --source-types user`,
-// checked by content-rule-is-grounded's script stage, then a judge confirms
-// the rule states only what the cited quote(s) say and nothing invented. No
-// separate schema field for this — the body IS the citation, exactly as a
-// task body's ask citation is.
+// A rule's ORIGIN is not stored in the rule at all — neither a frontmatter
+// field (an earlier draft's transcript_paths was dropped) nor a link to a
+// transcript in the body (a transcript path does not resolve on any other
+// machine). The citation rides on the ACTION: every create or update is made
+// with `sr-file write|edit <path> --cite:user '<exact quote>'`, which
+// content-rule-is-grounded requires (`require: [{citation: true}]`), and its
+// judge then confirms the rule states only what the cited words say and
+// nothing invented. The file keeps only the derived rule text. A body link
+// left by an older rule is neither read nor refused.

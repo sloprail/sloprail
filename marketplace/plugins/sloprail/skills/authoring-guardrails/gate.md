@@ -174,15 +174,11 @@ Three forms in use:
     (a Read tool_use, or a file-reading Bash command). Loading a skill only
     guarantees its `SKILL.md` was read, not any page it merely links to.
 - **`citation: true`** (or `citation: {source_types: [user, tool_result]}`) —
-  the action carries a citation that resolved in one of those pools (default:
-  `user`, the user's own words). For a command, the agent chains a cite in front
-  of it: `sr-session trajectory cite '<exact quote>' && git push`. For a file
-  change, it makes the change with `sr-file write|edit|delete ... --cite:user
-  '<exact quote>'`. Only kinds that carry `citations` may require one — a gate
-  on `PreCommandInvoke` or a `PreFile*` kind; on `Stop` or `PreToolUse` it is a
-  load error. `require` checks the citation **exists**; whether it grounds the
-  action is for a check, which reads `event.citations`. See
-  [events.md](events.md#citations-a-grounded-action).
+  the action carries a citation of the user's words (the default pool) or of a
+  tool's output. For a command, the agent chains a cite in front of it:
+  `sr-session trajectory cite '<exact quote>' && git push`. Only a gate on
+  `PreCommandInvoke` or a `PreFile*` kind may require one; on `Stop` or
+  `PreToolUse` it is a load error. See [grounding.md](grounding.md).
 - **`context: <name>`** — the named context is active. This is also what makes a
   Stop gate's cross-context read safe: `require: [{context: tag-declared}]`
   guarantees that context **entered this cycle before** this gate's check runs,

@@ -19,10 +19,9 @@
 # THIS LIBRARY READS NO EVENT OF ITS OWN — it walks the rule tree and the
 # filesystem only. The unit's bytes (whichever kind's content is safe to read,
 # a decision each CALLER makes for itself by checking resultKnown on a Pre kind
-# before ever handing bytes here) are the third argument, exactly as
-# cite-links.sh takes its subject as an argument rather than reading .event
-# itself. Never call this with content derived from a Pre kind you have not
-# first confirmed resultKnown for.
+# before ever handing bytes here) are the third argument, so the library
+# never reads .event itself. Never call this with content derived from a Pre
+# kind you have not first confirmed resultKnown for.
 #
 # collect_applicable_rules "<unit-path>" "<root>" "<unit-bytes>"  ->  one rule
 # FILE PATH per line, for every rule (project-wide or topic-scoped) whose

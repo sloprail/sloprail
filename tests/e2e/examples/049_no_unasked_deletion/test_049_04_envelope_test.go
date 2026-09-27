@@ -69,8 +69,7 @@ func TestT049_15_AnsweredQuestionReachesJudgePrompt(t *testing.T) {
 	// ANSWER. cite (in the shipped script, and again in the prepare) grounds it to
 	// the envelope from run 1; the prepare fetches the whole envelope there.
 	e.Run(proj, sess, "now make the edit", Turns("done",
-		Write("w1", "memories/topic.md",
-			"---\n# sr:asked \"remove the second line please\"\n---\nkeep this line\nprovenance: kept\n"),
+		srWrite("w1", "memories/topic.md", "keep this line\nprovenance: kept\n", "remove the second line please"),
 	))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
@@ -110,8 +109,7 @@ func TestT049_16_MessageGroundedRemovalHasNoEnvelopeButStillJudges(t *testing.T)
 	// grounds it to the prompt line; envelope finds no answer envelope there.
 	const prompt = "please remove the second line"
 	res := e.Run(proj, "s-049-16", prompt, Turns("done",
-		Write("w1", "memories/topic.md",
-			"---\n# sr:asked \"please remove the second line\"\n---\nkeep this line\n"),
+		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
 	))
 
 	if res.Refused() {

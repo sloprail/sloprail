@@ -63,14 +63,13 @@ func TestT049_13_AmbiguousAskBlocksViaScript(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the script refuses on the ambiguous cite"}`)
 
 	res := e.Run(proj, sess, shared, Turns("done",
-		Write("w1", "memories/topic.md",
-			"---\n# sr:asked \"please remove the second line\"\n---\nkeep this line\n"),
+		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
 	))
 
 	if !res.Refused() {
 		t.Fatalf("an ambiguous grounded ask (cite rc2) was NOT refused:\n%s", res.Output)
 	}
-	if !res.Saw("matches SEVERAL user messages") {
+	if !res.Saw("could not compute the result") || !res.Saw("resolves to exactly one message") {
 		t.Fatalf("the ambiguity (cite rc2) reason did not reach the agent:\n%s", res.Output)
 	}
 }

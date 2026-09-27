@@ -1,8 +1,16 @@
-# A unit may not reach `status: published` without a CITED USER APPROVAL
-# (approved:) and a published_url:. An agent must not be able to publish on its
-# own say-so — see check-publish.sh's header for the full mechanism, which
-# reuses sloprail-tasks's own `cite --source-types user` grounding verbatim
-# (vendored in cite-links.sh beside this guard, with its provenance noted).
+# A unit may not move INTO `status: published` without a CITED USER APPROVAL
+# on the action that moves it, and may not sit at published without
+# published_urls:. An agent must not be able to publish on its own say-so —
+# see check-publish.sh's header for the full mechanism.
+#
+# The approval is a citation carried by the command, never text in the unit:
+#   sr-file edit <UNIT.md> --old-string 'status: drafting' --new-string 'status: published' --cite:user 'ship it'
+# The session resolves the quote against its own record before the check
+# runs; the check reads `.event.citations` for one in the `user` pool.
+#
+# NOT `require: [{citation: true}]`: that would demand a citation on EVERY
+# UNIT.md write, and only the transition into published needs one. A draft
+# edit, or an edit to an already-published unit, stays uncited.
 #
 # match: ONLY the unit's own frontmatter file, UNIT.md — status: published is a
 # UNIT.md field (see unit.cue), never 02_draft.md's. unit-satisfies-rules
@@ -11,18 +19,17 @@
 match: path matches "^memories/topics/[^/]+/units/[^/]+/UNIT\\.md$"
 
 # PREVENTIVE: true — the one place in this plugin where prevention matters more
-# than anywhere else. Publishing is the irreversible step the task calls out
-# explicitly ("an agent must not be able to publish on its own say-so"); a
-# Post-only refusal would report the damage after status: published already
-# landed on disk (and, in the real world, after the content may already have
-# gone out under a false published_url claim). The Stop after-check remains the
-# backstop for a write the engine cannot derive at Pre (resultKnown false),
-# exactly like every other preventive guard in this repo.
+# than anywhere else. Publishing is the irreversible step; a Post-only refusal
+# would report the damage after status: published already landed on disk
+# (and, in the real world, after the content may already have gone out). It
+# also refuses an sr-file line mixed with other programs, whose result cannot
+# be known ahead of time. The Stop after-check remains the backstop for a
+# write the engine cannot derive at Pre (resultKnown false), exactly like
+# every other preventive guard in this repo.
 preventive: true
 
 checks:
   # Deterministic, fail-closed throughout — no model call. Whether a citation
-  # grounds to a real user message is exactly as decidable as it is in
-  # sloprail-tasks's task-body-is-human-authored stage 1, which this check
-  # mirrors.
+  # exists in the user pool is already decided by the session; the script only
+  # decides whether this write is a transition that needs one.
   - script: ./check-publish.sh
