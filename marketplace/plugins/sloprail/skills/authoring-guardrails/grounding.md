@@ -67,23 +67,30 @@ require:
 ```
 
 **Some** changes must be grounded, for example a removal, a body edit, or a
-status transition: use a script check. `require` would also demand a citation
-for every harmless edit. Read the pool you need off the event, and refuse only
-when the condition holds:
+status transition: add `when`, a script that says whether the prerequisite
+applies to this change. It reads the same payload on stdin as a script check.
+Exit 0 applies it, exit 1 waives it, and anything else (another code, a crash, a
+timeout) applies it, so a condition the script cannot decide never lifts the
+requirement:
+
+```yaml
+require:
+  - citation: {source_types: [user]}
+    when: ./removes-content.sh      # arguments allowed: ./in-review.sh --entering
+```
 
 ```bash
-cited="$(printf '%s' "$payload" \
-  | jq '[(.event.citations // [])[] | select(.sourceTypes | index("user"))] | length')"
-if [ "$removed" -gt 0 ] && [ "$cited" -eq 0 ]; then
-  echo "Removing lines needs the user's words. Make the change with sr-file on its own line: sr-file edit $path --old-string '…' --new-string '…' --cite:user '<their exact words>'" >&2
-  exit 1
-fi
+# removes-content.sh: exit 0 when a line present before is gone after.
+removed="$(comm -23 <(printf '%s' "$old" | sort -u) <(printf '%s' "$new" | sort -u) | grep -c . || true)"
+[ "${removed:-0}" -eq 0 ] && exit 1
+exit 0
 ```
 
 On `Post` kinds `oldContent` is the session baseline, so a transition such as
 "status became `published` this session" reads the same at both moments. Keep
 such a guard `preventive`: an unknown result is refused before it lands, and the
 after-check still refuses a change that reached the tree without a citation.
+`when` works on any prerequisite, on every nature.
 
 ## Judging it
 

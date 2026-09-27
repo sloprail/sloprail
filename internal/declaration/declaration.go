@@ -473,6 +473,16 @@ type Prerequisite struct {
 
 	// Citation requires the action to carry a resolved citation. Optional.
 	Citation *CitationPrerequisite `yaml:"citation"`
+
+	// When, optional, is a script that decides whether this prerequisite
+	// applies to the action at all — for a requirement that is conditional on
+	// the change ("a citation, but only when the body changes"). Resolved
+	// relative to the rule's folder and handed the same payload on stdin as a
+	// script check. Exit 0: the prerequisite applies. Exit 1: it does not, and
+	// is skipped. Any other outcome — another exit code, a script that cannot
+	// run, a timeout — applies it: a condition that could not be decided must
+	// not waive a requirement.
+	When string `yaml:"when"`
 }
 
 // kindsSet counts how many of skill/context/citation this prerequisite sets —

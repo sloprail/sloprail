@@ -15,7 +15,7 @@ import UseCase from '../../_components/UseCase.astro';
   `?raw` imports (never copied inline). docs/ and examples/ are siblings.
 */}
 import fileGuardYaml from '../../../examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/file-guard.yaml?raw';
-import removalSh     from '../../../examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/removal-has-a-grounded-ask.sh?raw';
+import removalSh     from '../../../examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/removes-content.sh?raw';
 import collectSh     from '../../../examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/collect-quote-and-diff.sh?raw';
 import judgeJ2       from '../../../examples/no-unasked-deletion/.sloprail/file-guard/preserves-unasked-content/change-is-clean-and-absolute.md.j2?raw';
 
@@ -38,9 +38,9 @@ and that quote has to resolve to something the user really said.
 
 <Steps>
 
-1. A script settles the cheap, deterministic case: pure additions pass; a removal
-   with no valid grounded quote is refused outright; a removal with a grounded
-   quote passes to the judge.
+1. A `when` script settles the cheap, deterministic case: pure additions need no
+   citation; a removal with no valid grounded quote is refused outright; a
+   removal with a grounded quote passes to the judge.
 
 2. A judge rules the two properties only a model can — that the change is clean
    and targeted to what the quote asked, and stated absolutely rather than as a
@@ -64,7 +64,7 @@ it names:
   - file-guard/
     - preserves-unasked-content/
       - file-guard.yaml
-      - removal-has-a-grounded-ask.sh
+      - removes-content.sh
       - collect-quote-and-diff.sh
       - change-is-clean-and-absolute.md.j2
 
@@ -72,11 +72,12 @@ it names:
 
 ### file-guard
 
-Matches memory files and runs preventively. The script gates the judge:
-additions pass, ungrounded removals are refused deterministically, and a grounded
-removal is prepared and handed to the model to rule on cleanliness.
+Matches memory files and runs preventively. A citation of the user's words is
+required `when` the change removes content: additions pass, ungrounded removals
+are refused deterministically, and a grounded removal is prepared and handed to
+the model to rule on cleanliness.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/preserves-unasked-content/file-guard.yaml" />
-<Code code={removalSh} lang="bash" title=".sloprail/file-guard/preserves-unasked-content/removal-has-a-grounded-ask.sh" />
+<Code code={removalSh} lang="bash" title=".sloprail/file-guard/preserves-unasked-content/removes-content.sh" />
 <Code code={collectSh} lang="bash" title=".sloprail/file-guard/preserves-unasked-content/collect-quote-and-diff.sh" />
 <Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/preserves-unasked-content/change-is-clean-and-absolute.md.j2" />

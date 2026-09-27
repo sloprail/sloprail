@@ -14,14 +14,18 @@ to answer "is this file OK?", and to keep re-firing until it is.
 match: 'path startsWith "memories/" and path endsWith ".md"'
 preventive: true
 deletions: include
+require:
+  - citation: {source_types: [user]}
+    when: ./removes-content.sh
 checks:
-  - script: ./removal-has-a-grounded-ask.sh
   - judge: ./change-is-clean-and-absolute.md.j2
     prepare: ./collect-quote-and-diff.sh
 ```
 
 `match` narrows to the files this rule is about (a glob or an expression —
-[matchers.md](matchers.md)). `checks` is the list of checks, run in order, first
+[matchers.md](matchers.md)). `require` lists what must hold before any check
+runs — here a citation of the user's words, `when` the change removes something
+([grounding.md](grounding.md)). `checks` is the list of checks, run in order, first
 refusal ending it — each a script ([script-checks.md](script-checks.md)) or a
 judge ([judge-checks.md](judge-checks.md)). `preventive` and `deletions` are the
 two nature-specific knobs, below; both are optional.

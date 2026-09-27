@@ -143,15 +143,16 @@ func TestReview_NotInReviewSkipsTheJudge(t *testing.T) {
 	}
 }
 
-// TestReview_EditedClaimWithoutProofRefusedByPreflight: a task that was ALREADY
+// TestReview_EditedClaimWithoutProofRefusedAtStop: a task that was ALREADY
 // in_review when the session began (committed, its artifact in the tree) is edited
 // in this session WITHOUT a citation — a priority change with the Write tool. That
 // is not a transition, so task-evidence permits it; but no change to it this
 // session cited tool output, so the claim reaching Stop has none on record and the
-// reviewer has nothing to weigh. The pre-flight refuses it
-// deterministically, before any model call (the stub is PASS to show the
-// deterministic layer is what refuses), naming how to cite the proof.
-func TestReview_EditedClaimWithoutProofRefusedByPreflight(t *testing.T) {
+// reviewer has nothing to weigh. task-review's declared requirement (a tool_result
+// citation `when` the task is in_review) refuses it deterministically, before any
+// model call (the stub is PASS to show the deterministic layer is what refuses),
+// naming how to cite the proof.
+func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -170,11 +171,11 @@ func TestReview_EditedClaimWithoutProofRefusedByPreflight(t *testing.T) {
 	}
 
 	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !containsStr(joined, "REVIEW CANNOT RUN") {
-		t.Fatalf("an in_review claim with no cited tool output was not refused by the pre-flight at Stop:\n%s", joined)
+	if !containsStr(joined, "was changed without a citation of an entry of this session's record in the tool_result pool") {
+		t.Fatalf("an in_review claim with no cited tool output was not refused at Stop:\n%s", joined)
 	}
 	if !containsStr(joined, "--cite:tool_result") {
-		t.Errorf("the pre-flight refusal does not say how to cite the proof:\n%s", joined)
+		t.Errorf("the refusal does not say how to cite the proof:\n%s", joined)
 	}
 }
 

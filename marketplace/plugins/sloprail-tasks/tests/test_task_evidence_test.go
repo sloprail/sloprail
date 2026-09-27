@@ -82,7 +82,7 @@ func TestEvidence_TransitionWithoutToolCitationRefused(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("a move to in_review citing no tool output was not refused:\n%s", res.Output)
 	}
-	if !res.Saw("cites no tool") || !res.Saw("--cite:tool_result") {
+	if !res.Saw("in the tool_result pool") || !res.Saw("--cite:tool_result") {
 		t.Errorf("the refusal did not name the missing proof and how to cite it:\n%s", res.Output)
 	}
 	if got := readFile(t, proj, taskPath); !strings.Contains(got, "status: in_progress") {
@@ -93,7 +93,8 @@ func TestEvidence_TransitionWithoutToolCitationRefused(t *testing.T) {
 // TestEvidence_UncitedToolEditTransitionRefused: the same transition made with the
 // plain Write tool — which cannot carry a citation at all — is refused too. The
 // task was committed in_progress, so this write changes only the frontmatter and
-// task-body has nothing to say: the refusal is task-evidence's alone.
+// task-body has nothing to say: the refusal is task-evidence's declared
+// requirement alone.
 func TestEvidence_UncitedToolEditTransitionRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -111,8 +112,8 @@ func TestEvidence_UncitedToolEditTransitionRefused(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an uncited move to in_review was not refused:\n%s", res.Output)
 	}
-	if !res.Saw("EVIDENCE REQUIRED") {
-		t.Errorf("the refusal was not task-evidence's missing-proof reason:\n%s", res.Output)
+	if !res.Saw("must be grounded in a citation of an entry of this session's record in the tool_result pool") {
+		t.Errorf("the refusal was not the missing-proof requirement:\n%s", res.Output)
 	}
 }
 
@@ -276,10 +277,10 @@ func TestEvidence_InReviewNeedsArtifacts(t *testing.T) {
 	if e.Exists(proj, taskPath) {
 		t.Errorf("the preventive guard let an in_review task with no artifacts land")
 	}
-	if !res.Saw("without its delivery evidence") || !res.Saw("artifacts: where the result is") {
+	if !res.Saw("EVIDENCE REQUIRED") || !res.Saw("names no artifacts") {
 		t.Errorf("the refusal was not the missing-artifacts reason:\n%s", res.Output)
 	}
-	if res.Saw("cites no tool") {
+	if res.Saw("in the tool_result pool") {
 		t.Errorf("the refusal claims no tool output was cited, though one was:\n%s", res.Output)
 	}
 }

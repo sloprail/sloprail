@@ -4,12 +4,12 @@ package e2e
 // file-guard (no judge), so there is no model verdict to swap from a stub to the
 // a10n-claude-mock; the D3 mock migration does not touch this test.
 //
-// The file-guard's DEFINING property, for the citation guard: it is a NON-preventive
-// file-guard on `**/*.md`, so a not-fine cited doc blocks the TURN at Stop and
-// RE-FIRES every cycle until its content satisfies the checks, then stops. The
-// shipped example writes no ledger, so a re-fire count cannot be read off it
-// directly; this installs a file-guard of the SAME shape (match: "**/*.md", a
-// deterministic script) that appends a ledger line each time it is ASKED — the same
+// The file-guard's DEFINING property, for a markdown guard: a NON-preventive
+// file-guard on `**/*.md` blocks the TURN at Stop on a not-fine doc and RE-FIRES
+// every cycle until its content satisfies the checks, then stops. The shipped
+// example is preventive and writes no ledger, so this installs a synthetic
+// file-guard (match: "**/*.md", a deterministic script) that appends a ledger
+// line each time it is ASKED — the same
 // mechanism tests/e2e/fileguard/034_fileguard_dispatch and T048_06 use. The script
 // is deterministic (no judge), so the re-fire is measured with no dependence on any
 // stub.

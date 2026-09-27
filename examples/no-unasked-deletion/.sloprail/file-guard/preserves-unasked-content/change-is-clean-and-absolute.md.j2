@@ -1,23 +1,11 @@
 # Does the change cleanly cover what was asked — and only that?
 
-The script already settled the deterministic case: a removal whose change cites
-nothing the user said was refused. Every citation below was resolved by the
-engine to a real message of this conversation. This check STILL RUNS after a
-pure addition passes the script — a script's own permit does not skip the
-checks after it, only a refusal ends the chain — so read `pure_addition` first:
-
-{% if additionalContext.pure_addition %}
-`pure_addition` is **true**: nothing was removed, so there is nothing here
-that needed an authorizing ask in the first place — the rule this guard exists
-to enforce (don't drop content nobody asked to remove) simply does not apply
-to this write. Answer PASS immediately; do not weigh the citations (possibly
-none) as evidence of anything.
-{% else %}
-`pure_addition` is **false**: a real removal happened and the script already
-confirmed the change cites the user's words. You are reached to answer the
-two questions a diff alone cannot: is the removal actually clean, and is the
-new content stated absolutely rather than as a delta.
-{% endif %}
+The engine already settled the deterministic case: this change removes content,
+and a removal that cites nothing the user said was refused before you were
+asked. Every citation below was resolved by the engine to a real message of this
+conversation. You are reached to answer the two questions a diff alone cannot:
+is the removal actually clean, and is the new content stated absolutely rather
+than as a delta.
 
 ## What the user actually asked (the change's citations)
 

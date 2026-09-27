@@ -2,10 +2,10 @@
 # prepare for stage 2 of task-body-is-human-authored: hand the judge the body it
 # rules on. The cited words need no preparing: judge-body.md.j2 reads them
 # straight off `.event.citations` (each quote with the whole message it came
-# from). Receives the SAME CheckPayload stage 1 (body-change-is-cited.sh) did.
+# from). Receives the SAME CheckPayload stage 1 (body-is-stated.sh) did.
 #
 # SKIPS THE JUDGE when no grounding was required — a status/frontmatter-only change
-# leaves the body byte-identical, and stage 1 permitted it without a citation — so
+# leaves the body byte-identical, and body-changed.sh waived the citation — so
 # no model call is spent on a write that changed nothing the judge rules on. Also
 # skips an underivable Pre write (resultKnown false): the settled bytes are judged
 # at Stop instead.

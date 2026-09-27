@@ -20,7 +20,24 @@ var (
 	newEnv = harness.New
 	Turns  = harness.Turns
 	Write  = harness.Write
+	Bash   = harness.Bash
 )
+
+// shq single-quotes s for a POSIX shell, so a Bash turn passes it verbatim.
+func shq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// citeTool renders one sr-file citation of a tool's output.
+func citeTool(quote string) string { return "--cite:tool_result " + shq(quote) }
+
+// readSource is the tool run that puts a source's text on the transcript, where a
+// write can cite it as tool output.
+func readSource(id, path string) harness.Turn { return Bash(id, "cat "+shq(path)) }
+
+// srWrite is a Bash turn that writes path with sr-file, citations on the command.
+// Run on its own in the line, so the pre-tool hook resolves it exactly.
+func srWrite(id, path, content string, cites ...string) harness.Turn {
+	return Bash(id, "sr-file write "+path+" --content "+shq(content)+" "+strings.Join(cites, " "))
+}
 
 // TestMain removes the binary build dir when this package's tests finish.
 func TestMain(m *testing.M) {

@@ -53,21 +53,28 @@ is not a citation at all, so a fabricated or paraphrased ask cites nothing.
 `sr-file` runs on its own line so its result can be computed before it runs;
 mixed into a longer command, the result is unknown and refused (see above).
 
-It is a script check, not `require: [{citation: {source_types: [user]}}]`, because the need is
-conditional: a pure append asks nothing and needs no citation.
+The requirement is declared on the guard, conditionally — a pure append asks
+nothing and needs no citation:
+
+```yaml
+require:
+  - citation: {source_types: [user]}
+    when: ./removes-content.sh
+```
 
 ## The parts — cheap gates expensive
 
-- **`removal-has-a-grounded-ask.sh`** (script) — the deterministic half. A
-  line-by-line diff of old vs new:
-  - `newContent` absent → **block** (fail-closed).
-  - no removed lines → **pass**: pure additions is "append, not rewrite".
-  - removed lines (or a deletion), no citation of the user's words → **block**
-    (unasked removal — the incident; a fabricated quote never became a citation).
-  - removed lines (or a deletion) citing the user's words → **pass to the judge**.
+- **`removes-content.sh`** (`when`) — the deterministic half. A line-by-line
+  diff of old vs new decides whether the citation applies:
+  - no removed lines → **waived**: pure additions is "append, not rewrite".
+  - removed lines, or a deletion → **applies**: an uncited removal is refused by
+    the engine before the judge is paid for (the incident; a fabricated quote
+    never became a citation).
+  - a result the engine could not compute → **applies** (fail-closed).
 
 - **`collect-quote-and-diff.sh`** (prepare) + **`change-is-clean-and-absolute.md.j2`**
-  (judge) — reached only when a real removal cites the user's words. The judge
+  (judge) — reached only when a real removal cites the user's words (the
+  prepare skips the judge on a pure addition). The judge
   rules the two things only a model can: (1) the change is **clean and
   targeted** — only what the cited words asked, nothing else dropped alongside
   it; and (2) it is

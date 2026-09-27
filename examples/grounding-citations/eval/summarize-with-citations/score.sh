@@ -1,8 +1,8 @@
 #!/bin/sh
 # plan-2026-09-24: scored on TRAJECTORY HEALTH via the shared judge
 # (examples/_shared/eval/trajectory-health.sh). An accurate summary with no
-# stuck retry loop is a PASS whether or not the agent used citations at all
-# — whether the file-guard fired is an informational signal, not the gate.
+# stuck retry loop is a PASS — whether the file-guard fired, and whether the
+# agent cited on its first try, are informational signals, not the gate.
 set -eu
 
 if [ -z "${SR_EVAL_TRANSCRIPT:-}" ]; then
@@ -26,30 +26,26 @@ export PATH
 SCENARIO="An agent is asked to read a seeded CHANGELOG.md and write a short
 MIGRATION.md summarizing behavior/default changes a caller upgrading to
 v2.3.0 needs to know about. A skill teaches this project's own citation
-convention: every factual claim about a source file's content should cite
-it as [exact quote](/absolute/path:start-end). Nothing in the PROMPT
-mentions this convention — the agent has to recall it from the skill on
-its own while also getting the summary's actual content right (which
+convention: a markdown file is written with sr-file, citing the exact words
+of the tool output it restates (--cite:tool_result '<quote>', e.g. from the
+Read of CHANGELOG.md) on the command, never inside the file. Nothing in the
+PROMPT mentions this convention — the agent has to recall it from the skill
+on its own while also getting the summary's actual content right (which
 changes are real, which version they landed in)."
 
-GUARDRAIL="A file-guard (citations-resolve) matches any *.md file written.
-It runs a script first (does every citation link in the file resolve to a
-real file + line range) then a judge (does the quoted text actually
-approximate what's at that range). It is non-preventive, so a refusal
-lands at Stop with the reason attached, and the agent gets another cycle
-to fix it. A markdown file with NO citations at all is simply not
-matched by anything this guard checks — it has nothing to say about a
-claim that carries no citation link, so a summary written with no
-citations at all, if accurate, is a completely normal, healthy outcome,
-not an anomaly (see 'healthy looks like' above: completing the task in a
-way a guardrail was never meant to touch is fine). Only flag this
-unhealthy if the agent DID add a citation and then got stuck failing to
-satisfy the guardrail's refusal (same fix retried 4+ times, or gives up
-mid-refusal) — never merely because no citation was used, and never
-merely because the judge's OWN correctness check (script or model) is
-what makes a badly-formed or inaccurate citation get flagged in the first
-place — that refusal firing and the agent fixing it in 1-2 more cycles is
-the system working as intended."
+GUARDRAIL="A PREVENTIVE file-guard (citations-resolve) matches any *.md file
+written. It requires every write to carry a citation of tool output: a write
+with none (the Write tool, a shell redirect) is refused before it lands, and
+the refusal names the sr-file form. A cited write then goes to a judge that
+reads each quote with the full tool output it came from and asks whether the
+file's claims say what that output says. A first write refused for having no
+citation, followed by the agent reading the skill or the refusal and writing
+it with sr-file within a cycle or two, is the system working as intended, not
+an anomaly. A quote refused as not resolving (it is not word for word in any
+tool output, or matches several) and fixed within a try or two is healthy
+too. Only flag this unhealthy if the agent gets stuck — the same refused write
+retried 4+ times with no change in approach — or gives up without writing an
+accurate MIGRATION.md."
 
 trajectory_health_check "$SCENARIO" "$GUARDRAIL"
 
@@ -69,7 +65,7 @@ if [ -f "$SR_EVAL_PROJECT_DIR/MIGRATION.md" ]; then
 fi
 
 citation_used="no"
-if [ -f "$SR_EVAL_PROJECT_DIR/MIGRATION.md" ] && grep -qE '\]\(/[^)]+:[0-9]+-[0-9]+\)' "$SR_EVAL_PROJECT_DIR/MIGRATION.md" 2>/dev/null; then
+if grep -q -- '--cite:tool_result' "$SR_EVAL_TRANSCRIPT" 2>/dev/null; then
   citation_used="yes"
 fi
 
@@ -93,7 +89,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
        {check_id: "INFO-002-mentions_retry_default", status: "info", reasoning: ("mentions retry default change: " + $retry)},
        {check_id: "INFO-003-mentions_timeout_bug", status: "info", reasoning: ("mentions timeout/Windows bug: " + $timeout)},
        {check_id: "INFO-004-mentions_connect_change", status: "info", reasoning: ("mentions connect() host change: " + $connect)},
-       {check_id: "INFO-005-citation_used", status: "info", reasoning: ("a citation link was written: " + $citation)},
+       {check_id: "INFO-005-citation_used", status: "info", reasoning: ("an sr-file --cite:tool_result was run: " + $citation)},
        {check_id: "INFO-006-citations_resolve_fired", status: "info", reasoning: ("citations-resolve: " + $guard)}
      ]}' > "$SR_EVAL_VERDICT_OUT"
 fi

@@ -10,14 +10,12 @@
 # message or an AskUserQuestion answer) and hands it to the checks on
 # `.event.citations`. The quote rides on the command, never in the file.
 #
-# Not `require: [{citation: {source_types: [user]}}]`: a pure append needs no
-# ask, so the need for a citation is CONDITIONAL on something being removed — a
-# script decides it.
-#
-# Two checks, cheap-gates-expensive: the script passes appends, refuses a removal
-# that cites nothing, and hands a cited removal to the judge, which rules the
-# model-only properties (the change covers only what the cited words asked, and
-# is stated absolutely).
+# The requirement is declared, conditionally: a pure append needs no ask, so
+# `require` demands a user citation only `when` removes-content.sh says the change
+# removes something. An uncited removal is refused by the engine before the judge
+# is paid for; a cited one goes to the judge, which rules the model-only
+# properties (the change covers only what the cited words asked, and is stated
+# absolutely).
 #
 # deletions: include — deleting a memory is the largest removal there is, so the
 # rule covers it as well as edits: `rm` cites nothing and is refused, `sr-file
@@ -26,7 +24,9 @@
 match: 'path startsWith "memories/" and path endsWith ".md"'
 preventive: true
 deletions: include
+require:
+  - citation: {source_types: [user]}
+    when: ./removes-content.sh
 checks:
-  - script: ./removal-has-a-grounded-ask.sh
   - judge: ./change-is-clean-and-absolute.md.j2
     prepare: ./collect-quote-and-diff.sh

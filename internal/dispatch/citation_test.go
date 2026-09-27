@@ -1,6 +1,8 @@
 package dispatch
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,6 +49,38 @@ func TestRequireCitation(t *testing.T) {
 			if tc.says != "" {
 				assert.Contains(t, v.Reason, tc.says)
 			}
+		})
+	}
+}
+
+// A prerequisite's `when` script decides whether it applies: only exit 1
+// waives it; exit 0, any other code, or a script that cannot run applies it.
+func TestRequireWhen(t *testing.T) {
+	dir := t.TempDir()
+	writeScript := func(name, body string) string {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755))
+		return "./" + name
+	}
+	for name, tc := range map[string]struct {
+		when   string
+		refuse bool
+	}{
+		"exit 0 applies it":            {writeScript("applies.sh", "exit 0"), true},
+		"exit 1 waives it":             {writeScript("waives.sh", "exit 1"), false},
+		"another code applies it":      {writeScript("broken.sh", "exit 2"), true},
+		"a missing script applies it":  {"./missing.sh", true},
+		"it reads the payload":         {writeScript("reads.sh", `jq -e '.event.kind == "PreFileUpdate"' >/dev/null || exit 1`), true},
+		"it reads the payload, waives": {writeScript("reads-no.sh", `jq -e '.event.kind == "PreFileCreate"' >/dev/null || exit 1`), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := declaration.Prerequisite{
+				Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}},
+				When:     tc.when,
+			}
+			v, err := Runner{}.Run(Request{Nature: NatureFileGuard, Dir: dir, Require: []declaration.Prerequisite{p}, Event: citedEvent("PreFileUpdate")})
+			require.NoError(t, err)
+			assert.Equal(t, tc.refuse, v.Refused, "reason: %s", v.Reason)
 		})
 	}
 }

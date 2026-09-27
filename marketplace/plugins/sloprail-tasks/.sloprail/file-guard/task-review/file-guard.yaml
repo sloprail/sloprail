@@ -55,12 +55,16 @@
 #      to_do/in_progress and must cost nothing); every gates/*.sh under the
 #      task must STILL pass (run faithfully, the same way task-gates-hold runs
 #      them at the start); and the delivery evidence must be THERE before a
-#      judge is shown anything — at least one tool_result citation on the event,
-#      at least one artifact, every artifact existing in the tree. Evidence that
-#      is absent leaves nothing real to review, so it is refused here without a
-#      model call. task-evidence-resolves normally refuses these first on the
-#      transition; this also covers a task already in_review when the session
-#      began, edited this session with no tool output cited.
+#      judge is shown anything — at least one artifact, every one existing in
+#      the tree. Evidence that is absent leaves nothing real to review, so it is
+#      refused here without a model call.
+#
+#   Before either check, `require` demands a tool_result citation `when` the task
+#   is in_review (../task-evidence-resolves/in-review.sh, the same predicate that
+#   guard applies to the transition). task-evidence-resolves normally refuses an
+#   uncited claim first, on the transition; this also covers a task already
+#   in_review when the session began, edited this session with no tool output
+#   cited.
 #   2. PREPARE + JUDGE: prepare (expand-evidence.sh) expands the evidence to the
 #      bytes — each tool_result citation to its quote plus the full tool result at
 #      its line, each artifact to the cited tree lines — and collects every
@@ -93,6 +97,10 @@
 # `^memories/tasks/[^/]+/[^/]+/TASK\.md$`, as a `matches` expression (a single-`*`
 # glob is one segment and would not require two arbitrary levels precisely).
 match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
+
+require:
+  - citation: {source_types: [tool_result]}
+    when: ../task-evidence-resolves/in-review.sh
 
 checks:
   # The gate + pre-flight: exits 0 for a non-in_review task, refuses an in_review

@@ -17,26 +17,22 @@
 # resolves every quote against its record before any check runs and puts the ones
 # that resolve on `.event.citations`, so a citation a check sees EXISTS.
 #
-# WHY NOT `require: [{citation: {source_types: [user]}}]`. That makes a citation
-# mandatory for EVERY
-# write the guard covers, and grounding here is conditional: only a create or a
-# BODY change needs one. A status/priority/depends_on edit leaves the body
-# byte-identical and is permitted uncited. So the condition lives in the script.
+# THE REQUIREMENT IS DECLARED, CONDITIONALLY. `require` below demands a user
+# citation, but only `when` body-changed.sh says the write sets the ask: a create,
+# or a BODY change. A status/priority/depends_on edit leaves the body
+# byte-identical, so body-changed.sh exits 1 and the write needs no citation. An
+# uncited write that does set the ask is refused by the engine before any check
+# runs, naming the sr-file form.
 #
 # TWO checks, cheap first:
 #
-#   1. SCRIPT (body-change-is-cited.sh): deterministic, no model. If the write
-#      creates the task, or its body differs from `.event.oldContent` (the file on
-#      disk at Pre, the session baseline at Post), `.event.citations` must hold at
-#      least one citation whose sourceTypes include `user`; otherwise it refuses,
-#      naming the exact sr-file form. A body-unchanged write is permitted here.
-#      Existing bodies that still carry the old inline links are neither required
-#      nor refused.
+#   1. SCRIPT (body-is-stated.sh): deterministic, no model. The task must have a
+#      body — prose under the frontmatter.
 #   2. PREPARE + JUDGE: prepare (resolve-cited-messages.sh) SKIPS the judge when
-#      no grounding was required (no model call on a status-only change); otherwise
-#      it hands the judge each cited quote and its transcript `path:line` as the
-#      ground truth. judge-body.md.j2 asks whether the body CORRESPONDS to the cited
-#      words and holds THAT AND NOTHING ELSE.
+#      the body did not change (no model call on a status-only change); otherwise
+#      it hands the judge the body. judge-body.md.j2 renders each citation — the
+#      quote and the whole message it came from — and asks whether the body
+#      CORRESPONDS to the cited words and holds THAT AND NOTHING ELSE.
 #
 # THE POST MOMENT AND UNCITED FRONTMATTER EDITS. A Post event at Stop carries
 # every citation the path's changes were made with this session — cited changes
@@ -63,10 +59,14 @@ match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 # backstop for a write that reached the tree without passing pre-tool.
 preventive: true
 
+require:
+  - citation: {source_types: [user]}
+    when: ./body-changed.sh
+
 checks:
   # Stage 1 — deterministic, fail-closed. Refuses with `{"reason": "..."}` on
   # stdout, exit non-zero.
-  - script: ./body-change-is-cited.sh
+  - script: ./body-is-stated.sh
 
   # Stage 2 — the judge, reached only when stage 1 passed, and skipped by its
   # prepare when the body did not change. model is size-md (the engine default

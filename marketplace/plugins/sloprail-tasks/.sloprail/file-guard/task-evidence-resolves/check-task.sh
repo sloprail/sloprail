@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Refuses a TASK.md whose frontmatter does not satisfy the plugin's task.cue, whose
-# artifacts do not resolve, or whose move INTO in_review is not grounded in the
-# tool output that proves the work.
+# Refuses a TASK.md whose frontmatter does not satisfy the plugin's task.cue, or
+# whose artifacts do not resolve or, in in_review, are missing.
 #
 # THE DETERMINISTIC FLOOR. Three questions, no model:
 #   1. SCHEMA — the product's own `sr-file validate` vets the frontmatter against
@@ -10,28 +9,19 @@
 #      the validated frontmatter as JSON; it parses none of its own.
 #   2. ARTIFACTS RESOLVE — every `<repo-relative-file>:<ranges>` names a file under
 #      the repo whose cited lines exist; an in_review task names at least one.
-#   3. PROOF RIDES ON THE TRANSITION — a write that moves the task INTO in_review
-#      (old status is not in_review, new status is) must carry at least one
-#      citation whose sourceTypes include `tool_result`: the output of the test run
-#      or build that proves the work, cited on the command that makes the claim —
-#      `sr-file edit … --cite:tool_result '<exact output>'`. The session resolved
-#      it against its own record before this ran, so a citation present EXISTS; a
-#      summary in the agent's own words, the user's words, or an answer the user
-#      gave to a question never resolves as tool output. The task file carries no
-#      transcript path of any kind.
+#   3. PROOF RIDES ON THE TRANSITION — not this script's: the guard's `require`
+#      demands a tool_result citation on a write that moves the task INTO
+#      in_review (`when: ./in-review.sh --entering`), and the engine refuses an
+#      uncited one before this runs. The task file carries no transcript path of
+#      any kind.
 #
 # WHAT THIS IS NOT. It does NOT check the BODY's grounding in the user's ask — that
 # is task-body-is-human-authored's, against the `user` pool. And it makes NO
 # judgement about whether the cited output SUBSTANTIATES the claim — that is
 # task-review's model call. See the plugin README for the three-way split.
 #
-# THE TWO MOMENTS. Preventive: a Pre kind reads the pending bytes and compares with
-# `.event.oldContent` (the file on disk); a Post kind at Stop reads the settled
-# bytes and compares with `.event.oldContent` (the session baseline) — a create has
-# none, so creating a task directly in in_review is a transition too. At Stop the
-# event carries every citation the path's changes were made with this session
-# (cited changes accumulate; an uncited one leaves them in place), so a
-# transition cited at pre-tool is still proven at Stop.
+# THE TWO MOMENTS. Preventive: a Pre kind reads the pending bytes; a Post kind at
+# Stop reads the settled bytes on disk.
 #
 # THE REFUSAL CONTRACT (internal/dispatch/exec.go): exit 0 permits; any non-zero
 # exit refuses, carrying `{"reason": "..."}` on stdout. Fails closed throughout —
@@ -173,52 +163,12 @@ fi
 
 [ "$status" = "in_review" ] || exit 0
 
-# THE PRIOR STATUS, to tell a move INTO in_review from an edit of a task already
-# there. An update carries the prior bytes (disk at Pre, the session baseline at
-# Post); a create has none. Prior bytes that do not validate have no status — the
-# honest reading is that the task was not in review.
-old_status=""
-case "$kind" in
-  PreFileUpdate | PostFileUpdate)
-    old_doc="$(field '.event.oldContent // ""' | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)"
-    old_status="$(printf '%s' "$old_doc" | jq -r '.status // empty' 2>/dev/null)"
-    ;;
-esac
-
-n_proof=0
-if [ "$old_status" != "in_review" ]; then
-  n_proof="$(field '[(.event.citations // [])[] | select(((.sourceTypes // []) | index("tool_result")) != null)] | length')"
-fi
-
-missing=""
+# The proof that the work happened — tool output cited on the move into
+# in_review — is the guard's declared `require`, conditioned on
+# `in-review.sh --entering`; it never reaches this script uncited. What is left
+# here is where the result is.
 if [ "${n_art:-0}" -eq 0 ]; then
-  missing="${missing}  - artifacts: where the result is — the files the work produced or changed,
-    repo-relative, at the lines that changed:  artifacts: [\"src/foo.go:10-60\"]
-"
-fi
-if [ "$old_status" != "in_review" ] && [ "${n_proof:-0}" -eq 0 ]; then
-  missing="${missing}  - proof it happened: this write moves the task INTO in_review and cites no tool
-    output. Run what proves the work (the tests, the build), then make the status
-    change with sr-file, quoting that output exactly, ON ITS OWN in the Bash line
-    (nothing else on the line but sr-file calls, &&, and echo):
-
-      sr-file edit $path --old-string 'status: ${old_status:-in_progress}' --new-string 'status: in_review' --cite:tool_result '<exact line of the output>'
-
-    --cite:tool_result is repeatable: cite each result that proves a part of the
-    claim. The quote must match exactly one tool result in this session — check it
-    with \`sr-session trajectory cite --source-types tool_result '<quote>'\`. Your
-    own summary, the user's words, or an answer to a question are not tool output.
-"
-fi
-
-if [ -n "$missing" ]; then
-  case "$kind" in
-    Post*) head="EVIDENCE REQUIRED: $path reached in_review this session without its delivery evidence on record: no change to it this session cited tool output." ;;
-    *)     head="EVIDENCE REQUIRED: $path is moving to in_review without its delivery evidence." ;;
-  esac
-  refuse "$head An in_review task claims the work is finished; the reviewer weighs that claim against evidence, so it must carry:
-
-$missing"
+  refuse "EVIDENCE REQUIRED: $path is in_review but names no artifacts. An in_review task claims the work is finished; the reviewer weighs that claim against evidence, so it must say where the result is — the files the work produced or changed, repo-relative, at the lines that changed:  artifacts: [\"src/foo.go:10-60\"]"
 fi
 
 exit 0

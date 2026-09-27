@@ -59,6 +59,15 @@ func (r Runner) checkRequire(req Request) (Verdict, error) {
 // tried first only because it is the field listed first in the spec; the two are
 // mutually exclusive so order is immaterial.
 func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verdict, error) {
+	if p.When != "" {
+		applies, err := r.prerequisiteApplies(req, p.When)
+		if err != nil {
+			return Verdict{}, err
+		}
+		if !applies {
+			return pass(), nil
+		}
+	}
 	if p.Skill != "" {
 		return r.checkSkill(req, p.Skill, p.Files)
 	}
@@ -71,6 +80,31 @@ func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verd
 	// Neither set: a loaded rule cannot reach here (the validator refuses an empty
 	// prerequisite), so an empty one establishes nothing to fail and passes.
 	return pass(), nil
+}
+
+// prerequisiteApplies runs a prerequisite's `when` script against the check
+// payload. Only exit 1 waives the prerequisite; every other outcome — exit 0,
+// another code, a script that could not run or did not answer — applies it,
+// so a condition that could not be decided never lifts a requirement.
+func (r Runner) prerequisiteApplies(req Request, when string) (bool, error) {
+	payload, err := r.checkPayloadJSON(req)
+	if err != nil {
+		return false, err
+	}
+	res, err := r.runScript(scriptCall{
+		Dir:            req.Dir,
+		Script:         when,
+		Stdin:          payload,
+		GuardName:      req.GuardName,
+		Workspace:      req.Workspace,
+		SessionID:      req.SessionID,
+		TranscriptPath: req.TranscriptPath,
+		LaunchedBy:     req.LaunchedBy,
+	})
+	if err != nil {
+		return false, err
+	}
+	return res.Passed || res.Code != 1, nil
 }
 
 // checkSkill refuses unless the session's own trajectory holds either a real

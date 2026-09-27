@@ -15,6 +15,7 @@ func TestLoad_CitationPrerequisiteShapes(t *testing.T) {
 match: "**/*.md"
 require:
   - citation: {source_types: [user]}
+    when: ./removes-content.sh --strict
 `,
 		"gate/pools/gate.yaml": `
 on:
@@ -29,6 +30,7 @@ require:
 	bare := loaded.FileGuards[0].Require[0].Citation
 	require.NotNil(t, bare)
 	assert.Equal(t, []transcript.SourceType{transcript.SourceUser}, bare.Pools())
+	assert.Equal(t, "./removes-content.sh --strict", loaded.FileGuards[0].Require[0].When)
 	pools := loaded.Gates[0].Require[0].Citation
 	require.NotNil(t, pools)
 	assert.Equal(t, []transcript.SourceType{transcript.SourceUser, transcript.SourceToolResult}, pools.Pools())

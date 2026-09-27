@@ -190,10 +190,17 @@ func runFileGuardsPreventive(
 				// missing require still refuses, so this is a message improvement, not
 				// a change in what is enforced.
 				reqReq := dispatchcore.Request{
+					Nature:         dispatchcore.NatureFileGuard,
 					Require:        g.Require,
 					Event:          e,
 					TranscriptPath: scope.Transcript,
 					Context:        contextMap,
+					// A prerequisite's `when` script runs from the guard's folder.
+					Dir:        g.Dir,
+					GuardName:  g.Name,
+					Workspace:  scope.Workspace,
+					SessionID:  scope.SessionID,
+					LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
 				}
 				if v, err := runner.CheckRequire(reqReq); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %s require: %v\n", g.Attribution(), err)

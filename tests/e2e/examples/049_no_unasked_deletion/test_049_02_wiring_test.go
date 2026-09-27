@@ -35,10 +35,10 @@ func seedCommittedMemory(t *testing.T, e *env, proj, rel, body string) {
 	e.Git(proj, "commit", "-m", "seed "+rel)
 }
 
-// T049_11: the prepared quote AND the unified diff reach the judge's prompt. A
-// grounded-ask removal passes the script to the judge; collect-quote-and-diff.sh
-// hands the judge the asked_quote and a `diff -u` of old->new under
-// additionalContext. Both the quote and the diff's collaterally-removed line must
+// T049_11: the cited quote AND the unified diff reach the judge's prompt. A
+// grounded-ask removal reaches the judge; the template renders the quote off
+// `.event.citations`, and collect-quote-and-diff.sh hands it a `diff -u` of
+// old->new under additionalContext. Both the quote and the diff's collaterally-removed line must
 // appear in the rendered prompt — only possible if prepare ran AND the template
 // interpolated its output. (A passing verdict here, so the point is the PROMPT, not
 // the block; the block path with the same real diff is T049_09.)
@@ -47,7 +47,7 @@ func TestT049_11_PreparedQuoteAndDiffReachJudgePrompt(t *testing.T) {
 	proj := nudProject(t, e)
 
 	// A distinctive collateral line the removal also drops, and a distinctive
-	// user prompt the marker quotes (so cite resolves it and the script passes).
+	// user prompt the change cites (so the citation resolves).
 	const collateral = "provenance: ZZ_PROV derived from source X"
 	const prompt = "please remove the second line"
 	seedCommittedMemory(t, e, proj, "memories/topic.md",

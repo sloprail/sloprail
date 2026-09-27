@@ -10,14 +10,15 @@ package e2e
 // words on the command that makes the change (`sr-file ... --cite:user '<quote>'`),
 // never a marker in the file.
 //
-// One SCRIPT + one JUDGE:
-//   - SCRIPT (removal-has-a-grounded-ask.sh): pure additions pass; a removal (or a
-//     delete) citing nothing the user said is refused; one citing the user's words
-//     passes to the judge; an unknown result (a quote that does not resolve, so
-//     sr-file's dry run fails, or sr-file mixed into a longer line) fails closed.
-//   - JUDGE (change-is-clean-and-absolute.md.j2): the change is clean & targeted
-//     (only what the cited words asked) and absolute (states the final content, not
-//     a delta narrative).
+// One conditional REQUIREMENT + one JUDGE:
+//   - REQUIRE a user citation `when: ./removes-content.sh`: pure additions need
+//     none; a removal (or a delete) citing nothing the user said is refused by the
+//     engine; an unknown result (a quote that does not resolve, so sr-file's dry
+//     run fails, or sr-file mixed into a longer line) fails closed.
+//   - JUDGE (change-is-clean-and-absolute.md.j2), reached for a cited removal only
+//     (its prepare skips a pure addition): the change is clean & targeted (only
+//     what the cited words asked) and absolute (states the final content, not a
+//     delta narrative).
 //
 // Because the guard is PREVENTIVE, refusals arrive at PRE-TOOL as a deny — read
 // with res.Refused() and res.Saw(reason), NOT at Stop. A cited ADMIT lets the
@@ -42,13 +43,9 @@ func nudProject(t *testing.T, e *env) string {
 	return proj
 }
 
-// T049_01: HAPPY PATH (pure additions) — an append that removes nothing passes
-// the script (no removed lines) and the judge (nothing to be unclean about), so
-// the write is admitted.
-//
-// The judge DOES run here (it is the second check, and a passing script lets it
-// run even on additions), so a passing verdict is what admits — proven by
-// TestT049_03 which flips only the verdict and gets a block.
+// T049_01: HAPPY PATH (pure additions) — an append removes nothing, so it needs
+// no citation (removes-content.sh waives it) and the judge is skipped: the write
+// is admitted. TestT049_03 flips the verdict and still gets an admit.
 func TestT049_01_PureAdditionAdmits(t *testing.T) {
 	e := newEnv(t)
 	proj := nudProject(t, e)
@@ -69,14 +66,14 @@ func TestT049_01_PureAdditionAdmits(t *testing.T) {
 	}
 }
 
-// T049_02: SCRIPT REFUSAL — a REMOVAL with NO sr:asked marker. Lines were removed
-// and the file declares no authorizing quote, so the script refuses at pre-tool
+// T049_02: REQUIREMENT REFUSAL — a REMOVAL citing nothing. Lines were removed and
+// the change carries no citation, so the engine refuses at pre-tool
 // (the unasked rewrite this rule exists to catch), and its reason reaches the
 // agent. The old content is still on disk (the write was denied, not undone).
 func TestT049_02_RemovalWithoutMarkerBlocks(t *testing.T) {
 	e := newEnv(t)
 	proj := nudProject(t, e)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the script refuses first"}`)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 
 	e.WriteFile(proj, "memories/topic.md", "keep this line\nremove this line\n")
 
@@ -88,8 +85,8 @@ func TestT049_02_RemovalWithoutMarkerBlocks(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("a removal with no sr:asked marker was NOT refused at pre-tool:\n%s", res.Output)
 	}
-	if !res.Saw("cites nothing the user said") {
-		t.Fatalf("the no-marker (script) reason did not reach the agent:\n%s", res.Output)
+	if !res.Saw("must be grounded in a citation of the user's own words") {
+		t.Fatalf("the uncited-removal reason did not reach the agent:\n%s", res.Output)
 	}
 	// The write was denied, so the file still holds its original content.
 	if !e.Exists(proj, "memories/topic.md") {
@@ -97,14 +94,13 @@ func TestT049_02_RemovalWithoutMarkerBlocks(t *testing.T) {
 	}
 }
 
-// T049_03: JUDGE REFUSAL — a pure addition, but the judge returns a FAILING
-// verdict. This is the same setup as T049_01 with only the verdict flipped, which
-// proves the judge really runs on an addition (it is not short-circuited) and its
-// reasoning reaches the agent. The block arrives at pre-tool (preventive).
-func TestT049_03_JudgeFailBlocks(t *testing.T) {
+// T049_03: a PURE ADDITION never reaches the judge — its prepare skips it, so
+// even a failing verdict stub cannot block the append, and the write lands. An
+// append removes nothing, so nothing needed authorizing and no model call is due.
+func TestT049_03_PureAdditionSkipsTheJudge(t *testing.T) {
 	e := newEnv(t)
 	proj := nudProject(t, e)
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR049 the added line narrates a delta instead of stating final content"}`)
+	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR049 the judge ran on a pure addition"}`)
 
 	e.WriteFile(proj, "memories/topic.md", "first line\n")
 
@@ -113,11 +109,8 @@ func TestT049_03_JudgeFailBlocks(t *testing.T) {
 		Write("w1", "memories/topic.md", "first line\nsecond line appended\n"),
 	))
 
-	if !res.Refused() {
-		t.Fatalf("a failing judge verdict did not block the write at pre-tool:\n%s", res.Output)
-	}
-	if !res.Saw("SR049 the added line narrates a delta") {
-		t.Fatalf("the judge's reasoning did not reach the agent:\n%s", res.Output)
+	if res.Refused() || res.Saw("SR049 the judge ran on a pure addition") {
+		t.Fatalf("a pure addition was judged:\n%s", res.Output)
 	}
 }
 
@@ -141,7 +134,7 @@ func TestT049_05_RmDeleteFailsClosed(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an rm of a memories file was NOT refused at pre-tool:\n%s", res.Output)
 	}
-	if !res.Saw("cites nothing the user said asking for it") {
+	if !res.Saw("must be grounded in a citation of the user's own words") || !res.Saw("sr-file delete memories/topic.md") {
 		t.Fatalf("the uncited-delete reason did not reach the agent:\n%s", res.Output)
 	}
 	// Refused at pre-tool means the delete was denied — the file survives.
@@ -152,7 +145,7 @@ func TestT049_05_RmDeleteFailsClosed(t *testing.T) {
 
 // T049_18: A CITED DELETE GOES TO THE JUDGE — the whole-file removal made the
 // grounded way, `sr-file delete <path> --cite:user '<quote>'`, carries the user's
-// words on the event; the script passes it and the judge (stubbed pass) admits
+// words on the event; the requirement is met and the judge (stubbed pass) admits
 // it. The file is gone. The complement of T049_05: `rm` cites nothing, this does.
 func TestT049_18_CitedDeleteAdmits(t *testing.T) {
 	e := newEnv(t)
@@ -218,7 +211,7 @@ func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
 		res := e.Run(proj, sess, prompt, Turns("done",
 			Write("w1", "memories/topic.md", "keep this line\n"),
 		))
-		if !res.Refused() || !res.Saw("cites nothing the user said") {
+		if !res.Refused() || !res.Saw("must be grounded in a citation of the user's own words") {
 			t.Fatalf("WITHOUT the marker, expected the no-marker refusal:\n%s", res.Output)
 		}
 	}
@@ -241,10 +234,9 @@ func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
 }
 
 // T049_08: GROUNDED ASK ADMITS — the headline happy path for a REMOVAL. A removal
-// whose sr:asked quote IS the user's own words resolves via
-// `cite --path "$transcript_path"`, passes the script, and the judge rules the
-// change clean & absolute. The write is admitted. This runs against the SHIPPED
-// example verbatim — the grounding is done by the shipped script itself.
+// citing the user's own words resolves against the transcript, meets the
+// requirement, and the judge rules the change clean & absolute. The write is
+// admitted. This runs against the SHIPPED example verbatim.
 func TestT049_08_GroundedAskAdmits(t *testing.T) {
 	e := newEnv(t)
 	proj := nudProject(t, e)
@@ -264,7 +256,7 @@ func TestT049_08_GroundedAskAdmits(t *testing.T) {
 }
 
 // T049_09: GROUNDED ASK, UNCLEAN CHANGE — the collateral case (coverage bar f).
-// The removal has a real grounded ask, so the script passes to the judge, but the
+// The removal has a real grounded ask, so it reaches the judge, but the
 // diff ALSO dropped an unrelated provenance line the quote did not authorize. The
 // JUDGE refuses (not clean & targeted), and its reasoning reaches the agent.
 //
@@ -322,7 +314,7 @@ func TestT049_10_FabricatedAskBlocksViaScript(t *testing.T) {
 	}
 	// sr-file's dry run fails on the unresolvable quote, and the refusal quotes
 	// its own reason rather than a generic "could not compute".
-	if !res.Saw("sr-file could not compute the change") || !res.Saw("does not resolve") {
+	if !res.Saw("sr-file said") || !res.Saw("does not resolve") {
 		t.Fatalf("the fabricated-ask reason did not reach the agent:\n%s", res.Output)
 	}
 }

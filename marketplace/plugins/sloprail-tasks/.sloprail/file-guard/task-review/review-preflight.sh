@@ -20,16 +20,13 @@
 #      JUDGE call instead, alongside the delivery evidence, so a judgment gate
 #      costs no second model call.
 #   3. PRE-FLIGHT: there must be DELIVERY evidence to put in front of a judge —
-#      at least one tool_result citation on the event (the tool output that
-#      proves the work, cited on the write that made the claim with `sr-file …
-#      --cite:tool_result`, already resolved by the session), and at least one
-#      artifact, every one resolving in the tree. Evidence that is absent or does
-#      not resolve leaves NOTHING REAL to review, so it is refused here, naming
-#      what is missing — cheap gates expensive. task-evidence-resolves normally
-#      refuses these first on the transition; this also covers a task that was
-#      already in_review when the session began and is edited this session with
-#      no tool output cited (not a transition, so nothing proves it on record), so
-#      the judge is never asked to weigh a claim with no proof on record.
+#      at least one artifact, every one resolving in the tree. Evidence that is
+#      absent or does not resolve leaves NOTHING REAL to review, so it is refused
+#      here, naming what is missing — cheap gates expensive. The proof that the
+#      work happened — a tool_result citation — is the guard's declared `require`
+#      (`when` the task is in_review), checked before this runs; it also covers a
+#      task already in_review when the session began and edited with no tool
+#      output cited, so the judge is never asked to weigh a claim with no proof.
 #
 # This is an AFTER-CHECK (the guard is not preventive), so it only ever fires on a
 # settled Post event: the bytes on disk ARE the answer, and `.event.citations` are
@@ -126,7 +123,6 @@ fi
 
 art_lines="$(printf '%s' "$doc" | jq -r '(.artifacts // [])[]' 2>/dev/null)"
 n_art="$(printf '%s' "$doc" | jq -r '(.artifacts // []) | length' 2>/dev/null)"
-n_proof="$(printf '%s' "$event" | jq -r '[(.event.citations // [])[] | select(((.sourceTypes // []) | index("tool_result")) != null)] | length' 2>/dev/null)"
 
 problems=""
 
@@ -142,31 +138,18 @@ done <<EOF
 $art_lines
 EOF
 
-# BOTH kinds are mandatory in in_review — cited tool output (proof it happened) and
-# artifacts (where the result is) — and the pre-flight names the missing one rather
-# than letting the judge see half the evidence and guess.
-if [ "${n_proof:-0}" -eq 0 ]; then
-  problems="${problems}  proof — no tool output is cited for this claim. The write that leaves the task in in_review must cite the output that proves the work (a test run, a build) — no change to it this session did
-"
-fi
+# Artifacts (where the result is) are mandatory in in_review; the other half, cited
+# tool output proving the work happened, is the guard's declared `require` and
+# never reaches this script missing.
 if [ "${n_art:-0}" -eq 0 ]; then
   problems="${problems}  artifacts — an in_review task must cite where the produced result is (tree files)
 "
 fi
 
 if [ -n "$problems" ]; then
-  IFS= read -r -d '' tail <<'EOF' || true
-There is nothing to review until the claim carries evidence a reviewer can open.
-Proof that the work happened is tool output cited on the write itself — run what
-proves it, then make the change with sr-file ON ITS OWN in the Bash line, quoting
-the output exactly (the quote must match exactly one tool result this session):
-
-EOF
-  refuse "REVIEW CANNOT RUN: $path is in_review but its delivery evidence is missing or does not resolve.
+  refuse "REVIEW CANNOT RUN: $path is in_review but its delivery evidence is missing or does not resolve. There is nothing to review until the claim carries evidence a reviewer can open.
 
 $problems
-$tail  sr-file edit $path --old-string '<old text>' --new-string '<new text>' --cite:tool_result '<exact line of the output>'
-
 An ARTIFACT is <repo-relative-file>:<ranges> in the frontmatter, pointing at the produced files in the tree. The status stays in_review; add the evidence and write the task again."
 fi
 

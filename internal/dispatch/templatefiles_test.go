@@ -82,31 +82,14 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 	// Under gonja's default strict-undefined, a key a template reads but this map
 	// omits would be a render ERROR (fail-closed), which would fail this test
 	// loudly — so this map must stay a superset of the templates' references.
-	// Nested loop items carry the exact keys the loop bodies read (`citations`
-	// items -> c.reference/c.quote/c.source_text).
 	additional := map[string]any{
 		// action-proof (gate)
 		"action_taken": true,
 		"action":       "fill_form",
 		"action_input": "{}",
 		"proof":        "a screenshot",
-		// grounding-citations
-		"citations": []any{
-			map[string]any{"reference": "r#1", "quote": "q", "source_text": "s"},
-		},
-		// task-management
-		"resolved":           true,
-		"reference":          "msg-3",
-		"referenced_message": "the human's actual words",
-		// no-unasked-deletion. asked_envelope is the whole AskUserQuestion envelope
-		// (question + answers) the prepare fetches via EnvelopeAt when the ask was an
-		// answer; it is ALWAYS emitted by the prepare (empty when the ask was a plain
-		// message), so it is always a present key — included here as a non-empty value
-		// so the template's `{% if additionalContext.asked_envelope %}` branch renders.
-		"asked_quote":    "please remove the stray import",
-		"change_diff":    "-import x\n+",
-		"asked_envelope": `The user answered: "which import?"="the stray one". Read the answers carefully.`,
-		"pure_addition":  false,
+		// no-unasked-deletion
+		"change_diff": "-import x\n+",
 	}
 	inputJSON, err := r.judgeInputJSON(req, additional)
 	require.NoError(t, err)

@@ -8,11 +8,13 @@ import (
 // task-body-is-human-authored is a PREVENTIVE file-guard over
 // memories/tasks/<cat>/<name>/TASK.md with TWO checks in order:
 //
-//   1. SCRIPT (body-change-is-cited.sh): a write that CREATES the task or CHANGES
-//      its body must carry a citation of the user's own words — `sr-file write|edit
-//      … --cite:user '<exact words>'`, resolved by the session into
-//      `.event.citations`. A write leaving the body byte-identical (a status edit)
-//      needs none. No citation where one is needed is refused HERE, before the judge.
+//   0. REQUIRE: a write that CREATES the task or CHANGES its body (the guard's
+//      `when: ./body-changed.sh`) must carry a citation of the user's own words —
+//      `sr-file write|edit … --cite:user '<exact words>'`, resolved by the session
+//      into `.event.citations`. A write leaving the body byte-identical (a status
+//      edit) needs none. No citation where one is needed is refused by the engine,
+//      before any check.
+//   1. SCRIPT (body-is-stated.sh): the task has a body under its frontmatter.
 //   2. PREPARE + JUDGE: the body must correspond to the cited words and hold THAT
 //      AND NOTHING ELSE. The prepare skips the judge when the body did not change.
 //      The judge is the model; its verdict is stubbed.
@@ -103,11 +105,11 @@ func TestBody_SlopBodyRefusedByJudge(t *testing.T) {
 	}
 }
 
-// TestBody_UncitedCreateRefusedByScript: creating a task with the Write tool —
-// which cannot carry a citation — is refused by the deterministic SCRIPT stage,
-// before the judge, and the refusal names the exact grounded form. The stub is
+// TestBody_UncitedCreateRefusedByRequire: creating a task with the Write tool —
+// which cannot carry a citation — is refused by the guard's declared citation
+// requirement, before any check, and the refusal names the exact grounded form. The stub is
 // PASS: if the engine reached the judge or admitted, the write would go through.
-func TestBody_UncitedCreateRefusedByScript(t *testing.T) {
+func TestBody_UncitedCreateRefusedByRequire(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -124,8 +126,8 @@ func TestBody_UncitedCreateRefusedByScript(t *testing.T) {
 	if e.Exists(proj, taskPath) {
 		t.Errorf("the preventive guard let an uncited task land on disk")
 	}
-	if !res.Saw("TASK BODY IS NOT GROUNDED") {
-		t.Errorf("the refusal was not the script tier's not-grounded reason:\n%s", res.Output)
+	if !res.Saw("must be grounded in a citation of the user's own words") {
+		t.Errorf("the refusal was not the citation requirement's reason:\n%s", res.Output)
 	}
 	if !res.Saw("sr-file write "+taskPath) || !res.Saw("--cite:user") {
 		t.Errorf("the refusal does not tell the agent the exact sr-file form to use:\n%s", res.Output)
@@ -154,8 +156,8 @@ func TestBody_UncitedBodyChangeRefused(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an uncited change to a task's body was not refused:\n%s", res.Output)
 	}
-	if !res.Saw("changes the body of " + taskPath) {
-		t.Errorf("the refusal was not the body-change reason:\n%s", res.Output)
+	if !res.Saw("this change to " + taskPath + " must be grounded in a citation") {
+		t.Errorf("the refusal was not the citation requirement's reason:\n%s", res.Output)
 	}
 	if got := readFile(t, proj, taskPath); got != original {
 		t.Errorf("the refused body change reached the file:\n%s", got)

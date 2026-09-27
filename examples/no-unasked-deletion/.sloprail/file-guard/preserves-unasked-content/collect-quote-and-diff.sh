@@ -3,13 +3,12 @@
 # it sees the changed lines directly). The cited words need no preparing: the
 # judge template reads them straight off `.event.citations`.
 #
-# ALSO computes pure_addition — REQUIRED, not cosmetic. A script's exit 0 does
-# NOT skip the checks after it; only a refusal ends the chain. So when
-# removal-has-a-grounded-ask.sh permits a PURE ADDITION, this judge still runs
-# next — and without pure_addition it would judge a diff with nothing removed
-# against no citation (correctly none: nothing needed authorizing) and refuse a
-# healthy append. Measured against a real Haiku run (eval/add-section).
-# change-is-clean-and-absolute.md.j2 auto-passes when pure_addition is true.
+# SKIPS THE JUDGE on a PURE ADDITION — REQUIRED, not cosmetic. When
+# removes-content.sh waives the citation for an append, this judge would still
+# run and judge a diff with nothing removed against no citation (correctly none:
+# nothing needed authorizing), and refuse a healthy append. Measured against a
+# real Haiku run (eval/add-section). `{"skip": true}` abstains instead, and no
+# model call is spent on a change that removes nothing.
 set -uo pipefail
 
 input="$(cat)"
@@ -18,12 +17,12 @@ input="$(cat)"
 old="$(printf '%s' "$input" | jq -r 'if (.event.kind // "" | endswith("Create")) then "" else .event.oldContent end')"
 
 empty() {
-  jq -n '{additionalContext: {change_diff: "", pure_addition: false}}'
+  jq -n '{additionalContext: {change_diff: ""}}'
   exit 0
 }
 
 # Content by event kind — the same fail-closed-on-Pre / trust-Post split
-# removal-has-a-grounded-ask.sh uses. resultKnown is declared ONLY on the Pre
+# removes-content.sh uses. resultKnown is declared ONLY on the Pre
 # create/update kinds; reading it on a Post kind defaults it to false and hands
 # the judge an empty context for a perfectly good, settled change.
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
@@ -44,16 +43,15 @@ case "$kind" in
     ;;
 esac
 
-# Same removed-lines test removal-has-a-grounded-ask.sh ran — recomputed rather
+# Same removed-lines test removes-content.sh ran — recomputed rather
 # than passed through, since a prepare step's only input is this same payload.
 removed_count="$(comm -23 <(printf '%s' "$old" | sort -u) <(printf '%s' "$new" | sort -u) | grep -c . || true)"
-pure_addition=false
-[ "${removed_count:-0}" -eq 0 ] && pure_addition=true
+if [ "${removed_count:-0}" -eq 0 ]; then
+  printf '{"skip": true}\n'
+  exit 0
+fi
 
 # Unified diff, before -> after. diff exits 1 when they differ, so guard it.
 change_diff="$(diff -u <(printf '%s' "$old") <(printf '%s' "$new") | tail -n +3 || true)"
 
-jq -n \
-  --arg diff "$change_diff" \
-  --argjson pure_addition "$pure_addition" \
-  '{additionalContext: {change_diff: $diff, pure_addition: $pure_addition}}'
+jq -n --arg diff "$change_diff" '{additionalContext: {change_diff: $diff}}'

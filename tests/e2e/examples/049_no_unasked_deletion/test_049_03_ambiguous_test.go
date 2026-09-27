@@ -1,22 +1,11 @@
 package e2e
 
-// TODO(D3): drive verdict via a10n-claude-mock once a10n-cli#470 lands + new mock
-// on PATH; today InstallJudgeClaude supplies the verdict (though the judge is not
-// reached in this test — the script refuses on the ambiguous cite first).
-//
-// The AMBIGUOUS-ASK branch (cite exit code 2). The shipped
-// removal-has-a-grounded-ask.sh branches `sr-session trajectory cite` rc 0/1/2/other
-// with distinct reasons: rc0 admits (T049_08), rc1 refuses "resolves to nothing"
-// (T049_10), and rc2 refuses "matches SEVERAL user messages … ambiguous". This
-// closes rc2: a quote that appears in TWO separate user messages makes cite return
-// two matches, and the script must refuse with the ambiguity reason.
-//
-// cite counts one match per USER ENTRY that contains the quote (internal/transcript
-// Cite iterates user entries by line), so two matches require two user entries. The
-// harness seeds ONE root user entry from the prompt; this test pre-seeds the session
-// transcript with TWO user entries carrying the same quoted text before Run (which
-// leaves an existing transcript untouched), so cite resolves the sr:asked quote to
-// both and returns 2.
+// The AMBIGUOUS-ASK case. A quote that appears in TWO separate user messages
+// resolves to neither: sr-file's dry run fails "ambiguous", the change carries no
+// citation, and the refusal quotes sr-file's reason so the agent knows to extend
+// the quote. The harness seeds ONE root user entry from the prompt; this test
+// pre-seeds the session transcript with TWO user entries carrying the same text
+// before Run (which leaves an existing transcript untouched).
 
 import (
 	"fmt"
@@ -60,7 +49,7 @@ func TestT049_13_AmbiguousAskBlocksViaScript(t *testing.T) {
 	seedTwoUserMessages(t, e, proj, sess, shared)
 
 	e.WriteFile(proj, "memories/topic.md", "keep this line\nremove the second line\n")
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the script refuses on the ambiguous cite"}`)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the ambiguous cite is refused first"}`)
 
 	res := e.Run(proj, sess, shared, Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
@@ -69,7 +58,7 @@ func TestT049_13_AmbiguousAskBlocksViaScript(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an ambiguous grounded ask (cite rc2) was NOT refused:\n%s", res.Output)
 	}
-	if !res.Saw("sr-file could not compute the change") || !res.Saw("is ambiguous") {
+	if !res.Saw("sr-file said") || !res.Saw("is ambiguous") {
 		t.Fatalf("the ambiguity reason did not reach the agent:\n%s", res.Output)
 	}
 }

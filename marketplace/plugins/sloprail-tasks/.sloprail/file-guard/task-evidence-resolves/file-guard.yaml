@@ -13,24 +13,22 @@
 #   - the PROOF that the work happened is tool output (a test run that came back
 #     green), and it rides on the WRITE that moves the task into in_review:
 #     `sr-file edit …/TASK.md --old-string 'status: in_progress' --new-string
-#     'status: in_review' --cite:tool_result '<exact output>'`. The session
-#     resolves the quote against its own record before any check runs, so this
-#     script only counts `.event.citations` whose sourceTypes include tool_result.
-#     (The frontmatter `observations:` list of absolute `.jsonl:<ranges>` strings
+#     'status: in_review' --cite:tool_result '<exact output>'`. (The frontmatter `observations:` list of absolute `.jsonl:<ranges>` strings
 #     this replaced is gone from the schema.)
 #
-# WHY NOT `require: [{citation: {source_types: [tool_result]}}]`. That would demand
-# tool output on EVERY write to a task — creating one, changing its priority. Only
-# the TRANSITION into in_review (old status not in_review, new status in_review)
-# is a claim of finished work, so the condition lives in the script.
+# THE REQUIREMENT IS DECLARED, CONDITIONALLY. Tool output is not demanded on
+# every write to a task — creating one, changing its priority. Only the
+# TRANSITION into in_review (old status not in_review, new status in_review) is a
+# claim of finished work, so `require` applies `when: ./in-review.sh --entering`
+# says the write makes it. An uncited transition is refused by the engine before
+# check-task.sh runs, naming the sr-file form.
 #
 # THIS IS THE STRUCTURAL HALF ONLY. It answers "is the evidence there", never
 # "does the evidence substantiate the claim" — that is task-review's model call,
 # gated behind this. The split is crisp and deliberate; see the README.
 #
 # A SCRIPT check. The logic is deterministic — `sr-file validate` for the schema,
-# the tree checker for artifacts, a count over `.event.citations` for the proof —
-# so it stays a script; no model, so no judge.
+# the tree checker for artifacts — so it stays a script; no model, so no judge.
 #
 # match: the task file, TWO directory levels deep —
 # `memories/tasks/<category>/<name>/TASK.md`, the old regex
@@ -53,6 +51,10 @@ match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 # on the Pre kinds before reading .event.newContent, and reading the file on disk
 # on Post.
 preventive: true
+
+require:
+  - citation: {source_types: [tool_result]}
+    when: ./in-review.sh --entering
 
 checks:
   # Deterministic, fail-closed throughout. A refusal exits non-zero with

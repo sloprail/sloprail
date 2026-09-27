@@ -5,12 +5,11 @@
 #
 # The approval is a citation carried by the command, never text in the unit:
 #   sr-file edit <UNIT.md> --old-string 'status: drafting' --new-string 'status: published' --cite:user 'ship it'
-# The session resolves the quote against its own record before the check
-# runs; the check reads `.event.citations` for one in the `user` pool.
-#
-# NOT `require: [{citation: {source_types: [user]}}]`: that would demand a citation on EVERY
-# UNIT.md write, and only the transition into published needs one. A draft
-# edit, or an edit to an already-published unit, stays uncited.
+# The session resolves the quote against its own record, and `require` below
+# demands one in the `user` pool — an agent's own turn or a tool result is not
+# the user's approval. Only `when` enters-published.sh says the write moves the
+# unit INTO published: a draft edit, or an edit to an already-published unit,
+# stays uncited.
 #
 # match: ONLY the unit's own frontmatter file, UNIT.md — status: published is a
 # UNIT.md field (see unit.cue), never 02_draft.md's. unit-satisfies-rules
@@ -28,8 +27,11 @@ match: path matches "^memories/topics/[^/]+/units/[^/]+/UNIT\\.md$"
 # every other preventive guard in this repo.
 preventive: true
 
+require:
+  - citation: {source_types: [user]}
+    when: ./enters-published.sh
+
 checks:
-  # Deterministic, fail-closed throughout — no model call. Whether a citation
-  # exists in the user pool is already decided by the session; the script only
-  # decides whether this write is a transition that needs one.
+  # Deterministic, fail-closed throughout — no model call: a published unit
+  # records where it went out.
   - script: ./check-publish.sh
