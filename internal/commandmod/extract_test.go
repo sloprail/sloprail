@@ -427,7 +427,7 @@ func TestInvocation_Flags(t *testing.T) {
 	if len(invs) != 1 {
 		t.Fatalf("got %d invocations, want 1", len(invs))
 	}
-	want := map[string]string{"tag": "next", "dry-run": "", "f": ""}
+	want := map[string][]string{"tag": {"next"}, "dry-run": {""}, "f": {""}}
 	got := invs[0].Flags
 	if len(got) != len(want) {
 		t.Fatalf("flags = %v, want %v", got, want)
@@ -435,7 +435,7 @@ func TestInvocation_Flags(t *testing.T) {
 	for k, v := range want {
 		// A flag without a value carries the empty string, so a rule can ask
 		// whether it is present without knowing whether it takes one.
-		if g, ok := got[k]; !ok || g != v {
+		if g, ok := got[k]; !ok || !equal(g, v) {
 			t.Errorf("flags[%q] = %q (present=%v), want %q", k, g, ok, v)
 		}
 	}

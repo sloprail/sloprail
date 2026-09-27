@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/declaration"
+	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -62,6 +64,9 @@ func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verd
 	}
 	if p.Context != "" {
 		return r.checkContext(req, p.Context), nil
+	}
+	if p.Citation != nil {
+		return checkCitation(req, *p.Citation), nil
 	}
 	// Neither set: a loaded rule cannot reach here (the validator refuses an empty
 	// prerequisite), so an empty one establishes nothing to fail and passes.
@@ -453,4 +458,64 @@ func skillLoaded(transcriptPath, workspace, skill string) (bool, error) {
 // split as skillLoaded/skillLoadedInTrajectory above.
 func subpageRead(transcriptPath, workspace, skill, file string) (bool, error) {
 	return subpageReadInTrajectory(transcriptPath, workspace, skill, file)
+}
+
+// checkCitation refuses unless the event carries at least one citation that
+// resolved in a pool the prerequisite accepts.
+//
+// It reads `citations` off the event and nothing else. The session resolved
+// every citation against its own record before dispatch (services/sr-session
+// grounding.go), so presence here IS existence: a quote that did not resolve
+// never became a citation. Whether it grounds THIS change is for the rule's
+// judge, which reads the same field.
+func checkCitation(req Request, c declaration.CitationPrerequisite) Verdict {
+	pools := c.Pools()
+	for _, cit := range grounding.FromWire(req.Event.Fields[grounding.FieldCitations]) {
+		for _, got := range cit.SourceTypes {
+			for _, want := range pools {
+				if got == want {
+					return pass()
+				}
+			}
+		}
+	}
+	return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools))
+}
+
+// citationRemedy says how to ground the action this event describes, in the
+// one form that works for its kind.
+func citationRemedy(kind string, fields map[string]any, pools []transcript.SourceType) string {
+	names := make([]string, len(pools))
+	for i, p := range pools {
+		names[i] = string(p)
+	}
+	flag := "--cite:" + strings.Join(names, ",")
+	what := "the user's own words"
+	if len(pools) != 1 || pools[0] != transcript.SourceUser {
+		what = "an entry of this session's record in the " + strings.Join(names, " or ") + " pool"
+	}
+	path, _ := fields["path"].(string)
+
+	switch kind {
+	case declaration.KindPreCommandInvoke:
+		return fmt.Sprintf("this command must be grounded in a citation of %s, and it carries none that resolves. "+
+			"Chain one in front of it, quoting the exact words verbatim:\n"+
+			"  sr-session trajectory cite --source-types %s '<exact quote>' && <the command>\n"+
+			"The quote must match exactly one entry of this session's record; run the cite part alone first to check it.",
+			what, strings.Join(names, ","))
+	case declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete:
+		return fmt.Sprintf("%s was changed without a citation of %s. Redo the change with sr-file, citing the words it is grounded in:\n"+
+			"  sr-file edit %s --old-string '<old>' --new-string '<new>' %s '<exact quote>'\n"+
+			"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
+			"  sr-file delete %s %s '<exact quote>'",
+			path, what, path, flag, path, flag, path, flag)
+	}
+	return fmt.Sprintf("this change to %s must be grounded in a citation of %s, and it carries none that resolves. "+
+		"Make it with sr-file, which carries the citation on the command (never in the file):\n"+
+		"  sr-file edit %s --old-string '<old>' --new-string '<new>' %s '<exact quote>'\n"+
+		"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
+		"  sr-file delete %s %s '<exact quote>'\n"+
+		"Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo) so its result can be checked before it runs. "+
+		"Single-quote the quote; it must match exactly one entry of this session's record — check one with `sr-session trajectory cite '<quote>'`.",
+		path, what, path, flag, path, flag, path, flag)
 }

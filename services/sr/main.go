@@ -100,7 +100,7 @@ type service struct {
 // was written.
 var services = []service{
 	{"session", "Session lifecycle — the hook points a harness calls"},
-	{"file", "Checks over a file's contents"},
+	{"file", "Check a file's contents, or change a file grounded in citations"},
 	{"mark", "Write // sr:<kind> <fqn> enforcement markers into impl files"},
 	{"agent", "Run an agent, whichever harness is running"},
 	{"eval", "Prove a guardrail's use case against a real agent"},

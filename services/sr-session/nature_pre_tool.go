@@ -50,14 +50,31 @@ type natureVerdict struct {
 func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
 	preventiveGuards := preventiveFileGuards(loaded.FileGuards)
-	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && len(preventiveGuards) == 0 {
+	grounds := requiresCitation(loaded)
+	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && len(preventiveGuards) == 0 && !grounds {
 		// Nothing new-format can act at pre-tool: no gate to block, no structure
 		// gate, no context to enter, no preventive file-guard to pre-check.
 		// (Non-preventive file-guards act only at Stop.)
 		return natureVerdict{}
 	}
 
-	events := extractPreEvents(cmd, p, reg, naturePreToolBoundKinds(loaded))
+	bound := naturePreToolBoundKinds(loaded)
+	if grounds {
+		// A rule requires citations, so every change this call makes must be
+		// seen here — even for a rule that only judges at Stop, whose Post
+		// events carry the citations recorded now.
+		bound = append(bound, declaration.KindPreFileCreate, declaration.KindPreFileUpdate,
+			declaration.KindPreFileDelete, declaration.KindPreCommandInvoke)
+	}
+	events := extractPreEvents(cmd, p, reg, bound)
+	// Citations are grounded in the END USER's record: for a sub-agent's call
+	// that is the parent session's transcript, never the sub-agent's own, whose
+	// "user" messages are the parent's dispatch.
+	citeIn := p.TranscriptPath
+	if citeIn == "" {
+		citeIn = scope.Transcript
+	}
+	events, grounded := groundPreEvents(cmd, p, citeIn, events)
 
 	// The state maps, loaded once so contexts/gates/guards this dispatch runs read
 	// one consistent world. Contexts enter FIRST, so a gate or a preventive
@@ -93,6 +110,9 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 		if r.Refused {
 			return natureVerdict{Blocked: fmt.Sprintf("%s (gate %s)", r.Reason, r.Attribution)}
 		}
+	}
+	if err := recordCitations(store, grounded); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 	}
 	return natureVerdict{}
 }

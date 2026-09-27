@@ -87,7 +87,7 @@ func TestReportable_AnExistingFileUnderASymlinkedWorkspaceRelativizes(t *testing
 	require.NoError(t, os.MkdirAll(filepath.Join(real, "memories"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(real, "memories", "a.md"), []byte("x"), 0o644))
 
-	got := reportable(filepath.Join(link, "memories", "a.md"), real)
+	got := Reportable(filepath.Join(link, "memories", "a.md"), real)
 	assert.Equal(t, "memories/a.md", got,
 		"an existing file in a workspace reached through a link is in the workspace; a rule must not go inert on the spelling")
 }
@@ -114,7 +114,7 @@ func TestReportable_TheWorkspaceSpelledThroughTheLinkIsTheSameWorkspace(t *testi
 		"both real":                        {filepath.Join(real, "memories", "a.md"), real},
 	} {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, "memories/a.md", reportable(tc.path, tc.root),
+			assert.Equal(t, "memories/a.md", Reportable(tc.path, tc.root),
 				"one file, one workspace, one reported spelling — whichever way each was spelled")
 		})
 	}
@@ -142,7 +142,7 @@ func TestReportable_AnEscapeThroughASymlinkedParentKeepsItsAbsoluteSpelling(t *t
 	require.NoError(t, os.WriteFile(filepath.Join(outside, "id_rsa"), []byte("KEY"), 0o600))
 	symlinkOrSkip(t, outside, filepath.Join(root, "escape"))
 
-	got := reportable(filepath.Join(root, "escape", "id_rsa"), root)
+	got := Reportable(filepath.Join(root, "escape", "id_rsa"), root)
 
 	assert.True(t, filepath.IsAbs(got),
 		"a path whose parent links out of the repository must not be given a relative spelling: got %q, which a hook would join onto its own root", got)
@@ -172,7 +172,7 @@ func TestReportable_ASymlinkIntoTheRepositoryFromOutsideIsReportedAsInside(t *te
 	outside := t.TempDir()
 	symlinkOrSkip(t, filepath.Join(root, "sub"), filepath.Join(outside, "in"))
 
-	assert.Equal(t, "sub/a.md", reportable(filepath.Join(outside, "in", "a.md"), realRoot),
+	assert.Equal(t, "sub/a.md", Reportable(filepath.Join(outside, "in", "a.md"), realRoot),
 		"a link INTO the repository names a file the repository holds; refusing it makes a rule about that file inert")
 }
 
@@ -206,7 +206,7 @@ func TestReportable_ARelativePathIsCleanedButNotResolved(t *testing.T) {
 		// admit is the one thing cleaning must not do.
 		"../outside.md": "../outside.md",
 	} {
-		assert.Equal(t, want, reportable(given, root),
+		assert.Equal(t, want, Reportable(given, root),
 			"one file must have one spelling, and an escape must stay one")
 	}
 }
@@ -219,7 +219,7 @@ func TestReportable_WithNoRootAnAbsolutePathKeepsItsAbsoluteSpelling(t *testing.
 	path := filepath.Join(dir, "a.md")
 	require.NoError(t, os.WriteFile(path, []byte("x"), 0o644))
 
-	got := reportable(path, "")
+	got := Reportable(path, "")
 	assert.True(t, filepath.IsAbs(got), "no root means no relative answer is available")
 	assert.Equal(t, filepath.ToSlash(path), got)
 }
@@ -245,10 +245,10 @@ func TestReportable_TwoSpellingsOfOnePathProduceOneReportedPath(t *testing.T) {
 		root + "/other/../sub/a.md",
 		root + "/./sub/../sub/a.md",
 	}
-	want := reportable(spellings[0], root)
+	want := Reportable(spellings[0], root)
 	assert.Equal(t, "sub/a.md", want)
 	for _, s := range spellings[1:] {
-		assert.Equalf(t, want, reportable(s, root),
+		assert.Equalf(t, want, Reportable(s, root),
 			"%q must report as the same path as %q — two spellings of one file are two events and two fingerprints", s, spellings[0])
 	}
 }
@@ -594,7 +594,7 @@ func TestReportable_AnEscapeThroughASymlinkedParentIsRefusedInItsRelativeSpellin
 	require.NoError(t, os.WriteFile(filepath.Join(outside, "id_rsa"), []byte("KEY"), 0o600))
 	symlinkOrSkip(t, outside, filepath.Join(root, "escape"))
 
-	got := reportable("escape/id_rsa", root)
+	got := Reportable("escape/id_rsa", root)
 
 	assert.NotEqual(t, "escape/id_rsa", got,
 		"the relative spelling of an escape must not stay a clean repository-relative path — a matcher admits it and a hook joins it onto its own root")
@@ -662,7 +662,7 @@ func TestReportable_ContainmentOnTheRelativeBranchDoesNotStrandTheOrdinaryCases(
 	t.Run("a create of a file that is not there yet stays relative", func(t *testing.T) {
 		root := t.TempDir()
 		for _, given := range []string{"new.md", "deep/nested/new.md", "./new.md"} {
-			got := reportable(given, root)
+			got := Reportable(given, root)
 			assert.False(t, filepath.IsAbs(got),
 				"a create cannot be resolved and must not be ejected for it: %q -> %q", given, got)
 		}
@@ -675,7 +675,7 @@ func TestReportable_ContainmentOnTheRelativeBranchDoesNotStrandTheOrdinaryCases(
 		require.NoError(t, os.WriteFile(filepath.Join(real, "a.md"), []byte("x"), 0o644))
 
 		for _, root := range []string{real, link} {
-			assert.Equal(t, "a.md", reportable("a.md", root),
+			assert.Equal(t, "a.md", Reportable("a.md", root),
 				"the repo spelled through a link is the same repo, and a rule about a.md must still fire")
 		}
 	})
@@ -686,7 +686,7 @@ func TestReportable_ContainmentOnTheRelativeBranchDoesNotStrandTheOrdinaryCases(
 		require.NoError(t, os.WriteFile(filepath.Join(root, "sub", "a.md"), []byte("x"), 0o644))
 		symlinkOrSkip(t, filepath.Join(root, "sub"), filepath.Join(root, "alias"))
 
-		got := reportable("alias/a.md", root)
+		got := Reportable("alias/a.md", root)
 		assert.False(t, filepath.IsAbs(got),
 			"the link's target is inside the repository, so refusing it makes a rule about that file inert: %q", got)
 	})
@@ -695,7 +695,7 @@ func TestReportable_ContainmentOnTheRelativeBranchDoesNotStrandTheOrdinaryCases(
 		root := t.TempDir()
 		symlinkOrSkip(t, filepath.Join(root, "generated"), filepath.Join(root, "pending"))
 
-		got := reportable("pending/out.md", root)
+		got := Reportable("pending/out.md", root)
 		assert.False(t, filepath.IsAbs(got),
 			"a link made before the directory it names is the ordinary generated-output case: %q", got)
 	})

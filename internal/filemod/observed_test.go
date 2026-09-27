@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/module"
 )
 
@@ -180,7 +181,8 @@ func TestObserved_DeleteCarriesTheBytesAboutToBeLost(t *testing.T) {
 		FieldOldMarkers: []any{
 			map[string]any{KeyMarkerKind: "doc", KeyMarkerFQN: "gone.thing", KeyMarkerLine: 1},
 		},
-		FieldSeen: false, // the module never knows; the session sets it
+		FieldSeen:                false, // the module never knows; the session sets it
+		grounding.FieldCitations: []any{},
 	}, events[0].Fields,
 		"a delete carries the baseline bytes and their markers, and no result fields")
 	assert.NotContains(t, events[0].Fields, FieldNewContent, "a delete leaves no result")
@@ -263,24 +265,27 @@ func TestObserved_OneEventPerFile(t *testing.T) {
 	require.Len(t, events, 3)
 	assert.Equal(t, []event.Event{
 		{Kind: KindPostCreate, Fields: map[string]any{
-			FieldPath:       "a.md",
-			FieldNewContent: "content of a.md\n",
-			FieldNewMarkers: []any{},
-			FieldSeen:       false,
+			FieldPath:                "a.md",
+			FieldNewContent:          "content of a.md\n",
+			FieldNewMarkers:          []any{},
+			FieldSeen:                false,
+			grounding.FieldCitations: []any{},
 		}},
 		{Kind: KindPostUpdate, Fields: map[string]any{
-			FieldPath:       "b.md",
-			FieldOldContent: "", // no baseline content supplied
-			FieldNewContent: "content of b.md\n",
-			FieldOldMarkers: []any{},
-			FieldNewMarkers: []any{},
-			FieldSeen:       false,
+			FieldPath:                "b.md",
+			FieldOldContent:          "", // no baseline content supplied
+			FieldNewContent:          "content of b.md\n",
+			FieldOldMarkers:          []any{},
+			FieldNewMarkers:          []any{},
+			FieldSeen:                false,
+			grounding.FieldCitations: []any{},
 		}},
 		{Kind: KindPostDelete, Fields: map[string]any{
-			FieldPath:       "c.md",
-			FieldOldContent: "",
-			FieldOldMarkers: []any{},
-			FieldSeen:       false,
+			FieldPath:                "c.md",
+			FieldOldContent:          "",
+			FieldOldMarkers:          []any{},
+			FieldSeen:                false,
+			grounding.FieldCitations: []any{},
 		}},
 	}, events)
 }

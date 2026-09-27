@@ -205,7 +205,7 @@ const (
 // pending callers pass one spelling twice, so on those paths the reported
 // string is whatever the producer wrote — which may be absolute. That is a
 // diagnostic difference and nothing more: these errors reach stderr, never a
-// matcher, and the EVENT's path is canonicalised by reportable() regardless.
+// matcher, and the EVENT's path is canonicalised by Reportable() regardless.
 // Said outright because this comment previously claimed every error names the
 // relative path, which was true of one caller out of four.
 func lookAt(path, full string) (presence, error) {

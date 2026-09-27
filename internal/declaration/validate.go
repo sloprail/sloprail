@@ -9,6 +9,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // This file holds the per-nature validation: every exactly-one-of, at-least-one,
@@ -113,6 +114,7 @@ func ValidateGate(g Gate, env Env) []Problem {
 	}
 
 	problems = append(problems, validatePrerequisites(g.Require, env)...)
+	problems = append(problems, validateCitationTriggers(g.Require, gateEvents(g.On), ExpandGateEvent)...)
 	problems = append(problems, validateChecks(g.Checks)...)
 
 	// The one at-least-one rule. Both are optional individually; a gate with
@@ -144,6 +146,7 @@ func ValidateContext(c Context, env Env) []Problem {
 	}
 
 	problems = append(problems, validatePrerequisites(c.Require, env)...)
+	problems = append(problems, validateCitationTriggers(c.Require, contextEvents(c.On), ExpandContextEvent)...)
 
 	if strings.TrimSpace(c.Enter) == "" {
 		problems = append(problems, prob(ErrMissingField, "enter",
@@ -276,18 +279,27 @@ func compileTriggerMatch(
 }
 
 // validatePrerequisites checks a require list: each entry sets exactly one of
-// skill/context, and a named context resolves against the declared ones.
+// skill/context/citation, a named context resolves against the declared ones,
+// and a citation names only known pools.
 func validatePrerequisites(reqs []Prerequisite, env Env) []Problem {
 	var problems []Problem
 	for i, r := range reqs {
 		where := fmt.Sprintf("require %d", i)
-		switch {
-		case r.isEmpty():
+		switch n := r.kindsSet(); {
+		case n == 0:
 			problems = append(problems, prob(ErrExactlyOne, where,
-				"a prerequisite must set exactly one of skill or context, but sets neither"))
-		case r.bothSet():
+				"a prerequisite must set exactly one of skill, context or citation, but sets none"))
+		case n > 1:
 			problems = append(problems, prob(ErrExactlyOne, where,
-				"a prerequisite must set exactly one of skill or context, but sets both"))
+				"a prerequisite must set exactly one of skill, context or citation, but sets %d", n))
+		case r.Citation != nil:
+			for _, name := range r.Citation.SourceTypes {
+				if _, ok := transcript.ParseSourceType(name); !ok {
+					problems = append(problems, prob(ErrBadValue, where+", citation",
+						"source_types names %q — the pools are %q and %q",
+						name, transcript.SourceUser, transcript.SourceToolResult))
+				}
+			}
 		case r.Context != "":
 			// A context prerequisite must name a context that exists — the engine
 			// orders against it, and cannot order against a name nothing declares.
@@ -311,6 +323,47 @@ func validatePrerequisites(reqs []Prerequisite, env Env) []Problem {
 		}
 	}
 	return problems
+}
+
+// validateCitationTriggers refuses a `require: [{citation}]` on a gate or
+// context that wakes on an event carrying no citations — Stop, PreToolUse, a
+// tag write — where the requirement could only ever refuse.
+func validateCitationTriggers(reqs []Prerequisite, events []string, expand func(string) ([]string, bool)) []Problem {
+	requires := false
+	for _, r := range reqs {
+		requires = requires || r.Citation != nil
+	}
+	if !requires {
+		return nil
+	}
+	var problems []Problem
+	for i, ev := range events {
+		kinds, _ := expand(ev)
+		for _, k := range kinds {
+			if !citationKinds[k] {
+				problems = append(problems, prob(ErrBadValue, fmt.Sprintf("on %d", i),
+					"%s carries no citations, so `require: [{citation}]` would refuse it every time — a citation rides on a file change or a command (PreFileCreate/Update/Delete, PreCommandInvoke)",
+					k))
+			}
+		}
+	}
+	return problems
+}
+
+func gateEvents(on []GateTrigger) []string {
+	out := make([]string, len(on))
+	for i, t := range on {
+		out[i] = t.Event
+	}
+	return out
+}
+
+func contextEvents(on []ContextTrigger) []string {
+	out := make([]string, len(on))
+	for i, t := range on {
+		out[i] = t.Event
+	}
+	return out
 }
 
 // badFilesEntry reports why f cannot name a file inside a skill's own

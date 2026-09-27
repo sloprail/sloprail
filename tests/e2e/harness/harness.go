@@ -2108,6 +2108,13 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	// the mock's environment reflects only what THIS harness constructs and
 	// never what happened to be running the test.
 	cmd.Env = append(cmd.Env, "CLAUDE_CODE_EXECPATH=")
+	// Real Claude Code exports CLAUDE_CODE_SESSION_ID into every Bash-tool
+	// subprocess; the mock sets it on hooks but runs a Bash tool call with its own
+	// process environment. Setting it here is what the tool call inherits, so an
+	// agent command that resolves "the current session" (`sr-session trajectory
+	// cite`, `sr-file --cite:`) finds this session's record — and an ambient id
+	// from a test run inside a live Claude Code session cannot stand in for it.
+	cmd.Env = append(cmd.Env, "CLAUDE_CODE_SESSION_ID="+sessionID)
 	// A test that set a blocked-Stop retry cap passes it to the mock. Appended
 	// last so it wins over any ambient value; omitted entirely when unset, leaving
 	// the mock's own default (8). See the stopBlockCap field's doc.

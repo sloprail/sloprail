@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/grounding"
 )
 
 // Invocation is one program a command line invokes.
@@ -19,10 +20,14 @@ type Invocation struct {
 	Argv []string
 
 	// Flags are the flags parsed out of Argv, keyed by name without its
-	// leading dashes. A flag given without a value carries an empty string, so
-	// a rule can ask whether a flag is present without knowing whether that
-	// flag takes one.
-	Flags map[string]string
+	// leading dashes. Each value is every occurrence of that flag, in the
+	// order given — a flag given once is a one-element slice, not a bare
+	// string, so a repeated flag (`--cite:user a --cite:user b`) is not lost
+	// to a last-wins collision the way a plain map would lose it. A flag
+	// given without a value carries an empty string at that position, so a
+	// rule can still ask whether a flag is present without knowing whether
+	// that flag takes one.
+	Flags map[string][]string
 }
 
 // CommandEvent is what this module's own code passes around.
@@ -54,9 +59,17 @@ func (c CommandEvent) Event() event.Event {
 		for _, a := range inv.Argv {
 			argv = append(argv, a)
 		}
+		// Each value is EVERY occurrence, so the wire form is always a JSON
+		// array — never a bare string — even for a flag given once. One shape
+		// for every flag, rather than a scalar-or-array union a matcher or a
+		// script would have to branch on before it can read a value.
 		flags := make(map[string]any, len(inv.Flags))
-		for k, v := range inv.Flags {
-			flags[k] = v
+		for k, vs := range inv.Flags {
+			arr := make([]any, 0, len(vs))
+			for _, v := range vs {
+				arr = append(arr, v)
+			}
+			flags[k] = arr
 		}
 		invs = append(invs, map[string]any{
 			KeyBin:   inv.Bin,
@@ -68,8 +81,9 @@ func (c CommandEvent) Event() event.Event {
 	return event.Event{
 		Kind: KindPreInvoke,
 		Fields: map[string]any{
-			FieldRaw:         c.Raw,
-			FieldInvocations: invs,
+			FieldRaw:                 c.Raw,
+			FieldInvocations:         invs,
+			grounding.FieldCitations: grounding.ToWire(nil),
 		},
 	}
 }
@@ -97,7 +111,7 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 		if !ok {
 			continue
 		}
-		inv := Invocation{Flags: map[string]string{}}
+		inv := Invocation{Flags: map[string][]string{}}
 		if v, ok := m[KeyBin].(string); ok {
 			inv.Bin = v
 		}
@@ -110,8 +124,19 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 		}
 		if flags, ok := m[KeyFlags].(map[string]any); ok {
 			for k, v := range flags {
-				if s, ok := v.(string); ok {
-					inv.Flags[k] = s
+				// The wire form is always an array (see Event()); a bare
+				// string is also accepted here so an event handed in from
+				// somewhere that has not adopted the array form still reads,
+				// rather than silently losing the flag.
+				switch vv := v.(type) {
+				case []any:
+					for _, item := range vv {
+						if s, ok := item.(string); ok {
+							inv.Flags[k] = append(inv.Flags[k], s)
+						}
+					}
+				case string:
+					inv.Flags[k] = []string{vv}
 				}
 			}
 		}

@@ -62,6 +62,40 @@ itself, before the check runs**, and re-judges the settled file at Stop instead
 — so the after-check is the backstop no unusual writer slips past. Dropping
 `preventive` loses the prevention; the after-check you get either way.
 
+## Grounded changes: `require: [{citation: true}]`
+
+A file whose every change must trace to something the user said — a goal, a
+rule, an ask — requires a citation instead of storing a transcript quote in the
+file:
+
+```yaml
+match: 'path startsWith "memories/goals/"'
+preventive: true
+deletions: include            # a deletion must be grounded too
+require:
+  - citation: true            # or: citation: {source_types: [user, tool_result]}
+checks:
+  - prepare: ./fetch-cited-lines.sh   # reads event.citations
+    judge: ./change-follows-the-ask.md.j2
+```
+
+The Write and Edit tools cannot carry a citation, so under this guard the agent
+makes the change with `sr-file`, which takes the same arguments plus
+`--cite:<pool> '<exact quote>'`:
+
+```bash
+sr-file edit memories/goals/q3.md --old-string 'ship v1' --new-string 'ship v2' --cite:user 'move the goal to v2'
+```
+
+Every other way of changing the file — Write, Edit, `sed`, `rm` — carries no
+citation and is refused. The file itself keeps only the derived text. Keep the
+guard `preventive`: a line mixing `sr-file` with other programs has an unknown
+result, which a preventive guard refuses before it lands; the after-check still
+refuses any change that reached the tree without a citation. `require` checks
+that the citation exists in the session's record; a judge reading
+`event.citations` decides whether it actually grounds the change. Full event
+shape: [events.md](events.md#citations-a-grounded-action).
+
 ## Deleted files: `deletions`
 
 A deleted file has no end state — no `newContent`, no `newMarkers` — so most

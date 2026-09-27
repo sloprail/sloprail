@@ -159,9 +159,10 @@ require:
   - skill: authoring-guardrails  # AND this specific page inside it was read
     files: [file-guard.md]
   - context: tag-declared        # this context is currently active
+  - citation: true               # the action carries a resolved citation
 ```
 
-Two forms in use:
+Three forms in use:
 
 - **`skill: <name>`** — the named skill was loaded this session. "Writing under
   `memories/decisions/` is blocked until `document-strategy` was loaded" is a
@@ -172,6 +173,16 @@ Two forms in use:
     that skill (relative to its own directory) that must ALSO have been read
     (a Read tool_use, or a file-reading Bash command). Loading a skill only
     guarantees its `SKILL.md` was read, not any page it merely links to.
+- **`citation: true`** (or `citation: {source_types: [user, tool_result]}`) —
+  the action carries a citation that resolved in one of those pools (default:
+  `user`, the user's own words). For a command, the agent chains a cite in front
+  of it: `sr-session trajectory cite '<exact quote>' && git push`. For a file
+  change, it makes the change with `sr-file write|edit|delete ... --cite:user
+  '<exact quote>'`. Only kinds that carry `citations` may require one — a gate
+  on `PreCommandInvoke` or a `PreFile*` kind; on `Stop` or `PreToolUse` it is a
+  load error. `require` checks the citation **exists**; whether it grounds the
+  action is for a check, which reads `event.citations`. See
+  [events.md](events.md#citations-a-grounded-action).
 - **`context: <name>`** — the named context is active. This is also what makes a
   Stop gate's cross-context read safe: `require: [{context: tag-declared}]`
   guarantees that context **entered this cycle before** this gate's check runs,

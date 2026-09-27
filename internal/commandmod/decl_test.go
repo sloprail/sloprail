@@ -214,8 +214,15 @@ func TestDecl_ArgvAndFlagsAreWireTypes(t *testing.T) {
 		t.Fatalf("%s is %T, want map[string]any", KeyFlags, inv[KeyFlags])
 	}
 	for k, v := range flags {
-		if _, ok := v.(string); !ok {
-			t.Errorf("flags[%q] is %T, want string", k, v)
+		vs, ok := v.([]any)
+		if !ok {
+			t.Errorf("flags[%q] is %T, want []any", k, v)
+			continue
+		}
+		for i, item := range vs {
+			if _, ok := item.(string); !ok {
+				t.Errorf("flags[%q][%d] is %T, want string", k, i, item)
+			}
 		}
 	}
 }
@@ -249,7 +256,7 @@ func TestEvent_RoundTrips(t *testing.T) {
 			t.Errorf("invocation %d flags = %v, want %v", i, g.Flags, w.Flags)
 		}
 		for k, v := range w.Flags {
-			if g.Flags[k] != v {
+			if !equal(g.Flags[k], v) {
 				t.Errorf("invocation %d flags[%q] = %q, want %q", i, k, g.Flags[k], v)
 			}
 		}

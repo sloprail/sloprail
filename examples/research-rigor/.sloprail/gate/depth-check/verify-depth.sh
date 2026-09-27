@@ -50,7 +50,7 @@ total_pages="$(printf '%s' "$gh_invocations" | jq '
     | ( [ range(0; ($a | length)) | select($a[.] == "--limit" or $a[.] == "-L") | $a[.+1] ] | .[0] // "" );
   [ .[]
     | if (.flags.paginate != null) then 999999
-      elif ((.flags.limit // "") | test("^[0-9]+$")) then (.flags.limit | tonumber)
+      elif (((.flags.limit // [])[-1] // "") | test("^[0-9]+$")) then ((.flags.limit // [])[-1] | tonumber)
       elif (limit_from_argv | test("^[0-9]+$")) then (limit_from_argv | tonumber)
       else 1
       end

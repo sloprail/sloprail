@@ -3,7 +3,7 @@
     "path": "sr",
     "use": "sr <command>",
     "short": "Declarative contracts that keep an agent's output honest",
-    "long": "Declarative contracts that keep an agent's output honest.\n\nA project declares guardrails under .sloprail/guardrails/; a harness calls the\nsession hook points, and the engine runs whichever guardrails bind to what is\nabout to happen.\n\nEach command below is a separate binary — `sr session start` and\n`sr-session start` do the same thing. This root exists so there is one name\nto learn; the hooks a project installs name the service binaries directly.\n\nThe event kinds a guardrail may bind to are per-build and are reported by the\nload check: `sr session start` names every kind this build produces, and\nevery field a kind carries, when a declaration binds to one it does not have.\nTo write a guardrail, use the authoring-guardrails skill.",
+    "long": "Declarative contracts that keep an agent's output honest.\n\nA project declares guardrails under .sloprail/, one folder per rule, in the\ndirectory named for its kind: file-guard/, gate/ or context/, plus one\nfile-guard/structure.yaml listing where writes may land at all. A harness\ncalls the session hook points, and the engine runs whichever guardrails bind\nto what is about to happen.\n\nEach command below is a separate binary — `sr session start` and\n`sr-session start` do the same thing. This root exists so there is one name\nto learn; the hooks a project installs name the service binaries directly.\n\nThe event kinds a guardrail may bind to are per-build and are reported by the\nload check: `sr session start` names every kind this build produces, and\nevery field a kind carries, when a declaration binds to one it does not have.\nTo write a guardrail, use the authoring-guardrails skill.",
     "children": [
       {
         "path": "sr agent",
@@ -12,10 +12,16 @@
         "long": "Run an agent, whichever harness is running.\n\nRuns sr-agent, passing everything after `agent` to it unchanged.\nRun `sr-agent --help` — or `sr agent --help` — for its own help."
       },
       {
+        "path": "sr eval",
+        "use": "eval ...",
+        "short": "Prove a guardrail's use case against a real agent",
+        "long": "Prove a guardrail's use case against a real agent.\n\nRuns sr-eval, passing everything after `eval` to it unchanged.\nRun `sr-eval --help` — or `sr eval --help` — for its own help."
+      },
+      {
         "path": "sr file",
         "use": "file ...",
-        "short": "Checks over a file's contents",
-        "long": "Checks over a file's contents.\n\nRuns sr-file, passing everything after `file` to it unchanged.\nRun `sr-file --help` — or `sr file --help` — for its own help."
+        "short": "Check a file's contents, or change a file grounded in citations",
+        "long": "Check a file's contents, or change a file grounded in citations.\n\nRuns sr-file, passing everything after `file` to it unchanged.\nRun `sr-file --help` — or `sr file --help` — for its own help."
       },
       {
         "path": "sr mark",
@@ -202,7 +208,7 @@
   {
     "path": "sr-file",
     "use": "sr-file <command>",
-    "short": "Checks over a file's contents",
+    "short": "Check a file's contents, or change a file grounded in citations",
     "children": [
       {
         "path": "sr-file declarations",
@@ -215,6 +221,18 @@
             "usage": "load the directory as the root of the plugin with this name, not a project"
           }
         ]
+      },
+      {
+        "path": "sr-file delete",
+        "use": "delete <file-path> [--cite:<source-types> <quote>]...",
+        "short": "Delete a file, grounded in cited words",
+        "long": "Delete a file. It must exist and be a regular file.\n\nCitations: --cite:<source-types> <quote>, repeatable. <source-types> is\nuser (the user's own words), tool_result (a tool's output), or both\ncomma-separated. Each quote must resolve to exactly one entry of the session's\ntrajectory, or nothing is written. Quote with single quotes so the shell leaves\nit verbatim.\n\nFlags take their value as the next word or after '='. '--' ends the flags."
+      },
+      {
+        "path": "sr-file edit",
+        "use": "edit <file-path> --old-string <old> --new-string <new> [--replace-all] [--cite:<source-types> <quote>]...",
+        "short": "Replace an exact string in a file, grounded in cited words",
+        "long": "Replace --old-string with --new-string — the Edit tool's semantics. --old-string\nmust occur exactly once unless --replace-all is given, and the file must exist.\n\nCitations: --cite:<source-types> <quote>, repeatable. <source-types> is\nuser (the user's own words), tool_result (a tool's output), or both\ncomma-separated. Each quote must resolve to exactly one entry of the session's\ntrajectory, or nothing is written. Quote with single quotes so the shell leaves\nit verbatim.\n\nFlags take their value as the next word or after '='. '--' ends the flags."
       },
       {
         "path": "sr-file validate",
@@ -248,6 +266,12 @@
             "usage": "The CUE schema to check against (required)"
           }
         ]
+      },
+      {
+        "path": "sr-file write",
+        "use": "write <file-path> [--content <content>] [--cite:<source-types> <quote>]...",
+        "short": "Write a file's whole content, grounded in cited words",
+        "long": "Write a file, replacing whatever it held — the Write tool's semantics.\n\nThe content is --content, or stdin when --content is absent (a heredoc:\n  sr-file write notes.md --cite:user 'keep a changelog' <<'EOF' ... EOF).\n\nCitations: --cite:<source-types> <quote>, repeatable. <source-types> is\nuser (the user's own words), tool_result (a tool's output), or both\ncomma-separated. Each quote must resolve to exactly one entry of the session's\ntrajectory, or nothing is written. Quote with single quotes so the shell leaves\nit verbatim.\n\nFlags take their value as the next word or after '='. '--' ends the flags."
       }
     ]
   },
@@ -309,7 +333,7 @@
       },
       {
         "name": "verify",
-        "usage": "A script that decides whether the agent's answer is acceptable; the agent is asked again if not"
+        "usage": "A script that decides whether the agent's answer is acceptable: exit 0 accepts, exit 3 rejects it as final, any other non-zero asks the agent again"
       },
       {
         "name": "verify-attempts",

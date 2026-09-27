@@ -76,7 +76,7 @@ func TestParseSourceTypes_RefusesEmpty(t *testing.T) {
 	}
 }
 
-// currentSessionTranscript is the environment fallback resolveTrajectory uses when
+// transcript.CurrentSessionPath is the environment fallback resolveTrajectory uses when
 // no --path was given and no hook payload named a record: it derives the CURRENT
 // session's own transcript from CLAUDE_CODE_SESSION_ID and the working directory.
 // These cases pin the env→path derivation and, above all, that the encoding it
@@ -116,11 +116,11 @@ func TestCurrentSessionTranscript_ResolvesTheRealFile(t *testing.T) {
 	}
 
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
-	t.Setenv(SessionIDEnv, sessionID)
+	t.Setenv(transcript.SessionIDEnv, sessionID)
 
-	got := currentSessionTranscript(cwd)
+	got := transcript.CurrentSessionPath(cwd)
 	if got != want {
-		t.Fatalf("currentSessionTranscript(%q) = %q, want %q", cwd, got, want)
+		t.Fatalf("transcript.CurrentSessionPath(%q) = %q, want %q", cwd, got, want)
 	}
 	if _, err := os.Stat(got); err != nil {
 		t.Fatalf("the resolved path does not exist on disk: %v", err)
@@ -153,11 +153,11 @@ func TestCurrentSessionTranscript_UsesTheProjectsDirScheme(t *testing.T) {
 	}
 
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
-	t.Setenv(SessionIDEnv, sessionID)
+	t.Setenv(transcript.SessionIDEnv, sessionID)
 
-	got := currentSessionTranscript(cwd)
+	got := transcript.CurrentSessionPath(cwd)
 	if got != want {
-		t.Fatalf("currentSessionTranscript = %q, want the ProjectDir-derived %q", got, want)
+		t.Fatalf("CurrentSessionPath = %q, want the ProjectDir-derived %q", got, want)
 	}
 
 	// The encodeWorkspace path is where this service keeps STATE, a different
@@ -178,10 +178,10 @@ func TestCurrentSessionTranscript_NoSessionID(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	// t.Setenv registers restoration of the ambient value (this test process runs
 	// inside a real session that sets it); unset AFTER, so the cleanup still restores.
-	t.Setenv(SessionIDEnv, "placeholder")
-	os.Unsetenv(SessionIDEnv)
-	if got := currentSessionTranscript(t.TempDir()); got != "" {
-		t.Fatalf("with no %s set, want \"\"; got %q", SessionIDEnv, got)
+	t.Setenv(transcript.SessionIDEnv, "placeholder")
+	os.Unsetenv(transcript.SessionIDEnv)
+	if got := transcript.CurrentSessionPath(t.TempDir()); got != "" {
+		t.Fatalf("with no %s set, want \"\"; got %q", transcript.SessionIDEnv, got)
 	}
 }
 
@@ -192,8 +192,8 @@ func TestCurrentSessionTranscript_NoSessionID(t *testing.T) {
 func TestCurrentSessionTranscript_SessionIDIsNotAName(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	for _, bad := range []string{"../../etc/passwd", `a\b`, ".", ".."} {
-		t.Setenv(SessionIDEnv, bad)
-		if got := currentSessionTranscript(t.TempDir()); got != "" {
+		t.Setenv(transcript.SessionIDEnv, bad)
+		if got := transcript.CurrentSessionPath(t.TempDir()); got != "" {
 			t.Fatalf("a session id %q that is not a name must yield \"\"; got %q", bad, got)
 		}
 	}
@@ -219,9 +219,9 @@ func TestCurrentSessionTranscript_WrongSessionRefused(t *testing.T) {
 	}
 
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
-	t.Setenv(SessionIDEnv, sessionID)
+	t.Setenv(transcript.SessionIDEnv, sessionID)
 
-	if got := currentSessionTranscript(cwd); got != "" {
+	if got := transcript.CurrentSessionPath(cwd); got != "" {
 		t.Fatalf("a file belonging to another session must yield \"\"; got %q", got)
 	}
 }
