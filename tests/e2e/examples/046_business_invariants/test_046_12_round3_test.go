@@ -180,3 +180,24 @@ func TestT046_47_DeletingTwoHoldersOfOnePinInOneCommand(t *testing.T) {
 		t.Fatalf("deleting both holders of a pin in one command was not refused at Stop for both:\n%s", joined)
 	}
 }
+
+// T046_48: a replace ref (`git replace <old> <new>`) makes git read another
+// commit in place of the one a pin names. A pin to a since-reworded rule, with
+// its commit replaced by the reworded one, would then read the new wording and
+// match HEAD. The scripts read objects as themselves (GIT_NO_REPLACE_OBJECTS).
+func TestT046_48_ReplaceRefDoesNotStandInForThePinnedCommit(t *testing.T) {
+	e := newEnv(t)
+	proj := biProject(t, e)
+	shaV1 := commitSpec(t, e, proj, "SPEC.md", specV1, "spec v1")
+	shaV2 := commitSpec(t, e, proj, "SPEC.md", "an invariants spec\nan order total must never be negative OR ZERO\n(end)\n", "spec v2")
+	e.Git(proj, "replace", shaV1, shaV2)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	sess := "s-046-48"
+	e.Run(proj, sess, "code pinned to v1", Turns("done",
+		Write("w1", "src/charge.go", invariantCode(proj+"@"+shaV1+":SPEC.md#L2-2", "func charge(total int) {}\n")),
+	))
+	if joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop")); !containsAll(joined, "since changed at HEAD", "pinned-invariant") {
+		t.Fatalf("a replace ref let a stale pin read the new wording:\n%s", joined)
+	}
+}
