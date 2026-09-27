@@ -15,13 +15,15 @@
 # WebFetch is refused only for the hosts that serve repositories, issues, code
 # and gists — what a scanner's search is about:
 #   github.com, www.github.com, api.github.com, gist.github.com,
-#   codeload.github.com, and any *.githubusercontent.com (raw., gist., objects.)
+#   codeload.github.com, raw.github.com (redirects to raw content),
+#   uploads.github.com, and any *.githubusercontent.com (raw., gist., objects.)
 # Other GitHub-owned hosts (docs.github.com, github.blog, *.github.io Pages
 # sites) are documentation and project sites, not the research gh covers, and
 # stay fetchable — as does every non-GitHub URL. The host is matched anchored at
-# the start of the URL, case-insensitive, with an optional scheme, userinfo and
-# port, so `https://example.com/?u=github.com` and `github.com.evil.example`
-# are not GitHub.
+# the start of the URL, case-insensitive, with an optional scheme, userinfo,
+# trailing dot (`github.com.` is the same host, fully qualified) and port, so
+# `https://example.com/?u=github.com` and `github.com.evil.example` are not
+# GitHub.
 #
 # The same hosts fetched from the SHELL — curl, wget, httpie/xh — are refused
 # the same way: once WebSearch was refused, a real Haiku run (2026-09-27) read
@@ -29,16 +31,30 @@
 # https://raw.githubusercontent.com/…`, and a curl of api.github.com/search is a
 # search no scanner governs. Matched on the parsed invocations (any argument of
 # the program anchored as a GitHub URL), so wrapping or quoting does not hide it.
+#
+# A URL built from a variable is not in the parsed invocations at all: in
+# `U=https://api.github.com; curl $U/search/issues` the parser cannot resolve
+# $U and the argument reads `/search/issues`. So a fetching program is also
+# refused on a line that expands something (`$`) and puts a GitHub host into a
+# shell variable or expansion: an assignment `NAME=…github.com…` starting a
+# word, or a `$(…)` / `${…}` naming one. A GitHub URL merely inside another
+# URL's query string (`?u=https://github.com/…`), or on a line with no
+# expansion, is still decided on the parsed arguments alone.
 on:
   - event: PreToolUse
     match: event.tool == "WebSearch"
   - event: PreToolUse
     match: >-
       event.tool == "WebFetch" and
-      string(event.input.url) matches "(?i)^([a-z][a-z0-9+.-]*://)?([^/?#@]*@)?(((www|api|gist|codeload)\\.)?github\\.com|([a-z0-9-]+\\.)*githubusercontent\\.com)(:[0-9]+)?([/?#]|$)"
+      string(event.input.url) matches "(?i)^([a-z][a-z0-9+.-]*://)?([^/?#@]*@)?(((www|api|gist|codeload|raw|uploads)\\.)?github\\.com|([a-z0-9-]+\\.)*githubusercontent\\.com)\\.?(:[0-9]+)?([/?#]|$)"
   - event: PreCommandInvoke
     match: >-
       any(event.invocations, .bin in ["curl", "wget", "http", "https", "xh", "xhs"] and
-        any(.argv, # matches "(?i)^(--url=)?([a-z][a-z0-9+.-]*://)?([^/?#@]*@)?(((www|api|gist|codeload)\\.)?github\\.com|([a-z0-9-]+\\.)*githubusercontent\\.com)(:[0-9]+)?([/?#]|$)"))
+        any(.argv, # matches "(?i)^(--url=)?([a-z][a-z0-9+.-]*://)?([^/?#@]*@)?(((www|api|gist|codeload|raw|uploads)\\.)?github\\.com|([a-z0-9-]+\\.)*githubusercontent\\.com)\\.?(:[0-9]+)?([/?#]|$)"))
+  - event: PreCommandInvoke
+    match: >-
+      any(event.invocations, .bin in ["curl", "wget", "http", "https", "xh", "xhs"]) and
+      event.raw matches "\\$" and
+      event.raw matches "(?i)((^|[\\s;&|(])[a-z_][a-z0-9_]*=|\\$[({])[^;&|\\n]*github(usercontent)?\\.com"
 checks:
   - script: ./use-gh.sh

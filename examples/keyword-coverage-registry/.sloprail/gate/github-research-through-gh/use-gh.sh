@@ -15,6 +15,8 @@ case "$kind" in
     # word the reason; the match already decided.
     tool="$(field '[.event.invocations[]? | select(.bin | IN("curl","wget","http","https","xh","xhs"))][0].bin // "the shell"')"
     url="$(field '[.event.invocations[]?.argv[1:][]? | select(test("github(usercontent)?\\.com"; "i"))][0] // ""')"
+    # No argument names the host: the URL was built from a variable.
+    [ -n "$url" ] || url="a URL built from a variable, on a line naming a GitHub host"
     ;;
   *)
     tool="$(field '.event.tool // "this tool"')"

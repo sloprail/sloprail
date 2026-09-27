@@ -19,16 +19,17 @@ set -uo pipefail
 # Undecidable without jq: apply the requirement (exit 0, fail-closed).
 command -v jq >/dev/null 2>&1 || exit 0
 
+# The keywords are read by the SAME parser scanner-declared logs them with
+# (scanner-lib.sh). Undecidable without it: apply the requirement.
+# shellcheck source=../../context/scanner-declared/scanner-lib.sh
+. "${SR_GUARDRAIL_DIR:-.}/../../context/scanner-declared/scanner-lib.sh" 2>/dev/null || exit 0
+
 payload="$(cat)"
 field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
 
-# keywords_of CONTENT — the entries under `keywords:`, one per line, trimmed.
+# keywords_of CONTENT — the declared keywords, one per line, as a set.
 keywords_of() {
-  printf '%s\n' "$1" | awk '
-    /^keywords:/ { inlist = 1; next }
-    inlist && /^[[:space:]]*-[[:space:]]*/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); print; next }
-    inlist && /^[^[:space:]]/ { inlist = 0 }
-  ' | sed 's/[[:space:]]*$//' | sort -u
+  scanner_keywords "$1" | sort -u
 }
 
 kind="$(field '.event.kind // ""')"

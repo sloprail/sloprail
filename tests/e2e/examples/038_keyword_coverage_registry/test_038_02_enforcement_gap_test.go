@@ -32,7 +32,7 @@ func TestT038_04_UncoveredScannerRefused(t *testing.T) {
 
 	// The scanner WAS declared (logged) — so this is a genuine uncovered-scanner
 	// setup, not an empty turn.
-	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:mine"]; !ok {
+	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:scanners/mine"]; !ok {
 		t.Fatalf("precondition: the scanner was not logged, so this is not a real coverage-violation setup")
 	}
 
@@ -81,7 +81,7 @@ func TestT038_06_CoveredScannerAdmits(t *testing.T) {
 		Bash("b1", "gh search repos guardrail llm agent --limit=10"),
 	))
 
-	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:mine"]; !ok {
+	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:scanners/mine"]; !ok {
 		t.Fatalf("precondition: the scanner was not logged")
 	}
 	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {

@@ -21,6 +21,12 @@
 # scanner.yaml inside it. (Whatever still gets a scanner deleted — a command the
 # engine cannot parse — does not clear the obligation: scanner-declared keeps
 # the scanner in its registry and stays open until coverage passes.)
+#
+# A delete that IS admitted — cited, and judged to be what the user asked for —
+# retires the scanner's obligation: retire-on-delete.sh, the last check, runs
+# only once the ones before it admitted the event. Without it a scanner declared
+# this session stayed owed forever after the user had it removed, and every
+# later Stop was refused.
 match: 'path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"'
 preventive: true
 deletions: include
@@ -30,3 +36,4 @@ require:
 checks:
   - prepare: ./only-when-dropped.sh
     judge: ./cited-words-ask-for-it.md.j2
+  - script: ./retire-on-delete.sh

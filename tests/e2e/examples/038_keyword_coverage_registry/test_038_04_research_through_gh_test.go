@@ -78,6 +78,12 @@ func TestT038_14_WebFetchOfGitHubRefused(t *testing.T) {
 		"https://user@github.com/owner/repo",
 		"github.com/owner/repo",
 		"https://github.com",
+		// The fully-qualified spelling, and the two GitHub content hosts the
+		// list missed.
+		"https://github.com./owner/repo",
+		"https://api.github.com.:443/search/issues?q=token",
+		"https://raw.github.com/owner/repo/main/README.md",
+		"https://uploads.github.com/repos/owner/repo/releases/1/assets",
 	} {
 		t.Run(url, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -138,6 +144,16 @@ func TestT038_16_SearchWithoutScannerRefused(t *testing.T) {
 		`gh api https://api.github.com/search/issues -f q=token`,
 		`gh api -X GET search/repositories -f q=token`,
 		`gh api graphql -f query='{ search(query: "token leak", type: ISSUE, first: 5) { issueCount } }'`,
+		// Searches no list of search spellings named — the gate allows a known
+		// set of reads instead, and everything else counts as a search.
+		`gh issue list -R cli/cli --search "token leak"`,
+		`gh pr list -R cli/cli --search=token`,
+		`gh issue list -R cli/cli -S token`,
+		`gh api graphql -f query='{ search (query: "token leak", type: ISSUE, first: 5) { issueCount } }'`,
+		`gh api graphql -F query=@q.graphql`,
+		`gh s token`,
+		`X=search; gh $X issues token`,
+		`gh api $ENDPOINT -f q=token`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -212,6 +228,9 @@ func TestT038_19_ScannerWriteAndNonSearchGhAllowed(t *testing.T) {
 		`gh pr view 7 -R cli/cli --comments`,
 		`gh api repos/cli/cli/issues/123`,
 		`gh --version`,
+		`gh issue list -R cli/cli --label bug --limit 5`,
+		`gh auth status`,
+		`gh api -H 'Accept: application/vnd.github.raw' repos/elastic/elasticsearch/contents/README.md`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -271,6 +290,13 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 		`wget -qO- https://github.com/owner/repo/issues/1`,
 		`cd sub && curl -H 'Accept: application/json' https://api.github.com/repos/owner/repo`,
 		`bash -c 'curl https://gist.github.com/someone/abc'`,
+		`curl -s https://github.com./owner/repo`,
+		`curl -sL https://raw.github.com/owner/repo/main/SECURITY.md`,
+		// A URL built from a variable: the parser cannot resolve $U, and the
+		// argument reads `/search/issues`.
+		`U=https://api.github.com; curl -s $U/search/issues?q=token`,
+		`H=api.github.com; curl -s "https://$H/repos/owner/repo"`,
+		`curl -s "$(printf https://api.github.com)/search/issues"`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -291,6 +317,8 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 		`curl -s "https://example.com/?u=https://github.com/owner/repo"`,
 		`wget -qO- https://docs.github.com/en/rest`,
 		`echo https://github.com/owner/repo`,
+		`curl -s https://github.com.evil.example/owner/repo`,
+		`Q=token; curl -s "https://owasp.org/?q=$Q"`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)

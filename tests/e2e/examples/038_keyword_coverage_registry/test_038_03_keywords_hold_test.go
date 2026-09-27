@@ -123,7 +123,7 @@ func TestT038_12_NestedScannerIsStillChecked(t *testing.T) {
 	e.Run(proj, sess, "declare a scanner but never search", Turns("done",
 		Write("w1", ".claude/scanners/mine/scanner.yaml", activeScanner),
 	))
-	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:mine"]; !ok {
+	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:.claude/scanners/mine"]; !ok {
 		t.Fatalf("a scanner declared under .claude/scanners/ was not logged")
 	}
 	if !strings.Contains(strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"), coverageRefusal) {

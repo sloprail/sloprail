@@ -7,15 +7,30 @@ set -uo pipefail
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
-# Read scanner-declared's registry; `require` guarantees it ran first, so entries
-# are current. `state list` emits JSON-LINES, so slurp with `jq -s`.
-declared="$(sr-session state list --owner scanner-declared 2>/dev/null | jq -s -c '[.[] | select(.key | startswith("scanner:"))]')"
-declared_count="$(printf '%s' "${declared:-[]}" | jq 'length' 2>/dev/null || echo 0)"
+# A registry this script cannot read decides nothing, so it refuses: reading the
+# silence as "nothing declared" passed every Stop whenever sr-session failed
+# (`jq -s` of empty input is `[]`, exit 0).
+plumbing() {
+  echo "verify-scanner-coverage could not check this turn: $1. The Stop was refused rather than passed unchecked; if this keeps happening the sloprail install is broken — say so rather than working around it." >&2
+  exit 1
+}
+
+# shellcheck source=../../context/scanner-declared/scanner-lib.sh
+. "${SR_GUARDRAIL_DIR:-.}/../../context/scanner-declared/scanner-lib.sh" 2>/dev/null \
+  || plumbing "the shared scanner-lib.sh beside scanner-declared could not be loaded"
+
+# Read scanner-declared's registry — the scanners still owed a search; `require`
+# guarantees the context ran first, so entries are current.
+declared="$(registry_owed)" || plumbing "scanner-declared's registry could not be read (sr-session state list failed or returned something that is not its JSON lines)"
+declared_count="$(printf '%s' "$declared" | jq 'length' 2>/dev/null)"
+case "$declared_count" in
+  '' | *[!0-9]*) plumbing "scanner-declared's registry did not parse" ;;
+esac
 
 if [ "$declared_count" -eq 0 ]; then
-  # Backstop only — gate.yaml's match already skips this script when nothing was
-  # declared; this covers the edge where the context ran but left nothing usable
-  # (e.g. every scanner.yaml failed to parse).
+  # Nothing owed: gate.yaml's match already skips this script when nothing was
+  # declared, and a scanner the user had deleted (an admitted, cited delete) is
+  # retired rather than owed.
   exit 0
 fi
 
@@ -56,8 +71,10 @@ missing_scanners=""
 missing_detail=""
 while IFS= read -r entry; do
   [ -z "$entry" ] && continue
-  scanner_name="$(printf '%s' "$entry" | jq -r '.key | ltrimstr("scanner:")')"
-  keywords="$(printf '%s' "$entry" | jq -r '.value | fromjson[]' 2>/dev/null)"
+  # The scanner's folder, workspace-relative (scanners/mine) — the registry's
+  # key, and what the remedy names.
+  scanner_name="$(printf '%s' "$entry" | jq -r '.dir')"
+  keywords="$(printf '%s' "$entry" | jq -r '.keywords[]?' 2>/dev/null)"
 
   if [ -z "$keywords" ]; then
     missing_scanners="$missing_scanners $scanner_name(no keywords parsed)"
