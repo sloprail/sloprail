@@ -271,10 +271,58 @@ func TestParseAllowedTools_SeparatorsAndEmpties(t *testing.T) {
 		"Read":               {"Read"},
 	}
 	for in, want := range cases {
-		assert.Equal(t, want, ParseAllowedTools(in), "input %q", in)
+		got, err := ParseAllowedTools(in)
+		require.NoError(t, err, in)
+		assert.Equal(t, want, got, "input %q", in)
 	}
-	assert.Nil(t, ParseAllowedTools(""), "empty grants nothing")
-	assert.Nil(t, ParseAllowedTools("   , ,  "), "only separators grants nothing")
+	for _, empty := range []string{"", "   , ,  "} {
+		got, err := ParseAllowedTools(empty)
+		require.NoError(t, err)
+		assert.Nil(t, got, "%q grants nothing", empty)
+	}
+}
+
+// A scoped rule is ONE rule, whatever spaces or commas sit inside its
+// parentheses: claude reads `Bash(git show:*)` as one rule, and splitting it
+// into `Bash(git` + `show:*)` loses it once each piece is its own argv value.
+func TestParseAllowedTools_ScopedRulesStayWhole(t *testing.T) {
+	cases := map[string][]string{
+		"Bash(git show:*)":                       {"Bash(git show:*)"},
+		"Read Bash(curl -sL:*) WebFetch":         {"Read", "Bash(curl -sL:*)", "WebFetch"},
+		"WebFetch(domain:code.claude.com),Read":  {"WebFetch(domain:code.claude.com)", "Read"},
+		"Bash(printf a,b:*), Bash(git log -1:*)": {"Bash(printf a,b:*)", "Bash(git log -1:*)"},
+		"Bash(echo (nested) x:*) Read":           {"Bash(echo (nested) x:*)", "Read"},
+	}
+	for in, want := range cases {
+		got, err := ParseAllowedTools(in)
+		require.NoError(t, err, in)
+		assert.Equal(t, want, got, "input %q", in)
+	}
+}
+
+// Unbalanced parentheses are refused: there is no telling which rule was meant.
+func TestParseAllowedTools_UnbalancedIsRefused(t *testing.T) {
+	for _, bad := range []string{"Bash(git show:*", "Read) Write", "Bash((x:*)"} {
+		_, err := ParseAllowedTools(bad)
+		assert.ErrorIs(t, err, ErrBadAllowedTools, bad)
+	}
+}
+
+// Through the CLI: a scoped rule with a space reaches the harness as ONE
+// --allowed-tools value, beside the answer grant — not as two broken halves.
+func TestCLI_ScopedToolRuleReachesTheHarnessWhole(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+	t.Setenv(outputDirEnv, dir)
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--allowed-tools", "Bash(git show:*) Bash(curl -sL:*) WebFetch(domain:code.claude.com)",
+		"--verify", script, "q")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, ` "Bash(git show:*)" "Bash(curl -sL:*)" "WebFetch(domain:code.claude.com)" -- `,
+		"each scoped rule must be one argv value, in order, after the answer grant")
+	assert.NotContains(t, stdout, `"Bash(git"`)
 }
 
 func TestInvocation_StringQuotesArgumentsWithSpaces(t *testing.T) {

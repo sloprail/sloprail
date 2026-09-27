@@ -104,28 +104,72 @@ func scalarString(value any) (string, error) {
 	}
 }
 
-// ParseAllowedTools splits the --allowed-tools value into individual tool names.
+// ErrBadAllowedTools is returned when an --allowed-tools value has a rule whose
+// parentheses do not balance.
+var ErrBadAllowedTools = errors.New("invalid --allowed-tools")
+
+// ParseAllowedTools splits the --allowed-tools value into individual tool rules.
 //
 // The flag takes the SAME comma-or-space-separated form claude's own
 // `--allowed-tools <tools...>` documents, so an author who knows one knows this.
 // Both separators are honoured and empty fields dropped, so "Read, WebFetch" and
 // "Read WebFetch" and "Read,WebFetch" all yield the same two tools and a stray
-// comma grants nothing rather than an empty tool name. Returns nil for an empty or
-// whitespace-only value, which the caller reads as "grant only what the run itself
-// needs".
+// comma grants nothing rather than an empty tool name.
+//
+// A separator INSIDE parentheses is part of the rule, not a split: a scoped rule
+// like `Bash(git show:*)` or `Bash(curl -sL:*)` is one rule, as claude itself
+// reads it (measured on claude 2.1.282: `--allowed-tools "Write Bash(curl
+// -sL:*)"` as one argument granted both). Splitting at every space turned it into
+// `Bash(git` and `show:*)`, which is harmless only while the pieces are joined
+// back into one argument; passed as separate argv values — which the grant does,
+// so that a path with a space stays one rule — the second piece begins with a
+// dash or means nothing, and the rule the author wrote is lost. A value whose
+// parentheses do not balance is refused rather than guessed at.
+//
+// Measured end to end on 2026-09-27 (claude 2.1.282, haiku, `sr-agent --verify
+// --allowed-tools "Bash(curl -sL:*) Bash(git show:*)"`): the rules reached
+// claude as two whole values, `curl -sL <url> | head -3` ran, and nothing
+// broader did — `curl -s <url>` (no -L), `touch`, `git commit` and `git -C
+// <dir> show` (which is not the prefix `git show`) were all refused.
 //
 // A tool name is not otherwise validated here: like a concrete model name in a
 // model set, whether the harness HAS a tool by that name is the harness's to
 // answer, not this binary's — sr-agent's job is to pass the request through in the
 // harness's own spelling.
-func ParseAllowedTools(raw string) []string {
-	fields := strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
-	})
-	if len(fields) == 0 {
-		return nil
+func ParseAllowedTools(raw string) ([]string, error) {
+	var (
+		tools []string
+		cur   strings.Builder
+		depth int
+	)
+	flush := func() {
+		if cur.Len() > 0 {
+			tools = append(tools, cur.String())
+			cur.Reset()
+		}
 	}
-	return fields
+	for _, r := range raw {
+		switch {
+		case r == '(':
+			depth++
+			cur.WriteRune(r)
+		case r == ')':
+			depth--
+			if depth < 0 {
+				return nil, fmt.Errorf("%w: %q has a ')' with no '(' before it", ErrBadAllowedTools, raw)
+			}
+			cur.WriteRune(r)
+		case depth == 0 && (r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'):
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if depth != 0 {
+		return nil, fmt.Errorf("%w: %q has a '(' that is never closed", ErrBadAllowedTools, raw)
+	}
+	flush()
+	return tools, nil
 }
 
 // ErrBadAddDir is returned when an `--add-dir[:<mode>]` names no existing

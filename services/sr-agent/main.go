@@ -227,7 +227,10 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	// The tools the agent may use, parsed from the comma/space-separated flag into
 	// the list the harness merges with the write grant it needs. Empty when the
 	// flag was not given, which grants only the answer-file write --verify needs.
-	allowedTools := ParseAllowedTools(allowedToolsFlag)
+	allowedTools, err := ParseAllowedTools(allowedToolsFlag)
+	if err != nil {
+		return err
+	}
 
 	// The directories the agent is given, each in its mode, made absolute and
 	// checked to exist BEFORE anything runs: a harness permission rule is matched

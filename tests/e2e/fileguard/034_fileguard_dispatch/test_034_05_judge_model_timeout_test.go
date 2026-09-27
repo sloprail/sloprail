@@ -80,3 +80,66 @@ func hasAdjacentPair(lines []string, flag, value string) bool {
 	}
 	return false
 }
+
+// judgeGuardScopedTools grants its judge scoped tool rules whose parentheses
+// hold spaces and colons — the shape a rule needs to let a judge run one
+// command family (`git show`, `curl -sL`) or fetch one domain.
+const judgeGuardScopedTools = `match: memories/**/*.md
+checks:
+  - judge: ./judge.md.j2
+    allowed_tools: ["Bash(git show:*)", "Bash(curl -sL:*)", "WebFetch(domain:code.claude.com)", Read]
+`
+
+// T034_12: a judge's scoped allowed_tools reach the harness INTACT — each rule
+// one --allowed-tools value, spaces and all. They pass through the engine's
+// judge command and sr-agent's parser, and a parser that split at every space
+// would hand claude `Bash(git` and `show:*)` as two argv values: the first
+// grants nothing, the second starts no rule at all.
+func TestT034_12_ScopedAllowedToolsReachTheHarnessIntact(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.FileGuard(proj, "substantive-memory", judgeGuardScopedTools, map[string]string{"judge.md.j2": judgeGuardTemplate})
+	commitGuards(t, proj)
+
+	argvFile := filepath.Join(proj, "claude-argv.txt")
+	e.InstallJudgeClaudeRecordingArgv(argvFile, `{"pass": true, "reasoning": ""}`)
+
+	e.Run(proj, "s-034-12", "write a memory", Turns("done",
+		Write("w1", "memories/note.md", "a substantive memory"),
+	))
+
+	argv, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatalf("the recording shim did not capture the claude argv (was the judge invoked?): %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(argv)), "\n")
+	var granted []string
+	for i, l := range lines {
+		if l != "--allowed-tools" {
+			continue
+		}
+		for _, v := range lines[i+1:] {
+			if strings.HasPrefix(v, "--") {
+				break
+			}
+			granted = append(granted, v)
+		}
+	}
+	for _, want := range []string{"Bash(git show:*)", "Bash(curl -sL:*)", "WebFetch(domain:code.claude.com)", "Read"} {
+		found := false
+		for _, g := range granted {
+			if g == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the scoped rule %q did not reach the harness as one --allowed-tools value; got %q", want, granted)
+		}
+	}
+	for _, g := range granted {
+		if g == "Bash(git" || g == "show:*)" || g == "-sL:*)" {
+			t.Errorf("a scoped rule was split at a space: %q in %q", g, granted)
+		}
+	}
+}

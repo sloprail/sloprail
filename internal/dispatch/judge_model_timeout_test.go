@@ -149,6 +149,14 @@ func TestWorkspaceNote(t *testing.T) {
 	assert.Empty(t, workspaceNote(""))
 }
 
+// A scoped rule keeps its spaces through the command line: the rules are joined
+// into one single-quoted --allowed-tools argument, which sr-agent splits back
+// paren-aware, so `Bash(git show:*)` arrives whole.
+func TestJudgeCommand_ScopedToolRulesSurviveTheCommandLine(t *testing.T) {
+	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Bash(git show:*)", "WebFetch(domain:code.claude.com)"}, "")
+	assert.Contains(t, cmd, "--allowed-tools 'Bash(git show:*) WebFetch(domain:code.claude.com)'")
+}
+
 // judgeCall.model() resolves the default when the check named none, so
 // judgeCommand is never handed an empty model.
 func TestJudgeCall_ModelDefaultsToSizeMD(t *testing.T) {
