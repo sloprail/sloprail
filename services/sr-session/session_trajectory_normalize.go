@@ -58,6 +58,10 @@ events, not PreToolUse, not Stop.
                          re-derive is refused here.
   --whole-session        read the entire record, not just the part no cycle has
                          judged yet
+  --ran-only             leave out the tool calls a hook refused before they ran
+                         (their tool_result is the harness's "PreToolUse:… hook
+                         error: …"): a refused command is in the record as a
+                         tool_use, but it did nothing
 
 The answer is NormalizedEntry[] as JSON, for whatever the hook already uses to
 read JSON.`,
@@ -70,6 +74,8 @@ read JSON.`,
 		"Comma-separated event kinds to populate each entry's events (default: every re-derivable kind)")
 	cmd.Flags().Bool("whole-session", false,
 		"Read the entire record, not just the part no cycle has judged yet")
+	cmd.Flags().Bool("ran-only", false,
+		"Leave out tool calls a hook refused before they ran")
 	return cmd
 }
 
@@ -119,6 +125,18 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 	// session" diagnostic — meant for a session that cannot open its own state —
 	// from firing on the ordinary --path case, where the empty payload has no state
 	// to open by design.
+	// The refused calls, read off the WHOLE record before any slice: a call's
+	// tool_result is a later entry, and the slice must not decide whether a call
+	// in it counts as run.
+	var refused map[string]bool
+	if ranOnly, _ := cmd.Flags().GetBool("ran-only"); ranOnly {
+		all := make([]transcript.Entry, 0, len(lined))
+		for _, le := range lined {
+			all = append(all, le.Entry)
+		}
+		refused = transcript.RefusedToolUseIDs(all)
+	}
+
 	wholeSession, _ := cmd.Flags().GetBool("whole-session")
 	pathGiven := cmd.Flags().Changed("path")
 	if !wholeSession && !pathGiven {
@@ -146,7 +164,7 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 		out = append(out, normalizedEntry{
 			raw:    le.Entry,
 			Line:   le.Line,
-			Events: deriveEvents(le.Entry, reg, kinds, root),
+			Events: deriveEvents(le.Entry, reg, kinds, root, refused),
 		})
 	}
 
@@ -167,7 +185,9 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 // One entry can yield several events — an assistant turn with three tool calls is
 // three extractions — and an entry that yields none carries an empty array, which
 // is why this always returns a non-nil slice.
-func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root string) []event.Event {
+//
+// A call whose id is in refused is skipped: a hook refused it, so it never ran.
+func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root string, refused map[string]bool) []event.Event {
 	events := []event.Event{}
 
 	// The command and file events, one tool call at a time. The modules dispatch
@@ -176,6 +196,9 @@ func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root 
 	if kinds.wantsAny(commandFileKinds()) {
 		mods := reg.Needed(intersect(commandFileKinds(), kinds))
 		for _, call := range transcript.ToolCalls(e) {
+			if refused[call.ID] {
+				continue
+			}
 			in := module.Input{
 				module.InputPhase:   module.PhasePre,
 				module.InputPayload: pendingCall{name: call.Name, input: call.Input, root: root},

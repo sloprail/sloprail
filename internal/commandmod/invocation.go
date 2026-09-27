@@ -110,6 +110,23 @@ var wrappers = map[string]wrapper{
 	"torify":      {},
 	"proxychains": {takesValue: map[string]bool{"-f": true}},
 
+	// `caffeinate [-disum] [-t timeout] [-w pid] [utility [args]]` (macOS) runs
+	// the utility while holding a power assertion. A vector, like nice.
+	"caffeinate": {takesValue: map[string]bool{"-t": true, "-w": true}},
+	// `script [-adkpqr] [-F pipe] [-t time] [file [command ...]]` (BSD/macOS)
+	// records a session of the command it runs; the transcript FILE is a
+	// mandatory bare word before it, the same shape as flock's lock file.
+	// util-linux's `script -c "command" file` is the command-string spelling
+	// and is on the interpreter path; `-c` is declared value-taking here so its
+	// payload is not read as a vector. util-linux takes no vector at all, so on
+	// Linux a `script file gh …` is reported as running gh although script
+	// would refuse the extra words — an over-report, the safe direction.
+	"script": {takesValue: map[string]bool{
+		"-F": true, "-t": true, "-c": true, "--command": true, "-E": true, "--echo": true,
+		"-m": true, "--logging-format": true, "-O": true, "--log-out": true, "-I": true,
+		"--log-in": true, "-B": true, "--log-io": true, "-T": true, "--log-timing": true,
+	}, positionals: 1},
+
 	// `flock [options] file|dir command [args]` — a mandatory bare word (the
 	// lock path) before the command, the same shape as timeout's duration.
 	//
@@ -545,7 +562,17 @@ var interpreters = map[string]interpreter{
 		"-G": true, "--supp-group": true,
 		"-u": true, "--user": true,
 	}},
+
+	// util-linux `script -c "command" [file]` runs the command string through
+	// the user's shell. BSD script has no -c; there the command is a vector and
+	// the wrapper table reads it. The value-taking options are both families'.
+	"script": {positionals: 1, takesValue: map[string]bool{
+		"-F": true, "-t": true, "-E": true, "--echo": true, "-m": true,
+		"--logging-format": true, "-O": true, "--log-out": true, "-I": true,
+		"--log-in": true, "-B": true, "--log-io": true, "-T": true, "--log-timing": true,
+	}},
 }
+
 
 // interpreterFlagsTakingValue are the interpreter's own flags that consume the
 // word after them.

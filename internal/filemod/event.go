@@ -36,6 +36,11 @@ type FileEvent struct {
 	// PreFileUpdate declares it.
 	ResultKnown bool
 
+	// OldContentKnown says whether OldContent on a Pre delete holds the bytes
+	// about to be lost or is "" because they were not read. See
+	// FieldOldContentKnown. Only PreFileDelete declares it.
+	OldContentKnown bool
+
 	// OldMarkers are the `sr:` annotations the OLD text carries. Set on the kinds
 	// that have prior text to read — the Pre/Post update and delete kinds.
 	OldMarkers []Marker
@@ -84,6 +89,9 @@ func (f FileEvent) Event(kind string) event.Event {
 	// defect this pair exists to avoid.
 	if kindDeclares(kind, FieldResultKnown) {
 		fields[FieldResultKnown] = f.ResultKnown
+	}
+	if kindDeclares(kind, FieldOldContentKnown) {
+		fields[FieldOldContentKnown] = f.OldContentKnown
 	}
 	if kindDeclares(kind, FieldSeen) {
 		fields[FieldSeen] = f.Seen
@@ -154,6 +162,7 @@ func FromEvent(e event.Event) (FileEvent, error) {
 		f.NewContent = v
 	}
 	f.Seen, _ = e.Fields[FieldSeen].(bool)
+	f.OldContentKnown, _ = e.Fields[FieldOldContentKnown].(bool)
 	f.OldMarkers = markersFromField(e.Fields[FieldOldMarkers])
 	f.NewMarkers = markersFromField(e.Fields[FieldNewMarkers])
 	if f.Path == "" {

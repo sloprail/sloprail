@@ -1,6 +1,9 @@
 package transcript
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // The events `normalize` re-derives from an entry come from two places in it:
 // the tool calls an assistant turn made (each a command or a file write the
@@ -32,6 +35,11 @@ type ToolCall struct {
 
 	// Input is the tool's own arguments, exactly as the harness wrote them.
 	Input json.RawMessage
+
+	// ID is the tool_use block's id — what the call's tool_result names as its
+	// tool_use_id, and so how a reader tells whether the call ran (see
+	// RefusedToolUseIDs).
+	ID string
 }
 
 // assistantContentBlock is one block of an assistant entry's content list, in
@@ -89,7 +97,7 @@ func ToolCalls(e Entry) []ToolCall {
 		if b.Type != "tool_use" || b.Name == "" {
 			continue
 		}
-		calls = append(calls, ToolCall{Name: b.Name, Input: b.Input})
+		calls = append(calls, ToolCall{Name: b.Name, Input: b.Input, ID: b.ID})
 	}
 	return calls
 }
@@ -141,6 +149,70 @@ func AssistantText(e Entry) string {
 			out += "\n"
 		}
 		out += b.Text
+	}
+	return out
+}
+
+// RefusedToolUseIDs is the tool_use id of every call a hook refused before it
+// ran: its tool_result body is the harness's "PreToolUse:<Tool> hook error: …"
+// rather than anything the tool produced.
+//
+// A refused call is in the record as a tool_use all the same, so a reader
+// re-deriving what the agent DID from its calls — "did one gh search carry
+// every keyword" — counts a search that never ran unless it leaves these out.
+// The test is the same shape the citation reader applies to a refused result
+// (isHookRefusal): the body opens with the hook's own prefix.
+func RefusedToolUseIDs(entries []Entry) map[string]bool {
+	refused := map[string]bool{}
+	for _, e := range entries {
+		if e.Type != EntryUser || len(e.Message) == 0 {
+			continue
+		}
+		var msg assistantContent
+		if json.Unmarshal(e.Message, &msg) != nil || len(msg.Content) == 0 {
+			continue
+		}
+		var blocks []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(msg.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_result" || b.ToolUseID == "" {
+				continue
+			}
+			for _, body := range resultBodies(b.Content) {
+				if strings.HasPrefix(body, "PreToolUse:") && strings.Contains(body, " hook error: ") {
+					refused[b.ToolUseID] = true
+				}
+			}
+		}
+	}
+	return refused
+}
+
+// resultBodies is a tool_result's content as text: a bare string, or the text
+// of each block of a list.
+func resultBodies(raw json.RawMessage) []string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return []string{s}
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p.Type == "text" {
+			out = append(out, p.Text)
+		}
 	}
 	return out
 }

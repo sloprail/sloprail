@@ -105,6 +105,11 @@ var knownBins = map[string]binSpec{
 		return markRecursive(targetsFor(operands(argv), Remove), rmIsRecursive(argv))
 	},
 
+	// `git rm` removes its pathspecs from the working tree as well as the index
+	// — the same deletion as rm, spelled through git. Read only for the `rm`
+	// subcommand; every other git subcommand is left to the tree diff.
+	"git": gitTargets,
+
 	// mv removes its sources and writes its destination. Both halves matter: a
 	// rule protecting notes.md must fire on `mv notes.md elsewhere.md` (the file
 	// stops existing at its path) and on `mv other.md notes.md` (its bytes are
@@ -497,6 +502,58 @@ func rmIsRecursive(argv []string) bool {
 		}
 	}
 	return false
+}
+
+// gitTargets reads `git [global options] rm [options] [--] <pathspec>...`.
+//
+// Nothing, rather than a guess, whenever the paths would not resolve where the
+// line started or nothing leaves the working tree:
+//   - `-C <dir>`, `--git-dir`, `--work-tree`: the pathspecs are relative to a
+//     directory the line names separately;
+//   - `--cached`: only the index entry goes, the file stays;
+//   - `-n`/`--dry-run`: nothing is removed;
+//   - `--pathspec-from-file`: the paths are in a file.
+//
+// `-r` (alone or in a short-flag cluster, `-rf`) removes a directory's files, as
+// rm's does — FileTarget.Recursive. git removes only TRACKED files; an
+// untracked file in the directory is reported too, the over-reporting
+// direction. A pathspec glob is dropped by targetsFor like rm's.
+func gitTargets(argv []string) []FileTarget {
+	sub := 0
+	for i := 1; i < len(argv) && sub == 0; i++ {
+		a := argv[i]
+		switch {
+		case a == "-C" || a == "--git-dir" || a == "--work-tree" ||
+			strings.HasPrefix(a, "--git-dir=") || strings.HasPrefix(a, "--work-tree="):
+			return nil
+		case a == "-c" || a == "--namespace" || a == "--config-env" || a == "--super-prefix":
+			i++
+		case strings.HasPrefix(a, "-"):
+		default:
+			sub = i
+		}
+	}
+	if sub == 0 || argv[sub] != "rm" {
+		return nil
+	}
+	rmArgv := argv[sub:]
+	recursive := false
+scan:
+	for _, a := range rmArgv[1:] {
+		switch {
+		case a == "--":
+			break scan
+		case a == "--cached" || a == "--dry-run" || strings.HasPrefix(a, "--pathspec-from-file"):
+			return nil
+		case strings.HasPrefix(a, "--"):
+		case strings.HasPrefix(a, "-") && strings.Contains(a[1:], "n"):
+			// -n / --dry-run, alone or in a cluster: nothing is removed.
+			return nil
+		case strings.HasPrefix(a, "-") && strings.Contains(a[1:], "r"):
+			recursive = true
+		}
+	}
+	return markRecursive(targetsFor(operands(rmArgv), Remove), recursive)
 }
 
 // markRecursive sets Recursive on every target when the line removes

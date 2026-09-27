@@ -83,6 +83,19 @@ const (
 	// kinds are settled, their bytes read off disk.
 	FieldResultKnown = "resultKnown"
 
+	// FieldOldContentKnown says whether FieldOldContent on PreFileDelete holds
+	// the bytes about to be lost, or is "" standing in for "not read". The same
+	// gap resultKnown closes for a write, on the delete side: a removal is still
+	// predicted — so a rule matching on the PATH fires — when its bytes were not
+	// read because the file is not a regular file (a link to a FIFO or a device,
+	// whose read blocks or never ends), is larger than a delete read takes, or
+	// lies past the byte budget of a recursive removal
+	// (expandRemovedDirectories). A rule deciding from what the file held must
+	// read `oldContentKnown` first: `oldContent == ""` alone cannot tell "the
+	// file was empty" from "the engine did not look". Declared on PreFileDelete
+	// only — a Post delete's bytes come from the session baseline, always read.
+	FieldOldContentKnown = "oldContentKnown"
+
 	// FieldSeen is true on a Post file event when an earlier Stop was already
 	// handed this file with the same content: the event is a re-send, not a
 	// change since the previous Stop. The Post events are the tree difference
@@ -127,6 +140,7 @@ func (*Module) Kinds() []module.KindDecl {
 	oldContent := module.FieldDecl{Name: FieldOldContent, Type: module.TypeString}
 	newContent := module.FieldDecl{Name: FieldNewContent, Type: module.TypeString}
 	resultKnown := module.FieldDecl{Name: FieldResultKnown, Type: module.TypeBool}
+	oldContentKnown := module.FieldDecl{Name: FieldOldContentKnown, Type: module.TypeBool}
 	seen := module.FieldDecl{Name: FieldSeen, Type: module.TypeBool}
 
 	// citations are the resolved citations the action was grounded in — on
@@ -244,8 +258,9 @@ func (*Module) Kinds() []module.KindDecl {
 		// A delete carries the bytes about to be lost (oldContent) and the
 		// markers that go with them (oldMarkers), and nothing about a result —
 		// nothing remains. No newMarkers for the same reason: a deletion has no
-		// text to read them out of.
-		{Name: KindPreDelete, Fields: []module.FieldDecl{path, oldContent, oldMarkers, citations}},
+		// text to read them out of. oldContentKnown says whether oldContent was
+		// read at all (see FieldOldContentKnown).
+		{Name: KindPreDelete, Fields: []module.FieldDecl{path, oldContent, oldContentKnown, oldMarkers, citations}},
 
 		// Post kinds are observations, established by comparing the tree against
 		// where the session started rather than by trusting what any action

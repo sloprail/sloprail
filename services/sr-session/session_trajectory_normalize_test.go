@@ -29,7 +29,7 @@ func derive(t *testing.T, e transcript.Entry, kinds kindSet) []event.Event {
 	// Root "" — the file extractors then report paths as the record spelled them,
 	// which is what a bare --path against another trajectory gets. The command
 	// extractor is a pure function of the line and unaffected.
-	return deriveEvents(e, reg, kinds, "")
+	return deriveEvents(e, reg, kinds, "", nil)
 }
 
 // assistantWith builds an assistant entry whose content is the given raw blocks.
@@ -276,4 +276,41 @@ func TestNormalizedEntry_EmptyEventsIsAnArrayNotNull(t *testing.T) {
 func allKinds() kindSet {
 	set, _ := parseEventKinds(nil)
 	return set
+}
+
+// A call a hook refused before it ran is in the record as a tool_use all the
+// same. --ran-only leaves it out: re-deriving what the agent DID from its calls
+// must not count a gh search that never ran (a coverage gate credited exactly
+// that).
+func TestRanOnly_ARefusedCallYieldsNothing(t *testing.T) {
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+	call := assistantWith(
+		`{"type":"tool_use","id":"ran","name":"Bash","input":{"command":"gh search issues ran"}},` +
+			`{"type":"tool_use","id":"blocked","name":"Bash","input":{"command":"gh search issues blocked"}}`)
+	results := transcript.Entry{
+		Type: transcript.EntryUser,
+		UUID: "u1",
+		Message: json.RawMessage(`{"role":"user","content":[` +
+			`{"type":"tool_result","tool_use_id":"ran","content":"stub output"},` +
+			`{"type":"tool_result","tool_use_id":"blocked","is_error":true,"content":[{"type":"text","text":"PreToolUse:Bash hook error: No scanner is declared"}]}` +
+			`]}`),
+	}
+	refused := transcript.RefusedToolUseIDs([]transcript.Entry{call, results})
+	assert.Equal(t, map[string]bool{"blocked": true}, refused)
+
+	argvs := func(events []event.Event) []string {
+		var out []string
+		for _, e := range events {
+			c, err := commandmod.FromEvent(e)
+			require.NoError(t, err)
+			out = append(out, c.Raw)
+		}
+		return out
+	}
+	kinds := kindSet{commandmod.KindPreInvoke: true}
+	assert.Equal(t, []string{"gh search issues ran", "gh search issues blocked"},
+		argvs(deriveEvents(call, reg, kinds, "", nil)), "without the set, both calls")
+	assert.Equal(t, []string{"gh search issues ran"},
+		argvs(deriveEvents(call, reg, kinds, "", refused)), "the refused call is left out")
 }
