@@ -51,6 +51,7 @@ func TestInvocationCwd(t *testing.T) {
 		{"env -C attached", "env -C/x cat f", "cat", "/x"},
 		{"env -C relative composes onto the line's cd", "cd /w && env -C sub cat f", "cat", "/w/sub"},
 		{"env -C from a variable is unknown", `env -C "$D/x" cat f`, "cat", ""},
+		{"env -C with an attached variable is unknown, and the program is still cat", `env -C"$D" cat f`, "cat", ""},
 		{"sudo -D", "sudo -D /x cat f", "cat", "/x"},
 		{"sudo --chdir=", "sudo --chdir=/x cat f", "cat", "/x"},
 		{"env without -C keeps the line's cwd", "cd /w && env FOO=1 cat f", "cat", "/w"},

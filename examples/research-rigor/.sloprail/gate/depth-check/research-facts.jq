@@ -26,7 +26,9 @@
 # the research run at once (a sub-agent's clone and the root's reads are one
 # run's research).
 #
-# Inputs: --arg ws  the workspace root, the directory a record with no `cwd`
+# Inputs: --arg min_lines / --arg min_bytes  the least a partial read must
+#                   show to count (fewer lines / bytes is a glimpse)
+#         --arg ws  the workspace root, the directory a record with no `cwd`
 #                   of its own started in (the mock harness writes cwd only on
 #                   a transcript's first record; Claude Code writes it on all)
 #         --arg home  $HOME, for a leading `~`
@@ -153,6 +155,7 @@ def nocontent: {
 # program), so the first operand is a file; an include filter is recorded.
 def optval($o; $v):
   (if ($o | IN("-e", "-f", "--regexp", "--file", "--expression")) then .given = true else . end)
+  | (if ($o | IN("-n", "--lines")) then .nlines = $v elif ($o | IN("-c", "--bytes")) then .nbytes = $v else . end)
   | (if ($o as $x | include_opts | index($x)) then .incl += [$v] else . end);
 
 # A cluster of short options — `-rn`, `-A3`, `-rnefoo`, `-tmd`. Each letter is
@@ -188,6 +191,7 @@ def operands($valued; $quiet):
         elif ($name | IN("--recursive", "--dereference-recursive")) then .recursive = true
         elif ($quiet[1] | index($name)) != null then .nocontent = true
         else . end
+    elif ($t | test("^-[0-9]+$")) then .nlines = $t[1:]
     elif ($t | startswith("-")) and ($t | length) > 1 then short_cluster($t; $valued; $quiet)
     else .ops += [$t] end);
 
@@ -203,7 +207,13 @@ def read_of:
   | if $valued == null then {paths: []}
     else (.argv | operands($valued; nocontent[$bin] // [[], []])) as $o
     | ($bin | IN("grep", "egrep", "fgrep", "rg", "ag")) as $search
-    | {search: $search, nocontent: $o.nocontent,
+    # `head -c 1`, `head -n 3`: a glimpse, not a read. A count from the end or
+    # from a line (`tail -n +5`) reads on to the end, so only a bare small
+    # number is a glimpse.
+    | ($bin | IN("head", "tail")
+       and ((($o.nlines // "") | test("^[0-9]+$") and tonumber < ($min_lines | tonumber))
+            or (($o.nbytes // "") | test("^[0-9]+$") and tonumber < ($min_bytes | tonumber)))) as $glimpse
+    | {search: $search, nocontent: ($o.nocontent or $glimpse),
        doconly: (($o.incl | length) > 0 and all($o.incl[]; doc_filter)),
        paths: (
          if ($bin | IN("sed", "awk", "gawk")) then
@@ -290,13 +300,16 @@ def results:
               else
                 read_of as $rd
                 | if ($rd.paths | length) == 0 then empty
-                  elif $rd.search and ($rd.doconly or $rd.nocontent or ($r.text | blank)) then empty
+                  elif $rd.nocontent then empty
+                  elif $rd.search and ($rd.doconly or ($r.text | blank)) then empty
                   else $rd.paths[] | resolve($dir) | select(. != null) | {read: .} end
               end)
         | .[]
       elif $r.err then empty
       elif $c.name == "Read" then
-        ($c.input.file_path | resolve($c.base)) | select(. != null) | {read: .}
+        # A Read limited to a few lines is a glimpse, not a read.
+        if (($c.input.limit // null) | if . == null then false else (tostring | test("^[0-9]+$") and tonumber < ($min_lines | tonumber)) end) then empty
+        else ($c.input.file_path | resolve($c.base)) | select(. != null) | {read: .} end
       elif $c.name == "Grep" then
         # The Grep tool's default output_mode is files_with_matches: file
         # names, no content. Only "content" shows what a file says.

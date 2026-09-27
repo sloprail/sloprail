@@ -18,6 +18,12 @@ set -uo pipefail
 # measure of quality — and meeting it costs the agent real reading either way.
 MIN_SOURCE_FILES=2
 
+# A partial read counts only when it shows at least this much: `head -c 1`,
+# `head -n 3`, a Read with `limit: 2` are glimpses. Whole-file reads and
+# searches that print matches are not measured.
+MIN_READ_LINES=10
+MIN_READ_BYTES=500
+
 here="$(cd "$(dirname "$0")" && pwd)"
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath // empty')"
@@ -58,7 +64,8 @@ while IFS= read -r traj; do
   if ! entries="$(sr-session trajectory normalize --path "$traj" --events PreCommandInvoke 2>"$errf")"; then
     unreadable "$traj" "$(errtext)"
   fi
-  if ! one="$(printf '%s' "$entries" | jq -c -L "$here" --arg ws "${SR_WORKSPACE:-}" --arg home "${HOME:-}" -f "$here/research-facts.jq" 2>"$errf")" \
+  if ! one="$(printf '%s' "$entries" | jq -c -L "$here" --arg ws "${SR_WORKSPACE:-}" --arg home "${HOME:-}" \
+    --arg min_lines "$MIN_READ_LINES" --arg min_bytes "$MIN_READ_BYTES" -f "$here/research-facts.jq" 2>"$errf")" \
     || [ -z "$one" ]; then
     unreadable "$traj" "its research facts could not be computed: $(errtext)"
   fi
@@ -87,7 +94,15 @@ while IFS= read -r dest; do
     case "$gd" in /*) gitdir="$gd" ;; ?*) gitdir="$dest/$gd" ;; esac
   fi
   first="$(head -n 1 "$gitdir/logs/HEAD" 2>/dev/null)"
-  reflogs="$(printf '%s' "$reflogs" | jq -c --arg d "$dest" --arg l "$first" '. + [{dest: $d, line: $l}]')"
+  # Beyond the line itself: the commit it says the clone checked out exists in
+  # the repository, and the repository's origin is what it was cloned from — a
+  # hand-written reflog over hand-made files has neither.
+  newsha="$(printf '%s' "$first" | cut -f1 | awk '{print $2}')"
+  hascommit=false
+  [ -n "$newsha" ] && git --git-dir="$gitdir" cat-file -e "$newsha^{commit}" 2>/dev/null && hascommit=true
+  origin="$(git --git-dir="$gitdir" config --get remote.origin.url 2>/dev/null)"
+  reflogs="$(printf '%s' "$reflogs" | jq -c --arg d "$dest" --arg l "$first" --argjson c "$hascommit" --arg o "$origin" \
+    '. + [{dest: $d, line: $l, commit: $c, origin: $o}]')"
 done <<EOF
 $(printf '%s' "$facts" | jq -r '[ .[].clones[].dest ] | unique[]')
 EOF
@@ -141,9 +156,13 @@ verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FI
       | ($parts[0] | split(" ") | .[-2] | tonumber? // null) as $ts
       | ($parts[1:] | join("\t") | capture("^clone: from (?<url>.*)$")? | .url | repokey(null)) as $url
       | select($ts != null and $since != null and $ts >= ($since | floor))
+      | select(.commit == true and (.origin | repokey(null)) == $url)
       | {key: $d, value: $url} ] | from_entries) as $cloned
-  | ([ .[].clones[] | select(.repo != null and $cloned[.dest] == .repo) | .dest ] | unique) as $dirs
-  | ([ .[].clones[].dest ] | unique - $dirs) as $unconfirmed
+  # A clone of this project itself is not prior art: it reads what the agent
+  # is meant to be researching FOR.
+  | ([ .[].clones[] | select(.repo != null and $ws != "" and (.repo == $ws or (.repo | startswith($ws + "/")))) | .dest ] | unique) as $self
+  | ([ .[].clones[] | select(.repo != null and $cloned[.dest] == .repo) | .dest ] | unique - $self) as $dirs
+  | ([ .[].clones[].dest ] | unique - $dirs - $self) as $unconfirmed
   | ([ .[].unresolvedClones ] | add // 0) as $unresolved
   | ([ .[].failedClones[]? ] | unique - $dirs) as $failed
   | ([ .[].reads[] ] | unique) as $reads
@@ -164,7 +183,7 @@ verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FI
   | {pass: (($dirs | length) > 0 and ($source | length) >= $min),
      dirs: $dirs, unresolved: $unresolved, source: $source, elsewhere: $elsewhere,
      failed: [ $failed[] | select(. as $f | $elsewhere | any(. == $f or startswith($f + "/"))) ],
-     unconfirmed: $unconfirmed}
+     unconfirmed: $unconfirmed, self: $self}
 ' 2>"$errf")" || block "The depth check could not evaluate this research run's trajectory ($transcript_path): $(errtext)"
 
 if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
@@ -196,6 +215,9 @@ if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
        else "" end)
     + (if (.unconfirmed | length) > 0 then
          " Your git clone into " + list(.unconfirmed) + " could not be confirmed: git'"'"'s own record of the clone (.git/logs/HEAD) is missing, older than this session, or names a different repository, so it may be a checkout that was already on disk — clone into a new directory."
+       else "" end)
+    + (if (.self | length) > 0 then
+         " Your clone into " + list(.self) + " is of this project itself, which is not prior art — clone a real repository that implements what you are researching."
        else "" end)
     + (if (.elsewhere | length) > 0 then
          " Reads of directories this run did not clone do not count (e.g. " + list(.elsewhere) + ") — a checkout already on disk is not research this run did."

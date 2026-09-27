@@ -1685,3 +1685,17 @@ func TestNesting_DeepStructureIsFlatCompletely(t *testing.T) {
 		}
 	})
 }
+
+// A flag word that is not literal cannot be the separated spelling of a
+// value-taking flag: `env -C"$D" tee f` expands to a bare `-C` (the value is
+// the unknown part), so the program is tee — not `f`, which reading `tee` as
+// the value would make it.
+func TestNesting_AnAttachedUnknownFlagValueDoesNotEatTheProgram(t *testing.T) {
+	var bins []string
+	for _, inv := range ExtractCommand(`env -C"$D" tee NOTES.md`).Invocations {
+		bins = append(bins, inv.Bin)
+	}
+	if len(bins) != 2 || bins[0] != "env" || bins[1] != "tee" {
+		t.Errorf("bins = %v, want [env tee]", bins)
+	}
+}

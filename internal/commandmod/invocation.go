@@ -856,7 +856,11 @@ func unwrap(argv []word) []word {
 			// the scan stops rather than continuing to look for one.
 			return nil
 		}
-		if w.consumesNextWord(arg) {
+		// Only a LITERAL flag word can be the separated spelling. `-C"$D"`
+		// expands (under the empty environment) to the bare `-C`, but it was
+		// written attached: its value is the unknown part, and the next word
+		// is the program, not the value.
+		if w.consumesNextWord(arg) && argv[i].literal {
 			i++
 		}
 	}

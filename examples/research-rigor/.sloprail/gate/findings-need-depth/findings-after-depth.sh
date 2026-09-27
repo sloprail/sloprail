@@ -35,6 +35,16 @@ if [ "$kind" = "PreCommandInvoke" ]; then
     ] | first | if . == null then empty else "\(.link) (a link to \(.src))" end' 2>/dev/null)"
   [ -n "$target" ] || exit 0
   path="$target"
+elif printf '%s' "$path" | grep -Eiq '[.](txt|text|rst|adoc|asciidoc|org)$'; then
+  # Plain-text notes (PROPOSAL.txt, NOTES.rst) are not this project's research
+  # notes, but a proposal is a proposal wherever it is written: such a write is
+  # held when it adds a proposal section, declared research or not.
+  adds="$(printf '%s' "$input" | jq -r -L "$here" 'include "proposal";
+    if (.event.kind | IN("PreFileCreate", "PreFileUpdate")) and .event.resultKnown == true
+    then (.event | adds_proposal) else false end' 2>/dev/null)"
+  [ "$adds" = "true" ] || exit 0
+  printf '%s' "$input" | DEPTH_FOR_WRITE="$path" DEPTH_PROPOSAL=1 bash "$here/../depth-check/verify-depth.sh"
+  exit $?
 elif ! is_notes "$path"; then
   # Not a Markdown path — but it may be a second name for one made earlier:
   # a symbolic link resolving to the notes, or a hard link sharing their inode.

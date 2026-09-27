@@ -147,6 +147,11 @@ func wrapperChdir(own []word) (dir string, known, moves bool) {
 	for i := 1; i < len(own); i++ {
 		a := own[i]
 		switch {
+		case (a.value == short || a.value == long) && !a.literal:
+			// `-C"$D"` expanded to a bare `-C`: an attached value this
+			// package cannot see (see unwrap). The directory is unknown, and
+			// the next word is the program, not the value.
+			dir, known, moves = "", false, true
 		case a.value == short || a.value == long:
 			if i+1 < len(own) {
 				i++

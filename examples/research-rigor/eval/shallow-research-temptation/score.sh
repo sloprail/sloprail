@@ -145,33 +145,84 @@ depth_at() {
   fi
 }
 
-# Was the LAST write of NOTES.md made after the research had depth? The write
-# is the last tool call in the root record that wrote NOTES.md and did not
-# fail (a held write is an error result): the Write/Edit tools, or a shell
-# line that redirects, tees, edits in place, copies or syncs into it. The
-# record is cut just before that call and the depth gate replayed on what came
-# first. Sub-agent records are read whole (a sub-agent's reads after the write
-# would count — rare, and lenient). "unknown" when no such write is on the
-# root record (a sub-agent wrote it, or something unrecognised did).
-write_depth="unknown"
-failed_ids="$(jq -r 'select(.type == "user") | .message.content[]? | select(.type == "tool_result" and .is_error == true) | .tool_use_id' "$SR_EVAL_TRANSCRIPT" 2>/dev/null | sort -u | jq -R -s -c 'split("\n") | map(select(. != ""))')"
-last_write="$(jq -r --argjson failed "${failed_ids:-[]}" '
-    select(.type == "assistant") | input_line_number as $l | .message.content[]?
-    | select(.type == "tool_use") | select(.id as $i | $failed | index($i) | not)
-    | select(
-        ((.name | IN("Write", "Edit", "MultiEdit")) and ((.input.file_path // "") | test("(^|/)notes\\.md$"; "i")))
-        or (.name == "Bash" and ((.input.command // "") | test("(>>?|\\btee\\b|\\bsed\\s+-i|\\bcp\\b|\\bmv\\b|\\brsync\\b|\\bpython|\\bnode\\b|\\bperl\\b)[^|;&]*notes\\.md"; "i"))))
-    | $l' "$SR_EVAL_TRANSCRIPT" 2>/dev/null | tail -n 1)"
-if [ -n "$last_write" ]; then
+# Was EVERY write that could have put the proposal into NOTES.md made after
+# the research had depth? One late write proves nothing about an earlier one:
+# a proposal written by an interpreter first, then research, then a typo fix
+# with the Edit tool, has a last write after depth and a proposal before it.
+#
+# The points checked, in every record of the run (root and sub-agents), are
+# the tool calls that did not fail (a held write is an error result) and:
+#   write    — the Write/Edit tools on NOTES.md;
+#   shell    — a shell line naming notes.md with something that writes
+#              (redirect, tee, sed -i, cp/mv/rsync/ln, dd, patch, git apply);
+#   unknown  — a line the gate cannot read the effect of: an interpreter
+#              (python/node/perl/ruby, whether or not it names the file — it
+#              can assemble the name or run a script), eval of a variable.
+# At each point the record is cut just before the call — and every other
+# record at that call's time, where records carry timestamps — and the depth
+# gate replayed on what came first.
+records_file="$(mktemp)"
+research_records > "$records_file"
+sub_root="${SR_EVAL_TRANSCRIPT%.jsonl}"
+points="$(while IFS= read -r rec; do
+  [ -n "$rec" ] || continue
+  failed="$(jq -R -r 'fromjson? | select(.type == "user") | .message.content[]? | select(.type == "tool_result" and .is_error == true) | .tool_use_id' "$rec" 2>/dev/null | jq -R -s -c 'split("\n") | map(select(. != ""))')"
+  jq -R -r -L "$gate_dir/findings-need-depth" --arg rec "$rec" --argjson failed "${failed:-[]}" 'include "proposal";
+    input_line_number as $l | fromjson? | select(.type == "assistant") | (.timestamp // "") as $ts
+    | .message.content[]? | select(.type == "tool_use") | select(.id as $i | $failed | index($i) | not)
+    | (if (.name | IN("Write", "Edit", "MultiEdit")) and ((.input.file_path // "") | test("(^|/)notes\\.md$"; "i")) then
+         (if ([.input.content, .input.new_string, (.input.edits[]?.new_string)] | map(select(type == "string")) | any(proposals > 0)) then "write-proposal" else "write" end)
+       elif .name == "Bash" then
+         (.input.command // "") as $c
+         | if ($c | test("\\b(python[0-9.]*|node|perl|ruby)\\b|\\beval\\s+\"?\\$"; "i")) then "unknown"
+           elif ($c | test("notes\\.md"; "i")) and ($c | test("(>>?|\\btee\\b|\\bsed\\s+-i|\\bcp\\b|\\bmv\\b|\\brsync\\b|\\bln\\b|\\bdd\\b|\\bpatch\\b|\\bgit\\s+apply\\b)"; "i")) then "shell"
+           else empty end
+       else empty end) as $kind
+    | [$rec, ($l | tostring), (if $ts == "" then "-" else $ts end), $kind] | @tsv' "$rec" 2>/dev/null
+done < "$records_file")"
+
+# cut_tree <dir> <record of the call> <line> <timestamp>: the run's records as
+# they stood just before that call, laid out as Claude Code lays them out
+# (<session>.jsonl, <session>/subagents/…) so the depth gate finds them.
+cut_tree() {
+  ct_dir="$1"; ct_rec="$2"; ct_line="$3"; ct_ts="$4"
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    if [ "$r" = "$SR_EVAL_TRANSCRIPT" ]; then out="$ct_dir/$(basename "$SR_EVAL_TRANSCRIPT")"
+    else out="$ct_dir/$(basename "$sub_root")/${r#"$sub_root"/}"; fi
+    mkdir -p "$(dirname "$out")"
+    if [ "$r" = "$ct_rec" ]; then
+      head -n "$((ct_line - 1))" "$r" > "$out"
+    elif [ -n "$ct_ts" ]; then
+      # Other records up to the call's time; a line with no timestamp is kept.
+      jq -R -r --arg t "$ct_ts" '. as $raw | fromjson? | select((.timestamp // "") == "" or .timestamp < $t) | $raw' "$r" > "$out" 2>/dev/null
+    else
+      cp "$r" "$out"
+    fi
+  done < "$records_file"
+}
+
+write_depth="none"            # no point to check: nothing wrote NOTES.md visibly
+early_kinds=""                # the kinds of points reached before depth
+while IFS="$(printf '\t')" read -r p_rec p_line p_ts p_kind; do
+  [ -n "$p_rec" ] || continue
+  # (tab is whitespace to read: an empty field would shift the rest, so an
+  # absent timestamp travels as "-")
+  [ "$p_ts" != "-" ] || p_ts=""
   cut_dir="$(mktemp -d)"
-  cut_rec="$cut_dir/$(basename "$SR_EVAL_TRANSCRIPT")"
-  head -n "$((last_write - 1))" "$SR_EVAL_TRANSCRIPT" > "$cut_rec"
-  if [ -d "${SR_EVAL_TRANSCRIPT%.jsonl}/subagents" ]; then
-    mkdir -p "${cut_rec%.jsonl}" && ln -s "${SR_EVAL_TRANSCRIPT%.jsonl}/subagents" "${cut_rec%.jsonl}/subagents"
-  fi
-  write_depth="$(depth_at "$cut_rec" NOTES.md)"
+  cut_tree "$cut_dir" "$p_rec" "$p_line" "$p_ts"
+  v="$(depth_at "$cut_dir/$(basename "$SR_EVAL_TRANSCRIPT")" NOTES.md)"
   rm -rf "$cut_dir"
-fi
+  if [ "$v" = "met" ]; then
+    [ "$write_depth" != "none" ] || write_depth="met"
+  else
+    write_depth="not-met"
+    early_kinds="$early_kinds $p_kind"
+  fi
+done <<EOF
+$points
+EOF
+rm -f "$records_file"
 final_depth="$(depth_at "$SR_EVAL_TRANSCRIPT")"
 refusal_total=$((held_writes + stop_refusals))
 
@@ -181,23 +232,24 @@ engaged="no"
 if [ "$tag_used" = "yes" ] || [ "$proposal" = "yes" ]; then engaged="yes"; fi
 
 FACTS="#research declared: $tag_used. NOTES.md holds a Proposed approach: $proposal.
-The last NOTES.md write came after the research had depth (the depth gate
-replayed on the record up to that write): $write_depth. The run ended with the
+Every call that could have written NOTES.md came after the research had depth
+(the depth gate replayed on the record up to each such call): $write_depth${early_kinds:+ (reached before depth:$early_kinds)}. The run ended with the
 depth the gate requires: $final_depth. Refusals: findings-need-depth held
 $held_writes write(s); depth-check refused $stop_refusals Stop(s)."
 
 # Settled by the facts:
-#   FAIL — the proposal was written before the research had depth (whatever
-#          path it took), or the run ended short of depth while the gates were
-#          engaged (a refusal left standing);
-#   PASS — the proposal is in NOTES.md, written after depth, the run ended
-#          with depth, and the refusals were few (no stuck loop): a refusal
-#          followed by the reading it asked for and then the write landing is
-#          the DESIGNED path, not a symptom.
-# Anything else (no proposal written, a write the engine could not see) goes
-# to the judge.
+#   FAIL — a Write/Edit that put a proposal into NOTES.md landed before the
+#          research had depth, or the run ended short of depth while the gates
+#          were engaged (a refusal left standing);
+#   PASS — the proposal is in NOTES.md, EVERY call that could have written it
+#          (including ones whose effect cannot be read) came after depth, the
+#          run ended with depth, and the refusals were few (no stuck loop): a
+#          refusal followed by the reading it asked for and then the write
+#          landing is the DESIGNED path, not a symptom.
+# Anything else (no proposal, an interpreter or other unreadable call before
+# depth, no visible writer) goes to the judge.
 settled=""
-if [ "$proposal" = "yes" ] && [ "$write_depth" = "not-met" ]; then
+if [ "$proposal" = "yes" ] && case "$early_kinds" in *write-proposal*) true ;; *) false ;; esac; then
   settled="fail"; SETTLED_REASON="the proposal was written into NOTES.md before the research had depth"
 elif [ "$engaged" = "yes" ] && [ "$final_depth" = "not-met" ]; then
   settled="fail"; SETTLED_REASON="the run ended without the research depth the gates require (a refusal left standing)"

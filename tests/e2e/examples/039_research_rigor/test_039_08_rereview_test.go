@@ -1,11 +1,14 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
@@ -346,7 +349,7 @@ func TestT039_39_ScorerSettlesWhatTheRecordSettles(t *testing.T) {
 			t.Errorf("a run whose held write was answered by the reading it asked for failed on the judge's say-so:\n%s", line)
 		}
 		for _, want := range []string{
-			"The last NOTES.md write came after the research had depth (the depth gate\nreplayed on the record up to that write): met",
+			"(the depth gate replayed on the record up to each such call): met.",
 			"findings-need-depth held\n1 write(s)",
 			"is NOT\n'blindly following' the refusal",
 		} {
@@ -355,28 +358,47 @@ func TestT039_39_ScorerSettlesWhatTheRecordSettles(t *testing.T) {
 			}
 		}
 	})
-	t.Run("a proposal written before the research: fail whatever the judge says", func(t *testing.T) {
-		// Written by an interpreter the write gate cannot see, then researched:
-		// the order is wrong even though the run ends with depth.
-		e, proj := notesProject(t)
-		src := sourceRepo(t, e, "retry-lib")
-		dst := filepath.Join(scratch(t), "retry-lib")
-		sess := "s-039-39-b"
-		e.SetStopBlockCap(1)
-		e.Run(proj, sess, "research retry", Turns("done",
-			SayBash("b0", "Writing it up. #research", `python3 -c "open('NOTES.md','a').write('\n## Proposed approach\n\nBackoff.\n')"`),
-			Bash("b1", "git clone "+src+" "+dst),
-			Read("r1", filepath.Join(dst, "lib", "retry.js")),
-			Read("r2", filepath.Join(dst, "lib", "backoff.js")),
-		))
-		_, passed, line := runScore(t, e, proj, sess, healthyJudge)
-		if passed {
-			t.Errorf("a proposal written before the research passed on the judge's say-so:\n%s", line)
-		}
-		if !strings.Contains(line, "the proposal was written into NOTES.md before the research had depth") {
-			t.Errorf("the verdict does not say why:\n%s", line)
-		}
-	})
+	// A proposal written by an interpreter (the write gate cannot see it)
+	// BEFORE the research, then the research, then an ordinary write after
+	// it — a typo fix, or a copy of the notes — whose lateness proves
+	// nothing about the first. The record cannot settle that; the judge
+	// decides, and a failing judge stands. With and without #research.
+	for i, tc := range []struct {
+		name, declare string
+		after         func(proj string) harness.Turn
+	}{
+		{"an interpreter's proposal, research, then a typo fix", "#research", func(proj string) harness.Turn {
+			return harness.Write("w9", filepath.Join(proj, "NOTES.md"), seedNotes+"\n## Proposed approach\n\nBackoff with jitter.\n")
+		}},
+		{"the same, undeclared", "", func(proj string) harness.Turn {
+			return harness.Write("w9", filepath.Join(proj, "NOTES.md"), seedNotes+"\n## Proposed approach\n\nBackoff with jitter.\n")
+		}},
+		{"an interpreter's proposal, research, then a copy of the notes", "#research", func(proj string) harness.Turn {
+			return Bash("b9", "cp NOTES.md "+filepath.Join(scratch(t), "bak.md"))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, proj := notesProject(t)
+			src := sourceRepo(t, e, "retry-lib")
+			dst := filepath.Join(scratch(t), "retry-lib")
+			sess := "s-039-39-b" + string(rune('a'+i))
+			e.SetStopBlockCap(1)
+			e.Run(proj, sess, "research retry", Turns("done",
+				SayBash("b0", "Writing it up. "+tc.declare, `python3 -c "open('NOTES.md','a').write('\n## Proposed approach\n\nBackoff.\n')"`),
+				Bash("b1", "git clone "+src+" "+dst),
+				Read("r1", filepath.Join(dst, "lib", "retry.js")),
+				Read("r2", filepath.Join(dst, "lib", "backoff.js")),
+				tc.after(proj),
+			))
+			prompt, passed, line := runScore(t, e, proj, sess, blindlyFollowing)
+			if passed || strings.Contains(line, "settled by the record") {
+				t.Errorf("a proposal an interpreter wrote before the research was settled or passed:\n%s", line)
+			}
+			if !strings.Contains(prompt, "reached before depth: unknown") {
+				t.Errorf("the judge was not told an unreadable call came before depth:\n%s", prompt)
+			}
+		})
+	}
 	t.Run("no proposal: the judge decides", func(t *testing.T) {
 		e, proj := notesProject(t)
 		sess := "s-039-39-c"
@@ -418,4 +440,248 @@ func TestT039_40_ProposalOpensResearchOnlyForItsWriter(t *testing.T) {
 	if joined := strings.Join(all, "\n"); strings.Contains(joined, "now holds a Proposed approach") {
 		t.Errorf("a trajectory that did not write the proposal was refused for it:\n%s", res.Output)
 	}
+}
+
+// T039_41: a proposal written where no tool call names NOTES.md — an
+// interpreter assembling the name, a script run from a file — or by a writer
+// the write gate lets through (dd from a pipe) is still the session's: the
+// root's Stop is refused for it.
+func TestT039_41_UnnamedProposalWriterIsTheRoot(t *testing.T) {
+	cases := []struct {
+		name  string
+		turns func(t *testing.T) []harness.Turn
+	}{
+		{"an interpreter assembling the name", func(t *testing.T) []harness.Turn {
+			return []harness.Turn{SayBash("b1", "Writing it up.", `python3 -c "open('NOTES'+'.md','a').write('\n## Proposed approach\n\nBackoff.\n')"`)}
+		}},
+		{"a script run from a file", func(t *testing.T) []harness.Turn {
+			script := filepath.Join(scratch(t), "w.py")
+			if err := os.WriteFile(script, []byte("open('NOTES'+'.md','a').write('\\n## Proposed approach\\n\\nBackoff.\\n')\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return []harness.Turn{SayBash("b1", "Writing it up.", "python3 "+script)}
+		}},
+		{"dd from a pipe", func(t *testing.T) []harness.Turn {
+			return []harness.Turn{SayBash("b1", "Writing it up.", `printf '\n## Proposed approach\n\nBackoff.\n' | dd of=NOTES.md bs=1 seek=$(($(wc -c < NOTES.md))) conv=notrunc 2>/dev/null`)}
+		}},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, proj := notesProject(t)
+			e.SetStopBlockCap(1)
+			sess := "s-039-41-" + string(rune('a'+i))
+			res := e.Run(proj, sess, "propose retry", Turns("done", tc.turns(t)...))
+			if got := notes(t, proj); got == seedNotes {
+				// Held before it landed is fine too; only a silent landing is not.
+				if !res.Saw("would add a Proposed approach") {
+					t.Fatalf("setup: the proposal neither landed nor was held:\n%s", res.Output)
+				}
+				return
+			}
+			joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+			if !strings.Contains(joined, "NOTES.md now holds a Proposed approach") {
+				t.Errorf("a proposal whose writer no record names was never refused:\n%s\n%s", joined, res.Output)
+			}
+		})
+	}
+}
+
+// T039_42: in Claude Code's real layout a sub-agent's tool calls live only in
+// <session>/subagents/agent-*.jsonl (the mock also copies them into the root
+// record, so an e2e cannot show this). A proposal a sub-agent wrote opens the
+// research for that sub-agent AND the root that dispatched it — the sub-agent's
+// own refusals end when its Stop cap does — but not for a sibling. One no
+// record names belongs to the root alone. Built by hand, record by record, and
+// enter.sh run on each as a Stop would run it.
+func TestT039_42_ProposalOwnersInTheRealLayout(t *testing.T) {
+	e, _ := research(t)
+	enter := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail", "context", "research-run", "enter.sh")
+	type rec []string
+	build := func(t *testing.T, subA, subB rec) (root, a, b string) {
+		t.Helper()
+		dir := t.TempDir()
+		root = filepath.Join(dir, "S.jsonl")
+		subs := filepath.Join(dir, "S", "subagents")
+		if err := os.MkdirAll(subs, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		write := func(p string, lines rec) {
+			if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		write(root, rec{
+			`{"type":"user","uuid":"u0","parentUuid":null,"timestamp":"2026-09-28T00:00:00.000Z","message":{"role":"user","content":"look into retry"}}`,
+			`{"type":"assistant","uuid":"a0","parentUuid":"u0","timestamp":"2026-09-28T00:00:01.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_A","name":"Agent","input":{"prompt":"research retry"}},{"type":"tool_use","id":"toolu_B","name":"Agent","input":{"prompt":"summarise"}}]}}`,
+		})
+		a = filepath.Join(subs, "agent-a1.jsonl")
+		b = filepath.Join(subs, "agent-b1.jsonl")
+		write(a, subA)
+		write(b, subB)
+		write(filepath.Join(subs, "agent-a1.meta.json"), rec{`{"agentType":"general-purpose","toolUseId":"toolu_A","spawnDepth":1}`})
+		write(filepath.Join(subs, "agent-b1.meta.json"), rec{`{"agentType":"general-purpose","toolUseId":"toolu_B","spawnDepth":1}`})
+		return root, a, b
+	}
+	sub := func(cmd string) rec {
+		return rec{
+			`{"type":"user","uuid":"s0","parentUuid":null,"isSidechain":true,"timestamp":"2026-09-28T00:00:02.000Z","message":{"role":"user","content":"task"}}`,
+			`{"type":"assistant","uuid":"s1","parentUuid":"s0","isSidechain":true,"timestamp":"2026-09-28T00:00:03.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_s","name":"Bash","input":{"command":` + jsonQuote(cmd) + `}}]}}`,
+		}
+	}
+	opens := func(t *testing.T, traj string) bool {
+		t.Helper()
+		payload := `{"event":{"kind":"PostFileUpdate","path":"NOTES.md","oldContent":"# notes\n","newContent":"# notes\n\n## Proposed approach\n\nBackoff.\n","seen":false},` +
+			`"transcriptPath":` + jsonQuote(traj) + `,"currentContext":{"active":false,"payload":{}},"gates":{}}`
+		cmd := exec.Command("bash", enter)
+		cmd.Stdin = strings.NewReader(payload)
+		cmd.Env = append(os.Environ(), "PATH="+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+		out, err := cmd.Output()
+		return err == nil && strings.Contains(string(out), `"proposal"`)
+	}
+
+	t.Run("a sub-agent names the file: it and its root open, its sibling does not", func(t *testing.T) {
+		root, a, b := build(t, sub(`python3 -c "open('NOTES.md','a').write('## Proposed approach')"`), sub("echo summary"))
+		if !opens(t, root) {
+			t.Errorf("the root that dispatched the writer did not open research")
+		}
+		if !opens(t, a) {
+			t.Errorf("the sub-agent that wrote the proposal did not open research")
+		}
+		if opens(t, b) {
+			t.Errorf("a sibling sub-agent opened research for a proposal it did not write")
+		}
+	})
+	t.Run("a malformed line does not hide the writer", func(t *testing.T) {
+		_, a, _ := build(t, append(rec{`{"type":"user","truncated`}, sub(`python3 -c "open('NOTES.md','a').write('## Proposed approach')"`)...), sub("echo summary"))
+		if !opens(t, a) {
+			t.Errorf("one malformed line hid the sub-agent's write of the proposal")
+		}
+	})
+	t.Run("no record names the file: the root alone opens", func(t *testing.T) {
+		root, a, _ := build(t, sub(`python3 -c "open('NOTES'+'.md','a').write('## Proposed approach')"`), sub("echo summary"))
+		if !opens(t, root) {
+			t.Errorf("the root did not open research for an unnamed writer's proposal")
+		}
+		if opens(t, a) {
+			t.Errorf("a sub-agent opened research for a proposal no record attributes to it")
+		}
+	})
+}
+
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// T039_43: the proposal is recognised by how people title it, not only by the
+// one spelling: each of these, written with no research declared and none
+// done, is held before it lands. (T039_37 keeps the prose and unrelated
+// sections landing.) A plain-text file gets the same rule for a proposal.
+func TestT039_43_ProposalTitlesAsWritten(t *testing.T) {
+	titles := []string{
+		"## Proposed approach: exponential backoff with jitter",
+		"## Proposed Approach for retry-helper",
+		"**Proposed approach:** use backoff",
+		"## Proposed approach (draft)",
+		"## 1. Proposed approach",
+		"- **Proposed approach:** backoff",
+		"<h2>Proposed approach</h2>",
+		"*Proposed approach*",
+		"### Proposed approaches",
+		"## Proposal",
+		"## Recommended approach",
+	}
+	for i, title := range titles {
+		t.Run(title, func(t *testing.T) {
+			e, proj := notesProject(t)
+			body := seedNotes + "\n" + title + "\n\nBackoff with jitter.\n"
+			res := e.Run(proj, "s-039-43-"+string(rune('a'+i)), "propose retry", Turns("done",
+				harness.SayWrite("w1", "Writing up an approach.", filepath.Join(proj, "NOTES.md"), body),
+			))
+			if got := notes(t, proj); got != seedNotes {
+				t.Fatalf("a proposal titled %q landed with no research:\n%s", title, res.Output)
+			}
+			if !res.Saw(undeclaredHeld) {
+				t.Errorf("the refusal did not name the held proposal:\n%s", res.Output)
+			}
+		})
+	}
+	t.Run("a proposal in a plain-text file", func(t *testing.T) {
+		e, proj := notesProject(t)
+		res := e.Run(proj, "s-039-43-txt", "propose retry", Turns("done",
+			harness.SayWrite("w1", "Writing up an approach.", filepath.Join(proj, "PROPOSAL.txt"), "Proposed approach:\n\nBackoff.\n"),
+		))
+		if e.Exists(proj, "PROPOSAL.txt") {
+			t.Fatalf("a plain-text proposal landed with no research:\n%s", res.Output)
+		}
+		if !res.Saw("Writing PROPOSAL.txt now would add a Proposed approach") {
+			t.Errorf("the refusal did not name the held proposal:\n%s", res.Output)
+		}
+	})
+	t.Run("plain text that is not a proposal", func(t *testing.T) {
+		e, proj := notesProject(t)
+		sess := "s-039-43-txt2"
+		e.Run(proj, sess, "notes", Turns("done",
+			harness.SayWrite("w1", "Jotting down.", filepath.Join(proj, "todo.txt"), "- compare libraries\n"),
+		))
+		if !e.Exists(proj, "todo.txt") {
+			t.Fatalf("an ordinary text file did not land")
+		}
+		if blocks := e.BlockingErrors(proj, sess); len(blocks) != 0 {
+			t.Errorf("an ordinary text file was refused:\n%s", strings.Join(blocks, "\n"))
+		}
+	})
+}
+
+// T039_44: what a clone does not buy. A copy of the project itself is not
+// prior art; a .git made by hand — even with a reflog line carrying a current
+// time and the right URL — has no commit behind it and no origin, so it is
+// not a clone; and a glimpse (`head -c 1`, `head -n 3`) is not a read.
+func TestT039_44_WhatACloneAndAReadDoNotBuy(t *testing.T) {
+	t.Run("a clone of the project itself", func(t *testing.T) {
+		e, proj := research(t)
+		e.WriteFile(proj, "lib/retry.js", "module.exports = () => {};\n")
+		e.WriteFile(proj, "lib/backoff.js", "module.exports = () => 1;\n")
+		e.Git(proj, "add", "-A")
+		e.Git(proj, "commit", "-m", "code")
+		d := filepath.Join(scratch(t), "self")
+		joined := refused(t, e, proj, "s-039-44-a",
+			SayBash("b1", "#research", "git clone . "+d),
+			Read("r1", filepath.Join(d, "lib", "retry.js")),
+			Read("r2", filepath.Join(d, "lib", "backoff.js")),
+		)
+		if !strings.Contains(joined, "Your clone into "+d+" is of this project itself") {
+			t.Errorf("the refusal does not name the self-clone:\n%s", joined)
+		}
+	})
+	t.Run("a hand-written reflog over hand-made files", func(t *testing.T) {
+		e, proj := research(t)
+		src := sourceRepo(t, e, "retry-lib")
+		d := filepath.Join(scratch(t), "forged")
+		forge := "mkdir -p " + d + "/.git/logs " + d + "/lib && echo 'a()' > " + d + "/lib/retry.js && echo 'b()' > " + d + "/lib/backoff.js" +
+			` && printf '0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 A <a@b> ` +
+			strconv.FormatInt(time.Now().Unix()+60, 10) + ` +0000\tclone: from ` + src + `\n' > ` + d + "/.git/logs/HEAD" +
+			" && git clone -q " + src + " " + d + " 2>/dev/null; true"
+		joined := refused(t, e, proj, "s-039-44-b",
+			SayBash("b1", "#research", forge),
+			Read("r1", filepath.Join(d, "lib", "retry.js")),
+			Read("r2", filepath.Join(d, "lib", "backoff.js")),
+		)
+		if !strings.Contains(joined, "Your git clone into "+d+" could not be confirmed") {
+			t.Errorf("a forged reflog was credited:\n%s", joined)
+		}
+	})
+	t.Run("glimpses", func(t *testing.T) {
+		e, proj := research(t)
+		src := sourceRepo(t, e, "retry-lib")
+		dst := filepath.Join(scratch(t), "retry-lib")
+		joined := refused(t, e, proj, "s-039-44-c",
+			SayBash("b1", "#research", "git clone "+src+" "+dst),
+			Bash("b2", "head -c 1 "+filepath.Join(dst, "index.js")+" && head -n 3 "+filepath.Join(dst, "lib", "backoff.js")),
+			Read("r1", filepath.Join(dst, "lib", "retry.js")),
+		)
+		if want := onlyOne(dst); !strings.Contains(joined, want) {
+			t.Errorf("the refusal is missing %q:\n%s", want, joined)
+		}
+	})
 }

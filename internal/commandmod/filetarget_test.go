@@ -714,6 +714,7 @@ func TestFileTargets_AChdirWrapperMovesItsTargets(t *testing.T) {
 	// A directory from a variable is unknown: a relative target under it is
 	// not guessed at, as after `cd "$D"`.
 	check(t, `env -C "$D" tee NOTES.md`, "(nothing)")
+	check(t, `env -C"$D" tee NOTES.md`, "(nothing)")
 	// No chdir, no move.
 	check(t, `env FOO=1 tee NOTES.md`, "write:NOTES.md")
 }

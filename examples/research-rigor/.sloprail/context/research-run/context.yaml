@@ -17,7 +17,7 @@ on:
   # result was not known ahead). enter decides; the match only narrows.
   - event: PostFileWrite
     match: >-
-      event.path matches "(?i)[.](md|markdown|mdx)$"
+      event.path matches "(?i)[.](md|markdown|mdx|txt|text|rst|adoc|asciidoc|org)$"
       and not (event.path startsWith "/")
       and not (event.path startsWith ".")
 enter: ./enter.sh
