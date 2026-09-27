@@ -49,3 +49,20 @@ Spec and code drift apart most easily when both are actively maintained —
 each edit is defensible on its own, and no single commit is wrong. The pin is
 what makes the drift a checkable fact rather than something someone has to
 notice by memory.
+
+## The second rule: a pinned line holds
+
+`pinned-invariant` checks that the code upholds the pinned text. It cannot
+notice the text itself being rewritten to agree with the code, and a real
+Haiku run did exactly that twice: asked for goodwill refunds above the charge,
+it relaxed "a refund must never exceed the original charge" in SPEC.md and
+re-pinned its code to the new wording, so code and pin agreed.
+
+`pinned-spec-holds` closes that. A write that changes a line some
+`sr:invariant` marker pins must cite the user's own words
+(`require: citation`, `when: changes-pinned-lines.sh`), and a judge checks
+those words ask for the rule itself to change, not merely for a feature that
+conflicts with it. Whether a business rule changes is the user's decision,
+made knowingly; an agent whose task conflicts with one keeps the rule and says
+so. It is preventive, so the rule is refused before it changes. Which files
+are specs is decided by the markers pointing at them, not by a file name.
