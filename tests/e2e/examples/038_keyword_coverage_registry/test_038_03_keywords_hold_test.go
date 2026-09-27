@@ -107,3 +107,26 @@ func TestT038_11_DropCitingUnrelatedWordsRefused(t *testing.T) {
 		t.Fatalf("a drop citing unrelated words was not refused by the judge:\n%s", res.Output)
 	}
 }
+
+// T038_12: a scanner declared below the root — `.claude/scanners/<name>/`, where
+// a real Haiku run put one — is still a scanner: the context logs it and the
+// coverage gate refuses it uncovered, so a misplaced declaration cannot escape.
+func TestT038_12_NestedScannerIsStillChecked(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installExampleTree(t, proj, exampleName)
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "install")
+
+	sess := "s-038-12"
+	e.Run(proj, sess, "declare a scanner but never search", Turns("done",
+		Write("w1", ".claude/scanners/mine/scanner.yaml", activeScanner),
+	))
+	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:mine"]; !ok {
+		t.Fatalf("a scanner declared under .claude/scanners/ was not logged")
+	}
+	if !strings.Contains(strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"), coverageRefusal) {
+		t.Errorf("the coverage gate did not refuse an uncovered nested scanner")
+	}
+}

@@ -12,7 +12,7 @@
 #
 # preventive: a weakened declaration refused before it lands, while the agent can
 # still meet it with a search instead.
-match: 'path startsWith "scanners/" and path endsWith "/scanner.yaml"'
+match: 'path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"'
 preventive: true
 require:
   - citation: {source_types: [user]}
