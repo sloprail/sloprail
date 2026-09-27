@@ -33,7 +33,7 @@
         "claude-md",
         "stop-hook"
       ],
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./marketplace/plugins/sloprail",
       "author": {
         "name": "sloprail",
@@ -50,7 +50,7 @@
         "agentic-coding",
         "code-quality"
       ],
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./marketplace/plugins/sloprail-tasks",
       "author": {
         "name": "sloprail",
@@ -67,7 +67,7 @@
         "agentic-coding",
         "code-quality"
       ],
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./marketplace/plugins/sloprail-content",
       "author": {
         "name": "sloprail",
