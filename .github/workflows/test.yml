@@ -53,12 +53,19 @@ jobs:
   # check), so a bump or workflow-only PR is never stuck waiting on a check
   # that never ran.
   #
-  # A single-commit push is compared against its own parent (github.event.
-  # before) rather than against main, so this reads the SAME question
-  # cut-release.yml's own `git diff --quiet` asks when deciding whether the
-  # bump changed anything — "did this push change more than the exempt
-  # files" — not "does this branch differ from main" (nearly always true on
-  # any working branch, which would defeat the skip entirely).
+  # Diffed against where this branch FORKED from the default branch (git
+  # merge-base), not against github.event.before. before is the all-zeros SHA
+  # on a branch's first push — exactly what scripts/cut-release.sh's
+  # release/vX.Y.Z branch is EVERY time (a fresh branch off main, one commit)
+  # — so treating that as "fail open, assume code changed" defeated the skip
+  # for the one case it exists for, discovered by actually running it: PR #54
+  # ran the full matrix on a plugin.json-only diff. merge-base answers "what
+  # did THIS branch add relative to where it started," which is right for
+  # both a brand-new release branch and an ordinary feature branch with
+  # several commits — not "does this branch differ from main" via a plain
+  # `git diff main...HEAD` (nearly always true the INSTANT a branch exists,
+  # for the trivial reason that main itself keeps moving — that question
+  # would defeat the skip just as completely, the opposite failure mode).
   changes:
     name: which files changed
     runs-on: ubuntu-latest
@@ -68,19 +75,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - id: diff
         run: |
-          before="${{ github.event.before }}"
-          # A new branch's first push (or force-push) has no real parent to
-          # diff against — github.event.before is all-zeros or an unreachable
-          # SHA. Fail open (treat as code-changed) rather than risk skipping
-          # real changes because history was rewritten.
-          if [ -z "$before" ] || ! git cat-file -e "$before" 2>/dev/null; then
+          default_branch="$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')"
+          base="$(git merge-base "origin/$default_branch" "${{ github.sha }}")"
+          # No merge-base at all (an unrelated-history branch, or the default
+          # branch itself force-pushed away from what this checkout knows) —
+          # fail open rather than risk skipping real changes on a comparison
+          # that cannot mean anything.
+          if [ -z "$base" ]; then
             echo "code-changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed="$(git diff --name-only "$before" "${{ github.sha }}")"
+          changed="$(git diff --name-only "$base" "${{ github.sha }}")"
           # Exempt: the two version files, and any workflow file except this
           # one (test.yml — see the job's own doc comment for why it is the
           # one exception). POSIX grep has no negative lookahead, so rather
