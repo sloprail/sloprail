@@ -235,6 +235,18 @@
         "long": "Replace --old-string with --new-string — the Edit tool's semantics. --old-string\nmust occur exactly once unless --replace-all is given, and the file must exist.\n\nCitations: --cite:<source-types> <quote>, repeatable. <source-types> is\nuser (the user's own words), tool_result (a tool's output), or both\ncomma-separated. Each quote must resolve to exactly one entry of the session's\ntrajectory, or nothing is written. The words must match exactly; whitespace\nneed not (a line break in the message matches a space in the quote). Quote with\nsingle quotes so the shell leaves it verbatim.\n\ntool_result also resolves in the records of the sub-agents the session\ndispatched, so a sub-agent can cite its own tools' output. user resolves only\nin the user's messages in the main conversation: a sub-agent's prompt is the\nparent agent's, so a sub-agent quotes the user's words exactly as the user\nwrote them, and a parent dispatching work that must cite the user pastes the\nuser's exact words into the prompt.\n\nFlags take their value as the next word or after '='. '--' ends the flags."
       },
       {
+        "path": "sr-file field",
+        "use": "field <path> <key>",
+        "short": "Print one top-level field of a document, read as plain YAML",
+        "long": "Print one top-level field of a document, read as plain YAML — no schema.\n\nWHICH BYTES ARE THE DOCUMENT is decided as `validate` decides it: the frontmatter of a\n.md, the whole of a .yaml, .yml or .json; '-' reads stdin, with --as.\n\nThe value is printed when it is a scalar (aliases and merge keys followed); an absent\nfield, or one whose value is a list or a map, prints nothing. Exit status:\n  0  the document was read (the value, or nothing, is on stdout)\n  1  the document cannot be read: it does not parse as YAML, or defines the field twice\n  2  the file has no frontmatter: no opening --- fence, or one never closed\n\nEXAMPLES:\n  sr-file field memories/topics/a/units/01/UNIT.md status\n  jq -r .event.newContent payload.json | sr-file field - status --as .md",
+        "flags": [
+          {
+            "name": "as",
+            "usage": "How to read bytes on stdin: .md, .yaml or .json. Required with '-', and refused with a path"
+          }
+        ]
+      },
+      {
         "path": "sr-file validate",
         "use": "validate <path> --schema <schema.cue>",
         "short": "Check a file against a CUE schema",

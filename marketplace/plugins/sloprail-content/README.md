@@ -197,17 +197,22 @@ Over a unit's `UNIT.md` only. Publishing needs **both**:
   may be distributed across several channels (posted to X and cross-posted
   to Reddit, say), each with its own URL.
 
-The status is read from the frontmatter as written, not through `unit.cue`
-(one reader, `publish-claim.sh`, shared by the `when` and the check):
+The status is read from the frontmatter as written, not through `unit.cue`:
+one reader, `publish-claim.sh`, shared by the `when` and the check, asks
+`sr-file field <UNIT.md> status` — a plain YAML reader, so valid YAML the schema
+would reject (an integer key, a custom tag) still answers.
 
 - A write that claims `status: published` and breaks the schema somewhere else
   (`type: article`) still needs the user's cited approval.
 - **Any** write that leaves a unit at `status: published` with frontmatter
   invalid against `unit.cue` is refused, including an edit to a unit that was
   already published (which needs no new approval, but must stay valid).
-- Frontmatter that opens a `---` fence but does not parse cannot be read for a
-  status, so it is treated as a claim to publish: the approval is required, and
-  the write is refused until the frontmatter parses.
+- Frontmatter that cannot be read — YAML that does not parse, `status` defined
+  twice, or a fence placed after a byte-order mark or blank lines — cannot be
+  read for a status, so it is treated as a claim to publish: the approval is
+  required, and the write is refused until the frontmatter reads. A file with no
+  frontmatter at all (including one whose body opens with a `---` rule that is
+  never closed) claims nothing.
 - A unit that is not published is not this guard's business, valid or not.
 
 A broken field is never a way to publish unchecked.

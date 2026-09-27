@@ -13,8 +13,9 @@
 #   published_urls:  where it actually went out. A non-empty LIST (a unit may
 #   be distributed across several channels); only presence is checked, not
 #   each URL's shape (see unit.cue).
-# And a unit whose frontmatter opens a fence but does not parse is refused: no
-# reader can say whether it claims published (publish-claim.sh, shared with
+# And a unit whose frontmatter cannot be read — YAML that does not parse, a
+# status defined twice, a fence after a byte-order mark — is refused: no reader
+# can say whether it claims published (publish-claim.sh, shared with
 # enters-published.sh, is the one reading of that).
 #
 # Bound preventive: true in file-guard.yaml — publish is the irreversible
@@ -94,7 +95,7 @@ case "$claim" in
     exit 0
     ;;
   undecidable)
-    refuse "UNREADABLE FRONTMATTER: $path opens a frontmatter fence but it does not parse, so whether it claims status: published cannot be told — fix the frontmatter so it parses:
+    refuse "UNREADABLE FRONTMATTER: $path's frontmatter cannot be read, so whether it claims status: published cannot be told — fix the frontmatter so it reads:
 $claim_why"
     ;;
 esac

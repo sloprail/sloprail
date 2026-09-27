@@ -63,12 +63,16 @@ func main() {
 		if !errors.Is(err, errRefused) {
 			fmt.Fprintln(os.Stderr, err)
 		}
+		var coded *exitCodeError
+		if errors.As(err, &coded) {
+			os.Exit(coded.code)
+		}
 		os.Exit(1)
 	}
 }
 
 // newRoot is the `sr-file` root. It carries no behaviour of its own — it hosts
-// the verbs: `validate` and `declarations` check a file, `write`, `edit` and
+// the verbs: `validate` and `declarations` check a file, `field` reads one, `write`, `edit` and
 // `delete` change one, grounded in cited words (see grounded.go).
 func newRoot() *cobra.Command {
 	cmd := &cobra.Command{
@@ -79,6 +83,7 @@ func newRoot() *cobra.Command {
 		SilenceErrors: true,
 	}
 	cmd.AddCommand(newValidateCmd())
+	cmd.AddCommand(newFieldCmd())
 	cmd.AddCommand(newDeclarationsCmd())
 	cmd.AddCommand(newWriteCmd(), newEditCmd(), newDeleteCmd())
 	return cmd
@@ -150,21 +155,21 @@ const stdinArg = "-"
 // extension — and on macOS `mktemp -t x.XXXXXX.md` appends its randomness AFTER
 // the template, so the extension becomes the random suffix and every file is
 // refused on its name, which looks exactly like the schema refusing it.
-func readInput(cmd *cobra.Command, path, as string) (Document, error) {
+func readInput(cmd *cobra.Command, verb, path, as string) (Document, error) {
 	if path != stdinArg {
 		// A named file already says what it is; taking --as here as well would be
 		// two answers to one question, with the flag silently winning over the
 		// name the caller can see.
 		if as != "" {
-			return Document{}, fmt.Errorf("sr-file validate: --as applies to bytes read from stdin ('-'), but a path was given: %s already says what it is", path)
+			return Document{}, fmt.Errorf("sr-file %s: --as applies to bytes read from stdin ('-'), but a path was given: %s already says what it is", verb, path)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return Document{}, fmt.Errorf("sr-file validate: read %s: %w", path, err)
+			return Document{}, fmt.Errorf("sr-file %s: read %s: %w", verb, path, err)
 		}
 		doc, err := ExtractDocument(path, data)
 		if err != nil {
-			return Document{}, fmt.Errorf("sr-file validate: %w", err)
+			return Document{}, fmt.Errorf("sr-file %s: %w", verb, err)
 		}
 		return doc, nil
 	}
@@ -174,17 +179,17 @@ func readInput(cmd *cobra.Command, path, as string) (Document, error) {
 	// produces a complaint about the wrong bytes — the failure document.go
 	// exists to prevent. A default would make that the common case.
 	if as == "" {
-		return Document{}, fmt.Errorf("sr-file validate: reading from stdin needs --as to say how (.md, .yaml or .json) — which bytes are the document is decided by the format, and there is no file name here to read one from")
+		return Document{}, fmt.Errorf("sr-file %s: reading from stdin needs --as to say how (.md, .yaml or .json) — which bytes are the document is decided by the format, and there is no file name here to read one from", verb)
 	}
 	data, err := io.ReadAll(cmd.InOrStdin())
 	if err != nil {
-		return Document{}, fmt.Errorf("sr-file validate: read stdin: %w", err)
+		return Document{}, fmt.Errorf("sr-file %s: read stdin: %w", verb, err)
 	}
 	// Named for the reader, since every message carries a file and "-" is what
 	// the caller asked to be called.
 	doc, err := ExtractDocumentAs(stdinArg, as, data)
 	if err != nil {
-		return Document{}, fmt.Errorf("sr-file validate: %w", err)
+		return Document{}, fmt.Errorf("sr-file %s: %w", verb, err)
 	}
 	return doc, nil
 }
@@ -229,7 +234,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("sr-file validate: read schema %s: %w", schemaPath, err)
 	}
 
-	doc, err := readInput(cmd, path, as)
+	doc, err := readInput(cmd, "validate", path, as)
 	if err != nil {
 		return err
 	}

@@ -329,13 +329,14 @@ func TestPublish_CitedUnparseableFrontmatterRefused(t *testing.T) {
 // at all — needs the approval. Each is an uncited Write over a drafting unit.
 func TestPublish_UncitedPublishSpellingsRefused(t *testing.T) {
 	for name, unit := range map[string]string{
-		"value on the next line":      "---\ntype: article\nstatus:\n  published\npublished_urls: [\"u\"]\n---\n",
-		"explicit key":                "---\n? status\n: published\npublished_urls: [\"u\"]\n---\n",
-		"escaped key and value":       "---\n\"stat\\x75s\": \"pub\\x6cished\"\ntype: article\npublished_urls: [\"u\"]\n---\n",
-		"indented fence":              " ---\ntype: [\nstatus: published\n---\n",
-		"fence with a trailing space": "--- \ntype: [\nstatus: published\n---\n",
-		"byte order mark":             "\ufeff---\nstatus: published\npublished_urls: [\"u\"]\n---\n",
-		"capitalised":                 "---\ntype: post\nstatus: Published\npublished_urls: [\"u\"]\n---\n",
+		"value on the next line":            "---\ntype: article\nstatus:\n  published\npublished_urls: [\"u\"]\n---\n",
+		"explicit key":                      "---\n? status\n: published\npublished_urls: [\"u\"]\n---\n",
+		"escaped key and value":             "---\n\"stat\\x75s\": \"pub\\x6cished\"\ntype: article\npublished_urls: [\"u\"]\n---\n",
+		"indented fence":                    " ---\ntype: [\nstatus: published\n---\n",
+		"fence with a trailing space":       "--- \ntype: [\nstatus: published\n---\n",
+		"byte order mark":                   "\ufeff---\nstatus: published\npublished_urls: [\"u\"]\n---\n",
+		"fence trailed by a no-break space": "---\u00a0\ntype: [\nstatus: published\n---\n",
+		"capitalised":                       "---\ntype: post\nstatus: Published\npublished_urls: [\"u\"]\n---\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			e, proj := installPublishProject(t, draftingUnit)
@@ -344,6 +345,9 @@ func TestPublish_UncitedPublishSpellingsRefused(t *testing.T) {
 			))
 			if !res.Refused() {
 				t.Fatalf("an uncited publish spelled %q was not refused:\n%s", name, res.Output)
+			}
+			if !res.Saw("must cite the user's own words (--cite:user)") {
+				t.Errorf("the publish spelled %q was not refused for its missing approval:\n%s", name, res.Output)
 			}
 			if body := readProj(t, proj, unitPath); body != draftingUnit {
 				t.Errorf("the uncited publish landed:\n%s", body)
@@ -357,10 +361,15 @@ func TestPublish_UncitedPublishSpellingsRefused(t *testing.T) {
 // guard's business — an uncited write of it lands.
 func TestPublish_InvalidNonPublishedUnitPermitted(t *testing.T) {
 	for name, unit := range map[string]string{
-		"invalid type, drafting": "---\ncreated: 2026-09-25\ntype: article\nstatus: drafting\n---\n\nAnnouncing the launch.\n",
-		"status unpublished":     "---\ntype: post\nstatus: unpublished\n---\n",
-		"comment naming publish": "---\ntype: post\nstatus: drafting # not published yet\n---\n",
-		"no frontmatter at all":  "Announcing the launch; status: published later.\n",
+		"invalid type, drafting":          "---\ncreated: 2026-09-25\ntype: article\nstatus: drafting\n---\n\nAnnouncing the launch.\n",
+		"status unpublished":              "---\ntype: post\nstatus: unpublished\n---\n",
+		"comment naming publish":          "---\ntype: post\nstatus: drafting # not published yet\n---\n",
+		"no frontmatter at all":           "Announcing the launch; status: published later.\n",
+		"integer key":                     "---\ntype: post\nstatus: drafting\n1: x\n---\n",
+		"null key and custom tag":         "---\nnull: x\nx: !custom foo\nstatus: drafting\n---\n",
+		"complex key":                     "---\n? [a, b]\n: c\nstatus: drafting\n---\n",
+		"inf, nan and a huge int":         "---\na: .inf\nb: .nan\nn: 123456789012345678901234567890\nstatus: drafting\n---\n",
+		"horizontal rule, no frontmatter": "---\n\nAnnouncing the launch.\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			e, proj := installPublishProject(t, draftingUnit)

@@ -5,54 +5,58 @@
 #
 # publish_claim CONTENT sets:
 #   claim         yes | no | undecidable
-#   claim_status  the status the frontmatter parses to ("" when none or undecidable)
-#   claim_why     for undecidable, why (sr-file's own parse error)
+#   claim_status  the status the frontmatter holds ("" when none or undecidable)
+#   claim_why     for undecidable, why (sr-file's own error)
 #
-# The frontmatter is read AS WRITTEN — parsed by `sr-file validate --emit` against
-# no schema (/dev/null), never against unit.cue: a document that breaks the
-# schema somewhere else (`type: article`) still claims its status. sr-file runs
-# once per call.
+# The status is read by `sr-file field`: a PLAIN YAML reader (no schema, no JSON
+# view of the document), with sr-file's own rule for where the frontmatter is.
+# Valid YAML a schema would reject — an integer key, a custom tag, `.inf` — still
+# answers; only YAML that does not parse, or names status twice, cannot. And
+# sr-file's exit status decides, never a second fence rule written here:
 #
-#   parses                           → yes when its status is published (trimmed,
-#                                      any case), else no
-#   opens a --- fence, does not parse → undecidable: no reader can say what
-#                                      status it holds, so it is never read as
-#                                      "not published". The fence is found the way
-#                                      sr-file's isFence finds it — the first line
-#                                      is `---` once whitespace is trimmed — and
-#                                      also past a byte-order mark and leading
-#                                      blank lines, which sr-file itself refuses.
-#   no fence at all                  → no: a document without frontmatter has no
-#                                      status.
+#   0  read             → yes when the status is published (trimmed, any case),
+#                         else no
+#   2  no frontmatter   → no: nothing is claimed. Unless the content opens a
+#                         fence once a byte-order mark and leading blank lines
+#                         are dropped (sr-file itself does not look past them):
+#                         then it is undecidable — a reader that does look past
+#                         them would find a status there.
+#   anything else       → undecidable: the frontmatter cannot be read, so it is
+#                         never taken as "not published" (a missing sr-file, too)
 #
 # A caller treats undecidable as it would yes: the `when` applies the approval,
 # the check refuses.
 publish_claim() {
-  local content="$1" doc err rest first
+  local content="$1" out code rest
   claim="" claim_status="" claim_why=""
-  if doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema /dev/null --emit 2>&1)"; then
-    if ! claim_status="$(printf '%s' "$doc" | jq -r 'if type == "object" then (.status // "" | tostring) else "" end' 2>/dev/null)"; then
-      claim="undecidable" claim_why="sr-file emitted a document jq could not read"
-      return 0
-    fi
-    if [ "$(printf '%s' "$claim_status" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" = "published" ]; then
-      claim="yes"
-    else
+  out="$(printf '%s' "$content" | sr-file field - status --as .md 2>&1)"
+  code=$?
+  case "$code" in
+    0)
+      claim_status="$out"
+      if [ "$(printf '%s' "$out" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" = "published" ]; then
+        claim="yes"
+      else
+        claim="no"
+      fi
+      ;;
+    2)
       claim="no"
-    fi
-    return 0
-  fi
-  err="$doc"
-  # Does it open a frontmatter fence? Drop a byte-order mark and any leading
-  # whitespace (blank lines included), then compare the first line, trimmed.
-  rest="${content#$'\xef\xbb\xbf'}"
-  rest="${rest#"${rest%%[![:space:]]*}"}"
-  first="${rest%%$'\n'*}"
-  first="${first%"${first##*[![:space:]]}"}"
-  if [ "$first" = "---" ]; then
-    claim="undecidable" claim_why="$err"
-  else
-    claim="no"
-  fi
+      # Past a byte-order mark and leading whitespace, does sr-file find a
+      # frontmatter? Its own answer again, so the fence rule stays its own.
+      rest="${content#$'\xef\xbb\xbf'}"
+      rest="${rest#"${rest%%[![:space:]]*}"}"
+      if [ "$rest" != "$content" ]; then
+        printf '%s' "$rest" | sr-file field - status --as .md >/dev/null 2>&1
+        if [ $? -ne 2 ]; then
+          claim="undecidable"
+          claim_why="the frontmatter fence comes after a byte-order mark or blank lines, where it is not read as frontmatter; start the file with the --- fence"
+        fi
+      fi
+      ;;
+    *)
+      claim="undecidable" claim_why="$out"
+      ;;
+  esac
   return 0
 }

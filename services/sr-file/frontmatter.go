@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"fmt"
+	"errors"
 )
 
 // fence is the `---` line that opens and closes a Markdown document's leading
@@ -41,7 +41,7 @@ func isFence(line []byte) bool {
 func splitFrontmatter(data []byte) (front, body []byte, err error) {
 	lines := bytes.SplitAfter(data, []byte("\n"))
 	if len(lines) == 0 || !isFence(lines[0]) {
-		return nil, nil, fmt.Errorf("no frontmatter: a document begins with a --- fence")
+		return nil, nil, noFrontmatterError("no frontmatter: a document begins with a --- fence")
 	}
 
 	for i := 1; i < len(lines); i++ {
@@ -51,5 +51,17 @@ func splitFrontmatter(data []byte) (front, body []byte, err error) {
 			return front, body, nil
 		}
 	}
-	return nil, nil, fmt.Errorf("unterminated frontmatter: no closing --- fence")
+	return nil, nil, noFrontmatterError("unterminated frontmatter: no closing --- fence")
 }
+
+// errNoFrontmatter is what both split failures are: the file carries no
+// frontmatter document — no opening fence, or an opening `---` with no closing
+// one, which is a horizontal rule at the top of prose rather than a fence. Test
+// with errors.Is; the messages stay the split's own.
+var errNoFrontmatter = errors.New("no frontmatter")
+
+// noFrontmatterError is a split failure that is errNoFrontmatter.
+type noFrontmatterError string
+
+func (e noFrontmatterError) Error() string        { return string(e) }
+func (e noFrontmatterError) Is(target error) bool { return target == errNoFrontmatter }
