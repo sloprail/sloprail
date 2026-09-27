@@ -11,6 +11,7 @@
 /sr-file
 /sr-mark
 /sr-agent
+/sr-eval
 
 # Where `make build` puts the same binaries. The entries above cover a bare
 # `go build ./services/...`, which drops them at the root; the Makefile builds
