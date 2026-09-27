@@ -109,11 +109,12 @@ func runVerified(
 
 	var lastRejection error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		// Truncated between attempts, so a second run that writes nothing at
-		// all cannot pass on the first attempt's leftovers. Without this the
-		// retry would silently re-judge stale bytes and report a pass for an
-		// agent that did nothing.
-		if err := os.Truncate(outputPath, 0); err != nil && !os.IsNotExist(err) {
+		// Removed between attempts, so a second run that writes nothing at all
+		// cannot pass on the first attempt's leftovers. Without this the retry
+		// would silently re-judge stale bytes and report a pass for an agent that
+		// did nothing. Removed rather than truncated: the file must not EXIST when
+		// the agent starts (see makeOutputFile).
+		if err := os.Remove(outputPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("%w: could not clear %s: %s", ErrVerifierBroken, outputPath, err)
 		}
 
@@ -166,13 +167,31 @@ func runVerified(
 	return fmt.Errorf("%w (after %d attempts)", lastRejection, attempts)
 }
 
-// makeOutputFile creates the file the agent writes and returns a cleanup.
+// makeOutputFile picks the path the agent writes its answer to, in a directory
+// sr-agent owns, and returns a cleanup.
 //
 // sr-agent owns the path rather than taking one from the caller. A
 // caller-chosen path could sit inside the tree the agent is working in, where
 // the agent's own edits would collide with it — and the file's value is that it
-// is created empty, truncated between attempts, and removed at the end, none of
-// which sr-agent can promise about a path someone else picked.
+// does not exist until the agent writes it, is removed between attempts, and is
+// removed at the end, none of which sr-agent can promise about a path someone
+// else picked.
+//
+// The DIRECTORY is created; the file is NOT. It used to be created empty, so
+// that "the agent wrote nothing" reached the verifier as an empty file. But
+// Claude Code's Write tool refuses to overwrite an existing file the agent has
+// not Read first, so every judge spent one tool call on that refusal before
+// writing its verdict — measured on claude 2.1.282 (haiku, 2026-09-27): 5 of 5
+// real judge runs with the pre-created file hit "File has not been read yet.
+// Read it first before writing to it." and then Read and re-Wrote it (tool
+// calls: Read, Write, Read, Write); 0 of 5 hit it with no file there, the first
+// Write creating it under the Edit(//<dir>/**) grant (tool calls: Read, Write).
+//
+// Nothing is lost by it. "Never written" is now a MISSING file, which
+// RunVerifier reports itself as a failed attempt ("the agent wrote no output
+// to …") and the retry quotes back to the agent; "written empty" is an empty
+// file, which the caller's verifier judges as before. The two used to look the
+// same.
 //
 // A plain, unique name with a .json-free suffix: the content is whatever the
 // caller's script expects, so naming it .json would be a claim this code has no
@@ -186,23 +205,17 @@ func makeOutputFile() (path string, cleanup func(), err error) {
 		}
 		path = filepath.Join(dir, "answer")
 		cleanup = func() { _ = os.RemoveAll(dir) }
-	} else {
-		// A directory supplied for tests. Not removed, because it is not ours.
-		path = filepath.Join(dir, "answer")
-		cleanup = func() { _ = os.Remove(path) }
+		return path, cleanup, nil
 	}
 
-	// Created empty so the verifier's "the agent wrote nothing" case is an
-	// empty file rather than a missing one. The distinction matters: a missing
-	// file could mean the agent wrote elsewhere, and an empty one can only mean
-	// it did not write.
-	f, err := os.Create(path)
-	if err != nil {
-		cleanup()
-		return "", func() {}, fmt.Errorf("%w: %s", ErrVerifierBroken, err)
+	// A directory supplied for tests. Not removed, because it is not ours — but
+	// an answer left there by an earlier run is, and it must not be judged as
+	// this run's.
+	path = filepath.Join(dir, "answer")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return "", func() {}, fmt.Errorf("%w: could not clear %s: %s", ErrVerifierBroken, path, err)
 	}
-	_ = f.Close()
-	return path, cleanup, nil
+	return path, func() { _ = os.Remove(path) }, nil
 }
 
 // runAgentQuietly runs the harness with its stdout suppressed.
@@ -212,10 +225,26 @@ func makeOutputFile() (path string, cleanup func(), err error) {
 // hook that captures this command's output to feed a rule must find only the
 // answer. stderr still passes through, because that is where a harness reports
 // its own trouble and a caller needs to see it.
+//
+// stdin is EMPTY, not inherited. Under --verify sr-agent owns the whole prompt,
+// so nothing on stdin is meant for the agent — and `claude -p` reads its stdin
+// and appends it to the prompt. Inherited, a stdin that is open but silent (a
+// terminal, a script's pipe nobody closes) held every run for claude's own
+// timeout: measured on claude 2.1.282 (haiku, 2026-09-27), a one-Read judge
+// call with an open, silent stdin printed "Warning: no stdin data received in
+// 3s, proceeding without it" and took 11.85-15.90s (3 runs) against
+// 9.08-10.63s (2 runs) with stdin closed — the 3s wait, per call. With this
+// empty stdin (and no pre-created answer file, see makeOutputFile) the same
+// call took 6.12-6.90s with the caller's stdin open and 5.93-5.96s closed, and
+// never printed the warning. A stdin carrying data is worse: a
+// script check that runs sr-agent would hand the agent its own check payload
+// as part of the question. The plain (non --verify) path still inherits stdin,
+// because there the caller may be piping the prompt on purpose.
 func runAgentQuietly(ctx context.Context, cmd *cobra.Command, inv Invocation) (string, error) {
 	quiet := *cmd
 	reply := &cappedBuffer{max: maxReply}
 	quiet.SetOut(reply)
+	quiet.SetIn(strings.NewReader(""))
 	quiet.SetContext(ctx)
 	err := runHarness(&quiet, inv)
 	return reply.String(), err
@@ -252,7 +281,11 @@ func (c *cappedBuffer) String() string { return c.buf.String() }
 // verifier still judges the bytes; a reply that is not a single object, or a
 // file the agent did write, is left untouched.
 func answerFromReply(outputPath, reply string) error {
-	if info, err := os.Stat(outputPath); err != nil || info.Size() > 0 {
+	// Filled when the agent left no answer — the file missing (never written) or
+	// empty — and never over an answer it did write.
+	if info, err := os.Stat(outputPath); err == nil && info.Size() > 0 {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
 		return nil
 	}
 	reply = strings.TrimSpace(reply)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,10 +39,19 @@ func requireSh(t *testing.T) {
 //
 // The fake learns where to write from SR_TEST_OUTPUT, which runVerified does
 // not set — a REAL agent learns the path from the prompt, and a fake cannot
-// read a prompt. The path is discovered by watching for the file runVerified
-// creates in the temp dir it makes.
+// read a prompt. The output directory is pinned with outputDirEnv so the path
+// is known before the run.
 func runVerifyHarness(
 	t *testing.T, spec harnessSpec, verifier, prompt string, attempts int, dir string,
+) (stdout, stderr string, err error) {
+	t.Helper()
+	return runVerifyHarnessWithStdin(t, spec, verifier, prompt, attempts, dir, strings.NewReader(""))
+}
+
+// runVerifyHarnessWithStdin is runVerifyHarness with sr-agent's OWN stdin set,
+// to show what the harness it launches does (not) inherit.
+func runVerifyHarnessWithStdin(
+	t *testing.T, spec harnessSpec, verifier, prompt string, attempts int, dir string, stdin io.Reader,
 ) (stdout, stderr string, err error) {
 	t.Helper()
 
@@ -49,7 +59,7 @@ func runVerifyHarness(
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetIn(strings.NewReader(""))
+	cmd.SetIn(stdin)
 
 	// The output directory is pinned so the fake knows where to write. A real
 	// agent learns the path from the prompt; a script cannot read a prompt.
@@ -318,7 +328,7 @@ exit 0
 	assert.Error(t, statErr, "the agent must not run at all when the verifier cannot be resolved")
 }
 
-// The output file is truncated between attempts, or a second attempt that
+// The output file is removed between attempts, or a second attempt that
 // writes nothing would be judged on the answer that was already rejected.
 func TestVerified_OutputIsResetBetweenAttempts(t *testing.T) {
 	requireSh(t)
@@ -349,6 +359,108 @@ exit 1
 	require.NoError(t, readErr)
 	assert.Equal(t, 1, strings.Count(string(got), "first answer"),
 		"the stale answer must not be shown to the verifier a second time")
+}
+
+// The answer file does NOT exist when the agent starts. Claude Code's Write
+// refuses to overwrite a file the agent has not Read, so a pre-created empty
+// answer cost every judge a refused Write and a Read before its real Write —
+// measured on 5 of 5 real judge runs. It must be absent on EVERY attempt, not
+// only the first.
+func TestVerified_AnswerFileIsAbsentWhenTheAgentStarts(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	fakeHarness := writeScript(t, dir, "fake-claude.sh", fmt.Sprintf(`
+if [ -e "$SR_TEST_OUTPUT" ]; then echo present >> %[1]s; else echo absent >> %[1]s; fi
+printf 'an answer' > "$SR_TEST_OUTPUT"
+exit 0
+`, log))
+	verifier := writeScript(t, dir, "v.sh", "echo no >&2; exit 1\n")
+
+	// A stale answer left in the (test-pinned) output dir by an earlier run.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "out"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "out", "answer"), []byte("stale"), 0o644))
+
+	spec := harnessSpec{name: "fake", binary: fakeHarness}
+	_, _, err := runVerifyHarness(t, spec, verifier, "q", 2, dir)
+	require.ErrorIs(t, err, ErrVerifyFailed)
+
+	got, readErr := os.ReadFile(log)
+	require.NoError(t, readErr)
+	assert.Equal(t, "absent\nabsent\n", string(got),
+		"the answer file must not exist when the agent starts, on any attempt")
+}
+
+// "Never written" and "written empty" are different outcomes. Never written is
+// a missing file: sr-agent reports it itself, without running the verifier, and
+// says so to the agent on the retry. Written empty is a file the verifier
+// judges like any other.
+func TestVerified_NeverWrittenIsDistinctFromWrittenEmpty(t *testing.T) {
+	requireSh(t)
+
+	t.Run("never written", func(t *testing.T) {
+		dir := t.TempDir()
+		ran := filepath.Join(dir, "verifier-ran")
+		fakeHarness := writeScript(t, dir, "fake-claude.sh", "exit 0\n")
+		verifier := writeScript(t, dir, "v.sh", fmt.Sprintf("touch %s; exit 0\n", ran))
+
+		spec := harnessSpec{name: "fake", binary: fakeHarness}
+		_, _, err := runVerifyHarness(t, spec, verifier, "q", 1, dir)
+		require.ErrorIs(t, err, ErrVerifyFailed)
+		assert.Contains(t, err.Error(), "wrote no output")
+		assert.NoFileExists(t, ran, "a never-written answer is not handed to the verifier")
+	})
+
+	t.Run("written empty", func(t *testing.T) {
+		dir := t.TempDir()
+		fakeHarness := writeScript(t, dir, "fake-claude.sh", `: > "$SR_TEST_OUTPUT"; exit 0`+"\n")
+		verifier := writeScript(t, dir, "v.sh", `[ -f "$1" ] && [ ! -s "$1" ] && exit 0; echo "not an empty file" >&2; exit 1`+"\n")
+
+		spec := harnessSpec{name: "fake", binary: fakeHarness}
+		_, errOut, err := runVerifyHarness(t, spec, verifier, "q", 1, dir)
+		require.NoError(t, err, "the verifier judges an empty answer file; stderr: %s", errOut)
+	})
+}
+
+// A printed JSON reply stands in for an answer that was never written, as it
+// does for one written empty — the file no longer exists beforehand, so the
+// missing case is the common one.
+func TestVerified_PrintedJSONReplyFillsANeverWrittenAnswer(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	fakeHarness := writeScript(t, dir, "fake-claude.sh", `printf '{"pass": true}\n'; exit 0`+"\n")
+	verifier := writeScript(t, dir, "v.sh", `grep -q '"pass": true' "$1" || { echo empty >&2; exit 1; }`)
+
+	spec := harnessSpec{name: "fake", binary: fakeHarness}
+	out, errOut, err := runVerifyHarness(t, spec, verifier, "q", 1, dir)
+	require.NoError(t, err, "stderr: %s", errOut)
+	assert.Contains(t, out, `"pass": true`)
+}
+
+// Under --verify the harness gets an EMPTY stdin, whatever sr-agent's own stdin
+// holds. `claude -p` appends its stdin to the prompt and, when stdin is open but
+// silent, waits 3s for it (measured) — so an inherited stdin cost every judge
+// that wait, and a script check running sr-agent would hand the agent its own
+// check payload as part of the question.
+func TestVerified_HarnessGetsAnEmptyStdin(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	seen := filepath.Join(dir, "stdin-seen")
+	fakeHarness := writeScript(t, dir, "fake-claude.sh", fmt.Sprintf(`
+cat > %s
+printf 'ok' > "$SR_TEST_OUTPUT"
+exit 0
+`, seen))
+	verifier := writeScript(t, dir, "v.sh", "exit 0\n")
+
+	spec := harnessSpec{name: "fake", binary: fakeHarness}
+	_, errOut, err := runVerifyHarnessWithStdin(t, spec, verifier, "q", 1, dir,
+		strings.NewReader(`{"event":{"path":"a check payload"}}`))
+	require.NoError(t, err, "stderr: %s", errOut)
+
+	got, readErr := os.ReadFile(seen)
+	require.NoError(t, readErr)
+	assert.Empty(t, string(got), "sr-agent's own stdin must not reach the harness under --verify")
 }
 
 // --- CLI wiring -------------------------------------------------------------

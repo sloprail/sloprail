@@ -110,8 +110,9 @@ func checkVerifyAttempts(n int) error {
 //
 // For tests only, and deliberately not a flag. A caller who could choose the
 // path could choose one inside the tree the agent is working in, and the file's
-// whole value is that sr-agent owns it: it is created empty, truncated between
-// attempts, and removed afterwards. A caller-supplied path breaks all three.
+// whole value is that sr-agent owns it: it does not exist until the agent
+// writes it, is removed between attempts, and is removed afterwards. A
+// caller-supplied path breaks all three.
 const outputDirEnv = "SLOPRAIL_AGENT_OUTPUT_DIR"
 
 // ResolveVerifier turns a --verify value into a runnable command.
@@ -166,8 +167,8 @@ func ResolveVerifier(script string) (string, error) {
 // Appended to the caller's prompt rather than replacing it, and phrased as an
 // instruction about the FILE rather than about formatting, because the file is
 // the contract: the verifier reads the file, not the transcript. An agent that
-// answers in prose and writes nothing fails verification on an empty file,
-// which is the correct outcome and a legible one.
+// answers in prose and writes nothing fails verification — the file is missing,
+// and RunVerifier says so — which is the correct outcome and a legible one.
 func verifyPromptSuffix(outputPath string) string {
 	return fmt.Sprintf(
 		"\n\nWrite your answer to the file %s. That file is what will be read and checked; "+
