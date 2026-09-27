@@ -1,16 +1,5 @@
 # sloprail Individual Contributor License Agreement ("Agreement")
 
-> **⚠️ LEGAL REVIEW NEEDED.** This document is adapted from the [Apache
-> Software Foundation Individual Contributor License Agreement v2.2](https://www.apache.org/licenses/icla.pdf)
-> for use by a for-profit Delaware C-corporation rather than a non-profit
-> foundation. It has **not** been reviewed by a lawyer. Do not treat this as
-> final or binding until A10N, Inc.'s counsel has reviewed and
-> approved it — in particular the assignment/license model (this draft keeps
-> the Apache original's non-exclusive-license model rather than a copyright
-> assignment), the disclaimer of warranty language, and governing law/venue,
-> which should likely be Delaware to match the entity's state of
-> incorporation.
-
 Thank you for your interest in contributing to sloprail, a project of
 **A10N, Inc.** ("Company"). In order to clarify the intellectual
 property license granted with Contributions from any person, the Company
@@ -121,9 +110,10 @@ respect.
 
 ## 9. Governing Law
 
-*[Placeholder — to be confirmed by counsel, expected: the laws of the State
-of Delaware, without regard to its conflict-of-laws principles, consistent
-with the Company's state of incorporation.]*
+This Agreement is governed by the laws of the State of Delaware, without
+regard to conflict-of-law principles. Any dispute arising from this Agreement
+will be brought exclusively in the state or federal courts located in
+Delaware, and you consent to their jurisdiction.
 
 ---
 
