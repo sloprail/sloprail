@@ -1,0 +1,12 @@
+[
+  {"text": "The mobile app keeps crashing on startup since the last update", "intent": "bug"},
+  {"text": "Every export attempt crashes the browser tab", "intent": "bug"},
+  {"text": "I was billed for two subscriptions this month by mistake", "intent": "billing"},
+  {"text": "Please cancel my plan and refund the last charge", "intent": "billing"},
+  {"text": "I can't log into my account, it says wrong password", "intent": "account"},
+  {"text": "Need to update the phone number on my profile", "intent": "account"},
+  {"text": "The notifications page crashed right after I clicked filter", "intent": "bug"},
+  {"text": "Do you support exporting to CSV?", "intent": "other"},
+  {"text": "The report generator throws an error and the screen goes blank", "intent": "bug"},
+  {"text": "What's the difference between the free and paid tiers?", "intent": "other"}
+]

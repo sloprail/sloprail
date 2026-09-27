@@ -1,4 +1,22 @@
-# Written by the agent when it commits to a target. The target itself lives in
-# verify.sh, not here — one place for the condition.
+# Written by the agent when it commits to a target — before this write, this
+# folder does not exist. Four fields, each doing one job:
+#
+#   enabled      — is this goal currently in force (goal-tracking's own switch).
+#   script       — the goal's own verify.sh, checked for "target met" (see there).
+#   target       — the accuracy threshold, as a bare number. Read INDEPENDENTLY
+#                  by the goal-verify gate's own runner script, which recomputes
+#                  the metric itself and compares against THIS number rather
+#                  than trusting verify.sh's exit code — so an agent-written
+#                  verify.sh that always `exit 0`s cannot pass the gate; the
+#                  runner's own comparison is the one that decides.
+#   cited_ask    — a citation of the user's own words, in the same
+#                  `[quote](jsonl-path)` grammar sloprail-tasks's
+#                  task-body-is-human-authored guard uses for a task body. This
+#                  is what lets goal-verify confirm the goal keeps the WHOLE
+#                  ask — the target AND the "don't hardcode the eval" half —
+#                  rather than a target quietly written down alone once
+#                  compaction has pushed the original prompt out of context.
 enabled: true
 script: verify.sh
+target: 0.75
+cited_ask: "[improve the classifier until accuracy is at least 0.75, WITHOUT hardcoding the eval's own tickets — the rules must generalize](/abs/path/to/session.jsonl:1)"

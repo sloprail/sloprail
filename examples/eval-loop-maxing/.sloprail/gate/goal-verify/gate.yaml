@@ -1,13 +1,36 @@
-# The "don't stop until target met" verdict lives here (a gate refuses; the
-# context only tracks active/inactive).
+# The "don't stop until the WHOLE ask is met" verdict lives here (a gate
+# refuses; the context only tracks active/inactive).
 #
 # match skips this when no goal is active, so a goal-free Stop is permitted
-# (`require` alone would block it). `require` orders the context's enter first,
-# making the active read meaningful.
+# (`require` alone would block it). `require` orders the context's enter
+# first, making the active read meaningful.
+#
+# FOUR checks, cheapest and most deterministic first, first refusal wins:
+#
+#   1. goal-cites-ask.sh    — script. The goal must cite the user's own
+#                             prompt (grounded via cite), so its target can be
+#                             checked against what was actually asked.
+#   2. goal-covers-ask.md.j2 — judge. Does the goal's target + constraints
+#                             preserve BOTH halves of that cited ask (the
+#                             target AND the no-overfit condition), or did it
+#                             narrow to just the number.
+#   3. run-verify.sh        — script. Recomputes accuracy itself (the
+#                             runner, not the agent) and refuses while the
+#                             target is unmet OR held-out accuracy trails
+#                             visible by more than the configured gap.
+#   4. no-hardcoding.md.j2  — judge. Reads classify.py against the visible
+#                             eval cases for per-case special-casing.
 on:
   - event: Stop
     match: context["goal-tracking"].active
 require:
   - context: goal-tracking
 checks:
+  - script: ./goal-cites-ask.sh
+  - prepare: ./prepare-goal-covers-ask.sh
+    judge: ./goal-covers-ask.md.j2
+    model: size-md
   - script: ./run-verify.sh
+  - prepare: ./prepare-no-hardcoding.sh
+    judge: ./no-hardcoding.md.j2
+    model: size-md

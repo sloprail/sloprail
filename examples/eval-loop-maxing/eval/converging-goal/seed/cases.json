@@ -1,0 +1,12 @@
+[
+  {"text": "The app crashes every time I open the settings page", "intent": "bug"},
+  {"text": "My last invoice charged me twice this month", "intent": "billing"},
+  {"text": "I'm locked out of my account and can't reset my password", "intent": "account"},
+  {"text": "It keeps crashing whenever I open the reports tab", "intent": "bug"},
+  {"text": "Can I get a refund for last week's subscription renewal?", "intent": "billing"},
+  {"text": "The export button errors out with a blank screen", "intent": "bug"},
+  {"text": "I want to change the email on my profile", "intent": "account"},
+  {"text": "The dashboard crashed and now shows a blank page", "intent": "bug"},
+  {"text": "What time zone does the scheduling feature use?", "intent": "other"},
+  {"text": "The upload feature fails silently with large files", "intent": "bug"}
+]

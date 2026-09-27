@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-# `eval` — the real evaluator this project's eval-loop-maxing convention
-# tracks (context/recording matches any invocation naming this binary).
-# Scores classify() against a fixed labeled set, appends the result to
-# evals/metrics.jsonl, and writes a run artifact under evals/runs/ whose
-# path this prints on stdout.
+# `eval` — the evaluator this project's eval-loop-maxing convention tracks
+# (context/recording matches any invocation naming this binary).
+#
+# Scores classify() against the VISIBLE eval cases in cases.json (the ones
+# this project's prompt and skill point the agent at) and appends the result
+# to evals/metrics.jsonl. It does NOT touch the held-out set — that set is
+# scored separately, by the goal-verify gate's own runner script, at Stop.
+# This script is what the agent runs while iterating; the held-out score is
+# not something the agent's own tool call can see or influence directly.
 import json
 import os
 import sys
@@ -12,18 +16,16 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from classify import classify
 
-CASES = [
-    ("You won a free trip!", "spam"),
-    ("Claim your prize now", "spam"),
-    ("You are a WINNER, click to claim", "spam"),
-    ("Free money waiting for you", "spam"),
-    ("Let's meet for lunch tomorrow", "ham"),
-    ("Meeting notes attached", "ham"),
-    ("Reminder: dentist appointment Friday", "ham"),
-    ("Can you review my prize-winning short story?", "ham"),
-]
+HERE = os.path.dirname(os.path.abspath(__file__))
 
-correct = sum(1 for text, want in CASES if classify(text) == want)
+with open(os.path.join(HERE, "cases.json")) as f:
+    CASES = json.load(f)
+
+correct = 0
+for case in CASES:
+    intent, _priority = classify(case["text"])
+    if intent == case["intent"]:
+        correct += 1
 accuracy = correct / len(CASES)
 
 os.makedirs("evals/runs", exist_ok=True)
