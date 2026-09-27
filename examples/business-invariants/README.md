@@ -17,9 +17,8 @@ what it meant when the code was written.
 The fix: the marker's fqn carries a GitHub-shaped link pinned to a commit —
 repo, sha, path, line range. The sha buys two things:
 
-- **A reference to compare against.** The judge follows the link and reads
-  the exact text the code was written against, not whatever the spec says
-  today.
+- **A reference to compare against.** The judge rules against the exact text
+  the code was written against, not whatever the spec says today.
 - **A change signal.** Diffing the pinned range against HEAD is checkable by a
   script, before any judge runs — if the spec moved and the marker did not,
   that is a fact, not an impression.
@@ -38,7 +37,11 @@ touched the file.
    path, real line range), and does the pinned text still match HEAD? Pure
    byte comparison — no model needed to catch spec drift.
 2. **Judge (only once the pin is confirmed live):** given the pinned text,
-   does the marked code actually enforce what it says?
+   does the marked code actually enforce what it says? A `prepare`
+   (`pinned-text.sh`) reads each pin and hands the judge the pinned lines and
+   the current spec, so the judge reads nothing itself: it runs with the
+   rule's folder as its working directory, and a spec outside that folder
+   would cost it a round of permission denials before it found the text.
 
 ## The failure this catches
 

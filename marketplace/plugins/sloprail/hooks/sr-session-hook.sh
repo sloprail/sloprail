@@ -279,10 +279,10 @@ if [ "$subcommand" = "start" ]; then
   status=0
   "$sr_session_bin" start "$@" 2>"$report" || status=$?
   cat "$report" >&2
-  # Everything but the two lines that are bookkeeping, not a problem with a
-  # rule: which plugin owns which folders, and a baseline that could not be
-  # recorded.
-  problems="$(grep -v ' owns \|no baseline recorded' "$report" 2>/dev/null || true)"
+  # Everything but the lines that are bookkeeping, not a problem with a rule:
+  # which plugin owns which folders, a baseline that could not be recorded, and
+  # the load check's own summary (printed only without a session payload).
+  problems="$(grep -v ' owns \|no baseline recorded\|rules loaded' "$report" 2>/dev/null || true)"
   if [ -n "$problems" ]; then
     echo
     echo "sloprail load check: what follows is NOT in force until fixed (the sloprail:authoring-guardrails skill has the format; re-check with: sr-session start < /dev/null)"
