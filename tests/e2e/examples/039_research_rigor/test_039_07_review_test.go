@@ -37,7 +37,7 @@ func TestT039_24_HiddenCloneFailureNotCredited(t *testing.T) {
 			e, proj := research(t)
 			src := sourceRepo(t, e, "retry-lib")
 			stale := filepath.Join(scratch(t), "retry-lib")
-			e.Git(filepath.Dir(stale), "clone", src, stale) // left over from an earlier session
+			staleClone(t, src, stale) // left over from an earlier session
 
 			joined := refused(t, e, proj, "s-039-24-"+string(rune('a'+i)),
 				SayBash("b1", "#research", tc.clone(src, stale)),
@@ -118,13 +118,13 @@ func TestT039_26_SearchesThatReadNoSourceDoNotCount(t *testing.T) {
 		}, noneOf},
 		{"the Grep tool restricted to markdown", func(dst string) []harness.Turn {
 			use, res := harness.CallWithOutput("g1", "Grep",
-				map[string]string{"pattern": "retry", "path": filepath.Join(dst, "lib"), "glob": "*.md"},
+				map[string]string{"pattern": "retry", "path": filepath.Join(dst, "lib"), "glob": "*.md", "output_mode": "content"},
 				filepath.Join(dst, "lib", "NOTES.md")+":1:retry")
 			return []harness.Turn{Read("r1", filepath.Join(dst, "lib", "retry.js")), use, res}
 		}, onlyOne},
 		{"the Grep tool finding nothing", func(dst string) []harness.Turn {
 			use, res := harness.CallWithOutput("g1", "Grep",
-				map[string]string{"pattern": "zzz-nomatch", "path": filepath.Join(dst, "lib")},
+				map[string]string{"pattern": "zzz-nomatch", "path": filepath.Join(dst, "lib"), "output_mode": "content"},
 				"No files found")
 			return []harness.Turn{Read("r1", filepath.Join(dst, "lib", "retry.js")), use, res}
 		}, onlyOne},
@@ -161,6 +161,11 @@ func noneOf(dst string) string {
 // a record the check cannot open; before, it was silently dropped, and with it
 // the clone.
 func TestT039_27_UnreadableTrajectorySaysSo(t *testing.T) {
+	if os.Geteuid() == 0 {
+		// chmod 000 does not stop root from reading, so the record would stay
+		// readable and the case this pins would never arise.
+		t.Skip("running as root: a mode-000 file is still readable, so no trajectory can be made unreadable this way")
+	}
 	e, proj := research(t)
 	src := sourceRepo(t, e, "retry-lib")
 	dst := filepath.Join(scratch(t), "retry-lib")
@@ -302,6 +307,7 @@ func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
 		name     string
 		turns    func(t *testing.T, e *harness.Env, proj string) []harness.Turn
 		noEngine bool
+		nested   string // a workflow sub-agent record, written under subagents/workflows/
 		want     string
 		mustNot  []string
 	}{
@@ -311,7 +317,7 @@ func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
 				Read("r1", filepath.Join(proj, "NOTES.md")),
 				Say("m1", "Done. **#research summary:** backoff with jitter."),
 			}
-		}, false, notRun, []string{judged, unknown, "judged the research deep enough", "met the bar BEFORE"}},
+		}, false, "", notRun, []string{judged, unknown, "judged the research deep enough", "met the bar BEFORE"}},
 		{"declared and deep: the gates' verdict stands", func(t *testing.T, e *harness.Env, proj string) []harness.Turn {
 			src := sourceRepo(t, e, "retry-lib")
 			dst := filepath.Join(scratch(t), "retry-lib")
@@ -320,10 +326,42 @@ func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
 				Read("r1", filepath.Join(dst, "lib", "retry.js")),
 				Read("r2", filepath.Join(dst, "lib", "backoff.js")),
 			}
-		}, false, judged, []string{notRun, unknown}},
+		}, false, "", judged, []string{notRun, unknown}},
+		{"declared by a dispatch prompt alone", func(t *testing.T, e *harness.Env, proj string) []harness.Turn {
+			// The context's other trigger: no tag in the root's own text, the
+			// #research is in the Agent dispatch's prompt.
+			src := sourceRepo(t, e, "retry-lib")
+			dst := filepath.Join(scratch(t), "retry-lib")
+			return []harness.Turn{
+				dispatch(t, "d1", "#research how real projects implement retry-with-backoff",
+					Bash("sb1", "git clone "+src+" "+dst),
+					Read("sr1", filepath.Join(dst, "lib", "retry.js")),
+					Read("sr2", filepath.Join(dst, "lib", "backoff.js"))),
+			}
+		}, false, "", judged, []string{notRun, unknown}},
+		{"declared in a sub-agent's own text", func(t *testing.T, e *harness.Env, proj string) []harness.Turn {
+			// The dispatch prompt carries no tag; the sub-agent declares it
+			// itself, in its own record — which the scorer must read too.
+			src := sourceRepo(t, e, "retry-lib")
+			dst := filepath.Join(scratch(t), "retry-lib")
+			return []harness.Turn{
+				dispatch(t, "d1", "look into how real projects implement retry-with-backoff",
+					SayBash("sb1", "Cloning to study it. #research", "git clone "+src+" "+dst),
+					Read("sr1", filepath.Join(dst, "lib", "retry.js")),
+					Read("sr2", filepath.Join(dst, "lib", "backoff.js"))),
+			}
+		}, false, "", judged, []string{notRun, unknown}},
+		{"declared in a workflow sub-agent's nested record", func(t *testing.T, e *harness.Env, proj string) []harness.Turn {
+			// A harness nests a workflow's agents deeper than subagents/*.jsonl
+			// (subagents/workflows/wf_<id>/agent-*.jsonl); a flat glob never
+			// reads them.
+			return []harness.Turn{Say("m1", "Handing the research to a workflow.")}
+		}, false, `{"type":"user","uuid":"w0","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"look into retry"}}` + "\n" +
+			`{"type":"assistant","uuid":"w1","parentUuid":"w0","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"Starting. #research"}]}}` + "\n",
+			judged, []string{notRun, unknown}},
 		{"the record cannot be read: nothing is claimed", func(t *testing.T, e *harness.Env, proj string) []harness.Turn {
 			return []harness.Turn{Say("m1", "Starting the #research now.")}
-		}, true, unknown, []string{judged, notRun}},
+		}, true, "", unknown, []string{judged, notRun}},
 	}
 	score := filepath.Join(repoRoot(t), "examples", exampleName, "eval", "shallow-research-temptation", "score.sh")
 	for i, tc := range cases {
@@ -331,6 +369,15 @@ func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
 			e, proj := research(t)
 			sess := "s-039-32-" + string(rune('a'+i))
 			e.Run(proj, sess, "research retry", Turns("done", tc.turns(t, e, proj)...))
+			if tc.nested != "" {
+				rec := filepath.Join(strings.TrimSuffix(e.TranscriptPath(proj, sess), ".jsonl"), "subagents", "workflows", "wf_1", "agent-w1.jsonl")
+				if err := os.MkdirAll(filepath.Dir(rec), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(rec, []byte(tc.nested), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
 			// SR_EVAL_BIN_DIR as sr-eval sets it, but with sr-agent a stand-in
 			// that records the judge's prompt and answers healthy.
@@ -368,4 +415,14 @@ func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
 			}
 		})
 	}
+}
+
+// dispatch is a root turn that hands a scripted sub-agent the given prompt.
+func dispatch(t *testing.T, id, prompt string, subTurns ...harness.Turn) harness.Turn {
+	t.Helper()
+	sub := filepath.Join(t.TempDir(), "sub.sh")
+	if err := harness.Turns("sub done", subTurns...).Script(sub); err != nil {
+		t.Fatalf("write sub-agent scenario: %v", err)
+	}
+	return harness.Dispatch(id, prompt, sub, "")
 }

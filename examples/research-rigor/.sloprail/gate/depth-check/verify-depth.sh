@@ -36,25 +36,31 @@ unreadable() {
   block "The depth check could not read this #research run's trajectory $1, so whether the research has depth is unknown: $2"
 }
 
+# A tool's stderr is kept apart from the JSON on its stdout — a warning on
+# stderr must not corrupt what is parsed — and shown only when the tool fails.
+errf="$(mktemp)" || block "The depth check could not create a temporary file, so this research run was not checked."
+trap 'rm -f "$errf"' EXIT
+errtext() { tr '\n' ' ' < "$errf" | cut -c1-400; }
+
 # Every trajectory of this research run: this one and each sub-agent it
 # dispatched (`describe` lists them) — research handed to a sub-agent is still
 # this run's research, and a clone in one and reads in another are one run.
-if ! described_run="$(sr-session trajectory describe --path "$transcript_path" 2>&1)"; then
-  unreadable "$transcript_path" "$described_run"
+if ! described_run="$(sr-session trajectory describe --path "$transcript_path" 2>"$errf")"; then
+  unreadable "$transcript_path" "$(errtext)"
 fi
-if ! subagents="$(printf '%s' "$described_run" | jq -r '.subagentPaths[]?' 2>&1)"; then
-  unreadable "$transcript_path" "trajectory describe returned no readable subagentPaths: $subagents"
+if ! subagents="$(printf '%s' "$described_run" | jq -r '.subagentPaths[]?' 2>"$errf")"; then
+  unreadable "$transcript_path" "trajectory describe returned no readable subagentPaths: $(errtext)"
 fi
 facts="[]"
 while IFS= read -r traj; do
   [ -n "$traj" ] || continue
   [ -f "$traj" ] || unreadable "$traj" "the file does not exist"
-  if ! entries="$(sr-session trajectory normalize --path "$traj" --events PreCommandInvoke 2>&1)"; then
-    unreadable "$traj" "$entries"
+  if ! entries="$(sr-session trajectory normalize --path "$traj" --events PreCommandInvoke 2>"$errf")"; then
+    unreadable "$traj" "$(errtext)"
   fi
-  if ! one="$(printf '%s' "$entries" | jq -c --arg ws "${SR_WORKSPACE:-}" --arg home "${HOME:-}" -f "$here/research-facts.jq" 2>&1)" \
+  if ! one="$(printf '%s' "$entries" | jq -c -L "$here" --arg ws "${SR_WORKSPACE:-}" --arg home "${HOME:-}" -f "$here/research-facts.jq" 2>"$errf")" \
     || [ -z "$one" ]; then
-    unreadable "$traj" "its research facts could not be computed: ${one:-no output}"
+    unreadable "$traj" "its research facts could not be computed: $(errtext)"
   fi
   facts="$(printf '%s' "$facts" | jq -c --argjson f "$one" '. + [$f]')"
 done <<EOF
@@ -62,68 +68,104 @@ $transcript_path
 $subagents
 EOF
 
-# A clone whose output does not show git cloning (`-q`, `2>/dev/null`, a
-# filter) is confirmed on disk instead: its .git was created after this
-# session's record began. A directory already there from an earlier session —
-# which a clone refused to touch, and whose refusal the agent hid — has an
-# older .git. Birth time, not modification time: fetching in an old checkout
-# touches its .git. Where the filesystem does not record birth, nothing is
-# confirmed this way (fail closed: the refusal says to clone visibly).
-if stat --version >/dev/null 2>&1; then
-  born() { stat -c %.9W -- "$1" 2>/dev/null; }
-else
-  born() { stat -f %FB -- "$1" 2>/dev/null; }
-fi
-since="$(born "$transcript_path")"
-ondisk="[]"
+# Whether a clone happened is read from git's own record of it, not from the
+# command's output (which the agent controls: `2>/dev/null`, `|| echo`, `echo
+# "Cloning into …"`): the first line of <dest>/.git/logs/HEAD, which git
+# writes as `<old> <new> <who> <epoch> <tz>\tclone: from <url>`. The clone
+# counts when that names the repository the invocation cloned and is no older
+# than this session's first record — a checkout from an earlier session, or a
+# .git copied or moved from one, carries its original line; a hand-made .git
+# carries none. Nothing here reads file times, so it holds on any filesystem.
+since="$(jq -rn 'first(inputs | .timestamp? | strings) | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' < "$transcript_path" 2>/dev/null)"
+reflogs="[]"
 while IFS= read -r dest; do
   [ -n "$dest" ] || continue
-  at="$(born "$dest/.git")"
-  if awk -v a="${at:-0}" -v s="${since:-0}" 'BEGIN { exit !(a + 0 > 0 && s + 0 > 0 && a + 0 > s + 0) }'; then
-    ondisk="$(printf '%s' "$ondisk" | jq -c --arg d "$dest" '. + [$d]')"
+  gitdir="$dest/.git"
+  if [ -f "$gitdir" ]; then
+    # --separate-git-dir: .git is a file naming the real one.
+    gd="$(sed -n 's/^gitdir: //p' "$gitdir" | head -n 1)"
+    case "$gd" in /*) gitdir="$gd" ;; ?*) gitdir="$dest/$gd" ;; esac
   fi
+  first="$(head -n 1 "$gitdir/logs/HEAD" 2>/dev/null)"
+  reflogs="$(printf '%s' "$reflogs" | jq -c --arg d "$dest" --arg l "$first" '. + [{dest: $d, line: $l}]')"
 done <<EOF
-$(printf '%s' "$facts" | jq -r '[ .[].clones[] | select(.seen | not) | .dest ] | unique[]')
+$(printf '%s' "$facts" | jq -r '[ .[].clones[].dest ] | unique[]')
 EOF
+
+# What each read path really is: its target once symlinks are resolved, and
+# its file identity (device:inode). `lib2 -> lib` is not a second directory,
+# a hard link is not a second file, and a symlink out of a clone is not a read
+# inside it.
+if stat --version >/dev/null 2>&1; then
+  ident() { stat -L -c %d:%i -- "$1" 2>/dev/null; }
+else
+  ident() { stat -L -f %d:%i -- "$1" 2>/dev/null; }
+fi
+real() { realpath -q -- "$1" 2>/dev/null || readlink -f -- "$1" 2>/dev/null || printf '%s' "$1"; }
+paths="$(printf '%s' "$facts" | jq -r '[ .[].reads[], .[].clones[].dest ] | unique[]' | while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  printf '%s\t%s\t%s\n' "$p" "$(real "$p")" "$(ident "$p")"
+done | jq -R -s -c 'split("\n") | map(select(. != "") | split("\t") | {key: .[0], value: {real: .[1], id: .[2]}}) | from_entries')"
+[ -n "$paths" ] || paths="{}"
 
 # The verdict over the whole run: which clone directories count, which reads
 # landed inside them, and what the agent read elsewhere (for the refusal).
-verdict="$(printf '%s' "$facts" | jq -c --argjson min "$MIN_SOURCE_FILES" --argjson ondisk "$ondisk" \
+verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FILES" \
+  --argjson reflogs "$reflogs" --argjson paths "$paths" --arg since "${since:-}" \
   --arg ws "${SR_WORKSPACE:-}" --arg home "${HOME:-}" '
-  def canon: sub("^/private(?<rest>/(tmp|var|etc)(/.*)?)$"; "\(.rest)");
+  include "paths";
   def under($d): . == $d or startswith($d + "/");
-  # A README, changelog, licence, or anything under a docs directory says what
-  # a library claims, not how it does it.
+  # A README, changelog, licence, anything under a docs directory, and the
+  # project metadata around the code (manifests, lockfiles, dotfiles, CI and
+  # build config) say what a library claims or how it is built, not how it
+  # works.
   def is_doc:
     (split("/") | map(ascii_downcase)) as $parts
     | ($parts | last) as $base
-    | ($parts | any(IN("docs", "doc", "documentation", ".git", ".github")))
+    | ($parts | any(IN("docs", "doc", "documentation", ".git", ".github", ".circleci", ".gitlab", ".vscode", ".idea")))
       or ($base | test("^(readme|changelog|changes|history|license|licence|copying|notice|contributing|code_of_conduct|security|authors|maintainers|codeowners)([.-].*)?$"))
-      or ($base | test("\\.(md|markdown|mdx|rst|txt|adoc|asciidoc|org)$"));
-  ($ws | canon) as $ws
-  # A clone counts once confirmed: git said it was cloning into it, or its .git
-  # was born during this session (verify-depth.sh looked on disk).
-  | ([ .[].clones[] | select(.seen or (.dest as $d | $ondisk | index($d) != null)) | .dest ] | unique) as $dirs
+      or ($base | test("\\.(md|markdown|mdx|rst|txt|adoc|asciidoc|org|lock)$"))
+      or ($base | startswith("."))
+      or ($base | test("^(package(-lock)?\\.json|npm-shrinkwrap\\.json|yarn\\.lock|pnpm-lock\\.yaml|bun\\.lockb|go\\.(mod|sum|work)|cargo\\.(toml|lock)|pyproject\\.toml|setup\\.cfg|pipfile(\\.lock)?|poetry\\.lock|requirements[^/]*\\.(txt|in)|gemfile(\\.lock)?|[^/]*\\.gemspec|composer\\.(json|lock)|pom\\.xml|(build|settings)\\.gradle(\\.kts)?|gradle\\.properties|tsconfig[^/]*\\.json|jsconfig\\.json|tox\\.ini|renovate\\.json|dependabot\\.ya?ml|codecov\\.ya?ml|appveyor\\.ya?ml|azure-pipelines\\.ya?ml|mkdocs\\.ya?ml)$"));
+  # Where a path really is (symlinks resolved) and which file it is.
+  def realof: . as $p | ($paths[$p].real // "" | if . == "" then $p else . end | canon);
+  def idof: . as $p | ($paths[$p].id // "" | if . == "" then ($p | realof) else . end);
+  ($since | if . == "" then null else tonumber end) as $since
+  | ($ws | canon) as $ws
+  # A clone counts when the record git wrote says it was cloned from that
+  # repository during this session.
+  | ([ $reflogs[]
+      | .dest as $d
+      | (.line | split("\t")) as $parts
+      | select(($parts | length) >= 2)
+      | ($parts[0] | split(" ") | .[-2] | tonumber? // null) as $ts
+      | ($parts[1:] | join("\t") | capture("^clone: from (?<url>.*)$")? | .url | repokey(null)) as $url
+      | select($ts != null and $since != null and $ts >= ($since | floor))
+      | {key: $d, value: $url} ] | from_entries) as $cloned
+  | ([ .[].clones[] | select(.repo != null and $cloned[.dest] == .repo) | .dest ] | unique) as $dirs
   | ([ .[].clones[].dest ] | unique - $dirs) as $unconfirmed
   | ([ .[].unresolvedClones ] | add // 0) as $unresolved
   | ([ .[].failedClones[]? ] | unique - $dirs) as $failed
   | ([ .[].reads[] ] | unique) as $reads
-  # Source: under a clone, below its root (a search of the root takes in the
-  # README and docs too), and not documentation itself.
-  | [ $reads[] | . as $p
-      | first($dirs[] | select(. as $d | $p | under($d))) as $d
-      | ($p | ltrimstr($d) | ltrimstr("/")) as $rel
+  | [ $dirs[] | realof ] as $realdirs
+  # Source: really under a confirmed clone, below its root (a search of the
+  # root takes in the README and docs too), not documentation or metadata —
+  # one per file, however many spellings reached it.
+  | ([ $reads[] | . as $p | ($p | realof) as $rp
+      | first($realdirs[] | select(. as $d | $rp | under($d))) as $d
+      | ($rp | ltrimstr($d) | ltrimstr("/")) as $rel
       | select($rel != "" and ($rel | is_doc | not))
-      | $p ] as $source
+      | {p: $p, id: ($p | idof)} ]
+    | unique_by(.id) | map(.p)) as $source
   | [ $reads[] | . as $p
-      | select(any($dirs[]; . as $d | $p | under($d)) | not)
+      | select(any($realdirs[]; . as $d | $p | realof | under($d)) | not)
       | select(($ws == "" or ($p | under($ws) | not)) and ($home == "" or ($p | under($home + "/.claude") | not)))
       | select(is_doc | not) ] as $elsewhere
   | {pass: (($dirs | length) > 0 and ($source | length) >= $min),
      dirs: $dirs, unresolved: $unresolved, source: $source, elsewhere: $elsewhere,
      failed: [ $failed[] | select(. as $f | $elsewhere | any(. == $f or startswith($f + "/"))) ],
      unconfirmed: $unconfirmed}
-')" || block "The depth check could not evaluate this research run's trajectory ($transcript_path)."
+' 2>"$errf")" || block "The depth check could not evaluate this research run's trajectory ($transcript_path): $(errtext)"
 
 if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
   reason="$(printf '%s' "$verdict" | jq -r --argjson min "$MIN_SOURCE_FILES" '
@@ -147,7 +189,7 @@ if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
          " Your git clone into " + list(.failed) + " failed because the directory was already there, so its contents are not this run'"'"'s clone — clone into a new directory to use that repository."
        else "" end)
     + (if (.unconfirmed | length) > 0 then
-         " Your git clone into " + list(.unconfirmed) + " could not be confirmed: its output does not show git cloning into it (-q, 2>/dev/null or a filter hid it), and its .git was not created during this session, so it may be a checkout that was already on disk — clone into a new directory without -q or 2>/dev/null."
+         " Your git clone into " + list(.unconfirmed) + " could not be confirmed: git'"'"'s own record of the clone (.git/logs/HEAD) is missing, older than this session, or names a different repository, so it may be a checkout that was already on disk — clone into a new directory."
        else "" end)
     + (if (.elsewhere | length) > 0 then
          " Reads of directories this run did not clone do not count (e.g. " + list(.elsewhere) + ") — a checkout already on disk is not research this run did."

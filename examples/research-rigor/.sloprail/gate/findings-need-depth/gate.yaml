@@ -12,11 +12,18 @@
 # research is open. Whether research is open is the check's to decide — the
 # context's flag, or a #research declaration already on the record (a tag
 # written earlier in this very turn has not reached the context yet).
+#
+# Every project write is matched, not only *.md paths: a write through a second
+# name for the notes — a symbolic or hard link, `ln -s NOTES.md n.txt && echo
+# >> n.txt` — has a path that is not Markdown. The check resolves the name and
+# lets anything that is not the notes through at once. `ln` of a Markdown file
+# is held itself, so a link made and written on one line never gets a name.
 on:
   - event: PreFileWrite
     match: >-
-      event.path matches "(?i)[.](md|markdown|mdx)$"
-      and not (event.path startsWith "/")
+      not (event.path startsWith "/")
       and not (event.path startsWith ".")
+  - event: PreCommandInvoke
+    match: any(event.invocations, .bin == "ln")
 checks:
   - script: ./findings-after-depth.sh

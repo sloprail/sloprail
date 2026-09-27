@@ -6,13 +6,55 @@ set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 input="$(cat)"
+kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
 path="$(printf '%s' "$input" | jq -r '.event.path // empty')"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath // empty')"
+ws="${SR_WORKSPACE:-.}"
 
 block() {
   echo "$1" >&2
   exit 1
 }
+
+# Research notes are Markdown in the project, outside a top-level
+# dot-directory (the gate's match already keeps absolute and dot paths out).
+is_notes() { printf '%s' "$1" | grep -Eiq '[.](md|markdown|mdx)$' && case "$1" in .*) false ;; esac; }
+
+# Which notes this action would write, if any — the name the refusal uses.
+if [ "$kind" = "PreCommandInvoke" ]; then
+  # `ln [-s] NOTES.md n.txt` makes a second name for the notes, and a write
+  # through that name is not a write of a *.md path: the link itself is held
+  # while research is open, on the same line or before the write.
+  target="$(printf '%s' "$input" | jq -r '
+    [ .event.invocations[]? | select(.bin == "ln")
+      | [ .argv[1:][] | select(startswith("-") | not) ] as $ops
+      | ($ops | if length >= 2 then .[:-1] else . end)[] as $src
+      | {src: $src, link: (if ($ops | length) >= 2 then $ops[-1] else ($src | split("/") | last) end)}
+      | select($src | test("(?i)[.](md|markdown|mdx)$"))
+      | select(($src | startswith(".") | not) or ($src | startswith("./")))
+    ] | first | if . == null then empty else "\(.link) (a link to \(.src))" end' 2>/dev/null)"
+  [ -n "$target" ] || exit 0
+  path="$target"
+elif ! is_notes "$path"; then
+  # Not a Markdown path — but it may be a second name for one made earlier:
+  # a symbolic link resolving to the notes, or a hard link sharing their inode.
+  abs="$ws/$path"
+  [ -e "$abs" ] || exit 0
+  wsreal="$(realpath -q -- "$ws" 2>/dev/null || printf '%s' "$ws")"
+  real="$(realpath -q -- "$abs" 2>/dev/null || printf '%s' "$abs")"
+  rel="${real#"$wsreal"/}"
+  if [ "$rel" != "$real" ] && is_notes "$rel"; then
+    path="$path (a link to $rel)"
+  else
+    if stat --version >/dev/null 2>&1; then links="$(stat -c %h -- "$abs" 2>/dev/null)"; ino="$(stat -c %i -- "$abs" 2>/dev/null)"
+    else links="$(stat -f %l -- "$abs" 2>/dev/null)"; ino="$(stat -f %i -- "$abs" 2>/dev/null)"; fi
+    [ "${links:-1}" -gt 1 ] 2>/dev/null || exit 0
+    twin="$(find "$ws" -path "$ws/.*" -prune -o -inum "$ino" -type f -print 2>/dev/null \
+      | while IFS= read -r f; do r="${f#"$ws"/}"; is_notes "$r" && { printf '%s' "$r"; break; }; done)"
+    [ -n "$twin" ] || exit 0
+    path="$path (a hard link to $twin)"
+  fi
+fi
 
 [ -n "$transcript_path" ] || block "Whether a #research run is open could not be read: the check got no transcript path, so writing $path is held."
 

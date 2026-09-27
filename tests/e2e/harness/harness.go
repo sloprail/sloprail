@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
@@ -1516,8 +1517,12 @@ func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatalf("harness: seed transcript: %v", err)
 	}
-	body := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
-		"e2e-root-"+sessionID, cwd, prompt)
+	// A timestamp, as every record real Claude Code writes carries one: a
+	// check that asks what happened DURING this session (research-rigor's
+	// depth check dates a clone against the session's first record) needs the
+	// session's start on the record. The mock's own records carry none.
+	body := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":%q}}`+"\n",
+		"e2e-root-"+sessionID, cwd, time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), prompt)
 	path := filepath.Join(dir, sessionID+".jsonl")
 	if _, err := os.Stat(path); err == nil {
 		return // already seeded, or the mock has started writing — never overwrite

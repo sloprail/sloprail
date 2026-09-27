@@ -2,12 +2,13 @@
 # `sr-session trajectory normalize` output (an array of normalized entries).
 #
 # Emits {clones, failedClones, unresolvedClones, reads}:
-#   clones            [{dest, repo, seen}] — `git clone`s that did not fail and
-#                     whose destination directory is known (absolute,
-#                     canonical). seen: git's own `Cloning into '<dest>'...`
-#                     line is in the result — positive evidence the clone ran.
-#                     A clone whose output hides that (-q, 2>/dev/null, a
-#                     filter) is left to verify-depth.sh to confirm on disk.
+#   clones            [{dest, repo}] — `git clone`s that did not visibly fail
+#                     and whose destination directory is known (absolute,
+#                     canonical); repo is the repository keyed as paths.jq's
+#                     repokey spells it. Whether the clone really happened is
+#                     NOT decided from its output here (the agent controls
+#                     that — `echo "Cloning into …"`): verify-depth.sh reads
+#                     git's own record of it, <dest>/.git/logs/HEAD.
 #   failedClones      [dest] — `git clone`s that failed (an error result, or a
 #                     `fatal:` naming them): a directory already there is not
 #                     this run's clone
@@ -17,8 +18,9 @@
 #   reads             [path] — files or directories whose CONTENT a successful
 #                     tool call read: the Read tool, the Grep tool, and shell
 #                     readers (cat, head, tail, sed, awk, grep, rg, …). A
-#                     search counts only if it printed something and was not
-#                     restricted to documentation files.
+#                     search counts only if it printed matching lines — not a
+#                     count, a file list or nothing — and was not restricted
+#                     to documentation files.
 #
 # Nothing here decides depth; verify-depth.sh does, over every trajectory of
 # the research run at once (a sub-agent's clone and the root's reads are one
@@ -31,16 +33,8 @@
 
 # ---- paths ------------------------------------------------------------------
 
-# Collapse `.`, `..` and repeated slashes in an absolute path, and drop macOS's
-# /private prefix, so `/tmp/x`, `/private/tmp/x` and `/tmp/./y/../x` are one
-# directory — an agent spells the same clone all of those ways.
-def canon:
-  (split("/") | reduce .[] as $s ([];
-      if $s == "" or $s == "." then .
-      elif $s == ".." then (if length > 0 then .[:-1] else . end)
-      else . + [$s] end)
-  | "/" + join("/"))
-  | sub("^/private(?<rest>/(tmp|var|etc)(/.*)?)$"; "\(.rest)");
+# canon, repokey — shared with the verdict (run with -L this directory).
+include "paths";
 
 # Resolve a path as written against the directory it was written in. null when
 # it cannot be placed — no base to put a relative path on.
@@ -146,6 +140,15 @@ def doc_filter:
     and (test("\\." + $ext + "$") or test("\\.\\{(" + $ext + ",?)+\\}$") or test("^" + $ext + "$")
          or test("(^|/)\\*?(readme|changelog|license|licence)"));
 
+# The options that make a search print no matching lines — a count, a list of
+# file names, or nothing (just an exit status) — per program. A search run that
+# way read no content, whatever it matched. Short letters, then long names.
+def nocontent: {
+  grep: [["c", "l", "L", "q"], ["--count", "--files-with-matches", "--files-without-match", "--quiet", "--silent"]],
+  rg: [["c", "l", "q"], ["--count", "--count-matches", "--files-with-matches", "--files-without-match", "--quiet", "--files"]],
+  ag: [["c", "l", "L"], ["--count", "--files-with-matches", "--files-without-matches"]]
+} | .egrep = .grep | .fgrep = .grep;
+
 # One option's value, folded into the operand scan: -e/-f give the pattern (or
 # program), so the first operand is a file; an include filter is recorded.
 def optval($o; $v):
@@ -155,7 +158,7 @@ def optval($o; $v):
 # A cluster of short options — `-rn`, `-A3`, `-rnefoo`, `-tmd`. Each letter is
 # its own option until one that takes a value, which takes the rest of the word
 # (or, when nothing is left, the next word).
-def short_cluster($t; $valued):
+def short_cluster($t; $valued; $quiet):
   ($t[1:] | explode | map([.] | implode)) as $cs
   | reduce range(0; $cs | length) as $i (. + {stop: false};
       if .stop then .
@@ -164,16 +167,17 @@ def short_cluster($t; $valued):
           ($cs[$i + 1:] | join("")) as $rest
           | (if $rest == "" then .skip = $o else optval($o; $rest) end)
           | .stop = true
-        elif ($cs[$i] | IN("r", "R")) then .recursive = true
-        else . end
+        else (if ($cs[$i] | IN("r", "R")) then .recursive = true else . end)
+          | (if ($quiet[0] | index($cs[$i])) != null then .nocontent = true else . end)
+        end
       end)
   | del(.stop);
 
 # argv → the operands left once options (and their values) are set aside;
 # whether a pattern/program was given by an option (-e/-f), in which case the
 # first operand is a file rather than the pattern; and any include filters.
-def operands($valued):
-  reduce .[1:][] as $t ({ops: [], skip: null, dd: false, given: false, recursive: false, incl: []};
+def operands($valued; $quiet):
+  reduce .[1:][] as $t ({ops: [], skip: null, dd: false, given: false, recursive: false, incl: [], nocontent: false};
     if .skip != null then optval(.skip; $t) | .skip = null
     elif .dd then .ops += [$t]
     elif $t == "--" then .dd = true
@@ -182,22 +186,24 @@ def operands($valued):
       | if ($t | contains("=")) then optval($name; $t | sub("^[^=]*="; ""))
         elif ($valued | index($name)) != null then .skip = $name
         elif ($name | IN("--recursive", "--dereference-recursive")) then .recursive = true
+        elif ($quiet[1] | index($name)) != null then .nocontent = true
         else . end
-    elif ($t | startswith("-")) and ($t | length) > 1 then short_cluster($t; $valued)
+    elif ($t | startswith("-")) and ($t | length) > 1 then short_cluster($t; $valued; $quiet)
     else .ops += [$t] end);
 
-# One invocation of a reader → {paths, search, doconly}: the paths (as written)
-# whose content it reads, whether it is a search (which reads only what it
-# prints), and whether its include filters name documentation alone. No paths
+# One invocation of a reader → {paths, search, doconly, nocontent}: the paths
+# (as written) whose content it reads, whether it is a search (which reads only
+# what it prints), whether its include filters name documentation alone, and
+# whether it was told to print no matching lines (-c, -l, -q, …). No paths
 # for a program that is not a reader. A search with no path searches where it
 # runs, returned as ".".
 def read_of:
   .bin as $bin
   | (readers[$bin]) as $valued
   | if $valued == null then {paths: []}
-    else (.argv | operands($valued)) as $o
+    else (.argv | operands($valued; nocontent[$bin] // [[], []])) as $o
     | ($bin | IN("grep", "egrep", "fgrep", "rg", "ag")) as $search
-    | {search: $search,
+    | {search: $search, nocontent: $o.nocontent,
        doconly: (($o.incl | length) > 0 and all($o.incl[]; doc_filter)),
        paths: (
          if ($bin | IN("sed", "awk", "gawk")) then
@@ -217,8 +223,12 @@ def read_of:
     end;
 
 # Whether a tool result shows nothing: a search that printed nothing read
-# nothing (the Grep tool says so in words).
-def blank: test("\\S") | not;
+# nothing. Claude Code says so in words — "(Bash completed with no output)",
+# the Grep tool's "No files found" — and appends a note when a `cd` in the
+# command was undone ("Shell cwd was reset to …"), which is not output either.
+def blank:
+  split("\n") | map(select(test("^Shell cwd was reset to ") | not)) | join("\n")
+  | (test("\\S") | not) or test("^\\s*\\((Bash|Read) completed with no output\\)\\s*$");
 def grep_tool_empty: blank or test("^\\s*No (files|matches) found");
 
 # ---- tool results -----------------------------------------------------------
@@ -267,23 +277,20 @@ def results:
                     # or naming the repository. A pipeline (`git clone … |
                     # head`) exits 0 anyway, so the output is read too.
                     | ($lines | map(select(startswith("fatal:")))) as $fatal
-                    # git announces a clone it is making as `Cloning into
-                    # '<dest>'...` — the positive evidence. Absent (-q,
-                    # 2>/dev/null, a filter), verify-depth.sh looks on disk.
-                    | ([ $lines[] | capture("^Cloning into '(?<p>.*)'\\.\\.\\.") | .p | resolve($gdir) ]
-                       | index($dest) != null) as $seen
+                    # git drops a destination's trailing slashes when it quotes
+                    # it (`dest/` → 'dest').
                     | if $r.err or ($fatal | any(. as $l | ($cl.repo != null and ($l | contains($cl.repo)))
-                                               or ($l | contains("'" + $cl.dest + "'"))
+                                               or ($l | contains("'" + ($cl.dest | sub("(?<k>.)/+$"; "\(.k)")) + "'"))
                                                or ($dest != null and ($l | contains("'" + $dest + "'")))))
                       then (if $dest == null then empty else {failed: $dest} end)
                       elif $dest == null or (($cl.explicit or ($cl.cdirs | length) > 0) and ($c.input.command | dynamic)) then {unresolved: 1}
-                      else {clone: {dest: $dest, repo: $cl.repo, seen: $seen}} end
+                      else {clone: {dest: $dest, repo: ($cl.repo | repokey($gdir))}} end
                   end
               elif $r.err then empty
               else
                 read_of as $rd
                 | if ($rd.paths | length) == 0 then empty
-                  elif $rd.search and ($rd.doconly or ($r.text | blank)) then empty
+                  elif $rd.search and ($rd.doconly or $rd.nocontent or ($r.text | blank)) then empty
                   else $rd.paths[] | resolve($dir) | select(. != null) | {read: .} end
               end)
         | .[]
@@ -291,7 +298,10 @@ def results:
       elif $c.name == "Read" then
         ($c.input.file_path | resolve($c.base)) | select(. != null) | {read: .}
       elif $c.name == "Grep" then
-        if ($r.text | grep_tool_empty)
+        # The Grep tool's default output_mode is files_with_matches: file
+        # names, no content. Only "content" shows what a file says.
+        if ($c.input.output_mode // "files_with_matches") != "content"
+           or ($r.text | grep_tool_empty)
            or ([ $c.input.glob, $c.input.type ] | map(select(. != null and . != "")) as $f
                | ($f | length) > 0 and all($f[]; doc_filter))
         then empty
