@@ -137,6 +137,13 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
   once is a one-element list, and a valueless flag carries `""`. Only the inline
   `--flag=value` form carries a value; a separated `--flag value` is `[""]` with
   `value` left in `.argv`.
+- `.cwd` — string, the directory the program runs in as far as the line says,
+  threaded through every `cd` ahead of it (a subshell's `cd` stays inside the
+  subshell): `"."` is where the line started, `"sub/dir"` is relative to that,
+  `"/abs"` is absolute, and `""` means a `cd` could not be resolved without
+  running something (`cd "$DIR"`, `cd -`, `pushd`). Where the line started is the
+  harness's working directory for that tool call — in a transcript, the record's
+  own `cwd` — so a script joins a relative `.cwd` onto that.
 
 ```
 any(event.invocations, .bin == "curl")
@@ -148,7 +155,7 @@ len(event.invocations) > 1
 In a script: `.flags.tag[0]` for the first value, `.flags.tag[-1]` for the last,
 `(.flags.tag // []) | join(" ")` for all of them.
 
-`.bin` and `.argv` have declared element shapes, so a mistyped key inside a
+`.bin`, `.argv` and `.cwd` have declared shapes, so a mistyped key inside a
 predicate is refused at load; `.flags` is the one open map. Only what the parser
 can see without running the command is emitted — a program named by a variable, a
 decoded-and-piped payload — is left alone rather than guessed, so this is a

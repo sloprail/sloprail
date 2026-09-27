@@ -28,6 +28,24 @@ type Invocation struct {
 	// rule can still ask whether a flag is present without knowing whether
 	// that flag takes one.
 	Flags map[string][]string
+
+	// Cwd is the directory this program runs in, as far as the line itself
+	// says — threaded through every `cd` ahead of it in its own scope (a
+	// subshell's `cd` does not leak out of the subshell; see cwd.go):
+	//
+	//	"."          where the command line started — no `cd` moved it
+	//	"sub/dir"    relative to where the line started (`cd sub/dir && …`)
+	//	"/abs/dir"   absolute, once a `cd` named an absolute directory
+	//	""           unknown — a `cd` this module cannot resolve without
+	//	             running something (`cd "$DIR"`, `cd -`, `pushd`)
+	//
+	// Where the line started is the harness's working directory for the tool
+	// call, which this pure function of a string does not have: a consumer
+	// joins a relative Cwd onto it. Empty means unknown rather than "the
+	// start", because a program whose directory was lost must not be read as
+	// running where the line began — that is a guess, and a path resolved
+	// against it could name a file the command never touches.
+	Cwd string
 }
 
 // CommandEvent is what this module's own code passes around.
@@ -75,6 +93,7 @@ func (c CommandEvent) Event() event.Event {
 			KeyBin:   inv.Bin,
 			KeyArgv:  argv,
 			KeyFlags: flags,
+			KeyCwd:   inv.Cwd,
 		})
 	}
 
@@ -121,6 +140,9 @@ func FromEvent(e event.Event) (CommandEvent, error) {
 					inv.Argv = append(inv.Argv, s)
 				}
 			}
+		}
+		if v, ok := m[KeyCwd].(string); ok {
+			inv.Cwd = v
 		}
 		if flags, ok := m[KeyFlags].(map[string]any); ok {
 			for k, v := range flags {

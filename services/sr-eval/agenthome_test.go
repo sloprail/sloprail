@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -88,6 +89,48 @@ func TestBuildRelease_StagedBinariesSurvive(t *testing.T) {
 		}
 		if info.Mode().Perm()&0o100 == 0 {
 			t.Fatalf("%s exists but is not executable: %v", p, info.Mode())
+		}
+	}
+}
+
+// baseAgentEnv moves every temp root the agent can reach through its
+// environment into the workspace — TMPDIR for its tools, CLAUDE_CODE_TMPDIR for
+// Claude Code's own per-uid directory (the scratchpad), which on macOS ignores
+// TMPDIR — and drops the caller's own values rather than leaving two.
+func TestBaseAgentEnv_TempRootsLandInTheWorkspace(t *testing.T) {
+	environ := []string{
+		"HOME=/Users/op", "TMPDIR=/var/folders/op/T/", "CLAUDE_CODE_TMPDIR=/tmp/op",
+		"PATH=/usr/bin", "KEEP=1",
+	}
+	got := baseAgentEnv(environ, "/ws/home", "/ws/tmp", false)
+
+	want := map[string]string{
+		"HOME": "/ws/home", "TMPDIR": "/ws/tmp", "CLAUDE_CODE_TMPDIR": "/ws/tmp", "KEEP": "1",
+	}
+	seen := map[string]int{}
+	for _, kv := range got {
+		key, val, _ := strings.Cut(kv, "=")
+		seen[key]++
+		if w, ok := want[key]; ok && val != w {
+			t.Errorf("%s=%s, want %s", key, val, w)
+		}
+	}
+	for key := range want {
+		if seen[key] != 1 {
+			t.Errorf("%s appears %d times, want exactly once: %v", key, seen[key], got)
+		}
+	}
+	if seen["PATH"] != 0 {
+		t.Errorf("PATH is the caller's to set, but baseAgentEnv kept one: %v", got)
+	}
+}
+
+// A fresh machine also drops what would reach an existing sloprail install.
+func TestBaseAgentEnv_FreshDropsInstallPointers(t *testing.T) {
+	got := baseAgentEnv([]string{"GOPATH=/go", "SLOPRAIL_X=1", "KEEP=1"}, "/h", "/t", true)
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "GOPATH=") || strings.HasPrefix(kv, "SLOPRAIL_") {
+			t.Errorf("a fresh machine kept %s", kv)
 		}
 	}
 }
