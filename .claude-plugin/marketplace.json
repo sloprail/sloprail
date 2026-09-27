@@ -15,7 +15,7 @@
   ],
   "owner": {
     "name": "sloprail",
-    "email": "nikita.sviridenko@voypost.com"
+    "email": "hello@sloprail.com"
   },
   "plugins": [
     {
@@ -37,7 +37,7 @@
       "source": "./marketplace/plugins/sloprail",
       "author": {
         "name": "sloprail",
-        "email": "nikita.sviridenko@voypost.com"
+        "email": "hello@sloprail.com"
       }
     },
     {
@@ -54,7 +54,7 @@
       "source": "./marketplace/plugins/sloprail-tasks",
       "author": {
         "name": "sloprail",
-        "email": "nikita.sviridenko@voypost.com"
+        "email": "hello@sloprail.com"
       }
     },
     {
@@ -71,7 +71,7 @@
       "source": "./marketplace/plugins/sloprail-content",
       "author": {
         "name": "sloprail",
-        "email": "nikita.sviridenko@voypost.com"
+        "email": "hello@sloprail.com"
       }
     }
   ]
