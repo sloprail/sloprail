@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
@@ -608,7 +609,17 @@ func checkCitation(req Request, c declaration.CitationPrerequisite, hint string)
 			}
 		}
 	}
-	return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools, hint))
+	return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools, hint) + subagentCitationNote(req.TranscriptPath, pools))
+}
+
+// subagentCitationNote tells a sub-agent, refused for want of the user's words,
+// that it never saw them: its prompt is the parent agent's. Empty for the root,
+// and for a requirement that does not accept the user pool.
+func subagentCitationNote(transcriptPath string, pools []transcript.SourceType) string {
+	if transcriptPath == "" || !slices.Contains(pools, transcript.SourceUser) || !transcript.IsSubagentTranscript(transcriptPath) {
+		return ""
+	}
+	return "\n" + transcript.SubagentUserAdvice
 }
 
 // citedWhat names, in plain words, what a citation in these pools quotes.

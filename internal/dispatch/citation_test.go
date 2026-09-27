@@ -3,6 +3,7 @@ package dispatch
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -115,5 +116,36 @@ func TestRequireWhenHint(t *testing.T) {
 			assert.Contains(t, v.Reason, "sr-file delete", "without a hint the generic forms stay")
 			assert.NotContains(t, v.Reason, "not json")
 		}
+	}
+}
+
+// A sub-agent refused for want of the user's words is told it never saw them:
+// its prompt is the parent agent's.
+func TestRequireCitationTellsASubagent(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "s.jsonl")
+	require.NoError(t, os.WriteFile(root, []byte(`{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"go"}}`+"\n"), 0o644))
+	sub := filepath.Join(dir, "s", transcript.SubagentDir, "agent-abc.jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(sub), 0o755))
+	require.NoError(t, os.WriteFile(sub, []byte(`{"type":"user","uuid":"s1","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"do it"}}`+"\n"), 0o644))
+
+	userOnly := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}
+	toolOnly := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"tool_result"}}}
+	for name, tc := range map[string]struct {
+		transcript string
+		req        declaration.Prerequisite
+		told       bool
+	}{
+		"a sub-agent, the user pool":        {sub, userOnly, true},
+		"the root, the user pool":           {root, userOnly, false},
+		"a sub-agent, the tool_result pool": {sub, toolOnly, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v, err := Runner{}.Run(Request{Nature: NatureFileGuard, TranscriptPath: tc.transcript,
+				Require: []declaration.Prerequisite{tc.req}, Event: citedEvent("PreFileUpdate")})
+			require.NoError(t, err)
+			require.True(t, v.Refused)
+			assert.Equal(t, tc.told, strings.Contains(v.Reason, transcript.SubagentUserAdvice), "reason: %s", v.Reason)
+		})
 	}
 }

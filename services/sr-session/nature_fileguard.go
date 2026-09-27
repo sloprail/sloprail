@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/natures"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // This file is the FILE-GUARD half of the new nature dispatch (3c): a rule bound
@@ -211,7 +213,12 @@ func runFileGuardsPreventive(
 					if resolveNote != "" {
 						// A citation the rule required did not resolve, and sr-file
 						// said which one and why — worth more than "cites nothing".
-						return fmt.Sprintf("%s sr-file said:\n%s\n(file-guard %s)", v.Reason, resolveNote, g.Attribution())
+						// Its words already carry the sub-agent advice when it applies.
+						reason := v.Reason
+						if strings.Contains(resolveNote, transcript.SubagentUserAdvice) {
+							reason = strings.TrimSuffix(reason, "\n"+transcript.SubagentUserAdvice)
+						}
+						return fmt.Sprintf("%s sr-file said:\n%s\n(file-guard %s)", reason, resolveNote, g.Attribution())
 					}
 					return fmt.Sprintf("%s (file-guard %s)", v.Reason, g.Attribution())
 				}

@@ -32,7 +32,7 @@ func TestResolveCitationRecordsOnlyThePoolItLandedIn(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
 		userMsg("u1", "run the suite"),
-		record("a1", "u1"),
+		toolUseMsg("a1", "u1", "Bash", "make test"),
 		toolResultMsg("u2", "a1", "SUITEMARKER passed"),
 	)
 
@@ -62,7 +62,7 @@ func TestResolveCitationsInOrder(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
 		userMsg("u1", "the ask is FIRSTMARKER"),
-		record("a1", "u1"),
+		toolUseMsg("a1", "u1", "Bash", "make test"),
 		toolResultMsg("u2", "a1", "SECONDMARKER passed"),
 	)
 
@@ -147,11 +147,12 @@ func TestResolveCitationIgnoresReadLineNumbers(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
 		userMsg("u1", "summarize the changelog"),
-		toolResultMsg("r1", "u1", "     4\t- Fixed a bug where `timeout` was treated as\n     5\t  seconds on Windows.\n"),
+		toolUseMsg("a1", "u1", "Read", "CHANGELOG.md"),
+		toolResultMsg("r1", "a1", "     4\t- Fixed a bug where `timeout` was treated as\n     5\t  seconds on Windows.\n"),
 	)
 	got, err := ResolveCitation(path, toolReq("Fixed a bug where `timeout` was treated as seconds on Windows."))
 	require.NoError(t, err)
-	assert.Equal(t, 2, got.Line)
+	assert.Equal(t, 3, got.Line)
 }
 
 // A hook's refusal is recorded as a tool_result, and it may quote the agent's own
@@ -160,7 +161,8 @@ func TestResolveCitationSkipsHookRefusals(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
 		userMsg("u1", "summarize the changelog"),
-		toolResultMsg("r1", "u1", `PreToolUse:Bash hook error: citation tool_result "retries are now infinite" does not resolve`),
+		toolUseMsg("a1", "u1", "Bash", "sr-file write"),
+		toolResultMsg("r1", "a1", `PreToolUse:Bash hook error: citation tool_result "retries are now infinite" does not resolve`),
 	)
 	_, err := ResolveCitation(path, toolReq("retries are now infinite"))
 	require.Error(t, err, "the agent's own words, echoed by a refusal, must not ground as tool output")
@@ -187,9 +189,11 @@ func TestResolveCitationNamesTheCall(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Read: /repo/CHANGELOG.md", got.Call)
 
-	got, err = ResolveCitation(path, toolReq("ORPHAN OUTPUT"))
-	require.NoError(t, err)
-	assert.Contains(t, got.Call, "not in the record")
+	// A result whose call is not in the record is of unknown provenance — it
+	// could answer a sub-agent dispatch as easily as a command — and is not
+	// tool output.
+	_, err = ResolveCitation(path, toolReq("ORPHAN OUTPUT"))
+	require.Error(t, err)
 
 	got, err = ResolveCitation(path, userReq("run the tests"))
 	require.NoError(t, err)
