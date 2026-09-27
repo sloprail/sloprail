@@ -53,8 +53,8 @@ trigger's `on`, not a kind the engine emits.
 | `PreFileCreate` | `path`, `newContent`, `resultKnown`, `newMarkers`, `citations` |
 | `PreFileUpdate` | `path`, `oldContent`, `newContent`, `resultKnown`, `oldMarkers`, `newMarkers`, `citations` |
 | `PreFileDelete` | `path`, `oldContent`, `oldContentKnown`, `oldMarkers`, `citations` |
-| `PostFileCreate` | `path`, `newContent`, `newMarkers`, `seen`, `citations` |
-| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `oldMarkers`, `newMarkers`, `seen`, `citations` |
+| `PostFileCreate` | `path`, `newContent`, `newContentKnown`, `newMarkers`, `seen`, `citations` |
+| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `newContentKnown`, `oldMarkers`, `newMarkers`, `seen`, `citations` |
 | `PostFileDelete` | `path`, `oldContent`, `oldMarkers`, `seen`, `citations` |
 
 - `seen` — bool, Post kinds only. `true` when an earlier Stop was already
@@ -75,10 +75,14 @@ trigger's `on`, not a kind the engine emits.
 - `oldContentKnown` — bool, on `PreFileDelete` **only**. The same gap on the
   delete side: `false` when the delete is predicted without its bytes being read
   — the file is not a regular file (a link to a FIFO or a device), larger than a
-  delete read takes (8 MiB), or past a recursive removal's byte budget (see
+  delete read takes (8 MiB), or does not fit in what is left of a recursive
+  removal's byte budget (see
   [file-guard.md](file-guard.md), "Deleted files"). `oldContent` is then `""`.
   A rule that decides from what the file held reads `oldContentKnown` first; a
   rule about the path needs neither.
+- `newContentKnown` — bool, on `PostFileCreate` and `PostFileUpdate` **only**.
+  `false` when the settled file was not read: not a regular file once links are
+  followed, or larger than one read takes (64 MiB). `newContent` is then `""`.
 - `newMarkers` / `oldMarkers` — the `sr:` markers of the new / old text, each a
   **list of `{kind, fqn, line}`** (`kind` string, `fqn` string, `line` int).
   `newMarkers` is set on the create and update kinds (the markers `newContent`

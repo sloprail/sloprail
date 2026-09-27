@@ -90,6 +90,9 @@ func TestT038_14_WebFetchOfGitHubRefused(t *testing.T) {
 		`https:\\github.com\owner\repo`,
 		"https://git%68ub.com/owner/repo",
 		"https://GITHUB.com%2E/owner/repo",
+		// Literal addresses in GitHub's published ranges.
+		"https://140.82.112.6/repos/owner/repo",
+		"https://[2606:50c0:8000::154]/owner/repo",
 	} {
 		t.Run(url, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -172,6 +175,12 @@ func TestT038_16_SearchWithoutScannerRefused(t *testing.T) {
 		`python3 -c "import os; os.system('gh search issues token')"`,
 		`script -q /dev/null gh search issues token`,
 		`caffeinate -i gh search issues token`,
+		// co is a default ALIAS (pr checkout), redefinable to anything; an
+		// extension run through exec can do anything.
+		`gh co token`,
+		`gh extension exec search-ext token`,
+		`gh ext exec search-ext token`,
+		`gh issue list -R cli/cli -wS token`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -260,6 +269,17 @@ func TestT038_19_ScannerWriteAndNonSearchGhAllowed(t *testing.T) {
 		`gh browse -R cli/cli`,
 		`gh search issues --help`,
 		`gh issue -R cli/cli view 1`,
+		// Lines that merely MENTION gh — the mention is an argument of a
+		// program that runs no code, or of gh itself.
+		`git commit --allow-empty -m "fix gh auth"`,
+		`command -v gh`,
+		`which gh`,
+		`type gh`,
+		`echo "done with gh"`,
+		`gh issue view 1 -R cli/cli | grep -c gh`,
+		`gh pr create --title "Update gh workflow" --body b`,
+		// -l takes a value: -lSecurity is --label Security, not -S.
+		`gh issue list -R cli/cli -lSecurity`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -334,6 +354,7 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 		`echo https://github.com/owner/repo | xargs curl -s`,
 		`curl -s https:github.com/owner/repo`,
 		`curl -s https://git%68ub.com/owner/repo`,
+		`curl -s https://140.82.112.6/repos/owner/repo`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -357,6 +378,11 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 		`curl -s https://github.com.evil.example/owner/repo`,
 		`Q=token; curl -s "https://owasp.org/?q=$Q"`,
 		`curl -s -o out.json -H 'Accept: application/json' https://owasp.org/x`,
+		// A GitHub mention that cannot feed the fetch: after it in its
+		// pipeline, or in another command of the line.
+		`curl -s https://pypi.org/pypi/requests/json | grep github.com`,
+		`curl -s https://example.com/health; git commit --allow-empty -m "fixes https://github.com/o/r/issues/1"`,
+		`curl -s https://8.8.8.8/`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)

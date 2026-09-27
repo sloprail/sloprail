@@ -102,13 +102,17 @@ func TestT038_33_TheScorerClaimsOnlyTheCoverageItChecked(t *testing.T) {
 		refused  map[int]bool
 		wantFact string
 		banFact  string
+		broken   bool // sr-session's normalize fails
 	}{
-		{"a declared scanner and no gh call", nil, nil, "found NO single gh command", "WAS covered"},
-		{"a declared scanner and a covering gh call", []string{covering}, nil, "WAS covered", "found NO single gh command"},
+		{"a declared scanner and no gh call", nil, nil, "found NO single gh command", "WAS covered", false},
+		{"a declared scanner and a covering gh call", []string{covering}, nil, "WAS covered", "found NO single gh command", false},
 		// A heredoc that merely MENTIONS the covering search is not one.
-		{"a covering search only mentioned in a heredoc", []string{heredoc}, nil, "found NO single gh command", "WAS covered"},
+		{"a covering search only mentioned in a heredoc", []string{heredoc}, nil, "found NO single gh command", "WAS covered", false},
 		// A covering search a hook refused never ran.
-		{"a covering search that was refused", []string{covering}, map[int]bool{0: true}, "found NO single gh command", "WAS covered"},
+		{"a covering search that was refused", []string{covering}, map[int]bool{0: true}, "found NO single gh command", "WAS covered", false},
+		// The scorer could not read the gh calls at all: coverage is unknown, not
+		// absent.
+		{"normalize fails", []string{covering}, nil, "not established by script", "found NO single gh command", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			work := t.TempDir()
@@ -135,7 +139,11 @@ func TestT038_33_TheScorerClaimsOnlyTheCoverageItChecked(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(bin, "sr-agent"), []byte(stub), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(filepath.Join(build, "sr-session"), filepath.Join(bin, "sr-session")); err != nil {
+			if tc.broken {
+				if err := os.WriteFile(filepath.Join(bin, "sr-session"), []byte("#!/bin/sh\necho 'database is locked' >&2\nexit 1\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Symlink(filepath.Join(build, "sr-session"), filepath.Join(bin, "sr-session")); err != nil {
 				t.Fatal(err)
 			}
 
@@ -163,8 +171,9 @@ func TestT038_33_TheScorerClaimsOnlyTheCoverageItChecked(t *testing.T) {
 				if tc.refused[i] {
 					result = "PreToolUse:Bash hook error: No scanner is declared in this session"
 				}
+				// A hook block is recorded as an error result, as the harness does.
 				entry(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
-					map[string]any{"type": "tool_result", "tool_use_id": id, "content": result}}}})
+					map[string]any{"type": "tool_result", "tool_use_id": id, "content": result, "is_error": tc.refused[i]}}}})
 			}
 			transcript := filepath.Join(work, "session.jsonl")
 			if err := os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {

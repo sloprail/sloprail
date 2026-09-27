@@ -11,12 +11,16 @@
 #     resolved: host and query stripped, percent-decoded, `.`/`..` collapsed —
 #     `gh api 'repos/../search/issues?q=token'` searched live — and any endpoint
 #     holding `..` at all, or none the parser can see (`gh api $E`);
-#   - `gh issue|pr|label list … --search/-S` (a filter, run by GitHub search);
+#   - `gh issue|pr|label list … --search/-S` (a filter, run by GitHub search),
+#     short flags read as gh bundles them (`-lSecurity` is a label, not -S);
 #   - a first word that is not a gh built-in: an alias or an extension, which
-#     can do anything (gh does not let an alias shadow a built-in);
-#   - a line that names gh more often than the parser found gh invocations:
-#     `eval "gh search …"`, `python3 -c "os.system('gh search …')"` — a gh call
-#     the parser cannot see is treated as a search.
+#     can do anything (gh does not let an alias shadow a built-in — but `co` is
+#     itself only a default alias, and can be redefined), and `gh extension
+#     exec <name>`;
+#   - a gh the line names that the parse does not account for: not a parsed gh
+#     invocation, and not inside an argument of a program that does not run
+#     code — `eval "gh search …"`, `python3 -c "os.system('gh search …')"`.
+#     `git commit -m "fix gh auth"`, `which gh`, `grep -c gh` are accounted for.
 # Everything else — gh pr create, gh repo clone, gh pr diff/checks, gh run list,
 # gh issue -R o/r view 1, gh status, gh browse, gh auth status — is not a
 # search and runs with or without a scanner. (A first version gated everything
@@ -38,7 +42,9 @@ refuse_plumbing() {
 # The searching gh calls on this line, one description per line; nothing when
 # there are none. A payload that does not parse is one search (fail closed).
 searches="$(printf '%s' "$payload" | jq -r '
-  def builtins: ["accessibility","agent-task","alias","api","attestation","auth","browse","cache","co","codespace","completion","config","extension","ext","gist","gpg-key","help","issue","label","licenses","org","pr","preview","project","release","repo","ruleset","run","search","secret","ssh-key","status","variable","version","workflow"];
+  # gh built-ins an alias cannot shadow. Not `co`: it is a DEFAULT ALIAS (for
+  # pr checkout), and `gh alias set co "search issues" --clobber` redefines it.
+  def builtins: ["accessibility","agent-task","alias","api","attestation","auth","browse","cache","codespace","completion","config","extension","ext","gist","gpg-key","help","issue","label","licenses","org","pr","preview","project","release","repo","ruleset","run","search","secret","ssh-key","status","variable","version","workflow"];
   def hexval: ascii_downcase | explode | map(if . >= 97 then . - 87 else . - 48 end) | .[0] * 16 + .[1];
   def pdecode: [splits("%")] as $p
     | $p[0] + ([$p[1:][] | if test("^[0-9A-Fa-f]{2}") then ([.[0:2] | hexval] | implode) + .[2:] else "%" + . end] | join(""));
@@ -64,7 +70,27 @@ searches="$(printf '%s' "$payload" | jq -r '
     else (reduce range(3) as $_ (.; pdecode)) as $d
       | ($d | test("\\.\\.")) or ((endpoint_path) | test("(?i)^/(api/v3/)?search(/|$)|graphql"))
     end;
-  def search_flag: any(.[]; test("^--search(=|$)") or test("^-[A-Za-z]*S"));
+  # --search/-S among gh issue|pr|label list flags, read the way gh parses them:
+  # a short flag that takes a value ends its cluster and, at the cluster end,
+  # takes the next word — so `-lSecurity` is --label Security, not -S.
+  def value_short: ["A","a","B","H","l","L","m","s","q","t","R"];
+  def value_long: ["--author","--assignee","--base","--head","--label","--limit","--milestone","--state","--jq","--template","--repo","--app","--json"];
+  def search_flag:
+    reduce .[] as $x ({skip: false, hit: false};
+      if .hit then .
+      elif .skip then .skip = false
+      elif ($x | test("^--search(=|$)")) then .hit = true
+      elif ($x | startswith("--")) then (if ($x | IN(value_long[])) then .skip = true else . end)
+      elif ($x | test("^-[A-Za-z]")) then
+        ($x[1:] | explode | map([.] | implode)) as $cs
+        | (reduce range(0; $cs | length) as $i ({done: false, hit: false, skip: false};
+             if .done then .
+             elif $cs[$i] == "S" then .hit = true | .done = true
+             elif ($cs[$i] | IN(value_short[])) then .done = true | .skip = ($i == ($cs | length) - 1)
+             else . end)) as $r
+        | .hit = $r.hit | .skip = $r.skip
+      else . end)
+    | .hit;
   def searches:
     (.argv // []) as $a
     | if ($a | length) < 2 then false
@@ -74,13 +100,28 @@ searches="$(printf '%s' "$payload" | jq -r '
         elif $sub == "search" then ($a[2:] | any(.[]; . == "--help" or . == "-h") | not)
         elif $sub == "api" then ($a[2:] | endpoint | search_endpoint)
         elif ($sub | IN("issue","pr","label")) then ($a[2:] | search_flag)
+        # `gh extension exec <name>` runs an extension, which can do anything.
+        elif ($sub | IN("extension","ext")) then (($a[2] // "") == "exec")
         elif ($sub | IN(builtins[])) then false
         else true end
       end;
+  # A word-bounded `gh` in a string.
+  def mentions: [match("(^|[^A-Za-z0-9_./-])gh(?=[^A-Za-z0-9_.-]|$)"; "g")] | length;
+  # Programs whose arguments are CODE: a gh inside them may run.
+  def runs_code:
+    (.bin // "") as $b
+    | ($b | IN("eval","sh","bash","zsh","dash","ksh","fish","su","runuser","flock","script","ssh","watch","node","nodejs","deno","bun","perl","ruby","php","lua","osascript","awk","gawk","mawk","nawk","tclsh","expect"))
+      or ($b | test("^(python|pypy)[0-9.]*$"));
   ([.event.invocations[]? | select(.bin == "gh")]) as $gh
-  | ([(.event.raw // "") | match("(^|[^A-Za-z0-9_./-])gh(?=[^A-Za-z0-9_.-]|$)"; "g")] | length) as $named
+  # Every gh the line names, minus the ones the parse accounts for: each parsed
+  # gh invocation, and each mention inside an argument of a program that does
+  # not run code (`git commit -m "fix gh auth"`, `which gh`, `grep -c gh`,
+  # `gh pr create --title "Update gh workflow"`). What is left — a gh inside
+  # eval, python -c, an unparsed sh -c — is a gh call this rule cannot see.
+  | ((.event.raw // "") | mentions) as $named
+  | (($gh | length) + ([.event.invocations[]? | select(runs_code | not) | (.argv // [])[1:][] | mentions] | add // 0)) as $accounted
   | ($gh[] | select(searches) | (.argv | join(" "))),
-    (if $named > ($gh | length) then "a gh call this rule cannot see into (eval, another language, a script): " + (.event.raw // "" | .[0:120]) else empty end)
+    (if $named > $accounted then "a gh call this rule cannot see into (eval, another language, a script): " + (.event.raw // "" | .[0:120]) else empty end)
 ' 2>/dev/null)" || searches="an unreadable command line"
 
 # No search on this line: nothing to hold to a scanner.

@@ -32,6 +32,13 @@ a deletion reaches it as a `PreFileDelete` and needs a citation like any other
 removal: `rm memories/x.md` cites nothing and is refused; `sr-file delete
 memories/x.md --cite:user '<quote>'` goes to the judge.
 
+A delete whose bytes the engine did not read — `oldContentKnown: false`, for a
+file past a recursive removal's read budget, larger than a delete read, or not a
+regular file — still needs the citation, and **always** goes to the judge: an
+empty `oldContent` there is "not read", not "nothing removed". The prepare used
+to read it as nothing removed and skip the judge, so any resolvable quote of the
+user's admitted `rm -rf` of a memory the engine had not read.
+
 ## "Asked" is a cited quote, not a keyword grep
 
 Grepping the turn's human messages for deletion words
@@ -74,7 +81,8 @@ require:
 
 - **`skip-pure-addition.sh`** (prepare) + **`change-is-clean-and-absolute.md.j2`**
   (judge) — reached only when a real removal cites the user's words (the
-  prepare skips the judge on a pure addition). The judge reads the change's
+  prepare skips the judge on a pure addition — never on a delete whose bytes
+  were not read). The judge reads the change's
   diff and its citations straight off its input, and
   rules the two things only a model can: (1) the change is **clean and
   targeted** — only what the cited words asked, nothing else dropped alongside

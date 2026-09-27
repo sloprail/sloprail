@@ -36,6 +36,12 @@ case "$kind" in
     new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
   PreFileDelete|PostFileDelete)
+    # A delete whose bytes the engine did not read (oldContentKnown false: past
+    # a recursive removal's read budget, larger than a delete read, or not a
+    # regular file) loses content nobody can see — never "nothing removed". An
+    # empty oldContent there used to skip the judge, and any resolvable quote
+    # of the user's then admitted the delete. Ask the judge.
+    [ "$(printf '%s' "$input" | jq -r 'if (.event | has("oldContentKnown")) then .event.oldContentKnown else true end')" = "true" ] || empty
     new=""
     ;;
   *)

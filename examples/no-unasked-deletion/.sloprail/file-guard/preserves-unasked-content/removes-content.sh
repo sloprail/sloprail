@@ -29,7 +29,8 @@ case "$kind" in
   PostFileUpdate)
     ;;
   *)
-    # A deletion is the largest removal there is.
+    # A deletion is the largest removal there is — whether or not the engine
+    # read the bytes it loses (oldContentKnown): it always applies.
     exit 0
     ;;
 esac

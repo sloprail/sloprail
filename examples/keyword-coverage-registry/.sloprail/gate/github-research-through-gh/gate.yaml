@@ -37,11 +37,16 @@
 # quoting does not hide it, plus two things the arguments cannot show:
 #   - `curl -K/--config file` and `wget -i/--input-file file` take their URLs
 #     from a file this rule cannot read: refused outright;
-#   - a line that names a GitHub host no fetch argument carries — the URL came
-#     from a variable (`U=https://api.github.com; curl $U/search/issues` parses
-#     as `curl /search/issues`), a substitution, or stdin (`echo URL | xargs
-#     curl`): refused. A GitHub URL inside another URL's own arguments
-#     (`?u=https://github.com/…`) is carried by that argument, and allowed.
+#   - a GitHub host that can FEED the fetch without being one of its arguments:
+#     put into a variable (`U=https://api.github.com; curl $U/search/issues`
+#     parses as `curl /search/issues`), a `$(…)`/`${…}` substitution, or an
+#     earlier stage of the fetch's pipeline (`echo URL | xargs curl`): refused.
+#     A mention AFTER the fetch in its pipeline (`curl … | grep github.com`), in
+#     another command of the line (`curl …; git commit -m "…github.com…"`), or
+#     inside another URL's query (`?u=https://github.com/…`) feeds nothing.
+#   - a literal address in GitHub's published web/API ranges
+#     (140.82.112.0/20, 143.55.64.0/20, 192.30.252.0/22, 185.199.108.0/22,
+#     2606:50c0::/32, 2a0a:a440::/29) is GitHub too.
 # What is still not caught is listed in the README ("What it does not catch").
 on:
   - event: PreToolUse

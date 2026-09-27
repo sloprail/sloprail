@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Decides whether this call is GitHub research outside gh — any WebSearch; a
-# WebFetch whose URL's HOST is a GitHub content host; a curl/wget/httpie that
-# fetches one, reads its URLs from a file, or runs on a line naming a GitHub host
-# none of its arguments carries — and refuses it with the remedy: the same
-# research through gh, against a declared scanner. Anything else permits.
+# WebFetch whose URL's HOST is a GitHub content host (or a literal address in
+# GitHub's published ranges); a curl/wget/httpie that fetches one, reads its
+# URLs from a file, or runs on a line where a GitHub host can feed it (a
+# variable, a substitution, an earlier pipeline stage) — and refuses it with the
+# remedy: the same research through gh, against a declared scanner. Anything
+# else permits.
 #
 # The host is parsed the way a browser parses a URL (see gate.yaml) rather than
 # matched by a regex over the raw text, which `https:github.com`,
@@ -35,9 +37,36 @@ verdict="$(printf '%s' "$payload" | jq -c '
     | gsub("[。．｡]"; ".")
     | sub(":[0-9]*$"; "")
     | sub("\\.+$"; "");
-  def github_host: test("^((www|api|gist|codeload|raw|uploads)\\.)?github\\.com$") or test("(^|\\.)githubusercontent\\.com$");
+  # A dotted-quad IPv4 in one of the published GitHub web/API ranges
+  # (api.github.com, github.com, *.githubusercontent.com): 140.82.112.0/20,
+  # 143.55.64.0/20, 192.30.252.0/22, 185.199.108.0/22 — or an IPv6 literal in
+  # 2606:50c0::/32 or 2a0a:a440::/29. Other spellings of an address (decimal,
+  # hex, octal) and other ranges are not caught; see the README.
+  def github_ip:
+    ([capture("^(?<a>[0-9]{1,3})\\.(?<b>[0-9]{1,3})\\.(?<c>[0-9]{1,3})\\.(?<d>[0-9]{1,3})$")][0]) as $ip
+    | if $ip != null then
+        ($ip.a | tonumber) as $a | ($ip.b | tonumber) as $b | ($ip.c | tonumber) as $c
+        | ($a == 140 and $b == 82 and $c >= 112 and $c <= 127)
+          or ($a == 143 and $b == 55 and $c >= 64 and $c <= 79)
+          or ($a == 192 and $b == 30 and $c >= 252)
+          or ($a == 185 and $b == 199 and $c >= 108 and $c <= 111)
+      else test("^\\[(2606:50c0:|2a0a:a44[0-7]:)") end;
+  def github_host: test("^((www|api|gist|codeload|raw|uploads)\\.)?github\\.com$") or test("(^|\\.)githubusercontent\\.com$") or github_ip;
   def mentions_github: pdecode | ascii_downcase | test("github(usercontent)?\\.com");
   def fetchers: ["curl","wget","http","https","xh","xhs"];
+  # Whether a GitHub host named on the line can FEED a fetch the arguments do not
+  # show: put into a shell variable (`U=https://api.github.com; curl $U/…`), a
+  # substitution (`curl "$(printf https://api.github.com)/…"`), or an EARLIER
+  # stage of the pipeline the fetch is in (`echo URL | xargs curl`). A mention
+  # after the fetch in its pipeline (`curl … | grep github.com`) or in another
+  # command of the line (`curl …; git commit -m "…github.com…"`) feeds nothing.
+  def feeds_a_fetch:
+    . as $raw
+    | ($raw | test("(?i)((^|[\\s;&|(])[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|]*github(usercontent)?\\.com|\\$[({][^)}]*github(usercontent)?\\.com)"))
+      or ([$raw | splits("\\n|;|&&|\\|\\|")] | any(.[];
+            [splits("\\|")] as $st
+            | ([range(0; $st | length) | select($st[.] | test("(^|[\\s/])(curl|wget|http|https|xh|xhs)(\\s|$)"))][0]) as $i
+            | $i != null and ([$st[0:$i][] | mentions_github] | any)));
 
   .event as $e
   | if $e.kind == "PreToolUse" and $e.tool == "WebSearch" then {refuse: "websearch"}
@@ -52,7 +81,7 @@ verdict="$(printf '%s' "$payload" | jq -c '
                            (.bin == "wget" and (.arg | test("^--input-file(=|$)") or test("^-[A-Za-z]*i"))))][0]) as $cfg
       | if $hit != null then {refuse: "fetch", tool: $hit.bin, url: $hit.arg}
         elif $cfg != null then {refuse: "config", tool: $cfg.bin, url: $cfg.arg}
-        elif ($f | length) > 0 and (($e.raw // "") | mentions_github) and ([$args[] | select(.arg | mentions_github)] | length == 0)
+        elif ($f | length) > 0 and (($e.raw // "") | feeds_a_fetch)
           then {refuse: "hidden", tool: $f[0].bin}
         else {} end
     else {} end

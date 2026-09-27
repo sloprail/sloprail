@@ -147,10 +147,16 @@ in one `gh search`:
   files from `raw.githubusercontent.com`, and a curl of `api.github.com/search`
   is a search no scanner governs. Two things the parsed arguments cannot show
   are refused as well: `curl -K`/`--config` and `wget -i`/`--input-file`, which
-  take their URLs from a file; and a line naming a GitHub host that none of the
-  fetch's own arguments carries — a URL built from a variable
+  take their URLs from a file; and a GitHub host that can **feed** the fetch
+  without being one of its arguments — put into a variable
   (`U=https://api.github.com; curl $U/search/issues` parses as
-  `curl /search/issues`), a substitution, or piped in (`echo URL | xargs curl`).
+  `curl /search/issues`), a `$(…)`/`${…}`, or an earlier stage of the fetch's
+  pipeline (`echo URL | xargs curl`). A mention that cannot feed it is left
+  alone: after the fetch in its pipeline (`curl … | grep github.com`) or in
+  another command of the line (`curl …; git commit -m "…github.com/…"`). A
+  literal address in GitHub's published web/API ranges (140.82.112.0/20,
+  143.55.64.0/20, 192.30.252.0/22, 185.199.108.0/22, 2606:50c0::/32,
+  2a0a:a440::/29) counts as GitHub too.
   The remedy names the gh equivalents (`gh issue view`, `gh api repos/…/contents/…`).
 - **`search-needs-declared-scanner`** (`PreCommandInvoke`, every line that runs
   or names `gh`). Until a scanner is declared, a gh call that **searches GitHub**
@@ -158,12 +164,18 @@ in one `gh search`:
   graphql, the endpoint resolved first — host and query stripped,
   percent-decoded, `.`/`..` collapsed, since `gh api 'repos/../search/issues?q=…'`
   searched live — with any `..` or no visible endpoint counting as a search;
-  `gh issue|pr|label list --search/-S`; and what the rule cannot see into: an
-  alias or extension (gh does not let one shadow a built-in), and a gh the parser
-  did not find as an invocation (`eval "gh search …"`,
-  `python3 -c "os.system('gh search …')"`), counted from the raw line. All other
-  gh work — `gh pr create`, `gh repo clone`, `gh pr checks`, `gh run list`,
-  `gh issue -R o/r view 1` — runs with or without a scanner. Both earlier
+  `gh issue|pr|label list --search/-S`, short flags read as gh bundles them
+  (`-lSecurity` is a label, `-wS` is a search); and what the rule cannot see
+  into: an alias or extension (gh does not let one shadow a built-in — but `co`
+  is itself only a default alias, and `gh alias set co 'search issues'
+  --clobber` redefines it), `gh extension exec <name>`, and a gh the line names
+  that the parse does not account for (`eval "gh search …"`,
+  `python3 -c "os.system('gh search …')"`). A mention the parse DOES account for
+  runs freely: an argument of a program that runs no code — `git commit -m
+  "fix gh auth"`, `which gh`, `grep -c gh`, `gh pr create --title "Update gh
+  workflow"`. All other gh work — `gh pr create`, `gh repo clone`, `gh pr
+  checks`, `gh run list`, `gh issue -R o/r view 1` — runs with or without a
+  scanner. Both earlier
   versions were wrong one way: a list of search spellings was measured short
   (`gh issue list --search`, `search (` with a space, a gh alias,
   `X=search; gh $X …` all searched), and an allowlist of reads refused ordinary
@@ -219,7 +231,7 @@ nothing" too, skip the judge, and let any quote of the user's admit the drop.
 `rm -rf scanners/<name>` — the directory, as the real run did it — reaches the
 guard as a `PreFileDelete` of the scanner file inside: the engine expands a
 recursive removal of a directory (`rm -r`/`-R`/`--recursive` or an
-abbreviation of it, `git rm -r`, or `mv` of it) into one delete per file it
+abbreviation of it, `git rm -r`, `mv` or `git mv` of it) into one delete per file it
 holds, even past its read budget (the files it did not read carry
 `oldContentKnown: false`, and the guard, unable to see what the scanner held,
 asks for the user's words). A delete the engine cannot see at all
@@ -259,14 +271,17 @@ reaches the check and records nothing.
 - **Parsing is a correctness aid, not a security boundary**: a program named by
   a variable (`$GH search …`) or a decoded payload is not visible to
   `event.invocations`. The search gate counts a gh it can SEE named on the line
-  but not parsed as a search (so `eval "gh search …"` is caught, and so is a
-  commit message mentioning `gh` before any scanner exists — the cost); a gh
-  whose name is itself hidden (`G=g; ${G}h search …`, base64) is not.
+  but not accounted for by the parse — inside code (`eval`, `python3 -c`, an
+  unparsed `sh -c`) or a heredoc body (so a heredoc mentioning `gh` before any
+  scanner exists is refused — the cost); a gh whose name is itself hidden
+  (`G=g; ${G}h search …`, `eval "g""h search …"`, base64) is not.
 - **Fetches this rule cannot see**: a GitHub host named only in an earlier
   command (`export API=https://api.github.com`, then `curl $API/…`), a host
   spliced from pieces (`H=git; curl https://${H}hub.com/…`), a URL a script or
-  program builds, a `Host:` header aimed at a GitHub IP address, or a fetching
-  program not in the list (`python3 -c "urllib…"`, `nc`).
+  program builds, a GitHub address outside the listed ranges or spelled another
+  way (`https://2354212870/`, hex or octal), a `Host:` header aimed at an
+  address this rule does not know, or a fetching program not in the list
+  (`python3 -c "urllib…"`, `nc`).
 - **A folder padded past 1000 files.** The engine predicts a recursive
   removal's deletes up to 1000 files; past that it predicts none, so padding a
   scanner's folder with files hides its `rm -rf` from the preventive check.
@@ -295,7 +310,9 @@ reaches the check and records nothing.
   shrinking the registry, a byte-padded folder's delete still refused, a refused
   search not counting as coverage, the near-miss hint that registers when
   followed, `git rm -r`, a declaration whose stamp cannot be recorded not
-  entering, and every list shape the parser reads.
+  entering, and every list shape the parser reads; the last check recording
+  only on the user's citation, and a cited drop narrowing what is owed
+  (T038_42–43).
 - eval: `eval/security-scan/` — a real Haiku run with its full toolset
   (WebSearch and WebFetch included) and a skill teaching the convention, scored
   on trajectory health, with deterministic failures for a declared scanner

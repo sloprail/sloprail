@@ -175,17 +175,34 @@ fi
 # invocations whose program is gh), never a grep over the Bash text: a grep
 # counted a heredoc writing SCAN-NOTES.md that merely MENTIONED `gh search …`
 # as a search. --ran-only leaves out calls a hook refused — they never ran.
-# A transcript normalize cannot read contributes nothing: coverage then reads
-# as unestablished, not as held.
+# A transcript normalize cannot read makes the whole reading UNKNOWN: it is
+# marked, and coverage is then reported "not checked" — never "no single gh
+# command", which would tell the judge the agent searched nothing when the
+# scorer simply could not look.
+gh_marker="__normalize_failed__"
 gh_lines="$(all_transcripts | while IFS= read -r f; do
     [ -f "$f" ] || continue
-    sr-session trajectory normalize --path "$f" --events PreCommandInvoke --whole-session --ran-only </dev/null 2>/dev/null \
-      | jq -r '.[] | .events[]? | select(.kind == "PreCommandInvoke") | .invocations[]? | select(.bin == "gh") | (.argv // []) | join(" ")' 2>/dev/null || true
+    if ! normalized="$(sr-session trajectory normalize --path "$f" --events PreCommandInvoke --whole-session --ran-only </dev/null 2>/dev/null)"; then
+      echo "$gh_marker"
+      continue
+    fi
+    printf '%s' "$normalized" \
+      | jq -r '.[] | .events[]? | select(.kind == "PreCommandInvoke") | .invocations[]? | select(.bin == "gh") | (.argv // []) | join(" ")' 2>/dev/null \
+      || echo "$gh_marker"
   done)"
+gh_read="yes"
+case "$gh_lines" in
+  *"$gh_marker"*)
+    gh_read="no"
+    gh_lines="$(printf '%s\n' "$gh_lines" | grep -v "^$gh_marker\$" || true)"
+    ;;
+esac
 
 gh_used="no"
 if [ -n "$gh_lines" ]; then
   gh_used="yes"
+elif [ "$gh_read" = "no" ]; then
+  gh_used="unknown (sr-session trajectory normalize failed)"
 fi
 
 web_search="$(tool_use_count WebSearch)"
@@ -245,6 +262,9 @@ if [ -f "$scan_lib" ]; then
     scorer_coverage="no active scanner on disk to check"
   elif [ -z "$scorer_uncovered" ]; then
     scorer_coverage="covered:$scorer_checked"
+  elif [ "$gh_read" = "no" ]; then
+    # Not found in what could be read, but part of the run could not be read.
+    scorer_coverage="not checked (sr-session trajectory normalize failed on a transcript)"
   else
     scorer_coverage="NOT covered:$scorer_uncovered"
   fi

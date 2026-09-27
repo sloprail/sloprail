@@ -121,10 +121,12 @@ rule keeps itself):
   runs, and only files in the session's baseline surface afterwards as
   `PostFileDelete` at Stop (a file created and removed in the same session
   leaves no difference at all).
-- **Bytes:** past 8 MiB read across the directory, every file is still
-  predicted, but the rest are not read: `oldContentKnown` is `false`. The same
-  for one file over 8 MiB, and for a file that is not a regular file once links
-  are followed (a FIFO or a device is never opened for reading).
+- **Bytes:** at most 8 MiB is read across the directory. Every file is still
+  predicted; one that does not fit in what is left of that budget is not read
+  (`oldContentKnown: false`) and charges nothing, so smaller files after it are
+  still read. The same for one file over 8 MiB, and for a file that is not a
+  regular file once links are followed (a FIFO or a device is never opened for
+  reading). `sr-file delete` reads the same way.
 - **Unreadable paths:** a subdirectory the walk cannot read is skipped and
   reported on the hook's stderr; the files around it are still predicted.
 - **Unseen commands:** a delete the parser does not model — `find … -delete`, a
