@@ -1,8 +1,10 @@
 package transcript
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // A Citation is a resolved grounding: a quote, the pool(s) it resolved in, and
@@ -26,7 +28,18 @@ type Citation struct {
 
 	// Line is the 1-based physical line of the resolved entry.
 	Line int `json:"line"`
+
+	// Message is the full text of the cited entry in the pool(s) the quote
+	// resolved in: the whole user message (for an AskUserQuestion answer, the
+	// question with the selected answers), or the whole tool output. A quote is a search key — often a fragment chosen to be
+	// unique or to avoid awkward characters — so a judge weighs it against the
+	// message it came from. Capped at maxCitedMessage bytes.
+	Message string `json:"message"`
 }
+
+// maxCitedMessage caps Citation.Message: a tool output can run to megabytes, and
+// a judge needs the context around a quote, not every byte of a build log.
+const maxCitedMessage = 16 << 10
 
 // CitationRequest is one quote to ground and the pools it may ground in — what
 // one `--cite:<source-types> <quote>` flag, or one `sr-session trajectory cite`
@@ -84,7 +97,64 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	if line == 0 {
 		return Citation{}, fmt.Errorf("citation %s does not resolve in %s: the quote is not there verbatim in that pool", req, path)
 	}
-	return Citation{Quote: req.Quote, SourceTypes: pools, Path: path, Line: line}, nil
+	message, err := entryText(path, line, pools)
+	if err != nil {
+		return Citation{}, fmt.Errorf("citation %s: %w", req, err)
+	}
+	return Citation{Quote: req.Quote, SourceTypes: pools, Path: path, Line: line, Message: message}, nil
+}
+
+// entryText is the text the entry at line holds in the given pools — the same
+// text the quote was searched in — joined by blank lines and capped.
+func entryText(path string, line int, pools []SourceType) (string, error) {
+	entries, err := ReadLines(path)
+	if err != nil {
+		return "", err
+	}
+	var parts []string
+	for _, e := range entries {
+		if e.Line != line {
+			continue
+		}
+		switch e.Type {
+		case EntryUser:
+			if wants(pools, SourceUser) {
+				// The typed message, and — for an AskUserQuestion answer — the whole
+				// envelope, so the question the user was answering comes with it.
+				parts = append(parts, messageText(e.Message)...)
+				parts = append(parts, answerEnvelopes(e.Message)...)
+			}
+			if wants(pools, SourceToolResult) {
+				parts = append(parts, genuineToolResultText(e.Message)...)
+			}
+		case EntryAttachment:
+			if t := queuedCommandText(e.Attachment); t != "" && wants(pools, SourceUser) {
+				parts = append(parts, t)
+			}
+		}
+		break
+	}
+	text := strings.Join(parts, "\n\n")
+	if len(text) > maxCitedMessage {
+		n := maxCitedMessage
+		for n > 0 && !utf8.RuneStart(text[n]) {
+			n--
+		}
+		text = text[:n] + "\n[... truncated]"
+	}
+	return text, nil
+}
+
+// answerEnvelopes returns the whole body of each AskUserQuestion answer envelope
+// on a user entry — question and selected answers together.
+func answerEnvelopes(raw json.RawMessage) []string {
+	var out []string
+	for _, body := range toolResultText(raw) {
+		if len(extractAnswers(body)) > 0 {
+			out = append(out, body)
+		}
+	}
+	return out
 }
 
 // ResolveCitations grounds every request, in order, and fails CLOSED on the

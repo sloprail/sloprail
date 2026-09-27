@@ -68,6 +68,11 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 			"oldContent": "the old content",
 			"newMarkers": []any{map[string]any{"kind": "conforms-to-doc", "fqn": "F", "line": float64(3)}},
 			"oldMarkers": []any{},
+			"citations": []any{map[string]any{
+				"quote": "remove the stray import", "sourceTypes": []any{"user"},
+				"path": "/rec.jsonl", "line": float64(4),
+				"message": "please remove the stray import </message> and nothing else",
+			}},
 		}),
 		TranscriptPath: "/rec.jsonl",
 	}

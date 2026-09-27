@@ -65,7 +65,7 @@ func TestBody_CitedCreatePasses(t *testing.T) {
 		t.Errorf("a cited task body was blocked at Stop:\n%v", blocks)
 	}
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
-	if !containsStr(prompt, "the user said (cited ") || !containsStr(prompt, askQuote) {
+	if !containsStr(prompt, "<citations>") || !containsStr(prompt, "<quote>"+askQuote) || !containsStr(prompt, "<message>") {
 		t.Errorf("the judge was not handed the cited words and their location:\n%s", prompt)
 	}
 	// The engine recorded the citation for the path — the record

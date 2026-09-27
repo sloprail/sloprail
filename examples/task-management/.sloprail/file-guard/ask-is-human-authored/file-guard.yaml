@@ -14,5 +14,4 @@ preventive: true
 require:
   - citation: {source_types: [user]}
 checks:
-  - prepare: ./resolve-cited-messages.sh
-    judge: ./reference-is-true-and-only-this.md.j2
+  - judge: ./reference-is-true-and-only-this.md.j2

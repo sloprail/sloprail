@@ -36,6 +36,7 @@ const (
 	KeySourceTypes = "sourceTypes"
 	KeyPath        = "path"
 	KeyLine        = "line"
+	KeyMessage     = "message"
 )
 
 // CitationsDecl is FieldCitations' declaration, shared by every module that
@@ -53,6 +54,7 @@ func CitationsDecl() module.FieldDecl {
 				{Name: KeySourceTypes, Type: module.TypeList, Elem: &module.FieldDecl{Type: module.TypeString}},
 				{Name: KeyPath, Type: module.TypeString},
 				{Name: KeyLine, Type: module.TypeInt},
+				{Name: KeyMessage, Type: module.TypeString},
 			},
 		},
 	}
@@ -73,6 +75,7 @@ func ToWire(cs []transcript.Citation) []any {
 			KeySourceTypes: types,
 			KeyPath:        c.Path,
 			KeyLine:        c.Line,
+			KeyMessage:     c.Message,
 		})
 	}
 	return out
@@ -92,6 +95,7 @@ func FromWire(v any) []transcript.Citation {
 		c := transcript.Citation{}
 		c.Quote, _ = m[KeyQuote].(string)
 		c.Path, _ = m[KeyPath].(string)
+		c.Message, _ = m[KeyMessage].(string)
 		switch n := m[KeyLine].(type) {
 		case int:
 			c.Line = n

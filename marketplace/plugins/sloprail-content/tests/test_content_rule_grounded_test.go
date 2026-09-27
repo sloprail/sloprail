@@ -114,7 +114,7 @@ func TestRuleGrounded_CitedWritePasses(t *testing.T) {
 	if prompt == "" {
 		t.Fatalf("the judge never ran on a cited rule write:\n%s", res.Output)
 	}
-	if !strings.Contains(prompt, "<cited_messages>") || !strings.Contains(prompt, ruleQuote) {
+	if !strings.Contains(prompt, "<citations>") || !strings.Contains(prompt, "<quote>"+ruleQuote) || !strings.Contains(prompt, "<message>") {
 		t.Errorf("the judge was not handed the cited quote %q:\n%s", ruleQuote, prompt)
 	}
 	if !strings.Contains(prompt, tp) {

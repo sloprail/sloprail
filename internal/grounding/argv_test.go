@@ -125,7 +125,7 @@ func TestFromArgv(t *testing.T) {
 }
 
 func TestWireRoundTrip(t *testing.T) {
-	in := []transcript.Citation{{Quote: "q", SourceTypes: both, Path: "/s.jsonl", Line: 7}}
+	in := []transcript.Citation{{Quote: "q", SourceTypes: both, Path: "/s.jsonl", Line: 7, Message: "the whole q message"}}
 	assert.Equal(t, in, FromWire(ToWire(in)))
 	assert.NotNil(t, ToWire(nil), "no citations is an empty list, never null")
 	assert.Empty(t, FromWire([]any{map[string]any{"quote": "q"}}), "an entry missing its location is not a citation")

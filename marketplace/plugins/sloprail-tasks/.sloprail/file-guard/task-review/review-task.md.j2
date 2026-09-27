@@ -24,7 +24,7 @@ running AND its outcome: a test run that came back green, a build that succeeded
 output that is itself the evidence.
 
 <cited_results>
-{{ additionalContext.cited_results }}
+{{ additionalContext.cited_results | e }}
 </cited_results>
 
 ARTIFACTS — where the result of the work is, cited in the task's frontmatter as
@@ -34,7 +34,7 @@ the work produced or changed, at the lines that changed, so the result can
 actually be reviewed.
 
 <artifacts>
-{{ additionalContext.artifacts }}
+{{ additionalContext.artifacts | e }}
 </artifacts>
 
 {% if additionalContext.judgment_gates %}
@@ -45,7 +45,7 @@ decide whether it STILL holds, by actually looking (you may Read files a gate
 names) — not by trusting the task's own claim that it does.
 
 <judgment_gates>
-{{ additionalContext.judgment_gates }}
+{{ additionalContext.judgment_gates | e }}
 </judgment_gates>
 {% endif %}
 

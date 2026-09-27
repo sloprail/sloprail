@@ -1,27 +1,14 @@
 #!/usr/bin/env bash
-# prepare for stage 2 of content-rule-is-grounded: hand the judge the user's
-# own words this change was grounded in, so judge-rule-body.md.j2 never has to
-# find them itself.
-#
-# THE GROUND TRUTH IS `.event.citations`, not the rule's body. The agent made
-# the change with `sr-file write|edit ... --cite:user '<exact quote>'`, and the
-# session already resolved each quote against its own record before this ran:
-# every entry is `{quote, sourceTypes, path, line}` naming a real entry of the
-# transcript. Only entries whose sourceTypes include `user` are ground truth
-# here — the guard's require is the user pool, and a tool's output is not the
-# human's ask. At a Pre kind they are this change's citations; at a Post kind
-# (Stop) they are every citation recorded for the path this session.
-#
-# The body is handed over too, and on an UPDATE so is the body BEFORE the
-# change (oldContent: the file on disk at Pre, the session baseline at Post —
-# the same span the citations cover), so the judge weighs what the change
-# added or altered rather than holding text carried over unchanged to a quote
-# that was never about it.
+# prepare for stage 2 of content-rule-is-grounded: hand the judge the rule's
+# body, and on an UPDATE the body BEFORE the change (oldContent: the file on
+# disk at Pre, the session baseline at Post), so it weighs what the change added
+# or altered rather than text carried over unchanged. The cited words need no
+# preparing: judge-rule-body.md.j2 reads them straight off `.event.citations`.
 #
 # THE PREPARE CONTRACT: exit 0 with additionalContext proceeds to the judge;
 # non-zero fails the check closed. Every read of the payload goes through
 # field(), which fails the prepare (and so the check) on an unreadable payload
-# rather than handing the judge an empty ground truth as if none were cited.
+# rather than handing the judge an empty body as if the rule had none.
 set -uo pipefail
 
 fail() {
@@ -84,15 +71,5 @@ body="$(body_of "$content")"
 old_body=""
 [ -n "$old_content" ] && old_body="$(body_of "$old_content")"
 
-cited_messages="$(field '
-  [ (.event.citations // [])[]
-    | select((.sourceTypes // []) | index("user"))
-    | "--- the user said (transcript \(.path), line \(.line)):\n\(.quote)\n" ]
-  | join("\n")')" || exit 1
-
-cited_ok=false
-[ -n "$cited_messages" ] && cited_ok=true
-
-jq -n --arg msgs "$cited_messages" --argjson ok "$cited_ok" \
-  --arg body "$body" --arg old_body "$old_body" \
-  '{additionalContext: {cited_messages: $msgs, cited_ok: $ok, body: $body, old_body: $old_body}}'
+jq -n --arg body "$body" --arg old_body "$old_body" \
+  '{additionalContext: {body: $body, old_body: $old_body}}'
