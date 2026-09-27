@@ -112,20 +112,27 @@ jobs:
   unit:
     name: unit + services
     needs: changes
-    if: needs.changes.outputs.code-changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      # Skipped via a per-STEP if:, not a job-level one, on this job alone
+      # (unit/install-sh have no matrix, so this line has to say it every
+      # step) — see the e2e job's own comment for why the job-level form is
+      # wrong for any job whose name is REQUIRED by main's ruleset.
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/checkout@v4
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: build
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: build
         run: go build ./...
 
-      - name: vet
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: vet
         run: go vet ./...
 
       # Reported as its own step: a formatting complaint is not a test failure
@@ -134,23 +141,42 @@ jobs:
       # worktree under .claude/ is a second copy of this repository, so every
       # file would be reported twice with a path that is not ours. Asking git
       # which files it tracks is the same question with the right answer.
-      - name: gofmt
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: gofmt
         run: |
           unformatted="$(git ls-files '*.go' | xargs gofmt -l)"
           if [ -n "$unformatted" ]; then
             echo "not gofmt'd:"; echo "$unformatted"; exit 1
           fi
 
-      - name: unit
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: unit
         run: make test-unit
 
-      - name: services
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: services
         run: make test-services
 
   e2e:
     name: e2e (${{ matrix.shard }})
     needs: changes
-    if: needs.changes.outputs.code-changed == 'true'
+    # NOT a job-level if:. A job-level if: on a job with a matrix: strategy
+    # skips the matrix EXPANSION itself when false — GitHub reports one job
+    # named literally "e2e (${{ matrix.shard }})" (the unexpanded template
+    # string), never the 6 real "e2e (session)" / "e2e (rest)" / etc. names
+    # main's ruleset actually requires. Those 6 required contexts then never
+    # report AT ALL for that commit, and the PR is blocked exactly as if the
+    # checks had failed — worse, actually, since a failed check can be seen
+    # and re-run, while a check stuck at "expected" looks identical to CI
+    # still running, forever. Caught by actually running it: PR #56's
+    # version-only bump PR sat BLOCKED with 5 checks reported instead of 9.
+    # So the if: moves onto every STEP below instead, which still runs a real
+    # job per shard (matrix always expands), each one just skipping its own
+    # work and reporting success in a few seconds — the same trick applied to
+    # the `unit` and `install-sh` jobs, which don't have this failure mode
+    # (no matrix to fail to expand) but get the identical treatment for
+    # consistency and because a job-level if: still LOOKS safe there today,
+    # right up until a matrix: is added to one of them later.
     runs-on: ubuntu-latest
     # The e2e suite runs -p 1 (one test binary at a time — a disk-space
     # constraint, see the Makefile), which made the whole suite a single long
@@ -169,8 +195,10 @@ jobs:
     # shard genuinely hung rather than the runner being slow.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/checkout@v4
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
@@ -178,7 +206,8 @@ jobs:
       # git is the subject of the change-detection half — every baseline, every
       # tree diff. A runner with no identity fails those with a message about
       # committing rather than about the engine.
-      - name: git identity
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: git identity
         run: |
           git config --global user.email ci@sloprail.invalid
           git config --global user.name  sloprail CI
@@ -188,7 +217,8 @@ jobs:
       # (v0.1.0, ...), never a floating tag) — mirrors the old GCP install
       # step's own "newest by update time" resolution, just against Releases
       # instead of Artifact Registry versions.
-      - name: install a10n-claude-mock
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: install a10n-claude-mock
         env:
           GH_TOKEN: ${{ secrets.HARNESS_MOCKS_TOKEN }}
         run: |
@@ -209,7 +239,8 @@ jobs:
       # package reports ok — 56 packages "passing" in 38 seconds against ~30
       # minutes locally. A green run that tested nothing is worse than a red one
       # because it is trusted, so the absence is made loud rather than silent.
-      - name: e2e
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: e2e
         run: |
           command -v a10n-claude-mock >/dev/null 2>&1 || {
             echo "a10n-claude-mock is not on PATH — every e2e package would SKIP"
@@ -229,25 +260,35 @@ jobs:
   install-sh:
     name: install.sh (stranger install path)
     needs: changes
-    if: needs.changes.outputs.code-changed == 'true'
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      # Per-step if:, not job-level — see the e2e job's own comment for why:
+      # this job has no matrix today, so a job-level if: would not break its
+      # required-check NAME the way it does there, but the same mistake is
+      # one `matrix:` away from happening here too, so every job in this file
+      # is held to the per-step form for the one property that actually
+      # matters — the job's OWN name always reports, skip or not.
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/checkout@v4
+      - if: needs.changes.outputs.code-changed == 'true'
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: shellcheck
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: shellcheck
         run: |
           brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
           shellcheck install.sh marketplace/plugins/sloprail/hooks/sr-session-hook.sh
 
-      - name: build release archives
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: build release archives
         run: make release
 
-      - name: serve the archives like a GitHub Release would
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: serve the archives like a GitHub Release would
         run: |
           python3 -m http.server 8931 --directory dist --bind 127.0.0.1 &
           echo $! > /tmp/http-server.pid
@@ -260,7 +301,8 @@ jobs:
       # GitHub via SLOPRAIL_RELEASE_URL — proving the SHIPPED script's
       # download → checksum verify → unpack → install sequence actually works,
       # not a rewritten stand-in.
-      - name: run install.sh end to end
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: run install.sh end to end
         run: |
           cp install.sh /tmp/install-under-test.sh
           chmod +x /tmp/install-under-test.sh
@@ -271,12 +313,14 @@ jobs:
           # is arbitrary; this test's mock doesn't care which tag it says.
           SLOPRAIL_RELEASE_URL="http://127.0.0.1:8931" SLOPRAIL_INSTALL_TAG="v0.0.0-ci-mock" SLOPRAIL_INSTALL_DIR="$RUNNER_TEMP/sloprail-installed" /tmp/install-under-test.sh
 
-      - name: installed binaries actually run
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: installed binaries actually run
         run: |
           "$RUNNER_TEMP/sloprail-installed/sr-session" start </dev/null >/dev/null
           echo "sr-session runs after install.sh"
 
-      - name: tampered download is rejected
+      - if: needs.changes.outputs.code-changed == 'true'
+        name: tampered download is rejected
         run: |
           cp dist/sloprail-darwin-arm64.tar.gz /tmp/original.tar.gz
           printf 'corruption' >> dist/sloprail-darwin-arm64.tar.gz
@@ -288,6 +332,11 @@ jobs:
           echo "tampered archive was correctly rejected"
           cp /tmp/original.tar.gz dist/sloprail-darwin-arm64.tar.gz
 
-      - name: stop local server
-        if: always()
+      # needs.changes.outputs.code-changed == 'true' is ANDed into this one's
+      # own always(): always() alone would try to kill a server this run
+      # never started when the job was skipped, which is harmless (the `||
+      # true` swallows it) but pointless — the AND just keeps the log free of
+      # a step that visibly "ran" a no-op on every skipped push.
+      - if: always() && needs.changes.outputs.code-changed == 'true'
+        name: stop local server
         run: kill "$(cat /tmp/http-server.pid)" 2>/dev/null || true
