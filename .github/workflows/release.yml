@@ -15,6 +15,13 @@ on:
 
 permissions:
   contents: write
+  # git-cliff's --github-repo (below) looks up each commit's PR to attribute
+  # it to an author (cliff.toml's `by @user` line) — a read of the PR list,
+  # which contents: write alone does not grant. Missing this made every
+  # release fail at "generate changelog" with a 403 from the GitHub API,
+  # caught by actually cutting v0.2.1: the archives built and verified fine,
+  # only the changelog step failed.
+  pull-requests: read
 
 jobs:
   build:
