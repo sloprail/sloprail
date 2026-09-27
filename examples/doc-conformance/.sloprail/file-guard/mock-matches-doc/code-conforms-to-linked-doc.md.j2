@@ -39,19 +39,20 @@ Read the doc's own text, not a summary of it.
    `https://code.claude.com/docs/en/hooks#precompact` becomes
    `https://code.claude.com/docs/en/hooks.md`. Docs sites like this one serve
    the page as raw markdown there.
-2. Fetch it with the Bash tool and cut out what you need in the same command —
-   pipe `curl` into `grep`, `sed -n` or `head`; never save the page to a file:
+2. Fetch it with the Bash tool as EXACTLY `curl -sL <url>.md` — no other flags,
+   one URL — and pipe it into `grep` or `head` to cut out what you need. That
+   exact form is the only curl this check permits; anything added after the URL
+   (an output file, another flag) is refused.
    - the anchor's section: an anchor is its heading lowercased with spaces
      turned into dashes (`#precompact` is `### PreCompact`,
      `#precompact-input` is `#### PreCompact input`), so
-     `curl -sL <url>.md | sed -n '/^### PreCompact$/,/^### /p'` or
      `curl -sL <url>.md | grep -n -A60 '^### PreCompact$'`;
    - every field, event or value name the change uses:
      `curl -sL <url>.md | grep -n -i -e 'trigger' -e 'custom_instructions'`.
    The page can be hundreds of KB: grep it, do not print it whole.
-3. Only if the `.md` URL does not return markdown (an HTML page, a 404), fall
-   back to WebFetch on the original URL and ask it to quote the section
-   verbatim.
+3. Only if the doc is not on `https://code.claude.com/docs/`, or its `.md`
+   URL does not return markdown, fall back to WebFetch on the original URL and
+   ask it to quote the section verbatim.
 
 Rule only on text you actually saw in that output. Do not rely on memory of
 what the doc used to say, on the file's own comments about the doc, or on
