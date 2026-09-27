@@ -477,12 +477,18 @@ func movelike(argv []string) []FileTarget {
 // rmIsRecursive reports whether an rm invocation removes directories with
 // their contents: `-r`, `-R`, `--recursive`, or either letter inside a bundle
 // of short flags (`-rf`, `-fR`). Flags stop at `--`, as they do for rm itself.
+//
+// GNU rm (getopt_long) also accepts any unambiguous abbreviation of a long
+// option, and --recursive is the only rm long option starting with `r` — so
+// `--r`, `--rec`, `--recur` are all --recursive. Matching only the full
+// spelling let `rm --rec -f dir` remove a directory whose files nothing was
+// told about.
 func rmIsRecursive(argv []string) bool {
 	for _, arg := range argv[1:] {
 		switch {
 		case arg == "--":
 			return false
-		case arg == "--recursive":
+		case len(arg) >= len("--r") && strings.HasPrefix("--recursive", arg):
 			return true
 		case strings.HasPrefix(arg, "--"), !strings.HasPrefix(arg, "-"), arg == "-":
 			continue

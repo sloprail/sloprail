@@ -39,6 +39,11 @@ func TestExtractCommand_RemovingADirectoryRecursivelyDeletesEveryFileInIt(t *tes
 		"rm -R " + dir,
 		"rm -fR " + dir,
 		"rm --recursive --force " + dir,
+		// GNU getopt accepts any unambiguous abbreviation of a long option, and
+		// --recursive is the only rm long option starting with r.
+		"rm --rec -f " + dir,
+		"rm --recur " + dir,
+		"rm --r " + dir,
 		"rm -rf " + dir + "/",
 		"mv " + dir + " " + filepath.Join(root, "elsewhere"),
 	} {
@@ -115,4 +120,74 @@ func TestExtractCommand_ATooLargeDirectoryIsNamedNotExpanded(t *testing.T) {
 	assert.Empty(t, events)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrRemovedDirectoryTooLarge), "%v", err)
+}
+
+// TestExtractCommand_AnUnreadableSubdirectoryHidesOnlyItself: one subdirectory
+// the walk cannot read must not hide every other file in the removed
+// directory. `rm -rf scanners/x` still deletes scanners/x/scanner.yaml when
+// scanners/x/zz is unreadable, so the prediction keeps what it found, and the
+// part it could not read is named as a problem.
+func TestExtractCommand_AnUnreadableSubdirectoryHidesOnlyItself(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 0o000 directory anyway")
+	}
+	root := scannerTree(t)
+	locked := filepath.Join(root, "scanners", "x", "zz")
+	require.NoError(t, os.Mkdir(locked, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(locked, "hidden.md"), []byte("h\n"), 0o644))
+	require.NoError(t, os.Chmod(locked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	events, err := extractForIn(t, "rm -rf "+filepath.Join(root, "scanners", "x"), root)
+	got := kindsByPath(events)
+	assert.Equal(t, KindPreDelete, got["scanners/x/scanner.yaml"], "the readable file is still predicted: %v", got)
+	assert.Equal(t, KindPreDelete, got["scanners/x/notes/extra.md"], "a readable sibling subtree is still predicted: %v", got)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUnreadableTree), "the unreadable subtree is named: %v", err)
+	assert.Contains(t, err.Error(), "zz")
+}
+
+// TestExtractCommand_ExactlyTheFileBoundStillExpands is the boundary of the
+// count bound: a directory holding exactly maxRemovedDirectoryFiles files is
+// predicted in full; one more is not (TestExtractCommand_ATooLargeDirectoryIsNamedNotExpanded).
+func TestExtractCommand_ExactlyTheFileBoundStillExpands(t *testing.T) {
+	root := t.TempDir()
+	big := filepath.Join(root, "big")
+	require.NoError(t, os.Mkdir(big, 0o755))
+	for i := 0; i < maxRemovedDirectoryFiles; i++ {
+		require.NoError(t, os.WriteFile(filepath.Join(big, fmt.Sprintf("f%04d", i)), nil, 0o644))
+	}
+
+	events, err := extractForIn(t, "rm -rf "+big, root)
+	require.NoError(t, err)
+	assert.Len(t, events, maxRemovedDirectoryFiles)
+}
+
+// TestExtractCommand_TooManyBytesIsNamedNotRead bounds what the expansion
+// READS, not only how many files it lists: each predicted delete carries the
+// file's bytes, read inside a hook the agent is waiting on, so a directory of
+// a few large files must not be read whole either. Past the byte budget the
+// directory is a named problem, decided from the files' sizes before any of
+// them is read.
+func TestExtractCommand_TooManyBytesIsNamedNotRead(t *testing.T) {
+	old := maxRemovedDirectoryBytes
+	maxRemovedDirectoryBytes = 64
+	t.Cleanup(func() { maxRemovedDirectoryBytes = old })
+
+	root := t.TempDir()
+	big := filepath.Join(root, "big")
+	require.NoError(t, os.Mkdir(big, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(big, "small.md"), []byte("small\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(big, "large.bin"), make([]byte, 100), 0o644))
+
+	events, err := extractForIn(t, "rm -rf "+big, root)
+	assert.Empty(t, events, "no file of an over-budget directory is read into an event")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRemovedDirectoryTooLarge), "%v", err)
+
+	// Under the budget the same directory is predicted, bytes and all.
+	maxRemovedDirectoryBytes = 1 << 20
+	events, err = extractForIn(t, "rm -rf "+big, root)
+	require.NoError(t, err)
+	assert.Len(t, events, 2)
 }

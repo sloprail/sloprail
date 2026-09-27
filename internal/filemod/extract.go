@@ -735,16 +735,32 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 }
 
 // maxRemovedDirectoryFiles bounds how many files one recursive directory
-// removal is expanded into. Each becomes a PreFileDelete carrying the file's
-// bytes, read here, inside a hook the agent is waiting on — and `rm -rf
-// node_modules` is an ordinary command. Past the bound the directory is named
-// as a problem and predicted as nothing; the tree diff still reports every
-// tracked file it removed, afterwards.
+// removal is expanded into, and maxRemovedDirectoryBytes how many bytes those
+// files hold together. Each file becomes a PreFileDelete carrying its bytes,
+// read here, inside a hook the agent is waiting on — and `rm -rf node_modules`
+// is an ordinary command. The byte bound is decided from the files' sizes
+// during the walk, before any of them is read: counting files alone still read
+// a few huge ones whole.
+//
+// Past either bound the directory is named as a problem and predicted as
+// NOTHING — no delete rule sees a PreFileDelete for any file in it. What is
+// reported afterwards is only what the tree diff can see: a file that was in
+// the session's baseline shows up as a PostFileDelete at Stop; a file created
+// and removed within the session leaves no difference and is never reported.
+// So padding a directory past a bound hides its removal from a preventive
+// delete rule; a rule that must survive that needs a backstop that does not
+// depend on the prediction (the keyword-coverage-registry example keeps its
+// obligation in a registry for exactly this).
 const maxRemovedDirectoryFiles = 1000
 
+// maxRemovedDirectoryBytes is a variable only so a test can lower it rather
+// than write megabytes to disk.
+var maxRemovedDirectoryBytes int64 = 8 << 20
+
 // ErrRemovedDirectoryTooLarge is a recursive removal whose directory holds more
-// files than maxRemovedDirectoryFiles, so none of them was predicted.
-var ErrRemovedDirectoryTooLarge = errors.New("a recursively removed directory holds too many files to predict each deletion")
+// files than maxRemovedDirectoryFiles, or more bytes than
+// maxRemovedDirectoryBytes, so none of them was predicted.
+var ErrRemovedDirectoryTooLarge = errors.New("a recursively removed directory is too large to predict each deletion")
 
 // expandRemovedDirectories resolves the ambiguity a recursive removal carries:
 // whether its operand is a file or a directory whose every file goes with it.
@@ -767,6 +783,12 @@ var ErrRemovedDirectoryTooLarge = errors.New("a recursively removed directory ho
 // never listed. A non-recursive target, or one that is not a directory now,
 // passes through untouched; an empty directory expands to nothing, which is the
 // truth — no file stops existing.
+//
+// A part of the tree the walk cannot read is named as a problem and skipped,
+// and everything else found is still predicted. Aborting the whole walk on it
+// used to discard the files already collected: one 0o000 subdirectory beside
+// scanners/x/scanner.yaml made `rm -rf scanners/x` predict nothing, although
+// rm still deletes the scanner — a way past every preventive delete rule.
 func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.FileTarget, []error) {
 	var out []commandmod.FileTarget
 	var problems []error
@@ -776,10 +798,15 @@ func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.Fil
 			continue
 		}
 		var files []commandmod.FileTarget
-		tooMany := false
-		err := filepath.WalkDir(t.Path, func(p string, d os.DirEntry, err error) error {
+		var bytes int64
+		tooMany, tooBig := false, false
+		_ = filepath.WalkDir(t.Path, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
-				return err
+				problems = append(problems, fmt.Errorf("%w: %s: %w", ErrUnreadableTree, p, err))
+				if d != nil && d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			if d.IsDir() {
 				return nil
@@ -788,14 +815,21 @@ func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.Fil
 				tooMany = true
 				return filepath.SkipAll
 			}
+			// The bytes the delete event will read — decided from sizes, before
+			// anything is read.
+			bytes += readSize(p)
+			if bytes > maxRemovedDirectoryBytes {
+				tooBig = true
+				return filepath.SkipAll
+			}
 			files = append(files, commandmod.FileTarget{Path: p, Effect: commandmod.Remove})
 			return nil
 		})
 		switch {
-		case err != nil:
-			problems = append(problems, fmt.Errorf("%w: %s: %w", ErrUnreadableTree, t.Path, err))
 		case tooMany:
-			problems = append(problems, fmt.Errorf("%w: %s (more than %d)", ErrRemovedDirectoryTooLarge, t.Path, maxRemovedDirectoryFiles))
+			problems = append(problems, fmt.Errorf("%w: %s (more than %d files)", ErrRemovedDirectoryTooLarge, t.Path, maxRemovedDirectoryFiles))
+		case tooBig:
+			problems = append(problems, fmt.Errorf("%w: %s (more than %d bytes)", ErrRemovedDirectoryTooLarge, t.Path, maxRemovedDirectoryBytes))
 		default:
 			out = append(out, files...)
 		}
