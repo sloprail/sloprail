@@ -177,9 +177,19 @@ func TestStableSessionIDBoundsRunaway(t *testing.T) {
 
 	got, err := ResolveStableSessionID(p.dir, start)
 	require.NoError(t, err, "a ring still leaves a root to key on")
-	assert.NotEmpty(t, got.ID)
+	// From link-a the walk goes b, c, d, e, and e points back at link-a: it
+	// stops at e, so e's root is the fallback.
+	assert.Equal(t, "root-link-e", got.ID)
 	require.ErrorIs(t, got.Degraded, ErrChainRunaway,
 		"a chain that never reaches an origin must be flagged, not passed off as resolved")
+
+	// In a ring the fallback depends on where the walk starts — every file is
+	// somebody's predecessor. Documented on Identity.Degraded; pinned here so a
+	// change to it is a decision rather than an accident.
+	fromB, err := ResolveStableSessionID(p.dir, p.dir+"/link-b.jsonl")
+	require.NoError(t, err)
+	assert.Equal(t, "root-link-a", fromB.ID)
+	require.ErrorIs(t, fromB.Degraded, ErrChainRunaway)
 }
 
 // TestStableSessionIDFailsWhenTranscriptMissing pins failing loudly. A hook

@@ -1,7 +1,9 @@
 package transcript
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,8 +15,8 @@ import (
 // walk itself because it answers a different question: the walk asks "where did
 // this conversation begin", this asks "which file holds this record".
 
-// findPredecessor returns the transcript in projectDir that the continuation
-// opening with root continues from.
+// predecessors returns, in name order, the transcripts in the walk's project
+// directory that the continuation opening with root may continue from.
 //
 // A predecessor is a transcript that holds the record root continues from
 // (its logicalParentUuid) OR root itself, and that opens on a DIFFERENT, not
@@ -47,45 +49,66 @@ import (
 //     the continuation did. Where either timestamp will not parse the check is
 //     skipped rather than guessed at.
 //
-// Files are tried in name order, so every fork of a continuation — which all
-// see the same candidates — lands on the same predecessor, and they converge.
+// Name order is what makes every fork of a continuation — which all see the
+// same candidates — land on the same predecessor, so they converge; the walk
+// (walk.from) backtracks to the next candidate when one dead-ends.
 //
-// An unreadable sibling is skipped rather than fatal — another session's
-// half-written file is not this conversation's problem. Finding nothing IS
-// reported: ErrContinuationMissing when no file holds either record (the
-// predecessor was deleted — Claude Code removes old transcripts on a cleanup
-// period), ErrChainRunaway when the only files that do are ones the walk has
-// already crossed.
-func findPredecessor(projectDir string, root Entry, seen map[string]bool) (string, error) {
-	entries, err := os.ReadDir(projectDir)
+// A file that holds no parentless record at all is not a transcript anyone
+// continues from and is skipped, as is one that vanished between the listing
+// and the read. Any OTHER failure to read a file is returned: a predecessor on
+// disk that cannot be read is not a predecessor that is gone, and deciding it
+// is would key the session on a fallback that flips back to the origin the day
+// the file reads again.
+func (w *walk) predecessors(root Entry) ([]candidate, error) {
+	all, err := w.transcripts()
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", projectDir, err)
+		return nil, err
 	}
-	looped := ""
+	var out []candidate
+	for _, c := range all {
+		if c.root.UUID == root.UUID || startedAfter(c.root, root) {
+			continue
+		}
+		holds, err := containsAnyUUID(c.path, root.LogicalParentUUID, root.UUID)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s is on disk but cannot be read, so whether it is what this continues cannot be decided: %w", c.path, err)
+		}
+		if holds {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// transcripts lists the project directory's transcripts with their roots,
+// once per walk.
+func (w *walk) transcripts() ([]candidate, error) {
+	if w.listed {
+		return w.listing, nil
+	}
+	entries, err := os.ReadDir(w.dir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", w.dir, err)
+	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		path := filepath.Join(projectDir, e.Name())
-		cand, err := rootRecord(path)
-		if err != nil || cand.UUID == root.UUID || startedAfter(cand, root) {
+		path := filepath.Join(w.dir, e.Name())
+		root, err := rootRecord(path)
+		if errors.Is(err, ErrNoOriginRecord) || errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		if !containsAnyUUID(path, root.LogicalParentUUID, root.UUID) {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("%s is on disk but cannot be read, so whether it is what this continues cannot be decided: %w", path, err)
 		}
-		if seen[cand.UUID] {
-			looped = path
-			continue
-		}
-		return path, nil
+		w.listing = append(w.listing, candidate{path: path, root: root})
 	}
-	if looped != "" {
-		return "", fmt.Errorf("%w: the only transcript holding what %s continues, %s, is one the walk already crossed",
-			ErrChainRunaway, root.UUID, looped)
-	}
-	return "", fmt.Errorf("%w: no transcript in %s opening on another root holds the record %s or %s itself",
-		ErrContinuationMissing, projectDir, root.LogicalParentUUID, root.UUID)
+	w.listed = true
+	return w.listing, nil
 }
 
 // startedAfter reports whether cand's root was written after root was — that
@@ -115,12 +138,11 @@ func sameFile(a, b string) bool {
 // containsAnyUUID reports whether any record in path has one of targets as its
 // own uuid — any record, not just the root: a logical parent points wherever
 // the earlier conversation had got to, which is somewhere in the middle of it.
-//
-// An unreadable file answers false rather than erroring; see findPredecessor
-// on why a sibling is not fatal.
-func containsAnyUUID(path string, targets ...string) bool {
+// A file that cannot be read to the end is an error, never a "no": see
+// predecessors.
+func containsAnyUUID(path string, targets ...string) (bool, error) {
 	found := false
-	_ = scanFile(path, func(rec claudeRecord) bool {
+	err := scanFile(path, func(rec claudeRecord) bool {
 		for _, t := range targets {
 			if t != "" && rec.UUID == t {
 				found = true
@@ -129,5 +151,8 @@ func containsAnyUUID(path string, targets ...string) bool {
 		}
 		return true
 	})
-	return found
+	if found {
+		return true, nil
+	}
+	return false, err
 }

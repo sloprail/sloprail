@@ -2,6 +2,9 @@ package transcript
 
 import (
 	"fmt"
+	"io/fs"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -197,4 +200,128 @@ func TestStableSessionIDDoesNotWalkIntoALaterContinuation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "origin", got.ID)
 	assert.NoError(t, got.Degraded)
+}
+
+// TestStableSessionIDBacktracksPastADeadEnd: a file can hold a copy of the
+// record a boundary names without being where the conversation came from.
+// When the first candidate in name order dead-ends further back, the walk
+// tries the next rather than degrading.
+func TestStableSessionIDBacktracksPastADeadEnd(t *testing.T) {
+	p := newProject(t)
+	// Sorts first; holds a copy of "point", but is itself a continuation of
+	// something deleted.
+	p.write("a-dead-end",
+		compactAt("dead-root", "deleted-long-ago", "2026-08-05T00:00:00.000Z"),
+		turnAt("point", "origin", "2026-08-02T00:00:00.000Z"),
+	)
+	p.write("z-true-predecessor",
+		originAt("origin", "2026-08-01T00:00:00.000Z"),
+		turnAt("point", "origin", "2026-08-02T00:00:00.000Z"),
+	)
+	current := p.write("m-current",
+		compactAt("compact", "point", "2026-08-10T00:00:00.000Z"),
+	)
+
+	got, err := ResolveStableSessionID(p.dir, current)
+	require.NoError(t, err)
+	assert.Equal(t, "origin", got.ID, "the walk must backtrack past a candidate that dead-ends")
+	assert.NoError(t, got.Degraded)
+}
+
+// TestStableSessionIDDegradesToTheFirstDeadEndInNameOrder: when every
+// candidate dead-ends, the fallback is the first candidate's dead end in name
+// order — the same for every fork, which all see the same candidates.
+func TestStableSessionIDDegradesToTheFirstDeadEndInNameOrder(t *testing.T) {
+	p := newProject(t)
+	p.write("a-dead-1",
+		compactAt("dead-1", "gone-1", "2026-08-05T00:00:00.000Z"),
+		turnAt("point", "x", "2026-08-02T00:00:00.000Z"),
+	)
+	p.write("b-dead-2",
+		compactAt("dead-2", "gone-2", "2026-08-06T00:00:00.000Z"),
+		turnAt("point", "x", "2026-08-02T00:00:00.000Z"),
+	)
+	var forks []string
+	for _, name := range []string{"m-fork", "n-fork"} {
+		forks = append(forks, p.write(name,
+			compactAt("compact", "point", "2026-08-10T00:00:00.000Z"),
+			turnAt("point", "x", "2026-08-02T00:00:00.000Z"),
+		))
+	}
+	for _, f := range forks {
+		got, err := ResolveStableSessionID(p.dir, f)
+		require.NoError(t, err)
+		assert.Equal(t, "dead-1", got.ID, "%s", f)
+		require.ErrorIs(t, got.Degraded, ErrContinuationMissing)
+	}
+}
+
+// TestStableSessionIDPastTheHopLimitDegradesLikeARing: a chain longer than
+// maxRestartHops is malformed the same way a ring is — no real conversation
+// restarts sixty-five times — so it degrades the same way, with
+// ErrChainRunaway, rather than leaving the session with no identity.
+func TestStableSessionIDPastTheHopLimitDegradesLikeARing(t *testing.T) {
+	p := newProject(t)
+	const n = maxRestartHops + 2 // an origin and 65 continuations
+	name := func(i int) string { return fmt.Sprintf("hop-%03d", i) }
+	ts := func(i int) string { return fmt.Sprintf("2026-01-01T00:%02d:%02d.000Z", i/60, i%60) }
+	p.write(name(0), originAt("root-0", ts(0)), turnAt("end-0", "root-0", ts(0)))
+	var last string
+	for i := 1; i < n; i++ {
+		last = p.write(name(i),
+			compactAt(fmt.Sprintf("root-%d", i), fmt.Sprintf("end-%d", i-1), ts(i)),
+			turnAt(fmt.Sprintf("end-%d", i), fmt.Sprintf("root-%d", i), ts(i)),
+		)
+	}
+
+	got, err := ResolveStableSessionID(p.dir, last)
+	require.NoError(t, err, "a chain past the hop limit must degrade, not leave the session with no identity")
+	require.ErrorIs(t, got.Degraded, ErrChainRunaway)
+	assert.Equal(t, fmt.Sprintf("root-%d", n-1-maxRestartHops), got.ID, "the fallback is where the walk stopped")
+
+	// One hop inside the limit still reaches the origin.
+	within, err := ResolveStableSessionID(p.dir, p.dir+"/"+name(maxRestartHops)+".jsonl")
+	require.NoError(t, err)
+	assert.Equal(t, "root-0", within.ID)
+	assert.NoError(t, within.Degraded)
+}
+
+// TestStableSessionIDRefusesAnUnreadablePredecessor: a candidate on disk that
+// cannot be read is not a predecessor that is gone. Calling it gone would key
+// the session on a fallback now and on the origin once the file reads again,
+// splitting its state in two — so the walk fails instead.
+func TestStableSessionIDRefusesAnUnreadablePredecessor(t *testing.T) {
+	t.Run("a record past the size bound", func(t *testing.T) {
+		p := newProject(t)
+		huge := `{"type":"assistant","uuid":"big","parentUuid":"origin","message":{"content":"` +
+			strings.Repeat("x", maxRecordBytes+1) + `"}}`
+		p.write("a-predecessor",
+			originAt("origin", "2026-08-01T00:00:00.000Z"),
+			huge,
+			turnAt("point", "origin", "2026-08-02T00:00:00.000Z"),
+		)
+		current := p.write("m-current", compactAt("compact", "point", "2026-08-10T00:00:00.000Z"))
+
+		_, err := ResolveStableSessionID(p.dir, current)
+		require.Error(t, err, "an unreadable predecessor must not be reported as gone")
+		assert.Contains(t, err.Error(), "cannot be read")
+		assert.NotErrorIs(t, err, ErrContinuationMissing)
+	})
+	t.Run("a file that cannot be opened", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads a mode-000 file")
+		}
+		p := newProject(t)
+		locked := p.write("a-predecessor",
+			originAt("origin", "2026-08-01T00:00:00.000Z"),
+			turnAt("point", "origin", "2026-08-02T00:00:00.000Z"),
+		)
+		require.NoError(t, os.Chmod(locked, 0))
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o644) })
+		current := p.write("m-current", compactAt("compact", "point", "2026-08-10T00:00:00.000Z"))
+
+		_, err := ResolveStableSessionID(p.dir, current)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, fs.ErrPermission)
+	})
 }
