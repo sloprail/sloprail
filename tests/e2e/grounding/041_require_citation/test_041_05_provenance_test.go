@@ -100,6 +100,35 @@ func TestT041_30_TaskOutputOfABackgroundAgentIsNotCitable(t *testing.T) {
 	}
 }
 
+// T041_32: an AskUserQuestion answer is the user's words, never a tool's
+// output. The answer sits in a tool_result block answering the AskUserQuestion
+// call, so only the answer-envelope check keeps it out of the tool-output pool:
+// it grounds a --cite:user, and does not ground a --cite:tool_result.
+func TestT041_32_AnAnswerIsNotToolOutput(t *testing.T) {
+	e, proj := provenanceProject(t)
+	ask, answer := harness.AskUserQuestion("q1", "which retry budget?", "ANSWER-E2E-6120 five retries")
+	e.Run(proj, "s-041-32", prompt, Turns("done", ask, answer))
+	record := readFile(t, e.TranscriptPath(proj, "s-041-32"))
+	for _, want := range []string{`"name":"AskUserQuestion"`, "ANSWER-E2E-6120"} {
+		if !strings.Contains(record, want) {
+			t.Fatalf("%q is not in the record, so this would not test it", want)
+		}
+	}
+	res := e.Run(proj, "s-041-32", "write it down", Turns("done",
+		Bash("b1", `sr-file write memories/budget.md --cite:tool_result 'ANSWER-E2E-6120 five retries' --content '# budget'`),
+		Bash("b2", `sr-file write notes/budget.md --cite:user 'ANSWER-E2E-6120 five retries' --content '# budget'`),
+	))
+	if !res.Saw("b2") {
+		t.Fatalf("the citing calls never ran:\n%s", res.Output)
+	}
+	if e.Exists(proj, "memories/budget.md") {
+		t.Errorf("the user's answer grounded a --cite:tool_result write:\n%s", res.Output)
+	}
+	if !e.Exists(proj, "notes/budget.md") {
+		t.Errorf("the user's answer did not ground a --cite:user write:\n%s", res.Output)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
