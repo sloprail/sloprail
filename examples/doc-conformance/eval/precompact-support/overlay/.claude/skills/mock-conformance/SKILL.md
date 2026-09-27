@@ -16,10 +16,10 @@ Add, as its own line in the file, next to the code that implements the hook:
 // sr:docs <URL>
 ```
 
-using this repo's own comment syntax (`//` for Go) — this repo already cites
-docs inline as `a10n:docs <URL>` in a few places; this is the same idea,
-spelled as an `sr:` marker so sloprail's own tooling can bind a rule to it.
-The URL should point at the specific page of Anthropic's Claude Code hooks
+using this repo's own comment syntax (`//` for Go). The `a10n:docs <URL>`
+comments across the tree are the older spelling of the same citation; nothing
+reads them any more. New or changed code writes `sr:docs` — copying the
+`a10n:docs` spelling from nearby code leaves the new code uncited. The URL should point at the specific page of Anthropic's Claude Code hooks
 documentation that describes the hook event being implemented.
 
 ## Why

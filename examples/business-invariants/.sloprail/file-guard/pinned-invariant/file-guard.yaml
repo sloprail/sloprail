@@ -9,4 +9,9 @@ match: any(markers, .kind == "invariant")
 deletions: include
 checks:
   - script: ./pin-still-matches-head.sh
-  - judge: ./code-upholds-invariant.md.j2
+  # prepare reads each marker's pinned spec text and hands it to the judge, so
+  # the judge rules on the pin without reading anything: it runs with this
+  # folder as its working directory, and a spec outside it is a permission
+  # denial away.
+  - prepare: ./pinned-text.sh
+    judge: ./code-upholds-invariant.md.j2

@@ -4,15 +4,14 @@ package e2e
 // on PATH; today InstallJudgeClaudeCapturing supplies the verdict AND records the
 // rendered prompt.
 //
-// EVENT -> TEMPLATE WIRING for business-invariants. This judge has NO prepare — it
-// renders straight from the CheckPayload's own event (code-upholds-invariant.md.j2:
-// `{{ event.newContent if event.newContent else event.oldContent }}`). Lower stakes
-// than the prepare-bearing judges, but still unproven by a stub that only flips the
-// verdict: the renderer treats an undefined variable as empty, so the template would
-// render fine even if event.newContent never reached it. This captures the rendered
-// prompt and asserts the marked file's content — the sr:invariant marker's pinned
-// fqn AND the code body — is in it, and that different content yields a different
-// prompt.
+// EVENT -> TEMPLATE WIRING for business-invariants. The judge renders the marked
+// file from the CheckPayload's own event (code-upholds-invariant.md.j2:
+// `{{ event.newContent if event.newContent else event.oldContent }}`) and the
+// pinned spec text its prepare (pinned-text.sh) read at each marker's pin. A stub
+// that only flips the verdict proves neither reached the prompt. This captures the
+// rendered prompt and asserts the marked file's content — the sr:invariant
+// marker's pinned fqn AND the code body — and the pinned spec line are in it, and
+// that different content yields a different prompt.
 
 import (
 	"strings"
@@ -52,6 +51,12 @@ func TestT046_08_EventContentReachesJudgePrompt(t *testing.T) {
 	// The distinctive code body the judge rules on.
 	if !strings.Contains(prompt, "ZZ_GUARD never negative") {
 		t.Fatalf("the marked code body did not reach the judge prompt:\n%s", prompt)
+	}
+	// The pinned spec line, read by the prepare at the marker's pin, so the judge
+	// rules on it without having to read the spec itself.
+	if !strings.Contains(prompt, "<pinned fqn=\""+fqn+"\"") ||
+		!strings.Contains(prompt, "an order total must never be negative\n</pinned>") {
+		t.Fatalf("the pinned spec text did not reach the judge prompt — the prepare's output is not wired:\n%s", prompt)
 	}
 }
 
