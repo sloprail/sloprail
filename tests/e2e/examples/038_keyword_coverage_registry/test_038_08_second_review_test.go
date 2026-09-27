@@ -233,3 +233,63 @@ func TestT038_41_TheKeywordParserReadsEveryListShape(t *testing.T) {
 		}
 	}
 }
+
+// T038_42: the last check records a retirement only on a resolved citation of
+// the user's words — it does not infer "asked for" from having been reached,
+// since a delete that drops nothing needs no citation to reach it. Run directly,
+// against a stub registry that records every write.
+func TestT038_42_NothingIsRecordedWithoutTheUsersWords(t *testing.T) {
+	script := exampleFile(t, ".sloprail/file-guard/scanner-keywords-hold/record-admitted.sh")
+	for _, tc := range []struct {
+		name      string
+		citations string
+		want      bool
+	}{
+		{"no citation", `[]`, false},
+		{"a citation of a tool result, not the user", `[{"quote":"q","sourceTypes":["tool_result"],"path":"t","line":3}]`, false},
+		{"the user's words", `[{"quote":"remove it","sourceTypes":["user"],"path":"t","line":1}]`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			log := filepath.Join(dir, "writes")
+			stub := "#!/bin/sh\n" +
+				`if [ "$1 $2" = "state list" ]; then echo '{"key":"stamp:scanners/mine","value":"S1"}'; exit 0; fi` + "\n" +
+				`if [ "$1 $2" = "state set" ]; then echo "$3=$4" >> ` + log + "; exit 0; fi\nexit 1\n"
+			if err := os.WriteFile(filepath.Join(dir, "sr-session"), []byte(stub), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"SR_GUARDRAIL_DIR="+filepath.Dir(script))
+			cmd.Stdin = strings.NewReader(`{"event":{"kind":"PreFileDelete","path":"scanners/mine/scanner.yaml","oldContent":"","oldContentKnown":true,"citations":` + tc.citations + `}}`)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("the check refused: %v\n%s", err, out)
+			}
+			b, _ := os.ReadFile(log)
+			if got := strings.Contains(string(b), "retired:scanners/mine=S1"); got != tc.want {
+				t.Errorf("retired recorded = %v, want %v (writes: %q)", got, tc.want, b)
+			}
+		})
+	}
+}
+
+// T038_43: a drop the user asked for narrows what is owed. The registry itself
+// only ever grows, so without the admitted narrowing the dropped keyword stayed
+// owed and a search covering what the scanner still declares was refused.
+func TestT038_43_ACitedDropNarrowsTheObligation(t *testing.T) {
+	e, proj := researchProjectWithScanner(t)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to drop agent"}`)
+	const sess = "s-038-43"
+	const ask = "drop the agent keyword from the scanner"
+	res := e.Run(proj, sess, ask, Turns("done",
+		srWriteScanner("b1", narrowedScanner, ask),
+		Bash("b2", stubbed(`gh search repos guardrail llm`)),
+	))
+	if got := readScanner(t, proj); strings.Contains(got, "agent") {
+		t.Fatalf("precondition: the cited drop should have landed:\n%s\n%s", got, res.Output)
+	}
+	if joined := stopRefusals(e, proj, sess); strings.Contains(joined, coverageRefusal) {
+		t.Errorf("the keyword the user asked to drop is still owed a search:\n%s", joined)
+	}
+}
