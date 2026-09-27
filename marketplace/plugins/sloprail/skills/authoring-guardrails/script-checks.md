@@ -111,11 +111,9 @@ a trajectory read given no path fails closed rather than guess which session it 
 in. `sr-session query --where '<expr>'` filters the raw entries (its expression
 language is over an **entry's** fields, not the event's — run `--help`).
 
-Note the shape difference: `sr-session trajectory normalize` emits each historical
-event in the **`{kind, fields}`** wire form, so a past command's invocations sit
-under `.fields.invocations`. That is the *normalized-history* shape — **not** the
-live check stdin, which is flat (`.event.invocations`). Do not conflate the two
-([events.md](events.md), "The normalized-history exception").
+Each normalized entry carries its events under `.events[]`, flat like the live
+event: a past command's invocations are `.events[].invocations`, just as the
+current one's are `.event.invocations` ([events.md](events.md), "Past events").
 
 ## Recording across cycles
 

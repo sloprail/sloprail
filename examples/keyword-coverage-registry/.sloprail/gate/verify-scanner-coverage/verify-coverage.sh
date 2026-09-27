@@ -31,13 +31,13 @@ all_gh_calls="[]"
 while IFS= read -r traj_path; do
   [ -f "$traj_path" ] || continue
   # Flatten every PreCommandInvoke event's invocations[] down to the gh ones.
-  # Invocations sit under `.fields.invocations` (event wire form is {kind, fields}).
+  # Events are flat: `.invocations` sits beside `.kind`, as on a live check.
   calls="$(sr-session trajectory normalize \
     --path "$traj_path" \
     --events PreCommandInvoke \
     --whole-session \
     | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke")
-               | .fields.invocations[]? | select(.bin == "gh") ]' 2>/dev/null)"
+               | .invocations[]? | select(.bin == "gh") ]' 2>/dev/null)"
   [ -z "${calls:-}" ] && continue
   all_gh_calls="$(printf '%s' "$all_gh_calls" | jq -c --argjson c "$calls" '. + $c')"
 done <<< "$trajectory_files"
