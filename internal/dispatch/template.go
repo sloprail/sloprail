@@ -98,8 +98,8 @@ var renderTimeout = 5 * time.Second
 // `<file path="{{ event.path }}">` puts a value between quotes, where `</` is not
 // the danger — a `"` is: `x" evil="1` would end the attribute and add one of its
 // own. So before rendering, every `{{ … }}` that sits inside a quoted attribute
-// value of a tag is wrapped in the `attrescape` filter, which escapes `"` and `'`
-// (on top of the `</` break every value already had). This is contextual, like
+// value of a tag is wrapped in the `attrescape` filter, which escapes `&`, `"`
+// and `'` (on top of the `</` break every value already had). This is contextual, like
 // html/template: the same value in a tag's BODY keeps its quotes (a diff full of
 // `&#34;` is harder to judge), and a template author writes nothing extra — the
 // context decides, so no template can forget it. templateattr.go holds the scan.
@@ -189,12 +189,21 @@ func cheapEscape(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Va
 // first (CheckTemplate), so one that does not parse, or names a filter this
 // engine does not have, is reported in its own terms — its own positions,
 // nothing the engine injected — and only a template that passes is rewritten and
-// rendered.
+// rendered. A runtime error is reported from the template as written too.
 func renderJudgeTemplate(src string, vars map[string]any) (string, error) {
 	if err := CheckTemplate(src); err != nil {
 		return "", err
 	}
-	return renderGonja(escapeAttributeValues(src), vars)
+	out, err := renderGonja(escapeAttributeValues(src), vars)
+	if err != nil {
+		// A runtime error does not depend on the rewrite, but its position does:
+		// the author's own template, rendered as written (output discarded),
+		// reports it where the author wrote it.
+		if _, asWritten := renderGonja(src, vars); asWritten != nil {
+			return "", asWritten
+		}
+	}
+	return out, err
 }
 
 // renderGonja is the actual gonja render: a fresh environment, the registered

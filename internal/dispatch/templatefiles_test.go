@@ -64,6 +64,13 @@ func TestRealExampleTemplatesRender(t *testing.T) {
 			// every value, every fence style and indentation.
 			assert.Empty(t, fencedInterpolations(string(src)),
 				"lines of %s interpolate a value inside a ``` / ~~~ fence it can close — wrap it in a named tag", path)
+			// The same, at render time: a fence the template PRODUCES (`{{ '```' }}`)
+			// is not in its source. Rendered with a marker in every value (and no
+			// fence lines of their own), no marker may land inside a fence.
+			marked, err := renderTemplate(string(src), markValues(vars).(map[string]any))
+			require.NoError(t, err)
+			assert.Empty(t, fencedLines(marked, valueMarker),
+				"lines of %s's OUTPUT put a value inside a fence — wrap it in a named tag", path)
 			// A value in a tag's quoted attribute cannot end the attribute and add
 			// one of its own: rendered with a `"` in every string, no tag gains an
 			// attribute.
@@ -90,16 +97,22 @@ func allRepoTemplates(t *testing.T, examples string) []string {
 // `{{` sits inside a markdown code fence — a line of three or more backticks or
 // tildes, at any indentation and inside blockquote or list-item markers, closed
 // by a like line at least as long — or in the opening fence's info string.
-func fencedInterpolations(src string) []int {
+func fencedInterpolations(src string) []int { return fencedLines(src, "{{") }
+
+// fencedLines returns the 1-based lines of text where needle sits inside a
+// markdown code fence, or on a fence's opening line — the scan
+// fencedInterpolations runs on a template's source, and the render-time check
+// runs on its output with a marker in every value.
+func fencedLines(text, needle string) []int {
 	var lines []int
 	var fence string // the open fence's run of ` or ~, or "" outside one
-	for i, line := range strings.Split(src, "\n") {
+	for i, line := range strings.Split(text, "\n") {
 		bare := fenceContent(line)
 		if run := fenceRun(bare); run != "" {
 			switch {
 			case fence == "":
 				fence = run
-				if strings.Contains(bare, "{{") {
+				if strings.Contains(bare, needle) {
 					lines = append(lines, i+1)
 				}
 				continue
@@ -108,7 +121,7 @@ func fencedInterpolations(src string) []int {
 				continue
 			}
 		}
-		if fence != "" && strings.Contains(line, "{{") {
+		if fence != "" && strings.Contains(line, needle) {
 			lines = append(lines, i+1)
 		}
 	}
@@ -183,6 +196,42 @@ func TestFencedInterpolations(t *testing.T) {
 	} {
 		assert.Empty(t, fencedInterpolations(src), "a value outside any fence was flagged:\n%s", src)
 	}
+}
+
+// valueMarker tags every value in a render-time fence check.
+const valueMarker = "ZZ-VALUE-ZZ"
+
+// markValues returns v with every string's own fence runs defused and
+// valueMarker appended, so in the rendered output a fence is the template's and
+// a marker is a value.
+func markValues(v any) any {
+	switch x := v.(type) {
+	case string:
+		return strings.NewReplacer("```", "'''", "~~~", "---").Replace(x) + " " + valueMarker
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = markValues(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = markValues(e)
+		}
+		return out
+	}
+	return v
+}
+
+// A fence the template produces with an expression is invisible to the source
+// scan and caught by the render-time one.
+func TestFenceProducedAtRenderTimeIsCaught(t *testing.T) {
+	src := "{{ '```' }}\n{{ event.newContent }}\n{{ '```' }}\n"
+	assert.Empty(t, fencedInterpolations(src), "the source scan cannot see a produced fence")
+	out, err := renderTemplate(src, markValues(assembledJudgeVars(t)).(map[string]any))
+	require.NoError(t, err)
+	assert.NotEmpty(t, fencedLines(out, valueMarker), "the render-time scan must catch it:\n%s", out)
 }
 
 // withSuffix returns v with suffix appended to every string inside it.

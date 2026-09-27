@@ -50,7 +50,7 @@ func CheckTemplate(src string) (err error) {
 	var unknown []string
 	seen := map[string]bool{}
 	for _, n := range namedCalls(tpl.Root) {
-		known := env.Filters.Exists(n.name)
+		known := env.Filters.Exists(n.name) && !reservedFilters[n.name]
 		if n.test {
 			known = env.Tests.Exists(n.name)
 		}
@@ -67,6 +67,12 @@ func CheckTemplate(src string) (err error) {
 	return fmt.Errorf("template: unknown %s — this engine has no such filter or test, so the template cannot be rendered; fix the name",
 		strings.Join(unknown, ", "))
 }
+
+// reservedFilters are the engine's own, applied by context and never by a
+// template: attrescape wraps every value in a quoted attribute
+// (escapeAttributeValues), and a template naming it too would escape twice. To
+// a template it is an unknown filter.
+var reservedFilters = map[string]bool{"attrescape": true}
 
 // namedCall is one filter or test a template names, and the line it sits on.
 type namedCall struct {

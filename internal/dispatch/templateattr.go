@@ -12,10 +12,12 @@ import (
 // quote in it cannot end the attribute and add one of its own (template.go, "A
 // value inside a tag's quoted attribute").
 
-// attrReplacer escapes the quotes that could end a quoted attribute value. It is
-// idempotent — its output holds no quote to escape again — so a template that
-// also writes `| attrescape` escapes a value once, not twice.
-var attrReplacer = strings.NewReplacer(`"`, "&#34;", "'", "&#39;")
+// attrReplacer escapes what could end a quoted attribute value, and `&` — so a
+// value that already holds `&#34;` cannot pass, to a judge reading entities, for
+// a quote that ends the attribute: it reaches the prompt as `&amp;#34;`. Not
+// idempotent, which is why a template cannot name the filter (reservedFilters):
+// the engine applies it, once, by context.
+var attrReplacer = strings.NewReplacer("&", "&amp;", `"`, "&#34;", "'", "&#39;")
 
 // attrEscape is `| attrescape`, applied by escapeAttributeValues to every
 // interpolation inside a quoted attribute value.

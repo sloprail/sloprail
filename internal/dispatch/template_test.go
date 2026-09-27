@@ -90,17 +90,17 @@ func TestTemplate_RegisteredFilters(t *testing.T) {
 }
 
 // A value rendered inside a quoted tag attribute — `<file path="{{ event.path }}">`
-// — cannot end the attribute and add one of its own: there its quotes are
-// escaped too, while the same value in the tag's body keeps them.
+// — cannot end the attribute and add one of its own: there its quotes and `&`
+// are escaped too, while the same value in the tag's body keeps them.
 func TestTemplate_AttributeValuesEscapeQuotes(t *testing.T) {
 	for _, tc := range []struct{ src, want string }{
 		{`<file path="{{ p }}">{{ p }}</file>`, `<file path="x&#34; evil=&#34;1">x" evil="1</file>`},
-		{`<f a='{{ q }}'>`, `<f a='it&#39;s & more'>`},
+		{`<f a='{{ q }}'>`, `<f a='it&#39;s &amp; more'>`},
 		// Two interpolations in one value, a filter with a quoted argument, a
 		// filter chain, whitespace control and a ternary all stay one expression.
 		{`<c source="{{ p }}:{{ n | int }}" pools="{{ list | join(",") }}">`, `<c source="x&#34; evil=&#34;1:4" pools="a,b">`},
 		{`<c k="{{- p -}}">`, `<c k="x&#34; evil=&#34;1">`},
-		{`<c k="{{ p if b else q }}">`, `<c k="it&#39;s & more">`},
+		{`<c k="{{ p if b else q }}">`, `<c k="it&#39;s &amp; more">`},
 		// Outside a tag — prose, a comparison, a tag's body — nothing changes.
 		{`a < b and x="{{ p }}"`, `a < b and x="x" evil="1"`},
 		{`<t>{{ q }}</t> {% if p == "<x a=\"" %}y{% endif %}`, `<t>it's & more</t> `},
@@ -110,6 +110,8 @@ func TestTemplate_AttributeValuesEscapeQuotes(t *testing.T) {
 		{`{% raw %}<a b="{{ p }}">{% endraw %}`, `<a b="{{ p }}">`},
 		{`x {%- raw %}<a b="{{ p }}">{% endraw -%} y`, `x<a b="{{ p }}"> y`}, // as gonja renders it unrewritten
 		{`{% raw %}{{ it's{% endraw %}<a b="{{ p }}">`, `{{ it's<a b="x&#34; evil=&#34;1">`},
+		// An entity already in the value cannot pass for a quote.
+		{`<c k="{{ ent }}">`, `<c k="x&amp;#34; evil=&amp;#34;1">`},
 		// `| raw` undoes the `</` break, not the attribute escape.
 		{`<c k="{{ p | raw }}">`, `<c k="x&#34; evil=&#34;1">`},
 		// A tag whose name is itself interpolated is still a tag.
@@ -117,22 +119,25 @@ func TestTemplate_AttributeValuesEscapeQuotes(t *testing.T) {
 		{`<{% if b %}x{% else %}y{% endif %} k="{{ p }}">`, `<y k="x&#34; evil=&#34;1">`},
 		// CRLF (and a form feed) between `=` and the quote.
 		{"<c a=\r\n\"{{ p }}\">", "<c a=\r\n\"x&#34; evil=&#34;1\">"},
-		{"<c a=\f'{{ q }}'>", "<c a=\f'it&#39;s & more'>"},
+		{"<c a=\f'{{ q }}'>", "<c a=\f'it&#39;s &amp; more'>"},
 		// A dict literal's closing braces inside the expression are not its end.
 		{`<c k="{{ p if {"a": {"b": 1}} else q }}">`, `<c k="x&#34; evil=&#34;1">`},
 	} {
 		out, err := renderTemplate(tc.src, map[string]any{"p": `x" evil="1`, "q": "it's & more", "n": 4,
-			"list": []any{"a", "b"}, "b": false, "tag": "file"})
+			"list": []any{"a", "b"}, "b": false, "tag": "file", "ent": "x&#34; evil=&#34;1"})
 		if assert.NoError(t, err, "template: %q", tc.src) {
 			assert.Equal(t, tc.want, out, "template: %q", tc.src)
 		}
 	}
 }
 
-// The attribute escape is idempotent: a template that also names it escapes a
-// value once, not twice.
-func TestTemplate_AttributeEscapeIsIdempotent(t *testing.T) {
-	assert.Equal(t, `<c k="a&#34;b">`, render(t, `<c k="{{ p | attrescape }}">`, `{"p":"a\"b"}`))
+// The attribute escape is the engine's, applied by context: a template that
+// names it is refused as naming an unknown filter, so no value is escaped twice.
+func TestTemplate_AttributeEscapeIsReservedToTheEngine(t *testing.T) {
+	_, err := renderTemplate(`<c k="{{ p | attrescape }}">`, map[string]any{"p": `a"b`})
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), `"attrescape"`)
+	}
 }
 
 // A template that does not parse is reported in the author's own terms: the
@@ -150,6 +155,21 @@ func TestTemplate_ParseErrorNamesOnlyTheAuthorsTemplate(t *testing.T) {
 		_, direct := renderGonja(src, map[string]any{"p": "a"})
 		require.Error(t, direct, src)
 		assert.Equal(t, direct.Error(), err.Error(), "the error (and its position) must be the original template's: %s", src)
+	}
+}
+
+// A RUNTIME error inside an attribute value is also reported at the author's
+// own position, not the rewritten template's.
+func TestTemplate_RuntimeErrorNamesTheAuthorsPosition(t *testing.T) {
+	for _, src := range []string{
+		`<c k="{{ missing.deep }}">`,
+		`ab <c k="{{ p }}" j="{{ missing.deep }}">`,
+	} {
+		_, err := renderTemplate(src, map[string]any{"p": "v"})
+		require.Error(t, err, src)
+		_, direct := renderGonja(src, map[string]any{"p": "v"})
+		require.Error(t, direct, src)
+		assert.Equal(t, direct.Error(), err.Error(), "the error must carry the author's positions: %s", src)
 	}
 }
 

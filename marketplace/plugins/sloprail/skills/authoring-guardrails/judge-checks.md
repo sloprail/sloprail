@@ -55,9 +55,9 @@ overwrite `event` or `transcriptPath` (it renders only under the single
 Every value renders escaped: the engine breaks `</` to `<\/`, so a value cannot
 close the tag it sits in, and changes nothing else. `| raw` undoes it for a value
 meant as markup. A value inside a tag's quoted attribute (`path="{{ event.path }}"`)
-also has its quotes escaped, so it cannot end the attribute and add one of its own;
-the engine sees the attribute and does this itself, and `| raw` does not undo it
-there. Always quote an attribute value: an unquoted one (`path={{ event.path }}`)
+also has its quotes and `&` escaped, so it cannot end the attribute and add one of
+its own; the engine sees the attribute and does this itself (a template cannot name
+that filter), and `| raw` does not undo it there. Always quote an attribute value: an unquoted one (`path={{ event.path }}`)
 is not an attribute value to the engine and is not escaped. A `{% raw %}` block is
 literal output and is left as written. A non-string value — a map or list a
 `prepare` handed over as JSON — renders `| tojson`
