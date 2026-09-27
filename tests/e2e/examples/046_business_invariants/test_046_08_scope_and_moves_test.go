@@ -244,3 +244,23 @@ func TestT046_38_CorrectingAPinWrittenThisSessionNeedsNothing(t *testing.T) {
 		t.Errorf("the corrected pin did not land")
 	}
 }
+
+// T046_38b: a malformed pin already committed pinned nothing (pinned-invariant
+// refuses it), so correcting it drops nothing either.
+func TestT046_38b_CorrectingACommittedMalformedPinNeedsNothing(t *testing.T) {
+	e := newEnv(t)
+	proj := biProject(t, e)
+	sha := commitSpec(t, e, proj, "SPEC.md", billingSpec, "spec")
+	pin := proj + "@" + sha + ":SPEC.md#"
+	e.WriteFile(proj, "src/charge.go", invariantCode(pin+"L3", refundBody))
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "a malformed pin")
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	res := e.Run(proj, "s-046-38b", "fix the pin", Turns("done",
+		Write("w1", "src/charge.go", invariantCode(pin+"L3-3", refundBody)),
+	))
+	if res.Refused() {
+		t.Fatalf("correcting a committed malformed pin was refused:\n%s", res.Output)
+	}
+}
