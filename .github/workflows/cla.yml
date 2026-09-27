@@ -38,8 +38,10 @@ jobs:
           # for source code and don't clutter the main branch's history.
           branch: "cla-signatures"
           path-to-signatures: "signatures/version1/cla.json"
-          # Org owner(s) and common bots don't need to sign.
-          allowlist: "n-sviridenko,dependabot[bot],dependabot-preview[bot],renovate[bot],github-actions[bot],bot*"
+          # Org owner(s) and common bots don't need to sign. noreply@anthropic.com
+          # is the Co-Authored-By trailer an AI coding agent adds to a commit the
+          # owner made with it — an unlinked email the action matches by address.
+          allowlist: "n-sviridenko,noreply@anthropic.com,dependabot[bot],dependabot-preview[bot],renovate[bot],github-actions[bot],bot*"
           lock-pullrequest-aftermerge: true
           suggest-recheck: true
           # Default (true): fail if the PR opener isn't an author/co-author of
