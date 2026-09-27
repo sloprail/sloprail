@@ -139,7 +139,7 @@ stubbed verdict is the one under test. This is noted in each such test.
   the agent — the evidence is there but does not show the claimed thing
 - ✓ a cited transition followed by an uncited edit of the in_review task is
   refused at Stop (a citation grounds only the change it rode on); followed by
-  a cited edit, it reaches the reviewer with the transition's tool output
+  an edit that cites the proof again, it reaches the reviewer with that output
 - ✓ a task already in_review at session start, edited with no tool output cited,
   is refused by the pre-flight at Stop (nothing on record), naming how to cite it
 - ✓ a gates/*.sh that regressed, and a gates/*.md the review judge rejects, block

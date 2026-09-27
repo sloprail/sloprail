@@ -2,6 +2,7 @@ package guardrail
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
@@ -60,8 +61,14 @@ func compile(src string, opts ...expr.Option) (*Matcher, error) {
 		return &Matcher{}, nil
 	}
 	// AsBool last, so it cannot be displaced by a caller's option.
-	program, err := expr.Compile(src, append(opts, expr.AsBool())...)
+	opts = append(opts, expr.Patch(absentListIsEmpty{}), expr.AsBool())
+	program, err := expr.Compile(src, opts...)
 	if err != nil {
+		if strings.Contains(src, ".flags") {
+			// The commonest cause by far: a flag compared as the one string it
+			// was before every flag's value became the list of its occurrences.
+			return nil, fmt.Errorf("matcher %q: %w (flag values are lists: write `\"x\" in .flags.name`, not `.flags.name == \"x\"`)", src, err)
+		}
 		return nil, fmt.Errorf("matcher %q: %w", src, err)
 	}
 	return &Matcher{src: src, program: program}, nil

@@ -1,16 +1,18 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
@@ -19,56 +21,108 @@ import (
 // Cited changes: how a citation made at pre-tool reaches the Post event at Stop
 // — and grounds there only the change it rode on.
 //
-// The Post events at Stop come from the tree difference, which knows nothing of
-// the commands that made it. So a permitted pre-tool call whose cited change has
-// a KNOWN result (an sr-file line the dry run resolved, or a module prediction
-// with exact bytes) leaves a PENDING record: the citations, and the file's state
-// before and after the change. Nothing is known yet about whether the call runs
-// — it may fail, be denied by the user or another hook, or never run — so the
-// next hook of the same session (the next pre-tool call, or the Stop) SETTLES
-// it: kept when the file now holds exactly what the change produces, dropped
-// otherwise. A citation of a change that never landed grounds nothing.
+// The Post events at Stop come from the tree difference against the session
+// baseline, which knows nothing of the commands that made it. So each path
+// keeps a HISTORY of points, which Stop lays over that difference:
 //
-// At Stop, a path's kept changes, in order, are laid over its history from the
-// session baseline to its current content. Their citations ride on the Post
-// event; every stretch between them that no cited change made — an uncited
-// write before the first, between two, or after the last — is handed to the
-// rule as dispatch.UncitedChange, and a `citation` prerequisite holds only when
-// its `when` waives each (see dispatch's checkCitation). So a status flip made
-// with a plain edit after a cited ask keeps the ask's citation where `when`
-// says a status flip needs none, and a rewrite made with the Write tool after
-// a cited change does not ride on that change's citation.
+//   - a CITED point for each cited change that landed. A permitted pre-tool call
+//     whose cited change has a KNOWN result (an sr-file line the dry run
+//     resolved, or a prediction with exact bytes) leaves a PENDING point; the
+//     next hook of the same session settles it — kept when the file holds
+//     exactly what the change produces, dropped when the call failed, was
+//     denied or never ran. A cited `sr-file write` states the whole file
+//     (Whole), so it grounds everything before it.
+//   - a FOREIGN point at the first hook of each of the agent's cycles, for each
+//     file that is not as the agent left it at its last Stop — the user edited
+//     it between turns, switched branches, or (at the session's first hook) it
+//     was already dirty. Changes the agent never made are never charged to it.
+//
+// At Stop each path's history goes to its rules (dispatch.FileHistory), and a
+// `citation` prerequisite holds only when every part of the change the agent
+// made that no cited change in its pools made is one its `when` waives.
+//
+// States are kept by content hash; each content is stored once, under its own
+// key (contentKey), so the history itself stays small.
 
-// fileState is a file's content at one moment, or its absence.
-type fileState struct {
-	Exists  bool   `json:"exists"`
-	Content string `json:"content,omitempty"`
+// historyState is a file's content at one moment, by hash, or its absence.
+type historyState struct {
+	Exists bool   `json:"exists"`
+	Hash   string `json:"hash,omitempty"`
 }
 
-// citedChange is one change a citation rode on: what it rested on, and the
-// file before and after it. At orders changes across the stores a Stop merges
-// (the session's own and its sub-agents').
-type citedChange struct {
-	Cites  []transcript.Citation `json:"cites"`
-	Before fileState             `json:"before"`
-	After  fileState             `json:"after"`
-	At     int64                 `json:"at"`
+// historyPoint is one step of a path's history. See dispatch.HistoryPoint.
+type historyPoint struct {
+	Foreign bool                  `json:"foreign,omitempty"`
+	From    *historyState         `json:"from,omitempty"`
+	Cites   []transcript.Citation `json:"cites,omitempty"`
+	Whole   bool                  `json:"whole,omitempty"`
+	Before  historyState          `json:"before"`
+	After   historyState          `json:"after"`
+	At      int64                 `json:"at"`
 }
 
 // pendingChange is a cited change a permitted call is about to make, keyed by
 // the path a Post event will name (Path) and the file it reads (Abs).
 type pendingChange struct {
-	Path   string      `json:"path"`
-	Abs    string      `json:"abs"`
-	Change citedChange `json:"change"`
+	Path  string       `json:"path"`
+	Abs   string       `json:"abs"`
+	Point historyPoint `json:"point"`
+}
+
+// cycleMeta is where the session's current cycle stands: State is "" before
+// the session's first hook, "open" once a cycle's first hook ran, "ended" once
+// its Stop ran; End is how the agent left each file it had changed, at that
+// Stop.
+type cycleMeta struct {
+	State     string                  `json:"state,omitempty"`
+	StartedAt int64                   `json:"startedAt,omitempty"`
+	End       map[string]historyState `json:"end,omitempty"`
+}
+
+// snapshotMax bounds the files a foreign point is recorded for: a file this
+// large is not one a citation rule is about, and reading every dirty file at
+// every cycle start must stay cheap.
+const snapshotMax = 1 << 20
+
+const contentKeyPrefix = "cited_content:"
+
+func contentKey(hash string) string { return contentKeyPrefix + hash }
+
+func hashOf(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
+// putState stores content once under its hash and returns the state naming it.
+func putState(store sessionstate.Store, exists bool, content string) historyState {
+	if !exists {
+		return historyState{}
+	}
+	h := hashOf(content)
+	if store != nil {
+		if _, ok, err := store.Meta(contentKey(h)); err == nil && !ok {
+			_ = store.SetMeta(contentKey(h), content)
+		}
+	}
+	return historyState{Exists: true, Hash: h}
+}
+
+// fileState is the file at abs as it stands now, and its content.
+func fileState(abs string) (historyState, string) {
+	b, err := os.ReadFile(abs)
+	if err != nil {
+		return historyState{}, ""
+	}
+	return historyState{Exists: true, Hash: hashOf(string(b))}, string(b)
 }
 
 // pendingChanges is, for each Pre file event this call produces that carries
-// citations and whose result is KNOWN, the change it would make. An event whose
-// result is unknown (a command the dry run could not compute) leaves nothing to
-// tie a citation to, so it records nothing: a rule judging at Stop then sees the
+// citations and whose result is KNOWN, the change it would make; wholes names
+// the paths an sr-file write in the line stated in full. An event whose result
+// is unknown (a command the dry run could not compute) leaves nothing to tie a
+// citation to, so it records nothing: a rule judging at Stop then sees the
 // change uncited.
-func pendingChanges(events []event.Event, root string, now int64) []pendingChange {
+func pendingChanges(store sessionstate.Store, events []event.Event, root string, wholes map[string]bool, now int64) []pendingChange {
 	var out []pendingChange
 	for _, e := range events {
 		cs := grounding.FromWire(e.Fields[grounding.FieldCitations])
@@ -78,27 +132,26 @@ func pendingChanges(events []event.Event, root string, now int64) []pendingChang
 		path, _ := e.Fields[filemod.FieldPath].(string)
 		oldContent, _ := e.Fields[filemod.FieldOldContent].(string)
 		newContent, _ := e.Fields[filemod.FieldNewContent].(string)
-		ch := citedChange{Cites: cs, At: now}
+		pt := historyPoint{Cites: cs, At: now}
 		switch e.Kind {
 		case filemod.KindPreCreate, filemod.KindPreUpdate:
 			if !resultKnown(e) {
 				continue
 			}
-			ch.Before = fileState{Exists: e.Kind == filemod.KindPreUpdate, Content: oldContent}
-			ch.After = fileState{Exists: true, Content: newContent}
+			pt.Before = putState(store, e.Kind == filemod.KindPreUpdate, oldContent)
+			pt.After = putState(store, true, newContent)
+			pt.Whole = wholes[path]
 		case filemod.KindPreDelete:
-			ch.Before = fileState{Exists: true, Content: oldContent}
+			pt.Before = putState(store, true, oldContent)
+			pt.Whole = true // a delete states the file's whole outcome
 		default:
 			continue
-		}
-		if !ch.Before.Exists {
-			ch.Before.Content = ""
 		}
 		abs := path
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(root, path)
 		}
-		out = append(out, pendingChange{Path: path, Abs: abs, Change: ch})
+		out = append(out, pendingChange{Path: path, Abs: abs, Point: pt})
 	}
 	return out
 }
@@ -130,12 +183,12 @@ func settleCitedChanges(store sessionstate.Store) error {
 	if err != nil || len(landed) == 0 {
 		return err
 	}
-	return swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]citedChange) {
+	return swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]historyPoint) {
 		if *all == nil {
-			*all = map[string][]citedChange{}
+			*all = map[string][]historyPoint{}
 		}
 		for _, p := range landed {
-			(*all)[p.Path] = append((*all)[p.Path], p.Change)
+			(*all)[p.Path] = append((*all)[p.Path], p.Point)
 		}
 	})
 }
@@ -144,125 +197,241 @@ func settleCitedChanges(store sessionstate.Store) error {
 func landedOf(pending []pendingChange) []pendingChange {
 	var out []pendingChange
 	for _, p := range pending {
-		if stateOf(p.Abs) == p.Change.After {
+		if st, _ := fileState(p.Abs); st == p.Point.After {
 			out = append(out, p)
 		}
 	}
 	return out
 }
 
-// stateOf is the file at abs as it stands now.
-func stateOf(abs string) fileState {
-	b, err := os.ReadFile(abs)
-	if err != nil {
-		return fileState{}
+// beginCycle runs at every hook that reads or records cited changes, and acts
+// only at the FIRST of a cycle: it records a foreign point for each file that
+// is not as the agent left it at its last Stop (at the session's first hook,
+// each file that differs from the baseline at all). Between the agent's Stop
+// and its next hook no tool of the agent's ran, so what changed there — the
+// user's edit, a branch switch, a file already dirty when the session began —
+// is not the agent's to cite.
+func beginCycle(store sessionstate.Store, dir string, now int64) error {
+	if store == nil {
+		return nil
 	}
-	return fileState{Exists: true, Content: string(b)}
+	var cyc cycleMeta
+	if raw, ok, err := store.Meta(sessionstate.MetaCitedCycle); err != nil {
+		return err
+	} else if ok && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cyc)
+	}
+	if cyc.State == "open" {
+		return nil
+	}
+	commit, _, _ := store.Meta(sessionstate.MetaBaselineCommit)
+	root, err := gitrepo.Root(dir)
+	if err != nil || commit == "" {
+		return writeCycle(store, cycleMeta{State: "open", StartedAt: now})
+	}
+
+	paths := map[string]bool{}
+	changes, _ := gitrepo.Changed(root, commit)
+	for _, c := range changes {
+		paths[c.Path] = true
+	}
+	for p := range cyc.End {
+		paths[p] = true
+	}
+
+	var foreign []pendingChange
+	for path := range paths {
+		abs := filepath.Join(root, path)
+		if fi, err := os.Stat(abs); err == nil && fi.Size() > snapshotMax {
+			continue
+		}
+		cur, content := fileState(abs)
+		pt := historyPoint{Foreign: true, At: now}
+		if cyc.State == "ended" {
+			prev, ok := cyc.End[path]
+			if !ok {
+				prev = baselineState(store, root, commit, path)
+			}
+			if prev == cur {
+				continue
+			}
+			pt.From = &prev
+		}
+		pt.After = putState(store, cur.Exists, content)
+		foreign = append(foreign, pendingChange{Path: path, Point: pt})
+	}
+	if len(foreign) > 0 {
+		if err := swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]historyPoint) {
+			if *all == nil {
+				*all = map[string][]historyPoint{}
+			}
+			for _, f := range foreign {
+				(*all)[f.Path] = append((*all)[f.Path], f.Point)
+			}
+		}); err != nil {
+			return err
+		}
+	}
+	return writeCycle(store, cycleMeta{State: "open", StartedAt: now})
 }
 
-// citedChangesIn is every cited change the store kept, by path — plus, for a
-// store only read and never settled (a sub-agent's, from its dispatcher's
-// Stop), the pending changes that have landed.
-func citedChangesIn(store sessionstate.Store, settled bool) map[string][]citedChange {
-	all := map[string][]citedChange{}
+// baselineState is path as the baseline commit holds it, through the
+// checkout's filters.
+func baselineState(store sessionstate.Store, root, commit, path string) historyState {
+	content, ok := gitrepo.ContentAt(root, commit, path)
+	return putState(store, ok, content)
+}
+
+// endCycle records, at Stop, how the agent leaves each file the cycle's
+// difference names, so the next cycle's first hook can tell a change the agent
+// did not make (beginCycle).
+func endCycle(store sessionstate.Store, events []event.Event) error {
+	if store == nil {
+		return nil
+	}
+	var cyc cycleMeta
+	if raw, ok, err := store.Meta(sessionstate.MetaCitedCycle); err == nil && ok && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cyc)
+	}
+	end := map[string]historyState{}
+	for _, e := range events {
+		path, _ := e.Fields[filemod.FieldPath].(string)
+		newContent, _ := e.Fields[filemod.FieldNewContent].(string)
+		end[path] = putState(store, e.Kind != filemod.KindPostDelete, newContent)
+	}
+	return writeCycle(store, cycleMeta{State: "ended", StartedAt: cyc.StartedAt, End: end})
+}
+
+func writeCycle(store sessionstate.Store, c cycleMeta) error {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return store.SetMeta(sessionstate.MetaCitedCycle, string(raw))
+}
+
+// pruneHistory drops every point recorded before cutoff, when the tree has
+// left the history the baseline was on: they describe a line of history the
+// tree no longer has. At Stop the cutoff is the current cycle's start (the
+// agent switched mid-cycle, and the cycle's own points still stand); at
+// SessionStart it is now (the switch happened between turns). The points kept
+// lose their From — the move itself is not the agent's — and how the agent left
+// each file at its last Stop is forgotten, so the next cycle compares with the
+// new baseline.
+func pruneHistory(store sessionstate.Store, cutoff int64) error {
+	if store == nil {
+		return nil
+	}
+	if err := swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]historyPoint) {
+		for path, pts := range *all {
+			var kept []historyPoint
+			for _, p := range pts {
+				if p.At < cutoff {
+					continue
+				}
+				if p.Foreign {
+					p.From = nil
+				}
+				kept = append(kept, p)
+			}
+			if len(kept) == 0 {
+				delete(*all, path)
+			} else {
+				(*all)[path] = kept
+			}
+		}
+	}); err != nil {
+		return err
+	}
+	cyc := readCycle(store)
+	cyc.End = nil
+	return writeCycle(store, cyc)
+}
+
+// cycleStartedAt is when the store's current cycle began.
+func cycleStartedAt(store sessionstate.Store) int64 {
+	return readCycle(store).StartedAt
+}
+
+func readCycle(store sessionstate.Store) cycleMeta {
+	var cyc cycleMeta
+	if store == nil {
+		return cyc
+	}
+	if raw, ok, err := store.Meta(sessionstate.MetaCitedCycle); err == nil && ok && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cyc)
+	}
+	return cyc
+}
+
+// historyIn is every point the store kept, by path — for a store only read
+// and never settled (another session's), its cited points only, with the
+// pending ones that have landed; its foreign points are its own business.
+func historyIn(store sessionstate.Store, own bool) map[string][]historyPoint {
+	all := map[string][]historyPoint{}
 	if store == nil {
 		return all
 	}
 	if raw, ok, err := store.Meta(sessionstate.MetaCitations); err == nil && ok && raw != "" {
 		_ = json.Unmarshal([]byte(raw), &all)
 	}
-	if !settled {
-		var pending []pendingChange
-		if raw, ok, err := store.Meta(sessionstate.MetaCitedPending); err == nil && ok && raw != "" {
-			_ = json.Unmarshal([]byte(raw), &pending)
-		}
-		for _, p := range landedOf(pending) {
-			all[p.Path] = append(all[p.Path], p.Change)
+	if own {
+		return all
+	}
+	out := map[string][]historyPoint{}
+	for path, pts := range all {
+		for _, p := range pts {
+			if !p.Foreign {
+				out[path] = append(out[path], p)
+			}
 		}
 	}
-	return all
+	var pending []pendingChange
+	if raw, ok, err := store.Meta(sessionstate.MetaCitedPending); err == nil && ok && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &pending)
+	}
+	for _, p := range landedOf(pending) {
+		out[p.Path] = append(out[p.Path], p.Point)
+	}
+	return out
 }
 
-// attachCitedChanges sets `citations` on each Post file event to those of the
-// cited changes that landed on its path this session — the session's own and
-// those of the sub-agents it dispatched into the same tree (delegated) — and
-// returns, by path, the parts of each change no citation rode on.
-func attachCitedChanges(store sessionstate.Store, events []event.Event, delegated map[string][]citedChange) map[string][]dispatchcore.UncitedChange {
-	all := citedChangesIn(store, true)
-	for path, chs := range delegated {
-		all[path] = append(all[path], chs...)
+// otherHistories is what the sessions this one shares its tree with kept, by
+// path — their cited points, and the contents those name (read now: their
+// stores are closed after). A session's own store knows only its own calls,
+// but in a shared tree the file one changed is in another's difference:
+//
+//   - for the ROOT: every sub-agent dispatched beneath its record;
+//   - for a SUB-AGENT: the root that dispatched it and the root's other
+//     sub-agents — the file it edits may have been created, cited, by them.
+//
+// Each store is found by its session's identity under this cycle's working
+// directory and read only if it already exists: a session isolated in its own
+// worktree keeps its store under that worktree, and its files are not in this
+// tree either. None of this is ever written.
+func otherHistories(p HookPayload, record string) (map[string][]historyPoint, map[string]string) {
+	points := map[string][]historyPoint{}
+	contents := map[string]string{}
+	if record == "" {
+		return points, contents
 	}
-	uncited := map[string][]dispatchcore.UncitedChange{}
-	for i, e := range events {
-		path, _ := e.Fields[filemod.FieldPath].(string)
-		chs := all[path]
-		if len(chs) == 0 {
+	root := transcript.SessionRootOf(record)
+	if root == "" {
+		root = record
+	}
+	var others []HookPayload
+	if root != record {
+		others = append(others, HookPayload{Cwd: p.Cwd, TranscriptPath: root})
+	}
+	subs, _ := transcript.DescendantSubagentPaths(root)
+	for _, sub := range subs {
+		if sub == record {
 			continue
 		}
-		var cs []transcript.Citation
-		for _, ch := range chs {
-			cs = append(cs, ch.Cites...)
-		}
-		events[i].Fields[grounding.FieldCitations] = grounding.ToWire(dedupe(cs))
-		if gaps := uncitedParts(e, chs); len(gaps) > 0 {
-			uncited[path] = gaps
-		}
+		others = append(others, HookPayload{Cwd: p.Cwd, AgentTranscriptPath: sub})
 	}
-	return uncited
-}
-
-// uncitedParts walks a Post event's path from its session baseline through its
-// cited changes, in order, to its current content, and returns every stretch
-// no cited change made.
-func uncitedParts(e event.Event, changes []citedChange) []dispatchcore.UncitedChange {
-	oldContent, _ := e.Fields[filemod.FieldOldContent].(string)
-	newContent, _ := e.Fields[filemod.FieldNewContent].(string)
-	state := fileState{Exists: e.Kind != filemod.KindPostCreate, Content: oldContent}
-	current := fileState{Exists: e.Kind != filemod.KindPostDelete, Content: newContent}
-	if !state.Exists {
-		state.Content = ""
-	}
-	if !current.Exists {
-		current.Content = ""
-	}
-	sorted := append([]citedChange(nil), changes...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].At < sorted[j].At })
-
-	var gaps []dispatchcore.UncitedChange
-	gap := func(from, to fileState) {
-		if from != to {
-			gaps = append(gaps, dispatchcore.UncitedChange{FromExists: from.Exists, From: from.Content, ToExists: to.Exists, To: to.Content})
-		}
-	}
-	for _, ch := range sorted {
-		gap(state, ch.Before)
-		state = ch.After
-	}
-	gap(state, current)
-	return gaps
-}
-
-// delegatedCitedChanges is what the sub-agents dispatched beneath the record at
-// path kept, by path, in the stores they keep for the same working tree.
-//
-// A sub-agent is a session in its own right, so its pre-tool calls record cited
-// changes in ITS store; a sub-agent sharing its dispatcher's tree changes files
-// the dispatcher's cycle also sees. Each sub-agent's store is found by its own
-// identity under this cycle's working directory, and read only if it already
-// exists: a sub-agent isolated in its own worktree keeps its store under that
-// worktree, and its files are not in this tree either. None of this is ever
-// written — a dispatcher never opens a store its sub-agent did not.
-func delegatedCitedChanges(p HookPayload, path string) map[string][]citedChange {
-	out := map[string][]citedChange{}
-	if path == "" {
-		return out
-	}
-	subs, err := transcript.DescendantSubagentPaths(path)
-	if err != nil {
-		return out
-	}
-	for _, sub := range subs {
-		id, err := stableID(HookPayload{Cwd: p.Cwd, AgentTranscriptPath: sub})
+	for _, o := range others {
+		id, err := stableID(o)
 		if err != nil {
 			continue
 		}
@@ -277,10 +446,98 @@ func delegatedCitedChanges(p HookPayload, path string) map[string][]citedChange 
 		if err != nil {
 			continue
 		}
-		for k, chs := range citedChangesIn(store, false) {
-			out[k] = append(out[k], chs...)
+		for path, pts := range historyIn(store, false) {
+			points[path] = append(points[path], pts...)
+			for _, pt := range pts {
+				for _, s := range []historyState{pt.Before, pt.After} {
+					if s.Exists {
+						if c, ok, err := store.Meta(contentKey(s.Hash)); err == nil && ok {
+							contents[s.Hash] = c
+						}
+					}
+				}
+			}
 		}
 		store.Close()
+	}
+	return points, contents
+}
+
+// attachHistories sets `citations` on each Post file event to those of the
+// cited changes that landed on its path this session — this session's own and
+// those of the sessions it shares the tree with (others) — and returns each
+// such path's history for its rules.
+func attachHistories(store sessionstate.Store, events []event.Event, others map[string][]historyPoint, otherContents map[string]string) map[string]*dispatchcore.FileHistory {
+	own := historyIn(store, true)
+	out := map[string]*dispatchcore.FileHistory{}
+	for i, e := range events {
+		path, _ := e.Fields[filemod.FieldPath].(string)
+		pts := append(append([]historyPoint(nil), own[path]...), others[path]...)
+		var cs []transcript.Citation
+		for _, p := range pts {
+			cs = append(cs, p.Cites...)
+		}
+		if len(cs) == 0 {
+			continue
+		}
+		events[i].Fields[grounding.FieldCitations] = grounding.ToWire(dedupe(cs))
+
+		oldContent, _ := e.Fields[filemod.FieldOldContent].(string)
+		newContent, _ := e.Fields[filemod.FieldNewContent].(string)
+		local := map[string]string{}
+		state := func(exists bool, c string) dispatchcore.HistoryState {
+			if !exists {
+				return dispatchcore.HistoryState{}
+			}
+			h := hashOf(c)
+			local[h] = c
+			return dispatchcore.HistoryState{Exists: true, Hash: h}
+		}
+		h := &dispatchcore.FileHistory{
+			Baseline: state(e.Kind != filemod.KindPostCreate, oldContent),
+			Current:  state(e.Kind != filemod.KindPostDelete, newContent),
+		}
+		for _, p := range pts {
+			dp := dispatchcore.HistoryPoint{
+				Foreign: p.Foreign, Whole: p.Whole, At: p.At,
+				Before: dispatchcore.HistoryState(p.Before), After: dispatchcore.HistoryState(p.After),
+				Pools: poolsOf(p.Cites),
+			}
+			if p.From != nil {
+				from := dispatchcore.HistoryState(*p.From)
+				dp.From = &from
+			}
+			h.Points = append(h.Points, dp)
+		}
+		h.Content = func(hash string) (string, bool) {
+			if c, ok := local[hash]; ok {
+				return c, true
+			}
+			if c, ok := otherContents[hash]; ok {
+				return c, true
+			}
+			if store == nil {
+				return "", false
+			}
+			c, ok, err := store.Meta(contentKey(hash))
+			return c, ok && err == nil
+		}
+		out[path] = h
+	}
+	return out
+}
+
+// poolsOf is every pool a change's citations resolved in.
+func poolsOf(cs []transcript.Citation) []transcript.SourceType {
+	var out []transcript.SourceType
+	seen := map[transcript.SourceType]bool{}
+	for _, c := range cs {
+		for _, s := range c.SourceTypes {
+			if !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
 	}
 	return out
 }
@@ -310,5 +567,5 @@ func swapJSON[T any](store sessionstate.Store, key string, change func(*T)) erro
 	return errors.New("cited changes not recorded: the record kept changing underneath")
 }
 
-// nowNano is the ordering stamp a cited change carries.
+// nowNano is the ordering stamp a point carries.
 func nowNano() int64 { return time.Now().UnixNano() }

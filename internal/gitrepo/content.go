@@ -13,10 +13,9 @@ import "fmt"
 // PostFileDelete.
 //
 // The path is repository-relative, in git's own spelling — the same spelling
-// Changed reports — and it is read from the commit's tree with `git show
-// <commit>:<path>`. A blob that git prints is returned exactly as git prints it;
-// git does not add or strip a trailing newline of its own, so the bytes are the
-// file's.
+// Changed reports — and it is read from the commit's tree as a checkout of it
+// would write the file (see below). The bytes are returned exactly as git
+// prints them; git does not add or strip a trailing newline of its own.
 //
 // The boolean separates "the blob is empty" from "there is no blob to read".
 // A file that was genuinely empty at the baseline returns ("", true); a path git
@@ -35,12 +34,20 @@ func ContentAt(dir, commit, path string) (string, bool) {
 	if commit == "" || path == "" {
 		return "", false
 	}
-	// `git show <commit>:<path>` prints the blob at that path in that commit.
-	// The `<rev>:<path>` form is unambiguous — there is no pathspec parsing to be
-	// confused by a leading dash — so no `--` separator is needed or accepted.
-	out, err := run(dir, "show", fmt.Sprintf("%s:%s", commit, path))
+	// `git cat-file --filters <commit>:<path>` prints the blob at that path in
+	// that commit as a checkout would write it: through the path's attributes
+	// (eol, ident, smudge filters). The raw blob is not what the file held — a
+	// `*.md text eol=crlf` file is stored with LF and checked out with CRLF — and
+	// comparing raw baseline bytes with the working tree would call every line
+	// of such a file changed. The `<rev>:<path>` form is unambiguous — there is
+	// no pathspec parsing to be confused by a leading dash — so no `--`
+	// separator is needed or accepted. A git too old for --filters (before
+	// 2.11) falls back to the raw blob.
+	out, err := run(dir, "cat-file", "--filters", fmt.Sprintf("%s:%s", commit, path))
 	if err != nil {
-		return "", false
+		if out, err = run(dir, "show", fmt.Sprintf("%s:%s", commit, path)); err != nil {
+			return "", false
+		}
 	}
 	return out, true
 }

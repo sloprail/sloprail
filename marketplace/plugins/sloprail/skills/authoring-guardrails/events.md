@@ -129,18 +129,25 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
 
 - `.bin` — string, the program name.
 - `.argv` — list of strings, its argument vector.
-- `.flags` — an **open map** of parsed flags. A flag name belongs to the command,
-  not the engine, so the map is untyped: a key read off `.flags` is verified
-  against nothing, and a mistyped one evaluates false forever. Cause the command
-  and watch the rule fire before trusting a flags match. Each value is a **list**
-  of every occurrence, in order — `--tag=a --tag=b` is `["a", "b"]`, a flag given
-  once is a one-element list, and a valueless flag carries `""`. Only the inline
-  `--flag=value` form carries a value; a separated `--flag value` is `[""]` with
-  `value` left in `.argv`. The keys are open but the values are declared, so a
-  comparison a list can never satisfy (`.flags.tag == "next"`, `.flags.tag
-  startsWith "n"`) is refused when the rule loads: write `"next" in .flags.tag`.
-  `len(.flags.access) > 0` means the flag was given at all; "given a non-empty
-  value" is `any(.flags.access, # != "")`.
+- `.flags` — a map of parsed flags with **open keys and typed values**. A flag
+  name belongs to the command, not the engine, so the keys are checked against
+  nothing: a mistyped flag name is a flag the command never passed, and reads as
+  absent. Cause the command and watch the rule fire before trusting a flags match.
+  Each value is a **list** of every occurrence, in order — `--tag=a --tag=b` is
+  `["a", "b"]`, a flag given once is a one-element list, and a valueless flag
+  carries `""`. Only the inline `--flag=value` form carries a value; a separated
+  `--flag value` is `[""]` with `value` left in `.argv`. A flag the command did
+  not pass reads as an **empty list**, so every list idiom answers false without
+  it rather than erroring. The values are declared, so a comparison a list can
+  never satisfy (`.flags.tag == "next"`, `.flags.tag startsWith "n"`) is refused
+  when the rule loads, with the error saying flag values are lists.
+
+  | question | match |
+  |---|---|
+  | was `--access` passed at all | `"access" in .flags` or `len(.flags.access) > 0` |
+  | was it given a non-empty value | `any(.flags.access, # != "")` |
+  | was `--tag=next` among them | `"next" in .flags.tag` |
+  | the first value | `"tag" in .flags and .flags.tag[0] == "next"` (indexing an empty list errors) |
 - `.cwd` — string, the directory the program runs in as far as the line says,
   threaded through every `cd` ahead of it (a subshell's `cd` stays inside the
   subshell): `"."` is where the line started, `"sub/dir"` is relative to that,
@@ -160,7 +167,7 @@ In a script: `.flags.tag[0]` for the first value, `.flags.tag[-1]` for the last,
 `(.flags.tag // []) | join(" ")` for all of them.
 
 `.bin`, `.argv` and `.cwd` have declared shapes, so a mistyped key inside a
-predicate is refused at load; `.flags` is the one open map. Only what the parser
+predicate is refused at load; `.flags` is the one map whose keys are open. Only what the parser
 can see without running the command is emitted — a program named by a variable, a
 decoded-and-piped payload — is left alone rather than guessed, so this is a
 correctness aid, **never a security boundary**. There is no `Post` counterpart: a

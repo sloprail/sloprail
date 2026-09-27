@@ -456,8 +456,8 @@ func runGatesForEvents(
 //
 // A compile failure (unreachable for a loaded gate, whose triggers the loader
 // already compiled) or an EVALUATION error (a trigger whose `match` compiled but
-// erred on the event handed to it — e.g. `len(.flags.access)` where the accessor
-// is nil) is NOT treated as "this trigger did not match". Doing so would let a
+// erred on the event handed to it — e.g. `int(.bin)` on "npm", which the vm
+// refuses) is NOT treated as "this trigger did not match". Doing so would let a
 // broken or adversarial trigger silently DISABLE the gate: the engine could not
 // confirm the match, and reading that as a non-wake reads it as approval of the
 // event the gate was bound to. Instead the error is returned to the caller, which

@@ -214,9 +214,12 @@ func TestReview_UncitedEditAfterCitedTransitionIsRefused(t *testing.T) {
 }
 
 // TestReview_CitedEditAfterCitedTransitionKeepsEvidence: the same flow with the
-// later edit made the grounded way. Cited changes accumulate: the claim reaching
-// Stop carries the transition's proof, the pre-flight passes and the reviewer is
-// handed the tool output cited on the EARLIER transition.
+// later edit made the grounded way. task-review requires tool output for every
+// change to an in_review task (TestReview_EditedClaimWithoutProofRefusedAtStop:
+// even a priority-only edit), and a change counts only in the pool it was cited
+// in — so the priority edit cites the proof again, beside the user's words. The
+// claim reaching Stop carries the proof, the pre-flight passes and the reviewer
+// is handed the tool output.
 func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -228,7 +231,7 @@ func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
 	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
-		srEdit("b2", taskPath, "priority: P1", "priority: P2", citeUser(askQuote)),
+		srEdit("b2", taskPath, "priority: P1", "priority: P2", citeUser(askQuote), citeTool(proofMarker)),
 	)...))
 	if res.Refused() {
 		t.Fatalf("the cited transition or the cited priority edit was refused at Pre:\n%s", res.Output)
@@ -240,7 +243,7 @@ func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 		t.Fatalf("an in_review claim whose transition cited tool output was blocked at Stop after a cited edit:\n%v", blocks)
 	}
 	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); !containsStr(prompt, "quoted: "+proofMarker) {
-		t.Errorf("the reviewer was not handed the tool output cited on the earlier transition:\n%s", prompt)
+		t.Errorf("the reviewer was not handed the cited tool output:\n%s", prompt)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -69,27 +70,56 @@ func TestSubagentPreToolAndStopShareOneStore(t *testing.T) {
 	// once the change it rode on has landed.
 	cites := []transcript.Citation{{Quote: "q", SourceTypes: []transcript.SourceType{transcript.SourceUser}, Path: root, Line: 1}}
 	abs := filepath.Join(tree, "memories", "a.md")
-	change := citedChange{Cites: cites, After: fileState{Exists: true, Content: "x"}, At: 1}
 	store, err := openEngineState(preTool)
 	require.NoError(t, err)
-	require.NoError(t, recordPending(store, []pendingChange{{Path: "memories/a.md", Abs: abs, Change: change}}))
+	point := historyPoint{Cites: cites, After: putState(store, true, "x"), Whole: true, At: 1}
+	require.NoError(t, recordPending(store, []pendingChange{{Path: "memories/a.md", Abs: abs, Point: point}}))
 	require.NoError(t, store.Close())
 
 	// The root's Stop, whose difference holds the sub-agent's change in a
-	// shared tree, reads it as delegated — landed or not yet settled alike,
-	// but only once the file holds what the change produces.
-	assert.Empty(t, delegatedCitedChanges(rootStop, root), "a change that has not landed grounds nothing")
+	// shared tree, reads it from the sub-agent's store — landed or not yet
+	// settled alike, but only once the file holds what the change produces.
+	got, _ := otherHistories(rootStop, root)
+	assert.Empty(t, got, "a change that has not landed grounds nothing")
 	require.NoError(t, os.MkdirAll(filepath.Dir(abs), 0o755))
 	require.NoError(t, os.WriteFile(abs, []byte("x"), 0o644))
-	want := map[string][]citedChange{"memories/a.md": {change}}
-	assert.Equal(t, want, delegatedCitedChanges(rootStop, root))
+	want := map[string][]historyPoint{"memories/a.md": {point}}
+	got, contents := otherHistories(rootStop, root)
+	assert.Equal(t, want, got)
+	assert.Equal(t, "x", contents[point.After.Hash], "the other store's contents come with its points")
 
 	store, err = openEngineState(subStop)
 	require.NoError(t, err)
 	defer store.Close()
 	require.NoError(t, settleCitedChanges(store))
-	assert.Equal(t, want, citedChangesIn(store, true))
-	assert.Equal(t, want, delegatedCitedChanges(rootStop, root))
+	assert.Equal(t, want, historyIn(store, true))
+	got, _ = otherHistories(rootStop, root)
+	assert.Equal(t, want, got)
+}
+
+// A sub-agent's Stop reads, beside its own, the cited changes of the root that
+// dispatched it: a file the root created with a citation and the sub-agent
+// then edited with one is grounded throughout.
+func TestSubagentReadsItsRootsCitedChanges(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	tree := transcript.ResolveWorkDir(t.TempDir())
+	root, sub := citedSubagentSession(t, cfg, tree, "sess-1", "abc")
+	rootPre := HookPayload{SessionID: "sess-1", Cwd: tree, TranscriptPath: root}
+	subStop := HookPayload{SessionID: "sess-1", Cwd: tree, AgentID: "abc", TranscriptPath: sub, AgentTranscriptPath: sub}
+
+	store, err := openEngineState(rootPre)
+	require.NoError(t, err)
+	point := historyPoint{Cites: userCite, After: putState(store, true, "created"), Whole: true, At: 1}
+	require.NoError(t, swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]historyPoint) {
+		*all = map[string][]historyPoint{"memories/a.md": {point}}
+	}))
+	require.NoError(t, store.Close())
+
+	got, contents := otherHistories(subStop, sub)
+	assert.Equal(t, map[string][]historyPoint{"memories/a.md": {point}}, got)
+	assert.Equal(t, "created", contents[point.After.Hash])
 }
 
 func TestDelegatedCitationsNeverCreateAStore(t *testing.T) {
@@ -101,7 +131,8 @@ func TestDelegatedCitationsNeverCreateAStore(t *testing.T) {
 
 	// A sub-agent that recorded nothing under this tree (none, or isolated in
 	// its own worktree): nothing is read, and no store is opened into being.
-	assert.Empty(t, delegatedCitedChanges(HookPayload{Cwd: tree, TranscriptPath: root}, root))
+	got, _ := otherHistories(HookPayload{Cwd: tree, TranscriptPath: root}, root)
+	assert.Empty(t, got)
 	id, err := stableID(HookPayload{Cwd: tree, AgentTranscriptPath: sub})
 	require.NoError(t, err)
 	db, err := sessionDBPath(tree, id)

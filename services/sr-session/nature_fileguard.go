@@ -139,8 +139,8 @@ func runFileGuardsPreventive(
 			selected, err := fileGuardSelects(match, e, contextMap)
 			if err != nil {
 				// The match COMPILED at load but could not be EVALUATED against this
-				// event (e.g. `int(path) > 0` on path "notes.md", or `len(.flags.access)`
-				// where the accessor is nil). That is not the guard cleanly declining —
+				// event (e.g. `int(path) > 0` on path "notes.md", which the vm refuses).
+				// That is not the guard cleanly declining —
 				// it is the engine unable to ANSWER whether this write is fine. Fail
 				// CLOSED: refuse the write, the same direction the old dispatch takes
 				// (internal/guardrail/matcher.go:121 — the pre-tool path refuses the
@@ -240,7 +240,7 @@ func runFileGuardsPreventive(
 						"(a change whose settled bytes are not known ahead of time — a command-derived edit, or a notebook create whose cell source is not the document), "+
 						"so whether the file would still be fine is unknown. "+
 						"Refusing: a preventive guard must not admit a write it cannot verify. "+
-						"Write the file's content directly, or make the change with sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, && and echo; no cd, no VAR= prefix, no $ expansion — quote every value verbatim) "+
+						"Write the file's content directly, or make the change with sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, && and echo; no cd, no VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) "+
 						"so its result is computed before it runs — and check that each --cite: quote resolves to exactly one message: `sr-session trajectory cite '<quote>'`. (file-guard %s)",
 					g.Name, underivableKindNoun(e.Kind), g.Attribution())
 			}
@@ -310,7 +310,7 @@ func runFileGuardsPost(
 	scope hookScope,
 	root string,
 	contextMap map[string]natures.ContextState,
-	uncited map[string][]dispatchcore.UncitedChange,
+	histories map[string]*dispatchcore.FileHistory,
 ) []fileGuardResult {
 	if len(guards) == 0 {
 		return nil
@@ -421,10 +421,10 @@ func runFileGuardsPost(
 				GuardName:      g.Name,
 				Workspace:      scope.Workspace,
 				SessionID:      scope.SessionID,
-				// The parts of this file's change no citation rode on: a
-				// `citation` prerequisite must see each waived. See
-				// cited_changes.go.
-				Uncited: uncited[path],
+				// The file's history this session: a `citation` prerequisite
+				// holds only when the parts of its change no cited change made
+				// are ones its `when` waives. See cited_changes.go.
+				History: histories[path],
 				// Re-entry provenance for an after-check that spawns sr-agent: this
 				// guard appended to any launched checks already on the stack, so the
 				// launched agent's own Write does not re-fire this guard on itself

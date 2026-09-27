@@ -135,9 +135,10 @@ watch it fire** before believing either.
   author for a name the engine cannot know.
 - **A flag off an invocation.** `event.invocations[].flags` belongs to the command
   being run, not the engine, so a key read off it is verified against nothing. A
-  mistyped or non-existent flag compiles and evaluates false. Its values are
-  declared (a list of strings each), so `.flags.tag == "next"` is refused at
-  load; `"next" in .flags.tag` is the match.
+  mistyped or non-existent flag compiles and reads as an empty list, so
+  `"next" in .flags.tag`, `len(.flags.tag) > 0` and `any(.flags.tag, …)` answer
+  false rather than error. Its values are declared (a list of strings each), so
+  `.flags.tag == "next"` is refused at load; `"next" in .flags.tag` is the match.
 
 The **inside of a list is checked** where its element shape is declared:
 `any(markers, .knid == …)` and `any(event.invocations, .bni == …)` are refused at

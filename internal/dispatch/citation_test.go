@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,8 +166,9 @@ func TestCitationRemedyAlwaysHasARunnableForm(t *testing.T) {
 		return "./" + name
 	}
 	advice := write("advice.sh", "ADVICE: append instead of rewriting.")
-	fileCmd := write("file-cmd.sh", "Run exactly: sr-file edit memories/a.md --old-string 'draft' --new-string 'published' --cite:user '<approval>'")
-	cmdCmd := write("cmd-cmd.sh", "Run exactly: sr-session trajectory cite '<approval>' && npm publish")
+	fileCmd := write("file-cmd.sh", "Run exactly:\n  sr-file edit memories/a.md --old-string 'draft' --new-string 'published' --cite:user '<approval>'")
+	cmdCmd := write("cmd-cmd.sh", "Run exactly:\n  sr-session trajectory cite '<approval>' && npm publish")
+	prose := write("prose-cmd.sh", "Use the sr-file tool rather than Write; append instead of rewriting.")
 
 	for name, tc := range map[string]struct {
 		kind, when string
@@ -179,7 +181,7 @@ func TestCitationRemedyAlwaysHasARunnableForm(t *testing.T) {
 			[]string{"sr-session trajectory cite --source-types user '<exact quote>' && <the command>", "ADVICE: append instead of rewriting."}, nil},
 		"command, the hint spells the chain": {"PreCommandInvoke", cmdCmd,
 			"this command must cite the user's own words, and it carries none that resolves.",
-			[]string{"Run exactly: sr-session trajectory cite '<approval>' && npm publish"},
+			[]string{"sr-session trajectory cite '<approval>' && npm publish"},
 			[]string{"--source-types user '<exact quote>'"}},
 		"after the fact, advice": {"PostFileUpdate", advice,
 			"memories/a.md was changed without citing the user's own words (--cite:user).",
@@ -187,8 +189,11 @@ func TestCitationRemedyAlwaysHasARunnableForm(t *testing.T) {
 			[]string{"sr-file delete"}},
 		"after the fact, the hint spells the command": {"PostFileUpdate", fileCmd,
 			"memories/a.md was changed without citing the user's own words (--cite:user).",
-			[]string{"Run exactly: sr-file edit memories/a.md --old-string 'draft'"},
+			[]string{"sr-file edit memories/a.md --old-string 'draft'"},
 			[]string{"Redo the change with sr-file", "'<old>'"}},
+		"prose naming sr-file is advice, not a command": {"PreFileUpdate", prose,
+			"this change to memories/a.md must cite the user's own words (--cite:user), and it carries none that resolves.",
+			[]string{"sr-file edit memories/a.md --old-string '<old>'", "Use the sr-file tool rather than Write"}, nil},
 		"a create, advice": {"PreFileCreate", advice,
 			"this change to memories/a.md must cite the user's own words (--cite:user), and it carries none that resolves.",
 			[]string{"sr-file write memories/a.md --cite:user '<exact quote>'", "ADVICE: append instead of rewriting."},
@@ -217,9 +222,11 @@ func TestCitationRemedyAlwaysHasARunnableForm(t *testing.T) {
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'" }
 
 // At Stop, a file's recorded citations ground only the changes they rode on.
-// Each part of the change since the baseline that no cited change made must be
-// waived by the prerequisite's `when` — run on THAT part — or the citation
-// does not hold; with no `when`, no such part may exist.
+// Each part of the change the agent made that no cited change in the
+// prerequisite's pools made must be waived by its `when` — run on THAT part —
+// or the citation does not hold; with no `when`, no such part may exist. A
+// cited write states the whole file and grounds everything before it; a
+// change the agent never made (Foreign) is never charged.
 func TestRequireCitationOnTheUncitedPartsOfAChange(t *testing.T) {
 	dir := t.TempDir()
 	// Applies unless the part leaves everything after the first line alone.
@@ -228,30 +235,76 @@ p="$(cat)"
 [ "$(printf '%s' "$p" | jq -r '.event.oldContent' | tail -n +2)" = "$(printf '%s' "$p" | jq -r '.event.newContent' | tail -n +2)" ] && exit 1
 exit 0
 `), 0o755))
-	statusFlip := UncitedChange{FromExists: true, From: "status: todo\nask", ToExists: true, To: "status: done\nask"}
-	bodyEdit := UncitedChange{FromExists: true, From: "status: todo\nask", ToExists: true, To: "status: todo\nanother ask"}
-	cited := citedEvent("PostFileUpdate", transcript.SourceUser)
-	cited.Fields["oldContent"], cited.Fields["newContent"] = "", "status: done\nask"
+	contents := map[string]string{}
+	st := func(c string) HistoryState {
+		h := fmt.Sprintf("h%d", len(contents))
+		for k, v := range contents {
+			if v == c {
+				h = k
+			}
+		}
+		contents[h] = c
+		return HistoryState{Exists: true, Hash: h}
+	}
+	absent := HistoryState{}
+	user := []transcript.SourceType{transcript.SourceUser}
+	tool := []transcript.SourceType{transcript.SourceToolResult}
+	todo, done, other := st("status: todo\nask"), st("status: done\nask"), st("status: todo\nanother ask")
+	evil := st("EVIL REWRITE")
+	cited := func(before, after HistoryState, pools []transcript.SourceType, whole bool, at int64) HistoryPoint {
+		return HistoryPoint{Pools: pools, Whole: whole, Before: before, After: after, At: at}
+	}
+	hist := func(base, cur HistoryState, pts ...HistoryPoint) *FileHistory {
+		return &FileHistory{Baseline: base, Current: cur, Points: pts, Content: func(h string) (string, bool) { c, ok := contents[h]; return c, ok }}
+	}
 
 	for name, tc := range map[string]struct {
-		when    string
-		uncited []UncitedChange
-		refuse  bool
+		when   string
+		h      *FileHistory
+		refuse bool
 	}{
-		"no uncited part":                 {"", nil, false},
-		"an uncited part, no when":        {"", []UncitedChange{statusFlip}, true},
-		"an uncited part when waives":     {"./body-changed.sh", []UncitedChange{statusFlip}, false},
-		"an uncited part when applies to": {"./body-changed.sh", []UncitedChange{bodyEdit}, true},
-		"one of two applies":              {"./body-changed.sh", []UncitedChange{statusFlip, bodyEdit}, true},
+		"exactly the cited change":        {"", hist(absent, todo, cited(absent, todo, user, true, 1)), false},
+		"an uncited part, no when":        {"", hist(absent, done, cited(absent, todo, user, true, 1)), true},
+		"an uncited part when waives":     {"./body-changed.sh", hist(absent, done, cited(absent, todo, user, true, 1)), false},
+		"an uncited part when applies to": {"./body-changed.sh", hist(absent, other, cited(absent, todo, user, true, 1)), true},
+		"one of two applies":              {"./body-changed.sh", hist(absent, other, cited(absent, todo, user, true, 1), cited(done, done, user, false, 2)), true},
+		// P1: cited write, uncited rewrite, then the remedy — a cited write of
+		// the whole file — clears it.
+		"a cited write after an uncited change clears it": {"", hist(absent, done,
+			cited(absent, todo, user, true, 1), cited(other, done, user, true, 3)), false},
+		// A cited EDIT after an uncited change grounds only its own part.
+		"a cited edit after an uncited change does not": {"", hist(absent, done,
+			cited(absent, todo, user, true, 1), cited(other, done, user, false, 3)), true},
+		// P2: a rewrite cited in another pool is, to this requirement, uncited.
+		"a change cited in another pool counts as uncited": {"", hist(absent, evil,
+			cited(absent, todo, user, true, 1), cited(todo, evil, tool, true, 2)), true},
+		// P3/P4: a change the agent never made is not charged.
+		"a foreign change is not charged": {"", hist(todo, done,
+			HistoryPoint{Foreign: true, After: other, At: 1}, cited(other, done, user, false, 2)), false},
+		"an uncited change before a foreign one still is": {"", hist(todo, done,
+			HistoryPoint{Foreign: true, From: &other, After: other, At: 2}, cited(other, done, user, false, 3)), true},
 	} {
 		t.Run(name, func(t *testing.T) {
+			ev := citedEvent("PostFileUpdate", transcript.SourceUser)
+			ev.Fields["oldContent"], ev.Fields["newContent"] = contents[tc.h.Baseline.Hash], contents[tc.h.Current.Hash]
 			p := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}, When: tc.when}
-			v, err := Runner{}.Run(Request{Nature: NatureFileGuard, Dir: dir, Require: []declaration.Prerequisite{p}, Event: cited, Uncited: tc.uncited})
+			v, err := Runner{}.Run(Request{Nature: NatureFileGuard, Dir: dir, Require: []declaration.Prerequisite{p}, Event: ev, History: tc.h})
 			require.NoError(t, err)
 			assert.Equal(t, tc.refuse, v.Refused, "reason: %s", v.Reason)
 			if tc.refuse {
 				assert.Contains(t, v.Reason, "memories/a.md was changed without a citation this session")
+				assert.Contains(t, v.Reason, "sr-file write memories/a.md --cite:user", "the remedy restates the whole file")
 			}
 		})
 	}
+}
+
+// The `when` of an uncited part is handed that part alone: its content, and no
+// citations — none rode on it.
+func TestUncitedPartCarriesNoCitations(t *testing.T) {
+	ev := citedEvent("PostFileUpdate", transcript.SourceUser)
+	part := uncitedEvent(ev, UncitedChange{FromExists: true, From: "a", ToExists: true, To: "b"})
+	assert.Empty(t, grounding.FromWire(part.Fields[grounding.FieldCitations]))
+	assert.Equal(t, "a", part.Fields["oldContent"])
+	assert.Equal(t, "b", part.Fields["newContent"])
 }

@@ -149,15 +149,14 @@ type Request struct {
 	// governs the verdict of the dispatch one exec down.
 	LaunchedBy string
 
-	// Uncited is, for a Post file event at Stop whose path has citations
-	// recorded this session, each part of its change since the session
-	// baseline that NO cited change made: an uncited write before the first
-	// cited one, between two, or after the last. A citation grounds the change
-	// it rode on and nothing else, so a `citation` prerequisite holds only when
-	// its `when` waives every one of these (with no `when`, none may exist).
-	// Nil for every other event — a Pre event IS one change, and its citations
-	// ride on it.
-	Uncited []UncitedChange
+	// History is, for a Post file event at Stop whose path had cited changes
+	// this session, the file's history from the session baseline (see
+	// FileHistory). A citation grounds only the change it rode on, so a
+	// `citation` prerequisite holds only when its `when` waives every part of
+	// the change the agent made that no cited change in its pools made (with no
+	// `when`, no such part may exist). Nil for every other event — a Pre event
+	// IS one change, and its citations ride on it.
+	History *FileHistory
 }
 
 // UncitedChange is one stretch of a file's history that no citation rode on:

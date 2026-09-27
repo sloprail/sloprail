@@ -51,7 +51,9 @@ Run `sr-file` **on its own** in the command line: only `sr-file` calls, `&&`,
 carries the exact result (`resultKnown: true`). Mixed with any other program,
 `cd`, a `VAR=…` prefix, any `$` expansion (`$VAR`, `$(…)`, `$((…))`, an
 unquoted heredoc delimiter), or an unquoted glob or brace (`*`, `?`, `[`, `{`,
-which bash and zsh expand differently), it is never run ahead of time. Its result is then
+zsh's `^` and `#`, or a `~name` other than a leading `~/` — bash, which runs the
+line ahead of time, and zsh expand them differently), it is never run ahead of
+time. Its result is then
 unknown, and a preventive rule refuses it (`sr-file write` creates missing
 directories, so no `mkdir` is needed). Harness Write/Edit tools, `sed` and `rm`
 cannot carry a citation at all.
@@ -69,11 +71,24 @@ own call.
   chained `cite` lands on every event the command produces.
 - A `Post` file event at Stop carries the citations of the cited changes that
   **landed** on its path this session: a cited call that failed, was denied, or
-  never ran grounds nothing. A citation grounds only the change it rode on, so
-  any part of the file's change since the baseline that no cited change made —
-  a Write, an Edit or a command before, between or after them — must be one the
-  prerequisite's `when` waives (run on that part alone), or the requirement
-  refuses. Without `when`, every change to the file must be cited.
+  never ran grounds nothing. A citation grounds only the change it rode on, and
+  only for a requirement whose pools it resolved in (a `--cite:tool_result`
+  change does not ground a `user` requirement). Every other part of the file's
+  change that the agent made — a Write, an Edit, a command, before, between or
+  after the cited changes — must be one the prerequisite's `when` waives (run on
+  that part alone: its `oldContent`/`newContent` are that part's, and it carries
+  no citations), or the requirement refuses. Without `when`, every change the
+  agent makes to the file must be cited.
+- A cited `sr-file write` states the whole file, so it grounds everything before
+  it: an uncited change is settled by restating the file with one, which is the
+  remedy the refusal gives.
+- Changes the agent did not make are never charged to it: a file already dirty
+  when the session began, the user's edit between turns, a branch switch, a
+  checkout filter (`eol=crlf`). They are noticed at the first hook of each of
+  the agent's cycles by comparing each file with how the agent left it at its
+  last Stop. A change made by something else WHILE the agent is working (an
+  editor saving the file mid-turn) cannot be told from the agent's own and is
+  charged; restate the file with a cited `sr-file write` to settle it.
 
 ## Requiring one
 

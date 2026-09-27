@@ -109,44 +109,53 @@ type citeRecord struct {
 }
 
 // resolveNotes is what a pure sr-file line's dry run said about the changes it
-// could not compute: by target (Reportable path), and — for a failure sr-file
-// could not tie to a target, such as an argument it could not parse — for the
-// line as a whole.
+// could not compute: each failure against its own target (Reportable path), in
+// the order the line ran them, and — for a failure sr-file could not tie to a
+// target, such as an argument it could not parse — the line's own stderr.
 type resolveNotes struct {
-	byPath map[string]string
+	failed []resolveFailure
 	line   string
 }
 
+type resolveFailure struct{ path, said string }
+
 // For is the note a refusal of the change to path quotes: sr-file's own words
-// about THAT file; when the dry run stopped at another file first, which one
-// and why; or the line's unattributed words when sr-file tied its failure to
-// no file.
+// about THAT file; when the dry run never reached it, which call stopped the
+// line (the last to fail — every call after it that did not run was skipped
+// on its account) and what it said; or the line's unattributed words when
+// sr-file tied its failure to no file.
 func (n resolveNotes) For(path string) string {
-	if note, ok := n.byPath[path]; ok {
-		return note
+	var own []string
+	for _, f := range n.failed {
+		if f.path == path {
+			own = append(own, f.said)
+		}
 	}
-	if len(n.byPath) > 0 {
-		others := sortedStrings(n.byPath)
-		return fmt.Sprintf("sr-file never computed this change: the line stopped at the sr-file call on %s, which said:\n%s", others[0], n.byPath[others[0]])
+	if len(own) > 0 {
+		return strings.Join(own, "\n")
+	}
+	if len(n.failed) > 0 {
+		last := n.failed[len(n.failed)-1]
+		return fmt.Sprintf("sr-file never computed this change: the line stopped at the sr-file call on %s, which said:\n%s", last.path, last.said)
 	}
 	return n.line
 }
 
-func sortedStrings(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+// groundResult is what grounding one pre-tool call yields.
+type groundResult struct {
+	events []event.Event
+	notes  resolveNotes
+	// wholes are the paths an sr-file write in the line states in full.
+	wholes map[string]bool
 }
 
 // groundPreEvents resolves and attaches citations to one pre-tool call's
-// events, returning the events to dispatch and — when a pure sr-file line's dry
-// run said why it could not compute a change — sr-file's own words, keyed by
-// the file each is about, so a refusal of that uncomputed change can name the
-// cause instead of guessing.
-func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, cite citeRecord, events []event.Event) ([]event.Event, resolveNotes) {
+// events, returning the events to dispatch, the paths an sr-file write states
+// in full, and — when a pure sr-file line's dry run said why it could not
+// compute a change — sr-file's own words, by the file each is about, so a
+// refusal of that uncomputed change can name the cause instead of guessing.
+func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, cite citeRecord, events []event.Event) groundResult {
+	wholes := map[string]bool{}
 	var chain []transcript.Citation
 	var notes resolveNotes
 	perPath := map[string][]transcript.Citation{}
@@ -192,18 +201,15 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, ci
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: sr-file resolve:", err)
 			} else {
 				events = replaceWithResolved(events, records, root, cite, perPath)
+				for _, r := range records {
+					if r.Verb == grounding.VerbWrite {
+						wholes[filemod.Reportable(r.Path, root)] = true
+					}
+				}
 			}
 			notes.line = said
 			for _, f := range failed {
-				if notes.byPath == nil {
-					notes.byPath = map[string]string{}
-				}
-				key := filemod.Reportable(f.Path, root)
-				if prev := notes.byPath[key]; prev != "" {
-					notes.byPath[key] = prev + "\n" + f.Error
-				} else {
-					notes.byPath[key] = clip(f.Error, resolveNoteMax)
-				}
+				notes.failed = append(notes.failed, resolveFailure{path: filemod.Reportable(f.Path, root), said: clip(f.Error, resolveNoteMax)})
 			}
 		}
 		events = ensureFileEvents(events, targets, root)
@@ -224,7 +230,7 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, ci
 			events[i].Fields[grounding.FieldCitations] = grounding.ToWire(cs)
 		}
 	}
-	return events, notes
+	return groundResult{events: events, notes: notes, wholes: wholes}
 }
 
 // resolveAll grounds each request in the session's own records — the user pool

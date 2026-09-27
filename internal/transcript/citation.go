@@ -486,7 +486,7 @@ func ResolveCitations(path string, reqs []CitationRequest) ([]Citation, error) {
 	return out, nil
 }
 
-// sameFile reports whether a and b name the same file — by spelling, or, when
+// sameRecord reports whether a and b name the same record — by spelling, or, when
 // both exist, by identity (a symlinked /var and /private/var spell one file
 // twice).
 func sameRecord(a, b string) bool {

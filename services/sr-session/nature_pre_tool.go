@@ -61,6 +61,10 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// The call before this one has run (or never will), so the cited changes it
 	// left pending are settled now — before anything this call records.
 	if grounds {
+		now := nowNano()
+		if err := beginCycle(store, p.Cwd, now); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
 		if err := settleCitedChanges(store); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		}
@@ -96,7 +100,8 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 		cite.Path = scope.Transcript
 	}
 	cite.Subagent = p.IsSubagent() && cite.Path != "" && cite.Path != p.TranscriptPath
-	events, resolveNotes := groundPreEvents(cmd, p, cite, events)
+	grounded := groundPreEvents(cmd, p, cite, events)
+	events = grounded.events
 
 	// The state maps, loaded once so contexts/gates/guards this dispatch runs read
 	// one consistent world. Contexts enter FIRST, so a gate or a preventive
@@ -106,7 +111,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 
 	// Context enters on the pre-action events, before anything reads context[].
 	// A context does not block; this only populates the map (and persists it).
-	runContextEnters(cmd, reg, loaded.Contexts, events, scope, store, contextMap, gatesMap)
+	runContextEnters(cmd, reg, loaded.Contexts, events, scope, store, contextMap, gatesMap, nil)
 
 	// The structure gates next: a write outside the allowlist is refused before
 	// any gate or file-guard is consulted — the cheapest "may you write here at
@@ -122,7 +127,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// Preventive file-guards next: a `preventive: true` guard whose match selects a
 	// pre-write file refuses a not-fine write before it lands. Blocks on the first
 	// refusal.
-	if reason := runFileGuardsPreventive(cmd, preventiveGuards, events, scope, contextMap, resolveNotes); reason != "" {
+	if reason := runFileGuardsPreventive(cmd, preventiveGuards, events, scope, contextMap, grounded.notes); reason != "" {
 		return natureVerdict{Blocked: reason}
 	}
 
@@ -135,7 +140,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	}
 	// Permitted: the cited changes this call makes are pending until the next
 	// hook finds them landed (settleCitedChanges).
-	if err := recordPending(store, pendingChanges(events, p.Root(), nowNano())); err != nil {
+	if err := recordPending(store, pendingChanges(store, events, p.Root(), grounded.wholes, nowNano())); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 	}
 	return natureVerdict{}

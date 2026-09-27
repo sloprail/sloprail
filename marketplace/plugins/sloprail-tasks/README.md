@@ -196,8 +196,10 @@ backstops writes that reached the tree without passing pre-tool.
 
 *Uncited frontmatter edits and the Stop check.* The engine hands a Stop event
 the citations of every cited change that landed on the path this session, and a
-citation grounds only the change it rode on: each part of the file's change no
-citation rode on must be one the rule's `when` waives. A status edit leaves the
+citation grounds only the change it rode on, in the pool it was cited in: each
+part of the file's change the agent made that no such citation rode on must be
+one the rule's `when` waives (a change the agent did not make, such as your own
+edit between turns, is not charged). A status edit leaves the
 body unchanged, so `body-changed.sh` waives it, and a task created with a
 citation and then moved to `in_progress` with a plain edit still reaches Stop
 with its ask's citation. Each uncited *body* change is refused at pre-tool, and
@@ -239,8 +241,9 @@ evidence** and asks a model whether the evidence **substantiates** the claim.
   began, edited with no tool output cited), or if an artifact is missing or
   does not resolve — there is nothing to review until the evidence is there and
   the gates still hold. The tool output must ground the claim as it stands: an
-  in_review task edited again without a citation after its cited transition is
-  refused at Stop, since a citation grounds only the change it rode on.
+  in_review task edited again without citing tool output after its cited
+  transition is refused at Stop, since a citation grounds only the change it
+  rode on, and only in the pool it was cited in.
 - The **prepare** gates on `in_review` a **second** time — it is a separate check
   from the pre-flight, and a passing pre-flight does not stop it, so without its own
   gate a to_do task would still pay for the model call. For a non-in_review task it

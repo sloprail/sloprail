@@ -170,3 +170,41 @@ func TestFlagValueIsAListAtLoad(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ok, "the list spelling matches the flag it names")
 }
+
+// TestAbsentFlagReadsAsAnEmptyList.
+//
+// A matcher that errors fails CLOSED, so a documented flag idiom that errors on
+// a command lacking the flag would refuse every such call. An absent flag
+// reads as an empty list, so each spelling answers false without the flag and
+// true with it.
+func TestAbsentFlagReadsAsAnEmptyList(t *testing.T) {
+	k := kindDecl(t, commandmod.KindPreInvoke)
+	without := commandmod.ExtractCommand(`npm publish`).Event()
+	with := commandmod.ExtractCommand(`npm publish --access=public --tag=next`).Event()
+
+	for _, src := range []string{
+		`any(invocations, "access" in .flags)`,
+		`any(invocations, len(.flags.access) > 0)`,
+		`any(invocations, any(.flags.access, # != ""))`,
+		`any(invocations, "next" in .flags.tag)`,
+		`any(invocations, len(.flags["access"]) > 0)`,
+		`any(invocations, "tag" in .flags and .flags.tag[0] == "next")`,
+	} {
+		m, err := guardrail.CompileMatcherFor(src, k)
+		require.NoError(t, err, src)
+		got, err := m.Match(without)
+		require.NoErrorf(t, err, "%s must not error on a command without the flag", src)
+		assert.Falsef(t, got, "%s matched a command without the flag", src)
+		got, err = m.Match(with)
+		require.NoError(t, err, src)
+		assert.Truef(t, got, "%s did not match the command with the flag", src)
+	}
+}
+
+// TestFlagLoadErrorSaysFlagsAreLists: a rule comparing a flag to a string is
+// refused at load, and the refusal says why.
+func TestFlagLoadErrorSaysFlagsAreLists(t *testing.T) {
+	_, err := guardrail.CompileMatcherFor(`any(invocations, .flags.tag == "next")`, kindDecl(t, commandmod.KindPreInvoke))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "flag values are lists")
+}

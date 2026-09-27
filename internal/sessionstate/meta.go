@@ -59,14 +59,24 @@ const (
 	// dropped when it does not (the call failed, was denied, or never ran).
 	MetaCitedPending = "cited_pending"
 
-	// MetaCitations is, per file path, every cited change that LANDED this
-	// session, in order: the citations it rode on and the file's state before
-	// and after it, as a JSON object of path to a list of changes. The Post
+	// MetaCitations is, per file path, its history this session: every cited
+	// change that LANDED (the citations it rode on, and the file's state before
+	// and after it, by content hash) and every change the agent did not make,
+	// as a JSON object of path to a list of points. Contents are stored once
+	// each, under their own keys. The Post
 	// events at Stop come from the tree difference, which knows nothing of the
 	// commands that made it; this is how they carry the citations the change
 	// was made with — and how the parts of the change no citation rode on are
 	// told apart from the parts one did.
 	MetaCitations = "citations"
+
+	// MetaCitedCycle is where the session's current cycle stands for cited
+	// changes — before its first hook, open, or ended, and how the agent left
+	// each changed file at its last Stop — as JSON. It is how the first hook
+	// of a cycle tells a change the agent never made (the user's edit between
+	// turns, a branch switch, a file dirty when the session began) from one it
+	// made.
+	MetaCitedCycle = "cited_cycle"
 )
 
 // Meta reads a session fact.

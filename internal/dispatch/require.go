@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -593,8 +594,8 @@ func subpageRead(transcriptPath, workspace, skill, file string) (bool, error) {
 
 // checkCitation refuses unless the event carries at least one citation that
 // resolved in a pool the prerequisite accepts — and, at Stop, unless every part
-// of the file's change that no citation rode on (req.Uncited) is one the
-// prerequisite's `when` waives.
+// of the file's change the agent made that no cited change in those pools made
+// (req.History) is one the prerequisite's `when` waives.
 //
 // It reads `citations` off the event and nothing else. The session resolved
 // every citation against its own record before dispatch (services/sr-session
@@ -606,11 +607,14 @@ func (r Runner) checkCitation(req Request, p declaration.Prerequisite, hint stri
 	if !citedIn(req.Event, pools) {
 		return refuse(citationRemedy(req.Event.Kind, req.Event.Fields, pools, hint) + subagentCitationNote(req.TranscriptPath, pools)), nil
 	}
-	for _, u := range req.Uncited {
+	if req.History == nil {
+		return pass(), nil
+	}
+	for _, u := range req.History.uncitedParts(pools) {
 		if p.When != "" {
 			part := req
 			part.Event = uncitedEvent(req.Event, u)
-			part.Uncited = nil
+			part.History = nil
 			applies, _, err := r.prerequisiteApplies(part, p.When)
 			if err != nil {
 				return Verdict{}, err
@@ -637,8 +641,8 @@ func citedIn(e event.Event, pools []transcript.SourceType) bool {
 }
 
 // uncitedEvent is e narrowed to one uncited part of its change: the same Post
-// event, its old and new content (and markers) those of that part, and its kind
-// what that part did to the file.
+// event, its old and new content (and markers) those of that part, its kind
+// what that part did to the file — and no citations, since none rode on it.
 func uncitedEvent(e event.Event, u UncitedChange) event.Event {
 	kind := declaration.KindPostFileUpdate
 	switch {
@@ -666,11 +670,14 @@ func uncitedEvent(e event.Event, u UncitedChange) event.Event {
 			fields[k] = v
 		}
 	}
+	fields[grounding.FieldCitations] = grounding.ToWire(nil)
 	return event.Event{Kind: kind, Fields: fields}
 }
 
-// uncitedRemedy says that the file carries citations, but also a change made
-// without one, which they do not ground.
+// uncitedRemedy says that the file carries citations, but also a change the
+// agent made without one in these pools, which they do not ground — and the
+// one command that settles it: restating the whole file, cited. An edit would
+// ground only its own part and leave the uncited one standing.
 func uncitedRemedy(fields map[string]any, pools []transcript.SourceType) string {
 	names := make([]string, len(pools))
 	for i, p := range pools {
@@ -678,11 +685,11 @@ func uncitedRemedy(fields map[string]any, pools []transcript.SourceType) string 
 	}
 	flag := "--cite:" + strings.Join(names, ",")
 	path, _ := fields["path"].(string)
-	return fmt.Sprintf("%s was changed without a citation this session (a Write, an Edit, or a command, before, between or after its cited sr-file changes), "+
-		"and a citation grounds only the change it rode on. Make that change with sr-file, citing %s (%s):\n"+
-		"  sr-file edit %s --old-string '<old>' --new-string '<new>' %s '<exact quote>'\n"+
-		"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF",
-		path, citedWhat(pools), flag, path, flag, path, flag)
+	return fmt.Sprintf("%s was changed without a citation this session (a Write, an Edit, a command, or an sr-file call citing another pool), "+
+		"and a citation grounds only the change it rode on. Restate the whole file with a cited sr-file write, citing %s (%s) — "+
+		"it grounds the file as it leaves it:\n"+
+		"  sr-file write %s %s '<exact quote>' <<'EOF'\n  <the whole file>\n  EOF",
+		path, citedWhat(pools), flag, path, flag)
 }
 
 // subagentCitationNote tells a sub-agent, refused for want of the user's words,
@@ -736,33 +743,43 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 	case declaration.KindPreCommandInvoke:
 		how := fmt.Sprintf("Chain a cite in front of it, quoting the exact words:\n"+
 			"  sr-session trajectory cite --source-types %s '<exact quote>' && <the command>", strings.Join(names, ","))
-		how = withHint(how, hint, "trajectory cite")
+		how = withHint(how, hint, citeCommand)
 		return fmt.Sprintf("this command must cite %s, and it carries none that resolves.\n%s\n"+
 			"The quote must match exactly one entry of this session; run the cite part alone first to check it.",
 			what, how)
 	case declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete:
-		how := withHint("Redo the change with sr-file, citing what it rests on:\n"+sfFileForms(kind, path, flag, hint != ""), hint, "sr-file ")
+		how := withHint("Redo the change with sr-file, citing what it rests on:\n"+sfFileForms(kind, path, flag, hint != ""), hint, fileCommand)
 		return fmt.Sprintf("%s was changed without citing %s (%s).\n%s", path, what, flag, how)
 	}
-	how := withHint("Make it with sr-file, which carries the citation on the command (never in the file):\n"+sfFileForms(kind, path, flag, hint != ""), hint, "sr-file ")
+	how := withHint("Make it with sr-file, which carries the citation on the command (never in the file):\n"+sfFileForms(kind, path, flag, hint != ""), hint, fileCommand)
 	return fmt.Sprintf("this change to %s must cite %s (%s), and it carries none that resolves.\n%s\n"+
-		"Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo; no cd, no VAR= prefix, no $ expansion — quote every value verbatim) so its result can be checked before it runs. "+
+		"Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo; no cd, no VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) so its result can be checked before it runs. "+
 		"Single-quote the quote; it must match exactly one entry of this session — check one with `sr-session trajectory cite '<quote>'`.",
 		path, what, flag, how)
 }
 
-// withHint is the how of a remedy given a rule's hint: the hint alone when it
-// spells the runnable command (contains command), else the engine's form and
-// then the hint.
-func withHint(form, hint, command string) string {
-	switch {
-	case hint == "":
+// withHint is the how of a remedy given a rule's hint: the hint alone when one
+// of its lines IS the runnable command (starts with it, once indented space is
+// trimmed — a hint merely mentioning `sr-file ` in prose does not qualify),
+// else the engine's form and then the hint.
+func withHint(form, hint string, command *regexp.Regexp) string {
+	if hint == "" {
 		return form
-	case strings.Contains(hint, command):
-		return hint
+	}
+	for _, line := range strings.Split(hint, "\n") {
+		if command.MatchString(strings.TrimSpace(line)) {
+			return hint
+		}
 	}
 	return form + "\n" + hint
 }
+
+var (
+	// fileCommand is a line that runs a grounded sr-file verb.
+	fileCommand = regexp.MustCompile(`^sr-file (write|edit|delete) `)
+	// citeCommand is a line that runs a cite chain.
+	citeCommand = regexp.MustCompile(`^sr-session trajectory cite `)
+)
 
 // sfFileForms is the sr-file command lines that make a change of this kind to
 // path: every form when narrow is false; when it is true (a rule's hint
