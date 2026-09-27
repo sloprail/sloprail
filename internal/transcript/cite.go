@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
@@ -530,12 +531,20 @@ func toolResultContain(e Entry, quote string) bool {
 	// line-based path. Excluding answer envelopes keeps the two pools disjoint and
 	// SourceToolResult meaning exactly "the tool's output", as its doc says.
 	for _, text := range genuineToolResultText(e.Message) {
-		if containsWords(text, quote) {
+		if containsWords(text, quote) || containsWords(withoutLineNumbers(text), quote) {
 			return true
 		}
 	}
 	return false
 }
+
+// lineNumber is the `cat -n` prefix the Read tool puts on every line it returns.
+var lineNumber = regexp.MustCompile(`(?m)^[ \t]*\d+\t`)
+
+// withoutLineNumbers drops Read's line-number prefixes, so a quote of the file's
+// own text matches across the lines it spans; left in, a number sits between the
+// last word of one line and the first of the next.
+func withoutLineNumbers(text string) string { return lineNumber.ReplaceAllString(text, "") }
 
 // toolResultText returns the raw text of every tool_result block on a user entry's
 // message — the output a tool produced, whichever shape the block's content takes.
@@ -657,10 +666,22 @@ func genuineToolResultText(raw json.RawMessage) []string {
 			if len(extractAnswers(body)) > 0 {
 				continue
 			}
+			// Nor does a hook's refusal: the tool never ran, and the body is the
+			// harness's message — which may quote the agent's own words back (an
+			// unresolved --cite: quote), and must not then ground them.
+			if isHookRefusal(body) {
+				continue
+			}
 			out = append(out, body)
 		}
 	}
 	return out
+}
+
+// isHookRefusal reports whether a tool_result body is a hook blocking the call
+// ("PreToolUse:Bash hook error: …") rather than anything the tool produced.
+func isHookRefusal(body string) bool {
+	return strings.HasPrefix(body, "PreToolUse:") && strings.Contains(body, " hook error: ")
 }
 
 // pairJoin is the `"="` that joins a question to its answer inside an envelope:

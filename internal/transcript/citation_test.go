@@ -136,3 +136,32 @@ func TestResolveCitationIgnoresWhereLinesWrap(t *testing.T) {
 	_, err = ResolveCitation(path, userReq("drop the context kubectl prerequisite"))
 	require.Error(t, err, "the words and their order must still match")
 }
+
+func toolReq(q string) CitationRequest {
+	return CitationRequest{Quote: q, SourceTypes: []SourceType{SourceToolResult}}
+}
+
+// The Read tool numbers every line it returns; a quote of the file's own text
+// must match across the lines it spans, with the numbers in between.
+func TestResolveCitationIgnoresReadLineNumbers(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "summarize the changelog"),
+		toolResultMsg("r1", "u1", "     4\t- Fixed a bug where `timeout` was treated as\n     5\t  seconds on Windows.\n"),
+	)
+	got, err := ResolveCitation(path, toolReq("Fixed a bug where `timeout` was treated as seconds on Windows."))
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.Line)
+}
+
+// A hook's refusal is recorded as a tool_result, and it may quote the agent's own
+// unresolved words back. It is not tool output, so those words never ground.
+func TestResolveCitationSkipsHookRefusals(t *testing.T) {
+	p := newProject(t)
+	path := p.write("a-session",
+		userMsg("u1", "summarize the changelog"),
+		toolResultMsg("r1", "u1", `PreToolUse:Bash hook error: citation tool_result "retries are now infinite" does not resolve`),
+	)
+	_, err := ResolveCitation(path, toolReq("retries are now infinite"))
+	require.Error(t, err, "the agent's own words, echoed by a refusal, must not ground as tool output")
+}

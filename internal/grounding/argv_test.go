@@ -30,6 +30,16 @@ func TestParseFileEdit(t *testing.T) {
 	}, fc)
 }
 
+// The Edit tool's own parameter names spell the same flags.
+func TestParseFileEditToolSpellings(t *testing.T) {
+	fc, err := ParseFile([]string{"edit", "a.md", "--old_string", "x", "--new_string=y", "--replace_all", "--cite:tool_result", "PASS"})
+	require.NoError(t, err)
+	assert.Equal(t, FileCommand{
+		Verb: VerbEdit, Path: "a.md", OldString: "x", NewString: "y", ReplaceAll: true,
+		Cites: []transcript.CitationRequest{{Quote: "PASS", SourceTypes: toolResult}},
+	}, fc)
+}
+
 func TestParseFileWriteAndDelete(t *testing.T) {
 	fc, err := ParseFile([]string{"write", "--content", "", "a.md"})
 	require.NoError(t, err)

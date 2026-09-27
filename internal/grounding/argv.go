@@ -122,6 +122,11 @@ func scanFile(args []string) (FileCommand, bool, bool, error) {
 			continue
 		}
 		name, value, inline := strings.Cut(a, "=")
+		if !strings.HasPrefix(name, CiteFlagPrefix) {
+			// The Edit tool's own names (old_string, new_string, replace_all) are
+			// what an agent reaches for; they mean the same flags.
+			name = strings.ReplaceAll(name, "_", "-")
+		}
 		take := func() (string, error) {
 			if inline {
 				return value, nil
