@@ -10,7 +10,7 @@ import (
 // cited on the ACTION (`sr-file write|edit ... --cite:user '<quote>'`), never
 // stored in the rule:
 //
-//  0. REQUIRE (citation: true, user pool): a change carrying no citation that
+//  0. REQUIRE (citation, user pool): a change carrying no citation that
 //     resolves — the Write tool, or a quote the user never said — is refused
 //     before any check runs, and the refusal names sr-file.
 //  1. SCRIPT (check-rule.sh): the frontmatter satisfies rule.cue and the body

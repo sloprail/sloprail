@@ -11,7 +11,7 @@ const touchGate = `on:
   - event: PreCommandInvoke
     match: any(event.invocations, .bin == "touch")
 require:
-  - citation: true
+  - citation: {source_types: [user]}
 checks:
   - script: ./record.sh
 `
@@ -118,7 +118,7 @@ require:
 func TestT041_12_CitationOnStopIsALoadError(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.Gate(proj, "never", "on:\n  - event: Stop\nrequire:\n  - citation: true\n", nil)
+	e.Gate(proj, "never", "on:\n  - event: Stop\nrequire:\n  - citation: {source_types: [user]}\n", nil)
 	e.Gate(proj, "typo", "on:\n  - event: PreCommandInvoke\nrequire:\n  - citation:\n      sourcetypes: [user]\n", nil)
 
 	res := e.CLIDirect(proj, "sr-file", "declarations", proj)

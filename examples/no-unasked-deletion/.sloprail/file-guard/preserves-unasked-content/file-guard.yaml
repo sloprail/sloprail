@@ -10,8 +10,9 @@
 # message or an AskUserQuestion answer) and hands it to the checks on
 # `.event.citations`. The quote rides on the command, never in the file.
 #
-# Not `require: [{citation: true}]`: a pure append needs no ask, so the need for
-# a citation is CONDITIONAL on something being removed — a script decides it.
+# Not `require: [{citation: {source_types: [user]}}]`: a pure append needs no
+# ask, so the need for a citation is CONDITIONAL on something being removed — a
+# script decides it.
 #
 # Two checks, cheap-gates-expensive: the script passes appends, refuses a removal
 # that cites nothing, and hands a cited removal to the judge, which rules the

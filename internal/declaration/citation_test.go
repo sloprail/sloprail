@@ -14,7 +14,7 @@ func TestLoad_CitationPrerequisiteShapes(t *testing.T) {
 		"file-guard/bare/file-guard.yaml": `
 match: "**/*.md"
 require:
-  - citation: true
+  - citation: {source_types: [user]}
 `,
 		"gate/pools/gate.yaml": `
 on:
@@ -28,7 +28,7 @@ require:
 	require.Len(t, loaded.Gates, 1)
 	bare := loaded.FileGuards[0].Require[0].Citation
 	require.NotNil(t, bare)
-	assert.Equal(t, []transcript.SourceType{transcript.SourceUser}, bare.Pools(), "true means the user pool")
+	assert.Equal(t, []transcript.SourceType{transcript.SourceUser}, bare.Pools())
 	pools := loaded.Gates[0].Require[0].Citation
 	require.NotNil(t, pools)
 	assert.Equal(t, []transcript.SourceType{transcript.SourceUser, transcript.SourceToolResult}, pools.Pools())
@@ -47,15 +47,21 @@ require:
 on:
   - event: Stop
 require:
-  - citation: true
+  - citation: {source_types: [user]}
 `, "", "Stop carries no citations"},
 		"with skill": {`
 on:
   - event: PreCommandInvoke
 require:
-  - citation: true
+  - citation: {source_types: [user]}
     skill: x
 `, "", "exactly one of skill, context or citation"},
+		"no pools": {`
+on:
+  - event: PreCommandInvoke
+require:
+  - citation: {}
+`, "", "names no source_types"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			iv := loadOneInvalid(t, map[string]string{"gate/g/gate.yaml": tc.yaml})
@@ -66,6 +72,7 @@ require:
 
 func TestLoad_CitationPrerequisiteYAMLRefusals(t *testing.T) {
 	for name, body := range map[string]string{
+		"true":        "citation: true",
 		"false":       "citation: false",
 		"typo key":    "citation:\n      sourcetypes: [user]",
 		"scalar junk": "citation: yes-please",

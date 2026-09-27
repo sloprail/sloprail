@@ -8,7 +8,7 @@
 # The session resolves the quote against its own record before the check
 # runs; the check reads `.event.citations` for one in the `user` pool.
 #
-# NOT `require: [{citation: true}]`: that would demand a citation on EVERY
+# NOT `require: [{citation: {source_types: [user]}}]`: that would demand a citation on EVERY
 # UNIT.md write, and only the transition into published needs one. A draft
 # edit, or an edit to an already-published unit, stays uncited.
 #

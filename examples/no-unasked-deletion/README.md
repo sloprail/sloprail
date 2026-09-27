@@ -53,7 +53,7 @@ is not a citation at all, so a fabricated or paraphrased ask cites nothing.
 `sr-file` runs on its own line so its result can be computed before it runs;
 mixed into a longer command, the result is unknown and refused (see above).
 
-It is a script check, not `require: [{citation: true}]`, because the need is
+It is a script check, not `require: [{citation: {source_types: [user]}}]`, because the need is
 conditional: a pure append asks nothing and needs no citation.
 
 ## The parts — cheap gates expensive

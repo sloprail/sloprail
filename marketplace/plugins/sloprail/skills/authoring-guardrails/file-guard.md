@@ -67,7 +67,7 @@ itself, before the check runs**, and re-judges the settled file at Stop instead
 A file whose changes must trace to something the user said, such as a goal, a
 rule or an ask, requires a **citation** on the change instead of a transcript
 quote stored in the file. When every change must be grounded, use
-`require: [{citation: true}]`. When only some must be (a removal, a status
+`require: [{citation: {source_types: [user]}}]`. When only some must be (a removal, a status
 transition), use a script check that reads `.event.citations`. Either way the
 agent makes the change with `sr-file ... --cite:user '<quote>'`, and Write, Edit,
 `sed` and `rm` are refused. Keep such a guard `preventive`. The full pattern is

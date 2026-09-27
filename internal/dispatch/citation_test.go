@@ -24,7 +24,7 @@ func citedEvent(kind string, pools ...transcript.SourceType) event.Event {
 }
 
 func TestRequireCitation(t *testing.T) {
-	userOnly := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{}}
+	userOnly := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}
 	toolOnly := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"tool_result"}}}
 
 	for name, tc := range map[string]struct {

@@ -12,7 +12,7 @@
 # and are simply not read — see the plugin README.)
 #
 # THREE stages, cheapest first:
-#   0. REQUIRE (citation: true — the user pool): the engine refuses a change
+#   0. REQUIRE (citation, user pool): the engine refuses a change
 #      carrying no citation that resolves to the user's own words, before any
 #      check runs, with a remedy naming sr-file. The Write and Edit tools
 #      cannot carry a citation, so they are always refused here.
@@ -48,8 +48,7 @@ preventive: true
 
 # UNCONDITIONAL: every create or update must cite the user's own words.
 require:
-  - citation: true
-
+  - citation: {source_types: [user]}
 checks:
   # Stage 1 — deterministic, fail-closed. Refuses with `{"reason": "..."}` on
   # stdout.

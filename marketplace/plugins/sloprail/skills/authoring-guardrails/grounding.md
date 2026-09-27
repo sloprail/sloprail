@@ -61,7 +61,7 @@ native prerequisite. It refuses before any check runs, with a remedy that names
 match: 'path startsWith "memories/rules/"'
 preventive: true
 require:
-  - citation: true            # or: citation: {source_types: [user, tool_result]}
+  - citation: {source_types: [user]}   # or [user, tool_result]
 ```
 
 **Some** changes must be grounded, for example a removal, a body edit, or a

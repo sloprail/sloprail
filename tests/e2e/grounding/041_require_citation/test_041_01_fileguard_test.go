@@ -12,7 +12,7 @@ const preventiveGuard = `match: "memories/**"
 preventive: true
 deletions: include
 require:
-  - citation: true
+  - citation: {source_types: [user]}
 checks:
   - script: ./record.sh
 `
@@ -190,7 +190,7 @@ func TestT041_06_DeletionsNeedACitation(t *testing.T) {
 func TestT041_07_AfterCheckUsesRecordedCitations(t *testing.T) {
 	const afterGuard = `match: "memories/**"
 require:
-  - citation: true
+  - citation: {source_types: [user]}
 `
 	e, proj := guarded(t, afterGuard)
 	e.Run(proj, "s-041-07", prompt, Turns("done", Write("w1", "memories/a.md", "# a")))

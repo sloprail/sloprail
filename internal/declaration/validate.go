@@ -293,6 +293,10 @@ func validatePrerequisites(reqs []Prerequisite, env Env) []Problem {
 			problems = append(problems, prob(ErrExactlyOne, where,
 				"a prerequisite must set exactly one of skill, context or citation, but sets %d", n))
 		case r.Citation != nil:
+			if len(r.Citation.SourceTypes) == 0 {
+				problems = append(problems, prob(ErrMissingField, where+", citation",
+					"names no source_types — say which pools ground the action, e.g. citation: {source_types: [user]}"))
+			}
 			for _, name := range r.Citation.SourceTypes {
 				if _, ok := transcript.ParseSourceType(name); !ok {
 					problems = append(problems, prob(ErrBadValue, where+", citation",

@@ -45,7 +45,7 @@ applies_to?: [...string]
 // transcript in the body (a transcript path does not resolve on any other
 // machine). The citation rides on the ACTION: every create or update is made
 // with `sr-file write|edit <path> --cite:user '<exact quote>'`, which
-// content-rule-is-grounded requires (`require: [{citation: true}]`), and its
+// content-rule-is-grounded requires (`require: [{citation: {source_types: [user]}}]`), and its
 // judge then confirms the rule states only what the cited words say and
 // nothing invented. The file keeps only the derived rule text. A body link
 // left by an older rule is neither read nor refused.

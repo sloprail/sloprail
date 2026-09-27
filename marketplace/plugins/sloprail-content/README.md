@@ -203,7 +203,7 @@ must not be able to publish on its own say-so — so this guard, like
 after-check is the backstop: there, "before" is the session baseline and the
 citations are every one recorded for the unit this session, so a publish that
 slipped through uncited is still refused, with the steps to redo it. This
-guard does not use `require: [{citation: true}]`, because that would demand a
+guard does not use `require: [{citation: {source_types: [user]}}]`, because that would demand a
 citation on every `UNIT.md` write rather than only the transition.
 
 ### content-rule-is-grounded — file-guard, **preventive**
@@ -212,7 +212,7 @@ Protects the RULE SET itself — the same role `task-body-is-human-authored`
 plays for a task's ask. Grounding is unconditional: every create or update of
 a rule must cite the user.
 
-0. **`require: [{citation: true}]`.** A change carrying no citation that
+0. **`require: [{citation: {source_types: [user]}}]`.** A change carrying no citation that
    resolves to the user's own words is refused by the engine before any
    check runs, with a remedy naming `sr-file ... --cite:user`. The Write and
    Edit tools, and a quote the user never said, are refused here.

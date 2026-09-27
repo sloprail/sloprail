@@ -61,7 +61,7 @@ user never said exercises the real "resolves to nothing" path; a `Write`
 turn exercises "carries no citation at all".
 
 - **a rule change** — `content-rule-is-grounded` requires a user citation on
-  every create and update (`require: [{citation: true}]`).
+  every create and update (`require: [{citation: {source_types: [user]}}]`).
 - **a publish** — `unit-publish-approved` requires one on a write that moves
   a unit into `status: published`.
 

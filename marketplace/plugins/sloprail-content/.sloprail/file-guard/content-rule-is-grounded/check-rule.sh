@@ -4,7 +4,7 @@
 # `constraints/<NN>/CONSTRAINT.md`) must have frontmatter satisfying
 # .sloprail/schemas/rule.cue and a non-empty body stating the rule.
 #
-# GROUNDING IS NOT CHECKED HERE. The guard's `require: [{citation: true}]`
+# GROUNDING IS NOT CHECKED HERE. The guard's `require: [{citation: {source_types: [user]}}]`
 # already refused any change carrying no citation of the user's own words
 # before this script runs (the citation rides on the `sr-file ... --cite:user`
 # command, never in the file), and stage 2's judge decides whether the cited
