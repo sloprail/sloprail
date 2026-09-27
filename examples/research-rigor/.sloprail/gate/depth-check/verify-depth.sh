@@ -168,16 +168,22 @@ verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FI
 ' 2>"$errf")" || block "The depth check could not evaluate this research run's trajectory ($transcript_path): $(errtext)"
 
 if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
-  reason="$(printf '%s' "$verdict" | jq -r --argjson min "$MIN_SOURCE_FILES" '
+  # An undeclared run is held for its proposal alone: "#research run" would
+  # name a declaration it never made.
+  label="This #research run"
+  if [ -n "${DEPTH_PROPOSAL:-}" ] || [ "$(printf '%s' "$input" | jq -r '.context["research-run"].payload.declared == false')" = "true" ]; then
+    label="This run"
+  fi
+  reason="$(printf '%s' "$verdict" | jq -r --argjson min "$MIN_SOURCE_FILES" --arg label "$label" '
     def list($xs): ($xs[:3] | join(", ")) + (if ($xs | length) > 3 then ", …" else "" end);
     def more($n): if $n == 1 then "1 more distinct source file" else "\($n) more distinct source files" end;
     (if (.dirs | length) == 0 then
-       "This #research run has not cloned a repository: no git clone in it (or in a sub-agent it dispatched) succeeded"
+       $label + " has not cloned a repository: no git clone in it (or in a sub-agent it dispatched) succeeded"
        + (if .unresolved > 0 then " into a directory that can be located — clone into a literal path, not one built from a variable or reached through an unresolvable cd" else "" end)
        + ". To finish the research: git clone a real repository that implements what you are researching, then read at least \($min) of its source files (not only the README or docs) with Read, Grep, cat, sed, grep or rg."
      else
        (if (.dirs | length) == 1 then "its" else "their" end) as $its
-       | "This #research run cloned " + list(.dirs) + " but read "
+       | $label + " cloned " + list(.dirs) + " but read "
        + (if (.source | length) == 0 then "none of " + $its + " source files"
           else "only one source file " + (if (.dirs | length) == 1 then "in it" else "across them" end)
                + " (" + list(.source) + "), and \($min) are needed" end)
@@ -197,8 +203,12 @@ if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
   ')"
   # Invoked by findings-need-depth before a research-notes write: say why the
   # write is held, so the agent reads first and writes after.
-  if [ -n "${DEPTH_FOR_WRITE:-}" ]; then
+  if [ -n "${DEPTH_FOR_WRITE:-}" ] && [ -n "${DEPTH_PROPOSAL:-}" ]; then
+    reason="Writing $DEPTH_FOR_WRITE now would add a Proposed approach before any research — this project's NOTES.md requires researching real prior art before proposing, whether or not #research was declared. Do the reading first, then write it. $reason"
+  elif [ -n "${DEPTH_FOR_WRITE:-}" ]; then
     reason="Writing $DEPTH_FOR_WRITE now would record this #research run's findings before the research has depth — do the reading first, then write it. $reason"
+  elif [ "$(printf '%s' "$input" | jq -r '.context["research-run"].payload.proposal // empty')" != "" ]; then
+    reason="$(printf '%s' "$input" | jq -r '.context["research-run"].payload.proposal') now holds a Proposed approach, and this project's NOTES.md requires researching real prior art before proposing — whether or not #research was declared. $reason"
   fi
   block "$reason"
 fi

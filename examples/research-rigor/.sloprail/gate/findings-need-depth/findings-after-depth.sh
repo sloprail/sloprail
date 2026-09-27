@@ -83,7 +83,20 @@ if [ "$open" != "true" ]; then
     block "Whether a #research run is open could not be decided from $transcript_path, so writing $path is held: $declared"
   fi
   case "$declared" in
-    false) exit 0 ;;   # no research declared: an ordinary write
+    false)
+      # No research declared. The write is still held if it IS the proposal —
+      # it adds a "Proposed approach" section (proposal.jq): the convention is
+      # research before proposing, declared or not. A write whose result the
+      # engine cannot know ahead (resultKnown false) is let through here and
+      # judged at Stop by depth-check, which the proposal activates (see the
+      # research-run context) — holding every such write would hold unrelated
+      # Markdown edits too.
+      adds="$(printf '%s' "$input" | jq -r -L "$here" 'include "proposal";
+        if (.event.kind | IN("PreFileCreate", "PreFileUpdate")) and .event.resultKnown == true
+        then (.event | adds_proposal) else false end' 2>/dev/null)"
+      [ "$adds" = "true" ] || exit 0   # an ordinary write
+      export DEPTH_PROPOSAL=1
+      ;;
     true) ;;
     *) block "Whether a #research run is open could not be decided from $transcript_path (got '$declared'), so writing $path is held." ;;
   esac

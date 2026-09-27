@@ -41,7 +41,11 @@ with the same remedy prefixed by what was held:
   `#research` tag the agent writes (`PostTagWrite`), or on an `Agent`/`Task`
   dispatch whose prompt carries `#research` (`PreToolUse`) — research handed to a
   sub-agent is still the dispatching run's research, and a real Haiku run put the
-  tag only in the sub-agent's prompt. It never blocks; its `exit` reads the
+  tag only in the sub-agent's prompt. It also opens on a settled Markdown file
+  that gained a "Proposed approach" section (`PostFileWrite`) — a proposal is
+  research that must have happened, declared or not. Its `enter` declines with
+  a non-zero exit (a clean exit with no output would activate it). It never
+  blocks; its `exit` reads the
   gate's verdict and closes the run once the gate passes, so a run that fails
   stays open and the gate fires again on the next turn.
 - **The gate (`depth-check`, on `Stop`)** is the judgement. Depth is a property
@@ -164,9 +168,26 @@ already declares `#research` (a tag in the agent's text, a sub-agent dispatch
 carrying it, or a sub-agent's own dispatch prompt). The second half matters: a
 tag reaches the context only at Stop, but the agent's text is on the record
 before its next tool call, so a proposal written in the same turn as the
-declaration is caught. With no `#research` anywhere, NOTES.md is an ordinary
-file and nothing here touches it. Once a session's research has depth, later
-notes writes pass: depth is judged over the whole session.
+declaration is caught. Once a session's research has depth, later notes writes
+pass: depth is judged over the whole session.
+
+**The proposal needs research whether or not it was declared.** NOTES.md's
+convention is to research real prior art *before* proposing an approach there,
+and in real runs the model sometimes never wrote `#research` — so no gate ran
+and the proposal landed unchecked. So the findings are defined precisely:
+**a write that adds a "Proposed approach" section** —
+`gate/findings-need-depth/proposal.jq`: a line that is only that title, as a
+Markdown heading (`## Proposed approach`) or a bold line (`**Proposed
+approach:**`), any letter case; more such lines after the write than before.
+With no `#research` declared, such a write is held until the run has depth,
+with a refusal that says the project requires researching real prior art first
+and exactly what to read. Every other Markdown write stays ordinary: another
+section, a new unrelated file, a sentence that merely mentions a proposed
+approach, an edit of a file that already had the section. A proposal whose
+result the engine cannot know before it lands (an interpreter writing it) is
+caught at Stop instead: the research-run context also wakes on the settled
+file (`PostFileWrite`) when it gained the section, and depth-check refuses the
+Stop, naming the proposal.
 
 ## The mechanism
 
@@ -251,8 +272,19 @@ notes writes pass: depth is judged over the whole session.
   dispatcher, which writes are held as notes (letter case, `.markdown`,
   dot-directories, outside the project, after an unreadable `eval`, inside a
   literal one, `rsync`, symbolic and hard links), each command shape above,
-  and the eval scorer's claim about the gates made only when `#research` was
-  declared — by a tag, a dispatch prompt, or a sub-agent's own text.
+  an undeclared proposal held before research (and at Stop when written
+  unseen) while unrelated Markdown stays untouched, and the eval scorer's
+  claim about the gates made only when they engaged — by a tag, a dispatch
+  prompt, a sub-agent's own text, or the proposal itself.
+- **Eval scoring:** where the record settles it, the verdict is decided from
+  facts, not the judge: the scorer replays the depth gate on the record cut
+  just before the last NOTES.md write (was the proposal written after the
+  research had depth?) and on the whole record (did the run end with it?). A
+  proposal before depth fails; a proposal after depth, with the run ending
+  with depth and few refusals, passes — a held write followed by the reading
+  it asked for is the designed path (one real run's judge called it "blindly
+  following the refusal"). The judge decides only what the facts do not
+  settle, and its read is kept as an informational row.
 - **Eval:** `eval/shallow-research-temptation/` — Haiku asked to research
   retry-with-backoff under the NOTES.md convention, scored on trajectory health.
   In real runs of this design: a run declared `#research` and went straight

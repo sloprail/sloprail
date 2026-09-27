@@ -1,5 +1,27 @@
 #!/usr/bin/env bash
-# enter: the trigger's `match` already confirmed #research — just activate.
+# enter: a #research tag or dispatch (the triggers' match already confirmed
+# it) opens a declared run. A file write opens one only if it added a
+# "Proposed approach" section — the findings — and was not already seen at an
+# earlier Stop; an active run stays as it is. See context.md — a clean exit
+# ACTIVATES, so every "no" here exits non-zero.
 set -uo pipefail
 
-jq -n '{declared: true}'
+here="$(cd "$(dirname "$0")" && pwd)"
+input="$(cat)"
+kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
+
+case "$kind" in
+  PostFileCreate | PostFileUpdate)
+    # Declining is a NON-ZERO exit: it leaves the context exactly as it was.
+    # (A clean exit with no output would activate it, keeping the old payload.)
+    # Already open: keep what opened it — a declared run stays declared.
+    [ "$(printf '%s' "$input" | jq -r '.currentContext.active // false')" != "true" ] || exit 1
+    adds="$(printf '%s' "$input" | jq -r -L "$here/../../gate/findings-need-depth" 'include "proposal";
+      if .event.seen == true then false else (.event | adds_proposal) end' 2>/dev/null)"
+    [ "$adds" = "true" ] || exit 1
+    printf '%s' "$input" | jq -c '{declared: false, proposal: .event.path}'
+    ;;
+  *)
+    jq -n '{declared: true}'
+    ;;
+esac

@@ -300,7 +300,7 @@ func TestT039_31_DotSlashNotesHeld(t *testing.T) {
 // a closing message (a real run did both; the engine parsed no tag and no gate
 // ran). When the record cannot be read, nothing is claimed.
 func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
-	const judged = "neither gate refused: depth-check found"
+	const judged = "The gates engaged."
 	const notRun = "NEITHER gate ran"
 	const unknown = "whether the gates ran is unknown"
 	cases := []struct {
@@ -397,12 +397,11 @@ func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
 			cmd := exec.Command("sh", score)
 			cmd.Env = append(os.Environ(), "SR_EVAL_TRANSCRIPT="+e.TranscriptPath(proj, sess),
 				"SR_EVAL_BIN_DIR="+bin, "SR_EVAL_PROJECT_DIR="+proj)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("score.sh: %v\n%s", err, out)
-			}
+			// The verdict itself is T039_39's subject; here, what the judge is told.
+			out, _ := cmd.CombinedOutput()
 			b, err := os.ReadFile(prompt)
 			if err != nil {
-				t.Fatalf("the judge was never asked: %v", err)
+				t.Fatalf("the judge was never asked: %v\n%s", err, out)
 			}
 			got := string(b)
 			if !strings.Contains(got, tc.want) {
