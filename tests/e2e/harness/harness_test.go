@@ -1,6 +1,10 @@
 package harness
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sloprail/sloprail/internal/transcript"
+)
 
 // Refused reads the real refusal tool_result, not the presence of a word.
 //
@@ -86,5 +90,25 @@ func TestRefused_ReadsTheMarkerNotAWord(t *testing.T) {
 				t.Errorf("Permitted() = %v, want %v", got, !tc.refused)
 			}
 		})
+	}
+}
+
+// TestHookRefusalReasonAgreesWithTheEngine: the harness's copy of the refusal
+// recogniser must answer as the engine's does.
+func TestHookRefusalReasonAgreesWithTheEngine(t *testing.T) {
+	for _, body := range []string{
+		"PreToolUse:Write hook error: guarded/ is off limits",
+		"PreToolUse:Bash hook error: [sr-session pre-tool]: no",
+		"PreToolUse:Bash hook error: ",
+		"PostToolUse:Bash hook error: x",
+		"Tool call blocked by a PreToolUse hook: x",
+		"PreToolUse:Write hook failed",
+		"",
+	} {
+		gotR, gotOK := hookRefusalReason(body)
+		wantR, wantOK := transcript.HookRefusalReason(body)
+		if gotR != wantR || gotOK != wantOK {
+			t.Errorf("%q: harness (%q, %v), engine (%q, %v)", body, gotR, gotOK, wantR, wantOK)
+		}
 	}
 }

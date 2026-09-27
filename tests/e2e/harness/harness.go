@@ -29,7 +29,6 @@ import (
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/sessionstate"
-	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 const (
@@ -1927,8 +1926,10 @@ func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) 
 // engine uses, see deny in hookio.go). No attachment is written and the turn
 // goes on. The mock writes exactly that, on the stream and in the transcript
 // (harness-mocks EVIDENCE.md, "A PreToolUse refusal is the tool_result …").
-// The recogniser is the production one, transcript.HookRefusalReason, so the
-// harness and the engine cannot disagree about what a refusal looks like.
+// hookRefusalReason mirrors the production recogniser,
+// transcript.HookRefusalReason; it is a copy rather than an import because the
+// plugins' own e2e modules import this harness and must not inherit the
+// engine's dependencies, and harness_test pins the two to agree.
 //
 // Read from the tool_result records, not by scanning the stream for words: the
 // stream also carries the agent's own tool input — the path it asked to write,
@@ -1961,13 +1962,23 @@ func (r Result) Refusals() []string {
 				continue
 			}
 			for _, body := range resultTexts(b.Content) {
-				if reason, ok := transcript.HookRefusalReason(body); ok {
+				if reason, ok := hookRefusalReason(body); ok {
 					out = append(out, reason)
 				}
 			}
 		}
 	}
 	return out
+}
+
+// hookRefusalReason is transcript.HookRefusalReason: the reason of a
+// "PreToolUse:<Tool> hook error: <reason>" body, and whether body is one.
+func hookRefusalReason(body string) (string, bool) {
+	if !strings.HasPrefix(body, "PreToolUse:") {
+		return "", false
+	}
+	_, reason, ok := strings.Cut(body, " hook error: ")
+	return reason, ok
 }
 
 // resultTexts is a tool_result's content as text: a plain string, or the text
