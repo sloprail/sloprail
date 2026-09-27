@@ -396,7 +396,7 @@ func entryText(path string, line int, pools []SourceType) (string, error) {
 				parts = append(parts, genuineToolResultText(e.Message, citableResults(entries))...)
 			}
 		case EntryAttachment:
-			if t := queuedCommandText(e.Attachment); t != "" && wants(pools, SourceUser) {
+			if t := queuedCommandText(e.Attachment); t != "" && wants(pools, SourceUser) && !notThePerson(e.Entry) {
 				parts = append(parts, t)
 			}
 		}

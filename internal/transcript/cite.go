@@ -204,7 +204,7 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 			// applies to a `user`-typed record. It only ever belongs to SourceUser:
 			// there is no tool_result concept on an attachment record for
 			// SourceToolResult to read.
-			if wants(sources, SourceUser) && queuedCommandContains(e.Entry, quote) {
+			if wants(sources, SourceUser) && !notThePerson(e.Entry) && queuedCommandContains(e.Entry, quote) {
 				matches = append(matches, CitationMatch{Path: path, Line: e.Line})
 			}
 		}
@@ -267,14 +267,22 @@ func otherToolUses(entries []LinedEntry) map[string]bool {
 	return others
 }
 
+// notThePerson reports an entry that is user-typed in shape but never the
+// person speaking: an isMeta entry is the harness writing (a Stop hook's
+// feedback, which may quote the agent back; a skill's body), a compaction
+// summary (isCompactSummary / isVisibleInTranscriptOnly) is a MODEL's account
+// of the conversation, and an isSidechain one is a sub-agent's, whose "user" is
+// the parent agent's dispatch.
+func notThePerson(e Entry) bool {
+	return e.IsMeta || e.IsSidechain || e.IsCompactSummary || e.IsVisibleInTranscriptOnly
+}
+
 // ownWords is e as far as it can carry the person's own words, and false when
-// it cannot carry them at all: an isMeta entry is the harness writing (a Stop
-// hook's feedback, which may quote the agent back; a skill's body), and an
-// isSidechain one is a sub-agent's, whose "user" is the parent agent's
-// dispatch. Otherwise it is e minus the tool_result blocks answering a tool
-// other than AskUserQuestion (otherToolUses).
+// it cannot carry them at all (notThePerson). Otherwise it is e minus the
+// tool_result blocks answering a tool other than AskUserQuestion
+// (otherToolUses).
 func ownWords(e Entry, others map[string]bool) (Entry, bool) {
-	if e.IsMeta || e.IsSidechain {
+	if notThePerson(e) {
 		return Entry{}, false
 	}
 	if len(others) == 0 || len(e.Message) == 0 {
