@@ -90,23 +90,66 @@ func TestTemplate_RegisteredFilters(t *testing.T) {
 }
 
 // A value rendered inside a quoted tag attribute — `<file path="{{ event.path }}">`
-// — cannot end the attribute and add one of its own: there its quotes (and `&`)
-// are escaped too, while the same value in the tag's body keeps its quotes.
+// — cannot end the attribute and add one of its own: there its quotes are
+// escaped too, while the same value in the tag's body keeps them.
 func TestTemplate_AttributeValuesEscapeQuotes(t *testing.T) {
-	vars := `{"p":"x\" evil=\"1","q":"it's & more","n":4,"list":["a","b"],"b":false}`
 	for _, tc := range []struct{ src, want string }{
 		{`<file path="{{ p }}">{{ p }}</file>`, `<file path="x&#34; evil=&#34;1">x" evil="1</file>`},
-		{`<f a='{{ q }}'>`, `<f a='it&#39;s &amp; more'>`},
+		{`<f a='{{ q }}'>`, `<f a='it&#39;s & more'>`},
 		// Two interpolations in one value, a filter with a quoted argument, a
 		// filter chain, whitespace control and a ternary all stay one expression.
 		{`<c source="{{ p }}:{{ n | int }}" pools="{{ list | join(",") }}">`, `<c source="x&#34; evil=&#34;1:4" pools="a,b">`},
 		{`<c k="{{- p -}}">`, `<c k="x&#34; evil=&#34;1">`},
-		{`<c k="{{ p if b else q }}">`, `<c k="it&#39;s &amp; more">`},
+		{`<c k="{{ p if b else q }}">`, `<c k="it&#39;s & more">`},
 		// Outside a tag — prose, a comparison, a tag's body — nothing changes.
 		{`a < b and x="{{ p }}"`, `a < b and x="x" evil="1"`},
 		{`<t>{{ q }}</t> {% if p == "<x a=\"" %}y{% endif %}`, `<t>it's & more</t> `},
+		{`if a<b then c = '{{ q }}'`, `if a<b then c = 'it's & more'`},
+		// A raw block is literal: nothing inside it is rewritten, and a quote in it
+		// does not throw the scan of what follows.
+		{`{% raw %}<a b="{{ p }}">{% endraw %}`, `<a b="{{ p }}">`},
+		{`x {%- raw %}<a b="{{ p }}">{% endraw -%} y`, `x<a b="{{ p }}"> y`}, // as gonja renders it unrewritten
+		{`{% raw %}{{ it's{% endraw %}<a b="{{ p }}">`, `{{ it's<a b="x&#34; evil=&#34;1">`},
+		// `| raw` undoes the `</` break, not the attribute escape.
+		{`<c k="{{ p | raw }}">`, `<c k="x&#34; evil=&#34;1">`},
+		// A tag whose name is itself interpolated is still a tag.
+		{`<{{ tag }} path="{{ p }}">`, `<file path="x&#34; evil=&#34;1">`},
+		{`<{% if b %}x{% else %}y{% endif %} k="{{ p }}">`, `<y k="x&#34; evil=&#34;1">`},
+		// CRLF (and a form feed) between `=` and the quote.
+		{"<c a=\r\n\"{{ p }}\">", "<c a=\r\n\"x&#34; evil=&#34;1\">"},
+		{"<c a=\f'{{ q }}'>", "<c a=\f'it&#39;s & more'>"},
+		// A dict literal's closing braces inside the expression are not its end.
+		{`<c k="{{ p if {"a": {"b": 1}} else q }}">`, `<c k="x&#34; evil=&#34;1">`},
 	} {
-		assert.Equal(t, tc.want, render(t, tc.src, vars), "template: %s", tc.src)
+		out, err := renderTemplate(tc.src, map[string]any{"p": `x" evil="1`, "q": "it's & more", "n": 4,
+			"list": []any{"a", "b"}, "b": false, "tag": "file"})
+		if assert.NoError(t, err, "template: %q", tc.src) {
+			assert.Equal(t, tc.want, out, "template: %q", tc.src)
+		}
+	}
+}
+
+// The attribute escape is idempotent: a template that also names it escapes a
+// value once, not twice.
+func TestTemplate_AttributeEscapeIsIdempotent(t *testing.T) {
+	assert.Equal(t, `<c k="a&#34;b">`, render(t, `<c k="{{ p | attrescape }}">`, `{"p":"a\"b"}`))
+}
+
+// A template that does not parse is reported in the author's own terms: the
+// same error the original template gives, positions included — nothing the
+// engine injected to escape attribute values.
+func TestTemplate_ParseErrorNamesOnlyTheAuthorsTemplate(t *testing.T) {
+	for _, src := range []string{
+		`<c k="{{ p }}"> {{ p | }}`, // a filter with no name, after an attribute value
+		`<c k="{{ p. }}">`,          // a malformed expression inside one
+		`<c k="{{ p }}">{% for %}`,  // a malformed tag after one
+	} {
+		_, err := renderTemplate(src, map[string]any{"p": "a"})
+		require.Error(t, err, src)
+		assert.NotContains(t, err.Error(), "attrescape", "the parse error leaks the injected filter: %v", err)
+		_, direct := renderGonja(src, map[string]any{"p": "a"})
+		require.Error(t, direct, src)
+		assert.Equal(t, direct.Error(), err.Error(), "the error (and its position) must be the original template's: %s", src)
 	}
 }
 

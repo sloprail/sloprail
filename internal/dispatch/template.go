@@ -1,12 +1,15 @@
 package dispatch
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/aisbergg/gonja/pkg/gonja"
+	"github.com/aisbergg/gonja/pkg/gonja/errors"
 	"github.com/aisbergg/gonja/pkg/gonja/exec"
 )
 
@@ -95,139 +98,24 @@ var renderTimeout = 5 * time.Second
 // `<file path="{{ event.path }}">` puts a value between quotes, where `</` is not
 // the danger — a `"` is: `x" evil="1` would end the attribute and add one of its
 // own. So before rendering, every `{{ … }}` that sits inside a quoted attribute
-// value of a tag is wrapped in the `attrescape` filter, which escapes `&`, `"` and
-// `'` (on top of the `</` break every value already had). This is contextual,
-// like html/template: the same value in a tag's BODY keeps its quotes (a diff full
-// of `&#34;` is harder to judge), and a template author writes nothing extra — the
-// context decides, so no template can forget it.
+// value of a tag is wrapped in the `attrescape` filter, which escapes `"` and `'`
+// (on top of the `</` break every value already had). This is contextual, like
+// html/template: the same value in a tag's BODY keeps its quotes (a diff full of
+// `&#34;` is harder to judge), and a template author writes nothing extra — the
+// context decides, so no template can forget it. templateattr.go holds the scan.
 //
 // # Non-string values render `| tojson`
 //
 // A map or list printed straight into a template comes out in gonja's Python-ish
 // form, with nested values as Go placeholders (`<float64 Value>`), so a judge
-// cannot read them. A template that shows one renders it `| tojson`, which also
-// escapes `<` and `>`.
+// cannot read them. A template that shows one renders it `| tojson`. This engine's
+// tojson (toJSON, below) keeps `&`, `<` and `>` as they are — no `\u0026` for the
+// judge to decode — and breaks `</` only in the JSON text it produces, as `<\/`,
+// which JSON reads back as `</`: the value round-trips, and still cannot close
+// the tag it sits in.
 
 // escapeClose breaks every closing-tag opener in s.
 func escapeClose(s string) string { return strings.ReplaceAll(s, "</", "<\\/") }
-
-// attrReplacer escapes what could end a quoted attribute value, and `&` so an
-// escape already in the value stays readable as itself.
-var attrReplacer = strings.NewReplacer("&", "&amp;", `"`, "&#34;", "'", "&#39;")
-
-// attrEscape is `| attrescape`, applied by escapeAttributeValues to every
-// interpolation inside a quoted attribute value.
-func attrEscape(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
-	return e.ValueFactory.Value(attrReplacer.Replace(in.String()))
-}
-
-// escapeAttributeValues rewrites src so every `{{ expr }}` inside a quoted
-// attribute value of a tag (`<name attr="…{{ expr }}…">`) renders through the
-// attrescape filter (wrapAttrEscape). Jinja tags, comments and expressions are
-// copied through as opaque units (string literals inside them included), so a quote in
-// `join(",")` or `{% if x == "<a b=\"" %}` never moves the scan. A tag opens at
-// `<` followed by a letter and closes at `>`; an attribute value opens at a quote
-// following `=`. An unterminated Jinja delimiter is left as written, for gonja to
-// refuse (or the watchdog, where gonja loops).
-func escapeAttributeValues(src string) string {
-	var b strings.Builder
-	inTag := false
-	var quote byte // the quote of the attribute value being scanned, or 0
-	var prev byte  // the last non-space byte seen inside the tag
-	for i := 0; i < len(src); {
-		if open, closer, ok := jinjaDelims(src[i:]); ok {
-			end := jinjaEnd(src, i+len(open), closer)
-			if end < 0 {
-				b.WriteString(src[i:])
-				break
-			}
-			unit := src[i : end+len(closer)]
-			if open == "{{" && quote != 0 {
-				unit = wrapAttrEscape(unit)
-			}
-			b.WriteString(unit)
-			i = end + len(closer)
-			continue
-		}
-		c := src[i]
-		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			}
-		case inTag:
-			switch {
-			case (c == '"' || c == '\'') && prev == '=':
-				quote = c
-			case c == '>':
-				inTag = false
-			}
-		case c == '<' && i+1 < len(src) && isASCIILetter(src[i+1]):
-			inTag = true
-		}
-		if c != ' ' && c != '\t' && c != '\n' {
-			prev = c
-		}
-		b.WriteByte(c)
-		i++
-	}
-	return b.String()
-}
-
-// jinjaDelims reports the Jinja delimiter pair s starts with, if any.
-func jinjaDelims(s string) (open, closer string, ok bool) {
-	switch {
-	case strings.HasPrefix(s, "{{"):
-		return "{{", "}}", true
-	case strings.HasPrefix(s, "{%"):
-		return "{%", "%}", true
-	case strings.HasPrefix(s, "{#"):
-		return "{#", "#}", true
-	}
-	return "", "", false
-}
-
-// jinjaEnd returns the index in src of closer at or after from, skipping string
-// literals (a closer inside quotes is not the end); -1 when there is none. A
-// comment holds no literals, so it ends at the first close.
-func jinjaEnd(src string, from int, closer string) int {
-	var quote byte
-	for i := from; i < len(src); i++ {
-		c := src[i]
-		switch {
-		case quote != 0 && c == '\\':
-			i++
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			}
-		case closer != "#}" && (c == '"' || c == '\''):
-			quote = c
-		case strings.HasPrefix(src[i:], closer):
-			return i
-		}
-	}
-	return -1
-}
-
-// wrapAttrEscape turns `{{ expr }}` into
-// `{% filter attrescape %}{{ expr }}{% endfilter %}`: a filter block escapes the
-// expression's whole rendered value whatever it is — a filter chain, a ternary —
-// with no parsing of it. Whitespace control moves onto the block's own tags, so
-// `{{- expr -}}` still trims what surrounds it.
-func wrapAttrEscape(unit string) string {
-	inner := unit[2 : len(unit)-2]
-	lead, trail := "", ""
-	if strings.HasPrefix(inner, "-") {
-		lead, inner = "-", inner[1:]
-	}
-	if strings.HasSuffix(inner, "-") {
-		trail, inner = "-", inner[:len(inner)-1]
-	}
-	return "{%" + lead + " filter attrescape %}{{" + inner + "}}{% endfilter " + trail + "%}"
-}
-
-func isASCIILetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
 // escapeStrings returns v with escapeClose applied to every string inside it.
 func escapeStrings(v any) any {
@@ -270,7 +158,7 @@ func renderTemplate(src string, vars map[string]any) (string, error) {
 	done := make(chan result, 1)
 	escaped, _ := escapeStrings(vars).(map[string]any)
 	go func() {
-		out, err := renderGonja(escapeAttributeValues(src), escaped)
+		out, err := renderJudgeTemplate(src, escaped)
 		done <- result{out, err}
 	}()
 
@@ -289,10 +177,35 @@ func cheapEscape(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Va
 	return e.ValueFactory.Value(escapeClose(in.String()))
 }
 
-// renderGonja is the actual gonja render: a fresh environment, the two registered
+// renderJudgeTemplate renders a judge's template with its attribute values
+// escaped (escapeAttributeValues). The author's template is parsed AS WRITTEN
+// first, so one that does not parse is reported in its own terms — its own
+// positions, nothing the engine injected — and only a template that parses is
+// rewritten and rendered.
+func renderJudgeTemplate(src string, vars map[string]any) (string, error) {
+	if _, err := newTemplateEnv().FromString(src); err != nil {
+		return "", fmt.Errorf("template: parse: %w", err)
+	}
+	return renderGonja(escapeAttributeValues(src), vars)
+}
+
+// renderGonja is the actual gonja render: a fresh environment, the registered
 // filters, parse, execute. Split out so renderTemplate can run it under a
 // watchdog without the timeout machinery obscuring the mirror of a10n's jinja.go.
 func renderGonja(src string, vars map[string]any) (string, error) {
+	tpl, err := newTemplateEnv().FromString(src)
+	if err != nil {
+		return "", fmt.Errorf("template: parse: %w", err)
+	}
+	out, err := tpl.Execute(vars)
+	if err != nil {
+		return "", fmt.Errorf("template: render: %w", err)
+	}
+	return out, nil
+}
+
+// newTemplateEnv is a fresh gonja environment with this engine's filters.
+func newTemplateEnv() *gonja.Environment {
 	env := gonja.NewEnvironment()
 	// This gonja fork ships no string `.split`, slicing, or `dirname`, so a
 	// template cannot derive a path's directory on its own. Register the same two
@@ -304,6 +217,7 @@ func renderGonja(src string, vars map[string]any) (string, error) {
 		"e":          cheapEscape,
 		"escape":     cheapEscape,
 		"attrescape": attrEscape,
+		"tojson":     toJSON,
 		"raw": func(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
 			return e.ValueFactory.Value(strings.ReplaceAll(in.String(), "<\\/", "</"))
 		},
@@ -318,13 +232,51 @@ func renderGonja(src string, vars map[string]any) (string, error) {
 			return e.ValueFactory.Value(s)
 		},
 	})
-	tpl, err := env.FromString(src)
-	if err != nil {
-		return "", fmt.Errorf("template: parse: %w", err)
+	return env
+}
+
+// toJSON is `| tojson` (gonja's `indent` keyword kept). The value is marshalled
+// as it arrived — its `<\/` breaks undone first — without HTML escaping, so `&`,
+// `<` and `>` reach the judge as themselves; then `</` is broken in the JSON
+// TEXT, where `<\/` is a legal escape that decodes back to `</`. The value
+// round-trips through json.Unmarshal and still cannot close the tag around it.
+func toJSON(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
+	p := params.Expect(0, []*exec.Kwarg{{Name: "indent", Default: nil}})
+	if p.IsError() {
+		errors.ThrowFilterArgumentError("tojson(indent=nil)", p.Error())
 	}
-	out, err := tpl.Execute(vars)
-	if err != nil {
-		return "", fmt.Errorf("template: render: %w", err)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if indent := p.GetKwarg("indent"); !indent.IsNil() {
+		if !indent.IsInteger() {
+			errors.ThrowFilterArgumentError("tojson(indent=nil)", "expected an integer for 'indent', got '%s'", indent.String())
+		}
+		enc.SetIndent("", strings.Repeat(" ", indent.Integer()))
 	}
-	return out, nil
+	if err := enc.Encode(unescapeClose(in.Interface())); err != nil {
+		errors.ThrowFilterArgumentError("tojson(indent=nil)", "unable to marshal to json: %s", err.Error())
+	}
+	return e.ValueFactory.SafeValue(escapeClose(strings.TrimSuffix(buf.String(), "\n")))
+}
+
+// unescapeClose undoes escapeStrings: every `<\/` in a string inside v back to `</`.
+func unescapeClose(v any) any {
+	switch t := v.(type) {
+	case string:
+		return strings.ReplaceAll(t, "<\\/", "</")
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, x := range t {
+			out[k] = unescapeClose(x)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = unescapeClose(x)
+		}
+		return out
+	}
+	return v
 }

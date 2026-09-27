@@ -1,8 +1,10 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -86,18 +88,22 @@ func allRepoTemplates(t *testing.T, examples string) []string {
 
 // fencedInterpolations returns the 1-based lines of a template's source where a
 // `{{` sits inside a markdown code fence — a line of three or more backticks or
-// tildes, at any indentation, closed by a like line at least as long.
+// tildes, at any indentation and inside blockquote or list-item markers, closed
+// by a like line at least as long — or in the opening fence's info string.
 func fencedInterpolations(src string) []int {
 	var lines []int
 	var fence string // the open fence's run of ` or ~, or "" outside one
 	for i, line := range strings.Split(src, "\n") {
-		trimmed := strings.TrimLeft(line, " \t")
-		if run := fenceRun(trimmed); run != "" {
+		bare := fenceContent(line)
+		if run := fenceRun(bare); run != "" {
 			switch {
 			case fence == "":
 				fence = run
+				if strings.Contains(bare, "{{") {
+					lines = append(lines, i+1)
+				}
 				continue
-			case run[0] == fence[0] && len(run) >= len(fence) && strings.TrimSpace(trimmed[len(run):]) == "":
+			case run[0] == fence[0] && len(run) >= len(fence) && strings.TrimSpace(bare[len(run):]) == "":
 				fence = ""
 				continue
 			}
@@ -107,6 +113,27 @@ func fencedInterpolations(src string) []int {
 		}
 	}
 	return lines
+}
+
+// listMarker is a markdown list item's marker: `-`, `*`, `+`, or `1.` / `1)`,
+// followed by whitespace.
+var listMarker = regexp.MustCompile(`^(?:[-*+]|[0-9]{1,9}[.)])[ \t]+`)
+
+// fenceContent is a line with its indentation and any blockquote (`>`) and
+// list-item markers before it removed — where a fence inside a quote or an item
+// begins.
+func fenceContent(line string) string {
+	s := strings.TrimLeft(line, " \t")
+	for {
+		switch {
+		case strings.HasPrefix(s, ">"):
+			s = strings.TrimLeft(s[1:], " \t")
+		case listMarker.MatchString(s):
+			s = s[len(listMarker.FindString(s)):]
+		default:
+			return s
+		}
+	}
 }
 
 // fenceRun returns the run of three or more ` or ~ a line opens with, or "".
@@ -133,6 +160,16 @@ func TestFencedInterpolations(t *testing.T) {
 		"```\n\n{{ additionalContext.body }}\n```\n",
 		"~~~md\n{{ additionalContext.unit_text }}\n~~~\n",
 		"````\n```\n{{ x }}\n````\n",
+		// A fence inside a blockquote or a list item, and a value in the opening
+		// fence's own info string.
+		"> ```\n> {{ x }}\n> ```\n",
+		"> > ~~~\n> > {{ x }}\n> > ~~~\n",
+		"- ```\n  {{ x }}\n  ```\n",
+		"* ```\n  {{ x }}\n  ```\n",
+		"1. ```\n   {{ x }}\n   ```\n",
+		"2) ```\n   {{ x }}\n   ```\n",
+		"- > ```\n  > {{ x }}\n  > ```\n",
+		"```{{ lang }}\ncode\n```\n",
 	} {
 		assert.NotEmpty(t, fencedInterpolations(src), "a value in a fence was not caught:\n%s", src)
 	}
@@ -140,6 +177,9 @@ func TestFencedInterpolations(t *testing.T) {
 		"```json\n{\"pass\": true}\n```\n<file>\n{{ event.newContent }}\n</file>\n",
 		"inline ``{{ x }}`` code is not a fence\n",
 		"```\nliteral\n```\n{{ after }}\n",
+		"- a list item {{ x }}\n> a quote {{ y }}\n1. step {{ z }}\n",
+		"> ```\n> literal\n> ```\n{{ after }}\n",
+		"---\n{{ not.a.fence }}\n---\n",
 	} {
 		assert.Empty(t, fencedInterpolations(src), "a value outside any fence was flagged:\n%s", src)
 	}
@@ -290,6 +330,33 @@ func TestActionProofTemplate_StructuredValuesRenderAsJSON(t *testing.T) {
 	}
 	for _, bad := range []string{"interface {} Value", "float64 Value", "Ada </action_input>", "PIX </proof>"} {
 		assert.NotContains(t, out, bad)
+	}
+}
+
+// `| tojson` hands the judge the value itself: `&`, `<` and `>` as written (no
+// `\u0026` to decode), a closing tag broken only as JSON's own `<\/` escape, and
+// the block json.Unmarshal's back to exactly what the prepare supplied.
+func TestActionProofTemplate_ToJSONRoundTrips(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join(repoTemplatesRoot(t), "action-proof", ".sloprail", "gate",
+		"screenshot-proves-fields", "screenshot-shows-all-fields.md.j2"))
+	require.NoError(t, err)
+	input := map[string]any{"company": "Smith & Co </action_input>", "rows": []any{1.0, "a<b>c"}}
+	proof := map[string]any{"note": "Smith & Co </proof>", "n": 1.0}
+	out, err := renderTemplate(string(src), map[string]any{"additionalContext": map[string]any{
+		"action_taken": true, "action": "fill_form", "action_input": input, "proof": proof,
+	}})
+	require.NoError(t, err)
+	assert.Contains(t, out, `Smith & Co <\/proof>`)
+	assert.Contains(t, out, `"a<b>c"`)
+	assert.NotContains(t, out, `\`+"u0026", "& reached the judge JSON-escaped")
+	for tag, want := range map[string]map[string]any{"action_input": input, "proof": proof} {
+		assert.Equal(t, 1, strings.Count(out, "</"+tag+">"), "a value closed <%s> from inside", tag)
+		start := strings.Index(out, "<"+tag+">\n")
+		end := strings.Index(out, "\n</"+tag+">")
+		require.True(t, start >= 0 && end > start, "no <%s> block in:\n%s", tag, out)
+		var got map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out[start+len(tag)+3:end]), &got), "the <%s> block is not JSON", tag)
+		assert.Equal(t, want, got, "the <%s> block does not round-trip", tag)
 	}
 }
 
