@@ -719,7 +719,16 @@ func fromArgv(argv []word, depth int) []Invocation {
 		// wrappers deep, and stopping at the first would report sudo and nohup
 		// while missing npm. The depth is passed through unchanged — a wrapper
 		// is not a new parse, so it spends none of the payload budget.
-		invs = append(invs, fromArgv(nested, depth)...)
+		//
+		// A wrapper that changes directory (`env -C /x cat f`) runs what it
+		// wraps there — see wrapperChdir.
+		inner := fromArgv(nested, depth)
+		if dir, known, moves := wrapperChdir(argv[:len(argv)-len(nested)]); moves {
+			for i := range inner {
+				inner[i].Cwd = chdirCwd(dir, known, inner[i].Cwd)
+			}
+		}
+		invs = append(invs, inner...)
 	}
 
 	// The infix form, which the suffix scan above cannot see: a command

@@ -232,6 +232,16 @@ var cwdTableCases = []cwdCase{
 		want:    "(nothing)",
 	},
 	{
+		name:    "eval of a literal cd moves what follows, like a block",
+		command: "eval 'cd /elsewhere' && echo x > rel",
+		want:    "write:/elsewhere/rel",
+	},
+	{
+		name:    "eval of a payload that cannot be read is unknown",
+		command: `eval "$SETUP" && echo x > rel`,
+		want:    "(nothing)",
+	},
+	{
 		name:    "popd is recognised but not resolved: unknown",
 		command: "cd /a && popd && touch a",
 		want:    "(nothing)",

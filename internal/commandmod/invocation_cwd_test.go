@@ -43,6 +43,30 @@ func TestInvocationCwd(t *testing.T) {
 		{"a payload's cd composes onto the outer cwd", `cd /x && sh -c 'cd y && cat z'`, "cat", "/x/y"},
 		{"a payload with no cd runs in the outer cwd", `cd /x && bash -c 'cat z'`, "cat", "/x"},
 		{"an absolute cd in a payload wins", `cd /x && sh -c 'cd /abs && cat z'`, "cat", "/abs"},
+		// A wrapper that changes directory runs its program there, not where
+		// the line was.
+		{"env -C", "env -C /x cat f", "cat", "/x"},
+		{"env --chdir=", "env --chdir=/x cat f", "cat", "/x"},
+		{"env --chdir", "env --chdir /x cat f", "cat", "/x"},
+		{"env -C attached", "env -C/x cat f", "cat", "/x"},
+		{"env -C relative composes onto the line's cd", "cd /w && env -C sub cat f", "cat", "/w/sub"},
+		{"env -C from a variable is unknown", `env -C "$D/x" cat f`, "cat", ""},
+		{"sudo -D", "sudo -D /x cat f", "cat", "/x"},
+		{"sudo --chdir=", "sudo --chdir=/x cat f", "cat", "/x"},
+		{"env without -C keeps the line's cwd", "cd /w && env FOO=1 cat f", "cat", "/w"},
+		{"the wrapper itself runs where the line is", "cd /w && env -C /x cat f", "env", "/w"},
+		{"env -C wraps a payload too", "env -C /x sh -c 'cat f'", "cat", "/x"},
+		// eval runs its argument in THIS shell: a cd inside it moves what
+		// follows it. A literal payload is read like a block; one this package
+		// cannot read may have gone anywhere — unknown, never a confident ".".
+		{"eval cd", "eval 'cd /x' && cat f", "cat", "/x"},
+		{"eval of a double-quoted cd", `eval "cd /x" && cat f`, "cat", "/x"},
+		{"eval of an unquoted cd", "eval cd sub && cat f", "cat", "sub"},
+		{"eval of an unresolvable cd", `eval 'cd "$D"' && cat f`, "cat", ""},
+		{"eval without a cd leaves cwd known", "eval 'echo hi' && cat f", "cat", "."},
+		{"eval of an unknowable payload is unknown", `eval "$SETUP" && cat f`, "cat", ""},
+		{"eval of a substitution is unknown", `eval "$(pyenv init -)" && cat f`, "cat", ""},
+		{"eval's cd does not leak out of a subshell", "(eval 'cd /x') && cat f", "cat", "."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -279,6 +279,42 @@ func cdTargetOf(cfg *expand.Config, call *syntax.CallExpr) (target string, isCd 
 	return argFields[0], isCd, true
 }
 
+// evalPayloadOf reads an `eval` call's payload: the statements eval would run
+// in the current shell, parsed from its arguments joined by spaces (which is
+// what eval itself does).
+//
+// isEval is false for any other call. ok is false when the payload cannot be
+// read without guessing — an argument that is not literal (`eval "$(pyenv
+// init -)"`, `eval "cd $D"`), or text that does not parse — which callers read
+// as "this eval may have moved the shell anywhere". A literal payload always
+// strictly shrinks on each nested `eval`, so the recursion through
+// cwdForSequence terminates.
+func evalPayloadOf(cfg *expand.Config, call *syntax.CallExpr) (payload []*syntax.Stmt, isEval, ok bool) {
+	if len(call.Args) == 0 || !isLiteral(call.Args[0]) {
+		return nil, false, false
+	}
+	got, err := expand.Fields(cfg, call.Args[0])
+	if err != nil || len(got) != 1 || got[0] != "eval" {
+		return nil, false, false
+	}
+	words := make([]string, 0, len(call.Args)-1)
+	for _, arg := range call.Args[1:] {
+		if !isLiteral(arg) {
+			return nil, true, false
+		}
+		fields, err := expand.Fields(cfg, arg)
+		if err != nil {
+			return nil, true, false
+		}
+		words = append(words, fields...)
+	}
+	f, err := syntax.NewParser().Parse(strings.NewReader(strings.Join(words, " ")), "")
+	if err != nil {
+		return nil, true, false
+	}
+	return f.Stmts, true, true
+}
+
 // cwdFor computes the effective directory belonging to each statement in a
 // parsed file, keyed by pointer so fromRedirs and fromCall — which already
 // walk the same tree via fileTargetsAt's syntax.Walk and already carry a
@@ -335,6 +371,20 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 
 	switch cmd := stmt.Cmd.(type) {
 	case *syntax.CallExpr:
+		if payload, isEval, ok := evalPayloadOf(cfg, cmd); isEval {
+			if !ok {
+				// `eval "$SETUP"` — a payload this package cannot read may `cd`
+				// anywhere, so what follows it runs somewhere unknown.
+				current.unknown = true
+				return
+			}
+			// eval runs its payload in THIS shell, exactly like a Block: a
+			// `cd` inside it moves every statement after the eval. Its own
+			// statements' entries are not recorded — nothing in the outer tree
+			// points at them — so they go to a scratch map.
+			*current = cwdForSequence(cfg, payload, *current, map[*syntax.Stmt]cwd{})
+			return
+		}
 		target, isCd, ok := cdTargetOf(cfg, cmd)
 		if !isCd {
 			return
