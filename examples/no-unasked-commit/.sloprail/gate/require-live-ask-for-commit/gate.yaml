@@ -15,9 +15,15 @@
 #   - citation-is-latest-user-turn.sh (script): is the cited line the latest
 #     real user message in the transcript? Deterministic — this is a fact
 #     about line numbers, not wording.
-#   - asks-for-commit-or-push.md.j2 (judge): does THAT message, in its own
-#     words, actually ask for a commit/push right now? Wording is not a thing
-#     a script should decide.
+#   - asks-for-commit-or-push.md.j2 (judge): does THAT message ask to commit
+#     exactly what this command commits? "commit it" means nothing without
+#     what "it" is, so the judge READS the session record itself (the cited
+#     message, the agent reply it answered, the edits since) and the working
+#     tree (read-only git), and fails a commit that sweeps in changes the user
+#     was not shown, e.g. an unrelated edit caught by `git add -A`. No prepare
+#     script: the judge does the reading, with the tools granted below.
+#     Read/Grep reach the transcript by absolute path; the Bash grants are
+#     read-only git and nothing else.
 on:
   - event: PreCommandInvoke
     match: >
@@ -29,3 +35,10 @@ checks:
   - script: ./citation-is-latest-user-turn.sh
   - judge: ./asks-for-commit-or-push.md.j2
     model: size-md
+    allowed_tools:
+      - Read
+      - Grep
+      - "Bash(git status:*)"
+      - "Bash(git diff:*)"
+      - "Bash(git log:*)"
+      - "Bash(git show:*)"
