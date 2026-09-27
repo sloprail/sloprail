@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -111,14 +113,18 @@ func runVerified(
 		}
 
 		inv := BuildInvocation(spec, model, harnessArgs, ask, os.Getenv)
-		if err := runAgentQuietly(parent, cmd, inv); err != nil {
+		said, err := runAgentQuietly(parent, cmd, inv)
+		if err != nil {
 			// The harness itself failed — not a verdict on the answer. Returned
 			// rather than retried: re-running a harness that could not start
 			// spends money to fail identically.
 			return err
 		}
+		if err := answerFromReply(outputPath, said); err != nil {
+			return fmt.Errorf("%w: could not write %s: %s", ErrVerifierBroken, outputPath, err)
+		}
 
-		err := RunVerifier(parent, resolved, outputPath, attempt, attempts, cmd.ErrOrStderr())
+		err = RunVerifier(parent, resolved, outputPath, attempt, attempts, cmd.ErrOrStderr())
 		if err == nil {
 			// Which attempt it took, on stderr. A caller watching a hook needs
 			// to know the difference between an answer that was right first
@@ -201,17 +207,55 @@ func makeOutputFile() (path string, cleanup func(), err error) {
 // hook that captures this command's output to feed a rule must find only the
 // answer. stderr still passes through, because that is where a harness reports
 // its own trouble and a caller needs to see it.
-func runAgentQuietly(ctx context.Context, cmd *cobra.Command, inv Invocation) error {
+func runAgentQuietly(ctx context.Context, cmd *cobra.Command, inv Invocation) (string, error) {
 	quiet := *cmd
-	quiet.SetOut(io_Discard{})
+	reply := &cappedBuffer{max: maxReply}
+	quiet.SetOut(reply)
 	quiet.SetContext(ctx)
-	return runHarness(&quiet, inv)
+	err := runHarness(&quiet, inv)
+	return reply.String(), err
 }
 
-// io_Discard is io.Discard as a Writer that cobra will accept.
-type io_Discard struct{}
+// maxReply bounds how much of the agent's printed reply is kept — enough for a
+// verdict object, never a whole transcript.
+const maxReply = 64 << 10
 
-func (io_Discard) Write(p []byte) (int, error) { return len(p), nil }
+// cappedBuffer keeps the first max bytes written to it and drops the rest,
+// reporting every write as complete so the harness is never cut short.
+type cappedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if room := c.max - c.buf.Len(); room > 0 {
+		if len(p) > room {
+			c.buf.Write(p[:room])
+		} else {
+			c.buf.Write(p)
+		}
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) String() string { return c.buf.String() }
+
+// answerFromReply fills an answer file the agent left EMPTY from its printed
+// reply, when that reply is exactly one JSON object. A model asked for a verdict
+// sometimes prints it instead of writing it — measured on real judges — and a
+// retry then pays for a second run to re-state what it already said. The
+// verifier still judges the bytes; a reply that is not a single object, or a
+// file the agent did write, is left untouched.
+func answerFromReply(outputPath, reply string) error {
+	if info, err := os.Stat(outputPath); err != nil || info.Size() > 0 {
+		return nil
+	}
+	reply = strings.TrimSpace(reply)
+	if !strings.HasPrefix(reply, "{") || !json.Valid([]byte(reply)) {
+		return nil
+	}
+	return os.WriteFile(outputPath, []byte(reply+"\n"), 0o600)
+}
 
 // emitVerified writes the accepted answer to stdout.
 //
