@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"strconv"
 	"strings"
@@ -50,9 +51,10 @@ func TestT036_06_SkipDeclaredLaterCycleExcusesEarlierMessage(t *testing.T) {
 	// Cycle 2's own resumed prompt ALSO lands as a new accountable user message
 	// (--resume appends the prompt as a continuation human turn — harness.go's
 	// own doc on this). Its line is not known up front the way the root's is, so
-	// it is read from the transcript the mock already wrote for cycle 1: the
-	// next line appended is one past the file's current line count.
-	nextLine := transcriptLineCount(t, e.TranscriptPath(proj, sess)) + 1
+	// it is read from the transcript the mock already wrote for cycle 1. The
+	// resume's SessionStart attachment is written first, as real Claude Code
+	// writes it, and the prompt after it.
+	nextLine := transcriptLineCount(t, e.TranscriptPath(proj, sess)) + harness.SessionStartAttachments + 1
 
 	// ---- Cycle 2: skip the FIRST message's line AND this cycle's own resumed
 	// prompt, declaring no new work of its own. ----
