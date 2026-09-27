@@ -415,24 +415,30 @@ func TestResolveBinary_NilDetectFallsBackWithoutPanicking(t *testing.T) {
 	})
 }
 
-// --- --read-dir -------------------------------------------------------------
+// --- --add-dir[:<mode>] ------------------------------------------------------
 
-// A read dir is made absolute (a permission rule matches absolute paths) and
-// must exist — a typo would otherwise surface only as a judge denied every read.
-func TestResolveReadDirs(t *testing.T) {
+// Every path is made absolute (a permission rule matches absolute paths) and
+// must be a directory — a typo would otherwise surface only as a judge denied
+// every read. A path repeated in one mode is one grant; the order is the flags'.
+func TestResolveAddDirs(t *testing.T) {
 	dir := t.TempDir()
+	other := t.TempDir()
 	file := filepath.Join(dir, "f")
 	require.NoError(t, os.WriteFile(file, nil, 0o644))
 
-	got, err := resolveReadDirs([]string{dir, dir})
+	got, err := resolveAddDirs(map[dirMode][]string{
+		dirWritable: {other},
+		dirReadonly: {dir, dir},
+	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{dir}, got, "a repeated directory is one grant")
+	assert.Equal(t, []dirGrant{{Path: other, Mode: dirWritable}, {Path: dir, Mode: dirReadonly}}, got,
+		"a repeated directory is one grant")
 
 	t.Chdir(dir)
-	got, err = resolveReadDirs([]string{"."})
+	got, err = resolveAddDirs(map[dirMode][]string{dirReadonly: {"."}})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.True(t, filepath.IsAbs(got[0]), "a relative dir is made absolute: %s", got[0])
+	assert.True(t, filepath.IsAbs(got[0].Path), "a relative dir is made absolute: %s", got[0].Path)
 
 	for name, bad := range map[string]string{
 		"missing": filepath.Join(dir, "nope"),
@@ -440,26 +446,40 @@ func TestResolveReadDirs(t *testing.T) {
 		"empty":   "",
 		"blank":   "  ",
 	} {
-		_, err := resolveReadDirs([]string{bad})
-		assert.ErrorIs(t, err, ErrBadReadDir, name)
+		_, err := resolveAddDirs(map[dirMode][]string{dirReadonly: {bad}})
+		assert.ErrorIs(t, err, ErrBadAddDir, name)
 	}
 
-	got, err = resolveReadDirs(nil)
+	got, err = resolveAddDirs(nil)
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }
 
-// A harness that cannot express "read but never write" refuses --read-dir rather
-// than dropping it (a blind judge) or granting the dir plainly (a writable one).
-func TestHarnessGrant_NoPermissionModelRefusesReadDirs(t *testing.T) {
+// One directory cannot be both writable and never writable.
+func TestResolveAddDirs_OneDirInTwoModesIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	_, err := resolveAddDirs(map[dirMode][]string{dirWritable: {dir}, dirReadonly: {dir}})
+	require.ErrorIs(t, err, ErrBadAddDir)
+	assert.Contains(t, err.Error(), "both writable and readonly")
+}
+
+// A harness that cannot express "read but never write" refuses a readonly dir
+// rather than dropping it (a blind judge) or granting it plainly (a writable
+// one). A writable dir costs it nothing — with no permission model everything
+// is already writable — and the tools still pass through.
+func TestHarnessGrant_NoPermissionModelRefusesReadonly(t *testing.T) {
 	bare := harnessSpec{name: "bare", binary: "bare"}
 
-	_, err := harnessGrant(bare, accessGrant{ReadDirs: []string{"/p"}})
-	require.ErrorIs(t, err, ErrNoReadConfinement)
+	_, err := harnessGrant(bare, accessGrant{Dirs: []dirGrant{{Path: "/p", Mode: dirReadonly}}})
+	require.ErrorIs(t, err, ErrModeUnsupported)
+	assert.Contains(t, err.Error(), "--add-dir:readonly")
 
-	got, err := harnessGrant(bare, accessGrant{WriteDir: "/out", Tools: []string{"Read", "WebFetch"}})
+	got, err := harnessGrant(bare, accessGrant{
+		Dirs:  []dirGrant{{Path: "/out", Mode: dirWritable}},
+		Tools: []string{"Read", "WebFetch"},
+	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"--allowed-tools", "Read WebFetch"}, got, "tools still pass through")
+	assert.Equal(t, []string{"--allowed-tools", "Read WebFetch"}, got)
 }
 
 // A permission rule's parentheses and `**` would break a pasted command.

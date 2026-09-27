@@ -186,14 +186,17 @@ func realDir(t *testing.T, name string) string {
 	return dir
 }
 
-// The answer directory is the ONLY thing a judge may write, and it is granted by
-// an Edit rule scoped to it — never an unscoped Write, which was measured to
-// write anywhere on disk. The caller's own tools follow as further values of the
-// same flag.
-func TestClaudeGrant_AnswerDirIsTheOnlyWriteGrant(t *testing.T) {
+func writable(p string) dirGrant { return dirGrant{Path: p, Mode: dirWritable} }
+func readonly(p string) dirGrant { return dirGrant{Path: p, Mode: dirReadonly} }
+
+// A writable dir is a working directory plus an Edit rule scoped to it — never
+// an unscoped Write, which was measured to write anywhere on disk. The answer
+// folder of a --verify run is just such a dir. The caller's own tools follow as
+// further values of the same flag.
+func TestClaudeGrant_WritableDirIsAddedAndAllowed(t *testing.T) {
 	answer := realDir(t, "answer")
 
-	got := claudeCodeSpec.grant(accessGrant{WriteDir: answer, Tools: []string{"Read", "WebFetch"}})
+	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{writable(answer)}, Tools: []string{"Read", "WebFetch"}})
 
 	assert.Equal(t, []string{
 		"--add-dir", answer,
@@ -202,48 +205,68 @@ func TestClaudeGrant_AnswerDirIsTheOnlyWriteGrant(t *testing.T) {
 	assert.NotContains(t, got, "Write", "an unscoped Write grant writes anywhere on disk")
 }
 
-// A read dir is a working directory (readable by Read/Grep/Glob with no grant)
-// and denied to every file-writing tool — a deny beats any allow, including a
-// Write the caller itself asked for.
-func TestClaudeGrant_ReadDirIsAWorkingDirectoryAndDenied(t *testing.T) {
-	answer := realDir(t, "answer")
+// A readonly dir is a working directory (readable by Read/Grep/Glob with no
+// grant) and denied to every file-writing tool — a deny beats any allow,
+// including a Write the caller itself asked for.
+func TestClaudeGrant_ReadonlyDirIsAddedAndDenied(t *testing.T) {
 	project := realDir(t, "project")
 
-	got := claudeCodeSpec.grant(accessGrant{WriteDir: answer, ReadDirs: []string{project}, Tools: []string{"Write"}})
+	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{readonly(project)}, Tools: []string{"Write"}})
 
 	assert.Equal(t, []string{
-		"--add-dir", answer, project,
-		"--allowed-tools", "Edit(/" + answer + "/**)", "Write",
+		"--add-dir", project,
+		"--allowed-tools", "Write",
 		"--disallowed-tools", "Edit(/" + project + "/**)",
 	}, got)
 }
 
-// With no answer file (sr-agent run without --verify) nothing is writable: the
-// grant is the read dirs and the caller's tools, and no Edit allow at all.
-func TestClaudeGrant_WithoutAnAnswerFileNothingIsWritable(t *testing.T) {
+// Mixed modes land in ONE --add-dir (in the order given), one --allowed-tools
+// and one --disallowed-tools: never repeated variadic groups.
+func TestClaudeGrant_MixedModesShareOneFlagEach(t *testing.T) {
 	project := realDir(t, "project")
+	scratch := realDir(t, "scratch")
+	answer := realDir(t, "answer")
 
-	got := claudeCodeSpec.grant(accessGrant{ReadDirs: []string{project}, Tools: []string{"Read"}})
+	got := claudeCodeSpec.grant(accessGrant{
+		Dirs:  []dirGrant{readonly(project), writable(scratch), writable(answer)},
+		Tools: []string{"WebFetch"},
+	})
 
 	assert.Equal(t, []string{
-		"--add-dir", project,
-		"--allowed-tools", "Read",
+		"--add-dir", project, scratch, answer,
+		"--allowed-tools", "Edit(/" + scratch + "/**)", "Edit(/" + answer + "/**)", "WebFetch",
 		"--disallowed-tools", "Edit(/" + project + "/**)",
 	}, got)
 	assert.Empty(t, claudeCodeSpec.grant(accessGrant{}), "no access asked for, no flags")
 }
 
-// A read dir that CONTAINS the answer directory is not denied — the deny would
-// beat the answer-file allow and the judge could never write its verdict.
-func TestClaudeGrant_ReadDirHoldingTheAnswerDirIsNotDenied(t *testing.T) {
+// A writable dir NESTED in a readonly one stays writable: the readonly dir's
+// deny would beat the nested allow, so it is not emitted.
+func TestClaudeGrant_WritableNestedInReadonlyStaysWritable(t *testing.T) {
 	project := realDir(t, "project")
 	answer := filepath.Join(project, "tmp", "answer")
 	require.NoError(t, os.MkdirAll(answer, 0o755))
 
-	got := claudeCodeSpec.grant(accessGrant{WriteDir: answer, ReadDirs: []string{project}})
+	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{readonly(project), writable(answer)}})
 
 	assert.NotContains(t, got, "--disallowed-tools")
 	assert.Contains(t, got, "Edit(/"+answer+"/**)")
+}
+
+// A readonly dir NESTED in a writable one stays readonly: its deny is emitted,
+// and a deny beats the enclosing allow.
+func TestClaudeGrant_ReadonlyNestedInWritableStaysReadonly(t *testing.T) {
+	scratch := realDir(t, "scratch")
+	vendored := filepath.Join(scratch, "vendor")
+	require.NoError(t, os.MkdirAll(vendored, 0o755))
+
+	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{writable(scratch), readonly(vendored)}})
+
+	assert.Equal(t, []string{
+		"--add-dir", scratch, vendored,
+		"--allowed-tools", "Edit(/" + scratch + "/**)",
+		"--disallowed-tools", "Edit(/" + vendored + "/**)",
+	}, got)
 }
 
 // claude matches a rule against the path as the agent SPELLS it (measured: an

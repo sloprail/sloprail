@@ -594,10 +594,11 @@ func TestCLI_VerifyMergesAllowedToolsWithTheScopedAnswerGrant(t *testing.T) {
 		"no unscoped Write: measured, it writes anywhere on disk")
 }
 
-// --read-dir makes the judge's project READABLE (a working directory, where
-// claude's Read/Grep/Glob need no grant) and NOT WRITABLE (an Edit deny, which
-// beats any allow). Both halves must reach the harness, beside the answer grant.
-func TestCLI_VerifyReadDirIsReadableButDenied(t *testing.T) {
+// `--add-dir:readonly` makes the judge's project READABLE (a working directory,
+// where claude's Read/Grep/Glob need no grant) and NOT WRITABLE (an Edit deny,
+// which beats any allow). Both halves must reach the harness, beside the answer
+// folder — which is just one more writable dir, in the same --add-dir.
+func TestCLI_VerifyReadonlyDirIsReadableButDenied(t *testing.T) {
 	requireSh(t)
 	dir := t.TempDir()
 	script := writeScript(t, dir, "v.sh", "exit 0\n")
@@ -609,15 +610,89 @@ func TestCLI_VerifyReadDirIsReadableButDenied(t *testing.T) {
 	require.NoError(t, os.MkdirAll(project, 0o755))
 
 	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
-		"--read-dir", project, "--verify", script, "judge this")
+		"--add-dir:readonly", project, "--verify", script, "judge this")
 	require.NoError(t, err)
 
-	assert.Contains(t, stdout, "--add-dir "+outputDir+" "+project+" ",
-		"the answer dir and the project must both be working directories, in one --add-dir")
+	assert.Contains(t, stdout, "--add-dir "+project+" "+outputDir+" ",
+		"the project and the answer dir must both be working directories, in one --add-dir")
 	assert.Contains(t, stdout, `--disallowed-tools "Edit(/`+project+`/**)"`,
 		"the project must be denied to every file-writing tool")
 	assert.NotContains(t, stdout, `--allowed-tools "Edit(/`+project,
 		"the project must never be granted for writing")
+	assert.Contains(t, stdout, `--allowed-tools "Edit(/`+outputDir+`/**)"`,
+		"the answer folder is granted like any writable dir")
+}
+
+// --- --add-dir[:<mode>] parsing ---------------------------------------------
+
+// addDirDirs makes two real directories under a fresh temp dir.
+func addDirDirs(t *testing.T) (a, b string) {
+	t.Helper()
+	root := t.TempDir()
+	a, b = filepath.Join(root, "a"), filepath.Join(root, "b")
+	require.NoError(t, os.MkdirAll(a, 0o755))
+	require.NoError(t, os.MkdirAll(b, 0o755))
+	return a, b
+}
+
+// Both modes, each repeatable, each taking its value as the next word OR after
+// '=' — the same affordances as sr-file's --cite:<source-types>.
+func TestCLI_AddDirModesRepeatAndTakeTheirValueEitherWay(t *testing.T) {
+	a, b := addDirDirs(t)
+	c := filepath.Join(filepath.Dir(a), "c")
+	require.NoError(t, os.MkdirAll(c, 0o755))
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir", a, "--add-dir:readonly="+b, "--add-dir:readonly", c, "q")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "--add-dir "+a+" "+b+" "+c+" ", "every dir, in one --add-dir")
+	assert.Contains(t, stdout, `--allowed-tools "Edit(/`+a+`/**)"`, "the bare --add-dir is writable")
+	assert.Contains(t, stdout, `--disallowed-tools "Edit(/`+b+`/**)"`, "readonly given with '='")
+	assert.Contains(t, stdout, `"Edit(/`+c+`/**)"`, "readonly given as the next word")
+	assert.NotContains(t, stdout, `--allowed-tools "Edit(/`+b, "a readonly dir is never allowed")
+}
+
+// '--' ends the flags: an --add-dir after it is prompt text, not a grant.
+func TestCLI_AddDirAfterDoubleDashIsPrompt(t *testing.T) {
+	a, _ := addDirDirs(t)
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--", "--add-dir:readonly", a)
+	require.NoError(t, err)
+
+	flags, prompt, _ := strings.Cut(stdout, " -- ")
+	assert.NotContains(t, flags, "--add-dir", "nothing after -- is a flag")
+	assert.Contains(t, prompt, "--add-dir:readonly "+a)
+}
+
+// An unknown mode is a usage error that names the modes that exist.
+func TestCLI_AddDirUnknownModeNamesTheValidOnes(t *testing.T) {
+	a, _ := addDirDirs(t)
+	for _, arg := range []string{"--add-dir:rw", "--add-dir:", "--add-dir:readonly:x"} {
+		_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run", arg, a, "q")
+		require.ErrorIs(t, err, ErrUnknownAddDirMode, arg)
+		assert.Contains(t, err.Error(), "--add-dir, --add-dir:readonly", "the refusal must name the modes: %s", arg)
+	}
+}
+
+// A mode flag with no value is refused, not read as granting nothing.
+func TestCLI_AddDirMissingValueIsRefused(t *testing.T) {
+	for _, flag := range []string{"--add-dir", "--add-dir:readonly"} {
+		_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run", flag)
+		require.Error(t, err, flag)
+		assert.Contains(t, err.Error(), "needs an argument", flag)
+	}
+	_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run", "--add-dir:readonly=", "q")
+	require.ErrorIs(t, err, ErrBadAddDir, "an empty value after '=' names no directory")
+}
+
+// The same dir in both modes is a contradiction and refused.
+func TestCLI_AddDirSameDirInBothModesIsRefused(t *testing.T) {
+	a, _ := addDirDirs(t)
+	_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir", a, "--add-dir:readonly", a, "q")
+	require.ErrorIs(t, err, ErrBadAddDir)
 }
 
 func TestCLI_NonExecutableVerifierIsRefusedBeforeAnythingRuns(t *testing.T) {

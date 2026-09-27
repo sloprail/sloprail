@@ -128,64 +128,137 @@ func ParseAllowedTools(raw string) []string {
 	return fields
 }
 
-// ErrBadReadDir is returned when a `--read-dir` does not name an existing
-// directory.
-var ErrBadReadDir = errors.New("invalid --read-dir")
+// ErrBadAddDir is returned when an `--add-dir[:<mode>]` names no existing
+// directory, or names one in two modes at once.
+var ErrBadAddDir = errors.New("invalid --add-dir")
 
-// ErrNoReadConfinement is returned when `--read-dir` is given to a harness with
-// no permission model sr-agent can express "read but never write" in.
-var ErrNoReadConfinement = errors.New("harness cannot confine a read-only directory")
+// ErrUnknownAddDirMode is returned for an `--add-dir:<mode>` whose mode is not
+// one of addDirModes.
+var ErrUnknownAddDirMode = errors.New("unknown --add-dir mode")
 
-// resolveReadDirs makes each `--read-dir` absolute and checks it is a directory.
+// ErrModeUnsupported is returned when a harness is asked for an --add-dir mode
+// its permission model cannot express.
+var ErrModeUnsupported = errors.New("harness cannot honour an --add-dir mode")
+
+// addDirFlag is the flag a caller gives a directory to the agent with. It
+// mirrors claude's own --add-dir, and takes a MODE the way sr-file's
+// `--cite:<source-types>` takes its pools: `--add-dir <path>` is readable and
+// writable, `--add-dir:readonly <path>` readable only. One flag spelling per
+// mode keeps the mode on the flag, where a reader of the command line sees it,
+// rather than in a second flag that would have to be paired with the right
+// path.
+const addDirFlag = "add-dir"
+
+// addDirModes is every mode `--add-dir:<mode>` accepts, by suffix; "" is the
+// bare `--add-dir`. Each entry becomes its own repeatable flag (see newRoot),
+// so the flag parser gives both of sr-file's affordances for free: the value
+// as the next word or after '=', and '--' ending the flags.
+var addDirModes = []struct {
+	suffix string
+	mode   dirMode
+	usage  string
+}{
+	{"", dirWritable, "A directory the agent may read and write, as claude's own --add-dir (repeatable)"},
+	{"readonly", dirReadonly, "A directory the agent may read but never write, e.g. the project a judge is judging (repeatable)"},
+}
+
+// addDirFlagName is the flag spelling for a mode suffix: `add-dir` or
+// `add-dir:<suffix>`.
+func addDirFlagName(suffix string) string {
+	if suffix == "" {
+		return addDirFlag
+	}
+	return addDirFlag + ":" + suffix
+}
+
+// addDirModeNames lists the accepted spellings, for a refusal to name.
+func addDirModeNames() string {
+	names := make([]string, 0, len(addDirModes))
+	for _, m := range addDirModes {
+		names = append(names, "--"+addDirFlagName(m.suffix))
+	}
+	return strings.Join(names, ", ")
+}
+
+// unknownAddDirMode recognises the flag parser's "unknown flag: --add-dir:<x>"
+// and turns it into a refusal naming the modes that exist. Without it a typo'd
+// mode reads as an unrelated unknown flag, and the caller is left to guess that
+// the mode — not the flag — was the problem.
+func unknownAddDirMode(err error) error {
+	const prefix = "unknown flag: --" + addDirFlag + ":"
+	msg := err.Error()
+	if !strings.HasPrefix(msg, prefix) {
+		return nil
+	}
+	return fmt.Errorf("%w %q in %s: the modes are %s",
+		ErrUnknownAddDirMode, strings.TrimPrefix(msg, prefix), strings.TrimPrefix(msg, "unknown flag: "), addDirModeNames())
+}
+
+// resolveAddDirs turns the given `--add-dir[:<mode>]` values into grants: each
+// path made absolute and checked to be a directory.
 //
 // Absolute because a harness permission rule is matched on an absolute path — a
 // relative one would be read against whatever the harness takes as its base,
 // which is not this process's cwd. Checked because a missing directory would not
 // fail loudly anywhere: the agent would simply be denied every read in it, and a
-// judge would reach its verdict blind. Duplicates are dropped so one directory
-// never becomes two grants.
-func resolveReadDirs(raw []string) ([]string, error) {
-	var dirs []string
-	seen := map[string]bool{}
-	for _, entry := range raw {
-		if strings.TrimSpace(entry) == "" {
-			return nil, fmt.Errorf("%w: an empty value names no directory", ErrBadReadDir)
-		}
-		abs, err := filepath.Abs(entry)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %q: %s", ErrBadReadDir, entry, err)
-		}
-		info, err := os.Stat(abs)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %q: %s", ErrBadReadDir, entry, err)
-		}
-		if !info.IsDir() {
-			return nil, fmt.Errorf("%w: %q is not a directory", ErrBadReadDir, entry)
-		}
-		if !seen[abs] {
-			seen[abs] = true
-			dirs = append(dirs, abs)
+// judge would reach its verdict blind. A directory repeated in one mode is one
+// grant; a directory named in TWO modes is refused — "writable" and "never
+// writable" cannot both be true of it, and silently picking one would break the
+// promise the other made. (A writable dir NESTED in a readonly one is fine and
+// stays writable; see claudeCodeSpec.grant.)
+func resolveAddDirs(byMode map[dirMode][]string) ([]dirGrant, error) {
+	var grants []dirGrant
+	modeOf := map[string]dirMode{}
+	for _, m := range addDirModes {
+		for _, entry := range byMode[m.mode] {
+			flag := "--" + addDirFlagName(m.suffix)
+			if strings.TrimSpace(entry) == "" {
+				return nil, fmt.Errorf("%w: %s was given an empty path", ErrBadAddDir, flag)
+			}
+			abs, err := filepath.Abs(entry)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %s %q: %s", ErrBadAddDir, flag, entry, err)
+			}
+			info, err := os.Stat(abs)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %s %q: %s", ErrBadAddDir, flag, entry, err)
+			}
+			if !info.IsDir() {
+				return nil, fmt.Errorf("%w: %s %q is not a directory", ErrBadAddDir, flag, entry)
+			}
+			if prev, seen := modeOf[abs]; seen {
+				if prev != m.mode {
+					return nil, fmt.Errorf("%w: %s is given both writable and readonly; name it once, in the mode you mean",
+						ErrBadAddDir, abs)
+				}
+				continue
+			}
+			modeOf[abs] = m.mode
+			grants = append(grants, dirGrant{Path: abs, Mode: m.mode})
 		}
 	}
-	return dirs, nil
+	return grants, nil
 }
 
 // harnessGrant turns the access a run needs into the harness's own flags, via
 // the harness's grant.
 //
 // A harness with no grant still gets the caller's tools, as its own
-// `--allowed-tools` — but a read-only directory is REFUSED there rather than
-// dropped or passed as a plain directory grant. "Read but never write" is a
-// promise about what the agent cannot do; a harness that cannot express it would
-// either leave the judge blind or hand it write access, and the caller asked for
-// neither.
+// `--allowed-tools`, and writable dirs cost it nothing — with no permission
+// model everything is already writable. A READONLY dir is refused there rather
+// than dropped or passed as a plain directory: "read but never write" is a
+// promise about what the agent cannot do, and a harness that cannot express it
+// would either leave the judge blind or hand it write access, and the caller
+// asked for neither.
 func harnessGrant(spec harnessSpec, g accessGrant) ([]string, error) {
 	if spec.grant != nil {
 		return spec.grant(g), nil
 	}
-	if len(g.ReadDirs) > 0 {
-		return nil, fmt.Errorf("%w: %s has no permission model sr-agent can express read-only access in; drop --read-dir or run a harness that has one",
-			ErrNoReadConfinement, spec.name)
+	for _, d := range g.Dirs {
+		if d.Mode == dirReadonly {
+			return nil, fmt.Errorf("%w: %s has no permission model to express --%s in; drop it or run a harness that has one",
+				ErrModeUnsupported, spec.name, addDirFlagName("readonly"))
+		}
 	}
 	if len(g.Tools) > 0 {
 		return []string{"--allowed-tools", strings.Join(g.Tools, " ")}, nil

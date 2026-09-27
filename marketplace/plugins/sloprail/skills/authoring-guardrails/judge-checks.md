@@ -144,8 +144,8 @@ refused at load (a blank name grants nothing).
 The judge's agent starts in the **rule's own folder**, but it can **read the whole
 project** (`SR_WORKSPACE`, the repository root) with `Read`, `Grep` and `Glob` — no
 `allowed_tools` needed. The engine passes the project to `sr-agent` as
-`--read-dir`, and the prompt tells the judge where it is (paths in `event` are
-relative to it). So a template can say "read the spec at the pinned path" or
+`--add-dir:readonly <workspace>`, and the prompt tells the judge where it is
+(paths in `event` are relative to it). So a template can say "read the spec at the pinned path" or
 "check the sibling file" and the judge will reach it; it does not need a `prepare`
 to inline a file just so the judge can see it (though inlining is still cheaper
 when the judge will always need it).
@@ -153,7 +153,9 @@ when the judge will always need it).
 It **cannot write the project**. Every file-writing tool — `Write`, `Edit`,
 `NotebookEdit`, and the shell's recognised writes (`>`, `touch`, `rm`) — is
 denied there, even if `allowed_tools` names `Write` or `Edit`. The only thing a
-judge may write is its verdict file.
+judge may write is its verdict file, whose folder `sr-agent` adds as a writable
+dir the same way (`--add-dir <path>` is readable and writable, as in claude's
+own `--add-dir`; `--add-dir:readonly <path>` is readable only).
 
 Two things `allowed_tools` can still widen, so name them deliberately:
 

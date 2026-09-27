@@ -90,11 +90,11 @@ type harnessSpec struct {
 	baseArgs []string
 
 	// grant returns the arguments that give the agent exactly the file access a
-	// run needs: write access to the one directory sr-agent owns (the --verify
-	// answer file's), READ-ONLY access to the directories the caller names (a
-	// judge's project workspace), and the caller's own requested tools (a judge's
-	// `allowed_tools`), merged into the same grant so they do not arrive as
-	// competing flags. nil when the harness has no permission model to speak to.
+	// run needs: each added directory in its mode — writable or readonly — (the
+	// caller's `--add-dir[:<mode>]`s, and the --verify answer file's folder, which
+	// is just one more writable dir), and the caller's own requested tools (a
+	// judge's `allowed_tools`), merged into the same grant so they do not arrive
+	// as competing flags. nil when the harness has no permission model to speak to.
 	//
 	// --stop-script puts the agent's output file outside the working tree on
 	// purpose, and a harness that sandboxes writes will refuse it. This is the
@@ -208,37 +208,54 @@ var claudeCodeSpec = harnessSpec{
 	//     for both spellings — see pathRules.
 	//
 	//   - --add-dir makes a directory a working directory, and inside a working
-	//     directory Read, Grep and Glob need no grant at all. So a read dir is
-	//     readable by a judge whatever its allowed_tools — which is the point: a
-	//     judge of a file-guard must be able to open the spec its marker pins.
+	//     directory Read, Grep and Glob need no grant at all. So a readonly dir
+	//     is readable by a judge whatever its allowed_tools — which is the point:
+	//     a judge of a file-guard must be able to open the spec its marker pins.
 	//
-	//   - `--disallowed-tools Edit(//<read dir>/**)` keeps a read dir read-only
-	//     even against a caller who ALSO granted Write, Edit or Bash: a deny rule
-	//     beats every allow. Measured with `Write` granted: Write and Edit into
-	//     the project and Write into the rule's folder inside it were denied; and
-	//     with `Bash` granted: `printf >`, `touch` and `rm` there were denied.
+	//   - `--disallowed-tools Edit(//<readonly dir>/**)` keeps a readonly dir
+	//     unwritable even against a caller who ALSO granted Write, Edit or Bash:
+	//     a deny rule beats every allow. Measured with `Write` granted: Write and
+	//     Edit into the project and Write into the rule's folder inside it were
+	//     denied; and with `Bash` granted: `printf >`, `touch` and `rm` there
+	//     were denied.
 	//
-	// So: --add-dir <answer dir> <read dirs…>; allow Edit on the answer dir only
-	// (the NARROWEST grant that writes the answer — no unscoped Write, which was
-	// measured to write anywhere); deny Edit on every read dir.
+	// So, per `--add-dir[:<mode>]` (sr-agent's own flag, mirroring claude's):
+	// every dir goes into one `--add-dir`; a WRITABLE dir (`--add-dir <path>`,
+	// and the --verify answer folder, which is just one of them) gets an Edit
+	// allow scoped to it — the NARROWEST grant that writes there, no unscoped
+	// Write, which was measured to write anywhere; a READONLY dir
+	// (`--add-dir:readonly <path>`) gets an Edit deny.
 	//
-	// Confirmed end to end through this binary (`sr-agent --harness claude-code
-	// --model haiku --verify … --read-dir <project>`, started in a rule's folder
-	// inside the project): the agent Read the project's SPEC.md and the verifier
-	// accepted the answer file the agent itself wrote (Read, then Write/Edit);
-	// Write, Edit and NotebookEdit into the project, and Write into the rule's own
-	// folder, were refused with "File is in a directory that is denied by your
-	// permission settings" — also with `--allowed-tools "Write Edit NotebookEdit"`
-	// and with `Bash` granted, whose `printf > <project file>` was denied too. The
-	// one write that got through was the caller-granted unscoped Write to a file
-	// OUTSIDE the project, which is the caveat below.
+	// Confirmed end to end through this binary on 2026-09-27 (claude 2.1.282,
+	// haiku; `sr-agent --verify … --add-dir:readonly <project> --add-dir
+	// <scratch>`, started in a rule's folder inside the project):
+	//
+	//   - readonly project: Read of its SPEC.md and a grep of it succeeded;
+	//     Write, Edit and NotebookEdit into it, Write into the rule's own folder
+	//     and Bash `printf > <project file>` were all refused ("File is in a
+	//     directory that is denied by your permission settings") — also with
+	//     `--allowed-tools "Write Edit NotebookEdit Bash"`, where the deny beat
+	//     every one of those allows;
+	//   - writable scratch dir: Write created a file, Edit changed one, and a Bash
+	//     `printf > <scratch file>` redirection was allowed;
+	//   - the answer file: the agent's FIRST Write created it and the verifier
+	//     accepted it;
+	//   - nesting: a writable dir inside the readonly project stayed writable
+	//     (Write, Edit, Bash redirection all succeeded there) while the rest of
+	//     the project still refused every write — denied by default, as nothing
+	//     allows it; and a readonly dir inside a writable one refused a Write
+	//     while its writable parent accepted one.
+	//
+	// The one write that ever got through outside a writable dir was a
+	// caller-granted unscoped Write to a file OUTSIDE every added dir, which is
+	// the caveat below.
 	//
 	// What this does NOT confine: a caller who names `Write`/`Edit` in its own
-	// tools gets them unscoped, and those write anywhere OUTSIDE the read dirs; a
-	// caller who names `Bash` gets a shell. The Edit deny catches the file-writing
-	// commands claude recognises (redirection, touch, rm were measured) but a
-	// granted shell can run any program, and no permission rule sandboxes what
-	// that program does. So the read-only promise is made for the file tools;
+	// tools gets them unscoped, and those write anywhere OUTSIDE the readonly
+	// dirs; a caller who names `Bash` gets a shell. The Edit deny catches the
+	// file-writing commands claude recognises (redirection, touch, rm were
+	// measured) but a granted shell can run any program, and no permission rule
+	// sandboxes what that program does. So the read-only promise is made for the file tools;
 	// granting Bash to a judge is granting it a shell, and the rule author owns
 	// that choice.
 	//
@@ -249,37 +266,33 @@ var claudeCodeSpec = harnessSpec{
 	// "my proj"). The `--` BuildInvocation puts before the prompt is what stops
 	// these variadic flags swallowing it.
 	grant: func(g accessGrant) []string {
-		var args []string
-
-		dirs := g.ReadDirs
-		if g.WriteDir != "" {
-			dirs = append([]string{g.WriteDir}, g.ReadDirs...)
+		var args, dirs, allow, deny []string
+		for _, d := range g.Dirs {
+			dirs = append(dirs, d.Path)
+			switch d.Mode {
+			case dirWritable:
+				allow = append(allow, pathRules("Edit", d.Path)...)
+			case dirReadonly:
+				// A readonly dir that HOLDS a writable one is not denied: the deny
+				// would beat the nested dir's allow, and a writable dir must stay
+				// writable (the --verify answer folder, when $TMPDIR sits inside a
+				// readonly project, is the case that matters). The readonly dir
+				// then stays unwritable by the file tools only because nothing
+				// allows writing it — which holds unless the caller also granted
+				// an unscoped Write/Edit. The reverse nesting needs no exception:
+				// a readonly dir inside a writable one is denied, and the deny
+				// wins.
+				if !g.holdsWritable(d.Path) {
+					deny = append(deny, pathRules("Edit", d.Path)...)
+				}
+			}
 		}
+		allow = append(allow, g.Tools...)
 		if len(dirs) > 0 {
 			args = append(append(args, "--add-dir"), dirs...)
 		}
-
-		var allow []string
-		if g.WriteDir != "" {
-			allow = pathRules("Edit", g.WriteDir)
-		}
-		allow = append(allow, g.Tools...)
 		if len(allow) > 0 {
 			args = append(append(args, "--allowed-tools"), allow...)
-		}
-
-		var deny []string
-		for _, dir := range g.ReadDirs {
-			// A read dir that CONTAINS the answer directory is not denied: the deny
-			// would beat the answer-file allow and the agent could never write its
-			// answer. That only happens when $TMPDIR (or SLOPRAIL_AGENT_OUTPUT_DIR)
-			// sits inside the project; the project then stays unwritable by the
-			// file tools only because nothing allows writing it — which holds
-			// unless the caller itself granted Write/Edit.
-			if g.WriteDir != "" && within(g.WriteDir, dir) {
-				continue
-			}
-			deny = append(deny, pathRules("Edit", dir)...)
 		}
 		if len(deny) > 0 {
 			args = append(append(args, "--disallowed-tools"), deny...)
@@ -303,18 +316,44 @@ func isClaudeFamilyAlias(model string) bool {
 // accessGrant is the file access one run needs, harness-neutral: the harness's
 // grant turns it into that harness's own flags.
 type accessGrant struct {
-	// WriteDir is the one directory the agent may write — the --verify answer
-	// file's, which sr-agent owns. Empty on a run with no answer file.
-	WriteDir string
-
-	// ReadDirs are directories the agent may read but never write — a judge's
-	// project workspace (`--read-dir`).
-	ReadDirs []string
+	// Dirs are the directories the agent is given, each in its mode: the
+	// caller's `--add-dir[:<mode>]`s and, under --verify, the answer file's
+	// folder as one more writable dir.
+	Dirs []dirGrant
 
 	// Tools are the caller's own requested tools (`--allowed-tools`), passed
 	// through in the harness's own spelling.
 	Tools []string
 }
+
+// holdsWritable reports whether a writable dir of this grant lies inside dir
+// (or is dir).
+func (g accessGrant) holdsWritable(dir string) bool {
+	for _, d := range g.Dirs {
+		if d.Mode == dirWritable && within(d.Path, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+// dirGrant is one directory the agent is given, and how.
+type dirGrant struct {
+	Path string
+	Mode dirMode
+}
+
+// dirMode is how an added directory may be used.
+type dirMode int
+
+const (
+	// dirWritable is `--add-dir <path>`: readable and writable, as claude's own
+	// --add-dir.
+	dirWritable dirMode = iota
+
+	// dirReadonly is `--add-dir:readonly <path>`: readable, never writable.
+	dirReadonly
+)
 
 // pathRules is one Claude Code permission rule per spelling of dir: `Tool(//abs/**)`
 // (a leading `//` is claude's spelling of an absolute path) for dir as given and,

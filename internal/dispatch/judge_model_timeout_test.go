@@ -43,7 +43,7 @@ func TestJudgeCheck_ModelAndTimeoutThreadToJudgeCall(t *testing.T) {
 }
 
 // The request's Workspace reaches the judgeCall, which is what hands sr-agent the
-// project as a read-only `--read-dir`.
+// project as a read-only `--add-dir:readonly`.
 func TestJudgeCheck_WorkspaceThreadsToJudgeCall(t *testing.T) {
 	var got judgeCall
 	r := Runner{
@@ -127,15 +127,15 @@ func TestJudgeCommand_CarriesAllowedTools(t *testing.T) {
 		"a judge that named no tools must not pass an empty --allowed-tools")
 }
 
-// judgeCommand hands sr-agent the workspace as `--read-dir`, quoted (a project
+// judgeCommand hands sr-agent the workspace as `--add-dir:readonly`, quoted (a project
 // path may hold a space), so the judge can read the project it judges and never
 // write it; a judge with no workspace gets no project access.
-func TestJudgeCommand_CarriesTheWorkspaceAsAReadDir(t *testing.T) {
+func TestJudgeCommand_CarriesTheWorkspaceAsAReadonlyDir(t *testing.T) {
 	cmd := judgeCommand("/tmp/verify.sh", "size-md", nil, "/work/my proj")
-	assert.Contains(t, cmd, "--read-dir '/work/my proj'")
+	assert.Contains(t, cmd, "--add-dir:readonly '/work/my proj'")
 
 	bare := judgeCommand("/tmp/verify.sh", "size-md", nil, "")
-	assert.NotContains(t, bare, "--read-dir", "no workspace, no project access")
+	assert.NotContains(t, bare, "--add-dir", "no workspace, no project access")
 }
 
 // The prompt names the workspace when the engine knows it — the judge starts in

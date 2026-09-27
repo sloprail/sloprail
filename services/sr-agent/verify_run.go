@@ -40,7 +40,7 @@ func runVerified(
 	model string,
 	harnessArgs []string,
 	allowedTools []string,
-	readDirs []string,
+	addDirs []dirGrant,
 	prompt string,
 	verifier string,
 	attempts int,
@@ -73,15 +73,13 @@ func runVerified(
 	// verifier to judge an empty file. A correct judgement is reported as a
 	// failed one.
 	//
-	// The caller's allowed-tools and read dirs are handed to the harness's grant
-	// so they are MERGED with the answer-file write — one `--add-dir`, one
-	// `--allowed-tools`, never competing variadic groups. See claudeCodeSpec.grant
-	// for what each grants and what was measured.
-	grantArgs, err := harnessGrant(spec, accessGrant{
-		WriteDir: filepath.Dir(outputPath),
-		ReadDirs: readDirs,
-		Tools:    allowedTools,
-	})
+	// The answer file's folder is one more WRITABLE dir, granted through the
+	// same path as a caller's `--add-dir` — MERGED with the caller's dirs and
+	// allowed-tools into one `--add-dir`, one `--allowed-tools`, never competing
+	// variadic groups. See claudeCodeSpec.grant for what each grants and what was
+	// measured.
+	dirs := append(append([]dirGrant{}, addDirs...), dirGrant{Path: filepath.Dir(outputPath), Mode: dirWritable})
+	grantArgs, err := harnessGrant(spec, accessGrant{Dirs: dirs, Tools: allowedTools})
 	if err != nil {
 		return err
 	}

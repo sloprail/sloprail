@@ -96,7 +96,7 @@ func TestRubricReachesSkillJudgePrompt(t *testing.T) {
 // TestJudgeConfigReachesTheHarness pins that the migrated guardrail's own judge
 // config — the haiku model PIN and the allowed_tools: [Read] — reaches the real
 // sr-agent -> claude invocation. sr-agent builds `claude -p --model <resolved>
-// --settings <isolation> --add-dir <answer dir> <workspace> --allowed-tools
+// --settings <isolation> --add-dir <workspace> <answer dir> --allowed-tools
 // Edit(//<answer dir>/**) Read --disallowed-tools Edit(//<workspace>/**) --
 // <prompt>`, so the recorded argv carries the pinned model and the merged grant.
 // This is the D.1/D.2 config threaded end to end through the real binaries, not
@@ -171,10 +171,12 @@ func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 
 	// Readable: the workspace is one of the --add-dir working directories.
 	dirs := flagValues(lines, "--add-dir")
-	if len(dirs) != 2 || resolved(t, dirs[1]) != ws {
-		t.Fatalf("--add-dir must carry the answer dir then the workspace %s; got %q; argv:\n%s", ws, dirs, string(argv))
+	// The engine passes the workspace as `--add-dir:readonly`; sr-agent adds the
+	// answer folder after it as one more (writable) dir, through the same path.
+	if len(dirs) != 2 || resolved(t, dirs[0]) != ws {
+		t.Fatalf("--add-dir must carry the workspace %s then the answer dir; got %q; argv:\n%s", ws, dirs, string(argv))
 	}
-	answerDir := dirs[0]
+	answerDir := dirs[1]
 
 	// Not writable: every spelling of the workspace is denied to the Edit family.
 	deny := flagValues(lines, "--disallowed-tools")

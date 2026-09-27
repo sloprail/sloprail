@@ -102,7 +102,7 @@ type judgeCall struct {
 	AllowedTools []string
 
 	// Workspace is the project being judged (Request.Workspace — the tree the
-	// guard protects), handed to sr-agent as `--read-dir`: the judge may READ it
+	// guard protects), handed to sr-agent as `--add-dir:readonly`: the judge may READ it
 	// with its file tools and may not write it. Without it the judge's agent,
 	// started in the rule's own folder, was denied every read of the project it
 	// judges — a spec its marker pins, a sibling source file — and reached its
@@ -265,7 +265,7 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 // space/comma-separated form); a check that named none omits the flag entirely, so
 // sr-agent grants only what its own verdict file needs.
 //
-// The workspace, when known, is sr-agent's `--read-dir`: the judge can read the
+// The workspace, when known, is sr-agent's `--add-dir:readonly`: the judge can read the
 // project with Read, Grep and Glob whatever its allowed_tools, and sr-agent denies
 // every file-writing tool there (services/sr-agent claudeCodeSpec.grant has the
 // measurement). The read access is for the FILE tools only by design — a rule
@@ -280,7 +280,7 @@ func judgeCommand(verifier, model string, allowedTools []string, workspace strin
 		cmd += " --allowed-tools " + shSingleQuote(strings.Join(allowedTools, " "))
 	}
 	if workspace != "" {
-		cmd += " --read-dir " + shSingleQuote(workspace)
+		cmd += " --add-dir:readonly " + shSingleQuote(workspace)
 	}
 	cmd += fmt.Sprintf(` --prompt "$%s"`, judgePromptEnv)
 	return cmd
@@ -290,7 +290,7 @@ func judgeCommand(verifier, model string, allowedTools []string, workspace strin
 // engine knows. The judge's agent starts in the RULE's folder, and the material
 // names files by repository-relative path, so without this a judge that must open
 // a pinned spec or a sibling file has to guess the root. It says the project is
-// readable and not writable, which is what sr-agent's --read-dir enforces — the
+// readable and not writable, which is what sr-agent's --add-dir:readonly enforces — the
 // note informs, the permission rules enforce.
 func workspaceNote(workspace string) string {
 	if workspace == "" {

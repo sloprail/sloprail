@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/sloprail/sloprail/internal/version"
 )
@@ -114,6 +115,11 @@ environment naming no known harness is refused rather than guessed at; pass
 	// question like "--model isn't resolving, why?" is an ordinary thing to ask
 	// a judge, and both escapes are non-obvious.
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		// An `--add-dir:<mode>` with a mode that does not exist is a usage error
+		// about the MODE, not a prompt that happens to start with a dash.
+		if modeErr := unknownAddDirMode(err); modeErr != nil {
+			return modeErr
+		}
 		return fmt.Errorf(
 			"%w\n"+
 				"If that was meant to be the prompt rather than a flag, pass it after -- "+
@@ -131,8 +137,10 @@ environment naming no known harness is refused rather than guessed at; pass
 		`Claude Code's own settings as a JSON object, passed through untouched (e.g. '{"permission-mode":"plan"}')`)
 	cmd.Flags().String("allowed-tools", "",
 		"Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")")
-	cmd.Flags().StringArray("read-dir", nil,
-		"A directory the agent may read but never write, e.g. the project a judge is judging (repeatable)")
+	// One repeatable flag per --add-dir mode: `--add-dir`, `--add-dir:readonly`.
+	for _, m := range addDirModes {
+		cmd.Flags().StringArray(addDirFlagName(m.suffix), nil, m.usage)
+	}
 	cmd.Flags().String("verify", "",
 		"A script that decides whether the agent's answer is acceptable: exit 0 accepts, exit 3 rejects it as final, any other non-zero asks the agent again")
 	cmd.Flags().Int("verify-attempts", DefaultVerifyAttempts,
@@ -155,7 +163,17 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	harnessFlag, _ := cmd.Flags().GetString("harness")
 	claudeArgs, _ := cmd.Flags().GetString("claude-args")
 	allowedToolsFlag, _ := cmd.Flags().GetString("allowed-tools")
-	readDirFlags, _ := cmd.Flags().GetStringArray("read-dir")
+	// Read through the flag's own slice, not GetStringArray: that one round-trips
+	// the values through CSV and loses an empty `--add-dir:readonly=`, which
+	// must be refused, not dropped.
+	addDirFlags := map[dirMode][]string{}
+	for _, m := range addDirModes {
+		if f := cmd.Flags().Lookup(addDirFlagName(m.suffix)); f != nil {
+			if sv, ok := f.Value.(pflag.SliceValue); ok {
+				addDirFlags[m.mode] = sv.GetSlice()
+			}
+		}
+	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	verifyFlag, _ := cmd.Flags().GetString("verify")
 	verifyAttempts, _ := cmd.Flags().GetInt("verify-attempts")
@@ -211,11 +229,11 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	// flag was not given, which grants only the answer-file write --verify needs.
 	allowedTools := ParseAllowedTools(allowedToolsFlag)
 
-	// The directories the agent may read and never write, made absolute and
+	// The directories the agent is given, each in its mode, made absolute and
 	// checked to exist BEFORE anything runs: a harness permission rule is matched
 	// on an absolute path, and a typo'd directory is free to report now and
 	// expensive to discover as a blind judge after a model has been paid for.
-	readDirs, err := resolveReadDirs(readDirFlags)
+	addDirs, err := resolveAddDirs(addDirFlags)
 	if err != nil {
 		return err
 	}
@@ -231,13 +249,13 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	// because it OWNS the prompt — it appends the output path, and on a retry
 	// appends the objection too.
 	if cmd.Flags().Changed("verify") {
-		return runVerified(cmd, spec, resolution.Model, harnessArgs, allowedTools, readDirs, prompt,
+		return runVerified(cmd, spec, resolution.Model, harnessArgs, allowedTools, addDirs, prompt,
 			verifyFlag, verifyAttempts, false, dryRun)
 	}
 
-	// Outside --verify there is no answer file, so nothing is writable: the grant
-	// carries only the caller's tools and the read-only dirs.
-	grantArgs, err := harnessGrant(spec, accessGrant{ReadDirs: readDirs, Tools: allowedTools})
+	// Outside --verify there is no answer file: the grant carries only the
+	// caller's own dirs and tools.
+	grantArgs, err := harnessGrant(spec, accessGrant{Dirs: addDirs, Tools: allowedTools})
 	if err != nil {
 		return err
 	}
