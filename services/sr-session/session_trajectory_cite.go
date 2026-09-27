@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -17,9 +18,9 @@ import (
 //	0  exactly one match — the resolvable <path>:<line> is on stdout
 //	1  no match — nothing on stdout
 //	2  several matches — every candidate <path>:<line>, one per line, on stdout
-//	3  cite refused — the RESOLVED trajectory is a sub-agent's, whose "user"
-//	   messages are the parent's dispatch rather than the end user's own words
-//	   (see runSessionTrajectoryCite)
+//	3  cite refused — the user pool was asked of a sub-agent's trajectory whose
+//	   session root is not found; its "user" messages are the parent's dispatch
+//	   rather than the end user's own words (see runSessionTrajectoryCite)
 //
 // citeNoMatch is 1 rather than a distinct high code because "nothing to cite" is
 // the ordinary not-found, the same shape a grep or a test uses; citeAmbiguous is
@@ -92,13 +93,16 @@ stdout:
   exactly one match   the resolvable <path>:<line> on stdout, exit 0
   several matches     every candidate <path>:<line>, one per line, exit 2
   no match            nothing on stdout, exit 1
-  in a sub-agent      refused on stderr, exit 3
+  user pool, sub-agent
+  with no session     refused on stderr, exit 3
 
-cite is not available inside a sub-agent: there the "user" messages are the
-PARENT agent's dispatch prompt, not the end user's own words, so a citation into
-them would ground a claim in something the user never said. It refuses with exit
-3 rather than mint that false citation. This holds whatever --source-types names
-— a sub-agent's records are the parent's dispatch in every pool.
+The whole session is searched: user in its root record (the end user's own
+conversation) alone, tool_result in the root's and every sub-agent's record, so
+a sub-agent can cite what its own tools printed. A sub-agent's "user" messages
+are the PARENT agent's dispatch prompt, not the end user's own words, and are
+never searched: given a sub-agent's trajectory, user is searched in the session
+it was dispatched from, and when that session is not found cite refuses with
+exit 3 rather than mint a false citation.
 
 The trajectory is auto-detected from the environment — the common case takes no
 --path. Pass --path to cite into a sibling or the parent that ` + "`describe`" + ` named.`,
@@ -151,42 +155,31 @@ func runSessionTrajectoryCite(cmd *cobra.Command, args []string) error {
 		return errNoTrajectory()
 	}
 
-	// Refuse a sub-agent's TRAJECTORY. cite finds a USER message an agent may cite as
-	// the grounding for a written claim — but a sub-agent's "user" messages are not
-	// the end user's: they are the PARENT agent's Task/dispatch prompt, the
-	// instructions one agent handed another. Citing those as "the user said this"
-	// would ground a claim in words the person never wrote, which is the one thing
-	// this command exists not to do (it already refuses the agent's own output for
-	// the same reason). So a sub-agent's trajectory gets a refusal, not a citation.
+	// Search the SESSION the trajectory belongs to (transcript.CiteInSession):
+	// the user pool in its ROOT record alone, the tool_result pool in the root's
+	// and every sub-agent's record. So a sub-agent — whose tool calls resolve the
+	// current session, the root, from CLAUDE_CODE_SESSION_ID — can cite the
+	// output its own tools printed, which is recorded only in its own file, and
+	// a `cite --source-types tool_result '<q>' && <cmd>` chain works inside it.
 	//
-	// The judgement is made from the RESOLVED TRAJECTORY, not from the environment —
-	// which is the whole reason this guard reads the file rather than sniffing a
-	// variable. A tool call's process environment carries no signal that a sub-agent
-	// is the caller (the fields that name a sub-agent — agent_id / agent_type —
-	// arrive only on a HOOK's JSON stdin, never to a tool call), so whether a
-	// trajectory is a sub-agent's has to be read from the record itself:
-	// IsSubagentTranscript inspects its meta companion, or the isSidechain its own
-	// origin carries (see that function). This is precisely the fact `describe`
-	// reports as `isSubagent`, read here to refuse rather than to report.
-	//
-	// This is why the environment fallback in resolveTrajectory is safe for cite: it
-	// resolves the CURRENT session — the root when a sub-agent is not the caller,
-	// which holds the citations cite grounds — and if a sub-agent's OWN transcript is
-	// ever what resolves (by --path, or by a hook payload's agent_transcript_path /
-	// agent_id), this guard catches it here. A ROOT citing a sub-agent's trajectory
-	// with an explicit --path is refused too, and correctly: whoever runs cite, a
-	// sub-agent's user-words are the parent's dispatch, so they are never a citable
-	// grounding for the end user's intent no matter who reads them. Citing INTO a
-	// sub-agent is not what cite is for; reading a sub-agent's trajectory for other
-	// purposes is `normalize --path`, which does not refuse.
-	if transcript.IsSubagentTranscript(path) {
+	// The user's words are never searched in a sub-agent's record: its "user"
+	// messages are the PARENT agent's Task/dispatch prompt, the instructions one
+	// agent handed another, and citing those as "the user said this" would ground
+	// a claim in words the person never wrote. Handed a sub-agent's trajectory
+	// (by --path, or a hook payload's agent_transcript_path / agent_id), the user
+	// pool is searched in the root it was dispatched from — and when that root is
+	// not where the layout puts it, cite refuses with exit 3 rather than search
+	// the sub-agent's dispatch. Whether a trajectory is a sub-agent's is read from
+	// the record itself (IsSubagentTranscript: its meta companion, or the
+	// isSidechain its origin carries), never from the environment: a tool call's
+	// process environment carries no signal that a sub-agent is the caller.
+	matches, err := transcript.CiteInSession(path, quote, sources)
+	if errors.Is(err, transcript.ErrNoSessionRoot) {
 		fmt.Fprintf(cmd.ErrOrStderr(),
-			"sloprail: cite is not available in a sub-agent — its user messages are the parent agent's dispatch, not the end user's own words, so a citation into them would ground a claim in something the user never said (trajectory %s is a sub-agent's)\n",
+			"sloprail: cite is not available in a sub-agent for the user's words — its user messages are the parent agent's dispatch, not the end user's own words, and the session it was dispatched from is not found, so a citation into them would ground a claim in something the user never said (trajectory %s is a sub-agent's)\n",
 			path)
 		os.Exit(citeInSubagent)
 	}
-
-	matches, err := transcript.CiteWithSources(path, quote, sources)
 	if err != nil {
 		// The trajectory could not be read at all — a broken environment, not an
 		// absence of the quote. Surfaced as an error rather than as exit 1, so a

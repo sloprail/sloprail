@@ -158,3 +158,41 @@ func TestResolveCitationSubagentSafetyPropertiesHold(t *testing.T) {
 	require.NoError(t, err, "whitespace-insensitive in a sub-agent's record too")
 	assert.Equal(t, 4, got.Line)
 }
+
+// CiteInSession is what `trajectory cite` runs: the same records per pool as
+// ResolveCitation, every candidate returned, root record first.
+func TestCiteInSessionSearchesThePoolsRecords(t *testing.T) {
+	p := newProject(t)
+	rootPath, sub := dispatchedSession(t, p, []string{
+		toolCall("a1", "u1", "toolu_root", "Bash", "cat retry.yaml"),
+		toolAnswer("r1", "a1", "toolu_root", "retries: 5 with TWICEMARKER backoff"),
+	}, "retries: 5 with TWICEMARKER backoff")
+
+	for _, from := range []string{rootPath, sub} {
+		got, err := CiteInSession(from, "TWICEMARKER", []SourceType{SourceToolResult})
+		require.NoError(t, err)
+		assert.Equal(t, []CitationMatch{{Path: rootPath, Line: 3}, {Path: sub, Line: 3}}, got, "root first, then the sub-agent's")
+
+		got, err = CiteInSession(from, "DISPATCHMARKER", []SourceType{SourceUser, SourceToolResult})
+		require.NoError(t, err)
+		assert.Empty(t, got, "a sub-agent's dispatch prompt is in no pool")
+
+		got, err = CiteInSession(from, "research the retry policy", nil)
+		require.NoError(t, err)
+		assert.Equal(t, []CitationMatch{{Path: rootPath, Line: 1}}, got, "the user pool is the root's")
+	}
+}
+
+func TestCiteInSessionOrphanRefusesOnlyTheUserPool(t *testing.T) {
+	p := newProject(t)
+	sub := p.writeSubagent("gone-session", "a1b2",
+		`{"type":"user","uuid":"s0","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"ORPHANPROMPT"}}`,
+		sidechainAnswer("s1", "s0", "toolu_sub", "ORPHANOUTPUT"),
+	)
+	_, err := CiteInSession(sub, "ORPHANPROMPT", []SourceType{SourceUser})
+	require.ErrorIs(t, err, ErrNoSessionRoot)
+
+	got, err := CiteInSession(sub, "ORPHANOUTPUT", []SourceType{SourceToolResult})
+	require.NoError(t, err)
+	assert.Equal(t, []CitationMatch{{Path: sub, Line: 2}}, got)
+}

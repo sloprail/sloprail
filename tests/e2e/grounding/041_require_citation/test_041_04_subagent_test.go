@@ -20,7 +20,12 @@ import (
 // which would let the citation resolve without the sub-agent's record ever
 // being searched. So T041_21 moves them to where Claude Code writes them before
 // the citing call runs — the one hand-arranged shape here, and the one the mock
-// provably cannot emit.
+// provably cannot emit. T041_24 does the same for a cite chain.
+//
+// A sub-agent is a session of its own, so the citations its pre-tool calls
+// record live in its own store; T041_23 pins that its cycle end reads them, and
+// that the root's cycle end — which sees the same change in a shared tree —
+// reads them too.
 
 const toolResultGuard = `match: "memories/**"
 preventive: true
@@ -90,9 +95,6 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	e.GitInit(proj)
 	e.FileGuard(proj, "grounded-memories", toolResultGuard, map[string]string{"record.sh": citedRecordScript})
 	commitAll(t, proj)
-	// The sub-agent's own cycle end is not what this is about; one refusal
-	// there is enough to finish the run.
-	e.SetStopBlockCap(1)
 
 	// The sub-agent measures something.
 	measure := subagentScript(t, harness.Turns("measured",
@@ -136,6 +138,15 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	}
 	if !strings.Contains(pre, `"record":"`+subs[0]+`"`) {
 		t.Errorf("the citation does not point into the sub-agent's own record %s: %s", subs[0], pre)
+	}
+	// The change was grounded when it was made, so neither the sub-agent's own
+	// cycle end nor the root's — both of which see it in the shared tree —
+	// refuses it as uncited.
+	if blocks := e.BlockingErrorsFrom(proj, "s-041-21", "SubagentStop"); len(blocks) != 0 {
+		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
+	}
+	if blocks := e.BlockingErrorsFrom(proj, "s-041-21", "Stop"); len(blocks) != 0 {
+		t.Errorf("the root's cycle end refused the sub-agent's cited write: %v", blocks)
 	}
 }
 
@@ -182,5 +193,84 @@ checks:
 		if strings.Contains(l, "measure the retry budget") {
 			t.Errorf("the dispatch prompt reached the guard as a citation: %s", l)
 		}
+	}
+}
+
+// T041_23: a sub-agent's cited write is judged at the sub-agent's own cycle end
+// with the citation its pre-tool call recorded — a sub-agent is a session of its
+// own, and its pre-tool call and its SubagentStop must key to the same one — and
+// at the root's Stop, which sees the same change in the shared tree. An uncited
+// sub-agent write is still refused there, so the guard is live.
+func TestT041_23_SubagentCitationsReachItsCycleEnd(t *testing.T) {
+	const afterGuard = `match: "memories/**"
+require:
+  - citation: {source_types: [user]}
+`
+	e, proj := guarded(t, afterGuard)
+	sub := subagentScript(t, harness.Turns("sub done",
+		Bash("sb1", `sr-file write memories/a.md --cite:user 'adopt a decision log' --content '# a'`),
+	))
+	res := e.Run(proj, "s-041-23", prompt, Turns("done", harness.Dispatch("d1", "write it down", sub, "")))
+	if !e.Exists(proj, "memories/a.md") {
+		t.Fatalf("the cited write did not land:\n%s", res.Output)
+	}
+	if blocks := e.BlockingErrorsFrom(proj, "s-041-23", "SubagentStop"); len(blocks) != 0 {
+		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
+	}
+	if blocks := e.BlockingErrorsFrom(proj, "s-041-23", "Stop"); len(blocks) != 0 {
+		t.Errorf("the root's cycle end refused the sub-agent's cited write: %v", blocks)
+	}
+
+	e2, proj2 := guarded(t, afterGuard)
+	e2.SetStopBlockCap(1)
+	uncited := subagentScript(t, harness.Turns("sub done",
+		Bash("sb1", `mkdir -p memories && echo '# b' > memories/b.md`),
+	))
+	e2.Run(proj2, "s-041-23b", prompt, Turns("done", harness.Dispatch("d1", "write it down", uncited, "")))
+	if len(e2.BlockingErrorsFrom(proj2, "s-041-23b", "SubagentStop")) == 0 {
+		t.Errorf("an uncited sub-agent write was not refused at its cycle end, so the guard never ran there")
+	}
+}
+
+// T041_24: `sr-session trajectory cite --source-types tool_result '<q>' && <cmd>`
+// inside a sub-agent, citing output its own tool printed: the chain runs (cite
+// exits 0, searching the sub-agent's record) and the gate is handed the
+// citation.
+func TestT041_24_SubagentCiteChainOnItsOwnOutput(t *testing.T) {
+	const gate = `on:
+  - event: PreCommandInvoke
+    match: any(event.invocations, .bin == "touch")
+require:
+  - citation:
+      source_types: [tool_result]
+checks:
+  - script: ./record.sh
+`
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.Gate(proj, "proven-touch", gate, map[string]string{"record.sh": citedRecordScript})
+	commitAll(t, proj)
+
+	measure := subagentScript(t, harness.Turns("measured",
+		Bash("sb1", `echo 'build finished: CHAINPROBE-9051 green'`),
+	))
+	e.Run(proj, "s-041-24", prompt, Turns("dispatched", harness.Dispatch("d1", "build it", measure, "")))
+	subs := e.SubagentRecordPaths(proj, "s-041-24")
+	if len(subs) != 1 {
+		t.Fatalf("want one sub-agent record, found %v", subs)
+	}
+	moveIntoSubagentRecord(t, e.TranscriptPath(proj, "s-041-24"), subs[0], "sb1")
+
+	release := subagentScript(t, harness.Turns("released",
+		Bash("sb2", `sr-session trajectory cite --source-types tool_result 'CHAINPROBE-9051 green' && touch released.txt`),
+	))
+	res := e.Run(proj, "s-041-24", "now release", Turns("done", harness.Dispatch("d2", "release it", release, "")))
+	if !e.Exists(proj, "released.txt") {
+		t.Fatalf("a sub-agent's cite chain on its own tool output did not run:\n%s", res.Output)
+	}
+	lines := e.GateLedgerLines(proj, "proven-touch", "ledger")
+	if len(lines) == 0 || !strings.Contains(lines[0], `"quote":"CHAINPROBE-9051 green"`) || !strings.Contains(lines[0], `"record":"`+subs[0]+`"`) {
+		t.Errorf("the gate was not handed the citation into the sub-agent's record: %v", lines)
 	}
 }

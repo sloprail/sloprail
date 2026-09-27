@@ -2,8 +2,10 @@ package transcript
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -74,19 +76,11 @@ func (r CitationRequest) String() string {
 
 // ResolveCitation grounds one request in the session whose record is at path.
 //
-// Each pool is searched in the records it may draw on (citationRecords):
-//
-//   - user        the session's ROOT record alone — the end user's own
-//     conversation. A sub-agent's "user" messages are the parent agent's
-//     dispatch, not the end user's words, so no sub-agent's record is ever
-//     searched for them. path may name a sub-agent's record; the user pool
-//     is then searched in the root it was dispatched from, and refused only
-//     when that root cannot be found.
-//   - tool_result the root record AND every sub-agent record beneath it. A
-//     sub-agent's tool output is genuine tool output of this session — the
-//     Bash it ran printed it — and it is recorded only in the sub-agent's own
-//     file, so a sub-agent grounding its work in what its tools returned
-//     needs its own record searched.
+// Each pool is searched in the records it may draw on (see CiteInSession): the
+// user pool in the session's ROOT record alone — never a sub-agent's, whose
+// "user" message is the parent agent's dispatch — and the tool_result pool in
+// the root record AND every sub-agent record beneath it, since a sub-agent's
+// tool output is recorded only in its own file.
 //
 // Each named pool is searched on its own, so the Citation records which pools
 // the quote actually landed in. The quote must land on exactly ONE entry across
@@ -101,42 +95,23 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	if len(req.SourceTypes) == 0 {
 		return Citation{}, fmt.Errorf("citation %s names no source type", req)
 	}
-	userIn, toolIn, err := citationRecords(path)
-	if err != nil {
-		return Citation{}, fmt.Errorf("citation %s: %w", req, err)
-	}
 
-	type entryAt struct {
-		path string
-		line int
-	}
-	var hits []entryAt
+	var hits []CitationMatch
 	var pools []SourceType
 	for _, st := range req.SourceTypes {
-		var records []string
-		switch st {
-		case SourceUser:
-			if userIn == "" {
-				return Citation{}, fmt.Errorf("citation %s cannot resolve in a sub-agent's trajectory (%s) whose session record is not found: its user messages are the parent agent's dispatch, not the end user's own words", req, path)
-			}
-			records = []string{userIn}
-		case SourceToolResult:
-			records = toolIn
+		matches, err := CiteInSession(path, req.Quote, []SourceType{st})
+		if errors.Is(err, ErrNoSessionRoot) {
+			return Citation{}, fmt.Errorf("citation %s cannot resolve in a sub-agent's trajectory (%s) whose session record is not found: its user messages are the parent agent's dispatch, not the end user's own words", req, path)
 		}
-		landed := false
-		for _, r := range records {
-			matches, err := CiteWithSources(r, req.Quote, []SourceType{st})
-			if err != nil {
-				return Citation{}, fmt.Errorf("citation %s: %w", req, err)
-			}
-			for _, m := range matches {
-				landed = true
-				if at := (entryAt{m.Path, m.Line}); !slices.Contains(hits, at) {
-					hits = append(hits, at)
-				}
+		if err != nil {
+			return Citation{}, fmt.Errorf("citation %s: %w", req, err)
+		}
+		for _, m := range matches {
+			if !slices.Contains(hits, m) {
+				hits = append(hits, m)
 			}
 		}
-		if landed {
+		if len(matches) > 0 {
 			pools = append(pools, st)
 		}
 	}
@@ -146,22 +121,82 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	case len(hits) > 1:
 		where := make([]string, len(hits))
 		for i, h := range hits {
-			where[i] = fmt.Sprintf("%s:%d", h.path, h.line)
+			where[i] = fmt.Sprintf("%s:%d", h.Path, h.Line)
 		}
 		return Citation{}, fmt.Errorf("citation %s is ambiguous: it matches more than one entry (%s) — extend the quote until it lands on exactly one", req, strings.Join(where, ", "))
 	}
 	at := hits[0]
-	message, err := entryText(at.path, at.line, pools)
+	message, err := entryText(at.Path, at.Line, pools)
 	if err != nil {
 		return Citation{}, fmt.Errorf("citation %s: %w", req, err)
 	}
-	c := Citation{Quote: req.Quote, SourceTypes: pools, Path: at.path, Line: at.line, Message: message}
+	c := Citation{Quote: req.Quote, SourceTypes: pools, Path: at.Path, Line: at.Line, Message: message}
 	if wants(pools, SourceToolResult) {
-		if c.Call, err = entryCalls(at.path, at.line); err != nil {
+		if c.Call, err = entryCalls(at.Path, at.Line); err != nil {
 			return Citation{}, fmt.Errorf("citation %s: %w", req, err)
 		}
 	}
 	return c, nil
+}
+
+// CiteInSession finds where quote sits within the SESSION whose record is at
+// path — CiteWithSources over every record each named pool may draw on — and
+// returns one match per entry, the session's root record first and each
+// record's matches in file order.
+//
+//   - SourceUser        the session's ROOT record alone: the end user's own
+//     conversation. path may name a sub-agent's record; the root it was
+//     dispatched from is searched instead, and ErrNoSessionRoot is returned
+//     when that root is not on disk. No sub-agent's record is ever searched
+//     for the user's words: its "user" message is the parent agent's dispatch.
+//   - SourceToolResult  the root record AND every sub-agent record beneath it
+//     (DescendantSubagentPaths). A sub-agent's tool output is genuine tool
+//     output of this session, and it is recorded only in the sub-agent's own
+//     file. For an orphaned sub-agent record, that record and its own
+//     sub-agents.
+//
+// An empty sources is SourceUser only, as for CiteWithSources.
+func CiteInSession(path, quote string, sources []SourceType) ([]CitationMatch, error) {
+	userIn, toolIn, err := citationRecords(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []CitationMatch
+	add := func(ms []CitationMatch) {
+		for _, m := range ms {
+			if !slices.Contains(out, m) {
+				out = append(out, m)
+			}
+		}
+	}
+	if wants(sources, SourceUser) {
+		if userIn == "" {
+			return nil, ErrNoSessionRoot
+		}
+		ms, err := CiteWithSources(userIn, quote, []SourceType{SourceUser})
+		if err != nil {
+			return nil, err
+		}
+		add(ms)
+	}
+	if wants(sources, SourceToolResult) {
+		for _, r := range toolIn {
+			ms, err := CiteWithSources(r, quote, []SourceType{SourceToolResult})
+			if err != nil {
+				return nil, err
+			}
+			add(ms)
+		}
+	}
+	// Record order (root first), then line: the candidates read top-to-bottom.
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := slices.Index(toolIn, out[i].Path), slices.Index(toolIn, out[j].Path)
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i].Line < out[j].Line
+	})
+	return out, nil
 }
 
 // citationRecords is where a citation into the session whose record is at path
