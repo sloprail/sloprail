@@ -22,6 +22,23 @@ BIN_DIR  := bin
 SERVICES := sr sr-session sr-file sr-mark sr-agent sr-eval
 BINARIES := $(addprefix $(BIN_DIR)/,$(SERVICES))
 
+# VERSION is what `sr-session --version` (etc.) reports, and what the plugin's
+# installation check compares against plugin.json's own version to decide
+# whether an installed binary needs upgrading — see internal/version.Version's
+# doc comment. Bare semver, no leading v, matching plugin.json's own field.
+#
+# Default: derive it from the nearest reachable tag (git describe), stripping
+# the "v" release.yml's tags carry — this makes a local `make build` off a
+# tagged commit report the real version with no extra step. `make release`
+# always runs in CI right after a tag push, where this resolves to exactly
+# that tag; a caller building a specific version (or with no tags reachable,
+# e.g. a shallow clone) can still override: `make build VERSION=0.2.1`.
+VERSION := $(patsubst v%,%,$(shell git describe --tags --match 'v*' --abbrev=0 2>/dev/null))
+ifeq ($(VERSION),)
+VERSION := dev
+endif
+LDFLAGS := -X github.com/sloprail/sloprail/internal/version.Version=$(VERSION)
+
 # Where distribute-local installs.
 #
 #   1. PREFIX, if the caller set it   — make distribute-local PREFIX=~/bin
@@ -51,8 +68,8 @@ endif
 build:
 	@mkdir -p $(BIN_DIR)
 	@for s in $(SERVICES); do \
-		echo "go build -o $(BIN_DIR)/$$s ./services/$$s"; \
-		go build -o $(BIN_DIR)/$$s ./services/$$s || exit 1; \
+		echo "go build -ldflags \"$(LDFLAGS)\" -o $(BIN_DIR)/$$s ./services/$$s"; \
+		go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$$s ./services/$$s || exit 1; \
 	done
 
 # where prints the install destination and why, without touching anything. Run
@@ -107,9 +124,13 @@ RELEASE_DIR := dist
 RELEASE_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
 # bump-version updates every plugin.json + marketplace.json to VERSION,
-# lockstep with the repo's own release — run this BEFORE tagging (see
-# scripts/bump-version.sh's own doc comment for the full commit-then-tag
-# flow). VERSION is bare semver (0.2.0), no leading v.
+# lockstep with the repo's own release. The ordinary way to cut a release is
+# `make cut-release VERSION=0.2.1` then, once that PR is merged, `make
+# cut-release-tag VERSION=0.2.1` (both scripts/cut-release.sh) — between them
+# they run this, commit, push, open the PR, and tag, so nobody has to do the
+# sequence by hand. This target (and scripts/bump-version.sh directly) stays
+# for a local dry run of what that script would write. VERSION is bare semver
+# (0.2.0), no leading v.
 .PHONY: bump-version
 bump-version:
 	@if [ -z "$(VERSION)" ]; then \
@@ -118,11 +139,42 @@ bump-version:
 	fi
 	@./scripts/bump-version.sh "$(VERSION)"
 
+# cut-release runs scripts/cut-release.sh open: bumps, commits, pushes a
+# release/vX.Y.Z branch and opens the PR that starts a release — see that
+# script's own header for why this has to run as a real person (you) rather
+# than as a GitHub Action.
+.PHONY: cut-release
+cut-release:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "make: VERSION is required — make cut-release VERSION=0.2.1" >&2; \
+		exit 1; \
+	fi
+	@./scripts/cut-release.sh open "$(VERSION)"
+
+# cut-release-tag runs scripts/cut-release.sh tag: once cut-release's PR has
+# been merged, this tags main — which is what actually triggers release.yml
+# to build and publish. Also has to run as a real person, for the same
+# GITHUB_TOKEN-anti-recursion reason the bump PR does; see the script's own
+# header.
+.PHONY: cut-release-tag
+cut-release-tag:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "make: VERSION is required — make cut-release-tag VERSION=0.2.1" >&2; \
+		exit 1; \
+	fi
+	@./scripts/cut-release.sh tag "$(VERSION)"
+
 # verify-version fails if the pushed tag and the committed plugin.json/
-# marketplace.json versions disagree — the release.yml gate that catches
-# "tagged without running bump-version first", before any binary is even
-# built. TAG is the full tag (v0.2.0); the leading v is stripped to compare
-# against plugin.json's bare-semver field.
+# marketplace.json versions disagree — the release.yml gate that catches a
+# tag pushed by hand, outside scripts/cut-release.sh, before its bump landed.
+# TAG is the full tag (v0.2.0); the leading v is stripped to compare against
+# plugin.json's bare-semver field.
+#
+# marketplace.json is checked too, not just marketplace/plugins/*/plugin.json:
+# it carries its OWN copy of each plugin's version (bump-version.sh writes
+# both), and a tag whose plugin.json files matched but whose marketplace.json
+# was left stale would ship a marketplace listing lying about what it points
+# to — the exact gap this loop closes.
 .PHONY: verify-version
 verify-version:
 	@if [ -z "$(TAG)" ]; then \
@@ -133,11 +185,18 @@ verify-version:
 	for f in $$(find marketplace/plugins -maxdepth 3 -name plugin.json -path '*/.claude-plugin/*'); do \
 		got="$$(jq -r .version "$$f")"; \
 		if [ "$$got" != "$$want" ]; then \
-			echo "make: $$f has version $$got, tag $(TAG) wants $$want — run 'make bump-version VERSION=$$want', commit, then re-tag" >&2; \
+			echo "make: $$f has version $$got, tag $(TAG) wants $$want — run make cut-release VERSION='$$want' instead of tagging by hand" >&2; \
 			exit 1; \
 		fi; \
 	done
-	@echo "verify-version: all plugin.json match $(TAG)"
+	@want="$${TAG#v}"; \
+	for got in $$(jq -r '.plugins[].version' .claude-plugin/marketplace.json); do \
+		if [ "$$got" != "$$want" ]; then \
+			echo "make: .claude-plugin/marketplace.json has a plugin at version $$got, tag $(TAG) wants $$want — run make cut-release VERSION='$$want' instead of tagging by hand" >&2; \
+			exit 1; \
+		fi; \
+	done
+	@echo "verify-version: all plugin.json and marketplace.json match $(TAG)"
 
 .PHONY: release
 release:
@@ -149,7 +208,7 @@ release:
 		mkdir -p "$$outdir"; \
 		echo "building $$os/$$arch"; \
 		for s in $(SERVICES); do \
-			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -o "$$outdir/$$s" ./services/$$s || exit 1; \
+			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o "$$outdir/$$s" ./services/$$s || exit 1; \
 		done; \
 		tar -C $(RELEASE_DIR) -czf $(RELEASE_DIR)/sloprail-$$os-$$arch.tar.gz sloprail-$$os-$$arch; \
 		rm -rf "$$outdir"; \

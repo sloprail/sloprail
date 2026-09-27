@@ -96,6 +96,36 @@ find_sr_session() {
 
 sr_session_bin="$(find_sr_session)" || sr_session_bin=""
 
+# plugin_version reads THIS plugin's own version out of its plugin.json — the
+# minimum an installed sr-session is required to meet, since the two are
+# bumped in lockstep (scripts/bump-version.sh) and a release always ships the
+# sr* binaries matching the tag it was cut from.
+plugin_version() {
+  sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$(dirname "$0")/../.claude-plugin/plugin.json" 2>/dev/null | head -1
+}
+
+# run_auto_install fetches and installs the sr* set at $1 (a tag, or "" for
+# whatever plugin_version resolves to), leaving sr_session_bin pointing at the
+# freshly-installed binary on success. Shared by the two callers below: no
+# binary found at all, and a binary found but below the required version — the
+# same fetch either way, install.sh always replacing the whole set in place
+# (Makefile's distribute-local comment: "copying only the changed ones is how
+# a stale sr-session outlives the sr that dispatches to it").
+run_auto_install() {
+  tag="${1:-v$(plugin_version)}"
+  install_log="$(mktemp)"
+  if SLOPRAIL_INSTALL_TAG="$tag" sh "$(dirname "$0")/install.sh" </dev/null >"$install_log" 2>&1; then
+    sr_session_bin="$(find_sr_session)" || sr_session_bin=""
+  fi
+  if [ -n "$sr_session_bin" ]; then
+    echo "sloprail: installed ${tag}: ${sr_session_bin}" | tee /dev/stderr
+  else
+    echo "sloprail: the automatic install failed; guardrails are NOT enforcing until it is fixed:" | tee /dev/stderr
+    tail -5 "$install_log" | tee /dev/stderr
+  fi
+  rm -f "$install_log"
+}
+
 # First session after `/plugin install`: the plugin installs the sr* binaries
 # itself, once, so installing the plugin is the whole install. Asking the agent
 # to do it was measured to fail both ways: a careful model (rightly) will not
@@ -115,20 +145,40 @@ sr_session_bin="$(find_sr_session)" || sr_session_bin=""
 # byte-identical copy of the repository's (a test holds them equal), since a
 # plugin can only run what it ships.
 if [ -z "$sr_session_bin" ] && [ "$subcommand" = "start" ] && [ -z "${SLOPRAIL_NO_AUTO_INSTALL:-}" ]; then
-  version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$(dirname "$0")/../.claude-plugin/plugin.json" 2>/dev/null | head -1)"
-  tag="${SLOPRAIL_INSTALL_TAG:-v${version}}"
+  tag="${SLOPRAIL_INSTALL_TAG:-v$(plugin_version)}"
   echo "sloprail: installing the sr binaries (${tag}) into ${SLOPRAIL_INSTALL_DIR:-~/.local/bin}, one time. Set SLOPRAIL_NO_AUTO_INSTALL=1 to install by hand instead." | tee /dev/stderr
-  install_log="$(mktemp)"
-  if SLOPRAIL_INSTALL_TAG="$tag" sh "$(dirname "$0")/install.sh" </dev/null >"$install_log" 2>&1; then
-    sr_session_bin="$(find_sr_session)" || sr_session_bin=""
+  run_auto_install "$tag"
+fi
+
+# A binary WAS found, but may be older than this plugin requires: the plugin
+# (guardrail definitions, docs, skills) and the sr* binaries (the engine that
+# reads them) are bumped in lockstep, and a stale engine can be missing a
+# feature a newer plugin's guardrails assume — a fresh plugin update landing
+# on top of a months-old manual install, say. This is the upgrade half of the
+# same contract the empty-binary branch above is the install half of: pinned,
+# verified, visible, opt-out (SLOPRAIL_NO_AUTO_INSTALL=1), and it reuses
+# run_auto_install so both paths fetch and verify identically.
+#
+# Checked on every `start`, not cached: `--version` is one already-resolved
+# process exec (no download, no network), the same cost find_sr_session
+# already pays via `command -v`, and a cached "already checked" would mean an
+# upgrade landing between two sessions silently never gets picked up until
+# someone thinks to ask.
+#
+# "dev" (an unreleased local build — see internal/version.Version's doc
+# comment) is deliberately never treated as behind: a maintainer building from
+# source is not the auto-install's audience, and a dev binary sorting behind
+# any real semver (ASCII 'd' > every digit) would otherwise trigger it.
+if [ -n "$sr_session_bin" ] && [ "$subcommand" = "start" ] && [ -z "${SLOPRAIL_NO_AUTO_INSTALL:-}" ]; then
+  installed_version="$("$sr_session_bin" --version 2>/dev/null | sed -n 's/.* version \(.*\)/\1/p')"
+  required_version="$(plugin_version)"
+  if [ -n "$installed_version" ] && [ "$installed_version" != "dev" ] && [ -n "$required_version" ] \
+    && [ "$installed_version" != "$required_version" ] \
+    && [ "$(printf '%s\n%s\n' "$installed_version" "$required_version" | sort -V | head -1)" = "$installed_version" ]; then
+    tag="v${required_version}"
+    echo "sloprail: sr-session ${installed_version} is older than this plugin needs (${required_version}); upgrading to ${tag}. Set SLOPRAIL_NO_AUTO_INSTALL=1 to skip." | tee /dev/stderr
+    run_auto_install "$tag"
   fi
-  if [ -n "$sr_session_bin" ]; then
-    echo "sloprail: installed ${tag}: ${sr_session_bin}" | tee /dev/stderr
-  else
-    echo "sloprail: the automatic install failed; guardrails are NOT enforcing until it is fixed:" | tee /dev/stderr
-    tail -5 "$install_log" | tee /dev/stderr
-  fi
-  rm -f "$install_log"
 fi
 
 # The engine runs its sibling binaries BY NAME — a judge check execs `sr-agent`,
