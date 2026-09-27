@@ -111,7 +111,7 @@ func normalize(e *Env, dir, path string, args ...string) harness.Result {
 
 // normalized is one NormalizedEntry decoded from the command's JSON output —
 // enough of it to assert on: the line, the raw entry fields the test reaches for,
-// and the events with their kind and fields.
+// and the events with their kind and fields (read FLAT: every key but `kind`).
 type normalized struct {
 	Type        string          `json:"type"`
 	UUID        string          `json:"uuid"`
@@ -121,8 +121,20 @@ type normalized struct {
 }
 
 type normalizedEvt struct {
-	Kind   string                 `json:"kind"`
-	Fields map[string]interface{} `json:"fields"`
+	Kind   string
+	Fields map[string]interface{}
+}
+
+// UnmarshalJSON reads a flat event: `kind` beside the event's own fields.
+func (e *normalizedEvt) UnmarshalJSON(b []byte) error {
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	e.Kind, _ = m["kind"].(string)
+	delete(m, "kind")
+	e.Fields = m
+	return nil
 }
 
 // decodeEntries parses the command's stdout into the entries, failing the test

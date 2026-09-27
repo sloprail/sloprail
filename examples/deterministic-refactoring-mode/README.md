@@ -78,7 +78,7 @@ This was a deliberate choice among three:
     the gate reads it (enters run before gates in the Stop cycle).
 - **`context/refactoring/enter.sh`** — gets `ContextEnterPayload`; reads the
   `#refactor` declaration out of the trajectory (`sr-session trajectory
-  normalize --events PostTagWrite`, tag at `.events[].fields.tags[].label`),
+  normalize --events PostTagWrite`, tag at `.events[].tags[].label`),
   extracts the declared fqns, and prints them as
   `context[refactoring].payload.declared_markers`.
 - **`context/refactoring/exit.sh`** — PURE LIFECYCLE. On a `Stop` it reads the

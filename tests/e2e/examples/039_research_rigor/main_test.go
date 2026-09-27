@@ -20,12 +20,12 @@ import (
 //
 // The depth gate now enforces end to end against the fixed verify-depth.sh:
 //   - check 1 detects the clone from the `git clone` INVOCATION (re-derived as a
-//     PreCommandInvoke event, read from the entry's `.fields.invocations`), rather
+//     PreCommandInvoke event, read from the entry's flat `.invocations`), rather
 //     than from an unreachable `.toolUseResult` — the tool_RESULT record carries
 //     no uuid and is not re-emitted as a normalized entry, so the invocation is
 //     the only re-derivable clone signal (and the honest one: a README fetch is a
 //     different command).
-//   - check 2 reads the gh invocations the same `.fields.invocations` way, and
+//   - check 2 reads the gh invocations the same `.invocations` way, and
 //     counts pages from `--paginate` (unbounded) or `--limit N` (reading N from
 //     the flag value, or from argv when the value was space-separated).
 //

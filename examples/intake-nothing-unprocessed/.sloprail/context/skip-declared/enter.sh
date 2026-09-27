@@ -26,7 +26,7 @@ skip_texts="$(sr-session trajectory normalize \
         else "" end;
       [ .[]
         | select(any(.events[]?;
-            .kind == "PostTagWrite" and any(.fields.tags[]?; .label == "skip")))
+            .kind == "PostTagWrite" and any(.tags[]?; .label == "skip")))
       ] | .[] | .message | msgtext')"
 
 # Each bare integer in the skip prose is an excused message line; log each as a
