@@ -1,0 +1,18 @@
+description: >
+  summarize-with-citations, with the writing done by a sub-agent: the user asks
+  for a sub-agent to read CHANGELOG.md and write MIGRATION.md. The sub-agent's
+  write must cite tool output (citations-resolve), and the output it read is in
+  ITS OWN record, not the root's, so this is the real-agent proof that a
+  sub-agent can ground a write in its own tool output (--cite:tool_result
+  searches the root and every sub-agent record) and that its cited write is not
+  then refused at its own SubagentStop as uncited.
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24), with the sub-agent's steps
+  shown to the judge. Whether the sub-agent wrote MIGRATION.md, whether its
+  citations resolved, and whether a SubagentStop refused a cited write are
+  informational rows.
+seed: seed
+overlay: overlay
+exampleSloprail: true
+model: haiku
+score: score.sh

@@ -1510,6 +1510,79 @@ func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
 	}
 }
 
+// RecordUnwrittenAtSessionStart makes a session's transcript ABSENT while its
+// SessionStart hooks run, and present again by the time the prompt is
+// submitted — the order real Claude Code writes it in, which the mock does not
+// reproduce. Call before Run; it applies to the one session id given, and
+// replaces the project's settings.local.json.
+//
+// # What real Claude Code does, measured
+//
+// A fresh session's transcript does not exist when SessionStart fires. Its
+// origin record (the first with no parent, which the engine keys a session's
+// identity on) is the attachment recording the SessionStart hooks' own result,
+// so it cannot be written before they finish. Across every real transcript on
+// one machine, all 940 `SessionStart:startup` runs of `sr-session start` failed
+// to open the record, and in all 940 the hook's attachment was the origin.
+//
+// The mock writes the root prompt first and fires SessionStart after
+// (a10n-claude-mock runner.Run), and Run seeds the file earlier still — so under
+// the mock, SessionStart always finds a record, and a defect that only exists
+// because it cannot was invisible to every e2e test.
+//
+// # Why this is not the forbidden kind of hook
+//
+// writeSettings refuses to add lifecycle hooks, because a test wiring one would
+// be arranging behaviour no user has. This arranges the OPPOSITE: it takes away
+// something the mock provides and real Claude Code does not. The two hooks
+// touch only the harness's own transcript file, call nothing in this repo, and
+// sit in settings.local.json so the project's settings.json stays exactly what
+// a user installs. The mock runs project hooks before plugin hooks, in order,
+// so the hide lands before `sr-session start` reads and the restore lands before
+// anything later does. The mock writes the transcript through a file handle it
+// opened before SessionStart, so moving the file aside loses nothing it writes.
+//
+// The restore is at UserPromptSubmit because that is the latest point it could
+// honestly be: by the first tool call a real transcript always exists — no
+// PreToolUse run of `sr-session pre-tool` in the same corpus ever failed to open
+// its record.
+func (e *Env) RecordUnwrittenAtSessionStart(projDir, sessionID string) {
+	e.t.Helper()
+	path := e.transcriptPath(projDir, sessionID)
+	held := path + ".unwritten"
+	// The marker is what lets a test prove the arrangement was in effect — see
+	// RecordWasUnwrittenAtSessionStart.
+	hide := fmt.Sprintf(`[ ! -f %s ] || { mv %s %s && : > %s; }`,
+		shellQuote(path), shellQuote(path), shellQuote(held), shellQuote(path+".hidden-at-start"))
+	restore := fmt.Sprintf(`[ ! -f %s ] || mv %s %s`, shellQuote(held), shellQuote(held), shellQuote(path))
+	hook := func(command string) []any {
+		return []any{map[string]any{
+			"matcher": "*",
+			"hooks":   []any{map[string]any{"type": "command", "command": command}},
+		}}
+	}
+	settings := map[string]any{"hooks": map[string]any{
+		"SessionStart":     hook(hide),
+		"UserPromptSubmit": hook(restore),
+	}}
+	body, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		e.t.Fatalf("harness: encode local settings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projDir, ".claude", "settings.local.json"), body, 0o644); err != nil {
+		e.t.Fatalf("harness: write local settings: %v", err)
+	}
+}
+
+// RecordWasUnwrittenAtSessionStart reports whether RecordUnwrittenAtSessionStart
+// actually moved the session's record aside at SessionStart. A test resting on
+// the record being absent checks this first: if the hook never ran, the session
+// had its record all along and the test proves nothing about the case it names.
+func (e *Env) RecordWasUnwrittenAtSessionStart(projDir, sessionID string) bool {
+	e.t.Helper()
+	return fileExists(e.transcriptPath(projDir, sessionID) + ".hidden-at-start")
+}
+
 // RootMessageID is the uuid seedTranscript gives a session's root user message —
 // the human prompt every Run starts from — so a test can REFERENCE that message by
 // id without hardcoding the seeding scheme.

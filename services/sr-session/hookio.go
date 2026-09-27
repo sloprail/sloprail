@@ -126,19 +126,38 @@ type HookPayload struct {
 // while the harness still nests its record under the DISPATCHING session's
 // project directory: of 337 real sub-agent transcripts carrying a cwd, 18 record
 // a sibling worktree not under the parent's tree at all, and asking
-// BelongsToTree about those would refuse a sub-agent its own record. It is never
-// asked, because a sub-agent's path is always REPORTED — by agent_transcript_path,
-// or reconstructed from agent_id against the parent's own reported path — and
-// both return above. projectDirOf is the same fact from the other side: for a
+// BelongsToTree about those would refuse a sub-agent its own record. It is
+// asked only of the SESSION's record: a sub-agent's path is REPORTED by
+// agent_transcript_path, or reconstructed from agent_id against the session's
+// record — the reported transcript_path, or, when a sub-agent's call carries
+// none, the one this branch reconstructs from the session id in the tree the
+// call reports (so an isolated sub-agent naming only its agent id resolves
+// nothing here rather than a wrong record). projectDirOf is the same fact from the other side: for a
 // sub-agent the transcript's own LOCATION is authoritative and the recorded cwd
 // is not.
 func (p HookPayload) record() (string, error) {
 	if p.AgentTranscriptPath != "" {
 		return p.AgentTranscriptPath, nil
 	}
-	if p.AgentID != "" && p.TranscriptPath != "" {
-		return transcript.SubagentTranscriptPath(p.TranscriptPath, p.AgentID)
+	root, err := p.sessionRecord()
+	if err != nil || root == "" || p.AgentID == "" {
+		return root, err
 	}
+	// A sub-agent's call reported by its agent id alone: its record is
+	// reconstructed from the session's — reported, or derived from the session
+	// id when the payload carries no transcript_path (a sub-agent's PreToolUse
+	// can arrive that way). Answering with the session's own record here would
+	// key the sub-agent's call to the ROOT's identity and state, while the same
+	// sub-agent's SubagentStop, which reports agent_transcript_path, keys to its
+	// own: what its pre-tool calls recorded (the citations a change was grounded
+	// in) would then be in a store its own cycle never reads.
+	return transcript.SubagentTranscriptPath(root, p.AgentID)
+}
+
+// sessionRecord is the SESSION's own record as the payload names it — its
+// transcript_path, or, failing that, reconstructed from the session id — with
+// no regard to a sub-agent: record() builds a sub-agent's path on top of it.
+func (p HookPayload) sessionRecord() (string, error) {
 	if p.TranscriptPath != "" {
 		return p.TranscriptPath, nil
 	}

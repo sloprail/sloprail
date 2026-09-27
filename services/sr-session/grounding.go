@@ -177,8 +177,9 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, tr
 	return events, grounded, note
 }
 
-// resolveAll grounds each request in the session's own record, keeping those
-// that resolve. One that does not is simply not a citation: the requirement
+// resolveAll grounds each request in the session's own records — the user pool
+// in the root's, the tool_result pool in the root's and its sub-agents' (see
+// transcript.ResolveCitation) — keeping those that resolve. One that does not is simply not a citation: the requirement
 // that one exist is a rule's, and a rule refusing names what is missing.
 func resolveAll(transcriptPath string, reqs []transcript.CitationRequest) []transcript.Citation {
 	if transcriptPath == "" {
@@ -194,13 +195,15 @@ func resolveAll(transcriptPath string, reqs []transcript.CitationRequest) []tran
 }
 
 // reground keeps each citation a resolve-mode record reports only if the
-// session's own record resolves its quote, in its pools, to the same line.
+// session's own records resolve its quote, in its pools, to the same entry —
+// the same line of the same file, since a tool_result may resolve in a
+// sub-agent's record rather than the root's.
 func reground(transcriptPath string, cs []transcript.Citation) []transcript.Citation {
 	var out []transcript.Citation
 	for _, c := range cs {
 		req := transcript.CitationRequest{Quote: c.Quote, SourceTypes: c.SourceTypes}
 		for _, got := range resolveAll(transcriptPath, []transcript.CitationRequest{req}) {
-			if got.Line == c.Line {
+			if got.Path == c.Path && got.Line == c.Line {
 				out = append(out, got)
 			}
 		}
@@ -447,17 +450,16 @@ func recordCitations(store sessionstate.Store, grounded map[string][]transcript.
 }
 
 // attachRecordedCitations sets `citations` on each Post file event to what the
-// session recorded for its path.
-func attachRecordedCitations(store sessionstate.Store, events []event.Event) {
-	if store == nil {
-		return
+// session recorded for its path — and what the sub-agents it dispatched
+// recorded for it (delegatedCitations): in a shared tree a sub-agent's change
+// is also in its dispatcher's difference, and the dispatcher's cycle judging
+// it must see the citations the change was made with.
+func attachRecordedCitations(store sessionstate.Store, events []event.Event, delegated map[string][]transcript.Citation) {
+	all := recordedCitations(store)
+	for path, cs := range delegated {
+		all[path] = dedupe(append(all[path], cs...))
 	}
-	raw, ok, err := store.Meta(sessionstate.MetaCitations)
-	if err != nil || !ok || raw == "" {
-		return
-	}
-	all := map[string][]transcript.Citation{}
-	if json.Unmarshal([]byte(raw), &all) != nil {
+	if len(all) == 0 {
 		return
 	}
 	for i, e := range events {
@@ -466,6 +468,63 @@ func attachRecordedCitations(store sessionstate.Store, events []event.Event) {
 			events[i].Fields[grounding.FieldCitations] = grounding.ToWire(cs)
 		}
 	}
+}
+
+// recordedCitations is what recordCitations kept in store, by path.
+func recordedCitations(store sessionstate.Store) map[string][]transcript.Citation {
+	all := map[string][]transcript.Citation{}
+	if store == nil {
+		return all
+	}
+	raw, ok, err := store.Meta(sessionstate.MetaCitations)
+	if err != nil || !ok || raw == "" {
+		return all
+	}
+	_ = json.Unmarshal([]byte(raw), &all)
+	return all
+}
+
+// delegatedCitations is what the sub-agents dispatched beneath the record at
+// path recorded, by path, in the stores they keep for the same working tree.
+//
+// A sub-agent is a session in its own right, so its pre-tool calls record
+// citations in ITS store; a sub-agent sharing its dispatcher's tree changes
+// files the dispatcher's cycle also sees. Each sub-agent's store is found by
+// its own identity under this cycle's working directory, and read only if it
+// already exists: a sub-agent isolated in its own worktree keeps its store
+// under that worktree, and its files are not in this tree either. None of this
+// is ever written — a dispatcher never opens a store its sub-agent did not.
+func delegatedCitations(p HookPayload, path string) map[string][]transcript.Citation {
+	out := map[string][]transcript.Citation{}
+	if path == "" {
+		return out
+	}
+	subs, err := transcript.DescendantSubagentPaths(path)
+	if err != nil {
+		return out
+	}
+	for _, sub := range subs {
+		id, err := stableID(HookPayload{Cwd: p.Cwd, AgentTranscriptPath: sub})
+		if err != nil {
+			continue
+		}
+		db, err := sessionDBPath(p.Cwd, id)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(db); err != nil {
+			continue
+		}
+		store, err := sessionstate.Open(db)
+		if err != nil {
+			continue
+		}
+		for k, cs := range recordedCitations(store) {
+			out[k] = dedupe(append(out[k], cs...))
+		}
+		store.Close()
+	}
+	return out
 }
 
 func absFrom(cwd, path string) string {
