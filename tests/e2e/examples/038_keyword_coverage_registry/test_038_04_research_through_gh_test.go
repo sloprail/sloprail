@@ -181,6 +181,11 @@ func TestT038_16_SearchWithoutScannerRefused(t *testing.T) {
 		`gh extension exec search-ext token`,
 		`gh ext exec search-ext token`,
 		`gh issue list -R cli/cli -wS token`,
+		// A heredoc or here-string that feeds CODE is code.
+		"bash <<'EOF'\ngh search issues token\nEOF",
+		"python3 - <<'EOF'\nimport os; os.system('gh search issues token')\nEOF",
+		"cat <<'EOF' | sh\ngh search issues token\nEOF",
+		`bash <<< "gh search issues token"`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -280,6 +285,13 @@ func TestT038_19_ScannerWriteAndNonSearchGhAllowed(t *testing.T) {
 		`gh pr create --title "Update gh workflow" --body b`,
 		// -l takes a value: -lSecurity is --label Security, not -S.
 		`gh issue list -R cli/cli -lSecurity`,
+		// A heredoc or here-string that feeds no code is data: notes, a commit
+		// message, a grep's input — and a plain data write.
+		"cat > NOTES.md <<'EOF'\nWe ran gh search issues \"auth token\" and found little.\nEOF",
+		"tee notes.md <<'EOF'\nnext: gh search code token\nEOF",
+		"git commit --allow-empty -F - <<'EOF'\nfix gh auth\nEOF",
+		`grep -c token <<< "gh search issues token"`,
+		`echo 'we used gh search issues token' > notes.md`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)

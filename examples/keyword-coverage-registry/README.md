@@ -173,7 +173,8 @@ in one `gh search`:
   `python3 -c "os.system('gh search …')"`). A mention the parse DOES account for
   runs freely: an argument of a program that runs no code — `git commit -m
   "fix gh auth"`, `which gh`, `grep -c gh`, `gh pr create --title "Update gh
-  workflow"`. All other gh work — `gh pr create`, `gh repo clone`, `gh pr
+  workflow"`, and a heredoc or here-string that feeds no code
+  (`cat > NOTES.md <<EOF`, `git commit -F - <<EOF`). All other gh work — `gh pr create`, `gh repo clone`, `gh pr
   checks`, `gh run list`, `gh issue -R o/r view 1` — runs with or without a
   scanner. Both earlier
   versions were wrong one way: a list of search spellings was measured short
@@ -272,9 +273,13 @@ reaches the check and records nothing.
   a variable (`$GH search …`) or a decoded payload is not visible to
   `event.invocations`. The search gate counts a gh it can SEE named on the line
   but not accounted for by the parse — inside code (`eval`, `python3 -c`, an
-  unparsed `sh -c`) or a heredoc body (so a heredoc mentioning `gh` before any
-  scanner exists is refused — the cost); a gh whose name is itself hidden
-  (`G=g; ${G}h search …`, `eval "g""h search …"`, base64) is not.
+  unparsed `sh -c`, a heredoc or here-string fed to `bash`, `python3 -`, or
+  piped on to `sh`). A heredoc or here-string that feeds no code is data and
+  runs (`cat > NOTES.md <<EOF … gh search … EOF`, `git commit -F - <<EOF`). A gh
+  whose name is itself hidden (`G=g; ${G}h search …`, `eval "g""h search …"`,
+  base64) is not caught; the consumer of a heredoc is read from the words of
+  its own line, so `sudo -u x sh <<EOF` is caught but a code-runner reached
+  another way (a script that reads stdin) is not.
 - **Fetches this rule cannot see**: a GitHub host named only in an earlier
   command (`export API=https://api.github.com`, then `curl $API/…`), a host
   spliced from pieces (`H=git; curl https://${H}hub.com/…`), a URL a script or

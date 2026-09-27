@@ -20,7 +20,10 @@
 #   - a gh the line names that the parse does not account for: not a parsed gh
 #     invocation, and not inside an argument of a program that does not run
 #     code — `eval "gh search …"`, `python3 -c "os.system('gh search …')"`.
-#     `git commit -m "fix gh auth"`, `which gh`, `grep -c gh` are accounted for.
+#     `git commit -m "fix gh auth"`, `which gh`, `grep -c gh` are accounted for,
+#     and so is a heredoc or here-string whose consumer runs no code
+#     (`cat > NOTES.md <<EOF … gh search … EOF`); one fed to bash, python3 -,
+#     or piped on to sh is code, and is not.
 # Everything else — gh pr create, gh repo clone, gh pr diff/checks, gh run list,
 # gh issue -R o/r view 1, gh status, gh browse, gh auth status — is not a
 # search and runs with or without a scanner. (A first version gated everything
@@ -108,18 +111,58 @@ searches="$(printf '%s' "$payload" | jq -r '
   # A word-bounded `gh` in a string.
   def mentions: [match("(^|[^A-Za-z0-9_./-])gh(?=[^A-Za-z0-9_.-]|$)"; "g")] | length;
   # Programs whose arguments are CODE: a gh inside them may run.
-  def runs_code:
-    (.bin // "") as $b
-    | ($b | IN("eval","sh","bash","zsh","dash","ksh","fish","su","runuser","flock","script","ssh","watch","node","nodejs","deno","bun","perl","ruby","php","lua","osascript","awk","gawk","mawk","nawk","tclsh","expect"))
+  def code_runner_name:
+    (split("/") | last) as $b
+    | ($b | IN("eval","sh","bash","zsh","dash","ksh","fish","su","runuser","flock","script","ssh","watch","node","nodejs","deno","bun","perl","ruby","php","lua","osascript","awk","gawk","mawk","nawk","tclsh","expect","source","."))
       or ($b | test("^(python|pypy)[0-9.]*$"));
+  def runs_code: (.bin // "") | code_runner_name;
+  # The command text a heredoc or here-string at offset $o of line $l feeds:
+  # its own pipeline stage and every later stage of that pipeline, up to the
+  # next ; && || — so `cat <<EOF | sh` feeds sh.
+  def consumer($l; $o):
+    ($l[0:$o] | sub("^.*(;|&&|\\|)"; "")) + ($l[$o:] | sub("(;|&&|\\|\\|).*$"; ""));
+  # Whether that text runs code: any of its words (quotes stripped) names a
+  # code-running program — bash, python3, sh after a pipe, xargs sh, eval.
+  def feeds_code:
+    [splits("[\\s|]+") | select(length > 0) | gsub("^[\"\\x27]+|[\"\\x27]+$"; "")]
+    | any(.[]; code_runner_name);
+  # The gh mentions in heredoc bodies and here-strings whose consumer runs NO
+  # code: those are data (`cat > NOTES.md <<EOF`, `git commit -F - <<EOF`,
+  # `sr-file write X.md <<EOF`), accounted for like an argument. A body fed to
+  # bash, python3 -, eval, or piped on to sh is code, and is not.
+  def data_mentions:
+    split("\n") as $lines
+    | reduce range(0; $lines | length) as $i ({cur: null, queue: [], acc: 0};
+        $lines[$i] as $l
+        | if .cur != null then
+            (if .cur.strip then ($l | sub("^\t+"; "")) else $l end) as $t
+            | if $t == .cur.delim then (.cur = (.queue[0] // null) | .queue = .queue[1:])
+              elif .cur.data then .acc += ($l | mentions)
+              else . end
+          else
+            ([$l | match("(?<!<)<<(?!<)(-?)[ \\t]*[\"\\x27]?([A-Za-z0-9_.-]+)[\"\\x27]?"; "g")
+              | {strip: (.captures[0].string == "-"), delim: .captures[1].string,
+                 data: (consumer($l; .offset) | feeds_code | not)}]) as $ops
+            | ([$l | match("<<<[ \\t]*(\"[^\"]*\"|\\x27[^\\x27]*\\x27|[^ \\t;|&]+)"; "g")
+                | select(consumer($l; .offset) | feeds_code | not)
+                | .captures[0].string | mentions] | add // 0) as $strings
+            | .acc += $strings
+            | .queue = ($ops[1:])
+            | .cur = ($ops[0] // null)
+          end)
+    | .acc;
   ([.event.invocations[]? | select(.bin == "gh")]) as $gh
   # Every gh the line names, minus the ones the parse accounts for: each parsed
   # gh invocation, and each mention inside an argument of a program that does
   # not run code (`git commit -m "fix gh auth"`, `which gh`, `grep -c gh`,
-  # `gh pr create --title "Update gh workflow"`). What is left — a gh inside
-  # eval, python -c, an unparsed sh -c — is a gh call this rule cannot see.
+  # `gh pr create --title "Update gh workflow"`), and each mention in a heredoc
+  # or here-string that feeds no code (data_mentions). What is left — a gh
+  # inside eval, python -c, an unparsed sh -c, a heredoc fed to bash — is a gh
+  # call this rule cannot see.
   | ((.event.raw // "") | mentions) as $named
-  | (($gh | length) + ([.event.invocations[]? | select(runs_code | not) | (.argv // [])[1:][] | mentions] | add // 0)) as $accounted
+  | (($gh | length)
+     + ([.event.invocations[]? | select(runs_code | not) | (.argv // [])[1:][] | mentions] | add // 0)
+     + ((.event.raw // "") | data_mentions)) as $accounted
   | ($gh[] | select(searches) | (.argv | join(" "))),
     (if $named > $accounted then "a gh call this rule cannot see into (eval, another language, a script): " + (.event.raw // "" | .[0:120]) else empty end)
 ' 2>/dev/null)" || searches="an unreadable command line"
