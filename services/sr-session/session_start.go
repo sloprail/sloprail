@@ -43,6 +43,15 @@ func newSessionStartCmd() *cobra.Command {
 			// never a reason for the session to have no point to diff against.
 			recordBaseline(cmd, p)
 
+			// A resume or a compaction is where a session most often turns out
+			// to continue a transcript that is gone; say so here, once, rather
+			// than leave it to the first tool call.
+			if !isLoadCheck(p) {
+				if id, err := stableIdentity(p); err == nil {
+					noteDegradedIdentity(cmd.ErrOrStderr(), p, id)
+				}
+			}
+
 			reg, err := modules.Registry()
 			if err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)

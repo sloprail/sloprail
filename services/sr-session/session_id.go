@@ -1,7 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -81,14 +85,64 @@ func newSessionIDCmd() *cobra.Command {
 // identity — the same silent orphaning this function exists to prevent, arrived
 // at from the other side.
 func stableID(p HookPayload) (string, error) {
+	id, err := stableIdentity(p)
+	return id.ID, err
+}
+
+// stableIdentity is stableID with the walk's Degraded flag kept: whether the id
+// is the conversation's origin or the continuation root the walk fell back to
+// because the transcript it continues is gone. See transcript.Identity for the
+// tradeoff, and noteDegradedIdentity for how it is surfaced.
+func stableIdentity(p HookPayload) (transcript.Identity, error) {
 	path, err := p.record()
 	if err != nil {
-		return "", err
+		return transcript.Identity{}, err
 	}
 	if path == "" {
-		return "", fmt.Errorf("sloprail: no transcript path on the hook payload — the record of this session is what its identity is read from")
+		return transcript.Identity{}, fmt.Errorf("sloprail: no transcript path on the hook payload — the record of this session is what its identity is read from")
 	}
-	return transcript.StableSessionID(projectDirOf(path, p.Cwd), path)
+	return transcript.ResolveStableSessionID(projectDirOf(path, p.Cwd), path)
+}
+
+// degradedMarker is the file, beside a session's state, that records the
+// session was told its identity is a fallback.
+const degradedMarker = "identity-degraded"
+
+// noteDegradedIdentity tells the person, ONCE per session, that this session's
+// identity is a fallback rather than its conversation's origin.
+//
+// Once, because the condition is permanent for the session — the transcript it
+// continues is not coming back — and every hook resolves it again. Printed on
+// every hook it would be the noise the identity errors this replaces were: 225
+// real hook runs repeated the same line into the transcript. The first hook to
+// see it creates a marker beside the session's state and says so; later hooks
+// find the marker and stay quiet. A marker that cannot be created for any other
+// reason than already existing is no reason to stay quiet, so that case still
+// prints.
+//
+// Not a refusal. The session keeps working under the fallback; what it loses is
+// only what was stored before the continuation, and that is what the line says.
+func noteDegradedIdentity(w io.Writer, p HookPayload, id transcript.Identity) {
+	if id.Degraded == nil || id.ID == "" {
+		return
+	}
+	db, err := sessionDBPath(p.Cwd, id.ID)
+	if err == nil {
+		marker := filepath.Join(filepath.Dir(db), degradedMarker)
+		if mkErr := os.MkdirAll(filepath.Dir(marker), 0o755); mkErr == nil {
+			f, openErr := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+			if errors.Is(openErr, fs.ErrExist) {
+				return
+			}
+			if openErr == nil {
+				fmt.Fprintln(f, id.Degraded)
+				f.Close()
+			}
+		}
+	}
+	fmt.Fprintf(w, "sloprail: this session continues a conversation whose earlier transcript is gone, "+
+		"so its state is kept under the continuation (%s) rather than the conversation's origin; "+
+		"anything recorded before that continuation is not carried over. (%v)\n", id.ID, id.Degraded)
 }
 
 // projectDirOf is where the conversation's OTHER transcripts live, given the

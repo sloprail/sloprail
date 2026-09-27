@@ -159,7 +159,11 @@ func (p HookPayload) record() (string, error) {
 // no regard to a sub-agent: record() builds a sub-agent's path on top of it.
 func (p HookPayload) sessionRecord() (string, error) {
 	if p.TranscriptPath != "" {
-		return p.TranscriptPath, nil
+		// Reported, so authoritative about WHICH session — but not always about
+		// where its file is: a session resumed from another directory is
+		// reported under that directory's project folder while its record stays
+		// where it began. See transcript.RelocateRecord.
+		return transcript.RelocateRecord(transcript.ConfigDir(), p.TranscriptPath), nil
 	}
 	if p.SessionID == "" {
 		// No path and no id: nothing to resolve and nothing to guess from. Not a

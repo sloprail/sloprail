@@ -132,9 +132,10 @@ func TestStableSessionIDIgnoresSelfMatch(t *testing.T) {
 }
 
 // TestStableSessionIDSelfMatchWhenItIsTheOnlyMatch pins the exclusion even when
-// following it means failing: if the ONLY file holding the target is the one
-// being left, there is nothing older to reach and the honest answer is an
-// error. Matching the copy instead would produce a confident wrong id.
+// following it means stopping short: if the ONLY file holding the target is the
+// one being left, there is nothing older to reach. Matching the copy would
+// produce a confident wrong id; what it produces instead is the continuation's
+// own root, flagged as degraded rather than passed off as the origin.
 func TestStableSessionIDSelfMatchWhenItIsTheOnlyMatch(t *testing.T) {
 	p := newProject(t)
 	only := p.write("only-one",
@@ -142,14 +143,17 @@ func TestStableSessionIDSelfMatchWhenItIsTheOnlyMatch(t *testing.T) {
 		record("the-continuation-point", "gone-with-the-older-file"),
 	)
 
-	_, err := StableSessionID(p.dir, only)
-	require.Error(t, err, "a logical parent found only in the file being left must be an error, not a match on the copy")
-	require.ErrorIs(t, err, ErrContinuationMissing)
+	got, err := ResolveStableSessionID(p.dir, only)
+	require.NoError(t, err, "a continuation whose predecessor is gone still has a root to key on")
+	assert.Equal(t, "restart-root", got.ID, "the fallback is the continuation's own root, never the copied record")
+	require.ErrorIs(t, got.Degraded, ErrContinuationMissing,
+		"a walk that stopped short of the origin must say so rather than pass the fallback off as the origin")
 }
 
-// TestStableSessionIDBoundsRunaway is the second trap. A chain of files each
-// pointing at the next is bounded, so a malformed record fails with a
-// diagnosis rather than spinning.
+// TestStableSessionIDBoundsRunaway is the second trap. A ring of files each
+// pointing at the next — malformed, no real harness writes one — ends where it
+// closes on itself, flagged as degraded with ErrChainRunaway, rather than
+// spinning or leaving the session with no identity.
 func TestStableSessionIDBoundsRunaway(t *testing.T) {
 	p := newProject(t)
 	// A ring: each boundary points at a record in the next file round, and the
@@ -171,9 +175,11 @@ func TestStableSessionIDBoundsRunaway(t *testing.T) {
 		}
 	}
 
-	_, err := StableSessionID(p.dir, start)
-	require.Error(t, err, "a chain that never reaches an origin must return an error, not walk forever")
-	require.ErrorIs(t, err, ErrChainRunaway)
+	got, err := ResolveStableSessionID(p.dir, start)
+	require.NoError(t, err, "a ring still leaves a root to key on")
+	assert.NotEmpty(t, got.ID)
+	require.ErrorIs(t, got.Degraded, ErrChainRunaway,
+		"a chain that never reaches an origin must be flagged, not passed off as resolved")
 }
 
 // TestStableSessionIDFailsWhenTranscriptMissing pins failing loudly. A hook
@@ -202,18 +208,24 @@ func TestStableSessionIDFailsWhenNoOriginRecord(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoOriginRecord)
 }
 
-// TestStableSessionIDFailsWhenLogicalParentIsNowhere pins the same for a
-// restart pointing at a record no transcript holds — the environment lost a
-// file, and answering anyway would answer wrongly.
-func TestStableSessionIDFailsWhenLogicalParentIsNowhere(t *testing.T) {
+// TestStableSessionIDDegradesWhenLogicalParentIsNowhere: a restart pointing at
+// a record no transcript holds, with no file holding the restart's own root
+// either. The environment lost the predecessor, so the origin cannot be
+// reached — and the answer is the restart's own root, flagged, not no answer.
+func TestStableSessionIDDegradesWhenLogicalParentIsNowhere(t *testing.T) {
 	p := newProject(t)
 	path := p.write("orphaned-restart",
 		boundary("restart-root", "nowhere-to-be-found"),
 	)
 
-	_, err := StableSessionID(p.dir, path)
-	require.Error(t, err, "an unresolvable logical parent must be an error")
-	require.ErrorIs(t, err, ErrContinuationMissing)
+	got, err := ResolveStableSessionID(p.dir, path)
+	require.NoError(t, err)
+	assert.Equal(t, "restart-root", got.ID)
+	require.ErrorIs(t, got.Degraded, ErrContinuationMissing)
+
+	id, err := StableSessionID(p.dir, path)
+	require.NoError(t, err, "StableSessionID answers with the fallback; only Resolve reports the degradation")
+	assert.Equal(t, "restart-root", id)
 }
 
 // TestStableSessionIDKeepsIndependentConversationsApart proves the other

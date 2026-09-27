@@ -29,58 +29,107 @@ import (
 // there so a malformed chain fails with a diagnosis instead of spinning.
 const maxRestartHops = 64
 
+// Identity is the conversation identity a transcript resolves to.
+//
+// ID is always usable: every hook of a session gets the same one for as long as
+// its transcript exists. Degraded says whether it is the conversation's TRUE
+// origin or the best the walk could do.
+type Identity struct {
+	// ID is the uuid the session's state is keyed on.
+	ID string
+
+	// Degraded is nil when ID is the conversation's origin. It is set when the
+	// walk reached a continuation whose predecessor is gone, and ID is then that
+	// continuation's own root, the furthest-back record the files on disk still
+	// hold. The error says why the walk stopped (ErrContinuationMissing, or
+	// ErrChainRunaway for a chain that closes on itself).
+	//
+	// The tradeoff, stated because it is a real one. What the conversation
+	// stored BEFORE that continuation is keyed on an origin nobody can compute
+	// any more, so it is not rejoined; the session starts a fresh store at the
+	// continuation. What it buys is everything after: the fallback is the
+	// continuation root, which the harness writes once and never moves, and
+	// which every fork of that continuation carries verbatim. So all of this
+	// session's own hooks agree, and so do its forks, which is the convergence
+	// the whole identity exists for. The alternative this replaces was no
+	// identity at all, and a session with no store has no baseline, no recorded
+	// citations and no guardrail state for the rest of its life.
+	Degraded error
+}
+
 // StableSessionID resolves the identity of the conversation the transcript at
-// path belongs to.
+// path belongs to. It is ResolveStableSessionID without the Degraded flag: the
+// id a degraded walk falls back to is returned as an answer, not an error. A
+// caller that surfaces the degradation uses ResolveStableSessionID.
+func StableSessionID(projectDir, path string) (string, error) {
+	id, err := ResolveStableSessionID(projectDir, path)
+	return id.ID, err
+}
+
+// ResolveStableSessionID resolves the identity of the conversation the
+// transcript at path belongs to.
 //
 // projectDir is where the conversation's OTHER transcripts live — needed only
 // to cross a restart, since the record a restart continues from is by
 // definition in an older file. Derive it with ProjectDir rather than by
 // searching: see path.go on the 1067-directory sweep that replaces.
 //
-// Failure is loud. This runs where a harness's transcript must exist, so a
-// missing or unreadable one is a broken environment rather than a session
-// without a record. Returning the reported id instead would restore the exact
-// silent orphaning this exists to prevent, and would do it invisibly — the
-// caller would carry on, quietly, against the wrong session.
-func StableSessionID(projectDir, path string) (string, error) {
+// What still fails is what leaves nothing to key on: no path, a transcript that
+// cannot be read, one with no parentless record at all, and a restart with no
+// project directory to cross it in. A hook runs where the harness's transcript
+// must exist, so these are a broken environment rather than a session without
+// a record, and returning the reported id instead would restore the exact
+// silent orphaning this exists to prevent.
+//
+// A predecessor that is gone is NOT one of those. The session has a record and
+// a continuation root, so it resolves to that root with Degraded set — see
+// Identity. Measured on one ~/.claude: of 19 transcripts opening on a
+// continuation, 4 name a predecessor no file holds any more, because Claude
+// Code deletes transcripts older than its cleanup period while a later
+// continuation of the same conversation is still resumable.
+func ResolveStableSessionID(projectDir, path string) (Identity, error) {
 	if path == "" {
-		return "", fmt.Errorf("transcript: stable session id: %w", ErrNoTranscriptPath)
+		return Identity{}, fmt.Errorf("transcript: stable session id: %w", ErrNoTranscriptPath)
 	}
 
-	visited := map[string]bool{path: true}
+	// The roots already walked through. Each hop has to reach a DIFFERENT
+	// root: every fork of one continuation opens on the same record, uuid and
+	// all, so a file whose root has been seen is a sibling of one already read,
+	// never what it continues. See findPredecessor.
+	seen := map[string]bool{}
 	cur := path
 	for hop := 0; hop < maxRestartHops; hop++ {
 		root, err := rootRecord(cur)
 		if err != nil {
-			return "", fmt.Errorf("transcript: stable session id: %w", err)
+			return Identity{}, fmt.Errorf("transcript: stable session id: %w", err)
 		}
 
 		// The first walk ended at a record with no parent. If it carries no
 		// logical parent either, it is the true origin and there is nothing
 		// older to reach.
 		if root.LogicalParentUUID == "" {
-			return root.UUID, nil
+			return Identity{ID: root.UUID}, nil
 		}
+		seen[root.UUID] = true
 
 		// The second walk. This root only opens a file continuing an earlier
 		// one, so the conversation began further back — in whichever older
 		// transcript holds the record it resumes.
 		if projectDir == "" {
-			return "", fmt.Errorf("transcript: stable session id: %s continues %s: %w",
+			return Identity{}, fmt.Errorf("transcript: stable session id: %s continues %s: %w",
 				cur, root.LogicalParentUUID, ErrNoProjectDir)
 		}
-		next, err := findTranscriptContaining(projectDir, root.LogicalParentUUID, cur)
+		next, err := findPredecessor(projectDir, root, seen)
+		if errors.Is(err, ErrContinuationMissing) || errors.Is(err, ErrChainRunaway) {
+			return Identity{ID: root.UUID, Degraded: fmt.Errorf(
+				"transcript: stable session id: resolving what %s continues: %w", cur, err)}, nil
+		}
 		if err != nil {
-			return "", fmt.Errorf("transcript: stable session id: resolving what %s continues: %w", cur, err)
+			return Identity{}, fmt.Errorf("transcript: stable session id: resolving what %s continues: %w", cur, err)
 		}
-		if visited[next] {
-			return "", fmt.Errorf("transcript: stable session id: the chain from %s revisits %s: %w",
-				path, next, ErrChainRunaway)
-		}
-		visited[next] = true
 		cur = next
 	}
-	return "", fmt.Errorf("transcript: stable session id: the chain from %s ran past %d restarts: %w",
+	return Identity{}, fmt.Errorf("transcript: stable session id: the chain from %s ran past %d restarts: %w",
 		path, maxRestartHops, ErrChainRunaway)
 }
 

@@ -98,8 +98,9 @@ func natureHookScope(cmd *cobra.Command, p HookPayload) hookScope {
 	if p.Cwd != "" {
 		scope.Workspace = workspaceAnchor(p.Cwd)
 	}
-	if id, err := stableID(p); err == nil {
-		scope.SessionID = id
+	if id, err := stableIdentity(p); err == nil {
+		scope.SessionID = id.ID
+		noteDegradedIdentity(cmd.ErrOrStderr(), p, id)
 	} else {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %v\n", err)
 	}
