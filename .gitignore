@@ -1,16 +1,12 @@
 # Built binaries. Each service compiles to one at the repo root, so a plain
 # `go build ./services/...` leaves them in the working tree.
 #
-# One entry per directory under services/, and nothing else: an entry for a
-# binary that cannot be built ignores a file that would never appear, and a
-# missing entry lets a real build artefact be committed. Both were true before
-# the split — /sloprail and /sr-command named binaries that no longer exist and
-# never existed, while sr-agent was built and unlisted.
+# Every service binary is named sr or sr-<service>, so a pattern covers them
+# all, including one added later. A per-binary list went stale twice: sr-agent,
+# and then sr-eval, were built and unlisted, and sr-eval got committed. Anchored
+# at the root, so services/sr-*/ itself is untouched.
 /sr
-/sr-session
-/sr-file
-/sr-mark
-/sr-agent
+/sr-*
 
 # Where `make build` puts the same binaries. The entries above cover a bare
 # `go build ./services/...`, which drops them at the root; the Makefile builds

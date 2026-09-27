@@ -126,7 +126,7 @@ func TestBody_UncitedCreateRefusedByRequire(t *testing.T) {
 	if e.Exists(proj, taskPath) {
 		t.Errorf("the preventive guard let an uncited task land on disk")
 	}
-	if !res.Saw("must be grounded in a citation of the user's own words") {
+	if !res.Saw("must cite the user's own words (--cite:user)") {
 		t.Errorf("the refusal was not the citation requirement's reason:\n%s", res.Output)
 	}
 	if !res.Saw("sr-file write "+taskPath) || !res.Saw("--cite:user") {
@@ -156,7 +156,7 @@ func TestBody_UncitedBodyChangeRefused(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an uncited change to a task's body was not refused:\n%s", res.Output)
 	}
-	if !res.Saw("this change to " + taskPath + " must be grounded in a citation") {
+	if !res.Saw("this change to " + taskPath + " must cite the user's own words") {
 		t.Errorf("the refusal was not the citation requirement's reason:\n%s", res.Output)
 	}
 	if got := readFile(t, proj, taskPath); got != original {

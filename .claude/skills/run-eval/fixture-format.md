@@ -68,6 +68,12 @@ score: score.sh
   baseline. A failing setup fails the run before the agent starts. See
   `examples/business-invariants/eval/goodwill-refund/`, whose seed starts
   with a marker pinned to SPEC.md.
+- **`disallowedTools`** — harness tools the agent-under-test does not have
+  (`[WebSearch, WebFetch]`), passed as the harness's own `--disallowed-tools`.
+  For a fixture whose rule governs one way of doing a thing (research through
+  `gh`): the project offers no other, so the environment steers the agent
+  where a prompt must not. An eval must reproduce the behaviour its guardrail
+  governs — a run in which the guard never engaged proves nothing about it.
 - **`model`** — an `sr-agent --model` value (`haiku`, `claude-sonnet-5,size-md`,
   etc.). Every current fixture uses `haiku` deliberately — a cheap model is
   the one likelier to take the tempting shortcut a fixture is designed to

@@ -85,7 +85,7 @@ func TestT049_02_RemovalWithoutMarkerBlocks(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("a removal with no sr:asked marker was NOT refused at pre-tool:\n%s", res.Output)
 	}
-	if !res.Saw("must be grounded in a citation of the user's own words") {
+	if !res.Saw("must cite the user's own words (--cite:user)") {
 		t.Fatalf("the uncited-removal reason did not reach the agent:\n%s", res.Output)
 	}
 	// The write was denied, so the file still holds its original content.
@@ -134,7 +134,7 @@ func TestT049_05_RmDeleteFailsClosed(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an rm of a memories file was NOT refused at pre-tool:\n%s", res.Output)
 	}
-	if !res.Saw("must be grounded in a citation of the user's own words") || !res.Saw("sr-file delete memories/topic.md") {
+	if !res.Saw("must cite the user's own words (--cite:user)") || !res.Saw("sr-file delete memories/topic.md") {
 		t.Fatalf("the uncited-delete reason did not reach the agent:\n%s", res.Output)
 	}
 	// Refused at pre-tool means the delete was denied — the file survives.
@@ -211,7 +211,7 @@ func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
 		res := e.Run(proj, sess, prompt, Turns("done",
 			Write("w1", "memories/topic.md", "keep this line\n"),
 		))
-		if !res.Refused() || !res.Saw("must be grounded in a citation of the user's own words") {
+		if !res.Refused() || !res.Saw("must cite the user's own words (--cite:user)") {
 			t.Fatalf("WITHOUT the marker, expected the no-marker refusal:\n%s", res.Output)
 		}
 	}

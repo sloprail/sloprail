@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -120,7 +121,7 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	configDir := agent.configDir
 
 	var agentErrText string
-	if agentErr := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, prompt, agent.env); agentErr != nil {
+	if agentErr := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, prompt, agent.env, fx.DisallowedTools); agentErr != nil {
 		agentErrText = agentErr.Error()
 		fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error: %v\n", agentErr)
 		// Not returned yet: a refusal or a crash mid-run still leaves a
@@ -222,11 +223,19 @@ func exitCode(err error) int {
 // build's siblings first on PATH — or, for a FreshMachine run, nothing of
 // sloprail on PATH at all, not even the directory sr-agent was found in
 // (which is why sr-agent is exec'd by absolute path).
-func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir, model, prompt string, env []string) error {
+func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir, model, prompt string, env []string, disallowed []string) error {
 	agentBin := filepath.Join(binDir, "sr-agent")
+	claudeArgs := map[string]string{"settings": "{}", "permission-mode": "bypassPermissions"}
+	if len(disallowed) > 0 {
+		claudeArgs["disallowed-tools"] = strings.Join(disallowed, " ")
+	}
+	encoded, err := json.Marshal(claudeArgs)
+	if err != nil {
+		return fmt.Errorf("encode the harness args: %w", err)
+	}
 	args := []string{
 		"--model", model,
-		"--claude-args", `{"settings":"{}","permission-mode":"bypassPermissions"}`,
+		"--claude-args", string(encoded),
 		"--prompt", prompt,
 	}
 
