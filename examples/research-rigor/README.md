@@ -11,10 +11,15 @@ README and wrote a confident summary is refused at `Stop`, with a reason that
 says what is missing and what to do:
 
 > This #research run cloned /…/node-retry but read none of its source files — a
-> README or docs file does not count. To finish the research: git clone a real
-> repository that implements what you are researching, then read at least 2 of
-> its source files (not only the README or docs) with Read, Grep, cat, sed, grep
-> or rg. Reads of directories this run did not clone do not count.
+> README or docs file does not count. To finish the research: read 2 more
+> distinct source files inside /…/node-retry with Read, Grep, cat, sed, grep or
+> rg; reading the same file again does not add one. Reads of directories this
+> run did not clone do not count.
+
+With nothing cloned, the remedy is to clone a real repository that implements
+what is being researched and read two of its source files. A `git clone` that
+failed because its directory was already there is named as such, with the
+advice to clone into a new directory.
 
 The convention it enforces is the one a project writes down (the eval seed's
 `NOTES.md`: "clone at least one real repo that implements retry/backoff logic,

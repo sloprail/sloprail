@@ -63,7 +63,7 @@ func TestT039_19_ProposalBeforeDepthRefusedBeforeItLands(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("the write was not refused:\n%s", res.Output)
 	}
-	for _, want := range []string{heldReason, "none of its source files", whatToDo, "findings-need-depth"} {
+	for _, want := range []string{heldReason, "none of its source files", readMore(2, dst), "findings-need-depth"} {
 		if !res.Saw(want) {
 			t.Errorf("the write refusal is missing %q:\n%s", want, res.Output)
 		}

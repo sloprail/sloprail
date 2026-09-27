@@ -122,7 +122,11 @@ func TestT039_17_FailedCloneIntoExistingDirectoryRefused(t *testing.T) {
 		Read("r1", filepath.Join(dst, "lib", "retry.js")),
 		Read("r2", filepath.Join(dst, "lib", "backoff.js")),
 	)
-	for _, want := range []string{noCloneReason, "Reads of directories this run did not clone do not count (e.g. " + filepath.Join(dst, "lib")} {
+	for _, want := range []string{
+		noCloneReason,
+		"Your git clone into " + dst + " failed because the directory was already there",
+		"Reads of directories this run did not clone do not count (e.g. " + filepath.Join(dst, "lib"),
+	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("the refusal is missing %q:\n%s", want, joined)
 		}

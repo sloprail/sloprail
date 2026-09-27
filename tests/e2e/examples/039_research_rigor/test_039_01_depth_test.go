@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -9,8 +10,8 @@ import (
 // clone of its own — the words that must reach the agent.
 const noCloneReason = "This #research run has not cloned a repository"
 
-// whatToDo is the part of every depth refusal that tells the agent what to do.
-const whatToDo = "git clone a real repository that implements what you are researching, then read at least 2 of its source files (not only the README or docs)"
+// whatToDo is what a depth refusal tells an agent that has cloned nothing.
+const whatToDo = "To finish the research: git clone a real repository that implements what you are researching, then read at least 2 of its source files (not only the README or docs)"
 
 // T039_01: a research run declared with #research is REFUSED at Stop when it
 // shows no depth — nothing cloned, nothing read — and the refusal says what is
@@ -86,4 +87,14 @@ func TestT039_03_NoResearchNoGate(t *testing.T) {
 	if res.Refused() || len(e.BlockingErrorsFrom(proj, sess, "Stop")) != 0 {
 		t.Errorf("an ordinary non-research turn was refused:\n%s", res.Output)
 	}
+}
+
+// readMore is what a depth refusal tells an agent that cloned but read too few
+// source files: how many more, and where.
+func readMore(n int, dirs string) string {
+	files := "1 more distinct source file"
+	if n != 1 {
+		files = strconv.Itoa(n) + " more distinct source files"
+	}
+	return "To finish the research: read " + files + " inside " + dirs
 }

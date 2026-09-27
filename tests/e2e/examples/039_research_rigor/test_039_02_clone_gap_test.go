@@ -66,7 +66,8 @@ func TestT039_05_CloneButReadmeOnlyRefused(t *testing.T) {
 		"This #research run cloned " + dst,
 		"but read only one source file in it (" + filepath.Join(dst, "lib", "retry.js") + "), and 2 are needed",
 		"a README or docs file does not count",
-		whatToDo,
+		readMore(1, dst),
+		"reading the same file again does not add one",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("the refusal is missing %q:\n%s", want, joined)

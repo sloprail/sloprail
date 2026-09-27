@@ -60,6 +60,7 @@ verdict="$(printf '%s' "$facts" | jq -c --argjson min "$MIN_SOURCE_FILES" \
   | ([ .[].clones[] ] | unique_by(.dest)) as $clones
   | ([ $clones[].dest ]) as $dirs
   | ([ .[].unresolvedClones ] | add // 0) as $unresolved
+  | ([ .[].failedClones[]? ] | unique - $dirs) as $failed
   | ([ .[].reads[] ] | unique) as $reads
   | [ $reads[] | . as $p
       | first($dirs[] | select(. as $d | $p | under($d))) as $d
@@ -71,25 +72,31 @@ verdict="$(printf '%s' "$facts" | jq -c --argjson min "$MIN_SOURCE_FILES" \
       | select(($ws == "" or ($p | under($ws) | not)) and ($home == "" or ($p | under($home + "/.claude") | not)))
       | select(is_doc | not) ] as $elsewhere
   | {pass: (($dirs | length) > 0 and ($source | length) >= $min),
-     dirs: $dirs, unresolved: $unresolved, source: $source, elsewhere: $elsewhere}
+     dirs: $dirs, unresolved: $unresolved, source: $source, elsewhere: $elsewhere,
+     failed: [ $failed[] | select(. as $f | $elsewhere | any(. == $f or startswith($f + "/"))) ]}
 ')" || block "The depth check could not evaluate this research run's trajectory ($transcript_path)."
 
 if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
   reason="$(printf '%s' "$verdict" | jq -r --argjson min "$MIN_SOURCE_FILES" '
     def list($xs): ($xs[:3] | join(", ")) + (if ($xs | length) > 3 then ", …" else "" end);
+    def more($n): if $n == 1 then "1 more distinct source file" else "\($n) more distinct source files" end;
     (if (.dirs | length) == 0 then
        "This #research run has not cloned a repository: no git clone in it (or in a sub-agent it dispatched) succeeded"
        + (if .unresolved > 0 then " into a directory that can be located — clone into a literal path, not one built from a variable or reached through an unresolvable cd" else "" end)
-       + "."
+       + ". To finish the research: git clone a real repository that implements what you are researching, then read at least \($min) of its source files (not only the README or docs) with Read, Grep, cat, sed, grep or rg."
      else
        (if (.dirs | length) == 1 then "its" else "their" end) as $its
        | "This #research run cloned " + list(.dirs) + " but read "
        + (if (.source | length) == 0 then "none of " + $its + " source files"
           else "only one source file " + (if (.dirs | length) == 1 then "in it" else "across them" end)
                + " (" + list(.source) + "), and \($min) are needed" end)
-       + " — a README or docs file does not count."
+       + " — a README or docs file does not count. To finish the research: read "
+       + more($min - (.source | length)) + " inside " + list(.dirs)
+       + " with Read, Grep, cat, sed, grep or rg; reading the same file again does not add one."
      end)
-    + " To finish the research: git clone a real repository that implements what you are researching, then read at least \($min) of its source files (not only the README or docs) with Read, Grep, cat, sed, grep or rg."
+    + (if (.failed | length) > 0 then
+         " Your git clone into " + list(.failed) + " failed because the directory was already there, so its contents are not this run'"'"'s clone — clone into a new directory to use that repository."
+       else "" end)
     + (if (.elsewhere | length) > 0 then
          " Reads of directories this run did not clone do not count (e.g. " + list(.elsewhere) + ") — a checkout already on disk is not research this run did."
        else " Reads of directories this run did not clone do not count." end)

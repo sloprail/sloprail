@@ -4,6 +4,9 @@
 # Emits {clones, unresolvedClones, reads}:
 #   clones            [{dest, repo}] — `git clone`s that succeeded and whose
 #                     destination directory is known (absolute, canonical)
+#   failedClones      [dest] — `git clone`s that failed (an error result, or a
+#                     `fatal:` naming them): a directory already there is not
+#                     this run's clone
 #   unresolvedClones  how many `git clone`s ran whose destination could not be
 #                     placed (a directory named through a variable, or after a
 #                     `cd` the engine could not resolve)
@@ -187,7 +190,6 @@ def results:
 | [ $calls[]
     | . as $c
     | ($res[$c.id] // {err: false, text: ""}) as $r
-    | select($r.err | not)
     | if $c.name == "Bash" then
         [ first($c.events[] | select(.kind == "PreCommandInvoke" and .raw == $c.input.command)) | .invocations[] ]
         | map(
@@ -203,23 +205,26 @@ def results:
                     # repository. A pipeline (`git clone … | head`) exits 0
                     # anyway, so the output is read too.
                     | ($r.text | split("\n") | map(select(startswith("fatal:"))) ) as $fatal
-                    | if ($fatal | any(. as $l | ($cl.repo != null and ($l | contains($cl.repo)))
+                    | if $r.err or ($fatal | any(. as $l | ($cl.repo != null and ($l | contains($cl.repo)))
                                                or ($dest != null and ($l | contains($dest | split("/") | last)))))
-                      then empty
+                      then (if $dest == null then empty else {failed: $dest} end)
                       elif $dest == null or (($cl.explicit or ($cl.cdirs | length) > 0) and ($c.input.command | dynamic)) then {unresolved: 1}
                       else {clone: {dest: $dest, repo: $cl.repo}} end
                   end
+              elif $r.err then empty
               else
                 read_paths as $ps
                 | if ($ps | length) == 0 then empty
                   else $ps[] | resolve($dir) | select(. != null) | {read: .} end
               end)
         | .[]
+      elif $r.err then empty
       elif $c.name == "Read" then
         ($c.input.file_path | resolve($c.base)) | select(. != null) | {read: .}
       elif $c.name == "Grep" then
         (($c.input.path // ".") | resolve($c.base)) | select(. != null) | {read: .}
       else empty end ]
 | {clones: [ .[] | .clone // empty ],
+   failedClones: [ .[] | .failed // empty ],
    unresolvedClones: ([ .[] | .unresolved // empty ] | add // 0),
    reads: [ .[] | .read // empty ]}
