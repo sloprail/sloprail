@@ -62,10 +62,8 @@ const (
 	taskAgent
 )
 
-// citableResults returns, for each tool_use id in the record, whether the
-// result answering it is a tool's own output. An id not in the map — a call not
-// in the record — is not.
-func citableResults(entries []LinedEntry) map[string]bool {
+// recordCalls is every tool call in the record, by its tool_use id.
+func recordCalls(entries []LinedEntry) map[string]assistantContentBlock {
 	calls := map[string]assistantContentBlock{}
 	for _, e := range entries {
 		if e.Type != EntryAssistant || len(e.Message) == 0 {
@@ -82,6 +80,14 @@ func citableResults(entries []LinedEntry) map[string]bool {
 			}
 		}
 	}
+	return calls
+}
+
+// citableResults returns, for each tool_use id in the record, whether the
+// result answering it is a tool's own output. An id not in the map — a call not
+// in the record — is not.
+func citableResults(entries []LinedEntry) map[string]bool {
+	calls := recordCalls(entries)
 	tasks := backgroundTasks(entries, calls)
 	citable := map[string]bool{}
 	for id, b := range calls {
@@ -150,4 +156,68 @@ func taskIDOf(input json.RawMessage) string {
 		return in.TaskID
 	}
 	return in.BashID
+}
+
+// excludedResultHint says why quote, which did not resolve as tool output in
+// the session whose record is at path, is not tool output — when the quote IS
+// in the session's records, in a tool_result block the pool leaves out. The
+// words are there, so "not there word for word" would send the caller looking
+// for a typo; what it needs to hear is which kind of text it quoted. "" when the
+// quote is in no excluded result either.
+func excludedResultHint(path, quote string, subagent bool) string {
+	_, records, err := citationRecords(path, subagent)
+	if err != nil {
+		return ""
+	}
+	for _, r := range records {
+		entries, err := ReadLines(r)
+		if err != nil {
+			continue
+		}
+		calls := recordCalls(entries)
+		tasks := backgroundTasks(entries, calls)
+		for _, e := range entries {
+			if e.Type != EntryUser || len(e.Message) == 0 {
+				continue
+			}
+			var msg userMessage
+			var blocks []userContentBlock
+			if json.Unmarshal(e.Message, &msg) != nil || json.Unmarshal(msg.Content, &blocks) != nil {
+				continue
+			}
+			for _, b := range blocks {
+				if b.Type != "tool_result" {
+					continue
+				}
+				for _, body := range toolResultStrings(b.Content) {
+					if !containsWords(body, quote) && !containsWords(withoutLineNumbers(body), quote) {
+						continue
+					}
+					if hint := whyExcluded(body, calls, tasks, b.ToolUseID); hint != "" {
+						return hint
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// whyExcluded names the kind of text an excluded tool_result body is, and what
+// to cite instead; "" for a body the tool-output pool does read.
+func whyExcluded(body string, calls map[string]assistantContentBlock, tasks map[string]taskKind, id string) string {
+	call, ok := calls[id]
+	switch {
+	case isHookRefusal(body):
+		return ""
+	case !ok:
+		return "Those words are in a tool result whose call is not in the record (the call that produced it is not in the record), so where they came from is unknown and they are not citable as tool output; run the command again so its output lands with its call, and cite that"
+	case delegationTools[call.Name]:
+		return "Those words are in a sub-agent's reply (model-written), which is not tool output; cite what the sub-agent's own tools printed — its record is searched too"
+	case taskReaders[call.Name] && tasks[taskIDOf(call.Input)] != taskBash:
+		return "Those words are a background agent's reply read through " + call.Name + " (model-written), which is not tool output; cite what that agent's own tools printed"
+	case len(extractAnswers(body)) > 0:
+		return "Those words are an AskUserQuestion answer — the user's own words, not a tool's output; cite them with --cite:user"
+	}
+	return ""
 }

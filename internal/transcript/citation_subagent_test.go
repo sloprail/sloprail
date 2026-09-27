@@ -118,19 +118,46 @@ func TestResolveCitationOrphanSubagentRefusesTheUserPool(t *testing.T) {
 	assert.Equal(t, sub, got.Path)
 }
 
-func TestResolveCitationIsAmbiguousAcrossRecords(t *testing.T) {
+// The root and a sub-agent printed the same thing — both read the same file.
+// Each resolves the quote in its OWN record first: the two entries are
+// identical, so no extension of the quote could tell them apart, and a root
+// that could cite its own output before it dispatched anything must still be
+// able to after. Only a quote the caller's own record does not hold is searched
+// for across the session.
+func TestResolveCitationPrefersTheCallersOwnRecord(t *testing.T) {
 	p := newProject(t)
-	// The root printed the same thing the sub-agent did.
 	rootPath, sub := dispatchedSession(t, p, []string{
 		toolCall("a1", "u1", "toolu_root", "Bash", "cat retry.yaml"),
 		toolAnswer("r1", "a1", "toolu_root", "retries: 5 with TWICEMARKER backoff"),
 	}, "retries: 5 with TWICEMARKER backoff")
 
+	got, err := ResolveCitation(rootPath, toolReq("TWICEMARKER"))
+	require.NoError(t, err, "the root's own output must stay citable by the root")
+	assert.Equal(t, rootPath, got.Path)
+	assert.Equal(t, 3, got.Line)
+
+	got, err = ResolveCitation(sub, toolReq("TWICEMARKER"))
+	require.NoError(t, err, "the sub-agent's own output must stay citable by the sub-agent")
+	assert.Equal(t, sub, got.Path)
+	assert.Equal(t, 3, got.Line)
+}
+
+// A quote the caller's own record does not hold, printed by two sub-agents, is
+// ambiguous: neither record is the caller's, and the two are indistinguishable.
+func TestResolveCitationIsAmbiguousAcrossRecords(t *testing.T) {
+	p := newProject(t)
+	rootPath, sub := dispatchedSession(t, p, nil, "retries: 5 with TWICEMARKER backoff")
+	other := p.writeSubagent("the-session", "c3d4",
+		`{"type":"user","uuid":"t0","parentUuid":null,"isSidechain":true,"agentId":"c3d4","message":{"role":"user","content":"read it too"}}`,
+		sidechainCall("t1", "t0", "toolu_other", "cat retry.yaml"),
+		sidechainAnswer("t2", "t1", "toolu_other", "retries: 5 with TWICEMARKER backoff"),
+	)
+
 	_, err := ResolveCitation(rootPath, toolReq("TWICEMARKER"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous")
-	assert.Contains(t, err.Error(), rootPath+":3")
-	assert.Contains(t, err.Error(), sub+":3", "the candidates name both records")
+	assert.Contains(t, err.Error(), sub+":3")
+	assert.Contains(t, err.Error(), other+":3", "the candidates name both records")
 }
 
 func TestResolveCitationSubagentSafetyPropertiesHold(t *testing.T) {
@@ -162,18 +189,19 @@ func TestResolveCitationSubagentSafetyPropertiesHold(t *testing.T) {
 }
 
 // CiteInSession is what `trajectory cite` runs: the same records per pool as
-// ResolveCitation, every candidate returned, root record first.
+// ResolveCitation — the caller's own record first for tool output, the whole
+// session when that holds nothing — every candidate returned, root first.
 func TestCiteInSessionSearchesThePoolsRecords(t *testing.T) {
 	p := newProject(t)
 	rootPath, sub := dispatchedSession(t, p, []string{
 		toolCall("a1", "u1", "toolu_root", "Bash", "cat retry.yaml"),
 		toolAnswer("r1", "a1", "toolu_root", "retries: 5 with TWICEMARKER backoff"),
-	}, "retries: 5 with TWICEMARKER backoff")
+	}, "retries: 5 with TWICEMARKER backoff ONLYSUB")
 
 	for _, from := range []string{rootPath, sub} {
 		got, err := CiteInSession(from, "TWICEMARKER", []SourceType{SourceToolResult})
 		require.NoError(t, err)
-		assert.Equal(t, []CitationMatch{{Path: rootPath, Line: 3}, {Path: sub, Line: 3}}, got, "root first, then the sub-agent's")
+		assert.Equal(t, []CitationMatch{{Path: from, Line: 3}}, got, "the caller's own record first")
 
 		got, err = CiteInSession(from, "DISPATCHMARKER", []SourceType{SourceUser, SourceToolResult})
 		require.NoError(t, err)
@@ -183,6 +211,11 @@ func TestCiteInSessionSearchesThePoolsRecords(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []CitationMatch{{Path: rootPath, Line: 1}}, got, "the user pool is the root's")
 	}
+
+	// What the root's own record does not hold is found across the session.
+	got, err := CiteInSession(rootPath, "ONLYSUB", []SourceType{SourceToolResult})
+	require.NoError(t, err)
+	assert.Equal(t, []CitationMatch{{Path: sub, Line: 3}}, got)
 }
 
 func TestCiteInSessionOrphanRefusesOnlyTheUserPool(t *testing.T) {
@@ -283,4 +316,100 @@ func TestUnresolvedUserCitationTellsASubagentWhy(t *testing.T) {
 	_, err = ResolveCitation(sub, toolReq("DISPATCHMARKER"))
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "sub-agent")
+}
+
+// A record a harness filed at <session>/subagents/agent-<id>.jsonl is a
+// sub-agent's even when nothing inside it says so — no meta.json beside it (a
+// harness that stopped writing one, a record not fully written yet) and no
+// isSidechain on its first record. Read as a root, its first "user" message —
+// the parent agent's dispatch — would ground as the end user's words.
+func TestResolveCitationSubagentByLayoutAlone(t *testing.T) {
+	p := newProject(t)
+	rootPath := p.write("the-session", userMsg("u1", "research the retry policy"))
+	sub := p.writeSubagent("the-session", "e5f6",
+		`{"type":"user","uuid":"s0","parentUuid":null,"message":{"role":"user","content":"DISPATCHMARKER: read the retry config"}}`,
+		toolCall("s1", "s0", "toolu_sub", "Bash", "cat retry.yaml"),
+		toolAnswer("s2", "s1", "toolu_sub", "LAYOUTOUTPUT retries: 5"),
+	)
+	require.False(t, IsSubagentTranscript(sub), "the fixture must carry no content mark, or this tests nothing")
+
+	_, err := ResolveCitation(sub, userReq("DISPATCHMARKER"))
+	var rerr *ResolutionError
+	require.ErrorAs(t, err, &rerr, "a dispatch prompt grounded as the user's words")
+
+	got, err := ResolveCitation(sub, userReq("research the retry policy"))
+	require.NoError(t, err, "the user's words resolve in the root the layout names")
+	assert.Equal(t, rootPath, got.Path)
+
+	got, err = ResolveCitation(sub, toolReq("LAYOUTOUTPUT"))
+	require.NoError(t, err)
+	assert.Equal(t, sub, got.Path)
+
+	// Orphaned by layout: no root on disk, so the user pool cannot be searched.
+	orphan := p.writeSubagent("gone-session", "e5f6",
+		`{"type":"user","uuid":"s0","parentUuid":null,"message":{"role":"user","content":"ORPHANDISPATCH go"}}`,
+	)
+	_, err = ResolveCitation(orphan, userReq("ORPHANDISPATCH"))
+	require.ErrorAs(t, err, &rerr)
+	assert.Contains(t, err.Error(), "sub-agent")
+}
+
+// A caller the hook KNOWS is a sub-agent (the payload says so) whose record
+// neither says so nor sits where a sub-agent's does: there is no root to climb
+// to, and the user pool must be refused rather than searched in the
+// sub-agent's own record.
+func TestResolveSubagentCitationWithNoDerivableRoot(t *testing.T) {
+	p := newProject(t)
+	stray := p.write("agent-stray",
+		`{"type":"user","uuid":"s0","parentUuid":null,"message":{"role":"user","content":"STRAYDISPATCH go"}}`,
+		toolCall("s1", "s0", "toolu_sub", "Bash", "echo hi"),
+		toolAnswer("s2", "s1", "toolu_sub", "STRAYOUTPUT hi"),
+	)
+	_, err := ResolveSubagentCitation(stray, userReq("STRAYDISPATCH"))
+	var rerr *ResolutionError
+	require.ErrorAs(t, err, &rerr, "a known sub-agent's dispatch grounded as the user's words")
+	assert.Contains(t, err.Error(), "sub-agent")
+
+	got, err := ResolveSubagentCitation(stray, toolReq("STRAYOUTPUT"))
+	require.NoError(t, err, "its own tool output is still citable")
+	assert.Equal(t, stray, got.Path)
+
+	// A sub-agent whose record is where the layout puts it climbs as before.
+	rootPath, sub := dispatchedSession(t, p, nil, "out")
+	got, err = ResolveSubagentCitation(sub, userReq("research the retry policy"))
+	require.NoError(t, err)
+	assert.Equal(t, rootPath, got.Path)
+}
+
+// A tool-output quote that is in the record, but in a result the tool-output
+// pool excludes, fails with a reason rather than "not there word for word".
+func TestUnresolvedToolResultSaysWhyAnExcludedResultIsNot(t *testing.T) {
+	p := newProject(t)
+	path := p.write("the-session",
+		userMsg("u1", "run the tests"),
+		agentDispatch("a1", "u1", "toolu_agent", "Agent"),
+		agentReply("r1", "a1", "toolu_agent", "REPLYMARKER all 40 tests pass"),
+		toolAnswer("r2", "r1", "toolu_gone", "ORPHANMARKER all green"),
+		namedCall("a3", "r2", "toolu_ag", "Agent", `{"prompt":"go","run_in_background":true}`),
+		toolAnswer("r3", "a3", "toolu_ag", "Async agent launched successfully.\nagentId: bg42 (internal ID)"),
+		namedCall("a4", "r3", "toolu_out", "TaskOutput", `{"task_id":"bg42"}`),
+		toolAnswer("r4", "a4", "toolu_out", "BGREPLYMARKER done"),
+		namedCall("a5", "r4", "toolu_q", "AskUserQuestion", `{"questions":[]}`),
+		toolAnswer("r5", "a5", "toolu_q", `The user answered: "which?"="ANSWERMARKER five". Read the answers carefully.`),
+	)
+	for quote, want := range map[string]string{
+		"REPLYMARKER":   "a sub-agent's reply",
+		"ORPHANMARKER":  "the call that produced it is not in the record",
+		"BGREPLYMARKER": "a background agent's reply",
+		"ANSWERMARKER":  "--cite:user",
+	} {
+		_, err := ResolveCitation(path, toolReq(quote))
+		require.Error(t, err, quote)
+		assert.Contains(t, err.Error(), want, quote)
+	}
+	// A quote that is nowhere keeps the plain message.
+	_, err := ResolveCitation(path, toolReq("NOWHEREMARKER"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not there word for word")
+	assert.NotContains(t, err.Error(), "reply")
 }
