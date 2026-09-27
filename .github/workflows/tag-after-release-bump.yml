@@ -1,0 +1,63 @@
+# Tags main the moment a cut-release.yml bump PR merges — the second half of
+# the same flow, split into its own workflow because the two halves cannot
+# run in the same job: cut-release.yml's PR needs a HUMAN review (main's
+# ruleset requires one; a workflow token cannot approve its own PR), so
+# nothing can tag until that approval and merge have actually happened,
+# which is a separate event this workflow reacts to rather than something
+# cut-release.yml can wait out inside one run.
+#
+# main's ruleset targets refs/heads/main only (branch, not tag — confirmed
+# via `gh api repos/OWNER/REPO/rulesets/ID --jq .target`), so pushing a tag
+# with the plain GITHUB_TOKEN needs no PR and no bypass; only the commit TO
+# main needed one, and that already happened when the bump PR was merged.
+name: tag after release bump
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    # Only a MERGED release/v* bump PR tags anything — a closed-without-merge
+    # PR (abandoned, superseded) must not tag a version nothing actually
+    # shipped, and this workflow has no business reacting to any other PR at
+    # all (branches: [main] above already narrows it to PRs targeting main,
+    # but that is every ordinary feature PR too).
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # The tag is the branch name's own version (release/v0.2.1 -> v0.2.1),
+      # not re-derived from plugin.json — the PR branch name is what a human
+      # actually reviewed and approved, so it is the authoritative answer to
+      # "what version is this."
+      - name: derive the tag from the branch name
+        id: version
+        env:
+          # Passed through an env var rather than interpolated into the
+          # script directly: a PR head ref is attacker-controlled (anyone who
+          # can open a PR against main names it), so splicing it straight
+          # into `run:` would be a script-injection hole. actionlint flags
+          # exactly this pattern.
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: echo "tag=${HEAD_REF#release/}" >> "$GITHUB_OUTPUT"
+
+      # Same gate release.yml itself runs — checked again here, against the
+      # actual merge commit on main, in case the PR was merged with changes
+      # (a review edit, a rebase conflict resolution) that moved it away from
+      # what cut-release.yml originally verified.
+      - name: verify-version
+        run: make verify-version TAG=${{ steps.version.outputs.tag }}
+
+      - name: tag and push
+        run: |
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"

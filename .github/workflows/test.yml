@@ -30,8 +30,56 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # changes decides whether this push touched anything besides the version
+  # files cut-release.yml's bump commit writes (plugin.json/marketplace.json).
+  # That commit is nothing but a version string in already-shipped JSON — no
+  # Go, no shell, no workflow file changes — so building and running the full
+  # matrix against it (unit + 6 e2e shards + a macOS install.sh run) proves
+  # nothing the LAST real commit's run didn't already prove, at the same cost
+  # as any other push. code-changed downstream turns that into a skip: fast,
+  # green, and every required context still REPORTS for the commit (a skipped
+  # job's conclusion still satisfies a required status check), so the bump PR
+  # is never stuck waiting on a check that never ran.
+  #
+  # A single-commit push is compared against its own parent (github.event.
+  # before) rather than against main, so this reads the SAME question
+  # cut-release.yml's own `git diff --quiet` asks when deciding whether the
+  # bump changed anything — "did this push change more than the version
+  # files" — not "does this branch differ from main" (nearly always true on
+  # any working branch, which would defeat the skip entirely).
+  changes:
+    name: which files changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code-changed: ${{ steps.diff.outputs.code-changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: diff
+        run: |
+          before="${{ github.event.before }}"
+          # A new branch's first push (or force-push) has no real parent to
+          # diff against — github.event.before is all-zeros or an unreachable
+          # SHA. Fail open (treat as code-changed) rather than risk skipping
+          # real changes because history was rewritten.
+          if [ -z "$before" ] || ! git cat-file -e "$before" 2>/dev/null; then
+            echo "code-changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$before" "${{ github.sha }}")"
+          other="$(printf '%s\n' "$changed" | grep -v '^\(marketplace/plugins/[^/]*/\.claude-plugin/plugin\.json\|\.claude-plugin/marketplace\.json\)$' || true)"
+          if [ -z "$other" ]; then
+            echo "code-changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code-changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
   unit:
     name: unit + services
+    needs: changes
+    if: needs.changes.outputs.code-changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -68,6 +116,8 @@ jobs:
 
   e2e:
     name: e2e (${{ matrix.shard }})
+    needs: changes
+    if: needs.changes.outputs.code-changed == 'true'
     runs-on: ubuntu-latest
     # The e2e suite runs -p 1 (one test binary at a time — a disk-space
     # constraint, see the Makefile), which made the whole suite a single long
@@ -145,6 +195,8 @@ jobs:
   # entirely.
   install-sh:
     name: install.sh (stranger install path)
+    needs: changes
+    if: needs.changes.outputs.code-changed == 'true'
     runs-on: macos-latest
     timeout-minutes: 15
     steps:

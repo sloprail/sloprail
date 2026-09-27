@@ -1,18 +1,27 @@
-# Cuts a release with no manual `make bump-version` step: run this by hand
+# Starts a release with no manual `make bump-version` step: run this by hand
 # (Actions tab -> "cut release" -> Run workflow, or `gh workflow run`), give
-# it the bare semver to ship, and it does the whole sequence
-# scripts/bump-version.sh's own doc comment used to ask a person to run:
+# it the bare semver to ship, and it opens the version-bump PR
+# scripts/bump-version.sh's own doc comment used to ask a person to make (and
+# push, and tag) by hand:
 #
 #   scripts/bump-version.sh $VERSION
 #   git commit -m "chore(release): bump plugins to v$VERSION"
 #   git push origin main
 #   git tag v$VERSION && git push origin v$VERSION
 #
-# The pushed tag is what actually ships anything — it triggers release.yml
-# (on: push: tags: v*), which builds the archives and publishes the GitHub
-# Release. This workflow's only job is making sure the commit that tag points
-# at already has plugin.json/marketplace.json saying the right version, which
-# is exactly what release.yml's own verify-version gate demands.
+# ONLY OPENS A PR, does not push to main or tag directly: main's ruleset
+# requires every change to arrive as a reviewed PR (GH013 rejects a direct
+# push even from this workflow's own token — a ruleset has no "the automation
+# that runs on main may skip the rule for main" exception, which is the whole
+# point of the rule). So this workflow's job ends at "PR is open"; tag-after-
+# merge.yml (this repo's other half of the same flow) does the tag once a
+# human approves and merges THIS PR — see that workflow's own header for why
+# it has to be separate rather than a step here.
+#
+# The PR is titled `chore(release): bump plugins to vX.Y.Z` on purpose:
+# pr-title.yml requires a conventional-commit type, and `chore` is what
+# cliff.toml already groups this kind of commit under. Squash-merging it
+# preserves that exact title as the commit on main.
 name: cut release
 
 on:
@@ -24,9 +33,10 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
-  bump-and-tag:
+  open-bump-pr:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,30 +54,36 @@ jobs:
         run: ./scripts/bump-version.sh "${{ inputs.version }}"
 
       # A no-op input (the version already committed) is a mistake worth
-      # stopping on rather than tagging a commit identical to the last
-      # release — the same commit would then carry two tags, and
-      # verify-version would pass for either one, which is not the same as
-      # the input having done anything.
-      - name: commit the bump
+      # stopping on rather than opening an empty PR — most often this input
+      # was already shipped, or the git ref checked out is stale.
+      - name: nothing changed?
         run: |
           if git diff --quiet; then
             echo "::error::nothing changed — plugin.json/marketplace.json already say ${{ inputs.version }}"
             exit 1
           fi
-          git config user.name "sloprail-release-bot"
-          git config user.email "release-bot@users.noreply.github.com"
-          git add -A
-          git commit -m "chore(release): bump plugins to v${{ inputs.version }}"
-          git push origin main
 
-      # verify-version re-run against the commit just pushed: the same gate
-      # release.yml runs, here BEFORE the tag exists, so a mistake is caught
-      # as a failed workflow run rather than as a tag that has to be deleted
-      # and re-pushed.
-      - name: verify-version
+      # verify-version reads plugin.json/marketplace.json off disk, so it
+      # works against the bumped WORKING TREE just as well as a committed
+      # one — running it here catches a bump that didn't actually reach
+      # every file it should have before a PR is even opened, rather than
+      # only when tag-after-release-bump.yml (or release.yml) re-checks it later.
+      - name: verify-version (pre-commit)
         run: make verify-version TAG=v${{ inputs.version }}
 
-      - name: tag and push
+      - name: open the bump PR
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git tag "v${{ inputs.version }}"
-          git push origin "v${{ inputs.version }}"
+          branch="release/v${{ inputs.version }}"
+          git config user.name "sloprail-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A
+          git commit -m "chore(release): bump plugins to v${{ inputs.version }}"
+          git push origin "$branch"
+          gh pr create \
+            --title "chore(release): bump plugins to v${{ inputs.version }}" \
+            --body "Bumps plugin.json/marketplace.json to v${{ inputs.version }}. Merging this (squash, so the commit on main keeps this exact title) is the last step before tagging — tag-after-release-bump.yml tags main automatically once it does." \
+            --base main \
+            --head "$branch"
