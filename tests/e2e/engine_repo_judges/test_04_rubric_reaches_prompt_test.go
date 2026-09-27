@@ -184,13 +184,23 @@ func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 		t.Errorf("the workspace %s is not denied to file-writing tools; --disallowed-tools %q; argv:\n%s", ws, deny, string(argv))
 	}
 
-	// The only write grant is the answer directory; nothing grants the workspace.
-	for _, rule := range flagValues(lines, "--allowed-tools") {
-		// Matched on the answer dir's own (unique, temp) name: sr-agent removed the
-		// directory when the judge finished, so it can no longer be resolved here.
-		if strings.HasPrefix(rule, "Edit(") && !strings.HasSuffix(rule, "/"+filepath.Base(answerDir)+"/**)") {
-			t.Errorf("a write grant other than the answer directory %s: %s; argv:\n%s", answerDir, rule, string(argv))
-		}
+	// The grant is EXACTLY the answer directory's Edit rule (one per spelling —
+	// the answer dir may sit under a symlinked temp root) plus the rule's own
+	// allowed_tools ([Read]). Anything else — an Edit allow on the workspace, an
+	// unscoped Write — fails here. The answer dir itself is gone (sr-agent
+	// removed it), so its resolved spelling is built from its parent's.
+	wantAllowed := []string{"Edit(/" + answerDir + "/**)"}
+	if parent := resolved(t, filepath.Dir(answerDir)); parent != filepath.Dir(answerDir) {
+		wantAllowed = append(wantAllowed, "Edit(/"+filepath.Join(parent, filepath.Base(answerDir))+"/**)")
+	}
+	wantAllowed = append(wantAllowed, "Read")
+	if got := flagValues(lines, "--allowed-tools"); strings.Join(got, "\n") != strings.Join(wantAllowed, "\n") {
+		t.Errorf("--allowed-tools must be exactly the answer dir's Edit rule(s) and Read;\n got %q\nwant %q\nargv:\n%s", got, wantAllowed, string(argv))
+	}
+	// And the answer dir is outside the readonly workspace, or its deny would
+	// block the verdict (sr-agent places it outside every readonly dir).
+	if strings.HasPrefix(resolved(t, filepath.Dir(answerDir))+string(filepath.Separator), ws+string(filepath.Separator)) {
+		t.Errorf("the answer dir %s lies inside the workspace %s", answerDir, ws)
 	}
 
 	// And the judge is told where the project is, so it need not guess the root.

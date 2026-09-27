@@ -208,14 +208,30 @@ project** (`SR_WORKSPACE`, the repository root) with `Read`, `Grep` and `Glob` �
 to inline a file just so the judge can see it (though inlining is still cheaper
 when the judge will always need it).
 
-It **cannot write the project**. Every file-writing tool — `Write`, `Edit`,
-`NotebookEdit`, and the shell's recognised writes (`>`, `touch`, `rm`) — is
-denied there, even if `allowed_tools` names `Write` or `Edit`. The only thing a
-judge may write is its verdict file, whose folder `sr-agent` adds as a writable
-dir the same way (`--add-dir <path>` is readable and writable, as in claude's
-own `--add-dir`; `--add-dir:readonly <path>` is readable only).
+It **cannot write the project** with its file tools. Every file-writing tool —
+`Write`, `Edit`, `NotebookEdit`, and the shell's recognised writes (`>`,
+`touch`, `rm`) — is denied there, even if `allowed_tools` names `Write` or
+`Edit`. The only thing a judge may write is its verdict file, whose folder
+`sr-agent` adds as a writable dir the same way (`--add-dir <path>` is readable
+and writable, as in claude's own `--add-dir`; `--add-dir:readonly <path>` is
+readable only). Three things keep that true:
 
-Two things `allowed_tools` can still widen, so name them deliberately:
+- The project's deny is never dropped. The verdict folder is placed outside the
+  project, even when `$TMPDIR` points inside it, and `sr-agent` refuses a
+  writable dir nested inside a readonly one.
+- `sr-agent` refuses a project whose path holds a glob character (a bracket, a
+  star, a question mark, a brace or a backslash). A permission rule reads the
+  path as a pattern, so its deny would not match the directory. The judge
+  fails closed instead.
+- The judge runs in the `default` permission mode, whatever the user's own
+  settings say. A user default of bypassPermissions was measured to let a judge
+  with no tools write outside the project.
+
+`allowed_tools: [Read]` is not needed to read the project. It adds reads
+**anywhere else** on disk, so name it only when the judge must open something
+outside the project (a transcript under `~/.claude`, say).
+
+Three things `allowed_tools` can still widen, so name them deliberately:
 
 - **`Write` / `Edit`** are granted unscoped: they cannot touch the project, but
   can write elsewhere on disk. A judge never needs them for its verdict.

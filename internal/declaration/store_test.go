@@ -490,12 +490,13 @@ func TestLoad_Check_ScopedToolRulesLoadWhole(t *testing.T) {
 match: "**/*.md"
 checks:
   - judge: ./j.md.j2
-    allowed_tools: ["Bash(git show:*)", "WebFetch(domain:code.claude.com)", mcp__srv__tool]
+    allowed_tools: ["Bash(git show:*)", "WebFetch(domain:code.claude.com)", mcp__srv__tool, mcp__claude-in-chrome__navigate, mcp__my-server, "mcp__srv__*"]
     disallowed_tools: ["Bash(curl * -o *)", "Bash(curl * -d @*)"]
 `,
 	})
 	c := loaded.FileGuards[0].Checks[0]
-	assert.Equal(t, []string{"Bash(git show:*)", "WebFetch(domain:code.claude.com)", "mcp__srv__tool"}, c.AllowedTools)
+	assert.Equal(t, []string{"Bash(git show:*)", "WebFetch(domain:code.claude.com)", "mcp__srv__tool",
+		"mcp__claude-in-chrome__navigate", "mcp__my-server", "mcp__srv__*"}, c.AllowedTools)
 	assert.Equal(t, []string{"Bash(curl * -o *)", "Bash(curl * -d @*)"}, c.DisallowedTools)
 }
 
@@ -535,6 +536,18 @@ func TestLoad_Check_MalformedToolRulesAreRefused(t *testing.T) {
 			assert.True(t, hasKind(iv, want), "%s %s must be refused: %v", key, name, iv.Reason)
 			assert.Contains(t, iv.Reason, "entry 1", "the refusal names the entry (%s %s)", key, name)
 		}
+	}
+}
+
+// A deny on Write or Edit would stop every judge of the rule writing its
+// verdict, so it is refused at load.
+func TestLoad_Check_DenyingTheVerdictWriteIsRefused(t *testing.T) {
+	for _, entry := range []string{"Write", "Edit", `"Edit(//tmp/**)"`} {
+		iv := loadOneInvalid(t, map[string]string{
+			"file-guard/denywrite/file-guard.yaml": "match: \"**/*.md\"\nchecks:\n  - judge: ./j.md.j2\n    disallowed_tools: [" + entry + "]\n",
+		})
+		assert.True(t, hasKind(iv, ErrBadDisallowedTools), "%s must be refused: %v", entry, iv.Reason)
+		assert.Contains(t, iv.Reason, "verdict", entry)
 	}
 }
 

@@ -168,7 +168,16 @@ var claudeCodeSpec = harnessSpec{
 	// free rather than every rule restating it. Without it a judge that is itself
 	// an agent (a rule-quality judge firing on RULE.md) would re-trigger the guard
 	// on its own child's writes and recurse.
-	baseArgs: []string{"--settings", `{"hooks":{},"mcpServers":{},"enabledPlugins":{}}`},
+	//
+	// `--permission-mode default` pins the permission mode, which the launched
+	// agent would otherwise inherit from the user's own settings. Measured on
+	// 2026-09-27 (claude 2.1.282, haiku, a fake HOME whose settings.json set
+	// `defaultMode: bypassPermissions`): a judge granted NO tools wrote a file
+	// outside every granted directory; with this flag the same Write was
+	// refused. (The readonly project's deny held either way; under
+	// `acceptEdits` nothing outside was writable.) A caller that wants another
+	// mode says so in --claude-args, which comes later and wins.
+	baseArgs: []string{"--settings", `{"hooks":{},"mcpServers":{},"enabledPlugins":{}}`, "--permission-mode", "default"},
 
 	// The file access a run gets. Every line of this was MEASURED against the real
 	// CLI (claude 2.1.282, haiku, `claude -p` in a clean environment, 2026-09-27)
@@ -273,18 +282,22 @@ var claudeCodeSpec = harnessSpec{
 			case dirWritable:
 				allow = append(allow, pathRules("Edit", d.Path)...)
 			case dirReadonly:
-				// A readonly dir that HOLDS a writable one is not denied: the deny
-				// would beat the nested dir's allow, and a writable dir must stay
-				// writable (the --verify answer folder, when $TMPDIR sits inside a
-				// readonly project, is the case that matters). The readonly dir
-				// then stays unwritable by the file tools only because nothing
-				// allows writing it — which holds unless the caller also granted
-				// an unscoped Write/Edit. The reverse nesting needs no exception:
-				// a readonly dir inside a writable one is denied, and the deny
-				// wins.
-				if !g.holdsWritable(d.Path) {
-					deny = append(deny, pathRules("Edit", d.Path)...)
-				}
+				// ALWAYS denied. There used to be an exception for a readonly dir
+				// holding a writable one (the answer folder, when $TMPDIR sits
+				// inside the project), and a review measured what it cost: with
+				// TMPDIR=<project>/.tmp the deny was dropped, and a judge granted
+				// Write wrote <project>/pwned-nested.txt. claude has no way to say
+				// "deny this dir except that sub-dir", so the exception cannot be
+				// expressed safely. Instead, nothing writable may sit inside a
+				// readonly dir: resolveAddDirs refuses the caller's own
+				// `--add-dir X/sub --add-dir:readonly X`, and runVerified places the
+				// answer folder outside every readonly dir (answerRoots).
+				// Re-measured after the fix (2026-09-27, claude 2.1.282, haiku,
+				// through sr-agent): with TMPDIR=<project>/.tmp and Write granted,
+				// Write into the project and into <project>/.tmp were refused and
+				// the answer landed in the user cache dir; the same with a project
+				// settings.json of `defaultMode: acceptEdits` and no tools.
+				deny = append(deny, pathRules("Edit", d.Path)...)
 			}
 		}
 		allow = append(allow, g.Tools...)
@@ -354,17 +367,6 @@ type accessGrant struct {
 	// passed through in the harness's own spelling beside the grant's own
 	// readonly-dir denies.
 	DenyTools []string
-}
-
-// holdsWritable reports whether a writable dir of this grant lies inside dir
-// (or is dir).
-func (g accessGrant) holdsWritable(dir string) bool {
-	for _, d := range g.Dirs {
-		if d.Mode == dirWritable && within(d.Path, dir) {
-			return true
-		}
-	}
-	return false
 }
 
 // dirGrant is one directory the agent is given, and how.

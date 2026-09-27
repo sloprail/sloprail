@@ -50,9 +50,9 @@ Read the doc's own text, not a summary of it.
    - every field, event or value name the change uses:
      `curl -sL <url>.md | grep -n -i -e 'trigger' -e 'custom_instructions'`.
    The page can be hundreds of KB: grep it, do not print it whole.
-3. Only if the doc is not on `https://code.claude.com/docs/`, or its `.md`
-   URL does not return markdown, fall back to WebFetch on the original URL and
-   ask it to quote the section verbatim.
+3. A doc that is not under `https://code.claude.com/docs/`, or whose `.md`
+   URL does not return markdown, cannot be read by this check: refuse, saying
+   the marker cites a doc this rule cannot read.
 
 Rule only on text you actually saw in that output. Do not rely on memory of
 what the doc used to say, on the file's own comments about the doc, or on

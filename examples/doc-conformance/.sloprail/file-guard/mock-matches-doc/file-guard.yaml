@@ -9,11 +9,13 @@ checks:
     # The judge reads the doc's RAW text: Claude Code's docs serve each page as
     # markdown at its path + `.md`, so the judge runs exactly
     # `curl -sL https://code.claude.com/docs/<page>.md` and pipes it into grep
-    # or head. WebFetch stays only as the fallback for a doc on another host:
-    # it returns another model's summary of the page, not the page. In real
-    # runs (2026-09-27), judges quoted fields and rules the hooks page never
-    # states (a `compact_reason` field, "PreCompact cannot block") and
-    # re-fetched it 10-30 times each until they ran out of time.
+    # or head. No WebFetch: it returns another model's summary of the page, not
+    # the page — in real runs (2026-09-27) judges quoted fields and rules the
+    # hooks page never states (a `compact_reason` field, "PreCompact cannot
+    # block") and re-fetched it 10-30 times each until they ran out of time —
+    # and an unscoped WebFetch to a URL the judged agent wrote, by a judge that
+    # can read the project, is a way to send the project out. A marker citing
+    # a doc on another host is refused as one this rule cannot read.
     #
     # The curl grant is PINNED: this command, these flags, this host, one URL.
     # The deny takes back any extra word after the URL (claude's `*` crosses
@@ -31,6 +33,5 @@ checks:
       - "Bash(curl -sL https://code.claude.com/docs/*)"
       - "Bash(grep:*)"
       - "Bash(head:*)"
-      - WebFetch
     disallowed_tools:
       - "Bash(curl -sL https://code.claude.com/docs/* *)"

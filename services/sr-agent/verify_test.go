@@ -623,6 +623,47 @@ func TestCLI_VerifyReadonlyDirIsReadableButDenied(t *testing.T) {
 		"the answer folder is granted like any writable dir")
 }
 
+// With $TMPDIR INSIDE the readonly project — the engine hands a judge its own
+// environment, so this is one `TMPDIR=<project>/.tmp` away — the project is
+// still denied, and the answer folder is placed outside it. The review that
+// found this measured the old behaviour: the deny was dropped and a judge
+// granted Write wrote into the project.
+func TestCLI_VerifyTMPDIRInsideTheProjectKeepsTheDenyAndMovesTheAnswer(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+	project := filepath.Join(dir, "project")
+	tmp := filepath.Join(project, ".tmp")
+	require.NoError(t, os.MkdirAll(tmp, 0o755))
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("HOME", filepath.Join(dir, "home")) // os.UserCacheDir, outside the project
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir:readonly", project, "--allowed-tools", "Write", "--verify", script, "judge this")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, `--disallowed-tools "Edit(/`+project+`/**)"`, "the project must stay denied")
+	_, prompt, _ := strings.Cut(stdout, " -- ")
+	assert.Contains(t, prompt, "Write your answer to the file "+filepath.Join(dir, "home"),
+		"the answer must go to the first root outside the project (the user cache dir)")
+	assert.NotContains(t, prompt, "Write your answer to the file "+project)
+}
+
+// A test-pinned output dir inside a readonly dir is refused, not silently used.
+func TestCLI_VerifyOutputDirInsideAReadonlyDirIsRefused(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+	project := filepath.Join(dir, "project")
+	require.NoError(t, os.MkdirAll(filepath.Join(project, "out"), 0o755))
+	t.Setenv(outputDirEnv, filepath.Join(project, "out"))
+
+	_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir:readonly", project, "--verify", script, "q")
+	require.ErrorIs(t, err, ErrVerifierBroken)
+	assert.Contains(t, err.Error(), "inside the readonly")
+}
+
 // --- --add-dir[:<mode>] parsing ---------------------------------------------
 
 // addDirDirs makes two real directories under a fresh temp dir.
@@ -683,8 +724,10 @@ func TestCLI_AddDirMissingValueIsRefused(t *testing.T) {
 		require.Error(t, err, flag)
 		assert.Contains(t, err.Error(), "needs an argument", flag)
 	}
-	_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run", "--add-dir:readonly=", "q")
-	require.ErrorIs(t, err, ErrBadAddDir, "an empty value after '=' names no directory")
+	for _, empty := range []string{"--add-dir:readonly=", "--add-dir="} {
+		_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run", empty, "q")
+		require.ErrorIs(t, err, ErrBadAddDir, "%s: an empty value after '=' names no directory", empty)
+	}
 }
 
 // The same dir in both modes is a contradiction and refused.

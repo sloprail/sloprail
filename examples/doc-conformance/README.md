@@ -23,9 +23,16 @@ each page as markdown at its path plus `.md`). It pipes that into `grep` or
 `head` to cut out the anchor's section and the names the change uses, and
 quotes the doc line for any refusal.
 
-WebFetch is only the fallback, for a doc on another host. It returns another
-model's summary of the page, not the page. In real precompact-support runs
-(2026-09-27), judges that WebFetched the 330 KB hooks page quoted things the
+There is no WebFetch, for two reasons.
+
+- It returns another model's summary of the page, not the page.
+- An unscoped WebFetch, pointed at a URL the judged agent wrote, by a judge that
+  can read the project, is a way to send the project out.
+
+A marker citing a doc on another host is refused as one this rule cannot read.
+To support another host, add its own pinned curl pair.
+
+In real precompact-support runs (2026-09-27), judges that WebFetched the 330 KB hooks page quoted things the
 page never says: a `compact_reason` field, and "PreCompact cannot block" where
 the page says exit 2 blocks. Three judges ruling on the same code at the same
 Stop gave three different field names. The agent rewrote correct code to match
@@ -43,7 +50,7 @@ that contradicts a quotable doc line.
 them, so the grant allows one form only:
 
 ```yaml
-allowed_tools: ["Bash(curl -sL https://code.claude.com/docs/*)", "Bash(grep:*)", "Bash(head:*)", WebFetch]
+allowed_tools: ["Bash(curl -sL https://code.claude.com/docs/*)", "Bash(grep:*)", "Bash(head:*)"]
 disallowed_tools: ["Bash(curl -sL https://code.claude.com/docs/* *)"]
 ```
 

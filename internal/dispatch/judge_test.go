@@ -117,3 +117,27 @@ func TestReasonFromVerifierOutput(t *testing.T) {
 	// No marker: empty.
 	assert.Equal(t, "", reasonFromVerifierOutput([]byte("nothing here")))
 }
+
+// A judge that never wrote its verdict is refused with ONE fixed sentence, not
+// with sr-agent's whole stderr (its banner, a harness warning, a deleted temp
+// path).
+func TestJudgeRefusalReason_NeverWrittenVerdictIsAFixedReason(t *testing.T) {
+	stderr := []byte("sr-agent: harness claude-code, model sonnet (from \"size-md\")\n" +
+		"Warning: something the harness printed\n" +
+		"sr-agent: check failed: the agent wrote no output to /var/folders/x/T/sr-agent-output123/answer (after 2 attempts)\n")
+	assert.Equal(t, "the judge did not produce a JSON verdict object", judgeRefusalReason(nil, stderr))
+}
+
+// An older sr-agent on PATH that does not know a judge's flags is named as such.
+func TestJudgeRefusalReason_OlderSrAgentIsNamed(t *testing.T) {
+	stderr := []byte("Error: unknown flag: --add-dir:readonly\nIf that was meant to be the prompt ...\n")
+	got := judgeRefusalReason(nil, stderr)
+	assert.Contains(t, got, "older than this engine")
+	assert.NotContains(t, got, "If that was meant")
+}
+
+// A verifier's own reasoning still wins over both.
+func TestJudgeRefusalReason_VerifierReasoningWins(t *testing.T) {
+	stderr := []byte("sr-agent: verifier (attempt 1/2): JUDGE-REASON: the change drops field x\n")
+	assert.Equal(t, "the change drops field x", judgeRefusalReason(nil, stderr))
+}

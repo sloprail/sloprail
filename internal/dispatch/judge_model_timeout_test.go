@@ -115,7 +115,7 @@ func TestJudgeCommand_CarriesCustomModel(t *testing.T) {
 
 // judgeCommand carries the check's allowed_tools to sr-agent as `--allowed-tools`,
 // space-joined and quoted; a check that named none omits the flag so sr-agent
-// grants only the Write its own verdict file needs.
+// grants only the answer folder's scoped Edit rule its own verdict file needs.
 func TestJudgeCommand_CarriesAllowedTools(t *testing.T) {
 	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Read", "WebFetch"}, nil, "")
 	assert.Contains(t, cmd, "--allowed-tools 'Read WebFetch'",

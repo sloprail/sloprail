@@ -153,8 +153,9 @@ checks:
   written from scratch almost never does first time.
 - A **judge** is the model half: a Jinja2 prompt template rendered against the
   payload (and any `additionalContext` a `prepare` script assembled), asked for a
-  `{"pass": true|false, "reasoning": "…"}` verdict via `sr-agent`. It can read
-  the whole project and write nothing but its verdict.
+  `{"pass": true|false, "reasoning": "…"}` verdict via `sr-agent`. Its file
+  tools can read the whole project and write nothing but its verdict; a
+  `Bash` grant can widen that.
   → [judge-checks.md](judge-checks.md)
 
 The two check kinds are documented separately because their contracts differ — a

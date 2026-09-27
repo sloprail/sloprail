@@ -364,11 +364,32 @@ func judgeRefusalReason(stdout, stderr []byte) string {
 	if reason := reasonFromVerifierOutput(stdout); reason != "" {
 		return reason
 	}
+	// Two failures sr-agent reports in its own words rather than through the
+	// verifier. Mapped to a fixed reason so the agent is not shown sr-agent's
+	// whole stderr — its banner, harness warnings and a temp path that is
+	// already deleted — as the refusal.
+	errText := string(stderr)
+	if strings.Contains(errText, noVerdictMarker) {
+		// The judge never wrote its answer file (sr-agent's RunVerifier:
+		// "the agent wrote no output to …"), so the verifier never ran.
+		return noVerdictReason
+	}
+	if strings.Contains(errText, "unknown flag: --add-dir") || strings.Contains(errText, "unknown flag: --disallowed-tools") {
+		return "the judge could not run: the sr-agent on PATH is older than this engine and does not know the flags a judge needs (--add-dir:readonly, --disallowed-tools). Install sloprail's matching binaries."
+	}
 	if text := plainText(stderr); text != "" {
 		return text
 	}
 	return "the judge refused this action but produced no readable reasoning"
 }
+
+// noVerdictMarker is sr-agent's own words for an answer file the agent never
+// wrote (services/sr-agent RunVerifier), and noVerdictReason what the agent is
+// shown instead: the same sentence the verifier gives a verdict it cannot parse.
+const (
+	noVerdictMarker = "the agent wrote no output to"
+	noVerdictReason = "the judge did not produce a JSON verdict object"
+)
 
 // reasonFromVerifierOutput pulls the reasoning the verify script printed out of
 // sr-agent's captured stream. The verifier prints the reasoning on its own line;

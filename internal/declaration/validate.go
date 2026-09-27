@@ -474,6 +474,9 @@ func validateJudgeTuning(c Check, where string) []Problem {
 		if err := validateToolRules(c.DisallowedTools); err != nil {
 			problems = append(problems, prob(ErrBadDisallowedTools, where,
 				"disallowed_tools %s", err.Error()))
+		} else if err := validateDenyKeepsVerdict(c.DisallowedTools); err != nil {
+			problems = append(problems, prob(ErrBadDisallowedTools, where,
+				"disallowed_tools %s", err.Error()))
 		}
 	}
 	return problems
@@ -507,7 +510,7 @@ func validateToolRule(t string) error {
 	}
 	name, scope, scoped := strings.Cut(t, "(")
 	if !toolNameRE.MatchString(name) {
-		return fmt.Errorf("does not start with a tool name (letters, digits and underscores, like Read or Bash); put each rule in its own list item")
+		return fmt.Errorf("does not start with a tool name (a name like Read, Bash or mcp__my-server__tool, with no spaces, commas or parentheses before its scope); put each rule in its own list item")
 	}
 	if !scoped {
 		return nil
@@ -530,8 +533,28 @@ func validateToolRule(t string) error {
 	return nil
 }
 
-// toolNameRE is a harness tool name: `Read`, `WebFetch`, `mcp__server__tool`.
-var toolNameRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
+// validateDenyKeepsVerdict refuses a deny on the tools the judge writes its
+// verdict with. The judge's answer file is written with Write (or Edit), under
+// an allow the engine adds for the answer's own folder; a deny beats every allow,
+// so `Write`, `Edit`, or a scoped form of either whose path the loader cannot
+// check against a folder chosen at run time, would leave every judge of the rule
+// unable to answer — a refusal on every action, for a reason nobody would see.
+func validateDenyKeepsVerdict(tools []string) error {
+	for i, t := range tools {
+		name, _, _ := strings.Cut(t, "(")
+		if name == "Write" || name == "Edit" {
+			return fmt.Errorf("entry %d (%q) denies %s, which the judge writes its verdict with; the project is already readonly to the judge, so leave file writes to the engine", i+1, t, name)
+		}
+	}
+	return nil
+}
+
+// toolNameRE is a harness tool name: `Read`, `WebFetch`, `mcp__server__tool`,
+// `mcp__claude-in-chrome__navigate`, `mcp__srv__*`. Anything but whitespace,
+// commas and parentheses: those are what separate rules and open a scope, and
+// the name is otherwise the harness's to judge (an earlier, narrower pattern
+// refused the hyphenated and wildcard MCP names a released version accepted).
+var toolNameRE = regexp.MustCompile(`^[^\s(),]+$`)
 
 // validateModelSet checks a judge model is a well-formed modelset, mirroring
 // what sr-agent's ParseModelSet refuses: a non-empty set whose every

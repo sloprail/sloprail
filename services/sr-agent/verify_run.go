@@ -56,7 +56,7 @@ func runVerified(
 		return err
 	}
 
-	outputPath, cleanup, err := makeOutputFile()
+	outputPath, cleanup, err := makeOutputFile(readonlyDirs(addDirs))
 	if err != nil {
 		return err
 	}
@@ -195,26 +195,83 @@ func runVerified(
 // A plain, unique name with a .json-free suffix: the content is whatever the
 // caller's script expects, so naming it .json would be a claim this code has no
 // business making.
-func makeOutputFile() (path string, cleanup func(), err error) {
-	dir := os.Getenv(outputDirEnv)
-	if dir == "" {
-		dir, err = os.MkdirTemp("", "sr-agent-output")
-		if err != nil {
-			return "", func() {}, fmt.Errorf("%w: %s", ErrVerifierBroken, err)
+//
+// The folder is created OUTSIDE every readonly dir of the run. The readonly
+// dir's Edit deny beats the answer folder's allow, so an answer folder inside
+// it (TMPDIR=<project>/.tmp) could not be written — and the old way out,
+// dropping the deny, let a judge write into the project (measured in review).
+// So the first of answerRoots that is outside all of them wins, and with none
+// the run is refused rather than confined to nothing.
+func makeOutputFile(readonly []string) (path string, cleanup func(), err error) {
+	if dir := os.Getenv(outputDirEnv); dir != "" {
+		// A directory supplied for tests. Not removed, because it is not ours —
+		// but an answer left there by an earlier run is, and it must not be
+		// judged as this run's.
+		if inside := insideAny(dir, readonly); inside != "" {
+			return "", func() {}, fmt.Errorf("%w: %s=%s lies inside the readonly %s, where the answer could never be written",
+				ErrVerifierBroken, outputDirEnv, dir, inside)
 		}
 		path = filepath.Join(dir, "answer")
-		cleanup = func() { _ = os.RemoveAll(dir) }
-		return path, cleanup, nil
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return "", func() {}, fmt.Errorf("%w: could not clear %s: %s", ErrVerifierBroken, path, err)
+		}
+		return path, func() { _ = os.Remove(path) }, nil
 	}
 
-	// A directory supplied for tests. Not removed, because it is not ours — but
-	// an answer left there by an earlier run is, and it must not be judged as
-	// this run's.
-	path = filepath.Join(dir, "answer")
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return "", func() {}, fmt.Errorf("%w: could not clear %s: %s", ErrVerifierBroken, path, err)
+	var tried []string
+	for _, root := range answerRoots() {
+		if root == "" {
+			continue
+		}
+		if insideAny(root, readonly) != "" || unsafeRulePath(root) != "" {
+			tried = append(tried, root)
+			continue
+		}
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			tried = append(tried, root)
+			continue
+		}
+		dir, err := os.MkdirTemp(root, "sr-agent-output")
+		if err != nil {
+			tried = append(tried, root)
+			continue
+		}
+		return filepath.Join(dir, "answer"), func() { _ = os.RemoveAll(dir) }, nil
 	}
-	return path, func() { _ = os.Remove(path) }, nil
+	return "", func() {}, fmt.Errorf("%w: no place to write the answer outside the readonly dirs (tried %s)",
+		ErrVerifierBroken, strings.Join(tried, ", "))
+}
+
+// answerRoots are where the answer folder may go, in order: $TMPDIR, the user's
+// cache dir, then /tmp — the first two usually, /tmp when both sit inside a
+// readonly project.
+func answerRoots() []string {
+	roots := []string{os.TempDir()}
+	if cache, err := os.UserCacheDir(); err == nil {
+		roots = append(roots, filepath.Join(cache, "sloprail-agent"))
+	}
+	return append(roots, "/tmp")
+}
+
+// readonlyDirs is the paths of the readonly grants among dirs.
+func readonlyDirs(dirs []dirGrant) []string {
+	var out []string
+	for _, d := range dirs {
+		if d.Mode == dirReadonly {
+			out = append(out, d.Path)
+		}
+	}
+	return out
+}
+
+// insideAny returns the first of dirs that path lies inside (or is), or "".
+func insideAny(path string, dirs []string) string {
+	for _, d := range dirs {
+		if within(path, d) {
+			return d
+		}
+	}
+	return ""
 }
 
 // runAgentQuietly runs the harness with its stdout suppressed.

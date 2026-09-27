@@ -12,12 +12,12 @@ import (
 // quoted fields and rules the page never states — a `compact_reason` field,
 // "PreCompact cannot block" — and the agent rewrote correct code to match them.
 // So the rule tells the judge to curl the page's `.md` form once and cut the
-// section out with grep/sed/head, and grants exactly those tools. These tests
+// section out with grep/head, and grants exactly those tools. These tests
 // pin the two halves of that wiring: the instructions reach the judge's prompt,
 // and the tool grant reaches the harness intact.
 
 // T044_06: the rendered prompt tells the judge how to fetch the raw doc — the
-// `.md` form of the marker's URL, piped into grep/sed — and to judge the CHANGE
+// `.md` form of the marker's URL, piped into grep/head — and to judge the CHANGE
 // against it, quoting the doc line for any refusal.
 func TestT044_06_PromptTellsTheJudgeToReadTheRawDoc(t *testing.T) {
 	e := New(t)
@@ -56,7 +56,8 @@ func TestT044_06_PromptTellsTheJudgeToReadTheRawDoc(t *testing.T) {
 // word after the URL, which is what closes curl's writing and uploading
 // options (measured; see the rule's file-guard.yaml). Each rule arrives as one
 // argv value, spaces included. sed and awk are not granted (both wrote files
-// under their Bash(...:*) grants), and no unpinned Bash(curl:*) is either.
+// under their Bash(...:*) grants), no unpinned Bash(curl:*) is either, and no
+// WebFetch (a summary, not the page; and a way to send the project out).
 func TestT044_07_PinnedToolsReachTheHarnessIntact(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -98,12 +99,12 @@ func TestT044_07_PinnedToolsReachTheHarnessIntact(t *testing.T) {
 		return false
 	}
 	allowed, denied := values("--allowed-tools"), values("--disallowed-tools")
-	for _, want := range []string{"Bash(curl -sL https://code.claude.com/docs/*)", "Bash(grep:*)", "Bash(head:*)", "WebFetch"} {
+	for _, want := range []string{"Bash(curl -sL https://code.claude.com/docs/*)", "Bash(grep:*)", "Bash(head:*)"} {
 		if !has(allowed, want) {
 			t.Errorf("the judge was not granted %q intact; --allowed-tools carried %q", want, allowed)
 		}
 	}
-	for _, not := range []string{"Bash(curl:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash"} {
+	for _, not := range []string{"Bash(curl:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash", "WebFetch"} {
 		if has(allowed, not) {
 			t.Errorf("the judge was granted %q, which the rule does not name; --allowed-tools carried %q", not, allowed)
 		}

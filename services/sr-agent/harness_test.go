@@ -261,17 +261,21 @@ func TestClaudeGrant_CallerDeniesJoinTheReadonlyDenies(t *testing.T) {
 	assert.Equal(t, []string{"--disallowed-tools", "WebSearch"}, onlyDenies)
 }
 
-// A writable dir NESTED in a readonly one stays writable: the readonly dir's
-// deny would beat the nested allow, so it is not emitted.
-func TestClaudeGrant_WritableNestedInReadonlyStaysWritable(t *testing.T) {
+// A readonly dir is denied ALWAYS — even when a writable dir sits inside it.
+// The old exception dropped the deny there, and a judge with Write then wrote
+// into the project (measured in review). claude cannot express "deny except
+// this sub-dir", so resolveAddDirs and runVerified keep writable dirs out of
+// readonly ones instead; the grant never weakens the deny.
+func TestClaudeGrant_ReadonlyDenyIsNeverDropped(t *testing.T) {
 	project := realDir(t, "project")
-	answer := filepath.Join(project, "tmp", "answer")
-	require.NoError(t, os.MkdirAll(answer, 0o755))
+	inner := filepath.Join(project, "tmp", "answer")
+	require.NoError(t, os.MkdirAll(inner, 0o755))
 
-	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{readonly(project), writable(answer)}})
+	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{readonly(project), writable(inner)}})
 
-	assert.NotContains(t, got, "--disallowed-tools")
-	assert.Contains(t, got, "Edit(/"+answer+"/**)")
+	i := indexOf(got, "--disallowed-tools")
+	require.NotEqual(t, -1, i, "the readonly project must be denied: %v", got)
+	assert.Contains(t, got[i+1:], "Edit(/"+project+"/**)")
 }
 
 // A readonly dir NESTED in a writable one stays readonly: its deny is emitted,
