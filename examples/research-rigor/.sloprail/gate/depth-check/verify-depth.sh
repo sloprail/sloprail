@@ -11,17 +11,26 @@ block() {
   exit 1
 }
 
-# 1. A real clone, recognised by the command: a PreCommandInvoke `git` with
-# `clone` in argv. Count invocations, not captured output — .toolUseResult lives
-# on the result record, not the tool_use record this event rides, so it is always
-# empty here and would refuse even a real clone.
-clone_count="$(sr-session trajectory normalize \
-  --path "$transcript_path" \
-  --events PreCommandInvoke \
-  | jq '[ .[]
-      | select(any(.events[]?; .kind == "PreCommandInvoke"
-          and any(.invocations[]?; .bin == "git" and any(.argv[]?; . == "clone"))))
-    ] | length')"
+# Every command this research ran: this trajectory's and each sub-agent's it
+# dispatched (`describe` lists them), since research handed to a sub-agent is
+# still this run's research. Flat PreCommandInvoke invocations, one array.
+invocations="[]"
+while IFS= read -r traj; do
+  [ -f "$traj" ] || continue
+  calls="$(sr-session trajectory normalize --path "$traj" --events PreCommandInvoke \
+    | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke") | .invocations[]? ]' 2>/dev/null)"
+  [ -n "${calls:-}" ] || continue
+  invocations="$(printf '%s' "$invocations" | jq -c --argjson c "$calls" '. + $c')"
+done <<EOF
+$transcript_path
+$(sr-session trajectory describe --path "$transcript_path" 2>/dev/null | jq -r '.subagentPaths[]?' 2>/dev/null)
+EOF
+
+# 1. A real clone, recognised by the command: a `git` invocation with `clone` in
+# argv. Count invocations, not captured output — .toolUseResult lives on the
+# result record, not the tool_use record this event rides, so it is always empty
+# here and would refuse even a real clone.
+clone_count="$(printf '%s' "$invocations" | jq '[ .[] | select(.bin == "git" and any(.argv[]?; . == "clone")) ] | length')"
 
 # Missing depth is collected across checks 1 and 2 and refused once, so the
 # agent learns everything it still owes in one cycle, not one fact per Stop.
@@ -32,11 +41,7 @@ fi
 
 # 2. Page count from gh CLI invocations, which carry it as an argument
 # (--limit N, --paginate). Events are flat: `.invocations` sits beside `.kind`.
-gh_invocations="$(sr-session trajectory normalize \
-  --path "$transcript_path" \
-  --events PreCommandInvoke \
-  | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke")
-             | .invocations[]? | select(.bin == "gh") ]')"
+gh_invocations="$(printf '%s' "$invocations" | jq -c '[ .[] | select(.bin == "gh") ]')"
 
 total_pages="$(printf '%s' "$gh_invocations" | jq '
   # The page count one gh call asks for: --paginate is unbounded; --limit N

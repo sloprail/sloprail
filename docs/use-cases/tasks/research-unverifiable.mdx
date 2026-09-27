@@ -40,11 +40,14 @@ the agent's summary of it.
 
 <Steps>
 
-1. A **context** wakes when the turn declares research, so depth-checking only
-   applies to a branch that was actually declared as research.
+1. A **context** wakes when the turn declares research, or dispatches a
+   sub-agent to do it, so depth-checking only applies to a branch that was
+   actually declared as research.
 
 2. A **gate** at `Stop` runs only while that context is active and refuses the
-   stop when the declared research doesn't meet the required depth.
+   stop when the declared research doesn't meet the required depth, counting
+   what any dispatched sub-agent ran as well, and naming everything still
+   missing at once.
 
 </Steps>
 
