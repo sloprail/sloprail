@@ -224,3 +224,17 @@ func TestT046_35_AnUnpinnedFileIsAnsweredCheaply(t *testing.T) {
 		t.Errorf("the payload was parsed %d times; once, plus the waiver's sentinel, is enough:\n%s", jqCalls, body)
 	}
 }
+
+// T046_37: the pinned-invariant prepare skips the judge on a delete — a deleted
+// file has no code left to rule on (whether it may drop its pins is
+// pinned-spec-holds' question).
+func TestT046_37_PrepareSkipsTheJudgeOnADelete(t *testing.T) {
+	for _, kind := range []string{"PreFileDelete", "PostFileDelete"} {
+		payload := `{"event":{"kind":"` + kind + `","path":"src/charge.go","oldContent":"x",` +
+			`"oldMarkers":[{"kind":"invariant","fqn":"/r@abcdef1:SPEC.md#L1-1","line":1}]}}`
+		out, code := runRuleScript(t, ruleDir(t, "pinned-invariant"), "pinned-text.sh", t.TempDir(), payload)
+		if code != 0 || !strings.Contains(out, `"skip": true`) {
+			t.Errorf("%s: the prepare did not skip the judge (exit %d): %s", kind, code, out)
+		}
+	}
+}
