@@ -67,6 +67,10 @@ func TestInvocationCwd(t *testing.T) {
 		{"eval of an unknowable payload is unknown", `eval "$SETUP" && cat f`, "cat", ""},
 		{"eval of a substitution is unknown", `eval "$(pyenv init -)" && cat f`, "cat", ""},
 		{"eval's cd does not leak out of a subshell", "(eval 'cd /x') && cat f", "cat", "."},
+		{"an absolute cd after an opaque eval is known", `eval "$X"; cd /a && cat f`, "cat", "/a"},
+		{"an opaque eval as an if condition", `if eval "$X"; then cat f; fi`, "cat", ""},
+		{"a program inside a literal eval runs where the eval does", "cd /w && eval 'cat f'", "cat", "/w"},
+		{"a cd inside a literal eval moves its own programs", "eval 'cd /x && cat f'", "cat", "/x"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

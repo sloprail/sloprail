@@ -316,10 +316,11 @@ func TestExtractCommand_Undecidable(t *testing.T) {
 			notSeen: []string{"", "npm", "publish"},
 		},
 		{
-			// eval's argument is a string it will interpret at runtime.
-			// Parsing it again has no bottom, so it is left as an argument.
-			name: "eval", src: `eval "npm publish"`,
-			wantSeen: []string{"eval"}, notSeen: []string{"npm"},
+			// eval's argument is a string it will interpret at runtime. A
+			// literal one is read like `sh -c`'s payload; a parameter's value
+			// is not in the line, so nothing inside it is invented.
+			name: "eval of a parameter", src: `eval "$CMD"`,
+			wantSeen: []string{"eval"}, notSeen: []string{"npm", "CMD", "$CMD"},
 		},
 		{
 			// An interpreter payload that is NOT literal stays opaque. The

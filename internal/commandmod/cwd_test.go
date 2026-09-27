@@ -237,9 +237,38 @@ var cwdTableCases = []cwdCase{
 		want:    "write:/elsewhere/rel",
 	},
 	{
-		name:    "eval of a payload that cannot be read is unknown",
+		// An eval this package cannot read makes the directory OPAQUE, not
+		// unknown: an invocation's cwd is not claimed (invocation_cwd_test),
+		// but a write target resolves as though it had not moved — dropping
+		// it would hide the write from every file guard.
+		name:    "eval of a payload that cannot be read leaves targets resolved",
 		command: `eval "$SETUP" && echo x > rel`,
-		want:    "(nothing)",
+		want:    "write:rel",
+	},
+	{
+		name:    "eval of ssh-agent's output",
+		command: `eval "$(ssh-agent -s)" && echo x > NOTES.md`,
+		want:    "write:NOTES.md",
+	},
+	{
+		name:    "eval of pyenv init, then a heredoc",
+		command: "eval \"$(pyenv init -)\"; cat > NOTES.md <<EOF\nx\nEOF",
+		want:    "write:NOTES.md",
+	},
+	{
+		name:    "an unquoted eval, then sed -i",
+		command: `eval $(opam env); sed -i 's/a/b/' NOTES.md`,
+		want:    "write:NOTES.md",
+	},
+	{
+		name:    "an eval as an if condition",
+		command: `if eval "$X"; then echo > rel; fi`,
+		want:    "write:rel",
+	},
+	{
+		name:    "an absolute cd after an opaque eval is known",
+		command: `eval "$X"; cd /a && echo > rel`,
+		want:    "write:/a/rel",
 	},
 	{
 		name:    "popd is recognised but not resolved: unknown",

@@ -76,6 +76,19 @@ type cwd struct {
 	// exactly where the top-level sequence was before the subshell opened,
 	// because the subshell's `cd` never ran in the parent shell at all.
 	unknown bool
+	// opaque is true once an `eval` whose payload this package cannot read
+	// (`eval "$(ssh-agent -s)"`, `eval "$X"`) has run in this scope. It MAY
+	// have moved the shell, and almost never does.
+	//
+	// A separate bit from unknown because the two consumers of this state
+	// fail in opposite directions. Invocation.Cwd reports it as unknown ("")
+	// — a read credited against a guessed directory is a false credit. A file
+	// target is still resolved as though the eval had not moved anything —
+	// dropping it (what unknown does) would hide every relative write after
+	// the eval from every file guard, and `eval "$(ssh-agent -s)" && echo x >
+	// NOTES.md` is an ordinary line, not an evasion. See composeCwd and
+	// resolveTargetAt.
+	opaque bool
 	// dir is the effective directory, meaningful only when !unknown.
 	//
 	// Empty means "wherever this sequence started" — the ordinary case with no
@@ -119,15 +132,17 @@ func (c cwd) advance(target string) cwd {
 		return c
 	}
 	if path.IsAbs(target) {
+		// An absolute cd names the directory outright, whatever an opaque
+		// eval before it may have done.
 		return cwd{dir: path.Clean(target)}
 	}
 	if c.dir == "" {
 		// Relative, composed onto "wherever this sequence started" — which
 		// stays exactly that: still relative, one level deeper. Not resolved
 		// against any root, because this package has none.
-		return cwd{dir: path.Clean(target)}
+		return cwd{dir: path.Clean(target), opaque: c.opaque}
 	}
-	return cwd{dir: path.Clean(path.Join(c.dir, target))}
+	return cwd{dir: path.Clean(path.Join(c.dir, target)), opaque: c.opaque}
 }
 
 // resolveTargetAt turns a path as a command line spelled it into the path it
@@ -279,36 +294,46 @@ func cdTargetOf(cfg *expand.Config, call *syntax.CallExpr) (target string, isCd 
 	return argFields[0], isCd, true
 }
 
-// evalPayloadOf reads an `eval` call's payload: the statements eval would run
-// in the current shell, parsed from its arguments joined by spaces (which is
-// what eval itself does).
+// evalPayloadText reads an `eval` call's payload: its arguments joined by
+// spaces, which is the text eval itself parses and runs in the current shell.
 //
 // isEval is false for any other call. ok is false when the payload cannot be
 // read without guessing — an argument that is not literal (`eval "$(pyenv
-// init -)"`, `eval "cd $D"`), or text that does not parse — which callers read
-// as "this eval may have moved the shell anywhere". A literal payload always
-// strictly shrinks on each nested `eval`, so the recursion through
-// cwdForSequence terminates.
-func evalPayloadOf(cfg *expand.Config, call *syntax.CallExpr) (payload []*syntax.Stmt, isEval, ok bool) {
+// init -)"`, `eval "cd $D"`) — because eval joins its words, so one
+// unknowable word makes the whole text a guess. A literal payload strictly
+// shrinks with each nested `eval`, so re-parsing it has a bottom; the callers
+// that re-parse it for programs and files also spend the interpreter depth
+// budget on it, exactly as for `sh -c`.
+func evalPayloadText(cfg *expand.Config, call *syntax.CallExpr) (payload string, isEval, ok bool) {
 	if len(call.Args) == 0 || !isLiteral(call.Args[0]) {
-		return nil, false, false
+		return "", false, false
 	}
 	got, err := expand.Fields(cfg, call.Args[0])
 	if err != nil || len(got) != 1 || got[0] != "eval" {
-		return nil, false, false
+		return "", false, false
 	}
 	words := make([]string, 0, len(call.Args)-1)
 	for _, arg := range call.Args[1:] {
 		if !isLiteral(arg) {
-			return nil, true, false
+			return "", true, false
 		}
 		fields, err := expand.Fields(cfg, arg)
 		if err != nil {
-			return nil, true, false
+			return "", true, false
 		}
 		words = append(words, fields...)
 	}
-	f, err := syntax.NewParser().Parse(strings.NewReader(strings.Join(words, " ")), "")
+	return strings.Join(words, " "), true, true
+}
+
+// evalPayloadOf is evalPayloadText parsed: the statements eval would run.
+// ok is also false for text that does not parse.
+func evalPayloadOf(cfg *expand.Config, call *syntax.CallExpr) (payload []*syntax.Stmt, isEval, ok bool) {
+	text, isEval, ok := evalPayloadText(cfg, call)
+	if !isEval || !ok {
+		return nil, isEval, false
+	}
+	f, err := syntax.NewParser().Parse(strings.NewReader(text), "")
 	if err != nil {
 		return nil, true, false
 	}
@@ -373,9 +398,10 @@ func cwdForStmt(cfg *expand.Config, stmt *syntax.Stmt, current *cwd, out map[*sy
 	case *syntax.CallExpr:
 		if payload, isEval, ok := evalPayloadOf(cfg, cmd); isEval {
 			if !ok {
-				// `eval "$SETUP"` — a payload this package cannot read may `cd`
-				// anywhere, so what follows it runs somewhere unknown.
-				current.unknown = true
+				// `eval "$SETUP"` — a payload this package cannot read may
+				// `cd` anywhere. Opaque, not unknown: see cwd.opaque for why
+				// the file-target side keeps resolving.
+				current.opaque = true
 				return
 			}
 			// eval runs its payload in THIS shell, exactly like a Block: a
@@ -625,6 +651,9 @@ func mergeBranches(branches ...cwd) cwd {
 		if b.unknown || b.dir != first.dir {
 			return cwd{unknown: true}
 		}
+		// An opaque eval on any path may have moved the shell on that path:
+		// the agreed directory stands, opaque.
+		first.opaque = first.opaque || b.opaque
 	}
 	return first
 }

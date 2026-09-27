@@ -80,6 +80,15 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 				inv.Cwd = composeCwd(at, inv.Cwd)
 				invs = append(invs, inv)
 			}
+			// A literal eval payload runs these programs in this shell,
+			// exactly as `sh -c` runs its payload in a child: re-parsed at
+			// depth+1 against the same bound. eval itself is reported above.
+			if text, isEval, ok := evalPayloadText(cfg, node); isEval && ok && depth < maxUnwrapDepth {
+				for _, inv := range walkAt(text, depth+1) {
+					inv.Cwd = composeCwd(at, inv.Cwd)
+					invs = append(invs, inv)
+				}
+			}
 		}
 		return true
 	})
@@ -99,7 +108,9 @@ func composeCwd(at cwd, inner string) string {
 		return ""
 	case path.IsAbs(inner):
 		return inner
-	case at.unknown:
+	case at.unknown, at.opaque:
+		// An opaque eval may have moved the shell: a program's directory is
+		// not claimed (see cwd.opaque — file targets resolve on regardless).
 		return ""
 	case at.dir == "":
 		return inner
