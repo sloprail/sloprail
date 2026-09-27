@@ -52,6 +52,7 @@ const (
 	KeyBin   = "bin"
 	KeyArgv  = "argv"
 	KeyFlags = "flags"
+	KeyCwd   = "cwd"
 )
 
 // Module produces command events.
@@ -120,6 +121,12 @@ func (*Module) Kinds() []module.KindDecl {
 							// their mistake. See fieldType, which leaves an
 							// unenumerated map at types.Any for this reason.
 							{Name: KeyFlags, Type: module.TypeMap},
+
+							// cwd is where this program runs as far as the line
+							// says: "." (where the line started), a path
+							// relative to that, an absolute path, or "" when a
+							// `cd` could not be resolved. See Invocation.Cwd.
+							{Name: KeyCwd, Type: module.TypeString},
 						},
 					},
 				},

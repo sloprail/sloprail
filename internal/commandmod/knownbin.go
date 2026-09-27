@@ -98,8 +98,12 @@ type binSpec func(argv []string) []FileTarget
 // normalisation Invocation.Bin already applies, and for the same reason: a rule
 // should not be evadable by spelling the path out.
 var knownBins = map[string]binSpec{
-	// rm removes every operand. Nothing is written.
-	"rm": func(argv []string) []FileTarget { return targetsFor(operands(argv), Remove) },
+	// rm removes every operand. Nothing is written. With -r/-R/--recursive an
+	// operand that is a directory goes with everything inside it — see
+	// FileTarget.Recursive.
+	"rm": func(argv []string) []FileTarget {
+		return markRecursive(targetsFor(operands(argv), Remove), rmIsRecursive(argv))
+	},
 
 	// mv removes its sources and writes its destination. Both halves matter: a
 	// rule protecting notes.md must fire on `mv notes.md elsewhere.md` (the file
@@ -465,7 +469,40 @@ func movelike(argv []string) []FileTarget {
 	if len(ops) < 2 {
 		return nil
 	}
-	return append(targetsFor(ops[:len(ops)-1], Remove), copyTargets(ops)...)
+	// A source that is a directory moves whole, contents included, with no
+	// flag asked for — so every source is a recursive removal from where it was.
+	return append(markRecursive(targetsFor(ops[:len(ops)-1], Remove), true), copyTargets(ops)...)
+}
+
+// rmIsRecursive reports whether an rm invocation removes directories with
+// their contents: `-r`, `-R`, `--recursive`, or either letter inside a bundle
+// of short flags (`-rf`, `-fR`). Flags stop at `--`, as they do for rm itself.
+func rmIsRecursive(argv []string) bool {
+	for _, arg := range argv[1:] {
+		switch {
+		case arg == "--":
+			return false
+		case arg == "--recursive":
+			return true
+		case strings.HasPrefix(arg, "--"), !strings.HasPrefix(arg, "-"), arg == "-":
+			continue
+		case strings.ContainsAny(arg[1:], "rR"):
+			return true
+		}
+	}
+	return false
+}
+
+// markRecursive sets Recursive on every target when the line removes
+// directories whole. See FileTarget.Recursive.
+func markRecursive(targets []FileTarget, recursive bool) []FileTarget {
+	if !recursive {
+		return targets
+	}
+	for i := range targets {
+		targets[i].Recursive = true
+	}
+	return targets
 }
 
 // reshapesCopyOperands reports whether a cp-shaped invocation carries a flag
