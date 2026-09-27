@@ -142,7 +142,7 @@ checks:
   - prepare: ./assemble-context.sh      # optional, feeds the judge
     judge: ./is-it-good.md.j2
     model: size-md                       # optional; a size alias or model name
-    allowed_tools: [Read, WebFetch]      # optional; judge-only, tools its agent may use
+    allowed_tools: [WebFetch]            # optional; judge-only, tools beyond reading the project
 ```
 
 - A **script** is the deterministic half: the check payload on stdin, and its
@@ -153,7 +153,8 @@ checks:
   written from scratch almost never does first time.
 - A **judge** is the model half: a Jinja2 prompt template rendered against the
   payload (and any `additionalContext` a `prepare` script assembled), asked for a
-  `{"pass": true|false, "reasoning": "…"}` verdict via `sr-agent`.
+  `{"pass": true|false, "reasoning": "…"}` verdict via `sr-agent`. It can read
+  the whole project and write nothing but its verdict.
   → [judge-checks.md](judge-checks.md)
 
 The two check kinds are documented separately because their contracts differ — a

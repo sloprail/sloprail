@@ -40,6 +40,7 @@ func runVerified(
 	model string,
 	harnessArgs []string,
 	allowedTools []string,
+	readDirs []string,
 	prompt string,
 	verifier string,
 	attempts int,
@@ -72,15 +73,19 @@ func runVerified(
 	// verifier to judge an empty file. A correct judgement is reported as a
 	// failed one.
 	//
-	// The caller's allowed-tools are handed to grantWrite so they are MERGED into
-	// the same tool grant as the answer-file Write — one `--allowed-tools`
-	// argument, never two competing variadic groups. A harness with no grantWrite
-	// gets the tools as their own flag instead, appended below.
-	if spec.grantWrite != nil {
-		harnessArgs = append(harnessArgs, spec.grantWrite(filepath.Dir(outputPath), allowedTools)...)
-	} else if len(allowedTools) > 0 {
-		harnessArgs = append(harnessArgs, "--allowed-tools", strings.Join(allowedTools, " "))
+	// The caller's allowed-tools and read dirs are handed to the harness's grant
+	// so they are MERGED with the answer-file write — one `--add-dir`, one
+	// `--allowed-tools`, never competing variadic groups. See claudeCodeSpec.grant
+	// for what each grants and what was measured.
+	grantArgs, err := harnessGrant(spec, accessGrant{
+		WriteDir: filepath.Dir(outputPath),
+		ReadDirs: readDirs,
+		Tools:    allowedTools,
+	})
+	if err != nil {
+		return err
 	}
+	harnessArgs = append(harnessArgs, grantArgs...)
 
 	// The path is appended to the caller's prompt rather than replacing it: the
 	// caller's question is still the question, and this only says where the

@@ -131,6 +131,8 @@ environment naming no known harness is refused rather than guessed at; pass
 		`Claude Code's own settings as a JSON object, passed through untouched (e.g. '{"permission-mode":"plan"}')`)
 	cmd.Flags().String("allowed-tools", "",
 		"Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")")
+	cmd.Flags().StringArray("read-dir", nil,
+		"A directory the agent may read but never write, e.g. the project a judge is judging (repeatable)")
 	cmd.Flags().String("verify", "",
 		"A script that decides whether the agent's answer is acceptable: exit 0 accepts, exit 3 rejects it as final, any other non-zero asks the agent again")
 	cmd.Flags().Int("verify-attempts", DefaultVerifyAttempts,
@@ -153,6 +155,7 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	harnessFlag, _ := cmd.Flags().GetString("harness")
 	claudeArgs, _ := cmd.Flags().GetString("claude-args")
 	allowedToolsFlag, _ := cmd.Flags().GetString("allowed-tools")
+	readDirFlags, _ := cmd.Flags().GetStringArray("read-dir")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	verifyFlag, _ := cmd.Flags().GetString("verify")
 	verifyAttempts, _ := cmd.Flags().GetInt("verify-attempts")
@@ -205,8 +208,17 @@ func runAgent(cmd *cobra.Command, args []string) error {
 
 	// The tools the agent may use, parsed from the comma/space-separated flag into
 	// the list the harness merges with the write grant it needs. Empty when the
-	// flag was not given, which grants only the mechanism's own Write.
+	// flag was not given, which grants only the answer-file write --verify needs.
 	allowedTools := ParseAllowedTools(allowedToolsFlag)
+
+	// The directories the agent may read and never write, made absolute and
+	// checked to exist BEFORE anything runs: a harness permission rule is matched
+	// on an absolute path, and a typo'd directory is free to report now and
+	// expensive to discover as a blind judge after a model has been paid for.
+	readDirs, err := resolveReadDirs(readDirFlags)
+	if err != nil {
+		return err
+	}
 
 	// Diagnostics go to stderr so that stdout carries only the agent's answer.
 	// A hook capturing this command's output to feed a rule must not find
@@ -219,16 +231,17 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	// because it OWNS the prompt — it appends the output path, and on a retry
 	// appends the objection too.
 	if cmd.Flags().Changed("verify") {
-		return runVerified(cmd, spec, resolution.Model, harnessArgs, allowedTools, prompt,
+		return runVerified(cmd, spec, resolution.Model, harnessArgs, allowedTools, readDirs, prompt,
 			verifyFlag, verifyAttempts, false, dryRun)
 	}
 
-	// Outside --verify there is no write grant to merge the tools into, so they are
-	// passed as their own `--allowed-tools` group. Appended to the harness args so
-	// they render as an ordinary flag before the prompt.
-	if len(allowedTools) > 0 {
-		harnessArgs = append(harnessArgs, "--allowed-tools", strings.Join(allowedTools, " "))
+	// Outside --verify there is no answer file, so nothing is writable: the grant
+	// carries only the caller's tools and the read-only dirs.
+	grantArgs, err := harnessGrant(spec, accessGrant{ReadDirs: readDirs, Tools: allowedTools})
+	if err != nil {
+		return err
 	}
+	harnessArgs = append(harnessArgs, grantArgs...)
 
 	inv := BuildInvocation(spec, resolution.Model, harnessArgs, prompt, os.Getenv)
 

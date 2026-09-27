@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -168,4 +170,99 @@ func TestRegistry_EveryHarnessIsWellFormed(t *testing.T) {
 		assert.NotEmpty(t, spec.argsFlag, "%s needs an args flag", spec.name)
 		assert.Len(t, spec.sizes, len(sizeAliases), "%s must map every size", spec.name)
 	}
+}
+
+// --- the file-access grant ------------------------------------------------
+
+// realDir is a fresh directory whose path has no symlink in it, so pathRules
+// yields exactly one spelling and a test can compare argv exactly. (t.TempDir on
+// macOS sits under /var, a symlink to /private/var.)
+func realDir(t *testing.T, name string) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	dir := filepath.Join(root, name)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	return dir
+}
+
+// The answer directory is the ONLY thing a judge may write, and it is granted by
+// an Edit rule scoped to it — never an unscoped Write, which was measured to
+// write anywhere on disk. The caller's own tools follow as further values of the
+// same flag.
+func TestClaudeGrant_AnswerDirIsTheOnlyWriteGrant(t *testing.T) {
+	answer := realDir(t, "answer")
+
+	got := claudeCodeSpec.grant(accessGrant{WriteDir: answer, Tools: []string{"Read", "WebFetch"}})
+
+	assert.Equal(t, []string{
+		"--add-dir", answer,
+		"--allowed-tools", "Edit(/" + answer + "/**)", "Read", "WebFetch",
+	}, got)
+	assert.NotContains(t, got, "Write", "an unscoped Write grant writes anywhere on disk")
+}
+
+// A read dir is a working directory (readable by Read/Grep/Glob with no grant)
+// and denied to every file-writing tool — a deny beats any allow, including a
+// Write the caller itself asked for.
+func TestClaudeGrant_ReadDirIsAWorkingDirectoryAndDenied(t *testing.T) {
+	answer := realDir(t, "answer")
+	project := realDir(t, "project")
+
+	got := claudeCodeSpec.grant(accessGrant{WriteDir: answer, ReadDirs: []string{project}, Tools: []string{"Write"}})
+
+	assert.Equal(t, []string{
+		"--add-dir", answer, project,
+		"--allowed-tools", "Edit(/" + answer + "/**)", "Write",
+		"--disallowed-tools", "Edit(/" + project + "/**)",
+	}, got)
+}
+
+// With no answer file (sr-agent run without --verify) nothing is writable: the
+// grant is the read dirs and the caller's tools, and no Edit allow at all.
+func TestClaudeGrant_WithoutAnAnswerFileNothingIsWritable(t *testing.T) {
+	project := realDir(t, "project")
+
+	got := claudeCodeSpec.grant(accessGrant{ReadDirs: []string{project}, Tools: []string{"Read"}})
+
+	assert.Equal(t, []string{
+		"--add-dir", project,
+		"--allowed-tools", "Read",
+		"--disallowed-tools", "Edit(/" + project + "/**)",
+	}, got)
+	assert.Empty(t, claudeCodeSpec.grant(accessGrant{}), "no access asked for, no flags")
+}
+
+// A read dir that CONTAINS the answer directory is not denied — the deny would
+// beat the answer-file allow and the judge could never write its verdict.
+func TestClaudeGrant_ReadDirHoldingTheAnswerDirIsNotDenied(t *testing.T) {
+	project := realDir(t, "project")
+	answer := filepath.Join(project, "tmp", "answer")
+	require.NoError(t, os.MkdirAll(answer, 0o755))
+
+	got := claudeCodeSpec.grant(accessGrant{WriteDir: answer, ReadDirs: []string{project}})
+
+	assert.NotContains(t, got, "--disallowed-tools")
+	assert.Contains(t, got, "Edit(/"+answer+"/**)")
+}
+
+// claude matches a rule against the path as the agent SPELLS it (measured: an
+// allow for the /private/var spelling did not cover a Write to the /var one), so
+// a directory reached through a symlink gets a rule for each spelling.
+func TestPathRules_EverySpellingOfASymlinkedDirectory(t *testing.T) {
+	real := realDir(t, "real")
+	link := filepath.Join(filepath.Dir(real), "link")
+	require.NoError(t, os.Symlink(real, link))
+
+	assert.Equal(t, []string{"Edit(/" + link + "/**)", "Edit(/" + real + "/**)"}, pathRules("Edit", link))
+	assert.Equal(t, []string{"Edit(/" + real + "/**)"}, pathRules("Edit", real),
+		"a path with no symlink in it has one spelling")
+}
+
+func TestWithin(t *testing.T) {
+	root := realDir(t, "root")
+	assert.True(t, within(root, root))
+	assert.True(t, within(filepath.Join(root, "a", "b"), root))
+	assert.False(t, within(filepath.Dir(root), root))
+	assert.False(t, within(root+"-sibling", root), "a shared prefix is not containment")
 }

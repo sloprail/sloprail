@@ -96,10 +96,19 @@ type judgeCall struct {
 	// AllowedTools are the check's own `allowed_tools` (dot-dir-file-store
 	// Check.allowed_tools) — the tools this judge's agent may use, passed through
 	// to sr-agent's `--allowed-tools`. Empty grants only what the judge substrate
-	// itself needs (the Write for the verdict file, which sr-agent adds). Carried
-	// per-call so a rule that must Read the file it judges, or WebFetch a URL,
-	// names those and no rule that does not is handed them.
+	// itself gives every judge (writing its verdict file, and reading the project
+	// — see Workspace). Carried per-call so a rule that must WebFetch a URL names
+	// it and no rule that does not is handed it.
 	AllowedTools []string
+
+	// Workspace is the project being judged (Request.Workspace — the tree the
+	// guard protects), handed to sr-agent as `--read-dir`: the judge may READ it
+	// with its file tools and may not write it. Without it the judge's agent,
+	// started in the rule's own folder, was denied every read of the project it
+	// judges — a spec its marker pins, a sibling source file — and reached its
+	// verdict blind (seen in real sr-eval runs as ~10 denials per judge). Empty
+	// (a caller with no workspace) grants no project access at all.
+	Workspace string
 }
 
 // runJudgeAgent is the production runJudge: render the template, run sr-agent with
@@ -194,7 +203,7 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	}
 	defer cleanup()
 
-	prompt := renderedPrompt + verdictInstruction
+	prompt := renderedPrompt + workspaceNote(j.Workspace) + verdictInstruction
 
 	// sr-agent is invoked as a shell command so the same runShell timeout and
 	// process-group kill protect a model call here as protect a script check —
@@ -213,7 +222,7 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 	// "exit -1" it replaces was the regression.
 	stdout, stderr, code, expired, _, startErr := runShell(
 		j.Dir,
-		judgeCommand(verifier, j.model(), j.AllowedTools),
+		judgeCommand(verifier, j.model(), j.AllowedTools, j.Workspace),
 		nil,
 		judgeEnv(j, prompt),
 		j.Timeout,
@@ -243,26 +252,53 @@ func askJudge(j judgeCall, renderedPrompt string) (Verdict, error) {
 // The prompt is read from an environment variable rather than the argv, so a
 // prompt of any size or shape (a leading dash, embedded quotes) cannot break the
 // command line — `--prompt "$VAR"` is one argument to sr-agent whatever the value
-// holds. The verifier path, the model and the allowed-tools are single-quoted as
-// their own arguments — each is author-supplied (a rule's `model`,
-// `allowed_tools`), so quoting keeps a stray character in one from breaking the
-// command line, the same discipline the verifier path gets.
+// holds. The verifier path, the model, the allowed-tools and the workspace are
+// single-quoted as their own arguments — each is author- or project-supplied (a
+// rule's `model`, `allowed_tools`, a project path with a space in it), so quoting
+// keeps a stray character in one from breaking the command line, the same
+// discipline the verifier path gets.
 //
 // The model is the check's resolved modelset (its own `model`, or the default) —
 // sr-agent's --model takes exactly this comma-separated preference format, so the
 // check's value passes straight through. allowed_tools, when the check named any,
 // is joined with spaces into sr-agent's `--allowed-tools` (which takes the same
 // space/comma-separated form); a check that named none omits the flag entirely, so
-// sr-agent grants only the Write its own verdict file needs.
-func judgeCommand(verifier, model string, allowedTools []string) string {
+// sr-agent grants only what its own verdict file needs.
+//
+// The workspace, when known, is sr-agent's `--read-dir`: the judge can read the
+// project with Read, Grep and Glob whatever its allowed_tools, and sr-agent denies
+// every file-writing tool there (services/sr-agent claudeCodeSpec.grant has the
+// measurement). The read access is for the FILE tools only by design — a rule
+// that grants its judge Bash has granted it a shell, which no permission rule
+// confines; the project stays denied to the shell's recognised write commands
+// (redirection, touch, rm), but not to every program a shell can run.
+func judgeCommand(verifier, model string, allowedTools []string, workspace string) string {
 	cmd := fmt.Sprintf(
 		`sr-agent --model %s --verify %s`,
 		shSingleQuote(model), shSingleQuote(verifier))
 	if len(allowedTools) > 0 {
 		cmd += " --allowed-tools " + shSingleQuote(strings.Join(allowedTools, " "))
 	}
+	if workspace != "" {
+		cmd += " --read-dir " + shSingleQuote(workspace)
+	}
 	cmd += fmt.Sprintf(` --prompt "$%s"`, judgePromptEnv)
 	return cmd
+}
+
+// workspaceNote tells the judge where the project it is judging lives, when the
+// engine knows. The judge's agent starts in the RULE's folder, and the material
+// names files by repository-relative path, so without this a judge that must open
+// a pinned spec or a sibling file has to guess the root. It says the project is
+// readable and not writable, which is what sr-agent's --read-dir enforces — the
+// note informs, the permission rules enforce.
+func workspaceNote(workspace string) string {
+	if workspace == "" {
+		return ""
+	}
+	return "\n\n---\n\nThe project being judged is at " + workspace + ". Paths in the material " +
+		"above are relative to it. You may read files there when the rubric needs " +
+		"something the material does not include; you cannot change them."
 }
 
 // model resolves the modelset to hand sr-agent: the check's own `model` when it

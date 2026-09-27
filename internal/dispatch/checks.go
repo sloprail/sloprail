@@ -150,6 +150,7 @@ func (r Runner) runJudgeCheck(req Request, c declaration.Check) (Verdict, error)
 		Timeout:      timeout,
 		LaunchedBy:   req.LaunchedBy,
 		AllowedTools: c.AllowedTools,
+		Workspace:    req.Workspace,
 	})
 }
 

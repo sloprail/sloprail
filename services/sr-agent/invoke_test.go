@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -412,4 +413,57 @@ func TestResolveBinary_NilDetectFallsBackWithoutPanicking(t *testing.T) {
 	require.NotPanics(t, func() {
 		assert.Equal(t, "fake-binary", resolveBinary(spec, getenv))
 	})
+}
+
+// --- --read-dir -------------------------------------------------------------
+
+// A read dir is made absolute (a permission rule matches absolute paths) and
+// must exist — a typo would otherwise surface only as a judge denied every read.
+func TestResolveReadDirs(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "f")
+	require.NoError(t, os.WriteFile(file, nil, 0o644))
+
+	got, err := resolveReadDirs([]string{dir, dir})
+	require.NoError(t, err)
+	assert.Equal(t, []string{dir}, got, "a repeated directory is one grant")
+
+	t.Chdir(dir)
+	got, err = resolveReadDirs([]string{"."})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.True(t, filepath.IsAbs(got[0]), "a relative dir is made absolute: %s", got[0])
+
+	for name, bad := range map[string]string{
+		"missing": filepath.Join(dir, "nope"),
+		"a file":  file,
+		"empty":   "",
+		"blank":   "  ",
+	} {
+		_, err := resolveReadDirs([]string{bad})
+		assert.ErrorIs(t, err, ErrBadReadDir, name)
+	}
+
+	got, err = resolveReadDirs(nil)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+// A harness that cannot express "read but never write" refuses --read-dir rather
+// than dropping it (a blind judge) or granting the dir plainly (a writable one).
+func TestHarnessGrant_NoPermissionModelRefusesReadDirs(t *testing.T) {
+	bare := harnessSpec{name: "bare", binary: "bare"}
+
+	_, err := harnessGrant(bare, accessGrant{ReadDirs: []string{"/p"}})
+	require.ErrorIs(t, err, ErrNoReadConfinement)
+
+	got, err := harnessGrant(bare, accessGrant{WriteDir: "/out", Tools: []string{"Read", "WebFetch"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--allowed-tools", "Read WebFetch"}, got, "tools still pass through")
+}
+
+// A permission rule's parentheses and `**` would break a pasted command.
+func TestInvocationString_QuotesPermissionRules(t *testing.T) {
+	inv := Invocation{Binary: "claude", Args: []string{"--allowed-tools", "Edit(//tmp/x/**)", "Read"}}
+	assert.Equal(t, `claude --allowed-tools "Edit(//tmp/x/**)" Read`, inv.String())
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -127,6 +128,71 @@ func ParseAllowedTools(raw string) []string {
 	return fields
 }
 
+// ErrBadReadDir is returned when a `--read-dir` does not name an existing
+// directory.
+var ErrBadReadDir = errors.New("invalid --read-dir")
+
+// ErrNoReadConfinement is returned when `--read-dir` is given to a harness with
+// no permission model sr-agent can express "read but never write" in.
+var ErrNoReadConfinement = errors.New("harness cannot confine a read-only directory")
+
+// resolveReadDirs makes each `--read-dir` absolute and checks it is a directory.
+//
+// Absolute because a harness permission rule is matched on an absolute path — a
+// relative one would be read against whatever the harness takes as its base,
+// which is not this process's cwd. Checked because a missing directory would not
+// fail loudly anywhere: the agent would simply be denied every read in it, and a
+// judge would reach its verdict blind. Duplicates are dropped so one directory
+// never becomes two grants.
+func resolveReadDirs(raw []string) ([]string, error) {
+	var dirs []string
+	seen := map[string]bool{}
+	for _, entry := range raw {
+		if strings.TrimSpace(entry) == "" {
+			return nil, fmt.Errorf("%w: an empty value names no directory", ErrBadReadDir)
+		}
+		abs, err := filepath.Abs(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %q: %s", ErrBadReadDir, entry, err)
+		}
+		info, err := os.Stat(abs)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %q: %s", ErrBadReadDir, entry, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("%w: %q is not a directory", ErrBadReadDir, entry)
+		}
+		if !seen[abs] {
+			seen[abs] = true
+			dirs = append(dirs, abs)
+		}
+	}
+	return dirs, nil
+}
+
+// harnessGrant turns the access a run needs into the harness's own flags, via
+// the harness's grant.
+//
+// A harness with no grant still gets the caller's tools, as its own
+// `--allowed-tools` — but a read-only directory is REFUSED there rather than
+// dropped or passed as a plain directory grant. "Read but never write" is a
+// promise about what the agent cannot do; a harness that cannot express it would
+// either leave the judge blind or hand it write access, and the caller asked for
+// neither.
+func harnessGrant(spec harnessSpec, g accessGrant) ([]string, error) {
+	if spec.grant != nil {
+		return spec.grant(g), nil
+	}
+	if len(g.ReadDirs) > 0 {
+		return nil, fmt.Errorf("%w: %s has no permission model sr-agent can express read-only access in; drop --read-dir or run a harness that has one",
+			ErrNoReadConfinement, spec.name)
+	}
+	if len(g.Tools) > 0 {
+		return []string{"--allowed-tools", strings.Join(g.Tools, " ")}, nil
+	}
+	return nil, nil
+}
+
 // CheckHarnessArgs reports a harness-args flag given while a different harness
 // is running.
 //
@@ -154,13 +220,15 @@ type Invocation struct {
 }
 
 // String renders the invocation for diagnostics. Arguments containing spaces
-// are quoted so a printed command can be pasted back into a shell and mean the
-// same thing — a prompt is almost always such an argument.
+// or shell metacharacters are quoted so a printed command can be pasted back
+// into a shell and mean the same thing — a prompt is almost always such an
+// argument, and a permission rule like `Edit(//dir/**)` is another: unquoted,
+// its parentheses are a shell syntax error and its `**` a glob.
 func (inv Invocation) String() string {
 	parts := make([]string, 0, len(inv.Args)+1)
 	parts = append(parts, inv.Binary)
 	for _, arg := range inv.Args {
-		if strings.ContainsAny(arg, " \t\n\"'") {
+		if strings.ContainsAny(arg, " \t\n\"'()*?[]<>|&;$`\\") {
 			parts = append(parts, strconv.Quote(arg))
 			continue
 		}

@@ -42,6 +42,26 @@ func TestJudgeCheck_ModelAndTimeoutThreadToJudgeCall(t *testing.T) {
 	assert.Equal(t, 45*time.Second, got.Timeout, "the check's timeout must be parsed and reach the judge run")
 }
 
+// The request's Workspace reaches the judgeCall, which is what hands sr-agent the
+// project as a read-only `--read-dir`.
+func TestJudgeCheck_WorkspaceThreadsToJudgeCall(t *testing.T) {
+	var got judgeCall
+	r := Runner{
+		skillLoaded: func(string, string, string) (bool, error) { return true, nil },
+		runJudge: func(j judgeCall) (Verdict, error) {
+			got = j
+			return pass(), nil
+		},
+	}
+	req := gateReq([]declaration.Check{{Judge: "j.md.j2"}}, nil)
+	req.Workspace = "/work/proj"
+
+	_, err := r.Run(req)
+	require.NoError(t, err)
+	assert.Equal(t, "/work/proj", got.Workspace, "the workspace must reach the judge run")
+	assert.Equal(t, "/guard", got.Dir, "the judge still starts in the rule's own folder")
+}
+
 // An unset model and timeout leave the judgeCall's fields at their zero values,
 // which the judge path resolves to the engine defaults (size-md, 30s).
 func TestJudgeCheck_UnsetModelTimeoutAreZeroOnJudgeCall(t *testing.T) {
@@ -84,12 +104,12 @@ func TestJudgeCheck_MalformedTimeoutFailsClosed(t *testing.T) {
 
 // judgeCommand carries the check's model to sr-agent as `--model <that>`, quoted.
 func TestJudgeCommand_CarriesCustomModel(t *testing.T) {
-	cmd := judgeCommand("/tmp/verify.sh", "size-xxl", nil)
+	cmd := judgeCommand("/tmp/verify.sh", "size-xxl", nil, "")
 	assert.Contains(t, cmd, "--model 'size-xxl'",
 		"the check's model must be the --model sr-agent is invoked with")
 	// A concrete, comma-separated set passes straight through (sr-agent's --model
 	// takes exactly this format).
-	cmd = judgeCommand("/tmp/verify.sh", "claude-opus-5,size-md", nil)
+	cmd = judgeCommand("/tmp/verify.sh", "claude-opus-5,size-md", nil, "")
 	assert.Contains(t, cmd, "--model 'claude-opus-5,size-md'")
 }
 
@@ -97,14 +117,36 @@ func TestJudgeCommand_CarriesCustomModel(t *testing.T) {
 // space-joined and quoted; a check that named none omits the flag so sr-agent
 // grants only the Write its own verdict file needs.
 func TestJudgeCommand_CarriesAllowedTools(t *testing.T) {
-	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Read", "WebFetch"})
+	cmd := judgeCommand("/tmp/verify.sh", "size-md", []string{"Read", "WebFetch"}, "")
 	assert.Contains(t, cmd, "--allowed-tools 'Read WebFetch'",
 		"the check's allowed_tools must reach sr-agent's --allowed-tools")
 
 	// None named: the flag is absent entirely.
-	bare := judgeCommand("/tmp/verify.sh", "size-md", nil)
+	bare := judgeCommand("/tmp/verify.sh", "size-md", nil, "")
 	assert.NotContains(t, bare, "--allowed-tools",
 		"a judge that named no tools must not pass an empty --allowed-tools")
+}
+
+// judgeCommand hands sr-agent the workspace as `--read-dir`, quoted (a project
+// path may hold a space), so the judge can read the project it judges and never
+// write it; a judge with no workspace gets no project access.
+func TestJudgeCommand_CarriesTheWorkspaceAsAReadDir(t *testing.T) {
+	cmd := judgeCommand("/tmp/verify.sh", "size-md", nil, "/work/my proj")
+	assert.Contains(t, cmd, "--read-dir '/work/my proj'")
+
+	bare := judgeCommand("/tmp/verify.sh", "size-md", nil, "")
+	assert.NotContains(t, bare, "--read-dir", "no workspace, no project access")
+}
+
+// The prompt names the workspace when the engine knows it — the judge starts in
+// the rule's folder and the material's paths are repository-relative — and says
+// nothing when it does not.
+func TestWorkspaceNote(t *testing.T) {
+	note := workspaceNote("/work/proj")
+	assert.Contains(t, note, "/work/proj")
+	assert.Contains(t, note, "relative to it")
+	assert.Contains(t, note, "cannot change them")
+	assert.Empty(t, workspaceNote(""))
 }
 
 // judgeCall.model() resolves the default when the check named none, so
@@ -115,7 +157,7 @@ func TestJudgeCall_ModelDefaultsToSizeMD(t *testing.T) {
 	assert.Equal(t, "size-lg", judgeCall{Model: "size-lg"}.model(), "a set model wins over the default")
 
 	// And the default reaches the command line when the check set no model.
-	cmd := judgeCommand("/tmp/verify.sh", judgeCall{}.model(), nil)
+	cmd := judgeCommand("/tmp/verify.sh", judgeCall{}.model(), nil, "")
 	assert.Contains(t, cmd, "--model 'size-md'")
 }
 

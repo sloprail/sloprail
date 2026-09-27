@@ -332,6 +332,11 @@
         "usage": "The prompt, when a positional would be awkward (from a file or a pipe)"
       },
       {
+        "name": "read-dir",
+        "default": "[]",
+        "usage": "A directory the agent may read but never write, e.g. the project a judge is judging (repeatable)"
+      },
+      {
         "name": "verify",
         "usage": "A script that decides whether the agent's answer is acceptable: exit 0 accepts, exit 3 rejects it as final, any other non-zero asks the agent again"
       },

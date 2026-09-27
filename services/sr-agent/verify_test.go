@@ -58,7 +58,7 @@ func runVerifyHarness(
 	t.Setenv(outputDirEnv, outputDir)
 	t.Setenv("SR_TEST_OUTPUT", filepath.Join(outputDir, "answer"))
 
-	err = runVerified(cmd, spec, "fake-model", nil, nil, prompt, verifier, attempts, false, false)
+	err = runVerified(cmd, spec, "fake-model", nil, nil, nil, prompt, verifier, attempts, false, false)
 	return out.String(), errOut.String(), err
 }
 
@@ -453,12 +453,12 @@ func TestCLI_VerifyGrantsWriteAccessToTheOutputDirectory(t *testing.T) {
 	assert.Contains(t, stdout, outputDir)
 }
 
-// A judge's --allowed-tools are MERGED into the same --allowed-tools argument as
-// the Write the answer file needs — one flag carrying `Write <tools>`, never two
-// competing variadic groups. Under --verify (the judge path) the merge happens in
-// grantWrite, so the dry-run command shows the single merged argument with Write
-// first and the caller's tools after.
-func TestCLI_VerifyMergesAllowedToolsWithTheWriteGrant(t *testing.T) {
+// A judge's --allowed-tools are MERGED into the same --allowed-tools flag as the
+// grant the answer file needs — one flag, never two competing variadic groups —
+// and that grant is an Edit rule scoped to the answer directory, not an unscoped
+// Write: measured on claude 2.1.282, an unscoped Write allow wrote anywhere on
+// disk (see claudeCodeSpec.grant).
+func TestCLI_VerifyMergesAllowedToolsWithTheScopedAnswerGrant(t *testing.T) {
 	requireSh(t)
 	dir := t.TempDir()
 	script := writeScript(t, dir, "v.sh", "exit 0\n")
@@ -471,10 +471,41 @@ func TestCLI_VerifyMergesAllowedToolsWithTheWriteGrant(t *testing.T) {
 		"--allowed-tools", "Read WebFetch", "--verify", script, "judge this")
 	require.NoError(t, err)
 
-	// One argument, Write first then the requested tools — quoted by dry-run's
-	// printer because it contains spaces.
-	assert.Contains(t, stdout, `--allowed-tools "Write Read WebFetch"`,
-		"the judge's tools must be unioned into the Write grant as one --allowed-tools argument")
+	assert.Contains(t, stdout, `--allowed-tools "Edit(/`+outputDir+`/**)"`,
+		"the answer directory must be granted by an Edit rule scoped to it")
+	assert.Contains(t, stdout, " Read WebFetch -- ",
+		"the judge's tools must follow the answer grant as further values of the same flag")
+	assert.Equal(t, 1, strings.Count(stdout, "--allowed-tools"),
+		"one --allowed-tools flag, never two competing variadic groups")
+	flags, _, _ := strings.Cut(stdout, " -- ")
+	assert.NotContains(t, flags, " Write ",
+		"no unscoped Write: measured, it writes anywhere on disk")
+}
+
+// --read-dir makes the judge's project READABLE (a working directory, where
+// claude's Read/Grep/Glob need no grant) and NOT WRITABLE (an Edit deny, which
+// beats any allow). Both halves must reach the harness, beside the answer grant.
+func TestCLI_VerifyReadDirIsReadableButDenied(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+
+	outputDir := filepath.Join(dir, "out")
+	require.NoError(t, os.MkdirAll(outputDir, 0o755))
+	t.Setenv(outputDirEnv, outputDir)
+	project := filepath.Join(dir, "project")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--read-dir", project, "--verify", script, "judge this")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "--add-dir "+outputDir+" "+project+" ",
+		"the answer dir and the project must both be working directories, in one --add-dir")
+	assert.Contains(t, stdout, `--disallowed-tools "Edit(/`+project+`/**)"`,
+		"the project must be denied to every file-writing tool")
+	assert.NotContains(t, stdout, `--allowed-tools "Edit(/`+project,
+		"the project must never be granted for writing")
 }
 
 func TestCLI_NonExecutableVerifierIsRefusedBeforeAnythingRuns(t *testing.T) {

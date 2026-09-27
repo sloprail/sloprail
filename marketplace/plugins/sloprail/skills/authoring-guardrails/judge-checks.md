@@ -16,7 +16,7 @@ checks:
   - prepare: ./skip-pure-addition.sh       # optional: assembles context, or skips the model
     judge: ./change-is-clean-and-absolute.md.j2
     model: size-md                            # optional: a size alias or model name
-    allowed_tools: [Read, WebFetch]           # optional: tools the judge's agent may use
+    allowed_tools: [WebFetch]                 # optional: tools beyond reading the project
 ```
 
 `prepare`, `model` and `allowed_tools` are **judge-only** keys: set any
@@ -127,17 +127,42 @@ the modelset.
 threaded to `sr-agent`'s `--allowed-tools`:
 
 ```yaml
-allowed_tools: [Read, WebFetch]
+allowed_tools: [WebFetch]
 ```
 
 The substrate always grants the judge whatever it needs to **write its verdict**
-(the `Write` for the verdict file, which `sr-agent` adds), so an empty or absent
-list still works — you name tools here **only** when the judge must do more than
-reason over what `prepare` already handed it: `Read` the file it judges, `WebFetch`
-a cited URL. It is a **judge-only key** (recently merged): set on a script check it
+(write access to the verdict file's own directory, which `sr-agent` adds) and to
+**read the project** (below), so an empty or absent list still works — you name
+tools here **only** when the judge must do more than read files and reason: `WebFetch`
+a cited URL, say. It is a **judge-only key**: set on a script check it
 is a load error (`allowed_tools` grants tools to a judge's agent; a script names
 its own by being an executable), and an **empty-string entry** in the list is
 refused at load (a blank name grants nothing).
+
+## What a judge can read and write
+
+The judge's agent starts in the **rule's own folder**, but it can **read the whole
+project** (`SR_WORKSPACE`, the repository root) with `Read`, `Grep` and `Glob` — no
+`allowed_tools` needed. The engine passes the project to `sr-agent` as
+`--read-dir`, and the prompt tells the judge where it is (paths in `event` are
+relative to it). So a template can say "read the spec at the pinned path" or
+"check the sibling file" and the judge will reach it; it does not need a `prepare`
+to inline a file just so the judge can see it (though inlining is still cheaper
+when the judge will always need it).
+
+It **cannot write the project**. Every file-writing tool — `Write`, `Edit`,
+`NotebookEdit`, and the shell's recognised writes (`>`, `touch`, `rm`) — is
+denied there, even if `allowed_tools` names `Write` or `Edit`. The only thing a
+judge may write is its verdict file.
+
+Two things `allowed_tools` can still widen, so name them deliberately:
+
+- **`Write` / `Edit`** are granted unscoped: they cannot touch the project, but
+  can write elsewhere on disk. A judge never needs them for its verdict.
+- **`Bash`** is a shell. The project stays denied to the writes Claude Code
+  recognises, but a shell can run any program, and no permission rule sandboxes
+  what that program does. Grant it only when the judge must *run* something, and
+  prefer a `prepare` script (which you control) for that.
 
 ## Failing closed by default
 
