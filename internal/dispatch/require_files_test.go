@@ -239,10 +239,11 @@ func TestCheckSkill_SkillMissingTakesPriorityOverFiles(t *testing.T) {
 	assert.NotContains(t, v.Reason, "READ REQUIRED")
 }
 
-// TestCheckSkill_OneOfSeveralFilesMissingNamesTheMissingOne pins that the
-// refusal names the SPECIFIC missing page, in declared order — the agent has
-// already read one page and should not be told to start over.
-func TestCheckSkill_OneOfSeveralFilesMissingNamesTheMissingOne(t *testing.T) {
+// TestCheckSkill_OneOfSeveralFilesMissingNamesOnlyTheMissingOne pins that the
+// refusal names the SPECIFIC missing page and does not also demand the one
+// already read — the agent has already read one page and should not be told
+// to start over.
+func TestCheckSkill_OneOfSeveralFilesMissingNamesOnlyTheMissingOne(t *testing.T) {
 	workspace := t.TempDir()
 	skillPath := writeSkillFile(t, workspace, "authoring-guardrails")
 	scriptChecksPath := writeSkillSubpage(t, workspace, "authoring-guardrails", "script-checks.md")
@@ -270,6 +271,42 @@ func TestCheckSkill_OneOfSeveralFilesMissingNamesTheMissingOne(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, v.Refused)
 	assert.Contains(t, v.Reason, "file-guard.md")
+	assert.NotContains(t, v.Reason, "script-checks.md", "the page already read must not be named as missing")
+	assert.Contains(t, v.Reason, "READ REQUIRED")
+}
+
+// TestCheckSkill_AllMissingFilesNamedInOneRefusal pins the bulk-error shape:
+// when NEITHER of two files was read, both are named in the single refusal
+// rather than the agent being told about only the first and discovering the
+// second only after a second write-and-refuse cycle.
+func TestCheckSkill_AllMissingFilesNamedInOneRefusal(t *testing.T) {
+	workspace := t.TempDir()
+	skillPath := writeSkillFile(t, workspace, "authoring-guardrails")
+	writeSkillSubpage(t, workspace, "authoring-guardrails", "script-checks.md")
+	writeSkillSubpage(t, workspace, "authoring-guardrails", "check-template.sh")
+
+	dir := t.TempDir()
+	transcriptPath := filepath.Join(dir, "session.jsonl")
+	writeJSONL(t, transcriptPath,
+		originEntry("origin", false),
+		readToolUseEntry("read-skill", "origin", skillPath, false),
+		// Neither script-checks.md nor check-template.sh is ever read.
+	)
+
+	req := Request{
+		Nature:         NatureFileGuard,
+		Require:        []declaration.Prerequisite{{Skill: "authoring-guardrails", Files: []string{"script-checks.md", "check-template.sh"}}},
+		TranscriptPath: transcriptPath,
+		Workspace:      workspace,
+		Dir:            "/guard",
+		GuardName:      "misplaced-declaration",
+	}
+
+	v, err := Runner{}.Run(req)
+	require.NoError(t, err)
+	assert.True(t, v.Refused)
+	assert.Contains(t, v.Reason, "script-checks.md")
+	assert.Contains(t, v.Reason, "check-template.sh")
 	assert.Contains(t, v.Reason, "READ REQUIRED")
 }
 

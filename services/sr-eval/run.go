@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sloprail/sloprail/internal/subbin"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -74,17 +73,17 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 		defer ws.Close()
 	}
 
-	binDir, err := siblingBinDir()
-	if err != nil {
-		return err
-	}
-
 	// Every run gets a HOME of its own (see agentHome); a FreshMachine run's
-	// also has no sr* binaries, only the plugin installed below.
-	agent, err := ws.agentHome(ctx, root, binDir, fx.FreshMachine)
+	// also has no sr* binaries, only the plugin installed below. Every run
+	// also gets THIS checkout built fresh (agent.binDir) — the caller no
+	// longer trusts whatever sr-agent happens to be first on ITS OWN PATH
+	// (the old siblingBinDir), which silently tested a stale install when one
+	// existed. See agentHome's doc comment for the measured gap this closes.
+	agent, err := ws.agentHome(ctx, root, fx.FreshMachine)
 	if err != nil {
 		return fmt.Errorf("build the agent's HOME: %w", err)
 	}
+	binDir := agent.binDir
 	if fx.FreshMachine {
 		fmt.Fprintf(out, "sr-eval: fresh machine: HOME %s — plugin installed, no sr binaries; install.sh's release is this checkout's build (%s)\n",
 			agent.home, agent.releaseURL)
@@ -191,18 +190,6 @@ func exitCode(err error) int {
 		return ef.code
 	}
 	return 1
-}
-
-// siblingBinDir is the directory holding sr-eval's own siblings
-// (sr-session, sr-file, sr-mark, sr-agent) — resolved once via subbin so the
-// agent-under-test's PATH can be given the SAME build under test rather than
-// whatever those names resolve to elsewhere on the machine.
-func siblingBinDir() (string, error) {
-	agentBin, err := subbin.Find("sr-agent")
-	if err != nil {
-		return "", fmt.Errorf("locate sr-agent (sr-eval launches the agent-under-test through it): %w", err)
-	}
-	return filepath.Dir(agentBin), nil
 }
 
 // launchAgent runs the agent-under-test through sr-agent, in the seeded
