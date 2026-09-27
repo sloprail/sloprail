@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,7 +16,9 @@ import (
 // newSessionStartCmd is the hook point that fires when a session begins.
 //
 // It records where this session measures from — the baseline commit and branch —
-// and loads the project's declarations once so a malformed one surfaces while the
+// where it can (a fresh session has no record to key it by yet, and its first
+// tool call records it instead; see recordNotYetWritten), and loads the
+// project's declarations once so a malformed one surfaces while the
 // person is still watching. It never refuses: a session that cannot start because
 // of a guardrail is worse than a session with none.
 //
@@ -64,14 +69,35 @@ func newSessionStartCmd() *cobra.Command {
 // of a guardrail is worse than a session with none, and that applies with more
 // force to the engine's own bookkeeping than to any rule a project wrote: a
 // missing baseline costs the difference this session would have measured, while
-// a refusal here costs the session itself. The next cycle asks again, and takes
-// the point then if it can.
+// a refusal here costs the session itself. The first tool call asks again, and
+// takes the point then — which, for a fresh session, is where it is actually
+// taken: see recordNotYetWritten.
+//
+// Still attempted here because it is not always a fresh session. A resumed one
+// reports a record that already exists, and taking the point (or noticing the
+// tree left it while the session was closed) before the first prompt is
+// strictly earlier than the first tool call.
 func recordBaseline(cmd *cobra.Command, p HookPayload) {
 	// No payload at all is the documented load check (`sr-session start <
 	// /dev/null`, which install.sh and the install docs tell a newcomer to
 	// run), not a session: there is nothing to record a baseline for, and
 	// reporting that as a failure makes a working install look broken.
 	if p.TranscriptPath == "" && p.AgentTranscriptPath == "" && p.SessionID == "" {
+		return
+	}
+	// A fresh session's record does not exist yet, and that is the harness
+	// working as designed rather than a fault worth a line of stderr. Claude
+	// Code writes the transcript after SessionStart's hooks have run — in a
+	// fresh session the record's origin is the attachment for this very hook —
+	// so the identity the store is keyed by cannot be read here. The session's
+	// first tool call takes the point instead, before anything the agent does
+	// can have moved HEAD (ensureBaselineRecorded, which says why that is early
+	// enough).
+	//
+	// Only the record's OWN absence is quiet. A record that exists but cannot
+	// be resolved — a continuation whose earlier transcript is missing, a chain
+	// that loops — is a broken identity, and still reported below.
+	if recordNotYetWritten(p) {
 		return
 	}
 	store, err := openEngineState(p)
@@ -84,6 +110,27 @@ func recordBaseline(cmd *cobra.Command, p HookPayload) {
 	if _, err := ensureBaseline(store, p.Cwd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)
 	}
+}
+
+// recordNotYetWritten reports whether the payload names this session's record
+// and that record does not exist yet — the ordinary state of a fresh session at
+// SessionStart.
+//
+// Asked of the path itself rather than read off an error from the identity
+// walk, because the walk opens more than one file: a continuation reads the
+// transcript it continues, and THAT one missing is a broken identity, not an
+// early hook. Only this session's own record being absent is the expected case.
+//
+// A path that cannot be resolved at all answers false, so the attempt goes
+// ahead and reports why — this only ever silences the one case that is known
+// to be harmless.
+func recordNotYetWritten(p HookPayload) bool {
+	path, err := p.record()
+	if err != nil || path == "" {
+		return false
+	}
+	_, err = os.Stat(path)
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // reportStructureScopes says, once per session, which part of the tree each

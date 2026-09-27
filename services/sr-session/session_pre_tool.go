@@ -7,6 +7,7 @@ import (
 
 	"github.com/sloprail/sloprail/internal/harness"
 	"github.com/sloprail/sloprail/internal/module/modules"
+	"github.com/sloprail/sloprail/internal/sessionstate"
 )
 
 // newSessionPreToolCmd is the hook point that fires before a tool call runs.
@@ -35,18 +36,42 @@ func newSessionPreToolCmd() *cobra.Command {
 // an unloadable declaration on stderr and dispatches nothing for it, so a malformed
 // rule blocks nothing while still being named where its author looks. See
 // nature_dispatch.go.
+//
+// Before any of that, the session's starting point is taken if it has none — see
+// ensureBaselineRecorded for why this, and not session start, is where a fresh
+// session's point is first recorded. It comes ahead of the registry so that a
+// build whose modules fail to load still records where the session began: the
+// difference Stop measures does not depend on this tool call's rules.
 func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 	p := readPayload(cmd)
+
+	store := natureStore(cmd, p)
+	if store != nil {
+		defer store.Close()
+		recordBaselineBeforeTool(cmd, store, p)
+	}
 
 	reg, err := modules.Registry()
 	if err != nil {
 		return nil
 	}
 
-	if reason := natureDispatchPreTool(cmd, p, reg); reason != "" {
+	if reason := natureDispatchPreTool(cmd, p, reg, store); reason != "" {
 		return deny(cmd, reason)
 	}
 	return nil
+}
+
+// recordBaselineBeforeTool takes the session's starting point on its first tool
+// call, and reports rather than refuses when it cannot.
+//
+// The engine's own bookkeeping failing is not a project's rule being violated,
+// so it never becomes a denial: the tool call goes ahead, the next one asks
+// again, and Stop asks once more before it measures anything.
+func recordBaselineBeforeTool(cmd *cobra.Command, store sessionstate.Store, p HookPayload) {
+	if _, err := ensureBaselineRecorded(store, p.Cwd); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)
+	}
 }
 
 // reportUnresolved names every enabled plugin whose files could not be found, on
