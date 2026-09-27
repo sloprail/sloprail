@@ -10,41 +10,19 @@
 # fail-closed direction; only exit 1 waives the citation, and only on a decided
 # "not a publish".
 #
-# The status is read from the frontmatter AS WRITTEN — parsed by the product's own
-# `sr-file validate --emit` against no schema (/dev/null), never against unit.cue.
-# A write that breaks the schema somewhere else (`type: article`) still claims
-# its status; reading it through unit.cue would see no status at all and waive
-# the approval, so a broken field would be a way to publish uncited. The shape
-# itself is check-publish.sh's to refuse. A document with no frontmatter has no
-# status, so it is not a publish; frontmatter that does not parse is read line
-# by line, and a status line naming published applies the requirement.
+# Whether the unit claims published is publish-claim.sh's answer, shared with
+# check-publish.sh: the frontmatter as written, never read through unit.cue, and
+# frontmatter that opens a fence but does not parse is UNDECIDABLE — which here
+# applies the requirement, like a publish.
 set -uo pipefail
 
-# Undecidable without jq: apply the requirement (exit 0, fail-closed).
+# Undecidable without jq or the shared reader: apply the requirement (exit 0).
 command -v jq >/dev/null 2>&1 || exit 0
+# shellcheck source=publish-claim.sh
+. "${SR_GUARDRAIL_DIR:-.}/publish-claim.sh" 2>/dev/null || exit 0
 
 event="$(cat)"
 field() { printf '%s' "$event" | jq -r "$1" 2>/dev/null; }
-# status_of CONTENT: the status its frontmatter parses to, or nothing.
-status_of() {
-  printf '%s' "$1" | sr-file validate - --as .md --schema /dev/null --emit 2>/dev/null \
-    | jq -r '.status // empty | tostring' 2>/dev/null
-}
-# claims_published CONTENT: does the write leave the unit claiming published?
-# Frontmatter that parses answers with its status; frontmatter that does not
-# parse answers yes when a line of it sets status to published — undecidable
-# leans toward applying the requirement, never toward waiving it.
-claims_published() {
-  if printf '%s' "$1" | sr-file validate - --as .md --schema /dev/null >/dev/null 2>&1; then
-    [ "$(status_of "$1")" = "published" ]
-    return
-  fi
-  printf '%s' "$1" | awk '
-    NR == 1 { if ($0 !~ /^---[ \t\r]*$/) exit 1; next }
-    /^---[ \t\r]*$/ { exit 1 }
-    /^[ \t]*["\047]?status["\047]?[ \t]*:.*published/ { found = 1; exit 0 }
-    END { exit found ? 0 : 1 }'
-}
 
 kind="$(field '.event.kind // ""')"
 case "$kind" in
@@ -59,15 +37,21 @@ case "$kind" in
     ;;
 esac
 
-claims_published "$(field '.event.newContent // ""')" || exit 1
-# The status before is read by parsing only — no line-by-line fallback. That
-# fallback leans toward "published", which here would WAIVE the approval; an old
-# document that does not parse is simply not a published one.
+# Only a decided "not published" waives; yes and undecidable both apply.
+publish_claim "$(field '.event.newContent // ""')"
+[ "$claim" = "no" ] && exit 1
+
+# Already published before this write: not a transition. Only a DECIDED
+# published counts — an old document no reader can parse is not a published one,
+# and treating it as one would waive the approval.
 from=""
 case "$kind" in
-  *Update) from="$(status_of "$(field '.event.oldContent // ""')")" ;;
+  *Update)
+    publish_claim "$(field '.event.oldContent // ""')"
+    [ "$claim" = "yes" ] && exit 1
+    from="$claim_status"
+    ;;
 esac
-[ "$from" = "published" ] && exit 1
 
 # It applies. The hint the refusal carries: only the user publishes, and how —
 # an edit of the status, or for a unit created published, a write.

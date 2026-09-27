@@ -197,11 +197,20 @@ Over a unit's `UNIT.md` only. Publishing needs **both**:
   may be distributed across several channels (posted to X and cross-posted
   to Reddit, say), each with its own URL.
 
-The status is read from the frontmatter as written, not through `unit.cue`:
-a write that claims `status: published` and breaks the schema somewhere else
-(`type: article`) still needs the user's cited approval, and is then refused
-until its frontmatter satisfies `unit.cue`. A broken field is never a way to
-publish unchecked.
+The status is read from the frontmatter as written, not through `unit.cue`
+(one reader, `publish-claim.sh`, shared by the `when` and the check):
+
+- A write that claims `status: published` and breaks the schema somewhere else
+  (`type: article`) still needs the user's cited approval.
+- **Any** write that leaves a unit at `status: published` with frontmatter
+  invalid against `unit.cue` is refused, including an edit to a unit that was
+  already published (which needs no new approval, but must stay valid).
+- Frontmatter that opens a `---` fence but does not parse cannot be read for a
+  status, so it is treated as a claim to publish: the approval is required, and
+  the write is refused until the frontmatter parses.
+- A unit that is not published is not this guard's business, valid or not.
+
+A broken field is never a way to publish unchecked.
 
 Publishing is the irreversible step, and the task is explicit that an agent
 must not be able to publish on its own say-so — so this guard, like

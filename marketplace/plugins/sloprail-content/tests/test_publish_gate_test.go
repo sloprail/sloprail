@@ -270,7 +270,134 @@ func TestPublish_CitedTransitionWithInvalidFrontmatterRefused(t *testing.T) {
 	if body := readProj(t, proj, unitPath); !strings.Contains(body, "status: drafting") {
 		t.Errorf("the invalid published unit landed:\n%s", body)
 	}
-	if !res.Saw("unit.cue") || !res.Saw("type") {
+	if !res.Saw("PUBLISH INVALID") || !res.Saw("type: conflicting values") {
+		t.Errorf("the refusal does not name the schema problem (PUBLISH INVALID, and the CUE error for type):\n%s", res.Output)
+	}
+}
+
+// brokenPublish is a UNIT.md that opens a frontmatter fence but does not parse
+// (an unclosed flow sequence), and whose lines set status to published. No
+// reader can say what status it holds, so it is not "no status": it is
+// undecidable, and a publish guard must treat it as a claim to publish.
+const brokenPublish = "---\ncreated: 2026-09-25\ntype: [\nstatus:\n  published\npublished_urls: [\"https://x.com/nikita/status/1\"]\n---\n\nAnnouncing the launch.\n"
+
+// TestPublish_UncitedEditToUnparseableFrontmatterRefused: an uncited sr-file
+// edit turns a drafting unit's frontmatter into one that does not parse while
+// its lines claim published. Unparseable is undecidable, so the approval is
+// required: refused, and UNIT.md stays drafting.
+func TestPublish_UncitedEditToUnparseableFrontmatterRefused(t *testing.T) {
+	e, proj := installPublishProject(t, draftingUnit)
+
+	res := e.Run(proj, "s-publish-unparseable-uncited", publishPrompt, Turns("done",
+		Bash("b1", srFileEdit(unitPath, "type: post\nstatus: drafting",
+			"type: [\nstatus:\n  published\npublished_urls: [\"https://x.com/nikita/status/1\"]")),
+	))
+	if !res.Refused() {
+		t.Fatalf("an uncited edit to unparseable frontmatter claiming published was not refused:\n%s", res.Output)
+	}
+	if body := readProj(t, proj, unitPath); !strings.Contains(body, "status: drafting") {
+		t.Errorf("the uncited edit landed:\n%s", body)
+	}
+	if !res.Saw("must cite the user's own words (--cite:user)") {
+		t.Errorf("the refusal is not the missing publish approval:\n%s", res.Output)
+	}
+}
+
+// TestPublish_CitedUnparseableFrontmatterRefused: with the approval cited, a
+// unit whose frontmatter does not parse still cannot land — check-publish
+// cannot tell what status it holds, and refuses rather than reading it as
+// "not published".
+func TestPublish_CitedUnparseableFrontmatterRefused(t *testing.T) {
+	e, proj := installPublishProject(t, "")
+
+	res := e.Run(proj, "s-publish-unparseable-cited", publishPrompt, Turns("done",
+		Bash("b1", srFileWrite(unitPath, brokenPublish, approvalQuote)),
+	))
+	if !res.Refused() {
+		t.Fatalf("a unit with unparseable frontmatter was not refused:\n%s", res.Output)
+	}
+	if e.Exists(proj, unitPath) {
+		t.Errorf("the unparseable unit landed on disk")
+	}
+	if !res.Saw("does not parse") {
+		t.Errorf("the refusal does not say the frontmatter does not parse:\n%s", res.Output)
+	}
+}
+
+// TestPublish_UncitedPublishSpellingsRefused: every way of writing a publish
+// that a YAML reader reads as status: published — or that no reader can read
+// at all — needs the approval. Each is an uncited Write over a drafting unit.
+func TestPublish_UncitedPublishSpellingsRefused(t *testing.T) {
+	for name, unit := range map[string]string{
+		"value on the next line":      "---\ntype: article\nstatus:\n  published\npublished_urls: [\"u\"]\n---\n",
+		"explicit key":                "---\n? status\n: published\npublished_urls: [\"u\"]\n---\n",
+		"escaped key and value":       "---\n\"stat\\x75s\": \"pub\\x6cished\"\ntype: article\npublished_urls: [\"u\"]\n---\n",
+		"indented fence":              " ---\ntype: [\nstatus: published\n---\n",
+		"fence with a trailing space": "--- \ntype: [\nstatus: published\n---\n",
+		"byte order mark":             "\ufeff---\nstatus: published\npublished_urls: [\"u\"]\n---\n",
+		"capitalised":                 "---\ntype: post\nstatus: Published\npublished_urls: [\"u\"]\n---\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, proj := installPublishProject(t, draftingUnit)
+			res := e.Run(proj, "s-publish-spelling", publishPrompt, Turns("done",
+				Write("w1", unitPath, unit),
+			))
+			if !res.Refused() {
+				t.Fatalf("an uncited publish spelled %q was not refused:\n%s", name, res.Output)
+			}
+			if body := readProj(t, proj, unitPath); body != draftingUnit {
+				t.Errorf("the uncited publish landed:\n%s", body)
+			}
+		})
+	}
+}
+
+// TestPublish_InvalidNonPublishedUnitPermitted: no over-refusal. A unit that
+// breaks unit.cue but parses to a status other than published is not this
+// guard's business — an uncited write of it lands.
+func TestPublish_InvalidNonPublishedUnitPermitted(t *testing.T) {
+	for name, unit := range map[string]string{
+		"invalid type, drafting": "---\ncreated: 2026-09-25\ntype: article\nstatus: drafting\n---\n\nAnnouncing the launch.\n",
+		"status unpublished":     "---\ntype: post\nstatus: unpublished\n---\n",
+		"comment naming publish": "---\ntype: post\nstatus: drafting # not published yet\n---\n",
+		"no frontmatter at all":  "Announcing the launch; status: published later.\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, proj := installPublishProject(t, draftingUnit)
+			res := e.Run(proj, "s-publish-invalid-draft", publishPrompt, Turns("done",
+				Write("w1", unitPath, unit),
+			))
+			if res.Refused() {
+				t.Fatalf("a unit that is not published (%s) was refused:\n%s", name, res.Output)
+			}
+			if body := readProj(t, proj, unitPath); body != unit {
+				t.Errorf("the permitted write did not land:\n%s", body)
+			}
+		})
+	}
+}
+
+// TestPublish_EditLeavingPublishedUnitInvalidRefused: a unit already published
+// needs no new approval to be edited, but an edit that leaves it at published
+// with frontmatter that breaks unit.cue is refused — a published unit must stay
+// valid, not only one entering published.
+func TestPublish_EditLeavingPublishedUnitInvalidRefused(t *testing.T) {
+	e, proj := installPublishProject(t, publishedUnit)
+
+	edited := strings.Replace(publishedUnit, "type: post", "type: article", 1)
+	res := e.Run(proj, "s-publish-published-invalid", publishPrompt, Turns("done",
+		Write("w1", unitPath, edited),
+	))
+	if !res.Refused() {
+		t.Fatalf("an edit leaving a published unit schema-invalid was not refused:\n%s", res.Output)
+	}
+	if !res.Saw("PUBLISH INVALID") || !res.Saw("type: conflicting values") {
 		t.Errorf("the refusal does not name the schema problem:\n%s", res.Output)
+	}
+	if body := readProj(t, proj, unitPath); body != publishedUnit {
+		t.Errorf("the invalid edit landed:\n%s", body)
+	}
+	if res.Saw("must cite the user's own words") {
+		t.Errorf("an edit to an already-published unit asked for a new approval:\n%s", res.Output)
 	}
 }

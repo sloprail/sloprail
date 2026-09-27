@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# A published unit records where it went out.
+# A published unit records where it went out, in frontmatter that holds.
 #
 # The user's approval to publish is not this script's: the guard's `require`
 # demands a user citation on a write that moves the unit INTO published (`when:
 # ./enters-published.sh`), and the engine refuses an uncited one before this
 # runs.
 #
-# Whenever the change leaves the unit at status: published:
+# Whenever the change leaves the unit at status: published — entering it or
+# already there:
+#   valid frontmatter: it must satisfy unit.cue — an invalid one is refused,
+#   never read as "no status" and waved through.
 #   published_urls:  where it actually went out. A non-empty LIST (a unit may
 #   be distributed across several channels); only presence is checked, not
 #   each URL's shape (see unit.cue).
-#   valid frontmatter: a unit claiming published must satisfy unit.cue — an
-#   invalid one is refused here, never read as "no status" and waved through.
+# And a unit whose frontmatter opens a fence but does not parse is refused: no
+# reader can say whether it claims published (publish-claim.sh, shared with
+# enters-published.sh, is the one reading of that).
 #
 # Bound preventive: true in file-guard.yaml — publish is the irreversible
 # step — with the Stop after-check as the backstop for a write the engine
@@ -54,6 +58,9 @@ schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/unit.cue"
 if [ ! -f "$schema" ]; then
   refuse "unit-publish-approved: schema not found at $schema — the plugin's own unit.cue is missing, so no unit can be checked."
 fi
+# shellcheck source=publish-claim.sh
+. "${SR_GUARDRAIL_DIR:-.}/publish-claim.sh" 2>/dev/null \
+  || refuse "unit-publish-approved: publish-claim.sh is missing beside this check, so whether $path claims published could not be read"
 
 # WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on
 # BOTH Pre kinds before newContent is read — an underivable result is deferred
@@ -80,40 +87,21 @@ case "$kind" in
     ;;
 esac
 
-# claims_published CONTENT: does the unit claim status: published in its
-# frontmatter AS WRITTEN? The same reading enters-published.sh makes: parsed
-# against no schema (/dev/null), and, for frontmatter that does not parse, a
-# status line naming published. Never read through unit.cue — a document that
-# breaks the schema elsewhere still claims its status.
-claims_published() {
-  local doc
-  if doc="$(printf '%s' "$1" | sr-file validate - --as .md --schema /dev/null --emit 2>/dev/null)"; then
-    [ "$(printf '%s' "$doc" | jq -r '.status // empty | tostring' 2>/dev/null)" = "published" ]
-    return
-  fi
-  printf '%s' "$1" | awk '
-    NR == 1 { if ($0 !~ /^---[ \t\r]*$/) exit 1; next }
-    /^---[ \t\r]*$/ { exit 1 }
-    /^[ \t]*["\047]?status["\047]?[ \t]*:.*published/ { found = 1; exit 0 }
-    END { exit found ? 0 : 1 }'
-}
+publish_claim "$content"
+case "$claim" in
+  no)
+    # Not published: its shape is not this guard's subject.
+    exit 0
+    ;;
+  undecidable)
+    refuse "UNREADABLE FRONTMATTER: $path opens a frontmatter fence but it does not parse, so whether it claims status: published cannot be told — fix the frontmatter so it parses:
+$claim_why"
+    ;;
+esac
 
 if ! new_doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)"; then
-  # The frontmatter breaks unit.cue (or does not parse). Its shape is not this
-  # guard's subject for a unit that is not published — but a unit that CLAIMS
-  # published with frontmatter no reader can trust is refused: reading it as
-  # "no status" would let a broken field carry a unit into published unchecked.
-  if claims_published "$content"; then
-    refuse "PUBLISH INVALID: $path claims status: published, but its frontmatter does not satisfy the plugin's unit.cue — fix the frontmatter before publishing:
+  refuse "PUBLISH INVALID: $path claims status: published, but its frontmatter does not satisfy the plugin's unit.cue — fix the frontmatter; a published unit must hold to the schema:
 $new_doc"
-  fi
-  exit 0
-fi
-
-new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty')" \
-  || refuse "unit-publish-approved: could not read the status $path would carry"
-if [ "$new_status" != "published" ]; then
-  exit 0
 fi
 
 n_urls="$(printf '%s' "$new_doc" | jq -r '(.published_urls // []) | length')" \
