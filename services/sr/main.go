@@ -115,9 +115,11 @@ func newRoot() *cobra.Command {
 		Short: "Declarative contracts that keep an agent's output honest",
 		Long: `Declarative contracts that keep an agent's output honest.
 
-A project declares guardrails under .sloprail/guardrails/; a harness calls the
-session hook points, and the engine runs whichever guardrails bind to what is
-about to happen.
+A project declares guardrails under .sloprail/, one folder per rule, in the
+directory named for its kind: file-guard/, gate/ or context/, plus one
+file-guard/structure.yaml listing where writes may land at all. A harness
+calls the session hook points, and the engine runs whichever guardrails bind
+to what is about to happen.
 
 Each command below is a separate binary — ` + "`sr session start`" + ` and
 ` + "`sr-session start`" + ` do the same thing. This root exists so there is one name

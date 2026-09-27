@@ -109,6 +109,13 @@ var (
 	// it by acting. Declaration fault.
 	ErrUnknownContext = errors.New("declaration: prerequisite names an unknown context")
 
+	// ErrBadFilesEntry: a `require: [{skill, files}]` prerequisite's `files` is
+	// set without `skill` (a subpage of nothing), or one of its entries is not a
+	// plain relative path inside the skill's own directory (empty, absolute, or
+	// climbing out with `..`). Declaration fault — caught at load, not at
+	// runtime, since the shape is checkable without reading the trajectory.
+	ErrBadFilesEntry = errors.New("declaration: prerequisite's files entry is invalid")
+
 	// ErrStrayPrepare: a check sets `prepare` without a `judge`. A prepare adds to
 	// what a judge's prompt sees, so a script-only check has nothing to prepare
 	// for — the field can only be a mistake. Declaration fault.

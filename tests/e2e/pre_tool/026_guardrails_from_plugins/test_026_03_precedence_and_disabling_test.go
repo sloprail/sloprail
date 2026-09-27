@@ -50,9 +50,12 @@ func TestT026_03_ProjectRuleTakesPrecedenceOverThePlugins(t *testing.T) {
 	e.FileGuard(proj, "authoring-slop", shadowingGuardYAML, map[string]string{"check.sh": recordThenPermit})
 
 	// Content the PLUGIN's rule would refuse (the tool-name allowlist). If the
-	// plugin's version were still in force, this write would be blocked.
+	// plugin's version were still in force, this write would be blocked. Reads
+	// the skill first — the shipped read-script-checks-doc guard is a DIFFERENT
+	// (nature, name) from authoring-slop, so shadowing that one does not touch
+	// this precondition.
 	got := e.Run(proj, "s-026-03", "write a guardrail hook", Turns("done",
-		Write("w1", ".sloprail/gate/other/check.sh", slopHook),
+		readSkillFirst(t, Write("w1", ".sloprail/gate/other/check.sh", slopHook))...,
 	))
 
 	// The project's own rule ran. Read from its ledger rather than the stream — it
@@ -102,8 +105,11 @@ func TestT026_04_ADisabledPluginRuleIsInert(t *testing.T) {
 
 	e.DisablePluginGuardrail(proj, "sloprail/file-guard/authoring-slop")
 
+	// Reads the skill first — disabling authoring-slop is a DIFFERENT (nature,
+	// name) from the shipped read-script-checks-doc guard, so this write must
+	// still clear that one on its own.
 	got := e.Run(proj, "s-026-04", "write a guardrail hook", Turns("done",
-		Write("w1", newFormatGuardHook, slopHook),
+		readSkillFirst(t, Write("w1", newFormatGuardHook, slopHook))...,
 	))
 
 	if got.Refused() {

@@ -74,7 +74,24 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 		defer ws.Close()
 	}
 
-	if err := ws.writeSettings(root); err != nil {
+	binDir, err := siblingBinDir()
+	if err != nil {
+		return err
+	}
+
+	// Every run gets a HOME of its own (see agentHome); a FreshMachine run's
+	// also has no sr* binaries, only the plugin installed below.
+	agent, err := ws.agentHome(ctx, root, binDir, fx.FreshMachine)
+	if err != nil {
+		return fmt.Errorf("build the agent's HOME: %w", err)
+	}
+	if fx.FreshMachine {
+		fmt.Fprintf(out, "sr-eval: fresh machine: HOME %s — plugin installed, no sr binaries; install.sh's release is this checkout's build (%s)\n",
+			agent.home, agent.releaseURL)
+	} else {
+		fmt.Fprintf(out, "sr-eval: agent HOME %s (isolated; the real one is never written)\n", agent.home)
+	}
+	if err := ws.writeSettings(root, agent.env); err != nil {
 		return fmt.Errorf("wire project settings: %w", err)
 	}
 
@@ -94,17 +111,14 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("commit harness setup: %w", err)
 	}
 
-	binDir, err := siblingBinDir()
-	if err != nil {
-		return err
-	}
-
 	fmt.Fprintf(out, "sr-eval: fixture %s\n", fx.Dir)
 	fmt.Fprintf(out, "sr-eval: project %s\n", ws.project)
 	fmt.Fprintf(out, "sr-eval: launching agent-under-test (model %q)...\n", fx.Model)
 
+	configDir := agent.configDir
+
 	var agentErrText string
-	if agentErr := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, prompt); agentErr != nil {
+	if agentErr := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, prompt, agent.env); agentErr != nil {
 		agentErrText = agentErr.Error()
 		fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error: %v\n", agentErr)
 		// Not returned yet: a refusal or a crash mid-run still leaves a
@@ -114,14 +128,13 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 		// transcript below is unrecoverable.
 	}
 
-	configDir := transcript.ConfigDir()
 	transcriptPath := findTranscript(ws.project, configDir)
 	if transcriptPath == "" {
 		return fmt.Errorf("no transcript found under %s/projects — the agent-under-test never wrote one", configDir)
 	}
 	fmt.Fprintf(out, "sr-eval: transcript %s\n", transcriptPath)
 
-	sr, scoreErr := score(ctx, fx, ws, transcriptPath, binDir)
+	sr, scoreErr := score(ctx, fx, ws, transcriptPath, binDir, agent.home)
 
 	rec := runRecord{
 		Fixture:    filepath.Base(fx.Dir),
@@ -214,15 +227,12 @@ func siblingBinDir() (string, error) {
 // exactly as it would under any permission mode. What bypassPermissions
 // removes is only Claude Code's OWN "may I write this file" question, which
 // exists for an interactive human, not for a fixture proving a guardrail.
-// CLAUDE_CONFIG_DIR is deliberately left unset, so the agent-under-test uses
-// the operator's real one. On macOS, Claude Code's desktop-app auth is a
-// host-auth refresh scoped to the REAL ~/.claude — an isolated config dir
-// loses it entirely ("Not logged in", confirmed empirically), which is a
-// harder failure than the isolation was worth. Everything else about the run
-// stays isolated: the project tree is a fresh temp directory, so the
-// transcript this writes cannot collide with a real project's, and PATH is
-// prepended with this build's own siblings.
-func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir, model, prompt string) error {
+// env is the agent's own environment (agentHome): a HOME of its own inside
+// the workspace, logged in through the linked ~/Library keychain, with this
+// build's siblings first on PATH — or, for a FreshMachine run, nothing of
+// sloprail on PATH at all, not even the directory sr-agent was found in
+// (which is why sr-agent is exec'd by absolute path).
+func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir, model, prompt string, env []string) error {
 	agentBin := filepath.Join(binDir, "sr-agent")
 	args := []string{
 		"--model", model,
@@ -234,18 +244,14 @@ func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, b
 	c.Dir = ws.project
 	c.Stdout = stdout
 	c.Stderr = stderr
-	c.Env = append(os.Environ(),
-		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-	)
+	c.Env = env
 	return c.Run()
 }
 
 // findTranscript locates the .jsonl the agent-under-test wrote, via the same
 // project-dir encoding the harness itself uses (internal/transcript.ProjectDir)
-// — the one place that rule is defined. configDir is the REAL Claude Code
-// config dir (CLAUDE_CONFIG_DIR if the operator's own shell sets it, else
-// ~/.claude — internal/transcript.ConfigDir's own resolution), since the
-// agent-under-test runs against it for auth; see launchAgent. There is exactly
+// — the one place that rule is defined. configDir is the agent's own
+// ~/.claude, inside its isolated HOME (agentHome). There is exactly
 // one project dir for the (fresh, temp) project path and, for a single-turn
 // eval run, exactly one session transcript in it, so the newest .jsonl is the
 // one to score.

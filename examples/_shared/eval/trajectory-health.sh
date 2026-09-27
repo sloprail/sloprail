@@ -135,7 +135,15 @@ trajectory_health_check() {
   rm -f "$prompt_file" "$scenario_file" "$guardrail_file" "$transcript_file"
   rmdir "$judge_cwd" 2>/dev/null || true
 
-  json="$(printf '%s' "$raw" | tr -d '\r' | sed 's/```json//g; s/```//g' | tr '\n' ' ' | grep -o '{[^{}]*}' | head -1)"
+  # Parse the answer whole first: a verdict's reasoning can quote text with
+  # braces, and the flat-object pattern would grab that fragment instead (the
+  # same bug the engine's judge verifier had). The pattern is the fallback for
+  # an answer with prose around the object.
+  stripped="$(printf '%s' "$raw" | tr -d '\r' | sed 's/```json//g; s/```//g')"
+  json="$(printf '%s' "$stripped" | jq -c 'select(type == "object")' 2>/dev/null | head -1)"
+  if [ -z "$json" ]; then
+    json="$(printf '%s' "$stripped" | tr '\n' ' ' | grep -o '{[^{}]*}' | head -1)"
+  fi
   if [ -z "$json" ]; then
     TH_STATUS="fail"
     TH_REASON="the trajectory-health judge did not produce a JSON verdict — raw output: $(printf '%s' "$raw" | head -c 500)"

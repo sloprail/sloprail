@@ -156,6 +156,8 @@ the whole rule, with no `checks` at all.
 ```yaml
 require:
   - skill: document-topic        # this skill was loaded this session
+  - skill: authoring-guardrails  # AND this specific page inside it was read
+    files: [file-guard.md]
   - context: tag-declared        # this context is currently active
 ```
 
@@ -166,6 +168,10 @@ Two forms in use:
   gate whose `require` is exactly that, and nothing else. A separate gate per
   prefix→skill pairing, rather than one gate branching internally, because
   `require` binds to the **whole gate**.
+  - **`files: [<name>, …]`**, alongside `skill`, optional — page(s) INSIDE
+    that skill (relative to its own directory) that must ALSO have been read
+    (a Read tool_use, or a file-reading Bash command). Loading a skill only
+    guarantees its `SKILL.md` was read, not any page it merely links to.
 - **`context: <name>`** — the named context is active. This is also what makes a
   Stop gate's cross-context read safe: `require: [{context: tag-declared}]`
   guarantees that context **entered this cycle before** this gate's check runs,

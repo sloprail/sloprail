@@ -36,6 +36,8 @@ package e2e
 
 import (
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // badMatchGuard is a file-guard whose match names a field the file scope does not
@@ -215,8 +217,13 @@ func TestT013_08_TheRemedyIsNotRefused(t *testing.T) {
 	e.GitInit(proj)
 	e.FileGuard(proj, "unreadable", unparseableGuard, nil)
 
-	// Remedy one: overwrite the broken declaration with a valid one.
+	// Remedy one: overwrite the broken declaration with a valid one. Reads the
+	// skill and its file-guard.md page first — the shipped read-file-guard-doc
+	// guard requires it for any write under .sloprail/file-guard/*/file-guard.yaml,
+	// the same precondition a real repair now meets.
 	got := e.Run(proj, "s-013-08-fix", "fix the declaration", Turns("done",
+		Skill("s1", "authoring-guardrails"),
+		ToolUse("r1", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "file-guard.md")}),
 		Write("w1", ".sloprail/file-guard/unreadable/file-guard.yaml", soundGuard),
 	))
 	if !got.Permitted() {

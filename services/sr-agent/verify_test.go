@@ -254,6 +254,30 @@ exit 0
 		"a rejected answer must never reach stdout")
 }
 
+// A verifier exiting FinalRejectionExit rejects the answer as final: the agent
+// is asked once, not again. A judge's clean "no" is the case — re-asking it
+// doubled every refusal's cost and pushed the judge to reverse a correct verdict.
+func TestVerified_FinalRejectionIsNotRetried(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+
+	fakeHarness := writeScript(t, dir, "fake-claude.sh", `
+echo x >> "`+calls+`"
+printf '{"pass": false}' > "$SR_TEST_OUTPUT"
+exit 0
+`)
+	verifier := writeScript(t, dir, "v.sh", "echo 'JUDGE-REASON: no' >&2\nexit 3\n")
+
+	spec := harnessSpec{name: "fake", binary: fakeHarness}
+	_, errOut, err := runVerifyHarness(t, spec, verifier, "judge this", 2, dir)
+
+	require.ErrorIs(t, err, ErrVerifyFailed)
+	body, _ := os.ReadFile(calls)
+	assert.Equal(t, 1, strings.Count(string(body), "x"), "a final rejection must not ask the agent again")
+	assert.Contains(t, errOut, "JUDGE-REASON: no")
+}
+
 // A passing answer is what stdout carries — the file's contents, not the
 // harness envelope, so a hook can read it directly.
 func TestVerified_AcceptedAnswerIsStdout(t *testing.T) {

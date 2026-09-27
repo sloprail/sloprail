@@ -2,6 +2,7 @@ package declaration
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -298,8 +299,38 @@ func validatePrerequisites(reqs []Prerequisite, env Env) []Problem {
 					r.Context, availableContexts(env.Contexts)))
 			}
 		}
+		if r.filesWithoutSkill() {
+			problems = append(problems, prob(ErrBadFilesEntry, where,
+				"sets files but no skill — files names a subpage inside a skill, and has no meaning without one"))
+		}
+		for j, f := range r.Files {
+			if reason := badFilesEntry(f); reason != "" {
+				problems = append(problems, prob(ErrBadFilesEntry, fmt.Sprintf("%s, files %d", where, j),
+					"%q is not a valid files entry: %s", f, reason))
+			}
+		}
 	}
 	return problems
+}
+
+// badFilesEntry reports why f cannot name a file inside a skill's own
+// directory, or "" if it is fine. A files entry is not itself checked against
+// disk (the same reasoning validatePrerequisites already gives for a skill
+// name: the loader has no list of a project's skills, let alone their
+// contents), only its SHAPE — the one thing checkable without a trajectory or a
+// workspace.
+func badFilesEntry(f string) string {
+	if f == "" {
+		return "empty"
+	}
+	if filepath.IsAbs(f) {
+		return "must be relative to the skill's own directory, not absolute"
+	}
+	clean := filepath.Clean(f)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "must not climb out of the skill's own directory with .."
+	}
+	return ""
 }
 
 // validateChecks checks a checks list: each is exactly-one-of script/judge, and

@@ -129,7 +129,7 @@ environment naming no known harness is refused rather than guessed at; pass
 	cmd.Flags().String("allowed-tools", "",
 		"Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")")
 	cmd.Flags().String("verify", "",
-		"A script that decides whether the agent's answer is acceptable; the agent is asked again if not")
+		"A script that decides whether the agent's answer is acceptable: exit 0 accepts, exit 3 rejects it as final, any other non-zero asks the agent again")
 	cmd.Flags().Int("verify-attempts", DefaultVerifyAttempts,
 		fmt.Sprintf("How many times the agent may be asked before --verify reports failure (1-%d)", MaxVerifyAttempts))
 	cmd.Flags().Bool("dry-run", false,

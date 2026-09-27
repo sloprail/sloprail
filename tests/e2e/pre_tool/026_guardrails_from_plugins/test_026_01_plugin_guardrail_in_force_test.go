@@ -132,7 +132,7 @@ func TestT026_02_APluginRuleStillPermitsWhatItDoesNotObjectTo(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	got := e.Run(proj, "s-026-02", "write a clean guardrail hook", Turns("done",
-		Write("w1", newFormatGuardHook, cleanHook),
+		readSkillFirst(t, Write("w1", newFormatGuardHook, cleanHook))...,
 	))
 
 	if got.Refused() {

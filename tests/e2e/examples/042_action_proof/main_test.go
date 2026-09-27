@@ -94,6 +94,20 @@ func installExampleTree(t *testing.T, projDir string) {
 	if copied == 0 {
 		t.Fatalf("install example tree: %s held no files", src)
 	}
+
+	// Committed into the baseline every caller already expects (installExampleTree
+	// is always called right after GitInit): the sloprail plugin ships preventive
+	// rules that judge a guardrail's OWN files (authoring-slop's script/template
+	// check, and the shipped read-*-doc rules requiring the skill be read before
+	// writing one), and an uncommitted copy of the example's gate/prepare/template
+	// reads as THIS cycle's write to those rules, not only to the gate under test —
+	// the same reason 037_fileguard_pure_require's own commitGuards commits.
+	if out, err := exec.Command("git", "-C", projDir, "add", ".sloprail").CombinedOutput(); err != nil {
+		t.Fatalf("install example tree: git add .sloprail: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", projDir, "commit", "-m", "baseline .sloprail").CombinedOutput(); err != nil {
+		t.Fatalf("install example tree: git commit: %v\n%s", err, out)
+	}
 }
 
 func repoRoot(t *testing.T) string {

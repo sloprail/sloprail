@@ -444,6 +444,25 @@ type Prerequisite struct {
 	// tool_use in the trajectory, not a claim) before the write. Optional.
 	Skill string `yaml:"skill"`
 
+	// Files, optional and meaningful only alongside Skill, names one or more
+	// files INSIDE that skill (relative to its own directory — the one holding
+	// its SKILL.md, e.g. "script-checks.md", "file-guard.md") that must ALSO
+	// have been read (a Read tool_use, or a file-reading Bash command) before
+	// the write — the same evidence a bare `{skill}` already accepts for the
+	// skill's own SKILL.md, extended to its subpages.
+	//
+	// This exists because loading a skill only guarantees its SKILL.md was
+	// read; a skill's detail — a per-event-kind script skeleton, a judge
+	// contract — often lives in a page SKILL.md merely links to, and an agent
+	// that loaded the skill has no guarantee of ever opening it. Measured
+	// against a real onboarding run: every agent loaded authoring-guardrails
+	// yet none read file-guard.md, so every check script was written from
+	// memory and refused several times before it was right.
+	//
+	// A relative path with no `..` and no leading `/` — it names a file inside
+	// the skill's own directory, never an escape from it. Load error otherwise.
+	Files []string `yaml:"files"`
+
 	// Context is the name of a context declaration that must run first, when both
 	// this rule and that context wake on the same event in the same cycle.
 	// Optional. Validated to resolve against the loaded contexts.
@@ -457,6 +476,12 @@ func (p Prerequisite) isEmpty() bool { return p.Skill == "" && p.Context == "" }
 // bothSet reports whether this prerequisite sets both fields — the other half of
 // the exactly-one-of check.
 func (p Prerequisite) bothSet() bool { return p.Skill != "" && p.Context != "" }
+
+// filesWithoutSkill reports whether Files is set on a prerequisite that does not
+// also set Skill — Files names a subpage INSIDE a skill, so it has no meaning
+// without one. Checked separately from isEmpty/bothSet: Files is not itself
+// one of the exactly-one-of pair, it is an optional refinement of Skill alone.
+func (p Prerequisite) filesWithoutSkill() bool { return len(p.Files) > 0 && p.Skill == "" }
 
 // Check is one check in a rule's ordered list (dot-dir-file-store/main.tsp
 // Check). Exactly one of Script or Judge is set — a rule needing both

@@ -3,6 +3,7 @@ package dispatch
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/declaration"
@@ -57,7 +58,7 @@ func (r Runner) checkRequire(req Request) (Verdict, error) {
 // mutually exclusive so order is immaterial.
 func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verdict, error) {
 	if p.Skill != "" {
-		return r.checkSkill(req, p.Skill)
+		return r.checkSkill(req, p.Skill, p.Files)
 	}
 	if p.Context != "" {
 		return r.checkContext(req, p.Context), nil
@@ -70,7 +71,15 @@ func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verd
 // checkSkill refuses unless the session's own trajectory holds either a real
 // Skill tool_use for this skill, or evidence that its own SKILL.md was read
 // directly (a Read tool_use on the file, or a file-reading Bash command) — see
-// skillLoadedInTrajectory for both halves.
+// skillLoadedInTrajectory for both halves — AND, for every entry in files
+// (optional), evidence that THAT subpage was read too (subpageReadInTrajectory).
+//
+// files is checked in declared order, first-missing-ends-it, same as
+// checkRequire itself does across the whole require list — one remedy at a
+// time, naming the nearest unmet page, rather than a pile of them. The skill
+// itself is checked first: a files entry naming a subpage of a skill that was
+// never loaded at all gets the skill's own remedy, not a confusing "read
+// script-checks.md" with no mention that the skill itself is missing too.
 //
 // "In the session's own trajectory" excludes sub-agents, which is what
 // skillLoaded does — a skill loaded (or its file read) inside a delegated
@@ -82,7 +91,7 @@ func (r Runner) checkPrerequisite(req Request, p declaration.Prerequisite) (Verd
 // not a precondition that passed. This is the fail-closed rule the deprecated
 // script spelled out at length, kept here: turning a gap in the environment into
 // consent is the one failure a guardrail must not have.
-func (r Runner) checkSkill(req Request, skill string) (Verdict, error) {
+func (r Runner) checkSkill(req Request, skill string, files []string) (Verdict, error) {
 	if req.TranscriptPath == "" {
 		// No record to read, so whether the skill was loaded is unknowable. Refuse
 		// with the remedy, naming why — the same reasoning require-skill.sh applied
@@ -102,10 +111,23 @@ func (r Runner) checkSkill(req Request, skill string) (Verdict, error) {
 				"so whether it was loaded is unknown. Refusing: a precondition that could not be checked is not a precondition that passed.",
 			skill, err)), nil
 	}
-	if loaded {
-		return pass(), nil
+	if !loaded {
+		return refuse(skillRemedy(skill)), nil
 	}
-	return refuse(skillRemedy(skill)), nil
+
+	for _, file := range files {
+		read, err := r.subpageRead(req.TranscriptPath, req.Workspace, skill, file)
+		if err != nil {
+			return refuse(fmt.Sprintf(
+				"this rule requires %q (inside the %q skill) to have been read first, but this session's record could not be read (%v), "+
+					"so whether it was read is unknown. Refusing: a precondition that could not be checked is not a precondition that passed.",
+				file, skill, err)), nil
+		}
+		if !read {
+			return refuse(subpageRemedy(skill, file, req.Workspace)), nil
+		}
+	}
+	return pass(), nil
 }
 
 // skillRemedy is what a missing-skill refusal tells the agent — the one
@@ -125,6 +147,34 @@ func skillRemedy(skill string) string {
 			"Invoke the Skill tool with skill %q, then retry — or read the skill's own SKILL.md file directly. "+
 			"Stating that you have read it is not what is checked — the session's own record is.",
 		skill, skill)
+}
+
+// subpageRemedy is what a missing-subpage refusal tells the agent — the one
+// instruction that clears it. Unlike skillRemedy, it names a concrete path: the
+// point of a `files` entry is a specific page the agent has almost certainly
+// never opened (the skill's own load does not surface it), so the remedy names
+// exactly where to find it rather than making the agent go looking a second
+// time. The first candidate that actually exists on disk is named (a project
+// skill outranks a plugin-shipped one of the same name, the same resolution
+// order SkillSubpagePaths returns them in); with none resolvable, the first
+// candidate is named anyway — a path to try beats no path at all.
+func subpageRemedy(skill, file, workspace string) string {
+	path := file
+	candidates := SkillSubpagePaths(workspace, skill, file)
+	if len(candidates) > 0 {
+		path = candidates[0]
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				path = c
+				break
+			}
+		}
+	}
+	return fmt.Sprintf(
+		"READ REQUIRED: this action requires %q (inside the %q skill) to have been read first, and this session's record holds no Read "+
+			"or file-reading Bash command (cat, head, …) on it. Read it directly: %s. "+
+			"Stating that you have read it is not what is checked — the session's own record is.",
+		file, skill, path)
 }
 
 // checkContext refuses unless the named context is active in the state map the
@@ -230,44 +280,99 @@ func skillLoadedInTrajectory(transcriptPath, workspace, skill string) (bool, err
 	}
 	skillPaths := SkillFilePaths(workspace, skill)
 
+	found := false
+	err = walkWritingLineOfWork(transcriptPath, entries, func(call transcript.ToolCall) bool {
+		if call.Name == "Skill" && skillNameMatches(call, skill) {
+			found = true
+			return true
+		}
+		if pathReadByEitherTool(call, skillPaths) {
+			found = true
+			return true
+		}
+		return false
+	})
+	return found, err
+}
+
+// subpageReadInTrajectory reports whether a FILE inside skill `skill` (file,
+// relative to the skill's own directory) was read directly — a Read tool_use
+// on one of its candidate paths (SkillSubpagePaths), or a file-reading Bash
+// command against one — on the session's own writing line of work.
+//
+// Unlike skillLoadedInTrajectory, there is no Skill-tool-use branch here: the
+// Skill tool loads a skill's SKILL.md, never a specific subpage by name, so
+// invoking it is evidence the SKILL ITSELF was loaded (skillLoadedInTrajectory
+// already covers that), not that any particular page inside it was opened.
+func subpageReadInTrajectory(transcriptPath, workspace, skill, file string) (bool, error) {
+	entries, err := transcript.Read(transcriptPath)
+	if err != nil {
+		return false, err
+	}
+	paths := SkillSubpagePaths(workspace, skill, file)
+
+	found := false
+	err = walkWritingLineOfWork(transcriptPath, entries, func(call transcript.ToolCall) bool {
+		if pathReadByEitherTool(call, paths) {
+			found = true
+			return true
+		}
+		return false
+	})
+	return found, err
+}
+
+// walkWritingLineOfWork walks entries — already read from transcriptPath — and
+// calls onCall for every tool_use on the session's own writing line of work
+// (see the sidechain-exclusion note above skillLoadedInTrajectory), stopping
+// early the moment onCall reports a match. Shared by skillLoadedInTrajectory
+// and subpageReadInTrajectory so the two cannot disagree about which entries
+// are "this line of work" or how a tool_use is extracted from one.
+func walkWritingLineOfWork(transcriptPath string, entries []transcript.Entry, onCall func(transcript.ToolCall) bool) error {
 	// Decided once, from the FILE, not per entry: a sub-agent's own transcript
 	// marks every entry IsSidechain, so treating that flag as "belongs to a
 	// delegated child" inside that very file would exclude everything in it. See
-	// the note above.
+	// the note above skillLoadedInTrajectory.
 	excludeSidechain := !transcript.IsSubagentTranscript(transcriptPath)
 	for _, e := range entries {
 		if e.Type != transcript.EntryAssistant {
 			continue
 		}
-		// The main line of work only, WITHIN this trajectory. A skill loaded
-		// inside a sub-agent's own record, when THIS trajectory is a root's, was
-		// not loaded on the writing line of work; when THIS trajectory IS that
-		// sub-agent's own record, its entries are exactly that line of work.
 		if excludeSidechain && e.IsSidechain {
 			continue
 		}
 		for _, call := range transcript.ToolCalls(e) {
-			switch call.Name {
-			case "Skill":
-				if skillNameOf(call) == skill {
-					return true, nil
-				}
-			case "Read":
-				if len(skillPaths) > 0 && pathReadByReadTool(call, skillPaths) {
-					return true, nil
-				}
-			default:
-				if len(skillPaths) > 0 && commandReadsAnyOf(call, skillPaths) {
-					return true, nil
-				}
+			if onCall(call) {
+				return nil
 			}
 		}
 	}
-	return false, nil
+	return nil
 }
 
-// pathReadByReadTool reports whether a Read tool_use's `file_path` is exactly
-// one of the candidate skill paths.
+// pathReadByEitherTool reports whether call is a Read tool_use naming one of
+// paths, or a Bash-shaped tool_use whose command reads one of them whole — the
+// two ways this package treats a file as "genuinely read", shared by the
+// skill-file check and the subpage check.
+func pathReadByEitherTool(call transcript.ToolCall, paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	if call.Name == "Read" {
+		return pathReadByReadTool(call, paths)
+	}
+	return commandReadsAnyOf(call, paths)
+}
+
+// pathReadByReadTool reports whether a Read tool_use's `file_path` names one
+// of the candidate skill paths — compared after ResolveExistingPrefix, not by
+// literal string equality, so two symlink spellings of the same file (macOS's
+// /var vs /private/var: Request.Workspace is built from a git root, which
+// `git rev-parse --show-toplevel` resolves, while the AGENT'S own file_path is
+// whatever path it was actually handed) still match. Measured against a real
+// e2e run: an agent Read the skill's own subpage at the exact path a refusal
+// had just told it to, and the bare comparison still refused it — the read
+// undeniably happened, and the check said otherwise.
 //
 // `file_path` is the same key filemod's own write-tool reading uses
 // (pendingshape.go's FilePath) — one field name, one convention, across every
@@ -279,8 +384,19 @@ func pathReadByReadTool(call transcript.ToolCall, skillPaths []string) bool {
 	if json.Unmarshal(call.Input, &in) != nil || in.FilePath == "" {
 		return false
 	}
-	for _, p := range skillPaths {
-		if in.FilePath == p {
+	return pathMatchesAnyOf(in.FilePath, skillPaths)
+}
+
+// pathMatchesAnyOf reports whether path resolves (ResolveExistingPrefix) to
+// the same place as any of candidates, each also resolved. Both sides are
+// resolved, not just one, because either can carry the symlinked spelling
+// depending on how it was produced — a candidate built from Request.Workspace
+// (a resolved git root) against an agent-reported path that is not, or the
+// reverse.
+func pathMatchesAnyOf(path string, candidates []string) bool {
+	resolved := ResolveExistingPrefix(path)
+	for _, c := range candidates {
+		if resolved == ResolveExistingPrefix(c) {
 			return true
 		}
 	}
@@ -300,6 +416,12 @@ func pathReadByReadTool(call transcript.ToolCall, skillPaths []string) bool {
 // shape this reads" answer arrived at without a name gate at all — no drift risk
 // results, because the failure mode of skipping the gate is a wasted parse on an
 // unrelated tool's input, not a wrongly-satisfied prerequisite.
+//
+// Each of commandmod's own extracted targets is compared through
+// pathMatchesAnyOf, not commandmod.ReadsFile's literal equality — the same
+// symlink-spelling gap pathReadByReadTool fixes (its own doc comment has the
+// measurement), and a `cat`'d path is exactly as exposed to it as a Read
+// tool_use's file_path is.
 func commandReadsAnyOf(call transcript.ToolCall, skillPaths []string) bool {
 	var in struct {
 		Command string `json:"command"`
@@ -307,8 +429,8 @@ func commandReadsAnyOf(call transcript.ToolCall, skillPaths []string) bool {
 	if json.Unmarshal(call.Input, &in) != nil || in.Command == "" {
 		return false
 	}
-	for _, p := range skillPaths {
-		if commandmod.ReadsFile(in.Command, p) {
+	for _, target := range commandmod.ReadTargets(in.Command) {
+		if pathMatchesAnyOf(target.Path, skillPaths) {
 			return true
 		}
 	}
@@ -324,4 +446,11 @@ func commandReadsAnyOf(call transcript.ToolCall, skillPaths []string) bool {
 // dispatch.go's own doc comment on the Runner field describes.
 func skillLoaded(transcriptPath, workspace, skill string) (bool, error) {
 	return skillLoadedInTrajectory(transcriptPath, workspace, skill)
+}
+
+// subpageRead is the production Runner.subpageRead: subpageReadInTrajectory
+// under the name Runner.withDefaults assigns to the zero-value Runner. Same
+// split as skillLoaded/skillLoadedInTrajectory above.
+func subpageRead(transcriptPath, workspace, skill, file string) (bool, error) {
+	return subpageReadInTrajectory(transcriptPath, workspace, skill, file)
 }

@@ -67,6 +67,13 @@ func newSessionStartCmd() *cobra.Command {
 // a refusal here costs the session itself. The next cycle asks again, and takes
 // the point then if it can.
 func recordBaseline(cmd *cobra.Command, p HookPayload) {
+	// No payload at all is the documented load check (`sr-session start <
+	// /dev/null`, which install.sh and the install docs tell a newcomer to
+	// run), not a session: there is nothing to record a baseline for, and
+	// reporting that as a failure makes a working install look broken.
+	if p.TranscriptPath == "" && p.AgentTranscriptPath == "" && p.SessionID == "" {
+		return
+	}
 	store, err := openEngineState(p)
 	if err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)

@@ -43,6 +43,7 @@ import (
 //	SR_EVAL_BIN_DIR       directory holding sr-session/sr-file/sr-mark/sr-agent,
 //	                      so a scorer can run `sr-session query` against the
 //	                      transcript without guessing where those binaries are
+//	SR_EVAL_AGENT_HOME    the isolated HOME the agent ran in
 //	SR_EVAL_VERDICT_OUT   a path the scorer may write a verdict JSON to — see
 //	                      verdict.go for the shape
 //
@@ -65,7 +66,7 @@ type scoreResult struct {
 	Verdict *Verdict // nil when the scorer wrote none
 }
 
-func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDir string) (scoreResult, error) {
+func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDir, agentHome string) (scoreResult, error) {
 	verdictPath, cleanup, err := newVerdictFile()
 	if err != nil {
 		return scoreResult{}, err
@@ -81,6 +82,7 @@ func score(ctx context.Context, fx Fixture, ws *workspace, transcriptPath, binDi
 		"SR_EVAL_BIN_DIR="+binDir,
 		"SR_EVAL_VERDICT_OUT="+verdictPath,
 	)
+	cmd.Env = append(cmd.Env, "SR_EVAL_AGENT_HOME="+agentHome)
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
