@@ -129,6 +129,12 @@ func TestT046_31_ShellEditsOutsideAPinsReachAreAdmitted(t *testing.T) {
 	if !res.Refused() || !res.Saw("pinned-spec-holds") {
 		t.Fatalf("a shell edit of a pinned spec line was not refused before it landed:\n%s", res.Output)
 	}
+	// The hint names the cases a result is unknown in, including the one where it
+	// is sr-file's own dry run that failed — not a bare "cannot be worked out",
+	// which misled an agent whose quote merely did not resolve.
+	if !res.Saw("a shell command that edits it, or an sr-file call whose dry run failed") {
+		t.Errorf("the refusal does not say why the result is unknown:\n%s", res.Output)
+	}
 	if got := readSpec(t, proj); got != billingSpec {
 		t.Errorf("the refused shell edit reached SPEC.md:\n%s", got)
 	}
