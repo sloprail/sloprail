@@ -20,12 +20,16 @@ var sloprailBinaries = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-ag
 
 // agentEnv is how an agent-under-test is launched: its HOME, the environment
 // it runs in, and where its harness keeps transcripts. releaseURL is set only
-// for a FreshMachine run.
+// for a FreshMachine run. binDir is this checkout's freshly built binaries —
+// where the CALLER (run.go) finds sr-agent to launch the harness itself, and
+// what it exposes to a score script as SR_EVAL_BIN_DIR — set for every run,
+// fresh or ordinary, since both now build rather than trust an existing PATH.
 type agentEnv struct {
 	home       string
 	env        []string
 	configDir  string
 	releaseURL string
+	binDir     string
 }
 
 // agentHome builds the HOME every agent-under-test runs in, and the
@@ -51,11 +55,25 @@ type agentEnv struct {
 //   - ~/.gitconfig and ~/.config/gh are COPIED, not linked: an agent that runs
 //     `git config --global` or re-logs gh must not reach the real ones.
 //
-// An ordinary run keeps this build's binaries first on PATH (binDir), exactly
-// as before. A FreshMachine run instead gets a PATH with no sloprail binary on
-// it and nothing in ~/.local/bin or ~/go/bin, install.sh pointed at this
-// checkout's build (SLOPRAIL_RELEASE_URL).
-func (w *workspace) agentHome(ctx context.Context, repoRoot, binDir string, fresh bool) (agentEnv, error) {
+// An ordinary run builds THIS checkout's binaries fresh (into the workspace,
+// not overwriting anything installed) and puts them first on PATH. A
+// FreshMachine run instead gets a PATH with no sloprail binary on it at all
+// and nothing in ~/.local/bin or ~/go/bin, install.sh pointed at this
+// checkout's build (SLOPRAIL_RELEASE_URL) — the two paths share buildRelease,
+// they differ only in whether an EXISTING install stays reachable.
+//
+// binDir naming "this build's binaries" used to mean whichever sr-agent
+// happened to be first on the CALLER's own PATH (siblingBinDir in run.go) —
+// not necessarily this checkout at all. An operator with an older global
+// install in ~/.local/bin (from make install, or a previous release) got a
+// run that silently tested THAT install's code, not whatever fix the
+// checkout was mid-editing — measured directly: a same-day code fix
+// (skillNameMatches, PR#44) did not reproduce in an ordinary sr-eval run
+// because the run never rebuilt, it just inherited the operator's day-old
+// ~/.local/bin. Building fresh here, every ordinary run too, removes that
+// gap; buildRelease already stages into the workspace and never touches an
+// existing install.
+func (w *workspace) agentHome(ctx context.Context, repoRootDir string, fresh bool) (agentEnv, error) {
 	realHome, err := os.UserHomeDir()
 	if err != nil {
 		return agentEnv{}, fmt.Errorf("locate the real HOME: %w", err)
@@ -112,23 +130,33 @@ func (w *workspace) agentHome(ctx context.Context, repoRoot, binDir string, fres
 	env = append(env, "HOME="+home, "TMPDIR="+tmp)
 
 	ae := agentEnv{home: home, configDir: filepath.Join(home, ".claude")}
+
+	// Every run — fresh or ordinary — launches THIS checkout's own binaries,
+	// built new into the workspace rather than trusted from wherever binDir
+	// happened to resolve to on the caller's PATH. buildRelease is what a
+	// FreshMachine run already used to get install.sh a real release to fetch;
+	// an ordinary run reuses the same build, staged into its own bin/ dir, and
+	// puts that dir first on PATH instead.
+	releaseDir := filepath.Join(w.root, "release")
+	if err := buildRelease(ctx, repoRootDir, releaseDir); err != nil {
+		return agentEnv{}, fmt.Errorf("build this checkout's release: %w", err)
+	}
+	builtBinDir := filepath.Join(releaseDir, "sloprail-"+runtime.GOOS+"-"+runtime.GOARCH)
+	ae.binDir = builtBinDir
+
 	if !fresh {
 		// Go's module cache defaults to $HOME/go: keep it the real one rather
 		// than re-downloading every module into the workspace.
 		if os.Getenv("GOPATH") == "" {
 			env = append(env, "GOPATH="+filepath.Join(realHome, "go"))
 		}
-		ae.env = append(env, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		ae.env = append(env, "PATH="+builtBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		return ae, nil
 	}
 
 	path, err := freshPath(home)
 	if err != nil {
 		return agentEnv{}, err
-	}
-	releaseDir := filepath.Join(w.root, "release")
-	if err := buildRelease(ctx, repoRoot, releaseDir); err != nil {
-		return agentEnv{}, fmt.Errorf("build this checkout's release: %w", err)
 	}
 	ae.releaseURL = "file://" + releaseDir
 	ae.env = append(env, "PATH="+path,
@@ -140,6 +168,16 @@ func (w *workspace) agentHome(ctx context.Context, repoRoot, binDir string, fres
 // in exactly the shape `make release` publishes and install.sh consumes:
 // sloprail-<os>-<arch>.tar.gz unpacking to sloprail-<os>-<arch>/<binaries>,
 // plus checksums.txt. Host platform only — the agent runs here.
+//
+// The staged binaries (dir/sloprail-<os>-<arch>/) are kept on disk after the
+// archive is built, not removed — an ordinary (non-FreshMachine) run's
+// agentHome hands this same directory back as agentEnv.binDir, for the HOST
+// to launch sr-agent through and for a score script's SR_EVAL_BIN_DIR, so it
+// must still exist once buildRelease returns. Earlier this removed the stage
+// right after tarring, which was correct while only the FreshMachine path
+// (which only ever needs the .tar.gz, unpacked freshly inside the sandbox)
+// called this — deleting it broke an ordinary run's own launch the moment it
+// started reusing the same build (fork/exec: no such file or directory).
 func buildRelease(ctx context.Context, repoRoot, dir string) error {
 	platform := "sloprail-" + runtime.GOOS + "-" + runtime.GOARCH
 	stage := filepath.Join(dir, platform)
@@ -158,9 +196,6 @@ func buildRelease(ctx context.Context, repoRoot, dir string) error {
 	tar := exec.CommandContext(ctx, "tar", "-C", dir, "-czf", filepath.Join(dir, archive), platform)
 	if out, err := tar.CombinedOutput(); err != nil {
 		return fmt.Errorf("tar: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	if err := os.RemoveAll(stage); err != nil {
-		return err
 	}
 	body, err := os.ReadFile(filepath.Join(dir, archive))
 	if err != nil {
