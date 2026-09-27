@@ -108,3 +108,42 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// T041_31: a sub-agent's --cite:user of its own dispatch prompt is refused up
+// front — with no rule requiring a citation at all — and told why: the Bash it
+// runs cannot tell sr-file it is a sub-agent, the hook can. The root's own
+// sr-file failing the same way is left to say its own words.
+func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+
+	sub := subagentScript(t, harness.Turns("sub done",
+		Bash("sb1", `sr-file write notes.md --cite:user 'measure the retry budget' --content '# notes'`),
+	))
+	e.Run(proj, "s-041-31", prompt, Turns("done",
+		harness.Dispatch("d1", "measure the retry budget", sub, ""),
+		Bash("b1", `sr-file write root-notes.md --cite:user 'never said by anyone' --content '# notes'`),
+	))
+	if e.Exists(proj, "notes.md") || e.Exists(proj, "root-notes.md") {
+		t.Fatalf("a write citing words the user never said landed")
+	}
+	record := readFile(t, e.TranscriptPath(proj, "s-041-31"))
+	var subResult, rootResult string
+	for _, l := range strings.Split(record, "\n") {
+		switch {
+		case strings.Contains(l, `"tool_use_id":"sb1`):
+			subResult = l
+		case strings.Contains(l, `"tool_use_id":"b1`):
+			rootResult = l
+		}
+	}
+	for _, want := range []string{"hook", "That quote is from your dispatch prompt, written by the parent agent.", "You are a sub-agent: your prompt is the parent agent's, not the user's."} {
+		if !strings.Contains(subResult, want) {
+			t.Errorf("the sub-agent's refusal does not say %q:\n%s", want, subResult)
+		}
+	}
+	if !strings.Contains(rootResult, "does not resolve") || strings.Contains(rootResult, "sub-agent") || strings.Contains(rootResult, "hook") {
+		t.Errorf("the root's own failed citation was not left to sr-file's own words:\n%s", rootResult)
+	}
+}

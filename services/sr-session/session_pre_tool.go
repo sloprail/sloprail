@@ -43,6 +43,12 @@ func runSessionPreTool(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// A sub-agent's citation of "the user" that cannot resolve is refused
+	// first, whatever the rules: sr-file and cite, run by a sub-agent, cannot
+	// tell it why. See subagent_cite_check.go.
+	if reason := subagentUserCitationRefusal(p); reason != "" {
+		return deny(cmd, reason)
+	}
 	if reason := natureDispatchPreTool(cmd, p, reg); reason != "" {
 		return deny(cmd, reason)
 	}

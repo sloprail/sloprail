@@ -74,6 +74,14 @@ func (r CitationRequest) String() string {
 	return fmt.Sprintf("%s %q", strings.Join(names, ","), r.Quote)
 }
 
+// ResolutionError is a citation that was read and did not resolve: its quote is
+// in no entry of the pools searched, in more than one, or the user's words were
+// asked of a sub-agent whose session is not found. Anything else ResolveCitation
+// returns is a request that could not be read or a record that could not be.
+type ResolutionError struct{ Msg string }
+
+func (e *ResolutionError) Error() string { return e.Msg }
+
 // ResolveCitation grounds one request in the session whose record is at path.
 //
 // Each pool is searched in the records it may draw on (see CiteInSession): the
@@ -101,7 +109,7 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	for _, st := range req.SourceTypes {
 		matches, err := CiteInSession(path, req.Quote, []SourceType{st})
 		if errors.Is(err, ErrNoSessionRoot) {
-			return Citation{}, fmt.Errorf("citation %s cannot resolve in a sub-agent's trajectory (%s) whose session record is not found: its user messages are the parent agent's dispatch, not the end user's own words. %s", req, path, SubagentUserAdvice)
+			return Citation{}, &ResolutionError{Msg: fmt.Sprintf("citation %s cannot resolve in a sub-agent's trajectory (%s) whose session record is not found: its user messages are the parent agent's dispatch, not the end user's own words. %s", req, path, SubagentUserAdvice)}
 		}
 		if err != nil {
 			return Citation{}, fmt.Errorf("citation %s: %w", req, err)
@@ -123,13 +131,13 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 				msg += ". " + hint
 			}
 		}
-		return Citation{}, errors.New(msg)
+		return Citation{}, &ResolutionError{Msg: msg}
 	case len(hits) > 1:
 		where := make([]string, len(hits))
 		for i, h := range hits {
 			where[i] = fmt.Sprintf("%s:%d", h.Path, h.Line)
 		}
-		return Citation{}, fmt.Errorf("citation %s is ambiguous: it matches more than one entry (%s) — extend the quote until it lands on exactly one", req, strings.Join(where, ", "))
+		return Citation{}, &ResolutionError{Msg: fmt.Sprintf("citation %s is ambiguous: it matches more than one entry (%s) — extend the quote until it lands on exactly one", req, strings.Join(where, ", "))}
 	}
 	at := hits[0]
 	message, err := entryText(at.Path, at.Line, pools)
