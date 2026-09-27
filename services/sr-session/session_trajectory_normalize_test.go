@@ -278,50 +278,51 @@ func allKinds() kindSet {
 	return set
 }
 
-// A call a hook refused before it ran is in the record as a tool_use all the
-// same. --ran-only leaves it out: re-deriving what the agent DID from its calls
-// must not count a gh search that never ran (a coverage gate credited exactly
-// that).
-func TestRanOnly_ARefusedCallYieldsNothing(t *testing.T) {
+// A call that did not run is in the record as a tool_use all the same.
+// --ran-only keeps only calls with a tool_result that is not the harness saying
+// the call never ran: re-deriving what the agent DID must not count a gh search
+// that never happened (a coverage gate credited exactly that).
+func TestRanOnly_OnlyCallsThatRanYieldEvents(t *testing.T) {
 	reg, err := modules.Registry()
 	require.NoError(t, err)
-	call := assistantWith(
-		`{"type":"tool_use","id":"ran","name":"Bash","input":{"command":"gh search issues ran"}},` +
-			`{"type":"tool_use","id":"blocked","name":"Bash","input":{"command":"gh search issues blocked"}}`)
-	results := transcript.Entry{
-		Type: transcript.EntryUser,
-		UUID: "u1",
-		Message: json.RawMessage(`{"role":"user","content":[` +
-			`{"type":"tool_result","tool_use_id":"ran","content":"stub output"},` +
-			`{"type":"tool_result","tool_use_id":"blocked","is_error":true,"content":[{"type":"text","text":"PreToolUse:Bash hook error: No scanner is declared"}]}` +
-			`]}`),
-	}
-	refused := transcript.RefusedToolUseIDs([]transcript.Entry{call, results})
-	assert.Equal(t, map[string]bool{"blocked": true}, refused)
 
-	// The other spelling a harness records a refusal in, as a list encoded
-	// inside the string.
-	mockShaped := transcript.Entry{
-		Type: transcript.EntryUser,
-		UUID: "u2",
-		Message: json.RawMessage(`{"role":"user","content":[` +
-			`{"type":"tool_result","tool_use_id":"blocked","is_error":true,"content":"[{\"text\":\"Tool call blocked by a PreToolUse hook: no scanner\",\"type\":\"text\"}]"}` +
-			`]}`),
+	type result struct {
+		content string // a JSON value
+		isError bool
 	}
-	assert.Equal(t, map[string]bool{"blocked": true}, transcript.RefusedToolUseIDs([]transcript.Entry{call, mockShaped}))
-
-	argvs := func(events []event.Event) []string {
-		var out []string
-		for _, e := range events {
-			c, err := commandmod.FromEvent(e)
-			require.NoError(t, err)
-			out = append(out, c.Raw)
-		}
-		return out
+	for _, tc := range []struct {
+		name   string
+		result *result // nil: no tool_result at all
+		ran    bool
+	}{
+		{"ran", &result{`"stub output"`, false}, true},
+		{"ran and failed", &result{`"Exit code 1"`, true}, true},
+		{"no result", nil, false},
+		{"hook block", &result{`"PreToolUse:Bash hook error: No scanner is declared"`, true}, false},
+		{"hook block as a list", &result{`[{"type":"text","text":"PreToolUse:Bash hook error: no"}]`, true}, false},
+		{"hook block, other spelling, list inside a string", &result{`"[{\"text\":\"Tool call blocked by a PreToolUse hook: no\",\"type\":\"text\"}]"`, true}, false},
+		{"hook-looking output that is not an error", &result{`"PreToolUse:Bash hook error: printed by the command"`, false}, true},
+		{"user denied", &result{`"The user doesn't want to take this action right now. STOP what you are doing"`, true}, false},
+		{"permission denied", &result{`"Permission to use Bash with command gh search x has been denied."`, true}, false},
+		{"needs approval", &result{`"This command requires approval"`, true}, false},
+		{"interrupted", &result{`"[Request interrupted by user for tool use]"`, true}, false},
+		{"cancelled by a sibling", &result{`"<tool_use_error>Sibling tool call errored</tool_use_error>"`, true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			call := assistantWith(`{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"gh search issues x"}}`)
+			entries := []transcript.Entry{call}
+			if tc.result != nil {
+				entries = append(entries, transcript.Entry{
+					Type: transcript.EntryUser, UUID: "u1",
+					Message: json.RawMessage(`{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","is_error":` +
+						map[bool]string{true: "true", false: "false"}[tc.result.isError] + `,"content":` + tc.result.content + `}]}`),
+				})
+			}
+			ran := transcript.RanToolUseIDs(entries)
+			assert.Equal(t, tc.ran, ran["c1"])
+			events := deriveEvents(call, reg, kindSet{commandmod.KindPreInvoke: true}, "", ran)
+			assert.Equal(t, tc.ran, len(events) == 1, "events: %v", events)
+			assert.Len(t, deriveEvents(call, reg, kindSet{commandmod.KindPreInvoke: true}, "", nil), 1, "without --ran-only every call yields")
+		})
 	}
-	kinds := kindSet{commandmod.KindPreInvoke: true}
-	assert.Equal(t, []string{"gh search issues ran", "gh search issues blocked"},
-		argvs(deriveEvents(call, reg, kinds, "", nil)), "without the set, both calls")
-	assert.Equal(t, []string{"gh search issues ran"},
-		argvs(deriveEvents(call, reg, kinds, "", refused)), "the refused call is left out")
 }

@@ -51,6 +51,7 @@ func TestExtractCommand_RemovingADirectoryRecursivelyDeletesEveryFileInIt(t *tes
 		// git rm -r deletes the directory's files from the working tree too.
 		"git rm -r " + dir,
 		"git rm -rf " + dir,
+		"git mv " + dir + " " + filepath.Join(root, "moved"),
 		"rm -rf " + dir + "/",
 		"mv " + dir + " " + filepath.Join(root, "elsewhere"),
 	} {
@@ -201,11 +202,13 @@ func deleteEvents(t *testing.T, events []event.Event) map[string]FileEvent {
 
 // TestExtractCommand_PastTheByteBudgetEveryFileIsPredictedUnread bounds what the
 // expansion READS without dropping what it PREDICTS. Every file of a directory
-// past the byte budget still gets its PreFileDelete — a rule matching the path
-// must still fire — but the files after the budget is spent carry no bytes and
-// oldContentKnown false, and they are never read. Dropping the whole directory,
-// as this once did, let one padding file beside a guarded one hide its removal
-// from every preventive delete rule.
+// is still a PreFileDelete — a rule matching the path must still fire — but a
+// file that does not fit in what is left of the byte budget carries no bytes
+// and oldContentKnown false, is never read, and charges nothing: the smaller
+// files after it are still read. Dropping the whole directory, as this once
+// did, let one padding file hide the removal from every preventive delete rule;
+// and stopping every read once a big file had spent the budget blinded content
+// rules to the small guarded files sorting after it.
 func TestExtractCommand_PastTheByteBudgetEveryFileIsPredictedUnread(t *testing.T) {
 	old := maxRemovedDirectoryBytes
 	maxRemovedDirectoryBytes = 64
@@ -215,7 +218,7 @@ func TestExtractCommand_PastTheByteBudgetEveryFileIsPredictedUnread(t *testing.T
 	root := t.TempDir()
 	dir := filepath.Join(root, "big")
 	require.NoError(t, os.Mkdir(dir, 0o755))
-	// Walked in lexical order: a.md fits, b.bin spends the budget, c.md is after.
+	// Walked in lexical order: a.md fits, b.bin does not, c.md fits after it.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("small\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.bin"), make([]byte, 100), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "c.md"), []byte("after\n"), 0o644))
@@ -226,26 +229,28 @@ func TestExtractCommand_PastTheByteBudgetEveryFileIsPredictedUnread(t *testing.T
 	require.Len(t, got, 3, "every file is predicted: %v", got)
 	assert.True(t, got["big/a.md"].OldContentKnown)
 	assert.Equal(t, "small\n", got["big/a.md"].OldContent)
-	for _, p := range []string{"big/b.bin", "big/c.md"} {
-		assert.False(t, got[p].OldContentKnown, "%s is past the budget", p)
-		assert.Empty(t, got[p].OldContent, "%s carries no bytes", p)
-	}
-	assert.Equal(t, 1, *reads, "only the file inside the budget is read")
+	assert.False(t, got["big/b.bin"].OldContentKnown, "b.bin does not fit the budget")
+	assert.Empty(t, got["big/b.bin"].OldContent)
+	assert.True(t, got["big/c.md"].OldContentKnown, "a small file after the big one is still read")
+	assert.Equal(t, "after\n", got["big/c.md"].OldContent)
+	assert.Equal(t, 2, *reads, "the two files that fit are read; the big one never is")
 
-	// A sparse file of 9 MiB against the real budget: predicted, not read.
+	// Against the real budget: a 9 MiB sparse asset sorting FIRST, beside a
+	// small spec — the spec is still read.
 	maxRemovedDirectoryBytes = old
 	*reads = 0
 	pad := filepath.Join(root, "pad")
 	require.NoError(t, os.Mkdir(pad, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(pad, "guarded.md"), []byte("keep\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(pad, "pad.bin"), nil, 0o644))
-	require.NoError(t, os.Truncate(filepath.Join(pad, "pad.bin"), 9<<20))
+	require.NoError(t, os.WriteFile(filepath.Join(pad, "0big.bin"), nil, 0o644))
+	require.NoError(t, os.Truncate(filepath.Join(pad, "0big.bin"), 9<<20))
+	require.NoError(t, os.WriteFile(filepath.Join(pad, "spec.md"), []byte("# spec\n"), 0o644))
 	events, err = extractForIn(t, "rm -rf "+pad, root)
 	require.NoError(t, err)
 	got = deleteEvents(t, events)
-	require.Contains(t, got, "pad/guarded.md", "the guarded file's removal is still predicted: %v", got)
-	assert.True(t, got["pad/guarded.md"].OldContentKnown, "it sorts before the padding, so it is read")
-	assert.False(t, got["pad/pad.bin"].OldContentKnown)
+	require.Contains(t, got, "pad/spec.md", "the spec's removal is predicted: %v", got)
+	assert.False(t, got["pad/0big.bin"].OldContentKnown)
+	assert.True(t, got["pad/spec.md"].OldContentKnown, "the spec after the big asset is read")
+	assert.Equal(t, "# spec\n", got["pad/spec.md"].OldContent)
 	assert.Equal(t, 1, *reads)
 }
 
@@ -256,7 +261,7 @@ func TestExtractCommand_AnOversizeFileIsPredictedUnread(t *testing.T) {
 	root := t.TempDir()
 	big := filepath.Join(root, "big.bin")
 	require.NoError(t, os.WriteFile(big, nil, 0o644))
-	require.NoError(t, os.Truncate(big, maxDeleteReadBytes+1))
+	require.NoError(t, os.Truncate(big, MaxDeleteReadBytes+1))
 
 	events, err := extractForIn(t, "rm "+big, root)
 	require.NoError(t, err)

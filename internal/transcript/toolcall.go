@@ -38,7 +38,7 @@ type ToolCall struct {
 
 	// ID is the tool_use block's id — what the call's tool_result names as its
 	// tool_use_id, and so how a reader tells whether the call ran (see
-	// RefusedToolUseIDs).
+	// RanToolUseIDs).
 	ID string
 }
 
@@ -153,17 +153,32 @@ func AssistantText(e Entry) string {
 	return out
 }
 
-// RefusedToolUseIDs is the tool_use id of every call a hook refused before it
-// ran: its tool_result body is the harness's "PreToolUse:<Tool> hook error: …"
-// rather than anything the tool produced.
+// RanToolUseIDs is the tool_use id of every call that RAN: one with a
+// tool_result that is not the harness saying the call never ran.
 //
-// A refused call is in the record as a tool_use all the same, so a reader
-// re-deriving what the agent DID from its calls — "did one gh search carry
-// every keyword" — counts a search that never ran unless it leaves these out.
-// The test is the same shape the citation reader applies to a refused result
-// (isHookRefusal): the body opens with the hook's own prefix.
-func RefusedToolUseIDs(entries []Entry) map[string]bool {
-	refused := map[string]bool{}
+// A call that did not run is in the record as a tool_use all the same, so a
+// reader re-deriving what the agent DID from its calls — "did one gh search
+// carry every keyword" — counts a search that never happened unless it asks
+// this. Not run, measured against real Claude Code records:
+//
+//   - no tool_result at all (interrupted, or still pending);
+//   - a hook block: "PreToolUse:<Tool> hook error: …", or "Tool call blocked by
+//     a PreToolUse hook: …";
+//   - a permission the user did not give: "The user doesn't want to …",
+//     "Permission to use … has been denied", "Claude requested permissions to use
+//     …", "This command requires approval", "This Bash command contains multiple
+//     operations. The following part requires approval: …", "Tool permission
+//     request …";
+//   - "[Request interrupted by user for tool use]";
+//   - the tool refusing its input before running: "<tool_use_error>…"
+//     (including a parallel call cancelled because a sibling errored), or the
+//     shell's safety check ("Contains brace with quote character …").
+//
+// Each of those counts only on a result the harness marked is_error: a tool's
+// own output can say anything, and text that merely looks like a refusal must
+// not make a call that ran read as not run.
+func RanToolUseIDs(entries []Entry) map[string]bool {
+	ran := map[string]bool{}
 	for _, e := range entries {
 		if e.Type != EntryUser || len(e.Message) == 0 {
 			continue
@@ -175,6 +190,7 @@ func RefusedToolUseIDs(entries []Entry) map[string]bool {
 		var blocks []struct {
 			Type      string          `json:"type"`
 			ToolUseID string          `json:"tool_use_id"`
+			IsError   bool            `json:"is_error"`
 			Content   json.RawMessage `json:"content"`
 		}
 		if json.Unmarshal(msg.Content, &blocks) != nil {
@@ -184,24 +200,50 @@ func RefusedToolUseIDs(entries []Entry) map[string]bool {
 			if b.Type != "tool_result" || b.ToolUseID == "" {
 				continue
 			}
-			for _, body := range resultBodies(b.Content) {
-				if isHookBlock(body) {
-					refused[b.ToolUseID] = true
+			notRun := false
+			if b.IsError {
+				for _, body := range resultBodies(b.Content) {
+					if didNotRun(body) {
+						notRun = true
+					}
 				}
+			}
+			if !notRun {
+				ran[b.ToolUseID] = true
 			}
 		}
 	}
-	return refused
+	return ran
 }
 
-// isHookBlock reports whether a tool_result body is a hook refusing the call
-// before it ran, in either spelling a harness writes it: Claude Code's
-// "PreToolUse:Bash hook error: …", and "Tool call blocked by a PreToolUse
-// hook: …" (the harness mock's, and newer releases').
-func isHookBlock(body string) bool {
+// notRunPrefixes open a tool_result the harness writes for a call that never
+// ran (see RanToolUseIDs).
+var notRunPrefixes = []string{
+	"Tool call blocked by a PreToolUse hook",
+	"The user doesn't want to",
+	"Permission to use ",
+	"Claude requested permissions to use ",
+	"This command requires approval",
+	"This Bash command contains multiple operations. The following part requires approval",
+	"Tool permission request",
+	"[Request interrupted by user for tool use]",
+	"<tool_use_error>",
+	"Contains brace with quote character",
+}
+
+// didNotRun reports whether an is_error tool_result body is the harness saying
+// the call never ran.
+func didNotRun(body string) bool {
 	body = strings.TrimSpace(body)
-	return (strings.HasPrefix(body, "PreToolUse:") && strings.Contains(body, " hook error: ")) ||
-		strings.HasPrefix(body, "Tool call blocked by a PreToolUse hook")
+	if strings.HasPrefix(body, "PreToolUse:") && strings.Contains(body, " hook error: ") {
+		return true
+	}
+	for _, p := range notRunPrefixes {
+		if strings.HasPrefix(body, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // resultBodies is a tool_result's content as text: a bare string, or the text

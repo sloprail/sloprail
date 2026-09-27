@@ -701,7 +701,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 			// The delete is predicted all the same — a rule about the PATH must
 			// still fire — with oldContentKnown false in place of the bytes.
 			if !unread[t.Path] {
-				f.OldContent, f.OldContentKnown = readContent(t.Path, maxDeleteReadBytes)
+				f.OldContent, f.OldContentKnown = readContent(t.Path, MaxDeleteReadBytes)
 			}
 			f.OldMarkers = Scan(f.OldContent)
 		} else {
@@ -749,14 +749,15 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 //
 // The two bounds fail differently, on purpose:
 //
-//   - Past the BYTE budget every file is still predicted; only the reading
-//     stops. The files after the budget is spent carry oldContentKnown false and
-//     no bytes, decided from sizes before anything is read. So a rule matching a
-//     file's PATH still fires on a directory padded with one large (or sparse)
-//     file, and a rule reading what the file held is told it was not read.
-//     Dropping the whole directory here, as this once did, let `truncate -s 9M
-//     pad.bin` beside a guarded file walk its removal past every preventive
-//     delete rule.
+//   - The BYTE budget never drops a prediction; it decides which files are
+//     READ. Every file is predicted. One whose size does not fit in what is left
+//     of the budget carries oldContentKnown false and no bytes, and charges
+//     nothing — so the smaller files after it are still read. Decided from sizes
+//     before anything is read. Dropping the whole directory here, as this once
+//     did, let `truncate -s 9M pad.bin` beside a guarded file walk its removal
+//     past every preventive delete rule; and stopping all reads once a large
+//     file had spent the budget blinded every content rule to the small guarded
+//     files sorting after it.
 //   - Past the FILE COUNT the directory is named as a problem and predicted as
 //     NOTHING: an event per file is what costs, and a rule bound to every path
 //     would run once per file. What is reported afterwards is only what the tree
@@ -792,7 +793,8 @@ var ErrRemovedDirectoryTooLarge = errors.New("a recursively removed directory ho
 // spelled plus the file's path inside it, so it is classified by exactly the
 // same code as `rm scanners/x/scanner.yaml` — the same canonical path reported.
 // The second result names the targets whose bytes must NOT be read, because
-// the removal's byte budget was spent before them (see maxRemovedDirectoryFiles).
+// they do not fit in what is left of the removal's byte budget (see
+// maxRemovedDirectoryFiles).
 //
 // The walk does not follow links, as `rm -r` does not: a link inside the
 // directory is removed as a link (and lookAt sees the link), and a link AT the
@@ -817,7 +819,7 @@ func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.Fil
 		}
 		var files []commandmod.FileTarget
 		var bytes int64
-		spent, tooMany := false, false
+		tooMany := false
 		_ = filepath.WalkDir(t.Path, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				problems = append(problems, fmt.Errorf("%w: %s: %w", ErrUnreadableTree, p, err))
@@ -834,13 +836,14 @@ func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.Fil
 				return filepath.SkipAll
 			}
 			// The bytes the delete event would read, from the size — before
-			// anything is read. Once the budget is spent, nothing more is.
-			if !spent {
-				bytes += readSize(p)
-				spent = bytes > maxRemovedDirectoryBytes
-			}
-			if spent {
+			// anything is read. A file that does not fit in what is left of the
+			// budget is predicted unread and charges nothing, so the smaller
+			// files after it are still read: one large asset sorting first must
+			// not blind every rule to the small, guarded files beside it.
+			if size := readSize(p); bytes+size > maxRemovedDirectoryBytes {
 				unread[p] = true
+			} else {
+				bytes += size
 			}
 			files = append(files, commandmod.FileTarget{Path: p, Effect: commandmod.Remove})
 			return nil
@@ -1051,29 +1054,31 @@ func (m *Module) resolvePayload(p commandmod.Payload, before string) (string, bo
 // old_string, which is refused on an existing file regardless. So no derived
 // `result` is ever built on bytes this failed to read.
 //
-// It reads only a regular file, and at most maxContentReadBytes of it (see
-// readRegular): a path that is a link to a FIFO used to block this read — and
+// It reads only a regular file, and at most MaxContentReadBytes of it (see
+// ReadRegular): a path that is a link to a FIFO used to block this read — and
 // the hook the agent is waiting on — forever, and a link to /dev/zero read
 // without end.
 func (*Module) contentOnDisk(path string) string {
-	s, _ := readContent(path, maxContentReadBytes)
+	s, _ := readContent(path, MaxContentReadBytes)
 	return s
 }
 
-// maxContentReadBytes bounds any one read of a file's bytes into an event.
-const maxContentReadBytes = 64 << 20
+// MaxContentReadBytes bounds any one read of a file's bytes into an event —
+// here, and in the services that build file events of their own (sr-file).
+const MaxContentReadBytes = 64 << 20
 
-// maxDeleteReadBytes bounds the read of one file a delete is about to lose. A
+// MaxDeleteReadBytes bounds the read of one file a delete is about to lose. A
 // larger file is still predicted, with its bytes marked not read
 // (oldContentKnown false).
-const maxDeleteReadBytes = 8 << 20
+const MaxDeleteReadBytes = 8 << 20
 
-// readContent is the one way this module reads a file's bytes: readRegular,
+// readContent is the one way this module reads a file's bytes: ReadRegular,
 // through a variable only so a test can count the reads.
-var readContent = readRegular
+var readContent = ReadRegular
 
-// readRegular reads a file whose bytes an event will carry, and says whether it
-// did. False, with nothing read, for anything that is not a regular file once
+// ReadRegular reads a file whose bytes an event will carry, and says whether it
+// did. Exported so every builder of a file event reads the one way — sr-file's
+// delete and edit resolve included. False, with nothing read, for anything that is not a regular file once
 // links are followed — a FIFO, a socket, a device — and for a file larger than
 // limit.
 //
@@ -1082,7 +1087,7 @@ var readContent = readRegular
 // appears, so a stat-then-open would still hang on a FIFO swapped in between;
 // with O_NONBLOCK the open returns at once and the fstat rejects it. The read
 // itself is capped as well, since a file can grow after the fstat.
-func readRegular(path string, limit int64) (string, bool) {
+func ReadRegular(path string, limit int64) (string, bool) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", false
@@ -1279,7 +1284,10 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		f := FileEvent{Path: clean}
 		switch kind {
 		case KindPostCreate:
-			f.NewContent = m.contentOnDisk(full)
+			// Read the safe way, and say whether it was: a link to a FIFO or a
+			// device, or a file past the read cap, is reported unread
+			// (newContentKnown false) rather than as an empty file.
+			f.NewContent, f.NewContentKnown = readContent(full, MaxContentReadBytes)
 			f.NewMarkers = Scan(f.NewContent)
 		case KindPostDelete:
 			// The baseline bytes, about to be gone. A read that fails yields "",
@@ -1290,7 +1298,7 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		case KindPostUpdate:
 			f.OldContent, _ = observed.BaselineContent(clean)
 			f.OldMarkers = Scan(f.OldContent)
-			f.NewContent = m.contentOnDisk(full)
+			f.NewContent, f.NewContentKnown = readContent(full, MaxContentReadBytes)
 			f.NewMarkers = Scan(f.NewContent)
 		}
 		events = append(events, f.Event(kind))

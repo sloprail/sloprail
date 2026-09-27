@@ -106,8 +106,9 @@ var knownBins = map[string]binSpec{
 	},
 
 	// `git rm` removes its pathspecs from the working tree as well as the index
-	// — the same deletion as rm, spelled through git. Read only for the `rm`
-	// subcommand; every other git subcommand is left to the tree diff.
+	// — the same deletion as rm, spelled through git — and `git mv` moves them
+	// as mv does. Read only for those two subcommands; every other git
+	// subcommand is left to the tree diff.
 	"git": gitTargets,
 
 	// mv removes its sources and writes its destination. Both halves matter: a
@@ -504,7 +505,8 @@ func rmIsRecursive(argv []string) bool {
 	return false
 }
 
-// gitTargets reads `git [global options] rm [options] [--] <pathspec>...`.
+// gitTargets reads `git [global options] rm [options] [--] <pathspec>...` and
+// `git [global options] mv [options] <source>... <destination>`.
 //
 // Nothing, rather than a guess, whenever the paths would not resolve where the
 // line started or nothing leaves the working tree:
@@ -533,7 +535,25 @@ func gitTargets(argv []string) []FileTarget {
 			sub = i
 		}
 	}
-	if sub == 0 || argv[sub] != "rm" {
+	if sub == 0 {
+		return nil
+	}
+	if argv[sub] == "mv" {
+		// `git mv src… dst` moves in the working tree exactly as mv does: the
+		// source stops existing at its path (a directory source with every file
+		// inside it), and the destination is written. -n/--dry-run moves
+		// nothing.
+		for _, a := range argv[sub+1:] {
+			if a == "--" {
+				break
+			}
+			if a == "--dry-run" || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a[1:], "n")) {
+				return nil
+			}
+		}
+		return movelike(argv[sub:])
+	}
+	if argv[sub] != "rm" {
 		return nil
 	}
 	rmArgv := argv[sub:]

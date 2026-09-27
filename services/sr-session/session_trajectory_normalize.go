@@ -58,10 +58,11 @@ events, not PreToolUse, not Stop.
                          re-derive is refused here.
   --whole-session        read the entire record, not just the part no cycle has
                          judged yet
-  --ran-only             leave out the tool calls a hook refused before they ran
-                         (their tool_result is the harness's "PreToolUse:… hook
-                         error: …"): a refused command is in the record as a
-                         tool_use, but it did nothing
+  --ran-only             keep only the tool calls that RAN: a call with no
+                         tool_result, or whose result is the harness saying it
+                         never ran (a hook block, a permission denied, an
+                         interrupt, a <tool_use_error>), is in the record as a
+                         tool_use but did nothing
 
 The answer is NormalizedEntry[] as JSON, for whatever the hook already uses to
 read JSON.`,
@@ -75,7 +76,7 @@ read JSON.`,
 	cmd.Flags().Bool("whole-session", false,
 		"Read the entire record, not just the part no cycle has judged yet")
 	cmd.Flags().Bool("ran-only", false,
-		"Leave out tool calls a hook refused before they ran")
+		"Keep only tool calls that ran (not refused, denied, interrupted, or left without a result)")
 	return cmd
 }
 
@@ -125,16 +126,16 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 	// session" diagnostic — meant for a session that cannot open its own state —
 	// from firing on the ordinary --path case, where the empty payload has no state
 	// to open by design.
-	// The refused calls, read off the WHOLE record before any slice: a call's
+	// The calls that ran, read off the WHOLE record before any slice: a call's
 	// tool_result is a later entry, and the slice must not decide whether a call
-	// in it counts as run.
-	var refused map[string]bool
+	// in it counts as run. nil means every call is kept.
+	var ran map[string]bool
 	if ranOnly, _ := cmd.Flags().GetBool("ran-only"); ranOnly {
 		all := make([]transcript.Entry, 0, len(lined))
 		for _, le := range lined {
 			all = append(all, le.Entry)
 		}
-		refused = transcript.RefusedToolUseIDs(all)
+		ran = transcript.RanToolUseIDs(all)
 	}
 
 	wholeSession, _ := cmd.Flags().GetBool("whole-session")
@@ -164,7 +165,7 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 		out = append(out, normalizedEntry{
 			raw:    le.Entry,
 			Line:   le.Line,
-			Events: deriveEvents(le.Entry, reg, kinds, root, refused),
+			Events: deriveEvents(le.Entry, reg, kinds, root, ran),
 		})
 	}
 
@@ -186,8 +187,8 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 // three extractions — and an entry that yields none carries an empty array, which
 // is why this always returns a non-nil slice.
 //
-// A call whose id is in refused is skipped: a hook refused it, so it never ran.
-func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root string, refused map[string]bool) []event.Event {
+// With ran non-nil, a call whose id is not in it is skipped: it never ran.
+func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root string, ran map[string]bool) []event.Event {
 	events := []event.Event{}
 
 	// The command and file events, one tool call at a time. The modules dispatch
@@ -196,7 +197,7 @@ func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root 
 	if kinds.wantsAny(commandFileKinds()) {
 		mods := reg.Needed(intersect(commandFileKinds(), kinds))
 		for _, call := range transcript.ToolCalls(e) {
-			if refused[call.ID] {
+			if ran != nil && !ran[call.ID] {
 				continue
 			}
 			in := module.Input{

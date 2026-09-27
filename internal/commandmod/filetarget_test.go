@@ -729,3 +729,21 @@ func TestFileTargets_GitRmRemovesLikeRm(t *testing.T) {
 		check(t, command, "(nothing)")
 	}
 }
+
+// TestFileTargets_GitMvMovesLikeMv: `git mv` moves in the working tree exactly
+// as mv does — the source is removed (recursively, for a directory) and the
+// destination written.
+func TestFileTargets_GitMvMovesLikeMv(t *testing.T) {
+	for _, command := range []string{"git mv scanners/x elsewhere", "git mv -f scanners/x elsewhere", "git -c a=b mv scanners/x elsewhere"} {
+		targets := FileTargets(command)
+		var removed bool
+		for _, tg := range targets {
+			if tg.Path == "scanners/x" && tg.Effect == Remove && tg.Recursive {
+				removed = true
+			}
+		}
+		if !removed {
+			t.Errorf("FileTargets(%q) = %+v, want a recursive remove of scanners/x", command, targets)
+		}
+	}
+}
