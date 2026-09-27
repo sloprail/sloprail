@@ -235,4 +235,9 @@ func TestBody_CitedCreateSurvivesUncitedStatusEdit(t *testing.T) {
 	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); !containsStr(prompt, askQuote) {
 		t.Errorf("the Stop judge was not handed the citation recorded for this body:\n%s", prompt)
 	}
+	// The body is judged once when it is set (the Pre create) and once as it
+	// settled (Stop) — never for the status edit, and never twice at Stop.
+	if n := e.JudgeCalls(proj, "judge-prompt.txt", "BODY of a task file"); n != 2 {
+		t.Errorf("the body judge was asked %d times, want 2 (the create, then Stop)", n)
+	}
 }

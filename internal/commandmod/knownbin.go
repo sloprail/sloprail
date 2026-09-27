@@ -391,14 +391,19 @@ var knownBins = map[string]binSpec{
 }
 
 func srFileTargets(args []string) []FileTarget {
-	verb, path, ok := grounding.TargetOf(args)
+	fc, ok := grounding.TargetOf(args)
 	if !ok {
 		return nil
 	}
-	if verb == grounding.VerbDelete {
-		return targetsFor([]string{path}, Remove)
+	effect := Write
+	if fc.Verb == grounding.VerbDelete {
+		effect = Remove
 	}
-	return targetsFor([]string{path}, Write)
+	targets := targetsFor([]string{fc.Path}, effect)
+	for i := range targets {
+		targets[i].Grounded = &fc
+	}
+	return targets
 }
 
 // ddIsAWholeCopy reports whether a dd invocation copies its input file entire,

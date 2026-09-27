@@ -144,8 +144,9 @@ func TestT047_05_UserWordsAreNotToolOutput(t *testing.T) {
 	}
 }
 
-// T047_06: the judge's prompt carries the quote AND the whole tool output it came
-// from — a line of the source the agent did not quote is there too — escaped.
+// T047_06: the judge's prompt carries the quote, the whole tool output it came
+// from — a line of the source the agent did not quote is there too — and the call
+// that produced it, escaped.
 func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
@@ -167,5 +168,8 @@ func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "ZZ_UNQUOTED connect() &lt;host&gt; now requires a port") {
 		t.Errorf("the whole tool output, escaped, is not in the judge prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "<call>Bash: cat ") {
+		t.Errorf("the call that produced the cited output is not in the judge prompt:\n%s", prompt)
 	}
 }

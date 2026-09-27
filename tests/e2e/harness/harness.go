@@ -474,6 +474,9 @@ for arg in "$@"; do
       # prompt is a single clean render.
       out="$(printf '%s' "$arg" | sed -n 's/.*Write your answer to the file \([^ ]*\)\. .*/\1/p' | tail -1)"
       printf '%s' "$arg" > ` + shellQuote(promptPath) + `
+      # One line per judge call — the prompt's heading — so a test can count how
+      # often each judge was asked.
+      printf '%s\n' "$arg" | head -1 >> ` + shellQuote(promptPath+".calls") + `
       ;;
   esac
 done
@@ -487,6 +490,23 @@ exit 0
 	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
 		e.t.Fatalf("harness: write capturing judge claude shim: %v", err)
 	}
+}
+
+// JudgeCalls is how many times a capturing shim's judge was asked with a prompt
+// whose first line contains heading ("" counts every call).
+func (e *Env) JudgeCalls(projDir, relPromptFile, heading string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(projDir, relPromptFile+".calls"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+		if line != "" && strings.Contains(line, heading) {
+			n++
+		}
+	}
+	return n
 }
 
 // JudgePrompt returns the rendered judge prompt a capturing shim recorded, or ""

@@ -10,7 +10,7 @@ import (
 const noCloneReason = "No git clone found in this research run"
 
 // T039_01: a research run declared with #research is REFUSED at Stop when it shows
-// no depth (no git clone), and check 1's own reason reaches the agent.
+// no depth (no git clone, no gh calls), and both reasons reach the agent at once.
 //
 // The core of the guardrail: declaring a research branch (#research) puts the run
 // under the depth gate, which refuses a shallow run. This drives the activate →
@@ -39,6 +39,10 @@ func TestT039_01_ShallowResearchRefused(t *testing.T) {
 	joined := strings.Join(blocks, "\n")
 	if !strings.Contains(joined, noCloneReason) {
 		t.Errorf("the depth gate's own reason did not reach the agent:\n%s", joined)
+	}
+	// Everything the run still owes arrives in one refusal, not one fact per Stop.
+	if !strings.Contains(joined, "No gh CLI calls found") {
+		t.Errorf("the refusal did not also name the missing gh calls:\n%s", joined)
 	}
 	if !strings.Contains(joined, "depth-check") {
 		t.Errorf("the refusal did not name the gate:\n%s", joined)

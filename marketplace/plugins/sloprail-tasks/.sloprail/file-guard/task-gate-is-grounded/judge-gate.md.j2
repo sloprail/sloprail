@@ -7,12 +7,12 @@ unmodified — whether its body is grounded in the user's own words is
 validated by a separate rule and is not your concern here), followed by the
 gate file itself.
 
-<task path="{{ additionalContext.gate_path }}">
-{{ additionalContext.task_content }}
+<task path="{{ additionalContext.gate_path | e }}">
+{{ additionalContext.task_content | e }}
 </task>
 
-<gate path="{{ additionalContext.gate_path }}" kind="{{ additionalContext.gate_kind }}">
-{{ additionalContext.gate_content }}
+<gate path="{{ additionalContext.gate_path | e }}" kind="{{ additionalContext.gate_kind | e }}">
+{{ additionalContext.gate_content | e }}
 </gate>
 
 A gate kind is either "script" (a `.sh` file; sloprail will literally RUN it

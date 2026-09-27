@@ -65,13 +65,13 @@ there — treat this as a FAIL.
 {% endif %}
 
 {% if additionalContext.old_body %}
-<body_before path="{{ event.path }}">
-{{ additionalContext.old_body }}
+<body_before path="{{ event.path | e }}">
+{{ additionalContext.old_body | e }}
 </body_before>
 {% endif %}
 
-<body path="{{ event.path }}">
-{{ additionalContext.body }}
+<body path="{{ event.path | e }}">
+{{ additionalContext.body | e }}
 </body>
 
 Answer PASS only if every part of the material under judgement is traceable

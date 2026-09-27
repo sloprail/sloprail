@@ -91,6 +91,9 @@ func runGrounded(cmd *cobra.Command, fc grounding.FileCommand) error {
 	if err != nil {
 		return fmt.Errorf("sr-file %s: %w", fc.Verb, err)
 	}
+	if link, ok := throughLink(abs); ok {
+		return fmt.Errorf("sr-file %s: %s goes through the symbolic link %s, so the change would land where the link points, not at the path a rule judges; name the real path", fc.Verb, fc.Path, link)
+	}
 	resolveDir := os.Getenv(grounding.EnvResolveDir)
 
 	citations, err := resolveCites(fc)
@@ -188,6 +191,28 @@ func resolveCites(fc grounding.FileCommand) ([]transcript.Citation, error) {
 		return nil, fmt.Errorf("sr-file %s: nothing written: %w", fc.Verb, err)
 	}
 	return cs, nil
+}
+
+// throughLink returns the first symbolic link on the way to abs — the target
+// itself included — that is not also on the way to the working directory. A
+// rule judges the path as spelled; through `notes.md -> .github/ci.yml` the
+// bytes land elsewhere. A link above the working directory (macOS's /var) is
+// shared with every path a rule sees, and a top-level one (/tmp) no agent made.
+func throughLink(abs string) (string, bool) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	sep := string(filepath.Separator)
+	for p := abs; ; p = filepath.Dir(p) {
+		parent := filepath.Dir(p)
+		if parent == p || parent == sep || p == wd || strings.HasPrefix(wd, p+sep) {
+			return "", false
+		}
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+			return p, true
+		}
+	}
 }
 
 // currentState is the target's content and existence — from the overlay when

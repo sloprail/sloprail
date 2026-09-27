@@ -51,18 +51,31 @@ import (
 const resolveTimeout = 20 * time.Second
 
 // pureGlue are the programs a resolve-mode line may run besides sr-file:
-// builtins whose only effect is on stdout, which resolve mode ignores.
-var pureGlue = map[string]bool{"echo": true, "printf": true, "true": true, "false": true, ":": true}
+// builtins whose only effect is on stdout, which resolve mode ignores. Not
+// printf: `printf -v 'a[$(id)]' x` runs the subscript in bash 4+, and a glob
+// or brace word (`?v`, `{-v,x}`) can become that -v without spelling it.
+var pureGlue = map[string]bool{"echo": true, "true": true, "false": true, ":": true}
 
-// isSRFileCall accepts sr-file (direct or via the sr proxy) and pure glue.
+// isSRFileCall accepts the grounded sr-file verbs (direct or via the sr proxy)
+// and pure glue.
+//
+// By bare name only, which resolve mode looks up in siblingPath: `./sr-file`
+// or `/tmp/x/sr-file` is whatever program sits there, and running it ahead of
+// time would both run it before any rule judged the line and let it write the
+// records this hook trusts. The verb is literal too, so only the verbs that
+// honour resolve mode ever run in it.
 func isSRFileCall(literals []string) bool {
-	switch filepath.Base(literals[0]) {
+	switch literals[0] {
 	case "sr-file":
-		return true
+		return len(literals) > 1 && groundedVerb(literals[1])
 	case "sr":
-		return len(literals) > 1 && literals[1] == "file"
+		return len(literals) > 2 && literals[1] == "file" && groundedVerb(literals[2])
 	}
 	return pureGlue[literals[0]]
+}
+
+func groundedVerb(v string) bool {
+	return v == grounding.VerbWrite || v == grounding.VerbEdit || v == grounding.VerbDelete
 }
 
 // requiresCitation reports whether any loaded rule requires a citation.
@@ -103,30 +116,41 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, tr
 	if commandmod.HarnessCommandTools[p.ToolName] && json.Unmarshal(p.ToolInput, &in) == nil && strings.TrimSpace(in.Command) != "" {
 		root := p.Root()
 		targets := map[string]string{}
+		// An sr-file call's citations are keyed by its target as FileTargets
+		// resolves it: after the line's `cd`s, and only from words it could read
+		// (an unreadable one holds its place), so they land on no path but the
+		// call's own.
+		for _, t := range commandmod.FileTargets(in.Command) {
+			if t.Grounded == nil {
+				continue
+			}
+			key := filemod.Reportable(absFrom(p.Cwd, t.Path), root)
+			targets[key] = t.Grounded.Verb
+			perPath[key] = append(perPath[key], resolveAll(transcriptPath, t.Grounded.Cites)...)
+		}
 		for _, inv := range commandmod.ExtractCommand(in.Command).Invocations {
+			// An invocation's argv DROPS an unreadable word, so `sr-file delete
+			// a.md $X` still names a.md here where FileTargets sees two paths. That
+			// makes it a target — an unknown result a preventive rule refuses —
+			// but never a key for citations, which a shifted argv could misplace.
 			if args, ok := grounding.FileArgs(inv.Argv); ok {
-				if verb, path, ok := grounding.TargetOf(args); ok {
-					targets[filemod.Reportable(absFrom(p.Cwd, path), root)] = verb
+				if fc, ok := grounding.TargetOf(args); ok {
+					key := filemod.Reportable(absFrom(p.Cwd, fc.Path), root)
+					if _, have := targets[key]; !have {
+						targets[key] = fc.Verb
+					}
 				}
 			}
-			g, ok, err := grounding.FromArgv(inv.Argv)
-			if !ok || err != nil {
-				continue
+			if g, ok, err := grounding.FromArgv(inv.Argv); ok && err == nil && g.File == nil {
+				chain = append(chain, resolveAll(transcriptPath, g.Cites)...)
 			}
-			cites := resolveAll(transcriptPath, g.Cites)
-			if g.File == nil {
-				chain = append(chain, cites...)
-				continue
-			}
-			key := filemod.Reportable(absFrom(p.Cwd, g.File.Path), root)
-			perPath[key] = append(perPath[key], cites...)
 		}
 		if commandmod.OnlyCalls(in.Command, isSRFileCall) {
 			records, said, err := runResolve(in.Command, p.Cwd, transcriptPath)
 			if err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: sr-file resolve:", err)
 			} else {
-				events = replaceWithResolved(events, records, root, perPath)
+				events = replaceWithResolved(events, records, root, transcriptPath, perPath)
 			}
 			note = said
 		}
@@ -164,6 +188,21 @@ func resolveAll(transcriptPath string, reqs []transcript.CitationRequest) []tran
 	for _, r := range reqs {
 		if c, err := transcript.ResolveCitation(transcriptPath, r); err == nil {
 			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// reground keeps each citation a resolve-mode record reports only if the
+// session's own record resolves its quote, in its pools, to the same line.
+func reground(transcriptPath string, cs []transcript.Citation) []transcript.Citation {
+	var out []transcript.Citation
+	for _, c := range cs {
+		req := transcript.CitationRequest{Quote: c.Quote, SourceTypes: c.SourceTypes}
+		for _, got := range resolveAll(transcriptPath, []transcript.CitationRequest{req}) {
+			if got.Line == c.Line {
+				out = append(out, got)
+			}
 		}
 	}
 	return out
@@ -255,7 +294,10 @@ func siblingPath() string {
 // resolve — an invocation that would fail, which changes nothing — keeps its
 // static event: an unknown result that a preventive rule refuses, never a
 // silent pass.
-func replaceWithResolved(events []event.Event, records []grounding.Resolved, root string, perPath map[string][]transcript.Citation) []event.Event {
+//
+// A record's citations are sr-file's say-so, so each is kept only when the
+// session's own record grounds its quote on the same line (reground).
+func replaceWithResolved(events []event.Event, records []grounding.Resolved, root, transcriptPath string, perPath map[string][]transcript.Citation) []event.Event {
 	type change struct {
 		first, last grounding.Resolved
 		cites       []transcript.Citation
@@ -289,7 +331,7 @@ func replaceWithResolved(events []event.Event, records []grounding.Resolved, roo
 	}
 	for _, key := range order {
 		ch := changes[key]
-		perPath[key] = ch.cites
+		perPath[key] = reground(transcriptPath, ch.cites)
 		existed := ch.first.Existed
 		fe := filemod.FileEvent{Path: key}
 		if existed {

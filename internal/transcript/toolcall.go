@@ -41,6 +41,7 @@ type ToolCall struct {
 // and tool_use blocks freely.
 type assistantContentBlock struct {
 	Type  string          `json:"type"`
+	ID    string          `json:"id"`
 	Name  string          `json:"name"`
 	Input json.RawMessage `json:"input"`
 	Text  string          `json:"text"`

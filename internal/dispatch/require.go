@@ -549,7 +549,7 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 		"  sr-file edit %s --old-string '<old>' --new-string '<new>' [--replace-all] %s '<exact quote>'\n"+
 		"  sr-file write %s %s '<exact quote>' <<'EOF' ... EOF\n"+
 		"  sr-file delete %s %s '<exact quote>'\n"+
-		"Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo) so its result can be checked before it runs. "+
+		"Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo; no cd, no VAR= prefix, no $ expansion — quote every value verbatim) so its result can be checked before it runs. "+
 		"Single-quote the quote; it must match exactly one entry of this session's record — check one with `sr-session trajectory cite '<quote>'`.",
 		path, what, path, flag, path, flag, path, flag)
 }

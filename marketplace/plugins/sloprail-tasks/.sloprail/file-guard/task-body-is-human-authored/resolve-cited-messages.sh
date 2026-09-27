@@ -11,7 +11,8 @@
 # at Stop instead.
 #
 # Output nests under `additionalContext` (the one key the engine reads from a
-# prepare): .body (the prose the judge rules on). `{"skip": true}` abstains. A non-zero exit fails the check closed.
+# prepare): .body (the prose the judge rules on) and .asks (the event's citations
+# in the user pool). `{"skip": true}` abstains. A non-zero exit fails the check closed.
 set -uo pipefail
 
 skip() { printf '{"skip": true}\n'; exit 0; }
@@ -64,4 +65,8 @@ case "$kind" in
     ;;
 esac
 
-jq -n --arg body "$body" '{additionalContext: {body: $body}}'
+# .asks is the event's citations in the user pool only: a path's citations
+# accumulate across its changes, and the tool output a later in_review move cited
+# is not the ask, so the judge is never shown it as if it were.
+printf '%s' "$payload" | jq --arg body "$body" \
+  '{additionalContext: {body: $body, asks: [(.event.citations // [])[] | select(((.sourceTypes // []) | index("user")) != null)]}}'

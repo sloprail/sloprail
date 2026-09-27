@@ -79,8 +79,9 @@ trigger's `on`, not a kind the engine emits.
   carries now). A create has no `oldMarkers`; a delete has no `newMarkers`.
 
 - `citations` — the citations the change was grounded in: a **list of
-  `{quote, sourceTypes, path, line}`** (`sourceTypes` a list of `user` /
-  `tool_result`, `path` the absolute transcript, `line` int). Empty unless the
+  `{quote, sourceTypes, path, line, message}`** (`sourceTypes` a list of `user` /
+  `tool_result`, `path` the absolute transcript, `line` int, `message` the whole
+  entry the quote came from, `call` the tool call behind a `tool_result`). Empty unless the
   change was made grounded — see [grounding.md](grounding.md).
 
 Read a marker's quote off `.fqn`, and test a list with a quantifier:
@@ -119,7 +120,7 @@ skeleton are in [file-guard.md](file-guard.md).
 |---|---|
 | `raw` | string — the command line as written |
 | `invocations` | list — every program the module parsed out of it, flattened |
-| `citations` | list of `{quote, sourceTypes, path, line}` — see [Citations](#citations-a-grounded-action) |
+| `citations` | list of `{quote, sourceTypes, path, line, message, call}` — see [Citations](#citations-a-grounded-action) |
 
 One command line is rarely one program: a pipeline, an `&&` chain, a subshell, a
 `sudo`, an `xargs` each nest invocations. The module walks that once and emits
@@ -157,9 +158,10 @@ command that ran shows its consequences as the file events. See [gate.md](gate.m
 ### Citations: a grounded action
 
 `citations` (on every file kind and on `PreCommandInvoke`) lists the citations
-the action was made with, each `{quote, sourceTypes, path, line}`: the quote,
-the pool(s) it resolved in (`user`, `tool_result`), the absolute transcript and
-the line. The engine resolves every quote against the session's record before
+the action was made with, each `{quote, sourceTypes, path, line, message, call}`:
+the quote, the pool(s) it resolved in (`user`, `tool_result`), the absolute
+transcript, the line, the whole entry it came from (capped at 16KB), and — for a
+`tool_result` — the tool call that produced it. The engine resolves every quote against the session's record before
 any rule runs, so an entry always names a real entry of the record. An action
 that cited nothing carries an empty list. A `Post` file event carries the
 citations recorded for its path at pre-tool. How an agent cites, and how a rule

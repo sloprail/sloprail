@@ -203,7 +203,7 @@ func (w *workspace) commitSetup() error {
 // by hand would test sr-eval's own arrangement rather than the product: the
 // whole point is that what fires is the plugin a real install gets, discovered
 // through hooks.json, not a hook this binary invented for the occasion.
-func (w *workspace) writeSettings(repoRoot string, env []string) error {
+func (w *workspace) writeSettings(repoRoot string, env []string, plugins []string) error {
 	source, err := w.snapshotMarketplace(repoRoot)
 	if err != nil {
 		return fmt.Errorf("snapshot the marketplace: %w", err)
@@ -215,14 +215,25 @@ func (w *workspace) writeSettings(repoRoot string, env []string) error {
 		return fmt.Errorf("claude plugin marketplace add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
-	install := exec.Command("claude", "plugin", "install", pluginKey, "--scope", "project", "-y")
-	install.Dir = w.project
-	install.Env = env
-	if out, err := install.CombinedOutput(); err != nil {
-		return fmt.Errorf("claude plugin install %s: %w: %s", pluginKey, err, strings.TrimSpace(string(out)))
+	for _, key := range append([]string{pluginKey}, pluginKeys(plugins)...) {
+		install := exec.Command("claude", "plugin", "install", key, "--scope", "project", "-y")
+		install.Dir = w.project
+		install.Env = env
+		if out, err := install.CombinedOutput(); err != nil {
+			return fmt.Errorf("claude plugin install %s: %w: %s", key, err, strings.TrimSpace(string(out)))
+		}
 	}
 
 	return w.disableAutoMemory()
+}
+
+// pluginKeys names each of a fixture's further plugins in this marketplace.
+func pluginKeys(plugins []string) []string {
+	keys := make([]string, len(plugins))
+	for i, p := range plugins {
+		keys[i] = p + "@" + marketplaceName
+	}
+	return keys
 }
 
 // disableAutoMemory sets autoMemoryEnabled: false in the project's

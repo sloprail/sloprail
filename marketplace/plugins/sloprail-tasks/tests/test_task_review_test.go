@@ -73,6 +73,10 @@ func TestReview_SubstantiatedPermits(t *testing.T) {
 	if !containsStr(prompt, "ok  sloprail/auth") {
 		t.Errorf("the reviewer saw only the quote, not the full tool output it came from:\n%s", prompt)
 	}
+	// And the call that printed it — here an echo, which the reviewer must see.
+	if !containsStr(prompt, "produced by: Bash: echo") {
+		t.Errorf("the reviewer was not told which call produced the cited output:\n%s", prompt)
+	}
 	if !containsStr(prompt, "migrated to the new token format") {
 		t.Errorf("the reviewer was not handed the artifact's cited lines:\n%s", prompt)
 	}

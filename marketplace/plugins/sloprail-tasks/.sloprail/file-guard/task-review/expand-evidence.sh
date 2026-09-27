@@ -128,7 +128,10 @@ while IFS= read -r c; do
   quote="$(printf '%s' "$c" | jq -r '.quote')"
   cpath="$(printf '%s' "$c" | jq -r '.path')"
   cline="$(printf '%s' "$c" | jq -r '.line')"
+  # The call that printed the output: `echo 'tests passed'` proves nothing.
+  ccall="$(printf '%s' "$c" | jq -r '.call // ""')"
   cited_results="${cited_results}### cited_results[$idx] ${cpath}:${cline}
+produced by: ${ccall:-(unknown)}
 quoted: ${quote}
 "
   result="$(sr-session trajectory tool-result --path "$cpath" --line "$cline" 2>/dev/null)"

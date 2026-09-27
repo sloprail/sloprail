@@ -23,8 +23,11 @@ clone_count="$(sr-session trajectory normalize \
           and any(.invocations[]?; .bin == "git" and any(.argv[]?; . == "clone"))))
     ] | length')"
 
+# Missing depth is collected across checks 1 and 2 and refused once, so the
+# agent learns everything it still owes in one cycle, not one fact per Stop.
+missing=""
 if [ "${clone_count:-0}" -eq 0 ]; then
-  block "No git clone found in this research run's trajectory — a README fetch alone does not establish depth."
+  missing="${missing}No git clone found in this research run's trajectory — a README fetch alone does not establish depth. "
 fi
 
 # 2. Page count from gh CLI invocations, which carry it as an argument
@@ -34,10 +37,6 @@ gh_invocations="$(sr-session trajectory normalize \
   --events PreCommandInvoke \
   | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke")
              | .invocations[]? | select(.bin == "gh") ]')"
-
-if [ "$(printf '%s' "$gh_invocations" | jq 'length')" -eq 0 ]; then
-  block "No gh CLI calls found in this research run — nothing establishes how many pages were actually covered."
-fi
 
 total_pages="$(printf '%s' "$gh_invocations" | jq '
   # The page count one gh call asks for: --paginate is unbounded; --limit N
@@ -53,13 +52,16 @@ total_pages="$(printf '%s' "$gh_invocations" | jq '
       elif (limit_from_argv | test("^[0-9]+$")) then (limit_from_argv | tonumber)
       else 1
       end
-  ] | add
+  ] | add // 0
 ')"
 
 MIN_PAGES=5
-if [ "${total_pages:-0}" -lt "$MIN_PAGES" ]; then
-  block "gh CLI calls this run cover only $total_pages page(s) (via --limit/--paginate), below the minimum of $MIN_PAGES."
+if [ "$(printf '%s' "$gh_invocations" | jq 'length')" -eq 0 ]; then
+  missing="${missing}No gh CLI calls found in this research run — nothing establishes how many pages were actually covered."
+elif [ "${total_pages:-0}" -lt "$MIN_PAGES" ]; then
+  missing="${missing}gh CLI calls this run cover only $total_pages page(s) (via --limit/--paginate), below the minimum of $MIN_PAGES."
 fi
+[ -z "$missing" ] || block "$missing"
 
 # 3. Keyword coverage is a separate gate (keyword-coverage-registry), not here.
 

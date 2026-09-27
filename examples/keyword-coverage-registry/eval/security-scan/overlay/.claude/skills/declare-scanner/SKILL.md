@@ -6,7 +6,8 @@ description: Use when asked to research or scan GitHub for a specific security/t
 # Declaring a Scanner
 
 Before running a `gh search` for a specific topic, write
-`scanners/<short-name>/scanner.yaml`:
+`scanners/<short-name>/scanner.yaml` at the project root (not inside this
+skill's folder):
 
 ```
 active: true

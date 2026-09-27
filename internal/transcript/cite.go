@@ -182,11 +182,12 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 	if err != nil {
 		return nil, err
 	}
+	others := otherToolUses(entries)
 	var matches []CitationMatch
 	for _, e := range entries {
 		switch e.Type {
 		case EntryUser:
-			if entryContains(e.Entry, quote, sources) {
+			if entryContains(e.Entry, quote, sources, others) {
 				matches = append(matches, CitationMatch{Path: path, Line: e.Line})
 			}
 		case EntryAttachment:
@@ -218,14 +219,89 @@ func containsWords(text, quote string) bool {
 // user entry. The pools are consulted in order and the walk short-circuits on the
 // first hit — a match is per entry, so which pool found it does not change the
 // resolved line.
-func entryContains(e Entry, quote string, sources []SourceType) bool {
-	if wants(sources, SourceUser) && userWordsContain(e, quote) {
+func entryContains(e Entry, quote string, sources []SourceType, others map[string]bool) bool {
+	if own, ok := ownWords(e, others); ok && wants(sources, SourceUser) && userWordsContain(own, quote) {
 		return true
 	}
 	if wants(sources, SourceToolResult) && toolResultContain(e, quote) {
 		return true
 	}
 	return false
+}
+
+// askUserQuestion is the harness tool whose result carries the user's answer.
+const askUserQuestion = "AskUserQuestion"
+
+// otherToolUses returns the ids of every tool_use in the trajectory that names
+// a tool other than AskUserQuestion. A tool_result answering one of them is that
+// tool's output however it reads — a Bash call can print `The user answered:
+// "q"="a"` as easily as the harness writes it — so it is never the user's words.
+// A result whose tool_use is not in the file at all (a fixture, a record split
+// across a restart) is left to the envelope test alone.
+func otherToolUses(entries []LinedEntry) map[string]bool {
+	others := map[string]bool{}
+	for _, e := range entries {
+		if e.Type != EntryAssistant || len(e.Message) == 0 {
+			continue
+		}
+		var msg assistantContent
+		if json.Unmarshal(e.Message, &msg) != nil {
+			continue
+		}
+		var blocks []assistantContentBlock
+		if json.Unmarshal(msg.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == "tool_use" && b.ID != "" && b.Name != askUserQuestion {
+				others[b.ID] = true
+			}
+		}
+	}
+	return others
+}
+
+// ownWords is e as far as it can carry the person's own words, and false when
+// it cannot carry them at all: an isMeta entry is the harness writing (a Stop
+// hook's feedback, which may quote the agent back; a skill's body), and an
+// isSidechain one is a sub-agent's, whose "user" is the parent agent's
+// dispatch. Otherwise it is e minus the tool_result blocks answering a tool
+// other than AskUserQuestion (otherToolUses).
+func ownWords(e Entry, others map[string]bool) (Entry, bool) {
+	if e.IsMeta || e.IsSidechain {
+		return Entry{}, false
+	}
+	if len(others) == 0 || len(e.Message) == 0 {
+		return e, true
+	}
+	var msg map[string]json.RawMessage
+	var blocks []json.RawMessage
+	if json.Unmarshal(e.Message, &msg) != nil || json.Unmarshal(msg["content"], &blocks) != nil {
+		return e, true
+	}
+	kept := blocks[:0:0]
+	for _, raw := range blocks {
+		var b struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+		}
+		if json.Unmarshal(raw, &b) == nil && b.Type == "tool_result" && others[b.ToolUseID] {
+			continue
+		}
+		kept = append(kept, raw)
+	}
+	if len(kept) == len(blocks) {
+		return e, true
+	}
+	content, err := json.Marshal(kept)
+	if err != nil {
+		return Entry{}, false
+	}
+	msg["content"] = content
+	if e.Message, err = json.Marshal(msg); err != nil {
+		return Entry{}, false
+	}
+	return e, true
 }
 
 // userWordsContain reports whether quote appears in the user's own words on a
@@ -265,9 +341,10 @@ func userWords(e Entry) []string {
 // `text` block, or a bare string the harness sometimes writes) or a tool_result
 // whose content holds the answer envelope.
 type userContentBlock struct {
-	Type    string          `json:"type"`
-	Text    string          `json:"text"`
-	Content json.RawMessage `json:"content"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	Content   json.RawMessage `json:"content"`
+	ToolUseID string          `json:"tool_use_id"`
 }
 
 // userMessage is the envelope a user entry's message sits in. content is either
@@ -644,6 +721,29 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 // block. A line carrying both a real result and an answer envelope keeps the real
 // result only; a line carrying only an answer envelope yields nothing.
 func genuineToolResultText(raw json.RawMessage) []string {
+	var out []string
+	for _, r := range genuineToolResults(raw) {
+		out = append(out, r.body)
+	}
+	return out
+}
+
+// genuineToolResultIDs is the tool_use_id of each block genuineToolResultText
+// reads a body from, once per block — which call produced the output.
+func genuineToolResultIDs(raw json.RawMessage) []string {
+	var out []string
+	for _, r := range genuineToolResults(raw) {
+		if len(out) == 0 || out[len(out)-1] != r.id {
+			out = append(out, r.id)
+		}
+	}
+	return out
+}
+
+// genuineToolResult is one body of a tool_result block and the call it answers.
+type genuineToolResult struct{ id, body string }
+
+func genuineToolResults(raw json.RawMessage) []genuineToolResult {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -655,7 +755,7 @@ func genuineToolResultText(raw json.RawMessage) []string {
 	if json.Unmarshal(msg.Content, &blocks) != nil {
 		return nil
 	}
-	var out []string
+	var out []genuineToolResult
 	for _, b := range blocks {
 		if b.Type != "tool_result" || len(b.Content) == 0 {
 			continue
@@ -672,7 +772,7 @@ func genuineToolResultText(raw json.RawMessage) []string {
 			if isHookRefusal(body) {
 				continue
 			}
-			out = append(out, body)
+			out = append(out, genuineToolResult{id: b.ToolUseID, body: body})
 		}
 	}
 	return out

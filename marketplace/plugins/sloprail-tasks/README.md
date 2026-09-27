@@ -57,18 +57,27 @@ Before any rule sees the event, the session resolves each quote against its own
 record — the `user` pool is the user's own messages (never the agent's output, a
 tool result, or a harness-injected `<system-reminder>`/`<task-notification>`), the
 `tool_result` pool is what tools returned (never an AskUserQuestion answer, which is
-the user's words) — and puts the ones that resolve on `.event.citations` as
-`{quote, sourceTypes, path, line}`. A quote that matches nothing, or more than one
+the user's words, nor a hook's refusal) — and puts the ones that resolve on
+`.event.citations` as `{quote, sourceTypes, path, line, message}`. A quote that matches nothing, or more than one
 entry, is not a citation. So a rule sees only citations that **exist**; whether one
 actually grounds the change is the judges' question.
 
 Why the pools are kept apart: grounding a delivery claim in the user's ask proves
 only that the work was *requested*, never that it was *done*.
 
-The grounding is **conditional**, which is why no guard here uses `require:
-[{citation: {source_types: [...]}}]` (that would demand a citation on every write). A write that
-leaves the body byte-identical — a status, priority or `depends_on` change — needs
-no user citation; only the transition **into** `in_review` needs tool output.
+The grounding is **conditional**, so each guard declares it with a `when:` script
+that says whether this write needs it:
+
+```yaml
+require:
+  - citation: {source_types: [user]}
+    when: ./body-changed.sh
+```
+
+A write that leaves the body byte-identical — a status, priority or `depends_on`
+change — needs no user citation; only the transition **into** `in_review` needs
+tool output (`when: ./in-review.sh --entering`). An uncited write that does need
+one is refused by the engine before any check runs, naming the `sr-file` form.
 
 The frontmatter shape is pinned by `.sloprail/schemas/task.cue`, which the
 deterministic guards read from the plugin's own tree (via `$SR_GUARDRAIL_DIR`,

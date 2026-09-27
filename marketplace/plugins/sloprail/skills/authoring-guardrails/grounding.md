@@ -32,9 +32,11 @@ need not match). `sr-session trajectory cite
 '<quote>'` checks a quote before using it.
 
 Run `sr-file` **on its own** in the command line: only `sr-file` calls, `&&`,
-`||`, `;`, `echo` and a stdin heredoc. Such a line is dry-run before it executes,
-so its event carries the exact result (`resultKnown: true`). Mixed with any other
-program, or with `$(…)`, it is never run ahead of time. Its result is then
+`||`, `;`, `echo` and a stdin heredoc, with every value quoted verbatim
+(`'…'`, `<<'BODY'`). Such a line is dry-run before it executes, so its event
+carries the exact result (`resultKnown: true`). Mixed with any other program,
+`cd`, a `VAR=…` prefix, or any `$` expansion (`$VAR`, `$(…)`, `$((…))`, an
+unquoted heredoc delimiter), it is never run ahead of time. Its result is then
 unknown, and a preventive rule refuses it (`sr-file write` creates missing
 directories, so no `mkdir` is needed). Harness Write/Edit tools, `sed` and `rm`
 cannot carry a citation at all.
@@ -99,8 +101,11 @@ A judge decides whether the cited words support **this** change. It needs no
 `prepare` for that: the template reads `event.citations` directly. Each citation
 carries its `quote` (the fragment the agent cited, often a short search key) and
 its `message` (the whole entry it was taken from: the user's full message, the
-question with the selected answers, or the tool's output, capped at 16 KB). Render
-both, escaped and inside tags, under a clause marking them as data
+question with the selected answers, or the tool's output, capped at 16 KB). A
+`tool_result` citation also carries its `call`: the tool call that produced the
+output (`Bash: <command>`, `Read: <file>`). Output alone does not say where it came
+from, and `echo 'all tests passed'` prints what a test run does. Render them,
+escaped and inside tags, under a clause marking them as data
 ([judge-checks.md](judge-checks.md)):
 
 ~~~markdown
@@ -114,7 +119,8 @@ the whole entry it was taken from, so weigh the quote in its context.
 {% for c in event.citations %}<citation source="{{ c.path | e }}:{{ c.line | int }}" pools="{{ c.sourceTypes | join(",") | e }}">
 <quote>{{ c.quote | e }}</quote>
 <message>{{ c.message | e }}</message>
-</citation>
+{% if c.call %}<call>{{ c.call | e }}</call>
+{% endif %}</citation>
 {% endfor %}</citations>{% else %}**This change cites nothing.**{% endif %}
 ~~~
 

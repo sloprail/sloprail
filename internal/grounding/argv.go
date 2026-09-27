@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/transcript"
@@ -79,16 +80,17 @@ func ParseFile(args []string) (FileCommand, error) {
 	return fc, nil
 }
 
-// TargetOf finds which file an sr-file invocation touches and how, from the
-// argument structure alone — without judging flag VALUES. A static reader that
-// could not resolve some word (an expansion it will not guess at) still learns
-// the target, as long as the path itself is known.
-func TargetOf(args []string) (verb, path string, ok bool) {
+// TargetOf reads an sr-file invocation's structure — verb, the one path, the
+// citations — without judging flag VALUES. A static reader that could not
+// resolve some word (an expansion it will not guess at, held in place as "")
+// still learns the target, as long as the path itself is known; a citation
+// whose quote it blanked is kept with an empty quote, which resolves nowhere.
+func TargetOf(args []string) (FileCommand, bool) {
 	fc, _, _, err := scanFile(args)
 	if err != nil || fc.Path == "" {
-		return "", "", false
+		return FileCommand{}, false
 	}
-	return fc.Verb, fc.Path, true
+	return fc, true
 }
 
 // scanFile is ParseFile's structural pass: verb, flags and the one path.
@@ -107,6 +109,7 @@ func scanFile(args []string) (FileCommand, bool, bool, error) {
 
 	var positionals []string
 	var hasOld, hasNew bool
+	seen := map[string]bool{}
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
@@ -128,6 +131,13 @@ func scanFile(args []string) (FileCommand, bool, bool, error) {
 			name = strings.ReplaceAll(name, "_", "-")
 		}
 		take := func() (string, error) {
+			// A value flag given twice is refused rather than last-wins: another
+			// reader of the same line (a gate reading its flags) could take the
+			// first. --cite: repeats by design, one flag per citation.
+			if seen[name] && !strings.HasPrefix(name, CiteFlagPrefix) {
+				return "", fmt.Errorf("sr-file %s: %s is given twice", fc.Verb, name)
+			}
+			seen[name] = true
 			if inline {
 				return value, nil
 			}
@@ -235,7 +245,7 @@ func ParseCite(args []string) (transcript.CitationRequest, error) {
 }
 
 // ParseSourceTypes reads a comma-separated pool list — cite's --source-types
-// vocabulary, and the suffix of a --cite: flag.
+// vocabulary, and the suffix of a --cite: flag. A pool named twice counts once.
 func ParseSourceTypes(list string) ([]transcript.SourceType, error) {
 	var out []transcript.SourceType
 	for _, name := range strings.Split(list, ",") {
@@ -247,7 +257,9 @@ func ParseSourceTypes(list string) ([]transcript.SourceType, error) {
 		if !ok {
 			return nil, fmt.Errorf("unknown source type %q: the pools are %q and %q", name, transcript.SourceUser, transcript.SourceToolResult)
 		}
-		out = append(out, s)
+		if !slices.Contains(out, s) {
+			out = append(out, s)
+		}
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no source type named: give %q, %q, or both comma-separated", transcript.SourceUser, transcript.SourceToolResult)

@@ -5,12 +5,12 @@ Below are the task's `.md` gate files under its `gates/` directory (each one a
 start condition in plain language, collected by prepare) and the task file
 itself, for context.
 
-<gates path="{{ additionalContext.path }}">
-{{ additionalContext.gates }}
+<gates path="{{ additionalContext.path | e }}">
+{{ additionalContext.gates | e }}
 </gates>
 
 <task_file>
-{{ additionalContext.task_body }}
+{{ additionalContext.task_body | e }}
 </task_file>
 
 For EACH gate file, decide whether the condition it describes currently holds,

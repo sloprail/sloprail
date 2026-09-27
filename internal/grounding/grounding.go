@@ -37,6 +37,7 @@ const (
 	KeyPath        = "path"
 	KeyLine        = "line"
 	KeyMessage     = "message"
+	KeyCall        = "call"
 )
 
 // CitationsDecl is FieldCitations' declaration, shared by every module that
@@ -55,6 +56,7 @@ func CitationsDecl() module.FieldDecl {
 				{Name: KeyPath, Type: module.TypeString},
 				{Name: KeyLine, Type: module.TypeInt},
 				{Name: KeyMessage, Type: module.TypeString},
+				{Name: KeyCall, Type: module.TypeString},
 			},
 		},
 	}
@@ -76,6 +78,8 @@ func ToWire(cs []transcript.Citation) []any {
 			KeyPath:        c.Path,
 			KeyLine:        c.Line,
 			KeyMessage:     c.Message,
+			// Always present, empty for the user pool, so a template can test it.
+			KeyCall: c.Call,
 		})
 	}
 	return out
@@ -96,6 +100,7 @@ func FromWire(v any) []transcript.Citation {
 		c.Quote, _ = m[KeyQuote].(string)
 		c.Path, _ = m[KeyPath].(string)
 		c.Message, _ = m[KeyMessage].(string)
+		c.Call, _ = m[KeyCall].(string)
 		switch n := m[KeyLine].(type) {
 		case int:
 			c.Line = n

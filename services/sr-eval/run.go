@@ -91,7 +91,7 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	} else {
 		fmt.Fprintf(out, "sr-eval: agent HOME %s (isolated; the real one is never written)\n", agent.home)
 	}
-	if err := ws.writeSettings(root, agent.env); err != nil {
+	if err := ws.writeSettings(root, agent.env, fx.Plugins); err != nil {
 		return fmt.Errorf("wire project settings: %w", err)
 	}
 

@@ -1,0 +1,24 @@
+description: >
+  The sloprail-tasks plugin end to end, on a real agent. The user reports a
+  bug (slugify() drops digits) and asks for it to be tracked as a task; a
+  skill teaches the repo's task lifecycle, and the seed holds one existing
+  task. The agent should create TASK.md citing the user's words (--cite:user,
+  required by task-body-is-human-authored when the body is set), fix the bug,
+  run the tests, and move the task to in_review citing that output
+  (--cite:tool_result, required by task-evidence-resolves on the transition)
+  with artifacts — after which task-review's judge weighs the claim against
+  the cited output and the changed lines, and no-unfinished-work-at-turn-end
+  refuses a turn that leaves the task open.
+
+  Scored on TRAJECTORY HEALTH (plan-2026-09-24): refusals the agent recovers
+  from within a cycle or two are the system working. Which grounded writes
+  landed, and which guards fired, are informational rows.
+seed: seed
+overlay: overlay
+plugins: [sloprail-tasks]
+# sonnet, not haiku: measured 2026-09-27 on task-management/track-as-task,
+# Haiku reads "track this as a task" as its own TaskCreate tool every time and
+# never reaches the repo's lifecycle, so none of the plugin's guards is
+# exercised.
+model: sonnet
+score: score.sh

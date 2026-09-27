@@ -55,6 +55,11 @@ score: score.sh
   `SLOPRAIL_RELEASE_URL` points install.sh at archives sr-eval builds, so
   everything the agent gets is the code under test. See
   `examples/_onboarding/eval/`.
+- **`plugins`** — further plugins of this checkout's marketplace to install
+  for the project alongside sloprail, by bare name (`[sloprail-tasks]`),
+  the way a user adds one — so the plugin's own guardrails are what fires.
+  A plugin's fixtures live under `examples/_<plugin>/eval/<case>/`, never in
+  the plugin's tree (that is copied into the agent's install).
 - **`model`** — an `sr-agent --model` value (`haiku`, `claude-sonnet-5,size-md`,
   etc.). Every current fixture uses `haiku` deliberately — a cheap model is
   the one likelier to take the tempting shortcut a fixture is designed to

@@ -13,20 +13,33 @@ import (
 // It is an allowlist over the parsed syntax tree, never a string test. A line
 // passes only when every statement is a plain call (or an &&/|| chain of them)
 // whose leading literal words allowed accepts, and nothing anywhere in it can
-// run code or touch a file on its own:
+// run code, touch a file, or mean something else to the shell that later runs
+// it for real:
 //
-//   - no command or process substitution — `$(...)`, backticks, `<(...)` run
-//     code during EXPANSION, before any allowed program starts;
+//   - no expansion but globbing, braces and tilde — no command or process
+//     substitution (`$(...)`, backticks, `<(...)` run code during EXPANSION,
+//     before any allowed program starts), and no parameter or arithmetic
+//     expansion either: `${X:=a[$(id)]}` then `$((X))`, `${!X}` and `${X@P}`
+//     all run code in bash, and even a plain `$X` is read from an environment
+//     the ahead-of-time run does not share with the real one (`$ZSH_VERSION`
+//     is set in one shell and not the other), so what it predicts is not what
+//     runs. A word opening with `=` is refused for the same reason: zsh
+//     expands it to a command's path;
 //   - no redirection but here-documents/here-strings on stdin and descriptor
 //     duplication to a NUMBER (`2>&1`) — `>&out.txt` writes a file in bash;
 //   - no pipes, subshells, groups, conditionals, loops, functions, background
 //     jobs or coprocesses;
-//   - assignments only as a call's prefix (`VAR=x prog`), plain and pure.
+//   - no assignments, not even as a call's prefix: `PATH=. prog` picks which
+//     program runs, and any variable the allowed program itself reads (a mode
+//     switch, a file to trust) would be the line's to set.
 //
 // allowed receives each call's leading LITERAL words (the program name first,
 // then any literal words up to the first expansion), so it can check a
 // program and a subcommand without being handed text an expansion produced.
-// An unparseable or empty line is not pure.
+// A literal may still hold a glob or a brace pattern, which the shell expands
+// against the tree — allowed must not treat a word it does not look up by
+// exact name as an option or a program. An unparseable or empty line is not
+// pure.
 func OnlyCalls(raw string, allowed func(literals []string) bool) bool {
 	f, err := syntax.NewParser().Parse(strings.NewReader(raw), "")
 	if err != nil || len(f.Stmts) == 0 {
@@ -62,20 +75,12 @@ func pureStmt(st *syntax.Stmt, allowed func([]string) bool) bool {
 }
 
 func pureCall(c *syntax.CallExpr, allowed func([]string) bool) bool {
-	if len(c.Args) == 0 {
+	if len(c.Args) == 0 || len(c.Assigns) > 0 {
 		return false
-	}
-	for _, a := range c.Assigns {
-		if a.Append || a.Naked || a.Array != nil || a.Index != nil {
-			return false
-		}
-		if a.Value != nil && !pureWord(a.Value) {
-			return false
-		}
 	}
 	var literals []string
 	for _, w := range c.Args {
-		if !pureWord(w) {
+		if !pureWord(w) || equalsExpansion(w) {
 			return false
 		}
 		if lit, ok := plainWord(w); ok && len(literals) == indexOf(c.Args, w) {
@@ -122,19 +127,35 @@ func pureRedir(r *syntax.Redirect) bool {
 	return false
 }
 
-// pureWord reports whether expanding w can run no code: no command or process
-// substitution anywhere inside it, however deeply nested in a parameter
-// expansion's default or an arithmetic expression.
+// pureWord reports whether expanding w runs no code and reads no variable:
+// no substitution and no parameter or arithmetic expansion anywhere inside it,
+// however deeply nested. `$"..."` is refused as locale-dependent, and `$'...'`
+// only when it spells a `\u`/`\U` escape, which bash 3.2 — the one a Mac runs
+// ahead of time — leaves as text where a newer shell makes a character.
 func pureWord(w *syntax.Word) bool {
 	pure := true
 	syntax.Walk(w, func(n syntax.Node) bool {
-		switch n.(type) {
-		case *syntax.CmdSubst, *syntax.ProcSubst:
+		switch n := n.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst, *syntax.ParamExp, *syntax.ArithmExp, *syntax.ExtGlob:
 			pure = false
+		case *syntax.DblQuoted:
+			pure = !n.Dollar
+		case *syntax.SglQuoted:
+			pure = !n.Dollar || !strings.Contains(n.Value, `\u`) && !strings.Contains(n.Value, `\U`)
 		}
 		return pure
 	})
 	return pure
+}
+
+// equalsExpansion reports whether w opens with a bare `=`, which zsh expands to
+// the path of the command it names (`=ls` is /bin/ls) and bash leaves as text.
+func equalsExpansion(w *syntax.Word) bool {
+	if len(w.Parts) == 0 {
+		return false
+	}
+	lit, ok := w.Parts[0].(*syntax.Lit)
+	return ok && strings.HasPrefix(lit.Value, "=")
 }
 
 // plainWord is w's value when it contains no expansion at all — plain text,

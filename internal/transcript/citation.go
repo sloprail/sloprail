@@ -35,7 +35,19 @@ type Citation struct {
 	// unique or to avoid awkward characters — so a judge weighs it against the
 	// message it came from. Capped at maxCitedMessage bytes.
 	Message string `json:"message"`
+
+	// Call is, for a quote that resolved in the tool_result pool, the tool call
+	// that produced the output — `Bash: <command>`, `Read: <file_path>`, or the
+	// tool's name and input — one line per result on the entry. Output alone
+	// does not say where it came from: `echo 'all tests passed'` prints exactly
+	// what a test run does, so a judge weighs the output against the call that
+	// printed it. Empty in the user pool.
+	Call string `json:"call,omitempty"`
 }
+
+// maxCitedCall caps each call Citation.Call renders: a command is context for
+// the output, and a heredoc can carry a whole file.
+const maxCitedCall = 2 << 10
 
 // maxCitedMessage caps Citation.Message: a tool output can run to megabytes, and
 // a judge needs the context around a quote, not every byte of a build log.
@@ -101,7 +113,82 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	if err != nil {
 		return Citation{}, fmt.Errorf("citation %s: %w", req, err)
 	}
-	return Citation{Quote: req.Quote, SourceTypes: pools, Path: path, Line: line, Message: message}, nil
+	c := Citation{Quote: req.Quote, SourceTypes: pools, Path: path, Line: line, Message: message}
+	if wants(pools, SourceToolResult) {
+		if c.Call, err = entryCalls(path, line); err != nil {
+			return Citation{}, fmt.Errorf("citation %s: %w", req, err)
+		}
+	}
+	return c, nil
+}
+
+// entryCalls renders the tool call behind each genuine tool_result on the entry
+// at line, found by its tool_use_id among the record's assistant entries. A
+// result whose call is not in the file (a fixture, a record split across a
+// restart) renders as unknown rather than being dropped, so its absence shows.
+func entryCalls(path string, line int) (string, error) {
+	entries, err := ReadLines(path)
+	if err != nil {
+		return "", err
+	}
+	calls := map[string]assistantContentBlock{}
+	var ids []string
+	for _, e := range entries {
+		switch {
+		case e.Type == EntryAssistant && len(e.Message) > 0:
+			var msg assistantContent
+			var blocks []assistantContentBlock
+			if json.Unmarshal(e.Message, &msg) == nil && json.Unmarshal(msg.Content, &blocks) == nil {
+				for _, b := range blocks {
+					if b.Type == "tool_use" && b.ID != "" {
+						calls[b.ID] = b
+					}
+				}
+			}
+		case e.Line == line:
+			ids = genuineToolResultIDs(e.Message)
+		}
+	}
+	var out []string
+	for _, id := range ids {
+		b, ok := calls[id]
+		if !ok {
+			out = append(out, "(the call that produced this output is not in the record)")
+			continue
+		}
+		out = append(out, renderCall(b))
+	}
+	return strings.Join(out, "\n"), nil
+}
+
+// renderCall is one tool call as a line a judge reads: the shell command for a
+// tool that ran one, the file for one that read one, otherwise the raw input.
+func renderCall(b assistantContentBlock) string {
+	var in struct {
+		Command  string `json:"command"`
+		FilePath string `json:"file_path"`
+	}
+	_ = json.Unmarshal(b.Input, &in)
+	arg := string(b.Input)
+	switch {
+	case in.Command != "":
+		arg = in.Command
+	case in.FilePath != "":
+		arg = in.FilePath
+	}
+	return b.Name + ": " + clipText(arg, maxCitedCall)
+}
+
+// clipText cuts s to at most max bytes on a rune boundary, marking the cut.
+func clipText(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	n := max
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "[... truncated]"
 }
 
 // entryText is the text the entry at line holds in the given pools — the same
@@ -118,11 +205,11 @@ func entryText(path string, line int, pools []SourceType) (string, error) {
 		}
 		switch e.Type {
 		case EntryUser:
-			if wants(pools, SourceUser) {
+			if own, ok := ownWords(e.Entry, otherToolUses(entries)); ok && wants(pools, SourceUser) {
 				// The typed message, and — for an AskUserQuestion answer — the whole
 				// envelope, so the question the user was answering comes with it.
-				parts = append(parts, messageText(e.Message)...)
-				parts = append(parts, answerEnvelopes(e.Message)...)
+				parts = append(parts, messageText(own.Message)...)
+				parts = append(parts, answerEnvelopes(own.Message)...)
 			}
 			if wants(pools, SourceToolResult) {
 				parts = append(parts, genuineToolResultText(e.Message)...)
