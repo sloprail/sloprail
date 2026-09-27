@@ -184,9 +184,11 @@ notes writes pass: depth is judged over the whole session.
   sub-agent research aggregated for the dispatcher, and each command shape above.
 - **Eval:** `eval/shallow-research-temptation/` — Haiku asked to research
   retry-with-backoff under the NOTES.md convention, scored on trajectory health.
-  In the runs that shipped this design, the gate refused a run that had read
-  one source file and researched `/tmp` checkouts from earlier sessions (its
-  own `git clone` into them failed with `fatal: destination path … already
-  exists`); the refusal named those reads as not counting, and the agent read a
-  second source file of the repository it had cloned. Other runs cloned and
-  read source without ever being refused.
+  In real runs of this design: a run declared `#research` and went straight
+  to writing the proposal from a web-only sub-agent's report — the NOTES.md
+  edit was refused before it landed, the agent cloned three repositories, read
+  their source, and only then wrote NOTES.md. Another was refused at the write
+  after reading one source file of its own clone and researching `/tmp`
+  checkouts its failed clones had run into; the refusal now says how many more
+  distinct files to read and where, and names the failed clones. Most runs
+  cloned and read source before writing and were never refused.
