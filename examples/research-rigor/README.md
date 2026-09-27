@@ -18,8 +18,9 @@ says what is missing and what to do:
 
 With nothing cloned, the remedy is to clone a real repository that implements
 what is being researched and read two of its source files. A `git clone` that
-failed because its directory was already there is named as such, with the
-advice to clone into a new directory.
+failed because its directory was already there is named as such — and one that
+hid its outcome (`-q`, `2>/dev/null`) into a directory already on disk is named
+as unconfirmed — with the advice to clone into a new directory.
 
 The convention it enforces is the one a project writes down (the eval seed's
 `NOTES.md`: "clone at least one real repo that implements retry/backoff logic,
@@ -63,7 +64,8 @@ with the same remedy prefixed by what was held:
 Depth is **reading what you cloned**:
 
 1. **A clone this run made.** A `git clone` invocation, from this trajectory or a
-   sub-agent's (`sr-session trajectory describe` lists them), that did not fail.
+   sub-agent's (`sr-session trajectory describe` lists them), that did not fail
+   and is confirmed to have run (see "Why this run cloned" below).
    Its destination is computed, not guessed: the explicit directory argument, or
    the name git derives from the repository (`…/node-retry.git` → `node-retry`),
    placed in the directory the invocation ran in — the record's own `cwd`, moved
@@ -71,13 +73,19 @@ Depth is **reading what you cloned**:
    clone`, a `(cd x && …)` subshell that does not leak), then by `git -C <dir>`.
    Options that take a value (`--depth 1`, `-b main`, …) are skipped so their
    value is not read as the repository or destination.
-2. **Source read inside it.** At least two distinct paths under a cloned
-   directory, read by a call that did not error: the Read tool's `file_path`,
-   the Grep tool's `path`, or the operands of `cat`, `head`, `tail`, `less`,
-   `bat`, `nl`, `sed`, `awk`, `grep` and `rg` (their option values and their
-   pattern/program argument set aside — `head -n 20 f` reads `f`, not `20`).
+2. **Source read inside it.** At least two distinct paths below a cloned
+   directory's root, read by a call that did not error: the Read tool's
+   `file_path`, the Grep tool's `path`, or the operands of `cat`, `head`,
+   `tail`, `less`, `bat`, `nl`, `sed`, `awk`, `grep` and `rg` (their option
+   values — also clustered, `-A3`, `-tmd` — and their pattern/program argument
+   set aside: `head -n 20 f` reads `f`, not `20`; `less +G f` reads `f`).
    READMEs, changelogs, licences, `*.md`/`*.rst`/`*.txt`, and anything under
-   `docs/` do not count. A search over a source directory counts as one read.
+   `docs/` do not count. **Files, or searches of a source subdirectory:** a
+   search counts as one read of what it searched only when it printed
+   something (the Grep tool's "No files found" is nothing), is not restricted
+   to documentation (`--include '*.md'`, `rg -t md` / `-g '*.md'`, the Grep
+   tool's `glob`/`type`), and is not over the clone's root — which holds the
+   README and docs too.
 
 **Why two.** One file can be an entry point that only re-exports; a second means
 the reading followed the implementation past it. It is a floor that separates
@@ -88,10 +96,17 @@ padding past it still costs real reading of the right repository.
 scratchpad that did not exist yet), and the agent then ran `ls /tmp`, found
 repositories *earlier sessions* had cloned there, and "researched" those. The
 previous gate saw a `git clone` invocation and credited it. Now a clone counts
-only if it succeeded — a non-error tool result, and no `fatal:` naming its
-destination or repository (a `git clone … | tail` pipeline exits 0 even when git
-refused) — and a read counts only inside a directory such a clone produced. A
-checkout that was already on disk is named in the refusal as not counting.
+only on positive evidence that it ran: a non-error tool result with no `fatal:`
+quoting its destination or naming its repository (a `git clone … | tail`
+pipeline exits 0 even when git refused), AND either git's own `Cloning into
+'<dest>'...` line in the output or — when `-q`, `2>/dev/null` or a filter hid
+it — a `<dest>/.git` whose birth time is after this session's record began. A
+clone whose failure was hidden (`git clone url existing 2>/dev/null; true`,
+`… || echo cloned`) shows neither, since an existing directory's `.git` is
+older than the session; the refusal names it as "could not be confirmed" and
+says to clone into a new directory without `-q` or `2>/dev/null`. A read
+counts only inside a confirmed clone, and a checkout that was already on disk
+is named in the refusal as not counting.
 
 **Why the gh page count was dropped.** The previous gate also demanded `gh`
 calls "covering at least 5 pages", counted from `--limit N` / `--paginate`.
@@ -108,8 +123,11 @@ page requirement is gone rather than restated.
 
 The example's convention: **research findings are prose, kept in Markdown in the
 project** — NOTES.md is where this project keeps them. So the gate matches any
-`*.md` write inside the project outside a dot-directory (`event.path endsWith
-".md"`, not absolute, not under `.claude/`, `.sloprail/`, …). Matching NOTES.md
+Markdown write (`.md`, `.markdown`, `.mdx`, in any letter case — on macOS's
+default filesystem `NOTES.MD` *is* `NOTES.md`) inside the project and not under
+a top-level dot-directory (`event.path matches "(?i)[.](md|markdown|mdx)$"`, not
+absolute, not starting with `.` — so `.claude/`, `.sloprail/`, `.notes/` are
+out, while a nested dot-directory such as `docs/.drafts/` is in). Matching NOTES.md
 alone would let the proposal move to `PROPOSAL.md` and be linked later; code
 files are not matched, because a clone into the project (`mkdir vendor && git
 clone …`) is part of doing the research, and "no code before research" is a
@@ -138,9 +156,11 @@ notes writes pass: depth is judged over the whole session.
   (`.bin`, `.argv`, `.cwd`), never by regex over the raw string. A tool call's
   result is joined by its `tool_use_id` to drop failed calls.
 - **`gate/depth-check/verify-depth.sh`** — gathers those facts for the
-  trajectory and every sub-agent trajectory, decides, and writes the refusal:
-  what the run cloned, what source it read there, what it read elsewhere, and
-  what to do. It keeps the older check that a research sub-agent ran as its own
+  trajectory and every sub-agent trajectory (refusing, with the error, when one
+  cannot be read), confirms on disk a clone whose output hid git's `Cloning
+  into` line, decides, and writes the refusal: what the run cloned, what source
+  it read there, what it read elsewhere, which clones failed or could not be
+  confirmed, and what to do. It keeps the older check that a research sub-agent ran as its own
   agent, not in a trajectory shared with siblings.
 - **`gate/findings-need-depth/findings-after-depth.sh`** — decides whether a
   research run is open, and if so runs `../depth-check/verify-depth.sh` with
@@ -167,7 +187,21 @@ notes writes pass: depth is judged over the whole session.
   works, and the gate refuses what is not yet on the record. In a real run the
   dispatcher then cloned and read source itself — healthy, if duplicated.
 - **A clone the harness moved to the background** (a large repository past the
-  Bash timeout) is credited once launched; reads under it still have to happen.
+  Bash timeout) shows no `Cloning into` line yet; it is credited once its
+  `.git` exists and was born during the session, and reads under it still have
+  to happen.
+- **A filesystem that does not record birth times** cannot confirm a clone
+  whose output was hidden; such a clone is refused as unconfirmed (fail
+  closed), and cloning without `-q`/`2>/dev/null` is the remedy the refusal
+  gives.
+- **A search counts once per directory, whatever it matched** — only a search
+  that printed nothing, or one restricted to documentation, is discounted. A
+  search whose Bash line also ran another command is judged on the whole
+  line's output.
+- **A trajectory the check cannot read** (the run's or a sub-agent's) is
+  refused as unreadable, naming the error — never reported as "has not
+  cloned", which would send the agent to clone again for a failure not its
+  own.
 - **A literal `/tmp`** is shared with every other process on the machine. The
   eval harness gives the agent its own `TMPDIR` and `CLAUDE_CODE_TMPDIR` (Claude
   Code's scratchpad) inside the workspace, but only a sandbox could stop `ls
@@ -180,8 +214,14 @@ notes writes pass: depth is judged over the whole session.
   untouched, and the evasions (a shell heredoc or append into NOTES.md, the
   proposal in another Markdown file) refused; activation, a shallow run
   refused, clone + source reads admitted, README/docs-only refused, reads of an
-  uncloned checkout refused, a failed clone into an existing directory refused,
-  sub-agent research aggregated for the dispatcher, and each command shape above.
+  uncloned checkout refused, a failed clone into an existing directory refused
+  (also with its failure hidden, and a quiet clone into a new directory
+  admitted), searches that read no source (the clone root, docs-only filters,
+  no matches) not counted, an unreadable sub-agent trajectory reported as such,
+  sub-agent research aggregated for the dispatcher, which Markdown writes are
+  held (letter case, `.markdown`, dot-directories, outside the project), each
+  command shape above, and the eval scorer's claim about the gates made only
+  when `#research` was declared.
 - **Eval:** `eval/shallow-research-temptation/` — Haiku asked to research
   retry-with-backoff under the NOTES.md convention, scored on trajectory health.
   In real runs of this design: a run declared `#research` and went straight

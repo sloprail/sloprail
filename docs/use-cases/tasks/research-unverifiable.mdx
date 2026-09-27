@@ -50,12 +50,13 @@ the agent's summary of it.
 2. A **gate** at `Stop` runs only while that context is active and refuses the
    stop unless the run cloned a repository itself and read at least two of that
    clone's source files — not its README or docs. It counts what any dispatched
-   sub-agent did as well, does not credit a checkout that was already on disk,
-   and says exactly what is missing and what to do.
+   sub-agent did as well, does not credit a checkout that was already on disk
+   (even when the clone that ran into it hid its failure), and says exactly
+   what is missing and what to do.
 
 3. A second **gate** holds the conclusion until the reading is done: while a
    research run is open, a write of the research notes (Markdown in the
-   project) is refused before it lands until the run has depth — by the same
+   project, in any letter case) is refused before it lands until the run has depth — by the same
    rule, with the same remedy. A `Stop` gate can refuse a turn, but only a gate
    on the write can keep the proposal from being written first.
 

@@ -1,9 +1,13 @@
 # research-facts.jq — what ONE trajectory's research did, read off
 # `sr-session trajectory normalize` output (an array of normalized entries).
 #
-# Emits {clones, unresolvedClones, reads}:
-#   clones            [{dest, repo}] — `git clone`s that succeeded and whose
-#                     destination directory is known (absolute, canonical)
+# Emits {clones, failedClones, unresolvedClones, reads}:
+#   clones            [{dest, repo, seen}] — `git clone`s that did not fail and
+#                     whose destination directory is known (absolute,
+#                     canonical). seen: git's own `Cloning into '<dest>'...`
+#                     line is in the result — positive evidence the clone ran.
+#                     A clone whose output hides that (-q, 2>/dev/null, a
+#                     filter) is left to verify-depth.sh to confirm on disk.
 #   failedClones      [dest] — `git clone`s that failed (an error result, or a
 #                     `fatal:` naming them): a directory already there is not
 #                     this run's clone
@@ -12,7 +16,9 @@
 #                     `cd` the engine could not resolve)
 #   reads             [path] — files or directories whose CONTENT a successful
 #                     tool call read: the Read tool, the Grep tool, and shell
-#                     readers (cat, head, tail, sed, awk, grep, rg, …)
+#                     readers (cat, head, tail, sed, awk, grep, rg, …). A
+#                     search counts only if it printed something and was not
+#                     restricted to documentation files.
 #
 # Nothing here decides depth; verify-depth.sh does, over every trajectory of
 # the research run at once (a sub-agent's clone and the root's reads are one
@@ -116,7 +122,8 @@ def readers: {
   sed: ["-e", "-f", "-l", "--expression", "--file", "--line-length"],
   awk: ["-f", "-v", "-F", "--file", "--assign", "--field-separator"],
   grep: ["-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D", "--regexp", "--file", "--max-count",
-         "--after-context", "--before-context", "--context", "--devices", "--directories", "--label"],
+         "--after-context", "--before-context", "--context", "--devices", "--directories", "--label",
+         "--include", "--exclude", "--exclude-dir", "--exclude-from"],
   rg: ["-e", "-f", "-g", "-t", "-T", "-m", "-A", "-B", "-C", "-M", "-j", "-E", "-d", "-r",
        "--regexp", "--file", "--glob", "--iglob", "--type", "--type-not", "--max-count",
        "--after-context", "--before-context", "--context", "--max-columns", "--threads",
@@ -125,40 +132,94 @@ def readers: {
   ag: ["-A", "-B", "-C", "-G", "-m", "--file-search-regex", "--max-count", "--ignore", "--depth"]
 } | .egrep = .grep | .fgrep = .grep | .gawk = .awk;
 
-# argv → the operands left once options (and their values) are set aside, and
+# Options whose value restricts a search to the files it names: grep's
+# --include, rg's -g/--glob/--iglob and -t/--type, ag's -G.
+def include_opts: ["--include", "-g", "--glob", "--iglob", "-t", "--type", "-G", "--file-search-regex"];
+
+# Whether a search's file filter (a glob, an rg type name, an ag regex) names
+# only documentation — `*.md`, `*.{md,rst}`, `md`, `README*`. A negated rg glob
+# (`!*.md`) excludes rather than selects, and is never documentation-only.
+def doc_filter:
+  "(md|markdown|mdx|rst|txt|adoc|asciidoc|org)" as $ext
+  | ascii_downcase | gsub("[\\\\$]"; "")
+  | (startswith("!") | not)
+    and (test("\\." + $ext + "$") or test("\\.\\{(" + $ext + ",?)+\\}$") or test("^" + $ext + "$")
+         or test("(^|/)\\*?(readme|changelog|license|licence)"));
+
+# One option's value, folded into the operand scan: -e/-f give the pattern (or
+# program), so the first operand is a file; an include filter is recorded.
+def optval($o; $v):
+  (if ($o | IN("-e", "-f", "--regexp", "--file", "--expression")) then .given = true else . end)
+  | (if ($o as $x | include_opts | index($x)) then .incl += [$v] else . end);
+
+# A cluster of short options — `-rn`, `-A3`, `-rnefoo`, `-tmd`. Each letter is
+# its own option until one that takes a value, which takes the rest of the word
+# (or, when nothing is left, the next word).
+def short_cluster($t; $valued):
+  ($t[1:] | explode | map([.] | implode)) as $cs
+  | reduce range(0; $cs | length) as $i (. + {stop: false};
+      if .stop then .
+      else ("-" + $cs[$i]) as $o
+      | if ($valued | index($o)) != null then
+          ($cs[$i + 1:] | join("")) as $rest
+          | (if $rest == "" then .skip = $o else optval($o; $rest) end)
+          | .stop = true
+        elif ($cs[$i] | IN("r", "R")) then .recursive = true
+        else . end
+      end)
+  | del(.stop);
+
+# argv → the operands left once options (and their values) are set aside;
 # whether a pattern/program was given by an option (-e/-f), in which case the
-# first operand is a file rather than the pattern.
+# first operand is a file rather than the pattern; and any include filters.
 def operands($valued):
-  reduce .[1:][] as $t ({ops: [], skip: false, dd: false, given: false, recursive: false};
-    if .skip then .skip = false
+  reduce .[1:][] as $t ({ops: [], skip: null, dd: false, given: false, recursive: false, incl: []};
+    if .skip != null then optval(.skip; $t) | .skip = null
     elif .dd then .ops += [$t]
     elif $t == "--" then .dd = true
-    elif ($t | startswith("-")) and ($t | length) > 1 then
-      (if ($t as $x | $valued | index($x)) then .skip = true else . end)
-      | (if ($t | test("^(-[ef]|--(regexp|file|expression))($|=)")) or ($t | test("^-[ef].")) then .given = true else . end)
-      | (if ($t | test("^(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive|--dereference-recursive)$")) then .recursive = true else . end)
+    elif ($t | startswith("--")) then
+      ($t | sub("=.*$"; "")) as $name
+      | if ($t | contains("=")) then optval($name; $t | sub("^[^=]*="; ""))
+        elif ($valued | index($name)) != null then .skip = $name
+        elif ($name | IN("--recursive", "--dereference-recursive")) then .recursive = true
+        else . end
+    elif ($t | startswith("-")) and ($t | length) > 1 then short_cluster($t; $valued)
     else .ops += [$t] end);
 
-# One invocation of a reader → the paths (as written) whose content it reads.
-# An empty list for a program that is not a reader. A search with no path
-# searches where it runs, returned as ".".
-def read_paths:
+# One invocation of a reader → {paths, search, doconly}: the paths (as written)
+# whose content it reads, whether it is a search (which reads only what it
+# prints), and whether its include filters name documentation alone. No paths
+# for a program that is not a reader. A search with no path searches where it
+# runs, returned as ".".
+def read_of:
   .bin as $bin
   | (readers[$bin]) as $valued
-  | if $valued == null then []
+  | if $valued == null then {paths: []}
     else (.argv | operands($valued)) as $o
-    | if ($bin | IN("sed", "awk", "gawk")) then
-        (if $o.given then $o.ops else $o.ops[1:] end)
-        | map(select(test("^[A-Za-z_][A-Za-z0-9_]*=") | not))
-      elif ($bin | IN("grep", "egrep", "fgrep", "rg", "ag")) then
-        (if $o.given then $o.ops else $o.ops[1:] end) as $files
-        | if ($files | length) > 0 then $files
-          elif ($bin | IN("rg", "ag")) or ($bin != "rg" and $o.recursive) then ["."]
-          else [] end
-      else $o.ops
-      end
-    | map(select(. != "-"))
+    | ($bin | IN("grep", "egrep", "fgrep", "rg", "ag")) as $search
+    | {search: $search,
+       doconly: (($o.incl | length) > 0 and all($o.incl[]; doc_filter)),
+       paths: (
+         if ($bin | IN("sed", "awk", "gawk")) then
+           (if $o.given then $o.ops else $o.ops[1:] end)
+           | map(select(test("^[A-Za-z_][A-Za-z0-9_]*=") | not))
+         elif $search then
+           (if $o.given then $o.ops else $o.ops[1:] end) as $files
+           | if ($files | length) > 0 then $files
+             elif ($bin | IN("rg", "ag")) or ($bin != "rg" and $o.recursive) then ["."]
+             else [] end
+         elif ($bin | IN("less", "more", "view")) then
+           # `less +G f`: a +command is not a file.
+           $o.ops | map(select(startswith("+") | not))
+         else $o.ops
+         end
+         | map(select(. != "-")))}
     end;
+
+# Whether a tool result shows nothing: a search that printed nothing read
+# nothing (the Grep tool says so in words).
+def blank: test("\\S") | not;
+def grep_tool_empty: blank or test("^\\s*No (files|matches) found");
 
 # ---- tool results -----------------------------------------------------------
 
@@ -200,29 +261,41 @@ def results:
                   else
                     (reduce $cl.cdirs[] as $d ($dir; . as $acc | $d | resolve($acc))) as $gdir
                     | ($cl.dest | resolve($gdir)) as $dest
+                    | ($r.text | split("\n") | map(split("\r")[])) as $lines
                     # git reports a clone it refused (destination exists, repo
-                    # not found) as `fatal:` naming the destination or the
-                    # repository. A pipeline (`git clone … | head`) exits 0
-                    # anyway, so the output is read too.
-                    | ($r.text | split("\n") | map(select(startswith("fatal:"))) ) as $fatal
+                    # not found) as `fatal:` quoting the destination as written
+                    # or naming the repository. A pipeline (`git clone … |
+                    # head`) exits 0 anyway, so the output is read too.
+                    | ($lines | map(select(startswith("fatal:")))) as $fatal
+                    # git announces a clone it is making as `Cloning into
+                    # '<dest>'...` — the positive evidence. Absent (-q,
+                    # 2>/dev/null, a filter), verify-depth.sh looks on disk.
+                    | ([ $lines[] | capture("^Cloning into '(?<p>.*)'\\.\\.\\.") | .p | resolve($gdir) ]
+                       | index($dest) != null) as $seen
                     | if $r.err or ($fatal | any(. as $l | ($cl.repo != null and ($l | contains($cl.repo)))
-                                               or ($dest != null and ($l | contains($dest | split("/") | last)))))
+                                               or ($l | contains("'" + $cl.dest + "'"))
+                                               or ($dest != null and ($l | contains("'" + $dest + "'")))))
                       then (if $dest == null then empty else {failed: $dest} end)
                       elif $dest == null or (($cl.explicit or ($cl.cdirs | length) > 0) and ($c.input.command | dynamic)) then {unresolved: 1}
-                      else {clone: {dest: $dest, repo: $cl.repo}} end
+                      else {clone: {dest: $dest, repo: $cl.repo, seen: $seen}} end
                   end
               elif $r.err then empty
               else
-                read_paths as $ps
-                | if ($ps | length) == 0 then empty
-                  else $ps[] | resolve($dir) | select(. != null) | {read: .} end
+                read_of as $rd
+                | if ($rd.paths | length) == 0 then empty
+                  elif $rd.search and ($rd.doconly or ($r.text | blank)) then empty
+                  else $rd.paths[] | resolve($dir) | select(. != null) | {read: .} end
               end)
         | .[]
       elif $r.err then empty
       elif $c.name == "Read" then
         ($c.input.file_path | resolve($c.base)) | select(. != null) | {read: .}
       elif $c.name == "Grep" then
-        (($c.input.path // ".") | resolve($c.base)) | select(. != null) | {read: .}
+        if ($r.text | grep_tool_empty)
+           or ([ $c.input.glob, $c.input.type ] | map(select(. != null and . != "")) as $f
+               | ($f | length) > 0 and all($f[]; doc_filter))
+        then empty
+        else (($c.input.path // ".") | resolve($c.base)) | select(. != null) | {read: .} end
       else empty end ]
 | {clones: [ .[] | .clone // empty ],
    failedClones: [ .[] | .failed // empty ],

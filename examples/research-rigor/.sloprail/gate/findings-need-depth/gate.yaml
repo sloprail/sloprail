@@ -1,8 +1,10 @@
 # Findings are written after the reading, not before. While a #research run is
 # open, a write of the project's research notes — this example's convention:
-# any Markdown file in the project outside a dot-directory, NOTES.md being where
-# this project keeps them — is refused BEFORE it lands until the run has depth
-# (the same rule depth-check applies at Stop, shared via its verify-depth.sh).
+# any Markdown file (.md, .markdown, .mdx, in any letter case) in the project,
+# outside a top-level dot-directory, NOTES.md being where this project keeps
+# them — is refused BEFORE it lands until the run has depth (the same rule
+# depth-check applies at Stop, shared via its verify-depth.sh). Case-insensitive
+# because on macOS's default filesystem NOTES.MD IS NOTES.md.
 #
 # PreFileWrite covers the Write and Edit tools and a shell command the engine
 # sees writing the file (`cat > NOTES.md`, `echo >> NOTES.md`, `sed -i`).
@@ -13,7 +15,7 @@
 on:
   - event: PreFileWrite
     match: >-
-      event.path endsWith ".md"
+      event.path matches "(?i)[.](md|markdown|mdx)$"
       and not (event.path startsWith "/")
       and not (event.path startsWith ".")
 checks:

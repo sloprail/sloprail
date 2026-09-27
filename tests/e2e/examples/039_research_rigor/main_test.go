@@ -32,7 +32,10 @@ import (
 // the dispatcher; and the command shapes the clone destination and the reads
 // are parsed from (git -C, --depth=1 / --depth 1, cd && git clone, a subshell,
 // a scratch dir outside the project, Read vs cat/sed/head/grep, the Grep tool,
-// a destination built from a variable).
+// a destination built from a variable); and what a review found admitted: a
+// clone whose failure was hidden, searches that read no source, an unreadable
+// trajectory reported as "not cloned", Markdown writes by letter case, and the
+// eval scorer's claim about gates that never ran.
 var (
 	New     = harness.New
 	Turns   = harness.Turns

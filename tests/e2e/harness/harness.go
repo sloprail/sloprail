@@ -314,6 +314,18 @@ func (e *Env) InstallClaudeShim(projDir string) {
 	}
 }
 
+// InstallPathShim puts an executable called name first on the PATH every hook
+// and check of this Env's runs sees — ahead of the build under test. For a test
+// that must make one of the tools a check shells out to fail (a check that
+// cannot read what it needs must say so, not report something else). The shim
+// shares shimDir with the `claude` shims; body is the whole script.
+func (e *Env) InstallPathShim(name, body string) {
+	e.t.Helper()
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(body), 0o755); err != nil {
+		e.t.Fatalf("harness: write %s shim: %v", name, err)
+	}
+}
+
 // InstallJudgeClaude puts a `claude` on PATH that stands in for the model a JUDGE
 // check invokes through sr-agent, writing a fixed verdict to the output file
 // sr-agent named.
