@@ -148,6 +148,29 @@ measured number for a deterministic rule). A unit selecting no rules at all
 (no global rules configured, no matching tag rule, no topic constraints)
 passes trivially — nothing to check is not a violation.
 
+**Tags always come from the unit's own `UNIT.md`, and the draft is what gets
+judged.** `02_draft.md` is prose with no frontmatter of its own, so tags are
+never read off whichever file the write event named — they are read from
+`UNIT.md` (on disk, or the settled write itself when the event IS `UNIT.md`).
+Whichever of the two files triggered the check, if `02_draft.md` exists on
+disk it is the content judged against the tag-selected rules (a writing rule
+is about what will ship). A `UNIT.md`-only write with no draft yet has
+nothing shippable to judge yet and passes trivially, the same as selecting no
+rules — once a draft exists, the next write judges it for real.
+
+**Deterministic facts are pre-computed, not left to the judge's own Bash
+loop.** `prepare-judge-rules.sh` runs `compute-draft-facts.sh` against the
+judged content once, cheaply, and hands the judge title-line character
+count, body word count (frontmatter/title excluded), em-dash count, emoji
+count, and each thread segment's own character count (split on a line
+containing exactly `---`) as ready-made numbers. The judge template tells
+the judge to use these first and reach for its own `Read`/`Bash` measurement
+only when a rule needs something these facts do not cover — and separately,
+to judge only what a rule's own text states: no fact-checking a unit's
+claims, no exploring the repo beyond `additionalContext.judged_path`, unless
+a rule's text explicitly asks for it (e.g. comparing against a sibling
+unit).
+
 ### unit-publish-approved — file-guard, **preventive**
 
 A unit cannot reach `status: published` without **both**:

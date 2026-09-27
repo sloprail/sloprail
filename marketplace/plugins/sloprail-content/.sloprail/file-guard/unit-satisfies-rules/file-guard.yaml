@@ -30,6 +30,19 @@
 # 02_draft.md}) is what this regex anchors, the same "<topic>/units/" anchor
 # unit-satisfies-constraints already used, extended with an alternation over
 # the two filenames.
+#
+# WHICHEVER FILE FIRED, TAGS COME FROM UNIT.md AND THE DRAFT IS WHAT GETS
+# JUDGED. 02_draft.md is prose with no frontmatter of its own — reading tags
+# off the file being written (the bug this fix corrects) meant a draft write
+# always resolved to zero tags, while a UNIT.md-only write got the full
+# tag-selected rule set applied to the pitch paragraph instead of the copy
+# that will actually ship. prepare-judge-rules.sh now always reads tags from
+# the unit's own UNIT.md (on disk, or the settled event content when the
+# event IS UNIT.md) and judges 02_draft.md's content whenever a draft exists,
+# regardless of which of the two files this event named. A UNIT.md-only
+# write with no draft yet has nothing shippable to judge and passes trivially
+# (the NONE sentinel) — see prepare-judge-rules.sh's own header for why that
+# is the simplest correct behaviour rather than judging the pitch itself.
 match: path matches "^memories/topics/[^/]+/units/[^/]+/(UNIT|02_draft)\\.md$"
 
 # NOT preventive — same reasoning as unit-satisfies-constraints: a writing-rule
@@ -48,8 +61,15 @@ checks:
   # [Read, Bash] — Read for the rules/unit text (already in the prompt, but
   # a rule may point the judge at a related file), Bash so the judge can run
   # the actual measurement a deterministic rule's text asks for (wc, grep,
-  # …) against the real unit file at additionalContext.unit_path, rather
-  # than estimate it.
+  # …) against the real unit file at additionalContext.judged_path, when a
+  # rule needs a measurement compute-draft-facts.sh did not already provide
+  # (see prepare-judge-rules.sh: title/body/em-dash/emoji counts and each
+  # thread segment's own character count are computed once, cheaply, and
+  # handed to the judge as additionalContext.facts_* so it is not spending
+  # its own turns re-measuring them one Bash call at a time). The judge
+  # template also tells the judge to stay inside the rules' own stated text
+  # and not explore the repo or fact-check the unit's claims beyond what a
+  # rule explicitly asks for.
   - prepare: ./prepare-judge-rules.sh
     judge: ./judge-rules.md.j2
     model: size-md
