@@ -2,47 +2,37 @@
 # An sr:invariant marker's fqn carries a pinned spec reference:
 #   <repo>@<sha>:<path>#L<start>-<end>
 # Two things a script can settle before any judge runs:
-#   1. the link resolves — the sha, path and line range are all real
+#   1. the link resolves — the sha, path and line range are all real, and the
+#      range holds text (pin.sh checks the fqn before git reads anything with it)
 #   2. the pinned range still matches HEAD — the spec has not moved since
 set -uo pipefail
 
-input="$(cat)"
-markers="$(printf '%s' "$input" | jq -c '.event.newMarkers // .event.oldMarkers // []')"
-
 fail() {
-  cat <<EOF
-{"decision":"block","reason":"$1"}
-EOF
+  jq -n --arg r "$1" '{reason: $r}'
   exit 1
 }
 
-invariant_markers="$(printf '%s' "$markers" | jq -c '[.[] | select(.kind == "invariant")]')"
-count="$(printf '%s' "$invariant_markers" | jq 'length')"
+# shellcheck source=pin.sh
+. "${SR_GUARDRAIL_DIR:-.}/pin.sh" || fail "pin.sh, which reads a pin, is missing beside this check."
 
-for i in $(seq 0 $((count - 1))); do
-  fqn="$(printf '%s' "$invariant_markers" | jq -r ".[$i].fqn")"
+input="$(cat)"
+markers="$(printf '%s' "$input" | jq -c '[(.event.newMarkers // .event.oldMarkers // [])[] | select(.kind == "invariant")]')" \
+  || fail "The check payload did not parse, so the invariant pins could not be checked."
 
-  # <repo>@<sha>:<path>#L<start>-<end>
-  repo="${fqn%%@*}"
-  rest="${fqn#*@}"
-  sha="${rest%%:*}"
-  rest="${rest#*:}"
-  path="${rest%%#*}"
-  range="${rest#*#L}"
-  start="${range%-*}"
-  end="${range#*-}"
+count="$(printf '%s' "$markers" | jq 'length')"
+for ((i = 0; i < count; i++)); do
+  fqn="$(printf '%s' "$markers" | jq -r ".[$i].fqn")"
 
-  if [ -z "$repo" ] || [ -z "$sha" ] || [ -z "$path" ] || [ -z "$start" ] || [ -z "$end" ]; then
-    fail "Invariant marker '$fqn' does not parse as <repo>@<sha>:<path>#L<start>-<end>."
-  fi
+  parse_pin "$fqn" || fail "$pin_error"
 
-  pinned="$(git -C "$repo" show "$sha:$path" 2>/dev/null | sed -n "${start},${end}p")" \
-    || fail "Invariant marker '$fqn' names a commit or path this checkout does not have."
+  pin_lines "$pin_sha" \
+    || fail "Invariant marker '$fqn' names a commit or path this checkout does not have, or a range with no text in it: $pin_error. Pin it to the spec lines that state the rule, at a commit that has them."
+  pinned="$pin_text"
 
-  head_text="$(git -C "$repo" show "HEAD:$path" 2>/dev/null | sed -n "${start},${end}p")" \
-    || fail "Invariant marker '$fqn' names a path that no longer exists at HEAD."
+  pin_lines HEAD \
+    || fail "Invariant marker '$fqn' names a path or range that no longer exists at HEAD: $pin_error."
 
-  if [ "$pinned" != "$head_text" ]; then
+  if [ "$pinned" != "$pin_text" ]; then
     fail "Invariant marker '$fqn' is pinned to text that has since changed at HEAD — the spec moved and the marker did not. Re-pin after confirming the code still upholds the current wording."
   fi
 done

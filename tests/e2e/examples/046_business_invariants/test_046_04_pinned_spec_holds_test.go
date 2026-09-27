@@ -113,3 +113,36 @@ func TestT046_14_CitingAConflictingFeatureRefused(t *testing.T) {
 		t.Errorf("the refused rule change reached SPEC.md:\n%s", got)
 	}
 }
+
+// T046_26: the pinned-spec-holds judge is handed the change and what it cites. A
+// stub that only flips the verdict proves neither: the renderer turns an undefined
+// variable into "", so a missing event.citations renders "This change cites
+// nothing" and the verdict-flipping tests above still pass. This captures the
+// prompt and asserts the cited words and the rewritten rule are in it.
+func TestT046_26_ChangeAndCitationsReachTheRuleChangeJudge(t *testing.T) {
+	e := newEnv(t)
+	proj := pinnedSpecProject(t, e)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": "the user asked to relax rule 2"}`)
+
+	const ask = "change rule 2 of the spec so goodwill refunds may exceed the charge"
+	res := e.Run(proj, "s-046-26", ask, Turns("done",
+		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
+	))
+	if res.Refused() {
+		t.Fatalf("the cited rule change was refused:\n%s", res.Output)
+	}
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if !strings.Contains(prompt, "Did the user ask for this rule to change?") {
+		t.Fatalf("the rule-change judge was never asked:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "<quote>"+ask+"</quote>") {
+		t.Errorf("the cited words did not reach the judge prompt:\n%s", prompt)
+	}
+	start, end := strings.Index(prompt, "<change path=\"SPEC.md\">"), strings.Index(prompt, "</change>")
+	if start < 0 || end < start || !strings.Contains(prompt[start:end], "+2. A refund must never exceed the original charge amount, except goodwill refunds.") {
+		t.Errorf("the rewritten rule did not reach the judge prompt inside <change>:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "This change cites nothing") {
+		t.Errorf("the judge was told the change cites nothing:\n%s", prompt)
+	}
+}

@@ -17,6 +17,9 @@ import (
 // its own copy of the rule would keep passing after the shipped one broke.
 type env = harness.Env
 
+// Turn is one step of a scripted session.
+type Turn = harness.Turn
+
 var (
 	newEnv = harness.New
 	Turns  = harness.Turns

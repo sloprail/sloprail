@@ -16,9 +16,15 @@ import UseCase from '../../_components/UseCase.astro';
   `?raw` imports (never copied inline). docs/ and examples/ are siblings, a
   layout the website's build preserves.
 */}
-import fileGuardYaml from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/file-guard.yaml?raw';
-import pinSh         from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/pin-still-matches-head.sh?raw';
-import judgeJ2       from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/code-upholds-invariant.md.j2?raw';
+import fileGuardYaml  from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/file-guard.yaml?raw';
+import pinSh          from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/pin-still-matches-head.sh?raw';
+import pinLib         from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/pin.sh?raw';
+import pinnedTextSh   from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/pinned-text.sh?raw';
+import judgeJ2        from '../../../examples/business-invariants/.sloprail/file-guard/pinned-invariant/code-upholds-invariant.md.j2?raw';
+import holdsYaml      from '../../../examples/business-invariants/.sloprail/file-guard/pinned-spec-holds/file-guard.yaml?raw';
+import changesSh      from '../../../examples/business-invariants/.sloprail/file-guard/pinned-spec-holds/changes-pinned-lines.sh?raw';
+import onlyPinnedSh   from '../../../examples/business-invariants/.sloprail/file-guard/pinned-spec-holds/only-when-pinned.sh?raw';
+import holdsJudgeJ2   from '../../../examples/business-invariants/.sloprail/file-guard/pinned-spec-holds/cited-words-change-the-rule.md.j2?raw';
 
 ## The failure
 
@@ -34,27 +40,35 @@ production.
 ## How it works
 
 The invariant is pinned to the code with a marker — a note in the source that
-names it as an invariant. The guardrail keys off that marker, not off a path, so
-it fires wherever the marked code lives.
+names the exact spec lines the code upholds, at a commit. The guardrail keys off
+that marker, not off a path, so it fires wherever the marked code lives.
 
 <Steps>
 
-1. A cheap script confirms the pin still lines up with the current code, so a
-   stale or moved pin is caught before anything expensive runs.
+1. A cheap script confirms the pin is real (a commit sha, a line range inside
+   the spec) and still lines up with the spec at HEAD, so a stale or moved pin
+   is caught before anything expensive runs.
 
-2. A judge then reads the marked code and rules on whether it still upholds the
-   invariant the marker names.
+2. A `prepare` step reads the pinned spec lines and hands them to the judge,
+   which rules on whether the marked code still upholds that exact wording.
 
 </Steps>
 
-This is a **file-guard**: it runs against the write itself, and the marker is
-what tells it which files carry an invariant to check.
+Pinning the code to the spec opens a second way out: rewrite the spec line to
+agree with the code, or re-pin the code to looser wording. A second file-guard,
+`pinned-spec-holds`, closes it. A write that changes a pinned spec line, or that
+moves or removes a pin, must cite the user's own words, and a judge checks that
+those words ask for the rule to change rather than for a feature that conflicts
+with it.
+
+Both are **file-guards**: they run against the write itself, and the markers
+decide which files carry an invariant and which spec lines are pinned.
 
 ## The actual configuration
 
 This is the real example shipped at `examples/business-invariants/`. One nature,
-a directory under `.sloprail/` — a `file-guard.yaml` declaration plus the checks
-it names:
+two directories under `.sloprail/`, each a `file-guard.yaml` declaration plus the
+checks it names:
 
 <FileTree>
 
@@ -63,15 +77,40 @@ it names:
     - pinned-invariant/
       - file-guard.yaml
       - pin-still-matches-head.sh
+      - pin.sh
+      - pinned-text.sh
       - code-upholds-invariant.md.j2
+    - pinned-spec-holds/
+      - file-guard.yaml
+      - changes-pinned-lines.sh
+      - only-when-pinned.sh
+      - cited-words-change-the-rule.md.j2
 
 </FileTree>
 
-### file-guard
+### pinned-invariant: the code upholds the pin
 
 Matches any file carrying an `invariant` marker. Two checks in order: the script
-gates the judge, so the model only runs once the pin is known to be current.
+gates the judge, so the model only runs once the pin is known to be real and
+current. `pin.sh` is the pin reader both scripts share: it checks the sha and the
+line range an agent wrote before git reads anything with them. `pinned-text.sh`
+is the judge's `prepare`.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/pinned-invariant/file-guard.yaml" />
 <Code code={pinSh} lang="bash" title=".sloprail/file-guard/pinned-invariant/pin-still-matches-head.sh" />
+<Code code={pinLib} lang="bash" title=".sloprail/file-guard/pinned-invariant/pin.sh" />
+<Code code={pinnedTextSh} lang="bash" title=".sloprail/file-guard/pinned-invariant/pinned-text.sh" />
 <Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/pinned-invariant/code-upholds-invariant.md.j2" />
+
+### pinned-spec-holds: a pinned rule changes only when the user asks
+
+Matches every write, and is preventive. `changes-pinned-lines.sh` is the `when`
+of a user citation: it applies the requirement when the write changes a spec line
+a marker pins (in the working tree or at HEAD) or moves a marker off the wording
+it pinned, and waives it only when it has decided the write changes neither.
+`only-when-pinned.sh` asks the judge about exactly those writes.
+
+<Code code={holdsYaml} lang="yaml" title=".sloprail/file-guard/pinned-spec-holds/file-guard.yaml" />
+<Code code={changesSh} lang="bash" title=".sloprail/file-guard/pinned-spec-holds/changes-pinned-lines.sh" />
+<Code code={onlyPinnedSh} lang="bash" title=".sloprail/file-guard/pinned-spec-holds/only-when-pinned.sh" />
+<Code code={holdsJudgeJ2} lang="jinja" title=".sloprail/file-guard/pinned-spec-holds/cited-words-change-the-rule.md.j2" />

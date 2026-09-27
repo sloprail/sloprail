@@ -60,16 +60,22 @@ score: score.sh
   the way a user adds one — so the plugin's own guardrails are what fires.
   A plugin's fixtures live under `examples/_<plugin>/eval/<case>/`, never in
   the plugin's tree (that is copied into the agent's install).
-- **`setup`** — a script, relative to the fixture dir, run in the project
-  after the copy order below and before the baseline commit (git identity
-  set, `SR_EVAL_PROJECT_DIR` in its environment). It is for state that only
+- **`setup`** — an executable script (the execute bit is checked at load),
+  relative to the fixture dir, run in the project after the copy order below
+  and before the baseline commit. It runs in the agent's environment (its
+  HOME, not yours), with `SR_EVAL_PROJECT_DIR` set, a git identity, and git's
+  commit signing and hooks turned off whatever your own git config says, so a
+  plain `git commit` in it works. It is for state that only
   exists at run time: the project's absolute path, or the sha of a commit
   made in it. It may commit; what it leaves uncommitted goes into the
   baseline. A failing setup fails the run before the agent starts. See
   `examples/business-invariants/eval/goodwill-refund/`, whose seed starts
   with a marker pinned to SPEC.md.
 - **`disallowedTools`** — harness tools the agent-under-test does not have
-  (`[WebSearch, WebFetch]`), passed as the harness's own `--disallowed-tools`.
+  (`[WebSearch, WebFetch]`), passed as the harness's own `--disallowed-tools`,
+  comma-joined. Each entry is one tool name, optionally with a rule in
+  parentheses (`Bash(gh search:*)`); any other shape is a load error. A
+  misspelled tool name still loads and removes nothing.
   An eval must reproduce the behaviour its guardrail governs — a run in which
   the guard never engaged proves nothing about it. Prefer rules that steer the
   agent themselves over removing tools: removing one hides the hole a real
@@ -78,9 +84,13 @@ score: score.sh
   replaced it with gates refusing the other routes; reach for the field only
   when the tool genuinely does not exist in the setting being modelled.
 - **`model`** — an `sr-agent --model` value (`haiku`, `claude-sonnet-5,size-md`,
-  etc.). Every current fixture uses `haiku` deliberately — a cheap model is
-  the one likelier to take the tempting shortcut a fixture is designed to
-  offer. Overridable per run with `sr-eval run --model`.
+  etc.). `haiku` is the default choice: a cheap model is the one likelier to
+  take the tempting shortcut a fixture is designed to offer. A fixture uses a
+  stronger model only when haiku never engages the guard at all (it never
+  reaches the convention the rule governs, so the run proves nothing), and
+  says so in a comment above `model:` with what was measured —
+  `examples/task-management/eval/report-result/fixture.yaml` is one.
+  Overridable per run with `sr-eval run --model`.
 
 ## The copy order, precisely
 
@@ -110,7 +120,10 @@ gets that HOME as `SR_EVAL_AGENT_HOME`.
 - neither `seed` nor `repo` is set, or both are (exactly one, always)
 - `repo` is set without `ref`
 - `score` is missing, or `prompt.md` is missing beside `fixture.yaml`
-- `seed`/`overlay`/`setup` is declared but the path doesn't exist
+- `seed`/`overlay`/`setup` is declared but the path doesn't exist, or
+  `setup` is not executable
+- a `disallowedTools` entry is empty, or has a comma or a space outside its
+  parentheses
 - `exampleSloprail: true` AND `overlay/.sloprail/` both exist — the exact
   duplication the field exists to remove, now silently doubled (the shipped
   copy would apply first, the stale overlay copy would win the collision,
