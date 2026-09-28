@@ -240,7 +240,7 @@ func runFileGuardsPreventive(
 						"(a change whose settled bytes are not known ahead of time — a command-derived edit, or a notebook create whose cell source is not the document), "+
 						"so whether the file would still be fine is unknown. "+
 						"Refusing: a preventive guard must not admit a write it cannot verify. "+
-						"Write the file's content directly, or make the change with sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, && and echo; no cd, no VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) "+
+						"Write the file's content directly, or make the change with sr-file ON ITS OWN in the command (call it by its bare name `sr-file`, not a path; nothing else in the line but sr-file calls, && and echo; no cd, no export or VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) "+
 						"so its result is computed before it runs — and check that each --cite: quote resolves to exactly one message: `sr-session trajectory cite '<quote>'`. (file-guard %s)",
 					g.Name, underivableKindNoun(e.Kind), g.Attribution())
 			}

@@ -47,7 +47,8 @@ messages in the main conversation, quoted exactly as the user wrote them. When
 dispatching work that must cite the user, paste the user's exact words into the
 sub-agent's prompt.
 
-Run `sr-file` **on its own** in the command line: only `sr-file` calls, `&&`,
+Run `sr-file` **on its own**, by its bare name (not `/path/to/sr-file`), in the
+command line: only `sr-file` calls, `&&`,
 `||`, `;`, `echo` and a stdin heredoc, with every value quoted verbatim
 (`'…'`, `<<'BODY'`). Such a line is dry-run before it executes, so its event
 carries the exact result (`resultKnown: true`). Mixed with any other program,

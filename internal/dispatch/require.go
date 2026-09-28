@@ -753,7 +753,7 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 	}
 	how := withHint("Make it with sr-file, which carries the citation on the command (never in the file):\n"+sfFileForms(kind, path, flag, hint != ""), hint, fileCommand)
 	return fmt.Sprintf("this change to %s must cite %s (%s), and it carries none that resolves.\n%s\n"+
-		"Run sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, &&, and echo; no cd, no VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) so its result can be checked before it runs. "+
+		"Run sr-file ON ITS OWN in the command (call it by its bare name `sr-file`, not a path; nothing else in the line but sr-file calls, &&, and echo; no cd, no export or VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) so its result can be checked before it runs. "+
 		"Single-quote the quote; it must match exactly one entry of this session — check one with `sr-session trajectory cite '<quote>'`.",
 		path, what, flag, how)
 }
