@@ -632,9 +632,10 @@ func TestCompileContextMatch_EmptyAdmitsEverything(t *testing.T) {
 func TestFileMatchScope_ExposesExactlyItsVariables(t *testing.T) {
 	env := fileMatchScope()
 
-	assert.Len(t, env, 3, "path, markers, context and nothing else")
+	assert.Len(t, env, 4, "path, markers, oldMarkers, context and nothing else")
 	assert.Equal(t, types.String, env["path"])
 	assert.Equal(t, types.Array(types.Map{"kind": types.String, "fqn": types.String, "line": types.Int}), env["markers"])
+	assert.Equal(t, types.Array(types.Map{"kind": types.String, "fqn": types.String, "line": types.Int}), env["oldMarkers"])
 	assert.Contains(t, env, "context")
 
 	// No event, no gates: those belong to other scopes.

@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
@@ -311,6 +312,23 @@ func (e *Env) InstallClaudeShim(projDir string) {
 		"  \"launched agent\"\n"
 	if err := os.WriteFile(filepath.Join(e.shimDir, "claude"), []byte(script), 0o755); err != nil {
 		e.t.Fatalf("harness: write claude shim: %v", err)
+	}
+}
+
+// BinDir is the directory holding the build under test's binaries (sr-session,
+// sr-agent, …) — for a test that runs a script outside a mock session which
+// shells out to them, as an eval's score.sh does through SR_EVAL_BIN_DIR.
+func (e *Env) BinDir() string { return e.binDir }
+
+// InstallPathShim puts an executable called name first on the PATH every hook
+// and check of this Env's runs sees — ahead of the build under test. For a test
+// that must make one of the tools a check shells out to fail (a check that
+// cannot read what it needs must say so, not report something else). The shim
+// shares shimDir with the `claude` shims; body is the whole script.
+func (e *Env) InstallPathShim(name, body string) {
+	e.t.Helper()
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(body), 0o755); err != nil {
+		e.t.Fatalf("harness: write %s shim: %v", name, err)
 	}
 }
 
@@ -1505,8 +1523,12 @@ func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatalf("harness: seed transcript: %v", err)
 	}
-	body := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"message":{"role":"user","content":%q}}`+"\n",
-		"e2e-root-"+sessionID, cwd, prompt)
+	// A timestamp, as every record real Claude Code writes carries one: a
+	// check that asks what happened DURING this session (research-rigor's
+	// depth check dates a clone against the session's first record) needs the
+	// session's start on the record. The mock's own records carry none.
+	body := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":%q}}`+"\n",
+		"e2e-root-"+sessionID, cwd, time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), prompt)
 	path := filepath.Join(dir, sessionID+".jsonl")
 	if _, err := os.Stat(path); err == nil {
 		return // already seeded, or the mock has started writing — never overwrite

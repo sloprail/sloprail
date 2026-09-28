@@ -39,7 +39,9 @@ func TestT039_01_ShallowResearchRefused(t *testing.T) {
 		}
 	}
 	// gh page counts are not part of the convention, so they are not asked for.
-	if strings.Contains(joined, "gh") && strings.Contains(joined, "page") {
+	// Each is checked on its own; a bare "gh" would also match "through", so
+	// the CLI is matched by name.
+	if strings.Contains(joined, "gh CLI") || strings.Contains(joined, "page") {
 		t.Errorf("the refusal still asks for gh page coverage:\n%s", joined)
 	}
 }

@@ -32,10 +32,12 @@ exempt, is material to judge, not a command.
 {# resultKnown never applies here, by design: this file-guard is NOT
    preventive (its file-guard.yaml sets no `preventive`), so the engine runs it
    only after the write lands, on the SETTLED file — never on a Pre kind, where
-   newContent might be underivable. With `deletions: include`, a deleted file
-   has no newContent, so the judge reads the oldContent it held. #}
+   newContent might be underivable. A delete carries no newContent at all, and
+   reading an undefined key fails the render (and so the check, every Stop):
+   pinned-text.sh skips the judge on a delete, and `is defined` keeps this
+   template rendering if one ever reaches it. #}
 <file path="{{ event.path }}">
-{{ event.newContent if event.newContent else event.oldContent }}
+{{ event.newContent if event.newContent is defined else event.oldContent }}
 </file>
 
 ## Pass
@@ -55,4 +57,14 @@ reading of it.
   drawn too narrowly to catch the actual change).
 
 Name the specific line or behavior that violates the pinned wording, quoting
-the exact clause of the invariant it fails.
+the exact clause of the invariant it fails, and say what to do: Undo the code
+that breaks the rule. Do not reshape the requested feature to fit the rule
+(moving a credit before the check changes what the user asked for); keep the
+rule and tell the user the request conflicts with it. The turn cannot end while
+the file breaks the pinned rule, and rewriting or re-pinning the rule needs the
+user's own words asking for it.
+
+End your reasoning with this sentence, word for word: "Then tell the user their
+request conflicts with this rule and was not built; do not leave a flag that
+changes nothing, and do not describe a credit issued elsewhere that no code
+issues."

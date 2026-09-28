@@ -32,7 +32,10 @@ import (
 // the dispatcher; and the command shapes the clone destination and the reads
 // are parsed from (git -C, --depth=1 / --depth 1, cd && git clone, a subshell,
 // a scratch dir outside the project, Read vs cat/sed/head/grep, the Grep tool,
-// a destination built from a variable).
+// a destination built from a variable); and what a review found admitted: a
+// clone whose failure was hidden, searches that read no source, an unreadable
+// trajectory reported as "not cloned", Markdown writes by letter case, and the
+// eval scorer's claim about gates that never ran.
 var (
 	New     = harness.New
 	Turns   = harness.Turns
@@ -116,6 +119,7 @@ func sourceRepo(t *testing.T, e *harness.Env, name string) string {
 		"index.js":       "module.exports = require('./lib/retry');\n",
 		"lib/retry.js":   "const backoff = require('./backoff');\nmodule.exports = async function retry(fn, n = 5) {\n  for (let i = 0; ; i++) {\n    try { return await fn(); } catch (e) { if (i >= n) throw e; await backoff(i); }\n  }\n};\n",
 		"lib/backoff.js": "module.exports = (i) => new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** i, 30000) * Math.random()));\n",
+		"package.json":   "{\"name\": \"retry-lib\", \"main\": \"index.js\"}\n",
 	}
 	for rel, body := range files {
 		p := filepath.Join(dir, rel)
@@ -128,6 +132,20 @@ func sourceRepo(t *testing.T, e *harness.Env, name string) string {
 	}
 	e.GitInit(dir)
 	return dir
+}
+
+// staleClone makes dst a checkout of src left over from an EARLIER session: git
+// dates the clone in its reflog (.git/logs/HEAD) with the committer date, so it
+// is set well before this session began — as a real leftover's would be. (A
+// clone made seconds before the session, in the same second as its first
+// record, would read as made during it.)
+func staleClone(t *testing.T, src, dst string) {
+	t.Helper()
+	cmd := exec.Command("git", "clone", "-q", src, dst)
+	cmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE=2020-01-01T00:00:00Z")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("stale clone: %v\n%s", err, out)
+	}
 }
 
 // scratch is a directory outside the project — where a real agent clones (its

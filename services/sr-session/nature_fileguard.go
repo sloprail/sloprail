@@ -535,9 +535,10 @@ func fileGuardSelects(match *guardrail.Matcher, e event.Event, contextMap map[st
 // it is the markers the file carried — see fileMarkers.
 func fileMatchScopeEvent(e event.Event, contextMap map[string]natures.ContextState) event.Event {
 	fields := map[string]any{
-		"path":    e.Fields[filemod.FieldPath],
-		"markers": fileMarkers(e),
-		"context": contextMatchValue(contextMap),
+		"path":       e.Fields[filemod.FieldPath],
+		"markers":    fileMarkers(e),
+		"oldMarkers": fileOldMarkers(e),
+		"context":    contextMatchValue(contextMap),
 	}
 	return event.Event{Kind: e.Kind, Fields: fields}
 }
@@ -568,6 +569,19 @@ func fileMarkers(e event.Event) []any {
 	if v, ok := e.Fields[field].([]any); ok {
 		return v
 	}
+	if v, ok := e.Fields[filemod.FieldOldMarkers].([]any); ok {
+		return v
+	}
+	return []any{}
+}
+
+// fileOldMarkers returns the markers the file carried before this change — the
+// scope's `oldMarkers`: from disk on a Pre update or delete, from the session's
+// baseline on a Post one, and none on a create, which nothing preceded. Always a
+// list, never nil, like fileMarkers. It is what lets a marker-scoped guard see a
+// write that REMOVES a marker: `markers` alone reads that write as a file with
+// none, and the guard never selects it.
+func fileOldMarkers(e event.Event) []any {
 	if v, ok := e.Fields[filemod.FieldOldMarkers].([]any); ok {
 		return v
 	}
