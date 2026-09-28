@@ -53,7 +53,8 @@ func TestT046_11_UncitedPinnedRuleChangeRefused(t *testing.T) {
 	}
 	if !res.Saw("must cite the user's own words (--cite:user)") || !res.Saw("rewrites SPEC.md L3-3") ||
 		!res.Saw("Do not reshape the requested feature to fit the rule") ||
-		!res.Saw("keep the rule and tell the user the request conflicts with it") ||
+		!res.Saw("keep the rule and tell the user the request conflicts with it and was not built") ||
+		!res.Saw("do not leave a flag that changes nothing") ||
 		!res.Saw("refused again if you send it again with the same words") {
 		t.Errorf("the refusal does not say what to cite, which lines are pinned, or what to do instead:\n%s", res.Output)
 	}
