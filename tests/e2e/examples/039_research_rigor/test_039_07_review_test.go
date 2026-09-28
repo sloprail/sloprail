@@ -296,9 +296,12 @@ func TestT039_31_DotSlashNotesHeld(t *testing.T) {
 // judged the research deep enough ONLY when #research was declared the way the
 // gates hear it — without it neither gate ran, and saying otherwise hands the
 // judge a false authority. NOTES.md's own mention of #research, read back in a
-// tool result, is not a declaration, and neither is "**#research summary:**" in
-// a closing message (a real run did both; the engine parsed no tag and no gate
-// ran). When the record cannot be read, nothing is claimed.
+// tool result, is not a declaration, and neither is "`#research` summary" — a
+// code span, shown not said — in a closing message. "**#research summary:**" IS
+// one: a real run wrote it, the engine then parsed no tag and no gate ran, and
+// the tag grammar now reads emphasis around a tag as the tag (issue #89), so the
+// gates run and the scorer says so. When the record cannot be read, nothing is
+// claimed.
 func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
 	const judged = "The gates engaged."
 	const notRun = "NEITHER gate ran"
@@ -315,9 +318,19 @@ func TestT039_32_ScorerClaimsGateVerdictOnlyWhenGatesRan(t *testing.T) {
 			e.WriteFile(proj, "NOTES.md", "Declare the research with a `#research` tag.\n")
 			return []harness.Turn{
 				Read("r1", filepath.Join(proj, "NOTES.md")),
-				Say("m1", "Done. **#research summary:** backoff with jitter."),
+				Say("m1", "Done. `#research` summary: backoff with jitter."),
 			}
 		}, false, "", notRun, []string{judged, unknown, "judged the research deep enough", "met the bar BEFORE"}},
+		{"declared in bold: the gates ran", func(t *testing.T, e *harness.Env, proj string) []harness.Turn {
+			// The closing message the real run wrote (issue #89): emphasis
+			// around the tag is the tag, so research-run activated and
+			// depth-check judged the run.
+			e.WriteFile(proj, "NOTES.md", "Declare the research with a `#research` tag.\n")
+			return []harness.Turn{
+				Read("r1", filepath.Join(proj, "NOTES.md")),
+				Say("m1", "Done. **#research summary:** backoff with jitter."),
+			}
+		}, false, "", judged, []string{notRun, unknown}},
 		{"declared and deep: the gates' verdict stands", func(t *testing.T, e *harness.Env, proj string) []harness.Turn {
 			src := sourceRepo(t, e, "retry-lib")
 			dst := filepath.Join(scratch(t), "retry-lib")

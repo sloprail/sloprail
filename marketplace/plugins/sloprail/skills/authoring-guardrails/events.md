@@ -211,6 +211,14 @@ Duplicates are dropped, first-occurrence order kept. An empty `tags` is a real
 answer ("nothing tagged this cycle") a context can react to. A `Post` fact only —
 there is nothing to scan before the agent writes.
 
+What counts as a tag: `#` at the start of the text or after whitespace, then a
+letter or `_`, then letters, digits, `_` and `-`. Markdown emphasis right before
+the `#` is fine — `**#research summary:**`, `*#research*`, `_#research_`,
+`__#research__` all give `research`. Not a tag: `#42` (an issue reference), `# `
+(a heading), `foo#bar` or `foo**#bar**` (inside a word), `~~#research~~`, and
+anything in a code span, a fenced block or a `>` quoted line — text the agent
+shows is not text it declares.
+
 `.seen` is `true` when the tag is only in text an earlier Stop already read — a
 refused reply's text, re-sent with the retry. A tag the agent wrote again since
 the previous Stop is `seen: false`.
