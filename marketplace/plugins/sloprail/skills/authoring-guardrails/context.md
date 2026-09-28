@@ -37,24 +37,35 @@ the per-nature admission table in [events.md](events.md).
 `PostFileWrite` is available here (context-only) as the alias for `PostFileCreate`
 + `PostFileUpdate`.
 
-## `enter`: activate, or stay silent
+## `enter`: activate, or decline
 
 `enter` runs on **every** occurrence of a trigger — active or not — and its
-**stdout decides activation**:
+**exit code decides activation**; its stdout only decides the payload:
 
-- **Print a JSON object** → the context activates, and that object becomes its
-  `payload`, readable elsewhere as `context["<name>"].payload`.
-- **Print nothing (exit 0, no stdout)** → do not activate. This is how a cheap
-  `match` narrows to "some tool is about to run" and `enter` makes the real
-  decision from the trajectory.
+- **Exit 0 and print a JSON object** → the context activates (or stays active),
+  and that object **replaces** its `payload`, readable elsewhere as
+  `context["<name>"].payload`.
+- **Exit 0 and print nothing** → the context **still activates** (or stays
+  active), keeping the payload it already had — none, the first time. A silent
+  clean exit is not a "no".
+- **Exit non-zero** → **decline**: this trigger leaves the context exactly as it
+  was. An inactive context stays inactive; an active one stays active with its
+  payload (declining is not `exit` saying done).
+
+So every "no" path in an `enter` must exit non-zero. This is how a cheap `match`
+narrows to "some tool is about to run" and `enter` makes the real decision from
+the trajectory.
 
 ```bash
 # enter: activate only if a refactor was actually declared.
 input="$(cat)"
 # ... inspect the trajectory via "$(jq -r '.transcriptPath' <<<"$input")" ...
-[ -n "$declared" ] || exit 0          # not a refactor — do not activate
+[ -n "$declared" ] || exit 1          # not a refactor — decline (exit 0 would activate)
 jq -n --arg scope "$scope" '{declared_markers: ($scope | split(",")), declared_at: "trajectory"}'
 ```
+
+Output that is not a flat JSON object (an array, a string, invalid JSON) is not
+read as a payload: the engine reports it and leaves the context as it was.
 
 **On stdin** `enter` receives a **ContextEnterPayload**: the flat `event` (read
 `.event.path`, `.event.newContent`, `.event.tags`, `.event.kind`),
@@ -98,13 +109,15 @@ A paired gate then reads that registry back with `sr-session state list --owner
 
 ## `exit`: may the context deactivate?
 
-`exit` is consulted on a **Stop** while the context is active, and it does double
-duty: it decides whether the context **deactivates**, and — because it can refuse
-the Stop — whether the turn may **end**.
+`exit` is consulted on a **Stop** while the context is active, and it decides one
+thing: whether the context **deactivates**. It never refuses the Stop — a context
+is a mode, not a check. To keep the turn from ending while the mode is
+unfinished, a **gate** on `Stop` that reads the context does the refusing (see
+"A thin exit that reads a gate's verdict" below).
 
-- **exit 0** → the context deactivates and the Stop proceeds.
-- **non-zero** → the context stays active **and the Stop is refused**, so the
-  agent cannot end a turn with the mode unfinished.
+- **exit 0** → the context deactivates.
+- **non-zero** → the context stays active for the next cycle. The Stop still
+  proceeds unless a gate refuses it.
 
 ```bash
 # exit: is the declared refactor done?
@@ -112,10 +125,7 @@ input="$(cat)"
 declared="$(printf '%s' "$input" | jq -r '.currentContext.payload.declared_markers[]?' 2>/dev/null)"
 [ -n "$declared" ] || exit 0          # nothing declared to reconcile — let it close
 # ... check each declared marker actually landed ...
-if [ -n "$missing" ]; then
-  echo "Refactor declared but not complete — these markers were never written:$missing. Finish the moves you declared, or the turn cannot end." >&2
-  exit 1
-fi
+[ -z "$missing" ] || exit 1           # not done — stay active (a gate refuses the Stop)
 exit 0
 ```
 
