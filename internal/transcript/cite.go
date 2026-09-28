@@ -792,7 +792,7 @@ func genuineToolResults(raw json.RawMessage, citable map[string]bool) []genuineT
 			// Nor does a hook's refusal: the tool never ran, and the body is the
 			// harness's message — which may quote the agent's own words back (an
 			// unresolved --cite: quote), and must not then ground them.
-			if isHookRefusal(body) {
+			if IsHookRefusal(body) {
 				continue
 			}
 			// Nor does an agent transcript read back: its text is model-written,
@@ -806,10 +806,24 @@ func genuineToolResults(raw json.RawMessage, citable map[string]bool) []genuineT
 	return out
 }
 
-// isHookRefusal reports whether a tool_result body is a hook blocking the call
-// ("PreToolUse:Bash hook error: …") rather than anything the tool produced.
-func isHookRefusal(body string) bool {
-	return strings.HasPrefix(body, "PreToolUse:") && strings.Contains(body, " hook error: ")
+// IsHookRefusal reports whether a tool_result body is a hook blocking the call
+// rather than anything the tool produced. Claude Code writes a PreToolUse
+// refusal as the tool_result "PreToolUse:<Tool> hook error: <reason>" with
+// is_error — the reason being "[<command>]: <stderr>" for an exit 2 and the
+// permissionDecisionReason for a JSON deny.
+func IsHookRefusal(body string) bool {
+	_, ok := HookRefusalReason(body)
+	return ok
+}
+
+// HookRefusalReason returns the reason of a PreToolUse refusal body — what
+// follows "PreToolUse:<Tool> hook error: " — and whether body is one.
+func HookRefusalReason(body string) (string, bool) {
+	if !strings.HasPrefix(body, "PreToolUse:") {
+		return "", false
+	}
+	_, reason, ok := strings.Cut(body, " hook error: ")
+	return reason, ok
 }
 
 // pairJoin is the `"="` that joins a question to its answer inside an envelope:

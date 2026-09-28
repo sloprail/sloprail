@@ -123,7 +123,7 @@ exit 0
 // failure.
 func answered(t *testing.T, answer string) {
 	t.Helper()
-	if strings.Contains(answer, "sloprail:") {
+	if harness.EngineErrored(answer) {
 		t.Fatalf("the engine reported an error instead of the session's entries, so every "+
 			"marker below reads as absent and no narrowing is being tested:\n%s", answer)
 	}

@@ -21,7 +21,25 @@ type Scenario struct {
 // Turn is one assistant action.
 type Turn struct {
 	jsonl string
+	// launchedOutput marks a turn whose jsonl names the output file of the most
+	// recently launched background command as @@LAUNCHED_OUTPUT@@, filled in when
+	// the turn is emitted — the mock picks the file at launch, and only its
+	// receipt says where it is, as it does for a real agent.
+	launchedOutput bool
+	// launchedTask marks a turn whose jsonl names the id of the most recently
+	// launched background task as @@LAUNCHED_TASK@@, filled in when the turn is
+	// emitted — the id is minted by the mock at launch (a Bash's own id, or an
+	// Agent's agentId) and only its receipt says what it is.
+	launchedTask bool
 }
+
+// launchedOutputPlaceholder is replaced by the output file of the most recently
+// launched background command when a launchedOutput turn is emitted.
+const launchedOutputPlaceholder = "@@LAUNCHED_OUTPUT@@"
+
+// launchedTaskPlaceholder is replaced by the id of the most recently launched
+// background task when a launchedTask turn is emitted.
+const launchedTaskPlaceholder = "@@LAUNCHED_TASK@@"
 
 // Turns builds a scenario ending in the given assistant text.
 func Turns(finalText string, turns ...Turn) Scenario {
@@ -412,11 +430,35 @@ func (s Scenario) script() string {
 	for i, t := range s.turns {
 		marker := fmt.Sprintf("slop-turn-%d-%s", i, turnID(t.jsonl))
 		line := injectMarker(t.jsonl, marker)
-		fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
-  %s
+		if t.launchedOutput {
+			// A background command's receipt names its output file: "Output is
+			// being written to: <file>. You will be notified …". The latest one
+			// is the command meant.
+			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  OUT="$(printf '%%s' "$SESS" | grep -o 'Output is being written to: [^ ]*\.output' | tail -1 | sed 's/.*: //')"
+  printf '%%s\n' %s | sed "s|%s|$OUT|"
   exit 0
 fi
-`, marker, emitStamped(line))
+`, marker, shQuote(line), launchedOutputPlaceholder)
+			continue
+		}
+		if t.launchedTask {
+			// The receipt a background launch was answered with names its id:
+			// "Command running in background with ID: <id>" for a Bash,
+			// "agentId: <id>" for an Agent. The latest one is the task meant.
+			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  TASK="$(printf '%%s' "$SESS" | grep -o 'running in background with ID: [A-Za-z0-9_-]*\|agentId: [A-Za-z0-9_-]*' | tail -1 | sed 's/.*: //')"
+  printf '%%s\n' %s | sed "s/%s/$TASK/"
+  exit 0
+fi
+`, marker, shQuote(line), launchedTaskPlaceholder)
+			continue
+		}
+		fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  printf '%%s\n' %s
+  exit 0
+fi
+`, marker, shQuote(line))
 	}
 	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(result(s.result)))
 	return b.String()
@@ -488,27 +530,6 @@ func injectMarker(jsonl, marker string) string {
 		return jsonl
 	}
 	return jsonl[:j] + jsonl[j:j+end] + "-" + marker + jsonl[j+end:]
-}
-
-// msNow is the shell that prints the current UTC time to the millisecond, as
-// Claude Code stamps its records — `date` cannot on macOS (no %N), and a
-// whole-second stamp would tie records written within one second, which a
-// check ordering calls by time (research-rigor's scorer cuts every record at a
-// call's time) must not see. perl is on every platform this suite runs on.
-// Without perl it falls back to a whole-second stamp rather than none.
-const msNow = `perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime($t)), ($t-int($t))*1000' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S.000Z`
-
-// emitStamped is the shell that prints one scenario record, stamped with the
-// time it is EMITTED — the moment the mock plays that turn, as real Claude Code
-// stamps every record it writes. A check asking what happened during a cycle
-// (research-rigor dates a file's change against the cycle's first record)
-// needs those times; a stamp taken when the script was generated would predate
-// the session. A record that already carries a timestamp is printed as is.
-func emitStamped(line string) string {
-	if !strings.HasPrefix(line, "{") || strings.Contains(line, `"timestamp"`) {
-		return "printf '%s\\n' " + shQuote(line)
-	}
-	return `printf '{"timestamp":"%s",%s\n' "$(` + msNow + `)" ` + shQuote(line[1:])
 }
 
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
@@ -607,4 +628,46 @@ func sayWithTool(id, prose, name string, input map[string]string) string {
 	return fmt.Sprintf(
 		`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":%s},{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
 		"e2e-turn-"+id, jsonStr(prose), id, name, ib.String())
+}
+
+// Compact returns ONE turn in which the harness compacts the context, the way
+// real Claude Code does: a compact_boundary record appended to the transcript —
+// parentless, naming the last record before it as its logicalParentUuid — then
+// the summary chained to it, then SessionStart with source "compact"
+// (a10n-claude-mock's {"type":"compact"} control record).
+func Compact(id string) Turn {
+	return Turn{jsonl: fmt.Sprintf(`{"type":"compact","id":%q,"summary":"compacted"}`, id)}
+}
+
+// CompactNamingUnwrittenParent is Compact with a boundary whose logical parent
+// is a record written to no transcript — the shape a real preserved-segment
+// compaction left, where the only trace of what it continues is the boundary
+// record itself, part-way down the file the compaction happened in.
+func CompactNamingUnwrittenParent(id string) Turn {
+	return Turn{jsonl: fmt.Sprintf(`{"type":"compact","id":%q,"summary":"compacted","logical_parent":"never-written-%s"}`, id, id)}
+}
+
+// Background launches a tool call in the background — a Bash or an Agent with
+// run_in_background — which the mock answers the way real Claude Code does: at
+// once, with a receipt naming the task ("Command running in background with
+// ID: …" / "Async agent launched successfully. … agentId: …"), and later with a
+// <task-notification> when the task finishes. The harness gives every run its
+// own CLAUDE_CODE_TMPDIR, so the task's output file is inside the test's
+// sandbox, not the shared /tmp.
+func Background(id, name string, input map[string]string) Turn {
+	in := map[string]string{"run_in_background": "true"}
+	for k, v := range input {
+		in[k] = v
+	}
+	return Turn{jsonl: toolUse(id, name, in)}
+}
+
+// ReadLaunchedOutput reads the output file of the most recently launched
+// background command with the Read tool — the way a real agent gets a
+// background command's output: its receipt says "To check interim output, use
+// Read on that file path", and the <task-notification> that follows carries
+// only a summary, never the output. (The mock no longer implements TaskOutput
+// as a tool: real transcripts hold no call to it.)
+func ReadLaunchedOutput(id string) Turn {
+	return Turn{jsonl: toolUse(id, "Read", map[string]string{"file_path": launchedOutputPlaceholder}), launchedOutput: true}
 }

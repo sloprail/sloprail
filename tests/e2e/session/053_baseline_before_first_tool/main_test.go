@@ -14,9 +14,10 @@ import (
 // so an agent that commits its work in its first turn still has that work
 // inside the difference its file-guards judge at Stop.
 //
-// Every test here arranges RecordUnwrittenAtSessionStart first. Without it the
-// mock hands SessionStart a record real Claude Code never does, and the defect
-// these tests exist for cannot happen.
+// The mock writes a fresh session's record in that order itself: nothing on
+// disk while SessionStart runs (a10n-claude-mock, e2e T017_01). Before it did,
+// SessionStart always found a record, and the defect these tests exist for
+// could not happen under the mock.
 var (
 	New   = harness.New
 	Turns = harness.Turns

@@ -27,7 +27,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/sloprail/sloprail/internal/sessionstate"
 )
@@ -52,9 +51,14 @@ type Env struct {
 	home      string
 	configDir string // an isolated stand-in for ~/.claude
 	pluginDir string
-	repoRoot  string
-	mock      string
-	shimDir   string // a `claude` that is really the mock, ahead of the real one on PATH
+
+	// tmpDir is the mock's CLAUDE_CODE_TMPDIR: where it writes a background
+	// task's output file (<tmpdir>/claude-<uid>/<cwd>/<session>/tasks/), as real
+	// Claude Code does. Per test, so no run writes into the shared /tmp.
+	tmpDir   string
+	repoRoot string
+	mock     string
+	shimDir  string // a `claude` that is really the mock, ahead of the real one on PATH
 
 	// stopBlockCap, when > 0, sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's
 	// mock runs — how many times the mock re-runs the agent when a Stop hook
@@ -265,11 +269,12 @@ func New(t *testing.T) *Env {
 		home:         filepath.Join(root, "home"),
 		configDir:    filepath.Join(root, "claude-cfg"),
 		pluginDir:    filepath.Join(root, "plugins"),
+		tmpDir:       filepath.Join(root, "tmp"),
 		repoRoot:     repoRoot(t),
 		mock:         mock,
 		seenSessions: map[string]bool{},
 	}
-	for _, d := range []string{e.home, e.configDir, e.pluginDir} {
+	for _, d := range []string{e.home, e.configDir, e.pluginDir, e.tmpDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatalf("harness: mkdir %s: %v", d, err)
 		}
@@ -1533,111 +1538,7 @@ func resolveWorkDir(dir string) string {
 	return dir
 }
 
-// seedTranscript writes a minimal valid transcript for (cwd, sessionID): a root
-// record with a uuid and a null parentUuid, which is the shape anything looking
-// for a conversation's origin scans for.
-//
-// The transcript's no-uuid PREAMBLE — the custom-title / mode / last-prompt records a
-// real session file opens with, ahead of this root — is NOT written here: the mock
-// writes it itself on a fresh session (a10n-claude-mock seedPreamble), prepending the
-// block ahead of this pre-seeded root so the head lands as [preamble..., root,
-// conversation...]. So the preamble a test relies on is the mock's, produced the same
-// way a real Claude Code session produces it, not a per-test fixture.
-func (e *Env) seedTranscript(cwd, sessionID, prompt string) {
-	e.t.Helper()
-	dir := filepath.Join(e.configDir, "projects", encodeProjectDir(resolveWorkDir(cwd)))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		e.t.Fatalf("harness: seed transcript: %v", err)
-	}
-	// A timestamp, as every record real Claude Code writes carries one: a
-	// check that asks what happened DURING this session (research-rigor's
-	// depth check dates a clone against the session's first record) needs the
-	// session's start on the record. The mock's own records carry none.
-	body := fmt.Sprintf(`{"type":"user","uuid":%q,"parentUuid":null,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":%q}}`+"\n",
-		"e2e-root-"+sessionID, cwd, time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), prompt)
-	path := filepath.Join(dir, sessionID+".jsonl")
-	if _, err := os.Stat(path); err == nil {
-		return // already seeded, or the mock has started writing — never overwrite
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		e.t.Fatalf("harness: seed transcript: %v", err)
-	}
-}
-
-// RecordUnwrittenAtSessionStart makes a session's transcript ABSENT while its
-// SessionStart hooks run, and present again by the time the prompt is
-// submitted — the order real Claude Code writes it in, which the mock does not
-// reproduce. Call before Run; it applies to the one session id given, and
-// replaces the project's settings.local.json.
-//
-// # What real Claude Code does, measured
-//
-// A fresh session's transcript does not exist when SessionStart fires. Its
-// origin record (the first with no parent, which the engine keys a session's
-// identity on) is the attachment recording the SessionStart hooks' own result,
-// so it cannot be written before they finish. Across every real transcript on
-// one machine, all 940 `SessionStart:startup` runs of `sr-session start` failed
-// to open the record, and in all 940 the hook's attachment was the origin.
-//
-// The mock writes the root prompt first and fires SessionStart after
-// (a10n-claude-mock runner.Run), and Run seeds the file earlier still — so under
-// the mock, SessionStart always finds a record, and a defect that only exists
-// because it cannot was invisible to every e2e test.
-//
-// # Why this is not the forbidden kind of hook
-//
-// writeSettings refuses to add lifecycle hooks, because a test wiring one would
-// be arranging behaviour no user has. This arranges the OPPOSITE: it takes away
-// something the mock provides and real Claude Code does not. The two hooks
-// touch only the harness's own transcript file, call nothing in this repo, and
-// sit in settings.local.json so the project's settings.json stays exactly what
-// a user installs. The mock runs project hooks before plugin hooks, in order,
-// so the hide lands before `sr-session start` reads and the restore lands before
-// anything later does. The mock writes the transcript through a file handle it
-// opened before SessionStart, so moving the file aside loses nothing it writes.
-//
-// The restore is at UserPromptSubmit because that is the latest point it could
-// honestly be: by the first tool call a real transcript always exists — no
-// PreToolUse run of `sr-session pre-tool` in the same corpus ever failed to open
-// its record.
-func (e *Env) RecordUnwrittenAtSessionStart(projDir, sessionID string) {
-	e.t.Helper()
-	path := e.transcriptPath(projDir, sessionID)
-	held := path + ".unwritten"
-	// The marker is what lets a test prove the arrangement was in effect — see
-	// RecordWasUnwrittenAtSessionStart.
-	hide := fmt.Sprintf(`[ ! -f %s ] || { mv %s %s && : > %s; }`,
-		shellQuote(path), shellQuote(path), shellQuote(held), shellQuote(path+".hidden-at-start"))
-	restore := fmt.Sprintf(`[ ! -f %s ] || mv %s %s`, shellQuote(held), shellQuote(held), shellQuote(path))
-	hook := func(command string) []any {
-		return []any{map[string]any{
-			"matcher": "*",
-			"hooks":   []any{map[string]any{"type": "command", "command": command}},
-		}}
-	}
-	settings := map[string]any{"hooks": map[string]any{
-		"SessionStart":     hook(hide),
-		"UserPromptSubmit": hook(restore),
-	}}
-	body, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		e.t.Fatalf("harness: encode local settings: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(projDir, ".claude", "settings.local.json"), body, 0o644); err != nil {
-		e.t.Fatalf("harness: write local settings: %v", err)
-	}
-}
-
-// RecordWasUnwrittenAtSessionStart reports whether RecordUnwrittenAtSessionStart
-// actually moved the session's record aside at SessionStart. A test resting on
-// the record being absent checks this first: if the hook never ran, the session
-// had its record all along and the test proves nothing about the case it names.
-func (e *Env) RecordWasUnwrittenAtSessionStart(projDir, sessionID string) bool {
-	e.t.Helper()
-	return fileExists(e.transcriptPath(projDir, sessionID) + ".hidden-at-start")
-}
-
-// RootMessageID is the uuid seedTranscript gives a session's root user message —
+// RootMessageID is the uuid the mock gives a session's first user message (the prompt) —
 // the human prompt every Run starts from — so a test can REFERENCE that message by
 // id without hardcoding the seeding scheme.
 //
@@ -1652,29 +1553,30 @@ func (e *Env) RootMessageID(sessionID string) string {
 }
 
 // MockPreambleLines is the number of no-uuid preamble records a10n-claude-mock writes
-// at the HEAD of every fresh transcript, ahead of the root prompt (custom-title / mode
-// / last-prompt — a10n-claude-mock seedPreamble). A transcript reader counts these
-// physical lines but skips them as entries, so the root prompt does NOT sit on physical
-// line 1 — it sits on line MockPreambleLines+1. A test that must name the root message's
-// LINE up front (before the run, e.g. an agent declaring `#skip <line>` in its prose)
-// uses RootMessageLine, which is built from this. Kept as the single place the mock's
-// preamble count is mirrored, so a change to how many records the mock opens with is a
-// one-line update here rather than a hunt through every test that names a line.
+// at the HEAD of every fresh transcript (custom-title / mode / last-prompt). A
+// transcript reader counts these physical lines but skips them as entries.
 const MockPreambleLines = 3
 
-// RootMessageLine is the 1-based PHYSICAL line the root prompt record sits on in a
-// session's transcript — MockPreambleLines preamble records precede it, so it is
-// MockPreambleLines+1.
+// SessionStartAttachments is the number of records a fresh session's SessionStart
+// leaves ahead of the prompt. The mock writes a fresh transcript in the order real
+// Claude Code does: nothing while SessionStart runs, then one hook_success attachment
+// per SessionStart hook that printed anything, then the prompt. The plugin's start
+// hook always prints (rules-first.md, the one standing instruction it gives the
+// agent), so every session this harness drives opens with exactly one — and that
+// attachment, not the prompt, is the session's origin.
+const SessionStartAttachments = 1
+
+// RootMessageLine is the 1-based PHYSICAL line the prompt record sits on in a
+// session's transcript: after the preamble and the SessionStart attachment.
 //
 // This is what a test uses to name the authorising message's LINE without hardcoding
-// the preamble count: a task's ASK.md references the message by `<path>:<line>-<line>`,
+// the layout: a task's ASK.md references the message by `<path>:<line>-<line>`,
 // or an agent's prose declares `#skip <line>`, and both are authored before the run,
-// so the line must be known up front. The mock opens every fresh transcript with a
-// fixed preamble block ahead of the harness-seeded root, so the root's line is
-// deterministic. (For a line derived AFTER a run — e.g. a citation's own output — read
-// it from the file the mock wrote instead; this is the up-front constant.)
+// so the line must be known up front. (For a line derived AFTER a run — e.g. a
+// citation's own output — read it from the file the mock wrote instead; this is the
+// up-front constant.)
 func (e *Env) RootMessageLine(sessionID string) int {
-	return MockPreambleLines + 1
+	return MockPreambleLines + SessionStartAttachments + 1
 }
 
 // ControlGuard and ControlScript are the positive control every revalidation
@@ -1784,14 +1686,15 @@ func RequireSessionStore(t *testing.T) {
 	}
 }
 
-// Fork makes a NEW session id that a conversation continues under, the way a
-// harness re-forks one mid-conversation.
+// Fork makes a NEW session id that a conversation continues under, in the
+// RESTART shape: a new transcript opening on a record of its own that names,
+// as its logicalParentUuid, a record in the old one.
 //
-// This is the only way to test that state survives a re-fork, and it has to be
-// built rather than asked for: the mock has no compaction or retry path that
-// changes the id of a running session, so the transcript a fork would leave is
-// written here instead. What is written is the shape the identity walk actually
-// looks for — nothing about it is invented for the test's convenience:
+// The mock writes the shapes current Claude Code leaves — a fork opening on a
+// copied compact_boundary, or on the whole shared history (RunForked) — but not
+// this one, an older harness's restart file, so it is written here. What is
+// written is the shape the identity walk actually looks for — nothing about it
+// is invented for the test's convenience:
 //
 //   - the new transcript's own root record is parentless, so it IS a root
 //     within its file, exactly like any other transcript's first record;
@@ -1820,7 +1723,7 @@ func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
 			oldSessionID, oldPath, err)
 	}
 
-	// The record the new file continues FROM. seedTranscript's root is the one
+	// The record the new file continues FROM. The prompt record is the one
 	// record every seeded session is guaranteed to have, and it is genuinely in
 	// the old file — asserted below rather than assumed, because a fork pointing
 	// at a record that is not there resolves to nothing and the test would fail
@@ -1846,6 +1749,24 @@ func (e *Env) Fork(cwd, oldSessionID, newSessionID string) {
 	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
 		e.t.Fatalf("harness: fork %s: %v", oldSessionID, err)
 	}
+}
+
+// OriginRecord is the uuid of the first record in a session's transcript with no
+// parent — where that FILE begins, read straight off the file. Not the identity
+// walk: a test uses it to name what the walk should land on, and the walk is
+// asked of the engine (SessionIdentity).
+func (e *Env) OriginRecord(projDir, sessionID string) string {
+	e.t.Helper()
+	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
+		var rec struct {
+			UUID       string  `json:"uuid"`
+			ParentUUID *string `json:"parentUuid"`
+		}
+		if json.Unmarshal([]byte(line), &rec) == nil && rec.UUID != "" && rec.ParentUUID == nil {
+			return rec.UUID
+		}
+	}
+	return ""
 }
 
 // SessionIdentity is the identity the engine resolves for a session's
@@ -1930,9 +1851,148 @@ func (e *Env) BlockingErrorsFrom(projDir, sessionID, hookEvent string) []string 
 func (e *Env) blockingErrors(projDir, sessionID, hookEvent string) []string {
 	e.t.Helper()
 
+	return blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent)
+}
+
+// StopContinuations returns the reason of every time a Stop hook refused to let
+// a turn end AND the agent was driven on past it, read from the session's own
+// record — in order, one per continuation.
+//
+// This is what a person sees in real Claude Code, and so what a test asks. A
+// blocked Stop is recorded as a meta user turn "Stop hook feedback:\n<reason>"
+// (the text the continued agent reads; for a decision:block it is followed by a
+// hook_blocking_error attachment, for an exit 2 it is all there is), and the
+// continued turn ends at the next Stop, which leaves its own stop_hook_summary
+// (harness-mocks EVIDENCE.md). The refused Stop's own summary comes right after
+// its feedback, so a feedback turn is counted only once the record shows the
+// agent went on past it: an assistant record, or the stop_hook_summary of a
+// LATER Stop. A refusal the harness gave up on at its stop-hook cap — feedback,
+// its own summary, then the cap's warning — is not a continuation.
+//
+// Counting the stream's result frames instead measured the mock rather than
+// the session: real Claude Code emits one result frame per continued turn, and
+// "two results" is not something a person reading the conversation ever sees.
+func (e *Env) StopContinuations(projDir, sessionID string) []string {
+	e.t.Helper()
+	return stopContinuationsIn(e.transcript(projDir, sessionID))
+}
+
+func stopContinuationsIn(record string) []string {
+	var out, pending []string
+	ownSummarySeen := false
+	for _, line := range strings.Split(record, "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			IsMeta  bool   `json:"isMeta"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		switch {
+		case rec.Type == "user" && rec.IsMeta:
+			var text string
+			if json.Unmarshal(rec.Message.Content, &text) == nil && strings.HasPrefix(text, "Stop hook feedback:\n") {
+				// A later Stop's feedback is itself a later Stop: whatever was
+				// pending (with its own summary written) was continued past.
+				if ownSummarySeen {
+					out = append(out, pending...)
+					pending = nil
+				}
+				pending = append(pending, strings.TrimPrefix(text, "Stop hook feedback:\n"))
+				ownSummarySeen = false
+			}
+		case rec.Type == "system" && rec.Subtype == "stop_hook_summary" && len(pending) > 0 && !ownSummarySeen:
+			ownSummarySeen = true // the refused Stop's own summary
+		case rec.Type == "assistant", rec.Type == "system" && rec.Subtype == "stop_hook_summary":
+			out = append(out, pending...)
+			pending = nil
+		}
+	}
+	return out
+}
+
+// SubagentBlockingErrors returns the text of every SubagentStop refusal
+// recorded in the sub-agents' OWN transcripts of a session, in order.
+//
+// Where it is recorded is the point. Real Claude Code writes a SubagentStop's
+// refusal — the "Stop hook feedback" turn the re-run sub-agent reads, then the
+// hook_blocking_error attachment — into the sub-agent's
+// <session>/subagents/agent-<id>.jsonl, never into the dispatching session's
+// file (all 40 real files holding one are sidechain files), and the mock does
+// the same. BlockingErrors reads only the session's own record, so a test of a
+// ROOT refusal cannot be satisfied by a sub-agent's, and this is the explicit
+// way to ask about a sub-agent's.
+//
+// Only refusals the sub-agent was actually told count: each attachment must
+// follow a "Stop hook feedback:" user turn carrying the same text in the same
+// file — the record a re-run sub-agent reads its refusal from.
+func (e *Env) SubagentBlockingErrors(projDir, sessionID string) []string {
+	e.t.Helper()
 	var out []string
 	seen := map[string]bool{}
-	for _, line := range strings.Split(e.transcript(projDir, sessionID), "\n") {
+	for _, sub := range e.SubagentRecordPaths(projDir, sessionID) {
+		b, err := os.ReadFile(sub)
+		if err != nil {
+			e.t.Fatalf("harness: read sub-agent record %s: %v", sub, err)
+		}
+		fed := map[string]bool{}
+		for _, line := range strings.Split(string(b), "\n") {
+			var rec struct {
+				Type    string `json:"type"`
+				Message struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"message"`
+			}
+			if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" {
+				var text string
+				if json.Unmarshal(rec.Message.Content, &text) == nil && strings.HasPrefix(text, "Stop hook feedback:\n") {
+					fed[strings.TrimPrefix(text, "Stop hook feedback:\n")] = true
+				}
+			}
+			for _, text := range blockingErrorsIn(line, "SubagentStop") {
+				if fed[text] && !seen[text] {
+					seen[text] = true
+					out = append(out, text)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// AnySubagentBlockingErrors returns the text of every SubagentStop
+// hook_blocking_error attachment recorded in the sub-agents' OWN transcripts
+// of a session, in order — WITHOUT requiring the "Stop hook feedback" turn
+// SubagentBlockingErrors also requires alongside it.
+//
+// For a NEGATIVE check only: "no refusal was recorded", asked as strictly as
+// possible, so it must not pass by accident when a refusal WAS recorded but
+// (through some other defect) without its feedback turn. A positive claim —
+// "the sub-agent was refused, and told" — still belongs to
+// SubagentBlockingErrors, which is the one that proves delivery.
+func (e *Env) AnySubagentBlockingErrors(projDir, sessionID string) []string {
+	e.t.Helper()
+	var out []string
+	for _, sub := range e.SubagentRecordPaths(projDir, sessionID) {
+		b, err := os.ReadFile(sub)
+		if err != nil {
+			e.t.Fatalf("harness: read sub-agent record %s: %v", sub, err)
+		}
+		out = append(out, blockingErrorsIn(string(b), "SubagentStop")...)
+	}
+	return out
+}
+
+// blockingErrorsIn reads the refusals out of a record's lines, optionally
+// narrowed to one lifecycle event.
+func blockingErrorsIn(record, hookEvent string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(record, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -1989,55 +2049,101 @@ type Result struct {
 // refusal travels back in, or the agent's own output.
 func (r Result) Saw(text string) bool { return strings.Contains(r.Output, text) }
 
-// blockedMarkers are what the harness emits when a PreToolUse hook refused the
-// call. Measured through this harness, one channel per run, rather than guessed:
-// the two delivering channels do NOT share a marker.
+// Refusals returns the reason of every PreToolUse refusal in a run's stream, in
+// order.
 //
-//   - `permissionDecision: "deny"` at exit 0 — the channel this engine uses, see
-//     deny in hookio.go — turns the tool call into a tool_result with is_error
-//     true whose content is
+// Real Claude Code refuses a tool call by answering it with a tool_result whose
+// content is "PreToolUse:<Tool> hook error: <reason>" and is_error true — the
+// reason being "[<command>]: <stderr>" when the hook exited 2, and its
+// permissionDecisionReason when it denied in JSON at exit 0 (the channel this
+// engine uses, see deny in hookio.go). No attachment is written and the turn
+// goes on. The mock writes exactly that, on the stream and in the transcript
+// (harness-mocks EVIDENCE.md, "A PreToolUse refusal is the tool_result …").
+// hookRefusalReason mirrors the production recogniser,
+// transcript.HookRefusalReason; it is a copy rather than an import because the
+// plugins' own e2e modules import this harness and must not inherit the
+// engine's dependencies, and harness_test pins the two to agree.
 //
-//     [{"text":"Tool call blocked by a PreToolUse hook: <reason>","type":"text"}]
-//
-//   - Exiting 2 with the reason on stderr never becomes a tool_result at all.
-//     The harness reports it on its own line, "claude-mock: PreToolUse hook
-//     blocked: ...", and the run carries no tool result for that call.
-//
-// Both are listed because a refusal is a refusal whichever channel carried it,
-// and a predicate that knew only the engine's current channel would silently
-// start answering "permitted" the day that changed. See refuseForBroken in
-// services/sr-session for the full measured table, including the channels that
-// deliver nothing.
-var blockedMarkers = []string{
-	"Tool call blocked by a PreToolUse hook",
-	"PreToolUse hook blocked",
-}
-
-// Refused reports whether the action was stopped before it happened.
-//
-// It reads the harness's own refusal marker rather than scanning the stream for
-// words. Two copies of a helper that scanned for "deny"/"denied"/"block"/
-// "blocked" anywhere in the output shipped in 013 and 014, and the stream
-// contains the agent's own tool input — the path it asked to write, and the
-// content. So a guardrail permitting EVERYTHING, writing to `deny/notes.md`,
-// produced "File written successfully" and a helper that answered "refused".
-//
-// That is not a cosmetic flaw. Every test asserting a refusal would pass on a
-// fully permitted write as soon as a trigger word appeared in the fixture, which
-// is precisely the reading a suite about fail-open must never get wrong. The
-// eight refusal-asserting tests in 013 and 014 were non-vacuous only by the
-// accident of using clean paths.
-//
-// One definition, in the harness, because both packages need the same answer and
-// two copies of a predicate are two chances to be wrong about it.
-func (r Result) Refused() bool {
-	for _, marker := range blockedMarkers {
-		if strings.Contains(r.Output, marker) {
-			return true
+// Read from the tool_result records, not by scanning the stream for words: the
+// stream also carries the agent's own tool input — the path it asked to write,
+// and the content — so a helper that scanned for "deny"/"blocked" anywhere
+// reported a fully PERMITTED write to `deny/notes.md` as refused. Two copies of
+// such a helper shipped in 013 and 014; every test asserting a refusal would
+// have passed on a permitted write as soon as a fixture used such a path.
+func (r Result) Refusals() []string {
+	var out []string
+	for _, line := range strings.Split(r.Output, "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		var blocks []struct {
+			Type    string          `json:"type"`
+			IsError bool            `json:"is_error"`
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_result" || !b.IsError {
+				continue
+			}
+			for _, body := range resultTexts(b.Content) {
+				if reason, ok := hookRefusalReason(body); ok {
+					out = append(out, reason)
+				}
+			}
 		}
 	}
-	return false
+	return out
 }
+
+// hookRefusalReason is transcript.HookRefusalReason: the reason of a
+// "PreToolUse:<Tool> hook error: <reason>" body, and whether body is one.
+func hookRefusalReason(body string) (string, bool) {
+	if !strings.HasPrefix(body, "PreToolUse:") {
+		return "", false
+	}
+	_, reason, ok := strings.Cut(body, " hook error: ")
+	return reason, ok
+}
+
+// resultTexts is a tool_result's content as text: a plain string, or the text
+// of each text block in a list.
+func resultTexts(raw json.RawMessage) []string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return []string{s}
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil
+	}
+	var out []string
+	for _, b := range blocks {
+		if b.Type == "text" {
+			out = append(out, b.Text)
+		}
+	}
+	return out
+}
+
+// Refused reports whether a tool call in the run was stopped before it
+// happened by a PreToolUse hook. See Refusals.
+//
+// One definition, in the harness, because every package asserting a refusal
+// needs the same answer and two copies of a predicate are two chances to be
+// wrong about it.
+func (r Result) Refused() bool { return len(r.Refusals()) > 0 }
 
 // Permitted reports whether the action went through.
 //
@@ -2049,6 +2155,35 @@ func (r Result) Permitted() bool { return !r.Refused() }
 func (e *Env) Run(projDir, sessionID, prompt string, s Scenario) Result {
 	e.t.Helper()
 	return e.run(projDir, projDir, sessionID, prompt, s)
+}
+
+// RunForked drives a scenario as a NEW session id continuing the conversation
+// of fromSessionID in a new transcript — `claude --resume <from> --fork-session
+// --session-id <new>`. The mock writes the fork the way real Claude Code left
+// them: a compacted conversation's fork opens on a verbatim copy of its last
+// compact_boundary (plus the records that compaction preserved), a
+// never-compacted one's carries the whole history. So several forks of one
+// compacted conversation all open on the SAME boundary record — the shape that
+// sent the identity walk round in a circle.
+//
+// A later Run on newSessionID resumes the fork.
+func (e *Env) RunForked(projDir, fromSessionID, newSessionID, prompt string, s Scenario) Result {
+	e.t.Helper()
+	if !e.seenSessions[fromSessionID] {
+		e.t.Fatalf("harness: fork of %s: that session was never run, so there is nothing to fork", fromSessionID)
+	}
+	e.seenSessions[newSessionID] = true
+	return e.drive(projDir, projDir, prompt, s, "--resume", fromSessionID, "--fork-session", "--session-id", newSessionID)
+}
+
+// DeleteTranscript removes a session's transcript, the way Claude Code's own
+// cleanup does once a transcript is older than its retention period — while a
+// later continuation of the same conversation can still be resumed.
+func (e *Env) DeleteTranscript(projDir, sessionID string) {
+	e.t.Helper()
+	if err := os.Remove(e.transcriptPath(projDir, sessionID)); err != nil {
+		e.t.Fatalf("harness: delete transcript of %s: %v", sessionID, err)
+	}
 }
 
 // RunFrom drives a scenario as a session whose hooks fire from a SUBDIRECTORY
@@ -2197,19 +2332,12 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	// re-seeds nothing (the mock appends the prompt itself) and uses --resume. This is
 	// what lets a test build a genuine multi-human-turn transcript by Running twice.
 	resume := e.seenSessions[sessionID]
-	if !resume {
-		// Seeded where the MOCK will write it, which is keyed on the directory the
-		// session reports rather than on the repository root. See RunFrom: seeding
-		// elsewhere leaves the mock's own record without a parentless root, and the
-		// identity walk then keys the session on a tool_use uuid.
-		e.seedTranscript(workDir, sessionID, prompt)
-		e.seenSessions[sessionID] = true
-	}
-
-	scriptPath := filepath.Join(projDir, ".scenario.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
-		e.t.Fatalf("harness: write scenario: %v", err)
-	}
+	// Nothing is written ahead of the mock. It writes a fresh session's record
+	// in the order real Claude Code does — no file at all while SessionStart
+	// runs, then the SessionStart hook's attachment (when a hook printed
+	// anything) as the origin, then the prompt as `e2e-root-<session>` — so a
+	// file seeded here would hand SessionStart a record no real session has.
+	e.seenSessions[sessionID] = true
 
 	// The session flag differs by whether this id has been Run before: --session-id for
 	// the first (new session), --resume for a repeat (continuation). Everything else —
@@ -2219,7 +2347,18 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	if resume {
 		sessionFlag = "--resume"
 	}
-	cmd := exec.Command(e.mock,
+	return e.drive(projDir, workDir, prompt, s, sessionFlag, sessionID)
+}
+
+// drive runs the mock once with the given session flags — the part of run
+// shared by a plain run, a resume and a fork.
+func (e *Env) drive(projDir, workDir, prompt string, s Scenario, sessionFlags ...string) Result {
+	e.t.Helper()
+	scriptPath := filepath.Join(projDir, ".scenario.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"+s.script()+"\n"), 0o755); err != nil {
+		e.t.Fatalf("harness: write scenario: %v", err)
+	}
+	args := []string{
 		"-p", "--output-format", "stream-json",
 		"--script", scriptPath,
 		// The directory the session reports, which RunFrom may place below the
@@ -2227,14 +2366,16 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 		"--project-dir", workDir,
 		"--config-dir", e.configDir,
 		"--plugin-cache-dir", e.pluginDir,
-		sessionFlag, sessionID,
-		prompt,
-	)
+	}
+	args = append(args, sessionFlags...)
+	args = append(args, prompt)
+	cmd := exec.Command(e.mock, args...)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"HOME="+e.home,
 		"CLAUDE_CONFIG_DIR="+e.configDir,
 		"CLAUDE_CODE_PLUGIN_CACHE_DIR="+e.pluginDir,
+		"CLAUDE_CODE_TMPDIR="+e.tmpDir,
 		// The session-identifying and harness-naming variables are the MOCK's to
 		// present, not the harness's: the mock takes --session-id (above) and sets
 		// CLAUDE_CODE_SESSION_ID on every hook/script env from it, and sets
@@ -2298,4 +2439,21 @@ func (e *Env) run(projDir, workDir, sessionID, prompt string, s Scenario) Result
 	}
 	e.t.Logf("mock:\n%s", out)
 	return Result{Output: string(out), Code: code}
+}
+
+// EngineErrored reports whether an sr-session answer captured with 2>&1 carries
+// an error line — a line of its own starting "sloprail:" — rather than entries.
+//
+// A line, not a substring: a session's record now carries its hooks' own output
+// (a hook that printed leaves a hook_success attachment holding its stdout and
+// stderr, as real Claude Code writes it), so an entry can legitimately CONTAIN
+// "sloprail:" inside one of its JSON strings. Only the error sr-session itself
+// prints starts a line with it.
+func EngineErrored(answer string) bool {
+	for _, l := range strings.Split(answer, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "sloprail:") {
+			return true
+		}
+	}
+	return false
 }

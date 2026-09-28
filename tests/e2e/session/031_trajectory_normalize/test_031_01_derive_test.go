@@ -192,7 +192,7 @@ func TestT031_05_ThreeToolCallsYieldThreeEvents(t *testing.T) {
 // Driven through the MOCK, with NO fixture and NO harness-seeded preamble: the mock
 // opens every fresh transcript with the no-uuid preamble records real Claude Code writes
 // (custom-title / mode / last-prompt) AHEAD of the root prompt — a10n-claude-mock's own
-// seedPreamble, prepended ahead of the root the harness pre-seeds. A transcript reader
+// seedPreamble, written ahead of the first record. A transcript reader
 // counts those physical lines but skips them as entries (they carry no uuid), so a
 // uuid-carrying entry's physical `.Line` runs PAST its entry ordinal by the number of
 // skipped preamble lines. That gap — physical line != entry ordinal — is the whole point.
@@ -230,25 +230,57 @@ func TestT031_06_LineNumbersAreThePhysicalLines(t *testing.T) {
 		t.Fatalf("normalize exited %d, want 0:\n%s", res.Code, res.Output)
 	}
 	entries := decodeEntries(t, res.Output)
-	if len(entries) != 2 {
-		t.Fatalf("only the two uuid-carrying lines are entries (root + the Say turn), got %d:\n%s",
-			len(entries), res.Output)
+	// Four entries, in the order real Claude Code writes a fresh session: the
+	// SessionStart hook's attachment (the plugin's start hook prints, and a hook
+	// that prints leaves a hook_success record — the session's origin), the
+	// prompt chained to it, the Say turn, and the stop_hook_summary every Stop
+	// that ran a hook ends with (harness-mocks EVIDENCE.md: 8,272 real records).
+	if len(entries) != 4 {
+		t.Fatalf("only the four uuid-carrying lines are entries (SessionStart attachment, prompt, "+
+			"Say turn, stop_hook_summary), got %d:\n%s", len(entries), res.Output)
 	}
-	// The root prompt is the FIRST entry, but it does not sit on physical line 1 — the
-	// preamble records occupy the opening lines, so it sits on line preamble+1. That its
-	// line is past its ordinal (1) is exactly "physical line != entry ordinal".
-	if entries[0].Type != "user" || entries[0].Line != preamble+1 {
-		t.Fatalf("the user entry sits on physical line %d (after %d preamble lines), got type %q line %d:\n%s",
-			preamble+1, preamble, entries[0].Type, entries[0].Line, res.Output)
+	// The first entry does not sit on physical line 1 — the preamble records
+	// occupy the opening lines, so it sits on line preamble+1. That its line is
+	// past its ordinal (1) is exactly "physical line != entry ordinal".
+	for i, want := range []string{"attachment", "user", "assistant", "system"} {
+		if string(entries[i].Type) != want || entries[i].Line != preamble+1+i {
+			t.Fatalf("entry %d should be the %s record on physical line %d, got type %q line %d:\n%s",
+				i, want, preamble+1+i, entries[i].Type, entries[i].Line, res.Output)
+		}
 	}
-	if entries[0].Line <= 1 {
-		t.Fatalf("the first entry's physical line must run PAST its ordinal because the preamble "+
-			"records before it are counted-but-skipped, got line %d", entries[0].Line)
+
+	// The system entry is the Stop summary, in the shape real Claude Code
+	// writes: the hook that ran, listed by command, at level "suggestion".
+	lines := strings.Split(readFile(t, path), "\n")
+	var summary struct {
+		Subtype   string `json:"subtype"`
+		HookCount int    `json:"hookCount"`
+		HookInfos []struct {
+			Command string `json:"command"`
+		} `json:"hookInfos"`
+		HookErrors            []string `json:"hookErrors"`
+		PreventedContinuation *bool    `json:"preventedContinuation"`
+		Level                 string   `json:"level"`
+		ToolUseID             string   `json:"toolUseID"`
 	}
-	// The assistant Say turn is the next physical line after the root.
-	if entries[1].Type != "assistant" || entries[1].Line != preamble+2 {
-		t.Fatalf("the assistant entry sits on physical line %d, got type %q line %d:\n%s",
-			preamble+2, entries[1].Type, entries[1].Line, res.Output)
+	if err := json.Unmarshal([]byte(lines[entries[3].Line-1]), &summary); err != nil {
+		t.Fatalf("the system entry is not JSON: %v", err)
+	}
+	if summary.Subtype != "stop_hook_summary" || summary.Level != "suggestion" || summary.ToolUseID == "" ||
+		summary.PreventedContinuation == nil || summary.HookCount != len(summary.HookInfos) || summary.HookCount < 1 {
+		t.Fatalf("the system entry is not a stop_hook_summary in the real shape: %s", lines[entries[3].Line-1])
+	}
+	stopHook := false
+	for _, h := range summary.HookInfos {
+		if strings.Contains(h.Command, "sr-session-hook.sh") && strings.HasSuffix(h.Command, " stop") {
+			stopHook = true
+		}
+	}
+	if !stopHook {
+		t.Errorf("the summary does not list the plugin's Stop hook: %s", lines[entries[3].Line-1])
+	}
+	if len(summary.HookErrors) != 0 {
+		t.Errorf("nothing refused, yet the summary lists hook errors: %v", summary.HookErrors)
 	}
 }
 

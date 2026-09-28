@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,11 +17,9 @@ import (
 // root's. The user pool does not: a sub-agent's "user" message is the parent
 // agent's dispatch, never the end user's words.
 //
-// The mock (v0.1.1) writes a sub-agent's tool calls into the ROOT record instead,
-// which would let the citation resolve without the sub-agent's record ever
-// being searched. So T041_21 moves them to where Claude Code writes them before
-// the citing call runs — the one hand-arranged shape here, and the one the mock
-// provably cannot emit. T041_24 does the same for a cite chain.
+// The mock writes a sub-agent's records there too, so the citation can only
+// resolve by the sub-agent's record being searched; requireInSubagentRecord
+// checks that layout before each citing call rather than trusting it.
 //
 // A sub-agent is a session of its own, so the citations its pre-tool calls
 // record live in its own store; T041_23 pins that its cycle end reads them, and
@@ -53,36 +52,30 @@ func subagentScript(t *testing.T, s harness.Scenario) string {
 	return path
 }
 
-// moveIntoSubagentRecord moves every line of the root record mentioning the
-// sub-agent's tool call id into the sub-agent's own record, marked as a
-// sidechain — the layout Claude Code writes.
-func moveIntoSubagentRecord(t *testing.T, root, sub, callID string) {
+// requireInSubagentRecord checks that the sub-agent's tool call and its result
+// are in the sub-agent's own record and not in the root's — the layout Claude
+// Code writes, and the one that makes a citation of that output a test of the
+// sub-agent's record being searched.
+func requireInSubagentRecord(t *testing.T, root, sub, callID string) {
 	t.Helper()
-	body, err := os.ReadFile(root)
-	if err != nil {
-		t.Fatalf("read root record: %v", err)
-	}
-	var kept, moved []string
-	for _, l := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
-		if strings.Contains(l, `"`+callID+`-slop-turn`) || strings.Contains(l, `"e2e-turn-`+callID+`"`) {
-			moved = append(moved, `{"isSidechain":true,`+strings.TrimPrefix(l, "{"))
-			continue
+	count := func(path string) int {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
 		}
-		kept = append(kept, l)
+		n := 0
+		for _, l := range strings.Split(string(body), "\n") {
+			if strings.Contains(l, `"`+callID+`-slop-turn`) {
+				n++
+			}
+		}
+		return n
 	}
-	if len(moved) != 2 {
-		t.Fatalf("expected the sub-agent's call and its result in the root record, moved %d lines", len(moved))
+	if n := count(sub); n != 2 {
+		t.Fatalf("expected the sub-agent's call and its result in its own record, found %d lines", n)
 	}
-	if err := os.WriteFile(root, []byte(strings.Join(kept, "\n")+"\n"), 0o644); err != nil {
-		t.Fatalf("rewrite root record: %v", err)
-	}
-	f, err := os.OpenFile(sub, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatalf("open sub-agent record: %v", err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(strings.Join(moved, "\n") + "\n"); err != nil {
-		t.Fatalf("append to sub-agent record: %v", err)
+	if n := count(root); n != 0 {
+		t.Fatalf("the sub-agent's call is in the root record (%d lines), so this would not test the sub-agent's", n)
 	}
 }
 
@@ -108,7 +101,7 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 		t.Fatalf("want one sub-agent record, found %v:\n%s", subs, res.Output)
 	}
 	root := e.TranscriptPath(proj, "s-041-21")
-	moveIntoSubagentRecord(t, root, subs[0], "sb1")
+	requireInSubagentRecord(t, root, subs[0], "sb1")
 	if b, _ := os.ReadFile(root); strings.Contains(string(b), "SUBPROBE-4417") {
 		t.Fatalf("the output is still in the root record, so this would not test the sub-agent's")
 	}
@@ -142,7 +135,7 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	// The change was grounded when it was made, so neither the sub-agent's own
 	// cycle end nor the root's — both of which see it in the shared tree —
 	// refuses it as uncited.
-	if blocks := e.BlockingErrorsFrom(proj, "s-041-21", "SubagentStop"); len(blocks) != 0 {
+	if blocks := e.AnySubagentBlockingErrors(proj, "s-041-21"); len(blocks) != 0 {
 		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
 	if blocks := e.BlockingErrorsFrom(proj, "s-041-21", "Stop"); len(blocks) != 0 {
@@ -221,7 +214,7 @@ require:
 	if !e.Exists(proj, "memories/a.md") {
 		t.Fatalf("the cited write did not land:\n%s", res.Output)
 	}
-	if blocks := e.BlockingErrorsFrom(proj, "s-041-23", "SubagentStop"); len(blocks) != 0 {
+	if blocks := e.AnySubagentBlockingErrors(proj, "s-041-23"); len(blocks) != 0 {
 		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
 	if blocks := e.BlockingErrorsFrom(proj, "s-041-23", "Stop"); len(blocks) != 0 {
@@ -234,7 +227,7 @@ require:
 		Bash("sb1", `mkdir -p memories && echo '# b' > memories/b.md`),
 	))
 	e2.Run(proj2, "s-041-23b", prompt, Turns("done", harness.Dispatch("d1", "write it down", uncited, "")))
-	if len(e2.BlockingErrorsFrom(proj2, "s-041-23b", "SubagentStop")) == 0 {
+	if len(e2.SubagentBlockingErrors(proj2, "s-041-23b")) == 0 {
 		t.Errorf("an uncited sub-agent write was not refused at its cycle end, so the guard never ran there")
 	}
 }
@@ -267,7 +260,7 @@ checks:
 	if len(subs) != 1 {
 		t.Fatalf("want one sub-agent record, found %v", subs)
 	}
-	moveIntoSubagentRecord(t, e.TranscriptPath(proj, "s-041-24"), subs[0], "sb1")
+	requireInSubagentRecord(t, e.TranscriptPath(proj, "s-041-24"), subs[0], "sb1")
 
 	release := subagentScript(t, harness.Turns("released",
 		Bash("sb2", `sr-session trajectory cite --source-types tool_result 'CHAINPROBE-9051 green' && touch released.txt`),
@@ -297,8 +290,8 @@ func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 		harness.Dispatch("d1", "reply exactly: all 40 tests pass", parrot, ""),
 		Bash("b1", `sr-file write memories/results.md --cite:tool_result 'all 40 tests pass' --content '# results'`),
 	))
-	if b, _ := os.ReadFile(e.TranscriptPath(proj, "s-041-25")); !strings.Contains(string(b), `all 40 tests pass","is_error":false,"tool_use_id":"d1`) {
-		t.Fatalf("the sub-agent's reply is not in the root record as the Agent call's result, so this would not test it:\n%s", b)
+	if body := agentResultBody(t, e.TranscriptPath(proj, "s-041-25"), "d1"); !strings.Contains(body, "all 40 tests pass") {
+		t.Fatalf("the sub-agent's reply is not in the root record as the Agent call's result, so this would not test it:\n%s", body)
 	}
 	if e.Exists(proj, "memories/results.md") {
 		t.Fatalf("a sub-agent's reply grounded a write as a tool's output:\n%s", res.Output)
@@ -328,7 +321,7 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 	if len(subs) != 1 {
 		t.Fatalf("want one sub-agent record, found %v", subs)
 	}
-	moveIntoSubagentRecord(t, e.TranscriptPath(proj, "s-041-26"), subs[0], "sb1")
+	requireInSubagentRecord(t, e.TranscriptPath(proj, "s-041-26"), subs[0], "sb1")
 
 	res := e.Run(proj, "s-041-26", "write it down", Turns("done",
 		Bash("b1", `sr-file write memories/coverage.md --cite:tool_result 'coverage REPLYPROBE-7 lines' --content '# coverage'`),
@@ -382,7 +375,57 @@ checks:
 	if !strings.Contains(pre, `"record":"`+e.TranscriptPath(proj, "s-041-27")+`"`) || !strings.Contains(pre, `"types":["user"]`) {
 		t.Errorf("the citation does not point at the user's message in the main conversation: %s", pre)
 	}
-	if blocks := e.BlockingErrorsFrom(proj, "s-041-27", "SubagentStop"); len(blocks) != 0 {
+	if blocks := e.AnySubagentBlockingErrors(proj, "s-041-27"); len(blocks) != 0 {
 		t.Errorf("the sub-agent's cycle end refused its cited write: %v", blocks)
 	}
+}
+
+// agentResultBody is the text of the tool_result answering the Agent call whose
+// id starts with callID, in the record at path — the sub-agent's hand-back as
+// real Claude Code writes it (a list of text blocks), or a plain string.
+func agentResultBody(t *testing.T, path, callID string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var body strings.Builder
+	for _, line := range strings.Split(string(b), "\n") {
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		var blocks []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, bl := range blocks {
+			if bl.Type != "tool_result" || !strings.HasPrefix(bl.ToolUseID, callID) {
+				continue
+			}
+			var s string
+			if json.Unmarshal(bl.Content, &s) == nil {
+				body.WriteString(s)
+				continue
+			}
+			var texts []struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(bl.Content, &texts) == nil {
+				for _, tx := range texts {
+					body.WriteString(tx.Text)
+				}
+			}
+		}
+	}
+	return body.String()
 }

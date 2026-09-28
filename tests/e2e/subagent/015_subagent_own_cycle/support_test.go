@@ -82,8 +82,8 @@ import (
 // "**/*.md"` selects the sub-agent's `.md` work at any depth (all of it lands as
 // `.md`), and never matches the guard's own ledger (`log`, `count` — no `.md`
 // suffix) so no self-observation doubles the ledger. Refusals (T015_07, T015_08)
-// still surface at SubagentStop and are read with e.BlockingErrorsFrom(…,
-// "SubagentStop"), a format-neutral channel.
+// still surface at SubagentStop and are read with e.SubagentBlockingErrors, from
+// the sub-agent's own record, where real Claude Code writes them.
 //
 // # The ledger channel, and a trap that cost real time
 //

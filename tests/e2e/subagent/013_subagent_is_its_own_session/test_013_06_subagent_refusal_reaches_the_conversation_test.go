@@ -20,11 +20,14 @@ import (
 // Two things were wrong, in two repositories, and the gap needed both.
 //
 //  1. The mock ran the SubagentStop block loop but never RECORDED the block.
-//     Its Stop has always written a hook_blocking_error attachment carrying the
-//     refusal's text — the channel harness.BlockingErrors reads, and the only
-//     one a refusal's words travel down. SubagentStop wrote nothing but a line
-//     on the mock's own stderr, so from outside, a refused delegated cycle and
-//     a clean one were the same conversation.
+//     Real Claude Code records a refusal as a "Stop hook feedback" turn — what
+//     the re-run agent reads — followed by a hook_blocking_error attachment
+//     carrying its text, and for a SubagentStop it writes both into the
+//     SUB-AGENT's own transcript (<session>/subagents/agent-<id>.jsonl), never
+//     the dispatching session's. The mock wrote nothing but a line on its own
+//     stderr, so from outside, a refused delegated cycle and a clean one were
+//     the same conversation. It now writes both where real Claude Code does,
+//     read with harness.SubagentBlockingErrors.
 //
 //  2. The mock seeded a sub-agent's transcript with a record carrying NO uuid.
 //     A real Claude sub-agent transcript opens with a uuid-bearing record whose
@@ -47,7 +50,9 @@ import (
 // Each mutation is recorded on the assertion it kills.
 
 // T013_06: a guardrail refusing a sub-agent's work blocks that sub-agent's stop,
-// and its words reach the conversation.
+// and its words reach the sub-agent — recorded in the sub-agent's own
+// transcript as the feedback turn it is re-run with, and the SubagentStop
+// attachment beside it.
 //
 // The sub-agent shares the dispatching session's tree rather than taking a
 // worktree, because the refusal has to be about work that really landed. The
@@ -55,11 +60,12 @@ import (
 // scenario creates no file — so the delegated work is done with Bash, which the
 // mock does execute, in the tree the guardrail is watching.
 //
-// Asserted against the SUBAGENT STOP attachments specifically, not against every
-// refusal in the record. Sharing the tree means the root's own Stop sees
-// from-sub.md too and refuses it a second time, so "some refusal arrived" is
-// true even when the sub-agent's cycle judged nothing — measured, by re-stubbing
-// subagent-stop and watching the loose version of this test stay green.
+// Asserted against the sub-agent's own record specifically, not against every
+// refusal anywhere. Sharing the tree means the root's own Stop sees from-sub.md
+// too and refuses it a second time, in the ROOT's record, so "some refusal
+// arrived" is true even when the sub-agent's cycle judged nothing — measured,
+// by re-stubbing subagent-stop and watching the loose version of this test stay
+// green.
 func TestT013_06_ASubagentRefusalReachesTheConversation(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -97,16 +103,22 @@ func TestT013_06_ASubagentRefusalReachesTheConversation(t *testing.T) {
 			"delegated work:\n%s", res.Output)
 	}
 
-	// THE CLAIM. The refusal reached the conversation, with its own words.
+	// THE CLAIM. The refusal reached the sub-agent, with its own words: in the
+	// sub-agent's own record, as the feedback turn it is re-run with followed
+	// by the SubagentStop attachment (SubagentBlockingErrors requires both).
 	//
 	// Read from the blocking attachments rather than from the output as a whole:
 	// a guardrail's folder path travels on every hook payload, so searching the
 	// transcript for the rule's name finds it whether or not any refusal ever
 	// named it — an assertion that cannot fail.
-	blocking := e.BlockingErrorsFrom(proj, "s-013-06", "SubagentStop")
+	if leaked := e.BlockingErrorsFrom(proj, "s-013-06", "SubagentStop"); len(leaked) != 0 {
+		t.Errorf("a SubagentStop refusal was recorded in the dispatching session's record (%v); "+
+			"it belongs in the sub-agent's own", leaked)
+	}
+	blocking := e.SubagentBlockingErrors(proj, "s-013-06")
 	if len(blocking) == 0 {
 		t.Fatalf("a guardrail refused the sub-agent's work and nothing recorded it at the "+
-			"sub-agent's own cycle — the refusal reached nothing, which is exactly the hole "+
+			"sub-agent's own cycle, in its own record — the refusal reached nothing, which is exactly the hole "+
 			"this test exists to close:\n%s", res.Output)
 	}
 	told := strings.Join(blocking, "\n")
@@ -152,7 +164,7 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 		t.Fatalf("the permitting guardrail never ran, so this proves nothing about a cycle that "+
 			"was judged and allowed:\n%s", res.Output)
 	}
-	if blocking := e.BlockingErrorsFrom(proj, "s-013-07", "SubagentStop"); len(blocking) > 0 {
+	if blocking := e.AnySubagentBlockingErrors(proj, "s-013-07"); len(blocking) > 0 {
 		t.Fatalf("a sub-agent cycle nothing objected to was recorded as refused (%v) — a refusal "+
 			"that appears without one stops meaning anything:\n%s", blocking, res.Output)
 	}
@@ -168,8 +180,8 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 // RE-VEHICLED onto the new file-guard nature (was old GUARDRAIL.md PostFileCreate
 // hooks). A sub-agent's own cycle is a Post cycle, which is exactly the
 // file-guard's after-check; it fires at the sub-agent's SubagentStop and a refusal
-// blocks that stop, read with e.BlockingErrorsFrom(…, "SubagentStop") — the same
-// format-neutral channel this test already used. `match: "**/*.md"` selects the
+// blocks that stop, read with e.SubagentBlockingErrors from the sub-agent's own
+// record. `match: "**/*.md"` selects the
 // delegated `.md` work the sub-agent's Bash creates.
 const refuseCreatedFiles = `match: "**/*.md"
 checks:

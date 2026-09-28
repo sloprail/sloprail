@@ -17,8 +17,10 @@ import (
 //
 // # What a fork is, and why it has to be built here
 //
-// The mock has no compaction or retry path that changes a running session's id,
-// so the transcript a fork would leave is written by harness.Fork. Nothing about
+// The transcript is written by harness.Fork, in the restart shape (a new file
+// opening on its own record that names one in the old file as its logical
+// parent); the fork shapes current Claude Code leaves are driven through the
+// mock in session/054_identity_continuations. Nothing about
 // its shape is invented for convenience — it is what the identity walk looks
 // for, and what a10n measured across real transcripts:
 //
@@ -208,8 +210,8 @@ func TestT016_03_TheForkedTranscriptResolvesToTheOriginalConversation(t *testing
 	//
 	// A constant-vs-constant check on the two session ids would not do this
 	// job: they differ by construction and such a check could never fire.
-	if want := "e2e-root-" + before; original != want {
-		t.Fatalf("the original session resolves to %q, want its seeded root record %q — if the "+
+	if want := e.OriginRecord(proj, before); original != want || want == "" {
+		t.Fatalf("the original session resolves to %q, want its transcript's origin record %q — if the "+
 			"origin is not the record this test thinks it is, the equality above compared two "+
 			"values that could coincide for reasons unrelated to the walk", original, want)
 	}

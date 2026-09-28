@@ -181,13 +181,41 @@ func TestSessionStart_BrokenIdentityIsStillReported(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	tree := initRepo(t)
 	commitFile(t, tree, "seed.txt", "seed")
+	path := filepath.Join(t.TempDir(), "no-origin.jsonl")
+	// Every record has a parent: no origin to key on at all.
+	require.NoError(t, os.WriteFile(path, []byte(
+		`{"type":"user","uuid":"u1","parentUuid":"not-here"}`+"\n"), 0o644))
+
+	_, stderr := runHook(t, newSessionStartCmd(), HookPayload{TranscriptPath: path, Cwd: tree})
+	assert.Contains(t, stderr, "no baseline recorded")
+}
+
+// TestSessionStart_DegradedIdentityIsKeyedAndReported: a continuation whose
+// earlier transcript is gone is not a broken identity any more. It keys on its
+// own continuation root, records its baseline there, and says so once.
+func TestSessionStart_DegradedIdentityIsKeyedAndReported(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	tree := initRepo(t)
+	start := commitFile(t, tree, "seed.txt", "seed")
 	path := filepath.Join(t.TempDir(), "orphaned.jsonl")
 	// A continuation whose earlier transcript is nowhere to be found.
 	require.NoError(t, os.WriteFile(path, []byte(
 		`{"type":"user","uuid":"u1","parentUuid":null,"logicalParentUuid":"gone"}`+"\n"), 0o644))
+	p := HookPayload{TranscriptPath: path, Cwd: tree}
 
-	_, stderr := runHook(t, newSessionStartCmd(), HookPayload{TranscriptPath: path, Cwd: tree})
-	assert.Contains(t, stderr, "no baseline recorded")
+	_, stderr := runHook(t, newSessionStartCmd(), p)
+	assert.NotContains(t, stderr, "no baseline recorded")
+	assert.Contains(t, stderr, "earlier transcript is gone")
+
+	store, err := openEngineState(p)
+	require.NoError(t, err)
+	defer store.Close()
+	got, _, err := store.Meta(sessionstate.MetaBaselineCommit)
+	require.NoError(t, err)
+	assert.Equal(t, start, got, "the degraded session must still measure from where it started")
+
+	_, again := runHook(t, newSessionStartCmd(), p)
+	assert.NotContains(t, again, "earlier transcript is gone", "the degradation is reported once, not on every hook")
 }
 
 // TestPreTool_FirstToolCallTakesThePoint is the whole fix at the hook level: a

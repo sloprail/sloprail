@@ -178,7 +178,7 @@ func TestT027_03_AnAnswerablePostMatcherIsConsulted(t *testing.T) {
 		Write("w1", "notes.md", "hello\n"),
 	))
 
-	if strings.Count(got.Output, `"subtype":"success"`) < 2 {
+	if len(e.StopContinuations(proj, "s-027-03")) == 0 {
 		t.Fatalf("a Post file-guard with an answerable match and a refusing check did not block "+
 			"the cycle, so T027_02's refusal proves nothing:\n%s", got.Output)
 	}

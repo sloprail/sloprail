@@ -98,8 +98,11 @@ func natureHookScope(cmd *cobra.Command, p HookPayload) hookScope {
 	if p.Cwd != "" {
 		scope.Workspace = workspaceAnchor(p.Cwd)
 	}
-	if id, err := stableID(p); err == nil {
-		scope.SessionID = id
+	if id, err := stableIdentity(p); err == nil {
+		// A fallback identity is reported at SessionStart, where it is seen —
+		// not here, where it would be recorded and shown to nobody. See
+		// noteDegradedIdentity.
+		scope.SessionID = id.ID
 	} else {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: %v\n", err)
 	}

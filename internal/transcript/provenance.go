@@ -418,7 +418,7 @@ func excludedResultHint(path, quote string, subagent bool) string {
 func whyExcluded(body string, calls map[string]recordCall, id string) string {
 	call, ok := calls[id]
 	switch {
-	case isHookRefusal(body):
+	case IsHookRefusal(body):
 		return ""
 	case !ok:
 		return "Those words are in a tool result whose call is not in the record (the call that produced it is not in the record), so where they came from is unknown and they are not citable as tool output; run the command again so its output lands with its call, and cite that"
