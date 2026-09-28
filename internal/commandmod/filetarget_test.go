@@ -694,6 +694,60 @@ func TestFileTargets_DirectoryFlagsOnUnmodelledBinariesStayUnmodelled(t *testing
 	check(t, "npm --prefix /elsewhere run build", "(nothing)")
 }
 
+// TestFileTargets_GitRmRemovesLikeRm: `git rm` deletes its pathspecs from the
+// working tree as rm does, so it names them the same way — with -r marking a
+// directory's removal recursive. What leaves no file gone, or names paths that
+// resolve somewhere else, names nothing.
+func TestFileTargets_GitRmRemovesLikeRm(t *testing.T) {
+	check(t, "git rm notes.md", "remove:notes.md")
+	check(t, "git rm -f a.md b.md", "remove:a.md remove:b.md")
+	check(t, "git rm -q -- -weird.md", "remove:-weird.md")
+	check(t, "git -c core.quotepath=off rm notes.md", "remove:notes.md")
+	check(t, "git --no-pager rm notes.md", "remove:notes.md")
+
+	for _, command := range []string{"git rm -r scanners/x", "git rm -rf scanners/x", "git rm -fr scanners/x"} {
+		targets := FileTargets(command)
+		if len(targets) != 1 || targets[0].Path != "scanners/x" || !targets[0].Recursive {
+			t.Errorf("FileTargets(%q) = %+v, want one recursive remove of scanners/x", command, targets)
+		}
+	}
+	if targets := FileTargets("git rm scanners/x"); len(targets) != 1 || targets[0].Recursive {
+		t.Errorf("without -r git rm does not reach inside a directory: %+v", targets)
+	}
+
+	for _, command := range []string{
+		"git rm --cached notes.md",      // the index entry only; the file stays
+		"git rm -n notes.md",            // dry run
+		"git rm --dry-run notes.md",     // dry run
+		"git rm -rn scanners/x",         // dry run, in a cluster
+		"git -C other rm notes.md",      // the path is relative to other/
+		"git --work-tree=w rm notes.md", // likewise
+		"git rm --pathspec-from-file=f", // the paths are in a file
+		"git status",                    // not rm
+		"git commit -m 'rm notes.md'",   // not rm
+	} {
+		check(t, command, "(nothing)")
+	}
+}
+
+// TestFileTargets_GitMvMovesLikeMv: `git mv` moves in the working tree exactly
+// as mv does — the source is removed (recursively, for a directory) and the
+// destination written.
+func TestFileTargets_GitMvMovesLikeMv(t *testing.T) {
+	for _, command := range []string{"git mv scanners/x elsewhere", "git mv -f scanners/x elsewhere", "git -c a=b mv scanners/x elsewhere"} {
+		targets := FileTargets(command)
+		var removed bool
+		for _, tg := range targets {
+			if tg.Path == "scanners/x" && tg.Effect == Remove && tg.Recursive {
+				removed = true
+			}
+		}
+		if !removed {
+			t.Errorf("FileTargets(%q) = %+v, want a recursive remove of scanners/x", command, targets)
+		}
+	}
+}
+
 // TestFileTargets_AChdirWrapperMovesItsTargets: `env -C DIR` and `sudo -D DIR`
 // run what they wrap in DIR, so its relative targets are there — the same
 // directory Invocation.Cwd reports for the program (wrapperChdir). Before,

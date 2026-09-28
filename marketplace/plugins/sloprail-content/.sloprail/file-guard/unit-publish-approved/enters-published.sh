@@ -36,7 +36,13 @@ case "$kind" in
     # A result the engine could not compute is undecidable: apply (exit 0).
     [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
     ;;
-  PostFileCreate | PostFileUpdate) ;;
+  PostFileCreate | PostFileUpdate)
+    # Settled bytes the engine could not read — newContentKnown false, a field
+    # declared on PostFileCreate/PostFileUpdate (internal/filemod/module.go
+    # FieldNewContentKnown): a link to a FIFO or a device, or a file past the
+    # read cap. Whether the unit is now published is undecidable: apply.
+    [ "$(field '.event.newContentKnown // false')" = "true" ] || exit 0
+    ;;
   *)
     # Deleting a unit publishes nothing.
     exit 1

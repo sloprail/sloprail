@@ -33,7 +33,7 @@ func derive(t *testing.T, e transcript.Entry, kinds kindSet) []event.Event {
 	// Root "" — the file extractors then report paths as the record spelled them,
 	// which is what a bare --path against another trajectory gets. The command
 	// extractor is a pure function of the line and unaffected.
-	return deriveEvents(e, reg, kinds, "", "")
+	return deriveEvents(e, reg, kinds, "", "", nil)
 }
 
 // assistantWith builds an assistant entry whose content is the given raw blocks.
@@ -282,6 +282,55 @@ func allKinds() kindSet {
 	return set
 }
 
+// A call that did not run is in the record as a tool_use all the same.
+// --ran-only keeps only calls with a tool_result that is not the harness saying
+// the call never ran: re-deriving what the agent DID must not count a gh search
+// that never happened (a coverage gate credited exactly that).
+func TestRanOnly_OnlyCallsThatRanYieldEvents(t *testing.T) {
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+
+	type result struct {
+		content string // a JSON value
+		isError bool
+	}
+	for _, tc := range []struct {
+		name   string
+		result *result // nil: no tool_result at all
+		ran    bool
+	}{
+		{"ran", &result{`"stub output"`, false}, true},
+		{"ran and failed", &result{`"Exit code 1"`, true}, true},
+		{"no result", nil, false},
+		{"hook block", &result{`"PreToolUse:Bash hook error: No scanner is declared"`, true}, false},
+		{"hook block as a list", &result{`[{"type":"text","text":"PreToolUse:Bash hook error: no"}]`, true}, false},
+		{"hook block, other spelling, list inside a string", &result{`"[{\"text\":\"Tool call blocked by a PreToolUse hook: no\",\"type\":\"text\"}]"`, true}, false},
+		{"hook-looking output that is not an error", &result{`"PreToolUse:Bash hook error: printed by the command"`, false}, true},
+		{"user denied", &result{`"The user doesn't want to take this action right now. STOP what you are doing"`, true}, false},
+		{"permission denied", &result{`"Permission to use Bash with command gh search x has been denied."`, true}, false},
+		{"needs approval", &result{`"This command requires approval"`, true}, false},
+		{"interrupted", &result{`"[Request interrupted by user for tool use]"`, true}, false},
+		{"cancelled by a sibling", &result{`"<tool_use_error>Sibling tool call errored</tool_use_error>"`, true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			call := assistantWith(`{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"gh search issues x"}}`)
+			entries := []transcript.Entry{call}
+			if tc.result != nil {
+				entries = append(entries, transcript.Entry{
+					Type: transcript.EntryUser, UUID: "u1",
+					Message: json.RawMessage(`{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","is_error":` +
+						map[bool]string{true: "true", false: "false"}[tc.result.isError] + `,"content":` + tc.result.content + `}]}`),
+				})
+			}
+			ran := transcript.RanToolUseIDs(entries)
+			assert.Equal(t, tc.ran, ran["c1"])
+			events := deriveEvents(call, reg, kindSet{commandmod.KindPreInvoke: true}, "", "", ran)
+			assert.Equal(t, tc.ran, len(events) == 1, "events: %v", events)
+			assert.Len(t, deriveEvents(call, reg, kindSet{commandmod.KindPreInvoke: true}, "", "", nil), 1, "without --ran-only every call yields")
+		})
+	}
+}
+
 // entryRoots resolves each record's file paths against the repository of the
 // record's OWN cwd, inheriting the last cwd written above a record that has
 // none — never the process's working directory. A rule's script runs in the
@@ -341,7 +390,7 @@ func derive2(t *testing.T, e transcript.Entry, root, dir string) []event.Event {
 	t.Helper()
 	reg, err := modules.Registry()
 	require.NoError(t, err)
-	return deriveEvents(e, reg, kindSet{"PreFileCreate": true, "PreFileUpdate": true}, root, dir)
+	return deriveEvents(e, reg, kindSet{"PreFileCreate": true, "PreFileUpdate": true}, root, dir, nil)
 }
 
 func gitInit(t *testing.T, dir string) {

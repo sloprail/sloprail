@@ -78,6 +78,21 @@ func TestT038_14_WebFetchOfGitHubRefused(t *testing.T) {
 		"https://user@github.com/owner/repo",
 		"github.com/owner/repo",
 		"https://github.com",
+		// The fully-qualified spelling, and the two GitHub content hosts the
+		// list missed.
+		"https://github.com./owner/repo",
+		"https://api.github.com.:443/search/issues?q=token",
+		"https://raw.github.com/owner/repo/main/README.md",
+		"https://uploads.github.com/repos/owner/repo/releases/1/assets",
+		// Spellings a browser parses to the same host.
+		"https:github.com/owner/repo",
+		"https:/github.com/owner/repo",
+		`https:\\github.com\owner\repo`,
+		"https://git%68ub.com/owner/repo",
+		"https://GITHUB.com%2E/owner/repo",
+		// Literal addresses in GitHub's published ranges.
+		"https://140.82.112.6/repos/owner/repo",
+		"https://[2606:50c0:8000::154]/owner/repo",
 	} {
 		t.Run(url, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -138,6 +153,60 @@ func TestT038_16_SearchWithoutScannerRefused(t *testing.T) {
 		`gh api https://api.github.com/search/issues -f q=token`,
 		`gh api -X GET search/repositories -f q=token`,
 		`gh api graphql -f query='{ search(query: "token leak", type: ISSUE, first: 5) { issueCount } }'`,
+		// Searches no list of search spellings named — the gate allows a known
+		// set of reads instead, and everything else counts as a search.
+		`gh issue list -R cli/cli --search "token leak"`,
+		`gh pr list -R cli/cli --search=token`,
+		`gh issue list -R cli/cli -S token`,
+		`gh api graphql -f query='{ search (query: "token leak", type: ISSUE, first: 5) { issueCount } }'`,
+		`gh api graphql -F query=@q.graphql`,
+		`gh s token`,
+		`X=search; gh $X issues token`,
+		`gh api $ENDPOINT -f q=token`,
+		// An endpoint that resolves to search/… once its dot segments and
+		// percent-encoding are undone — `repos/../search/issues` searched live.
+		`gh api 'repos/../search/issues?q=token'`,
+		`gh api repos%2F..%2Fsearch%2Fissues -f q=token`,
+		`gh api /repos/a/b/../../../search/code?q=token`,
+		`gh api https://api.github.com/repos/x/../../search/issues?q=token`,
+		// gh that the parser does not find as an invocation, or finds only
+		// through a wrapper it had to learn.
+		`eval "gh search issues token"`,
+		`python3 -c "import os; os.system('gh search issues token')"`,
+		`script -q /dev/null gh search issues token`,
+		`caffeinate -i gh search issues token`,
+		// co is a default ALIAS (pr checkout), redefinable to anything; an
+		// extension run through exec can do anything.
+		`gh co token`,
+		`gh extension exec search-ext token`,
+		`gh ext exec search-ext token`,
+		`gh issue list -R cli/cli -wS token`,
+		// A heredoc or here-string that feeds CODE is code.
+		"bash <<'EOF'\ngh search issues token\nEOF",
+		"python3 - <<'EOF'\nimport os; os.system('gh search issues token')\nEOF",
+		"cat <<'EOF' | sh\ngh search issues token\nEOF",
+		`bash <<< "gh search issues token"`,
+		// Text piped into a shell, or a script written and run in the same
+		// command: once anything runs code, no mention is data.
+		`echo "gh search issues token" | bash`,
+		`printf 'gh search issues token\n' | sh`,
+		`echo "gh search issues token" | xargs -I{} sh -c '{}'`,
+		"cat <<'EOF' > s.sh\ngh search issues token\nEOF\nbash s.sh",
+		"cat > s.sh <<'EOF' && bash s.sh\ngh search issues token\nEOF",
+		"cat > s.sh <<'EOF'\ngh search issues token\nEOF\nchmod +x s.sh && ./s.sh",
+		// A $(gh …) inside an unquoted heredoc is one invocation, not also data.
+		"cat >/dev/null <<EOF\n$(gh issue view 1 -R cli/cli)\nEOF\neval \"gh search issues token\"",
+		// A gh whose subcommand the parser cannot see.
+		`echo search issues token | xargs gh`,
+		`gh $(echo search issues token)`,
+		`A="search issues token"; gh $A`,
+		// Text reaching execution through a program no list of code-runners
+		// named: only programs known NOT to execute their input earn the data
+		// pass.
+		`printf 'gh search issues token\n' > /tmp/zzs-038 && chmod +x /tmp/zzs-038 && /tmp/zzs-038`,
+		`printf 'gh search issues token\n' > zzs && chmod +x zzs && PATH=.:$PATH zzs`,
+		`git -c alias.zz='!gh search issues token' zz`,
+		`printf 'all:\n\tgh search issues token\n' | make -f -`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -212,6 +281,38 @@ func TestT038_19_ScannerWriteAndNonSearchGhAllowed(t *testing.T) {
 		`gh pr view 7 -R cli/cli --comments`,
 		`gh api repos/cli/cli/issues/123`,
 		`gh --version`,
+		`gh issue list -R cli/cli --label bug --limit 5`,
+		`gh auth status`,
+		`gh api -H 'Accept: application/vnd.github.raw' repos/elastic/elasticsearch/contents/README.md`,
+		// Ordinary gh work is not searching: none of it needs a scanner.
+		`gh pr create --title fix --body done`,
+		`gh repo clone cli/cli`,
+		`gh pr diff 7 -R cli/cli`,
+		`gh pr checks 7 -R cli/cli`,
+		`gh run list -R cli/cli`,
+		`gh label list -R cli/cli`,
+		`gh status`,
+		`gh browse -R cli/cli`,
+		`gh search issues --help`,
+		`gh issue -R cli/cli view 1`,
+		// Lines that merely MENTION gh — the mention is an argument of a
+		// program that runs no code, or of gh itself.
+		`git commit --allow-empty -m "fix gh auth"`,
+		`command -v gh`,
+		`which gh`,
+		`type gh`,
+		`echo "done with gh"`,
+		`gh issue view 1 -R cli/cli | grep -c gh`,
+		`gh pr create --title "Update gh workflow" --body b`,
+		// -l takes a value: -lSecurity is --label Security, not -S.
+		`gh issue list -R cli/cli -lSecurity`,
+		// A heredoc or here-string that feeds no code is data: notes, a commit
+		// message, a grep's input — and a plain data write.
+		"cat > NOTES.md <<'EOF'\nWe ran gh search issues \"auth token\" and found little.\nEOF",
+		"tee notes.md <<'EOF'\nnext: gh search code token\nEOF",
+		"git commit --allow-empty -F - <<'EOF'\nfix gh auth\nEOF",
+		`grep -c token <<< "gh search issues token"`,
+		`echo 'we used gh search issues token' > notes.md`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -271,6 +372,22 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 		`wget -qO- https://github.com/owner/repo/issues/1`,
 		`cd sub && curl -H 'Accept: application/json' https://api.github.com/repos/owner/repo`,
 		`bash -c 'curl https://gist.github.com/someone/abc'`,
+		`curl -s https://github.com./owner/repo`,
+		`curl -sL https://raw.github.com/owner/repo/main/SECURITY.md`,
+		// A URL built from a variable: the parser cannot resolve $U, and the
+		// argument reads `/search/issues`.
+		`U=https://api.github.com; curl -s $U/search/issues?q=token`,
+		`H=api.github.com; curl -s "https://$H/repos/owner/repo"`,
+		`curl -s "$(printf https://api.github.com)/search/issues"`,
+		// URLs from a file the rule cannot read, and from stdin.
+		`curl -s -K fetch.cfg`,
+		`curl --config=fetch.cfg`,
+		`wget -qi urls.txt`,
+		`wget --input-file=urls.txt`,
+		`echo https://github.com/owner/repo | xargs curl -s`,
+		`curl -s https:github.com/owner/repo`,
+		`curl -s https://git%68ub.com/owner/repo`,
+		`curl -s https://140.82.112.6/repos/owner/repo`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -291,6 +408,16 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 		`curl -s "https://example.com/?u=https://github.com/owner/repo"`,
 		`wget -qO- https://docs.github.com/en/rest`,
 		`echo https://github.com/owner/repo`,
+		`curl -s https://github.com.evil.example/owner/repo`,
+		`Q=token; curl -s "https://owasp.org/?q=$Q"`,
+		`curl -s -o out.json -H 'Accept: application/json' https://owasp.org/x`,
+		// A GitHub mention that cannot feed the fetch: after it in its
+		// pipeline, or in another command of the line.
+		`curl -s https://pypi.org/pypi/requests/json | grep github.com`,
+		`curl -s https://example.com/health; git commit --allow-empty -m "fixes https://github.com/o/r/issues/1"`,
+		`curl -s https://8.8.8.8/`,
+		// A variable holding a GitHub URL that the fetch never expands.
+		`REPO=https://github.com/cli/cli; echo $REPO; curl -s https://example.com/`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)

@@ -286,14 +286,14 @@ func TestModule_FieldsPerKind(t *testing.T) {
 	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldResultKnown, FieldOldMarkers, FieldNewMarkers, grounding.FieldCitations},
 		fieldsOf[KindPreUpdate],
 		"an update carries both contents; resultKnown makes an uncomputable newContent askable")
-	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers, grounding.FieldCitations},
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldContentKnown, FieldOldMarkers, grounding.FieldCitations},
 		fieldsOf[KindPreDelete],
-		"a delete carries only the bytes about to be lost")
+		"a delete carries only the bytes about to be lost, and oldContentKnown says whether they were read")
 
-	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldNewMarkers, FieldSeen, grounding.FieldCitations},
+	assert.Equal(t, []string{FieldPath, FieldNewContent, FieldNewContentKnown, FieldNewMarkers, FieldSeen, grounding.FieldCitations},
 		fieldsOf[KindPostCreate],
 		"a Post create mirrors PreFileCreate, plus seen")
-	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldOldMarkers, FieldNewMarkers, FieldSeen, grounding.FieldCitations},
+	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldNewContent, FieldNewContentKnown, FieldOldMarkers, FieldNewMarkers, FieldSeen, grounding.FieldCitations},
 		fieldsOf[KindPostUpdate],
 		"a Post update carries both settled contents, seen, and no resultKnown")
 	assert.Equal(t, []string{FieldPath, FieldOldContent, FieldOldMarkers, FieldSeen, grounding.FieldCitations},

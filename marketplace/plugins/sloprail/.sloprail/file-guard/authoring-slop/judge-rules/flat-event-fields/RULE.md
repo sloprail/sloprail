@@ -26,9 +26,9 @@ value, silently):
 | --- | --- |
 | `PreFileCreate` | `path`, `newContent`, `resultKnown`, `newMarkers` |
 | `PreFileUpdate` | `path`, `oldContent`, `newContent`, `resultKnown`, `oldMarkers`, `newMarkers` |
-| `PreFileDelete` | `path`, `oldContent`, `oldMarkers` |
-| `PostFileCreate` | `path`, `newContent`, `newMarkers` |
-| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `oldMarkers`, `newMarkers` |
+| `PreFileDelete` | `path`, `oldContent`, `oldContentKnown`, `oldMarkers` |
+| `PostFileCreate` | `path`, `newContent`, `newContentKnown`, `newMarkers` |
+| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `newContentKnown`, `oldMarkers`, `newMarkers` |
 | `PostFileDelete` | `path`, `oldContent`, `oldMarkers` |
 
 So there is no `oldContent` on a create, no `newContent`/`newMarkers` on a

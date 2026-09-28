@@ -63,7 +63,13 @@ unset rules_lib_loaded
 kind="$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
-    # A Post kind carries the SETTLED bytes directly on the flat event.
+    # A Post kind carries the SETTLED bytes directly on the flat event — when
+    # the engine could read them. newContentKnown false (a link to a FIFO or a
+    # device, or past the read cap): the text is unseen, so the check fails
+    # closed rather than judge an empty unit.
+    if [ "$(printf '%s' "$payload" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
+      refuse "unit-satisfies-rules: $path could not be read (not a regular file, or too large), so its rules could not be checked"
+    fi
     content="$(printf '%s' "$payload" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PreFileCreate|PreFileUpdate)

@@ -43,11 +43,14 @@ case "$kind" in
     content="$(field '.event.newContent // ""')"
     ;;
   PostFileCreate | PostFileUpdate)
-    # After the write: judge the file as it now is on disk.
+    # After the write: the settled bytes, which the engine read for you — unless
+    # it could not (newContentKnown false: a link to a FIFO or a device, or a
+    # file past the read cap). A file this rule cannot see is refused, not
+    # waved through as empty.
     [ -n "$path" ] || refuse "the event named no path, so this rule could not check it"
-    abs="${SR_WORKSPACE:-.}/$path"
-    [ -f "$abs" ] || exit 0
-    content="$(cat "$abs")"
+    [ "$(field '.event.newContentKnown')" = "true" ] ||
+      refuse "$path could not be read (not a regular file, or too large), so this rule could not check it"
+    content="$(field '.event.newContent // ""')"
     ;;
   PreFileDelete | PostFileDelete)
     # Deleting a file is not this rule's business.

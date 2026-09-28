@@ -1107,6 +1107,24 @@ func (e *Env) WriteExecutable(projDir, rel, body string) {
 	}
 }
 
+// WrapBinary puts a program named name on the session's PATH ahead of the build
+// under test, so every hook and every script a rule runs finds it first. body is
+// the shell text run BEFORE the real binary; `$REAL` names the real one (in the
+// build dir), and a body that does not exit falls through to `exec "$REAL"
+// "$@"`. For proving how a rule behaves when one of the engine's own commands
+// fails — e.g. `sr-session state list` exiting non-zero — without breaking the
+// hooks that run that same binary for everything else.
+//
+// Must be called before Run. It shares the shim directory with the `claude`
+// shims, which the harness already places first on PATH.
+func (e *Env) WrapBinary(name, body string) {
+	e.t.Helper()
+	script := "#!/bin/sh\nREAL=" + shellQuote(filepath.Join(e.binDir, name)) + "\n" + body + "\nexec \"$REAL\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(e.shimDir, name), []byte(script), 0o755); err != nil {
+		e.t.Fatalf("harness: write %s wrapper: %v", name, err)
+	}
+}
+
 // Exists reports whether a path is present in a project.
 //
 // How a test asks what actually happened to the tree, as opposed to what came

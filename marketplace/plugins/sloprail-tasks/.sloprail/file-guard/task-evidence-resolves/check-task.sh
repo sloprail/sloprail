@@ -88,6 +88,11 @@ unset cite_links_loaded
 kind="$(field '.event.kind // ""')"
 case "$kind" in
   PostFileCreate | PostFileUpdate)
+    # newContentKnown (declared on the Post kinds, internal/filemod/module.go)
+    # false: the engine could not read the settled file — a link to a FIFO or a
+    # device, or past the read cap. Unseen: refuse rather than pass unchecked.
+    [ "$(field '.event.newContentKnown // false')" = "true" ] ||
+      refuse "task-evidence-resolves: $path could not be read (not a regular file, or too large), so it could not be checked"
     abs="$root/$path"
     # Written and then removed within the cycle: nothing to check, nothing wrong.
     [ -f "$abs" ] || exit 0

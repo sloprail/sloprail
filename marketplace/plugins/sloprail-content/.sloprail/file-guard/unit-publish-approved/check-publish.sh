@@ -82,7 +82,10 @@ case "$kind" in
     content="$(field '.event.newContent // ""')" || exit 1
     ;;
   PostFileCreate|PostFileUpdate)
-    # A Post kind carries the SETTLED bytes directly on the flat event.
+    # A Post kind carries the SETTLED bytes directly on the flat event — when
+    # the engine could read them (newContentKnown). Unread: refuse, unchecked.
+    [ "$(field '.event.newContentKnown // false')" = "true" ] ||
+      refuse "unit-publish-approved: $path could not be read (not a regular file, or too large), so its publish state could not be checked"
     content="$(field '.event.newContent // ""')" || exit 1
     ;;
   PreFileDelete|PostFileDelete)
