@@ -219,11 +219,13 @@ would reject (an integer key, a custom tag) still answers.
   horizontal rule — however many colons it has — claims nothing. A frontmatter placed after a
   byte-order mark or blank lines is treated the same way: harmless unless it
   claims published. A file with no frontmatter at all claims nothing.
-- The status is read with `sr-file field`, so the sloprail binaries must be the
-  release this plugin ships with, or newer (plugin versions move in lockstep
-  with releases). Against an older `sr-file` every unit write is
-  refused with a message naming the upgrade (`install.sh`, or
-  `make distribute-local`).
+- The status is read with `sr-file field`, which first ships in the sloprail
+  release after 0.2.1, so the sloprail binaries must be newer than 0.2.1.
+  Against an older `sr-file` every unit write is refused with a message naming
+  the installed version and the upgrade (`install.sh`, or
+  `make distribute-local`). The marketplace serves this plugin from the default
+  branch while `install.sh` installs the latest release, so until a release
+  newer than 0.2.1 is out, marketplace users get that refusal.
 - A unit that is not published is not this guard's business, valid or not.
 
 A broken field is never a way to publish unchecked.

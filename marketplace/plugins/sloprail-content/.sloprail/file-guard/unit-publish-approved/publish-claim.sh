@@ -44,13 +44,20 @@
 # A caller treats undecidable as it would yes (the `when` applies the approval,
 # the check refuses), and unsupported as a refusal naming the upgrade.
 
-# The upgrade, naming the release this plugin ships with (its plugin.json, three
-# levels above this guard's folder): the sloprail binaries must be that release
-# or newer. Plugin versions move in lockstep with releases (`make bump-version`,
-# checked by `verify-version`), so a released plugin names a release whose
-# sr-file has `field`. Unreadable, it says so rather than guessing a number.
-publish_claim_plugin_version="$(jq -r '.version // empty' "${SR_GUARDRAIL_DIR:-.}/../../../.claude-plugin/plugin.json" 2>/dev/null)"
-publish_claim_upgrade="sloprail-content needs \`sr-file field\`, from the sloprail release this plugin ships with (${publish_claim_plugin_version:-see its plugin.json}) or newer; the sr-file on PATH is missing or older — upgrade the sloprail binaries (install.sh, or make distribute-local)."
+# The minimum is what this code needs, not this plugin's own version: the
+# marketplace serves the plugin from the default branch while users run the
+# latest RELEASED binaries, so the plugin can be ahead of every release. `sr-file
+# field` first ships in the release after 0.2.1, so that is the minimum — a
+# constant that stays true, never bumped.
+publish_claim_field_after="0.2.1"
+
+# publish_claim_upgrade_message — the refusal for a missing `sr-file field`,
+# naming the sr-file actually installed (asked only when needed).
+publish_claim_upgrade_message() {
+  local installed
+  installed="$(sr-file --version 2>/dev/null | awk '{ print $NF; exit }')"
+  printf '%s' "sloprail-content needs \`sr-file field\`, which is in sloprail releases newer than ${publish_claim_field_after}; the installed sr-file is ${installed:-missing (not on PATH)} — upgrade the sloprail binaries to a newer release (install.sh, or make distribute-local)."
+}
 
 # claim_of_unclosed TEXT — TEXT is what follows an opening fence never closed
 # (or one sr-file did not see): the whole of it, then its first paragraph, as
@@ -126,7 +133,7 @@ publish_claim() {
       ;;
     *)
       if [ "$code" -eq 64 ] || ! sr-file field --help >/dev/null 2>&1; then
-        claim="unsupported" claim_why="$publish_claim_upgrade"
+        claim="unsupported" claim_why="$(publish_claim_upgrade_message)"
       else
         claim="undecidable" claim_why="$out"
       fi

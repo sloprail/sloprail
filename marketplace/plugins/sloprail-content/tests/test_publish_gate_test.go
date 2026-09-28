@@ -444,10 +444,10 @@ func TestPublish_OlderSRFileAsksForTheUpgrade(t *testing.T) {
 	e.InstallShim("sr-session", "#!/bin/sh\nexec "+shq(e.BinPath("sr-session"))+` "$@"
 `)
 	e.InstallShim("sr-file", `#!/bin/sh
-if [ "$1" = "field" ]; then
-  echo 'Error: unknown command "field" for "sr-file"' >&2
-  exit 1
-fi
+case "$1" in
+  --version) echo "sr-file version 0.2.1"; exit 0 ;;
+  field) echo 'Error: unknown command "field" for "sr-file"' >&2; exit 1 ;;
+esac
 exec `+shq(e.BinPath("sr-file"))+` "$@"
 `)
 
@@ -460,6 +460,15 @@ exec `+shq(e.BinPath("sr-file"))+` "$@"
 	}
 	if !res.Saw("sloprail-content needs `sr-file field`") || !res.Saw("upgrade the sloprail binaries") {
 		t.Errorf("the refusal does not name the upgrade:\n%s", res.Output)
+	}
+	// The minimum is what the code needs — a release NEWER than 0.2.1 — and the
+	// refusal names what is installed, so a user on 0.2.1 is never told to
+	// upgrade to "0.2.1 or newer", the release they already have.
+	if !res.Saw("newer than 0.2.1") || !res.Saw("installed sr-file is 0.2.1") {
+		t.Errorf("the refusal does not ask for a release newer than 0.2.1 and name the installed 0.2.1:\n%s", res.Output)
+	}
+	if res.Saw("or newer") {
+		t.Errorf("the refusal asks for a minimum the installed release already meets:\n%s", res.Output)
 	}
 	if res.Saw("fix the frontmatter") || res.Saw("Only the user publishes") {
 		t.Errorf("the refusal blames the frontmatter or asks for an approval instead of the upgrade:\n%s", res.Output)

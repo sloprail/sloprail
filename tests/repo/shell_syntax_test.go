@@ -119,7 +119,8 @@ func repoRoot(t *testing.T) string {
 
 // bash4Only matches constructs bash 3.2 — macOS's /bin/bash, which a hook may
 // run under — does not have: case fall-through (;& ;;&), |&, coproc, case
-// modification (${x,,} ${x^^}), associative arrays, mapfile/readarray.
+// modification (${x,,} ${x^^}), associative arrays, mapfile/readarray, [[ -v,
+// namerefs (declare -n), parameter transformation (${x@Q}).
 var bash4Only = []struct{ name, pattern string }{
 	{"case fall-through ;& or ;;&", `(^|[^;&])(;;&|;&)[[:space:]]*($|#)`},
 	{"|& (pipe stderr)", `(^|[^\[\^|])\|&`},
@@ -127,6 +128,9 @@ var bash4Only = []struct{ name, pattern string }{
 	{"case modification ${x,,} / ${x^^}", `\$\{[A-Za-z_][A-Za-z0-9_]*(,,?|\^\^?)[^}]*\}`},
 	{"associative array (declare/local/typeset -A)", `(^|[[:space:];])(declare|local|typeset)[[:space:]]+-[a-zA-Z]*A`},
 	{"mapfile / readarray", `(^|[[:space:];&|(])(mapfile|readarray)([[:space:]]|$)`},
+	{"[[ -v (variable is set)", `\[\[[[:space:]]+!?[[:space:]]*-v[[:space:]]`},
+	{"nameref (declare/local/typeset -n)", `(^|[[:space:];])(declare|local|typeset)[[:space:]]+-[a-zA-Z]*n`},
+	{"${x@Q} (parameter transformation)", `\$\{[A-Za-z_][A-Za-z0-9_]*@[QEPAaKkUuL]\}`},
 }
 
 // Shipped scripts use only what bash 3.2 has: a hook may run under macOS's
@@ -181,6 +185,7 @@ func TestBash4OnlyScanCatchesEachConstruct(t *testing.T) {
 	for _, line := range []string{
 		`  a) echo a ;&`, `  a) echo a ;;&`, `cmd |& tee log`, `coproc worker { cat; }`,
 		`echo "${name,,}"`, `echo "${name^^}"`, `declare -A seen`, `local -A m`, `mapfile -t lines < f`, `readarray lines`,
+		`if [[ -v name ]]; then`, `[[ ! -v name ]]`, `declare -n ref=name`, `local -n ref=$1`, `printf '%s' "${val@Q}"`,
 	} {
 		hit := false
 		for _, c := range bash4Only {
@@ -194,6 +199,7 @@ func TestBash4OnlyScanCatchesEachConstruct(t *testing.T) {
 	}
 	for _, line := range []string{
 		`grep -qE "(claude)[^|&;]*(--print)"`, `case $x in a) echo a ;; esac`, `a && b || c`, `echo "${name:-x}"`, `declare -F f`,
+		`[ -n "$x" ]`, `[[ -n $x ]]`, `echo user@example.com`, `local name=x`,
 	} {
 		for _, c := range bash4Only {
 			if regexp.MustCompile(c.pattern).MatchString(line) {
