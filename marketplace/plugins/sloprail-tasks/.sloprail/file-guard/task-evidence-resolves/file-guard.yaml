@@ -46,7 +46,7 @@ match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 # Pre unverifiable — a preventive guard fails CLOSED engine-side there — and a
 # write that reached the tree without passing pre-tool is judged at Stop, where the
 # event's oldContent is the session baseline and its citations are those recorded
-# for the path this session (cited changes accumulate). check-task.sh
+# for the cited changes that landed on the path this session. check-task.sh
 # handles both moments: it dispatches on .event.kind, consulting .event.resultKnown
 # on the Pre kinds before reading .event.newContent, and reading the file on disk
 # on Post.

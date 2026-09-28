@@ -20,7 +20,6 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/grounding"
-	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
 
@@ -74,6 +73,55 @@ func isSRFileCall(literals []string) bool {
 	return pureGlue[literals[0]]
 }
 
+// srFileCallFor is isSRFileCall that also accepts the program named by a PATH
+// (`/opt/sr/bin/sr-file`, `./bin/sr`) when that path, relative to cwd and
+// through symbolic links, IS the sr-file or sr installed beside this engine —
+// the very binary resolve mode runs, so the dry run and the real run are the
+// same program. Any other program named sr-file is whatever sits there, and is
+// never run ahead of time.
+func srFileCallFor(cwd string) func(literals []string) bool {
+	return func(literals []string) bool {
+		if isSRFileCall(literals) {
+			return true
+		}
+		name := literals[0]
+		if !strings.Contains(name, "/") {
+			return false
+		}
+		base := filepath.Base(name)
+		if base != "sr-file" && base != "sr" {
+			return false
+		}
+		if !filepath.IsAbs(name) {
+			if cwd == "" {
+				return false
+			}
+			name = filepath.Join(cwd, name)
+		}
+		if !sameBinary(name, filepath.Join(siblingDir(), base)) {
+			return false
+		}
+		return isSRFileCall(append([]string{base}, literals[1:]...))
+	}
+}
+
+// siblingDir is the directory this engine's own binary sits in. A variable so
+// a test can name another.
+var siblingDir = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(exe)
+}
+
+// sameBinary reports whether a and b are one existing file.
+func sameBinary(a, b string) bool {
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	return errA == nil && errB == nil && !ai.IsDir() && os.SameFile(ai, bi)
+}
+
 func groundedVerb(v string) bool {
 	return v == grounding.VerbWrite || v == grounding.VerbEdit || v == grounding.VerbDelete
 }
@@ -100,14 +148,65 @@ func requiresCitation(loaded declaration.Loaded) bool {
 	return false
 }
 
+// citeRecord is the record a pre-tool call's citations resolve from: the
+// caller's own where it is on disk, and whether the caller is KNOWN to be a
+// sub-agent — its payload says so and Path is its own record — in which case
+// Path is never read as a root (transcript.ResolveSubagentCitation).
+type citeRecord struct {
+	Path     string
+	Subagent bool
+}
+
+// resolveNotes is what a pure sr-file line's dry run said about the changes it
+// could not compute: each failure against its own target (Reportable path), in
+// the order the line ran them, and — for a failure sr-file could not tie to a
+// target, such as an argument it could not parse — the line's own stderr.
+type resolveNotes struct {
+	failed []resolveFailure
+	line   string
+}
+
+type resolveFailure struct{ path, said string }
+
+// For is the note a refusal of the change to path quotes: sr-file's own words
+// about THAT file; when the dry run never reached it, which call stopped the
+// line (the last to fail — every call after it that did not run was skipped
+// on its account) and what it said; or the line's unattributed words when
+// sr-file tied its failure to no file.
+func (n resolveNotes) For(path string) string {
+	var own []string
+	for _, f := range n.failed {
+		if f.path == path {
+			own = append(own, f.said)
+		}
+	}
+	if len(own) > 0 {
+		return strings.Join(own, "\n")
+	}
+	if len(n.failed) > 0 {
+		last := n.failed[len(n.failed)-1]
+		return fmt.Sprintf("sr-file never computed this change: the line stopped at the sr-file call on %s, which said:\n%s", last.path, last.said)
+	}
+	return n.line
+}
+
+// groundResult is what grounding one pre-tool call yields.
+type groundResult struct {
+	events []event.Event
+	notes  resolveNotes
+	// wholes are the paths an sr-file write in the line states in full.
+	wholes map[string]bool
+}
+
 // groundPreEvents resolves and attaches citations to one pre-tool call's
-// events, returning the events to dispatch, the citations each touched file
-// path was grounded in (for recordCitations), and — when a pure sr-file line's
-// dry run said why it could not compute a change — sr-file's own words, so a
-// refusal of the uncomputed change can name the cause instead of guessing.
-func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, transcriptPath string, events []event.Event) ([]event.Event, map[string][]transcript.Citation, string) {
+// events, returning the events to dispatch, the paths an sr-file write states
+// in full, and — when a pure sr-file line's dry run said why it could not
+// compute a change — sr-file's own words, by the file each is about, so a
+// refusal of that uncomputed change can name the cause instead of guessing.
+func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, cite citeRecord, events []event.Event) groundResult {
+	wholes := map[string]bool{}
 	var chain []transcript.Citation
-	var note string
+	var notes resolveNotes
 	perPath := map[string][]transcript.Citation{}
 
 	var in struct {
@@ -126,7 +225,7 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, tr
 			}
 			key := filemod.Reportable(absFrom(p.Cwd, t.Path), root)
 			targets[key] = t.Grounded.Verb
-			perPath[key] = append(perPath[key], resolveAll(transcriptPath, t.Grounded.Cites)...)
+			perPath[key] = append(perPath[key], resolveAll(cite, t.Grounded.Cites)...)
 		}
 		for _, inv := range commandmod.ExtractCommand(in.Command).Invocations {
 			// An invocation's argv DROPS an unreadable word, so `sr-file delete
@@ -142,17 +241,25 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, tr
 				}
 			}
 			if g, ok, err := grounding.FromArgv(inv.Argv); ok && err == nil && g.File == nil {
-				chain = append(chain, resolveAll(transcriptPath, g.Cites)...)
+				chain = append(chain, resolveAll(cite, g.Cites)...)
 			}
 		}
-		if commandmod.OnlyCalls(in.Command, isSRFileCall) {
-			records, said, err := runResolve(in.Command, p.Cwd, transcriptPath)
+		if commandmod.OnlyCalls(in.Command, srFileCallFor(p.Cwd)) {
+			records, failed, said, err := runResolve(in.Command, p.Cwd, cite.Path)
 			if err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: sr-file resolve:", err)
 			} else {
-				events = replaceWithResolved(events, records, root, transcriptPath, perPath)
+				events = replaceWithResolved(events, records, root, cite, perPath)
+				for _, r := range records {
+					if r.Verb == grounding.VerbWrite {
+						wholes[filemod.Reportable(r.Path, root)] = true
+					}
+				}
 			}
-			note = said
+			notes.line = said
+			for _, f := range failed {
+				notes.failed = append(notes.failed, resolveFailure{path: filemod.Reportable(f.Path, root), said: clip(f.Error, resolveNoteMax)})
+			}
 		}
 		events = ensureFileEvents(events, targets, root)
 	}
@@ -162,7 +269,6 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, tr
 	for _, k := range sortedKeys(perPath) {
 		all = append(all, perPath[k]...)
 	}
-	grounded := map[string][]transcript.Citation{}
 	for i, e := range events {
 		switch e.Kind {
 		case commandmod.KindPreInvoke:
@@ -171,23 +277,27 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, tr
 			path, _ := e.Fields[filemod.FieldPath].(string)
 			cs := dedupe(append(append([]transcript.Citation{}, chain...), perPath[path]...))
 			events[i].Fields[grounding.FieldCitations] = grounding.ToWire(cs)
-			grounded[path] = cs
 		}
 	}
-	return events, grounded, note
+	return groundResult{events: events, notes: notes, wholes: wholes}
 }
 
 // resolveAll grounds each request in the session's own records — the user pool
-// in the root's, the tool_result pool in the root's and its sub-agents' (see
-// transcript.ResolveCitation) — keeping those that resolve. One that does not is simply not a citation: the requirement
+// in the root's, the tool_result pool in the caller's own first and then the
+// root's and its sub-agents' (see transcript.ResolveCitation) — keeping those
+// that resolve. One that does not is simply not a citation: the requirement
 // that one exist is a rule's, and a rule refusing names what is missing.
-func resolveAll(transcriptPath string, reqs []transcript.CitationRequest) []transcript.Citation {
-	if transcriptPath == "" {
+func resolveAll(cite citeRecord, reqs []transcript.CitationRequest) []transcript.Citation {
+	if cite.Path == "" {
 		return nil
+	}
+	resolve := transcript.ResolveCitation
+	if cite.Subagent {
+		resolve = transcript.ResolveSubagentCitation
 	}
 	var out []transcript.Citation
 	for _, r := range reqs {
-		if c, err := transcript.ResolveCitation(transcriptPath, r); err == nil {
+		if c, err := resolve(cite.Path, r); err == nil {
 			out = append(out, c)
 		}
 	}
@@ -198,11 +308,11 @@ func resolveAll(transcriptPath string, reqs []transcript.CitationRequest) []tran
 // session's own records resolve its quote, in its pools, to the same entry —
 // the same line of the same file, since a tool_result may resolve in a
 // sub-agent's record rather than the root's.
-func reground(transcriptPath string, cs []transcript.Citation) []transcript.Citation {
+func reground(cite citeRecord, cs []transcript.Citation) []transcript.Citation {
 	var out []transcript.Citation
 	for _, c := range cs {
 		req := transcript.CitationRequest{Quote: c.Quote, SourceTypes: c.SourceTypes}
-		for _, got := range resolveAll(transcriptPath, []transcript.CitationRequest{req}) {
+		for _, got := range resolveAll(cite, []transcript.CitationRequest{req}) {
 			if got.Path == c.Path && got.Line == c.Line {
 				out = append(out, got)
 			}
@@ -212,15 +322,16 @@ func reground(transcriptPath string, cs []transcript.Citation) []transcript.Cita
 }
 
 // runResolve runs a pure sr-file line in resolve mode and returns what each
-// invocation recorded. The records arrive through a directory this hook names,
-// never through the line's stdout, which is the command's own and may say
-// anything (`sr-file edit ... && echo done`). When the line fails, it also
-// returns what it printed to stderr — sr-file's reason, e.g. a quote that
-// resolves to no message — trimmed to what a refusal can quote.
-func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, string, error) {
+// invocation recorded — the changes it computed, and the invocations that
+// failed, each against its own target. The records arrive through a directory
+// this hook names, never through the line's stdout, which is the command's own
+// and may say anything (`sr-file edit ... && echo done`). When the line fails,
+// it also returns what it printed to stderr — sr-file's reason, e.g. a quote
+// that resolves to no message — trimmed to what a refusal can quote.
+func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, []grounding.Failed, string, error) {
 	dir, err := os.MkdirTemp("", "sr-file-resolve-")
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	defer os.RemoveAll(dir)
 
@@ -243,28 +354,42 @@ func runResolve(line, cwd, transcriptPath string) ([]grounding.Resolved, string,
 		said = clip(strings.TrimSpace(stderr.String()), resolveNoteMax)
 	}
 	if ctx.Err() != nil {
-		return nil, "", fmt.Errorf("timed out after %s", resolveTimeout)
+		return nil, nil, "", fmt.Errorf("timed out after %s", resolveTimeout)
 	}
 
-	f, err := os.Open(grounding.ResolvedFile(dir))
+	out, err := readJSONLines[grounding.Resolved](grounding.ResolvedFile(dir))
+	if err != nil {
+		return nil, nil, said, err
+	}
+	failed, err := readJSONLines[grounding.Failed](grounding.FailedFile(dir))
+	if err != nil {
+		return nil, nil, said, err
+	}
+	return out, failed, said, nil
+}
+
+// readJSONLines reads one T per line of the file at path; none when it does not
+// exist.
+func readJSONLines[T any](path string) ([]T, error) {
+	f, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return nil, said, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, said, err
+		return nil, err
 	}
 	defer f.Close()
-	var out []grounding.Resolved
+	var out []T
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<30)
 	for sc.Scan() {
-		var r grounding.Resolved
+		var r T
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
-			return nil, said, fmt.Errorf("unreadable record: %w", err)
+			return nil, fmt.Errorf("unreadable record: %w", err)
 		}
 		out = append(out, r)
 	}
-	return out, said, sc.Err()
+	return out, sc.Err()
 }
 
 // resolveNoteMax bounds how much of a failed dry run's stderr a refusal quotes.
@@ -286,8 +411,8 @@ func clip(s string, max int) string {
 // runs the sr-file installed beside the engine judging it.
 func siblingPath() string {
 	path := os.Getenv("PATH")
-	if exe, err := os.Executable(); err == nil {
-		return filepath.Dir(exe) + string(os.PathListSeparator) + path
+	if dir := siblingDir(); dir != "" {
+		return dir + string(os.PathListSeparator) + path
 	}
 	return path
 }
@@ -300,7 +425,7 @@ func siblingPath() string {
 //
 // A record's citations are sr-file's say-so, so each is kept only when the
 // session's own record grounds its quote on the same line (reground).
-func replaceWithResolved(events []event.Event, records []grounding.Resolved, root, transcriptPath string, perPath map[string][]transcript.Citation) []event.Event {
+func replaceWithResolved(events []event.Event, records []grounding.Resolved, root string, cite citeRecord, perPath map[string][]transcript.Citation) []event.Event {
 	type change struct {
 		first, last grounding.Resolved
 		cites       []transcript.Citation
@@ -334,7 +459,7 @@ func replaceWithResolved(events []event.Event, records []grounding.Resolved, roo
 	}
 	for _, key := range order {
 		ch := changes[key]
-		perPath[key] = reground(transcriptPath, ch.cites)
+		perPath[key] = reground(cite, ch.cites)
 		existed := ch.first.Existed
 		fe := filemod.FileEvent{Path: key}
 		if existed {
@@ -419,123 +544,6 @@ func ensureFileEvents(events []event.Event, targets map[string]string, root stri
 		}
 	}
 	return events
-}
-
-// recordCitations remembers, per file path, the citations a permitted pre-tool
-// call grounded its change in, so the Post events at Stop — built from the tree
-// difference, which knows nothing of commands — carry them too.
-//
-// Cited changes to one file accumulate, and an uncited change leaves them in
-// place: a Post event carries every citation the file's changes were made with
-// this session. Clearing on an uncited change would make a grounded task lose
-// its ask the moment its status is flipped with a plain edit. A rule that must
-// refuse every uncited change does so at pre-tool, where it is preventive.
-func recordCitations(store sessionstate.Store, grounded map[string][]transcript.Citation) error {
-	if store == nil || len(grounded) == 0 {
-		return nil
-	}
-	for attempt := 0; attempt < 5; attempt++ {
-		old, _, err := store.Meta(sessionstate.MetaCitations)
-		if err != nil {
-			return err
-		}
-		all := map[string][]transcript.Citation{}
-		if old != "" {
-			_ = json.Unmarshal([]byte(old), &all)
-		}
-		for path, cs := range grounded {
-			if len(cs) > 0 {
-				all[path] = dedupe(append(all[path], cs...))
-			}
-		}
-		raw, err := json.Marshal(all)
-		if err != nil {
-			return err
-		}
-		ok, err := store.SwapMeta(sessionstate.MetaCitations, old, string(raw))
-		if err != nil || ok {
-			return err
-		}
-	}
-	return fmt.Errorf("citations not recorded: the record kept changing underneath")
-}
-
-// attachRecordedCitations sets `citations` on each Post file event to what the
-// session recorded for its path — and what the sub-agents it dispatched
-// recorded for it (delegatedCitations): in a shared tree a sub-agent's change
-// is also in its dispatcher's difference, and the dispatcher's cycle judging
-// it must see the citations the change was made with.
-func attachRecordedCitations(store sessionstate.Store, events []event.Event, delegated map[string][]transcript.Citation) {
-	all := recordedCitations(store)
-	for path, cs := range delegated {
-		all[path] = dedupe(append(all[path], cs...))
-	}
-	if len(all) == 0 {
-		return
-	}
-	for i, e := range events {
-		path, _ := e.Fields[filemod.FieldPath].(string)
-		if cs := all[path]; len(cs) > 0 {
-			events[i].Fields[grounding.FieldCitations] = grounding.ToWire(cs)
-		}
-	}
-}
-
-// recordedCitations is what recordCitations kept in store, by path.
-func recordedCitations(store sessionstate.Store) map[string][]transcript.Citation {
-	all := map[string][]transcript.Citation{}
-	if store == nil {
-		return all
-	}
-	raw, ok, err := store.Meta(sessionstate.MetaCitations)
-	if err != nil || !ok || raw == "" {
-		return all
-	}
-	_ = json.Unmarshal([]byte(raw), &all)
-	return all
-}
-
-// delegatedCitations is what the sub-agents dispatched beneath the record at
-// path recorded, by path, in the stores they keep for the same working tree.
-//
-// A sub-agent is a session in its own right, so its pre-tool calls record
-// citations in ITS store; a sub-agent sharing its dispatcher's tree changes
-// files the dispatcher's cycle also sees. Each sub-agent's store is found by
-// its own identity under this cycle's working directory, and read only if it
-// already exists: a sub-agent isolated in its own worktree keeps its store
-// under that worktree, and its files are not in this tree either. None of this
-// is ever written — a dispatcher never opens a store its sub-agent did not.
-func delegatedCitations(p HookPayload, path string) map[string][]transcript.Citation {
-	out := map[string][]transcript.Citation{}
-	if path == "" {
-		return out
-	}
-	subs, err := transcript.DescendantSubagentPaths(path)
-	if err != nil {
-		return out
-	}
-	for _, sub := range subs {
-		id, err := stableID(HookPayload{Cwd: p.Cwd, AgentTranscriptPath: sub})
-		if err != nil {
-			continue
-		}
-		db, err := sessionDBPath(p.Cwd, id)
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(db); err != nil {
-			continue
-		}
-		store, err := sessionstate.Open(db)
-		if err != nil {
-			continue
-		}
-		for k, cs := range recordedCitations(store) {
-			out[k] = dedupe(append(out[k], cs...))
-		}
-		store.Close()
-	}
-	return out
 }
 
 func absFrom(cwd, path string) string {

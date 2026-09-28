@@ -58,6 +58,9 @@ func TestT046_11_UncitedPinnedRuleChangeRefused(t *testing.T) {
 		!res.Saw("refused again if you send it again with the same words") {
 		t.Errorf("the refusal does not say what to cite, which lines are pinned, or what to do instead:\n%s", res.Output)
 	}
+	if !res.Saw("sr-file edit SPEC.md") {
+		t.Errorf("the refusal carries no runnable sr-file command:\n%s", res.Output)
+	}
 	if got := readSpec(t, proj); got != billingSpec {
 		t.Errorf("the refused change reached SPEC.md:\n%s", got)
 	}

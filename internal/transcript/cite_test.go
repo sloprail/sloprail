@@ -566,15 +566,21 @@ func TestToolResultAtResolvesToolResultLine(t *testing.T) {
 // block, so the classifier answers false. A genuine produced result on a later line
 // still answers true, so the exclusion does not over-reject. (A plain typed message,
 // by contrast, is not a tool_result at all.)
+//
+// The answer is paired with the AskUserQuestion call it answers, as it is in every
+// real record. Without the call the result's provenance is unknown and it is
+// dropped for THAT reason (citableResults), so the test would pass whether or not
+// the answer-envelope check exists.
 func TestToolResultAtAnswerEnvelopeIsNotAResult(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
 		userMsg("u1", "just a typed message"), // line 1 — no tool_result block
-		`{"type":"user","uuid":"u2","parentUuid":"u1","isSidechain":false,"message":{"role":"user","content":[`+
-			`{"type":"tool_result","tool_use_id":"t1","content":"The user answered: \"pick one\"=\"option B\". Read carefully."}]}}`, // line 2 — answer envelope
-		toolUseMsg("a2", "u2", "Bash", "go test ./pkg/foo"), // line 3 — the call
+		namedCall("q1", "u1", "t1", "AskUserQuestion", `{"questions":[{"question":"pick one","options":[{"label":"option B"}]}]}`), // line 2 — the question
+		`{"type":"user","uuid":"u2","parentUuid":"q1","isSidechain":false,"message":{"role":"user","content":[`+
+			`{"type":"tool_result","tool_use_id":"t1","content":"The user answered: \"pick one\"=\"option B\". Read carefully."}]}}`, // line 3 — answer envelope
+		toolUseMsg("a2", "u2", "Bash", "go test ./pkg/foo"), // line 4 — the call
 		`{"type":"user","uuid":"u3","parentUuid":"a2","isSidechain":false,"message":{"role":"user","content":[`+
-			`{"type":"tool_result","tool_use_id":"t-a2","content":"PASS: TestFoo (0.01s)\nok  pkg/foo"}]}}`, // line 4 — a real produced result
+			`{"type":"tool_result","tool_use_id":"t-a2","content":"PASS: TestFoo (0.01s)\nok  pkg/foo"}]}}`, // line 5 — a real produced result
 	)
 
 	// A plain typed message is not a tool_result.
@@ -587,14 +593,22 @@ func TestToolResultAtAnswerEnvelopeIsNotAResult(t *testing.T) {
 	// delivery observation. Classifying it as one would let an agent cite the user's
 	// "yes, proceed" as proof the work happened, the exact substitution this check
 	// exists to refuse. It must be false, matching ToolResultAt's own contract.
-	_, ok, err = ToolResultAt(path, 2)
+	_, ok, err = ToolResultAt(path, 3)
 	require.NoError(t, err)
 	assert.False(t, ok, "an answer envelope is the user's words, not a produced result — not a tool_result observation")
+
+	// The same through a citation: the answer grounds in the user pool, never in
+	// the tool_result pool.
+	_, err = ResolveCitation(path, toolReq("option B"))
+	assert.Error(t, err, "an AskUserQuestion answer grounded as tool output")
+	got, err := ResolveCitation(path, userReq("option B"))
+	require.NoError(t, err, "the answer is the user's words")
+	assert.Equal(t, 3, got.Line)
 
 	// A genuine tool-call result IS a tool_result observation, and its body is
 	// returned — the fix rejects the answer envelope without over-rejecting real
 	// results.
-	text, ok, err := ToolResultAt(path, 4)
+	text, ok, err := ToolResultAt(path, 5)
 	require.NoError(t, err)
 	assert.True(t, ok, "a real produced result is a tool_result observation")
 	assert.Contains(t, text, "PASS: TestFoo", "the produced result's body is returned")

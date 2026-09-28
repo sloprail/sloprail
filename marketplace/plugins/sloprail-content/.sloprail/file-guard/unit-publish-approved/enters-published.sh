@@ -10,20 +10,25 @@
 # fail-closed direction; only exit 1 waives the citation, and only on a decided
 # "not a publish".
 #
-# The status is read with the product's own `sr-file validate --emit` against the
-# project's unit.cue. A document whose frontmatter does not parse has no status,
-# so it is not a publish.
+# Whether the unit claims published is publish-claim.sh's answer, shared with
+# check-publish.sh: the frontmatter as written, never read through unit.cue, and
+# frontmatter that opens a fence but does not parse is UNDECIDABLE — which here
+# applies the requirement, like a publish.
 set -uo pipefail
 
-# Undecidable without jq: apply the requirement (exit 0, fail-closed).
+# Undecidable without jq or the shared reader: apply the requirement (exit 0).
 command -v jq >/dev/null 2>&1 || exit 0
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version): a partial reader may answer "no" with a
+# function it calls missing, so only the last-line sentinel proves it loaded
+# whole. Not loaded whole: apply, never read on and waive.
+unset publish_claim_loaded
+# shellcheck source=publish-claim.sh
+. "${SR_GUARDRAIL_DIR:-.}/publish-claim.sh" 2>/dev/null || exit 0
+[ "${publish_claim_loaded:-}" = 1 ] || exit 0
 
 event="$(cat)"
 field() { printf '%s' "$event" | jq -r "$1" 2>/dev/null; }
-schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/unit.cue"
-status_of() {
-  printf '%s' "$1" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null | jq -r '.status // empty' 2>/dev/null
-}
 
 kind="$(field '.event.kind // ""')"
 case "$kind" in
@@ -44,12 +49,27 @@ case "$kind" in
     ;;
 esac
 
-[ "$(status_of "$(field '.event.newContent // ""')")" = "published" ] || exit 1
+# Only a decided "not published" waives; yes and undecidable both apply.
+publish_claim "$(field '.event.newContent // ""')"
+[ "$claim" = "no" ] && exit 1
+# The sr-file on PATH cannot read a status at all: apply, and the refusal's
+# hint is the upgrade (check-publish.sh refuses with the same words).
+if [ "$claim" = "unsupported" ]; then
+  jq -n --arg why "$claim_why" '{hint: $why}'
+  exit 0
+fi
+
+# Already published before this write: not a transition. Only a DECIDED
+# published counts — an old document no reader can parse is not a published one,
+# and treating it as one would waive the approval.
 from=""
 case "$kind" in
-  *Update) from="$(status_of "$(field '.event.oldContent // ""')")" ;;
+  *Update)
+    publish_claim "$(field '.event.oldContent // ""')"
+    [ "$claim" = "yes" ] && exit 1
+    from="$claim_status"
+    ;;
 esac
-[ "$from" = "published" ] && exit 1
 
 # It applies. The hint the refusal carries: only the user publishes, and how —
 # an edit of the status, or for a unit created published, a write.

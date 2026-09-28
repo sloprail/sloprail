@@ -112,17 +112,43 @@ func TestT029_25_UserPoolIsTheRootsFromASubagent(t *testing.T) {
 	}
 }
 
-// T029_26: one quote in the root's output and a sub-agent's is ambiguous, exit
-// 2, with both candidates — root first.
+// T029_26: one quote that two sub-agents printed, and the caller's own record
+// did not, is ambiguous from the root: exit 2, with both candidates.
 func TestT029_26_AmbiguousAcrossRecords(t *testing.T) {
 	e := New(t)
 	root, sub := subagentSessionFiles(t)
-	res := citeFrom(e, root, "tool_result", "SHARED-LINE")
-	if res.Code != 2 {
-		t.Fatalf("a quote in two records exited %d, want 2:\n%s", res.Code, res.Output)
+	other := filepath.Join(filepath.Dir(sub), "agent-def.jsonl")
+	if err := os.WriteFile(other, []byte(strings.Join([]string{
+		sidechainUserMsg("t0", "def", "DISPATCH words: measure it too"),
+		toolCallLine("t1", true, "toolu_other", "echo measured"),
+		toolOutputLine("t2", true, "toolu_other", "measured SUBOUT-4417 attempts"),
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	want := []string{root + ":3", sub + ":5"}
+	res := citeFrom(e, root, "tool_result", "SUBOUT-4417")
+	if res.Code != 2 {
+		t.Fatalf("a quote in two sub-agents' records exited %d, want 2:\n%s", res.Code, res.Output)
+	}
+	want := []string{sub + ":3", other + ":3"}
 	if got := nonEmptyLines(res.Output); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("candidates %q, want %q", got, want)
+	}
+}
+
+// T029_27: one quote in the root's output and a sub-agent's — both read the
+// same file — resolves in the CALLER's own record, exit 0: the entries are
+// identical, so no longer quote could tell them apart, and the root could cite
+// its own output before it dispatched anyone.
+func TestT029_27_TheCallersOwnOutputFirst(t *testing.T) {
+	e := New(t)
+	root, sub := subagentSessionFiles(t)
+	for from, want := range map[string]string{root: root + ":3", sub: sub + ":5"} {
+		res := citeFrom(e, from, "tool_result", "SHARED-LINE")
+		if res.Code != 0 {
+			t.Fatalf("from %s: a quote in the caller's own record and a sub-agent's exited %d, want 0:\n%s", from, res.Code, res.Output)
+		}
+		if got := nonEmptyLines(res.Output); len(got) != 1 || got[0] != want {
+			t.Errorf("from %s: got %q, want the caller's own line %s", from, got, want)
+		}
 	}
 }

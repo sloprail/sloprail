@@ -50,8 +50,15 @@ lib="$gdir/rules-lib.sh"
 if [ ! -f "$lib" ]; then
   refuse "unit-satisfies-rules: rules-lib.sh not found at $lib, so the rule set could not be collected"
 fi
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version): collect_applicable_rules can be defined
+# with rule_applies missing, and then no rule applies. Only the last-line
+# sentinel proves it loaded whole.
+unset rules_lib_loaded
 # shellcheck source=rules-lib.sh
 . "$lib"
+[ "${rules_lib_loaded:-}" = 1 ] \
+  || refuse "unit-satisfies-rules: rules-lib.sh did not load whole (its last-line sentinel rules_lib_loaded is unset), so the rule set could not be collected"
 
 kind="$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in

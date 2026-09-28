@@ -70,6 +70,11 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	if outcome, err := ensureBaseline(store, p.Cwd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: baseline not re-taken:", err)
 	} else if outcome == baselineMoved {
+		// The cited-change history before this cycle describes the line the
+		// tree left; see pruneHistory.
+		if err := pruneHistory(store, cycleStartedAt(store)); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
 		// Worth saying out loud. The next cycle's difference is measured from
 		// somewhere other than where the session began, and a person reading
 		// why a file stopped appearing in it should not have to infer this.

@@ -218,3 +218,8 @@ EOF
 has_user_citation() {
   printf '%s' "$1" | jq -e '[.event.citations[]? | select((.sourceTypes // []) | index("user"))] | length > 0' >/dev/null 2>&1
 }
+
+# LOADED SENTINEL — keep this the LAST line. bash runs a sourced file up to its
+# first syntax error, so a helper can load partly; a caller unsets this,
+# sources, and checks it, which proves the whole file ran.
+scanner_lib_loaded=1

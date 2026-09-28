@@ -52,12 +52,37 @@ const (
 	// it is delivered on every Stop until committed) and is marked `seen`.
 	MetaStopSeenFiles = "stop_seen_files"
 
-	// MetaCitations is, per file path, the citations a permitted pre-tool call
-	// grounded its change to that file in, as a JSON object of path to a list
-	// of citations. The Post events at Stop come from the tree difference, which
-	// knows nothing of the commands that made it; this is how they carry the
-	// citations the change was made with.
+	// MetaCitedPending is the cited changes permitted pre-tool calls are about
+	// to make, not yet known to have landed: a JSON list of {path, abs, change}.
+	// The next hook of the same session settles each — kept in
+	// MetaCitedChanges when the file now holds what the change produces,
+	// dropped when it does not (the call failed, was denied, or never ran).
+	MetaCitedPending = "cited_pending"
+
+	// MetaCitations is, per file path, its history this session: every cited
+	// change that LANDED (the citations it rode on, and the file's state before
+	// and after it, by content hash) and every change the agent did not make,
+	// as a JSON object of path to a list of points. Contents are stored once
+	// each, under their own keys. The Post
+	// events at Stop come from the tree difference, which knows nothing of the
+	// commands that made it; this is how they carry the citations the change
+	// was made with — and how the parts of the change no citation rode on are
+	// told apart from the parts one did.
 	MetaCitations = "citations"
+
+	// MetaCitedCycle is where the session's current cycle stands for cited
+	// changes — before its first hook, open, or ended, and how the agent left
+	// each changed file at its last Stop — as JSON. It is how the first hook
+	// of a cycle tells a change the agent never made (the user's edit between
+	// turns, a branch switch, a file dirty when the session began) from one it
+	// made.
+	MetaCitedCycle = "cited_cycle"
+
+	// MetaCitedUnknown is the files a permitted call changed with resolved
+	// citations but a result not computable ahead of time, as a JSON object of
+	// path to true — so a refusal at Stop can say why the citations did not
+	// count.
+	MetaCitedUnknown = "cited_unknown"
 )
 
 // Meta reads a session fact.
@@ -138,4 +163,39 @@ func (s *store) SwapMeta(key, old, value string) (bool, error) {
 		return false, fmt.Errorf("sessionstate: swap meta %q: %w", key, err)
 	}
 	return n > 0, nil
+}
+
+// MetaKeys lists the meta keys that start with prefix, in key order.
+func (s *store) MetaKeys(prefix string) ([]string, error) {
+	db, err := s.conn()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT key FROM meta WHERE substr(key, 1, ?) = ? ORDER BY key`, len(prefix), prefix)
+	if err != nil {
+		return nil, fmt.Errorf("sessionstate: list meta %q: %w", prefix, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, fmt.Errorf("sessionstate: list meta %q: %w", prefix, err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// DeleteMeta forgets a session fact. Deleting a key never written is not an
+// error.
+func (s *store) DeleteMeta(key string) error {
+	db, err := s.conn()
+	if err != nil {
+		return err
+	}
+	if _, err := db.Exec(`DELETE FROM meta WHERE key = ?`, key); err != nil {
+		return fmt.Errorf("sessionstate: delete meta %q: %w", key, err)
+	}
+	return nil
 }

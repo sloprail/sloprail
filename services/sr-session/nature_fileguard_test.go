@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -246,7 +247,7 @@ func TestRunFileGuardsPreventive_AbsentResultFailsClosed(t *testing.T) {
 	}}
 	seeded := map[string]natures.ContextState{}
 
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, seeded, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, seeded, resolveNotes{})
 	require.NotEmpty(t, reason, "a preventive guard that cannot verify an update must refuse")
 	assert.Contains(t, reason, "always-fine")
 	assert.Contains(t, reason, "could not")
@@ -270,7 +271,7 @@ func TestRunFileGuardsPreventive_KnownResultRunsCheck(t *testing.T) {
 		filemod.FieldResultKnown: true,
 		filemod.FieldNewContent:  "package x",
 	}}
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
 	assert.Empty(t, reason, "a known-result update with a passing check is admitted")
 }
 
@@ -296,7 +297,7 @@ func TestRunFileGuardsPreventive_UnderivableCreateFailsClosed(t *testing.T) {
 		filemod.FieldResultKnown: false,
 	}}
 
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
 	require.NotEmpty(t, reason, "a preventive guard that cannot verify an underivable create must refuse (not pass)")
 	assert.Contains(t, reason, "always-fine")
 	assert.Contains(t, reason, "could not")
@@ -325,7 +326,7 @@ func TestRunFileGuardsPreventive_GenuineEmptyCreateRunsCheck(t *testing.T) {
 		filemod.FieldNewContent:  "",
 		filemod.FieldResultKnown: true,
 	}}
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
 	assert.Empty(t, reason, "a known-result (genuinely-empty) create with a passing check is admitted, not refused")
 }
 
@@ -347,6 +348,117 @@ func TestIsUnderivablePreWrite(t *testing.T) {
 	// resultKnown field.
 	assert.False(t, isUnderivablePreWrite(mk(declaration.KindPreFileDelete, map[string]any{})),
 		"a delete carries no result and must not be treated as an unverifiable write")
+}
+
+// A preventive guard is asked about EVERY file a call changes (issue #87): the
+// first file passes, the second and third fail, and the refusal names both
+// failing files and not the passing one. The check ledger proves each file was
+// handed to the check.
+func TestRunFileGuardsPreventive_ChecksEveryFileOfTheCall(t *testing.T) {
+	dir := t.TempDir()
+	ledger := filepath.Join(dir, "ledger")
+	writeExecutable(t, dir, "bad.sh", `#!/bin/sh
+p="$(cat)"
+path="$(printf '%s' "$p" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+echo "$path" >> "`+ledger+`"
+case "$path" in *bad*) echo '{"reason":"BAD FILE"}'; exit 1 ;; esac
+exit 0
+`)
+	guard := declaration.FileGuard{
+		Name: "no-bad", Match: "src/**", Preventive: true,
+		Checks: []declaration.Check{{Script: "./bad.sh"}}, Dir: dir,
+	}
+	pre := func(path string) event.Event {
+		return event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{
+			filemod.FieldPath: path, filemod.FieldResultKnown: true, filemod.FieldNewContent: "x",
+		}}
+	}
+	events := []event.Event{pre("src/ok.go"), pre("src/bad1.go"), pre("src/bad2.go")}
+
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, events, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
+	require.NotEmpty(t, reason, "a call whose later files fail must be refused")
+	assert.Contains(t, reason, "src/bad1.go")
+	assert.Contains(t, reason, "src/bad2.go")
+	assert.Contains(t, reason, "BAD FILE")
+	assert.NotContains(t, reason, "src/ok.go", "a file the guard passed is not named as refused")
+
+	b, err := os.ReadFile(ledger)
+	require.NoError(t, err)
+	assert.Equal(t, "src/ok.go\nsrc/bad1.go\nsrc/bad2.go\n", string(b), "the check is handed every file, in order")
+}
+
+// Once a file is refused by one guard, a SECOND guard that also selects it is
+// never asked about it — the write is already prevented, and each further
+// check on a file already refused is a run that buys nothing (the same
+// per-file "first refusal ends the matter" T017_07 pins for a single file; #87
+// only adds the axis of checking every OTHER file). The second guard's ledger
+// stays empty for the refused file, but is asked about a second, unrefused one.
+func TestRunFileGuardsPreventive_SecondGuardNotAskedAboutAnAlreadyRefusedFile(t *testing.T) {
+	dir := t.TempDir()
+	ledgerA := filepath.Join(dir, "ledgerA")
+	writeExecutable(t, dir, "refuse.sh", `#!/bin/sh
+p="$(cat)"
+path="$(printf '%s' "$p" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+case "$path" in
+  *bad*) echo '{"reason":"REFUSED BY A"}'; exit 1 ;;
+esac
+exit 0
+`)
+	ledgerB := filepath.Join(dir, "ledgerB")
+	writeExecutable(t, dir, "log.sh", `#!/bin/sh
+p="$(cat)"
+path="$(printf '%s' "$p" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+echo "$path" >> "`+ledgerB+`"
+exit 0
+`)
+	guardA := declaration.FileGuard{Name: "a", Match: "src/**", Preventive: true, Checks: []declaration.Check{{Script: "./refuse.sh"}}, Dir: dir}
+	guardB := declaration.FileGuard{Name: "b", Match: "src/**", Preventive: true, Checks: []declaration.Check{{Script: "./log.sh"}}, Dir: dir}
+	pre := func(path string) event.Event {
+		return event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{
+			filemod.FieldPath: path, filemod.FieldResultKnown: true, filemod.FieldNewContent: "x",
+		}}
+	}
+	events := []event.Event{pre("src/bad.go"), pre("src/other.go")}
+
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guardA, guardB}, events, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
+	require.NotEmpty(t, reason)
+	assert.Contains(t, reason, "src/bad.go")
+	assert.Contains(t, reason, "REFUSED BY A")
+
+	_ = ledgerA // refuse.sh does not log; the ledger name is kept for symmetry
+	b, err := os.ReadFile(ledgerB)
+	require.NoError(t, err)
+	assert.Equal(t, "src/other.go\n", string(b),
+		"guard b must be asked about src/other.go, but never about src/bad.go, which guard a already refused")
+}
+
+// A single-file call's one refusal keeps its wording exactly: no list, no path
+// prefix — the file is the only one the call touches.
+func TestPreventiveRefusals_SingleFileKeepsItsWording(t *testing.T) {
+	r := newPreventiveRefusals([]event.Event{{Kind: declaration.KindPreFileCreate, Fields: map[string]any{filemod.FieldPath: "a.go"}}}, "")
+	assert.Equal(t, "", r.render(), "nothing refused renders as no refusal")
+	r.add("a.go", "the reason (file-guard g)")
+	assert.Equal(t, "the reason (file-guard g)", r.render())
+}
+
+// A multi-file call names each refused file, relative to the workspace, and
+// says a reason shared by several files once.
+func TestPreventiveRefusals_MultiFileNamesEachFileOnce(t *testing.T) {
+	ws := filepath.Join(string(filepath.Separator), "ws")
+	evs := []event.Event{
+		{Kind: declaration.KindPreFileUpdate, Fields: map[string]any{filemod.FieldPath: filepath.Join(ws, "a.go")}},
+		{Kind: declaration.KindPreFileUpdate, Fields: map[string]any{filemod.FieldPath: "b.go"}},
+		{Kind: declaration.KindPreFileUpdate, Fields: map[string]any{filemod.FieldPath: "c.go"}},
+	}
+	r := newPreventiveRefusals(evs, ws)
+	r.add(filepath.Join(ws, "a.go"), "cannot verify (file-guard g)")
+	r.add("b.go", "cannot verify (file-guard g)")
+	r.add("c.go", "other reason (file-guard h)")
+	got := r.render()
+	assert.Contains(t, got, "a.go, b.go: cannot verify (file-guard g)")
+	assert.Contains(t, got, "c.go: other reason (file-guard h)")
+	assert.Equal(t, 1, strings.Count(got, "cannot verify"), "a reason shared by several files is said once")
+	assert.NotContains(t, got, ws+string(filepath.Separator), "paths inside the workspace are named relative to it")
 }
 
 // writeExecutable writes an executable script into dir for a test check.

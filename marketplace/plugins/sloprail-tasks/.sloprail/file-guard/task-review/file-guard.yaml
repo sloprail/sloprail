@@ -22,7 +22,7 @@
 #     `sr-file … --cite:tool_result '<exact output>'`; the session resolved each
 #     quote to one tool_result of its record, and the Post event at Stop carries it
 #     in `.event.citations` (`{quote, sourceTypes, path, line}` — the citations
-#     recorded for this path this session; cited changes accumulate). The
+#     of the cited changes that landed on this path this session). The
 #     reviewer is shown each quote AND the full tool result at that line, via
 #     `sr-session trajectory tool-result --path --line`. The task file itself holds
 #     no transcript path: the repository keeps derived text only.
@@ -127,8 +127,9 @@ checks:
   # to the stale override. Omitting timeout: lets this check inherit
   # whatever the engine judges to be a reasonable bound going forward,
   # instead of freezing this guard's own guess ahead of it.
-  # allowed_tools: [Read] adds Read on top of the engine-granted Write for the
-  # verdict file (the evidence is already expanded INTO the prompt).
+  # allowed_tools: [Read] adds reads outside the project (the evidence is
+  # already expanded INTO the prompt, and the project itself is readable without
+  # any grant). The verdict file's write is the engine's, not this list's.
   - prepare: ./expand-evidence.sh
     judge: ./review-task.md.j2
     model: size-md

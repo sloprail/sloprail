@@ -33,8 +33,16 @@ if [ ! -f "$lib" ]; then
   echo "task-body-is-human-authored: lib-body.sh not found at $lib, so the cited messages could not be assembled" >&2
   exit 1
 fi
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version); only its last-line sentinel proves it
+# loaded whole.
+unset lib_body_loaded
 # shellcheck source=lib-body.sh
 . "$lib"
+if [ "${lib_body_loaded:-}" != 1 ]; then
+  echo "task-body-is-human-authored: lib-body.sh did not load whole (its last-line sentinel lib_body_loaded is unset), so the cited messages could not be assembled" >&2
+  exit 1
+fi
 
 # The same kind dispatch as stage 1, so the two never disagree about which bytes
 # are the body. resultKnown is consulted on both Pre kinds before newContent is read.
@@ -74,8 +82,9 @@ case "$kind" in
     ;;
 esac
 
-# .asks is the event's citations in the user pool only: a path's citations
-# accumulate across its changes, and the tool output a later in_review move cited
-# is not the ask, so the judge is never shown it as if it were.
+# .asks is the event's citations in the user pool only: a path's citations are
+# those of every cited change that landed on it, and the tool output a later
+# in_review move cited is not the ask, so the judge is never shown it as if it
+# were.
 printf '%s' "$payload" | jq --arg body "$body" \
   '{additionalContext: {body: $body, asks: [(.event.citations // [])[] | select(((.sourceTypes // []) | index("user")) != null)]}}'

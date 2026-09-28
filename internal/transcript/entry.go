@@ -53,6 +53,18 @@ type Entry struct {
 	// agent's latest reply begins needs to keep them. Omitted when false.
 	IsMeta bool `json:"isMeta,omitempty"`
 
+	// IsCompactSummary reports the record Claude Code writes when it compacts a
+	// conversation (/compact, or automatically near the context limit): a
+	// `type: "user"` entry with no isMeta whose text is a MODEL's summary of
+	// what came before. Never the person's words. Omitted when false.
+	IsCompactSummary bool `json:"isCompactSummary,omitempty"`
+
+	// IsVisibleInTranscriptOnly reports a record the harness shows in the
+	// transcript view but never sent the agent as the person's turn — the
+	// compaction summary carries it, beside IsCompactSummary. Omitted when
+	// false.
+	IsVisibleInTranscriptOnly bool `json:"isVisibleInTranscriptOnly,omitempty"`
+
 	// Message is what was said or done — the message content for a turn, the
 	// invocation for a tool call. Left undecoded: what is inside is the
 	// harness's shape, and a rule that wants to reach into it is better served

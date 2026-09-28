@@ -35,11 +35,13 @@
 #      CORRESPONDS to the cited words and holds THAT AND NOTHING ELSE.
 #
 # THE POST MOMENT AND UNCITED FRONTMATTER EDITS. A Post event at Stop carries
-# every citation the path's changes were made with this session — cited changes
-# accumulate, and an uncited change (the status-only edits this guard permits)
-# leaves them in place. So a task created with a citation and then moved to
-# in_progress by a plain edit still reaches Stop with its ask's citation. Each
-# uncited BODY change is refused at pre-tool, which is why the guard is preventive.
+# the citations of every cited change that landed on the path this session, and
+# each part of the change no citation rode on must be one body-changed.sh waives
+# (run on that part alone). A status-only edit leaves the body byte-identical, so
+# a task created with a citation and then moved to in_progress by a plain edit
+# still reaches Stop with its ask's citation. Each uncited BODY change is refused
+# at pre-tool, which is why the guard is preventive — and at Stop too, should one
+# reach the tree some other way.
 #
 # FAIL-OPEN RECONCILIATION (flagged, not hidden). The old judge failed OPEN on its
 # own machinery (no sr-agent, a timeout, an unparseable verdict). A judge: check
@@ -72,9 +74,10 @@ checks:
   # prepare when the body did not change. model is size-md (the engine default
   # judge modelset; an unpinned model resolves larger and this can fire several
   # times per turn); no explicit timeout — it runs under the engine's own default
-  # (internal/dispatch/exec.go's defaultCheckTimeout). allowed_tools: [Read] adds
-  # Read on top of the Write the judge substrate always grants for the verdict
-  # file, so the judge may open a cited transcript line or the file on disk.
+  # (internal/dispatch/exec.go's defaultCheckTimeout). The judge reads the
+  # project without any grant (the engine passes it as readonly);
+  # allowed_tools: [Read] adds reads outside it, which is what opens a cited
+  # transcript line under ~/.claude. The verdict file's write is the engine's.
   - prepare: ./resolve-cited-messages.sh
     judge: ./judge-body.md.j2
     model: size-md

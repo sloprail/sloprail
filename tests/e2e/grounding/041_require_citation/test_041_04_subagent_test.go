@@ -296,6 +296,11 @@ func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 	if e.Exists(proj, "memories/results.md") {
 		t.Fatalf("a sub-agent's reply grounded a write as a tool's output:\n%s", res.Output)
 	}
+	// The words ARE in the record, so "not there word for word" would send the
+	// agent looking for a typo: the failure says what those words are.
+	if !res.Saw("a sub-agent's reply (model-written)") {
+		t.Errorf("the failed citation does not say the quote is a sub-agent's reply:\n%s", res.Output)
+	}
 }
 
 // T041_26: a sub-agent quotes its command's output in its reply. The root

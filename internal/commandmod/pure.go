@@ -16,8 +16,7 @@ import (
 // run code, touch a file, or mean something else to the shell that later runs
 // it for real:
 //
-//   - no expansion but globbing, braces and tilde — no command or process
-//     substitution (`$(...)`, backticks, `<(...)` run code during EXPANSION,
+//   - no expansion but a leading `~/` — no command or process substitution (`$(...)`, backticks, `<(...)` run code during EXPANSION,
 //     before any allowed program starts), and no parameter or arithmetic
 //     expansion either: `${X:=a[$(id)]}` then `$((X))`, `${!X}` and `${X@P}`
 //     all run code in bash, and even a plain `$X` is read from an environment
@@ -25,6 +24,16 @@ import (
 //     is set in one shell and not the other), so what it predicts is not what
 //     runs. A word opening with `=` is refused for the same reason: zsh
 //     expands it to a command's path;
+//   - no unquoted glob or brace character anywhere in a word (`*`, `?`, `[`,
+//     `{`, and zsh's extended `^`, `#`, `~`): the ahead-of-time run is bash,
+//     the real one is the user's shell, and the two expand a pattern
+//     differently — zsh reads `memories/**/a.md` recursively where bash leaves
+//     it as text, and brace, extglob and EXTENDED_GLOB rules differ too — so
+//     the file the dry run judged would not be the file the real run changes.
+//     Quoted (`'notes-*.md'`) or escaped (`notes-\*.md`), the character is
+//     text to every shell and the word stays pure. `~` is admitted only as a
+//     bare leading `~` or `~/`, which is $HOME to both; `~name` is a user's
+//     home to bash and may be a named directory to zsh;
 //   - no redirection but here-documents/here-strings on stdin and descriptor
 //     duplication to a NUMBER (`2>&1`) — `>&out.txt` writes a file in bash;
 //   - no pipes, subshells, groups, conditionals, loops, functions, background
@@ -36,10 +45,8 @@ import (
 // allowed receives each call's leading LITERAL words (the program name first,
 // then any literal words up to the first expansion), so it can check a
 // program and a subcommand without being handed text an expansion produced.
-// A literal may still hold a glob or a brace pattern, which the shell expands
-// against the tree — allowed must not treat a word it does not look up by
-// exact name as an option or a program. An unparseable or empty line is not
-// pure.
+// No word it is handed can expand to anything but itself (or a leading `~/`
+// to $HOME). An unparseable or empty line is not pure.
 func OnlyCalls(raw string, allowed func(literals []string) bool) bool {
 	f, err := syntax.NewParser().Parse(strings.NewReader(raw), "")
 	if err != nil || len(f.Stmts) == 0 {
@@ -80,7 +87,7 @@ func pureCall(c *syntax.CallExpr, allowed func([]string) bool) bool {
 	}
 	var literals []string
 	for _, w := range c.Args {
-		if !pureWord(w) || equalsExpansion(w) {
+		if !pureWord(w) || equalsExpansion(w) || shellPattern(w) {
 			return false
 		}
 		if lit, ok := plainWord(w); ok && len(literals) == indexOf(c.Args, w) {
@@ -156,6 +163,40 @@ func equalsExpansion(w *syntax.Word) bool {
 	}
 	lit, ok := w.Parts[0].(*syntax.Lit)
 	return ok && strings.HasPrefix(lit.Value, "=")
+}
+
+// shellPattern reports whether w holds, outside any quotes, a character some
+// shell expands against the file tree or into several words: a glob (`*`, `?`,
+// `[`), a brace (`{`), zsh's EXTENDED_GLOB operators (`^`, `#`, `~` — options
+// an interactive zsh commonly sets), or a `~` that is not a bare leading `~` or
+// `~/`. A backslash-escaped character is text to every shell and is skipped.
+//
+// Refused rather than interpreted: bash (which runs the line ahead of time)
+// and zsh (which a Mac runs it in for real) disagree on `**`, on a pattern
+// that matches nothing, on brace ranges and on extended globs, and a dry run
+// that expanded differently from the real run would have judged another file.
+func shellPattern(w *syntax.Word) bool {
+	for i, p := range w.Parts {
+		lit, ok := p.(*syntax.Lit)
+		if !ok {
+			continue
+		}
+		v := lit.Value
+		for j := 0; j < len(v); j++ {
+			switch v[j] {
+			case '\\':
+				j++ // the next byte is escaped
+			case '*', '?', '[', '{', '^', '#':
+				return true
+			case '~':
+				leading := i == 0 && j == 0
+				if !leading || (len(v) > 1 && v[1] != '/') || (len(v) == 1 && len(w.Parts) > 1) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // plainWord is w's value when it contains no expansion at all — plain text,

@@ -32,6 +32,8 @@ type claudeRecord struct {
 	Timestamp         string          `json:"timestamp"`
 	IsSidechain       bool            `json:"isSidechain"`
 	IsMeta            bool            `json:"isMeta"`
+	IsCompactSummary  bool            `json:"isCompactSummary"`
+	IsTranscriptOnly  bool            `json:"isVisibleInTranscriptOnly"`
 	Message           json.RawMessage `json:"message"`
 	ToolUseResult     json.RawMessage `json:"toolUseResult"`
 	Attachment        json.RawMessage `json:"attachment"`
@@ -51,15 +53,18 @@ type claudeRecord struct {
 // entry converts a record into the canonical shape.
 func (r claudeRecord) entry() Entry {
 	e := Entry{
-		Type:          EntryType(r.Type),
-		UUID:          r.UUID,
-		Timestamp:     r.Timestamp,
-		IsSidechain:   r.IsSidechain,
-		IsMeta:        r.IsMeta,
-		Message:       r.Message,
-		ToolUseResult: r.ToolUseResult,
-		Attachment:    r.Attachment,
-		Cwd:           r.Cwd,
+		Type:        EntryType(r.Type),
+		UUID:        r.UUID,
+		Timestamp:   r.Timestamp,
+		IsSidechain: r.IsSidechain,
+		IsMeta:      r.IsMeta,
+
+		IsCompactSummary:          r.IsCompactSummary,
+		IsVisibleInTranscriptOnly: r.IsTranscriptOnly,
+		Message:                   r.Message,
+		ToolUseResult:             r.ToolUseResult,
+		Attachment:                r.Attachment,
+		Cwd:                       r.Cwd,
 	}
 	if r.ParentUUID != nil {
 		e.ParentUUID = *r.ParentUUID

@@ -101,6 +101,14 @@ func ToolUse(id, name string, input map[string]string) Turn {
 	return Turn{jsonl: toolUse(id, name, input)}
 }
 
+// ToolUseJSON is ToolUse with the input given as a raw JSON object, for a tool
+// whose input carries numbers, nested objects or arrays — values a check must
+// carry through as JSON, which a map of strings cannot express.
+func ToolUseJSON(id, name, inputJSON string) Turn {
+	return Turn{jsonl: fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
+		"e2e-turn-"+id, id, name, inputJSON)}
+}
+
 // ToolUseWithResult returns the TWO turns that model a tool call which produced an
 // artifact a grounding check reads back: the tool_use, and a following record
 // carrying its `toolUseResult`.
@@ -235,6 +243,22 @@ func AnswerQuestion(id string, qa ...[2]string) Turn {
 	return Turn{jsonl: fmt.Sprintf(
 		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s}]}}`,
 		id+"#a", "e2e-turn-"+id, id, jsonStr(content))}
+}
+
+// AskUserQuestion returns the TWO turns of a question the agent asks and the
+// person answers, as a real record holds them: the AskUserQuestion tool_use,
+// then the answer envelope (AnswerQuestion) as the tool_result for that same
+// call. The call matters: a result whose call is not in the record is of
+// unknown provenance and is dropped from the tool-output pool for THAT reason,
+// so an answer without its question cannot show that an answer is kept out of
+// the tool-output pool because it is the user's words.
+//
+// The mock does not implement AskUserQuestion and answers the tool_use with its
+// own error result; the answer envelope follows it for the same id, the way the
+// harness writes the person's selection.
+func AskUserQuestion(id, question, answer string) (Turn, Turn) {
+	use, _ := ToolUseWithResult(id, "AskUserQuestion", map[string]string{"question": question}, "null")
+	return use, AnswerQuestion(id, [2]string{question, answer})
 }
 
 // ToolResult returns ONE turn carrying a tool's RESULT with arbitrary content — the
@@ -511,7 +535,7 @@ func injectMarker(jsonl, marker string) string {
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func jsonStr(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`)
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
 	return `"` + r.Replace(s) + `"`
 }
 

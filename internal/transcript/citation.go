@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -97,6 +99,20 @@ func (e *ResolutionError) Error() string { return e.Msg }
 // reported as errors here so a caller can surface them verbatim. The Citation's
 // Path, Line, Message and Call point into the record the quote resolved in.
 func ResolveCitation(path string, req CitationRequest) (Citation, error) {
+	return resolveCitation(path, req, false)
+}
+
+// ResolveSubagentCitation is ResolveCitation for a caller KNOWN to be a
+// sub-agent — its hook payload says so — whose record is at path. Such a record
+// is never a root, whatever it says about itself or wherever it was filed: when
+// no root can be climbed to from it, the user pool is refused
+// (ErrNoSessionRoot) rather than searched in the sub-agent's own record, where
+// the first "user" message is the parent agent's dispatch.
+func ResolveSubagentCitation(path string, req CitationRequest) (Citation, error) {
+	return resolveCitation(path, req, true)
+}
+
+func resolveCitation(path string, req CitationRequest, subagent bool) (Citation, error) {
 	if req.Quote == "" {
 		return Citation{}, fmt.Errorf("an empty quote grounds nothing")
 	}
@@ -107,7 +123,7 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	var hits []CitationMatch
 	var pools []SourceType
 	for _, st := range req.SourceTypes {
-		matches, err := CiteInSession(path, req.Quote, []SourceType{st})
+		matches, err := citeInSession(path, req.Quote, []SourceType{st}, subagent)
 		if errors.Is(err, ErrNoSessionRoot) {
 			return Citation{}, &ResolutionError{Msg: fmt.Sprintf("citation %s cannot resolve in a sub-agent's trajectory (%s) whose session record is not found: its user messages are the parent agent's dispatch, not the end user's own words. %s", req, path, SubagentUserAdvice)}
 		}
@@ -127,7 +143,12 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 	case len(hits) == 0:
 		msg := fmt.Sprintf("citation %s does not resolve in %s: the quote is not there word for word in that pool (only whitespace may differ)", req, path)
 		if wants(req.SourceTypes, SourceUser) {
-			if hint := UnresolvedUserHint(path, req.Quote); hint != "" {
+			if hint := unresolvedUserHint(path, req.Quote, subagent); hint != "" {
+				msg += ". " + hint
+			}
+		}
+		if wants(req.SourceTypes, SourceToolResult) {
+			if hint := excludedResultHint(path, req.Quote, subagent); hint != "" {
 				msg += ". " + hint
 			}
 		}
@@ -163,15 +184,24 @@ func ResolveCitation(path string, req CitationRequest) (Citation, error) {
 //     dispatched from is searched instead, and ErrNoSessionRoot is returned
 //     when that root is not on disk. No sub-agent's record is ever searched
 //     for the user's words: its "user" message is the parent agent's dispatch.
-//   - SourceToolResult  the root record AND every sub-agent record beneath it
-//     (DescendantSubagentPaths). A sub-agent's tool output is genuine tool
-//     output of this session, and it is recorded only in the sub-agent's own
-//     file. For an orphaned sub-agent record, that record and its own
-//     sub-agents.
+//   - SourceToolResult  the record at path FIRST — the caller's own — and, only
+//     when that holds no match, the root record and every sub-agent record
+//     beneath it (DescendantSubagentPaths). A sub-agent's tool output is genuine
+//     tool output of this session, recorded only in the sub-agent's own file,
+//     so it is found from anywhere in the session. But when the root and a
+//     sub-agent (or two sub-agents) read the same file, the two entries are
+//     identical and no longer quote tells them apart: the caller's own output
+//     is the one it means, and before any sub-agent existed it was the only
+//     one searched. For an orphaned sub-agent record, the session is that
+//     record and its own sub-agents.
 //
 // An empty sources is SourceUser only, as for CiteWithSources.
 func CiteInSession(path, quote string, sources []SourceType) ([]CitationMatch, error) {
-	userIn, toolIn, err := citationRecords(path)
+	return citeInSession(path, quote, sources, false)
+}
+
+func citeInSession(path, quote string, sources []SourceType, subagent bool) ([]CitationMatch, error) {
+	userIn, toolIn, err := citationRecords(path, subagent)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +224,18 @@ func CiteInSession(path, quote string, sources []SourceType) ([]CitationMatch, e
 		add(ms)
 	}
 	if wants(sources, SourceToolResult) {
+		own, err := CiteWithSources(path, quote, []SourceType{SourceToolResult})
+		if err != nil {
+			return nil, err
+		}
+		add(own)
 		for _, r := range toolIn {
+			if len(own) > 0 {
+				break
+			}
+			if sameRecord(r, path) {
+				continue
+			}
 			ms, err := CiteWithSources(r, quote, []SourceType{SourceToolResult})
 			if err != nil {
 				return nil, err
@@ -235,7 +276,11 @@ const SubagentUserAdvice = "You are a sub-agent: " + subagentUserRule
 // --cite:user works for a sub-agent. From the root's record the caller is not
 // known, so a dispatch-prompt match is named without assuming who is asking.
 func UnresolvedUserHint(path, quote string) string {
-	sub := IsSubagentTranscript(path)
+	return unresolvedUserHint(path, quote, false)
+}
+
+func unresolvedUserHint(path, quote string, subagent bool) string {
+	sub := subagent || isSubagentRecord(path)
 	inPrompt := dispatchPromptContains(path, quote)
 	switch {
 	case inPrompt && sub:
@@ -289,8 +334,14 @@ func dispatchPromptContains(path, quote string) bool {
 // disk), and toolIn, the records the tool_result pool is searched in (the root
 // and every sub-agent record beneath it — or, for an orphaned sub-agent record,
 // that record and its own sub-agents).
-func citationRecords(path string) (userIn string, toolIn []string, err error) {
+//
+// subagent is the caller's own word that path is a sub-agent's record: when
+// no root can be climbed to from it, there is no user pool to search.
+func citationRecords(path string, subagent bool) (userIn string, toolIn []string, err error) {
 	userIn = SessionRootOf(path)
+	if subagent && sameRecord(userIn, path) {
+		userIn = ""
+	}
 	top := userIn
 	if top == "" {
 		top = path
@@ -303,16 +354,16 @@ func citationRecords(path string) (userIn string, toolIn []string, err error) {
 }
 
 // entryCalls renders the tool call behind each genuine tool_result on the entry
-// at line, found by its tool_use_id among the record's assistant entries. A
-// result whose call is not in the file (a fixture, a record split across a
-// restart) renders as unknown rather than being dropped, so its absence shows.
+// at line, found by its tool_use_id among the record's assistant entries. Only a
+// citable result is rendered, and a result is citable only when its call is in
+// the record (citableResults), so every id here has its call.
 func entryCalls(path string, line int) (string, error) {
 	entries, err := ReadLines(path)
 	if err != nil {
 		return "", err
 	}
 	calls := map[string]assistantContentBlock{}
-	citable := citableResults(entries)
+	citable := citableFor(path, entries)
 	var ids []string
 	for _, e := range entries {
 		switch {
@@ -332,12 +383,7 @@ func entryCalls(path string, line int) (string, error) {
 	}
 	var out []string
 	for _, id := range ids {
-		b, ok := calls[id]
-		if !ok {
-			out = append(out, "(the call that produced this output is not in the record)")
-			continue
-		}
-		out = append(out, renderCall(b))
+		out = append(out, renderCall(calls[id]))
 	}
 	return strings.Join(out, "\n"), nil
 }
@@ -393,10 +439,10 @@ func entryText(path string, line int, pools []SourceType) (string, error) {
 				parts = append(parts, answerEnvelopes(own.Message)...)
 			}
 			if wants(pools, SourceToolResult) {
-				parts = append(parts, genuineToolResultText(e.Message, citableResults(entries))...)
+				parts = append(parts, genuineToolResultText(e.Message, citableFor(path, entries))...)
 			}
 		case EntryAttachment:
-			if t := queuedCommandText(e.Attachment); t != "" && wants(pools, SourceUser) {
+			if t := queuedCommandText(e.Attachment); t != "" && wants(pools, SourceUser) && !notThePerson(e.Entry) {
 				parts = append(parts, t)
 			}
 		}
@@ -438,4 +484,19 @@ func ResolveCitations(path string, reqs []CitationRequest) ([]Citation, error) {
 		out = append(out, c)
 	}
 	return out, nil
+}
+
+// sameRecord reports whether a and b name the same record — by spelling, or, when
+// both exist, by identity (a symlinked /var and /private/var spell one file
+// twice).
+func sameRecord(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(ai, bi)
 }

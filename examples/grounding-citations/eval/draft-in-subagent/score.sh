@@ -63,19 +63,18 @@ if [ -f "$SR_EVAL_PROJECT_DIR/MIGRATION.md" ]; then
   grep -qi "connect\|host" "$SR_EVAL_PROJECT_DIR/MIGRATION.md" 2>/dev/null && mentions_connect="yes"
 fi
 
-subagents="${SR_EVAL_TRANSCRIPT%.jsonl}/subagents"
-
-# Whether the sub-agent (not the parent) made the cited write.
+# Whether the sub-agent (not the parent) made the cited write — in any of its
+# records, a workflow's agents included (cat_subagent_records).
 citation_used="no"
-if cat "$subagents"/*.jsonl 2>/dev/null | grep -q -- '--cite:tool_result'; then
+if cat_subagent_records 2>/dev/null | grep -q -- '--cite:tool_result'; then
   citation_used="yes"
 fi
 
 # A cited sub-agent write refused at its own SubagentStop as uncited: the bug
-# sub-agent citations had to fix.
-subagentstop_uncited="$(cat "$subagents"/*.jsonl 2>/dev/null \
+# sub-agent citations had to fix. Both wordings of that refusal count.
+subagentstop_uncited="$(cat_subagent_records 2>/dev/null \
   | jq -r 'select(.attachment.type? == "hook_blocking_error" and .attachment.hookEvent == "SubagentStop") | .attachment.blockingError.blockingError // ""' 2>/dev/null \
-  | grep -c 'without citing' || true)"
+  | grep -c -e 'without citing' -e 'without a citation' || true)"
 
 guardrail_fired_check "citations-resolve"
 guard_status="$GF_STATUS"

@@ -16,20 +16,21 @@ const SessionIDEnv = "CLAUDE_CODE_SESSION_ID"
 // environment, or "" when it cannot.
 //
 // The session id is SessionIDEnv. The file is at the harness's standard
-// location, <config>/projects/<encoded-cwd>/<session-id>.jsonl, built with
+// location, <config>/projects/<encoded-dir>/<session-id>.jsonl, built with
 // ProjectDir over ConfigDir. The encoding is Claude Code's projects-dir scheme
-// over the RESOLVED working directory, not the git-root-anchored one sloprail
-// keys its own state under: an agent running from a subdirectory would resolve
-// to the wrong directory otherwise.
+// over the RESOLVED directory the session was started in, not the
+// git-root-anchored one sloprail keys its own state under.
 //
 // cwd is the caller's reported working directory when there is one; "" uses the
-// process's own, which is the directory the agent ran the command from and the
-// one Claude Code filed the transcript under.
+// process's own, which is the directory the agent ran the command from. That is
+// not always the directory Claude Code filed the record under: its Bash tool
+// keeps the working directory between calls, so after a `cd internal` a command
+// runs below it. So the lookup walks UP from cwd, and the first directory whose
+// projects entry holds this session's record — one that exists, belongs to this
+// session, and was written in that directory's tree — is the answer.
 //
-// The derived file must EXIST, belong to this session, and have been written in
-// this tree — a session id inherited from a launcher, or a guessed file
-// colliding with an unrelated conversation, resolves to nothing rather than to
-// the wrong record.
+// A session id inherited from a launcher, or a guessed file colliding with an
+// unrelated conversation, resolves to nothing rather than to the wrong record.
 func CurrentSessionPath(cwd string) string {
 	sessionID := strings.TrimSpace(os.Getenv(SessionIDEnv))
 	if sessionID == "" {
@@ -47,18 +48,34 @@ func CurrentSessionPath(cwd string) string {
 		}
 		cwd = wd
 	}
-	dir := ProjectDir(ConfigDir(), cwd)
-	if dir == "" {
+	config := ConfigDir()
+	for dir := filepath.Clean(cwd); ; {
+		if path := sessionPathIn(config, dir, sessionID); path != "" {
+			return path
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+// sessionPathIn is the session's record filed under the projects entry for dir,
+// or "" when there is none that belongs to this session and this tree.
+func sessionPathIn(config, dir, sessionID string) string {
+	projects := ProjectDir(config, dir)
+	if projects == "" {
 		return ""
 	}
-	path := filepath.Join(dir, sessionID+".jsonl")
+	path := filepath.Join(projects, sessionID+".jsonl")
 	if fi, err := os.Stat(path); err != nil || fi.IsDir() {
 		return ""
 	}
 	if ok, _ := BelongsToSession(path, sessionID); !ok {
 		return ""
 	}
-	if ok, _ := BelongsToTree(path, cwd); !ok {
+	if ok, _ := BelongsToTree(path, dir); !ok {
 		return ""
 	}
 	return path

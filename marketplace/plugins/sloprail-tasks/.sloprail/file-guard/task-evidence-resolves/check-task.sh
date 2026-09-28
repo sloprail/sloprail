@@ -72,8 +72,14 @@ lib="$gdir/cite-links.sh"
 if [ ! -f "$lib" ]; then
   refuse "task-evidence-resolves: cite-links.sh not found beside this hook at $lib, so no artifact could be resolved"
 fi
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version); only its last-line sentinel proves it
+# loaded whole.
+unset cite_links_loaded
 # shellcheck source=cite-links.sh
 . "$lib"
+[ "${cite_links_loaded:-}" = 1 ] \
+  || refuse "task-evidence-resolves: cite-links.sh did not load whole (its last-line sentinel cite_links_loaded is unset), so no artifact could be resolved"
 
 # WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on BOTH
 # Pre kinds before newContent is read — an underivable result is deferred to the

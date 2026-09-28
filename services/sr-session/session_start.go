@@ -119,8 +119,14 @@ func recordBaseline(cmd *cobra.Command, p HookPayload) {
 	}
 	defer store.Close()
 
-	if _, err := ensureBaseline(store, p.Cwd); err != nil {
+	if outcome, err := ensureBaseline(store, p.Cwd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)
+	} else if outcome == baselineMoved {
+		// Between turns: every cited-change point so far is on the line the
+		// tree left. See pruneHistory.
+		if err := pruneHistory(store, nowNano()); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
 	}
 }
 
@@ -174,6 +180,9 @@ func reportLoadCheck(cmd *cobra.Command, loaded declaration.Loaded) {
 	failed := ""
 	if len(loaded.Invalid) > 0 {
 		failed = fmt.Sprintf(", %d could not load (above)", len(loaded.Invalid))
+	}
+	if broken := reportJudgeTemplates(cmd, loaded); broken > 0 {
+		failed += fmt.Sprintf(", %d judge template(s) cannot be rendered (above)", broken)
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(),
 		"sloprail: %d rules loaded%s. This only checked that they load: no rule ran against any file or action.\n",

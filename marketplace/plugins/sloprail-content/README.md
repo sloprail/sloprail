@@ -197,12 +197,50 @@ Over a unit's `UNIT.md` only. Publishing needs **both**:
   may be distributed across several channels (posted to X and cross-posted
   to Reddit, say), each with its own URL.
 
+The status is read from the frontmatter as written, not through `unit.cue`:
+one reader, `publish-claim.sh`, shared by the `when` and the check, asks
+`sr-file field <UNIT.md> status` — a plain YAML reader, so valid YAML the schema
+would reject (an integer key, a custom tag) still answers.
+
+- A write that claims `status: published` and breaks the schema somewhere else
+  (`type: article`) still needs the user's cited approval.
+- **Any** write that leaves a unit at `status: published` with frontmatter
+  invalid against `unit.cue` is refused, including an edit to a unit that was
+  already published (which needs no new approval, but must stay valid).
+- Frontmatter that cannot be read — YAML that does not parse, more than one
+  YAML document, `status` (or a `<<` merge key) defined twice — cannot be read
+  for a status, so it is treated as a claim to publish: the approval is
+  required, and the write is refused until the frontmatter reads.
+- A `---` fence that is never closed is read too — the whole text under it
+  first, then, if that does not parse, its first paragraph (where a forgotten
+  frontmatter would be): YAML claiming `status: published` is treated as a claim
+  to publish (a reader that tolerates a missing close would publish it), and so
+  is text that does not parse but names a `status` key. Prose under a
+  horizontal rule — however many colons it has — claims nothing. A frontmatter placed after a
+  byte-order mark or blank lines is treated the same way: harmless unless it
+  claims published. A file with no frontmatter at all claims nothing.
+- The status is read with `sr-file field`, which first ships in the sloprail
+  release after 0.2.1, so the sloprail binaries must be newer than 0.2.1.
+  Against an older `sr-file` every unit write is refused with a message naming
+  the installed version and the upgrade (`install.sh`, or
+  `make distribute-local`). The marketplace serves this plugin from the default
+  branch while `install.sh` installs the latest release, so until a release
+  newer than 0.2.1 is out, marketplace users get that refusal.
+- A unit that is not published is not this guard's business, valid or not.
+
+A broken field is never a way to publish unchecked.
+
 Publishing is the irreversible step, and the task is explicit that an agent
 must not be able to publish on its own say-so — so this guard, like
 `content-rule-is-grounded` below, is bound `preventive: true`. The Stop
-after-check is the backstop: there, "before" is the session baseline and the
-citations are every one recorded for the unit this session, so a publish that
-slipped through uncited is still refused, with the steps to redo it. The
+after-check is the backstop: there, "before" is the session baseline, and a
+citation grounds only the change it rode on — citations do not accumulate. A
+cited change counts only if it landed, only for a requirement whose pools it
+was cited in, and every other part of the unit's change the agent made must be
+one `enters-published.sh` waives (a cited `sr-file write` of the whole unit
+grounds everything before it; a change the agent did not make, such as the
+user's own edit between turns, is not charged). So a publish that slipped
+through uncited is still refused, with the steps to redo it. The
 citation is required only on the transition, so the guard declares it with a
 `when:` script — a draft edit needs none:
 

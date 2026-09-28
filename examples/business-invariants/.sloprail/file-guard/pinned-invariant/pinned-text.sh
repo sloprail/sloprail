@@ -18,8 +18,12 @@ refuse() {
   exit 1
 }
 
+# A helper stopped early runs only partly (whether the `.` then fails depends
+# on the bash version); only its last-line sentinel proves it loaded whole.
+unset pin_loaded
 # shellcheck source=pin.sh
 . "${SR_GUARDRAIL_DIR:-.}/pin.sh" || refuse "pin.sh, which reads a pin, is missing beside this prepare."
+[ "${pin_loaded:-}" = 1 ] || refuse "pin.sh did not load whole (its last-line sentinel pin_loaded is unset)."
 
 input="$(cat)"
 
