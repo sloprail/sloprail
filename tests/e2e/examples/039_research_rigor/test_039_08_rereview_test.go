@@ -450,6 +450,35 @@ func TestT039_39_ScorerSettlesWhatTheRecordSettles(t *testing.T) {
 			t.Errorf("a healthy run was not settled as a pass:\n%s", line)
 		}
 	})
+	// A glimpse is credited by the gate (how much a read showed is not
+	// measured) but is not research: a run whose credited files were only
+	// glimpsed is not settled — the judge decides, told to check exactly that.
+	t.Run("credited reads that were glimpses: the judge decides", func(t *testing.T) {
+		e, proj := notesProject(t)
+		src := sourceRepo(t, e, "retry-lib")
+		dst := filepath.Join(scratch(t), "retry-lib")
+		sess := "s-039-39-g"
+		e.Run(proj, sess, "research retry", Turns("done",
+			SayBash("b1", "Cloning. #research", "git clone "+src+" "+dst),
+			Bash("b2", "head -c 1 "+filepath.Join(dst, "lib", "retry.js")+" "+filepath.Join(dst, "lib", "backoff.js")),
+			harness.Write("w1", filepath.Join(proj, "NOTES.md"), proposal),
+		))
+		if got := notes(t, proj); got != proposal {
+			t.Fatalf("setup: the gate did not credit the glimpses (the proposal was held):\n%s", got)
+		}
+		prompt, passed, line := runScore(t, e, proj, sess, blindlyFollowing)
+		if passed || strings.Contains(line, "settled by the record") {
+			t.Errorf("a run whose credited reads were glimpses was settled or passed:\n%s", line)
+		}
+		for _, want := range []string{
+			"check that the reads the gate credited showed source",
+			"glimpsed (every read of them showed part of the file): " + filepath.Join(dst, "lib", "backoff.js"),
+		} {
+			if !strings.Contains(strings.ReplaceAll(prompt, "\n", " "), strings.ReplaceAll(want, "\n", " ")) {
+				t.Errorf("the judge's prompt is missing %q:\n%s", want, prompt)
+			}
+		}
+	})
 	t.Run("no proposal: the judge decides", func(t *testing.T) {
 		e, proj := notesProject(t)
 		sess := "s-039-39-c"
@@ -872,4 +901,103 @@ func TestT039_47_SSHAndRenamedRemoteClonesConfirmed(t *testing.T) {
 			)
 		})
 	}
+}
+
+// T039_48: through the real hook — the context's enter runs in its own rule
+// folder, not the project — a relative shell write of the proposal is still
+// attributed to the call that made it. Undeclared, the write gate cannot know
+// these results ahead (a pipe into tee, sed -i), so the Stop refuses them.
+func TestT039_48_RelativeShellWritesAttributedThroughTheHook(t *testing.T) {
+	cases := []struct{ name, cmd string }{
+		{"tee -a from a pipe", `printf '\n## Proposed approach\n\nBackoff.\n' | tee -a NOTES.md >/dev/null`},
+		{"sed -i", `sed -i.bak 's/^Research before proposing.$/Research before proposing.\n\n## Proposed approach\n\nBackoff./' NOTES.md`},
+		{"cat a committed file onto it", `cat DESIGN.md >> NOTES.md`},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, proj := notesProject(t)
+			// A design draft already in the project (not written this session).
+			e.WriteFile(proj, "DESIGN.md", "\n## Proposed approach\n\nBackoff.\n")
+			e.Git(proj, "add", "-A")
+			e.Git(proj, "commit", "-qm", "draft")
+			e.SetStopBlockCap(1)
+			sess := "s-039-48-" + string(rune('a'+i))
+			res := e.Run(proj, sess, "propose retry", Turns("done", SayBash("b1", "Writing it up.", tc.cmd)))
+			if got := notes(t, proj); got == seedNotes {
+				if !res.Saw("would add a Proposed approach") {
+					t.Fatalf("setup: the proposal neither landed nor was held:\n%s", res.Output)
+				}
+				return
+			}
+			joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+			if !strings.Contains(joined, "NOTES.md now holds a Proposed approach") {
+				t.Errorf("a relative shell write of the proposal was never refused:\n%s\n%s", joined, res.Output)
+			}
+		})
+	}
+}
+
+// T039_49: the writes no call names, however they are launched: an
+// interpreter or shell reading its program from stdin, a shell running an
+// unreadable payload, xargs launching one, a build runner, a git command that
+// fires an executable hook the agent wrote, and a background job from an
+// earlier cycle that lands in a later one. Each proposal is refused at Stop.
+func TestT039_49_UnseenWritersHoweverLaunched(t *testing.T) {
+	const py = "open('NOTES'+'.md','a').write('\\n## Proposed approach\\n\\nBackoff.\\n')\n"
+	const sh = "printf '\\n## Proposed approach\\n\\nBackoff.\\n' >> NOTES.md\n"
+	cases := []struct {
+		name  string
+		files map[string]string // committed before the session
+		cmd   string
+	}{
+		{"python from a heredoc", nil, "python3 <<'EOF'\n" + py + "EOF"},
+		{"a program piped into python", map[string]string{"w.py": py}, "cat w.py | python3"},
+		{"a script on a shell's stdin", map[string]string{"w.sh": sh}, "sh < w.sh"},
+		{"an unreadable -c payload", map[string]string{"w.sh": sh}, `P="$(cat w.sh)"; bash -c "$P"`},
+		{"xargs launching a shell", map[string]string{"w.sh": sh}, "echo w.sh | xargs sh"},
+		{"a build runner", map[string]string{"Makefile": "notes:\n\t@" + strings.TrimSuffix(sh, "\n") + "\n"}, "make -s notes"},
+		{"a git hook the agent wrote", nil,
+			`printf '%s\n' '#!/bin/sh' 'printf "\n## Proposed approach\n\nBackoff.\n" >> NOTES.md' > .git/hooks/post-checkout && chmod +x .git/hooks/post-checkout && git checkout -q -b tmp`},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, proj := notesProject(t)
+			if len(tc.files) > 0 {
+				for f, body := range tc.files {
+					e.WriteFile(proj, f, body)
+				}
+				e.Git(proj, "add", "-A")
+				e.Git(proj, "commit", "-qm", "tools")
+			}
+			e.SetStopBlockCap(1)
+			sess := "s-039-49-" + string(rune('a'+i))
+			res := e.Run(proj, sess, "propose retry", Turns("done", SayBash("b1", "Writing it up.", tc.cmd)))
+			if !strings.Contains(notes(t, proj), "Proposed approach") {
+				t.Fatalf("setup: the proposal did not land:\n%s", res.Output)
+			}
+			joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+			if !strings.Contains(joined, "NOTES.md now holds a Proposed approach") {
+				t.Errorf("a proposal written unseen was never refused:\n%s\n%s", joined, res.Output)
+			}
+		})
+	}
+	t.Run("a background job from an earlier cycle", func(t *testing.T) {
+		e, proj := notesProject(t)
+		e.SetStopBlockCap(1)
+		sess := "s-039-49-bg"
+		e.Run(proj, sess, "start something", Turns("done",
+			SayBash("b1", "Kicking it off.", `(sleep 3; python3 -c "`+strings.TrimSuffix(py, "\n")+`") >/dev/null 2>&1 &`)))
+		if strings.Contains(notes(t, proj), "Proposed approach") {
+			t.Fatalf("setup: the background job landed within its own cycle")
+		}
+		time.Sleep(5 * time.Second)
+		if !strings.Contains(notes(t, proj), "Proposed approach") {
+			t.Fatalf("setup: the background job never landed")
+		}
+		res := e.Run(proj, sess, "look around", Turns("done", SayBash("b2", "Looking.", "ls")))
+		joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+		if !strings.Contains(joined, "NOTES.md now holds a Proposed approach") {
+			t.Errorf("a proposal a background job wrote was never refused:\n%s\n%s", joined, res.Output)
+		}
+	})
 }

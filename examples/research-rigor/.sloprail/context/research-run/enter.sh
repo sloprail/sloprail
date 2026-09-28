@@ -63,7 +63,10 @@ records="$(printf '%s\n' "$root"; printf '%s' "$desc" | jq -r '.subagentPaths[]?
 # feedback of a refused Stop). A write made in an earlier cycle was judged at
 # that cycle's Stop; a change arriving now that no call of this cycle made —
 # a user's own edit between turns — is not the agent's.
-entries_of() { sr-session trajectory normalize --path "$1" --events PreCommandInvoke,PreFileCreate,PreFileUpdate 2>/dev/null; }
+# Run from the workspace: the engine resolves a recorded command's relative
+# paths against the record's own cwd, and this is the defence should it not
+# (this script's own folder holds no NOTES.md).
+entries_of() { (cd "${SR_WORKSPACE:-.}" && sr-session trajectory normalize --path "$1" --events PreCommandInvoke,PreFileCreate,PreFileUpdate 2>/dev/null); }
 root_entries="$(entries_of "$root")" || open
 since="$(printf '%s' "$root_entries" | jq -r '
   [ .[] | select(.type == "user" and (.isSidechain | not))
@@ -75,32 +78,58 @@ since_ts="$(printf '%s' "$since" | cut -f2)"
 # Writers this cycle: a call the engine derived a write of the path from
 # (named), else a call that could write without naming it (unnamed:
 # writers.jq). Git bringing in committed content is neither.
+# An executable git hook makes every git command a possible writer.
+githooks=false
+ws="${SR_WORKSPACE:-.}"
+if [ -n "$(git -C "$ws" config --get core.hooksPath 2>/dev/null)" ]; then
+  githooks=true
+else
+  hooks_dir="$(git -C "$ws" rev-parse --git-path hooks 2>/dev/null)"
+  case "$hooks_dir" in /*) ;; ?*) hooks_dir="$ws/$hooks_dir" ;; esac
+  if [ -n "$hooks_dir" ] && [ -d "$hooks_dir" ]; then
+    for h in "$hooks_dir"/*; do
+      case "$h" in *.sample) continue ;; esac
+      [ -f "$h" ] && [ -x "$h" ] && { githooks=true; break; }
+    done
+  fi
+fi
+
 named=""
 unnamed=""
+background=""
 while IFS= read -r rec; do
   [ -n "$rec" ] || continue
   [ -r "$rec" ] || open
   if [ "$rec" = "$root" ]; then ents="$root_entries"; else ents="$(entries_of "$rec")" || open; fi
   kinds="$(printf '%s' "$ents" | jq -r -L "$here/../../gate/findings-need-depth" \
       --arg p "$path" --argjson root "$([ "$rec" = "$root" ] && echo true || echo false)" \
-      --argjson sl "${since_line:-0}" --arg st "$since_ts" 'include "writers";
-    [ .[] | select(if $root then .line > $sl
-                   elif $st != "" and (.timestamp // "") != "" then .timestamp >= $st
-                   else true end)
-      | if names_write($p) then "named" elif runs_unnamed_writer then "unnamed" else empty end ]
+      --argjson sl "${since_line:-0}" --arg st "$since_ts" --argjson gh "$githooks" 'include "writers";
+    [ .[] | (if $root then .line > $sl
+             elif $st != "" and (.timestamp // "") != "" then .timestamp >= $st
+             else true end) as $now
+      | if $now then
+          (if names_write($p) then "named" elif runs_unnamed_writer($gh) then "unnamed" else empty end)
+        elif starts_background then "background"
+        else empty end ]
     | unique | join(" ")' 2>/dev/null)" || open
   case " $kinds " in *" named "*) named="$named$rec
 " ;; esac
   case " $kinds " in *" unnamed "*) unnamed="$unnamed$rec
+" ;; esac
+  case " $kinds " in *" background "*) background="$background$rec
 " ;; esac
 done <<EOF
 $records
 EOF
 
 # A named writer is the writer. With none, the calls that could have written
-# it unseen are; with neither, nothing the agent ran this cycle wrote it.
+# it unseen are. With neither, something the agent started in an EARLIER cycle
+# and left running (`… &`, nohup, setsid, run_in_background) could have — its
+# trajectory owes it. With none of those either, nothing the agent ran wrote
+# it (a user's edit, git bringing in committed content with no hook).
 writers="$named"
 [ -n "$writers" ] || writers="$unnamed"
+[ -n "$writers" ] || writers="$background"
 [ -n "$writers" ] || exit 1
 
 # Open when this trajectory is a writer or above one.

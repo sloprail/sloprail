@@ -92,8 +92,11 @@ Depth is **reading what you cloned**:
    deliberately: what a read showed cannot be told apart per file from one
    line's combined output (`head -n 5 a b` shows all of a one-line `b`), and
    a size threshold both over-refuses and is gamed (`sed -n 1p`, `grep -m1`).
-   Padding reads to the count is left to the eval judge. Paths are counted by
-   the file they really are:
+   The depth gate reports the credited files every read of which showed only
+   part (`head -n/-c`, `sed -n`, `grep -m`, a Read with a limit), and the
+   eval never settles a PASS over one: its judge is told to check that the
+   credited reads showed source. Paths are counted by the file they really
+   are:
    symlinks resolved and hard links collapsed, so `lib2 -> lib` is not a
    second directory and a symlink out of the clone is not a read inside it.
    **Files, or searches of a source subdirectory:** a search counts as one
@@ -218,11 +221,19 @@ research:** a call of THIS cycle (since the root's last prompt) that wrote it
 — one the engine derives a write of the path from — and every trajectory
 above that call's (`describe`'s `parentPath` chain), never a sibling or one
 below. With no such call, the calls of this cycle that could have written it
-unseen owe it (`gate/findings-need-depth/writers.jq`: an interpreter with code
-or a script, a script run, `eval` of a word the engine cannot read,
-patch/dd/git apply); with none of those either, nobody does — a user's own
-edit between turns, or git bringing in committed content (merge, pull,
-checkout, stash pop, …), is not the agent's proposal. A Stop sees every file
+unseen owe it (`gate/findings-need-depth/writers.jq`: an interpreter or shell
+with code, a script, or a program read from stdin — `python3 <<EOF`, `cat w.py
+| python3`, `sh < w.sh`, `xargs sh`; a shell with an unreadable `-c`
+payload; `eval` of a word the engine cannot read; a build or task runner —
+make, just, npm/yarn/pnpm/bun run, cargo/go run, …; patch/dd/git apply; any
+git command while the repository has an executable hook). With none of those,
+something the agent started in an EARLIER cycle and left running (`… &`,
+nohup, setsid, disown, `run_in_background`) owes it. With none of those
+either, nobody does — a user's own edit between turns, or git bringing in
+committed content (merge, pull, checkout, stash pop, …) with no hook, is not
+the agent's proposal. Which calls wrote what is the engine's own reading
+(`trajectory normalize`, which resolves a recorded command's relative paths
+against that record's cwd — a rule's script runs in the rule's own folder). A Stop sees every file
 that changed in the session: a real run's background research sub-agent was
 refused for its dispatcher's proposal until the writer was checked; and in
 Claude Code's own layout a sub-agent's calls live only in its

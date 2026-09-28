@@ -25,32 +25,64 @@ def names_write($p):
 
 def interpreter: test("^(python[0-9.]*|pypy[0-9.]*|node(js)?|perl[0-9.]*|ruby|php|deno|bun|osascript|rscript|lua|tclsh|awk|gawk)$"; "i");
 def shell: IN("sh", "bash", "zsh", "dash", "ksh", "fish");
+def only_version_or_help: length > 0 and (map(select(IN("--version", "-V", "-v", "--help", "-h") | not)) | length == 0);
 
-# One invocation that could write without naming what it writes.
-def unnamed_writer:
+# Build and task runners run whatever their recipe says.
+def runner($a):
+  ($a[1:] | map(select(startswith("-") | not))) as $ops
+  | (.bin as $b
+     | if ($b | IN("make", "gmake", "just", "task", "rake", "tox", "nox", "npx", "pnpx", "bunx")) then true
+       elif ($b | IN("npm", "pnpm", "yarn", "bun")) then
+         ($ops[0] // "") | IN("run", "run-script", "exec", "x", "start", "test", "dlx", "")
+                          or ($b == "yarn" and (IN("add", "install", "remove", "upgrade", "info", "list", "why", "config", "cache") | not))
+       elif ($b | IN("cargo", "go", "deno", "uv", "poetry", "pipx", "gradle", "gradlew", "mvn", "dotnet")) then
+         ($ops[0] // "") | IN("run", "task", "exec", "test", "script")
+       else false end);
+
+# One invocation that could write without naming what it writes. $githooks:
+# the repository has an executable git hook, so any git command may run it.
+def unnamed_writer($githooks):
   .bin as $b | (.argv // []) as $a
   | ($a[1:] | map(select(. != ""))) as $args
-  | if ($b | interpreter) then
+  | if ($b | IN("awk", "gawk")) then
       # awk only with a program that could write (a print redirection or
-      # system()); an interpreter with nothing but a version/help flag runs
-      # nothing.
-      if ($b | IN("awk", "gawk")) then ($args | any(test(">|system\\s*\\(")))
-      else ($args | map(select(IN("--version", "-V", "-v", "--help", "-h") | not)) | length) > 0 end
+      # system()).
+      ($args | any(test(">|system\\s*\\(")))
+    elif ($b | interpreter) then
+      # With code, a script — or nothing, when it reads its program from
+      # stdin (`python3 <<EOF`, `cat w.py | python3`). Only a version or help
+      # flag runs nothing.
+      ($a[1:] | only_version_or_help) | not
     elif ($b | shell) then
-      # A script file: a first operand, with no -c payload (that payload is
-      # parsed, and its own invocations are judged on their own).
-      (($a[1:] | any(test("^-[a-zA-Z]*c[a-zA-Z]*$"))) | not)
-      and ($args | map(select(startswith("-") | not)) | length) > 0
+      # A -c payload the engine could read is parsed, and its programs are
+      # judged on their own; an unreadable one (`bash -c "$P"`) is not. A
+      # script file, or a program read from stdin (`sh < w.sh`, `xargs sh`),
+      # always could write.
+      (($a[1:] | map(test("^-[a-zA-Z]*c[a-zA-Z]*$"))) | index(true)) as $ci
+      | if $ci == null then (($a[1:] | only_version_or_help) | not)
+        else (($a[$ci + 2] // "") == "") end
     elif $b == "eval" then
       # A literal payload is parsed (its programs are separate invocations);
       # one the engine could not read arrives as a bare or empty word.
       ($a | length) == 1 or ($a[1:] | any(. == ""))
     elif ($b | IN("patch", "dd")) then true
-    elif $b == "git" then ($args | map(select(startswith("-") | not)) | .[0]) == "apply"
+    elif $b == "git" then
+      $githooks or (($args | map(select(startswith("-") | not)) | .[0]) == "apply")
+    elif runner($a) then true
     else
       # A program run by path that is not a system tool: ./gen, tools/gen.
       (($a[0] // "") | test("/")) and (($a[0] // "") | test("^/(usr|bin|sbin|opt|System|Library|nix)/") | not)
     end;
+def unnamed_writer: unnamed_writer(false);
 
-def runs_unnamed_writer:
-  any(.events[]?; .kind == "PreCommandInvoke" and any(.invocations[]?; unnamed_writer));
+def runs_unnamed_writer($githooks):
+  any(.events[]?; .kind == "PreCommandInvoke" and any(.invocations[]?; unnamed_writer($githooks)));
+def runs_unnamed_writer: runs_unnamed_writer(false);
+
+# A call that leaves something running past its own end: `cmd &`, nohup,
+# setsid, disown, or the Bash tool's own run_in_background. What it writes may
+# land in a LATER cycle, with nothing of that cycle to show for it.
+def starts_background:
+  any(.message.content[]?; .type == "tool_use"
+      and (.input.run_in_background == true
+           or ((.input.command // "") | test("(^|[^&|>])&[ \t]*($|;|\\)|\\n)|\\b(nohup|setsid|disown)\\b"))));

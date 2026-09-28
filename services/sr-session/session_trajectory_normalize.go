@@ -12,6 +12,7 @@ import (
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
+	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/tagmod"
@@ -119,6 +120,13 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 	// session" diagnostic — meant for a session that cannot open its own state —
 	// from firing on the ordinary --path case, where the empty payload has no state
 	// to open by design.
+	// Each record's workspace, from the record's own cwd — computed over the
+	// WHOLE record before any slice, since a record without a cwd of its own
+	// inherits the last one written (the mock writes cwd on the first record
+	// only). Computed before slicing so a slice starting mid-session still
+	// knows where its first entries ran.
+	roots, dirs := entryRoots(lined, p.Root())
+
 	wholeSession, _ := cmd.Flags().GetBool("whole-session")
 	pathGiven := cmd.Flags().Changed("path")
 	if !wholeSession && !pathGiven {
@@ -134,25 +142,65 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// The workspace file paths are resolved and read relative to. It is the
-	// payload's cwd when the hook provided one; empty when a bare --path named
-	// another trajectory, in which case the file extractors report paths as the
-	// record spelled them and read no tree they cannot reach. Either way the
-	// command extractor (a pure function of the command line) is unaffected.
-	root := p.Root()
-
+	// The workspace file paths are resolved and read relative to: per record,
+	// the repository its own cwd is in (see entryRoots) — never the process's
+	// working directory, which for a rule's script is the rule's own folder.
+	// The command extractor (a pure function of the command line) is
+	// unaffected either way.
 	out := make([]normalizedEntry, 0, len(lined))
 	for _, le := range lined {
 		out = append(out, normalizedEntry{
 			raw:    le.Entry,
 			Line:   le.Line,
-			Events: deriveEvents(le.Entry, reg, kinds, root),
+			Events: deriveEvents(le.Entry, reg, kinds, roots[le.Line], dirs[le.Line]),
 		})
 	}
 
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetEscapeHTML(false)
 	return enc.Encode(out)
+}
+
+// entryRoots is the workspace each record's file paths are resolved against,
+// keyed by physical line: the repository its own cwd is in, the way a live
+// hook's root is the repository of the payload's cwd (HookPayload.Root), and
+// the directory a command's relative paths are looked up in (dirs) is that
+// cwd itself, where the harness ran it. A
+// record without a cwd inherits the last one written above it; before any, and
+// when a cwd is in no repository, fallback — the payload's root, empty for a
+// bare --path.
+//
+// The bug this replaced: normalize used the payload's root alone, which is
+// empty when a script names the trajectory with --path, so a relative write
+// (`tee -a NOTES.md`) resolved against whatever directory the script ran in —
+// a rule's own folder — found no file there, and derived no event.
+func entryRoots(lined []transcript.LinedEntry, fallback string) (roots, dirs map[int]string) {
+	roots = make(map[int]string, len(lined))
+	dirs = make(map[int]string, len(lined))
+	cwd := ""
+	cache := map[string]string{}
+	for _, le := range lined {
+		if le.Cwd != "" {
+			cwd = le.Cwd
+		}
+		root := fallback
+		if cwd != "" {
+			r, seen := cache[cwd]
+			if !seen {
+				r = ""
+				if got, err := gitrepo.Root(cwd); err == nil {
+					r = got
+				}
+				cache[cwd] = r
+			}
+			if r != "" {
+				root = r
+			}
+		}
+		roots[le.Line] = root
+		dirs[le.Line] = cwd
+	}
+	return roots, dirs
 }
 
 // deriveEvents re-derives the TrajectoryEvents an entry yields, narrowed to the
@@ -167,7 +215,7 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 // One entry can yield several events — an assistant turn with three tool calls is
 // three extractions — and an entry that yields none carries an empty array, which
 // is why this always returns a non-nil slice.
-func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root string) []event.Event {
+func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root, dir string) []event.Event {
 	events := []event.Event{}
 
 	// The command and file events, one tool call at a time. The modules dispatch
@@ -178,7 +226,7 @@ func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root 
 		for _, call := range transcript.ToolCalls(e) {
 			in := module.Input{
 				module.InputPhase:   module.PhasePre,
-				module.InputPayload: pendingCall{name: call.Name, input: call.Input, root: root},
+				module.InputPayload: pendingCall{name: call.Name, input: call.Input, root: root, dir: dir},
 			}
 			for _, m := range mods {
 				evs, _ := m.Extract(in)
@@ -232,11 +280,16 @@ type pendingCall struct {
 	name  string
 	input json.RawMessage
 	root  string
+	dir   string // the recorded cwd the command ran in; "" when unknown
 }
 
 func (c pendingCall) Tool() string               { return c.name }
 func (c pendingCall) Arguments() json.RawMessage { return c.input }
 func (c pendingCall) Root() string               { return c.root }
+
+// Dir is where the recorded command ran (filemod.DirPending): its relative
+// paths are looked up there, not in this process's working directory.
+func (c pendingCall) Dir() string { return c.dir }
 
 // kindSet is the set of event kinds an entry's events are narrowed to.
 type kindSet map[string]bool

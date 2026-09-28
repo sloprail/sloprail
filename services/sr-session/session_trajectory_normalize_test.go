@@ -2,6 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,7 +33,7 @@ func derive(t *testing.T, e transcript.Entry, kinds kindSet) []event.Event {
 	// Root "" — the file extractors then report paths as the record spelled them,
 	// which is what a bare --path against another trajectory gets. The command
 	// extractor is a pure function of the line and unaffected.
-	return deriveEvents(e, reg, kinds, "")
+	return deriveEvents(e, reg, kinds, "", "")
 }
 
 // assistantWith builds an assistant entry whose content is the given raw blocks.
@@ -276,4 +280,72 @@ func TestNormalizedEntry_EmptyEventsIsAnArrayNotNull(t *testing.T) {
 func allKinds() kindSet {
 	set, _ := parseEventKinds(nil)
 	return set
+}
+
+// entryRoots resolves each record's file paths against the repository of the
+// record's OWN cwd, inheriting the last cwd written above a record that has
+// none — never the process's working directory. A rule's script runs in the
+// rule's own folder, and resolving `tee -a NOTES.md` against that found no
+// NOTES.md and derived no write (research-rigor's writer attribution missed
+// every relative shell write because of it).
+func TestEntryRoots_FromEachRecordsOwnCwd(t *testing.T) {
+	repo := t.TempDir()
+	gitInit(t, repo)
+	other := t.TempDir() // not a repository
+	lined := []transcript.LinedEntry{
+		{Entry: transcript.Entry{Type: "user", Cwd: repo}, Line: 1},
+		{Entry: transcript.Entry{Type: "assistant"}, Line: 2},             // inherits repo
+		{Entry: transcript.Entry{Type: "assistant", Cwd: other}, Line: 3}, // no repository: fallback
+		{Entry: transcript.Entry{Type: "assistant", Cwd: repo + "/sub"}, Line: 4},
+	}
+	roots, _ := entryRoots(lined, "/fallback")
+	want, err := filepath.EvalSymlinks(repo)
+	require.NoError(t, err)
+	got2, _ := filepath.EvalSymlinks(roots[2])
+	got1, _ := filepath.EvalSymlinks(roots[1])
+	assert.Equal(t, want, got1)
+	assert.Equal(t, want, got2, "a record without a cwd inherits the last one")
+	assert.Equal(t, "/fallback", roots[3], "a cwd in no repository falls back to the payload's root")
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "sub"), 0o755))
+	roots, _ = entryRoots(lined, "")
+	got4, _ := filepath.EvalSymlinks(roots[4])
+	assert.Equal(t, want, got4, "a cwd below the top of the tree resolves to the repository root")
+}
+
+// The derivation end to end: a relative shell write, read by a process whose
+// working directory is elsewhere, yields the write of the record's file.
+func TestNormalize_RelativeWriteResolvesAgainstTheRecordNotTheProcess(t *testing.T) {
+	repo := t.TempDir()
+	gitInit(t, repo)
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "NOTES.md"), []byte("# notes\n"), 0o644))
+	lined := []transcript.LinedEntry{
+		{Entry: transcript.Entry{Type: "user", Cwd: repo}, Line: 1},
+		{Entry: assistantWith(bashBlock(`printf '## Proposed approach\n' | tee -a NOTES.md`)), Line: 2},
+		{Entry: assistantWith(bashBlock(`sed -i.bak 's/notes/Notes/' NOTES.md`)), Line: 3},
+	}
+	t.Chdir(t.TempDir()) // the process is anywhere but the repository
+	roots, dirs := entryRoots(lined, "")
+	for _, le := range lined[1:] {
+		evs := derive2(t, le.Entry, roots[le.Line], dirs[le.Line])
+		var paths []string
+		for _, ev := range evs {
+			if ev.Kind == "PreFileUpdate" {
+				paths = append(paths, fmt.Sprint(ev.Fields["path"]))
+			}
+		}
+		assert.Contains(t, paths, "NOTES.md", "line %d derived no write of NOTES.md: %v", le.Line, evs)
+	}
+}
+
+func derive2(t *testing.T, e transcript.Entry, root, dir string) []event.Event {
+	t.Helper()
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+	return deriveEvents(e, reg, kindSet{"PreFileCreate": true, "PreFileUpdate": true}, root, dir)
+}
+
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput()
+	require.NoError(t, err, string(out))
 }

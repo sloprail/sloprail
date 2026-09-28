@@ -160,6 +160,7 @@ verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FI
   | ([ .[].unresolvedClones ] | add // 0) as $unresolved
   | ([ .[].failedClones[]? ] | unique - $dirs) as $failed
   | ([ .[].reads[] ] | unique) as $reads
+  | ([ .[].fullReads[]? ] | unique) as $fullreads
   | [ $dirs[] | realof ] as $realdirs
   # Source: really under a confirmed clone, below its root (a search of the
   # root takes in the README and docs too), not documentation or metadata —
@@ -170,6 +171,9 @@ verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FI
       | select($rel != "" and ($rel | is_doc | not))
       | {p: $p, id: ($p | idof)} ]
     | unique_by(.id) | map(.p)) as $source
+  # Credited source files every read of which showed only part (head -c 1,
+  # sed -n 1p, a Read with limit): credited, and reported for the eval.
+  | [ $source[] | select(. as $p | $fullreads | index($p) | not) ] as $glimpsed
   | [ $reads[] | . as $p
       | select(any($realdirs[]; . as $d | $p | realof | under($d)) | not)
       | select(($ws == "" or ($p | under($ws) | not)) and ($home == "" or ($p | under($home + "/.claude") | not)))
@@ -177,8 +181,12 @@ verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FI
   | {pass: (($dirs | length) > 0 and ($source | length) >= $min),
      dirs: $dirs, unresolved: $unresolved, source: $source, elsewhere: $elsewhere,
      failed: [ $failed[] | select(. as $f | $elsewhere | any(. == $f or startswith($f + "/"))) ],
-     unconfirmed: $unconfirmed, self: $self}
+     unconfirmed: $unconfirmed, self: $self, glimpsed: $glimpsed}
 ' 2>"$errf")" || block "The depth check could not evaluate this research run's trajectory ($transcript_path): $(errtext)"
+
+# DEPTH_REPORT=<file>: the verdict itself, for a caller that needs more than
+# pass/fail (the eval's scorer asks which credited reads were glimpses).
+[ -z "${DEPTH_REPORT:-}" ] || printf '%s' "$verdict" > "$DEPTH_REPORT"
 
 if [ "$(printf '%s' "$verdict" | jq -r '.pass')" != "true" ]; then
   # An undeclared run is held for its proposal alone: "#research run" would

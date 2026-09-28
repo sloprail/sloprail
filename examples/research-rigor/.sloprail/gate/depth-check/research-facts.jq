@@ -222,6 +222,19 @@ def read_of:
          | map(select(. != "-")))}
     end;
 
+# Whether one reader invocation shows only PART of what it reads: a count of
+# lines or bytes (`head -n 3`, `tail -c 10`, `head -5`), a sed that prints
+# only what it is told to (`sed -n '1,5p'`), a search capped at N matches
+# (`grep -m1`). Such a read is still credited by the depth gate — how much it
+# showed cannot be told apart per file (see the README) — but it is reported,
+# so the eval does not take a glimpse for research.
+def partial_read:
+  .bin as $b | (.argv[1:] // []) as $a
+  | if ($b | IN("head", "tail")) then ($a | any(test("^(-[nc]|--(lines|bytes)|-[0-9]+$)")))
+    elif ($b | IN("sed")) then ($a | any(test("^-[a-zA-Z]*n[a-zA-Z]*$|^--(quiet|silent)$")))
+    elif ($b | IN("grep", "egrep", "fgrep", "rg", "ag")) then ($a | any(test("^(-[a-zA-Z]*m|--max-count)")))
+    else false end;
+
 # Whether a tool result shows nothing: a search that printed nothing read
 # nothing. Claude Code says so in words — "(Bash completed with no output)",
 # the Grep tool's "No files found" — and appends a note when a `cd` in the
@@ -292,12 +305,14 @@ def results:
                 | if ($rd.paths | length) == 0 then empty
                   elif $rd.nocontent then empty
                   elif $rd.search and ($rd.doconly or ($r.text | blank)) then empty
-                  else $rd.paths[] | resolve($dir) | select(. != null) | {read: .} end
+                  else (partial_read) as $part
+                    | $rd.paths[] | resolve($dir) | select(. != null) | {read: ., partial: $part} end
               end)
         | .[]
       elif $r.err then empty
       elif $c.name == "Read" then
-        ($c.input.file_path | resolve($c.base)) | select(. != null) | {read: .}
+        ($c.input.file_path | resolve($c.base)) | select(. != null)
+        | {read: ., partial: (($c.input.limit // $c.input.offset // null) != null)}
       elif $c.name == "Grep" then
         # The Grep tool's default output_mode is files_with_matches: file
         # names, no content. Only "content" shows what a file says.
@@ -311,4 +326,5 @@ def results:
 | {clones: [ .[] | .clone // empty ],
    failedClones: [ .[] | .failed // empty ],
    unresolvedClones: ([ .[] | .unresolved // empty ] | add // 0),
-   reads: [ .[] | .read // empty ]}
+   reads: [ .[] | .read // empty ],
+   fullReads: [ .[] | select(.read != null and (.partial | not)) | .read ]}
