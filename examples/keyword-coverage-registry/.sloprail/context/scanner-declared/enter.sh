@@ -40,8 +40,12 @@ set -uo pipefail
 # Without the shared parser nothing can be logged correctly: decline. With no
 # scanner logged, search-needs-declared-scanner refuses every search — closed.
 [ -n "${SR_GUARDRAIL_DIR:-}" ] || exit 1
+# A helper stopped early runs only partly (whether the `.` then fails depends
+# on the bash version); only its last-line sentinel proves it loaded whole.
+unset scanner_lib_loaded
 # shellcheck source=scanner-lib.sh
 . "$SR_GUARDRAIL_DIR/scanner-lib.sh" 2>/dev/null || exit 1
+[ "${scanner_lib_loaded:-}" = 1 ] || exit 1
 
 input="$(cat)"
 scanner_path="$(printf '%s' "$input" | jq -r '.event.path // ""')"
@@ -72,9 +76,11 @@ case "$kind" in
       exit 1
     fi
     content="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
-    # The file as it stands before this write (an update has it; a create
-    # has none).
-    old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
+    # The file as it stands before this write: only an update carries it — a
+    # create has none, and `old` stays "".
+    if [ "$kind" = "PreFileUpdate" ]; then
+      old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
+    fi
     ;;
   *)
     # No kind, or one this context is not about: nothing to activate on.

@@ -35,8 +35,12 @@ refuse() {
 
 [ -n "${SR_GUARDRAIL_DIR:-}" ] || refuse "The change could not be recorded against the scanner registry (SR_GUARDRAIL_DIR is not set), so it was not let through."
 lib="$SR_GUARDRAIL_DIR/../../context/scanner-declared/scanner-lib.sh"
+# A helper stopped early runs only partly (whether the `.` then fails depends
+# on the bash version); only its last-line sentinel proves it loaded whole.
+unset scanner_lib_loaded
 # shellcheck source=../../context/scanner-declared/scanner-lib.sh
 . "$lib" 2>/dev/null || refuse "The change could not be recorded against the scanner registry (scanner-lib.sh beside scanner-declared could not be loaded), so it was not let through."
+[ "${scanner_lib_loaded:-}" = 1 ] || refuse "The change could not be recorded against the scanner registry (scanner-lib.sh did not load whole: its last-line sentinel scanner_lib_loaded is unset), so it was not let through."
 
 payload="$(cat)"
 field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }

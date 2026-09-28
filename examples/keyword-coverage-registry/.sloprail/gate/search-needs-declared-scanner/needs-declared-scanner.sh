@@ -219,9 +219,14 @@ searches="$(printf '%s' "$payload" | jq -r '
 [ -n "$searches" ] || exit 0
 
 [ -n "${SR_GUARDRAIL_DIR:-}" ] || refuse_plumbing "SR_GUARDRAIL_DIR is not set, so the shared scanner-lib.sh could not be found"
+# A helper stopped early runs only partly (whether the `.` then fails depends
+# on the bash version); only its last-line sentinel proves it loaded whole.
+unset scanner_lib_loaded
 # shellcheck source=../../context/scanner-declared/scanner-lib.sh
 . "$SR_GUARDRAIL_DIR/../../context/scanner-declared/scanner-lib.sh" 2>/dev/null \
   || refuse_plumbing "the shared scanner-lib.sh beside scanner-declared could not be loaded"
+[ "${scanner_lib_loaded:-}" = 1 ] \
+  || refuse_plumbing "the shared scanner-lib.sh did not load whole (its last-line sentinel scanner_lib_loaded is unset)"
 
 owed="$(registry_owed)" || refuse_plumbing "scanner-declared's registry could not be read (sr-session state list failed or returned something that is not its JSON lines)"
 declared="$(printf '%s' "$owed" | jq 'length' 2>/dev/null)"
