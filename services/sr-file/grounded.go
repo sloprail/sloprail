@@ -96,10 +96,19 @@ func newDeleteCmd() *cobra.Command {
 		"Delete a file. It must exist and be a regular file.")
 }
 
-func runGrounded(cmd *cobra.Command, fc grounding.FileCommand) error {
+func runGrounded(cmd *cobra.Command, fc grounding.FileCommand) (err error) {
 	abs, err := filepath.Abs(fc.Path)
 	if err != nil {
 		return fmt.Errorf("sr-file %s: %w", fc.Verb, err)
+	}
+	if dir := os.Getenv(grounding.EnvResolveDir); dir != "" {
+		// In resolve mode a failure is recorded against its own target, so the
+		// hook quotes it beside that file and no other.
+		defer func() {
+			if err != nil {
+				recordFailed(dir, grounding.Failed{Verb: fc.Verb, Path: abs, Error: err.Error()})
+			}
+		}()
 	}
 	if link, ok := throughLink(abs); ok {
 		return fmt.Errorf("sr-file %s: %s goes through the symbolic link %s, so the change would land where the link points, not at the path a rule judges; name the real path", fc.Verb, fc.Path, link)
@@ -288,6 +297,21 @@ func recordResolved(dir string, r grounding.Resolved) error {
 	defer f.Close()
 	_, err = f.Write(append(line, '\n'))
 	return err
+}
+
+// recordFailed appends a Failed record. Best effort: a failure to record it
+// leaves the hook with the line's stderr, which it still has.
+func recordFailed(dir string, f grounding.Failed) {
+	line, err := json.Marshal(f)
+	if err != nil {
+		return
+	}
+	file, err := os.OpenFile(grounding.FailedFile(dir), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = file.Write(append(line, '\n'))
 }
 
 func writePreservingMode(abs, content string) error {

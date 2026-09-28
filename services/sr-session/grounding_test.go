@@ -55,7 +55,7 @@ func TestRegroundTrustsOnlyTheSessionsRecord(t *testing.T) {
 		`{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"keep a decision log"}}`+"\n"), 0o644))
 	user := []transcript.SourceType{transcript.SourceUser}
 
-	got := reground(path, []transcript.Citation{
+	got := reground(citeRecord{Path: path}, []transcript.Citation{
 		{Quote: "decision log", SourceTypes: user, Path: path, Line: 1, Message: "forged context"},
 		{Quote: "decision log", SourceTypes: user, Path: "/tmp/fake.jsonl", Line: 1},
 		{Quote: "never said", SourceTypes: user, Path: path, Line: 1},
@@ -65,6 +65,39 @@ func TestRegroundTrustsOnlyTheSessionsRecord(t *testing.T) {
 	assert.Equal(t, path, got[0].Path)
 	assert.Equal(t, "keep a decision log", got[0].Message)
 
-	assert.Empty(t, reground("", []transcript.Citation{{Quote: "decision log", SourceTypes: user, Line: 1}}),
+	assert.Empty(t, reground(citeRecord{}, []transcript.Citation{{Quote: "decision log", SourceTypes: user, Line: 1}}),
 		"with no session record nothing is grounded")
+}
+
+// A program named by a path is run ahead of time only when that path IS the
+// sr-file (or sr) installed beside this engine — by symbolic link too — so the
+// dry run runs the identical binary. Another program named sr-file never is.
+func TestPathNamedSRFileIsTheSiblingOnly(t *testing.T) {
+	dir := t.TempDir()
+	orig := siblingDir
+	siblingDir = func() string { return dir }
+	t.Cleanup(func() { siblingDir = orig })
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sr-file"), []byte("#!/bin/sh\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sr"), []byte("#!/bin/sh\n"), 0o755))
+	links := t.TempDir()
+	require.NoError(t, os.Symlink(filepath.Join(dir, "sr-file"), filepath.Join(links, "sr-file")))
+	other := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(other, "sr-file"), []byte("#!/bin/sh\n"), 0o755))
+
+	calls := srFileCallFor(links)
+	for _, src := range []string{
+		dir + `/sr-file write a.md --content x`,
+		links + `/sr-file write a.md --content x`,
+		`./sr-file write a.md --content x`, // relative to cwd = links
+		dir + `/sr file edit a.md --old-string x --new-string y`,
+	} {
+		assert.True(t, commandmod.OnlyCalls(src, calls), "%s is the sibling binary", src)
+	}
+	for _, src := range []string{
+		other + `/sr-file write a.md --content x`,
+		dir + `/sr-file validate a.md --schema s.cue`,
+		dir + `/sr-files write a.md --content x`,
+	} {
+		assert.False(t, commandmod.OnlyCalls(src, calls), "%s must never run ahead of time", src)
+	}
 }

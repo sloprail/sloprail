@@ -117,17 +117,126 @@ func TestArgvStringPredicatesStillLoad(t *testing.T) {
 // everything" change. A flag name belongs to the command being run, so
 // enumerating them here would refuse `--access` because this engine has not
 // heard of npm — the checker punishing an author for our missing vocabulary
-// rather than for their mistake. fieldType leaves such a map at types.Any for
-// exactly this reason.
+// rather than for their mistake. The KEYS stay open; every VALUE is declared a
+// list of strings (TestFlagValueIsAListAtLoad), so the reads here are the list
+// spellings.
 func TestFlagsStayOpen(t *testing.T) {
 	k := kindDecl(t, commandmod.KindPreInvoke)
 
 	for _, src := range []string{
-		`any(invocations, .flags.access == "public")`,
+		`any(invocations, "public" in .flags.access)`,
 		`any(invocations, "force" in .flags)`,
-		`any(invocations, .flags.anythingAtAll == "")`,
+		`any(invocations, "" in .flags.anythingAtAll)`,
+		`any(invocations, len(.flags.access) > 0)`,
+		`any(invocations, .flags.tag[0] == "next")`,
+		`any(invocations, .flags.tag[-1] startsWith "n")`,
+		`any(invocations, any(.flags.tag, # == "next"))`,
 	} {
 		_, err := guardrail.CompileMatcherFor(src, k)
 		assert.NoErrorf(t, err, "a flag name is the command's, not this module's: %s", src)
 	}
+}
+
+// TestFlagValueIsAListAtLoad.
+//
+// Every `.flags.X` value is the list of that flag's occurrences, so a rule
+// comparing one to a string — the spelling from when a flag was one string —
+// could never match again. That fails OPEN, silently: a gate on
+// `.flags.tag == "next"` loaded and permitted `--tag=next`. Declaring the
+// values a list makes the checker refuse the comparison when the rule loads, so
+// the rule is reported instead of quietly guarding nothing.
+func TestFlagValueIsAListAtLoad(t *testing.T) {
+	k := kindDecl(t, commandmod.KindPreInvoke)
+
+	for _, src := range []string{
+		`any(invocations, .bin == "npm" and .flags.tag == "next")`,
+		`any(invocations, .flags.tag != "next")`,
+		`any(invocations, .flags["tag"] == "next")`,
+		`any(invocations, .flags.tag startsWith "n")`,
+		`any(invocations, .flags.tag endsWith "t")`,
+		`any(invocations, .flags.tag contains "ex")`,
+		`any(invocations, .flags.tag matches "^n")`,
+		`any(invocations, lower(.flags.tag) == "next")`,
+		`any(invocations, .flags.access == "")`,
+	} {
+		_, err := guardrail.CompileMatcherFor(src, k)
+		assert.Errorf(t, err, "a flag's value is a list; comparing it to a string must be refused at load: %s", src)
+	}
+
+	// And what such a rule meant still loads, and matches.
+	m, err := guardrail.CompileMatcherFor(`any(invocations, .bin == "npm" and "next" in .flags.tag)`, k)
+	require.NoError(t, err)
+	ok, err := m.Match(commandmod.ExtractCommand(`npm publish --tag=next`).Event())
+	require.NoError(t, err)
+	assert.True(t, ok, "the list spelling matches the flag it names")
+}
+
+// TestAbsentFlagReadsAsAnEmptyList.
+//
+// A matcher that errors fails CLOSED, so a documented flag idiom that errors on
+// a command lacking the flag would refuse every such call. An absent flag
+// reads as an empty list, so each spelling answers false without the flag and
+// true with it.
+func TestAbsentFlagReadsAsAnEmptyList(t *testing.T) {
+	k := kindDecl(t, commandmod.KindPreInvoke)
+	without := commandmod.ExtractCommand(`npm publish`).Event()
+	with := commandmod.ExtractCommand(`npm publish --access=public --tag=next`).Event()
+
+	for _, src := range []string{
+		`any(invocations, "access" in .flags)`,
+		`any(invocations, len(.flags.access) > 0)`,
+		`any(invocations, any(.flags.access, # != ""))`,
+		`any(invocations, "next" in .flags.tag)`,
+		`any(invocations, len(.flags["access"]) > 0)`,
+		`any(invocations, "tag" in .flags and .flags.tag[0] == "next")`,
+	} {
+		m, err := guardrail.CompileMatcherFor(src, k)
+		require.NoError(t, err, src)
+		got, err := m.Match(without)
+		require.NoErrorf(t, err, "%s must not error on a command without the flag", src)
+		assert.Falsef(t, got, "%s matched a command without the flag", src)
+		got, err = m.Match(with)
+		require.NoError(t, err, src)
+		assert.Truef(t, got, "%s did not match the command with the flag", src)
+	}
+}
+
+// TestFlagLoadErrorSaysFlagsAreLists: a rule comparing a flag to a string is
+// refused at load, and the refusal says why.
+func TestFlagLoadErrorSaysFlagsAreLists(t *testing.T) {
+	_, err := guardrail.CompileMatcherFor(`any(invocations, .flags.tag == "next")`, kindDecl(t, commandmod.KindPreInvoke))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "flag values are lists")
+}
+
+// TestAbsentFlagNilQuestionsAreRefused: an absent flag reads as an empty list,
+// so a rule asking whether one is nil — or supplying its own `??` default —
+// would answer the same for every command. Refused at load, with the spelling
+// that asks the question.
+func TestAbsentFlagNilQuestionsAreRefused(t *testing.T) {
+	k := kindDecl(t, commandmod.KindPreInvoke)
+	for _, src := range []string{
+		`any(invocations, .flags.tag == nil)`,
+		`any(invocations, .flags.tag != nil)`,
+		`any(invocations, nil == .flags.tag)`,
+		`any(invocations, "latest" in (.flags.tag ?? ["latest"]))`,
+	} {
+		_, err := guardrail.CompileMatcherFor(src, k)
+		require.Errorf(t, err, "%s must be refused at load", src)
+		assert.Contains(t, err.Error(), `not ("tag" in .flags)`, src)
+	}
+	m, err := guardrail.CompileMatcherFor(`any(invocations, not ("tag" in .flags))`, k)
+	require.NoError(t, err)
+	got, err := m.Match(commandmod.ExtractCommand(`npm publish`).Event())
+	require.NoError(t, err)
+	assert.True(t, got, "the spelling the refusal gives asks the question")
+}
+
+// TestFlagHintOnlyForAListMismatch: the "flag values are lists" hint names the
+// cause only when the error IS a list compared as a scalar; a rule that
+// mentions flags and fails for another reason (a typo) is not told about lists.
+func TestFlagHintOnlyForAListMismatch(t *testing.T) {
+	_, err := guardrail.CompileMatcherFor(`any(invocations, .bni == "npm" and "x" in .flags.tag)`, kindDecl(t, commandmod.KindPreInvoke))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "flag values are lists")
 }

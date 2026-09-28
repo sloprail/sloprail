@@ -247,7 +247,7 @@ func TestRunFileGuardsPreventive_AbsentResultFailsClosed(t *testing.T) {
 	}}
 	seeded := map[string]natures.ContextState{}
 
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, seeded, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, seeded, resolveNotes{})
 	require.NotEmpty(t, reason, "a preventive guard that cannot verify an update must refuse")
 	assert.Contains(t, reason, "always-fine")
 	assert.Contains(t, reason, "could not")
@@ -271,7 +271,7 @@ func TestRunFileGuardsPreventive_KnownResultRunsCheck(t *testing.T) {
 		filemod.FieldResultKnown: true,
 		filemod.FieldNewContent:  "package x",
 	}}
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
 	assert.Empty(t, reason, "a known-result update with a passing check is admitted")
 }
 
@@ -297,7 +297,7 @@ func TestRunFileGuardsPreventive_UnderivableCreateFailsClosed(t *testing.T) {
 		filemod.FieldResultKnown: false,
 	}}
 
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
 	require.NotEmpty(t, reason, "a preventive guard that cannot verify an underivable create must refuse (not pass)")
 	assert.Contains(t, reason, "always-fine")
 	assert.Contains(t, reason, "could not")
@@ -326,7 +326,7 @@ func TestRunFileGuardsPreventive_GenuineEmptyCreateRunsCheck(t *testing.T) {
 		filemod.FieldNewContent:  "",
 		filemod.FieldResultKnown: true,
 	}}
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, []event.Event{e}, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
 	assert.Empty(t, reason, "a known-result (genuinely-empty) create with a passing check is admitted, not refused")
 }
 
@@ -375,7 +375,7 @@ exit 0
 	}
 	events := []event.Event{pre("src/ok.go"), pre("src/bad1.go"), pre("src/bad2.go")}
 
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, events, hookScope{}, map[string]natures.ContextState{}, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guard}, events, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
 	require.NotEmpty(t, reason, "a call whose later files fail must be refused")
 	assert.Contains(t, reason, "src/bad1.go")
 	assert.Contains(t, reason, "src/bad2.go")
@@ -420,7 +420,7 @@ exit 0
 	}
 	events := []event.Event{pre("src/bad.go"), pre("src/other.go")}
 
-	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guardA, guardB}, events, hookScope{}, map[string]natures.ContextState{}, "")
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guardA, guardB}, events, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
 	require.NotEmpty(t, reason)
 	assert.Contains(t, reason, "src/bad.go")
 	assert.Contains(t, reason, "REFUSED BY A")

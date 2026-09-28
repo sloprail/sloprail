@@ -26,24 +26,39 @@ sr-session trajectory cite --source-types tool_result '0 failures' && git push
 
 The pool says what the quote must be: `user` (the user's own words, a message
 or an AskUserQuestion answer) or `tool_result` (a tool's output, proof that work
-happened). `--cite:` repeats for several citations. The quote's words must
+happened). Neither pool holds model-written text: a compaction summary is not
+the user's words, and these are not tool output — a sub-agent's reply (the
+Agent tool's result), whatever TaskOutput returned, what a tool read out of an
+agent transcript (a Read, Grep or command whose target is a Claude Code record,
+including a background agent's `tasks/<id>.output`, which links to one), an
+AskUserQuestion answer (cite it as `user`), and a result whose call is not in
+the record — a quote found only in one of these fails and says which it was —
+nor a hook's refusal. `--cite:` repeats for several citations. The quote's words must
 match exactly **one** entry of the session's record (whitespace, such as a line
 break, need not match). `sr-session trajectory cite '<quote>'` checks a quote
 before using it.
 
 In a sub-agent: its own tool output is citable as `tool_result` (the records of
-the sub-agents a session dispatched are searched beside its own). Its prompt is
+the sub-agents a session dispatched are searched beside its own). A quote is
+looked for in the caller's own record first, so output the root and a
+sub-agent both printed resolves to the caller's own. Its prompt is
 the parent agent's, not the user's, so `user` resolves only against the user's
 messages in the main conversation, quoted exactly as the user wrote them. When
 dispatching work that must cite the user, paste the user's exact words into the
 sub-agent's prompt.
 
-Run `sr-file` **on its own** in the command line: only `sr-file` calls, `&&`,
+Run `sr-file` **on its own**, by its bare name, in the command line — it must
+be on PATH (`command -v sr-file`; if that fails, put sloprail's binaries on
+PATH, or name the engine's own `sr-file` by its full path, which is dry-run as
+the same program): only `sr-file` calls, `&&`,
 `||`, `;`, `echo` and a stdin heredoc, with every value quoted verbatim
 (`'…'`, `<<'BODY'`). Such a line is dry-run before it executes, so its event
 carries the exact result (`resultKnown: true`). Mixed with any other program,
-`cd`, a `VAR=…` prefix, or any `$` expansion (`$VAR`, `$(…)`, `$((…))`, an
-unquoted heredoc delimiter), it is never run ahead of time. Its result is then
+`cd`, a `VAR=…` prefix, any `$` expansion (`$VAR`, `$(…)`, `$((…))`, an
+unquoted heredoc delimiter), or an unquoted glob or brace (`*`, `?`, `[`, `{`,
+zsh's `^` and `#`, or a `~name` other than a leading `~/` — bash, which runs the
+line ahead of time, and zsh expand them differently), it is never run ahead of
+time. Its result is then
 unknown, and a preventive rule refuses it (`sr-file write` creates missing
 directories, so no `mkdir` is needed). Harness Write/Edit tools, `sed` and `rm`
 cannot carry a citation at all.
@@ -59,9 +74,53 @@ own call.
 
 - An `sr-file` citation lands on that file's events and on the command event. A
   chained `cite` lands on every event the command produces.
-- A `Post` file event at Stop carries every citation its path's changes were
-  made with this session. A rule that must refuse each uncited change is
-  `preventive`, so it refuses that change at pre-tool.
+- A `Post` file event at Stop carries the citations of the cited changes that
+  **landed** on its path this session: a cited call that failed, was denied, or
+  never ran grounds nothing. A citation grounds only the change it rode on, and
+  only for a requirement whose pools it resolved in (a `--cite:tool_result`
+  change does not ground a `user` requirement). Every other part of the file's
+  change that the agent made — a Write, an Edit, a command, before, between or
+  after the cited changes — must be one the prerequisite's `when` waives (run on
+  that part alone: its `oldContent`/`newContent` are that part's, and it carries
+  no citations), or the requirement refuses. Without `when`, every change the
+  agent makes to the file must be cited.
+- A cited `sr-file write` states the whole file, so it grounds everything before
+  it: an uncited change is settled by restating the file with one, which is the
+  remedy the refusal gives.
+- A cited write settles the file by the citation's EXISTENCE alone: it grounds
+  everything the write states, whatever the quote says. Whether the restated
+  content is what the quote supports is a content check — a `judge` reading
+  `event.citations` against the change — and a rule that must tie the whole
+  file to its quote needs one.
+- Changes the agent did not make are never charged to it: a file already dirty
+  when the session began, the user's edit between turns, a branch switch, a
+  checkout filter (`eol=crlf`). They are noticed at the first hook of each of
+  the agent's cycles by comparing each file with how the agent left it at its
+  last Stop. A change made by something else WHILE the agent is working (an
+  editor saving the file mid-turn) cannot be told from the agent's own and is
+  charged; restate the file with a cited `sr-file write` to settle it.
+- Work the agent starts that can outlive the call that started it can land
+  after its Stop, and a change that lands then is charged to the agent (the
+  refusal says the file changed after its last Stop, and names the work),
+  never set aside as the user's:
+  - a shell command that detaches work — `nohup`, `setsid`, `disown`, `at`,
+    `crontab`, `tmux`, `screen`, a coprocess, or a `&` nothing in the same
+    line `wait`s for (a `&` inside quotes, a URL or a here-document is text;
+    `cmd & wait` ends inside the call) — for the rest of the session, since
+    nothing reports when such work ends;
+  - a Bash run with `run_in_background`, a background sub-agent, a session
+    cron — for as long as the harness's Stop reports it still running
+    (`background_tasks`, `session_crons`).
+  A sub-agent's detached work counts for the session that dispatched it, and
+  the other way round. Work detached by other means — a program's own
+  `subprocess.Popen(start_new_session=True)`, a daemon, `docker run -d`, a git
+  hook — is not seen: grounding is a correctness aid, not a security boundary.
+- A `tool_result` citation proves that the quoted output EXISTS in the
+  session's record — never where it came from. Output read back from an agent's
+  transcript is excluded as far as it can be recognised (by the file a tool
+  read, or by its text), and that is best-effort: text copied out of a
+  transcript and reshaped first (`jq` to a file, then `cat`) is ordinary
+  output.
 
 ## Requiring one
 
@@ -91,22 +150,28 @@ require:
 
 ```bash
 # removes-content.sh: exit 0 when a line present before is gone after.
+input="$(cat)"
+old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
+new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
 removed="$(comm -23 <(printf '%s' "$old" | sort -u) <(printf '%s' "$new" | sort -u) | grep -c . || true)"
 [ "${removed:-0}" -eq 0 ] && exit 1
 exit 0
 ```
 
 The engine's refusal says what must be cited and with which flag ("must cite a
-tool's output from this session (`--cite:tool_result`)"), then how: the generic
-`sr-file` forms, or — when a `when` script that applies the requirement prints
-`{"hint": "…"}` on stdout — that hint in their place. A hint is the rule's own
-advice for this case (which status to move from, what counts as proof), so give
-the exact command in it, for a create as well as an edit.
+tool's output from this session (`--cite:tool_result`)"), then how: the
+`sr-file` forms. A `when` script that applies the requirement may print
+`{"hint": "…"}` on stdout: the rule's own advice for this case (which status to
+move from, what counts as proof). A hint that spells the exact command (an
+`sr-file ` line, or a `trajectory cite` chain for a command) takes the generic
+forms' place; one that only advises follows the form for this kind of change,
+so a refusal always carries a command the agent can run.
 
 On `Post` kinds `oldContent` is the session baseline, so a transition such as
 "status became `published` this session" reads the same at both moments. Keep
 such a guard `preventive`: an unknown result is refused before it lands, and the
-after-check still refuses a change that reached the tree without a citation.
+after-check still refuses a change that reached the tree without a citation
+(one `when` does not waive).
 `when` works on any prerequisite, on every nature.
 
 ## Judging it

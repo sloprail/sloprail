@@ -110,8 +110,14 @@ func recordBaseline(cmd *cobra.Command, p HookPayload) {
 	}
 	defer store.Close()
 
-	if _, err := ensureBaseline(store, p.Cwd); err != nil {
+	if outcome, err := ensureBaseline(store, p.Cwd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: no baseline recorded:", err)
+	} else if outcome == baselineMoved {
+		// Between turns: every cited-change point so far is on the line the
+		// tree left. See pruneHistory.
+		if err := pruneHistory(store, nowNano()); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
 	}
 }
 

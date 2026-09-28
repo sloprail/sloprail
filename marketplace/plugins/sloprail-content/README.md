@@ -233,9 +233,14 @@ A broken field is never a way to publish unchecked.
 Publishing is the irreversible step, and the task is explicit that an agent
 must not be able to publish on its own say-so — so this guard, like
 `content-rule-is-grounded` below, is bound `preventive: true`. The Stop
-after-check is the backstop: there, "before" is the session baseline and the
-citations are every one recorded for the unit this session, so a publish that
-slipped through uncited is still refused, with the steps to redo it. The
+after-check is the backstop: there, "before" is the session baseline, and a
+citation grounds only the change it rode on — citations do not accumulate. A
+cited change counts only if it landed, only for a requirement whose pools it
+was cited in, and every other part of the unit's change the agent made must be
+one `enters-published.sh` waives (a cited `sr-file write` of the whole unit
+grounds everything before it; a change the agent did not make, such as the
+user's own edit between turns, is not charged). So a publish that slipped
+through uncited is still refused, with the steps to redo it. The
 citation is required only on the transition, so the guard declares it with a
 `when:` script — a draft edit needs none:
 

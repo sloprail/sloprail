@@ -43,11 +43,10 @@ case "$kind" in
     # false: the engine could not read the settled file — a link to a FIFO or a
     # device, or past the read cap. Undecidable: apply (exit 0).
     [ "$(field '.event.newContentKnown // false')" = "true" ] || exit 0
-    abs="${SR_WORKSPACE:-.}/$(field '.event.path // ""')"
-    # Written and removed within the cycle: nothing landed, nothing claims review.
-    [ -f "$abs" ] || exit 1
-    # A settled file that cannot be read is undecidable: apply (exit 0).
-    content="$(cat "$abs")" || exit 0
+    # The settled content, off the event rather than the disk: at Stop the
+    # engine also asks about each PART of a change no citation rode on, with
+    # the event narrowed to that part, and the disk holds only the last state.
+    content="$(field '.event.newContent // ""')"
     ;;
   *)
     # A delete claims nothing.

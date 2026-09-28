@@ -49,6 +49,14 @@ type HookPayload struct {
 	ToolName       string          `json:"tool_name"`
 	ToolInput      json.RawMessage `json:"tool_input"`
 	StopHookActive bool            `json:"stop_hook_active"`
+
+	// BackgroundTasks and SessionCrons are what a Stop (or SubagentStop)
+	// reports still running in the background: Claude Code sends each as a
+	// list — a task as {id, type: "shell"|"subagent", status: "running",
+	// description, command|agent_type}. Absent from a harness that does not
+	// report them. See backgroundOf.
+	BackgroundTasks json.RawMessage `json:"background_tasks,omitempty"`
+	SessionCrons    json.RawMessage `json:"session_crons,omitempty"`
 }
 
 // record is the transcript whose session this hook belongs to.

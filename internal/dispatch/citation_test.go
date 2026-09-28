@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,9 +110,11 @@ func TestRequireWhenHint(t *testing.T) {
 		assert.Contains(t, v.Reason, "must cite a tool's output from this session (--cite:tool_result)", "what to cite, always")
 		assert.Contains(t, v.Reason, "ON ITS OWN", "how to run sr-file, always")
 		if want != "" {
-			// The hint is the how: it takes the generic forms' place.
+			// A hint that spells no command is advice: the runnable form for THIS
+			// kind of change stays, and the hint follows it.
 			assert.Contains(t, v.Reason, "\n"+want+"\n")
-			assert.NotContains(t, v.Reason, "sr-file delete", "a hint replaces the generic forms: %s", v.Reason)
+			assert.Contains(t, v.Reason, "sr-file edit memories/a.md", "a hint without a command must not take away the runnable form: %s", v.Reason)
+			assert.NotContains(t, v.Reason, "sr-file delete", "only the forms for this kind of change: %s", v.Reason)
 		} else {
 			assert.Contains(t, v.Reason, "sr-file delete", "without a hint the generic forms stay")
 			assert.NotContains(t, v.Reason, "not json")
@@ -148,4 +151,188 @@ func TestRequireCitationTellsASubagent(t *testing.T) {
 			assert.Equal(t, tc.told, strings.Contains(v.Reason, transcript.SubagentUserAdvice), "reason: %s", v.Reason)
 		})
 	}
+}
+
+// Every citation refusal carries a command the agent can run, on every kind of
+// event: a rule's hint that spells the command is the how and replaces the
+// generic forms; a hint that only advises follows the engine's form for this
+// kind of change.
+func TestCitationRemedyAlwaysHasARunnableForm(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, hint string) string {
+		t.Helper()
+		body := "#!/bin/sh\njq -n --arg h " + shellQuote(hint) + " '{hint: $h}'\nexit 0\n"
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755))
+		return "./" + name
+	}
+	advice := write("advice.sh", "ADVICE: append instead of rewriting.")
+	fileCmd := write("file-cmd.sh", "Run exactly:\n  sr-file edit memories/a.md --old-string 'draft' --new-string 'published' --cite:user '<approval>'")
+	cmdCmd := write("cmd-cmd.sh", "Run exactly:\n  sr-session trajectory cite '<approval>' && npm publish")
+	prose := write("prose-cmd.sh", "Use the sr-file tool rather than Write; append instead of rewriting.")
+
+	for name, tc := range map[string]struct {
+		kind, when string
+		header     string
+		has        []string
+		hasNot     []string
+	}{
+		"command, advice": {"PreCommandInvoke", advice,
+			"this command must cite the user's own words, and it carries none that resolves.",
+			[]string{"sr-session trajectory cite --source-types user '<exact quote>' && <the command>", "ADVICE: append instead of rewriting."}, nil},
+		"command, the hint spells the chain": {"PreCommandInvoke", cmdCmd,
+			"this command must cite the user's own words, and it carries none that resolves.",
+			[]string{"sr-session trajectory cite '<approval>' && npm publish"},
+			[]string{"--source-types user '<exact quote>'"}},
+		"after the fact, advice": {"PostFileUpdate", advice,
+			"memories/a.md was changed without citing the user's own words (--cite:user).",
+			[]string{"Redo the change with sr-file", "sr-file edit memories/a.md --old-string '<old>'", "ADVICE: append instead of rewriting."},
+			[]string{"sr-file delete"}},
+		"after the fact, the hint spells the command": {"PostFileUpdate", fileCmd,
+			"memories/a.md was changed without citing the user's own words (--cite:user).",
+			[]string{"sr-file edit memories/a.md --old-string 'draft'"},
+			[]string{"Redo the change with sr-file", "'<old>'"}},
+		"prose naming sr-file is advice, not a command": {"PreFileUpdate", prose,
+			"this change to memories/a.md must cite the user's own words (--cite:user), and it carries none that resolves.",
+			[]string{"sr-file edit memories/a.md --old-string '<old>'", "Use the sr-file tool rather than Write"}, nil},
+		"a create, advice": {"PreFileCreate", advice,
+			"this change to memories/a.md must cite the user's own words (--cite:user), and it carries none that resolves.",
+			[]string{"sr-file write memories/a.md --cite:user '<exact quote>'", "ADVICE: append instead of rewriting."},
+			[]string{"sr-file edit", "sr-file delete"}},
+		"a delete, advice": {"PreFileDelete", advice,
+			"this change to memories/a.md must cite the user's own words (--cite:user), and it carries none that resolves.",
+			[]string{"sr-file delete memories/a.md --cite:user '<exact quote>'", "ADVICE: append instead of rewriting."},
+			[]string{"sr-file edit", "sr-file write"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}, When: tc.when}
+			v, err := Runner{}.Run(Request{Nature: NatureFileGuard, Dir: dir, Require: []declaration.Prerequisite{p}, Event: citedEvent(tc.kind)})
+			require.NoError(t, err)
+			require.True(t, v.Refused)
+			assert.True(t, strings.HasPrefix(v.Reason, tc.header), "header of:\n%s", v.Reason)
+			for _, want := range tc.has {
+				assert.Contains(t, v.Reason, want)
+			}
+			for _, not := range tc.hasNot {
+				assert.NotContains(t, v.Reason, not)
+			}
+		})
+	}
+}
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'" }
+
+// At Stop, a file's recorded citations ground only the changes they rode on.
+// Each part of the change the agent made that no cited change in the
+// prerequisite's pools made must be waived by its `when` — run on THAT part —
+// or the citation does not hold; with no `when`, no such part may exist. A
+// cited write states the whole file and grounds everything before it; a
+// change the agent never made (Foreign) is never charged.
+func TestRequireCitationOnTheUncitedPartsOfAChange(t *testing.T) {
+	dir := t.TempDir()
+	// Applies unless the part leaves everything after the first line alone.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "body-changed.sh"), []byte(`#!/usr/bin/env bash
+p="$(cat)"
+[ "$(printf '%s' "$p" | jq -r '.event.oldContent' | tail -n +2)" = "$(printf '%s' "$p" | jq -r '.event.newContent' | tail -n +2)" ] && exit 1
+exit 0
+`), 0o755))
+	contents := map[string]string{}
+	st := func(c string) HistoryState {
+		h := fmt.Sprintf("h%d", len(contents))
+		for k, v := range contents {
+			if v == c {
+				h = k
+			}
+		}
+		contents[h] = c
+		return HistoryState{Exists: true, Hash: h}
+	}
+	absent := HistoryState{}
+	user := []transcript.SourceType{transcript.SourceUser}
+	tool := []transcript.SourceType{transcript.SourceToolResult}
+	todo, done, other := st("status: todo\nask"), st("status: done\nask"), st("status: todo\nanother ask")
+	evil := st("EVIL REWRITE")
+	cited := func(before, after HistoryState, pools []transcript.SourceType, whole bool, at int64) HistoryPoint {
+		return HistoryPoint{Pools: pools, Whole: whole, Before: before, After: after, At: at}
+	}
+	hist := func(base, cur HistoryState, pts ...HistoryPoint) *FileHistory {
+		return &FileHistory{Baseline: base, Current: cur, Points: pts, Content: func(h string) (string, bool) { c, ok := contents[h]; return c, ok }}
+	}
+
+	for name, tc := range map[string]struct {
+		when   string
+		h      *FileHistory
+		refuse bool
+	}{
+		"exactly the cited change":        {"", hist(absent, todo, cited(absent, todo, user, true, 1)), false},
+		"an uncited part, no when":        {"", hist(absent, done, cited(absent, todo, user, true, 1)), true},
+		"an uncited part when waives":     {"./body-changed.sh", hist(absent, done, cited(absent, todo, user, true, 1)), false},
+		"an uncited part when applies to": {"./body-changed.sh", hist(absent, other, cited(absent, todo, user, true, 1)), true},
+		"one of two applies":              {"./body-changed.sh", hist(absent, other, cited(absent, todo, user, true, 1), cited(done, done, user, false, 2)), true},
+		// P1: cited write, uncited rewrite, then the remedy — a cited write of
+		// the whole file — clears it.
+		"a cited write after an uncited change clears it": {"", hist(absent, done,
+			cited(absent, todo, user, true, 1), cited(other, done, user, true, 3)), false},
+		// A cited EDIT after an uncited change grounds only its own part.
+		"a cited edit after an uncited change does not": {"", hist(absent, done,
+			cited(absent, todo, user, true, 1), cited(other, done, user, false, 3)), true},
+		// P2: a rewrite cited in another pool is, to this requirement, uncited.
+		"a change cited in another pool counts as uncited": {"", hist(absent, evil,
+			cited(absent, todo, user, true, 1), cited(todo, evil, tool, true, 2)), true},
+		// P3/P4: a change the agent never made is not charged.
+		"a foreign change is not charged": {"", hist(todo, done,
+			HistoryPoint{Foreign: true, After: other, At: 1}, cited(other, done, user, false, 2)), false},
+		"an uncited change before a foreign one still is": {"", hist(todo, done,
+			HistoryPoint{Foreign: true, From: &other, FromAt: 1, After: other, At: 2}, cited(other, done, user, false, 3)), true},
+		// A background sub-agent's cited write landing after the agent's last
+		// Stop explains the difference from how the agent left the file.
+		"another session's cited change after the agent's Stop is not charged": {"", hist(absent, todo,
+			cited(absent, todo, user, true, 5), HistoryPoint{Foreign: true, From: &absent, FromAt: 4, After: todo, At: 6}), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ev := citedEvent("PostFileUpdate", transcript.SourceUser)
+			ev.Fields["oldContent"], ev.Fields["newContent"] = contents[tc.h.Baseline.Hash], contents[tc.h.Current.Hash]
+			p := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}, When: tc.when}
+			v, err := Runner{}.Run(Request{Nature: NatureFileGuard, Dir: dir, Require: []declaration.Prerequisite{p}, Event: ev, History: tc.h})
+			require.NoError(t, err)
+			assert.Equal(t, tc.refuse, v.Refused, "reason: %s", v.Reason)
+			if tc.refuse {
+				assert.Contains(t, v.Reason, "memories/a.md was changed without a citation this session")
+				assert.Contains(t, v.Reason, "sr-file write memories/a.md --cite:user", "the remedy restates the whole file")
+			}
+		})
+	}
+}
+
+// The `when` of an uncited part is handed that part alone: its content, and no
+// citations — none rode on it.
+func TestUncitedPartCarriesNoCitations(t *testing.T) {
+	ev := citedEvent("PostFileUpdate", transcript.SourceUser)
+	part := uncitedEvent(ev, UncitedChange{FromExists: true, From: "a", ToExists: true, To: "b"})
+	assert.Empty(t, grounding.FromWire(part.Fields[grounding.FieldCitations]))
+	assert.Equal(t, "a", part.Fields["oldContent"])
+	assert.Equal(t, "b", part.Fields["newContent"])
+}
+
+// A change that landed between turns while work the agent had started may have
+// been running is charged, and the refusal says so and names the work.
+func TestBetweenTurnsChangeIsChargedAndExplained(t *testing.T) {
+	contents := map[string]string{"c": "cited", "u": "user edit"}
+	cited := HistoryState{Exists: true, Hash: "c"}
+	edited := HistoryState{Exists: true, Hash: "u"}
+	h := &FileHistory{
+		Baseline: HistoryState{}, Current: edited,
+		Points: []HistoryPoint{
+			{Pools: []transcript.SourceType{transcript.SourceUser}, Whole: true, After: cited, At: 1},
+			{BetweenTurns: true, From: &cited, FromAt: 2, After: edited, At: 3, By: "sleep 1"},
+		},
+		Content: func(k string) (string, bool) { c, ok := contents[k]; return c, ok },
+	}
+	ev := citedEvent("PostFileUpdate", transcript.SourceUser)
+	p := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}
+	v, err := Runner{}.Run(Request{Nature: NatureFileGuard, Require: []declaration.Prerequisite{p}, Event: ev, History: h})
+	require.NoError(t, err)
+	require.True(t, v.Refused)
+	assert.Contains(t, v.Reason, "memories/a.md changed after your last Stop")
+	assert.Contains(t, v.Reason, "(sleep 1)")
+	assert.Contains(t, v.Reason, "sr-file write memories/a.md --cite:user")
 }

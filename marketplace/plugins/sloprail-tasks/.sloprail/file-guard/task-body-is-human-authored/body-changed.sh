@@ -9,8 +9,11 @@
 # missing, an unreadable settled file, a Pre result the engine could not compute.
 #
 # THE TWO MOMENTS match the checks': a Pre kind compares the pending bytes with
-# `.event.oldContent` (the file on disk); a Post kind reads the settled file and
-# compares it with `.event.oldContent` (the session baseline).
+# `.event.oldContent` (the file on disk); a Post kind compares `.event.newContent`
+# (the settled file) with `.event.oldContent` (the session baseline). Both are
+# read off the event, never the disk: at Stop the engine also asks about each
+# PART of a change no citation rode on, with the event narrowed to that part,
+# and the file on disk is only its last state.
 set -uo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -53,8 +56,7 @@ case "$kind" in
     # events.md): false when it could not read the settled file — a link to a
     # FIFO or a device, or past the read cap. Undecidable: apply (exit 0).
     [ "$(field '.event.newContentKnown // false')" = "true" ] || exit 0
-    abs="${SR_WORKSPACE:-.}/$(field '.event.path // ""')"
-    content="$(cat "$abs" 2>/dev/null)" || exit 0
+    content="$(field '.event.newContent // ""')"
     ;;
   *)
     # A delete is not this guard's business (deletions default to skip).

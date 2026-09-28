@@ -39,8 +39,13 @@ match: path matches "^\\.sloprail/content-rules/[^/]+/RULE\\.md$" or path matche
 # to gate a unit write before being caught. It also matters for the citation:
 # a line mixing sr-file with any other program has an unknown result, which a
 # preventive guard refuses before it runs. The Stop after-check remains the
-# backstop, and there `event.citations` is every citation recorded for the
-# path this session (an uncited change clears them).
+# backstop. There a citation grounds only the change it rode on — citations do
+# not accumulate: `event.citations` are those of the cited changes that landed
+# on the path this session, and since this requirement has no `when`, every
+# part of the change the agent made must come from a cited change in the user
+# pool (a cited `sr-file write` restating the file grounds everything before
+# it; a change the agent did not make, such as the user's own edit between
+# turns, is not charged).
 preventive: true
 
 # deletions: left at the default (skip). Deleting a rule removes a constraint

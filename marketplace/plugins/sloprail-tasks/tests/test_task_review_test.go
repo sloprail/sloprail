@@ -183,20 +183,19 @@ func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
 	}
 }
 
-// TestReview_UncitedEditAfterCitedTransitionKeepsEvidence: in ONE session the task
-// is moved into in_review with cited tool output, then edited again with the plain
-// Write tool (a priority change). The engine keeps the transition's tool_result
-// citation on record through the uncited edit, so the claim reaching Stop still
-// carries its proof: the pre-flight passes and the reviewer is handed the tool
-// output.
-func TestReview_UncitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
+// TestReview_UncitedEditAfterCitedTransitionIsRefused: in ONE session the task
+// is moved into in_review with cited tool output, then edited again with the
+// plain Write tool (a priority change). A citation grounds only the change it
+// rode on: the transition's proof does not ground the later uncited edit of an
+// in_review task, so Stop refuses it and says how to cite.
+func TestReview_UncitedEditAfterCitedTransitionIsRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	installPluginTree(t, e, proj)
-	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
-	sess := "s-review-accumulate"
+	sess := "s-review-uncited-after"
 	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
 	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
@@ -208,11 +207,49 @@ func TestReview_UncitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 	if got := readFile(t, proj, taskPath); !strings.Contains(got, "priority: P2") {
 		t.Fatalf("the uncited edit did not land:\n%s", got)
 	}
-	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
-		t.Fatalf("an in_review claim whose transition cited tool output was blocked at Stop after an uncited edit:\n%v", blocks)
+	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !containsStr(joined, "was changed without a citation") || !containsStr(joined, "--cite:tool_result") {
+		t.Fatalf("an uncited edit of an in_review task passed at Stop on an earlier change's citation:\n%s", joined)
 	}
-	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); !containsStr(prompt, "quoted: "+proofMarker) {
-		t.Errorf("the reviewer was not handed the tool output cited on the earlier transition:\n%s", prompt)
+}
+
+// TestReview_CitedEditAfterCitedTransitionKeepsEvidence: the same flow with the
+// later edit made the grounded way. task-review requires tool output for every
+// change to an in_review task (TestReview_EditedClaimWithoutProofRefusedAtStop:
+// even a priority-only edit), and a change counts only in the pool it was cited
+// in — so the priority edit cites tool output of its own (a second run),
+// beside the user's words. The claim reaching Stop carries BOTH changes' proof,
+// the pre-flight passes and the reviewer is handed each.
+func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installPluginTree(t, e, proj)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
+
+	sess := "s-review-accumulate"
+	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
+	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
+		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
+		Bash("p2", "echo 'PROOF-TWO-7715 re-ran the suite, still green'"),
+		srEdit("b2", taskPath, "priority: P1", "priority: P2", citeUser(askQuote), citeTool("PROOF-TWO-7715")),
+	)...))
+	if res.Refused() {
+		t.Fatalf("the cited transition or the cited priority edit was refused at Pre:\n%s", res.Output)
+	}
+	if got := readFile(t, proj, taskPath); !strings.Contains(got, "priority: P2") {
+		t.Fatalf("the cited edit did not land:\n%s", got)
+	}
+	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
+		t.Fatalf("an in_review claim whose transition cited tool output was blocked at Stop after a cited edit:\n%v", blocks)
+	}
+	// Cited changes accumulate: the reviewer is handed the transition's proof AND
+	// the later edit's, each with its own tool output.
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	for _, marker := range []string{proofMarker, "PROOF-TWO-7715"} {
+		if !containsStr(prompt, "quoted: "+marker) {
+			t.Errorf("the reviewer was not handed the tool output cited as %q:\n%s", marker, prompt)
+		}
 	}
 }
 

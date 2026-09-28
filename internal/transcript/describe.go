@@ -184,6 +184,21 @@ func SubagentPaths(path string) ([]string, error) {
 	return paths, nil
 }
 
+// isSubagentRecord reports whether the record at path is a sub-agent's: by
+// what it says about itself (IsSubagentTranscript), OR by where the harness
+// filed it — an agent-<id>.jsonl under a subagents directory. Either suffices.
+// A question deciding whose words a record's "user" messages are must not
+// read a sub-agent's record as a root because its meta.json is missing or its
+// first record is not written yet: that would make the parent's dispatch
+// prompt citable as the end user's words.
+func isSubagentRecord(path string) bool {
+	name := filepath.Base(path)
+	if strings.HasPrefix(name, subagentFilePrefix) && strings.HasSuffix(name, jsonlSuffix) && SessionDirOfSubagent(path) != "" {
+		return true
+	}
+	return IsSubagentTranscript(path)
+}
+
 // SessionRootOf returns the ROOT record of the session the trajectory at path
 // belongs to — the end user's own conversation — climbing out of however many
 // levels of delegation path sits under. A root answers itself.
@@ -199,7 +214,7 @@ func SubagentPaths(path string) ([]string, error) {
 // another's.
 func SessionRootOf(path string) string {
 	cur := path
-	for IsSubagentTranscript(cur) {
+	for isSubagentRecord(cur) {
 		dir := SessionDirOfSubagent(cur)
 		if dir == "" {
 			return ""

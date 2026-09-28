@@ -227,6 +227,22 @@ func AnswerQuestion(id string, qa ...[2]string) Turn {
 		id+"#a", "e2e-turn-"+id, id, jsonStr(content))}
 }
 
+// AskUserQuestion returns the TWO turns of a question the agent asks and the
+// person answers, as a real record holds them: the AskUserQuestion tool_use,
+// then the answer envelope (AnswerQuestion) as the tool_result for that same
+// call. The call matters: a result whose call is not in the record is of
+// unknown provenance and is dropped from the tool-output pool for THAT reason,
+// so an answer without its question cannot show that an answer is kept out of
+// the tool-output pool because it is the user's words.
+//
+// The mock does not implement AskUserQuestion and answers the tool_use with its
+// own error result; the answer envelope follows it for the same id, the way the
+// harness writes the person's selection.
+func AskUserQuestion(id, question, answer string) (Turn, Turn) {
+	use, _ := ToolUseWithResult(id, "AskUserQuestion", map[string]string{"question": question}, "null")
+	return use, AnswerQuestion(id, [2]string{question, answer})
+}
+
 // ToolResult returns ONE turn carrying a tool's RESULT with arbitrary content — the
 // shape a command's output lands as in a real trajectory, and the fixture a
 // DELIVERY OBSERVATION is cited against: a `user` record whose content is a

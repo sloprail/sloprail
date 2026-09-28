@@ -69,6 +69,8 @@ type fileGuardResult struct {
 	Attribution string
 	Refused     bool
 	Reason      string
+	// Path is the file a Post refusal is about; "" otherwise.
+	Path string
 }
 
 // runFileGuardsPreventive runs the PREVENTIVE file-guards against a cycle's PRE
@@ -104,7 +106,7 @@ func runFileGuardsPreventive(
 	events []event.Event,
 	scope hookScope,
 	contextMap map[string]natures.ContextState,
-	resolveNote string,
+	notes resolveNotes,
 ) string {
 	runner := dispatchcore.Runner{}
 	refusals := newPreventiveRefusals(events, scope.Workspace)
@@ -161,8 +163,8 @@ func runFileGuardsPreventive(
 			selected, err := fileGuardSelects(match, e, contextMap)
 			if err != nil {
 				// The match COMPILED at load but could not be EVALUATED against this
-				// event (e.g. `int(path) > 0` on path "notes.md", or `len(.flags.access)`
-				// where the accessor is nil). That is not the guard cleanly declining —
+				// event (e.g. `int(path) > 0` on path "notes.md", which the vm refuses).
+				// That is not the guard cleanly declining —
 				// it is the engine unable to ANSWER whether this write is fine. Fail
 				// CLOSED: refuse the write, the same direction the old dispatch takes
 				// (internal/guardrail/matcher.go:121 — the pre-tool path refuses the
@@ -202,7 +204,8 @@ func runFileGuardsPreventive(
 			// including a genuinely-empty one) has resultKnown true and is judged
 			// normally, so this refuses only the truly-underivable write.
 			if isUnderivablePreWrite(e) {
-				refusals.add(eventPath(e), underivableRefusal(cmd, runner, g, e, scope, contextMap, resolveNote))
+				// What sr-file's dry run said about THIS file, never another's.
+				refusals.add(eventPath(e), underivableRefusal(cmd, runner, g, e, scope, contextMap, notes.For(eventPath(e))))
 				continue
 			}
 
@@ -313,7 +316,7 @@ func underivableRefusal(
 			"(a change whose settled bytes are not known ahead of time — a command-derived edit, or a notebook create whose cell source is not the document), "+
 			"so whether the file would still be fine is unknown. "+
 			"Refusing: a preventive guard must not admit a write it cannot verify. "+
-			"Write the file's content directly, or make the change with sr-file ON ITS OWN in the command (nothing else in the line but sr-file calls, && and echo; no cd, no VAR= prefix, no $ expansion — quote every value verbatim) "+
+			"Write the file's content directly, or make the change with sr-file ON ITS OWN in the command (call it by its bare name `sr-file`, not a path; nothing else in the line but sr-file calls, && and echo; no cd, no export or VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) "+
 			"so its result is computed before it runs — and check that each --cite: quote resolves to exactly one message: `sr-session trajectory cite '<quote>'`. (file-guard %s)",
 		g.Name, underivableKindNoun(e.Kind), g.Attribution())
 }
@@ -491,6 +494,7 @@ func runFileGuardsPost(
 	scope hookScope,
 	root string,
 	contextMap map[string]natures.ContextState,
+	histories map[string]*dispatchcore.FileHistory,
 ) []fileGuardResult {
 	if len(guards) == 0 {
 		return nil
@@ -589,6 +593,7 @@ func runFileGuardsPost(
 				}
 			}
 
+			path, _ := e.Fields[filemod.FieldPath].(string)
 			verdict, err := runner.Run(dispatchcore.Request{
 				Nature:         dispatchcore.NatureFileGuard,
 				Require:        g.Require,
@@ -600,6 +605,10 @@ func runFileGuardsPost(
 				GuardName:      g.Name,
 				Workspace:      scope.Workspace,
 				SessionID:      scope.SessionID,
+				// The file's history this session: a `citation` prerequisite
+				// holds only when the parts of its change no cited change made
+				// are ones its `when` waives. See cited_changes.go.
+				History: histories[path],
 				// Re-entry provenance for an after-check that spawns sr-agent: this
 				// guard appended to any launched checks already on the stack, so the
 				// launched agent's own Write does not re-fire this guard on itself
@@ -634,7 +643,7 @@ func runFileGuardsPost(
 			}
 
 			if verdict.Refused {
-				results = append(results, fileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: verdict.Reason})
+				results = append(results, fileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: verdict.Reason, Path: path})
 				// One refusal per (guard, file); keep judging the remaining files so
 				// the agent hears every not-fine one at once.
 				continue

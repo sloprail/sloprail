@@ -27,15 +27,16 @@
 // not enumerate types as Any, so an accessor reaching inside it is checked against
 // nothing at load and meets whatever actually arrives.
 //
-// commandmod declares an invocation's `flags` as a TypeMap with no enumerated keys
-// (internal/commandmod/module.go) — deliberately, because a flag name belongs to
-// the command being run, not to the module, so there is no vocabulary to close it
-// over. That is the one field shape in the shipped build where an authored rule
-// bound to a command can still error: `.flags.access` is nil on any command that
-// did not pass the flag, and `len` of nil errors. `event.invocations` is the gate
-// scope's nesting of the kind's `invocations` field (CompileGateMatch nests the
-// event under `event`); verified compile-clean-but-eval-error against the real
-// commandmod KindDecl before this suite was written.
+// The flag map used to be that place: `.flags.access` was nil on a command that
+// did not pass the flag, and `len` of nil errored. It no longer is — an absent
+// flag reads as an empty list (guardrail's absentListIsEmpty), because an
+// ordinary flag rule erroring on every command without the flag is itself the
+// fail-closed footgun. What remains is a well-typed expression the vm cannot
+// answer: `int(.bin) > 0` COMPILES (int of a string is well-formed in the
+// expression language) and then refuses "npm" at run time — the same shape
+// 027's file-guard side rides. `event.invocations` is the gate scope's nesting
+// of the kind's `invocations` field (CompileGateMatch nests the event under
+// `event`).
 //
 // # What this suite does NOT reach
 //
@@ -44,26 +45,18 @@
 // against and then reads nil, compares unequal, and quietly does not fire — is not
 // closed here and cannot be from here. commandmod now DECLARES its invocation
 // element shape (bin/argv/flags), so `.bni` is caught at load the same way a
-// top-level `paht` is; only the open `flags` map remains a place an accessor
-// reaches unchecked, which is what T014_01 rides. Recorded so the boundary is
+// top-level `paht` is; what T014_01 rides is an expression the vm cannot answer. Recorded so the boundary is
 // explicit.
 package e2e
 
 import "testing"
 
-// A gate about `npm publish --access <value>`: does the invocation carry an access
-// flag with a value? `event.invocations` is the command's flattened invocations,
-// and `.flags` is an open map, so the predicate body compiles unchecked and
-// `.flags.access` is nil on any command that did not pass the flag — which `len`
-// then refuses at EVALUATION.
-//
-// An ordinary rule to write, phrased the ordinary way. Nothing about it warns the
-// author it will error on the commands it is meant to let past. The check PERMITS,
-// so the only thing that can refuse the command is the engine's answer to the
-// matcher error.
+// A gate whose trigger match loads cleanly and cannot be answered at run time:
+// `int(.bin)` on "npm" is refused by the vm. The check PERMITS, so the only thing
+// that can refuse the command is the engine's answer to the matcher error.
 const gateMatcherErrorsAtRuntime = `on:
   - event: PreCommandInvoke
-    match: any(event.invocations, len(.flags.access) > 0)
+    match: any(event.invocations, int(.bin) > 0)
 checks:
   - script: ./check.sh
 `
@@ -133,7 +126,7 @@ func TestT014_01_MatcherErrorRefusesTheAction(t *testing.T) {
 	}
 	// The author has to be able to find the expression that failed, or the refusal
 	// is a wall with no door in it.
-	if !got.Saw("flags.access") {
+	if !got.Saw("int(.bin)") {
 		t.Errorf("the refusal does not quote the matcher that could not be evaluated:\n%s", got.Output)
 	}
 }

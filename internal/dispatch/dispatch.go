@@ -148,6 +148,32 @@ type Request struct {
 	// name is the only entry. Not load-bearing for THIS request's verdict; it
 	// governs the verdict of the dispatch one exec down.
 	LaunchedBy string
+
+	// History is, for a Post file event at Stop whose path had cited changes
+	// this session, the file's history from the session baseline (see
+	// FileHistory). A citation grounds only the change it rode on, so a
+	// `citation` prerequisite holds only when its `when` waives every part of
+	// the change the agent made that no cited change in its pools made (with no
+	// `when`, no such part may exist). Nil for every other event — a Pre event
+	// IS one change, and its citations ride on it.
+	History *FileHistory
+}
+
+// UncitedChange is one stretch of a file's history that no citation rode on:
+// the file as it stood before (From, absent when !FromExists) and after (To,
+// absent when !ToExists).
+type UncitedChange struct {
+	FromExists bool
+	From       string
+	ToExists   bool
+	To         string
+	// ToKnown is false when To could not be read (the settled file, unreadable).
+	ToKnown bool
+
+	// BetweenTurns: the change landed after the agent's last Stop, while work
+	// it had started (By) may still have been running.
+	BetweenTurns bool
+	By           string
 }
 
 // Verdict is what the check-runner concluded about one fired event.

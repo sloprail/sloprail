@@ -65,16 +65,15 @@ if find "$SR_EVAL_PROJECT_DIR/memories/tasks" -iname "ASK.md" 2>/dev/null | grep
   ask_written="yes"
 fi
 
-subagents="${SR_EVAL_TRANSCRIPT%.jsonl}/subagents"
-
+# Every sub-agent record, a workflow's agents included (cat_subagent_records).
 ask_cited="no"
-if cat "$SR_EVAL_TRANSCRIPT" "$subagents"/*.jsonl 2>/dev/null | grep -q -- '--cite:user'; then
+if { cat "$SR_EVAL_TRANSCRIPT"; cat_subagent_records; } 2>/dev/null | grep -q -- '--cite:user'; then
   ask_cited="yes"
 fi
 
 # Who made the ASK.md write that landed: the sub-agent, the parent, or nobody.
 ask_writer="nobody"
-if cat "$subagents"/*.jsonl 2>/dev/null | grep -q 'sr-file write[^"]*ASK.md'; then
+if cat_subagent_records 2>/dev/null | grep -q 'sr-file write[^"]*ASK.md'; then
   ask_writer="sub-agent"
 fi
 if grep -q 'sr-file write[^"]*ASK.md' "$SR_EVAL_TRANSCRIPT" 2>/dev/null; then
@@ -84,7 +83,7 @@ fi
 
 # Whether a sub-agent met the sub-agent refusal (its quote not the user's).
 subagent_note="no"
-if cat "$subagents"/*.jsonl 2>/dev/null | grep -q 'You are a sub-agent'; then
+if cat_subagent_records 2>/dev/null | grep -q 'You are a sub-agent'; then
   subagent_note="yes"
 fi
 
