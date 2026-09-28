@@ -18,11 +18,14 @@ set -uo pipefail
 
 # Undecidable without jq or the shared reader: apply the requirement (exit 0).
 command -v jq >/dev/null 2>&1 || exit 0
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version): a partial reader may answer "no" with a
+# function it calls missing, so only the last-line sentinel proves it loaded
+# whole. Not loaded whole: apply, never read on and waive.
+unset publish_claim_loaded
 # shellcheck source=publish-claim.sh
 . "${SR_GUARDRAIL_DIR:-.}/publish-claim.sh" 2>/dev/null || exit 0
-# A helper that sourced only partly (a syntax error stops bash mid-file without
-# failing the `.`) defines no reader: apply rather than read "no".
-declare -F publish_claim >/dev/null || exit 0
+[ "${publish_claim_loaded:-}" = 1 ] || exit 0
 
 event="$(cat)"
 field() { printf '%s' "$event" | jq -r "$1" 2>/dev/null; }

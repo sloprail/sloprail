@@ -134,3 +134,9 @@ publish_claim() {
   esac
   return 0
 }
+
+# LOADED SENTINEL — keep this the LAST line. bash runs a sourced file up to its
+# first syntax error, so a helper can load partly: publish_claim defined, a
+# function it calls missing. A caller unsets this, sources, and checks it,
+# which proves the whole file ran.
+publish_claim_loaded=1

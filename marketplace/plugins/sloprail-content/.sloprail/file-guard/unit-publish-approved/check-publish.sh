@@ -59,11 +59,15 @@ schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/unit.cue"
 if [ ! -f "$schema" ]; then
   refuse "unit-publish-approved: schema not found at $schema — the plugin's own unit.cue is missing, so no unit can be checked."
 fi
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version), so its last-line sentinel is what proves
+# it loaded whole.
+unset publish_claim_loaded
 # shellcheck source=publish-claim.sh
 . "${SR_GUARDRAIL_DIR:-.}/publish-claim.sh" 2>/dev/null \
   || refuse "unit-publish-approved: publish-claim.sh is missing beside this check, so whether $path claims published could not be read"
-declare -F publish_claim >/dev/null \
-  || refuse "unit-publish-approved: publish-claim.sh did not load (it defines no publish_claim), so whether $path claims published could not be read"
+[ "${publish_claim_loaded:-}" = 1 ] \
+  || refuse "unit-publish-approved: publish-claim.sh did not load whole (its last-line sentinel publish_claim_loaded is unset), so whether $path claims published could not be read"
 
 # WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on
 # BOTH Pre kinds before newContent is read — an underivable result is deferred

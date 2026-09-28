@@ -36,11 +36,14 @@ kind="$(field '.event.kind // ""')"
 
 lib="${SR_GUARDRAIL_DIR:-.}/lib-body.sh"
 [ -f "$lib" ] || refuse "task-body-is-human-authored: lib-body.sh not found at $lib, so the body could not be read"
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version); only its last-line sentinel proves it
+# loaded whole.
+unset lib_body_loaded
 # shellcheck source=lib-body.sh
 . "$lib"
-# A helper stopped by a syntax error loads partly and the `.` does not fail.
-declare -F task_body >/dev/null \
-  || refuse "task-body-is-human-authored: lib-body.sh did not load (it defines no task_body), so the body could not be read"
+[ "${lib_body_loaded:-}" = 1 ] \
+  || refuse "task-body-is-human-authored: lib-body.sh did not load whole (its last-line sentinel lib_body_loaded is unset), so the body could not be read"
 
 # WHICH BYTES. resultKnown is consulted on BOTH Pre kinds before newContent is
 # read: an underivable result exits 0 here and is judged on the settled bytes at

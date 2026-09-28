@@ -65,11 +65,14 @@ if [ ! -f "$lib" ]; then
   echo "task-review: cite-links.sh not found at $lib, so the evidence could not be assembled" >&2
   exit 1
 fi
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version); only its last-line sentinel proves it
+# loaded whole.
+unset cite_links_loaded
 # shellcheck source=../task-evidence-resolves/cite-links.sh
 . "$lib"
-# A helper stopped by a syntax error loads partly and the `.` does not fail.
-if ! declare -F citation_path citation_ranges citation_lines >/dev/null; then
-  echo "task-review: cite-links.sh did not load (it defines no citation_* helpers), so the evidence could not be assembled" >&2
+if [ "${cite_links_loaded:-}" != 1 ]; then
+  echo "task-review: cite-links.sh did not load whole (its last-line sentinel cite_links_loaded is unset), so the evidence could not be assembled" >&2
   exit 1
 fi
 

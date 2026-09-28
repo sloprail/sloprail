@@ -7,16 +7,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
 // Every shell script the repo ships parses under bash — the shell hooks, checks,
 // preparers and eval scorers run under. A script that does not parse can fail
-// OPEN: a sourced helper that stops at a syntax error defines nothing, and the
-// `.` that loaded it does not fail, so a `when` reading a claim from it can read
-// "no" and waive. (An apostrophe inside a double-quoted ${var:-…} is valid zsh
-// and a bash syntax error; one shipped for a moment in sloprail-content.)
+// OPEN: bash runs a sourced helper only up to its first syntax error, and
+// whether the `.` then fails depends on the bash version and the error, so a
+// caller can read on with part of the helper and decide on it — a `when` can
+// read "no" and waive. (An apostrophe inside a double-quoted ${var:-…} is valid
+// zsh and a bash syntax error; one shipped for a moment in sloprail-content.)
 //
 // "Ships" is every tracked *.sh, and every tracked file whose shebang names
 // bash, outside the e2e test tree and testdata (which may hold broken scripts on
@@ -113,4 +115,90 @@ func repoRoot(t *testing.T) string {
 		t.Fatalf("git rev-parse: %v", err)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// bash4Only matches constructs bash 3.2 — macOS's /bin/bash, which a hook may
+// run under — does not have: case fall-through (;& ;;&), |&, coproc, case
+// modification (${x,,} ${x^^}), associative arrays, mapfile/readarray.
+var bash4Only = []struct{ name, pattern string }{
+	{"case fall-through ;& or ;;&", `(^|[^;&])(;;&|;&)[[:space:]]*($|#)`},
+	{"|& (pipe stderr)", `(^|[^\[\^|])\|&`},
+	{"coproc", `(^|[[:space:];&|(])coproc([[:space:]]|$)`},
+	{"case modification ${x,,} / ${x^^}", `\$\{[A-Za-z_][A-Za-z0-9_]*(,,?|\^\^?)[^}]*\}`},
+	{"associative array (declare/local/typeset -A)", `(^|[[:space:];])(declare|local|typeset)[[:space:]]+-[a-zA-Z]*A`},
+	{"mapfile / readarray", `(^|[[:space:];&|(])(mapfile|readarray)([[:space:]]|$)`},
+}
+
+// Shipped scripts use only what bash 3.2 has: a hook may run under macOS's
+// /bin/bash, and a construct it lacks is a syntax error there — the partial
+// load a sourced helper's sentinel exists to catch, or a check that cannot run.
+// Where /bin/bash is a different bash from the one on PATH (a Mac with a newer
+// bash installed), every script is also parsed with it.
+func TestShippedScriptsAreBash32Compatible(t *testing.T) {
+	root := repoRoot(t)
+	scripts := trackedBashScripts(t, root)
+	compiled := make([]*regexp.Regexp, len(bash4Only))
+	for i, c := range bash4Only {
+		compiled[i] = regexp.MustCompile(c.pattern)
+	}
+	for _, f := range scripts {
+		b, err := os.ReadFile(filepath.Join(root, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for n, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			for i, re := range compiled {
+				if re.MatchString(line) {
+					t.Errorf("%s:%d uses %s, which bash 3.2 does not have: %s", f, n+1, bash4Only[i].name, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+
+	pathBash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatalf("no bash on PATH: %v", err)
+	}
+	if sys, err := filepath.EvalSymlinks("/bin/bash"); err == nil {
+		if onPath, err := filepath.EvalSymlinks(pathBash); err == nil && sys != onPath {
+			for _, f := range scripts {
+				cmd := exec.Command("/bin/bash", "-n", f)
+				cmd.Dir = root
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Errorf("%s does not parse under /bin/bash: %s", f, strings.TrimSpace(string(out)))
+				}
+			}
+		}
+	}
+}
+
+// The scan catches each construct, and not the character class that looks like
+// one (`[^|&;]` in a grep pattern).
+func TestBash4OnlyScanCatchesEachConstruct(t *testing.T) {
+	for _, line := range []string{
+		`  a) echo a ;&`, `  a) echo a ;;&`, `cmd |& tee log`, `coproc worker { cat; }`,
+		`echo "${name,,}"`, `echo "${name^^}"`, `declare -A seen`, `local -A m`, `mapfile -t lines < f`, `readarray lines`,
+	} {
+		hit := false
+		for _, c := range bash4Only {
+			if regexp.MustCompile(c.pattern).MatchString(line) {
+				hit = true
+			}
+		}
+		if !hit {
+			t.Errorf("not caught: %s", line)
+		}
+	}
+	for _, line := range []string{
+		`grep -qE "(claude)[^|&;]*(--print)"`, `case $x in a) echo a ;; esac`, `a && b || c`, `echo "${name:-x}"`, `declare -F f`,
+	} {
+		for _, c := range bash4Only {
+			if regexp.MustCompile(c.pattern).MatchString(line) {
+				t.Errorf("false positive (%s): %s", c.name, line)
+			}
+		}
+	}
 }
