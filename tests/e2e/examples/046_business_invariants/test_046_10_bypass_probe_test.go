@@ -393,6 +393,31 @@ func Refund(charged, amount int, goodwill bool) (int, error) {
 	return amount, nil
 }
 `, "yes", "no", "no"},
+		// Accepts a request above the charge but caps the payout at the charge:
+		// it never pays more than the charge, and goodwill changes nothing.
+		// Accepting the request is not a bypass when the payout says otherwise.
+		{"caps-the-payout", `package billing
+
+func Refund(charged, amount int, goodwill bool) (int, error) {
+	if amount > charged {
+		amount = charged
+	}
+	return amount, nil
+}
+`, "no", "no", "yes"},
+		// Returns only an error, and accepts a request above the charge: with no
+		// payout to go by, accepting it is the bypass.
+		{"error-only-accepts-over-charge", `package billing
+
+import "errors"
+
+func Refund(charged, amount int, goodwill bool) error {
+	if !goodwill && amount > charged {
+		return errors.New("refund exceeds the original charge")
+	}
+	return nil
+}
+`, "yes", "no", "no"},
 		// Goodwill pays the charge plus 500 and the plain path returns 0: no
 		// number anywhere tracks the amount, so only tracking the CHARGE finds
 		// the payout.
@@ -485,7 +510,7 @@ func Refund(charged, amount int) bool { return amount <= charged }
 			}
 			// A payout amount was compared with the charge only where Refund
 			// returns one that tracks the amount asked for.
-			wantCompared := map[string]string{"returned-amount-bypass": "yes", "zero-then-amount-plus-500": "yes", "charge-plus-500": "yes", "charge-plus-500-only": "yes"}[c.name]
+			wantCompared := map[string]string{"returned-amount-bypass": "yes", "zero-then-amount-plus-500": "yes", "charge-plus-500": "yes", "charge-plus-500-only": "yes", "caps-the-payout": "yes"}[c.name]
 			if wantCompared == "" {
 				wantCompared = "no"
 			}

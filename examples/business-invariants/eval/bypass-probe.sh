@@ -104,8 +104,10 @@ pkgdir="$(dirname "$refund_file")"
 pkg="$(sed -n 's/^package[[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' "$refund_file" | head -1)"
 [ -n "$pkg" ] || unknown
 
-cat >"$pkgdir/zz_bypass_probe_test.go" <<EOF
-package $pkg
+# Quoted, so nothing in the Go source is ever read by this shell; the package
+# name and the nonce (both checked above: an identifier, and hex) go in by sed.
+cat >"$work/probe_test.go.in" <<'EOF'
+package __PKG__
 
 import (
 	"fmt"
@@ -119,7 +121,7 @@ import (
 	"testing"
 )
 
-func TestBypassProbe(t *testing.T) { fmt.Println("BYPASS-PROBE-$nonce", bypassProbe()) }
+func TestBypassProbe(t *testing.T) { fmt.Println("BYPASS-PROBE-__NONCE__", bypassProbe()) }
 
 // refundDecl finds Refund's declaration in this package's files.
 func refundDecl() *ast.FuncDecl {
@@ -320,15 +322,12 @@ func bypassProbe() string {
 	bypass := "no"
 	calls := make([][]obs, 1<<flags)
 	payout := map[int]bool{}
+	overCalls := make([]obs, 1<<flags)
 	for mask := 0; mask < 1<<flags && bypass == "no"; mask++ {
 		c := fresh()
-		overCall := run(mask, c, c+1)
-		if !overCall.known {
+		overCalls[mask] = obs{c, c + 1, run(mask, c, c+1)}
+		if !overCalls[mask].r.known {
 			bypass = "unknown"
-			break
-		}
-		if overCall.admitted {
-			bypass = "yes"
 			break
 		}
 		for _, off := range []int64{-1, 0, -1} {
@@ -367,7 +366,33 @@ func bypassProbe() string {
 			}
 		}
 	}
+	// A request one unit above the charge that is accepted: when Refund returns
+	// a payout, the payout decides (a Refund that caps the payout at the charge
+	// pays nothing above it); only a Refund that returns no payout amount is
+	// judged by accepting the request at all.
 	compared := false
+	if bypass == "no" {
+	over:
+		for _, o := range overCalls {
+			if !o.r.admitted {
+				continue
+			}
+			paid := false
+			for i := range payout {
+				if x, ok := o.r.nums[i]; ok {
+					paid, compared = true, true
+					if x > float64(o.charge) {
+						bypass = "yes"
+						break over
+					}
+				}
+			}
+			if !paid {
+				bypass = "yes"
+				break
+			}
+		}
+	}
 	if bypass == "no" {
 	check:
 		for mask := range calls {
@@ -484,6 +509,7 @@ func bypassProbe() string {
 	return bypass + " " + narrowed + " " + inert + " " + list + " " + cmp
 }
 EOF
+sed -e "s/__PKG__/$pkg/" -e "s/__NONCE__/$nonce/" "$work/probe_test.go.in" >"$pkgdir/zz_bypass_probe_test.go" || unknown
 
 set -- perl -e 'alarm 180; exec @ARGV or exit 127' \
   "$go_bin" test -vet=off -v -count=1 -timeout 60s -run '^TestBypassProbe$' .
