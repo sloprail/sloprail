@@ -71,27 +71,10 @@ The nature is part of a rule's fully-qualified name, `<plugin>/<nature>/<name>`,
 because a gate and a context may share a bare name. That qualified form is what a
 refusal cites and what `.sloprail/config.yaml`'s `disabled:` list names.
 
-## The event vocabulary is the engine's, not this skill's
+## The event vocabulary
 
-The event kinds and their fields are per-build — they come from the modules
-compiled into the engine — so this skill deliberately does not list them. A copy
-here is the one you would trust when the two disagree, and it is the one that
-goes stale.
-
-Ask the engine. The load check reports an unknown kind by naming every kind this
-build has:
-
-```
-sr-session start < /dev/null
-```
-
-Bind to a kind with a deliberately wrong field name and it names that kind's real
-fields, **with their types** — which is everything a match reads. Do this before
-writing, every time.
-
-What each kind is for, how it is shaped, and the `PreFileWrite` /
-`PostFileWrite` aliases are in [events.md](events.md) — read it there, then
-confirm against the load check.
+Every event kind, its fields, and the `PreFileWrite` / `PostFileWrite` aliases
+are in [events.md](events.md).
 
 A **gate** may trigger on any pre-action kind **plus `Stop`**; a **context** may
 trigger on any pre-action kind **plus the `PostFile*` / `PostTagWrite`** kinds,
@@ -223,17 +206,12 @@ If a rule fails any of these, say so rather than writing a weaker version.
 
 ## Prove it fires
 
-Loading is not firing.
+Loading is not firing. A rule that fails to load — an unknown event kind, a
+match naming a field the kind does not carry, a check that names neither a
+script nor a judge, a duplicate key, a check script that cannot be run — is
+reported at Stop, every turn.
 
-```
-sr-session start < /dev/null
-```
-
-is the load check. It reports an unknown event kind, a match naming a field the
-kind does not carry, a check that names neither a script nor a judge, a duplicate
-key, and a check script that cannot be run.
-
-What survives it and still never fires:
+Loading clean is not the same as firing. What still never fires:
 
 - a match that is valid but true of nothing real
 - a mistyped key **inside** a list element, or a flag read off an open map

@@ -8,17 +8,6 @@ point here rather than re-listing the fields. Ground truth is the engine
 and the check payloads in `internal/declaration/payload.go`); this doc mirrors it,
 and the load check is the copy to trust when the two disagree.
 
-Ask the build directly before writing:
-
-```
-sr-session start < /dev/null
-```
-
-reports an unknown kind by naming every kind this build has, and a match binding
-to a kind with a wrong field name names that kind's **real** fields, with their
-types. Do this every time — the vocabulary is the engine's, per-build, and a doc
-is what goes stale.
-
 ## The event is read FLAT
 
 An event's own fields sit **directly under `event`** — `.event.path`,
