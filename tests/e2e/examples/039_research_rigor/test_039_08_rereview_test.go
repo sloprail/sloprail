@@ -1216,3 +1216,107 @@ func TestT039_53_ScheduledJobIsABackgroundWriter(t *testing.T) {
 		})
 	}
 }
+
+// T039_54: where the clock-lag probe is made, and what happens when it cannot
+// be. In a linked worktree (.git is a FILE) the scratch file goes to the
+// worktree's own git directory (.git/worktrees/<name>), never the user's
+// tree; with the git directory read-only and the filesystem lagging, the lag
+// is unknown and an unseen proposal is charged (before, the lag read as 0 and
+// the lagging clock made the write look older than the cycle). Driven record
+// by record: enter.sh run as a Stop would, on a hand-built record whose cycle
+// began a second ago and ran an interpreter.
+func TestT039_54_ClockProbePlacement(t *testing.T) {
+	e, _ := research(t)
+	enter := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail", "context", "research-run", "enter.sh")
+	git := func(dir string, args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	setup := func(t *testing.T) (main, wt string) {
+		main = filepath.Join(t.TempDir(), "main")
+		require := func(err error) {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		require(os.MkdirAll(main, 0o755))
+		git(main, "init", "-q")
+		require(os.WriteFile(filepath.Join(main, "NOTES.md"), []byte(seedNotes), 0o644))
+		git(main, "add", "-A")
+		git(main, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed")
+		wt = filepath.Join(t.TempDir(), "wt")
+		git(main, "worktree", "add", "-q", wt)
+		return main, wt
+	}
+	// run writes the proposal now and runs enter.sh for it in workspace ws,
+	// with extra PATH entries first; it reports whether research opened.
+	run := func(t *testing.T, ws string, pathFirst string) bool {
+		t.Helper()
+		start := time.Now().Add(-1 * time.Second).UTC().Format("2006-01-02T15:04:05.000Z")
+		root := filepath.Join(t.TempDir(), "S.jsonl")
+		lines := []string{
+			`{"type":"user","uuid":"u0","parentUuid":null,"timestamp":"` + start + `","message":{"role":"user","content":"go"}}`,
+			`{"type":"assistant","uuid":"a0","parentUuid":"u0","timestamp":"` + start + `","message":{"role":"assistant","content":[{"type":"tool_use","id":"t0","name":"Bash","input":{"command":"python3 w.py"}}]}}`,
+		}
+		if err := os.WriteFile(root, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, "NOTES.md"), []byte(seedNotes+"\n## Proposed approach\n\nBackoff.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		payload := `{"event":{"kind":"PostFileUpdate","path":"NOTES.md","oldContent":` + jsonQuote(seedNotes) + `,"newContent":` +
+			jsonQuote(seedNotes+"\n## Proposed approach\n\nBackoff.\n") + `,"seen":false},` +
+			`"transcriptPath":` + jsonQuote(root) + `,"currentContext":{"active":false,"payload":{}},"gates":{}}`
+		cmd := exec.Command("bash", enter)
+		cmd.Stdin = strings.NewReader(payload)
+		cmd.Env = append(os.Environ(), "SR_WORKSPACE="+ws,
+			"PATH="+pathFirst+string(os.PathListSeparator)+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+		out, err := cmd.Output()
+		return err == nil && strings.Contains(string(out), `"proposal"`)
+	}
+	t.Run("in a linked worktree the probe is under the git directory", func(t *testing.T) {
+		main, wt := setup(t)
+		shims := t.TempDir()
+		log := filepath.Join(t.TempDir(), "mktemp.log")
+		shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + log + "'\nexec /usr/bin/mktemp \"$@\"\n"
+		if err := os.WriteFile(filepath.Join(shims, "mktemp"), []byte(shim), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !run(t, wt, shims) {
+			t.Fatalf("an unseen proposal in the worktree was not charged")
+		}
+		b, _ := os.ReadFile(log)
+		gitdir, _ := filepath.EvalSymlinks(filepath.Join(main, ".git", "worktrees", filepath.Base(wt)))
+		got := strings.TrimSpace(string(b))
+		if resolved, err := filepath.EvalSymlinks(filepath.Dir(got)); err != nil || resolved != gitdir {
+			t.Errorf("the clock probe was made at %q, want under %s", got, gitdir)
+		}
+		ents, _ := os.ReadDir(wt)
+		for _, ent := range ents {
+			if strings.HasPrefix(ent.Name(), ".sr-clock") {
+				t.Errorf("a clock probe was left in the working tree: %s", ent.Name())
+			}
+		}
+	})
+	t.Run("a read-only git directory and a lagging clock: charged", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("running as root: a read-only directory is still writable")
+		}
+		main, _ := setup(t)
+		shims := t.TempDir()
+		if err := os.WriteFile(filepath.Join(shims, "stat"), []byte(busyboxStat(5)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		gd := filepath.Join(main, ".git")
+		if err := os.Chmod(gd, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(gd, 0o755) })
+		if !run(t, main, shims) {
+			t.Errorf("with the lag unmeasurable, an unseen proposal was not charged")
+		}
+	})
+}

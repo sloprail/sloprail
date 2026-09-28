@@ -471,7 +471,8 @@ func injectMarker(jsonl, marker string) string {
 // whole-second stamp would tie records written within one second, which a
 // check ordering calls by time (research-rigor's scorer cuts every record at a
 // call's time) must not see. perl is on every platform this suite runs on.
-const msNow = `perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime($t)), ($t-int($t))*1000'`
+// Without perl it falls back to a whole-second stamp rather than none.
+const msNow = `perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime($t)), ($t-int($t))*1000' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S.000Z`
 
 // emitStamped is the shell that prints one scenario record, stamped with the
 // time it is EMITTED — the moment the mock plays that turn, as real Claude Code

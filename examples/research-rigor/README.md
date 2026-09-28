@@ -247,8 +247,12 @@ agent's background writers is still running IS charged — the two cannot be
 told apart. Times are compared in whole seconds, so a user edit in the same
 second the cycle began is charged too (fail closed). The cycle's start is the
 harness's clock and ctime the filesystem's; where the filesystem's lags (a
-bind mount, a network share) the lag is measured once, on a scratch file under
-`.git`, and the start moved back by it. `stat` is asked in its GNU/BusyBox
+bind mount, a network share) the lag is measured once, on a scratch file made
+in the repository's own git directory (`git rev-parse --absolute-git-dir` — in
+a linked worktree that is `.git/worktrees/<name>`, never the user's tree)
+when it is on the same filesystem as the notes, else beside the notes, and the
+start moved back by it. When no scratch file can be made (a read-only git
+directory), the lag is unknown and the change is charged (fail closed). `stat` is asked in its GNU/BusyBox
 form first and BSD's after, never chosen by `stat --version` (BusyBox rejects
 it, and there `-f` means filesystem status), and an answer that is not a
 number is no answer. With no writer at all, nobody is charged — git bringing in

@@ -156,16 +156,31 @@ ctime_of() {
   [ "$v" -gt 1000000000 ] || return 1
   printf '%s' "$v"
 }
-# How far the filesystem's clock lags this host's (seconds; 0 if not
-# measurable): the cycle's start is the harness's clock, a file's ctime the
-# filesystem's — a bind mount or network share can lag, which would make a
-# write in this cycle look older than it. Measured once, on a scratch file
-# beside the notes.
+# How far the filesystem's clock lags this host's, in seconds — or "unknown":
+# the cycle's start is the harness's clock, a file's ctime the filesystem's,
+# and a bind mount or network share can lag, which would make a write in this
+# cycle look older than it. Measured once, on a scratch file created where it
+# is invisible to the user's tree: the repository's own git directory (in a
+# linked worktree .git is a FILE, and the real one is .git/worktrees/<name>)
+# when it is on the same filesystem as the notes, else beside the notes. When
+# no scratch file can be made the lag is unknown, and a change is charged.
+dev_of() {
+  v="$(stat -c %d -- "$1" 2>/dev/null)"
+  case "$v" in "" | *[!0-9]*) v="$(stat -f %d -- "$1" 2>/dev/null)" ;; esac
+  case "$v" in "" | *[!0-9]*) return 1 ;; esac
+  printf '%s' "$v"
+}
 fs_lag() {
-  probe_dir="$ws/.git"; [ -d "$probe_dir" ] || probe_dir="$(dirname "$ws/$path_as_given")"
-  probe="$(mktemp "$probe_dir/.sr-clock.XXXXXX" 2>/dev/null)" || { echo 0; return; }
+  notes_dir="$(dirname "$ws/$path_as_given")"
+  probe_dir="$notes_dir"
+  gitdir="$(git -C "$ws" rev-parse --absolute-git-dir 2>/dev/null)"
+  if [ -n "$gitdir" ] && [ -d "$gitdir" ] && [ "$(dev_of "$gitdir")" = "$(dev_of "$notes_dir")" ]; then
+    probe_dir="$gitdir"
+  fi
+  probe="$(mktemp "$probe_dir/.sr-clock.XXXXXX" 2>/dev/null)" || { echo unknown; return; }
+  trap 'rm -f "$probe"' EXIT
   now="$(date +%s)"; pc="$(ctime_of "$probe")"; rm -f "$probe"
-  [ -n "$pc" ] || { echo 0; return; }
+  [ -n "$pc" ] || { echo unknown; return; }
   echo $(( now - pc ))
 }
 changed_since() { # <iso time>
@@ -174,6 +189,8 @@ changed_since() { # <iso time>
   [ -n "$start" ] || return 0
   ct="$(ctime_of "$ws/$path_as_given")" || return 0
   [ -n "$lag" ] || lag="$(fs_lag)"
+  # An unmeasurable lag could hide an in-cycle write: charged (fail closed).
+  [ "$lag" != "unknown" ] || return 0
   # A filesystem clock more than a second behind moves the start back by as
   # much; one ahead only makes more changes look recent (charged — fails
   # closed).
