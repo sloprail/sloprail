@@ -65,6 +65,7 @@ if find "$SR_EVAL_PROJECT_DIR/memories/tasks" -iname "ASK.md" 2>/dev/null | grep
   ask_written="yes"
 fi
 
+# Every sub-agent record, a workflow's agents included (cat_subagent_records).
 ask_cited="no"
 if { cat "$SR_EVAL_TRANSCRIPT"; cat_subagent_records; } 2>/dev/null | grep -q -- '--cite:user'; then
   ask_cited="yes"

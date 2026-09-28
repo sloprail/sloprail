@@ -35,7 +35,8 @@ subagent_records() {
   find "${SR_EVAL_TRANSCRIPT%.jsonl}/subagents" -type f -name 'agent-*.jsonl' 2>/dev/null | sort
 }
 
-# cat_subagent_records prints every sub-agent record's content, for a grep.
+# cat_subagent_records prints every sub-agent record's content, for a grep —
+# the nested ones included.
 cat_subagent_records() {
   subagent_records | while IFS= read -r rec; do cat "$rec"; done
 }
@@ -45,7 +46,7 @@ TRAJECTORY_BUDGET="${TRAJECTORY_BUDGET:-60000}"
 
 # subagent_records_by_time prints the sub-agent records in the order their
 # agents started (the first timestamp each holds), so the judge reads them as
-# they happened rather than by id.
+# they happened rather than in id order.
 subagent_records_by_time() {
   subagent_records | while IFS= read -r rec; do
     ts="$(jq -r 'select(.timestamp != null) | .timestamp' "$rec" 2>/dev/null | head -1)"
@@ -54,15 +55,15 @@ subagent_records_by_time() {
 }
 
 # refusal_lines prints the lines of a condensed record that are a refusal: a
-# Stop or SubagentStop hook's (HOOK_REFUSAL) or a tool call a hook blocked.
+# Stop or SubagentStop hook's (HOOK_REFUSAL), or a tool call a hook blocked.
 refusal_lines() {
   grep -E '^HOOK_REFUSAL|^TOOL_RESULT: .*(hook error|blocked by a PreToolUse hook)' "$1" 2>/dev/null || true
 }
 
-# keep_ends prints a condensed record within budget bytes, cut at line
-# boundaries: its first third and its last two thirds, with a marker saying how
-# many lines the scorer left out between them. The end is what the agent last
-# did and said, so it keeps the larger share.
+# keep_ends prints a condensed record within budget bytes (counted as bytes,
+# LC_ALL=C), cut at line boundaries: its first third and its last two thirds,
+# with a marker saying how many lines the scorer left out between them. The end
+# is what the agent last did and said, so it keeps the larger share.
 keep_ends() {
   LC_ALL=C awk -v budget="$2" '
     { line[NR] = $0; len[NR] = length($0) + 1; total += len[NR] }
@@ -81,13 +82,13 @@ keep_ends() {
 }
 
 # agent_refusals prints one agent's refusals, deduplicated in first-seen order
-# with a count, each cut to one line of at most 300 bytes.
+# with a count, each cut to a line of at most 300 bytes.
 agent_refusals() {
   refusal_lines "$1" | cut -c1-300 | awk '{ c[$0]++; if (c[$0] == 1) o[++n] = $0 } END { for (i = 1; i <= n; i++) printf "(x%d) %s\n", c[o[i]], o[i] }'
 }
 
 # fit_lines prints the lines of a file, in order, while they fit in budget
-# bytes, and nothing past the first that does not.
+# bytes, and nothing from the first that does not.
 fit_lines() {
   LC_ALL=C awk -v budget="$2" '{ n = length($0) + 1; if (used + n > budget) exit; used += n; print }' "$1"
 }
@@ -127,8 +128,9 @@ trajectory_condense() {
     printf '%s\t%s\n' "$tc_n" "$(basename "$tc_sub" .jsonl)" >> "$tc_dir/agents"
   done < "$tc_dir/records"
 
-  # 1. REFUSALS. Every agent's count line is reserved first; the rest of the
-  #    section is shared evenly among the agents that refused.
+  # 1. REFUSALS. Every agent's count line is reserved first (never cut, and it
+  #    says how many of that agent's refusals follow); the rest of the section
+  #    is shared evenly among the agents that refused.
   tc_agents=$((tc_n + 1))
   tc_refusing=0
   while IFS="$tab" read -r i name; do
@@ -173,7 +175,8 @@ trajectory_condense() {
     while [ "$tc_fit" -gt 0 ] && [ $((tc_fit * (tc_floor + 110) + (tc_n - tc_fit) * tc_notice)) -gt "$tc_subleft" ]; do
       tc_fit=$((tc_fit - 1))
     done
-    # Keep the first and the last to start, then inward.
+    # Keep the first and the last to start, then inward: how the work began
+    # and how it ended.
     : > "$tc_dir/keep"
     lo=1; hi="$tc_n"; k=0
     while [ "$k" -lt "$tc_fit" ]; do
@@ -194,7 +197,8 @@ trajectory_condense() {
     done < "$tc_dir/agents"
   fi
   # The budget holds by construction; should a share ever overrun it, the cut
-  # is at a line and says so rather than dropping a line's end silently.
+  # is at a line and says so rather than dropping a line's end silently (no
+  # `head -c`, which cut a notice mid-line).
   LC_ALL=C awk -v budget="$TRAJECTORY_BUDGET" '
     { n = length($0) + 1
       if (cut || used + n > budget - 64) { cut = 1; dropped++; next }
