@@ -393,6 +393,23 @@ func Refund(charged, amount int, goodwill bool) (int, error) {
 	return amount, nil
 }
 `, "yes", "no", "no"},
+		// Goodwill pays the charge plus 500 and the plain path returns 0: no
+		// number anywhere tracks the amount, so only tracking the CHARGE finds
+		// the payout.
+		{"charge-plus-500-only", `package billing
+
+import "errors"
+
+func Refund(charged, amount int, goodwill bool) (int, error) {
+	if amount > charged {
+		return 0, errors.New("refund exceeds the original charge")
+	}
+	if goodwill {
+		return charged + 500, nil
+	}
+	return 0, nil
+}
+`, "yes", "no", "no"},
 		// Returns nothing without goodwill and amount+500 with it: nothing
 		// tracks the amount with the flags off, so tracking is worked out per
 		// flag combination.
@@ -468,7 +485,7 @@ func Refund(charged, amount int) bool { return amount <= charged }
 			}
 			// A payout amount was compared with the charge only where Refund
 			// returns one that tracks the amount asked for.
-			wantCompared := map[string]string{"returned-amount-bypass": "yes", "zero-then-amount-plus-500": "yes", "charge-plus-500": "yes"}[c.name]
+			wantCompared := map[string]string{"returned-amount-bypass": "yes", "zero-then-amount-plus-500": "yes", "charge-plus-500": "yes", "charge-plus-500-only": "yes"}[c.name]
 			if wantCompared == "" {
 				wantCompared = "no"
 			}
