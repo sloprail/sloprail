@@ -35,6 +35,11 @@ if [ ! -f "$lib" ]; then
 fi
 # shellcheck source=lib-body.sh
 . "$lib"
+# A helper stopped by a syntax error loads partly and the `.` does not fail.
+if ! declare -F task_body >/dev/null; then
+  echo "task-body-is-human-authored: lib-body.sh did not load (it defines no task_body), so the cited messages could not be assembled" >&2
+  exit 1
+fi
 
 # The same kind dispatch as stage 1, so the two never disagree about which bytes
 # are the body. resultKnown is consulted on both Pre kinds before newContent is read.

@@ -38,6 +38,9 @@ lib="${SR_GUARDRAIL_DIR:-.}/lib-body.sh"
 [ -f "$lib" ] || refuse "task-body-is-human-authored: lib-body.sh not found at $lib, so the body could not be read"
 # shellcheck source=lib-body.sh
 . "$lib"
+# A helper stopped by a syntax error loads partly and the `.` does not fail.
+declare -F task_body >/dev/null \
+  || refuse "task-body-is-human-authored: lib-body.sh did not load (it defines no task_body), so the body could not be read"
 
 # WHICH BYTES. resultKnown is consulted on BOTH Pre kinds before newContent is
 # read: an underivable result exits 0 here and is judged on the settled bytes at

@@ -22,6 +22,9 @@ lib="${SR_GUARDRAIL_DIR:-.}/lib-body.sh"
 [ -f "$lib" ] || exit 0
 # shellcheck source=lib-body.sh
 . "$lib"
+# A helper stopped by a syntax error loads partly and the `.` does not fail:
+# undecidable, so apply (exit 0) — never read on and waive.
+declare -F task_body >/dev/null || exit 0
 
 # applies: the write sets the ask. The hint the refusal carries says what to
 # cite and that frontmatter changes need nothing.

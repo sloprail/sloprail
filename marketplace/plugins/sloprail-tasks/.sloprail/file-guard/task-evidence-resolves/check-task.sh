@@ -74,6 +74,9 @@ if [ ! -f "$lib" ]; then
 fi
 # shellcheck source=cite-links.sh
 . "$lib"
+# A helper stopped by a syntax error loads partly and the `.` does not fail.
+declare -F artifact_resolve >/dev/null \
+  || refuse "task-evidence-resolves: cite-links.sh did not load (it defines no artifact_resolve), so no artifact could be resolved"
 
 # WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on BOTH
 # Pre kinds before newContent is read — an underivable result is deferred to the

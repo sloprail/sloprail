@@ -67,6 +67,11 @@ if [ ! -f "$lib" ]; then
 fi
 # shellcheck source=../task-evidence-resolves/cite-links.sh
 . "$lib"
+# A helper stopped by a syntax error loads partly and the `.` does not fail.
+if ! declare -F citation_path citation_ranges citation_lines >/dev/null; then
+  echo "task-review: cite-links.sh did not load (it defines no citation_* helpers), so the evidence could not be assembled" >&2
+  exit 1
+fi
 
 # The schema is the PLUGIN's, read from the plugin's own tree — see
 # task-evidence-resolves/check-task.sh for why it is never a consumer-side copy.

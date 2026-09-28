@@ -22,16 +22,19 @@
 #                          dropped (sr-file does not look past them), that block
 #                          is read: claiming published, or unreadable →
 #                          undecidable; otherwise no.
-#   3  fence never closed → the FIRST PARAGRAPH after the opening fence (blank
-#                          lines skipped, up to the next blank line) is read the
-#                          same way — where a forgotten frontmatter would be.
-#                          A mapping claiming published → undecidable (a reader
-#                          that tolerates a missing close would publish it); any
-#                          other mapping, or a non-mapping → no. Text that does
-#                          not parse is undecidable only when a line of it names
-#                          a status key (or a quoted key with an escape, which
-#                          could spell one); otherwise it is prose under a
-#                          horizontal rule → no.
+#   3  fence never closed → the text after the opening fence is read the same
+#                          way, WHOLE first: if it parses, a mapping claiming
+#                          published → undecidable (a reader that tolerates a
+#                          missing close would publish it; blank lines inside a
+#                          YAML block do not end it), anything else → no. Only
+#                          when the whole does not parse is its FIRST PARAGRAPH
+#                          (blank lines skipped, up to the next blank line) read
+#                          — where a forgotten frontmatter would be: a mapping
+#                          decides by its status; text that does not parse is
+#                          undecidable only when a line of it names a status key
+#                          (or a quoted key with an escape, which could spell
+#                          one); otherwise it is prose under a horizontal rule
+#                          → no.
 #   64, or an sr-file with no `field` command (older than this plugin needs)
 #                        → unsupported: nothing here can be read, and the answer
 #                          is an upgrade, not "fix the frontmatter".
@@ -50,12 +53,19 @@ publish_claim_plugin_version="$(jq -r '.version // empty' "${SR_GUARDRAIL_DIR:-.
 publish_claim_upgrade="sloprail-content needs \`sr-file field\`, from the sloprail release this plugin ships with (${publish_claim_plugin_version:-see its plugin.json}) or newer; the sr-file on PATH is missing or older — upgrade the sloprail binaries (install.sh, or make distribute-local)."
 
 # claim_of_unclosed TEXT — TEXT is what follows an opening fence never closed
-# (or one sr-file did not see): read its first paragraph, as the header says.
+# (or one sr-file did not see): the whole of it, then its first paragraph, as
+# the header says.
 claim_of_unclosed() {
   local para out code
-  para="$(printf '%s' "$1" | tr -d '\r' | awk '/^[[:space:]]*$/ { if (started) exit; next } { started = 1; print }')"
-  out="$(printf '%s\n' "$para" | sr-file field - status --as .yaml 2>&1)"
+  out="$(printf '%s' "$1" | sr-file field - status --as .yaml 2>&1)"
   code=$?
+  if [ "$code" -ne 0 ]; then
+    para="$(printf '%s' "$1" | tr -d '\r' | awk '/^[[:space:]]*$/ { if (started) exit; next } { started = 1; print }')"
+    out="$(printf '%s\n' "$para" | sr-file field - status --as .yaml 2>&1)"
+    code=$?
+  else
+    para=""
+  fi
   claim="no"
   if [ "$code" -eq 0 ]; then
     if [ "$(publish_claim_norm "$out")" = "published" ]; then

@@ -52,6 +52,9 @@ if [ ! -f "$lib" ]; then
 fi
 # shellcheck source=rules-lib.sh
 . "$lib"
+# A helper stopped by a syntax error loads partly and the `.` does not fail.
+declare -F collect_applicable_rules >/dev/null \
+  || refuse "unit-satisfies-rules: rules-lib.sh did not load (it defines no collect_applicable_rules), so the rule set could not be collected"
 
 kind="$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in

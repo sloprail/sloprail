@@ -120,6 +120,9 @@ if [ ! -f "$lib" ]; then
 fi
 # shellcheck source=../task-evidence-resolves/cite-links.sh
 . "$lib"
+# A helper stopped by a syntax error loads partly and the `.` does not fail.
+declare -F artifact_resolve >/dev/null \
+  || refuse "task-review: cite-links.sh did not load (it defines no artifact_resolve), so no delivery evidence could be resolved for review"
 
 art_lines="$(printf '%s' "$doc" | jq -r '(.artifacts // [])[]' 2>/dev/null)"
 n_art="$(printf '%s' "$doc" | jq -r '(.artifacts // []) | length' 2>/dev/null)"
