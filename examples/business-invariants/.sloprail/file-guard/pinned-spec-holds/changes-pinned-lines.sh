@@ -69,16 +69,6 @@ case "$kind" in
   *) exit 0 ;;
 esac
 
-# The engine declares newContentKnown on PostFileCreate and PostFileUpdate
-# (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
-# events.md): false when it could not read the settled file — a link to a FIFO
-# or a device, or past the read cap. Which pinned lines changed is then
-# undecidable: apply the requirement (exit 0) — the fail-closed direction of
-# this `when` predicate, not a pass.
-case "$kind" in
-  PostFileCreate | PostFileUpdate) [ "$new_read" = "true" ] || exit 0 ;;
-esac
-
 command -v git >/dev/null 2>&1 || exit 0
 workspace="${SR_WORKSPACE:-.}"
 # A pin names <repo>@<sha>: outside a git work tree nothing can be pinned, which
@@ -111,8 +101,16 @@ norm() {
 npath="$(norm "$path")"
 
 new_known=1
+# What the write leaves is unknown on a Pre kind whose result could not be
+# worked out (resultKnown false), and on a Post kind whose settled file the
+# engine could not read: newContentKnown false (internal/filemod/module.go
+# FieldNewContentKnown; authoring-guardrails/events.md) — a link to a FIFO, a
+# device or a directory, or a file past the read cap. Unknown is not a pass: a
+# path something pins, or a file that carries markers, applies below
+# (unknown_result); a path nothing pins is still waived, as nothing is at stake.
 case "$kind" in
   PreFileCreate | PreFileUpdate) [ "$known" = "true" ] || new_known=0 ;;
+  PostFileCreate | PostFileUpdate) [ "$new_read" = "true" ] || new_known=0 ;;
 esac
 case "$kind" in *Delete) new="" new_fqns="" ;; esac
 [ "$new_known" = 1 ] || { new="" new_fqns=""; }
@@ -277,6 +275,14 @@ apply() {
 # checked. So the first advice is to make it checkable; citing comes second.
 unknown_result="what it would leave cannot be worked out before it runs (a shell command that edits it, or an sr-file call whose dry run failed — if sr-file said why, fix that first)"
 unknown_remedy="Make this edit with Edit or Write, or with sr-file edit on its own in the command, so what it leaves can be checked first: no citation is needed when it keeps every pinned line and every pin. $remedy"
+# A Post kind is the file as the write left it, and what it left could not be
+# read at all: the advice is about the file, not about how the edit was made.
+case "$kind" in
+  Post*)
+    unknown_result="what it left could not be read (it is not a regular file — a link to a FIFO, a device or a directory — or it is larger than sloprail reads)"
+    unknown_remedy="Leave $path a regular file of ordinary size, so what it holds can be checked: no citation is needed when it keeps every pinned line and every pin. $remedy"
+    ;;
+esac
 
 # 1. Spec lines. Every marker in the project, in the working tree (tracked or not)
 # AND at HEAD, and in what this file held: a marker dropped or moved in the working
