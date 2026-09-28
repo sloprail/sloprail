@@ -19,6 +19,9 @@ func TestDetaches(t *testing.T) {
 		`coproc cat`:                                 "coproc",
 		`tmux new -d 'sleep 9'`:                      "tmux",
 		`sleep 1 & wait; nohup ./x &`:                "nohup",
+		`job1 & job2 & wait $!`:                      "job1",
+		`job1 & job2 & wait -n`:                      "job1",
+		`job1 & job2 & wait 1234`:                    "job1",
 	} {
 		ok, what := Detaches(src)
 		if !ok {
@@ -34,6 +37,9 @@ func TestDetaches(t *testing.T) {
 		`echo 'https://x.invalid/?a=1&b=2'`,
 		`sleep 0 & wait`,
 		`a & b & wait`,
+		`a & wait $!`,
+		`a & wait "$!"`,
+		`a & wait -n`,
 		`cat a &> b`,
 		`bash -c 'echo "R&D"'`,
 		"cat <<'EOF'\nx & y\nEOF",

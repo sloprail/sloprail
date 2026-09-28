@@ -23,8 +23,14 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true
 // setsid, disown, at, crontab, tmux, screen, …), a coprocess, or a statement
 // sent to the background (`&`) that nothing in the same line waits for. A
 // `cmd & … wait` ends its work inside the call, and so does `&` that is only
-// text — in a quoted argument, a URL, a here-document. A shell's `-c` command
-// line (`bash -c 'x &'`) is parsed the same way, as a line of its own.
+// text — in a quoted argument, a URL, a here-document. A bare `wait` (no
+// arguments) reaps every job backgrounded so far. `wait` given an argument —
+// `wait $!`, `wait -n`, `wait 1234` — reaps at most one, so it is only weighed
+// against how many jobs the line backgrounded, not assumed to cover them all:
+// one job and one targeted wait clears it, but `job1 & job2 & wait $!` leaves
+// job1 running (bash's `$!` names the last background PID) and is reported as
+// detaching by job1. A shell's `-c` command line (`bash -c 'x &'`) is parsed
+// the same way, as a line of its own.
 //
 // A line that does not parse is reported as detaching: whether it could is
 // then unknown, and the answer decides whether a change that lands later can be
@@ -39,7 +45,8 @@ func detaches(raw string, depth int) (bool, string) {
 		return true, clipCommand(raw)
 	}
 	var background []*syntax.Stmt
-	waited := false
+	waitedAll := false
+	targetedWaits := 0
 	found, what := false, ""
 	syntax.Walk(f, func(n syntax.Node) bool {
 		if found {
@@ -65,7 +72,15 @@ func detaches(raw string, depth int) (bool, string) {
 			case detachers[bin]:
 				found, what = true, clipCommand(strings.Join(args, " "))
 			case bin == "wait":
-				waited = true
+				// A bare `wait` reaps every job backgrounded so far. A
+				// targeted one (a PID, `$!`, `-n`, a job spec) reaps at
+				// most one, so it cannot be assumed to cover every `&`
+				// on the line — only tallied against how many there are.
+				if len(args) == 1 {
+					waitedAll = true
+				} else {
+					targetedWaits++
+				}
 			case shells[bin] && depth < 3:
 				for i := 1; i+1 < len(args); i++ {
 					if args[i] == "-c" {
@@ -82,7 +97,7 @@ func detaches(raw string, depth int) (bool, string) {
 	if found {
 		return true, what
 	}
-	if len(background) > 0 && !waited {
+	if len(background) > 0 && !waitedAll && targetedWaits < len(background) {
 		return true, stmtText(raw, background[0]) + " &"
 	}
 	return false, ""
