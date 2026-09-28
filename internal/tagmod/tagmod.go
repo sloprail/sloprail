@@ -18,6 +18,7 @@ package tagmod
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/module"
@@ -79,9 +80,42 @@ const (
 //   - A markdown heading (`# Heading`) does not match: the space after `#` is not
 //     a tag character, so there is no tag body at all. That is deliberate — `#`
 //     followed by a space is punctuation, not a tag.
+//   - Markdown EMPHASIS may open right before the `#`: up to three `*` or `_`
+//     between the word boundary and the `#`, so `**#research summary:**`,
+//     `*#research*`, `_#research_`, `__#research__` and `***#research***` are all
+//     the tag `research`. Emphasis is how an agent makes a declaration stand out
+//     — it is the agent SAYING the tag, loudly — and a real run wrote
+//     `**#research summary:**` and was never heard (issue #89). The boundary rule
+//     still applies to the emphasis run itself: `foo**#bar**` is intraword and
+//     stays no tag. A closing `*` ends the tag already (it is not a tag
+//     character); a closing `_` is — see emphasisLabel for how it is told apart.
+//   - Backticks do NOT count as emphasis. A backtick opens a code span, and a
+//     code span is text the agent is SHOWING, not declaring: a closed span is
+//     removed before the scan (quotedForms), and a stray unclosed backtick before
+//     `#` is not a word boundary, so neither is ever read as a tag. Strikethrough
+//     (`~~#tag~~`) does not count either: struck-out text is text the agent took
+//     back.
 //
-// Group 2 is the label, WITHOUT the leading `#`.
-var tagPattern = regexp.MustCompile(`(^|\s)#([A-Za-z_][A-Za-z0-9_-]*)`)
+// Group 2 is the emphasis run before the `#` (possibly empty), group 3 the
+// label, WITHOUT the leading `#`.
+var tagPattern = regexp.MustCompile(`(^|\s)([*_]{0,3})#([A-Za-z_][A-Za-z0-9_-]*)`)
+
+// emphasisLabel is a matched tag's label with the underscore emphasis that
+// CLOSES it removed.
+//
+// `_` is both an emphasis delimiter and a tag character (`#no_slop`), so
+// `_#research_` scans as `research_`. When the tag was opened by an emphasis run
+// holding underscores, as many trailing underscores as that run held are the
+// closing delimiter, not part of the label: `_#research_` → `research`,
+// `__#no_slop__` → `no_slop`. A tag with no underscore opener keeps every
+// character it had — `#research_` is still `research_`, exactly as before — so
+// every form read before this is read the same way now.
+func emphasisLabel(opener, label string) string {
+	for n := strings.Count(opener, "_"); n > 0 && strings.HasSuffix(label, "_"); n-- {
+		label = strings.TrimSuffix(label, "_")
+	}
+	return label
+}
 
 // quotedForms are removed from a message before it is scanned — SAID, not
 // SHOWN. Each pattern strips one way an agent can put `#tag`-shaped text in
@@ -244,7 +278,11 @@ func scan(seenMessages, messages []string) []Tag {
 		for _, msg := range msgs {
 			msg = stripQuoted(msg)
 			for _, match := range tagPattern.FindAllStringSubmatch(msg, -1) {
-				label := match[2]
+				label := emphasisLabel(match[2], match[3])
+				if label == "" {
+					// `_#_` — the "label" was only the closing underscore.
+					continue
+				}
 				if i, ok := index[label]; ok {
 					if !seen {
 						tags[i].Seen = false

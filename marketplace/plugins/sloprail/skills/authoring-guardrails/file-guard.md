@@ -57,6 +57,13 @@ the after-check at Stop on the settled file as a backstop.
 preventive: true
 ```
 
+A call that changes several files (`rm a.go b.go`, two `sr-file` calls joined by
+`&&`) is checked file by file before it runs: a guard is asked about every file
+it selects that no other guard has already refused, and the call is refused if
+any file fails. The refusal names each refused file. Once a file is refused,
+no further guard is asked about it — the write is already prevented, and
+asking again buys nothing.
+
 The two moments are one script's job, and the event's `kind` tells them apart —
 a `Pre*` kind at the pre-write (read the pending bytes off the event), a
 `Post*` kind at Stop (the bytes are on disk). See "The pending bytes" below.

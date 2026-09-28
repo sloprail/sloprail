@@ -98,9 +98,9 @@ gate_status="$GF_STATUS"
 # the engine parsed from its own text, or a sub-agent dispatch whose prompt
 # carries it (the research-run context's two triggers)? Not a grep of the
 # record: NOTES.md itself mentions #research (reading it puts the word in a
-# tool result), and "**#research summary:**" in a closing message is text, not
-# a tag — a real run did both and no gate ran. Undeclared, their silence is not
-# a verdict. Every record of the run is read — a sub-agent that declares
+# tool result), and "`#research`" in a code span is shown, not said — neither
+# is a tag. (Emphasis is: "**#research summary:**" is the tag, as the engine
+# reads it.) Undeclared, the gates' silence is not a verdict. Every record of the run is read — a sub-agent that declares
 # #research in its own text runs the gates in its own session. If any record
 # cannot be read, nothing is claimed either way.
 tag_used="no"
