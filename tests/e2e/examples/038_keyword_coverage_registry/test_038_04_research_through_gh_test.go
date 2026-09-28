@@ -196,6 +196,17 @@ func TestT038_16_SearchWithoutScannerRefused(t *testing.T) {
 		"cat > s.sh <<'EOF'\ngh search issues token\nEOF\nchmod +x s.sh && ./s.sh",
 		// A $(gh …) inside an unquoted heredoc is one invocation, not also data.
 		"cat >/dev/null <<EOF\n$(gh issue view 1 -R cli/cli)\nEOF\neval \"gh search issues token\"",
+		// A gh whose subcommand the parser cannot see.
+		`echo search issues token | xargs gh`,
+		`gh $(echo search issues token)`,
+		`A="search issues token"; gh $A`,
+		// Text reaching execution through a program no list of code-runners
+		// named: only programs known NOT to execute their input earn the data
+		// pass.
+		`printf 'gh search issues token\n' > /tmp/zzs-038 && chmod +x /tmp/zzs-038 && /tmp/zzs-038`,
+		`printf 'gh search issues token\n' > zzs && chmod +x zzs && PATH=.:$PATH zzs`,
+		`git -c alias.zz='!gh search issues token' zz`,
+		`printf 'all:\n\tgh search issues token\n' | make -f -`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)

@@ -39,6 +39,6 @@ on:
   - event: PreCommandInvoke
     match: >-
       any(event.invocations, .bin == "gh") or
-      event.raw matches "(^|[^A-Za-z0-9_./-])gh([^A-Za-z0-9_.-]|$)"
+      event.raw matches "(^|[^A-Za-z0-9_./-]|\\\\[a-z])gh([^A-Za-z0-9_.-]|$)"
 checks:
   - script: ./needs-declared-scanner.sh

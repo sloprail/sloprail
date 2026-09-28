@@ -293,3 +293,24 @@ func TestT038_43_ACitedDropNarrowsTheObligation(t *testing.T) {
 		t.Errorf("the keyword the user asked to drop is still owed a search:\n%s", joined)
 	}
 }
+
+// T038_44: a line where gh is only TEXT beside a command that runs code is
+// refused before a scanner exists — once code runs, text and command cannot be
+// told apart — and the refusal says how to get past that honestly: run the
+// code-running command in a separate call.
+func TestT038_44_MixedLinesSayToRunTheCodeSeparately(t *testing.T) {
+	for _, command := range []string{
+		`git commit --allow-empty -m "fix gh auth" && ./gradlew test`,
+		`python3 -c "print(1)" && echo "gh ok"`,
+		`gh pr create --title "Update gh workflow" --body b && ./scripts/check.sh`,
+		`git log | awk '{print $1}'; echo "gh done"`,
+	} {
+		t.Run(command, func(t *testing.T) {
+			e, proj := researchProject(t)
+			res := e.Run(proj, "s-038-44", "tidy up", Turns("done", Bash("b1", stubbed(command))))
+			if !res.Refused() || !res.Saw("run the code-running command in a separate call") {
+				t.Errorf("a mixed line was not refused with the remedy:\n%s", res.Output)
+			}
+		})
+	}
+}

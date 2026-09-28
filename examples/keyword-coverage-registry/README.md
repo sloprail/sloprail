@@ -174,14 +174,21 @@ in one `gh search`:
   --clobber` redefines it), `gh extension exec <name>`, and a gh the line names
   that the parse does not account for (`eval "gh search …"`,
   `python3 -c "os.system('gh search …')"`). A mention the parse DOES account for
-  runs freely — but only when **nothing in the whole command runs code**: an
-  argument of a program (`git commit -m "fix gh auth"`, `which gh`, `grep -c gh`,
-  `gh pr create --title "Update gh workflow"`), or a heredoc or here-string that
-  feeds no code (`cat > NOTES.md <<EOF`, `git commit -F - <<EOF`). Once anything
-  in the command runs code, text can become a command — `echo "gh search …" |
-  bash`, `printf … | sh`, `… | xargs sh -c '{}'`, a heredoc written to `s.sh`
-  and run with `bash s.sh` or `./s.sh` — so every mention not parsed as a gh
-  invocation counts as a hidden search. A `$(gh …)` inside an unquoted heredoc
+  runs freely — but only when **every program in the command is one known not
+  to execute its input**: `echo`, `printf`, `cat`, `tee`, `grep`, `head`/`tail`,
+  `jq`, `which`, `type`, `command`, `ls`, `cp`/`mv`/`rm`/`mkdir`, `curl`,
+  `sr-file`, `gh` itself, and `git` on its ordinary subcommands (no `-c`, no
+  alias). Then an argument (`git commit -m "fix gh auth"`, `which gh`, `grep -c
+  gh`, `gh pr create --title "Update gh workflow"`) or a heredoc or here-string
+  (`cat > NOTES.md <<EOF`, `git commit -F - <<EOF`) is data. Anything else on
+  the line — an interpreter, `xargs`, `make`, `awk` and `sed` (they can run
+  commands: `system()`, `e`), `env -S`, a script run by any path that is not a
+  system bin directory (`./s.sh`, `/tmp/zzs`, `PATH=.:$PATH zzs`), `git -c
+  alias.x='!…'` — may turn text into a command, so every mention not parsed as
+  a gh invocation counts as a hidden search. (A list of code-RUNNERS was always
+  one short; this is a list of what is known safe.) A gh whose subcommand the
+  parser cannot see (`echo search issues x | xargs gh`, `gh $(echo search …)`,
+  `A="search …"; gh $A`) is a search too; only the bare command `gh` is not. A `$(gh …)` inside an unquoted heredoc
   is counted once, as the invocation it is. All other gh work — `gh pr create`, `gh repo clone`, `gh pr
   checks`, `gh run list`, `gh issue -R o/r view 1` — runs with or without a
   scanner. Both earlier
@@ -285,12 +292,12 @@ reaches the check and records nothing.
   piped on to `sh`, text piped into a shell, a script run by its path). A
   heredoc or here-string that feeds no code, on a command that runs none, is
   data and runs (`cat > NOTES.md <<EOF … gh search … EOF`, `git commit -F -
-  <<EOF`). The cost of "anything runs code": a command that both runs a script
-  and merely mentions gh (`bash build.sh && git commit -m "fix gh"`), or an awk
-  program naming gh (`awk '$1=="gh"'` — awk runs code), is refused until a
-  scanner exists. A gh whose name is itself hidden (`G=g; ${G}h search …`,
-  `eval "g""h search …"`, base64) is not caught, nor is a program that runs
-  code but is not in the list (a compiled binary reading stdin as commands).
+  <<EOF`). The cost: a command that both runs something outside the safe list
+  and merely mentions gh (`git commit -m "fix gh auth" && ./gradlew test`,
+  `git log | awk '{print $1}'; echo "gh done"`, `awk '$1=="gh"'`) is refused
+  until a scanner exists; the refusal says to run the code-running command in a
+  separate call. A gh whose name is itself hidden (`G=g; ${G}h search …`,
+  `eval "g""h search …"`, base64) is not caught.
 - **Fetches this rule cannot see**: a GitHub host named only in an earlier
   command (`export API=https://api.github.com`, then `curl $API/…`), a host
   spliced from pieces (`H=git; curl https://${H}hub.com/…`), a URL a script or

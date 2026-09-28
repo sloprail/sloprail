@@ -96,9 +96,13 @@ searches="$(printf '%s' "$payload" | jq -r '
         | .hit = $r.hit | .skip = $r.skip
       else . end)
     | .hit;
-  def searches:
+  # A gh call with no subcommand the parser could see is a search, unless the
+  # whole command is literally `gh` (help): its words came from somewhere the
+  # parse cannot follow — `echo search issues x | xargs gh`, `gh $(echo search
+  # …)`, `A="search issues x"; gh $A`.
+  def searches($raw):
     (.argv // []) as $a
-    | if ($a | length) < 2 then false
+    | if ($a | length) < 2 then (($raw | gsub("^\\s+|\\s+$"; "")) != "gh")
       else $a[1] as $sub
       | if ($sub | IN("--version","--help","-h")) then false
         elif ($sub | startswith("-")) then true
@@ -111,18 +115,40 @@ searches="$(printf '%s' "$payload" | jq -r '
         else true end
       end;
   # A word-bounded `gh` in a string.
-  def mentions: [match("(^|[^A-Za-z0-9_./-])gh(?=[^A-Za-z0-9_.-]|$)"; "g")] | length;
+  # A backslash escape (`\tgh`, `\ngh` in printf or echo -e) is a boundary too:
+  # it becomes a tab or a newline before the text runs anywhere.
+  def mentions: [match("(^|[^A-Za-z0-9_./-]|\\\\[a-z])gh(?=[^A-Za-z0-9_.-]|$)"; "g")] | length;
   # Programs whose arguments are CODE: a gh inside them may run.
   def code_runner_name:
     (split("/") | last) as $b
     | ($b | IN("eval","sh","bash","zsh","dash","ksh","fish","su","runuser","flock","script","ssh","watch","node","nodejs","deno","bun","perl","ruby","php","lua","osascript","awk","gawk","mawk","nawk","tclsh","expect","source","."))
       or ($b | test("^(python|pypy)[0-9.]*$"));
-  # An invocation that runs code: a code-running program, or a script run by
-  # its path — `./s.sh`, `../run`, `tools/x.py`, a file the same command may
-  # just have written.
-  def runs_code:
-    ((.bin // "") | code_runner_name)
-    or (((.argv // [])[0] // "") | test("^\\.{1,2}/|\\.(sh|bash|zsh|py|pl|rb|js|mjs)$"));
+  # Programs that never execute their input or arguments as code. The data
+  # pass below needs EVERY program on the line to be one of these: a fixed list
+  # of code-RUNNERS was always one short (a script at `/tmp/zzs` with no
+  # extension, `PATH=.:$PATH zzs`, `git -c alias.zz="!gh …" zz`, `make -f -`).
+  # Not here, deliberately: awk and sed (system(), the `e` command), xargs,
+  # make, less, env -S, any interpreter, and anything run by a path that is not
+  # a system bin directory.
+  def data_safe_names: ["echo","printf","cat","tee","grep","egrep","fgrep","rg","head","tail","wc","sort","uniq","cut","tr","jq","which","type","command","gh","git","sr-file","sr-session","cd","pwd","ls","mkdir","touch","cp","mv","rm","ln","chmod","true","false","test","[","date","basename","dirname","diff","sleep","curl","wget","find","export","unset","nohup","nice","timeout","time","stdbuf"];
+  # The git subcommands that run nothing the caller chose. No `-c` (an
+  # alias or a hook path can be set there) and no alias: any other subcommand
+  # may be one.
+  def git_safe_subs: ["add","commit","status","log","diff","show","rm","mv","restore","switch","checkout","branch","tag","blame","grep","ls-files","rev-parse","init","fetch","push","pull","remote","stash","merge","reset","clean","clone","describe","shortlog","reflog","worktree"];
+  def git_data_safe:
+    (.argv // []) as $a
+    | ([$a[1:][] | select(startswith("-") | not)][0] // "") as $sub
+    | ([$a[1:][] | select(. == "-c" or startswith("--config-env") or startswith("--exec-path"))] | length == 0)
+      and ($sub | IN(git_safe_subs[]));
+  def data_safe:
+    ((.argv // [])[0] // "") as $p
+    | ((.bin // "") | IN(data_safe_names[]))
+      and (($p | contains("/") | not) or ($p | test("^/(usr/(local/)?|opt/homebrew/)?s?bin/")))
+      and (if .bin == "git" then git_data_safe
+           elif .bin == "env" then false
+           else true end);
+  # An invocation that may run code: anything not data-safe.
+  def runs_code: data_safe | not;
   # The command text a heredoc or here-string at offset $o of line $l feeds:
   # its own pipeline stage and every later stage of that pipeline, up to the
   # next ; && || — so `cat <<EOF | sh` feeds sh.
@@ -179,8 +205,14 @@ searches="$(printf '%s' "$payload" | jq -r '
           ([.event.invocations[]? | (.argv // [])[1:][] | mentions] | add // 0)
           + ((.event.raw // "") | data_mentions)
         end)) as $accounted
-  | ($gh[] | select(searches) | (.argv | join(" "))),
-    (if $named > $accounted then "a gh call this rule cannot see into (eval, another language, text fed to a shell or a script): " + (.event.raw // "" | .[0:120]) else empty end)
+  | (.event.raw // "") as $raw
+  | ($gh[] | select(searches($raw)) | (.argv | join(" "))),
+    (if $named > $accounted then
+       ([.event.invocations[]? | select(runs_code) | .bin] | unique | join(", ")) as $runners
+       | "HIDDEN a gh call this rule cannot see into, because code runs on this line ("
+       + (if $runners == "" then "text fed to code" else $runners end)
+       + "): " + ($raw | .[0:120])
+     else empty end)
 ' 2>/dev/null)" || searches="an unreadable command line"
 
 # No search on this line: nothing to hold to a scanner.
@@ -231,8 +263,19 @@ $(find "$SR_WORKSPACE" -maxdepth 6 -path "$SR_WORKSPACE/.git" -prune -o -type f 
 EOF
 fi
 
-jq -n --arg hint "$hint" --arg calls "$searches" '{reason: (
-  "No scanner is declared in this session, and GitHub searches in this project run against one (this line searches: " + ($calls | split("\n") | join("; ")) + ")."
+# A line where gh is only TEXT beside a command that runs code (`git commit -m
+# "fix gh auth" && ./gradlew test`) is refused too, because this rule cannot
+# tell text from a command once code runs; say how to get past that honestly.
+separately=""
+case "$searches" in
+  *"HIDDEN "*)
+    separately=" If gh only appears here as text (a commit message, a note, a pattern) and nothing on this line runs it, run the code-running command in a separate call from the one that mentions gh — each then runs without a scanner."
+    ;;
+esac
+
+jq -n --arg hint "$hint" --arg calls "$searches" --arg separately "$separately" '{reason: (
+  "No scanner is declared in this session, and GitHub searches in this project run against one (this line searches: " + ($calls | gsub("HIDDEN "; "") | split("\n") | join("; ")) + ")."
+  + $separately
   + $hint + " "
   + "Declare one with the Write tool at scanners/<short-name>/scanner.yaml — for example scanners/token-leaks/scanner.yaml — containing:\n"
   + "  active: true\n  keywords:\n    - <keyword>\n    - <keyword>\n"
