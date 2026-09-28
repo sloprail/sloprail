@@ -90,20 +90,17 @@ func TestLoadFixture_SetupMustBeExecutable(t *testing.T) {
 
 // disallowedTools reaches the harness as ONE comma-joined --disallowed-tools
 // value, so a rule with a space of its own survives as one entry.
-func TestHarnessArgs_DisallowedToolsAreCommaJoined(t *testing.T) {
-	got, err := harnessArgs([]string{"WebSearch", "WebFetch", "Bash(gh search:*)"})
-	if err != nil {
-		t.Fatal(err)
+func TestAgentArgs_DisallowedToolsAreCommaJoined(t *testing.T) {
+	got := claudeArgsOf(t, agentArgs("haiku", "fix it", "sid-1", false, []string{"WebSearch", "WebFetch", "Bash(gh search:*)"}))
+	if got["disallowed-tools"] != "WebSearch,WebFetch,Bash(gh search:*)" {
+		t.Fatalf("agent args do not carry the tools comma-joined: %v", got)
 	}
-	if !strings.Contains(got, `"disallowed-tools":"WebSearch,WebFetch,Bash(gh search:*)"`) {
-		t.Fatalf("harness args do not carry the tools comma-joined: %s", got)
+	if got["permission-mode"] != "bypassPermissions" || got["settings"] != "{}" {
+		t.Fatalf("agent args lost the isolation override: %v", got)
 	}
-	if !strings.Contains(got, `"permission-mode":"bypassPermissions"`) || !strings.Contains(got, `"settings":"{}"`) {
-		t.Fatalf("harness args lost the isolation override: %s", got)
-	}
-	none, err := harnessArgs(nil)
-	if err != nil || strings.Contains(none, "disallowed-tools") {
-		t.Fatalf("no disallowedTools must pass no --disallowed-tools: %s, %v", none, err)
+	none := claudeArgsOf(t, agentArgs("haiku", "fix it", "sid-1", false, nil))
+	if _, ok := none["disallowed-tools"]; ok {
+		t.Fatalf("no disallowedTools must pass no --disallowed-tools: %v", none)
 	}
 }
 

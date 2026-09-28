@@ -96,7 +96,7 @@ type Fixture struct {
 
 	// DisallowedTools names harness tools the agent-under-test does not have,
 	// e.g. [WebSearch, WebFetch] — passed as the harness's own
-	// --disallowed-tools, comma-joined (harnessArgs). Each entry is a tool name,
+	// --disallowed-tools, comma-joined (agentArgs, user.go). Each entry is a tool name,
 	// optionally with a rule in parentheses (`Bash(gh search:*)`); LoadFixture
 	// refuses any other shape. For a fixture whose rule governs one way of doing a
 	// thing (research through gh), in a project that offers no other: the
@@ -112,12 +112,56 @@ type Fixture struct {
 	// be run across several models without editing this file.
 	Model string `yaml:"model"`
 
+	// User, when set, makes the run MULTI-TURN: after the agent answers
+	// prompt.md, a simulated user (another agent, launched the way the
+	// scorer's judge is — isolated, no plugins, no sloprail hooks, a cheap
+	// model) reads the conversation so far and writes the next user message,
+	// which is fed to the agent-under-test in the SAME session (resumed), so
+	// the transcript holds real, separate user turns. Absent, a run is one
+	// turn, exactly as before.
+	User *SimulatedUser `yaml:"user"`
+
 	// Score names the script, relative to Dir, that judges the run. It
 	// receives the environment documented in score.go and reports pass/fail
 	// by exit code, exactly like a guardrail script check — the same
 	// fail-closed contract, so a scorer that cannot run is a failed eval, not
 	// a silently-skipped one.
 	Score string `yaml:"score"`
+}
+
+// SimulatedUser configures the agent that plays the user after the first
+// turn. See Fixture.User.
+type SimulatedUser struct {
+	// Brief names a file, relative to Dir, telling the simulated user who it
+	// is and what it wants — e.g. "you asked for the bug fix; when asked
+	// whether to commit, say yes". A file for the same reason prompt.md is
+	// one: it is prose, read by a reviewer exactly as the model reads it.
+	Brief string `yaml:"brief"`
+
+	// MaxTurns caps the USER turns in the whole run, prompt.md included, so a
+	// simulated user that never says it is done cannot run the eval forever.
+	// Required, between 2 (one simulated reply) and maxUserTurns.
+	MaxTurns int `yaml:"maxTurns"`
+
+	// Model is the sr-agent --model set for the simulated user. Empty is
+	// size-sm: playing a user from a short brief is not a hard judgment
+	// call, the same reasoning the trajectory-health judge's model follows.
+	Model string `yaml:"model"`
+}
+
+// maxUserTurns is the ceiling on SimulatedUser.MaxTurns — a bound on what one
+// run can spend, not a number any current fixture comes near.
+const maxUserTurns = 10
+
+// defaultUserModel is SimulatedUser.Model's default.
+const defaultUserModel = "size-sm"
+
+// UserModel is the model set the simulated user runs on.
+func (u SimulatedUser) UserModel() string {
+	if u.Model == "" {
+		return defaultUserModel
+	}
+	return u.Model
 }
 
 // promptPath is prompt.md beside fixture.yaml — the exact words the
@@ -192,6 +236,17 @@ func LoadFixture(dir string) (Fixture, error) {
 	if _, err := os.Stat(filepath.Join(abs, f.Score)); err != nil {
 		return Fixture{}, fmt.Errorf("%s/fixture.yaml: score %q: %w", abs, f.Score, err)
 	}
+	if f.User != nil {
+		if f.User.Brief == "" {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: user.brief is required — the simulated user needs to be told who it is", abs)
+		}
+		if _, err := os.Stat(filepath.Join(abs, f.User.Brief)); err != nil {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: user.brief %q: %w", abs, f.User.Brief, err)
+		}
+		if f.User.MaxTurns < 2 || f.User.MaxTurns > maxUserTurns {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: user.maxTurns is %d — it counts every user turn including prompt.md, so it must be between 2 and %d", abs, f.User.MaxTurns, maxUserTurns)
+		}
+	}
 	if f.Setup != "" {
 		info, err := os.Stat(filepath.Join(abs, f.Setup))
 		if err != nil {
@@ -212,13 +267,27 @@ func LoadFixture(dir string) (Fixture, error) {
 	return f, nil
 }
 
+// UserBrief returns the simulated user's brief. Empty when the fixture is
+// single-turn.
+func (f Fixture) UserBrief() (string, error) {
+	if f.User == nil {
+		return "", nil
+	}
+	p := filepath.Join(f.Dir, f.User.Brief)
+	body, err := os.ReadFile(p)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", p, err)
+	}
+	return string(body), nil
+}
+
 // toolRulePattern is the shape of one disallowedTools entry: a tool name, and
 // optionally a rule in parentheses. It is what keeps an entry from being split
 // or merged on its way to the harness (the list is joined with commas; see
-// harnessArgs) — an empty entry, a stray space, two names in one, or a comma
-// inside a rule's parentheses (which the join would split) would each remove
-// something other than what the fixture says. It cannot tell a typo in a
-// tool's name from a tool this harness has.
+// agentArgs in user.go) — an empty entry, a stray space, two names in one, or
+// a comma inside a rule's parentheses (which the join would split) would each
+// remove something other than what the fixture says. It cannot tell a typo in
+// a tool's name from a tool this harness has.
 var toolRulePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*(\([^(),]*\))?$`)
 
 // Prompt returns the exact text handed to the agent-under-test.

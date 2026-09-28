@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -117,16 +117,54 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 
 	configDir := agent.configDir
 
-	var agentErrText string
-	if agentErr := launchAgent(ctx, out, cmd.ErrOrStderr(), ws, binDir, fx.Model, prompt, agent.env, fx.DisallowedTools); agentErr != nil {
-		agentErrText = agentErr.Error()
-		fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error: %v\n", agentErr)
-		// Not returned yet: a refusal or a crash mid-run still leaves a
-		// transcript worth scoring — the scorer is what decides whether an
-		// early stop is itself the pass condition (a gate that never let the
-		// agent past its first refusal, say). Only the ABSENCE of a
-		// transcript below is unrecoverable.
+	sessionID, err := newSessionID()
+	if err != nil {
+		return fmt.Errorf("make a session id: %w", err)
 	}
+	brief, err := fx.UserBrief()
+	if err != nil {
+		return err
+	}
+	maxTurns := 1
+	if fx.User != nil {
+		maxTurns = fx.User.MaxTurns
+	}
+
+	var agentErrs []string
+	var dialogue []exchange
+	message := prompt
+	for turn := 1; turn <= maxTurns; turn++ {
+		if turn > 1 {
+			next, done, userErr := simulateUser(ctx, binDir, fx.User.UserModel(), brief, dialogue)
+			if userErr != nil {
+				// The conversation cannot go on, but what already happened is
+				// a transcript worth scoring — same reasoning as an agent
+				// error below.
+				agentErrs = append(agentErrs, userErr.Error())
+				fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: %v\n", userErr)
+				break
+			}
+			if done {
+				fmt.Fprintf(out, "sr-eval: simulated user is done after %d turn(s)\n", turn-1)
+				break
+			}
+			message = next
+			fmt.Fprintf(out, "sr-eval: turn %d, simulated user says: %s\n", turn, message)
+		}
+		var reply bytes.Buffer
+		if agentErr := launchAgent(ctx, io.MultiWriter(out, &reply), cmd.ErrOrStderr(), ws, binDir,
+			agentArgs(fx.Model, message, sessionID, turn > 1, fx.DisallowedTools), agent.env); agentErr != nil {
+			agentErrs = append(agentErrs, fmt.Sprintf("turn %d: %v", turn, agentErr))
+			fmt.Fprintf(cmd.ErrOrStderr(), "sr-eval: agent-under-test exited with error on turn %d: %v\n", turn, agentErr)
+			// Not returned yet: a refusal or a crash mid-run still leaves a
+			// transcript worth scoring — the scorer is what decides whether an
+			// early stop is itself the pass condition (a gate that never let the
+			// agent past its first refusal, say). Only the ABSENCE of a
+			// transcript below is unrecoverable.
+		}
+		dialogue = append(dialogue, exchange{User: message, Agent: reply.String()})
+	}
+	agentErrText := strings.Join(agentErrs, "; ")
 
 	transcriptPath := findTranscript(ws.project, configDir)
 	if transcriptPath == "" {
@@ -220,17 +258,11 @@ func exitCode(err error) int {
 // build's siblings first on PATH — or, for a FreshMachine run, nothing of
 // sloprail on PATH at all, not even the directory sr-agent was found in
 // (which is why sr-agent is exec'd by absolute path).
-func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir, model, prompt string, env []string, disallowed []string) error {
+//
+// args is one turn's sr-agent argv, from agentArgs (user.go), which also pins
+// every turn of a run to one session.
+func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir string, args []string, env []string) error {
 	agentBin := filepath.Join(binDir, "sr-agent")
-	claudeArgs, err := harnessArgs(disallowed)
-	if err != nil {
-		return err
-	}
-	args := []string{
-		"--model", model,
-		"--claude-args", claudeArgs,
-		"--prompt", prompt,
-	}
 
 	c := exec.CommandContext(ctx, agentBin, args...)
 	c.Dir = ws.project
@@ -240,30 +272,14 @@ func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, b
 	return c.Run()
 }
 
-// harnessArgs is the --claude-args JSON sr-agent passes on to the harness:
-// sr-agent's isolation overridden (see launchAgent), and the fixture's
-// disallowedTools as one --disallowed-tools value. Joined with commas, not
-// spaces: a rule such as `Bash(gh search:*)` carries a space of its own, and a
-// space-joined list splits it in two, so neither half removes anything.
-func harnessArgs(disallowed []string) (string, error) {
-	claudeArgs := map[string]string{"settings": "{}", "permission-mode": "bypassPermissions"}
-	if len(disallowed) > 0 {
-		claudeArgs["disallowed-tools"] = strings.Join(disallowed, ",")
-	}
-	encoded, err := json.Marshal(claudeArgs)
-	if err != nil {
-		return "", fmt.Errorf("encode the harness args: %w", err)
-	}
-	return string(encoded), nil
-}
-
 // findTranscript locates the .jsonl the agent-under-test wrote, via the same
 // project-dir encoding the harness itself uses (internal/transcript.ProjectDir)
 // — the one place that rule is defined. configDir is the agent's own
 // ~/.claude, inside its isolated HOME (agentHome). There is exactly
-// one project dir for the (fresh, temp) project path and, for a single-turn
-// eval run, exactly one session transcript in it, so the newest .jsonl is the
-// one to score.
+// one project dir for the (fresh, temp) project path and exactly one session
+// transcript in it — a multi-turn run resumes the SAME session on every turn
+// (agentArgs), and Claude Code appends each resumed turn to that one file — so
+// the newest .jsonl is the one to score.
 func findTranscript(projectDir, configDir string) string {
 	projDir := transcript.ProjectDir(configDir, projectDir)
 	if projDir == "" {

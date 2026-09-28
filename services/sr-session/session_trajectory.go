@@ -128,7 +128,7 @@ func resolveTrajectory(cmd *cobra.Command) (string, HookPayload, error) {
 	if flag, _ := cmd.Flags().GetString("path"); flag != "" {
 		return flag, HookPayload{}, nil
 	}
-	p := readPayload(cmd)
+	p := readPayloadIfWaiting(cmd)
 	path, err := p.record()
 	if err != nil {
 		return "", p, err
