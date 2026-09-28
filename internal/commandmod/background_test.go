@@ -25,9 +25,9 @@ func TestDetaches(t *testing.T) {
 		// `$!` is fixed by the LAST `&` and does not move: a second `wait $!`
 		// with no new `&` in between targets the exact same job the first one
 		// did, not job1. round-5 review of #83, finding 1.
-		`job1 & job2 & wait $!; wait $!`:             "job1",
-		`job1 & job2 & wait "$!"; wait "$!"`:         "job1",
-		`job1 & job2 & job3 & wait $!; wait $!`:      "job1",
+		`job1 & job2 & wait $!; wait $!`:        "job1",
+		`job1 & job2 & wait "$!"; wait "$!"`:    "job1",
+		`job1 & job2 & job3 & wait $!; wait $!`: "job1",
 	} {
 		ok, what := Detaches(src)
 		if !ok {
