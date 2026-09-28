@@ -156,7 +156,7 @@ func TestT046_46_SpecConventionAgrees(t *testing.T) {
 }
 
 // T046_47: `rm a.go b.go`, both carrying the same pin. The engine asks a
-// preventive guard about the first file a command touches and not again, and that
+// preventive guard about every file a command touches, before it runs, and each
 // file sees the other still holding the pin, so the command runs. At Stop both
 // are gone, neither holds the pin, and both deletes are refused: the after-check
 // is the backstop, and names both files.

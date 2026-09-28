@@ -171,6 +171,78 @@ func TestScan_TagBodyCharacters(t *testing.T) {
 		"a trailing period ends the tag and stays in the prose")
 }
 
+// --- markdown emphasis (issue #89) -------------------------------------------
+//
+// A real run wrote `**#research summary:**` and the research-run context never
+// activated: `#` right after `**` was not at a word boundary. Emphasis around a
+// tag is the agent saying it loudly, so it counts.
+
+// Every emphasis delimiter run — `*`, `**`, `***`, `_`, `__`, and mixed — before
+// a tag reads as that tag, with any closing delimiter left out of the label.
+func TestScan_EmphasisAroundATagIsTheTag(t *testing.T) {
+	for _, msg := range []string{
+		"**#research summary:** backoff with jitter.", // the measured form
+		"**#research**",
+		"*#research*",
+		"***#research***",
+		"_#research_",
+		"__#research__",
+		"___#research___",
+		"**_#research_**",
+		"_**#research**_",
+		"Done. **#research** — cloned and read.",
+		"first line\n**#research** on the next",
+		"_#research_.",
+	} {
+		assert.Equal(t, []string{"research"}, labels(scan(nil, []string{msg})), "in %q", msg)
+	}
+}
+
+// An underscore opener's closing underscores are trimmed, but only as many as
+// opened it: underscores that are part of the tag stay.
+func TestScan_UnderscoreEmphasisKeepsTheTagsOwnUnderscores(t *testing.T) {
+	assert.Equal(t, []string{"no_slop"}, labels(scan(nil, []string{"_#no_slop_"})))
+	assert.Equal(t, []string{"no_slop"}, labels(scan(nil, []string{"__#no_slop__"})))
+	assert.Equal(t, []string{"no-slop"}, labels(scan(nil, []string{"**#no-slop**"})))
+	assert.Equal(t, []string{"_private"}, labels(scan(nil, []string{"_#_private_"})))
+	assert.Empty(t, scan(nil, []string{"_#_"}), "a lone underscore closing an empty tag is no tag")
+}
+
+// Strict superset: every form read before is read the same way now — a bare
+// tag's trailing underscore is still its own, since no emphasis opened it.
+func TestScan_EmphasisDoesNotChangeFormsReadBefore(t *testing.T) {
+	assert.Equal(t, []string{"research_"}, labels(scan(nil, []string{"#research_"})))
+	assert.Equal(t, []string{"research"}, labels(scan(nil, []string{"#research**"})))
+	assert.Equal(t, []string{"a", "b"}, labels(scan(nil, []string{"**#a** and #b"})))
+}
+
+// What emphasis does NOT open: the boundary still applies to the emphasis run,
+// a digit-first body is still an issue reference, `# ` is still a heading, and
+// strikethrough and backticks are not emphasis.
+func TestScan_EmphasisNegatives(t *testing.T) {
+	for _, msg := range []string{
+		"foo**#bar**",                // intraword: no boundary before the run
+		"see x_#y_",                  // intraword underscore
+		"**#42**",                    // an issue reference, emphasised
+		"**# Heading**",              // a heading-shaped `# `
+		"~~#research~~",              // struck out: taken back, not said
+		"`#research` summary",        // a code span is shown, not said
+		"`**#research**` is the tag", // emphasis inside a code span
+		"an unclosed `#research",     // a stray backtick is not a boundary
+		"****#research****",          // four delimiters are not emphasis
+	} {
+		assert.Empty(t, scan(nil, []string{msg}), "in %q", msg)
+	}
+}
+
+// Emphasis inside the shapes the scan strips is still stripped: fenced blocks
+// and quoted lines are removed before the pattern runs, emphasis or not.
+func TestScan_EmphasisedTagInQuotedFormsIsNotATag(t *testing.T) {
+	assert.Empty(t, scan(nil, []string{"```\n**#research** example\n```"}))
+	assert.Empty(t, scan(nil, []string{"~~~\n_#research_\n~~~"}))
+	assert.Empty(t, scan(nil, []string{"> **#research summary:** quoted"}))
+}
+
 // --- said, not shown ---------------------------------------------------------
 //
 // Two independent consumers of this module (sloprail's own `strategy` repo and

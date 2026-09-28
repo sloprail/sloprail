@@ -106,8 +106,8 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	}
 
 	// Preventive file-guards next: a `preventive: true` guard whose match selects a
-	// pre-write file refuses a not-fine write before it lands. Blocks on the first
-	// refusal.
+	// pre-write file refuses a not-fine write before it lands. Every file the call
+	// would change is checked, and the one deny names each refused file.
 	if reason := runFileGuardsPreventive(cmd, preventiveGuards, events, scope, contextMap, resolveNote); reason != "" {
 		return natureVerdict{Blocked: reason}
 	}

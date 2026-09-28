@@ -198,13 +198,11 @@ Some answers are decided, and waive:
 
 **What happens only at Stop.** An edit the engine does not see as a write at
 all (a script rewriting the file) is caught at Stop, against the session's
-baseline. So is one command touching several files: the engine asks a
-preventive guard about the first file a command touches and not again, so `rm
-a.go b.go` of two files carrying the same pin is let through (each sees the
-other still holding it) and both deletes are refused at Stop. That pre-write gap
-is the engine's (its preventive dispatch stops after a command's first file) and
-is tracked as [sloprail#87](https://github.com/sloprail/sloprail/issues/87);
-until it is fixed the Stop check is the guard for it (T046_47). So is a delete
+baseline. So is one command removing every holder of a pin at once: the engine
+asks a preventive guard about each file a command touches before it runs, but
+each against the tree as it stands, so `rm a.go b.go` of two files carrying the
+same pin is let through (each sees the other still holding it) and both deletes
+are refused at Stop (T046_47). So is a delete
 the engine did not read of a file carrying a pin (an `rm -r` past its byte
 budget): its event carries no oldMarkers, so the guard's match cannot select it
 before the write; at Stop the baseline's markers arrive and the dropped pin is
