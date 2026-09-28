@@ -55,17 +55,16 @@ func keepProject(t *testing.T, files ...string) (*harness.Env, string) {
 	return e, proj
 }
 
-// denyText is the text of every pre-tool deny in a run's stream — what the agent
-// was told — without the rest of the stream, which also holds the agent's own
-// command and so names every file whether or not a deny did.
+// denyText is the reason of every pre-tool deny in a run — what the agent was
+// told — without the rest of the stream, which also holds the agent's own
+// command and so names every file whether or not a deny did. Built on
+// harness.Result.Refusals, which reads the tool_result records rather than
+// scanning the stream for a fixed marker string: real Claude Code (and the
+// mock, since harness-mocks#4/v0.2.0) answers a PreToolUse refusal with
+// "PreToolUse:<Tool> hook error: <reason>", not the older, fictitious "Tool
+// call blocked by a PreToolUse hook" text a prior mock version emitted.
 func denyText(res harness.Result) string {
-	var out []string
-	for _, line := range strings.Split(res.Output, "\n") {
-		if i := strings.Index(line, "Tool call blocked by a PreToolUse hook"); i >= 0 {
-			out = append(out, line[i:])
-		}
-	}
-	return strings.Join(out, "\n")
+	return strings.Join(res.Refusals(), "\n")
 }
 
 // T034_12: `rm src/a.go src/keep.go` — the FIRST file passes the guard, the

@@ -671,24 +671,3 @@ func Background(id, name string, input map[string]string) Turn {
 func ReadLaunchedOutput(id string) Turn {
 	return Turn{jsonl: toolUse(id, "Read", map[string]string{"file_path": launchedOutputPlaceholder}), launchedOutput: true}
 }
-
-// TaskOutputOfLaunched is CallWithOutput of a TaskOutput call whose task_id is
-// the id of the most recently launched background task — the id the mock
-// minted at launch, which only its receipt says. The mock no longer runs
-// TaskOutput itself (real transcripts hold no call to it): as with any
-// CallWithOutput pair, the mock answers the tool_use with its own error first,
-// and the scenario's own second tool_result — the one a test cites — is what
-// this pins to a REAL background task's id, rather than one made up for a
-// stray, never-launched case.
-func TaskOutputOfLaunched(id, output string) (Turn, Turn) {
-	use := Turn{
-		jsonl: fmt.Sprintf(
-			`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":"TaskOutput","input":{"task_id":%q}}]}}`,
-			id+"#u", "e2e-turn-"+id+"u", id, launchedTaskPlaceholder),
-		launchedTask: true,
-	}
-	res := Turn{jsonl: fmt.Sprintf(
-		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s}]}}`,
-		id+"#r", "e2e-turn-"+id+"r", id, jsonStr(output))}
-	return use, res
-}
