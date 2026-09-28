@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -168,4 +170,147 @@ func TestRegistry_EveryHarnessIsWellFormed(t *testing.T) {
 		assert.NotEmpty(t, spec.argsFlag, "%s needs an args flag", spec.name)
 		assert.Len(t, spec.sizes, len(sizeAliases), "%s must map every size", spec.name)
 	}
+}
+
+// --- the file-access grant ------------------------------------------------
+
+// realDir is a fresh directory whose path has no symlink in it, so pathRules
+// yields exactly one spelling and a test can compare argv exactly. (t.TempDir on
+// macOS sits under /var, a symlink to /private/var.)
+func realDir(t *testing.T, name string) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	dir := filepath.Join(root, name)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	return dir
+}
+
+func writable(p string) dirGrant { return dirGrant{Path: p, Mode: dirWritable} }
+func readonly(p string) dirGrant { return dirGrant{Path: p, Mode: dirReadonly} }
+
+// A writable dir is a working directory plus an Edit rule scoped to it — never
+// an unscoped Write, which was measured to write anywhere on disk. The answer
+// folder of a --verify run is just such a dir. The caller's own tools follow as
+// further values of the same flag.
+func TestClaudeGrant_WritableDirIsAddedAndAllowed(t *testing.T) {
+	answer := realDir(t, "answer")
+
+	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{writable(answer)}, Tools: []string{"Read", "WebFetch"}})
+
+	assert.Equal(t, []string{
+		"--add-dir", answer,
+		"--allowed-tools", "Edit(/" + answer + "/**)", "Read", "WebFetch",
+	}, got)
+	assert.NotContains(t, got, "Write", "an unscoped Write grant writes anywhere on disk")
+}
+
+// A readonly dir is a working directory (readable by Read/Grep/Glob with no
+// grant) and denied to every file-writing tool — a deny beats any allow,
+// including a Write the caller itself asked for.
+func TestClaudeGrant_ReadonlyDirIsAddedAndDenied(t *testing.T) {
+	project := realDir(t, "project")
+
+	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{readonly(project)}, Tools: []string{"Write"}})
+
+	assert.Equal(t, []string{
+		"--add-dir", project,
+		"--allowed-tools", "Write",
+		"--disallowed-tools", "Edit(/" + project + "/**)",
+	}, got)
+}
+
+// Mixed modes land in ONE --add-dir (in the order given), one --allowed-tools
+// and one --disallowed-tools: never repeated variadic groups.
+func TestClaudeGrant_MixedModesShareOneFlagEach(t *testing.T) {
+	project := realDir(t, "project")
+	scratch := realDir(t, "scratch")
+	answer := realDir(t, "answer")
+
+	got := claudeCodeSpec.grant(accessGrant{
+		Dirs:  []dirGrant{readonly(project), writable(scratch), writable(answer)},
+		Tools: []string{"WebFetch"},
+	})
+
+	assert.Equal(t, []string{
+		"--add-dir", project, scratch, answer,
+		"--allowed-tools", "Edit(/" + scratch + "/**)", "Edit(/" + answer + "/**)", "WebFetch",
+		"--disallowed-tools", "Edit(/" + project + "/**)",
+	}, got)
+	assert.Empty(t, claudeCodeSpec.grant(accessGrant{}), "no access asked for, no flags")
+}
+
+// The caller's own deny rules join the readonly-dir denies in ONE
+// --disallowed-tools group, each rule whole.
+func TestClaudeGrant_CallerDeniesJoinTheReadonlyDenies(t *testing.T) {
+	project := realDir(t, "project")
+
+	got := claudeCodeSpec.grant(accessGrant{
+		Dirs:      []dirGrant{readonly(project)},
+		Tools:     []string{"Bash(curl:*)"},
+		DenyTools: []string{"Bash(curl * -o *)", "Bash(curl * -d @*)"},
+	})
+
+	assert.Equal(t, []string{
+		"--add-dir", project,
+		"--allowed-tools", "Bash(curl:*)",
+		"--disallowed-tools", "Edit(/" + project + "/**)", "Bash(curl * -o *)", "Bash(curl * -d @*)",
+	}, got)
+
+	onlyDenies := claudeCodeSpec.grant(accessGrant{DenyTools: []string{"WebSearch"}})
+	assert.Equal(t, []string{"--disallowed-tools", "WebSearch"}, onlyDenies)
+}
+
+// A readonly dir is denied ALWAYS — even when a writable dir sits inside it.
+// The old exception dropped the deny there, and a judge with Write then wrote
+// into the project (measured in review). claude cannot express "deny except
+// this sub-dir", so resolveAddDirs and runVerified keep writable dirs out of
+// readonly ones instead; the grant never weakens the deny.
+func TestClaudeGrant_ReadonlyDenyIsNeverDropped(t *testing.T) {
+	project := realDir(t, "project")
+	inner := filepath.Join(project, "tmp", "answer")
+	require.NoError(t, os.MkdirAll(inner, 0o755))
+
+	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{readonly(project), writable(inner)}})
+
+	i := indexOf(got, "--disallowed-tools")
+	require.NotEqual(t, -1, i, "the readonly project must be denied: %v", got)
+	assert.Contains(t, got[i+1:], "Edit(/"+project+"/**)")
+}
+
+// A readonly dir NESTED in a writable one stays readonly: its deny is emitted,
+// and a deny beats the enclosing allow.
+func TestClaudeGrant_ReadonlyNestedInWritableStaysReadonly(t *testing.T) {
+	scratch := realDir(t, "scratch")
+	vendored := filepath.Join(scratch, "vendor")
+	require.NoError(t, os.MkdirAll(vendored, 0o755))
+
+	got := claudeCodeSpec.grant(accessGrant{Dirs: []dirGrant{writable(scratch), readonly(vendored)}})
+
+	assert.Equal(t, []string{
+		"--add-dir", scratch, vendored,
+		"--allowed-tools", "Edit(/" + scratch + "/**)",
+		"--disallowed-tools", "Edit(/" + vendored + "/**)",
+	}, got)
+}
+
+// claude matches a rule against the path as the agent SPELLS it (measured: an
+// allow for the /private/var spelling did not cover a Write to the /var one), so
+// a directory reached through a symlink gets a rule for each spelling.
+func TestPathRules_EverySpellingOfASymlinkedDirectory(t *testing.T) {
+	real := realDir(t, "real")
+	link := filepath.Join(filepath.Dir(real), "link")
+	require.NoError(t, os.Symlink(real, link))
+
+	assert.Equal(t, []string{"Edit(/" + link + "/**)", "Edit(/" + real + "/**)"}, pathRules("Edit", link))
+	assert.Equal(t, []string{"Edit(/" + real + "/**)"}, pathRules("Edit", real),
+		"a path with no symlink in it has one spelling")
+}
+
+func TestWithin(t *testing.T) {
+	root := realDir(t, "root")
+	assert.True(t, within(root, root))
+	assert.True(t, within(filepath.Join(root, "a", "b"), root))
+	assert.False(t, within(filepath.Dir(root), root))
+	assert.False(t, within(root+"-sibling", root), "a shared prefix is not containment")
 }

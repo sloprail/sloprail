@@ -58,6 +58,12 @@ func fieldType(f module.FieldDecl) types.Type {
 		if len(f.Fields) > 0 {
 			return structure(f.Fields)
 		}
+		if f.Elem != nil {
+			// Open keys, declared values: `.flags.<any name>` is checked as the
+			// value type, so a comparison the value can never satisfy (a list
+			// against a string) is refused at load rather than false forever.
+			return types.Map{types.Extra: fieldType(*f.Elem)}
+		}
 		return types.Any
 
 	default:

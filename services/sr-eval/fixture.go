@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -95,7 +96,9 @@ type Fixture struct {
 
 	// DisallowedTools names harness tools the agent-under-test does not have,
 	// e.g. [WebSearch, WebFetch] — passed as the harness's own
-	// --disallowed-tools. For a fixture whose rule governs one way of doing a
+	// --disallowed-tools, comma-joined (agentArgs, user.go). Each entry is a tool name,
+	// optionally with a rule in parentheses (`Bash(gh search:*)`); LoadFixture
+	// refuses any other shape. For a fixture whose rule governs one way of doing a
 	// thing (research through gh), in a project that offers no other: the
 	// environment steers the agent, the prompt never has to.
 	DisallowedTools []string `yaml:"disallowedTools"`
@@ -245,8 +248,19 @@ func LoadFixture(dir string) (Fixture, error) {
 		}
 	}
 	if f.Setup != "" {
-		if _, err := os.Stat(filepath.Join(abs, f.Setup)); err != nil {
+		info, err := os.Stat(filepath.Join(abs, f.Setup))
+		if err != nil {
 			return Fixture{}, fmt.Errorf("%s/fixture.yaml: setup %q: %w", abs, f.Setup, err)
+		}
+		// Checked here, not left to the run: a setup without its execute bit
+		// fails only after the workspace is built and the release compiled.
+		if info.IsDir() || info.Mode().Perm()&0o111 == 0 {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: setup %q is not an executable file (chmod +x it)", abs, f.Setup)
+		}
+	}
+	for _, tool := range f.DisallowedTools {
+		if !toolRulePattern.MatchString(tool) {
+			return Fixture{}, fmt.Errorf("%s/fixture.yaml: disallowedTools names %q — each entry is one tool name, optionally with a rule in parentheses (WebSearch, Bash(gh search:*)), with no commas or spaces outside them", abs, tool)
 		}
 	}
 
@@ -266,6 +280,15 @@ func (f Fixture) UserBrief() (string, error) {
 	}
 	return string(body), nil
 }
+
+// toolRulePattern is the shape of one disallowedTools entry: a tool name, and
+// optionally a rule in parentheses. It is what keeps an entry from being split
+// or merged on its way to the harness (the list is joined with commas; see
+// agentArgs in user.go) — an empty entry, a stray space, two names in one, or
+// a comma inside a rule's parentheses (which the join would split) would each
+// remove something other than what the fixture says. It cannot tell a typo in
+// a tool's name from a tool this harness has.
+var toolRulePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*(\([^(),]*\))?$`)
 
 // Prompt returns the exact text handed to the agent-under-test.
 func (f Fixture) Prompt() (string, error) {

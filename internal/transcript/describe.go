@@ -184,6 +184,84 @@ func SubagentPaths(path string) ([]string, error) {
 	return paths, nil
 }
 
+// isSubagentRecord reports whether the record at path is a sub-agent's: by
+// what it says about itself (IsSubagentTranscript), OR by where the harness
+// filed it — an agent-<id>.jsonl under a subagents directory. Either suffices.
+// A question deciding whose words a record's "user" messages are must not
+// read a sub-agent's record as a root because its meta.json is missing or its
+// first record is not written yet: that would make the parent's dispatch
+// prompt citable as the end user's words.
+func isSubagentRecord(path string) bool {
+	name := filepath.Base(path)
+	if strings.HasPrefix(name, subagentFilePrefix) && strings.HasSuffix(name, jsonlSuffix) && SessionDirOfSubagent(path) != "" {
+		return true
+	}
+	return IsSubagentTranscript(path)
+}
+
+// SessionRootOf returns the ROOT record of the session the trajectory at path
+// belongs to — the end user's own conversation — climbing out of however many
+// levels of delegation path sits under. A root answers itself.
+//
+// A sub-agent's record is nested under the directory named for the record that
+// dispatched it (SessionDirOfSubagent), so its dispatcher's record is that
+// directory plus .jsonl; the climb repeats while the record reached is still a
+// sub-agent's, so a nested delegation reaches the root too.
+//
+// Returns "" when path is a sub-agent's record whose root is not on disk where
+// the layout puts it: an orphaned record is not a session this can name the
+// root of, and guessing one is how one conversation's words are cited as
+// another's.
+func SessionRootOf(path string) string {
+	cur := path
+	for isSubagentRecord(cur) {
+		dir := SessionDirOfSubagent(cur)
+		if dir == "" {
+			return ""
+		}
+		next := dir + jsonlSuffix
+		if fi, err := os.Stat(next); err != nil || fi.IsDir() || next == cur {
+			return ""
+		}
+		cur = next
+	}
+	return cur
+}
+
+// DescendantSubagentPaths returns every sub-agent record beneath the trajectory
+// at path — the ones it dispatched, the ones THOSE dispatched, and records a
+// harness nests deeper still (subagents/workflows/wf_<id>/, see
+// SessionDirOfSubagent) — in lexical order. SubagentPaths lists one level; this
+// is the whole tree, which is what "the session's own work" spans.
+//
+// Empty, not an error, when path dispatched nothing. A subtree that cannot be
+// read is an error: a caller deciding that a quote lands on exactly one entry
+// must not decide it over records it silently skipped.
+func DescendantSubagentPaths(path string) ([]string, error) {
+	dir := subagentDirOf(path)
+	if dir == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil, nil
+	}
+	var paths []string
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := d.Name()
+		if !d.IsDir() && strings.HasPrefix(name, subagentFilePrefix) && strings.HasSuffix(name, jsonlSuffix) {
+			paths = append(paths, p)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("transcript: enumerate sub-agents under %s: %w", dir, err)
+	}
+	return paths, nil
+}
+
 // subagentDirOf is the directory a trajectory's own sub-agent records sit in:
 // <session>/subagents for a record at <session>.jsonl. Built by the same
 // construction SubagentTranscriptPath uses, so a root and a sub-agent both name

@@ -33,7 +33,9 @@ two nature-specific knobs, below; both are optional.
 A file-guard's match sees the file's own facts **bare**: `path`, `markers`,
 `context` — not `event.path`. It reasons about a settled file, so `markers` is
 the one set of markers that file carries; test them with a quantifier,
-`any(markers, .kind == "invariant")`.
+`any(markers, .kind == "invariant")`. `oldMarkers` is the set it carried before
+this change, for a rule that must also see a marker removed:
+`any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")`.
 
 ## After-check (default) vs preventive
 
@@ -54,6 +56,13 @@ the after-check at Stop on the settled file as a backstop.
 ```yaml
 preventive: true
 ```
+
+A call that changes several files (`rm a.go b.go`, two `sr-file` calls joined by
+`&&`) is checked file by file before it runs: a guard is asked about every file
+it selects that no other guard has already refused, and the call is refused if
+any file fails. The refusal names each refused file. Once a file is refused,
+no further guard is asked about it — the write is already prevented, and
+asking again buys nothing.
 
 The two moments are one script's job, and the event's `kind` tells them apart —
 a `Pre*` kind at the pre-write (read the pending bytes off the event), a
@@ -103,7 +112,37 @@ On a delete, a check reads what was lost: `oldContent` and `oldMarkers`. The
 guard's own `match` sees the deleted file's markers too — for a delete, the
 scope's `markers` is the file's `oldMarkers` — so a marker-scoped guard
 (`any(markers, .kind == "invariant")`) that includes deletions still selects the
-file it is about.
+file it is about. On a `PreFileDelete`, read `oldContentKnown` before
+`oldContent`: it is `false`, with `oldContent` `""`, when the bytes were not
+read (below) — "the file was empty" and "the engine did not look" are otherwise
+the same string.
+
+**Which shell commands reach a `PreFileDelete`.** `rm <file>`, `mv <file> …`
+and `git rm <file>` name the file directly. A recursive removal of a DIRECTORY —
+`rm -r`/`-R`/`--recursive` (or an abbreviation, `--rec`), `git rm -r`, or `mv`
+of the directory — is expanded into one `PreFileDelete` per file inside it, so a
+guard on `scanners/x/scanner.yaml` fires on `rm -rf scanners/x`. The expansion
+has limits, and a preventive guard that must hold past them needs a backstop
+that does not depend on the prediction (the Post-phase tree diff, or state the
+rule keeps itself):
+
+- **Files:** past 1000 files the directory predicts **nothing** — the command
+  runs, and only files in the session's baseline surface afterwards as
+  `PostFileDelete` at Stop (a file created and removed in the same session
+  leaves no difference at all).
+- **Bytes:** at most 8 MiB is read across the directory. Every file is still
+  predicted; one that does not fit in what is left of that budget is not read
+  (`oldContentKnown: false`) and charges nothing, so smaller files after it are
+  still read. The same for one file over 8 MiB, and for a file that is not a
+  regular file once links are followed (a FIFO or a device is never opened for
+  reading). `sr-file delete` reads the same way. An unread file's `oldMarkers`
+  come from its copy at HEAD (tracked, within the cap), so a guard whose
+  `match` reads markers still selects it before the delete lands.
+- **Unreadable paths:** a subdirectory the walk cannot read is skipped and
+  reported on the hook's stderr; the files around it are still predicted.
+- **Unseen commands:** a delete the parser does not model — `find … -delete`, a
+  script, a program named by a variable — predicts nothing; only the tree diff
+  sees it.
 
 One key with three values, not a list of events: a file-guard binds to a file's
 state, and "is a file that no longer exists my business" is the one place that
@@ -206,16 +245,18 @@ case "$kind" in
     [ "$known" = "true" ] || exit 0            # defer to the after-check
     body="$(printf '%s' "$event" | jq -r '.event.newContent // ""')" ;;
   PostFileCreate|PostFileUpdate)
-    abs="${SR_WORKSPACE:-.}/$path"             # settled: read disk
-    [ -f "$abs" ] || exit 0
-    body="$(cat "$abs")" ;;
+    known="$(printf '%s' "$event" | jq -r '.event.newContentKnown // false')"
+    [ "$known" = "true" ] || { echo "could not read $path" >&2; exit 1; }  # fail closed
+    body="$(printf '%s' "$event" | jq -r '.event.newContent // ""')" ;;
 esac
 ```
 
-The `Post` kinds carry `newContent` too, but reading disk keeps that branch
-identical whatever a Post event happens to carry, and the bytes on disk **are**
-what the cycle produced. `SR_WORKSPACE` is set on the check's environment by the
-engine ([environment.md](environment.md)).
+The `Post` kinds carry the settled bytes in `newContent`, read by the engine the
+one safe way (a regular file, capped). When it could not read them —
+`newContentKnown` false: a link to a FIFO or a device, or a file past the cap —
+`newContent` is `""`, and a rule that treats that as an empty file has seen
+nothing. Reading the file from disk yourself (`cat "$SR_WORKSPACE/$path"`) is
+the same bytes when it works, and blocks the hook on a FIFO when it does not.
 
 ## Markers
 
@@ -232,9 +273,11 @@ any(oldMarkers, .kind == "asked")         does the file already carry one
 ```
 
 Note the distinction from a **file-guard's own match scope**, which exposes the
-settled file's markers under the single name `markers` (`any(markers, .kind ==
-"invariant")`) — on a delete, the markers the deleted file carried. `newMarkers`/`oldMarkers` are the **event's** fields — what a
-`Pre`/`Post` file event carries, read by a check off `.event.newMarkers`. In a
+settled file's markers as `markers` (`any(markers, .kind == "invariant")`) — on a
+delete, the markers the deleted file carried — and the markers it carried before
+the change as `oldMarkers` (empty on a create; the session baseline's at Stop).
+`newMarkers`/`oldMarkers` are also the **event's** fields — what a `Pre`/`Post`
+file event carries, read by a check off `.event.newMarkers`. In a
 script, a marker's quote is on `.fqn`:
 
 ```bash

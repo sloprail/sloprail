@@ -10,6 +10,7 @@ import (
 	"github.com/sloprail/sloprail/internal/declaration"
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/natures"
@@ -170,6 +171,7 @@ func runContextEnters(
 	store sessionstate.Store,
 	contextMap map[string]natures.ContextState,
 	gatesMap map[string]natures.GateState,
+	histories map[string]*dispatchcore.FileHistory,
 ) {
 	runner := dispatchcore.Runner{}
 
@@ -185,10 +187,15 @@ func runContextEnters(
 			// the same context/transcript the checks would), so `{skill}` and
 			// `{context}` behave exactly as they do for a gate.
 			if len(c.Require) > 0 {
+				path, _ := fired.Fields[filemod.FieldPath].(string)
 				v, err := runner.Run(dispatchcore.Request{
-					Nature:         dispatchcore.NatureFileGuard,
-					Require:        c.Require,
-					Event:          fired,
+					Nature:  dispatchcore.NatureFileGuard,
+					Require: c.Require,
+					Event:   fired,
+					// A Post file event's history, as a file-guard's gets it: a
+					// citation grounds only the change it rode on, for a
+					// context's requirement as for any other.
+					History:        histories[path],
 					TranscriptPath: scope.Transcript,
 					Context:        contextMap,
 					Gates:          gatesMap,

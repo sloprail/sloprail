@@ -7,15 +7,36 @@ set -uo pipefail
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath')"
 
-# Read scanner-declared's registry; `require` guarantees it ran first, so entries
-# are current. `state list` emits JSON-LINES, so slurp with `jq -s`.
-declared="$(sr-session state list --owner scanner-declared 2>/dev/null | jq -s -c '[.[] | select(.key | startswith("scanner:"))]')"
-declared_count="$(printf '%s' "${declared:-[]}" | jq 'length' 2>/dev/null || echo 0)"
+# A registry this script cannot read decides nothing, so it refuses: reading the
+# silence as "nothing declared" passed every Stop whenever sr-session failed
+# (`jq -s` of empty input is `[]`, exit 0).
+plumbing() {
+  echo "verify-scanner-coverage could not check this turn: $1. The Stop was refused rather than passed unchecked; if this keeps happening the sloprail install is broken — say so rather than working around it." >&2
+  exit 1
+}
+
+[ -n "${SR_GUARDRAIL_DIR:-}" ] || plumbing "SR_GUARDRAIL_DIR is not set, so the shared scanner-lib.sh could not be found"
+# A helper stopped early runs only partly (whether the `.` then fails depends
+# on the bash version); only its last-line sentinel proves it loaded whole.
+unset scanner_lib_loaded
+# shellcheck source=../../context/scanner-declared/scanner-lib.sh
+. "$SR_GUARDRAIL_DIR/../../context/scanner-declared/scanner-lib.sh" 2>/dev/null \
+  || plumbing "the shared scanner-lib.sh beside scanner-declared could not be loaded"
+[ "${scanner_lib_loaded:-}" = 1 ] \
+  || plumbing "the shared scanner-lib.sh did not load whole (its last-line sentinel scanner_lib_loaded is unset)"
+
+# Read scanner-declared's registry — the scanners still owed a search; `require`
+# guarantees the context ran first, so entries are current.
+declared="$(registry_owed)" || plumbing "scanner-declared's registry could not be read (sr-session state list failed or returned something that is not its JSON lines)"
+declared_count="$(printf '%s' "$declared" | jq 'length' 2>/dev/null)"
+case "$declared_count" in
+  '' | *[!0-9]*) plumbing "scanner-declared's registry did not parse" ;;
+esac
 
 if [ "$declared_count" -eq 0 ]; then
-  # Backstop only — gate.yaml's match already skips this script when nothing was
-  # declared; this covers the edge where the context ran but left nothing usable
-  # (e.g. every scanner.yaml failed to parse).
+  # Nothing owed: gate.yaml's match already skips this script when nothing was
+  # declared, and a scanner the user had deleted (an admitted, cited delete) is
+  # retired rather than owed.
   exit 0
 fi
 
@@ -32,10 +53,14 @@ while IFS= read -r traj_path; do
   [ -f "$traj_path" ] || continue
   # Flatten every PreCommandInvoke event's invocations[] down to the gh ones.
   # Events are flat: `.invocations` sits beside `.kind`, as on a live check.
+  # --ran-only: a gh call a hook REFUSED is still a tool_use in the record, and
+  # counting it credited a search that never ran — refused before any scanner
+  # was declared, then "covering" the scanner declared after it.
   calls="$(sr-session trajectory normalize \
     --path "$traj_path" \
     --events PreCommandInvoke \
     --whole-session \
+    --ran-only \
     | jq -c '[ .[] | .events[]? | select(.kind == "PreCommandInvoke")
                | .invocations[]? | select(.bin == "gh") ]' 2>/dev/null)"
   [ -z "${calls:-}" ] && continue
@@ -53,10 +78,13 @@ searchable_text="$(printf '%s' "$all_gh_calls" | jq -r '
 ')"
 
 missing_scanners=""
+missing_detail=""
 while IFS= read -r entry; do
   [ -z "$entry" ] && continue
-  scanner_name="$(printf '%s' "$entry" | jq -r '.key | ltrimstr("scanner:")')"
-  keywords="$(printf '%s' "$entry" | jq -r '.value | fromjson[]' 2>/dev/null)"
+  # The scanner's folder, workspace-relative (scanners/mine) — the registry's
+  # key, and what the remedy names.
+  scanner_name="$(printf '%s' "$entry" | jq -r '.dir')"
+  keywords="$(printf '%s' "$entry" | jq -r '.keywords[]?' 2>/dev/null)"
 
   if [ -z "$keywords" ]; then
     missing_scanners="$missing_scanners $scanner_name(no keywords parsed)"
@@ -99,11 +127,21 @@ while IFS= read -r entry; do
 
   if [ "$covered" != "true" ]; then
     missing_scanners="$missing_scanners $scanner_name"
+    # Name the keywords, so the remedy is one command away rather than a
+    # re-read of a file (which may be gone — the registry still holds it).
+    missing_detail="$missing_detail
+  $scanner_name: $(printf '%s' "$keywords" | sed 's/.*/"&"/' | paste -sd ' ' -)"
   fi
 done < <(printf '%s' "$declared" | jq -c '.[]')
 
+# The remedy, spelled out: measured on a real run, an agent whose covering search
+# came back empty took the refusal to mean it needed RESULTS from that search,
+# tried to drop keywords (refused), and thrashed through twenty narrower
+# searches — although its one covering call had already satisfied this gate.
 if [ -n "$missing_scanners" ]; then
-  echo "These declared scanners have no single gh call covering all their keywords:$missing_scanners" >&2
+  echo "These declared scanners have no single gh call covering all their keywords:$missing_scanners.
+Run ONE gh search whose query contains every keyword of the scanner, e.g.:$missing_detail
+That one call is what counts — it satisfies this check even if GitHub returns nothing for so specific a query. Run narrower searches besides it for actual results; they do not have to carry every keyword." >&2
   exit 1
 fi
 

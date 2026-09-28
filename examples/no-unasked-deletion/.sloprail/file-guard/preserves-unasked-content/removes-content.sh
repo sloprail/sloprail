@@ -27,9 +27,14 @@ case "$kind" in
     [ "$(printf '%s' "$input" | jq -r '.event.resultKnown // false')" = "true" ] || exit 0
     ;;
   PostFileUpdate)
+    # Settled bytes the engine could not read — newContentKnown false (declared
+    # on PostFileCreate/PostFileUpdate, internal/filemod/module.go): a link to a
+    # FIFO or a device, or a file past the read cap. Undecidable: apply (exit 0).
+    [ "$(printf '%s' "$input" | jq -r 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')" = "true" ] || exit 0
     ;;
   *)
-    # A deletion is the largest removal there is.
+    # A deletion is the largest removal there is — whether or not the engine
+    # read the bytes it loses (oldContentKnown): it always applies.
     exit 0
     ;;
 esac

@@ -1,0 +1,29 @@
+# Findings are written after the reading, not before. While a #research run is
+# open, a write of the project's research notes — this example's convention:
+# any Markdown file (.md, .markdown, .mdx, in any letter case) in the project,
+# outside a top-level dot-directory, NOTES.md being where this project keeps
+# them — is refused BEFORE it lands until the run has depth (the same rule
+# depth-check applies at Stop, shared via its verify-depth.sh). Case-insensitive
+# because on macOS's default filesystem NOTES.MD IS NOTES.md.
+#
+# PreFileWrite covers the Write and Edit tools and a shell command the engine
+# sees writing the file (`cat > NOTES.md`, `echo >> NOTES.md`, `sed -i`).
+# No `require: context`: `require` would refuse every Markdown write while no
+# research is open. Whether research is open is the check's to decide — the
+# context's flag, or a #research declaration already on the record (a tag
+# written earlier in this very turn has not reached the context yet).
+#
+# Every project write is matched, not only *.md paths: a write through a second
+# name for the notes — a symbolic or hard link, `ln -s NOTES.md n.txt && echo
+# >> n.txt` — has a path that is not Markdown. The check resolves the name and
+# lets anything that is not the notes through at once. `ln` of a Markdown file
+# is held itself, so a link made and written on one line never gets a name.
+on:
+  - event: PreFileWrite
+    match: >-
+      not (event.path startsWith "/")
+      and not (event.path startsWith ".")
+  - event: PreCommandInvoke
+    match: any(event.invocations, .bin == "ln")
+checks:
+  - script: ./findings-after-depth.sh

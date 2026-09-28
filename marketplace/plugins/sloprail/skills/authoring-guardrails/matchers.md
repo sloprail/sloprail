@@ -22,13 +22,19 @@ directly:
 |---|---|---|
 | `path` | string | the file's repository-relative path |
 | `markers` | list | the `sr:` markers the file carries, elements `{kind, fqn, line}` |
+| `oldMarkers` | list | the markers it carried before this change (empty on a create; the session baseline's on a Post kind) |
 | `context` | map | every declared context, by name, `{active, payload}` |
 
 ```
 path endsWith "SKILL.md"
 any(markers, .kind == "invariant")
 context["refactoring"].active and any(markers, .kind == "moved-from")
+any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")
 ```
+
+The last form is how a rule sees a marker **leave**: an update that strips a
+file's last marker has `markers` empty, so `any(markers, …)` alone never selects
+the very write that removes what the rule guards.
 
 ### Gate and context: the event, **nested under `event`**
 
@@ -135,7 +141,10 @@ watch it fire** before believing either.
   author for a name the engine cannot know.
 - **A flag off an invocation.** `event.invocations[].flags` belongs to the command
   being run, not the engine, so a key read off it is verified against nothing. A
-  mistyped or non-existent flag compiles and evaluates false.
+  mistyped or non-existent flag compiles and reads as an empty list, so
+  `"next" in .flags.tag`, `len(.flags.tag) > 0` and `any(.flags.tag, …)` answer
+  false rather than error. Its values are declared (a list of strings each), so
+  `.flags.tag == "next"` is refused at load; `"next" in .flags.tag` is the match.
 
 The **inside of a list is checked** where its element shape is declared:
 `any(markers, .knid == …)` and `any(event.invocations, .bni == …)` are refused at

@@ -20,6 +20,9 @@ import enterSh     from '../../../examples/research-rigor/.sloprail/context/rese
 import exitSh      from '../../../examples/research-rigor/.sloprail/context/research-run/exit.sh?raw';
 import gateYaml    from '../../../examples/research-rigor/.sloprail/gate/depth-check/gate.yaml?raw';
 import verifySh    from '../../../examples/research-rigor/.sloprail/gate/depth-check/verify-depth.sh?raw';
+import factsJq     from '../../../examples/research-rigor/.sloprail/gate/depth-check/research-facts.jq?raw';
+import findingsYaml from '../../../examples/research-rigor/.sloprail/gate/findings-need-depth/gate.yaml?raw';
+import findingsSh  from '../../../examples/research-rigor/.sloprail/gate/findings-need-depth/findings-after-depth.sh?raw';
 
 ## The failure
 
@@ -45,9 +48,20 @@ the agent's summary of it.
    actually declared as research.
 
 2. A **gate** at `Stop` runs only while that context is active and refuses the
-   stop when the declared research doesn't meet the required depth, counting
-   what any dispatched sub-agent ran as well, and naming everything still
-   missing at once.
+   stop unless the run cloned a repository itself and read at least two of that
+   clone's source files — not its README or docs. It counts what any dispatched
+   sub-agent did as well, credits a clone only when git's own record of it says
+   it was made this session (not output the agent controls, so a checkout
+   already on disk does not count even when the clone that ran into it hid its
+   failure), and says exactly what is missing and what to do.
+
+3. A second **gate** holds the conclusion until the reading is done: while a
+   research run is open, a write of the research notes (Markdown in the
+   project, in any letter case) is refused before it lands until the run has depth — by the same
+   rule, with the same remedy. So is a write that adds the proposal itself (a
+   "Proposed approach" section) when no research was declared at all: the
+   project's convention is research before proposing, declared or not. A `Stop` gate can refuse a turn, but only a gate
+   on the write can keep the proposal from being written first.
 
 </Steps>
 
@@ -70,6 +84,10 @@ a directory under `.sloprail/` — a `*.yaml` declaration plus the scripts it na
     - depth-check/
       - gate.yaml
       - verify-depth.sh
+      - research-facts.jq
+    - findings-need-depth/
+      - gate.yaml
+      - findings-after-depth.sh
 
 </FileTree>
 
@@ -90,3 +108,10 @@ research was declared, it skips.
 
 <Code code={gateYaml} lang="yaml" title=".sloprail/gate/depth-check/gate.yaml" />
 <Code code={verifySh} lang="bash" title=".sloprail/gate/depth-check/verify-depth.sh" />
+<Code code={factsJq} lang="jq" title=".sloprail/gate/depth-check/research-facts.jq" />
+
+The write-time half: the same depth rule, checked before a research-notes write
+lands.
+
+<Code code={findingsYaml} lang="yaml" title=".sloprail/gate/findings-need-depth/gate.yaml" />
+<Code code={findingsSh} lang="bash" title=".sloprail/gate/findings-need-depth/findings-after-depth.sh" />

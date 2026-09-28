@@ -43,7 +43,11 @@ func agentArgs(model, prompt, sessionID string, resume bool, disallowed []string
 		key:               sessionID,
 	}
 	if len(disallowed) > 0 {
-		claudeArgs["disallowed-tools"] = strings.Join(disallowed, " ")
+		// Comma-joined, not space-joined: a rule such as `Bash(gh search:*)`
+		// carries a space of its own, and a space-joined list splits it in
+		// two, so neither half removes anything (fixture.go's toolRulePattern
+		// is what keeps an entry from smuggling a comma in to begin with).
+		claudeArgs["disallowed-tools"] = strings.Join(disallowed, ",")
 	}
 	harness, _ := json.Marshal(claudeArgs)
 	return []string{"--model", model, "--claude-args", string(harness), "--prompt", prompt}

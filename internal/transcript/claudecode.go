@@ -32,6 +32,8 @@ type claudeRecord struct {
 	Timestamp         string          `json:"timestamp"`
 	IsSidechain       bool            `json:"isSidechain"`
 	IsMeta            bool            `json:"isMeta"`
+	IsCompactSummary  bool            `json:"isCompactSummary"`
+	IsTranscriptOnly  bool            `json:"isVisibleInTranscriptOnly"`
 	Message           json.RawMessage `json:"message"`
 	ToolUseResult     json.RawMessage `json:"toolUseResult"`
 	Attachment        json.RawMessage `json:"attachment"`
@@ -41,23 +43,28 @@ type claudeRecord struct {
 	// file it landed on says about itself — see BelongsToSession.
 	SessionID string `json:"sessionId"`
 
-	// Cwd is the working directory the harness ran this turn in. Kept only so
-	// that a GUESSED path can be checked against the tree it was written in,
-	// which is the half BelongsToSession cannot see — see BelongsToTree.
+	// Cwd is the working directory the harness ran this turn in. It lets a
+	// GUESSED path be checked against the tree it was written in, which is the
+	// half BelongsToSession cannot see — see BelongsToTree — and it travels on
+	// the Entry, where a rule resolves a tool call's relative paths against it.
 	Cwd string `json:"cwd"`
 }
 
 // entry converts a record into the canonical shape.
 func (r claudeRecord) entry() Entry {
 	e := Entry{
-		Type:          EntryType(r.Type),
-		UUID:          r.UUID,
-		Timestamp:     r.Timestamp,
-		IsSidechain:   r.IsSidechain,
-		IsMeta:        r.IsMeta,
-		Message:       r.Message,
-		ToolUseResult: r.ToolUseResult,
-		Attachment:    r.Attachment,
+		Type:        EntryType(r.Type),
+		UUID:        r.UUID,
+		Timestamp:   r.Timestamp,
+		IsSidechain: r.IsSidechain,
+		IsMeta:      r.IsMeta,
+
+		IsCompactSummary:          r.IsCompactSummary,
+		IsVisibleInTranscriptOnly: r.IsTranscriptOnly,
+		Message:                   r.Message,
+		ToolUseResult:             r.ToolUseResult,
+		Attachment:                r.Attachment,
+		Cwd:                       r.Cwd,
 	}
 	if r.ParentUUID != nil {
 		e.ParentUUID = *r.ParentUUID

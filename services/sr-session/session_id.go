@@ -1,8 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -81,14 +87,130 @@ func newSessionIDCmd() *cobra.Command {
 // identity — the same silent orphaning this function exists to prevent, arrived
 // at from the other side.
 func stableID(p HookPayload) (string, error) {
+	id, err := stableIdentity(p)
+	return id.ID, err
+}
+
+// stableIdentity is stableID with the walk's Degraded flag kept: whether the id
+// is the conversation's origin or the continuation root the walk fell back to.
+// See transcript.Identity for the tradeoff, and noteDegradedIdentity for how
+// it is surfaced.
+//
+// Remembered for the life of the process, keyed by the record and its size
+// and modification time: one hook asks for its session's identity several
+// times (the scope, the store, the baseline), and each ask is a walk across the
+// project directory's transcripts. A hook process lives for one event, so the
+// answer cannot go stale in a way that matters; the file's size and time are
+// in the key so that a longer-lived caller (a test) that rewrites a record is
+// not handed the old answer.
+func stableIdentity(p HookPayload) (transcript.Identity, error) {
 	path, err := p.record()
 	if err != nil {
-		return "", err
+		return transcript.Identity{}, err
 	}
 	if path == "" {
-		return "", fmt.Errorf("sloprail: no transcript path on the hook payload — the record of this session is what its identity is read from")
+		return transcript.Identity{}, fmt.Errorf("sloprail: no transcript path on the hook payload — the record of this session is what its identity is read from")
 	}
-	return transcript.StableSessionID(projectDirOf(path, p.Cwd), path)
+	dir := projectDirOf(path, p.Cwd)
+	key := identityKey(dir, path)
+	if key != "" {
+		if hit, ok := identities.Load(key); ok {
+			return hit.(transcript.Identity), nil
+		}
+	}
+	id, err := transcript.ResolveStableSessionID(dir, path)
+	if err == nil && key != "" {
+		identities.Store(key, id)
+	}
+	return id, err
+}
+
+// identities is stableIdentity's per-process memory.
+var identities sync.Map
+
+func identityKey(dir, path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s\x00%s\x00%d\x00%d", dir, path, fi.Size(), fi.ModTime().UnixNano())
+}
+
+// degradedMarker prefixes the files, beside a session's state, that record a
+// harness session was told its identity is a fallback.
+const degradedMarker = "identity-degraded."
+
+// noteDegradedIdentity tells the person, once per harness session, that the
+// session's identity is a fallback rather than its conversation's origin. It
+// is called at SessionStart and nowhere else.
+//
+// At SessionStart because that is the one hook whose output reaches anyone:
+// its stdout is added to the agent's context and rendered in the transcript,
+// where every other hook that exits 0 has its stderr recorded but shown to
+// nobody. A notice printed first by a pre-tool or Stop hook would be the one
+// report — and invisible — and the marker would then silence every later
+// hook. SessionStart fires on every startup, resume and compaction, so a
+// session whose identity is degraded always passes through one: a resumed
+// continuation whose predecessor is gone, or one whose predecessor was deleted
+// while it was closed, hears it on resume.
+//
+// Once per HARNESS SESSION, not once per identity. Every fork of a degraded
+// continuation shares the fallback id, and so the state directory the marker
+// sits in — but each fork is a session somebody started or resumed, and should
+// hear why it does not have what came before. So the marker is named by the
+// harness's session id (identity-degraded.<session id>). Within one session
+// the condition is permanent — the transcript it continues is not coming back —
+// and a compaction's SessionStart does not repeat it. A marker that cannot be
+// created for any reason but already existing is no reason to stay quiet, so
+// that case still prints.
+//
+// Not a refusal. The session keeps working under the fallback; what it loses is
+// only what was stored before the continuation, and that is what the notice
+// says. Written to stdout (the agent's context, which the person sees) and to
+// stderr (recorded with the hook's run).
+func noteDegradedIdentity(stdout, stderr io.Writer, p HookPayload, id transcript.Identity) {
+	if id.Degraded == nil || id.ID == "" {
+		return
+	}
+	if session := harnessSessionID(p); session != "" {
+		if db, err := sessionDBPath(p.Cwd, id.ID); err == nil {
+			marker := filepath.Join(filepath.Dir(db), degradedMarker+session)
+			if mkErr := os.MkdirAll(filepath.Dir(marker), 0o755); mkErr == nil {
+				f, openErr := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+				if errors.Is(openErr, fs.ErrExist) {
+					return
+				}
+				if openErr == nil {
+					fmt.Fprintln(f, id.Degraded)
+					f.Close()
+				}
+			}
+		}
+	}
+	why := "whose earlier transcript is gone"
+	switch {
+	case errors.Is(id.Degraded, transcript.ErrChainRunaway):
+		why = "whose chain of earlier transcripts loops or runs past any real conversation's length"
+	case len(id.UnreadableSiblings) > 0:
+		why = "whose earlier transcript could not be reached — some of this project's other transcripts could not be read"
+	}
+	msg := fmt.Sprintf("sloprail: identity: this session continues a conversation %s, "+
+		"so its state is kept under the continuation (%s) rather than the conversation's origin; "+
+		"anything recorded before that continuation is not carried over. (%v)", why, id.ID, id.Degraded)
+	fmt.Fprintln(stdout, msg)
+	fmt.Fprintln(stderr, msg)
+}
+
+// harnessSessionID is the id the harness reports for this session — the
+// payload's, or the record's own file name.
+func harnessSessionID(p HookPayload) string {
+	if p.SessionID != "" && !strings.ContainsAny(p.SessionID, `/\`) {
+		return p.SessionID
+	}
+	if p.TranscriptPath != "" {
+		return strings.TrimSuffix(filepath.Base(p.TranscriptPath), ".jsonl")
+	}
+	return ""
 }
 
 // projectDirOf is where the conversation's OTHER transcripts live, given the

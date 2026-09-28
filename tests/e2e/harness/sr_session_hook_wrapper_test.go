@@ -563,3 +563,46 @@ func TestSrSessionHookWrapper_StartInstallsThePinnedRelease(t *testing.T) {
 		t.Fatalf("SLOPRAIL_NO_AUTO_INSTALL=1 still installed:\n%s", out)
 	}
 }
+
+// TestSrSessionHookWrapper_StartRepeatsOnlyProblems pins the filter the wrapper
+// uses to decide what of sr-session start's stderr it repeats to the agent under
+// "NOT in force until fixed": bookkeeping — which plugin owns which folders, a
+// baseline that could not be recorded, the load check's own "N rules loaded"
+// summary — is never presented as a rule that failed to load; a real load
+// problem is.
+func TestSrSessionHookWrapper_StartRepeatsOnlyProblems(t *testing.T) {
+	stubWith := func(t *testing.T, stderrLines string) string {
+		dir := t.TempDir()
+		script := "#!/bin/sh\ncat >/dev/null\nprintf '%s' '" + stderrLines + "' >&2\nexit 0\n"
+		if err := os.WriteFile(filepath.Join(dir, "sr-session"), []byte(script), 0o755); err != nil {
+			t.Fatalf("write stub sr-session: %v", err)
+		}
+		return dir
+	}
+	const bookkeeping = "sloprail: plugin mdmap owns .mdmap/**\n" +
+		"sloprail: no baseline recorded: no commit yet\n" +
+		"sloprail: 3 rules loaded. This only checked that they load: no rule ran against any file or action.\n"
+
+	out, code := runHookScript(t, "start", stubWith(t, bookkeeping)+":/usr/bin:/bin")
+	if code != 0 {
+		t.Fatalf("start exited %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "NOT in force") {
+		t.Errorf("bookkeeping lines were repeated to the agent as rules not in force:\n%s", out)
+	}
+
+	out, _ = runHookScript(t, "start", stubWith(t, bookkeeping+"sloprail: declaration file-guard/typo not loaded\n")+":/usr/bin:/bin")
+	header := strings.Index(out, "NOT in force")
+	if header < 0 {
+		t.Fatalf("a rule that did not load was not repeated to the agent:\n%s", out)
+	}
+	after := out[header:]
+	if !strings.Contains(after, "file-guard/typo not loaded") {
+		t.Errorf("the load problem is not under the header:\n%s", out)
+	}
+	for _, line := range []string{"rules loaded", " owns ", "no baseline recorded"} {
+		if strings.Contains(after, line) {
+			t.Errorf("bookkeeping %q was repeated under the header:\n%s", line, out)
+		}
+	}
+}

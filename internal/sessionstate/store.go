@@ -61,6 +61,10 @@ type Store interface {
 	// An absent key is matched by an empty old, so the first write of a key goes
 	// through this too rather than needing a separate path.
 	SwapMeta(key, old, value string) (bool, error)
+	// MetaKeys lists the meta keys that start with prefix, in key order.
+	MetaKeys(prefix string) ([]string, error)
+	// DeleteMeta forgets a session fact; deleting an absent key is not an error.
+	DeleteMeta(key string) error
 
 	// FileCheck reads one guardrail's verdict on one file. A check never
 	// recorded is a zero verdict and false.

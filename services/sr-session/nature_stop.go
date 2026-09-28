@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -70,9 +71,22 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// Which of those files an earlier Stop was already handed with this content
 	// (`seen`), before any rule reads them. See seen.go.
 	fileSnapshot := markSeenFiles(cmd, store, postFileEvents, root)
-	// And which citations each file's change was made with, as recorded when the
-	// pre-tool call that made it was permitted. See grounding.go.
-	attachRecordedCitations(store, postFileEvents)
+	// And which citations each file's change was made with, and the history
+	// that says which parts of it no citation rode on (see cited_changes.go):
+	// the cycle's first hook, if this Stop is it, records what changed while
+	// the agent was not running; the last call's pending changes settle; the
+	// sessions sharing this tree contribute their cited changes.
+	if err := beginCycle(store, p.Cwd, nowNano(), citedPathsOf(loaded.FileGuards), otherMarks(p, scope.Transcript)); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+	}
+	if err := settleCitedChanges(store); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+	}
+	others, otherContents := otherHistories(p, scope.Transcript)
+	histories := attachHistories(store, postFileEvents, others, otherContents)
+	if err := endCycle(store, postFileEvents, citedPathsOf(loaded.FileGuards), backgroundOf(p)); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+	}
 
 	// The cycle's PostTagWrite events too, for a context that recognises itself from
 	// a tag the agent wrote (research-rigor enters on #research). Gathered separately
@@ -90,16 +104,20 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 
 	// 1. file-guard after-checks on the Post FILE events. Records verdicts
 	//    (re-fire), collects refusals.
-	for _, r := range runFileGuardsPost(cmd, loaded.FileGuards, postFileEvents, rev, scope, root, contextMap) {
+	for _, r := range runFileGuardsPost(cmd, loaded.FileGuards, postFileEvents, rev, scope, root, contextMap, histories) {
 		if r.Refused {
-			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
+			refusals = append(refusals, r.Reason+citedUnknownNote(store, r.Path)+" (file-guard "+r.Attribution+")")
 		}
+	}
+
+	if err := clearCitedUnknown(store); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 	}
 
 	// 2. context enters on the Post file events AND the tag events, populating
 	//    context[] before gates read it. Never blocks.
 	contextEvents := append(append([]event.Event{}, postFileEvents...), tagWriteEvents...)
-	runContextEnters(cmd, reg, loaded.Contexts, contextEvents, scope, store, contextMap, gatesMap)
+	runContextEnters(cmd, reg, loaded.Contexts, contextEvents, scope, store, contextMap, gatesMap, histories)
 
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is
 	//    the subjectless one cyclemod produces. Refusals block the turn.

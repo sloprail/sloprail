@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -8,10 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/sloprail/sloprail/internal/declaration"
+	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/filemod"
+	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // These cover the context[] map's persistence and the trigger-matching seam the
@@ -137,4 +142,42 @@ func TestContextMatchingEvents_TriggerMatchNarrows(t *testing.T) {
 	matched := contextMatchingEvents(discard(), reg, c, events, nil)
 	require.Len(t, matched, 1, "only the occurrence the trigger's match admits wakes enter")
 	assert.Equal(t, "goal.yaml", matched[0].Fields["path"])
+}
+
+// A context's citation prerequisite on a Post event reads the file's history,
+// as a file-guard's does: a citation grounds only the change it rode on, so a
+// file whose change holds an uncited part does not meet it, and the context
+// does not enter.
+func TestContextCitationRequireReadsTheHistory(t *testing.T) {
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "entered")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "enter.sh"),
+		[]byte("#!/bin/sh\ncat >/dev/null\ntouch '"+marker+"'\necho '{\"active\": true}'\n"), 0o755))
+	c := declaration.Context{
+		Name:    "cited",
+		Dir:     dir,
+		On:      []declaration.ContextTrigger{{Event: declaration.AliasPostFileWrite}},
+		Require: []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}},
+		Enter:   "./enter.sh",
+		Exit:    "./enter.sh",
+	}
+	store := openTestStore(t)
+	ev := citedPostEvent(filemod.KindPostUpdate, "a.md", "base", "cited, then more")
+	ev.Fields[grounding.FieldCitations] = grounding.ToWire(userCite)
+	cited := dispatchcore.HistoryState{Exists: true, Hash: "cited"}
+	history := map[string]*dispatchcore.FileHistory{"a.md": {
+		Baseline: dispatchcore.HistoryState{Exists: true, Hash: "base"},
+		Current:  dispatchcore.HistoryState{Exists: true, Hash: "more"},
+		Points: []dispatchcore.HistoryPoint{{Pools: []transcript.SourceType{transcript.SourceUser},
+			Before: dispatchcore.HistoryState{Exists: true, Hash: "base"}, After: cited, At: 1}},
+	}}
+
+	ctxMap := loadContextMap(discard(), store, []declaration.Context{c})
+	runContextEnters(discard(), reg, []declaration.Context{c}, []event.Event{ev}, hookScope{}, store, ctxMap, loadGatesMap(discard(), store), history)
+	assert.NoFileExists(t, marker, "a change with an uncited part met the context's citation requirement")
+
+	runContextEnters(discard(), reg, []declaration.Context{c}, []event.Event{ev}, hookScope{}, store, ctxMap, loadGatesMap(discard(), store), nil)
+	assert.FileExists(t, marker, "the control: without a history the citation on the event meets it")
 }

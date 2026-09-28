@@ -100,3 +100,8 @@ artifact_resolve() {
   done
   return 0
 }
+
+# LOADED SENTINEL — keep this the LAST line. bash runs a sourced file up to its
+# first syntax error, so a helper can load partly; a caller unsets this,
+# sources, and checks it, which proves the whole file ran.
+cite_links_loaded=1

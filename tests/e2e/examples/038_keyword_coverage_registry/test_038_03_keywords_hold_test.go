@@ -59,6 +59,9 @@ func TestT038_08_UncitedKeywordDropRefused(t *testing.T) {
 	if !res.Saw("must cite the user's own words (--cite:user)") || !res.Saw("drops the declared keyword(s) agent") {
 		t.Errorf("the refusal does not say what to cite or name the dropped keyword:\n%s", res.Output)
 	}
+	if !res.Saw("sr-file edit scanners/mine/scanner.yaml") {
+		t.Errorf("the refusal carries no runnable sr-file command:\n%s", res.Output)
+	}
 	if got := readScanner(t, proj); got != activeScanner {
 		t.Errorf("the refused drop reached the file:\n%s", got)
 	}
@@ -123,7 +126,7 @@ func TestT038_12_NestedScannerIsStillChecked(t *testing.T) {
 	e.Run(proj, sess, "declare a scanner but never search", Turns("done",
 		Write("w1", ".claude/scanners/mine/scanner.yaml", activeScanner),
 	))
-	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:mine"]; !ok {
+	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:.claude/scanners/mine"]; !ok {
 		t.Fatalf("a scanner declared under .claude/scanners/ was not logged")
 	}
 	if !strings.Contains(strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"), coverageRefusal) {

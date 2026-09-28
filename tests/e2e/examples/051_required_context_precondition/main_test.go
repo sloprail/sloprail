@@ -110,31 +110,22 @@ func repoRoot(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
-// denyReason returns the text of the PreToolUse deny message in a run's stream,
-// or "" if the run was not denied by a PreToolUse hook.
+// denyReason returns the reason of the first PreToolUse refusal in a run's
+// stream, or "" if the run was not refused by a PreToolUse hook.
 //
 // Needed to assert on the REFUSAL's own words rather than on the whole stream:
 // the stream also carries the agent's own tool_use turns, so a session that
 // loaded document-topic and was then refused for want of document-strategy has
 // "document-topic" in its stream from the agent's Skill call — and a whole-stream
-// Saw check could not tell that from the refusal naming it. This isolates the deny
-// message so "which skill did the refusal name" is answered against the refusal
-// alone. The marker text is the harness's own (blockedMarkers in harness.go).
+// Saw check could not tell that from the refusal naming it. The refusal is the
+// real tool_result "PreToolUse:<Tool> hook error: <reason>", read by the
+// harness's Refusals.
 func denyReason(output string) string {
-	const marker = "Tool call blocked by a PreToolUse hook:"
-	i := strings.Index(output, marker)
-	if i < 0 {
+	reasons := harness.Result{Output: output}.Refusals()
+	if len(reasons) == 0 {
 		return ""
 	}
-	rest := output[i+len(marker):]
-	// The reason runs to the end of this JSON string field; cut at the closing
-	// quote sequence Claude Code writes (\",\"type\":\"text\"). The escaping in the
-	// record is \\\" for an inner quote, so the field terminator is the first
-	// unescaped \" — approximated here by cutting at the block's own suffix.
-	if j := strings.Index(rest, `\",\"type\":\"text\"`); j >= 0 {
-		rest = rest[:j]
-	}
-	return rest
+	return reasons[0]
 }
 
 // containsStr is a tiny substring helper kept local so the test file needs no

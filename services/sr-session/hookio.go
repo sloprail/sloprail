@@ -45,10 +45,24 @@ type HookPayload struct {
 	// path, and SessionStart is precisely where that happens.
 	SessionID string `json:"session_id"`
 
+	// Source is SessionStart's "startup" | "resume" | "clear" | "compact". Kept
+	// because a fresh session ("startup") has no record yet by design, and the
+	// search for a record reported where it is not (transcript.RelocateRecord)
+	// must not run for one: see sessionRecord.
+	Source string `json:"source"`
+
 	Cwd            string          `json:"cwd"`
 	ToolName       string          `json:"tool_name"`
 	ToolInput      json.RawMessage `json:"tool_input"`
 	StopHookActive bool            `json:"stop_hook_active"`
+
+	// BackgroundTasks and SessionCrons are what a Stop (or SubagentStop)
+	// reports still running in the background: Claude Code sends each as a
+	// list — a task as {id, type: "shell"|"subagent", status: "running",
+	// description, command|agent_type}. Absent from a harness that does not
+	// report them. See backgroundOf.
+	BackgroundTasks json.RawMessage `json:"background_tasks,omitempty"`
+	SessionCrons    json.RawMessage `json:"session_crons,omitempty"`
 }
 
 // record is the transcript whose session this hook belongs to.
@@ -126,21 +140,64 @@ type HookPayload struct {
 // while the harness still nests its record under the DISPATCHING session's
 // project directory: of 337 real sub-agent transcripts carrying a cwd, 18 record
 // a sibling worktree not under the parent's tree at all, and asking
-// BelongsToTree about those would refuse a sub-agent its own record. It is never
-// asked, because a sub-agent's path is always REPORTED — by agent_transcript_path,
-// or reconstructed from agent_id against the parent's own reported path — and
-// both return above. projectDirOf is the same fact from the other side: for a
+// BelongsToTree about those would refuse a sub-agent its own record. It is
+// asked only of the SESSION's record: a sub-agent's path is REPORTED by
+// agent_transcript_path, or reconstructed from agent_id against the session's
+// record — the reported transcript_path, or, when a sub-agent's call carries
+// none, the one this branch reconstructs from the session id in the tree the
+// call reports (so an isolated sub-agent naming only its agent id resolves
+// nothing here rather than a wrong record). projectDirOf is the same fact from the other side: for a
 // sub-agent the transcript's own LOCATION is authoritative and the recorded cwd
 // is not.
 func (p HookPayload) record() (string, error) {
 	if p.AgentTranscriptPath != "" {
-		return p.AgentTranscriptPath, nil
+		// Nested under the session's record, so it moves with it when the
+		// session was resumed from another directory — found by the same
+		// lookup, or the sub-agent's hooks would key on a path that does not
+		// exist while its pre-tool calls, reconstructed from agent_id against
+		// the relocated session record, keyed on the real one.
+		return p.relocate(p.AgentTranscriptPath), nil
 	}
-	if p.AgentID != "" && p.TranscriptPath != "" {
-		return transcript.SubagentTranscriptPath(p.TranscriptPath, p.AgentID)
+	root, err := p.sessionRecord()
+	if err != nil || root == "" || p.AgentID == "" {
+		return root, err
 	}
+	// A sub-agent's call reported by its agent id alone: its record is
+	// reconstructed from the session's — reported, or derived from the session
+	// id when the payload carries no transcript_path (a sub-agent's PreToolUse
+	// can arrive that way). Answering with the session's own record here would
+	// key the sub-agent's call to the ROOT's identity and state, while the same
+	// sub-agent's SubagentStop, which reports agent_transcript_path, keys to its
+	// own: what its pre-tool calls recorded (the citations a change was grounded
+	// in) would then be in a store its own cycle never reads.
+	return transcript.SubagentTranscriptPath(root, p.AgentID)
+}
+
+// relocate finds a reported record the harness wrote somewhere other than
+// where it reported it (transcript.RelocateRecord) — except at a FRESH
+// session's SessionStart, whose record does not exist yet by design: searching
+// for it there would only ever find another project's transcript that
+// happens to share a fixed --session-id. Both "startup" and "clear" are fresh
+// in this sense — "clear" is a fresh session too (the previous conversation is
+// discarded), reported under a --session-id that may just as well be reused,
+// so it carries the identical hazard "startup" does.
+func (p HookPayload) relocate(path string) string {
+	if p.Source == "startup" || p.Source == "clear" {
+		return path
+	}
+	return transcript.RelocateRecord(transcript.ConfigDir(), path)
+}
+
+// sessionRecord is the SESSION's own record as the payload names it — its
+// transcript_path, or, failing that, reconstructed from the session id — with
+// no regard to a sub-agent: record() builds a sub-agent's path on top of it.
+func (p HookPayload) sessionRecord() (string, error) {
 	if p.TranscriptPath != "" {
-		return p.TranscriptPath, nil
+		// Reported, so authoritative about WHICH session — but not always about
+		// where its file is: a session resumed from another directory is
+		// reported under that directory's project folder while its record stays
+		// where it began. See transcript.RelocateRecord.
+		return p.relocate(p.TranscriptPath), nil
 	}
 	if p.SessionID == "" {
 		// No path and no id: nothing to resolve and nothing to guess from. Not a
@@ -235,6 +292,18 @@ func (p HookPayload) Root() string {
 		return ""
 	}
 	return root
+}
+
+// HeadContent implements filemod.HeadReader: a workspace-relative file's bytes
+// in the repository's HEAD commit, when they are at most limit bytes (git is
+// asked the size first, so an oversize blob is never read). The file module
+// uses it for the markers of a delete whose bytes it could not read on disk.
+func (p HookPayload) HeadContent(path string, limit int64) (string, bool) {
+	root := p.Root()
+	if root == "" || path == "" {
+		return "", false
+	}
+	return gitrepo.ContentAtWithin(root, "HEAD", "./"+path, limit)
 }
 
 // readPayload reads the hook payload from stdin.

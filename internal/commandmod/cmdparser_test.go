@@ -84,6 +84,13 @@ func TestFileTargets_AnInterpreterPayloadDoesNotHideTheFile(t *testing.T) {
 	// A path-spelled interpreter is the same interpreter here too, or `/bin/sh
 	// -c` is a hole in exactly the way `/bin/rm` is not.
 	check(t, `/bin/sh -c 'rm notes.md'`, "remove:notes.md")
+
+	// eval runs its literal payload in THIS shell: the writes in it are the
+	// line's writes, resolved where the eval ran.
+	check(t, `eval "rm notes.md"`, "remove:notes.md")
+	check(t, `eval 'echo "## Proposed approach" >> NOTES.md'`, "write:NOTES.md")
+	check(t, `cd /w && eval 'echo x > rel'`, "write:/w/rel")
+	check(t, `sh -c "eval 'rm notes.md'"`, "remove:notes.md")
 }
 
 // TestFileTargets_PayloadCertaintyMatchesTheInvocationSide pins the OTHER
@@ -119,8 +126,10 @@ func TestFileTargets_PayloadCertaintyMatchesTheInvocationSide(t *testing.T) {
 	check(t, `sh -s 'rm notes.md'`, "(nothing)")
 	// A payload in another language is not re-parsed as shell.
 	check(t, `python -c "import os; os.system('rm notes.md')"`, "(nothing)")
-	// eval's argument is re-interpreted at runtime; re-parsing has no bottom.
-	check(t, `eval "rm notes.md"`, "(nothing)")
+	// eval of a parameter: its text is not in the line. (A LITERAL eval
+	// payload is read like `sh -c`'s — see the positive cases above.)
+	check(t, `eval "$CMD"`, "(nothing)")
+	check(t, `eval "rm notes${X}.md"`, "(nothing)")
 
 	// A glob inside a payload is as unknowable as one outside it — the drop
 	// happens in targetsFor, which the payload path must reach rather than

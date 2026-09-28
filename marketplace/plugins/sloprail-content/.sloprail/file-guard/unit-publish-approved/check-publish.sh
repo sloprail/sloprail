@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# A published unit records where it went out.
+# A published unit records where it went out, in frontmatter that holds.
 #
 # The user's approval to publish is not this script's: the guard's `require`
 # demands a user citation on a write that moves the unit INTO published (`when:
 # ./enters-published.sh`), and the engine refuses an uncited one before this
 # runs.
 #
-# Whenever the change leaves the unit at status: published:
+# Whenever the change leaves the unit at status: published — entering it or
+# already there:
+#   valid frontmatter: it must satisfy unit.cue — an invalid one is refused,
+#   never read as "no status" and waved through.
 #   published_urls:  where it actually went out. A non-empty LIST (a unit may
 #   be distributed across several channels); only presence is checked, not
 #   each URL's shape (see unit.cue).
+# And a unit whose frontmatter cannot be read — YAML that does not parse, a
+# status defined twice, a fence after a byte-order mark — is refused: no reader
+# can say whether it claims published (publish-claim.sh, shared with
+# enters-published.sh, is the one reading of that).
 #
 # Bound preventive: true in file-guard.yaml — publish is the irreversible
 # step — with the Stop after-check as the backstop for a write the engine
@@ -52,6 +59,15 @@ schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/unit.cue"
 if [ ! -f "$schema" ]; then
   refuse "unit-publish-approved: schema not found at $schema — the plugin's own unit.cue is missing, so no unit can be checked."
 fi
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version), so its last-line sentinel is what proves
+# it loaded whole.
+unset publish_claim_loaded
+# shellcheck source=publish-claim.sh
+. "${SR_GUARDRAIL_DIR:-.}/publish-claim.sh" 2>/dev/null \
+  || refuse "unit-publish-approved: publish-claim.sh is missing beside this check, so whether $path claims published could not be read"
+[ "${publish_claim_loaded:-}" = 1 ] \
+  || refuse "unit-publish-approved: publish-claim.sh did not load whole (its last-line sentinel publish_claim_loaded is unset), so whether $path claims published could not be read"
 
 # WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on
 # BOTH Pre kinds before newContent is read — an underivable result is deferred
@@ -66,7 +82,10 @@ case "$kind" in
     content="$(field '.event.newContent // ""')" || exit 1
     ;;
   PostFileCreate|PostFileUpdate)
-    # A Post kind carries the SETTLED bytes directly on the flat event.
+    # A Post kind carries the SETTLED bytes directly on the flat event — when
+    # the engine could read them (newContentKnown). Unread: refuse, unchecked.
+    [ "$(field '.event.newContentKnown // false')" = "true" ] ||
+      refuse "unit-publish-approved: $path could not be read (not a regular file, or too large), so its publish state could not be checked"
     content="$(field '.event.newContent // ""')" || exit 1
     ;;
   PreFileDelete|PostFileDelete)
@@ -78,18 +97,24 @@ case "$kind" in
     ;;
 esac
 
-if ! new_doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)"; then
-  # A document that fails to parse as frontmatter cannot be read for status,
-  # so it is not a publish this guard can see — nothing to check rather than
-  # a false publish refusal. unit.cue is not close()'d; shape is not this
-  # guard's subject.
-  exit 0
-fi
+publish_claim "$content"
+case "$claim" in
+  no)
+    # Not published: its shape is not this guard's subject.
+    exit 0
+    ;;
+  undecidable)
+    refuse "UNREADABLE FRONTMATTER: $path's frontmatter cannot be read, so whether it claims status: published cannot be told — fix the frontmatter so it reads:
+$claim_why"
+    ;;
+  unsupported)
+    refuse "$claim_why"
+    ;;
+esac
 
-new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty')" \
-  || refuse "unit-publish-approved: could not read the status $path would carry"
-if [ "$new_status" != "published" ]; then
-  exit 0
+if ! new_doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)"; then
+  refuse "PUBLISH INVALID: $path claims status: published, but its frontmatter does not satisfy the plugin's unit.cue — fix the frontmatter; a published unit must hold to the schema:
+$new_doc"
 fi
 
 n_urls="$(printf '%s' "$new_doc" | jq -r '(.published_urls // []) | length')" \

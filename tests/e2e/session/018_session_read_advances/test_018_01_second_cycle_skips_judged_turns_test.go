@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // session_read_advances: a hook asking what a session has done is given the part
@@ -104,7 +106,7 @@ exit 0
 // silent pass into a named failure.
 func answered(t *testing.T, answer string) {
 	t.Helper()
-	if strings.Contains(answer, "sloprail:") {
+	if harness.EngineErrored(answer) {
 		t.Fatalf("the engine reported an error instead of the session's entries, so every "+
 			"marker below reads as absent and no narrowing is being tested:\n%s", answer)
 	}

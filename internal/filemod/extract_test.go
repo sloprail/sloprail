@@ -2,6 +2,7 @@ package filemod
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1131,4 +1132,42 @@ func TestObserved_TheTreeIsLookedAtOncePerFile(t *testing.T) {
 	require.Len(t, events, 1, "four spellings of one file are one event")
 	assert.Equal(t, KindPostUpdate, events[0].Kind)
 	assert.Equal(t, "a.md", events[0].Fields[FieldPath])
+}
+
+// dirPending is a pending shell command that knows where it ran — what a
+// re-derivation over a recorded transcript supplies (DirPending).
+type dirPending struct {
+	fakePending
+	dir string
+}
+
+func (p dirPending) Dir() string { return p.dir }
+
+// A recorded shell command's relative targets resolve against the directory
+// it RAN in, not this process's: a rule's script re-deriving a transcript
+// runs in the rule's own folder, where `tee -a NOTES.md` names no file.
+func TestExtract_ARecordedCommandResolvesWhereItRan(t *testing.T) {
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "NOTES.md"), []byte("# notes\n"), 0o644))
+	t.Chdir(t.TempDir()) // anywhere but where the command ran
+	args, _ := json.Marshal(map[string]string{"command": `printf '## x\n' | tee -a NOTES.md`})
+	pending := fakePending{tool: "Bash", args: args, root: repo}
+
+	in := func(p Pending) module.Input {
+		return module.Input{module.InputPhase: module.PhasePre, module.InputPayload: p}
+	}
+	anchored, _ := New().Extract(in(dirPending{fakePending: pending, dir: repo}))
+	var paths []string
+	for _, ev := range anchored {
+		if ev.Kind == KindPreUpdate {
+			paths = append(paths, fmt.Sprint(ev.Fields["path"]))
+		}
+	}
+	assert.Equal(t, []string{"NOTES.md"}, paths, "the write where the command ran")
+
+	// Without the directory the lookup happens here, and finds nothing.
+	unanchored, _ := New().Extract(in(pending))
+	for _, ev := range unanchored {
+		assert.NotEqual(t, KindPreUpdate, ev.Kind, "an update derived from a file in the wrong directory: %v", ev)
+	}
 }

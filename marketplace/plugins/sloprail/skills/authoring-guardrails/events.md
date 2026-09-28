@@ -8,17 +8,6 @@ point here rather than re-listing the fields. Ground truth is the engine
 and the check payloads in `internal/declaration/payload.go`); this doc mirrors it,
 and the load check is the copy to trust when the two disagree.
 
-Ask the build directly before writing:
-
-```
-sr-session start < /dev/null
-```
-
-reports an unknown kind by naming every kind this build has, and a match binding
-to a kind with a wrong field name names that kind's **real** fields, with their
-types. Do this every time — the vocabulary is the engine's, per-build, and a doc
-is what goes stale.
-
 ## The event is read FLAT
 
 An event's own fields sit **directly under `event`** — `.event.path`,
@@ -52,9 +41,9 @@ trigger's `on`, not a kind the engine emits.
 |---|---|
 | `PreFileCreate` | `path`, `newContent`, `resultKnown`, `newMarkers`, `citations` |
 | `PreFileUpdate` | `path`, `oldContent`, `newContent`, `resultKnown`, `oldMarkers`, `newMarkers`, `citations` |
-| `PreFileDelete` | `path`, `oldContent`, `oldMarkers`, `citations` |
-| `PostFileCreate` | `path`, `newContent`, `newMarkers`, `seen`, `citations` |
-| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `oldMarkers`, `newMarkers`, `seen`, `citations` |
+| `PreFileDelete` | `path`, `oldContent`, `oldContentKnown`, `oldMarkers`, `citations` |
+| `PostFileCreate` | `path`, `newContent`, `newContentKnown`, `newMarkers`, `seen`, `citations` |
+| `PostFileUpdate` | `path`, `oldContent`, `newContent`, `newContentKnown`, `oldMarkers`, `newMarkers`, `seen`, `citations` |
 | `PostFileDelete` | `path`, `oldContent`, `oldMarkers`, `seen`, `citations` |
 
 - `seen` — bool, Post kinds only. `true` when an earlier Stop was already
@@ -72,6 +61,19 @@ trigger's `on`, not a kind the engine emits.
 - `resultKnown` — bool, on `PreFileCreate` and `PreFileUpdate` **only**. Says
   whether the engine could compute `newContent`, or whether the value is a zero
   standing in for "the engine could not work it out". See the discipline below.
+- `oldContentKnown` — bool, on `PreFileDelete` **only**. The same gap on the
+  delete side: `false` when the delete is predicted without its bytes being read
+  — the file is not a regular file (a link to a FIFO or a device), larger than a
+  delete read takes (8 MiB), or does not fit in what is left of a recursive
+  removal's byte budget (see
+  [file-guard.md](file-guard.md), "Deleted files"). `oldContent` is then `""`.
+  A rule that decides from what the file held reads `oldContentKnown` first; a
+  rule about the path needs neither. Its `oldMarkers` are then those of the file's copy
+  at HEAD when that is tracked and within the cap (so a marker-matched guard
+  still selects it before the delete), and empty otherwise.
+- `newContentKnown` — bool, on `PostFileCreate` and `PostFileUpdate` **only**.
+  `false` when the settled file was not read: not a regular file once links are
+  followed, or larger than one read takes (64 MiB). `newContent` is then `""`.
 - `newMarkers` / `oldMarkers` — the `sr:` markers of the new / old text, each a
   **list of `{kind, fqn, line}`** (`kind` string, `fqn` string, `line` int).
   `newMarkers` is set on the create and update kinds (the markers `newContent`
@@ -92,8 +94,9 @@ quote="$(printf '%s' "$payload" \
 ```
 
 Full treatment of the create/update/delete distinction, the pending-bytes reads,
-and markers in a file-guard's own **match scope** (where they appear under the
-single name `markers`, not `newMarkers`/`oldMarkers`): [file-guard.md](file-guard.md).
+and markers in a file-guard's own **match scope** (where they appear as `markers`,
+the file's markers after the change, and `oldMarkers`, before it — not
+`newMarkers`): [file-guard.md](file-guard.md).
 
 #### The resultKnown discipline
 
@@ -129,14 +132,41 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
 
 - `.bin` — string, the program name.
 - `.argv` — list of strings, its argument vector.
-- `.flags` — an **open map** of parsed flags. A flag name belongs to the command,
-  not the engine, so the map is untyped: a key read off `.flags` is verified
-  against nothing, and a mistyped one evaluates false forever. Cause the command
-  and watch the rule fire before trusting a flags match. Each value is a **list**
-  of every occurrence, in order — `--tag=a --tag=b` is `["a", "b"]`, a flag given
-  once is a one-element list, and a valueless flag carries `""`. Only the inline
-  `--flag=value` form carries a value; a separated `--flag value` is `[""]` with
-  `value` left in `.argv`.
+- `.flags` — a map of parsed flags with **open keys and typed values**. A flag
+  name belongs to the command, not the engine, so the keys are checked against
+  nothing: a mistyped flag name is a flag the command never passed, and reads as
+  absent. Cause the command and watch the rule fire before trusting a flags match.
+  Each value is a **list** of every occurrence, in order — `--tag=a --tag=b` is
+  `["a", "b"]`, a flag given once is a one-element list, and a valueless flag
+  carries `""`. Only the inline `--flag=value` form carries a value; a separated
+  `--flag value` is `[""]` with `value` left in `.argv`. A flag the command did
+  not pass reads as an **empty list**, so every list idiom answers false without
+  it rather than erroring. The values are declared, so a comparison a list can
+  never satisfy (`.flags.tag == "next"`, `.flags.tag startsWith "n"`) is refused
+  when the rule loads, with the error saying flag values are lists.
+
+  | question | match |
+  |---|---|
+  | was `--access` passed at all | `"access" in .flags` or `len(.flags.access) > 0` |
+  | was it given a non-empty value | `any(.flags.access, # != "")` |
+  | was `--tag=next` among them | `"next" in .flags.tag` |
+  | the first value | `"tag" in .flags and .flags.tag[0] == "next"` (indexing an empty list errors) |
+  | was `--tag` NOT passed | `not ("tag" in .flags)` — `.flags.tag == nil`, `!= nil` and a `??` default are refused at load, since an absent flag reads as `[]`, never nil |
+- `.cwd` — string, the directory the program runs in as far as the line says,
+  threaded through every `cd` ahead of it (a subshell's `cd` stays inside the
+  subshell), through a wrapper that changes directory (`env -C DIR` /
+  `--chdir`, `sudo -D DIR` / `--chdir` — what it wraps runs in DIR), and through
+  a literal `eval` payload (`eval 'cd /x'` moves what follows; the programs in
+  the payload are reported too): `"."` is where the line started, `"sub/dir"`
+  is relative to that, `"/abs"` is absolute, and `""` means the directory could
+  not be known without running something (`cd "$DIR"`, `cd -`, `pushd`, `env
+  -C "$D"`, or anything after an `eval` whose payload is not literal, such as
+  `eval "$(ssh-agent -s)"`). A file event's path is resolved the same way, with
+  one difference: after an unreadable `eval`, a relative write target is still
+  reported where the line started — such an eval almost never moves the shell,
+  and dropping the target would hide the write from every file rule. Where the line started is the
+  harness's working directory for that tool call — in a transcript, the record's
+  own `cwd` — so a script joins a relative `.cwd` onto that.
 
 ```
 any(event.invocations, .bin == "curl")
@@ -148,8 +178,8 @@ len(event.invocations) > 1
 In a script: `.flags.tag[0]` for the first value, `.flags.tag[-1]` for the last,
 `(.flags.tag // []) | join(" ")` for all of them.
 
-`.bin` and `.argv` have declared element shapes, so a mistyped key inside a
-predicate is refused at load; `.flags` is the one open map. Only what the parser
+`.bin`, `.argv` and `.cwd` have declared shapes, so a mistyped key inside a
+predicate is refused at load; `.flags` is the one map whose keys are open. Only what the parser
 can see without running the command is emitted — a program named by a variable, a
 decoded-and-piped payload — is left alone rather than guessed, so this is a
 correctness aid, **never a security boundary**. There is no `Post` counterpart: a
@@ -194,6 +224,14 @@ context deciding whether **its** tag showed up should see the whole set at once.
 Duplicates are dropped, first-occurrence order kept. An empty `tags` is a real
 answer ("nothing tagged this cycle") a context can react to. A `Post` fact only —
 there is nothing to scan before the agent writes.
+
+What counts as a tag: `#` at the start of the text or after whitespace, then a
+letter or `_`, then letters, digits, `_` and `-`. Markdown emphasis right before
+the `#` is fine — `**#research summary:**`, `*#research*`, `_#research_`,
+`__#research__` all give `research`. Not a tag: `#42` (an issue reference), `# `
+(a heading), `foo#bar` or `foo**#bar**` (inside a word), `~~#research~~`, and
+anything in a code span, a fenced block or a `>` quoted line — text the agent
+shows is not text it declares.
 
 `.seen` is `true` when the tag is only in text an earlier Stop already read — a
 refused reply's text, re-sent with the retry. A tag the agent wrote again since

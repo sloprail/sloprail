@@ -3,6 +3,7 @@ package declaration
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -70,7 +71,7 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 			"a file-guard must say which files it covers"))
 	} else if _, err := guardrail.CompileFileMatch(g.Match); err != nil {
 		problems = append(problems, prob(ErrBadMatch, "match",
-			"%s — a file-guard's match reads a file's own facts (path, markers, context)", oneLine(err.Error())))
+			"%s — a file-guard's match reads a file's own facts (path, markers, oldMarkers, context)", oneLine(err.Error())))
 	}
 
 	// `deletions:` is a closed enum. An unknown value is refused, not read as
@@ -443,6 +444,10 @@ func validateJudgeTuning(c Check, where string) []Problem {
 		problems = append(problems, prob(ErrStrayAllowedTools, where,
 			"sets allowed_tools without a judge — it grants tools to a judge's agent, and a script check names its own tools by being an executable"))
 	}
+	if c.hasDisallowedTools() && !c.isJudge() {
+		problems = append(problems, prob(ErrStrayDisallowedTools, where,
+			"sets disallowed_tools without a judge — it denies tools to a judge's agent, and a script check has none"))
+	}
 	if !c.isJudge() {
 		return problems
 	}
@@ -460,26 +465,105 @@ func validateJudgeTuning(c Check, where string) []Problem {
 		}
 	}
 	if c.hasAllowedTools() {
-		if err := validateAllowedTools(c.AllowedTools); err != nil {
+		if err := validateToolRules(c.AllowedTools); err != nil {
 			problems = append(problems, prob(ErrBadAllowedTools, where,
 				"allowed_tools %s", err.Error()))
+		}
+	}
+	if c.hasDisallowedTools() {
+		if err := validateToolRules(c.DisallowedTools); err != nil {
+			problems = append(problems, prob(ErrBadDisallowedTools, where,
+				"disallowed_tools %s", err.Error()))
+		} else if err := validateDenyKeepsVerdict(c.DisallowedTools); err != nil {
+			problems = append(problems, prob(ErrBadDisallowedTools, where,
+				"disallowed_tools %s", err.Error()))
 		}
 	}
 	return problems
 }
 
-// validateAllowedTools checks a judge's allowed-tools list carries no empty
-// entry — a blank tool name would reach sr-agent as an empty `--allowed-tools`
-// argument, which names no tool and can only be a stray or trailing list item.
-// Mirrors validateModelSet's empty-entry refusal.
-func validateAllowedTools(tools []string) error {
+// validateToolRules checks that every entry of a judge's allowed_tools or
+// disallowed_tools list is ONE harness permission rule: a tool name
+// (`Read`, `mcp__srv__tool`), optionally followed by one parenthesised scope
+// (`Bash(git show:*)`, `WebFetch(domain:code.claude.com)`) that closes at the
+// entry's end.
+//
+// Each list item reaches the harness as one rule (sr-agent keeps a scope's
+// spaces and commas inside it), so the shapes refused here are the ones that
+// would not: an empty item names nothing; `Read WebFetch` in one item is two
+// rules the author meant as one; `Bash(git show:*` never closes, and
+// `Bash(x) y` trails text after the scope. Whether the harness HAS a tool by
+// that name is the harness's to answer, as with a concrete model name — the
+// shape is what this loader can know.
+func validateToolRules(tools []string) error {
 	for i, t := range tools {
-		if strings.TrimSpace(t) == "" {
-			return fmt.Errorf("entry %d is empty (a blank tool name grants nothing)", i+1)
+		if err := validateToolRule(t); err != nil {
+			return fmt.Errorf("entry %d (%q) %s", i+1, t, err.Error())
 		}
 	}
 	return nil
 }
+
+func validateToolRule(t string) error {
+	if strings.TrimSpace(t) == "" {
+		return fmt.Errorf("is empty (a blank tool name names no tool)")
+	}
+	name, scope, scoped := strings.Cut(t, "(")
+	if !toolNameRE.MatchString(name) {
+		return fmt.Errorf("does not start with a tool name (a name like Read, Bash or mcp__my-server__tool, with no spaces, commas or parentheses before its scope); put each rule in its own list item")
+	}
+	if !scoped {
+		return nil
+	}
+	depth := 1
+	for i, r := range scope {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(scope)-1 {
+				return fmt.Errorf("has text after its closing ')'; put each rule in its own list item")
+			}
+		}
+	}
+	if depth != 0 {
+		return fmt.Errorf("opens a '(' that never closes")
+	}
+	return nil
+}
+
+// validateDenyKeepsVerdict refuses a deny on the tools the judge writes its
+// verdict with. The judge's answer file is written with Write (or Edit), under
+// an allow the engine adds for the answer's own folder; a deny beats every allow,
+// so `Write`, `Edit`, or a scoped form of either — the answer folder is chosen at
+// run time, so the loader cannot tell a scope that would spare it from one that
+// wouldn't, and refuses the tool name regardless of scope — would leave every
+// judge of the rule unable to answer — a refusal on every action, for a reason
+// nobody would see.
+//
+// This check only refuses the bare tool name Write/Edit (ignoring any scope);
+// it does not (and cannot, at load time) prove every OTHER way a rule could
+// leave the verdict path unreachable is caught — e.g. a scope on some other
+// tool that happens to intersect the runtime-chosen answer folder. That residual
+// case is not new: the answer folder isn't known until run time, so no static
+// check can rule it out in general.
+func validateDenyKeepsVerdict(tools []string) error {
+	for i, t := range tools {
+		name, _, _ := strings.Cut(t, "(")
+		if name == "Write" || name == "Edit" {
+			return fmt.Errorf("entry %d (%q) denies %s, which the judge writes its verdict with; the project is already readonly to the judge, so leave file writes to the engine", i+1, t, name)
+		}
+	}
+	return nil
+}
+
+// toolNameRE is a harness tool name: `Read`, `WebFetch`, `mcp__server__tool`,
+// `mcp__claude-in-chrome__navigate`, `mcp__srv__*`. Anything but whitespace,
+// commas and parentheses: those are what separate rules and open a scope, and
+// the name is otherwise the harness's to judge (an earlier, narrower pattern
+// refused the hyphenated and wildcard MCP names a released version accepted).
+var toolNameRE = regexp.MustCompile(`^[^\s(),]+$`)
 
 // validateModelSet checks a judge model is a well-formed modelset, mirroring
 // what sr-agent's ParseModelSet refuses: a non-empty set whose every

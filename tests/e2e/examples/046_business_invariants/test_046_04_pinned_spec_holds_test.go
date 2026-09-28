@@ -51,29 +51,56 @@ func TestT046_11_UncitedPinnedRuleChangeRefused(t *testing.T) {
 	if !res.Refused() {
 		t.Fatalf("an uncited change to a pinned rule was not refused:\n%s", res.Output)
 	}
-	if !res.Saw("must cite the user's own words (--cite:user)") || !res.Saw("rewrites SPEC.md L3-3") || !res.Saw("tell the user about the conflict") {
+	if !res.Saw("must cite the user's own words (--cite:user)") || !res.Saw("rewrites SPEC.md L3-3") ||
+		!res.Saw("Do not reshape the requested feature to fit the rule") ||
+		!res.Saw("keep the rule and tell the user the request conflicts with it and was not built") ||
+		!res.Saw("do not leave a flag that changes nothing") ||
+		!res.Saw("refused again if you send it again with the same words") {
 		t.Errorf("the refusal does not say what to cite, which lines are pinned, or what to do instead:\n%s", res.Output)
+	}
+	if !res.Saw("sr-file edit SPEC.md") {
+		t.Errorf("the refusal carries no runnable sr-file command:\n%s", res.Output)
 	}
 	if got := readSpec(t, proj); got != billingSpec {
 		t.Errorf("the refused change reached SPEC.md:\n%s", got)
 	}
 }
 
-// T046_12: a change to a line no marker pins needs no citation and no judge.
-func TestT046_12_UnpinnedLineNeedsNothing(t *testing.T) {
+// T046_12: a pinned spec holds the user's business rules, so a change to a line
+// no marker pins still needs the user's words asking for it — and is admitted
+// with them. The rule-change judge is asked about the cited change.
+func TestT046_12_UnpinnedLineOfAPinnedSpecNeedsTheUsersWords(t *testing.T) {
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR046 the judge ran on an unpinned line"}`)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": "the user asked to reword rule 1"}`)
 
 	edited := strings.Replace(billingSpec, "never be negative", "never be below zero", 1)
-	res := e.Run(proj, "s-046-12", "reword rule 1", Turns("done",
+	res := e.Run(proj, "s-046-12a", "reword rule 1", Turns("done",
 		Write("w1", "SPEC.md", edited),
 	))
-	if res.Refused() || res.Saw("SR046 the judge ran") {
-		t.Fatalf("a change to an unpinned line was refused or judged:\n%s", res.Output)
+	if !res.Refused() || !res.Saw("every rule in a pinned spec is the user's") {
+		t.Fatalf("an uncited change to an unpinned line of a pinned spec was not refused:\n%s", res.Output)
+	}
+	if got := readSpec(t, proj); got != billingSpec {
+		t.Fatalf("the uncited change reached SPEC.md:\n%s", got)
+	}
+
+	const ask = "reword rule 1 of the spec to say below zero instead of negative"
+	res = e.Run(proj, "s-046-12b", ask, Turns("done",
+		Bash("b1", "sr-file edit SPEC.md --old-string 'never be negative' --new-string 'never be below zero' --cite:user '"+ask+"'"),
+	))
+	if res.Refused() {
+		t.Fatalf("a cited change the user asked for was refused:\n%s", res.Output)
 	}
 	if got := readSpec(t, proj); got != edited {
-		t.Errorf("the unpinned change did not land:\n%s", got)
+		t.Errorf("the cited change did not land:\n%s", got)
+	}
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if !strings.Contains(prompt, "every rule in a pinned spec is the user's") {
+		t.Errorf("the judge was not told the change edits a pinned spec outside its pinned lines")
+	}
+	if !strings.Contains(prompt, "The cited words do not ask for this change to the spec at all: they ask for\n  code work, or name a different change.") {
+		t.Errorf("the judge is not told to fail citations that ask for code work or a different change:\n%s", prompt)
 	}
 }
 
@@ -111,5 +138,38 @@ func TestT046_14_CitingAConflictingFeatureRefused(t *testing.T) {
 	}
 	if got := readSpec(t, proj); got != billingSpec {
 		t.Errorf("the refused rule change reached SPEC.md:\n%s", got)
+	}
+}
+
+// T046_26: the pinned-spec-holds judge is handed the change and what it cites. A
+// stub that only flips the verdict proves neither: the renderer turns an undefined
+// variable into "", so a missing event.citations renders "This change cites
+// nothing" and the verdict-flipping tests above still pass. This captures the
+// prompt and asserts the cited words and the rewritten rule are in it.
+func TestT046_26_ChangeAndCitationsReachTheRuleChangeJudge(t *testing.T) {
+	e := newEnv(t)
+	proj := pinnedSpecProject(t, e)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": "the user asked to relax rule 2"}`)
+
+	const ask = "change rule 2 of the spec so goodwill refunds may exceed the charge"
+	res := e.Run(proj, "s-046-26", ask, Turns("done",
+		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
+	))
+	if res.Refused() {
+		t.Fatalf("the cited rule change was refused:\n%s", res.Output)
+	}
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if !strings.Contains(prompt, "Did the user ask for this rule to change?") {
+		t.Fatalf("the rule-change judge was never asked:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "<quote>"+ask+"</quote>") {
+		t.Errorf("the cited words did not reach the judge prompt:\n%s", prompt)
+	}
+	start, end := strings.Index(prompt, "<change path=\"SPEC.md\">"), strings.Index(prompt, "</change>")
+	if start < 0 || end < start || !strings.Contains(prompt[start:end], "+2. A refund must never exceed the original charge amount, except goodwill refunds.") {
+		t.Errorf("the rewritten rule did not reach the judge prompt inside <change>:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "This change cites nothing") {
+		t.Errorf("the judge was told the change cites nothing:\n%s", prompt)
 	}
 }

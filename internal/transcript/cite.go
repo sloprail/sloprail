@@ -77,7 +77,9 @@ const (
 	// SourceToolResult is the raw text a tool_result block carries — the output an
 	// action produced. This is the pool SourceUser refuses: a delivery observation
 	// grounds a "the work happened" claim here (a green test, a command's result),
-	// where the user's own words could never prove a command ran.
+	// where the user's own words could never prove a command ran. The reply to a
+	// sub-agent dispatch (Agent/Task) is excluded: it is model-written text, and
+	// the sub-agent's own tool output is in its own record.
 	SourceToolResult SourceType = "tool_result"
 )
 
@@ -160,7 +162,10 @@ func Cite(path, quote string) ([]CitationMatch, error) {
 //     selected words, so it belongs to SourceUser and is
 //     EXCLUDED here (genuineToolResultText drops it): the two
 //     pools are disjoint, and under this pool the caller is
-//     asking about tool output, not the person.
+//     asking about tool output, not the person. Only a
+//     result whose call is in the record and produced tool
+//     output is read (citableResults): not a sub-agent's reply,
+//     not a result of unknown provenance.
 //
 // A match is per ENTRY, not per occurrence or per pool: an entry whose text
 // contains the substring — twice, or in both pools — is one candidate, because
@@ -183,11 +188,12 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 		return nil, err
 	}
 	others := otherToolUses(entries)
+	citable := citableFor(path, entries)
 	var matches []CitationMatch
 	for _, e := range entries {
 		switch e.Type {
 		case EntryUser:
-			if entryContains(e.Entry, quote, sources, others) {
+			if entryContains(e.Entry, quote, sources, others, citable) {
 				matches = append(matches, CitationMatch{Path: path, Line: e.Line})
 			}
 		case EntryAttachment:
@@ -198,7 +204,7 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 			// applies to a `user`-typed record. It only ever belongs to SourceUser:
 			// there is no tool_result concept on an attachment record for
 			// SourceToolResult to read.
-			if wants(sources, SourceUser) && queuedCommandContains(e.Entry, quote) {
+			if wants(sources, SourceUser) && !notThePerson(e.Entry) && queuedCommandContains(e.Entry, quote) {
 				matches = append(matches, CitationMatch{Path: path, Line: e.Line})
 			}
 		}
@@ -219,11 +225,11 @@ func containsWords(text, quote string) bool {
 // user entry. The pools are consulted in order and the walk short-circuits on the
 // first hit — a match is per entry, so which pool found it does not change the
 // resolved line.
-func entryContains(e Entry, quote string, sources []SourceType, others map[string]bool) bool {
+func entryContains(e Entry, quote string, sources []SourceType, others, citable map[string]bool) bool {
 	if own, ok := ownWords(e, others); ok && wants(sources, SourceUser) && userWordsContain(own, quote) {
 		return true
 	}
-	if wants(sources, SourceToolResult) && toolResultContain(e, quote) {
+	if wants(sources, SourceToolResult) && toolResultContain(e, quote, citable) {
 		return true
 	}
 	return false
@@ -261,14 +267,22 @@ func otherToolUses(entries []LinedEntry) map[string]bool {
 	return others
 }
 
+// notThePerson reports an entry that is user-typed in shape but never the
+// person speaking: an isMeta entry is the harness writing (a Stop hook's
+// feedback, which may quote the agent back; a skill's body), a compaction
+// summary (isCompactSummary / isVisibleInTranscriptOnly) is a MODEL's account
+// of the conversation, and an isSidechain one is a sub-agent's, whose "user" is
+// the parent agent's dispatch.
+func notThePerson(e Entry) bool {
+	return e.IsMeta || e.IsSidechain || e.IsCompactSummary || e.IsVisibleInTranscriptOnly
+}
+
 // ownWords is e as far as it can carry the person's own words, and false when
-// it cannot carry them at all: an isMeta entry is the harness writing (a Stop
-// hook's feedback, which may quote the agent back; a skill's body), and an
-// isSidechain one is a sub-agent's, whose "user" is the parent agent's
-// dispatch. Otherwise it is e minus the tool_result blocks answering a tool
-// other than AskUserQuestion (otherToolUses).
+// it cannot carry them at all (notThePerson). Otherwise it is e minus the
+// tool_result blocks answering a tool other than AskUserQuestion
+// (otherToolUses).
 func ownWords(e Entry, others map[string]bool) (Entry, bool) {
-	if e.IsMeta || e.IsSidechain {
+	if notThePerson(e) {
 		return Entry{}, false
 	}
 	if len(others) == 0 || len(e.Message) == 0 {
@@ -599,7 +613,7 @@ func toolResultStrings(raw json.RawMessage) []string {
 // result grounds here and is refused by userWordsContain; a quote of the user's
 // ask grounds there and is refused here, because a tool's output is not the user's
 // words and this pool holds nothing but tool output.
-func toolResultContain(e Entry, quote string) bool {
+func toolResultContain(e Entry, quote string, citable map[string]bool) bool {
 	// genuineToolResultText, not toolResultText: an AskUserQuestion answer envelope
 	// is a tool_result block whose body is the user's own answer, and it belongs to
 	// the SourceUser pool (userWordsContain reads it), not here. Searching it under
@@ -607,7 +621,7 @@ func toolResultContain(e Entry, quote string) bool {
 	// tool's output" — the same substitution ToolResultAt guards against on the
 	// line-based path. Excluding answer envelopes keeps the two pools disjoint and
 	// SourceToolResult meaning exactly "the tool's output", as its doc says.
-	for _, text := range genuineToolResultText(e.Message) {
+	for _, text := range genuineToolResultText(e.Message, citable) {
 		if containsWords(text, quote) || containsWords(withoutLineNumbers(text), quote) {
 			return true
 		}
@@ -688,6 +702,7 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 	if err != nil {
 		return "", false, err
 	}
+	citable := citableFor(path, entries)
 	for _, e := range entries {
 		if e.Line != line {
 			continue
@@ -703,7 +718,7 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 		// genuineToolResultText drops the answer-envelope blocks, so a line that
 		// carries ONLY an answer envelope is not a tool_result, matching this
 		// function's contract above.
-		results := genuineToolResultText(e.Message)
+		results := genuineToolResultText(e.Message, citable)
 		if len(results) == 0 {
 			return "", false, nil
 		}
@@ -720,9 +735,9 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 // between the user's answer and a command's result, applied here to the whole
 // block. A line carrying both a real result and an answer envelope keeps the real
 // result only; a line carrying only an answer envelope yields nothing.
-func genuineToolResultText(raw json.RawMessage) []string {
+func genuineToolResultText(raw json.RawMessage, citable map[string]bool) []string {
 	var out []string
-	for _, r := range genuineToolResults(raw) {
+	for _, r := range genuineToolResults(raw, citable) {
 		out = append(out, r.body)
 	}
 	return out
@@ -730,9 +745,9 @@ func genuineToolResultText(raw json.RawMessage) []string {
 
 // genuineToolResultIDs is the tool_use_id of each block genuineToolResultText
 // reads a body from, once per block — which call produced the output.
-func genuineToolResultIDs(raw json.RawMessage) []string {
+func genuineToolResultIDs(raw json.RawMessage, citable map[string]bool) []string {
 	var out []string
-	for _, r := range genuineToolResults(raw) {
+	for _, r := range genuineToolResults(raw, citable) {
 		if len(out) == 0 || out[len(out)-1] != r.id {
 			out = append(out, r.id)
 		}
@@ -743,7 +758,10 @@ func genuineToolResultIDs(raw json.RawMessage) []string {
 // genuineToolResult is one body of a tool_result block and the call it answers.
 type genuineToolResult struct{ id, body string }
 
-func genuineToolResults(raw json.RawMessage) []genuineToolResult {
+// genuineToolResults reads a user entry's tool_result blocks that are a tool's
+// own output: not an AskUserQuestion answer envelope, not a hook's refusal, and
+// and only a result answering a call citableResults admits (citable).
+func genuineToolResults(raw json.RawMessage, citable map[string]bool) []genuineToolResult {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -760,6 +778,11 @@ func genuineToolResults(raw json.RawMessage) []genuineToolResult {
 		if b.Type != "tool_result" || len(b.Content) == 0 {
 			continue
 		}
+		// Only a result whose call is in the record and produced tool output:
+		// not a sub-agent's reply, not a result of unknown provenance.
+		if !citable[b.ToolUseID] {
+			continue
+		}
 		for _, body := range toolResultStrings(b.Content) {
 			// An answer envelope contributes nothing: its body is the user's
 			// selected answer, not a produced result.
@@ -769,7 +792,12 @@ func genuineToolResults(raw json.RawMessage) []genuineToolResult {
 			// Nor does a hook's refusal: the tool never ran, and the body is the
 			// harness's message — which may quote the agent's own words back (an
 			// unresolved --cite: quote), and must not then ground them.
-			if isHookRefusal(body) {
+			if IsHookRefusal(body) {
+				continue
+			}
+			// Nor does an agent transcript read back: its text is model-written,
+			// however the tool reached the file (see readsTranscript).
+			if looksLikeTranscript(body) {
 				continue
 			}
 			out = append(out, genuineToolResult{id: b.ToolUseID, body: body})
@@ -778,10 +806,24 @@ func genuineToolResults(raw json.RawMessage) []genuineToolResult {
 	return out
 }
 
-// isHookRefusal reports whether a tool_result body is a hook blocking the call
-// ("PreToolUse:Bash hook error: …") rather than anything the tool produced.
-func isHookRefusal(body string) bool {
-	return strings.HasPrefix(body, "PreToolUse:") && strings.Contains(body, " hook error: ")
+// IsHookRefusal reports whether a tool_result body is a hook blocking the call
+// rather than anything the tool produced. Claude Code writes a PreToolUse
+// refusal as the tool_result "PreToolUse:<Tool> hook error: <reason>" with
+// is_error — the reason being "[<command>]: <stderr>" for an exit 2 and the
+// permissionDecisionReason for a JSON deny.
+func IsHookRefusal(body string) bool {
+	_, ok := HookRefusalReason(body)
+	return ok
+}
+
+// HookRefusalReason returns the reason of a PreToolUse refusal body — what
+// follows "PreToolUse:<Tool> hook error: " — and whether body is one.
+func HookRefusalReason(body string) (string, bool) {
+	if !strings.HasPrefix(body, "PreToolUse:") {
+		return "", false
+	}
+	_, reason, ok := strings.Cut(body, " hook error: ")
+	return reason, ok
 }
 
 // pairJoin is the `"="` that joins a question to its answer inside an envelope:

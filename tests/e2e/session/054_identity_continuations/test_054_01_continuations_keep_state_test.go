@@ -1,0 +1,223 @@
+package e2e
+
+import (
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/sloprail/sloprail/internal/sessionstate"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+)
+
+// project is a git repository with the store probe installed.
+func project(t *testing.T) (*harness.Env, string) {
+	t.Helper()
+	e := New(t)
+	proj := e.Project()
+	e.FileGuard(proj, "control", harness.ControlGuard, map[string]string{"probe.sh": harness.ControlScript})
+	e.GitInit(proj)
+	return e, proj
+}
+
+// probeLines is the store probe's log in dir's copy of the guard.
+func probeLines(e *harness.Env, dir string) []string {
+	return e.FileGuardLedgerLines(dir, "control", "log")
+}
+
+// readsBack runs one cycle and requires that EVERY probe run it caused found
+// the mark a previous hook stored — and that there was at least one.
+//
+// Every line, not the last. A cycle judging two new files runs the probe twice
+// against one store, and the second run reads the first's mark whether or not
+// that store is the conversation's: "the last line says yes" holds on a fresh
+// store too. Only a FIRST probe run in the cycle reading "yes" proves the store
+// was already written to before this cycle began — by an earlier transcript of
+// the same conversation.
+func readsBack(t *testing.T, e *harness.Env, dir, what string, run func()) {
+	t.Helper()
+	before := len(probeLines(e, dir))
+	run()
+	added := probeLines(e, dir)[before:]
+	if len(added) == 0 {
+		t.Fatalf("%s: the probe never ran in this cycle, so nothing about the store can be concluded", what)
+	}
+	for i, l := range added {
+		if l != "before=[yes]" {
+			t.Fatalf("%s: probe run %d of this cycle read %q — the store it opened was not the one "+
+				"the conversation wrote to before this continuation (this cycle: %q)", what, i+1, l, added)
+		}
+	}
+}
+
+// sameConversation requires that each session resolves, through the engine, to
+// the origin record of the first.
+func sameConversation(t *testing.T, e *harness.Env, proj string, sessions ...string) {
+	t.Helper()
+	want := e.OriginRecord(proj, sessions[0])
+	if want == "" {
+		t.Fatalf("%s has no origin record", sessions[0])
+	}
+	for _, s := range sessions {
+		if got := e.SessionIdentity(proj, s); got != want {
+			t.Errorf("%s resolves to %q, want the conversation's origin %q", s, got, want)
+		}
+	}
+}
+
+// T054_01 is the "chain revisits" mode: 110 real hook runs across four sessions
+// of one conversation. The conversation compacted — the boundary appended to its
+// own transcript — and each resume forked a new file opening on a copy of that
+// same boundary, carrying a copy of the record it names. The forks' names sort
+// ahead of the original's, as the real ones happened to, so a walk taking "any
+// other file holding the logical parent" goes from one fork to the other and
+// back, and the session runs with no store.
+func TestT054_01_ForksOfACompactedConversationKeepItsState(t *testing.T) {
+	e, proj := project(t)
+
+	e.Run(proj, "z-original", "start", Turns("done",
+		Write("w1", "one.md", "first"),
+		Compact("c1"),
+	))
+	e.RunForked(proj, "z-original", "a-fork-1", "resume once", Turns("done"))
+	readsBack(t, e, proj, "the second fork", func() {
+		e.RunForked(proj, "z-original", "a-fork-2", "resume again", Turns("done",
+			Write("w2", "two.md", "second"),
+		))
+	})
+	sameConversation(t, e, proj, "z-original", "a-fork-1", "a-fork-2")
+}
+
+// T054_02 is the "continuation missing" mode that was not a lost file: 115 real
+// hook runs across five forks. A preserved-segment compaction named a logical
+// parent that no transcript holds; the file it compacted still holds the
+// boundary itself, part-way down.
+func TestT054_02_ABoundaryNamingAnUnwrittenParentKeepsState(t *testing.T) {
+	e, proj := project(t)
+
+	e.Run(proj, "orig-02", "start", Turns("done",
+		Write("w1", "one.md", "first"),
+		CompactNamingUnwrittenParent("c1"),
+	))
+	readsBack(t, e, proj, "the fork", func() {
+		e.RunForked(proj, "orig-02", "fork-02", "resume", Turns("done",
+			Write("w2", "two.md", "second"),
+		))
+	})
+	sameConversation(t, e, proj, "orig-02", "fork-02")
+}
+
+// T054_03: the transcript a continuation came from is deleted while the
+// continuation is closed — Claude Code deletes transcripts past its cleanup
+// period while a later continuation stays resumable.
+//
+// Before the deletion the continuation is the conversation: same identity,
+// same store, same baseline. After it the origin cannot be reached, so the
+// continuation keys on its own root — a fresh store, whose baseline is taken at
+// its first tool call on whatever HEAD is then — and keeps THAT across its own
+// hooks. What was stored before is not carried over, and the session is told
+// so exactly once, at its SessionStart.
+func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.T) {
+	e, proj := project(t)
+	start := e.Git(proj, "rev-parse", "HEAD")
+
+	e.Run(proj, "orig-03", "start", Turns("done",
+		Write("w1", "one.md", "first"),
+		Bash("b1", "git add -A && git -c user.email=a@b.invalid -c user.name=a commit -qm work --no-gpg-sign"),
+		Compact("c1"),
+	))
+	moved := e.Git(proj, "rev-parse", "HEAD")
+	if moved == start {
+		t.Fatalf("the original session did not commit, so the baselines below cannot be told apart")
+	}
+	e.RunForked(proj, "orig-03", "fork-03", "resume", Turns("done"))
+
+	// Before the deletion: one conversation, one store, the original baseline.
+	sameConversation(t, e, proj, "orig-03", "fork-03")
+	if got := e.Meta(proj, "fork-03", sessionstate.MetaBaselineCommit); got != start {
+		t.Fatalf("before the deletion the continuation measures from %q, want the conversation's baseline %q", got, start)
+	}
+
+	e.DeleteTranscript(proj, "orig-03")
+
+	// After it: the continuation's own root.
+	if got, want := e.SessionIdentity(proj, "fork-03"), e.OriginRecord(proj, "fork-03"); got != want || want == "" {
+		t.Fatalf("after the deletion the continuation resolves to %q, want its own root %q", got, want)
+	}
+
+	e.Run(proj, "fork-03", "carry on", Turns("done", Write("w2", "two.md", "second")))
+	readsBack(t, e, proj, "the continuation's next cycle", func() {
+		e.Run(proj, "fork-03", "and more", Turns("done", Write("w3", "three.md", "third")))
+	})
+
+	// The fallback store is new, so its baseline is where HEAD was at its
+	// first tool call — after the original session's commit, not before it.
+	if got := e.Meta(proj, "fork-03", sessionstate.MetaBaselineCommit); got != moved {
+		t.Errorf("the fallback store measures from %q, want HEAD at its first tool call %q", got, moved)
+	}
+
+	record, err := os.ReadFile(e.TranscriptPath(proj, "fork-03"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Counted per hook run: each hook that printed leaves one attachment.
+	reports := 0
+	for _, l := range strings.Split(string(record), "\n") {
+		var rec struct {
+			Attachment struct {
+				HookEvent string `json:"hookEvent"`
+				Stdout    string `json:"stdout"`
+				Stderr    string `json:"stderr"`
+			} `json:"attachment"`
+		}
+		if json.Unmarshal([]byte(l), &rec) != nil {
+			continue
+		}
+		if strings.Contains(rec.Attachment.Stdout+rec.Attachment.Stderr, "sloprail: identity:") {
+			reports++
+			if rec.Attachment.HookEvent != "SessionStart" {
+				t.Errorf("the fallback identity was reported by a %s hook, where nobody sees it", rec.Attachment.HookEvent)
+			}
+			if !strings.Contains(rec.Attachment.Stdout, "earlier transcript is gone") {
+				t.Errorf("the SessionStart report is not on stdout, the channel that is seen")
+			}
+		}
+	}
+	if reports != 1 {
+		t.Errorf("the fallback identity must be reported by exactly one hook run, got %d", reports)
+	}
+}
+
+// T054_04: a session resumed from another directory. Real Claude Code keeps
+// appending to the transcript where the session began, but reports
+// transcript_path under the new directory's project folder, where no file
+// exists. Resumed from a subdirectory of the same repository, the session is
+// the same tree, so the same store.
+func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
+	e, proj := project(t)
+	sub := proj + "/sub"
+	e.WriteFile(proj, "sub/.keep", "")
+	e.FileGuard(sub, "control", harness.ControlGuard, map[string]string{"probe.sh": harness.ControlScript})
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "sub")
+
+	e.Run(proj, "moved-04", "start", Turns("done", Write("w1", "one.md", "first")))
+	readsBack(t, e, sub, "the cycle resumed from below", func() {
+		e.RunFrom(proj, "sub", "moved-04", "carry on from below", Turns("done",
+			Write("w2", "two.md", "second"),
+		))
+	})
+
+	if _, err := os.Stat(e.TranscriptPath(sub, "moved-04")); err == nil {
+		t.Fatalf("the resumed turn was written under the new directory, so this is not the real shape")
+	}
+	// Asked with the path the harness reports from below — which does not
+	// exist — the engine finds the record where the session began.
+	want := e.OriginRecord(proj, "moved-04")
+	if got := e.SessionIdentity(sub, "moved-04"); got != want || want == "" {
+		t.Errorf("resumed from below, the session resolves to %q, want its origin %q", got, want)
+	}
+	if got := e.SessionIdentity(proj, "moved-04"); got != want {
+		t.Errorf("the session resolves to %q from its own directory, want %q", got, want)
+	}
+}

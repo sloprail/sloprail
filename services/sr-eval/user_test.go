@@ -35,8 +35,8 @@ func TestAgentArgs_FirstTurnSetsTheSessionLaterTurnsResumeIt(t *testing.T) {
 	if later["resume"] != "sid-1" || later["session-id"] != "" {
 		t.Fatalf("a later turn must resume the session, got %v", later)
 	}
-	if later["disallowed-tools"] != "Skill Task" || first["disallowed-tools"] != "" {
-		t.Fatalf("disallowedTools must ride every turn it is given on: first %v, later %v", first, later)
+	if later["disallowed-tools"] != "Skill,Task" || first["disallowed-tools"] != "" {
+		t.Fatalf("disallowedTools must ride every turn it is given on, comma-joined: first %v, later %v", first, later)
 	}
 	for _, m := range []map[string]string{first, later} {
 		if m["settings"] != "{}" || m["permission-mode"] != "bypassPermissions" {

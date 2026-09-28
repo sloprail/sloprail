@@ -50,13 +50,26 @@ lib="$gdir/rules-lib.sh"
 if [ ! -f "$lib" ]; then
   refuse "unit-satisfies-rules: rules-lib.sh not found at $lib, so the rule set could not be collected"
 fi
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version): collect_applicable_rules can be defined
+# with rule_applies missing, and then no rule applies. Only the last-line
+# sentinel proves it loaded whole.
+unset rules_lib_loaded
 # shellcheck source=rules-lib.sh
 . "$lib"
+[ "${rules_lib_loaded:-}" = 1 ] \
+  || refuse "unit-satisfies-rules: rules-lib.sh did not load whole (its last-line sentinel rules_lib_loaded is unset), so the rule set could not be collected"
 
 kind="$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
-    # A Post kind carries the SETTLED bytes directly on the flat event.
+    # A Post kind carries the SETTLED bytes directly on the flat event — when
+    # the engine could read them. newContentKnown false (a link to a FIFO or a
+    # device, or past the read cap): the text is unseen, so the check fails
+    # closed rather than judge an empty unit.
+    if [ "$(printf '%s' "$payload" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
+      refuse "unit-satisfies-rules: $path could not be read (not a regular file, or too large), so its rules could not be checked"
+    fi
     content="$(printf '%s' "$payload" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PreFileCreate|PreFileUpdate)

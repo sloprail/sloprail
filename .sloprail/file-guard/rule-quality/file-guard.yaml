@@ -51,17 +51,16 @@ checks:
   # modelset, so the tier is the engine's to choose (the old script pinned
   # claude-haiku-4-5-20251001 directly).
   #
-  # allowed_tools: [Read] is ADDITIVE, not the judge's whole tool set — it does
-  # NOT disallow Write. The engine's judge substrate ALWAYS grants Write for the
-  # verdict file, then UNIONS this list into the SAME grant: sr-agent's judge
-  # harness does `append([]string{"Write"}, extraTools...)` and passes ONE
-  # `--allowed-tools "Write Read"` argument (services/sr-agent/harness.go
-  # grantWrite). So the verdict file is always writable regardless of what a check
-  # names here; [Read] only ADDS Read on top, the one conservative grant that lets
-  # the judge corroborate the file on disk if it chooses, and nothing broader. A
-  # check that named no allowed_tools would still get Write alone. (The
-  # `--allowed-tools "Write Read"` merge is pinned end-to-end by the
-  # TestJudgeConfigReachesTheHarness e2e in tests/e2e/engine_repo_judges/.)
+  # allowed_tools: [Read] is ADDITIVE, and no longer what lets the judge read
+  # the project: the engine passes the workspace to sr-agent as
+  # `--add-dir:readonly`, where Read/Grep/Glob need no grant. What [Read] adds
+  # is reads OUTSIDE the project (any path on disk). The verdict file is always
+  # writable regardless of this list — sr-agent grants an Edit rule scoped to
+  # the answer file's own folder (services/sr-agent/harness.go
+  # claudeCodeSpec.grant), never an unscoped Write — and the project stays
+  # denied to every file-writing tool. The exact grant (the answer folder's Edit
+  # rule(s) plus Read, nothing else) is pinned end-to-end by
+  # TestJudgeReadsTheWorkspaceButCannotWriteIt in tests/e2e/engine_repo_judges/.
   # No explicit timeout: runs under the engine's own default
   # (internal/dispatch/exec.go's defaultCheckTimeout), so this tracks that
   # value rather than needing to be kept in sync with it by hand.

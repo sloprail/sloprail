@@ -41,10 +41,14 @@ body_of() {
 kind="$(field '.event.kind // ""')" || exit 1
 content=""
 case "$kind" in
-  PostFileCreate)
-    content="$(field '.event.newContent // ""')" || exit 1
-    ;;
-  PostFileUpdate)
+  PostFileCreate|PostFileUpdate)
+    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
+    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
+    # events.md): false when it could not read the settled file (a link to a
+    # FIFO or a device, or past the read cap). Then the quotes are unseen, so
+    # the prepare fails and the check fails closed.
+    [ "$(field '.event.newContentKnown // false')" = "true" ] ||
+      fail "the settled rule file could not be read (not a regular file, or too large)"
     content="$(field '.event.newContent // ""')" || exit 1
     ;;
   PreFileCreate|PreFileUpdate)

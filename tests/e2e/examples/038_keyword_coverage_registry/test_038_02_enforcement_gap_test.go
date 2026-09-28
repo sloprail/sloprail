@@ -32,7 +32,7 @@ func TestT038_04_UncoveredScannerRefused(t *testing.T) {
 
 	// The scanner WAS declared (logged) — so this is a genuine uncovered-scanner
 	// setup, not an empty turn.
-	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:mine"]; !ok {
+	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:scanners/mine"]; !ok {
 		t.Fatalf("precondition: the scanner was not logged, so this is not a real coverage-violation setup")
 	}
 
@@ -50,6 +50,11 @@ func TestT038_04_UncoveredScannerRefused(t *testing.T) {
 	}
 	if !strings.Contains(joined, "verify-scanner-coverage") {
 		t.Errorf("the refusal did not name the gate:\n%s", joined)
+	}
+	// The remedy names the keywords to search, and that the covering call counts
+	// even when it finds nothing — a real run thrashed for want of both.
+	if !strings.Contains(joined, `mine: "guardrail" "llm" "agent"`) || !strings.Contains(joined, "even if GitHub returns nothing") {
+		t.Errorf("the refusal does not spell out the covering search:\n%s", joined)
 	}
 }
 
@@ -76,7 +81,7 @@ func TestT038_06_CoveredScannerAdmits(t *testing.T) {
 		Bash("b1", "gh search repos guardrail llm agent --limit=10"),
 	))
 
-	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:mine"]; !ok {
+	if _, ok := e.GuardrailState(proj, sess, "scanner-declared", "")["scanner:scanners/mine"]; !ok {
 		t.Fatalf("precondition: the scanner was not logged")
 	}
 	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {

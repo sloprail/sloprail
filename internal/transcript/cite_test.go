@@ -280,9 +280,9 @@ func TestCiteExcludesHarnessInjectedUserMessages(t *testing.T) {
 func TestCiteResolvesAMidTurnQueuedCommand(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
-		userMsg("u1", "start the task"),               // line 1
-		record("a1", "u1"),                            // line 2
-		toolResultMsg("u2", "a1", "some tool output"), // line 3
+		userMsg("u1", "start the task"),                                                  // line 1
+		toolUseMsg("a1", "u1", "Bash", "run"),                                            // line 2
+		toolResultMsg("u2", "a1", "some tool output"),                                    // line 3
 		queuedCommandMsg("q1", "u2", "also automatically detect the intent of the user"), // line 4
 	)
 
@@ -451,7 +451,8 @@ func TestCiteBothPoolsResolveEither(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
 		userMsg("u1", "run the BUILD and report"),              // line 1 — user
-		toolResultMsg("u2", "u1", "BUILD succeeded: 0 errors"), // line 2 — tool result
+		toolUseMsg("a1", "u1", "Bash", "make"),                 // line 2 — the call
+		toolResultMsg("u2", "a1", "BUILD succeeded: 0 errors"), // line 3 — tool result
 	)
 	both := []SourceType{SourceUser, SourceToolResult}
 
@@ -467,7 +468,7 @@ func TestCiteBothPoolsResolveEither(t *testing.T) {
 	fromResult, err := CiteWithSources(path, "0 errors", both)
 	require.NoError(t, err)
 	require.Len(t, fromResult, 1)
-	assert.Equal(t, 2, fromResult[0].Line, "the tool result resolves under the combined selection")
+	assert.Equal(t, 3, fromResult[0].Line, "the tool result resolves under the combined selection")
 }
 
 // TestCiteToolResultExcludesAssistantAndHarnessNoise: the tool_result pool is still
@@ -480,7 +481,8 @@ func TestCiteToolResultExcludesAssistantAndHarnessNoise(t *testing.T) {
 	path := p.write("a-session",
 		assistantText("a1", "u0", "I ran the suite and it PASSED, trust me"),            // narration — not a result
 		userMsg("u1", "<system-reminder>\nPASSED is a policy word\n</system-reminder>"), // injected noise
-		toolResultMsg("u2", "a1", "--- FAIL: TestFoo (0.01s)"),                          // a real result, different word
+		toolUseMsg("c1", "u1", "Bash", "go test"),                                       // the call
+		toolResultMsg("u2", "c1", "--- FAIL: TestFoo (0.01s)"),                          // a real result, different word
 	)
 
 	// The agent's narration of a pass is not a tool result.
@@ -492,7 +494,7 @@ func TestCiteToolResultExcludesAssistantAndHarnessNoise(t *testing.T) {
 	real, err := CiteWithSources(path, "FAIL: TestFoo", []SourceType{SourceToolResult})
 	require.NoError(t, err)
 	require.Len(t, real, 1, "a real tool_result body resolves")
-	assert.Equal(t, 3, real[0].Line)
+	assert.Equal(t, 4, real[0].Line)
 }
 
 // TestToolResultTextReadsBodyNotAnswer pins the unit that separates the two pools:
@@ -564,14 +566,21 @@ func TestToolResultAtResolvesToolResultLine(t *testing.T) {
 // block, so the classifier answers false. A genuine produced result on a later line
 // still answers true, so the exclusion does not over-reject. (A plain typed message,
 // by contrast, is not a tool_result at all.)
+//
+// The answer is paired with the AskUserQuestion call it answers, as it is in every
+// real record. Without the call the result's provenance is unknown and it is
+// dropped for THAT reason (citableResults), so the test would pass whether or not
+// the answer-envelope check exists.
 func TestToolResultAtAnswerEnvelopeIsNotAResult(t *testing.T) {
 	p := newProject(t)
 	path := p.write("a-session",
 		userMsg("u1", "just a typed message"), // line 1 — no tool_result block
-		`{"type":"user","uuid":"u2","parentUuid":"u1","isSidechain":false,"message":{"role":"user","content":[`+
-			`{"type":"tool_result","tool_use_id":"t1","content":"The user answered: \"pick one\"=\"option B\". Read carefully."}]}}`, // line 2 — answer envelope
-		`{"type":"user","uuid":"u3","parentUuid":"u2","isSidechain":false,"message":{"role":"user","content":[`+
-			`{"type":"tool_result","tool_use_id":"t2","content":"PASS: TestFoo (0.01s)\nok  pkg/foo"}]}}`, // line 3 — a real produced result
+		namedCall("q1", "u1", "t1", "AskUserQuestion", `{"questions":[{"question":"pick one","options":[{"label":"option B"}]}]}`), // line 2 — the question
+		`{"type":"user","uuid":"u2","parentUuid":"q1","isSidechain":false,"message":{"role":"user","content":[`+
+			`{"type":"tool_result","tool_use_id":"t1","content":"The user answered: \"pick one\"=\"option B\". Read carefully."}]}}`, // line 3 — answer envelope
+		toolUseMsg("a2", "u2", "Bash", "go test ./pkg/foo"), // line 4 — the call
+		`{"type":"user","uuid":"u3","parentUuid":"a2","isSidechain":false,"message":{"role":"user","content":[`+
+			`{"type":"tool_result","tool_use_id":"t-a2","content":"PASS: TestFoo (0.01s)\nok  pkg/foo"}]}}`, // line 5 — a real produced result
 	)
 
 	// A plain typed message is not a tool_result.
@@ -584,14 +593,22 @@ func TestToolResultAtAnswerEnvelopeIsNotAResult(t *testing.T) {
 	// delivery observation. Classifying it as one would let an agent cite the user's
 	// "yes, proceed" as proof the work happened, the exact substitution this check
 	// exists to refuse. It must be false, matching ToolResultAt's own contract.
-	_, ok, err = ToolResultAt(path, 2)
+	_, ok, err = ToolResultAt(path, 3)
 	require.NoError(t, err)
 	assert.False(t, ok, "an answer envelope is the user's words, not a produced result — not a tool_result observation")
+
+	// The same through a citation: the answer grounds in the user pool, never in
+	// the tool_result pool.
+	_, err = ResolveCitation(path, toolReq("option B"))
+	assert.Error(t, err, "an AskUserQuestion answer grounded as tool output")
+	got, err := ResolveCitation(path, userReq("option B"))
+	require.NoError(t, err, "the answer is the user's words")
+	assert.Equal(t, 3, got.Line)
 
 	// A genuine tool-call result IS a tool_result observation, and its body is
 	// returned — the fix rejects the answer envelope without over-rejecting real
 	// results.
-	text, ok, err := ToolResultAt(path, 3)
+	text, ok, err := ToolResultAt(path, 5)
 	require.NoError(t, err)
 	assert.True(t, ok, "a real produced result is a tool_result observation")
 	assert.Contains(t, text, "PASS: TestFoo", "the produced result's body is returned")
@@ -633,10 +650,12 @@ func userMsg(uuid, content string) string {
 // toolResultMsg is a user entry carrying a tool_result block — the shape Claude
 // Code writes a tool's output in: a `type:"user"` record whose content is a
 // `type:"tool_result"` block whose `content` is the result text. This is the
-// SourceToolResult pool's fixture, the mirror of userMsg.
+// SourceToolResult pool's fixture, the mirror of userMsg. It answers the call
+// its parent made (toolUseMsg's id is "t-<uuid>"): a result whose call is not in
+// the record is of unknown provenance and is not in the pool.
 func toolResultMsg(uuid, parent, result string) string {
 	return `{"type":"user","uuid":"` + uuid + `","parentUuid":"` + parent + `","isSidechain":false,` +
-		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t-` + uuid + `","content":` +
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t-` + parent + `","content":` +
 		jsonQuote(result) + `}]}}`
 }
 

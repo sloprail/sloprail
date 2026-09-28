@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // mark_follows_completion: where a cycle's reading ended is remembered only when
@@ -73,7 +75,7 @@ exit 1
 // failure.
 func answered(t *testing.T, answer string) {
 	t.Helper()
-	if strings.Contains(answer, "sloprail:") {
+	if harness.EngineErrored(answer) {
 		t.Fatalf("the engine reported an error instead of the session's entries, so every "+
 			"marker below reads as absent and no narrowing is being tested:\n%s", answer)
 	}

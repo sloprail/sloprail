@@ -362,13 +362,13 @@ func TestT006_04_APostRefusalBlocksTheTurnWithoutUndoingTheWork(t *testing.T) {
 		t.Fatalf("the refusing file-guard never ran, so this proves nothing about after-the-fact refusals:\n%s", got.Output)
 	}
 
-	// The turn was blocked. A blocked stop makes the agent continue past its own
-	// end, so the mock is driven round again and emits its final result more than
-	// once — one result means the turn simply ended. The file check below could
-	// never have supplied this: the file survives whether the engine blocks or
-	// silently permits.
-	if n := strings.Count(got.Output, `"subtype":"success"`); n < 2 {
-		t.Errorf("the turn ended despite a guardrail refusing (%d result lines) — a Post refusal must stop the turn, which is the only way it gets anything corrected:\n%s", n, got.Output)
+	// The turn was blocked: a Stop refusal drove the agent on past the end of its
+	// turn, which the record shows as a "Stop hook feedback" turn followed by a
+	// later Stop (harness.StopContinuations). The file check below could never
+	// have supplied this: the file survives whether the engine blocks or silently
+	// permits.
+	if n := len(e.StopContinuations(proj, "s-006-04")); n == 0 {
+		t.Errorf("the turn ended despite a guardrail refusing (%d continuations) — a Post refusal must stop the turn, which is the only way it gets anything corrected:\n%s", n, got.Output)
 	}
 
 	// The agent was told WHY. Separate from the block: of the channels that block a

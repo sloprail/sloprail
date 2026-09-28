@@ -14,9 +14,18 @@
 # Each output line is prefixed by its role so a judge (or a person) can scan
 # for repetition — the same TOOL_USE line appearing 4+ times in a row is
 # exactly the retry-loop shape trajectory-health.md asks the judge to flag.
-select(.type == "user" or .type == "assistant") |
+#
+# A Stop or SubagentStop hook's refusal is not a user or assistant entry: the
+# harness records it as an attachment of type hook_blocking_error. Dropping it
+# (as this did until 2026-09-27) hid every end-of-turn refusal from the judge,
+# which then could not tell a refused turn from a finished one.
+select(.type == "user" or .type == "assistant"
+  or (.type == "attachment" and .attachment.type? == "hook_blocking_error")) |
 (.message // {}) as $m |
-if $m.role == "user" and ($m.content | type) == "array" then
+if .type == "attachment" then
+  "HOOK_REFUSAL (" + (.attachment.hookEvent // "?") + "): "
+    + ((.attachment.blockingError.blockingError // .attachment.blockingError // "") | tostring | .[0:600])
+elif $m.role == "user" and ($m.content | type) == "array" then
   ($m.content[]? | select(.type == "tool_result") |
     "TOOL_RESULT: " + ((.content | if type == "string" then . else ([.[]? | .text?] | join(" ")) end) // "" | tostring | .[0:300]))
 elif $m.role == "assistant" and ($m.content | type) == "array" then

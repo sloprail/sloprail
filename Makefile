@@ -231,8 +231,10 @@ check:
 # in seconds rather than after the slow half finishes.
 test: test-unit test-services test-e2e
 
+# tests/repo checks the repository's own files (every shipped shell script
+# parses under bash), so it rides with the unit tests: no binary, no mock.
 test-unit:
-	go test -p 1 -count=1 ./internal/...
+	go test -p 1 -count=1 ./internal/... ./tests/repo/...
 
 test-services:
 	go test -p 1 -count=1 ./services/...

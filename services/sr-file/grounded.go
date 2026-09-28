@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -39,6 +40,13 @@ trajectory, or nothing is written. The words must match exactly; whitespace
 need not (a line break in the message matches a space in the quote). Quote with
 single quotes so the shell leaves it verbatim.
 
+tool_result also resolves in the records of the sub-agents the session
+dispatched, so a sub-agent can cite its own tools' output. user resolves only
+in the user's messages in the main conversation: a sub-agent's prompt is the
+parent agent's, so a sub-agent quotes the user's words exactly as the user
+wrote them, and a parent dispatching work that must cite the user pastes the
+user's exact words into the prompt.
+
 Flags take their value as the next word or after '='. '--' ends the flags.`
 
 func newGroundedCmd(verb, use, short, long string) *cobra.Command {
@@ -55,7 +63,9 @@ func newGroundedCmd(verb, use, short, long string) *cobra.Command {
 				return cmd.Help()
 			}
 			if err != nil {
-				return err
+				// Everything ParseFile refuses is the command line itself: a
+				// missing path, a flag with no value, an unknown pool.
+				return usageError{err}
 			}
 			return runGrounded(cmd, fc)
 		},
@@ -86,10 +96,19 @@ func newDeleteCmd() *cobra.Command {
 		"Delete a file. It must exist and be a regular file.")
 }
 
-func runGrounded(cmd *cobra.Command, fc grounding.FileCommand) error {
+func runGrounded(cmd *cobra.Command, fc grounding.FileCommand) (err error) {
 	abs, err := filepath.Abs(fc.Path)
 	if err != nil {
 		return fmt.Errorf("sr-file %s: %w", fc.Verb, err)
+	}
+	if dir := os.Getenv(grounding.EnvResolveDir); dir != "" {
+		// In resolve mode a failure is recorded against its own target, so the
+		// hook quotes it beside that file and no other.
+		defer func() {
+			if err != nil {
+				recordFailed(dir, grounding.Failed{Verb: fc.Verb, Path: abs, Error: err.Error()})
+			}
+		}()
 	}
 	if link, ok := throughLink(abs); ok {
 		return fmt.Errorf("sr-file %s: %s goes through the symbolic link %s, so the change would land where the link points, not at the path a rule judges; name the real path", fc.Verb, fc.Path, link)
@@ -173,7 +192,11 @@ func runGrounded(cmd *cobra.Command, fc grounding.FileCommand) error {
 	return nil
 }
 
-// resolveCites grounds every --cite: flag, or refuses the whole command.
+// resolveCites grounds every --cite: flag, or refuses the whole command. The
+// trajectory named is the session's; ResolveCitation searches the user pool in
+// its root record and the tool_result pool in the root's and every sub-agent's,
+// so a sub-agent's call — whose session id names the root — can ground a change
+// in its own tools' output.
 func resolveCites(fc grounding.FileCommand) ([]transcript.Citation, error) {
 	if len(fc.Cites) == 0 {
 		return []transcript.Citation{}, nil
@@ -222,8 +245,8 @@ func currentState(abs, resolveDir string) (string, bool, error) {
 		if _, err := os.Stat(grounding.OverlayDeleted(resolveDir, abs)); err == nil {
 			return "", false, nil
 		}
-		if b, err := os.ReadFile(grounding.OverlayEntry(resolveDir, abs)); err == nil {
-			return string(b), true, nil
+		if b, ok := filemod.ReadRegular(grounding.OverlayEntry(resolveDir, abs), filemod.MaxContentReadBytes); ok {
+			return b, true, nil
 		}
 	}
 	fi, err := os.Stat(abs)
@@ -236,11 +259,13 @@ func currentState(abs, resolveDir string) (string, bool, error) {
 	if !fi.Mode().IsRegular() {
 		return "", false, fmt.Errorf("not a regular file")
 	}
-	b, err := os.ReadFile(abs)
-	if err != nil {
-		return "", false, err
+	// The stat above can be raced (a FIFO swapped in) and says nothing of size:
+	// read the one safe way — non-blocking open, fstat on the open file, capped.
+	b, ok := filemod.ReadRegular(abs, filemod.MaxContentReadBytes)
+	if !ok {
+		return "", false, fmt.Errorf("not a regular file, or larger than %d bytes", filemod.MaxContentReadBytes)
 	}
-	return string(b), true, nil
+	return b, true, nil
 }
 
 // recordResolved appends r to the resolve directory's record file and updates
@@ -272,6 +297,21 @@ func recordResolved(dir string, r grounding.Resolved) error {
 	defer f.Close()
 	_, err = f.Write(append(line, '\n'))
 	return err
+}
+
+// recordFailed appends a Failed record. Best effort: a failure to record it
+// leaves the hook with the line's stderr, which it still has.
+func recordFailed(dir string, f grounding.Failed) {
+	line, err := json.Marshal(f)
+	if err != nil {
+		return
+	}
+	file, err := os.OpenFile(grounding.FailedFile(dir), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = file.Write(append(line, '\n'))
 }
 
 func writePreservingMode(abs, content string) error {

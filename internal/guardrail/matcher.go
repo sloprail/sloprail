@@ -2,6 +2,7 @@ package guardrail
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
@@ -60,8 +61,18 @@ func compile(src string, opts ...expr.Option) (*Matcher, error) {
 		return &Matcher{}, nil
 	}
 	// AsBool last, so it cannot be displaced by a caller's option.
-	program, err := expr.Compile(src, append(opts, expr.AsBool())...)
+	absent := newAbsentListIsEmpty()
+	opts = append(opts, expr.Patch(absent), expr.AsBool())
+	program, err := expr.Compile(src, opts...)
+	if err == nil && absent.Err != nil {
+		return nil, fmt.Errorf("matcher %q: %w", src, absent.Err)
+	}
 	if err != nil {
+		if strings.Contains(src, ".flags") && (strings.Contains(err.Error(), "mismatched types []") || strings.Contains(err.Error(), "cannot use []")) {
+			// The commonest cause by far: a flag compared as the one string it
+			// was before every flag's value became the list of its occurrences.
+			return nil, fmt.Errorf("matcher %q: %w (flag values are lists: write `\"x\" in .flags.name`, not `.flags.name == \"x\"`)", src, err)
+		}
 		return nil, fmt.Errorf("matcher %q: %w", src, err)
 	}
 	return &Matcher{src: src, program: program}, nil
@@ -262,10 +273,23 @@ func fill(f module.FieldDecl, carried any) (any, error) {
 			return nil, wrongType(f, "map", carried)
 		}
 		if len(f.Fields) == 0 {
-			// Keys the module never enumerated stay open, matching the types.Any
+			// Keys the module never enumerated stay open, matching the open map
 			// fieldType gives them. Manufacturing keys here would contradict the
 			// declaration rather than honour it.
-			return fields, nil
+			if f.Elem == nil {
+				return fields, nil
+			}
+			// Declared values are completed like a list's elements, into a
+			// fresh map for the same reason as below.
+			out := make(map[string]any, len(fields))
+			for k, v := range fields {
+				filled, err := fill(*f.Elem, v)
+				if err != nil {
+					return nil, fmt.Errorf("in %s.%s: %w", name(f), k, err)
+				}
+				out[k] = filled
+			}
+			return out, nil
 		}
 		// A fresh map, so completing one event's value cannot mutate the event —
 		// see TestMatch_DoesNotMutateTheEvent. Writing into the carried map would

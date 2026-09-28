@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // T031_09: normalize's default read is the part of the session not yet judged,
@@ -91,7 +93,7 @@ func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T
 	if scoped == "" || whole == "" {
 		t.Fatalf("the hook never recorded a read, so nothing here can be observed\nscoped:\n%s\nwhole:\n%s", scoped, whole)
 	}
-	if strings.Contains(scoped, "sloprail:") {
+	if harness.EngineErrored(scoped) {
 		t.Fatalf("the default normalize read errored, so the slice below is vacuous:\n%s", scoped)
 	}
 

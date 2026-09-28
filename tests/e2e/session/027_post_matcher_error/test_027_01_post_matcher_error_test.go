@@ -34,7 +34,7 @@
 //
 // # Why an evaluation error is still reachable
 //
-// The gate side rides commandmod's open `flags` map (see 014). The file-guard side
+// The gate side rides `int(.bin) > 0` on a command (see 014). The file-guard side
 // rides the file MATCH scope, where `path` is a bare string: `int(path) > 0`
 // COMPILES (int of a string is well-formed in the expression language) and the vm
 // then refuses "notes.md" at run time. It is an odd rule to write, and that is the
@@ -52,14 +52,12 @@ import (
 // gateErroringMatcher is a gate whose trigger match cannot be evaluated against the
 // command it is bound to.
 //
-// `event.invocations[].flags.access` is nil on a command that did not pass
-// --access, and `len` of nil errors. `flags` is an open map (commandmod declares no
-// keys for it), so the accessor inside it is not checked at load — which is what
-// makes this a rule that LOADS cleanly and fails at EVALUATION, the only way to
-// reach the evaluation branch at all.
+// `int(.bin)` compiles — int of a string is well-formed — and the vm refuses
+// "npm" at run time: a rule that LOADS cleanly and fails at EVALUATION, the only
+// way to reach the evaluation branch at all.
 const gateErroringMatcher = `on:
   - event: PreCommandInvoke
-    match: any(event.invocations, len(.flags.access) > 0)
+    match: any(event.invocations, int(.bin) > 0)
 checks:
   - script: ./check.sh
 `
@@ -180,7 +178,7 @@ func TestT027_03_AnAnswerablePostMatcherIsConsulted(t *testing.T) {
 		Write("w1", "notes.md", "hello\n"),
 	))
 
-	if strings.Count(got.Output, `"subtype":"success"`) < 2 {
+	if len(e.StopContinuations(proj, "s-027-03")) == 0 {
 		t.Fatalf("a Post file-guard with an answerable match and a refusing check did not block "+
 			"the cycle, so T027_02's refusal proves nothing:\n%s", got.Output)
 	}

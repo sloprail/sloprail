@@ -50,6 +50,23 @@ type Resolved struct {
 // ResolvedFile is where resolve mode appends its records, one JSON per line.
 func ResolvedFile(dir string) string { return filepath.Join(dir, "resolved.jsonl") }
 
+// Failed is an sr-file invocation that could not compute its change in resolve
+// mode — and so, run for real, would change nothing: the target it named and
+// what it said. Recorded by target so the hook can quote each failure beside
+// the file it is about, never beside another invocation's.
+type Failed struct {
+	Verb string `json:"verb"`
+
+	// Path is the target, absolute.
+	Path string `json:"path"`
+
+	// Error is what sr-file printed.
+	Error string `json:"error"`
+}
+
+// FailedFile is where resolve mode appends its Failed records, one JSON per line.
+func FailedFile(dir string) string { return filepath.Join(dir, "failed.jsonl") }
+
 // OverlayEntry is where resolve mode records the predicted content of abs, so
 // a later invocation in the same line (`sr-file edit a ... && sr-file edit a
 // ...`) reads the earlier one's result instead of disk. A name derived from the

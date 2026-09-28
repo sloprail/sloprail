@@ -21,7 +21,25 @@ type Scenario struct {
 // Turn is one assistant action.
 type Turn struct {
 	jsonl string
+	// launchedOutput marks a turn whose jsonl names the output file of the most
+	// recently launched background command as @@LAUNCHED_OUTPUT@@, filled in when
+	// the turn is emitted — the mock picks the file at launch, and only its
+	// receipt says where it is, as it does for a real agent.
+	launchedOutput bool
+	// launchedTask marks a turn whose jsonl names the id of the most recently
+	// launched background task as @@LAUNCHED_TASK@@, filled in when the turn is
+	// emitted — the id is minted by the mock at launch (a Bash's own id, or an
+	// Agent's agentId) and only its receipt says what it is.
+	launchedTask bool
 }
+
+// launchedOutputPlaceholder is replaced by the output file of the most recently
+// launched background command when a launchedOutput turn is emitted.
+const launchedOutputPlaceholder = "@@LAUNCHED_OUTPUT@@"
+
+// launchedTaskPlaceholder is replaced by the id of the most recently launched
+// background task when a launchedTask turn is emitted.
+const launchedTaskPlaceholder = "@@LAUNCHED_TASK@@"
 
 // Turns builds a scenario ending in the given assistant text.
 func Turns(finalText string, turns ...Turn) Scenario {
@@ -81,6 +99,14 @@ func Say(id, text string) Turn {
 // audit inspects — uses ToolUseWithResult instead, which supplies that field.
 func ToolUse(id, name string, input map[string]string) Turn {
 	return Turn{jsonl: toolUse(id, name, input)}
+}
+
+// ToolUseJSON is ToolUse with the input given as a raw JSON object, for a tool
+// whose input carries numbers, nested objects or arrays — values a check must
+// carry through as JSON, which a map of strings cannot express.
+func ToolUseJSON(id, name, inputJSON string) Turn {
+	return Turn{jsonl: fmt.Sprintf(`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
+		"e2e-turn-"+id, id, name, inputJSON)}
 }
 
 // ToolUseWithResult returns the TWO turns that model a tool call which produced an
@@ -148,6 +174,21 @@ func ToolUseWithResult(id, name string, input map[string]string, toolUseResultJS
 	return use, res
 }
 
+// CallWithOutput returns the TWO turns of a tool call whose output the mock
+// cannot produce itself: the tool_use, and a tool_result for the same id
+// carrying output — a background task's receipt, what TaskOutput read back.
+//
+// The mock answers the tool_use with its own result (executing it, or an error
+// for a tool it does not implement); the second turn is a later tool_result for
+// the same id, which is the one a test cites. Both records carry a throwaway
+// top-level `id` for the turn marker, so the tool_use's own id and the result's
+// tool_use_id stay equal to id and correlate — a result whose call is not in
+// the record is not tool output.
+func CallWithOutput(id, name string, input map[string]string, output string) (Turn, Turn) {
+	use, _ := ToolUseWithResult(id, name, input, "null")
+	return use, ToolResult(id, output)
+}
+
 // AnswerQuestion returns ONE turn carrying an AskUserQuestion ANSWER — the shape a
 // person's prompted answer lands as in a real trajectory: a `user` record whose
 // content is a `tool_result` block reading
@@ -202,6 +243,22 @@ func AnswerQuestion(id string, qa ...[2]string) Turn {
 	return Turn{jsonl: fmt.Sprintf(
 		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s}]}}`,
 		id+"#a", "e2e-turn-"+id, id, jsonStr(content))}
+}
+
+// AskUserQuestion returns the TWO turns of a question the agent asks and the
+// person answers, as a real record holds them: the AskUserQuestion tool_use,
+// then the answer envelope (AnswerQuestion) as the tool_result for that same
+// call. The call matters: a result whose call is not in the record is of
+// unknown provenance and is dropped from the tool-output pool for THAT reason,
+// so an answer without its question cannot show that an answer is kept out of
+// the tool-output pool because it is the user's words.
+//
+// The mock does not implement AskUserQuestion and answers the tool_use with its
+// own error result; the answer envelope follows it for the same id, the way the
+// harness writes the person's selection.
+func AskUserQuestion(id, question, answer string) (Turn, Turn) {
+	use, _ := ToolUseWithResult(id, "AskUserQuestion", map[string]string{"question": question}, "null")
+	return use, AnswerQuestion(id, [2]string{question, answer})
 }
 
 // ToolResult returns ONE turn carrying a tool's RESULT with arbitrary content — the
@@ -373,6 +430,30 @@ func (s Scenario) script() string {
 	for i, t := range s.turns {
 		marker := fmt.Sprintf("slop-turn-%d-%s", i, turnID(t.jsonl))
 		line := injectMarker(t.jsonl, marker)
+		if t.launchedOutput {
+			// A background command's receipt names its output file: "Output is
+			// being written to: <file>. You will be notified …". The latest one
+			// is the command meant.
+			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  OUT="$(printf '%%s' "$SESS" | grep -o 'Output is being written to: [^ ]*\.output' | tail -1 | sed 's/.*: //')"
+  printf '%%s\n' %s | sed "s|%s|$OUT|"
+  exit 0
+fi
+`, marker, shQuote(line), launchedOutputPlaceholder)
+			continue
+		}
+		if t.launchedTask {
+			// The receipt a background launch was answered with names its id:
+			// "Command running in background with ID: <id>" for a Bash,
+			// "agentId: <id>" for an Agent. The latest one is the task meant.
+			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  TASK="$(printf '%%s' "$SESS" | grep -o 'running in background with ID: [A-Za-z0-9_-]*\|agentId: [A-Za-z0-9_-]*' | tail -1 | sed 's/.*: //')"
+  printf '%%s\n' %s | sed "s/%s/$TASK/"
+  exit 0
+fi
+`, marker, shQuote(line), launchedTaskPlaceholder)
+			continue
+		}
 		fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
   printf '%%s\n' %s
   exit 0
@@ -454,7 +535,7 @@ func injectMarker(jsonl, marker string) string {
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func jsonStr(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`)
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
 	return `"` + r.Replace(s) + `"`
 }
 
@@ -547,4 +628,46 @@ func sayWithTool(id, prose, name string, input map[string]string) string {
 	return fmt.Sprintf(
 		`{"type":"assistant","uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":%s},{"type":"tool_use","id":%q,"name":%q,"input":%s}]}}`,
 		"e2e-turn-"+id, jsonStr(prose), id, name, ib.String())
+}
+
+// Compact returns ONE turn in which the harness compacts the context, the way
+// real Claude Code does: a compact_boundary record appended to the transcript —
+// parentless, naming the last record before it as its logicalParentUuid — then
+// the summary chained to it, then SessionStart with source "compact"
+// (a10n-claude-mock's {"type":"compact"} control record).
+func Compact(id string) Turn {
+	return Turn{jsonl: fmt.Sprintf(`{"type":"compact","id":%q,"summary":"compacted"}`, id)}
+}
+
+// CompactNamingUnwrittenParent is Compact with a boundary whose logical parent
+// is a record written to no transcript — the shape a real preserved-segment
+// compaction left, where the only trace of what it continues is the boundary
+// record itself, part-way down the file the compaction happened in.
+func CompactNamingUnwrittenParent(id string) Turn {
+	return Turn{jsonl: fmt.Sprintf(`{"type":"compact","id":%q,"summary":"compacted","logical_parent":"never-written-%s"}`, id, id)}
+}
+
+// Background launches a tool call in the background — a Bash or an Agent with
+// run_in_background — which the mock answers the way real Claude Code does: at
+// once, with a receipt naming the task ("Command running in background with
+// ID: …" / "Async agent launched successfully. … agentId: …"), and later with a
+// <task-notification> when the task finishes. The harness gives every run its
+// own CLAUDE_CODE_TMPDIR, so the task's output file is inside the test's
+// sandbox, not the shared /tmp.
+func Background(id, name string, input map[string]string) Turn {
+	in := map[string]string{"run_in_background": "true"}
+	for k, v := range input {
+		in[k] = v
+	}
+	return Turn{jsonl: toolUse(id, name, in)}
+}
+
+// ReadLaunchedOutput reads the output file of the most recently launched
+// background command with the Read tool — the way a real agent gets a
+// background command's output: its receipt says "To check interim output, use
+// Read on that file path", and the <task-notification> that follows carries
+// only a summary, never the output. (The mock no longer implements TaskOutput
+// as a tool: real transcripts hold no call to it.)
+func ReadLaunchedOutput(id string) Turn {
+	return Turn{jsonl: toolUse(id, "Read", map[string]string{"file_path": launchedOutputPlaceholder}), launchedOutput: true}
 }

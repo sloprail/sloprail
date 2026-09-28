@@ -47,14 +47,11 @@ checks:
   - script: ./refuse.sh
 `
 
-// blocked reports whether the turn was stopped rather than allowed to end.
-//
-// A blocked stop makes the agent continue past its own end, so the mock is
-// driven round again and emits its final result more than once. One result
-// means the turn simply ended. Format-neutral — it reads the mock's stream, not
-// the dispatch.
-func blocked(r harness.Result) bool {
-	return strings.Count(r.Output, `"subtype":"success"`) >= 2
+// continuations is how many times, so far, a Stop refusal drove the session's
+// agent on past the end of its turn — read from the record, as a person would
+// see it (harness.StopContinuations).
+func continuations(e *harness.Env, proj, sess string) int {
+	return len(e.StopContinuations(proj, sess))
 }
 
 // refusingGuardrail writes a file-guard whose check logs OUTSIDE the project and
@@ -129,10 +126,10 @@ func TestT024_01_OneRefusalBlocksTheTurnWithoutUndoingTheWrite(t *testing.T) {
 	}
 
 	// FACT TWO: the turn did not end.
-	if !blocked(got) {
-		t.Errorf("the turn ended despite a guardrail refusing (%d result lines) — a Post refusal "+
+	if continuations(e, proj, "s-024-01") == 0 {
+		t.Errorf("the turn ended despite a guardrail refusing (%d continuations) — a Post refusal "+
 			"must stop the turn, which is the only way it gets anything corrected:\n%s",
-			strings.Count(got.Output, `"subtype":"success"`), got.Output)
+			continuations(e, proj, "s-024-01"), got.Output)
 	}
 
 	// FACT THREE: the agent was told why, and by whom. Read from the blocking
@@ -184,7 +181,7 @@ func TestT024_02_SeveralRefusalsAreAllReportedAndBlockOnce(t *testing.T) {
 		}
 	}
 
-	if !blocked(got) {
+	if continuations(e, proj, "s-024-02") == 0 {
 		t.Fatalf("three guardrails refused and the turn was not blocked:\n%s", got.Output)
 	}
 
@@ -237,7 +234,7 @@ checks:
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the refusing hook never ran, so there is no refusal here to survive:\n%s", got.Output)
 	}
-	if !blocked(got) {
+	if continuations(e, proj, "s-024-03") == 0 {
 		t.Fatalf("the turn ended despite a refusal, so this is not the case being tested:\n%s", got.Output)
 	}
 	if _, err := os.Stat(afterLog); err != nil {
@@ -277,7 +274,7 @@ func TestT024_04_ARefusingSessionStillTerminates(t *testing.T) {
 	}
 	// The turn really was blocked at least once, or "it did not loop" is a
 	// statement about a cycle that never refused.
-	if !blocked(got) {
+	if continuations(e, proj, "s-024-04") == 0 {
 		t.Fatalf("the turn ended without ever being blocked, so there is no loop to avoid:\n%s", got.Output)
 	}
 	// And it ended. The mock stops driving a session that keeps blocking, so a
@@ -317,9 +314,9 @@ func TestT024_05_APassingRuleDoesNotBlockTheTurn(t *testing.T) {
 		t.Fatalf("the passing hook never ran, so the absence of a block below proves nothing:\n%s",
 			got.Output)
 	}
-	if blocked(got) {
-		t.Errorf("a cycle in which every rule passed was blocked anyway (%d result lines):\n%s",
-			strings.Count(got.Output, `"subtype":"success"`), got.Output)
+	if continuations(e, proj, "s-024-05") > 0 {
+		t.Errorf("a cycle in which every rule passed was blocked anyway (%d continuations):\n%s",
+			continuations(e, proj, "s-024-05"), got.Output)
 	}
 	if b := e.BlockingErrors(proj, "s-024-05"); len(b) > 0 {
 		t.Errorf("a cycle in which every rule passed produced a blocking reason:\n%s",
@@ -355,7 +352,7 @@ func TestT024_06_ARefusalAndAPassNameOnlyTheRefuser(t *testing.T) {
 			t.Fatalf("guardrail %q never ran, so this is not the mixed case:\n%s", name, got.Output)
 		}
 	}
-	if !blocked(got) {
+	if continuations(e, proj, "s-024-06") == 0 {
 		t.Fatalf("the turn ended despite one rule refusing:\n%s", got.Output)
 	}
 
@@ -396,7 +393,8 @@ func TestT024_07_AnUnfixedRefusalBlocksTheNextCycleToo(t *testing.T) {
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the rule never ran in the first cycle:\n%s", first.Output)
 	}
-	if !blocked(first) {
+	firstBlocks := continuations(e, proj, sess)
+	if firstBlocks == 0 {
 		t.Fatalf("the first cycle was not blocked, so there is no outstanding refusal:\n%s", first.Output)
 	}
 
@@ -405,7 +403,7 @@ func TestT024_07_AnUnfixedRefusalBlocksTheNextCycleToo(t *testing.T) {
 		Write("w2", "unrelated.md", "fine\n"),
 	))
 
-	if !blocked(second) {
+	if continuations(e, proj, sess) <= firstBlocks {
 		t.Fatalf("a cycle that left an unfixed violation in place was allowed to end:\n%s\n"+
 			"the file is still broken and the rule has stopped saying so — an after-the-fact "+
 			"rule that complains once is not enforcement", second.Output)

@@ -52,6 +52,7 @@ const (
 	KeyBin   = "bin"
 	KeyArgv  = "argv"
 	KeyFlags = "flags"
+	KeyCwd   = "cwd"
 )
 
 // Module produces command events.
@@ -118,8 +119,29 @@ func (*Module) Kinds() []module.KindDecl {
 							// heard of npm, which is the checker punishing an
 							// author for our missing knowledge rather than for
 							// their mistake. See fieldType, which leaves an
-							// unenumerated map at types.Any for this reason.
-							{Name: KeyFlags, Type: module.TypeMap},
+							// unenumerated map's keys open for this reason.
+							//
+							// Its VALUES are declared, though: each is every
+							// occurrence of that flag, a list of strings (see
+							// Invocation.Flags). Undeclared, `.flags.tag ==
+							// "next"` — the spelling from when a flag was one
+							// string — loaded and could never match, a rule
+							// failing open in silence; declared, the checker
+							// refuses it when the rule loads.
+							{
+								Name: KeyFlags,
+								Type: module.TypeMap,
+								Elem: &module.FieldDecl{
+									Type: module.TypeList,
+									Elem: &module.FieldDecl{Type: module.TypeString},
+								},
+							},
+
+							// cwd is where this program runs as far as the line
+							// says: "." (where the line started), a path
+							// relative to that, an absolute path, or "" when a
+							// `cd` could not be resolved. See Invocation.Cwd.
+							{Name: KeyCwd, Type: module.TypeString},
 						},
 					},
 				},

@@ -9,8 +9,11 @@
 # missing, an unreadable settled file, a Pre result the engine could not compute.
 #
 # THE TWO MOMENTS match the checks': a Pre kind compares the pending bytes with
-# `.event.oldContent` (the file on disk); a Post kind reads the settled file and
-# compares it with `.event.oldContent` (the session baseline).
+# `.event.oldContent` (the file on disk); a Post kind compares `.event.newContent`
+# (the settled file) with `.event.oldContent` (the session baseline). Both are
+# read off the event, never the disk: at Stop the engine also asks about each
+# PART of a change no citation rode on, with the event narrowed to that part,
+# and the file on disk is only its last state.
 set -uo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -20,8 +23,13 @@ field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
 
 lib="${SR_GUARDRAIL_DIR:-.}/lib-body.sh"
 [ -f "$lib" ] || exit 0
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version); only its last-line sentinel proves it
+# loaded whole. Not loaded whole is undecidable: apply (exit 0), never waive.
+unset lib_body_loaded
 # shellcheck source=lib-body.sh
 . "$lib"
+[ "${lib_body_loaded:-}" = 1 ] || exit 0
 
 # applies: the write sets the ask. The hint the refusal carries says what to
 # cite and that frontmatter changes need nothing.
@@ -43,8 +51,12 @@ case "$kind" in
     content="$(field '.event.newContent // ""')"
     ;;
   PostFileUpdate)
-    abs="${SR_WORKSPACE:-.}/$(field '.event.path // ""')"
-    content="$(cat "$abs" 2>/dev/null)" || exit 0
+    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
+    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
+    # events.md): false when it could not read the settled file — a link to a
+    # FIFO or a device, or past the read cap. Undecidable: apply (exit 0).
+    [ "$(field '.event.newContentKnown // false')" = "true" ] || exit 0
+    content="$(field '.event.newContent // ""')"
     ;;
   *)
     # A delete is not this guard's business (deletions default to skip).

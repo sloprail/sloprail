@@ -1,27 +1,23 @@
 package e2e
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// noCloneReason is check 1's own wording — the words that must reach the agent
-// when a research run shows no real clone.
-const noCloneReason = "No git clone found in this research run"
+// noCloneReason is the depth gate's own wording when a research run shows no
+// clone of its own — the words that must reach the agent.
+const noCloneReason = "This #research run has not cloned a repository"
 
-// T039_01: a research run declared with #research is REFUSED at Stop when it shows
-// no depth (no git clone, no gh calls), and both reasons reach the agent at once.
-//
-// The core of the guardrail: declaring a research branch (#research) puts the run
-// under the depth gate, which refuses a shallow run. This drives the activate →
-// gate → refuse path end to end.
+// whatToDo is what a depth refusal tells an agent that has cloned nothing.
+const whatToDo = "To finish the research: git clone a real repository that implements what you are researching, then read at least 2 of its source files (not only the README or docs)"
+
+// T039_01: a research run declared with #research is REFUSED at Stop when it
+// shows no depth — nothing cloned, nothing read — and the refusal says what is
+// missing AND what to do about it.
 func TestT039_01_ShallowResearchRefused(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e, proj := research(t)
 
 	sess := "s-039-01"
 	res := e.Run(proj, sess, "look into this", Turns("done",
@@ -37,15 +33,16 @@ func TestT039_01_ShallowResearchRefused(t *testing.T) {
 		t.Fatalf("the depth gate did not refuse a shallow research run:\n%s", res.Output)
 	}
 	joined := strings.Join(blocks, "\n")
-	if !strings.Contains(joined, noCloneReason) {
-		t.Errorf("the depth gate's own reason did not reach the agent:\n%s", joined)
+	for _, want := range []string{noCloneReason, whatToDo, "Reads of directories this run did not clone do not count", "depth-check"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the refusal is missing %q:\n%s", want, joined)
+		}
 	}
-	// Everything the run still owes arrives in one refusal, not one fact per Stop.
-	if !strings.Contains(joined, "No gh CLI calls found") {
-		t.Errorf("the refusal did not also name the missing gh calls:\n%s", joined)
-	}
-	if !strings.Contains(joined, "depth-check") {
-		t.Errorf("the refusal did not name the gate:\n%s", joined)
+	// gh page counts are not part of the convention, so they are not asked for.
+	// Each is checked on its own; a bare "gh" would also match "through", so
+	// the CLI is matched by name.
+	if strings.Contains(joined, "gh CLI") || strings.Contains(joined, "page") {
+		t.Errorf("the refusal still asks for gh page coverage:\n%s", joined)
 	}
 }
 
@@ -57,12 +54,7 @@ func TestT039_01_ShallowResearchRefused(t *testing.T) {
 // depth gate never runs. Proves the guardrail keys on the research declaration,
 // not on any tag.
 func TestT039_02_OtherTagDoesNotActivate(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e, proj := research(t)
 
 	sess := "s-039-02"
 	res := e.Run(proj, sess, "plan something", Turns("done",
@@ -82,15 +74,9 @@ func TestT039_02_OtherTagDoesNotActivate(t *testing.T) {
 // untouched.
 //
 // The second control: `match: context["research-run"].active` on the gate means a
-// turn that declared no research is not subject to the depth check. An ordinary
-// file write with no #research passes.
+// turn that declared no research is not subject to the depth check.
 func TestT039_03_NoResearchNoGate(t *testing.T) {
-	e := New(t)
-	proj := e.Project()
-	e.GitInit(proj)
-	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e, proj := research(t)
 
 	sess := "s-039-03"
 	res := e.Run(proj, sess, "do ordinary work", Turns("done",
@@ -103,4 +89,14 @@ func TestT039_03_NoResearchNoGate(t *testing.T) {
 	if res.Refused() || len(e.BlockingErrorsFrom(proj, sess, "Stop")) != 0 {
 		t.Errorf("an ordinary non-research turn was refused:\n%s", res.Output)
 	}
+}
+
+// readMore is what a depth refusal tells an agent that cloned but read too few
+// source files: how many more, and where.
+func readMore(n int, dirs string) string {
+	files := "1 more distinct source file"
+	if n != 1 {
+		files = strconv.Itoa(n) + " more distinct source files"
+	}
+	return "To finish the research: read " + files + " inside " + dirs
 }

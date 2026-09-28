@@ -12,11 +12,33 @@
 #
 # preventive: a weakened declaration refused before it lands, while the agent can
 # still meet it with a search instead.
+#
+# deletions: include — deleting a scanner drops ALL its keywords, the same
+# weakening taken to the limit. Measured on a real run: refused by the coverage
+# gate, a sub-agent ran `rm -rf scanners/<name>` rather than search, and the
+# gate went quiet. The delete is refused the same way an uncited drop is; `rm -r`
+# of the scanner's DIRECTORY reaches this guard as a PreFileDelete of the
+# scanner.yaml inside it. (Whatever still gets a scanner deleted — a command the
+# engine cannot parse — does not clear the obligation: scanner-declared keeps
+# the scanner in its registry and stays open until coverage passes.)
+#
+# What "drops" means is measured against the file before the change AND what
+# scanner-declared's registry holds owed: a write the engine cannot parse can
+# empty the file behind every rule's back, and compared against the file alone
+# the delete (or the Stop-time create) that follows dropped nothing.
+#
+# A change that IS admitted — its user citation resolved, and judged to be what
+# the user asked for — is recorded by record-admitted.sh, the last check: a
+# delete retires the scanner, a drop narrows what it owes. The registry itself
+# never shrinks; these records are the only way an obligation goes, and both
+# need the user's citation on the event.
 match: 'path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"'
 preventive: true
+deletions: include
 require:
   - citation: {source_types: [user]}
     when: ./drops-keywords.sh
 checks:
   - prepare: ./only-when-dropped.sh
     judge: ./cited-words-ask-for-it.md.j2
+  - script: ./record-admitted.sh

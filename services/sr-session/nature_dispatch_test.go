@@ -211,11 +211,10 @@ func TestFirstMatchingEvent_NoMatchWakesAlways(t *testing.T) {
 // the fail-OPEN this regressed to and was corrected for. The e2e proves the refusal
 // end to end; this proves the error is produced (not swallowed) at the seam.
 //
-// `any(event.invocations, len(.flags.access) > 0)` is the shape that reaches the
-// evaluation branch: `flags` is an open map (commandmod declares no keys), so the
-// accessor is not checked at load and the trigger LOADS clean; at run time
-// `.flags.access` is nil on a command with no --access and `len(nil)` errors. It is
-// the same expression 027 rides on the gate side.
+// `any(event.invocations, int(.bin) > 0)` is a shape that reaches the evaluation
+// branch: int of a string is well-formed, so the trigger LOADS clean, and at run
+// time the vm refuses int("npm"). It is the same expression 014 and 027 ride on
+// the gate side. (An absent flag no longer errors: it reads as an empty list.)
 func TestFirstMatchingEvent_UnevaluableMatchErrorsNotSkip(t *testing.T) {
 	reg, err := modules.Registry()
 	require.NoError(t, err)
@@ -224,11 +223,10 @@ func TestFirstMatchingEvent_UnevaluableMatchErrorsNotSkip(t *testing.T) {
 		Name: "npm-access",
 		On: []declaration.GateTrigger{{
 			Event: declaration.KindPreCommandInvoke,
-			Match: `any(event.invocations, len(.flags.access) > 0)`,
+			Match: `any(event.invocations, int(.bin) > 0)`,
 		}},
 	}
-	// A command invocation with an empty flags map: `.flags.access` is nil, so
-	// `len(.flags.access)` errors at evaluation — the only way to reach the branch.
+	// A command invocation: `int(.bin)` errors at evaluation.
 	cmd := event.Event{Kind: declaration.KindPreCommandInvoke, Fields: map[string]any{
 		"raw": "npm publish",
 		"invocations": []any{map[string]any{
