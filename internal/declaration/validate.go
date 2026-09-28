@@ -536,9 +536,18 @@ func validateToolRule(t string) error {
 // validateDenyKeepsVerdict refuses a deny on the tools the judge writes its
 // verdict with. The judge's answer file is written with Write (or Edit), under
 // an allow the engine adds for the answer's own folder; a deny beats every allow,
-// so `Write`, `Edit`, or a scoped form of either whose path the loader cannot
-// check against a folder chosen at run time, would leave every judge of the rule
-// unable to answer — a refusal on every action, for a reason nobody would see.
+// so `Write`, `Edit`, or a scoped form of either — the answer folder is chosen at
+// run time, so the loader cannot tell a scope that would spare it from one that
+// wouldn't, and refuses the tool name regardless of scope — would leave every
+// judge of the rule unable to answer — a refusal on every action, for a reason
+// nobody would see.
+//
+// This check only refuses the bare tool name Write/Edit (ignoring any scope);
+// it does not (and cannot, at load time) prove every OTHER way a rule could
+// leave the verdict path unreachable is caught — e.g. a scope on some other
+// tool that happens to intersect the runtime-chosen answer folder. That residual
+// case is not new: the answer folder isn't known until run time, so no static
+// check can rule it out in general.
 func validateDenyKeepsVerdict(tools []string) error {
 	for i, t := range tools {
 		name, _, _ := strings.Cut(t, "(")
