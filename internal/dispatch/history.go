@@ -137,9 +137,10 @@ func (h FileHistory) uncitedParts(pools []transcript.SourceType) []UncitedChange
 
 	out := make([]UncitedChange, 0, len(gaps))
 	for _, g := range gaps {
+		to, toKnown := h.contentOf(g.to)
 		out = append(out, UncitedChange{
 			FromExists: g.from.Exists, From: h.content(g.from),
-			ToExists: g.to.Exists, To: h.content(g.to),
+			ToExists: g.to.Exists, To: to, ToKnown: toKnown,
 			BetweenTurns: g.betweenTurns, By: g.by,
 		})
 	}
@@ -155,6 +156,18 @@ func countsFor(got, want []transcript.SourceType) bool {
 		}
 	}
 	return false
+}
+
+// contentOf is a state's content and whether it is known: an absent file's is
+// "" and known.
+func (h FileHistory) contentOf(s HistoryState) (string, bool) {
+	if !s.Exists {
+		return "", true
+	}
+	if h.Content == nil {
+		return "", false
+	}
+	return h.Content(s.Hash)
 }
 
 func (h FileHistory) content(s HistoryState) string {

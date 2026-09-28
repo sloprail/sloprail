@@ -67,7 +67,7 @@ func TestSettleKeepsOnlyChangesThatLanded(t *testing.T) {
 }
 
 func citedPostEvent(kind, path, oldContent, newContent string) event.Event {
-	fe := filemod.FileEvent{Path: path, OldContent: oldContent, NewContent: newContent}
+	fe := filemod.FileEvent{Path: path, OldContent: oldContent, NewContent: newContent, NewContentKnown: true}
 	return fe.Event(kind)
 }
 
@@ -375,4 +375,21 @@ func TestSnapshotsOnlyWhatACitationRuleSelects(t *testing.T) {
 	_, ok, err = store.Meta(contentKey(hashOf("dirty memory\n")))
 	require.NoError(t, err)
 	assert.True(t, ok, "a content a point names was deleted")
+}
+
+// A settled file the engine could not read (newContentKnown false) matches no
+// state: the stretch to it is charged rather than guessed at, and the Stop
+// records no end state for it.
+func TestUnreadableSettledFileIsCharged(t *testing.T) {
+	store := openTestStore(t)
+	pt := historyPoint{Cites: userCite, Before: st(store, "base"), After: st(store, "cited"), Whole: true, At: 1}
+	require.NoError(t, swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]historyPoint) {
+		*all = map[string][]historyPoint{"a.md": {pt}}
+	}))
+	unread := filemod.FileEvent{Path: "a.md", OldContent: "base", NewContent: ""}.Event(filemod.KindPostUpdate)
+	hs := attachHistories(store, []event.Event{unread}, nil, nil)
+	require.Contains(t, hs, "a.md")
+	assert.Equal(t, "unreadable", hs["a.md"].Current.Hash)
+	require.NoError(t, endCycle(store, []event.Event{unread}, nil, backgroundReport{}))
+	assert.NotContains(t, readCycle(store).End, "a.md")
 }

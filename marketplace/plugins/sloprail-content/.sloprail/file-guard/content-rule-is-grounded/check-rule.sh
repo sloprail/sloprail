@@ -41,7 +41,14 @@ kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
     # A Post kind carries the SETTLED bytes directly on the flat event — no
-    # disk re-read.
+    # disk re-read — when the engine could read them. It says so in
+    # newContentKnown, a bool the engine declares on PostFileCreate and
+    # PostFileUpdate (internal/filemod/module.go FieldNewContentKnown;
+    # authoring-guardrails/events.md): false for a link to a FIFO or a device,
+    # or a file past the read cap. Unread: refuse, unchecked.
+    if [ "$(printf '%s' "$event" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
+      refuse "content-rule-is-grounded: $path could not be read (not a regular file, or too large), so the rule could not be checked"
+    fi
     content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   PreFileCreate|PreFileUpdate)

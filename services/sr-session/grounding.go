@@ -463,7 +463,10 @@ func replaceWithResolved(events []event.Event, records []grounding.Resolved, roo
 		existed := ch.first.Existed
 		fe := filemod.FileEvent{Path: key}
 		if existed {
+			// sr-file's resolve read these bytes (a regular file, capped — see
+			// currentState) and recorded them: they are known.
 			fe.OldContent = ch.first.OldContent
+			fe.OldContentKnown = true
 			fe.OldMarkers = filemod.Scan(fe.OldContent)
 		}
 		switch {
@@ -515,10 +518,18 @@ func ensureFileEvents(events []event.Event, targets map[string]string, root stri
 			abs = filepath.Join(root, key)
 		}
 		fe := filemod.FileEvent{Path: key}
-		b, err := os.ReadFile(abs)
-		exists := err == nil
+		// Whether the path exists is one question, and whether its bytes can be
+		// read is another: a link to a FIFO or a device exists, and reading it
+		// the plain way blocks the hook or never ends. Read the one safe way,
+		// capped, and say whether it was (oldContentKnown on a delete).
+		_, statErr := os.Lstat(abs)
+		exists := statErr == nil
 		if exists {
-			fe.OldContent = string(b)
+			limit := int64(filemod.MaxContentReadBytes)
+			if targets[key] == grounding.VerbDelete {
+				limit = filemod.MaxDeleteReadBytes
+			}
+			fe.OldContent, fe.OldContentKnown = filemod.ReadRegular(abs, limit)
 			fe.OldMarkers = filemod.Scan(fe.OldContent)
 		}
 		switch {

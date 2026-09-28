@@ -264,6 +264,18 @@ func (p HookPayload) Root() string {
 	return root
 }
 
+// HeadContent implements filemod.HeadReader: a workspace-relative file's bytes
+// in the repository's HEAD commit, when they are at most limit bytes (git is
+// asked the size first, so an oversize blob is never read). The file module
+// uses it for the markers of a delete whose bytes it could not read on disk.
+func (p HookPayload) HeadContent(path string, limit int64) (string, bool) {
+	root := p.Root()
+	if root == "" || path == "" {
+		return "", false
+	}
+	return gitrepo.ContentAtWithin(root, "HEAD", "./"+path, limit)
+}
+
 // readPayload reads the hook payload from stdin.
 //
 // An unreadable or empty body yields a zero payload rather than an error. A

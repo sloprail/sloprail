@@ -39,11 +39,13 @@ case "$kind" in
     content="$(field '.event.newContent // ""')"
     ;;
   PostFileCreate | PostFileUpdate)
+    # newContentKnown (declared on the Post kinds, internal/filemod/module.go)
+    # false: the engine could not read the settled file — a link to a FIFO or a
+    # device, or past the read cap. Undecidable: apply (exit 0).
+    [ "$(field '.event.newContentKnown // false')" = "true" ] || exit 0
     # The settled content, off the event rather than the disk: at Stop the
     # engine also asks about each PART of a change no citation rode on, with
     # the event narrowed to that part, and the disk holds only the last state.
-    # An event without it is undecidable: apply (exit 0).
-    [ "$(field '.event | has("newContent")')" = "true" ] || exit 0
     content="$(field '.event.newContent // ""')"
     ;;
   *)

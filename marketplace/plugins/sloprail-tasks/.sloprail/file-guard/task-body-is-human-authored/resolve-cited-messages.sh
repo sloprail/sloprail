@@ -44,6 +44,15 @@ case "$kind" in
     content="$(field '.event.newContent // ""')"
     ;;
   PostFileCreate | PostFileUpdate)
+    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
+    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
+    # events.md): false when it could not read the settled file — a link to a
+    # FIFO or a device, or past the read cap. The body is unseen: the prepare
+    # fails, so the check fails closed (never a skip).
+    if [ "$(field '.event.newContentKnown // false')" != "true" ]; then
+      echo "task-body-is-human-authored: $path could not be read (not a regular file, or too large), so its body could not be judged" >&2
+      exit 1
+    fi
     abs="${SR_WORKSPACE:-.}/$path"
     [ -f "$abs" ] || skip
     content="$(cat "$abs")" || {

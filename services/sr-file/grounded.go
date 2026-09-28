@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/grounding"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -242,8 +243,8 @@ func currentState(abs, resolveDir string) (string, bool, error) {
 		if _, err := os.Stat(grounding.OverlayDeleted(resolveDir, abs)); err == nil {
 			return "", false, nil
 		}
-		if b, err := os.ReadFile(grounding.OverlayEntry(resolveDir, abs)); err == nil {
-			return string(b), true, nil
+		if b, ok := filemod.ReadRegular(grounding.OverlayEntry(resolveDir, abs), filemod.MaxContentReadBytes); ok {
+			return b, true, nil
 		}
 	}
 	fi, err := os.Stat(abs)
@@ -256,11 +257,13 @@ func currentState(abs, resolveDir string) (string, bool, error) {
 	if !fi.Mode().IsRegular() {
 		return "", false, fmt.Errorf("not a regular file")
 	}
-	b, err := os.ReadFile(abs)
-	if err != nil {
-		return "", false, err
+	// The stat above can be raced (a FIFO swapped in) and says nothing of size:
+	// read the one safe way — non-blocking open, fstat on the open file, capped.
+	b, ok := filemod.ReadRegular(abs, filemod.MaxContentReadBytes)
+	if !ok {
+		return "", false, fmt.Errorf("not a regular file, or larger than %d bytes", filemod.MaxContentReadBytes)
 	}
-	return string(b), true, nil
+	return b, true, nil
 }
 
 // recordResolved appends r to the resolve directory's record file and updates

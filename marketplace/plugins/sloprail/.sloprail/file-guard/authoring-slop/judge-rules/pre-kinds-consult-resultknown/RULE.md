@@ -18,8 +18,11 @@ document, so the bytes are not derivable. The engine gates BOTH Pre kinds on
 
 **What a correct script looks like** — dispatch on `.event.kind`, and:
 
-- `PostFileCreate` / `PostFileUpdate`: read `newContent` directly. Settled bytes,
-  no `resultKnown`, always present.
+- `PostFileCreate` / `PostFileUpdate`: settled bytes, no `resultKnown` — but
+  consult `newContentKnown` first. It is false when the engine could not READ the
+  settled file (a link to a FIFO or a device, or past the read cap), and then
+  `newContent` is `""`, not the file. Fail closed there (refuse, or apply the
+  requirement); read `newContent` only when it is true.
 - `PreFileCreate` / `PreFileUpdate`: consult `resultKnown` FIRST. When it is not
   `true`, **defer to the Post kind** — `exit 0` at Pre and let the Stop
   after-check judge what actually landed. Only when `resultKnown` is true may the
@@ -34,5 +37,7 @@ The word is present, so the grep stays silent; the reasoning about *which kinds*
 that branch actually runs on is what catches it.
 
 **Flag** when a `PreFileCreate` (or a Pre branch that includes create) reads
-`newContent` without a `resultKnown` guard governing that read. Do NOT flag a
-Post branch reading `newContent` — that is correct.
+`newContent` without a `resultKnown` guard governing that read, and when a Post
+branch reads `newContent` with no `newContentKnown` guard governing that read (or
+treats `newContentKnown` false as an empty or passing file). Do NOT flag a Post
+branch that consults `newContentKnown` before reading `newContent`.

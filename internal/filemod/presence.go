@@ -255,6 +255,20 @@ func isDirectory(full string) bool {
 	return err == nil && info.IsDir()
 }
 
+// readSize is how many bytes contentOnDisk would read at a path: the size of a
+// regular file, following a link as the read does. It answers a BUDGET question
+// (expandRemovedDirectories bounds what one removal reads), never a presence
+// one — anything that is not a regular file, or cannot be stat'ed, is 0 here
+// and is classified by lookAt like any other target. It lives in this file
+// because this is the one file that stats.
+func readSize(full string) int64 {
+	info, err := os.Stat(full)
+	if err != nil || !info.Mode().IsRegular() {
+		return 0
+	}
+	return info.Size()
+}
+
 // isRegular reports whether the object AT a path is one this module's kinds are
 // about, judging the link itself and never what it points at.
 //

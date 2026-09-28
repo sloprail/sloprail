@@ -671,6 +671,11 @@ func uncitedEvent(e event.Event, u UncitedChange) event.Event {
 		}
 	}
 	fields[grounding.FieldCitations] = grounding.ToWire(nil)
+	if _, declared := part.Fields[filemod.FieldNewContentKnown]; declared {
+		fields[filemod.FieldNewContentKnown] = u.ToKnown
+	} else {
+		delete(fields, filemod.FieldNewContentKnown)
+	}
 	return event.Event{Kind: kind, Fields: fields}
 }
 

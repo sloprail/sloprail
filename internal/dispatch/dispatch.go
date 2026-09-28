@@ -167,6 +167,8 @@ type UncitedChange struct {
 	From       string
 	ToExists   bool
 	To         string
+	// ToKnown is false when To could not be read (the settled file, unreadable).
+	ToKnown bool
 
 	// BetweenTurns: the change landed after the agent's last Stop, while work
 	// it had started (By) may still have been running.

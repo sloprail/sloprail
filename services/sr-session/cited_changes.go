@@ -465,6 +465,9 @@ func endCycle(store sessionstate.Store, events []event.Event, selects citedPath,
 		path, _ := e.Fields[filemod.FieldPath].(string)
 		newContent, _ := e.Fields[filemod.FieldNewContent].(string)
 		exists := e.Kind != filemod.KindPostDelete
+		if known, declared := e.Fields[filemod.FieldNewContentKnown].(bool); declared && !known {
+			continue // unread: the next cycle compares with what it reads then
+		}
 		if selects != nil && !selects(path, exists, newContent) {
 			continue
 		}
@@ -744,6 +747,12 @@ func attachHistories(store sessionstate.Store, events []event.Event, others map[
 		h := &dispatchcore.FileHistory{
 			Baseline: state(e.Kind != filemod.KindPostCreate, oldContent),
 			Current:  state(e.Kind != filemod.KindPostDelete, newContent),
+		}
+		if known, declared := e.Fields[filemod.FieldNewContentKnown].(bool); declared && !known {
+			// The engine could not read the settled file: its state matches
+			// no point, so the stretch to it is charged, and its content is
+			// unknown to the rule asked about it.
+			h.Current = dispatchcore.HistoryState{Exists: true, Hash: "unreadable"}
 		}
 		for _, p := range pts {
 			dp := dispatchcore.HistoryPoint{
