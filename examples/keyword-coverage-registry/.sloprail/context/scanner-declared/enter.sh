@@ -54,6 +54,14 @@ old=""
 case "$kind" in
   PostFileCreate|PostFileUpdate)
     phase="post"
+    # Settled bytes the engine could not READ (newContentKnown false: a link to
+    # a FIFO or a device, or past the read cap) declare nothing this context can
+    # log. Enter without touching the registry: what is owed stays owed.
+    known="$(printf '%s' "$input" | jq -r 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')"
+    if [ "$known" != "true" ]; then
+      jq -n --arg path "$scanner_path" '{scanner: $path, error: "the settled scanner file could not be read"}'
+      exit 0
+    fi
     content="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
   PreFileCreate|PreFileUpdate)

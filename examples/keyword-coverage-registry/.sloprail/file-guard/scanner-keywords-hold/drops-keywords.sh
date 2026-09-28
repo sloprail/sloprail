@@ -60,6 +60,9 @@ case "$kind" in
     new="$(field '.event.newContent // ""')"
     ;;
   PostFileCreate | PostFileUpdate)
+    # Settled bytes the engine could not read (newContentKnown false):
+    # undecidable, apply.
+    [ "$(field 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')" = "true" ] || exit 0
     old="$(field '.event.oldContent // ""')"
     new="$(field '.event.newContent // ""')"
     ;;

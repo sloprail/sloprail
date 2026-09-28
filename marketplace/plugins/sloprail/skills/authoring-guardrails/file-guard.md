@@ -234,16 +234,18 @@ case "$kind" in
     [ "$known" = "true" ] || exit 0            # defer to the after-check
     body="$(printf '%s' "$event" | jq -r '.event.newContent // ""')" ;;
   PostFileCreate|PostFileUpdate)
-    abs="${SR_WORKSPACE:-.}/$path"             # settled: read disk
-    [ -f "$abs" ] || exit 0
-    body="$(cat "$abs")" ;;
+    known="$(printf '%s' "$event" | jq -r '.event.newContentKnown // false')"
+    [ "$known" = "true" ] || { echo "could not read $path" >&2; exit 1; }  # fail closed
+    body="$(printf '%s' "$event" | jq -r '.event.newContent // ""')" ;;
 esac
 ```
 
-The `Post` kinds carry `newContent` too, but reading disk keeps that branch
-identical whatever a Post event happens to carry, and the bytes on disk **are**
-what the cycle produced. `SR_WORKSPACE` is set on the check's environment by the
-engine ([environment.md](environment.md)).
+The `Post` kinds carry the settled bytes in `newContent`, read by the engine the
+one safe way (a regular file, capped). When it could not read them —
+`newContentKnown` false: a link to a FIFO or a device, or a file past the cap —
+`newContent` is `""`, and a rule that treats that as an empty file has seen
+nothing. Reading the file from disk yourself (`cat "$SR_WORKSPACE/$path"`) is
+the same bytes when it works, and blocks the hook on a FIFO when it does not.
 
 ## Markers
 

@@ -67,7 +67,11 @@ case "$kind" in
     # file is judged again at Stop and recorded then.
     [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
     ;;
-  PostFileCreate | PostFileUpdate) ;;
+  PostFileCreate | PostFileUpdate)
+    # Settled bytes the engine could not read (newContentKnown false): what
+    # the scanner now declares is unknown, so no narrowing is recorded.
+    [ "$(field 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')" = "true" ] || exit 0
+    ;;
   *) exit 0 ;;
 esac
 

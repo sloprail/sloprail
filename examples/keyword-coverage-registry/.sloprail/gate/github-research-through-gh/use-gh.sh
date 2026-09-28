@@ -55,18 +55,25 @@ verdict="$(printf '%s' "$payload" | jq -c '
   def mentions_github: pdecode | ascii_downcase | test("github(usercontent)?\\.com");
   def fetchers: ["curl","wget","http","https","xh","xhs"];
   # Whether a GitHub host named on the line can FEED a fetch the arguments do not
-  # show: put into a shell variable (`U=https://api.github.com; curl $U/…`), a
-  # substitution (`curl "$(printf https://api.github.com)/…"`), or an EARLIER
-  # stage of the pipeline the fetch is in (`echo URL | xargs curl`). A mention
-  # after the fetch in its pipeline (`curl … | grep github.com`) or in another
-  # command of the line (`curl …; git commit -m "…github.com…"`) feeds nothing.
+  # show. Only through the pipeline of the fetch — its stage and the stages before
+  # it (stdin): a variable assigned a GitHub host and EXPANDED there
+  # (`U=https://api.github.com; curl $U/…`, `"https://${H}/…"`), a substitution
+  # there naming one (`curl "$(printf https://api.github.com)/…"`), or an
+  # earlier stage mentioning one (`echo URL | xargs curl`). A variable only
+  # assigned and echoed elsewhere (`REPO=https://github.com/o/r; echo $REPO;
+  # curl https://example.com/`), a mention after the fetch (`curl … | grep
+  # github.com`), or one in another command (`curl …; git commit -m "…github…"`)
+  # feeds nothing.
   def feeds_a_fetch:
     . as $raw
-    | ($raw | test("(?i)((^|[\\s;&|(])[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|]*github(usercontent)?\\.com|\\$[({][^)}]*github(usercontent)?\\.com)"))
-      or ([$raw | splits("\\n|;|&&|\\|\\|")] | any(.[];
-            [splits("\\|")] as $st
-            | ([range(0; $st | length) | select($st[.] | test("(^|[\\s/])(curl|wget|http|https|xh|xhs)(\\s|$)"))][0]) as $i
-            | $i != null and ([$st[0:$i][] | mentions_github] | any)));
+    | [$raw | match("(?:^|[\\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=[^\\s;&|]*github(?:usercontent)?\\.com"; "gi") | .captures[0].string] as $vars
+    | [$raw | splits("\\n|;|&&|\\|\\|")] | any(.[];
+        [splits("\\|")] as $st
+        | ([range(0; $st | length) | select($st[.] | test("(^|[\\s/])(curl|wget|http|https|xh|xhs)(\\s|$)"))][0]) as $i
+        | $i != null and (
+            ([$st[0:$i][] | mentions_github] | any)
+            or ($st[$i] | test("(?i)\\$[({][^)}]*github(usercontent)?\\.com"))
+            or ([$st[0:$i + 1][] as $stage | $vars[] as $v | $stage | test("\\$\\{?" + $v + "([^A-Za-z0-9_]|$)")] | any)));
 
   .event as $e
   | if $e.kind == "PreToolUse" and $e.tool == "WebSearch" then {refuse: "websearch"}

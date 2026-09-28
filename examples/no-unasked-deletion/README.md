@@ -37,7 +37,9 @@ file past a recursive removal's read budget, larger than a delete read, or not a
 regular file — still needs the citation, and **always** goes to the judge: an
 empty `oldContent` there is "not read", not "nothing removed". The prepare used
 to read it as nothing removed and skip the judge, so any resolvable quote of the
-user's admitted `rm -rf` of a memory the engine had not read.
+user's admitted `rm -rf` of a memory the engine had not read. The same on a Post
+create or update whose settled bytes the engine could not read
+(`newContentKnown: false`): the citation applies and the judge is asked.
 
 ## "Asked" is a cited quote, not a keyword grep
 

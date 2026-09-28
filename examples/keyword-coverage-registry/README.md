@@ -150,8 +150,11 @@ in one `gh search`:
   take their URLs from a file; and a GitHub host that can **feed** the fetch
   without being one of its arguments — put into a variable
   (`U=https://api.github.com; curl $U/search/issues` parses as
-  `curl /search/issues`), a `$(…)`/`${…}`, or an earlier stage of the fetch's
-  pipeline (`echo URL | xargs curl`). A mention that cannot feed it is left
+  `curl /search/issues`) **and expanded in the fetch's pipeline**, a
+  `$(…)`/`${…}` there, or an earlier stage of that pipeline (`echo URL | xargs
+  curl`). A variable only assigned and used elsewhere
+  (`REPO=https://github.com/o/r; echo $REPO; curl https://example.com/`) feeds
+  nothing. A mention that cannot feed it is left
   alone: after the fetch in its pipeline (`curl … | grep github.com`) or in
   another command of the line (`curl …; git commit -m "…github.com/…"`). A
   literal address in GitHub's published web/API ranges (140.82.112.0/20,
@@ -171,10 +174,15 @@ in one `gh search`:
   --clobber` redefines it), `gh extension exec <name>`, and a gh the line names
   that the parse does not account for (`eval "gh search …"`,
   `python3 -c "os.system('gh search …')"`). A mention the parse DOES account for
-  runs freely: an argument of a program that runs no code — `git commit -m
-  "fix gh auth"`, `which gh`, `grep -c gh`, `gh pr create --title "Update gh
-  workflow"`, and a heredoc or here-string that feeds no code
-  (`cat > NOTES.md <<EOF`, `git commit -F - <<EOF`). All other gh work — `gh pr create`, `gh repo clone`, `gh pr
+  runs freely — but only when **nothing in the whole command runs code**: an
+  argument of a program (`git commit -m "fix gh auth"`, `which gh`, `grep -c gh`,
+  `gh pr create --title "Update gh workflow"`), or a heredoc or here-string that
+  feeds no code (`cat > NOTES.md <<EOF`, `git commit -F - <<EOF`). Once anything
+  in the command runs code, text can become a command — `echo "gh search …" |
+  bash`, `printf … | sh`, `… | xargs sh -c '{}'`, a heredoc written to `s.sh`
+  and run with `bash s.sh` or `./s.sh` — so every mention not parsed as a gh
+  invocation counts as a hidden search. A `$(gh …)` inside an unquoted heredoc
+  is counted once, as the invocation it is. All other gh work — `gh pr create`, `gh repo clone`, `gh pr
   checks`, `gh run list`, `gh issue -R o/r view 1` — runs with or without a
   scanner. Both earlier
   versions were wrong one way: a list of search spellings was measured short
@@ -274,12 +282,15 @@ reaches the check and records nothing.
   `event.invocations`. The search gate counts a gh it can SEE named on the line
   but not accounted for by the parse — inside code (`eval`, `python3 -c`, an
   unparsed `sh -c`, a heredoc or here-string fed to `bash`, `python3 -`, or
-  piped on to `sh`). A heredoc or here-string that feeds no code is data and
-  runs (`cat > NOTES.md <<EOF … gh search … EOF`, `git commit -F - <<EOF`). A gh
-  whose name is itself hidden (`G=g; ${G}h search …`, `eval "g""h search …"`,
-  base64) is not caught; the consumer of a heredoc is read from the words of
-  its own line, so `sudo -u x sh <<EOF` is caught but a code-runner reached
-  another way (a script that reads stdin) is not.
+  piped on to `sh`, text piped into a shell, a script run by its path). A
+  heredoc or here-string that feeds no code, on a command that runs none, is
+  data and runs (`cat > NOTES.md <<EOF … gh search … EOF`, `git commit -F -
+  <<EOF`). The cost of "anything runs code": a command that both runs a script
+  and merely mentions gh (`bash build.sh && git commit -m "fix gh"`), or an awk
+  program naming gh (`awk '$1=="gh"'` — awk runs code), is refused until a
+  scanner exists. A gh whose name is itself hidden (`G=g; ${G}h search …`,
+  `eval "g""h search …"`, base64) is not caught, nor is a program that runs
+  code but is not in the list (a compiled binary reading stdin as commands).
 - **Fetches this rule cannot see**: a GitHub host named only in an earlier
   command (`export API=https://api.github.com`, then `curl $API/…`), a host
   spliced from pieces (`H=git; curl https://${H}hub.com/…`), a URL a script or
@@ -317,7 +328,9 @@ reaches the check and records nothing.
   followed, `git rm -r`, a declaration whose stamp cannot be recorded not
   entering, and every list shape the parser reads; the last check recording
   only on the user's citation, and a cited drop narrowing what is owed
-  (T038_42–43).
+  (T038_42–43). Every scanner script reads a Post kind's `newContent` only when
+  `newContentKnown` is true, and treats an unread settled file as undecidable
+  (the registry keeps what is owed; the citation applies).
 - eval: `eval/security-scan/` — a real Haiku run with its full toolset
   (WebSearch and WebFetch included) and a skill teaching the convention, scored
   on trajectory health, with deterministic failures for a declared scanner

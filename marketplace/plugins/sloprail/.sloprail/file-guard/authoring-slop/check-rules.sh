@@ -93,6 +93,19 @@ esac
 #
 # All fields read FLAT under `.event`, the new CheckPayload shape — not
 # `.event.fields.*`.
+kind="$(printf '%s' "$event" | jq -r '.event.kind // empty' 2>/dev/null)"
+if [ "$kind" = "PreFileCreate" ] || [ "$kind" = "PreFileUpdate" ]; then
+  # Not derivable ahead of the write: defer to the Post kind (judged at Stop).
+  [ "$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)" = "true" ] || exit 0
+fi
+if [ "$kind" = "PostFileCreate" ] || [ "$kind" = "PostFileUpdate" ]; then
+  # The engine could not read the settled bytes (newContentKnown false): a
+  # script this check cannot see is refused, not permitted unread.
+  if [ "$(printf '%s' "$event" | jq -r 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end' 2>/dev/null)" != "true" ]; then
+    echo "authoring-slop: the engine could not read the settled $path (newContentKnown false: not a regular file, or too large), so it could not be checked. Make it an ordinary script file." >&2
+    exit 1
+  fi
+fi
 body="$(printf '%s' "$event" | jq -r '.event.newContent // empty' 2>/dev/null)"
 if [ -z "$body" ]; then
   abs="${SR_WORKSPACE:-.}/$path"
@@ -169,6 +182,26 @@ if printf '%s' "$body" | grep -q 'newContent' 2>/dev/null &&
     Post kind."
 fi
 
+# --- Rule 2b: Post kinds read without newContentKnown ------------------------
+#
+# The Post kinds' newContent is the settled file — but only when the engine
+# could READ it: a link to a FIFO or a device, or a file past the read cap, is
+# reported with newContent "" and newContentKnown false. A script that handles
+# a Post create/update and reads newContent without naming newContentKnown
+# reads "not read" as "the file is empty". Same floor as rule 2: the word named
+# nowhere. (A script that reads the settled file from DISK instead is the
+# judge's to reason about; this floor is about the field.)
+if printf '%s' "$body" | grep -q 'newContent' 2>/dev/null &&
+   printf '%s' "$body" | grep -qE 'PostFile(Create|Update|Write)|Post[*]' 2>/dev/null &&
+   ! printf '%s' "$body" | grep -q 'newContentKnown' 2>/dev/null; then
+  note "rules/content-may-be-unresolvable — handles a Post kind and reads .event.newContent without .newContentKnown.
+    On PostFileCreate/PostFileUpdate the settled bytes are in newContent only when
+    the engine could read them; a link to a FIFO or a device, or a file past the
+    read cap, arrives as newContent \"\" with newContentKnown false. Check
+    newContentKnown on the Post kinds and decide what the rule does when the bytes
+    were not read — usually: fail closed (refuse, or apply the requirement)."
+fi
+
 # --- Rule 6: content interpolated into a prompt without a DATA clause -------
 #
 # Only when the script actually runs a model. A script that does not is not
@@ -217,7 +250,10 @@ prompt_files=""
 if [ -n "${path:-}" ]; then
   _dir="${SR_WORKSPACE:-.}/$(dirname "$path")"
   if [ -d "$_dir" ]; then
-    prompt_files="$(cat "$_dir"/*.md 2>/dev/null)"
+    # A judge's prompt is a RUBRIC.md or a `.md.j2` template — both are
+    # searched, or a well-factored judge keeping its DATA clause in its
+    # template is refused for lacking it.
+    prompt_files="$(cat "$_dir"/*.md "$_dir"/*.md.j2 2>/dev/null)"
   fi
 fi
 

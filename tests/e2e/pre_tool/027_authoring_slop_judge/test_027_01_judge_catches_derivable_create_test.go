@@ -39,12 +39,18 @@ exit 0
 
 // correctDispatchHook is the pattern the corrected example scripts use: it
 // consults resultKnown on BOTH Pre kinds and reads newContent only on the
-// Post/derivable path, deferring to Post when the result is not known.
+// Post/derivable path, deferring to Post when the result is not known — and on
+// the Post kinds it consults newContentKnown, refusing a settled file the
+// engine could not read rather than reading "" as an empty file.
 const correctDispatchHook = `#!/bin/sh
 input="$(cat)"
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
+    if [ "$(printf '%s' "$input" | jq -r '.event.newContentKnown // false')" != "true" ]; then
+      echo '{"reason":"the settled file could not be read"}'
+      exit 1
+    fi
     new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
   PreFileCreate|PreFileUpdate)

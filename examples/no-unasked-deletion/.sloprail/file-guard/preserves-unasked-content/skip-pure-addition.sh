@@ -33,6 +33,9 @@ case "$kind" in
     new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
   PostFileCreate|PostFileUpdate)
+    # Settled bytes the engine could not read (newContentKnown false): what
+    # the change removed is unknown — ask the judge, never skip it.
+    [ "$(printf '%s' "$input" | jq -r 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')" = "true" ] || empty
     new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
   PreFileDelete|PostFileDelete)

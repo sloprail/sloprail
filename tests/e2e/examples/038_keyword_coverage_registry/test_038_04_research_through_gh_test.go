@@ -186,6 +186,16 @@ func TestT038_16_SearchWithoutScannerRefused(t *testing.T) {
 		"python3 - <<'EOF'\nimport os; os.system('gh search issues token')\nEOF",
 		"cat <<'EOF' | sh\ngh search issues token\nEOF",
 		`bash <<< "gh search issues token"`,
+		// Text piped into a shell, or a script written and run in the same
+		// command: once anything runs code, no mention is data.
+		`echo "gh search issues token" | bash`,
+		`printf 'gh search issues token\n' | sh`,
+		`echo "gh search issues token" | xargs -I{} sh -c '{}'`,
+		"cat <<'EOF' > s.sh\ngh search issues token\nEOF\nbash s.sh",
+		"cat > s.sh <<'EOF' && bash s.sh\ngh search issues token\nEOF",
+		"cat > s.sh <<'EOF'\ngh search issues token\nEOF\nchmod +x s.sh && ./s.sh",
+		// A $(gh …) inside an unquoted heredoc is one invocation, not also data.
+		"cat >/dev/null <<EOF\n$(gh issue view 1 -R cli/cli)\nEOF\neval \"gh search issues token\"",
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
@@ -395,6 +405,8 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 		`curl -s https://pypi.org/pypi/requests/json | grep github.com`,
 		`curl -s https://example.com/health; git commit --allow-empty -m "fixes https://github.com/o/r/issues/1"`,
 		`curl -s https://8.8.8.8/`,
+		// A variable holding a GitHub URL that the fetch never expands.
+		`REPO=https://github.com/cli/cli; echo $REPO; curl -s https://example.com/`,
 	} {
 		t.Run(command, func(t *testing.T) {
 			e, proj := researchProject(t)
