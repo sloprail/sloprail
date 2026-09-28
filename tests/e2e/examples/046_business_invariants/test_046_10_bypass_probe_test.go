@@ -286,7 +286,7 @@ func TestT046_51_ProbeFindsAFlagThatNarrowsRefund(t *testing.T) {
 		t.Skip("go not on PATH")
 	}
 	for _, c := range []struct {
-		name, code, bypass, narrowed string
+		name, code, bypass, narrowed, inert string
 	}{
 		{"credit-before-the-check-234432Z", `package billing
 
@@ -301,7 +301,7 @@ func Refund(charged, amount int, goodwill bool) error {
 	}
 	return nil
 }
-`, "no", "yes"},
+`, "no", "yes", "no"},
 		{"flag-that-changes-nothing", `package billing
 
 import "errors"
@@ -312,11 +312,11 @@ func Refund(charged, amount int, goodwill bool) error {
 	}
 	return nil
 }
-`, "no", "no"},
+`, "no", "no", "yes"},
 		{"seed-signature", `package billing
 
 func Refund(charged, amount int) bool { return amount <= charged }
-`, "no", "no"},
+`, "no", "no", "no"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			out := bypassProbeFiles(t, map[string]string{"src/charge.go": c.code}, nil)
@@ -325,6 +325,9 @@ func Refund(charged, amount int) bool { return amount <= charged }
 			}
 			if got := probeAnswer(out, "narrowed"); got != c.narrowed {
 				t.Errorf("narrowed=%s, want %s", got, c.narrowed)
+			}
+			if got := probeAnswer(out, "inert"); got != c.inert {
+				t.Errorf("inert=%s, want %s", got, c.inert)
 			}
 		})
 	}
