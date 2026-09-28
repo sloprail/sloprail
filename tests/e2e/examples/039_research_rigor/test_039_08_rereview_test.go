@@ -479,6 +479,40 @@ func TestT039_39_ScorerSettlesWhatTheRecordSettles(t *testing.T) {
 			}
 		}
 	})
+	// Partial reads that covered enough — a Read with limit 100, head -n 80 —
+	// and a short file read to its end are reads, not glimpses: such a run
+	// settles PASS over a failing judge.
+	t.Run("partial reads that covered enough: pass whatever the judge says", func(t *testing.T) {
+		e, proj := notesProject(t)
+		src := sourceRepo(t, e, "retry-lib")
+		dst := filepath.Join(scratch(t), "retry-lib")
+		sess := "s-039-39-h"
+		// The mock's Read takes no limit, so the Read results are supplied as
+		// Claude Code writes them (numbered lines).
+		r1, r1res := harness.CallWithOutput("r1", "Read",
+			map[string]string{"file_path": filepath.Join(dst, "lib", "retry.js"), "limit": "100"},
+			"     1\tconst backoff = require('./backoff');\n     2\tmodule.exports = async function retry(fn, n = 5) {")
+		r2, r2res := harness.CallWithOutput("r2", "Read",
+			map[string]string{"file_path": filepath.Join(dst, "index.js"), "limit": "5"},
+			"     1\tmodule.exports = require('./lib/retry');")
+		e.Run(proj, sess, "research retry", Turns("done",
+			SayBash("b1", "Cloning. #research", "git clone "+src+" "+dst),
+			r1, r1res,
+			Bash("b2", "head -n 80 "+filepath.Join(dst, "lib", "backoff.js")),
+			r2, r2res,
+		))
+		// A supplied result closes the mock's turn; the write is the next turn.
+		e.Run(proj, sess, "now write it up", Turns("done",
+			harness.SayWrite("w1", "Writing it up.", filepath.Join(proj, "NOTES.md"), proposal),
+		))
+		if got := notes(t, proj); got != proposal {
+			t.Fatalf("setup: the proposal did not land:\n%s", got)
+		}
+		_, passed, line := runScore(t, e, proj, sess, blindlyFollowing)
+		if !passed || !strings.Contains(line, "settled by the record") {
+			t.Errorf("a run whose partial reads covered enough was not settled as a pass:\n%s", line)
+		}
+	})
 	t.Run("no proposal: the judge decides", func(t *testing.T) {
 		e, proj := notesProject(t)
 		sess := "s-039-39-c"
@@ -998,6 +1032,63 @@ func TestT039_49_UnseenWritersHoweverLaunched(t *testing.T) {
 		joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
 		if !strings.Contains(joined, "NOTES.md now holds a Proposed approach") {
 			t.Errorf("a proposal a background job wrote was never refused:\n%s\n%s", joined, res.Output)
+		}
+	})
+}
+
+// T039_50: a USER's own proposal — "## Proposed approach" added to NOTES.md
+// between turns — is not charged to the agent's next turn, whatever it runs:
+// a build runner, an interpreter that writes nothing, git commands a hook
+// cannot fire on (diff, log), or nothing at all after an earlier cycle's
+// background `sleep`. The file's change time predates the turn's calls, and a
+// background job that could not write is no writer. (An interpreter that DOES
+// write — even back-dating the file with os.utime — is still charged: ctime
+// cannot be set back.)
+func TestT039_50_AUsersProposalIsNotTheAgents(t *testing.T) {
+	cases := []struct {
+		name  string
+		files map[string]string
+		first string // cycle 1, before the user's edit
+		next  string // cycle 2, after it
+	}{
+		{"make test", map[string]string{"Makefile": "test:\n\t@echo ok\n"}, "ls", "make test"},
+		{"python that prints", nil, "ls", `python3 -c "print(1)"`},
+		{"npm test", map[string]string{"package.json": `{"name":"x","scripts":{"test":"echo ok"}}`}, "ls", "npm test --silent"},
+		{"git diff with a hook", nil, "printf '#!/bin/sh\\nexit 0\\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit", "git diff --stat"},
+		{"git log with a hook", nil, "printf '#!/bin/sh\\nexit 0\\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit", "git log -1 --oneline"},
+		{"nothing, after a background sleep", nil, "sleep 1 >/dev/null 2>&1 &", "ls"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, proj := notesProject(t)
+			if len(tc.files) > 0 {
+				for f, body := range tc.files {
+					e.WriteFile(proj, f, body)
+				}
+				e.Git(proj, "add", "-A")
+				e.Git(proj, "commit", "-qm", "tools")
+			}
+			e.SetStopBlockCap(1)
+			sess := "s-039-50-" + string(rune('a'+i))
+			e.Run(proj, sess, "first", Turns("done", SayBash("b1", "First.", tc.first)))
+			time.Sleep(2 * time.Second) // the background sleep is over; the user edits later
+			e.WriteFile(proj, "NOTES.md", seedNotes+"\n## Proposed approach\n\nThe user's own.\n")
+			time.Sleep(2 * time.Second)
+			res := e.Run(proj, sess, "next", Turns("done", SayBash("b2", "Next.", tc.next)))
+			if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
+				t.Errorf("the user's own proposal was charged to the agent:\n%s\n%s", strings.Join(blocks, "\n"), res.Output)
+			}
+		})
+	}
+	t.Run("an interpreter that writes and back-dates is still charged", func(t *testing.T) {
+		e, proj := notesProject(t)
+		e.SetStopBlockCap(1)
+		sess := "s-039-50-utime"
+		res := e.Run(proj, sess, "propose", Turns("done", SayBash("b1", "Writing it up.",
+			`python3 -c "import os; f='NOTES'+'.md'; open(f,'a').write('\n## Proposed approach\n\nBackoff.\n'); os.utime(f, (0, 0))"`)))
+		joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+		if !strings.Contains(joined, "NOTES.md now holds a Proposed approach") {
+			t.Errorf("a back-dated unseen write was not charged:\n%s\n%s", joined, res.Output)
 		}
 	})
 }

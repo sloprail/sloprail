@@ -389,10 +389,10 @@ func (s Scenario) script() string {
 		marker := fmt.Sprintf("slop-turn-%d-%s", i, turnID(t.jsonl))
 		line := injectMarker(t.jsonl, marker)
 		fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
-  printf '%%s\n' %s
+  %s
   exit 0
 fi
-`, marker, shQuote(line))
+`, marker, emitStamped(line))
 	}
 	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(result(s.result)))
 	return b.String()
@@ -464,6 +464,19 @@ func injectMarker(jsonl, marker string) string {
 		return jsonl
 	}
 	return jsonl[:j] + jsonl[j:j+end] + "-" + marker + jsonl[j+end:]
+}
+
+// emitStamped is the shell that prints one scenario record, stamped with the
+// time it is EMITTED — the moment the mock plays that turn, as real Claude Code
+// stamps every record it writes. A check asking what happened during a cycle
+// (research-rigor dates a file's change against the cycle's first record)
+// needs those times; a stamp taken when the script was generated would predate
+// the session. A record that already carries a timestamp is printed as is.
+func emitStamped(line string) string {
+	if !strings.HasPrefix(line, "{") || strings.Contains(line, `"timestamp"`) {
+		return "printf '%s\\n' " + shQuote(line)
+	}
+	return `printf '{"timestamp":"%s",%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" ` + shQuote(line[1:])
 }
 
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

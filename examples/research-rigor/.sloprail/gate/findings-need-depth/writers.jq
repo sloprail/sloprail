@@ -67,7 +67,16 @@ def unnamed_writer($githooks):
       ($a | length) == 1 or ($a[1:] | any(. == ""))
     elif ($b | IN("patch", "dd")) then true
     elif $b == "git" then
-      $githooks or (($args | map(select(startswith("-") | not)) | .[0]) == "apply")
+      # The subcommand, past git's own options (-C dir, -c k=v, …).
+      ([ range(0; $args | length) as $i | $args[$i] as $t
+         | select(($t | startswith("-") | not)
+                  and ((if $i > 0 then $args[$i - 1] else "" end) | IN("-C", "-c", "--git-dir", "--work-tree") | not))
+         | $t ] | .[0] // "") as $sub
+      | $sub == "apply"
+        # An executable hook runs only on the subcommands that fire hooks —
+        # never on diff, log, status or show.
+        or ($githooks and ($sub | IN("commit", "merge", "pull", "rebase", "checkout", "switch", "am",
+                                     "cherry-pick", "revert", "push", "clone", "worktree")))
     elif runner($a) then true
     else
       # A program run by path that is not a system tool: ./gen, tools/gen.
@@ -86,3 +95,8 @@ def starts_background:
   any(.message.content[]?; .type == "tool_use"
       and (.input.run_in_background == true
            or ((.input.command // "") | test("(^|[^&|>])&[ \t]*($|;|\\)|\\n)|\\b(nohup|setsid|disown)\\b"))));
+
+# A background start that could itself write the file: it names the path, or
+# it runs something that writes unseen. `sleep 1 &` could not.
+def starts_background_writer($p; $githooks):
+  starts_background and (names_write($p) or runs_unnamed_writer($githooks));

@@ -92,10 +92,14 @@ Depth is **reading what you cloned**:
    deliberately: what a read showed cannot be told apart per file from one
    line's combined output (`head -n 5 a b` shows all of a one-line `b`), and
    a size threshold both over-refuses and is gamed (`sed -n 1p`, `grep -m1`).
-   The depth gate reports the credited files every read of which showed only
-   part (`head -n/-c`, `sed -n`, `grep -m`, a Read with a limit), and the
-   eval never settles a PASS over one: its judge is told to check that the
-   credited reads showed source. Paths are counted by the file they really
+   The depth gate reports the credited files every read of which was a
+   GLIMPSE — under about 50 lines: `head -c 1`, `head -n 3`, `sed -n 1p`,
+   `sed -n '1,20p'`, `grep -m1`, a Read with `limit` under 50 — and the eval
+   never settles a PASS over one: its judge is told to check that the credited
+   reads showed source. A partial read that covered enough is a read: a Read
+   with `limit` 50 or more, or one whose numbered lines run to the file's end
+   (a short file read whole); `head/tail -n` 50 or more or `-c` 2000 or more,
+   `tail -n +N`; `sed -n 'a,bp'` over 50 lines or more; `grep -m` 50 or more. Paths are counted by the file they really
    are:
    symlinks resolved and hard links collapsed, so `lib2 -> lib` is not a
    second directory and a symlink out of the clone is not a read inside it.
@@ -225,12 +229,21 @@ unseen owe it (`gate/findings-need-depth/writers.jq`: an interpreter or shell
 with code, a script, or a program read from stdin — `python3 <<EOF`, `cat w.py
 | python3`, `sh < w.sh`, `xargs sh`; a shell with an unreadable `-c`
 payload; `eval` of a word the engine cannot read; a build or task runner —
-make, just, npm/yarn/pnpm/bun run, cargo/go run, …; patch/dd/git apply; any
-git command while the repository has an executable hook). With none of those,
+make, just, npm/yarn/pnpm/bun run, cargo/go run, …; patch/dd/git apply; a
+hook-firing git command — commit, merge, pull, rebase, checkout, switch, am,
+cherry-pick, revert, push, clone, worktree — while the repository has an
+executable hook; never diff, log, status or show). With none of those,
 something the agent started in an EARLIER cycle and left running (`… &`,
-nohup, setsid, disown, `run_in_background`) owes it. With none of those
-either, nobody does — a user's own edit between turns, or git bringing in
-committed content (merge, pull, checkout, stash pop, …) with no hook, is not
+nohup, setsid, disown, `run_in_background`) owes it — if that job could itself
+write (`sleep 1 &` could not). A call that writes UNSEEN is charged only if
+the file's change time (ctime, which no one can set back — `touch -d` and
+`os.utime` reset it to now) is at or after the time the call could have run:
+this cycle's start, or the background job's own start. So a user's own edit
+between turns is not charged, whatever the next turn runs (`make test`,
+`python3 -c "print(1)"`, `git diff`); a user edit made while one of the
+agent's background writers is still running IS charged — the two cannot be
+told apart. With no writer at all, nobody is charged — git bringing in
+committed content (merge, pull, checkout, stash pop, …) with no hook is not
 the agent's proposal. Which calls wrote what is the engine's own reading
 (`trajectory normalize`, which resolves a recorded command's relative paths
 against that record's cwd — a rule's script runs in the rule's own folder). A Stop sees every file

@@ -117,10 +117,19 @@ paths="$(printf '%s' "$facts" | jq -r '[ .[].reads[], .[].clones[].dest ] | uniq
 done | jq -R -s -c 'split("\n") | map(select(. != "") | split("\t") | {key: .[0], value: {real: .[1], id: .[2]}}) | from_entries')"
 [ -n "$paths" ] || paths="{}"
 
+# A Read with a small limit whose shown lines ran to the file's end showed the
+# whole file (a short file read in one go): it counts as a full read.
+endreads="$(printf '%s' "$facts" | jq -r '.[].partialEnds[]? | "\(.last)\t\(.path)"' | while IFS="$(printf '\t')" read -r last p; do
+  [ -f "$p" ] || continue
+  n="$(wc -l < "$p" 2>/dev/null | tr -d ' ')"
+  [ -n "$n" ] && [ "$n" -le "$last" ] 2>/dev/null && printf '%s\n' "$p"
+done | jq -R -s -c 'split("\n") | map(select(. != ""))')"
+[ -n "$endreads" ] || endreads="[]"
+
 # The verdict over the whole run: which clone directories count, which reads
 # landed inside them, and what the agent read elsewhere (for the refusal).
 verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FILES" \
-  --argjson reflogs "$reflogs" --argjson paths "$paths" --arg since "${since:-}" \
+  --argjson reflogs "$reflogs" --argjson paths "$paths" --arg since "${since:-}" --argjson endreads "$endreads" \
   --arg ws "${SR_WORKSPACE:-}" --arg home "${HOME:-}" '
   include "paths";
   def under($d): . == $d or startswith($d + "/");
@@ -160,7 +169,7 @@ verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FI
   | ([ .[].unresolvedClones ] | add // 0) as $unresolved
   | ([ .[].failedClones[]? ] | unique - $dirs) as $failed
   | ([ .[].reads[] ] | unique) as $reads
-  | ([ .[].fullReads[]? ] | unique) as $fullreads
+  | ([ .[].fullReads[]?, $endreads[] ] | unique) as $fullreads
   | [ $dirs[] | realof ] as $realdirs
   # Source: really under a confirmed clone, below its root (a search of the
   # root takes in the README and docs too), not documentation or metadata —

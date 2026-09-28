@@ -68,10 +68,18 @@ records="$(printf '%s\n' "$root"; printf '%s' "$desc" | jq -r '.subagentPaths[]?
 # (this script's own folder holds no NOTES.md).
 entries_of() { (cd "${SR_WORKSPACE:-.}" && sr-session trajectory normalize --path "$1" --events PreCommandInvoke,PreFileCreate,PreFileUpdate 2>/dev/null); }
 root_entries="$(entries_of "$root")" || open
+# The cycle's start time is the prompt's own timestamp, or — a record written
+# without one — that of the first stamped record after it: either way no
+# earlier than anything this cycle ran.
 since="$(printf '%s' "$root_entries" | jq -r '
-  [ .[] | select(.type == "user" and (.isSidechain | not))
-    | select(.message.content | if type == "string" then true else (map(.type) | index("tool_result") | not) end)
-  ] | last | if . == null then "0\t" else "\(.line)\t\(.timestamp // "")" end' 2>/dev/null)" || open
+  . as $all
+  | [ .[] | select(.type == "user" and (.isSidechain | not))
+      | select(.message.content | if type == "string" then true else (map(.type) | index("tool_result") | not) end)
+    ] | last
+  | if . == null then "0\t"
+    else .line as $l
+      | (.timestamp // ([ $all[] | select(.line > $l) | .timestamp // empty ] | first) // "") as $ts
+      | "\($l)\t\($ts)" end' 2>/dev/null)" || open
 since_line="$(printf '%s' "$since" | cut -f1)"
 since_ts="$(printf '%s' "$since" | cut -f2)"
 
@@ -109,14 +117,16 @@ while IFS= read -r rec; do
              else true end) as $now
       | if $now then
           (if names_write($p) then "named" elif runs_unnamed_writer($gh) then "unnamed" else empty end)
-        elif starts_background then "background"
+        elif starts_background_writer($p; $gh) then "background@\(.timestamp // "")"
         else empty end ]
     | unique | join(" ")' 2>/dev/null)" || open
   case " $kinds " in *" named "*) named="$named$rec
 " ;; esac
   case " $kinds " in *" unnamed "*) unnamed="$unnamed$rec
 " ;; esac
-  case " $kinds " in *" background "*) background="$background$rec
+  # The EARLIEST background writer's start in this record, for the time test.
+  bg_ts="$(printf '%s' "$kinds" | tr ' ' '\n' | sed -n 's/^background@//p' | sort | head -n 1)"
+  case " $kinds " in *" background@"*) background="$background$rec	$bg_ts
 " ;; esac
 done <<EOF
 $records
@@ -127,9 +137,36 @@ EOF
 # and left running (`… &`, nohup, setsid, run_in_background) could have — its
 # trajectory owes it. With none of those either, nothing the agent ran wrote
 # it (a user's edit, git bringing in committed content with no hook).
+# A call that could write UNSEEN is charged only if the file changed at or
+# after the time that call could have run: its status-change time (ctime),
+# which no one can set back (`touch -d` and os.utime move mtime, and change
+# ctime to now). A file that last changed before this cycle began — a user's
+# edit between turns — was not written by this cycle's calls. A background
+# job is measured from its own start in the earlier cycle, so a user edit made
+# while such a job still runs IS charged: the two cannot be told apart.
+# An unknown time on either side fails closed (charged).
+changed_since() { # <iso time>
+  [ -n "$1" ] || return 0
+  start="$(printf '%s' "$1" | jq -Rr 'sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' 2>/dev/null)" || return 0
+  [ -n "$start" ] || return 0
+  if stat --version >/dev/null 2>&1; then ct="$(stat -c %Z -- "$ws/$path_as_given" 2>/dev/null)"
+  else ct="$(stat -f %c -- "$ws/$path_as_given" 2>/dev/null)"; fi
+  [ -n "$ct" ] || return 0
+  [ "$ct" -ge "$start" ]
+}
+path_as_given="$(printf '%s' "$input" | jq -r '.event.path // empty')"
+
 writers="$named"
-[ -n "$writers" ] || writers="$unnamed"
-[ -n "$writers" ] || writers="$background"
+if [ -z "$writers" ] && [ -n "$unnamed" ] && changed_since "$since_ts"; then writers="$unnamed"; fi
+if [ -z "$writers" ] && [ -n "$background" ]; then
+  while IFS="$(printf '\t')" read -r rec ts; do
+    [ -n "$rec" ] || continue
+    changed_since "$ts" && writers="$writers$rec
+"
+  done <<EOF
+$background
+EOF
+fi
 [ -n "$writers" ] || exit 1
 
 # Open when this trajectory is a writer or above one.

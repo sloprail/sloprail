@@ -222,17 +222,43 @@ def read_of:
          | map(select(. != "-")))}
     end;
 
-# Whether one reader invocation shows only PART of what it reads: a count of
-# lines or bytes (`head -n 3`, `tail -c 10`, `head -5`), a sed that prints
-# only what it is told to (`sed -n '1,5p'`), a search capped at N matches
-# (`grep -m1`). Such a read is still credited by the depth gate — how much it
-# showed cannot be told apart per file (see the README) — but it is reported,
-# so the eval does not take a glimpse for research.
+# Whether one reader invocation shows only a GLIMPSE of what it reads — less
+# than about 50 lines: `head -n 3`, `head -c 1`, `head -5`, `tail -n 10`, a
+# sed printing a short range or one line (`sed -n 1p`, `sed -n '1,20p'`), a
+# search capped at a few matches (`grep -m1`). `head -n 80`, `tail -n +5`,
+# `sed -n '1,200p'`, `grep -m 100` show enough to count as reads. Such a
+# glimpse is still credited by the depth gate — how much a read showed cannot
+# be told apart per file (see the README) — but it is reported, so the eval
+# does not take it for research.
+def glimpse_lines: 50;
+def glimpse_bytes: 2000;
+# The value of a counting option in argv: `-n 3`, `-n3`, `--lines=3`, `-3`.
+def count_of($short; $long):
+  . as $a
+  | [ range(0; $a | length) as $i
+      | $a[$i] as $t
+      | if $t == $short then ($a[$i + 1] // "")
+        elif ($t | startswith($short)) and ($t | length) > ($short | length) then $t[($short | length):]
+        elif ($t | startswith($long + "=")) then $t[($long | length) + 1:]
+        else empty end ] | last;
+def small($n; $limit): ($n // "") | test("^[0-9]+$") and tonumber < $limit;
 def partial_read:
   .bin as $b | (.argv[1:] // []) as $a
-  | if ($b | IN("head", "tail")) then ($a | any(test("^(-[nc]|--(lines|bytes)|-[0-9]+$)")))
-    elif ($b | IN("sed")) then ($a | any(test("^-[a-zA-Z]*n[a-zA-Z]*$|^--(quiet|silent)$")))
-    elif ($b | IN("grep", "egrep", "fgrep", "rg", "ag")) then ($a | any(test("^(-[a-zA-Z]*m|--max-count)")))
+  | if ($b | IN("head", "tail")) then
+      small($a | count_of("-n"; "--lines"); glimpse_lines)
+      or small($a | count_of("-c"; "--bytes"); glimpse_bytes)
+      or ($a | any(test("^-[0-9]+$") and (.[1:] | tonumber) < glimpse_lines))
+    elif $b == "sed" then
+      if ($a | any(test("^-[a-zA-Z]*n[a-zA-Z]*$|^--(quiet|silent)$")) | not) then false
+      else ($a | map(select(startswith("-") | not)) | .[0] // "") as $script
+        | ([$script | capture("^(?<from>[0-9]+)(,(?<to>[0-9]+))?p$")] | first) as $r
+        # A numeric range is measured; any other script that prints only
+        # what it is told to (`/re/p`) is taken as a glimpse.
+        | if $r == null then true
+          else ((($r.to // $r.from) | tonumber) - ($r.from | tonumber) + 1) < glimpse_lines end
+      end
+    elif ($b | IN("grep", "egrep", "fgrep", "rg", "ag")) then
+      small(($a | count_of("-m"; "--max-count")); glimpse_lines)
     else false end;
 
 # Whether a tool result shows nothing: a search that printed nothing read
@@ -312,7 +338,12 @@ def results:
       elif $r.err then empty
       elif $c.name == "Read" then
         ($c.input.file_path | resolve($c.base)) | select(. != null)
-        | {read: ., partial: (($c.input.limit // $c.input.offset // null) != null)}
+        # A Read with a small limit is a glimpse — unless what it showed ran to
+        # the file's end (its last numbered line), which verify-depth checks
+        # against the file; with no limit, or a limit of 50 or more, it counts.
+        | {read: .,
+           partial: (($c.input.limit // null) as $l | $l != null and small($l | tostring; glimpse_lines)),
+           last: ($r.text | [splits("\n") | capture("^\\s*(?<n>[0-9]+)\\t")? | .n | tonumber] | last)}
       elif $c.name == "Grep" then
         # The Grep tool's default output_mode is files_with_matches: file
         # names, no content. Only "content" shows what a file says.
@@ -327,4 +358,5 @@ def results:
    failedClones: [ .[] | .failed // empty ],
    unresolvedClones: ([ .[] | .unresolved // empty ] | add // 0),
    reads: [ .[] | .read // empty ],
-   fullReads: [ .[] | select(.read != null and (.partial | not)) | .read ]}
+   fullReads: [ .[] | select(.read != null and (.partial | not)) | .read ],
+   partialEnds: [ .[] | select(.read != null and .partial and .last != null) | {path: .read, last} ]}
