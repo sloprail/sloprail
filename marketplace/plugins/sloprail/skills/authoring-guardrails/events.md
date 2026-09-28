@@ -140,9 +140,17 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
   `value` left in `.argv`.
 - `.cwd` — string, the directory the program runs in as far as the line says,
   threaded through every `cd` ahead of it (a subshell's `cd` stays inside the
-  subshell): `"."` is where the line started, `"sub/dir"` is relative to that,
-  `"/abs"` is absolute, and `""` means a `cd` could not be resolved without
-  running something (`cd "$DIR"`, `cd -`, `pushd`). Where the line started is the
+  subshell), through a wrapper that changes directory (`env -C DIR` /
+  `--chdir`, `sudo -D DIR` / `--chdir` — what it wraps runs in DIR), and through
+  a literal `eval` payload (`eval 'cd /x'` moves what follows; the programs in
+  the payload are reported too): `"."` is where the line started, `"sub/dir"`
+  is relative to that, `"/abs"` is absolute, and `""` means the directory could
+  not be known without running something (`cd "$DIR"`, `cd -`, `pushd`, `env
+  -C "$D"`, or anything after an `eval` whose payload is not literal, such as
+  `eval "$(ssh-agent -s)"`). A file event's path is resolved the same way, with
+  one difference: after an unreadable `eval`, a relative write target is still
+  reported where the line started — such an eval almost never moves the shell,
+  and dropping the target would hide the write from every file rule. Where the line started is the
   harness's working directory for that tool call — in a transcript, the record's
   own `cwd` — so a script joins a relative `.cwd` onto that.
 

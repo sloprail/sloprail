@@ -86,7 +86,7 @@ func TestT039_06_ReadsOfUnclonedDirectoryRefused(t *testing.T) {
 	e, proj := research(t)
 	src := sourceRepo(t, e, "retry-lib")
 	stale := filepath.Join(scratch(t), "backoff")
-	e.Git(filepath.Dir(stale), "clone", src, stale)
+	staleClone(t, src, stale)
 
 	sess := "s-039-06"
 	res := e.Run(proj, sess, "research what is lying around", Turns("done",

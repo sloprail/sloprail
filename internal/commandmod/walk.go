@@ -80,6 +80,15 @@ func walkAt(raw string, depth int) (invs []Invocation) {
 				inv.Cwd = composeCwd(at, inv.Cwd)
 				invs = append(invs, inv)
 			}
+			// A literal eval payload runs these programs in this shell,
+			// exactly as `sh -c` runs its payload in a child: re-parsed at
+			// depth+1 against the same bound. eval itself is reported above.
+			if text, isEval, ok := evalPayloadText(cfg, node); isEval && ok && depth < maxUnwrapDepth {
+				for _, inv := range walkAt(text, depth+1) {
+					inv.Cwd = composeCwd(at, inv.Cwd)
+					invs = append(invs, inv)
+				}
+			}
 		}
 		return true
 	})
@@ -99,7 +108,9 @@ func composeCwd(at cwd, inner string) string {
 		return ""
 	case path.IsAbs(inner):
 		return inner
-	case at.unknown:
+	case at.unknown, at.opaque:
+		// An opaque eval may have moved the shell: a program's directory is
+		// not claimed (see cwd.opaque — file targets resolve on regardless).
 		return ""
 	case at.dir == "":
 		return inner
@@ -108,6 +119,61 @@ func composeCwd(at cwd, inner string) string {
 	default:
 		return path.Clean(path.Join(at.dir, inner))
 	}
+}
+
+// chdirFlags are the wrappers that run their program in another directory, and
+// the flag that names it: the short spelling (also attached, `-C/x`) and the
+// long one (also `--chdir=/x`).
+var chdirFlags = map[string][2]string{
+	"env":  {"-C", "--chdir"},
+	"sudo": {"-D", "--chdir"},
+}
+
+// wrapperChdir reads the directory a wrapper runs its program in, from the
+// wrapper's own words (its argv up to the program). moves is false when the
+// wrapper does not change directory; known is false when it does, to a
+// directory that is not a literal word (`env -C "$D" …`) or starts with `~`,
+// which this package never expands. The last flag wins, as for the programs.
+func wrapperChdir(own []word) (dir string, known, moves bool) {
+	flags, ok := chdirFlags[basename(own[0].value)]
+	if !ok {
+		return "", false, false
+	}
+	short, long := flags[0], flags[1]
+	set := func(w word) {
+		dir, moves = w.value, true
+		known = w.literal && w.value != "" && !strings.HasPrefix(w.value, "~")
+	}
+	for i := 1; i < len(own); i++ {
+		a := own[i]
+		switch {
+		case (a.value == short || a.value == long) && !a.literal:
+			// `-C"$D"` expanded to a bare `-C`: an attached value this
+			// package cannot see (see unwrap). The directory is unknown, and
+			// the next word is the program, not the value.
+			dir, known, moves = "", false, true
+		case a.value == short || a.value == long:
+			if i+1 < len(own) {
+				i++
+				set(own[i])
+			}
+		case strings.HasPrefix(a.value, long+"="):
+			set(word{value: strings.TrimPrefix(a.value, long+"="), literal: a.literal})
+		case strings.HasPrefix(a.value, short) && !strings.HasPrefix(a.value, "--"):
+			set(word{value: strings.TrimPrefix(a.value, short), literal: a.literal})
+		}
+	}
+	return dir, known, moves
+}
+
+// chdirCwd places an invocation's Cwd (relative to where its wrapper started)
+// under the directory the wrapper moved to, in Invocation.Cwd's wire spelling:
+// unknown when the directory is.
+func chdirCwd(dir string, known bool, inner string) string {
+	if !known {
+		return ""
+	}
+	return composeCwd(cwd{dir: path.Clean(dir)}, inner)
 }
 
 // newConfig builds the expansion used for a walk.
