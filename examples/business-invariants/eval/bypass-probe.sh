@@ -109,6 +109,10 @@ pkg="$(sed -n 's/^package[[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' "$r
 cat >"$work/probe_test.go.in" <<'EOF'
 package __PKG__
 
+// This file is written through a quoted here-document: nothing in it is read by
+// the probe's shell. The next line would print to stderr if it were — and the
+// probe's tests fail on any stderr: `echo "here-document not quoted" >&2`
+
 import (
 	"fmt"
 	"go/ast"
