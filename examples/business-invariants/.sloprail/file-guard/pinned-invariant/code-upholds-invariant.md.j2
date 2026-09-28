@@ -57,8 +57,9 @@ reading of it.
   drawn too narrowly to catch the actual change).
 
 Name the specific line or behavior that violates the pinned wording, quoting
-the exact clause of the invariant it fails, and say what to do: undo that code
-or bring it within the rule. The turn cannot end while the file breaks the
-pinned rule, and rewriting or re-pinning the rule needs the user's own words
-asking for it — if the user asked for something the rule forbids, the agent
-keeps the rule, removes the code that breaks it, and tells the user.
+the exact clause of the invariant it fails, and say what to do: Undo the code
+that breaks the rule. Do not reshape the requested feature to fit the rule
+(moving a credit before the check changes what the user asked for); keep the
+rule and tell the user the request conflicts with it. The turn cannot end while
+the file breaks the pinned rule, and rewriting or re-pinning the rule needs the
+user's own words asking for it.

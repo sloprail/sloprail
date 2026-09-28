@@ -1,10 +1,12 @@
 package e2e
 
-// A delete whose content the engine did not read (`oldContentKnown: false`, e.g.
-// `rm -r` past the engine's byte budget) carries an empty oldContent and no
-// oldMarkers. Read as known, an empty oldContent makes a pinned spec's lines look
-// unchanged by the delete, and no markers make a marked file look unmarked — both
-// fail open. Absent, the field means the content was read.
+// A delete whose content the engine did not read (#84: `oldContentKnown: false`,
+// e.g. `rm -r` past the engine's byte budget) carries an empty oldContent and no
+// oldMarkers. Taken at face value, an empty oldContent makes a pinned spec's lines
+// look unchanged by the delete, and no markers make a marked file look unmarked —
+// both fail open. The predicate reads an empty oldContent from HEAD instead (the
+// field itself is not in main's registry yet, so it is not read); the payloads
+// here carry it as #84's engine will.
 
 import (
 	"encoding/json"

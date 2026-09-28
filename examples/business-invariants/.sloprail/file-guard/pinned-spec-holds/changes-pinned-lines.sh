@@ -54,13 +54,12 @@ parsed="$(printf '%s' "$payload" | jq -r '
   | @sh "kind=\($e.kind // "")",
     @sh "path=\($e.path // "")",
     @sh "known=\($e.resultKnown // false | tostring)",
-    @sh "old_known=\(if $e.kind == "PreFileDelete" and ($e | has("oldContentKnown")) then $e.oldContentKnown else true end | tostring)",
     @sh "old=\($e.oldContent // "")",
     @sh "new=\($e.newContent // "")",
     @sh "old_fqns=\([($e.oldMarkers // [])[] | select(.kind == "invariant") | .fqn] | join("\n"))",
     @sh "new_fqns=\([($e.newMarkers // [])[] | select(.kind == "invariant") | .fqn] | join("\n"))"
 ' 2>/dev/null)" || exit 0
-kind="" path="" known="" old_known="" old="" new="" old_fqns="" new_fqns=""
+kind="" path="" known="" old="" new="" old_fqns="" new_fqns=""
 eval "$parsed"
 [ -n "$path" ] || exit 0
 
@@ -117,6 +116,15 @@ case "$kind" in
     had_old=0
     if [ "$has_head" = 1 ] && old="$(git -C "$workspace" cat-file blob "HEAD:$npath" 2>/dev/null)"; then
       had_old=1
+    fi
+    ;;
+  *Delete)
+    # A delete whose bytes the engine did not read (an `rm -r` past its byte
+    # budget, say) arrives with an empty oldContent, which would read as "the
+    # pinned lines were already empty": unchanged. What a delete removes is at
+    # least what HEAD holds, so an empty oldContent is read from HEAD instead.
+    if [ -z "$old" ] && [ "$has_head" = 1 ]; then
+      old="$(git -C "$workspace" cat-file blob "HEAD:$npath" 2>/dev/null)"
     fi
     ;;
 esac
@@ -240,7 +248,7 @@ esac
 # What to do next, for every refusal. A cited change the judge refused is refused
 # again when it is re-submitted with the same words: a real run (231517Z) sent the
 # same refused `sr-file edit` twice before stopping.
-remedy="If what you were asked for conflicts with the rule, keep the rule: undo any code that breaks it, then tell the user about the conflict, and stop there — the rule changes only when the user asks for that. Only if the user asked for this change to the rule, cite their words: $how. A cited change that was refused is refused again if you send it again with the same words; do not retry it — tell the user instead."
+remedy="If what you were asked for conflicts with the rule: Undo the code that breaks the rule. Do not reshape the requested feature to fit the rule (moving a credit before the check changes what the user asked for); keep the rule and tell the user the request conflicts with it, and stop there — the rule changes only when the user asks for that. Only if the user asked for this change to the rule, cite their words: $how. A cited change that was refused is refused again if you send it again with the same words; do not retry it — tell the user instead."
 spec_remedy="A spec that code pins holds the user's business rules: change it only when the user asked for that change — a new rule, a rewording, an exception — citing their words: $how. If they did not ask for it, leave the spec as it is and tell the user what you would change and why. A cited change that was refused is refused again if you send it again with the same words."
 
 # apply <what>: the requirement applies. `hint` is what the refusal carries (what
@@ -280,11 +288,6 @@ while IFS= read -r fqn; do
     *) pinned_here="${pinned_here:+$pinned_here, }L${f_start}-${f_end}" ;;
   esac
   [ "$new_known" = 1 ] || apply "This change touches $path, which code in this project pins as a business rule (L$f_start-$f_end), and $unknown_result." "$unknown_remedy"
-  # A PreFileDelete the engine did not read (oldContentKnown false — an `rm -r`
-  # past its byte budget, say) carries an empty oldContent, which would read as
-  # "the pinned lines were already empty": unchanged. Deleting a pinned spec is a
-  # change to it. (Absent, the field means the content was read.)
-  [ "$old_known" = true ] || apply "This change deletes $path, which code in this project pins as a business rule (L$f_start-$f_end), and the engine did not read it before the delete."
   if [ "$had_old" = 1 ]; then
     before="$(lines "$old" "$f_start" "$f_end")"
   else
@@ -308,10 +311,18 @@ EOF
 
 # 2. The rest of a pinned spec. Any change to a file some pin names — a new rule,
 # a rewording, an exception on a line of its own — is a change to the user's
-# business rules.
+# business rules. Whitespace outside the pinned lines is not: a formatter
+# trimming trailing spaces, CRLF made LF, a trailing newline added or dropped
+# changes no rule, so it is compared with that whitespace removed. The pinned
+# lines themselves stay byte-exact (step 1), as pin-still-matches-head.sh
+# compares them.
+ws_norm() {
+  printf '%s\n' "$1" | tr -d '\r' | sed -e 's/[[:space:]]*$//' |
+    awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }'
+}
 spec_changed=0
 if [ -n "$pinned_here" ] && [ -z "$changed" ]; then
-  if [ "$had_old" = 0 ] || [ "$old" != "$new" ]; then
+  if [ "$had_old" = 0 ] || [ "$(ws_norm "$old")" != "$(ws_norm "$new")" ]; then
     spec_changed=1
   fi
 fi

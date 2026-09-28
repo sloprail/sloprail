@@ -246,3 +246,23 @@ func TestT046_50_CitedNewRuleTheUserAskedForIsAdmitted(t *testing.T) {
 		t.Errorf("the cited change to a pinned spec was not judged")
 	}
 }
+
+// T046_54: whitespace outside the pinned lines of a pinned spec — trailing spaces
+// trimmed or added, a trailing newline — changes no rule and needs no citation.
+// The pinned lines stay byte-exact (T046_34 refuses a trailing space on L3).
+func TestT046_54_WhitespaceOutsidePinnedLinesNeedsNothing(t *testing.T) {
+	e := newEnv(t)
+	proj := pinnedSpecProject(t, e)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	reformatted := strings.Replace(billingSpec, "Billing invariants\n", "Billing invariants   \n", 1) + "\n"
+	res := e.Run(proj, "s-046-54", "tidy the spec", Turns("done",
+		Write("w1", "SPEC.md", reformatted),
+	))
+	if res.Refused() {
+		t.Fatalf("a whitespace-only change outside the pinned lines was refused:\n%s", res.Output)
+	}
+	if got := readSpec(t, proj); got != reformatted {
+		t.Errorf("the whitespace change did not land:\n%q", got)
+	}
+}

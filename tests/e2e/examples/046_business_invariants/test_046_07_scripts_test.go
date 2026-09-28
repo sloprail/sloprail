@@ -238,3 +238,27 @@ func TestT046_37_PrepareSkipsTheJudgeOnADelete(t *testing.T) {
 		}
 	}
 }
+
+// T046_53: without the pinned mock in .bin/ the mock-driven tests skip with the
+// fix, rather than run against whatever mock is on PATH.
+func TestT046_53_PinnedMockMissingSaysRunMakeMock(t *testing.T) {
+	root := t.TempDir()
+	writeExec(t, root, "x", "")
+	if err := os.MkdirAll(filepath.Join(root, "tests", "e2e", "harness"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExec(t, filepath.Join(root, "tests", "e2e", "harness"), "MOCK_VERSION", "v9.9.9\n")
+	if msg := pinnedMockMissing(root, ""); !strings.Contains(msg, "run `make mock`") {
+		t.Errorf("no stamp: %q, want the make mock advice", msg)
+	}
+	if msg := pinnedMockMissing(root, "/my/mock"); msg != "" {
+		t.Errorf("A10N_CLAUDE_MOCK set: %q, want none", msg)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExec(t, filepath.Join(root, ".bin"), "a10n-claude-mock.v9.9.9", "")
+	if msg := pinnedMockMissing(root, ""); msg != "" {
+		t.Errorf("stamp present: %q, want none", msg)
+	}
+}

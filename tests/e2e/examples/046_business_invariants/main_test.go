@@ -21,11 +21,42 @@ type env = harness.Env
 type Turn = harness.Turn
 
 var (
-	newEnv = harness.New
-	Turns  = harness.Turns
-	Write  = harness.Write
-	Bash   = harness.Bash
+	Turns = harness.Turns
+	Write = harness.Write
+	Bash  = harness.Bash
 )
+
+// newEnv is harness.New behind a check that the PINNED mock is installed. The
+// harness falls back to any a10n-claude-mock on PATH, and an older one there
+// drives the session differently (no CLAUDE_CODE_SESSION_ID, so sr-file cannot
+// find the session) — the tests then fail for a reason that is not theirs. With
+// A10N_CLAUDE_MOCK unset and no .bin/ stamp for tests/e2e/harness/MOCK_VERSION,
+// every test here that drives the mock is skipped with the fix. CI runs
+// `make mock` and checks .bin/ itself, so it never takes this skip.
+func newEnv(t *testing.T) *env {
+	t.Helper()
+	if msg := pinnedMockMissing(repoRoot(t), os.Getenv("A10N_CLAUDE_MOCK")); msg != "" {
+		t.Skip(msg)
+	}
+	return harness.New(t)
+}
+
+// pinnedMockMissing says why the pinned mock is not installed, or "" when it is
+// (or when A10N_CLAUDE_MOCK names a mock build of the caller's own).
+func pinnedMockMissing(root, override string) string {
+	if override != "" {
+		return ""
+	}
+	version, err := os.ReadFile(filepath.Join(root, "tests", "e2e", "harness", "MOCK_VERSION"))
+	if err != nil {
+		return "harness: tests/e2e/harness/MOCK_VERSION unreadable: " + err.Error()
+	}
+	stamp := filepath.Join(root, ".bin", "a10n-claude-mock."+strings.TrimSpace(string(version)))
+	if _, err := os.Stat(stamp); err != nil {
+		return "the pinned a10n-claude-mock (" + strings.TrimSpace(string(version)) + ") is not in .bin/ — run `make mock`"
+	}
+	return ""
+}
 
 // TestMain removes the binary build dir when this package's tests finish.
 // Without it every e2e package leaks 15M for the life of the machine.

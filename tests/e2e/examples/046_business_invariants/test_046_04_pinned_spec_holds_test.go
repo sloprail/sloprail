@@ -52,7 +52,8 @@ func TestT046_11_UncitedPinnedRuleChangeRefused(t *testing.T) {
 		t.Fatalf("an uncited change to a pinned rule was not refused:\n%s", res.Output)
 	}
 	if !res.Saw("must cite the user's own words (--cite:user)") || !res.Saw("rewrites SPEC.md L3-3") ||
-		!res.Saw("keep the rule: undo any code that breaks it, then tell the user about the conflict") ||
+		!res.Saw("Do not reshape the requested feature to fit the rule") ||
+		!res.Saw("keep the rule and tell the user the request conflicts with it") ||
 		!res.Saw("refused again if you send it again with the same words") {
 		t.Errorf("the refusal does not say what to cite, which lines are pinned, or what to do instead:\n%s", res.Output)
 	}
@@ -90,8 +91,12 @@ func TestT046_12_UnpinnedLineOfAPinnedSpecNeedsTheUsersWords(t *testing.T) {
 	if got := readSpec(t, proj); got != edited {
 		t.Errorf("the cited change did not land:\n%s", got)
 	}
-	if !strings.Contains(e.JudgePrompt(proj, "judge-prompt.txt"), "every rule in a pinned spec is the user's") {
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if !strings.Contains(prompt, "every rule in a pinned spec is the user's") {
 		t.Errorf("the judge was not told the change edits a pinned spec outside its pinned lines")
+	}
+	if !strings.Contains(prompt, "The cited words do not ask for this change to the spec at all: they ask for\n  code work, or name a different change.") {
+		t.Errorf("the judge is not told to fail citations that ask for code work or a different change:\n%s", prompt)
 	}
 }
 
