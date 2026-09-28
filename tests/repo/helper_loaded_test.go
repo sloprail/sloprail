@@ -19,9 +19,12 @@ import (
 // it; a script that reads on after a partial load can decide on nothing, and
 // for a `when`, exit 1 waives the requirement.
 
-// sourceLine matches a line that sources a file: `.` or `source`, then the
-// path, quoted or not.
-var sourceLine = regexp.MustCompile(`^\s*(\.|source)\s+("[^"]+"|'[^']+'|\S+)`)
+// sourceLine matches a line that sources a file: `.` or `source`, then
+// something that is a path — quoted, a variable, holding a `/`, or ending in
+// .sh — and nothing after it but a redirection, a list operator, a line
+// continuation or a comment. (A bare word
+// such as the `. as $x` of a jq program inside a string is not one.)
+var sourceLine = regexp.MustCompile(`^\s*(\.|source)\s+("[^"]+"|'[^']+'|\$\S+|\S*/\S*|\S+\.sh)\s*($|[;&|#<>\\]|[0-9]+>)`)
 
 // sentinelLine is a helper's last line: its loaded sentinel.
 var sentinelLine = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*_loaded)=1$`)

@@ -12,8 +12,12 @@ fail() {
   exit 1
 }
 
+# A helper stopped early runs only partly (whether the `.` then fails depends
+# on the bash version); only its last-line sentinel proves it loaded whole.
+unset pin_loaded
 # shellcheck source=pin.sh
 . "${SR_GUARDRAIL_DIR:-.}/pin.sh" || fail "pin.sh, which reads a pin, is missing beside this check."
+[ "${pin_loaded:-}" = 1 ] || fail "pin.sh did not load whole (its last-line sentinel pin_loaded is unset)."
 
 input="$(cat)"
 markers="$(printf '%s' "$input" | jq -c '[(.event.newMarkers // .event.oldMarkers // [])[] | select(.kind == "invariant")]')" \
