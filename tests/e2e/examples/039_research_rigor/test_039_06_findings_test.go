@@ -94,18 +94,22 @@ func TestT039_20_ProposalAfterDepthLands(t *testing.T) {
 	}
 }
 
-// T039_21: with no #research declared, NOTES.md is an ordinary file — the write
-// lands and nothing is refused.
+// T039_21: with no #research declared, NOTES.md is an ordinary file — a write
+// lands and nothing is refused. (Not a write that adds the "Proposed approach"
+// section: that is the proposal, which needs research declared or not — see
+// T039_36. This case used to write the proposal itself; the body is now an
+// ordinary notes update, so it still pins "no research, no hold".)
 func TestT039_21_NoResearchNotesWriteUnaffected(t *testing.T) {
 	e, proj := notesProject(t)
+	update := seedNotes + "\n## Open questions\n\nWhich libraries to compare.\n"
 
 	sess := "s-039-21"
 	res := e.Run(proj, sess, "update notes", Turns("done",
 		SayBash("m1", "Updating the planning notes.", "echo start"),
-		harness.Write("w1", filepath.Join(proj, "NOTES.md"), proposal),
+		harness.Write("w1", filepath.Join(proj, "NOTES.md"), update),
 	))
 
-	if got := notes(t, proj); got != proposal {
+	if got := notes(t, proj); got != update {
 		t.Fatalf("an ordinary NOTES.md write did not land:\n%s\n%s", got, res.Output)
 	}
 	if blocks := e.BlockingErrors(proj, sess); len(blocks) != 0 {

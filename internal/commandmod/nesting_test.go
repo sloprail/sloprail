@@ -313,8 +313,12 @@ func TestNesting_InterpreterPayloadsAreOpaque(t *testing.T) {
 		whyRight string
 	}{
 		{
-			name: "eval", src: `eval "npm publish"`, want: []string{"eval"}, unseen: "npm",
-			whyRight: "eval's argument is re-interpreted at runtime after expansion; re-parsing has no bottom",
+			// A LITERAL eval payload is unwrapped like `sh -c`'s (see
+			// TestNesting_LiteralInterpreterPayloadsAreUnwrapped): it has a
+			// bottom — it shrinks with every nesting, and spends the same
+			// depth budget. One that is not literal stays opaque.
+			name: "eval of a parameter", src: `eval "$CMD"`, want: []string{"eval"}, unseen: "npm",
+			whyRight: "eval joins its words and runs them; a parameter's value is not in the line",
 		},
 		{
 			name: "sh -c from a variable", src: `sh -c "$CMD"`, want: []string{"sh"}, unseen: "npm",
@@ -481,6 +485,10 @@ func TestNesting_LiteralInterpreterPayloadsAreUnwrapped(t *testing.T) {
 		want []string
 	}{
 		{"sh -c", `sh -c "npm publish"`, []string{"sh", "npm"}},
+		// eval runs its joined, literal words in the current shell — the same
+		// text `sh -c` would be given, re-parsed against the same bound.
+		{"eval", `eval "npm publish"`, []string{"eval", "npm"}},
+		{"eval of unquoted words", `eval npm publish`, []string{"eval", "npm"}},
 		{"sh -c single quoted", `sh -c 'npm publish'`, []string{"sh", "npm"}},
 		{"bash -c", `bash -c "npm publish"`, []string{"bash", "npm"}},
 		{"zsh -c", `zsh -c 'npm publish'`, []string{"zsh", "npm"}},
@@ -1684,4 +1692,18 @@ func TestNesting_DeepStructureIsFlatCompletely(t *testing.T) {
 			t.Errorf("bins = %v, want npm found under 50 levels of if", got)
 		}
 	})
+}
+
+// A flag word that is not literal cannot be the separated spelling of a
+// value-taking flag: `env -C"$D" tee f` expands to a bare `-C` (the value is
+// the unknown part), so the program is tee — not `f`, which reading `tee` as
+// the value would make it.
+func TestNesting_AnAttachedUnknownFlagValueDoesNotEatTheProgram(t *testing.T) {
+	var bins []string
+	for _, inv := range ExtractCommand(`env -C"$D" tee NOTES.md`).Invocations {
+		bins = append(bins, inv.Bin)
+	}
+	if len(bins) != 2 || bins[0] != "env" || bins[1] != "tee" {
+		t.Errorf("bins = %v, want [env tee]", bins)
+	}
 }

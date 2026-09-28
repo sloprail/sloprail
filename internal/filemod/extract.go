@@ -102,6 +102,54 @@ type HeadReader interface {
 // waiting on, and `rm -rf` of a large tree can leave many unread.
 const maxHeadMarkerLookups = 64
 
+// DirPending is a Pending that knows the directory its command runs in.
+//
+// A live hook does not implement it: the hook process runs where the harness
+// ran the command, so a relative target already resolves against the right
+// directory. A RE-derivation does — `sr-session trajectory normalize` reading
+// a recorded command from a rule's script, whose process runs in the rule's
+// own folder: there a relative `tee -a NOTES.md` would be looked up in that
+// folder, found missing, and derive nothing. Dir is the recorded cwd; the
+// command's relative targets are anchored to it before anything is stat'd or
+// read.
+type DirPending interface {
+	Pending
+	Dir() string
+}
+
+// anchorTargets makes every relative path a batch of targets names — each
+// target's own Path, its Into sources and its copy Payload's sources —
+// absolute under dir, the directory the command ran in. Absolute paths (a
+// line's own `cd /abs` already made them so) are left as they are.
+func anchorTargets(targets []commandmod.FileTarget, dir string) []commandmod.FileTarget {
+	abs := func(p string) string {
+		if p == "" || filepath.IsAbs(p) {
+			return p
+		}
+		return filepath.Join(dir, p)
+	}
+	out := make([]commandmod.FileTarget, len(targets))
+	for i, t := range targets {
+		t.Path = abs(t.Path)
+		if len(t.Into) > 0 {
+			into := make([]string, len(t.Into))
+			for j, src := range t.Into {
+				into[j] = abs(src)
+			}
+			t.Into = into
+		}
+		if len(t.Payload.From) > 0 {
+			from := make([]string, len(t.Payload.From))
+			for j, src := range t.Payload.From {
+				from[j] = abs(src)
+			}
+			t.Payload.From = from
+		}
+		out[i] = t
+	}
+	return out
+}
+
 // extractPending reads a pending action for the files it would touch.
 //
 // It dispatches on the HARNESS TOOL NAME first — commandmod.HarnessWriteTools
@@ -584,6 +632,9 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 	}
 
 	targets := commandmod.FileTargets(pc.Command)
+	if d, ok := pending.(DirPending); ok && filepath.IsAbs(d.Dir()) {
+		targets = anchorTargets(targets, d.Dir())
+	}
 	if len(targets) == 0 {
 		// EQUIVALENT to falling through, and kept anyway so the survivor is read
 		// as an equivalence rather than as this branch being untested. With no
