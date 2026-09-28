@@ -208,3 +208,35 @@ func TestFlagLoadErrorSaysFlagsAreLists(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "flag values are lists")
 }
+
+// TestAbsentFlagNilQuestionsAreRefused: an absent flag reads as an empty list,
+// so a rule asking whether one is nil — or supplying its own `??` default —
+// would answer the same for every command. Refused at load, with the spelling
+// that asks the question.
+func TestAbsentFlagNilQuestionsAreRefused(t *testing.T) {
+	k := kindDecl(t, commandmod.KindPreInvoke)
+	for _, src := range []string{
+		`any(invocations, .flags.tag == nil)`,
+		`any(invocations, .flags.tag != nil)`,
+		`any(invocations, nil == .flags.tag)`,
+		`any(invocations, "latest" in (.flags.tag ?? ["latest"]))`,
+	} {
+		_, err := guardrail.CompileMatcherFor(src, k)
+		require.Errorf(t, err, "%s must be refused at load", src)
+		assert.Contains(t, err.Error(), `not ("tag" in .flags)`, src)
+	}
+	m, err := guardrail.CompileMatcherFor(`any(invocations, not ("tag" in .flags))`, k)
+	require.NoError(t, err)
+	got, err := m.Match(commandmod.ExtractCommand(`npm publish`).Event())
+	require.NoError(t, err)
+	assert.True(t, got, "the spelling the refusal gives asks the question")
+}
+
+// TestFlagHintOnlyForAListMismatch: the "flag values are lists" hint names the
+// cause only when the error IS a list compared as a scalar; a rule that
+// mentions flags and fails for another reason (a typo) is not told about lists.
+func TestFlagHintOnlyForAListMismatch(t *testing.T) {
+	_, err := guardrail.CompileMatcherFor(`any(invocations, .bni == "npm" and "x" in .flags.tag)`, kindDecl(t, commandmod.KindPreInvoke))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "flag values are lists")
+}

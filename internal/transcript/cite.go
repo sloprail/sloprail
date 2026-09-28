@@ -188,7 +188,7 @@ func CiteWithSources(path, quote string, sources []SourceType) ([]CitationMatch,
 		return nil, err
 	}
 	others := otherToolUses(entries)
-	citable := citableResults(entries)
+	citable := citableFor(path, entries)
 	var matches []CitationMatch
 	for _, e := range entries {
 		switch e.Type {
@@ -702,7 +702,7 @@ func ToolResultAt(path string, line int) (text string, isToolResult bool, err er
 	if err != nil {
 		return "", false, err
 	}
-	citable := citableResults(entries)
+	citable := citableFor(path, entries)
 	for _, e := range entries {
 		if e.Line != line {
 			continue
@@ -793,6 +793,11 @@ func genuineToolResults(raw json.RawMessage, citable map[string]bool) []genuineT
 			// harness's message — which may quote the agent's own words back (an
 			// unresolved --cite: quote), and must not then ground them.
 			if isHookRefusal(body) {
+				continue
+			}
+			// Nor does an agent transcript read back: its text is model-written,
+			// however the tool reached the file (see readsTranscript).
+			if looksLikeTranscript(body) {
 				continue
 			}
 			out = append(out, genuineToolResult{id: b.ToolUseID, body: body})

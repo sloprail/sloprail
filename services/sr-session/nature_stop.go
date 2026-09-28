@@ -76,7 +76,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// the cycle's first hook, if this Stop is it, records what changed while
 	// the agent was not running; the last call's pending changes settle; the
 	// sessions sharing this tree contribute their cited changes.
-	if err := beginCycle(store, p.Cwd, nowNano()); err != nil {
+	if err := beginCycle(store, p.Cwd, nowNano(), citedPathsOf(loaded.FileGuards)); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 	}
 	if err := settleCitedChanges(store); err != nil {
@@ -84,7 +84,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	}
 	others, otherContents := otherHistories(p, scope.Transcript)
 	histories := attachHistories(store, postFileEvents, others, otherContents)
-	if err := endCycle(store, postFileEvents); err != nil {
+	if err := endCycle(store, postFileEvents, citedPathsOf(loaded.FileGuards)); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 	}
 
@@ -106,7 +106,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	//    (re-fire), collects refusals.
 	for _, r := range runFileGuardsPost(cmd, loaded.FileGuards, postFileEvents, rev, scope, root, contextMap, histories) {
 		if r.Refused {
-			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
+			refusals = append(refusals, r.Reason+citedUnknownNote(store, r.Path)+" (file-guard "+r.Attribution+")")
 		}
 	}
 

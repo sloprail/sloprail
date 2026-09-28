@@ -217,9 +217,9 @@ func TestReview_UncitedEditAfterCitedTransitionIsRefused(t *testing.T) {
 // later edit made the grounded way. task-review requires tool output for every
 // change to an in_review task (TestReview_EditedClaimWithoutProofRefusedAtStop:
 // even a priority-only edit), and a change counts only in the pool it was cited
-// in — so the priority edit cites the proof again, beside the user's words. The
-// claim reaching Stop carries the proof, the pre-flight passes and the reviewer
-// is handed the tool output.
+// in — so the priority edit cites tool output of its own (a second run),
+// beside the user's words. The claim reaching Stop carries BOTH changes' proof,
+// the pre-flight passes and the reviewer is handed each.
 func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -231,7 +231,8 @@ func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
 	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
-		srEdit("b2", taskPath, "priority: P1", "priority: P2", citeUser(askQuote), citeTool(proofMarker)),
+		Bash("p2", "echo 'PROOF-TWO-7715 re-ran the suite, still green'"),
+		srEdit("b2", taskPath, "priority: P1", "priority: P2", citeUser(askQuote), citeTool("PROOF-TWO-7715")),
 	)...))
 	if res.Refused() {
 		t.Fatalf("the cited transition or the cited priority edit was refused at Pre:\n%s", res.Output)
@@ -242,8 +243,13 @@ func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
 		t.Fatalf("an in_review claim whose transition cited tool output was blocked at Stop after a cited edit:\n%v", blocks)
 	}
-	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); !containsStr(prompt, "quoted: "+proofMarker) {
-		t.Errorf("the reviewer was not handed the cited tool output:\n%s", prompt)
+	// Cited changes accumulate: the reviewer is handed the transition's proof AND
+	// the later edit's, each with its own tool output.
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	for _, marker := range []string{proofMarker, "PROOF-TWO-7715"} {
+		if !containsStr(prompt, "quoted: "+marker) {
+			t.Errorf("the reviewer was not handed the tool output cited as %q:\n%s", marker, prompt)
+		}
 	}
 }
 

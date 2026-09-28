@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
@@ -214,5 +215,66 @@ func TestT041_44_ACitedWriteThatFailsForRealGroundsNothing(t *testing.T) {
 	}
 	if blocks := stopBlocks(e, proj, "s-041-44"); blocks == "" {
 		t.Errorf("an uncited write passed at Stop on the citation of a cited write that never landed")
+	}
+}
+
+// T041_46 (P9): work the agent started in the background lands after its
+// Stop. The next turn's first hook must not set that change aside as the
+// user's: once the agent has started work that can outlive the call, what
+// changes between its turns is charged to it, and the uncited rewrite is
+// refused.
+func TestT041_46_BackgroundWorkLandingAfterStopIsCharged(t *testing.T) {
+	e, proj := guarded(t, afterCitationGuard)
+	e.Run(proj, "s-041-46", prompt, Turns("done",
+		Bash("b1", `sr-file write memories/a.md --cite:user 'adopt a decision log' --content 'the log'`),
+		Bash("b2", `nohup sh -c 'sleep 3; printf "EVIL UNCITED REWRITE" > memories/a.md' >/dev/null 2>&1 &`),
+	))
+	deadline := time.Now().Add(20 * time.Second)
+	for readProj(t, proj, "memories/a.md") != "EVIL UNCITED REWRITE" {
+		if time.Now().After(deadline) {
+			t.Fatalf("the background rewrite never landed, so this tests nothing")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	e.Run(proj, "s-041-46", "carry on", Turns("done", Bash("b3", "true")))
+	if blocks := stopBlocks(e, proj, "s-041-46"); !strings.Contains(blocks, "was changed without a citation") {
+		t.Errorf("an uncited rewrite by the agent's own background job passed as the user's edit:\n%s", blocks)
+	}
+}
+
+// T041_47 (P15): a cited sr-file named by the path of the engine's own sr-file
+// is the same program, so it is dry-run like the bare name: the change lands
+// and passes at Stop (non-preventive) and is admitted (preventive). A cited
+// call the dry run cannot compute (here behind an `export`) lands with its
+// citations untied to what landed — and the Stop refusal says why, and how to
+// run sr-file so they count.
+func TestT041_47_TheEnginesOwnSRFileByPath(t *testing.T) {
+	e, proj := guarded(t, afterCitationGuard)
+	byPath := filepath.Join(e.BinDir(), "sr-file")
+	e.Run(proj, "s-041-47", prompt, Turns("done",
+		Bash("b1", byPath+` write memories/a.md --cite:user 'adopt a decision log' --content 'by path'`),
+	))
+	if got := readProj(t, proj, "memories/a.md"); got != "by path" {
+		t.Fatalf("the write by path did not land: %q", got)
+	}
+	if blocks := stopBlocks(e, proj, "s-041-47"); blocks != "" {
+		t.Errorf("a cited write by the engine's own sr-file path was refused at Stop:\n%s", blocks)
+	}
+
+	e2, proj2 := guarded(t, preventiveGuard)
+	res := e2.Run(proj2, "s-041-47b", prompt, Turns("done",
+		Bash("b1", filepath.Join(e2.BinDir(), "sr-file")+` write memories/a.md --cite:user 'adopt a decision log' --content 'by path'`),
+	))
+	if !e2.Exists(proj2, "memories/a.md") {
+		t.Errorf("a preventive rule refused a cited write by the engine's own sr-file path:\n%s", res.Output)
+	}
+
+	e3, proj3 := guarded(t, afterCitationGuard)
+	e3.Run(proj3, "s-041-47c", prompt, Turns("done",
+		Bash("b1", `export X=1 && sr-file write memories/a.md --cite:user 'adopt a decision log' --content 'behind export'`),
+	))
+	blocks := stopBlocks(e3, proj3, "s-041-47c")
+	if !strings.Contains(blocks, "could not be computed before it ran") || !strings.Contains(blocks, "command -v sr-file") {
+		t.Errorf("the Stop refusal does not say why the citation did not count, or how to run sr-file:\n%s", blocks)
 	}
 }

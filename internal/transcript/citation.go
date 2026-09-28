@@ -363,7 +363,7 @@ func entryCalls(path string, line int) (string, error) {
 		return "", err
 	}
 	calls := map[string]assistantContentBlock{}
-	citable := citableResults(entries)
+	citable := citableFor(path, entries)
 	var ids []string
 	for _, e := range entries {
 		switch {
@@ -439,7 +439,7 @@ func entryText(path string, line int, pools []SourceType) (string, error) {
 				parts = append(parts, answerEnvelopes(own.Message)...)
 			}
 			if wants(pools, SourceToolResult) {
-				parts = append(parts, genuineToolResultText(e.Message, citableResults(entries))...)
+				parts = append(parts, genuineToolResultText(e.Message, citableFor(path, entries))...)
 			}
 		case EntryAttachment:
 			if t := queuedCommandText(e.Attachment); t != "" && wants(pools, SourceUser) && !notThePerson(e.Entry) {

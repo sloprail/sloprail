@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Which tool_result blocks are a TOOL's output — the tool_result pool — is
@@ -92,11 +94,46 @@ func citableResults(entries []LinedEntry) map[string]bool {
 	return citable
 }
 
+// citableCache keeps citableResults per record, keyed by the record's path and
+// the size and modification time it had: a citation resolves over the same
+// records several times (each pool, each sub-agent record, the message and the
+// call it renders), and classifying a long record's calls is not free.
+var citableCache sync.Map // path -> citableEntry
+
+type citableEntry struct {
+	size    int64
+	mod     time.Time
+	citable map[string]bool
+}
+
+// citableFor is citableResults of the record at path, whose entries are given.
+func citableFor(path string, entries []LinedEntry) map[string]bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return citableResults(entries)
+	}
+	if v, ok := citableCache.Load(path); ok {
+		if c := v.(citableEntry); c.size == fi.Size() && c.mod.Equal(fi.ModTime()) {
+			return c.citable
+		}
+	}
+	citable := citableResults(entries)
+	citableCache.Store(path, citableEntry{size: fi.Size(), mod: fi.ModTime(), citable: citable})
+	return citable
+}
+
 // readsTranscript reports whether a call's target is an agent's transcript: a
 // path in its input (file_path, path, notebook_path) or, for a shell command,
-// any word of it, that resolves — through symbolic links — to a Claude Code
-// record or into the harness's projects directory; or a command that names
-// that directory at all (a glob over it cannot be resolved ahead of time).
+// an argument or redirection of any program in it, that resolves — through
+// symbolic links — to a harness record or into the harness's projects
+// directory. Only a word that can name a file is looked at (one holding a `/`,
+// or ending .jsonl or .output), never an option, and never a comment
+// (commandPaths). A glob is judged by the directory it starts from.
+//
+// The call's own output is checked too (looksLikeTranscript, where the result
+// is read): a transcript read back is recognised by its text even once the
+// file is gone, copied, or named by a path relative to a directory the record
+// does not say.
 func readsTranscript(c recordCall) bool {
 	var in struct {
 		FilePath     string `json:"file_path"`
@@ -107,12 +144,7 @@ func readsTranscript(c recordCall) bool {
 	_ = json.Unmarshal(c.Input, &in)
 	candidates := []string{in.FilePath, in.Path, in.NotebookPath}
 	if in.Command != "" {
-		if strings.Contains(in.Command, ".claude/projects") {
-			return true
-		}
-		for _, w := range strings.Fields(in.Command) {
-			candidates = append(candidates, strings.Trim(w, `'"();|&<>`))
-		}
+		candidates = append(candidates, commandPaths(in.Command)...)
 	}
 	for _, p := range candidates {
 		if p != "" && isTranscriptPath(p, c.cwd) {
@@ -122,8 +154,50 @@ func readsTranscript(c recordCall) bool {
 	return false
 }
 
+// commandPaths is every word of a shell command that can name a file: a word
+// that holds a `/` or ends in .jsonl or .output and is not an option, with its
+// quotes and the shell's punctuation trimmed. A word opening a comment ends the
+// line's words. Split on white space rather than parsed: this runs over every
+// call of a record, and a path with a space in it is the rare case the result's
+// own text still catches (looksLikeTranscript).
+func commandPaths(cmd string) []string {
+	if !strings.Contains(cmd, "/") && !strings.Contains(cmd, ".jsonl") && !strings.Contains(cmd, ".output") {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(cmd, "\n") {
+		for _, w := range strings.Fields(line) {
+			if strings.HasPrefix(w, "#") {
+				break
+			}
+			w = strings.Trim(w, `'"();|&<>`+"`")
+			if i := strings.LastIndexAny(w, "<>"); i >= 0 {
+				w = w[i+1:] // a redirection glued to its target: >out, 2>/dev/null
+			}
+			if w == "" || strings.HasPrefix(w, "-") {
+				continue
+			}
+			if strings.Contains(w, "/") || strings.HasSuffix(w, ".jsonl") || strings.HasSuffix(w, ".output") {
+				out = append(out, w)
+			}
+		}
+	}
+	return out
+}
+
+// transcriptPathCache keeps isTranscriptPath answers per resolved path, size and
+// modification time.
+var transcriptPathCache sync.Map // resolved path -> transcriptPathEntry
+
+type transcriptPathEntry struct {
+	size int64
+	mod  time.Time
+	is   bool
+}
+
 // isTranscriptPath reports whether path, as a call in cwd would read it, is an
-// agent's transcript or lies in the harness's projects directory.
+// agent's transcript or lies in the harness's projects directory. A glob is
+// judged by the literal directory it starts from.
 func isTranscriptPath(path, cwd string) bool {
 	if strings.HasPrefix(path, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -136,28 +210,64 @@ func isTranscriptPath(path, cwd string) bool {
 		}
 		path = filepath.Join(cwd, path)
 	}
+	if i := strings.IndexAny(path, "*?["); i >= 0 {
+		return underProjects(filepath.Dir(path[:i]))
+	}
+	if _, err := os.Stat(path); err != nil {
+		return false // one stat, not a walk: most words name nothing on disk
+	}
 	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return false
 	}
-	if projects := ConfigDir(); projects != "" {
-		if root, err := filepath.EvalSymlinks(filepath.Join(projects, "projects")); err == nil {
-			if real == root || strings.HasPrefix(real, root+string(filepath.Separator)) {
-				return true
-			}
-		}
+	if underProjects(real) {
+		return true
 	}
-	return readsAsTranscript(real)
-}
-
-// readsAsTranscript reports whether the file at path is a harness record: its
-// first lines are records carrying a uuid, a conversational type and a message.
-// A copy of a transcript moved out of the projects directory is still one.
-func readsAsTranscript(path string) bool {
-	fi, err := os.Stat(path)
+	fi, err := os.Stat(real)
 	if err != nil || fi.IsDir() {
 		return false
 	}
+	if v, ok := transcriptPathCache.Load(real); ok {
+		if c := v.(transcriptPathEntry); c.size == fi.Size() && c.mod.Equal(fi.ModTime()) {
+			return c.is
+		}
+	}
+	is := readsAsTranscript(real)
+	transcriptPathCache.Store(real, transcriptPathEntry{size: fi.Size(), mod: fi.ModTime(), is: is})
+	return is
+}
+
+// underProjects reports whether path, resolved as far as it exists, is the
+// harness's projects directory or inside it.
+func underProjects(path string) bool {
+	cfg := ConfigDir()
+	if cfg == "" {
+		return false
+	}
+	root, err := filepath.EvalSymlinks(filepath.Join(cfg, "projects"))
+	if err != nil {
+		return false
+	}
+	real := path
+	for {
+		if r, err := filepath.EvalSymlinks(real); err == nil {
+			real = filepath.Join(r, strings.TrimPrefix(path, real))
+			break
+		}
+		parent := filepath.Dir(real)
+		if parent == real {
+			return false
+		}
+		real = parent
+	}
+	return real == root || strings.HasPrefix(real, root+string(filepath.Separator))
+}
+
+// readsAsTranscript reports whether the file at path is a harness record: one
+// of its first lines is a record looksLikeRecord accepts. A copy of a transcript
+// moved out of the projects directory is still one; a data file of JSON lines
+// that merely carry a uuid is not.
+func readsAsTranscript(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
@@ -166,15 +276,44 @@ func readsAsTranscript(path string) bool {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	for i := 0; i < 20 && sc.Scan(); i++ {
-		var rec struct {
-			UUID    string          `json:"uuid"`
-			Type    string          `json:"type"`
-			Message json.RawMessage `json:"message"`
+		if looksLikeRecord(sc.Text()) {
+			return true
 		}
-		if json.Unmarshal(sc.Bytes(), &rec) != nil {
-			continue
-		}
-		if rec.UUID != "" && (rec.Type == "user" || rec.Type == "assistant") && len(rec.Message) > 0 {
+	}
+	return false
+}
+
+// looksLikeRecord reports whether line is a harness record: a conversational
+// entry with the fields only the harness writes — a uuid, a sessionId, a
+// parentUuid key (null on the first), and its version or userType.
+func looksLikeRecord(line string) bool {
+	i := strings.IndexByte(line, '{')
+	if i < 0 {
+		return false
+	}
+	var rec map[string]json.RawMessage
+	if json.Unmarshal([]byte(line[i:]), &rec) != nil {
+		return false
+	}
+	var typ string
+	_ = json.Unmarshal(rec["type"], &typ)
+	_, hasParent := rec["parentUuid"]
+	_, hasVersion := rec["version"]
+	_, hasUserType := rec["userType"]
+	return len(rec["uuid"]) > 2 && len(rec["sessionId"]) > 2 && hasParent && (hasVersion || hasUserType) &&
+		(typ == "user" || typ == "assistant" || typ == "attachment" || typ == "system")
+}
+
+// looksLikeTranscript reports whether a tool's output is an agent transcript
+// read back — any of its lines a harness record, once Read's line numbers are
+// set aside. Recognised by the text itself, it holds however the file was
+// named and whether or not it is still there.
+func looksLikeTranscript(body string) bool {
+	if !strings.Contains(body, `"sessionId"`) {
+		return false
+	}
+	for _, line := range strings.Split(withoutLineNumbers(body), "\n") {
+		if looksLikeRecord(line) {
 			return true
 		}
 	}
@@ -238,7 +377,7 @@ func whyExcluded(body string, calls map[string]recordCall, id string) string {
 		return "Those words are in a sub-agent's reply (model-written), which is not tool output; cite what the sub-agent's own tools printed — its record is searched too"
 	case taskReaders[call.Name]:
 		return "Those words are what " + call.Name + " returned — a background task's output, which may be an agent's model-written reply — so they are not citable as tool output; cite what that task's own tools printed"
-	case readsTranscript(call):
+	case readsTranscript(call) || looksLikeTranscript(body):
 		return "Those words were read out of an agent transcript (the file is an agent's record — its text is model-written), which is not tool output; cite what the tools in that record printed — sub-agents' records are searched too"
 	case len(extractAnswers(body)) > 0:
 		return "Those words are an AskUserQuestion answer — the user's own words, not a tool's output; cite them with --cite:user"

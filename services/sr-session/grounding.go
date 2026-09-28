@@ -73,6 +73,55 @@ func isSRFileCall(literals []string) bool {
 	return pureGlue[literals[0]]
 }
 
+// srFileCallFor is isSRFileCall that also accepts the program named by a PATH
+// (`/opt/sr/bin/sr-file`, `./bin/sr`) when that path, relative to cwd and
+// through symbolic links, IS the sr-file or sr installed beside this engine —
+// the very binary resolve mode runs, so the dry run and the real run are the
+// same program. Any other program named sr-file is whatever sits there, and is
+// never run ahead of time.
+func srFileCallFor(cwd string) func(literals []string) bool {
+	return func(literals []string) bool {
+		if isSRFileCall(literals) {
+			return true
+		}
+		name := literals[0]
+		if !strings.Contains(name, "/") {
+			return false
+		}
+		base := filepath.Base(name)
+		if base != "sr-file" && base != "sr" {
+			return false
+		}
+		if !filepath.IsAbs(name) {
+			if cwd == "" {
+				return false
+			}
+			name = filepath.Join(cwd, name)
+		}
+		if !sameBinary(name, filepath.Join(siblingDir(), base)) {
+			return false
+		}
+		return isSRFileCall(append([]string{base}, literals[1:]...))
+	}
+}
+
+// siblingDir is the directory this engine's own binary sits in. A variable so
+// a test can name another.
+var siblingDir = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(exe)
+}
+
+// sameBinary reports whether a and b are one existing file.
+func sameBinary(a, b string) bool {
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	return errA == nil && errB == nil && !ai.IsDir() && os.SameFile(ai, bi)
+}
+
 func groundedVerb(v string) bool {
 	return v == grounding.VerbWrite || v == grounding.VerbEdit || v == grounding.VerbDelete
 }
@@ -195,7 +244,7 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, ci
 				chain = append(chain, resolveAll(cite, g.Cites)...)
 			}
 		}
-		if commandmod.OnlyCalls(in.Command, isSRFileCall) {
+		if commandmod.OnlyCalls(in.Command, srFileCallFor(p.Cwd)) {
 			records, failed, said, err := runResolve(in.Command, p.Cwd, cite.Path)
 			if err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: sr-file resolve:", err)
@@ -362,8 +411,8 @@ func clip(s string, max int) string {
 // runs the sr-file installed beside the engine judging it.
 func siblingPath() string {
 	path := os.Getenv("PATH")
-	if exe, err := os.Executable(); err == nil {
-		return filepath.Dir(exe) + string(os.PathListSeparator) + path
+	if dir := siblingDir(); dir != "" {
+		return dir + string(os.PathListSeparator) + path
 	}
 	return path
 }

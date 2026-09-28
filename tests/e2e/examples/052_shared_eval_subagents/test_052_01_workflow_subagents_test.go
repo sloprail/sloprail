@@ -9,10 +9,12 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -76,5 +78,74 @@ printf '\nFIRED=%s COUNT=%s\n' "$GF_STATUS" "$GF_COUNT"
 		if !strings.Contains(got, want) {
 			t.Errorf("the condensed trajectory / fired count lacks %q:\n%s", want, got)
 		}
+	}
+}
+
+// T052_02: a run too long for the judge's budget — a 68k-character root and
+// eight sub-agents, each ending in a SubagentStop refusal, the root ending in a
+// Stop refusal and its final message. Every refusal, the final message and the
+// scorer's omission marker are in what the judge reads, and it fits the budget.
+func TestT052_02_TruncationKeepsEveryRefusal(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not installed")
+	}
+	shared := sharedEval(t)
+	session := filepath.Join(t.TempDir(), "s-052b.jsonl")
+	text := func(uuid, ts, s string) string {
+		return fmt.Sprintf(`{"type":"assistant","uuid":%q,"timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":%q}]}}`, uuid, ts, s)
+	}
+	refusal := func(event, s string) string {
+		return fmt.Sprintf(`{"type":"attachment","uuid":"x","attachment":{"type":"hook_blocking_error","hookEvent":%q,"blockingError":{"blockingError":%q}}}`, event, s)
+	}
+	filler := strings.Repeat("the agent keeps working through the task ", 18)
+	var root []string
+	root = append(root, `{"type":"user","uuid":"u1","message":{"role":"user","content":"do the work"}}`)
+	for i := 0; i < 90; i++ {
+		root = append(root, text(fmt.Sprintf("r%d", i), "2026-09-28T00:00:00Z", fmt.Sprintf("ROOT-STEP-%d %s", i, filler)))
+	}
+	root = append(root, refusal("Stop", "ROOT-STOP-REFUSAL-9001 memories/a.md was changed without a citation"),
+		text("rz", "2026-09-28T00:10:00Z", "FINAL-MESSAGE-9002 all done"))
+	writeLines(t, session, root...)
+	for s := 1; s <= 8; s++ {
+		var sub []string
+		sub = append(sub, `{"type":"user","uuid":"s0","isSidechain":true,"message":{"role":"user","content":"sub-task"}}`)
+		for i := 0; i < 40; i++ {
+			sub = append(sub, text(fmt.Sprintf("s%d", i), fmt.Sprintf("2026-09-28T00:0%d:00Z", s), fmt.Sprintf("SUB-%d-STEP-%d %s", s, i, filler)))
+		}
+		sub = append(sub, refusal("SubagentStop", fmt.Sprintf("SUB-REFUSAL-%d the file-guard refused", s)))
+		writeLines(t, filepath.Join(strings.TrimSuffix(session, ".jsonl"), "subagents", fmt.Sprintf("agent-sub%d.jsonl", s)), sub...)
+	}
+
+	script := `. "$SHARED/trajectory-health.sh"
+root="$(mktemp)"
+jq -r -f "$SHARED/condense-transcript.jq" "$SR_EVAL_TRANSCRIPT" > "$root"
+wc -c < "$root" >&2
+trajectory_condense "$SHARED/condense-transcript.jq" "$root"
+`
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(), "SHARED="+shared, "SR_EVAL_TRANSCRIPT="+session)
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("sh: %v\n%s", err, stderr.String())
+	}
+	got := stdout.String()
+	if n, _ := strconv.Atoi(strings.TrimSpace(stderr.String())); n < 60000 {
+		t.Fatalf("the root condenses to %d bytes, under the budget, so this tests nothing", n)
+	}
+	if len(got) > 60000 {
+		t.Errorf("the condensed trajectory is %d bytes, over the 60000 budget", len(got))
+	}
+	want := []string{"ROOT-STOP-REFUSAL-9001", "FINAL-MESSAGE-9002", "omitted by the scorer"}
+	for s := 1; s <= 8; s++ {
+		want = append(want, fmt.Sprintf("SUB-REFUSAL-%d", s))
+	}
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("the condensed trajectory lacks %q", w)
+		}
+	}
+	if i, j := strings.Index(got, "SUB-1-STEP"), strings.Index(got, "SUB-8-STEP"); i >= 0 && j >= 0 && j < i {
+		t.Errorf("the sub-agents are not in the order they started")
 	}
 }

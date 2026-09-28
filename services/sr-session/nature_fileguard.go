@@ -68,6 +68,8 @@ type fileGuardResult struct {
 	Attribution string
 	Refused     bool
 	Reason      string
+	// Path is the file a Post refusal is about; "" otherwise.
+	Path string
 }
 
 // runFileGuardsPreventive runs the PREVENTIVE file-guards against a cycle's PRE
@@ -459,7 +461,7 @@ func runFileGuardsPost(
 			}
 
 			if verdict.Refused {
-				results = append(results, fileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: verdict.Reason})
+				results = append(results, fileGuardResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: verdict.Reason, Path: path})
 				// One refusal per (guard, file); keep judging the remaining files so
 				// the agent hears every not-fine one at once.
 				continue

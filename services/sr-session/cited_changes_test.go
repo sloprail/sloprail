@@ -5,11 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/grounding"
@@ -130,7 +132,7 @@ func TestBeginCycleRecordsOnlyWhatTheAgentDidNotDo(t *testing.T) {
 
 	// Dirty before the session began.
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.md"), []byte("dirty\n"), 0o644))
-	require.NoError(t, beginCycle(store, repo, 10))
+	require.NoError(t, beginCycle(store, repo, 10, nil))
 	h := historyOf(t, store)
 	require.Len(t, h["a.md"], 1)
 	assert.True(t, h["a.md"][0].Foreign)
@@ -139,16 +141,16 @@ func TestBeginCycleRecordsOnlyWhatTheAgentDidNotDo(t *testing.T) {
 
 	// The agent's own change during the open cycle is not recorded.
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "b.md"), []byte("agent\n"), 0o644))
-	require.NoError(t, beginCycle(store, repo, 11))
+	require.NoError(t, beginCycle(store, repo, 11, nil))
 	assert.NotContains(t, historyOf(t, store), "b.md")
 
 	// Stop: the agent leaves b.md as "agent". Then the user edits it.
 	require.NoError(t, endCycle(store, []event.Event{
 		citedPostEvent(filemod.KindPostUpdate, "a.md", "base\n", "dirty\n"),
 		citedPostEvent(filemod.KindPostUpdate, "b.md", "base\n", "agent\n"),
-	}))
+	}, nil))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "b.md"), []byte("user\n"), 0o644))
-	require.NoError(t, beginCycle(store, repo, 20))
+	require.NoError(t, beginCycle(store, repo, 20, nil))
 	h = historyOf(t, store)
 	require.Len(t, h["b.md"], 1)
 	assert.True(t, h["b.md"][0].Foreign)
@@ -207,4 +209,62 @@ func TestResolveNotesAreKeyedByFile(t *testing.T) {
 
 	// A failure sr-file tied to no file is the line's.
 	assert.Equal(t, "unparseable", resolveNotes{line: "unparseable"}.For("a.md"))
+}
+
+func commitRepo(t *testing.T, files map[string]string) (string, sessionstate.Store) {
+	t.Helper()
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "-q")
+	for p, c := range files {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(repo, p)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(repo, p), []byte(c), 0o644))
+	}
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-qm", "base")
+	head, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	store := openTestStore(t)
+	require.NoError(t, store.SetMeta(sessionstate.MetaBaselineCommit, strings.TrimSpace(string(head))))
+	return repo, store
+}
+
+// Once the agent started work that can outlive the call that started it, what
+// changes between its Stop and its next hook may be that work landing: it is
+// not set aside as foreign.
+func TestBeginCycleChargesWhatChangedAfterBackgroundWork(t *testing.T) {
+	repo, store := commitRepo(t, map[string]string{"a.md": "base\n"})
+	require.NoError(t, beginCycle(store, repo, 10, nil))
+	require.NoError(t, markOutlives(store))
+	require.NoError(t, endCycle(store, []event.Event{citedPostEvent(filemod.KindPostUpdate, "a.md", "base\n", "cited\n")}, nil))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.md"), []byte("EVIL UNCITED REWRITE"), 0o644))
+	require.NoError(t, beginCycle(store, repo, 20, nil))
+	assert.NotContains(t, historyOf(t, store), "a.md", "a change landing after background work was set aside as not the agent's")
+	assert.True(t, readCycle(store).Outlives, "the mark lasts the session")
+}
+
+// Only files a citation rule selects are snapshotted, and a content nothing
+// names any more is deleted.
+func TestSnapshotsOnlyWhatACitationRuleSelects(t *testing.T) {
+	repo, store := commitRepo(t, map[string]string{"memories/a.md": "base\n", "other.txt": "base\n"})
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "memories/a.md"), []byte("dirty memory\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "other.txt"), []byte("dirty other\n"), 0o644))
+	selects := citedPathsOf([]declaration.FileGuard{{Match: `memories/**`,
+		Require: []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{}}}}})
+	require.NoError(t, beginCycle(store, repo, 10, selects))
+	h := historyOf(t, store)
+	assert.Contains(t, h, "memories/a.md")
+	assert.NotContains(t, h, "other.txt")
+	_, ok, err := store.Meta(contentKey(hashOf("dirty other\n")))
+	require.NoError(t, err)
+	assert.False(t, ok, "the content of a file no citation rule selects was stored")
+
+	// A content no point names any more goes at the next Stop.
+	orphan := putState(store, true, "orphan")
+	require.NoError(t, endCycle(store, nil, selects))
+	_, ok, err = store.Meta(contentKey(orphan.Hash))
+	require.NoError(t, err)
+	assert.False(t, ok, "an unreferenced content was kept")
+	_, ok, err = store.Meta(contentKey(hashOf("dirty memory\n")))
+	require.NoError(t, err)
+	assert.True(t, ok, "a content a point names was deleted")
 }

@@ -981,6 +981,12 @@ func (e *Env) TranscriptPath(projDir, sessionID string) string {
 	return e.transcriptPath(projDir, sessionID)
 }
 
+// BinDir is where this run's service binaries were built — the directory a
+// test names to run one by path rather than by name.
+func (e *Env) BinDir() string {
+	return e.binDir
+}
+
 // ConfigDir is the isolated stand-in for ~/.claude the mock wrote this run's
 // transcripts under. A test that drives a `trajectory` command through cite's
 // ENVIRONMENT fallback (no --path, no payload) hands this to the binary as

@@ -47,8 +47,10 @@ messages in the main conversation, quoted exactly as the user wrote them. When
 dispatching work that must cite the user, paste the user's exact words into the
 sub-agent's prompt.
 
-Run `sr-file` **on its own**, by its bare name (not `/path/to/sr-file`), in the
-command line: only `sr-file` calls, `&&`,
+Run `sr-file` **on its own**, by its bare name, in the command line — it must
+be on PATH (`command -v sr-file`; if that fails, put sloprail's binaries on
+PATH, or name the engine's own `sr-file` by its full path, which is dry-run as
+the same program): only `sr-file` calls, `&&`,
 `||`, `;`, `echo` and a stdin heredoc, with every value quoted verbatim
 (`'…'`, `<<'BODY'`). Such a line is dry-run before it executes, so its event
 carries the exact result (`resultKnown: true`). Mixed with any other program,
@@ -85,6 +87,11 @@ own call.
 - A cited `sr-file write` states the whole file, so it grounds everything before
   it: an uncited change is settled by restating the file with one, which is the
   remedy the refusal gives.
+- A cited write settles the file by the citation's EXISTENCE alone: it grounds
+  everything the write states, whatever the quote says. Whether the restated
+  content is what the quote supports is a content check — a `judge` reading
+  `event.citations` against the change — and a rule that must tie the whole
+  file to its quote needs one.
 - Changes the agent did not make are never charged to it: a file already dirty
   when the session began, the user's edit between turns, a branch switch, a
   checkout filter (`eol=crlf`). They are noticed at the first hook of each of
@@ -92,6 +99,13 @@ own call.
   last Stop. A change made by something else WHILE the agent is working (an
   editor saving the file mid-turn) cannot be told from the agent's own and is
   charged; restate the file with a cited `sr-file write` to settle it.
+- Work the agent starts that can outlive the call that started it — a command
+  sent to the background (`&`, `run_in_background`), `nohup`, `setsid`,
+  `disown`, `at`, `crontab`, a sub-agent run in the background — can land
+  after the agent's Stop. Once the agent has started any, a change between its
+  turns is no longer set aside as someone else's for the rest of the session:
+  it is charged to the agent, so the user's own edit between turns then needs
+  the agent to restate the file with a cited write too.
 
 ## Requiring one
 

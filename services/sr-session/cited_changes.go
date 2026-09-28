@@ -9,11 +9,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/sloprail/sloprail/internal/commandmod"
+	"github.com/sloprail/sloprail/internal/declaration"
 	dispatchcore "github.com/sloprail/sloprail/internal/dispatch"
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/grounding"
+	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -73,13 +76,22 @@ type pendingChange struct {
 // cycleMeta is where the session's current cycle stands: State is "" before
 // the session's first hook, "open" once a cycle's first hook ran, "ended" once
 // its Stop ran; End is how the agent left each file it had changed, at that
-// Stop.
+// Stop. Outlives is set, for the rest of the session, once the agent started
+// work that can outlive the call that started it (see launchesBackground):
+// from then on, what changes between its Stop and its next hook may be its own.
 type cycleMeta struct {
 	State     string                  `json:"state,omitempty"`
 	StartedAt int64                   `json:"startedAt,omitempty"`
 	EndedAt   int64                   `json:"endedAt,omitempty"`
 	End       map[string]historyState `json:"end,omitempty"`
+	Outlives  bool                    `json:"outlives,omitempty"`
 }
+
+// citedPath reports whether a rule requiring a citation cares about the file at
+// path, as it now stands. Only such files are snapshotted: a file no citation
+// rule selects needs no history, and its content need not be stored. nil
+// selects every path.
+type citedPath func(path string, exists bool, content string) bool
 
 // snapshotMax bounds the files a foreign point is recorded for: a file this
 // large is not one a citation rule is about, and reading every dirty file at
@@ -213,7 +225,7 @@ func landedOf(pending []pendingChange) []pendingChange {
 // and its next hook no tool of the agent's ran, so what changed there — the
 // user's edit, a branch switch, a file already dirty when the session began —
 // is not the agent's to cite.
-func beginCycle(store sessionstate.Store, dir string, now int64) error {
+func beginCycle(store sessionstate.Store, dir string, now int64, selects citedPath) error {
 	if store == nil {
 		return nil
 	}
@@ -226,10 +238,19 @@ func beginCycle(store sessionstate.Store, dir string, now int64) error {
 	if cyc.State == "open" {
 		return nil
 	}
+	opened := cycleMeta{State: "open", StartedAt: now, Outlives: cyc.Outlives}
 	commit, _, _ := store.Meta(sessionstate.MetaBaselineCommit)
 	root, err := gitrepo.Root(dir)
 	if err != nil || commit == "" {
-		return writeCycle(store, cycleMeta{State: "open", StartedAt: now})
+		return writeCycle(store, opened)
+	}
+	if cyc.State == "ended" && cyc.Outlives {
+		// The agent started work that can outlive the call that started it —
+		// a background job, a detached process, a background sub-agent. What
+		// changed since its Stop may be that work landing, so none of it is
+		// set aside as not the agent's: it is charged like any change the
+		// agent made.
+		return writeCycle(store, opened)
 	}
 
 	paths := map[string]bool{}
@@ -248,6 +269,9 @@ func beginCycle(store sessionstate.Store, dir string, now int64) error {
 			continue
 		}
 		cur, content := fileState(abs)
+		if selects != nil && !selects(path, cur.Exists, content) {
+			continue
+		}
 		pt := historyPoint{Foreign: true, At: now}
 		if cyc.State == "ended" {
 			prev, ok := cyc.End[path]
@@ -275,7 +299,21 @@ func beginCycle(store sessionstate.Store, dir string, now int64) error {
 			return err
 		}
 	}
-	return writeCycle(store, cycleMeta{State: "open", StartedAt: now})
+	return writeCycle(store, opened)
+}
+
+// markOutlives records that the agent started work that can outlive the call
+// that started it. See cycleMeta.Outlives.
+func markOutlives(store sessionstate.Store) error {
+	if store == nil {
+		return nil
+	}
+	cyc := readCycle(store)
+	if cyc.Outlives {
+		return nil
+	}
+	cyc.Outlives = true
+	return writeCycle(store, cyc)
 }
 
 // baselineState is path as the baseline commit holds it, through the
@@ -288,21 +326,74 @@ func baselineState(store sessionstate.Store, root, commit, path string) historyS
 // endCycle records, at Stop, how the agent leaves each file the cycle's
 // difference names, so the next cycle's first hook can tell a change the agent
 // did not make (beginCycle).
-func endCycle(store sessionstate.Store, events []event.Event) error {
+func endCycle(store sessionstate.Store, events []event.Event, selects citedPath) error {
 	if store == nil {
 		return nil
 	}
-	var cyc cycleMeta
-	if raw, ok, err := store.Meta(sessionstate.MetaCitedCycle); err == nil && ok && raw != "" {
-		_ = json.Unmarshal([]byte(raw), &cyc)
-	}
+	cyc := readCycle(store)
 	end := map[string]historyState{}
 	for _, e := range events {
 		path, _ := e.Fields[filemod.FieldPath].(string)
 		newContent, _ := e.Fields[filemod.FieldNewContent].(string)
-		end[path] = putState(store, e.Kind != filemod.KindPostDelete, newContent)
+		exists := e.Kind != filemod.KindPostDelete
+		if selects != nil && !selects(path, exists, newContent) {
+			continue
+		}
+		end[path] = putState(store, exists, newContent)
 	}
-	return writeCycle(store, cycleMeta{State: "ended", StartedAt: cyc.StartedAt, EndedAt: nowNano(), End: end})
+	if err := writeCycle(store, cycleMeta{State: "ended", StartedAt: cyc.StartedAt, EndedAt: nowNano(), End: end, Outlives: cyc.Outlives}); err != nil {
+		return err
+	}
+	return gcContent(store)
+}
+
+// gcContent deletes every stored content no point, pending change or cycle
+// snapshot still names: a dropped pending change, a pruned history, a file's
+// superseded state at the last Stop.
+func gcContent(store sessionstate.Store) error {
+	if store == nil {
+		return nil
+	}
+	keep := map[string]bool{}
+	mark := func(s historyState) {
+		if s.Exists {
+			keep[contentKey(s.Hash)] = true
+		}
+	}
+	markPoint := func(p historyPoint) {
+		mark(p.Before)
+		mark(p.After)
+		if p.From != nil {
+			mark(*p.From)
+		}
+	}
+	for _, pts := range historyIn(store, true) {
+		for _, p := range pts {
+			markPoint(p)
+		}
+	}
+	var pending []pendingChange
+	if raw, ok, err := store.Meta(sessionstate.MetaCitedPending); err == nil && ok && raw != "" {
+		_ = json.Unmarshal([]byte(raw), &pending)
+	}
+	for _, p := range pending {
+		markPoint(p.Point)
+	}
+	for _, s := range readCycle(store).End {
+		mark(s)
+	}
+	keys, err := store.MetaKeys(contentKeyPrefix)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if !keep[k] {
+			if err := store.DeleteMeta(k); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func writeCycle(store sessionstate.Store, c cycleMeta) error {
@@ -348,7 +439,10 @@ func pruneHistory(store sessionstate.Store, cutoff int64) error {
 	}
 	cyc := readCycle(store)
 	cyc.End = nil
-	return writeCycle(store, cyc)
+	if err := writeCycle(store, cyc); err != nil {
+		return err
+	}
+	return gcContent(store)
 }
 
 // cycleStartedAt is when the store's current cycle began.
@@ -572,3 +666,101 @@ func swapJSON[T any](store sessionstate.Store, key string, change func(*T)) erro
 
 // nowNano is the ordering stamp a point carries.
 func nowNano() int64 { return time.Now().UnixNano() }
+
+// citedPathsOf is the citedPath of the loaded rules: a file any file-guard
+// requiring a citation selects, as it now stands. A match that cannot be
+// compiled or answered selects the file — a snapshot too many costs a stored
+// content, one too few charges the agent for a change it did not make.
+func citedPathsOf(guards []declaration.FileGuard) citedPath {
+	var matches []*guardrail.Matcher
+	for _, g := range guards {
+		cites := false
+		for _, r := range g.Require {
+			cites = cites || r.Citation != nil
+		}
+		if !cites {
+			continue
+		}
+		m, err := guardrail.CompileFileMatch(g.Match)
+		if err != nil {
+			return nil
+		}
+		matches = append(matches, m)
+	}
+	return func(path string, exists bool, content string) bool {
+		fe := filemod.FileEvent{Path: path}
+		kind := filemod.KindPostDelete
+		if exists {
+			fe.NewContent, fe.NewMarkers = content, filemod.Scan(content)
+			kind = filemod.KindPostUpdate
+		}
+		e := fe.Event(kind)
+		for _, m := range matches {
+			if ok, err := fileGuardSelects(m, e, nil); ok || err != nil {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// launchesBackground reports whether a tool call starts work that can outlive
+// it: a shell command run in the background or detaching work (nohup, setsid,
+// `&`, at, crontab, …), or a sub-agent run in the background.
+func launchesBackground(p HookPayload) bool {
+	var in struct {
+		Command    string `json:"command"`
+		Background bool   `json:"run_in_background"`
+	}
+	_ = json.Unmarshal(p.ToolInput, &in)
+	if in.Background {
+		return true
+	}
+	return commandmod.HarnessCommandTools[p.ToolName] && in.Command != "" && commandmod.Backgrounds(in.Command)
+}
+
+// markCitedUnknown remembers each file a permitted call changed with citations
+// that resolved but a result that could not be computed ahead of time — an
+// sr-file call the dry run never ran (not on its own in the line, named by a
+// path that is not the engine's own sr-file, sr-file not on PATH). Such a
+// change cannot be tied to its citations; if a rule refuses the file at Stop,
+// the refusal says why (citedUnknownNote).
+func markCitedUnknown(store sessionstate.Store, events []event.Event) error {
+	var paths []string
+	for _, e := range events {
+		if (e.Kind == filemod.KindPreCreate || e.Kind == filemod.KindPreUpdate) && !resultKnown(e) &&
+			len(grounding.FromWire(e.Fields[grounding.FieldCitations])) > 0 {
+			path, _ := e.Fields[filemod.FieldPath].(string)
+			paths = append(paths, path)
+		}
+	}
+	if store == nil || len(paths) == 0 {
+		return nil
+	}
+	return swapJSON(store, sessionstate.MetaCitedUnknown, func(all *map[string]bool) {
+		if *all == nil {
+			*all = map[string]bool{}
+		}
+		for _, p := range paths {
+			(*all)[p] = true
+		}
+	})
+}
+
+// citedUnknownNote is what a Stop refusal of path adds when a cited change to
+// it could not be computed ahead of time; "" otherwise.
+func citedUnknownNote(store sessionstate.Store, path string) string {
+	if store == nil || path == "" {
+		return ""
+	}
+	raw, ok, err := store.Meta(sessionstate.MetaCitedUnknown)
+	if err != nil || !ok {
+		return ""
+	}
+	var all map[string]bool
+	if json.Unmarshal([]byte(raw), &all) != nil || !all[path] {
+		return ""
+	}
+	return "\nA cited sr-file call changed this file, but its result could not be computed before it ran, so its citations could not be tied to what landed. " +
+		"Run sr-file ON ITS OWN in the line and by its bare name `sr-file` (it must be on PATH: check `command -v sr-file`; if that fails, install sloprail's binaries onto PATH), with every value quoted verbatim."
+}

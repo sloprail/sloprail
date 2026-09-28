@@ -40,33 +40,116 @@ cat_subagent_records() {
   subagent_records | while IFS= read -r rec; do cat "$rec"; done
 }
 
-# trajectory_condense prints the condensed trajectory a judge reads: the root
-# record's condensed text (from condensed_file, already produced with
-# condense_jq), then each sub-agent record's, under its own header.
+# TRAJECTORY_BUDGET is the most text a judge is handed, in bytes.
+TRAJECTORY_BUDGET="${TRAJECTORY_BUDGET:-60000}"
+
+# subagent_records_by_time prints the sub-agent records in the order their
+# agents started (the first timestamp each holds), so the judge reads them as
+# they happened rather than by id.
+subagent_records_by_time() {
+  subagent_records | while IFS= read -r rec; do
+    ts="$(jq -r 'select(.timestamp != null) | .timestamp' "$rec" 2>/dev/null | head -1)"
+    printf '%s\t%s\n' "${ts:-9999}" "$rec"
+  done | sort | cut -f2-
+}
+
+# refusal_lines prints the lines of a condensed record that are a refusal: a
+# Stop or SubagentStop hook's (HOOK_REFUSAL) or a tool call a hook blocked.
+refusal_lines() {
+  grep -E '^HOOK_REFUSAL|^TOOL_RESULT: .*(hook error|blocked by a PreToolUse hook)' "$1" 2>/dev/null || true
+}
+
+# keep_ends prints a condensed record within budget bytes, cut at line
+# boundaries: its first third and its last two thirds, with a marker saying how
+# many lines the scorer left out between them. The end is what the agent last
+# did and said, so it keeps the larger share.
+keep_ends() {
+  awk -v budget="$2" '
+    { line[NR] = $0; len[NR] = length($0) + 1; total += len[NR] }
+    END {
+      if (total <= budget) { for (i = 1; i <= NR; i++) print line[i]; exit }
+      room = budget - 64
+      head = int(room / 3); tail = room - head
+      used = 0; h = 0
+      for (i = 1; i <= NR && used + len[i] <= head; i++) { used += len[i]; h = i }
+      used = 0; t = NR + 1
+      for (i = NR; i > h && used + len[i] <= tail; i--) { used += len[i]; t = i }
+      for (i = 1; i <= h; i++) print line[i]
+      printf "[... %d lines omitted by the scorer ...]\n", t - h - 1
+      for (i = t; i <= NR; i++) print line[i]
+    }' "$1"
+}
+
+# trajectory_condense prints the condensed trajectory a judge reads, within
+# TRAJECTORY_BUDGET: first every refusal anywhere in the run (the root's and
+# each sub-agent's, deduplicated with a count), then the root record, then each
+# sub-agent record under its own header, in the order the agents started.
 #
 # Work the agent dispatched to sub-agents is part of the trajectory: a
 # sub-agent's refusals, retries and evasions are in ITS record, not the root's,
 # so a judge shown only the root misses them (measured 2026-09-27: a
 # security-scan sub-agent deleted its declared scanner to escape the coverage
-# gate, and a root-only judge scored the run healthy). Each sub-agent record is
-# condensed the same way and appended under its own header. The root keeps the
-# larger share of the budget; the sub-agents split the rest, each getting at
-# least enough to show its refusals and what it did about them.
+# gate, and a root-only judge scored the run healthy).
+#
+# A record too long for its share keeps its beginning and its end — the refusals
+# and how the run ended are what a health judge must see — with a marker where
+# the scorer cut. The refusals come first because no cut may hide one. The root
+# keeps the larger share; the sub-agents split the rest evenly, and a sub-agent
+# that does not fit even a minimal share is named with its refusal count
+# instead of shown.
 trajectory_condense() {
   tc_jq="$1"
   tc_root="$2"
-  tc_n="$(subagent_records | grep -c . || true)"
-  if [ "${tc_n:-0}" -eq 0 ]; then
-    head -c 60000 "$tc_root"
-    return
+  tc_dir="$(mktemp -d)"
+  tc_n=0
+  : > "$tc_dir/subs"
+  subagent_records_by_time > "$tc_dir/records"
+  while IFS= read -r tc_sub; do
+    tc_n=$((tc_n + 1))
+    jq -r -f "$tc_jq" "$tc_sub" > "$tc_dir/sub-$tc_n" 2>/dev/null
+    printf '%s\t%s\n' "$tc_n" "$(basename "$tc_sub" .jsonl)" >> "$tc_dir/subs"
+  done < "$tc_dir/records"
+
+  # Every refusal, deduplicated in first-seen order, each cut to one line.
+  {
+    refusal_lines "$tc_root" | sed 's/^/[root] /'
+    while IFS="$(printf '\t')" read -r i name; do
+      refusal_lines "$tc_dir/sub-$i" | sed "s/^/[$name] /"
+    done < "$tc_dir/subs"
+  } | cut -c1-400 | awk '{ c[$0]++; if (c[$0] == 1) o[++n] = $0 } END { for (i = 1; i <= n; i++) printf "(x%d) %s\n", c[o[i]], o[i] }' > "$tc_dir/refusals"
+  if [ -s "$tc_dir/refusals" ]; then
+    printf '=== REFUSALS: every refusal in this run, gathered by the scorer (count, then where) ===\n' > "$tc_dir/out"
+    keep_ends "$tc_dir/refusals" 12000 >> "$tc_dir/out"
+    printf '=== END OF REFUSALS; the trajectory follows ===\n' >> "$tc_dir/out"
+  else
+    : > "$tc_dir/out"
   fi
-  tc_per=$((24000 / tc_n))
-  [ "$tc_per" -ge 6000 ] || tc_per=6000
-  head -c 36000 "$tc_root"
-  subagent_records | while IFS= read -r tc_sub; do
-    printf '\n=== SUB-AGENT %s: a separate agent the agent above dispatched; its own steps follow ===\n' "$(basename "$tc_sub" .jsonl)"
-    jq -r -f "$tc_jq" "$tc_sub" 2>/dev/null | head -c "$tc_per"
-  done
+
+  tc_used="$(wc -c < "$tc_dir/out" | tr -d ' ')"
+  tc_left=$((TRAJECTORY_BUDGET - tc_used))
+  if [ "$tc_n" -eq 0 ]; then
+    keep_ends "$tc_root" "$tc_left" >> "$tc_dir/out"
+  else
+    keep_ends "$tc_root" $((tc_left * 3 / 5)) >> "$tc_dir/out"
+    tc_used="$(wc -c < "$tc_dir/out" | tr -d ' ')"
+    tc_left=$((TRAJECTORY_BUDGET - tc_used))
+    tc_floor=2500
+    tc_fit=$((tc_left / tc_floor))
+    [ "$tc_fit" -le "$tc_n" ] || tc_fit="$tc_n"
+    [ "$tc_fit" -ge 1 ] || tc_fit=0
+    tc_per=0
+    [ "$tc_fit" -eq 0 ] || tc_per=$((tc_left / tc_fit - 160))
+    while IFS="$(printf '\t')" read -r i name; do
+      if [ "$i" -le "$tc_fit" ]; then
+        printf '\n=== SUB-AGENT %s: a separate agent the agent above dispatched; its own steps follow ===\n' "$name" >> "$tc_dir/out"
+        keep_ends "$tc_dir/sub-$i" "$tc_per" >> "$tc_dir/out"
+      else
+        printf '\n=== SUB-AGENT %s: left out by the scorer for length (%s refusal(s), listed above) ===\n' "$name" "$(refusal_lines "$tc_dir/sub-$i" | grep -c . || true)" >> "$tc_dir/out"
+      fi
+    done < "$tc_dir/subs"
+  fi
+  head -c "$TRAJECTORY_BUDGET" "$tc_dir/out"
+  rm -rf "$tc_dir"
 }
 
 trajectory_health_check() {
@@ -112,11 +195,10 @@ trajectory_health_check() {
     rm -f "$condensed_file"
     return
   fi
-  # A hard cap as a last-resort safety net beyond condensing — a pathological
-  # single tool result (e.g. a test suite dumping thousands of lines despite
-  # the per-line truncation above) could still blow the budget. 60000 chars
-  # is comfortably under any judge model's context at the truncation lengths
-  # condense-transcript.jq already applies. Sub-agents: see trajectory_condense.
+  # The budget (TRAJECTORY_BUDGET, 60000 bytes) is comfortably under any judge
+  # model's context at the truncation lengths condense-transcript.jq already
+  # applies. How it is spent — refusals first, then each record's beginning and
+  # end — is trajectory_condense's.
   condensed_text="$(trajectory_condense "$condense_jq" "$condensed_file")"
   rm -f "$condensed_file"
 

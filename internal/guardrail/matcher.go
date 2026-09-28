@@ -61,10 +61,14 @@ func compile(src string, opts ...expr.Option) (*Matcher, error) {
 		return &Matcher{}, nil
 	}
 	// AsBool last, so it cannot be displaced by a caller's option.
-	opts = append(opts, expr.Patch(absentListIsEmpty{}), expr.AsBool())
+	absent := newAbsentListIsEmpty()
+	opts = append(opts, expr.Patch(absent), expr.AsBool())
 	program, err := expr.Compile(src, opts...)
+	if err == nil && absent.Err != nil {
+		return nil, fmt.Errorf("matcher %q: %w", src, absent.Err)
+	}
 	if err != nil {
-		if strings.Contains(src, ".flags") {
+		if strings.Contains(src, ".flags") && (strings.Contains(err.Error(), "mismatched types []") || strings.Contains(err.Error(), "cannot use []")) {
 			// The commonest cause by far: a flag compared as the one string it
 			// was before every flag's value became the list of its occurrences.
 			return nil, fmt.Errorf("matcher %q: %w (flag values are lists: write `\"x\" in .flags.name`, not `.flags.name == \"x\"`)", src, err)

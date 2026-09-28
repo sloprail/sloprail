@@ -1,9 +1,11 @@
 package transcript
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,10 +64,7 @@ func TestTaskOutputIsNeverCitable(t *testing.T) {
 // An ordinary file read the same ways still does.
 func TestReadingAnAgentTranscriptIsNotToolOutput(t *testing.T) {
 	p := newProject(t)
-	agentRecord := p.write("agent-bg1",
-		`{"type":"user","uuid":"s0","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"go"}}`,
-		`{"type":"assistant","uuid":"s1","parentUuid":"s0","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"TRANSCRIPTMARKER all 40 tests pass"}]}}`,
-	)
+	agentRecord := p.write("agent-bg1", harnessRecordLines("TRANSCRIPTMARKER all 40 tests pass")...)
 	tasks := filepath.Join(t.TempDir(), "tasks")
 	require.NoError(t, os.MkdirAll(tasks, 0o755))
 	link := filepath.Join(tasks, "bg1.output")
@@ -91,4 +90,70 @@ func TestReadingAnAgentTranscriptIsNotToolOutput(t *testing.T) {
 	got, err := ResolveCitation(path, toolReq("PLAINMARKER"))
 	require.NoError(t, err, "an ordinary file read is tool output")
 	assert.Equal(t, 7, got.Line)
+}
+
+// harnessRecordLines is a record as the harness writes one: the fields only it
+// writes (sessionId, parentUuid, version, userType) beside the conversation.
+func harnessRecordLines(text string) []string {
+	return []string{
+		`{"parentUuid":null,"isSidechain":true,"userType":"external","cwd":"/w","sessionId":"sess-1","version":"2.1.282","type":"user","uuid":"s0","message":{"role":"user","content":"go"}}`,
+		`{"parentUuid":"s0","isSidechain":true,"userType":"external","cwd":"/w","sessionId":"sess-1","version":"2.1.282","type":"assistant","uuid":"s1","message":{"role":"assistant","content":[{"type":"text","text":` + jsonQuote(text) + `}]}}`,
+	}
+}
+
+// A transcript read back is recognised by its text too: a cat of a record the
+// command then deletes, or one named relative to a directory the record does
+// not give, still returns model-written text. An ordinary JSON-lines data file
+// — even one whose lines carry a uuid and a type — and a command that merely
+// mentions the projects directory in a comment are ordinary tool output.
+func TestTranscriptReadBackIsRecognisedByItsText(t *testing.T) {
+	p := newProject(t)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	gone := filepath.Join(t.TempDir(), "agent.jsonl")
+	lines := harnessRecordLines("GONEMARKER all green")
+	data := `{"uuid":"d1","type":"user","message":{"n":1},"value":"DATAMARKER 42"}`
+	path := p.write("the-session",
+		userMsg("u1", "check it"),
+		namedCall("a1", "u1", "toolu_cat", "Bash", `{"command":"cat `+gone+` && rm `+gone+`"}`),
+		toolAnswer("r1", "a1", "toolu_cat", lines[0]+"\n"+lines[1]),
+		namedCall("a2", "r1", "toolu_rel", "Bash", `{"command":"cat agent.jsonl"}`),
+		toolAnswer("r2", "a2", "toolu_rel", "RELMARKER "+lines[1]),
+		namedCall("a3", "r2", "toolu_data", "Bash", `{"command":"cat data.jsonl"}`),
+		toolAnswer("r3", "a3", "toolu_data", data),
+		namedCall("a4", "r3", "toolu_echo", "Bash", `{"command":"echo BUILD-OK-5512 # not reading `+cfg+`/projects"}`),
+		toolAnswer("r4", "a4", "toolu_echo", "BUILD-OK-5512"),
+	)
+	for _, q := range []string{"GONEMARKER", "RELMARKER"} {
+		_, err := ResolveCitation(path, toolReq(q))
+		require.Error(t, err, "%s: an agent transcript read back grounded as tool output", q)
+		assert.Contains(t, err.Error(), "agent transcript", q)
+	}
+	for _, q := range []string{"DATAMARKER 42", "BUILD-OK-5512"} {
+		_, err := ResolveCitation(path, toolReq(q))
+		assert.NoError(t, err, "%s is ordinary tool output", q)
+	}
+}
+
+// Classifying a long record's calls stays cheap: a record of 3000 shell calls,
+// each naming a file, resolves a citation well within a hook's budget.
+func TestLongRecordResolvesQuickly(t *testing.T) {
+	p := newProject(t)
+	dir := t.TempDir()
+	lines := []string{userMsg("u0", "go")}
+	for i := 0; i < 3000; i++ {
+		id := fmt.Sprintf("t%d", i)
+		f := filepath.Join(dir, fmt.Sprintf("f%d.txt", i))
+		lines = append(lines,
+			namedCall(fmt.Sprintf("a%d", i), "u0", id, "Bash", `{"command":"cat `+f+` | grep -n x -- `+f+`"}`),
+			toolAnswer(fmt.Sprintf("r%d", i), fmt.Sprintf("a%d", i), id, fmt.Sprintf("output %d", i)))
+	}
+	lines = append(lines, namedCall("aZ", "u0", "tZ", "Bash", `{"command":"make test"}`), toolAnswer("rZ", "aZ", "tZ", "LONGMARKER passed"))
+	path := p.write("the-session", lines...)
+	start := time.Now()
+	_, err := ResolveCitation(path, toolReq("LONGMARKER"))
+	require.NoError(t, err)
+	took := time.Since(start)
+	t.Logf("resolved over 3000 calls in %s", took)
+	assert.Less(t, took, 1500*time.Millisecond, "a citation over a long record must stay cheap")
 }

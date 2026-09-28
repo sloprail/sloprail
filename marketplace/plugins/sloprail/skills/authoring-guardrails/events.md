@@ -148,6 +148,7 @@ string and nesting one level deeper does not defeat it. Each invocation carries:
   | was it given a non-empty value | `any(.flags.access, # != "")` |
   | was `--tag=next` among them | `"next" in .flags.tag` |
   | the first value | `"tag" in .flags and .flags.tag[0] == "next"` (indexing an empty list errors) |
+  | was `--tag` NOT passed | `not ("tag" in .flags)` — `.flags.tag == nil`, `!= nil` and a `??` default are refused at load, since an absent flag reads as `[]`, never nil |
 - `.cwd` — string, the directory the program runs in as far as the line says,
   threaded through every `cd` ahead of it (a subshell's `cd` stays inside the
   subshell): `"."` is where the line started, `"sub/dir"` is relative to that,

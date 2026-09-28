@@ -81,8 +81,7 @@ func TestT041_45_AnAgentTranscriptReadBackIsNotToolOutput(t *testing.T) {
 	e, proj := provenanceProject(t)
 	elsewhere := t.TempDir()
 	record := filepath.Join(elsewhere, "agent-bg1.jsonl")
-	if err := os.WriteFile(record, []byte(`{"type":"user","uuid":"s0","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"go"}}`+"\n"+
-		`{"type":"assistant","uuid":"s1","parentUuid":"s0","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"AGENTTEXT-5150 all 40 tests pass"}]}}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(record, []byte(agentRecordText("AGENTTEXT-5150 all 40 tests pass")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(elsewhere, "tasks", "bg1.output")
@@ -223,5 +222,50 @@ func TestT041_31_ASubagentIsToldWhyItsUserQuoteFails(t *testing.T) {
 	}
 	if !strings.Contains(rootResult, "does not resolve") || strings.Contains(rootResult, "sub-agent") || strings.Contains(rootResult, "hook") {
 		t.Errorf("the root's own failed citation was not left to sr-file's own words:\n%s", rootResult)
+	}
+}
+
+// agentRecordText is a sub-agent's record as the harness writes one.
+func agentRecordText(said string) string {
+	return `{"parentUuid":null,"isSidechain":true,"userType":"external","cwd":"/w","sessionId":"sess-bg","version":"2.1.282","type":"user","uuid":"s0","message":{"role":"user","content":"go"}}` + "\n" +
+		`{"parentUuid":"s0","isSidechain":true,"userType":"external","cwd":"/w","sessionId":"sess-bg","version":"2.1.282","type":"assistant","uuid":"s1","message":{"role":"assistant","content":[{"type":"text","text":"` + said + `"}]}}` + "\n"
+}
+
+// T041_48 (P14, P12): an agent transcript read back is recognised by its
+// text — a cat of a record the command then deletes, a cat by a relative path
+// — and does not ground a tool_result citation. Output that merely mentions the
+// projects directory in a comment, or an ordinary JSON-lines data file, does.
+func TestT041_48_ATranscriptReadBackIsRecognisedByItsText(t *testing.T) {
+	e, proj := provenanceProject(t)
+	elsewhere := t.TempDir()
+	gone := filepath.Join(elsewhere, "agent.jsonl")
+	if err := os.WriteFile(gone, []byte(agentRecordText("GONETEXT-6601 all green")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.WriteFile(proj, "rel-agent.jsonl", agentRecordText("RELTEXT-6602 all green"))
+	e.WriteFile(proj, "data.jsonl", `{"uuid":"d1","type":"user","message":{"n":1},"value":"DATAVALUE-6603"}`+"\n")
+
+	res := e.Run(proj, "s-041-48", prompt, Turns("done",
+		Bash("c1", "cat "+gone+" && rm "+gone),
+		Bash("c2", "cat rel-agent.jsonl"),
+		Bash("c3", "cat data.jsonl"),
+		Bash("c4", "echo BUILD-OK-5512 # not reading "+filepath.Join(e.ConfigDir(), "projects")),
+		Bash("b1", `sr-file write memories/gone.md --cite:tool_result 'GONETEXT-6601 all green' --content '# x'`),
+		Bash("b2", `sr-file write memories/rel.md --cite:tool_result 'RELTEXT-6602 all green' --content '# x'`),
+		Bash("b3", `sr-file write memories/data.md --cite:tool_result 'DATAVALUE-6603' --content '# x'`),
+		Bash("b4", `sr-file write memories/echo.md --cite:tool_result 'BUILD-OK-5512' --content '# x'`),
+	))
+	if !res.Saw("b4") {
+		t.Fatalf("the citing calls never ran:\n%s", res.Output)
+	}
+	for _, f := range []string{"memories/gone.md", "memories/rel.md"} {
+		if e.Exists(proj, f) {
+			t.Errorf("%s: an agent transcript read back grounded a write:\n%s", f, res.Output)
+		}
+	}
+	for _, f := range []string{"memories/data.md", "memories/echo.md"} {
+		if !e.Exists(proj, f) {
+			t.Errorf("%s: ordinary tool output did not ground a write:\n%s", f, res.Output)
+		}
 	}
 }

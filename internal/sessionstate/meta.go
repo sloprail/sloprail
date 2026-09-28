@@ -77,6 +77,12 @@ const (
 	// turns, a branch switch, a file dirty when the session began) from one it
 	// made.
 	MetaCitedCycle = "cited_cycle"
+
+	// MetaCitedUnknown is the files a permitted call changed with resolved
+	// citations but a result not computable ahead of time, as a JSON object of
+	// path to true — so a refusal at Stop can say why the citations did not
+	// count.
+	MetaCitedUnknown = "cited_unknown"
 )
 
 // Meta reads a session fact.
@@ -157,4 +163,39 @@ func (s *store) SwapMeta(key, old, value string) (bool, error) {
 		return false, fmt.Errorf("sessionstate: swap meta %q: %w", key, err)
 	}
 	return n > 0, nil
+}
+
+// MetaKeys lists the meta keys that start with prefix, in key order.
+func (s *store) MetaKeys(prefix string) ([]string, error) {
+	db, err := s.conn()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT key FROM meta WHERE substr(key, 1, ?) = ? ORDER BY key`, len(prefix), prefix)
+	if err != nil {
+		return nil, fmt.Errorf("sessionstate: list meta %q: %w", prefix, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, fmt.Errorf("sessionstate: list meta %q: %w", prefix, err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// DeleteMeta forgets a session fact. Deleting a key never written is not an
+// error.
+func (s *store) DeleteMeta(key string) error {
+	db, err := s.conn()
+	if err != nil {
+		return err
+	}
+	if _, err := db.Exec(`DELETE FROM meta WHERE key = ?`, key); err != nil {
+		return fmt.Errorf("sessionstate: delete meta %q: %w", key, err)
+	}
+	return nil
 }

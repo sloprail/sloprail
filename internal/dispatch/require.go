@@ -749,14 +749,17 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 			what, how)
 	case declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete:
 		how := withHint("Redo the change with sr-file, citing what it rests on:\n"+sfFileForms(kind, path, flag, hint != ""), hint, fileCommand)
-		return fmt.Sprintf("%s was changed without citing %s (%s).\n%s", path, what, flag, how)
+		return fmt.Sprintf("%s was changed without citing %s (%s).\n%s\n%s", path, what, flag, how, runOnItsOwn)
 	}
 	how := withHint("Make it with sr-file, which carries the citation on the command (never in the file):\n"+sfFileForms(kind, path, flag, hint != ""), hint, fileCommand)
-	return fmt.Sprintf("this change to %s must cite %s (%s), and it carries none that resolves.\n%s\n"+
-		"Run sr-file ON ITS OWN in the command (call it by its bare name `sr-file`, not a path; nothing else in the line but sr-file calls, &&, and echo; no cd, no export or VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) so its result can be checked before it runs. "+
+	return fmt.Sprintf("this change to %s must cite %s (%s), and it carries none that resolves.\n%s\n%s "+
 		"Single-quote the quote; it must match exactly one entry of this session — check one with `sr-session trajectory cite '<quote>'`.",
-		path, what, flag, how)
+		path, what, flag, how, runOnItsOwn)
 }
+
+// runOnItsOwn is how sr-file must be run for its change to be computed before
+// it runs — and so for its citations to count.
+const runOnItsOwn = "Run sr-file ON ITS OWN in the command (call it by its bare name `sr-file` — it must be on PATH, check `command -v sr-file` — not a path; nothing else in the line but sr-file calls, &&, and echo; no cd, no export or VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) so its result can be checked before it runs."
 
 // withHint is the how of a remedy given a rule's hint: the hint alone when one
 // of its lines IS the runnable command (starts with it, once indented space is
