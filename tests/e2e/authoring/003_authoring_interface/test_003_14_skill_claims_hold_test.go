@@ -176,12 +176,15 @@ func TestT003_14_SkillDoesNotRestateTheDerivedVocabulary(t *testing.T) {
 	// says where to get it leaves an author guessing kind names, which is the
 	// silent no-op this whole document exists to prevent.
 	//
-	// `sr-session start` is that surface now. It is not a help screen — it is the
-	// loader reporting, from the registry the enforcement itself runs on, every
-	// kind this build produces and every field a kind carries. T003_19 below
-	// proves it actually answers that way rather than merely being cited.
-	if !strings.Contains(skill, "sr-session start") {
-		t.Error("the skill never tells the author how to get the kinds from the engine — they are per-build and cannot be guessed, so an author who is not sent to the load check will invent a kind name")
+	// This half reads the WHOLE folder (skillCorpusText, not skillText): SKILL.md
+	// itself only has to point at events.md, the single reference for the
+	// vocabulary — the pointer does not have to duplicate the mechanism it points
+	// at. `sr-session start` is that mechanism. It is not a help screen — it is
+	// the loader reporting, from the registry the enforcement itself runs on,
+	// every kind this build produces and every field a kind carries. T003_19
+	// below proves it actually answers that way rather than merely being cited.
+	if !strings.Contains(skillCorpusText(t), "sr-session start") {
+		t.Error("nothing in the skill folder tells the author how to get the kinds from the engine — they are per-build and cannot be guessed, so an author who is not sent to the load check will invent a kind name")
 	}
 }
 
