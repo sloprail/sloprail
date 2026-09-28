@@ -237,7 +237,7 @@ func TestT041_46_BackgroundWorkLandingAfterStopIsCharged(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	e.Run(proj, "s-041-46", "carry on", Turns("done", Bash("b3", "true")))
-	if blocks := stopBlocks(e, proj, "s-041-46"); !strings.Contains(blocks, "was changed without a citation") {
+	if blocks := stopBlocks(e, proj, "s-041-46"); !strings.Contains(blocks, "changed after your last Stop") || !strings.Contains(blocks, "nohup") {
 		t.Errorf("an uncited rewrite by the agent's own background job passed as the user's edit:\n%s", blocks)
 	}
 }
@@ -276,5 +276,80 @@ func TestT041_47_TheEnginesOwnSRFileByPath(t *testing.T) {
 	blocks := stopBlocks(e3, proj3, "s-041-47c")
 	if !strings.Contains(blocks, "could not be computed before it ran") || !strings.Contains(blocks, "command -v sr-file") {
 		t.Errorf("the Stop refusal does not say why the citation did not count, or how to run sr-file:\n%s", blocks)
+	}
+}
+
+// waitFor polls until the file holds want, or fails the test.
+func waitFor(t *testing.T, proj, rel, want string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for readProj(t, proj, rel) != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never came to hold %q, so this tests nothing", rel, want)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// T041_49 (P18, P19, P20): honest work mentioning `&` does not mark the session
+// as running work between turns — a cited write whose content holds "R&D", an
+// echo of a URL with `&` in its query, a background job the line waits for. The
+// user's own edit between turns is then set aside as theirs, as on main.
+func TestT041_49_AmpersandsThatDetachNothing(t *testing.T) {
+	for name, cmd := range map[string]string{
+		"P18 R&D content": `sr-file write memories/b.md --cite:user 'adopt a decision log' --content '# R&D decision log'`,
+		"P19 URL":         `echo 'https://x.invalid/?a=1&b=2'`,
+		"P20 waited job":  `sleep 0 & wait`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, proj := guarded(t, afterCitationGuard)
+			e.Run(proj, "s-041-49", prompt, Turns("done",
+				Bash("b1", `sr-file write memories/a.md --cite:user 'adopt a decision log' --content 'v1'`),
+				Bash("b2", cmd),
+			))
+			e.WriteFile(proj, "memories/a.md", "v1 and the user's own line")
+			e.Run(proj, "s-041-49", "carry on", Turns("done", Bash("b3", "true")))
+			if blocks := stopBlocks(e, proj, "s-041-49"); blocks != "" {
+				t.Errorf("the user's edit was charged after a command that detached nothing:\n%s", blocks)
+			}
+		})
+	}
+}
+
+// T041_50 (P17): a bare `&` nothing waits for may still be running between
+// turns, so the change that lands then is charged — and the refusal says the
+// file changed after the agent's last Stop, and names the work.
+func TestT041_50_ABareBackgroundJobChargesAndExplains(t *testing.T) {
+	e, proj := guarded(t, afterCitationGuard)
+	e.Run(proj, "s-041-50", prompt, Turns("done",
+		Bash("b1", `sr-file write memories/a.md --cite:user 'adopt a decision log' --content 'v1'`),
+		Bash("b2", `sleep 1 &`),
+	))
+	e.WriteFile(proj, "memories/a.md", "v1 and a later line")
+	e.Run(proj, "s-041-50", "carry on", Turns("done", Bash("b3", "true")))
+	blocks := stopBlocks(e, proj, "s-041-50")
+	for _, want := range []string{"memories/a.md changed after your last Stop", "(sleep 1 &)", "sr-file write memories/a.md --cite:user"} {
+		if !strings.Contains(blocks, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, blocks)
+		}
+	}
+}
+
+// T041_51 (P21): a foreground sub-agent detaches a job that rewrites a file the
+// root cited, after the root's Stop. The sub-agent's mark lives in its own
+// store; the root's next cycle reads it, and charges the rewrite.
+func TestT041_51_ASubagentsDetachedJobIsCharged(t *testing.T) {
+	e, proj := guarded(t, afterCitationGuard)
+	sub := subagentScript(t, harness.Turns("sub done",
+		Bash("sb1", `nohup sh -c 'sleep 3; printf "EVIL SUB REWRITE" > memories/a.md' >/dev/null 2>&1 &`),
+	))
+	e.Run(proj, "s-041-51", prompt, Turns("done",
+		Bash("b1", `sr-file write memories/a.md --cite:user 'adopt a decision log' --content 'the log'`),
+		harness.Dispatch("d1", "tidy up", sub, ""),
+	))
+	waitFor(t, proj, "memories/a.md", "EVIL SUB REWRITE")
+	e.Run(proj, "s-041-51", "carry on", Turns("done", Bash("b3", "true")))
+	if blocks := stopBlocks(e, proj, "s-041-51"); !strings.Contains(blocks, "changed after your last Stop") {
+		t.Errorf("a sub-agent's detached rewrite passed as the user's edit:\n%s", blocks)
 	}
 }

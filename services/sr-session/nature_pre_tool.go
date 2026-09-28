@@ -62,7 +62,7 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	// left pending are settled now — before anything this call records.
 	if grounds {
 		now := nowNano()
-		if err := beginCycle(store, p.Cwd, now, citedPathsOf(loaded.FileGuards)); err != nil {
+		if err := beginCycle(store, p.Cwd, now, citedPathsOf(loaded.FileGuards), otherMarks(p, scope.Transcript)); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		}
 		if err := settleCitedChanges(store); err != nil {
@@ -146,8 +146,8 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	if err := markCitedUnknown(store, events); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 	}
-	if grounds && launchesBackground(p) {
-		if err := markOutlives(store); err != nil {
+	if grounds {
+		if err := noteBackground(store, p); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
 		}
 	}

@@ -41,6 +41,13 @@ type HistoryPoint struct {
 	// say — explains a difference from From that is not the agent's either.
 	FromAt int64
 
+	// BetweenTurns marks a change that landed between the agent's Stop and its
+	// next hook while work it had started may still have been running (By
+	// names that work): charged like the agent's own, from From to After, and
+	// the refusal says why.
+	BetweenTurns bool
+	By           string
+
 	// Pools are the pools the citations of a cited change resolved in. A cited
 	// change grounds a requirement only when one of them is one it accepts:
 	// a change cited in the wrong pool is, to that requirement, uncited.
@@ -75,7 +82,12 @@ func (h FileHistory) uncitedParts(pools []transcript.SourceType) []UncitedChange
 	points := append([]HistoryPoint(nil), h.Points...)
 	sort.SliceStable(points, func(i, j int) bool { return points[i].At < points[j].At })
 
-	var gaps [][2]HistoryState
+	type gap struct {
+		from, to     HistoryState
+		betweenTurns bool
+		by           string
+	}
+	var gaps []gap
 	state := h.Baseline
 	var stateAt int64
 	for _, p := range points {
@@ -85,7 +97,21 @@ func (h FileHistory) uncitedParts(pools []transcript.SourceType) []UncitedChange
 			// covers — unless the state was reached AFTER that Stop, by
 			// another session's cited change, which is not the agent's.
 			if p.From != nil && *p.From != state && stateAt <= p.FromAt {
-				gaps = append(gaps, [2]HistoryState{state, *p.From})
+				gaps = append(gaps, gap{from: state, to: *p.From})
+			}
+			state = p.After
+			stateAt = p.At
+			continue
+		case p.BetweenTurns:
+			if p.From != nil && *p.From != state && stateAt <= p.FromAt {
+				gaps = append(gaps, gap{from: state, to: *p.From})
+			}
+			from := state
+			if p.From != nil {
+				from = *p.From
+			}
+			if from != p.After {
+				gaps = append(gaps, gap{from: from, to: p.After, betweenTurns: true, by: p.By})
 			}
 			state = p.After
 			stateAt = p.At
@@ -99,21 +125,22 @@ func (h FileHistory) uncitedParts(pools []transcript.SourceType) []UncitedChange
 			stateAt = p.At
 		default:
 			if state != p.Before {
-				gaps = append(gaps, [2]HistoryState{state, p.Before})
+				gaps = append(gaps, gap{from: state, to: p.Before})
 			}
 			state = p.After
 			stateAt = p.At
 		}
 	}
 	if state != h.Current {
-		gaps = append(gaps, [2]HistoryState{state, h.Current})
+		gaps = append(gaps, gap{from: state, to: h.Current})
 	}
 
 	out := make([]UncitedChange, 0, len(gaps))
 	for _, g := range gaps {
 		out = append(out, UncitedChange{
-			FromExists: g[0].Exists, From: h.content(g[0]),
-			ToExists: g[1].Exists, To: h.content(g[1]),
+			FromExists: g.from.Exists, From: h.content(g.from),
+			ToExists: g.to.Exists, To: h.content(g.to),
+			BetweenTurns: g.betweenTurns, By: g.by,
 		})
 	}
 	return out

@@ -623,7 +623,7 @@ func (r Runner) checkCitation(req Request, p declaration.Prerequisite, hint stri
 				continue
 			}
 		}
-		return refuse(uncitedRemedy(req.Event.Fields, pools)), nil
+		return refuse(uncitedRemedy(req.Event.Fields, pools, u)), nil
 	}
 	return pass(), nil
 }
@@ -678,13 +678,24 @@ func uncitedEvent(e event.Event, u UncitedChange) event.Event {
 // agent made without one in these pools, which they do not ground — and the
 // one command that settles it: restating the whole file, cited. An edit would
 // ground only its own part and leave the uncited one standing.
-func uncitedRemedy(fields map[string]any, pools []transcript.SourceType) string {
+func uncitedRemedy(fields map[string]any, pools []transcript.SourceType, u UncitedChange) string {
 	names := make([]string, len(pools))
 	for i, p := range pools {
 		names[i] = string(p)
 	}
 	flag := "--cite:" + strings.Join(names, ",")
 	path, _ := fields["path"].(string)
+	if u.BetweenTurns {
+		by := u.By
+		if by == "" {
+			by = "background work"
+		}
+		return fmt.Sprintf("%s changed after your last Stop, while work you started earlier this session may still have been running (%s). "+
+			"A change that lands then is charged to you like one you made, since it may be that work's, and it carries no citation. "+
+			"If it is yours, restate the whole file with a cited sr-file write, citing %s (%s):\n"+
+			"  sr-file write %s %s '<exact quote>' <<'EOF'\n  <the whole file>\n  EOF",
+			path, by, citedWhat(pools), flag, path, flag)
+	}
 	return fmt.Sprintf("%s was changed without a citation this session (a Write, an Edit, a command, or an sr-file call citing another pool), "+
 		"and a citation grounds only the change it rode on. Restate the whole file with a cited sr-file write, citing %s (%s) — "+
 		"it grounds the file as it leaves it:\n"+

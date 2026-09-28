@@ -155,32 +155,75 @@ func readsTranscript(c recordCall) bool {
 }
 
 // commandPaths is every word of a shell command that can name a file: a word
-// that holds a `/` or ends in .jsonl or .output and is not an option, with its
-// quotes and the shell's punctuation trimmed. A word opening a comment ends the
-// line's words. Split on white space rather than parsed: this runs over every
-// call of a record, and a path with a space in it is the rare case the result's
-// own text still catches (looksLikeTranscript).
+// that holds a `/` or ends in .jsonl or .output — an option's value too
+// (`--file=/abs/x.jsonl`) — with its quotes and the shell's punctuation
+// trimmed. An unquoted `#` at the start of a word begins a comment, which holds
+// no words. Tokenised by quotes and white space rather than parsed: this runs
+// over every call of a record, and what it misses the result's own text still
+// catches (looksLikeTranscript).
 func commandPaths(cmd string) []string {
 	if !strings.Contains(cmd, "/") && !strings.Contains(cmd, ".jsonl") && !strings.Contains(cmd, ".output") {
 		return nil
 	}
 	var out []string
-	for _, line := range strings.Split(cmd, "\n") {
-		for _, w := range strings.Fields(line) {
-			if strings.HasPrefix(w, "#") {
-				break
-			}
-			w = strings.Trim(w, `'"();|&<>`+"`")
-			if i := strings.LastIndexAny(w, "<>"); i >= 0 {
-				w = w[i+1:] // a redirection glued to its target: >out, 2>/dev/null
-			}
-			if w == "" || strings.HasPrefix(w, "-") {
-				continue
-			}
-			if strings.Contains(w, "/") || strings.HasSuffix(w, ".jsonl") || strings.HasSuffix(w, ".output") {
-				out = append(out, w)
-			}
+	keep := func(w string) {
+		w = strings.Trim(w, "();|&`")
+		if i := strings.LastIndexAny(w, "<>"); i >= 0 {
+			w = w[i+1:] // a redirection glued to its target: >out, 2>/dev/null
 		}
+		if strings.HasPrefix(w, "-") {
+			i := strings.IndexByte(w, '=')
+			if i < 0 {
+				return
+			}
+			w = w[i+1:] // an option's value: --file=/abs/x
+		}
+		if w != "" && (strings.Contains(w, "/") || strings.HasSuffix(w, ".jsonl") || strings.HasSuffix(w, ".output")) {
+			out = append(out, w)
+		}
+	}
+	var word strings.Builder
+	var quote byte
+	inWord, comment := false, false
+	for i := 0; i < len(cmd); i++ {
+		c := cmd[i]
+		switch {
+		case comment:
+			if c == '\n' {
+				comment = false
+			}
+			continue
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			} else {
+				word.WriteByte(c)
+			}
+			continue
+		case c == '\\' && i+1 < len(cmd):
+			i++
+			word.WriteByte(cmd[i])
+			inWord = true
+			continue
+		case c == '\'' || c == '"':
+			quote, inWord = c, true
+			continue
+		case c == '#' && !inWord:
+			comment = true
+			continue
+		case c == ' ' || c == '\t' || c == '\n':
+			if inWord {
+				keep(word.String())
+				word.Reset()
+				inWord = false
+			}
+			continue
+		}
+		word.WriteByte(c)
+		inWord = true
+	}
+	if inWord {
+		keep(word.String())
 	}
 	return out
 }

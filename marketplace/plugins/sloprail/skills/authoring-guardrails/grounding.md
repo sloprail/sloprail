@@ -99,13 +99,28 @@ own call.
   last Stop. A change made by something else WHILE the agent is working (an
   editor saving the file mid-turn) cannot be told from the agent's own and is
   charged; restate the file with a cited `sr-file write` to settle it.
-- Work the agent starts that can outlive the call that started it — a command
-  sent to the background (`&`, `run_in_background`), `nohup`, `setsid`,
-  `disown`, `at`, `crontab`, a sub-agent run in the background — can land
-  after the agent's Stop. Once the agent has started any, a change between its
-  turns is no longer set aside as someone else's for the rest of the session:
-  it is charged to the agent, so the user's own edit between turns then needs
-  the agent to restate the file with a cited write too.
+- Work the agent starts that can outlive the call that started it can land
+  after its Stop, and a change that lands then is charged to the agent (the
+  refusal says the file changed after its last Stop, and names the work),
+  never set aside as the user's:
+  - a shell command that detaches work — `nohup`, `setsid`, `disown`, `at`,
+    `crontab`, `tmux`, `screen`, a coprocess, or a `&` nothing in the same
+    line `wait`s for (a `&` inside quotes, a URL or a here-document is text;
+    `cmd & wait` ends inside the call) — for the rest of the session, since
+    nothing reports when such work ends;
+  - a Bash run with `run_in_background`, a background sub-agent, a session
+    cron — for as long as the harness's Stop reports it still running
+    (`background_tasks`, `session_crons`).
+  A sub-agent's detached work counts for the session that dispatched it, and
+  the other way round. Work detached by other means — a program's own
+  `subprocess.Popen(start_new_session=True)`, a daemon, `docker run -d`, a git
+  hook — is not seen: grounding is a correctness aid, not a security boundary.
+- A `tool_result` citation proves that the quoted output EXISTS in the
+  session's record — never where it came from. Output read back from an agent's
+  transcript is excluded as far as it can be recognised (by the file a tool
+  read, or by its text), and that is best-effort: text copied out of a
+  transcript and reshaped first (`jq` to a file, then `cat`) is ordinary
+  output.
 
 ## Requiring one
 

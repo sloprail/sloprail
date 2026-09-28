@@ -157,3 +157,16 @@ func TestLongRecordResolvesQuickly(t *testing.T) {
 	t.Logf("resolved over 3000 calls in %s", took)
 	assert.Less(t, took, 1500*time.Millisecond, "a citation over a long record must stay cheap")
 }
+
+func TestCommandPaths(t *testing.T) {
+	for cmd, want := range map[string][]string{
+		`cat /a/agent.jsonl`:                             {"/a/agent.jsonl"},
+		`tool --file=/a/agent.jsonl -v`:                  {"/a/agent.jsonl"},
+		`echo 'a # b' /a/x.jsonl`:                        {"/a/x.jsonl"},
+		`echo ok # cat /a/x.jsonl`:                       nil,
+		`grep -n x -- "/a/with space.jsonl" 2>/dev/null`: {"/a/with space.jsonl", "/dev/null"},
+		`cat x.output >out/y`:                            {"x.output", "out/y"},
+	} {
+		assert.Equal(t, want, commandPaths(cmd), cmd)
+	}
+}

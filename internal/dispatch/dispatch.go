@@ -167,6 +167,11 @@ type UncitedChange struct {
 	From       string
 	ToExists   bool
 	To         string
+
+	// BetweenTurns: the change landed after the agent's last Stop, while work
+	// it had started (By) may still have been running.
+	BetweenTurns bool
+	By           string
 }
 
 // Verdict is what the check-runner concluded about one fired event.

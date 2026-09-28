@@ -1,6 +1,7 @@
 package commandmod
 
 import (
+	"path/filepath"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -14,42 +15,104 @@ var detachers = map[string]bool{
 	"systemd-run": true, "launchctl": true, "start-stop-daemon": true,
 }
 
-// Backgrounds reports whether running raw may leave work running after the
-// line itself returns: a statement sent to the background (`&`, a coprocess),
-// or a program that detaches work (nohup, setsid, at, crontab, …) anywhere in
-// the line, including inside a wrapper's own command string (`bash -c 'x &'`).
+// shells are the programs whose `-c` argument is itself a command line.
+var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true}
+
+// Detaches reports whether running raw may leave work running after the line
+// itself returns, and names that work: a program that detaches work (nohup,
+// setsid, disown, at, crontab, tmux, screen, …), a coprocess, or a statement
+// sent to the background (`&`) that nothing in the same line waits for. A
+// `cmd & … wait` ends its work inside the call, and so does `&` that is only
+// text — in a quoted argument, a URL, a here-document. A shell's `-c` command
+// line (`bash -c 'x &'`) is parsed the same way, as a line of its own.
 //
-// It errs toward yes — a line that cannot be parsed, or whose text holds a lone
-// `&` outside `&&` and the redirection forms, is reported as backgrounding —
-// because the answer decides whether a change that lands later can be set aside
-// as not the agent's, and a wrong "no" is the one that launders.
-func Backgrounds(raw string) bool {
+// A line that does not parse is reported as detaching: whether it could is
+// then unknown, and the answer decides whether a change that lands later can be
+// set aside as not the agent's.
+func Detaches(raw string) (bool, string) {
+	return detaches(raw, 0)
+}
+
+func detaches(raw string, depth int) (bool, string) {
 	f, err := syntax.NewParser().Parse(strings.NewReader(raw), "")
 	if err != nil {
-		return true
+		return true, clipCommand(raw)
 	}
-	found := false
+	var background []*syntax.Stmt
+	waited := false
+	found, what := false, ""
 	syntax.Walk(f, func(n syntax.Node) bool {
+		if found {
+			return false
+		}
 		switch n := n.(type) {
 		case *syntax.Stmt:
-			found = found || n.Background || n.Coprocess
+			if n.Background {
+				background = append(background, n)
+			}
+			if n.Coprocess {
+				found, what = true, stmtText(raw, n)
+			}
 		case *syntax.CoprocClause:
-			found = true
+			found, what = true, "coproc"
+		case *syntax.CallExpr:
+			args := literalArgs(n)
+			if len(args) == 0 {
+				return true
+			}
+			bin := filepath.Base(args[0])
+			switch {
+			case detachers[bin]:
+				found, what = true, clipCommand(strings.Join(args, " "))
+			case bin == "wait":
+				waited = true
+			case shells[bin] && depth < 3:
+				for i := 1; i+1 < len(args); i++ {
+					if args[i] == "-c" {
+						if ok, w := detaches(args[i+1], depth+1); ok {
+							found, what = true, w
+						}
+						break
+					}
+				}
+			}
 		}
-		return !found
+		return true
 	})
 	if found {
-		return true
+		return true, what
 	}
-	for _, inv := range ExtractCommand(raw).Invocations {
-		if detachers[inv.Bin] {
-			return true
+	if len(background) > 0 && !waited {
+		return true, stmtText(raw, background[0]) + " &"
+	}
+	return false, ""
+}
+
+// literalArgs is a call's words as far as each is literal text.
+func literalArgs(c *syntax.CallExpr) []string {
+	var out []string
+	for _, w := range c.Args {
+		lit, ok := plainWord(w)
+		if !ok {
+			lit = ""
 		}
+		out = append(out, lit)
 	}
-	// A `&` inside a quoted command string the parser did not look into.
-	rest := raw
-	for _, form := range []string{"&&", ">&", "&>", "<&", "|&"} {
-		rest = strings.ReplaceAll(rest, form, "")
+	return out
+}
+
+func stmtText(raw string, st *syntax.Stmt) string {
+	start, end := int(st.Pos().Offset()), int(st.End().Offset())
+	if start < 0 || end > len(raw) || start >= end {
+		return clipCommand(raw)
 	}
-	return strings.Contains(rest, "&")
+	return clipCommand(strings.TrimSuffix(strings.TrimSpace(raw[start:end]), "&"))
+}
+
+func clipCommand(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 120 {
+		return s[:120] + "…"
+	}
+	return s
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
@@ -55,14 +56,20 @@ type historyState struct {
 
 // historyPoint is one step of a path's history. See dispatch.HistoryPoint.
 type historyPoint struct {
-	Foreign bool                  `json:"foreign,omitempty"`
-	From    *historyState         `json:"from,omitempty"`
-	FromAt  int64                 `json:"fromAt,omitempty"`
-	Cites   []transcript.Citation `json:"cites,omitempty"`
-	Whole   bool                  `json:"whole,omitempty"`
-	Before  historyState          `json:"before"`
-	After   historyState          `json:"after"`
-	At      int64                 `json:"at"`
+	Foreign bool          `json:"foreign,omitempty"`
+	From    *historyState `json:"from,omitempty"`
+	FromAt  int64         `json:"fromAt,omitempty"`
+
+	// BetweenTurns marks a change that landed between the agent's Stop and its
+	// next hook while work it started may have been running (By names it): it
+	// is charged, and a refusal says why.
+	BetweenTurns bool                  `json:"betweenTurns,omitempty"`
+	By           string                `json:"by,omitempty"`
+	Cites        []transcript.Citation `json:"cites,omitempty"`
+	Whole        bool                  `json:"whole,omitempty"`
+	Before       historyState          `json:"before"`
+	After        historyState          `json:"after"`
+	At           int64                 `json:"at"`
 }
 
 // pendingChange is a cited change a permitted call is about to make, keyed by
@@ -76,15 +83,47 @@ type pendingChange struct {
 // cycleMeta is where the session's current cycle stands: State is "" before
 // the session's first hook, "open" once a cycle's first hook ran, "ended" once
 // its Stop ran; End is how the agent left each file it had changed, at that
-// Stop. Outlives is set, for the rest of the session, once the agent started
-// work that can outlive the call that started it (see launchesBackground):
-// from then on, what changes between its Stop and its next hook may be its own.
+// Stop.
+//
+// Two marks say that work the agent started may still be running between its
+// turns, so that what changes there may be its own (beginCycle charges it
+// instead of setting it aside):
+//
+//   - Detached: a shell command detached work (nohup, setsid, disown, at,
+//     crontab, tmux, screen, a coprocess, a `&` nothing in the line waits
+//     for). Nothing reports when such work ends, so the mark lasts the
+//     session.
+//   - Tasks: the harness reported background tasks still running at the last
+//     Stop (its payload's background_tasks / session_crons: a Bash run with
+//     run_in_background, a background sub-agent, a cron). Set and cleared at
+//     each Stop. A harness that reports nothing falls back to the calls this
+//     cycle made in the background (Launched), and keeps the mark.
+//
+// By names, for a refusal, the work behind whichever mark is set.
 type cycleMeta struct {
 	State     string                  `json:"state,omitempty"`
 	StartedAt int64                   `json:"startedAt,omitempty"`
 	EndedAt   int64                   `json:"endedAt,omitempty"`
 	End       map[string]historyState `json:"end,omitempty"`
-	Outlives  bool                    `json:"outlives,omitempty"`
+
+	Detached   bool     `json:"detached,omitempty"`
+	DetachedBy []string `json:"detachedBy,omitempty"`
+	Tasks      bool     `json:"tasks,omitempty"`
+	TasksBy    []string `json:"tasksBy,omitempty"`
+	Launched   []string `json:"launched,omitempty"`
+}
+
+// marked reports whether work the agent started may be running between its
+// turns, and names it.
+func (c cycleMeta) marked() (bool, []string) {
+	var by []string
+	if c.Detached {
+		by = append(by, c.DetachedBy...)
+	}
+	if c.Tasks {
+		by = append(by, c.TasksBy...)
+	}
+	return c.Detached || c.Tasks, by
 }
 
 // citedPath reports whether a rule requiring a citation cares about the file at
@@ -197,12 +236,21 @@ func settleCitedChanges(store sessionstate.Store) error {
 	if err != nil || len(landed) == 0 {
 		return err
 	}
-	return swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]historyPoint) {
+	if err := swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]historyPoint) {
 		if *all == nil {
 			*all = map[string][]historyPoint{}
 		}
 		for _, p := range landed {
 			(*all)[p.Path] = append((*all)[p.Path], p.Point)
+		}
+	}); err != nil {
+		return err
+	}
+	// A cited change to the file landed, and its citations are tied to it: an
+	// earlier uncomputable cited call no longer explains anything.
+	return swapJSON(store, sessionstate.MetaCitedUnknown, func(all *map[string]bool) {
+		for _, p := range landed {
+			delete(*all, p.Path)
 		}
 	})
 }
@@ -225,32 +273,35 @@ func landedOf(pending []pendingChange) []pendingChange {
 // and its next hook no tool of the agent's ran, so what changed there — the
 // user's edit, a branch switch, a file already dirty when the session began —
 // is not the agent's to cite.
-func beginCycle(store sessionstate.Store, dir string, now int64, selects citedPath) error {
+func beginCycle(store sessionstate.Store, dir string, now int64, selects citedPath, others []string) error {
 	if store == nil {
 		return nil
 	}
+	// Opening the cycle is one swap, so of two hooks racing to be a cycle's
+	// first, one records its points and the other sees the cycle open.
 	var cyc cycleMeta
-	if raw, ok, err := store.Meta(sessionstate.MetaCitedCycle); err != nil {
+	first := false
+	if err := updateCycle(store, func(c *cycleMeta) {
+		cyc = *c
+		first = c.State != "open"
+		if first {
+			c.State, c.StartedAt = "open", now
+		}
+	}); err != nil || !first {
 		return err
-	} else if ok && raw != "" {
-		_ = json.Unmarshal([]byte(raw), &cyc)
 	}
-	if cyc.State == "open" {
-		return nil
-	}
-	opened := cycleMeta{State: "open", StartedAt: now, Outlives: cyc.Outlives}
 	commit, _, _ := store.Meta(sessionstate.MetaBaselineCommit)
 	root, err := gitrepo.Root(dir)
 	if err != nil || commit == "" {
-		return writeCycle(store, opened)
+		return nil
 	}
-	if cyc.State == "ended" && cyc.Outlives {
-		// The agent started work that can outlive the call that started it —
-		// a background job, a detached process, a background sub-agent. What
-		// changed since its Stop may be that work landing, so none of it is
-		// set aside as not the agent's: it is charged like any change the
-		// agent made.
-		return writeCycle(store, opened)
+	// Work the agent — or a session it shares the tree with (others) — started
+	// may be running between its turns: what changed there may be that work
+	// landing, and is charged like any change the agent made, marked as having
+	// happened between turns so a refusal can say why.
+	marked, by := cyc.marked()
+	if len(others) > 0 {
+		marked, by = true, append(by, others...)
 	}
 
 	paths := map[string]bool{}
@@ -262,7 +313,7 @@ func beginCycle(store sessionstate.Store, dir string, now int64, selects citedPa
 		paths[p] = true
 	}
 
-	var foreign []pendingChange
+	var points []pendingChange
 	for path := range paths {
 		abs := filepath.Join(root, path)
 		if fi, err := os.Stat(abs); err == nil && fi.Size() > snapshotMax {
@@ -283,37 +334,116 @@ func beginCycle(store sessionstate.Store, dir string, now int64, selects citedPa
 			}
 			pt.From = &prev
 			pt.FromAt = cyc.EndedAt
+			if marked {
+				pt.Foreign, pt.BetweenTurns, pt.By = false, true, strings.Join(dedupeStrings(by), "; ")
+			}
 		}
 		pt.After = putState(store, cur.Exists, content)
-		foreign = append(foreign, pendingChange{Path: path, Point: pt})
+		points = append(points, pendingChange{Path: path, Point: pt})
 	}
-	if len(foreign) > 0 {
-		if err := swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]historyPoint) {
-			if *all == nil {
-				*all = map[string][]historyPoint{}
-			}
-			for _, f := range foreign {
-				(*all)[f.Path] = append((*all)[f.Path], f.Point)
-			}
-		}); err != nil {
-			return err
+	if len(points) == 0 {
+		return nil
+	}
+	return swapJSON(store, sessionstate.MetaCitations, func(all *map[string][]historyPoint) {
+		if *all == nil {
+			*all = map[string][]historyPoint{}
 		}
-	}
-	return writeCycle(store, opened)
+		for _, f := range points {
+			(*all)[f.Path] = append((*all)[f.Path], f.Point)
+		}
+	})
 }
 
-// markOutlives records that the agent started work that can outlive the call
-// that started it. See cycleMeta.Outlives.
-func markOutlives(store sessionstate.Store) error {
+// markDetached records that a shell command detached work (see
+// cycleMeta.Detached), naming it.
+func markDetached(store sessionstate.Store, what string) error {
 	if store == nil {
 		return nil
 	}
-	cyc := readCycle(store)
-	if cyc.Outlives {
+	return updateCycle(store, func(c *cycleMeta) {
+		c.Detached = true
+		c.DetachedBy = dedupeStrings(append(c.DetachedBy, what))
+	})
+}
+
+// markLaunched records a call this cycle ran in the background (a Bash with
+// run_in_background, a background sub-agent) — what the Stop falls back to when
+// the harness does not report its background tasks.
+func markLaunched(store sessionstate.Store, what string) error {
+	if store == nil {
 		return nil
 	}
-	cyc.Outlives = true
-	return writeCycle(store, cyc)
+	return updateCycle(store, func(c *cycleMeta) {
+		c.Launched = dedupeStrings(append(c.Launched, what))
+	})
+}
+
+// backgroundReport is what a Stop payload says of the background work still
+// running: Known when the harness reports it at all (background_tasks is
+// present), and the tasks and crons it lists as running.
+type backgroundReport struct {
+	Known   bool
+	Running []string
+}
+
+// backgroundOf reads a Stop payload's background_tasks and session_crons.
+// Claude Code sends each as a list; a task is `{id, type: "shell"|"subagent",
+// status: "running", description, command|agent_type}`. A task with no status
+// counts as running.
+func backgroundOf(p HookPayload) backgroundReport {
+	var r backgroundReport
+	if len(p.BackgroundTasks) > 0 && string(p.BackgroundTasks) != "null" {
+		r.Known = true
+		var tasks []struct {
+			ID          string `json:"id"`
+			Type        string `json:"type"`
+			Status      string `json:"status"`
+			Description string `json:"description"`
+			Command     string `json:"command"`
+			AgentType   string `json:"agent_type"`
+		}
+		_ = json.Unmarshal(p.BackgroundTasks, &tasks)
+		for _, t := range tasks {
+			if t.Status != "" && t.Status != "running" && t.Status != "pending" {
+				continue
+			}
+			what := t.Command
+			if what == "" {
+				what = strings.TrimSpace(t.Type + " " + t.Description)
+			}
+			r.Running = append(r.Running, clipWhat(what))
+		}
+	}
+	if len(p.SessionCrons) > 0 && string(p.SessionCrons) != "null" {
+		var crons []json.RawMessage
+		if json.Unmarshal(p.SessionCrons, &crons) == nil {
+			r.Known = true
+			for _, c := range crons {
+				r.Running = append(r.Running, clipWhat("session cron "+string(c)))
+			}
+		}
+	}
+	return r
+}
+
+func clipWhat(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 120 {
+		return s[:120] + "…"
+	}
+	return s
+}
+
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // baselineState is path as the baseline commit holds it, through the
@@ -326,11 +456,10 @@ func baselineState(store sessionstate.Store, root, commit, path string) historyS
 // endCycle records, at Stop, how the agent leaves each file the cycle's
 // difference names, so the next cycle's first hook can tell a change the agent
 // did not make (beginCycle).
-func endCycle(store sessionstate.Store, events []event.Event, selects citedPath) error {
+func endCycle(store sessionstate.Store, events []event.Event, selects citedPath, bg backgroundReport) error {
 	if store == nil {
 		return nil
 	}
-	cyc := readCycle(store)
 	end := map[string]historyState{}
 	for _, e := range events {
 		path, _ := e.Fields[filemod.FieldPath].(string)
@@ -341,7 +470,18 @@ func endCycle(store sessionstate.Store, events []event.Event, selects citedPath)
 		}
 		end[path] = putState(store, exists, newContent)
 	}
-	if err := writeCycle(store, cycleMeta{State: "ended", StartedAt: cyc.StartedAt, EndedAt: nowNano(), End: end, Outlives: cyc.Outlives}); err != nil {
+	if err := updateCycle(store, func(c *cycleMeta) {
+		c.State, c.EndedAt, c.End = "ended", nowNano(), end
+		if bg.Known {
+			// The harness says what is still running: the mark follows it.
+			c.Tasks, c.TasksBy = len(bg.Running) > 0, bg.Running
+		} else if len(c.Launched) > 0 {
+			// It says nothing: what this cycle ran in the background may still
+			// be running, and nothing will say when it stops.
+			c.Tasks, c.TasksBy = true, dedupeStrings(append(c.TasksBy, c.Launched...))
+		}
+		c.Launched = nil
+	}); err != nil {
 		return err
 	}
 	return gcContent(store)
@@ -396,12 +536,11 @@ func gcContent(store sessionstate.Store) error {
 	return nil
 }
 
-func writeCycle(store sessionstate.Store, c cycleMeta) error {
-	raw, err := json.Marshal(c)
-	if err != nil {
-		return err
-	}
-	return store.SetMeta(sessionstate.MetaCitedCycle, string(raw))
+// updateCycle applies change to the cycle record in one swap, so two hooks of
+// the session (a sibling sub-agent's among them) cannot overwrite each other's
+// marks.
+func updateCycle(store sessionstate.Store, change func(*cycleMeta)) error {
+	return swapJSON(store, sessionstate.MetaCitedCycle, change)
 }
 
 // pruneHistory drops every point recorded before cutoff, when the tree has
@@ -437,9 +576,7 @@ func pruneHistory(store sessionstate.Store, cutoff int64) error {
 	}); err != nil {
 		return err
 	}
-	cyc := readCycle(store)
-	cyc.End = nil
-	if err := writeCycle(store, cyc); err != nil {
+	if err := updateCycle(store, func(c *cycleMeta) { c.End = nil }); err != nil {
 		return err
 	}
 	return gcContent(store)
@@ -478,7 +615,7 @@ func historyIn(store sessionstate.Store, own bool) map[string][]historyPoint {
 	out := map[string][]historyPoint{}
 	for path, pts := range all {
 		for _, p := range pts {
-			if !p.Foreign {
+			if len(p.Cites) > 0 {
 				out[path] = append(out[path], p)
 			}
 		}
@@ -512,6 +649,32 @@ func otherHistories(p HookPayload, record string) (map[string][]historyPoint, ma
 	if record == "" {
 		return points, contents
 	}
+	forOtherStores(p, record, func(store sessionstate.Store) {
+		for path, pts := range historyIn(store, false) {
+			points[path] = append(points[path], pts...)
+			for _, pt := range pts {
+				for _, s := range []historyState{pt.Before, pt.After} {
+					if s.Exists {
+						if c, ok, err := store.Meta(contentKey(s.Hash)); err == nil && ok {
+							contents[s.Hash] = c
+						}
+					}
+				}
+			}
+		}
+	})
+	return points, contents
+}
+
+// forOtherStores opens, read-only, the store of every session sharing this
+// tree with the one whose record is at record — for the root, each sub-agent
+// dispatched beneath it; for a sub-agent, its root and its siblings — that
+// already exists, and hands it to read. A session isolated in its own worktree
+// keeps its store under that worktree, and is not found here.
+func forOtherStores(p HookPayload, record string, read func(sessionstate.Store)) {
+	if record == "" {
+		return
+	}
 	root := transcript.SessionRootOf(record)
 	if root == "" {
 		root = record
@@ -543,21 +706,9 @@ func otherHistories(p HookPayload, record string) (map[string][]historyPoint, ma
 		if err != nil {
 			continue
 		}
-		for path, pts := range historyIn(store, false) {
-			points[path] = append(points[path], pts...)
-			for _, pt := range pts {
-				for _, s := range []historyState{pt.Before, pt.After} {
-					if s.Exists {
-						if c, ok, err := store.Meta(contentKey(s.Hash)); err == nil && ok {
-							contents[s.Hash] = c
-						}
-					}
-				}
-			}
-		}
+		read(store)
 		store.Close()
 	}
-	return points, contents
 }
 
 // attachHistories sets `citations` on each Post file event to those of the
@@ -597,6 +748,7 @@ func attachHistories(store sessionstate.Store, events []event.Event, others map[
 		for _, p := range pts {
 			dp := dispatchcore.HistoryPoint{
 				Foreign: p.Foreign, FromAt: p.FromAt, Whole: p.Whole, At: p.At,
+				BetweenTurns: p.BetweenTurns, By: p.By,
 				Before: dispatchcore.HistoryState(p.Before), After: dispatchcore.HistoryState(p.After),
 				Pools: poolsOf(p.Cites),
 			}
@@ -704,19 +856,50 @@ func citedPathsOf(guards []declaration.FileGuard) citedPath {
 	}
 }
 
-// launchesBackground reports whether a tool call starts work that can outlive
-// it: a shell command run in the background or detaching work (nohup, setsid,
-// `&`, at, crontab, …), or a sub-agent run in the background.
-func launchesBackground(p HookPayload) bool {
+// noteBackground records what a permitted tool call starts that can outlive
+// it: a shell command that detaches work marks the session (markDetached); a
+// Bash run with run_in_background, or a sub-agent run in the background, is
+// noted for the Stop to weigh against what the harness reports still running
+// (markLaunched).
+func noteBackground(store sessionstate.Store, p HookPayload) error {
 	var in struct {
-		Command    string `json:"command"`
-		Background bool   `json:"run_in_background"`
+		Command     string `json:"command"`
+		Description string `json:"description"`
+		Background  bool   `json:"run_in_background"`
 	}
 	_ = json.Unmarshal(p.ToolInput, &in)
 	if in.Background {
-		return true
+		what := in.Command
+		if what == "" {
+			what = p.ToolName + " " + in.Description
+		}
+		if err := markLaunched(store, clipWhat(what)); err != nil {
+			return err
+		}
 	}
-	return commandmod.HarnessCommandTools[p.ToolName] && in.Command != "" && commandmod.Backgrounds(in.Command)
+	if commandmod.HarnessCommandTools[p.ToolName] && in.Command != "" {
+		if ok, what := commandmod.Detaches(in.Command); ok {
+			return markDetached(store, what)
+		}
+	}
+	return nil
+}
+
+// otherMarks is what the sessions sharing this tree have marked as possibly
+// still running between turns (see cycleMeta.marked): for the root, the
+// sub-agents it dispatched; for a sub-agent, its root and its siblings. Read
+// only, from stores that already exist — the same set otherHistories reads.
+func otherMarks(p HookPayload, record string) []string {
+	var by []string
+	forOtherStores(p, record, func(store sessionstate.Store) {
+		if ok, what := readCycle(store).marked(); ok {
+			by = append(by, what...)
+			if len(what) == 0 {
+				by = append(by, "background work a sub-agent started")
+			}
+		}
+	})
+	return dedupeStrings(by)
 }
 
 // markCitedUnknown remembers each file a permitted call changed with citations
@@ -763,4 +946,14 @@ func citedUnknownNote(store sessionstate.Store, path string) string {
 	}
 	return "\nA cited sr-file call changed this file, but its result could not be computed before it ran, so its citations could not be tied to what landed. " +
 		"Run sr-file ON ITS OWN in the line and by its bare name `sr-file` (it must be on PATH: check `command -v sr-file`; if that fails, install sloprail's binaries onto PATH), with every value quoted verbatim."
+}
+
+// clearCitedUnknown forgets, once a Stop has said what it had to, which files
+// an uncomputable cited call changed: the next cycle's calls speak for
+// themselves.
+func clearCitedUnknown(store sessionstate.Store) error {
+	if store == nil {
+		return nil
+	}
+	return swapJSON(store, sessionstate.MetaCitedUnknown, func(all *map[string]bool) { *all = nil })
 }

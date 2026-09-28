@@ -64,7 +64,7 @@ refusal_lines() {
 # many lines the scorer left out between them. The end is what the agent last
 # did and said, so it keeps the larger share.
 keep_ends() {
-  awk -v budget="$2" '
+  LC_ALL=C awk -v budget="$2" '
     { line[NR] = $0; len[NR] = length($0) + 1; total += len[NR] }
     END {
       if (total <= budget) { for (i = 1; i <= NR; i++) print line[i]; exit }
@@ -80,75 +80,126 @@ keep_ends() {
     }' "$1"
 }
 
-# trajectory_condense prints the condensed trajectory a judge reads, within
-# TRAJECTORY_BUDGET: first every refusal anywhere in the run (the root's and
-# each sub-agent's, deduplicated with a count), then the root record, then each
-# sub-agent record under its own header, in the order the agents started.
+# agent_refusals prints one agent's refusals, deduplicated in first-seen order
+# with a count, each cut to one line of at most 300 bytes.
+agent_refusals() {
+  refusal_lines "$1" | cut -c1-300 | awk '{ c[$0]++; if (c[$0] == 1) o[++n] = $0 } END { for (i = 1; i <= n; i++) printf "(x%d) %s\n", c[o[i]], o[i] }'
+}
+
+# fit_lines prints the lines of a file, in order, while they fit in budget
+# bytes, and nothing past the first that does not.
+fit_lines() {
+  LC_ALL=C awk -v budget="$2" '{ n = length($0) + 1; if (used + n > budget) exit; used += n; print }' "$1"
+}
+
+# trajectory_condense prints the condensed trajectory a judge reads, never more
+# than TRAJECTORY_BUDGET bytes and always whole lines:
+#
+#   1. REFUSALS — for every agent (the root, then each sub-agent in the order it
+#      started), one line that is never cut: its name and how many of its
+#      refusals are shown ("N of M shown"), followed by as many of them as its
+#      share of the section holds.
+#   2. The root record, then each sub-agent record under its own header. A
+#      record too long for its share keeps its beginning and its end with a
+#      scorer's marker between; a sub-agent that does not fit even a minimal
+#      share is named with its refusal counts instead. When not all fit, the
+#      first and the last to start are kept first — how the work began and how
+#      it ended.
 #
 # Work the agent dispatched to sub-agents is part of the trajectory: a
 # sub-agent's refusals, retries and evasions are in ITS record, not the root's,
 # so a judge shown only the root misses them (measured 2026-09-27: a
 # security-scan sub-agent deleted its declared scanner to escape the coverage
 # gate, and a root-only judge scored the run healthy).
-#
-# A record too long for its share keeps its beginning and its end — the refusals
-# and how the run ended are what a health judge must see — with a marker where
-# the scorer cut. The refusals come first because no cut may hide one. The root
-# keeps the larger share; the sub-agents split the rest evenly, and a sub-agent
-# that does not fit even a minimal share is named with its refusal count
-# instead of shown.
 trajectory_condense() {
   tc_jq="$1"
   tc_root="$2"
   tc_dir="$(mktemp -d)"
   tc_n=0
-  : > "$tc_dir/subs"
+  tab="$(printf '\t')"
+  : > "$tc_dir/agents"
+  cp "$tc_root" "$tc_dir/rec-0"
+  printf '0\troot\n' >> "$tc_dir/agents"
   subagent_records_by_time > "$tc_dir/records"
   while IFS= read -r tc_sub; do
     tc_n=$((tc_n + 1))
-    jq -r -f "$tc_jq" "$tc_sub" > "$tc_dir/sub-$tc_n" 2>/dev/null
-    printf '%s\t%s\n' "$tc_n" "$(basename "$tc_sub" .jsonl)" >> "$tc_dir/subs"
+    jq -r -f "$tc_jq" "$tc_sub" > "$tc_dir/rec-$tc_n" 2>/dev/null
+    printf '%s\t%s\n' "$tc_n" "$(basename "$tc_sub" .jsonl)" >> "$tc_dir/agents"
   done < "$tc_dir/records"
 
-  # Every refusal, deduplicated in first-seen order, each cut to one line.
-  {
-    refusal_lines "$tc_root" | sed 's/^/[root] /'
-    while IFS="$(printf '\t')" read -r i name; do
-      refusal_lines "$tc_dir/sub-$i" | sed "s/^/[$name] /"
-    done < "$tc_dir/subs"
-  } | cut -c1-400 | awk '{ c[$0]++; if (c[$0] == 1) o[++n] = $0 } END { for (i = 1; i <= n; i++) printf "(x%d) %s\n", c[o[i]], o[i] }' > "$tc_dir/refusals"
-  if [ -s "$tc_dir/refusals" ]; then
-    printf '=== REFUSALS: every refusal in this run, gathered by the scorer (count, then where) ===\n' > "$tc_dir/out"
-    keep_ends "$tc_dir/refusals" 12000 >> "$tc_dir/out"
+  # 1. REFUSALS. Every agent's count line is reserved first; the rest of the
+  #    section is shared evenly among the agents that refused.
+  tc_agents=$((tc_n + 1))
+  tc_refusing=0
+  while IFS="$tab" read -r i name; do
+    agent_refusals "$tc_dir/rec-$i" > "$tc_dir/ref-$i"
+    [ -s "$tc_dir/ref-$i" ] && tc_refusing=$((tc_refusing + 1))
+  done < "$tc_dir/agents"
+  : > "$tc_dir/out"
+  if [ "$tc_refusing" -gt 0 ]; then
+    tc_section=$((TRAJECTORY_BUDGET / 5))
+    tc_share=$(( (tc_section - tc_agents * 90) / tc_refusing ))
+    [ "$tc_share" -ge 0 ] || tc_share=0
+    printf '=== REFUSALS: every refusal in this run, gathered by the scorer (count, then text), per agent ===\n' >> "$tc_dir/out"
+    while IFS="$tab" read -r i name; do
+      tc_all="$(grep -c . "$tc_dir/ref-$i" || true)"
+      [ "${tc_all:-0}" -gt 0 ] || continue
+      fit_lines "$tc_dir/ref-$i" "$tc_share" > "$tc_dir/shown-$i"
+      tc_shown="$(grep -c . "$tc_dir/shown-$i" || true)"
+      printf '%s\t%s\t%s\n' "$i" "${tc_shown:-0}" "$tc_all" >> "$tc_dir/counts"
+      printf -- '--- [%s] %s of %s refusal(s) shown ---\n' "$name" "${tc_shown:-0}" "$tc_all" >> "$tc_dir/out"
+      cat "$tc_dir/shown-$i" >> "$tc_dir/out"
+    done < "$tc_dir/agents"
     printf '=== END OF REFUSALS; the trajectory follows ===\n' >> "$tc_dir/out"
-  else
-    : > "$tc_dir/out"
   fi
+  counts() {
+    c="$(awk -F "$tab" -v i="$1" '$1 == i { print $2 " of " $3 " refusal(s) shown above" }' "$tc_dir/counts" 2>/dev/null)"
+    printf '%s' "${c:-no refusals}"
+  }
 
+  # 2. The records. Each left-out sub-agent's notice is reserved before the
+  #    shares are cut, so nothing past the budget is ever dropped silently.
   tc_used="$(wc -c < "$tc_dir/out" | tr -d ' ')"
-  tc_left=$((TRAJECTORY_BUDGET - tc_used))
+  tc_left=$((TRAJECTORY_BUDGET - tc_used - 64))
   if [ "$tc_n" -eq 0 ]; then
-    keep_ends "$tc_root" "$tc_left" >> "$tc_dir/out"
+    keep_ends "$tc_dir/rec-0" "$tc_left" >> "$tc_dir/out"
   else
-    keep_ends "$tc_root" $((tc_left * 3 / 5)) >> "$tc_dir/out"
-    tc_used="$(wc -c < "$tc_dir/out" | tr -d ' ')"
-    tc_left=$((TRAJECTORY_BUDGET - tc_used))
     tc_floor=2500
-    tc_fit=$((tc_left / tc_floor))
-    [ "$tc_fit" -le "$tc_n" ] || tc_fit="$tc_n"
-    [ "$tc_fit" -ge 1 ] || tc_fit=0
+    tc_notice=130
+    tc_rootshare=$((tc_left * 3 / 5))
+    tc_subleft=$((tc_left - tc_rootshare))
+    # How many sub-agents fit a floor share, the rest costing a notice each.
+    tc_fit="$tc_n"
+    while [ "$tc_fit" -gt 0 ] && [ $((tc_fit * (tc_floor + 110) + (tc_n - tc_fit) * tc_notice)) -gt "$tc_subleft" ]; do
+      tc_fit=$((tc_fit - 1))
+    done
+    # Keep the first and the last to start, then inward.
+    : > "$tc_dir/keep"
+    lo=1; hi="$tc_n"; k=0
+    while [ "$k" -lt "$tc_fit" ]; do
+      echo "$lo" >> "$tc_dir/keep"; k=$((k + 1)); lo=$((lo + 1))
+      [ "$k" -lt "$tc_fit" ] && [ "$hi" -ge "$lo" ] && { echo "$hi" >> "$tc_dir/keep"; k=$((k + 1)); hi=$((hi - 1)); }
+    done
     tc_per=0
-    [ "$tc_fit" -eq 0 ] || tc_per=$((tc_left / tc_fit - 160))
-    while IFS="$(printf '\t')" read -r i name; do
-      if [ "$i" -le "$tc_fit" ]; then
+    [ "$tc_fit" -eq 0 ] || tc_per=$(( (tc_subleft - (tc_n - tc_fit) * tc_notice) / tc_fit - 110 ))
+    keep_ends "$tc_dir/rec-0" "$tc_rootshare" >> "$tc_dir/out"
+    while IFS="$tab" read -r i name; do
+      [ "$i" -eq 0 ] && continue
+      if grep -qx "$i" "$tc_dir/keep"; then
         printf '\n=== SUB-AGENT %s: a separate agent the agent above dispatched; its own steps follow ===\n' "$name" >> "$tc_dir/out"
-        keep_ends "$tc_dir/sub-$i" "$tc_per" >> "$tc_dir/out"
+        keep_ends "$tc_dir/rec-$i" "$tc_per" >> "$tc_dir/out"
       else
-        printf '\n=== SUB-AGENT %s: left out by the scorer for length (%s refusal(s), listed above) ===\n' "$name" "$(refusal_lines "$tc_dir/sub-$i" | grep -c . || true)" >> "$tc_dir/out"
+        printf '\n=== SUB-AGENT %s: left out by the scorer for length (%s) ===\n' "$name" "$(counts "$i")" >> "$tc_dir/out"
       fi
-    done < "$tc_dir/subs"
+    done < "$tc_dir/agents"
   fi
-  head -c "$TRAJECTORY_BUDGET" "$tc_dir/out"
+  # The budget holds by construction; should a share ever overrun it, the cut
+  # is at a line and says so rather than dropping a line's end silently.
+  LC_ALL=C awk -v budget="$TRAJECTORY_BUDGET" '
+    { n = length($0) + 1
+      if (cut || used + n > budget - 64) { cut = 1; dropped++; next }
+      used += n; print }
+    END { if (cut) printf "[... %d lines cut by the scorer at the budget ...]\n", dropped }' "$tc_dir/out"
   rm -rf "$tc_dir"
 }
 

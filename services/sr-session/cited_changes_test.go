@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -132,7 +134,7 @@ func TestBeginCycleRecordsOnlyWhatTheAgentDidNotDo(t *testing.T) {
 
 	// Dirty before the session began.
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.md"), []byte("dirty\n"), 0o644))
-	require.NoError(t, beginCycle(store, repo, 10, nil))
+	require.NoError(t, beginCycle(store, repo, 10, nil, nil))
 	h := historyOf(t, store)
 	require.Len(t, h["a.md"], 1)
 	assert.True(t, h["a.md"][0].Foreign)
@@ -141,16 +143,16 @@ func TestBeginCycleRecordsOnlyWhatTheAgentDidNotDo(t *testing.T) {
 
 	// The agent's own change during the open cycle is not recorded.
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "b.md"), []byte("agent\n"), 0o644))
-	require.NoError(t, beginCycle(store, repo, 11, nil))
+	require.NoError(t, beginCycle(store, repo, 11, nil, nil))
 	assert.NotContains(t, historyOf(t, store), "b.md")
 
 	// Stop: the agent leaves b.md as "agent". Then the user edits it.
 	require.NoError(t, endCycle(store, []event.Event{
 		citedPostEvent(filemod.KindPostUpdate, "a.md", "base\n", "dirty\n"),
 		citedPostEvent(filemod.KindPostUpdate, "b.md", "base\n", "agent\n"),
-	}, nil))
+	}, nil, backgroundReport{}))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "b.md"), []byte("user\n"), 0o644))
-	require.NoError(t, beginCycle(store, repo, 20, nil))
+	require.NoError(t, beginCycle(store, repo, 20, nil, nil))
 	h = historyOf(t, store)
 	require.Len(t, h["b.md"], 1)
 	assert.True(t, h["b.md"][0].Foreign)
@@ -228,18 +230,124 @@ func commitRepo(t *testing.T, files map[string]string) (string, sessionstate.Sto
 	return repo, store
 }
 
-// Once the agent started work that can outlive the call that started it, what
-// changes between its Stop and its next hook may be that work landing: it is
-// not set aside as foreign.
+// Once the agent detached work, what changes between its Stop and its next
+// hook may be that work landing: it is not set aside as foreign but recorded
+// as a between-turns change naming the work, and charged.
 func TestBeginCycleChargesWhatChangedAfterBackgroundWork(t *testing.T) {
 	repo, store := commitRepo(t, map[string]string{"a.md": "base\n"})
-	require.NoError(t, beginCycle(store, repo, 10, nil))
-	require.NoError(t, markOutlives(store))
-	require.NoError(t, endCycle(store, []event.Event{citedPostEvent(filemod.KindPostUpdate, "a.md", "base\n", "cited\n")}, nil))
+	require.NoError(t, beginCycle(store, repo, 10, nil, nil))
+	require.NoError(t, markDetached(store, "nohup sh -c 'sleep 3'"))
+	require.NoError(t, endCycle(store, []event.Event{citedPostEvent(filemod.KindPostUpdate, "a.md", "base\n", "cited\n")}, nil, backgroundReport{Known: true}))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.md"), []byte("EVIL UNCITED REWRITE"), 0o644))
-	require.NoError(t, beginCycle(store, repo, 20, nil))
-	assert.NotContains(t, historyOf(t, store), "a.md", "a change landing after background work was set aside as not the agent's")
-	assert.True(t, readCycle(store).Outlives, "the mark lasts the session")
+	require.NoError(t, beginCycle(store, repo, 20, nil, nil))
+	pts := historyOf(t, store)["a.md"]
+	require.Len(t, pts, 1)
+	assert.False(t, pts[0].Foreign, "a change landing after detached work was set aside as not the agent's")
+	assert.True(t, pts[0].BetweenTurns)
+	assert.Contains(t, pts[0].By, "nohup")
+	assert.True(t, readCycle(store).Detached, "a detached job's mark lasts the session")
+}
+
+// Work another session sharing the tree started (a sub-agent's detached job)
+// charges the between-turns change the same way.
+func TestBeginCycleHonoursAnotherSessionsMark(t *testing.T) {
+	repo, store := commitRepo(t, map[string]string{"a.md": "base\n"})
+	require.NoError(t, beginCycle(store, repo, 10, nil, nil))
+	require.NoError(t, endCycle(store, []event.Event{citedPostEvent(filemod.KindPostUpdate, "a.md", "base\n", "cited\n")}, nil, backgroundReport{Known: true}))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.md"), []byte("rewritten"), 0o644))
+	require.NoError(t, beginCycle(store, repo, 20, nil, []string{"a sub-agent's nohup job"}))
+	pts := historyOf(t, store)["a.md"]
+	require.Len(t, pts, 1)
+	assert.True(t, pts[0].BetweenTurns)
+	assert.Contains(t, pts[0].By, "sub-agent")
+}
+
+// The harness's own report of what still runs sets and clears the task mark;
+// a harness that reports nothing falls back to what the cycle ran in the
+// background, and keeps it.
+func TestTaskMarkFollowsTheStopReport(t *testing.T) {
+	store := openTestStore(t)
+	running := backgroundOf(HookPayload{BackgroundTasks: json.RawMessage(
+		`[{"id":"b1","type":"shell","status":"running","description":"tests","command":"make watch"},` +
+			`{"id":"a1","type":"subagent","status":"running","description":"research","agent_type":"general-purpose"},` +
+			`{"id":"b2","type":"shell","status":"completed","command":"done already"}]`),
+		SessionCrons: json.RawMessage(`[]`)})
+	assert.True(t, running.Known)
+	assert.Equal(t, []string{"make watch", "subagent research"}, running.Running)
+
+	require.NoError(t, endCycle(store, nil, nil, running))
+	c := readCycle(store)
+	assert.True(t, c.Tasks)
+	assert.Equal(t, []string{"make watch", "subagent research"}, c.TasksBy)
+
+	require.NoError(t, endCycle(store, nil, nil, backgroundOf(HookPayload{BackgroundTasks: json.RawMessage(`[]`)})))
+	assert.False(t, readCycle(store).Tasks, "a Stop reporting nothing running clears the mark")
+
+	crons := backgroundOf(HookPayload{BackgroundTasks: json.RawMessage(`[]`), SessionCrons: json.RawMessage(`[{"id":"c1","cron":"*/5 * * * *"}]`)})
+	assert.Len(t, crons.Running, 1, "a session cron keeps work running between turns")
+
+	// No report at all: what this cycle ran in the background stands.
+	require.NoError(t, markLaunched(store, "sleep 30 && touch x"))
+	require.NoError(t, endCycle(store, nil, nil, backgroundOf(HookPayload{})))
+	c = readCycle(store)
+	assert.True(t, c.Tasks)
+	assert.Contains(t, c.TasksBy, "sleep 30 && touch x")
+	assert.Empty(t, c.Launched)
+}
+
+// The cycle record is updated by swaps: many hooks marking it at once lose no
+// mark.
+func TestCycleMarksSurviveConcurrentUpdates(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "state.db")
+	s0, err := sessionstate.Open(db)
+	require.NoError(t, err)
+	defer s0.Close()
+	require.NoError(t, updateCycle(s0, func(c *cycleMeta) { c.State = "ended" }))
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			s, err := sessionstate.Open(db)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer s.Close()
+			if i%2 == 0 {
+				assert.NoError(t, markDetached(s, fmt.Sprintf("job %d", i)))
+			} else {
+				assert.NoError(t, beginCycle(s, t.TempDir(), int64(i), nil, nil))
+			}
+		}(i)
+	}
+	wg.Wait()
+	c := readCycle(s0)
+	assert.True(t, c.Detached, "a concurrent cycle opening overwrote the mark")
+	assert.Len(t, c.DetachedBy, 4)
+	assert.Equal(t, "open", c.State)
+}
+
+// A cited change that lands clears the earlier "could not be computed" note
+// for its file, and every Stop clears the set.
+func TestCitedUnknownClears(t *testing.T) {
+	root := t.TempDir()
+	store := openTestStore(t)
+	unknown := filemod.FileEvent{Path: "a.md"}.Event(filemod.KindPreCreate)
+	unknown.Fields[grounding.FieldCitations] = grounding.ToWire(userCite)
+	require.NoError(t, markCitedUnknown(store, []event.Event{unknown}))
+	require.NotEmpty(t, citedUnknownNote(store, "a.md"))
+
+	abs := filepath.Join(root, "a.md")
+	require.NoError(t, os.WriteFile(abs, []byte("cited"), 0o644))
+	require.NoError(t, recordPending(store, []pendingChange{{Path: "a.md", Abs: abs,
+		Point: historyPoint{Cites: userCite, After: putState(store, true, "cited"), Whole: true, At: 1}}}))
+	require.NoError(t, settleCitedChanges(store))
+	assert.Empty(t, citedUnknownNote(store, "a.md"), "a computed cited write left the note standing")
+
+	require.NoError(t, markCitedUnknown(store, []event.Event{unknown}))
+	require.NoError(t, clearCitedUnknown(store))
+	assert.Empty(t, citedUnknownNote(store, "a.md"), "the Stop did not clear the set")
 }
 
 // Only files a citation rule selects are snapshotted, and a content nothing
@@ -250,7 +358,7 @@ func TestSnapshotsOnlyWhatACitationRuleSelects(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "other.txt"), []byte("dirty other\n"), 0o644))
 	selects := citedPathsOf([]declaration.FileGuard{{Match: `memories/**`,
 		Require: []declaration.Prerequisite{{Citation: &declaration.CitationPrerequisite{}}}}})
-	require.NoError(t, beginCycle(store, repo, 10, selects))
+	require.NoError(t, beginCycle(store, repo, 10, selects, nil))
 	h := historyOf(t, store)
 	assert.Contains(t, h, "memories/a.md")
 	assert.NotContains(t, h, "other.txt")
@@ -260,7 +368,7 @@ func TestSnapshotsOnlyWhatACitationRuleSelects(t *testing.T) {
 
 	// A content no point names any more goes at the next Stop.
 	orphan := putState(store, true, "orphan")
-	require.NoError(t, endCycle(store, nil, selects))
+	require.NoError(t, endCycle(store, nil, selects, backgroundReport{}))
 	_, ok, err = store.Meta(contentKey(orphan.Hash))
 	require.NoError(t, err)
 	assert.False(t, ok, "an unreferenced content was kept")

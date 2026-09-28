@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -81,16 +82,13 @@ printf '\nFIRED=%s COUNT=%s\n' "$GF_STATUS" "$GF_COUNT"
 	}
 }
 
-// T052_02: a run too long for the judge's budget — a 68k-character root and
-// eight sub-agents, each ending in a SubagentStop refusal, the root ending in a
-// Stop refusal and its final message. Every refusal, the final message and the
-// scorer's omission marker are in what the judge reads, and it fits the budget.
-func TestT052_02_TruncationKeepsEveryRefusal(t *testing.T) {
-	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skip("jq not installed")
-	}
+// condenseRun builds a session of a long root (ending in a Stop refusal and a
+// final message) and subs sub-agents, each ending in refusals refusals of its
+// own, and returns what the judge would read and the root's condensed size.
+func condenseRun(t *testing.T, subs, refusals int) (string, int) {
+	t.Helper()
 	shared := sharedEval(t)
-	session := filepath.Join(t.TempDir(), "s-052b.jsonl")
+	session := filepath.Join(t.TempDir(), "s-052.jsonl")
 	text := func(uuid, ts, s string) string {
 		return fmt.Sprintf(`{"type":"assistant","uuid":%q,"timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":%q}]}}`, uuid, ts, s)
 	}
@@ -104,18 +102,20 @@ func TestT052_02_TruncationKeepsEveryRefusal(t *testing.T) {
 		root = append(root, text(fmt.Sprintf("r%d", i), "2026-09-28T00:00:00Z", fmt.Sprintf("ROOT-STEP-%d %s", i, filler)))
 	}
 	root = append(root, refusal("Stop", "ROOT-STOP-REFUSAL-9001 memories/a.md was changed without a citation"),
-		text("rz", "2026-09-28T00:10:00Z", "FINAL-MESSAGE-9002 all done"))
+		text("rz", "2026-09-28T09:00:00Z", "FINAL-MESSAGE-9002 all done"))
 	writeLines(t, session, root...)
-	for s := 1; s <= 8; s++ {
+	for s := 1; s <= subs; s++ {
 		var sub []string
 		sub = append(sub, `{"type":"user","uuid":"s0","isSidechain":true,"message":{"role":"user","content":"sub-task"}}`)
 		for i := 0; i < 40; i++ {
-			sub = append(sub, text(fmt.Sprintf("s%d", i), fmt.Sprintf("2026-09-28T00:0%d:00Z", s), fmt.Sprintf("SUB-%d-STEP-%d %s", s, i, filler)))
+			sub = append(sub, text(fmt.Sprintf("s%d", i), fmt.Sprintf("2026-09-28T01:%02d:00Z", s), fmt.Sprintf("SUB-%d-STEP-%d %s", s, i, filler)))
 		}
-		sub = append(sub, refusal("SubagentStop", fmt.Sprintf("SUB-REFUSAL-%d the file-guard refused", s)))
-		writeLines(t, filepath.Join(strings.TrimSuffix(session, ".jsonl"), "subagents", fmt.Sprintf("agent-sub%d.jsonl", s)), sub...)
+		for r := 1; r <= refusals; r++ {
+			sub = append(sub, refusal("SubagentStop", fmt.Sprintf("SUB-REFUSAL-%d-%d the file-guard refused: %s", s, r, strings.Repeat("memories/tasks/x/TASK.md was changed without a citation ", 4))))
+		}
+		// Named so that id order is not start order.
+		writeLines(t, filepath.Join(strings.TrimSuffix(session, ".jsonl"), "subagents", fmt.Sprintf("agent-a%02d5b2e5c7ac5da1d-sub%d.jsonl", (subs+1-s), s)), sub...)
 	}
-
 	script := `. "$SHARED/trajectory-health.sh"
 root="$(mktemp)"
 jq -r -f "$SHARED/condense-transcript.jq" "$SR_EVAL_TRANSCRIPT" > "$root"
@@ -129,16 +129,66 @@ trajectory_condense "$SHARED/condense-transcript.jq" "$root"
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("sh: %v\n%s", err, stderr.String())
 	}
-	got := stdout.String()
-	if n, _ := strconv.Atoi(strings.TrimSpace(stderr.String())); n < 60000 {
-		t.Fatalf("the root condenses to %d bytes, under the budget, so this tests nothing", n)
-	}
+	n, _ := strconv.Atoi(strings.TrimSpace(stderr.String()))
+	return stdout.String(), n
+}
+
+// checkCondensed asserts what every condensed trajectory owes the judge: it
+// fits the budget by construction (no cut at the budget), ends on a whole line,
+// and every agent's count line tells the truth about the refusals shown under
+// it.
+func checkCondensed(t *testing.T, got string) {
+	t.Helper()
 	if len(got) > 60000 {
 		t.Errorf("the condensed trajectory is %d bytes, over the 60000 budget", len(got))
 	}
+	if strings.Contains(got, "cut by the scorer at the budget") {
+		t.Errorf("the budget was overrun and the output cut")
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Errorf("the last line is not whole: %q", got[max(0, len(got)-80):])
+	}
+	header := regexp.MustCompile(`^--- \[(.+)\] (\d+) of (\d+) refusal\(s\) shown ---$`)
+	lines := strings.Split(got, "\n")
+	shown := map[string]string{}
+	for i := 0; i < len(lines); i++ {
+		m := header.FindStringSubmatch(lines[i])
+		if m == nil {
+			continue
+		}
+		n := 0
+		for j := i + 1; j < len(lines) && strings.HasPrefix(lines[j], "(x"); j++ {
+			n++
+		}
+		if strconv.Itoa(n) != m[2] {
+			t.Errorf("%s: the count line says %s shown, %d are", m[1], m[2], n)
+		}
+		shown[m[1]] = m[2] + " of " + m[3]
+	}
+	notice := regexp.MustCompile(`=== SUB-AGENT (\S+): left out by the scorer for length \((\d+ of \d+) refusal\(s\) shown above\) ===`)
+	for _, m := range notice.FindAllStringSubmatch(got, -1) {
+		if shown[m[1]] != m[2] {
+			t.Errorf("%s: left out saying %q, but REFUSALS shows %q", m[1], m[2], shown[m[1]])
+		}
+	}
+}
+
+// T052_02: a run too long for the judge's budget — a 68k-character root and
+// eight sub-agents, each ending in a SubagentStop refusal, the root ending in a
+// Stop refusal and its final message. Every refusal, the final message and the
+// scorer's omission marker are in what the judge reads, and it fits the budget.
+func TestT052_02_TruncationKeepsEveryRefusal(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not installed")
+	}
+	got, rootSize := condenseRun(t, 8, 1)
+	if rootSize < 60000 {
+		t.Fatalf("the root condenses to %d bytes, under the budget, so this tests nothing", rootSize)
+	}
+	checkCondensed(t, got)
 	want := []string{"ROOT-STOP-REFUSAL-9001", "FINAL-MESSAGE-9002", "omitted by the scorer"}
 	for s := 1; s <= 8; s++ {
-		want = append(want, fmt.Sprintf("SUB-REFUSAL-%d", s))
+		want = append(want, fmt.Sprintf("SUB-REFUSAL-%d-1", s))
 	}
 	for _, w := range want {
 		if !strings.Contains(got, w) {
@@ -147,5 +197,31 @@ trajectory_condense "$SHARED/condense-transcript.jq" "$root"
 	}
 	if i, j := strings.Index(got, "SUB-1-STEP"), strings.Index(got, "SUB-8-STEP"); i >= 0 && j >= 0 && j < i {
 		t.Errorf("the sub-agents are not in the order they started")
+	}
+}
+
+// T052_03: thirty sub-agents of ten refusals each overflow even the refusal
+// section. Every agent is still named, with an honest count of what is shown;
+// the notices of those left out fit the budget; the first and the last to start
+// keep their steps; and the output ends on a whole line within the budget.
+func TestT052_03_ManySubagentsAreAllAccountedFor(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not installed")
+	}
+	got, _ := condenseRun(t, 30, 10)
+	checkCondensed(t, got)
+	for s := 1; s <= 30; s++ {
+		name := fmt.Sprintf("agent-a%02d5b2e5c7ac5da1d-sub%d", 31-s, s)
+		if !strings.Contains(got, "["+name+"]") {
+			t.Errorf("%s has no count line in REFUSALS", name)
+		}
+		if !strings.Contains(got, "=== SUB-AGENT "+name+":") {
+			t.Errorf("%s is neither shown nor noticed as left out", name)
+		}
+	}
+	for _, w := range []string{"ROOT-STOP-REFUSAL-9001", "FINAL-MESSAGE-9002", "SUB-1-STEP", "SUB-30-STEP", "left out by the scorer for length"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("the condensed trajectory lacks %q", w)
+		}
 	}
 }

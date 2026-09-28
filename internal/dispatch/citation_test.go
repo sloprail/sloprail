@@ -312,3 +312,27 @@ func TestUncitedPartCarriesNoCitations(t *testing.T) {
 	assert.Equal(t, "a", part.Fields["oldContent"])
 	assert.Equal(t, "b", part.Fields["newContent"])
 }
+
+// A change that landed between turns while work the agent had started may have
+// been running is charged, and the refusal says so and names the work.
+func TestBetweenTurnsChangeIsChargedAndExplained(t *testing.T) {
+	contents := map[string]string{"c": "cited", "u": "user edit"}
+	cited := HistoryState{Exists: true, Hash: "c"}
+	edited := HistoryState{Exists: true, Hash: "u"}
+	h := &FileHistory{
+		Baseline: HistoryState{}, Current: edited,
+		Points: []HistoryPoint{
+			{Pools: []transcript.SourceType{transcript.SourceUser}, Whole: true, After: cited, At: 1},
+			{BetweenTurns: true, From: &cited, FromAt: 2, After: edited, At: 3, By: "sleep 1"},
+		},
+		Content: func(k string) (string, bool) { c, ok := contents[k]; return c, ok },
+	}
+	ev := citedEvent("PostFileUpdate", transcript.SourceUser)
+	p := declaration.Prerequisite{Citation: &declaration.CitationPrerequisite{SourceTypes: []string{"user"}}}
+	v, err := Runner{}.Run(Request{Nature: NatureFileGuard, Require: []declaration.Prerequisite{p}, Event: ev, History: h})
+	require.NoError(t, err)
+	require.True(t, v.Refused)
+	assert.Contains(t, v.Reason, "memories/a.md changed after your last Stop")
+	assert.Contains(t, v.Reason, "(sleep 1)")
+	assert.Contains(t, v.Reason, "sr-file write memories/a.md --cite:user")
+}
