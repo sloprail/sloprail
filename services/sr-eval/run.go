@@ -107,11 +107,8 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	// real run where a guardrail never fired despite the agent's write
 	// plainly matching its rule), so both branches now have a repository to
 	// commit into.
-	if err := ws.runSetup(ctx, fx); err != nil {
-		return fmt.Errorf("fixture setup: %w", err)
-	}
-	if err := ws.commitSetup(); err != nil {
-		return fmt.Errorf("commit harness setup: %w", err)
+	if err := ws.setUp(ctx, fx, agent.env); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(out, "sr-eval: fixture %s\n", fx.Dir)
@@ -225,17 +222,13 @@ func exitCode(err error) int {
 // (which is why sr-agent is exec'd by absolute path).
 func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, binDir, model, prompt string, env []string, disallowed []string) error {
 	agentBin := filepath.Join(binDir, "sr-agent")
-	claudeArgs := map[string]string{"settings": "{}", "permission-mode": "bypassPermissions"}
-	if len(disallowed) > 0 {
-		claudeArgs["disallowed-tools"] = strings.Join(disallowed, " ")
-	}
-	encoded, err := json.Marshal(claudeArgs)
+	claudeArgs, err := harnessArgs(disallowed)
 	if err != nil {
-		return fmt.Errorf("encode the harness args: %w", err)
+		return err
 	}
 	args := []string{
 		"--model", model,
-		"--claude-args", string(encoded),
+		"--claude-args", claudeArgs,
 		"--prompt", prompt,
 	}
 
@@ -245,6 +238,23 @@ func launchAgent(ctx context.Context, stdout, stderr io.Writer, ws *workspace, b
 	c.Stderr = stderr
 	c.Env = env
 	return c.Run()
+}
+
+// harnessArgs is the --claude-args JSON sr-agent passes on to the harness:
+// sr-agent's isolation overridden (see launchAgent), and the fixture's
+// disallowedTools as one --disallowed-tools value. Joined with commas, not
+// spaces: a rule such as `Bash(gh search:*)` carries a space of its own, and a
+// space-joined list splits it in two, so neither half removes anything.
+func harnessArgs(disallowed []string) (string, error) {
+	claudeArgs := map[string]string{"settings": "{}", "permission-mode": "bypassPermissions"}
+	if len(disallowed) > 0 {
+		claudeArgs["disallowed-tools"] = strings.Join(disallowed, ",")
+	}
+	encoded, err := json.Marshal(claudeArgs)
+	if err != nil {
+		return "", fmt.Errorf("encode the harness args: %w", err)
+	}
+	return string(encoded), nil
 }
 
 // findTranscript locates the .jsonl the agent-under-test wrote, via the same

@@ -6,18 +6,36 @@
 # must never exceed the original charge" and re-pinned its code to the new line.
 #
 # The requirement is declared, conditionally: `when` changes-pinned-lines.sh says
-# the write changes a pinned line. An uncited change is refused before any check,
-# with the script's hint. A cited one goes to the judge, which checks the cited
-# words ask for the rule to change, not merely for a feature that conflicts with it.
+# the write changes a spec some pin names (anywhere in it: a pinned spec holds the
+# user's business rules), or moves code's pin off the wording it pinned (the
+# marker removed, or re-pinned to different text). An uncited change is refused
+# before any check, with the script's hint. A cited one goes to the judge, which
+# checks the cited words ask for that change — for a pinned line, for the rule
+# itself to change, not merely for a feature that conflicts with it.
 #
-# Matches every path: which files are specs is decided by the markers pointing at
-# them, not by a name, and the predicate answers a file no marker pins with one
-# `git grep`.
+# Matches only the files a pin can involve, not every path. A preventive guard
+# refuses any write whose result the engine cannot work out ahead (`sed -i`, `>`,
+# `cp`, `tee`) on a file it matches, so matching every path refused every shell
+# edit in the project. Two kinds of file can be involved:
+#
+#   - A spec: `SPEC.md` at any depth, or a `.md` file under a `specs/` directory,
+#     case-insensitively (`spec.md` is the same file on a macOS disk).
+#     That is this example's convention, and pinned-invariant holds pins to it
+#     (pin.sh refuses a pin into any other file), so no accepted pin names a file
+#     this guard does not match. Change both together.
+#   - A file carrying an sr:invariant marker, before or after the write:
+#     `oldMarkers` is what sees a write that REMOVES the marker, which `markers`
+#     alone reads as a file with none.
+#
+# Which lines of a spec are pinned is still decided by the markers pointing at
+# them: the predicate answers that with a `git grep` of the working tree and HEAD.
 #
 # preventive: the rule is refused before it changes, while the agent can still keep
 # it and tell the user. deletions: include — deleting the spec drops every rule in
 # it at once.
-match: 'path matches ".*"'
+match: >-
+  path matches "(?i)(^|/)spec\\.md$" or path matches "(?i)(^|/)specs/.+\\.md$"
+  or any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")
 preventive: true
 deletions: include
 require:

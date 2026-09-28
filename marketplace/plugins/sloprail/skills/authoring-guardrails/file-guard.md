@@ -33,7 +33,9 @@ two nature-specific knobs, below; both are optional.
 A file-guard's match sees the file's own facts **bare**: `path`, `markers`,
 `context` — not `event.path`. It reasons about a settled file, so `markers` is
 the one set of markers that file carries; test them with a quantifier,
-`any(markers, .kind == "invariant")`.
+`any(markers, .kind == "invariant")`. `oldMarkers` is the set it carried before
+this change, for a rule that must also see a marker removed:
+`any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")`.
 
 ## After-check (default) vs preventive
 
@@ -232,9 +234,11 @@ any(oldMarkers, .kind == "asked")         does the file already carry one
 ```
 
 Note the distinction from a **file-guard's own match scope**, which exposes the
-settled file's markers under the single name `markers` (`any(markers, .kind ==
-"invariant")`) — on a delete, the markers the deleted file carried. `newMarkers`/`oldMarkers` are the **event's** fields — what a
-`Pre`/`Post` file event carries, read by a check off `.event.newMarkers`. In a
+settled file's markers as `markers` (`any(markers, .kind == "invariant")`) — on a
+delete, the markers the deleted file carried — and the markers it carried before
+the change as `oldMarkers` (empty on a create; the session baseline's at Stop).
+`newMarkers`/`oldMarkers` are also the **event's** fields — what a `Pre`/`Post`
+file event carries, read by a check off `.event.newMarkers`. In a
 script, a marker's quote is on `.fqn`:
 
 ```bash
