@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/module"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -306,4 +308,56 @@ func TestExtractCommand_ALinkToAFIFOOrADeviceIsNotRead(t *testing.T) {
 			t.Fatalf("command %q: extraction blocked reading a FIFO or a device", command)
 		}
 	}
+}
+
+// headPending is a fakePending that can also read files at HEAD — the
+// optional HeadReader a producer with git offers.
+type headPending struct {
+	fakePending
+	head  map[string]string
+	asked []string
+}
+
+func (h *headPending) HeadContent(path string, limit int64) (string, bool) {
+	h.asked = append(h.asked, path)
+	c, ok := h.head[path]
+	if !ok || int64(len(c)) > limit {
+		return "", false
+	}
+	return c, true
+}
+
+// TestExtractCommand_AnUnreadDeleteCarriesHeadsMarkers: a delete whose bytes
+// could not be read on disk (here, a marked spec that does not fit what is left
+// of the read budget) still carries the markers of HEAD's copy of the file, so a
+// rule selecting by marker sees it before the delete lands. oldContent stays ""
+// and oldContentKnown false: HEAD's bytes are not the file's now. A read file is
+// never looked up at HEAD; a file HEAD cannot supply keeps no markers.
+func TestExtractCommand_AnUnreadDeleteCarriesHeadsMarkers(t *testing.T) {
+	old := maxRemovedDirectoryBytes
+	maxRemovedDirectoryBytes = 64
+	t.Cleanup(func() { maxRemovedDirectoryBytes = old })
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "specs")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	marked := "// sr:invariant \"refunds-capped\"\n" + strings.Repeat("x", 100) + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("small\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.md"), []byte(marked), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "c.md"), make([]byte, 100), 0o644))
+
+	p := &headPending{fakePending: bashPendingIn("rm -rf "+dir, root), head: map[string]string{"specs/b.md": marked}}
+	events, err := New().Extract(module.Input{module.InputPhase: module.PhasePre, module.InputPayload: p})
+	require.NoError(t, err)
+	got := deleteEvents(t, events)
+
+	b := got["specs/b.md"]
+	assert.False(t, b.OldContentKnown)
+	assert.Empty(t, b.OldContent)
+	require.Len(t, b.OldMarkers, 1, "HEAD's markers are carried: %+v", b)
+	assert.Equal(t, "invariant", b.OldMarkers[0].Kind)
+
+	assert.Empty(t, got["specs/c.md"].OldMarkers, "HEAD has no copy: no markers")
+	assert.NotContains(t, p.asked, "specs/a.md", "a file read on disk is never looked up at HEAD")
+	assert.ElementsMatch(t, []string{"specs/b.md", "specs/c.md"}, p.asked)
 }

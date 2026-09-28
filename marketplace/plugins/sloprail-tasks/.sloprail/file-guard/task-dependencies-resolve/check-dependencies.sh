@@ -74,6 +74,14 @@ self_id="$(printf '%s' "$path" | sed -E 's#^memories/tasks/([^/]+)/([^/]+)/TASK\
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
+    # The engine declares newContentKnown on the Post kinds
+    # (internal/filemod/module.go FieldNewContentKnown): false when it could
+    # not read the settled file — a link to a FIFO or a device, or past the
+    # read cap. That file is unseen here too (and reading it could block), so
+    # refuse rather than pass it unchecked.
+    if [ "$(printf '%s' "$event" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
+      refuse "task-dependencies-resolve: $path could not be read (not a regular file, or too large), so its dependencies could not be checked"
+    fi
     abs="$root/$path"
     # Written and then removed within the cycle: nothing to check, nothing
     # wrong — deliberate fail-open, mirroring the sibling guards' Post branch.

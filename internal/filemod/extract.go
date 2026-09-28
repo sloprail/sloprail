@@ -84,6 +84,24 @@ type Pending interface {
 	Root() string
 }
 
+// HeadReader is what a Pending MAY also offer: a file's bytes as they stand in
+// the repository's HEAD commit, when they are at most limit bytes. This module
+// does not read git itself; the producer does (sr-session, through gitrepo).
+//
+// Used for one thing: a PreFileDelete whose bytes could not be read on disk
+// (oldContentKnown false — past the byte budget, too large, not a regular file)
+// still carries the MARKERS of HEAD's copy of the file, so a rule selecting
+// files by marker (`any(oldMarkers, .kind == "invariant")`) selects it before
+// the delete lands rather than only at Stop.
+type HeadReader interface {
+	HeadContent(path string, limit int64) (string, bool)
+}
+
+// maxHeadMarkerLookups bounds how many unread deletes of one command line have
+// their markers read from HEAD — each is a git call inside a hook the agent is
+// waiting on, and `rm -rf` of a large tree can leave many unread.
+const maxHeadMarkerLookups = 64
+
 // extractPending reads a pending action for the files it would touch.
 //
 // It dispatches on the HARNESS TOOL NAME first — commandmod.HarnessWriteTools
@@ -596,6 +614,8 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 	// effect named wins: a rule should be asked once about a file, and asking
 	// twice would run a judging hook twice over one decision.
 	seen := make(map[string]bool, len(targets))
+	// How many unread deletes have had their markers read from HEAD.
+	headLookups := 0
 
 	for _, t := range targets {
 		// Keyed on the CANONICAL spelling, not the raw one, because "one file"
@@ -704,6 +724,15 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 				f.OldContent, f.OldContentKnown = readContent(t.Path, MaxDeleteReadBytes)
 			}
 			f.OldMarkers = Scan(f.OldContent)
+			// Unread: the markers of HEAD's copy, when the producer can read
+			// it within the cap — oldContent stays "" and oldContentKnown
+			// false, since HEAD's bytes are not necessarily the file's now.
+			if hr, ok := pending.(HeadReader); ok && !f.OldContentKnown && headLookups < maxHeadMarkerLookups {
+				headLookups++
+				if head, ok := hr.HeadContent(key, MaxDeleteReadBytes); ok {
+					f.OldMarkers = Scan(head)
+				}
+			}
 		} else {
 			// An update carries oldContent — the file NOW — and its oldMarkers,
 			// the same as the tool-write path.

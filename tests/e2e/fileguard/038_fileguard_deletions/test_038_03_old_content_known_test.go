@@ -82,3 +82,47 @@ func TestT038_09_DeletingALinkToAFIFOReturns(t *testing.T) {
 		})
 	}
 }
+
+// markerGuard selects files by marker — `any(markers, .kind == "invariant")`,
+// the business-invariants shape — and refuses deleting one before it happens.
+const markerGuard = "match: 'any(markers, .kind == \"invariant\")'\npreventive: true\ndeletions: include\nchecks:\n  - script: ./check.sh\n"
+
+// T038_10: a marker-matched preventive guard selects a marked file's delete
+// BEFORE it lands even when the engine did not read the file's bytes. A
+// recursive removal reads at most 8 MiB: here 7.5 MiB of padding sorts first
+// and fits, and the marked spec after it does not — so the spec is predicted
+// unread (no oldContent), and without its markers a marker-scoped guard never
+// selected it; only Stop did, after the fact. Its markers now come from HEAD's
+// copy. A 9 MiB file sorting first charges nothing and the spec is read on disk
+// (the second layout).
+func TestT038_10_AnUnreadMarkedFileIsSelectedBeforeItsDelete(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pad  int64
+	}{
+		{"the spec does not fit what is left of the read budget", 15 << 19},
+		{"a 9 MiB file sorts first", 9 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := New(t)
+			proj := e.Project()
+			e.GitInit(proj)
+			e.FileGuard(proj, "keep-invariants", markerGuard, map[string]string{"check.sh": refuseDeletesCheck})
+			e.WriteFile(proj, "docs/specs/0pad.bin", "")
+			if err := os.Truncate(filepath.Join(proj, "docs", "specs", "0pad.bin"), tc.pad); err != nil {
+				t.Fatal(err)
+			}
+			e.WriteFile(proj, "docs/specs/spec.md", "// sr:invariant \"refunds-capped\"\n# Refunds\n"+strings.Repeat("Refunds are capped at the order total.\n", 1<<15))
+			e.Git(proj, "add", "-A")
+			e.Git(proj, "commit", "-m", "specs")
+
+			res := e.Run(proj, "s-038-10", "clean up the specs", Turns("done", Bash("b1", "rm -rf docs/specs")))
+			if !res.Refused() || !res.Saw("DELETE-REFUSED") {
+				t.Errorf("the marked spec's delete was not refused before it ran:\n%s", res.Output)
+			}
+			if !e.Exists(proj, "docs/specs/spec.md") {
+				t.Errorf("the marked spec is gone: the guard never selected its delete")
+			}
+		})
+	}
+}

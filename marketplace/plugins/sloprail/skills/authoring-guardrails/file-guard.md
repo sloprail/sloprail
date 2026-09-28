@@ -126,7 +126,9 @@ rule keeps itself):
   (`oldContentKnown: false`) and charges nothing, so smaller files after it are
   still read. The same for one file over 8 MiB, and for a file that is not a
   regular file once links are followed (a FIFO or a device is never opened for
-  reading). `sr-file delete` reads the same way.
+  reading). `sr-file delete` reads the same way. An unread file's `oldMarkers`
+  come from its copy at HEAD (tracked, within the cap), so a guard whose
+  `match` reads markers still selects it before the delete lands.
 - **Unreadable paths:** a subdirectory the walk cannot read is skipped and
   reported on the hook's stderr; the files around it are still predicted.
 - **Unseen commands:** a delete the parser does not model — `find … -delete`, a

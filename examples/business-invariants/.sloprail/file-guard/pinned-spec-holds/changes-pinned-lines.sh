@@ -34,7 +34,16 @@ case "$kind" in
   PreFileUpdate)
     [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
     ;;
-  PreFileDelete | PostFileDelete | PostFileUpdate)
+  PostFileUpdate)
+    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
+    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
+    # events.md, added in #84): false when it could not read the settled file —
+    # a link to a FIFO or a device, or past the read cap. Which pinned lines
+    # changed is then undecidable: apply the requirement (exit 0) — the
+    # fail-closed direction of this `when` predicate, not a pass.
+    [ "$(field '.event.newContentKnown // false')" = "true" ] || exit 0
+    ;;
+  PreFileDelete | PostFileDelete)
     ;;
   *)
     exit 0

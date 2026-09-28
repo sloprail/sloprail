@@ -39,6 +39,10 @@ case "$kind" in
     content="$(field '.event.newContent // ""')"
     ;;
   PostFileCreate | PostFileUpdate)
+    # newContentKnown (declared on the Post kinds, internal/filemod/module.go)
+    # false: the engine could not read the settled file — a link to a FIFO or a
+    # device, or past the read cap. Undecidable: apply (exit 0).
+    [ "$(field '.event.newContentKnown // false')" = "true" ] || exit 0
     abs="${SR_WORKSPACE:-.}/$(field '.event.path // ""')"
     # Written and removed within the cycle: nothing landed, nothing claims review.
     [ -f "$abs" ] || exit 1
