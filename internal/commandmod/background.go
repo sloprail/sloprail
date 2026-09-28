@@ -29,8 +29,20 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true
 // against how many jobs the line backgrounded, not assumed to cover them all:
 // one job and one targeted wait clears it, but `job1 & job2 & wait $!` leaves
 // job1 running (bash's `$!` names the last background PID) and is reported as
-// detaching by job1. A shell's `-c` command line (`bash -c 'x &'`) is parsed
-// the same way, as a line of its own.
+// detaching by job1.
+//
+// `wait $!` specifically is stricter still: `$!` is set once, by the MOST
+// RECENT `&`, and does not change until another job is backgrounded — so a
+// second `wait $!` with no new `&` in between targets the exact same job the
+// first one did, not a different one. `job1 & job2 & wait $!; wait $!` still
+// leaves job1 running: both waits target job2. Only the FIRST `wait $!` (or
+// `wait "$!"`) since the last `&` can cover a job at all; every further one
+// before the next `&` is credited as covering nothing new. `wait -n` and
+// `wait <pid>` do not have this problem — `-n` can reap a different job each
+// call, and a literal PID is assumed to name a real, distinct job — so those
+// keep being tallied one-per-call against the count of backgrounded jobs. A
+// shell's `-c` command line (`bash -c 'x &'`) is parsed the same way, as a
+// line of its own.
 //
 // A line that does not parse is reported as detaching: whether it could is
 // then unknown, and the answer decides whether a change that lands later can be
@@ -47,6 +59,11 @@ func detaches(raw string, depth int) (bool, string) {
 	var background []*syntax.Stmt
 	waitedAll := false
 	targetedWaits := 0
+	// lastBangWaitAfter is how many jobs had been backgrounded the last time a
+	// `wait $!` was credited — a further `wait $!` with the same count behind
+	// it targets the same job (no new `&` happened since) and is not credited
+	// again. -1 means none credited yet.
+	lastBangWaitAfter := -1
 	found, what := false, ""
 	syntax.Walk(f, func(n syntax.Node) bool {
 		if found {
@@ -76,9 +93,17 @@ func detaches(raw string, depth int) (bool, string) {
 				// targeted one (a PID, `$!`, `-n`, a job spec) reaps at
 				// most one, so it cannot be assumed to cover every `&`
 				// on the line — only tallied against how many there are.
-				if len(args) == 1 {
+				switch {
+				case len(args) == 1:
 					waitedAll = true
-				} else {
+				case isBangWait(n):
+					// `$!` is fixed by the last `&`; a second `wait $!` before
+					// the NEXT `&` targets the same job the first one did.
+					if lastBangWaitAfter != len(background) {
+						targetedWaits++
+						lastBangWaitAfter = len(background)
+					}
+				default:
 					targetedWaits++
 				}
 			case shells[bin] && depth < 3:
@@ -101,6 +126,39 @@ func detaches(raw string, depth int) (bool, string) {
 		return true, stmtText(raw, background[0]) + " &"
 	}
 	return false, ""
+}
+
+// isBangWait reports whether call is `wait $!` (or `wait "$!"`) — a wait whose
+// one argument is exactly the last-background-PID expansion, spelled either
+// bare or double-quoted. literalArgs reads a parameter expansion as "" (it is
+// not literal text), so this is told apart by looking at the raw word instead.
+func isBangWait(call *syntax.CallExpr) bool {
+	if len(call.Args) != 2 {
+		return false
+	}
+	parts := call.Args[1].Parts
+	if len(parts) != 1 {
+		return false
+	}
+	part := parts[0]
+	// `"$!"` double-quotes the same expansion; unwrap one layer of quoting.
+	if dq, ok := part.(*syntax.DblQuoted); ok {
+		if len(dq.Parts) != 1 {
+			return false
+		}
+		part = dq.Parts[0]
+	}
+	pe, ok := part.(*syntax.ParamExp)
+	if !ok {
+		return false
+	}
+	// A plain $! or ${!}: no flags, index, modifier or other decoration —
+	// anything fancier is not the simple last-background-PID expansion.
+	return pe.Param != nil && pe.Param.Value == "!" &&
+		pe.Flags == nil && !pe.Excl && !pe.Length && !pe.Width && !pe.IsSet &&
+		pe.NestedParam == nil && pe.Index == nil &&
+		len(pe.Modifiers) == 0 && pe.Slice == nil && pe.Repl == nil &&
+		pe.Names == 0 && pe.Exp == nil
 }
 
 // literalArgs is a call's words as far as each is literal text.
