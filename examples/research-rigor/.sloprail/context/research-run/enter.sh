@@ -145,15 +145,42 @@ EOF
 # job is measured from its own start in the earlier cycle, so a user edit made
 # while such a job still runs IS charged: the two cannot be told apart.
 # An unknown time on either side fails closed (charged).
+# A file's ctime in epoch seconds: the GNU/BusyBox form first, then BSD's
+# (macOS rejects -c). Not chosen by `stat --version` — BusyBox rejects it,
+# and there BSD's -f means filesystem status (%c = total inodes). Anything but
+# a plausible epoch is no answer.
+ctime_of() {
+  v="$(stat -c %Z -- "$1" 2>/dev/null)"
+  case "$v" in "" | *[!0-9]*) v="$(stat -f %c -- "$1" 2>/dev/null)" ;; esac
+  case "$v" in "" | *[!0-9]*) return 1 ;; esac
+  [ "$v" -gt 1000000000 ] || return 1
+  printf '%s' "$v"
+}
+# How far the filesystem's clock lags this host's (seconds; 0 if not
+# measurable): the cycle's start is the harness's clock, a file's ctime the
+# filesystem's — a bind mount or network share can lag, which would make a
+# write in this cycle look older than it. Measured once, on a scratch file
+# beside the notes.
+fs_lag() {
+  probe_dir="$ws/.git"; [ -d "$probe_dir" ] || probe_dir="$(dirname "$ws/$path_as_given")"
+  probe="$(mktemp "$probe_dir/.sr-clock.XXXXXX" 2>/dev/null)" || { echo 0; return; }
+  now="$(date +%s)"; pc="$(ctime_of "$probe")"; rm -f "$probe"
+  [ -n "$pc" ] || { echo 0; return; }
+  echo $(( now - pc ))
+}
 changed_since() { # <iso time>
   [ -n "$1" ] || return 0
   start="$(printf '%s' "$1" | jq -Rr 'sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' 2>/dev/null)" || return 0
   [ -n "$start" ] || return 0
-  if stat --version >/dev/null 2>&1; then ct="$(stat -c %Z -- "$ws/$path_as_given" 2>/dev/null)"
-  else ct="$(stat -f %c -- "$ws/$path_as_given" 2>/dev/null)"; fi
-  [ -n "$ct" ] || return 0
+  ct="$(ctime_of "$ws/$path_as_given")" || return 0
+  [ -n "$lag" ] || lag="$(fs_lag)"
+  # A filesystem clock more than a second behind moves the start back by as
+  # much; one ahead only makes more changes look recent (charged — fails
+  # closed).
+  [ "$lag" -gt 1 ] 2>/dev/null && start=$(( start - lag ))
   [ "$ct" -ge "$start" ]
 }
+lag=""
 path_as_given="$(printf '%s' "$input" | jq -r '.event.path // empty')"
 
 writers="$named"

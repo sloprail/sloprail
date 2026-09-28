@@ -235,14 +235,23 @@ cherry-pick, revert, push, clone, worktree — while the repository has an
 executable hook; never diff, log, status or show). With none of those,
 something the agent started in an EARLIER cycle and left running (`… &`,
 nohup, setsid, disown, `run_in_background`) owes it — if that job could itself
-write (`sleep 1 &` could not). A call that writes UNSEEN is charged only if
+write (`sleep 1 &` could not) — and so does a job handed to a scheduler (`at`,
+`batch`, `crontab`, `launchctl`, `systemd-run`), whose command the engine
+cannot read. A call that writes UNSEEN is charged only if
 the file's change time (ctime, which no one can set back — `touch -d` and
 `os.utime` reset it to now) is at or after the time the call could have run:
 this cycle's start, or the background job's own start. So a user's own edit
 between turns is not charged, whatever the next turn runs (`make test`,
 `python3 -c "print(1)"`, `git diff`); a user edit made while one of the
 agent's background writers is still running IS charged — the two cannot be
-told apart. With no writer at all, nobody is charged — git bringing in
+told apart. Times are compared in whole seconds, so a user edit in the same
+second the cycle began is charged too (fail closed). The cycle's start is the
+harness's clock and ctime the filesystem's; where the filesystem's lags (a
+bind mount, a network share) the lag is measured once, on a scratch file under
+`.git`, and the start moved back by it. `stat` is asked in its GNU/BusyBox
+form first and BSD's after, never chosen by `stat --version` (BusyBox rejects
+it, and there `-f` means filesystem status), and an answer that is not a
+number is no answer. With no writer at all, nobody is charged — git bringing in
 committed content (merge, pull, checkout, stash pop, …) with no hook is not
 the agent's proposal. Which calls wrote what is the engine's own reading
 (`trajectory normalize`, which resolves a recorded command's relative paths

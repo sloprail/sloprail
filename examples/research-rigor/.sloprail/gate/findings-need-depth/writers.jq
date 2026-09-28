@@ -98,5 +98,11 @@ def starts_background:
 
 # A background start that could itself write the file: it names the path, or
 # it runs something that writes unseen. `sleep 1 &` could not.
+# A job handed to a scheduler — at, batch, crontab, launchctl, systemd-run —
+# runs later from text the engine does not read: it could write anything.
+def schedules_job:
+  any(.events[]?; .kind == "PreCommandInvoke"
+      and any(.invocations[]?; .bin | IN("at", "batch", "crontab", "launchctl", "systemd-run")));
+
 def starts_background_writer($p; $githooks):
-  starts_background and (names_write($p) or runs_unnamed_writer($githooks));
+  (starts_background and (names_write($p) or runs_unnamed_writer($githooks))) or schedules_job;

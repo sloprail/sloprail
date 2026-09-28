@@ -105,11 +105,16 @@ EOF
 # its file identity (device:inode). `lib2 -> lib` is not a second directory,
 # a hard link is not a second file, and a symlink out of a clone is not a read
 # inside it.
-if stat --version >/dev/null 2>&1; then
-  ident() { stat -L -c %d:%i -- "$1" 2>/dev/null; }
-else
-  ident() { stat -L -f %d:%i -- "$1" 2>/dev/null; }
-fi
+# GNU/BusyBox form first, then BSD's (macOS rejects -c). Not chosen by
+# `stat --version`: BusyBox rejects it, and there BSD's -f means "filesystem
+# status" — every file would get the same filesystem's numbers and every read
+# collapse into one. An answer that is not device:inode is no answer.
+ident() {
+  v="$(stat -L -c %d:%i -- "$1" 2>/dev/null)"
+  case "$v" in *[!0-9:]* | "" | :* | *:) v="$(stat -L -f %d:%i -- "$1" 2>/dev/null)" ;; esac
+  case "$v" in *[!0-9:]* | "" | :* | *:) return 0 ;; esac
+  printf '%s' "$v"
+}
 real() { realpath -q -- "$1" 2>/dev/null || readlink -f -- "$1" 2>/dev/null || printf '%s' "$1"; }
 paths="$(printf '%s' "$facts" | jq -r '[ .[].reads[], .[].clones[].dest ] | unique[]' | while IFS= read -r p; do
   [ -n "$p" ] || continue

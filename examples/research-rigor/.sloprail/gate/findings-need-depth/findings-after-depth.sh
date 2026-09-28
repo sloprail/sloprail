@@ -62,9 +62,13 @@ elif ! is_notes "$path"; then
     printf '%s' "$rel" | grep -Eiq '(^|/)notes[.]md$' && notes_scope=true
     path="$path (a link to $rel)"
   else
-    if stat --version >/dev/null 2>&1; then links="$(stat -c %h -- "$abs" 2>/dev/null)"; ino="$(stat -c %i -- "$abs" 2>/dev/null)"
-    else links="$(stat -f %l -- "$abs" 2>/dev/null)"; ino="$(stat -f %i -- "$abs" 2>/dev/null)"; fi
-    [ "${links:-1}" -gt 1 ] 2>/dev/null || exit 0
+    # GNU/BusyBox form first, then BSD's (see verify-depth.sh's ident: BusyBox
+    # rejects --version, and its -f is filesystem status).
+    li="$(stat -c %h:%i -- "$abs" 2>/dev/null)"
+    case "$li" in *[!0-9:]* | "" | :* | *:) li="$(stat -f %l:%i -- "$abs" 2>/dev/null)" ;; esac
+    case "$li" in *[!0-9:]* | "" | :* | *:) block "Whether $path is a second name for the research notes could not be read (stat), so writing it is held." ;; esac
+    links="${li%%:*}"; ino="${li#*:}"
+    [ "$links" -gt 1 ] 2>/dev/null || exit 0
     twin="$(find "$ws" -path "$ws/.*" -prune -o -inum "$ino" -type f -print 2>/dev/null \
       | while IFS= read -r f; do r="${f#"$ws"/}"; is_notes "$r" && { printf '%s' "$r"; break; }; done)"
     [ -n "$twin" ] || exit 0

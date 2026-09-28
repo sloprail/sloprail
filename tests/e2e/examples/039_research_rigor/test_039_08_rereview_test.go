@@ -1092,3 +1092,127 @@ func TestT039_50_AUsersProposalIsNotTheAgents(t *testing.T) {
 		}
 	})
 }
+
+// busyboxStat is a `stat` that behaves like BusyBox's (Alpine, many
+// devcontainers): it rejects --version, supports GNU's -c, and its -f means
+// FILESYSTEM status — the same numbers for every file. lagSeconds shifts the
+// ctime -c %Z reports back, as a filesystem whose clock lags the host's would.
+func busyboxStat(lagSeconds int) string {
+	return `#!/bin/sh
+real=/usr/bin/stat
+[ "$1" = "--version" ] && { echo "stat: unrecognized option '--version'" >&2; exit 1; }
+L=""; [ "$1" = "-L" ] && { L=-L; shift; }
+case "$1" in
+  -c)
+    fmt="$2"; shift 2; [ "$1" = "--" ] && shift
+    if "$real" --version >/dev/null 2>&1; then out="$("$real" $L -c "$fmt" -- "$@")" || exit 1
+    else out="$("$real" $L -f "$(printf '%s' "$fmt" | sed 's/%Z/%c/g; s/%h/%l/g')" -- "$@")" || exit 1; fi
+    if [ "$fmt" = "%Z" ] && [ ` + strconv.Itoa(lagSeconds) + ` -gt 0 ]; then out=$((out - ` + strconv.Itoa(lagSeconds) + `)); fi
+    printf '%s\n' "$out" ;;
+  -f)
+    # Filesystem status: the same numbers whatever file is named.
+    fmt="$2"; printf '%s\n' "$(printf '%s' "$fmt" | sed 's/%[a-zA-Z]/7/g')" ;;
+  *) exec "$real" $L "$@" ;;
+esac
+`
+}
+
+// T039_51: on a BusyBox `stat` the rules still work — a proposal written
+// unseen is charged, a clone and two source reads have depth (reads are not
+// all folded into one file), and a write through a hard link to the notes is
+// held. Each read `stat` as BSD's before, and got filesystem numbers.
+func TestT039_51_BusyBoxStat(t *testing.T) {
+	const py = "open('NOTES'+'.md','a').write('\\n## Proposed approach\\n\\nBackoff.\\n')\n"
+	t.Run("an unseen proposal is charged", func(t *testing.T) {
+		e, proj := notesProject(t)
+		e.InstallPathShim("stat", busyboxStat(0))
+		e.SetStopBlockCap(1)
+		sess := "s-039-51-a"
+		res := e.Run(proj, sess, "propose", Turns("done", SayBash("b1", "Writing it up.", "python3 <<'EOF'\n"+py+"EOF")))
+		joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+		if !strings.Contains(joined, "NOTES.md now holds a Proposed approach") {
+			t.Errorf("an unseen proposal was not charged under BusyBox stat:\n%s\n%s", joined, res.Output)
+		}
+	})
+	t.Run("a clone and two source reads have depth", func(t *testing.T) {
+		e, proj := research(t)
+		e.InstallPathShim("stat", busyboxStat(0))
+		src := sourceRepo(t, e, "retry-lib")
+		dst := filepath.Join(scratch(t), "retry-lib")
+		admitted(t, e, proj, "s-039-51-b",
+			SayBash("b1", "#research", "git clone "+src+" "+dst),
+			Read("r1", filepath.Join(dst, "lib", "retry.js")),
+			Read("r2", filepath.Join(dst, "lib", "backoff.js")),
+		)
+	})
+	t.Run("a write through a hard link is held", func(t *testing.T) {
+		e, proj := notesProject(t)
+		if err := os.Link(filepath.Join(proj, "NOTES.md"), filepath.Join(proj, "n.log")); err != nil {
+			t.Fatal(err)
+		}
+		e.InstallPathShim("stat", busyboxStat(0))
+		res := e.Run(proj, "s-039-51-c", "research retry", Turns("done",
+			SayBash("m1", "Researching retry libraries. #research", "echo start"),
+			Bash("b2", "echo '## Proposed approach' >> n.log"),
+		))
+		if got := notes(t, proj); got != seedNotes {
+			t.Fatalf("the proposal reached NOTES.md through a hard link:\n%s\n%s", got, res.Output)
+		}
+	})
+}
+
+// T039_52: a filesystem clock 5s behind the host's (a bind mount, a network
+// share) does not make an in-cycle write look older than the cycle: the lag is
+// measured and the cycle's start moved back by it.
+func TestT039_52_LaggingFilesystemClock(t *testing.T) {
+	const py = "open('NOTES'+'.md','a').write('\\n## Proposed approach\\n\\nBackoff.\\n')\n"
+	e, proj := notesProject(t)
+	e.InstallPathShim("stat", busyboxStat(5))
+	e.SetStopBlockCap(1)
+	sess := "s-039-52"
+	res := e.Run(proj, sess, "propose", Turns("done", SayBash("b1", "Writing it up.", "python3 <<'EOF'\n"+py+"EOF")))
+	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !strings.Contains(joined, "NOTES.md now holds a Proposed approach") {
+		t.Errorf("an unseen proposal was not charged with a lagging filesystem clock:\n%s\n%s", joined, res.Output)
+	}
+}
+
+// T039_53: a job handed to a scheduler (`at`, `crontab`, `systemd-run`, …) in
+// an earlier cycle is a background writer like `… &`: when a proposal lands
+// in a later cycle that ran nothing that writes, the scheduling trajectory
+// owes it. Built by hand (scheduling a real job from a test would be unkind)
+// and enter.sh run on the root as its Stop would.
+func TestT039_53_ScheduledJobIsABackgroundWriter(t *testing.T) {
+	e, _ := research(t)
+	enter := filepath.Join(repoRoot(t), "examples", exampleName, ".sloprail", "context", "research-run", "enter.sh")
+	for _, tc := range []struct {
+		name, first string
+		want        bool
+	}{
+		{"at", `echo "python3 w.py" | at now + 1 minute`, true},
+		{"nothing scheduled", "ls", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "S.jsonl")
+			lines := []string{
+				`{"type":"user","uuid":"u0","parentUuid":null,"timestamp":"2026-09-28T00:00:00.000Z","message":{"role":"user","content":"first"}}`,
+				`{"type":"assistant","uuid":"a0","parentUuid":"u0","timestamp":"2026-09-28T00:00:01.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t0","name":"Bash","input":{"command":` + jsonQuote(tc.first) + `}}]}}`,
+				`{"type":"user","uuid":"u1","parentUuid":"a0","timestamp":"2026-09-28T00:10:00.000Z","message":{"role":"user","content":"next"}}`,
+				`{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-09-28T00:10:01.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}`,
+			}
+			if err := os.WriteFile(root, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			payload := `{"event":{"kind":"PostFileUpdate","path":"NOTES.md","oldContent":"# notes\n","newContent":"# notes\n\n## Proposed approach\n\nBackoff.\n","seen":false},` +
+				`"transcriptPath":` + jsonQuote(root) + `,"currentContext":{"active":false,"payload":{}},"gates":{}}`
+			cmd := exec.Command("bash", enter)
+			cmd.Stdin = strings.NewReader(payload)
+			cmd.Env = append(os.Environ(), "PATH="+e.BinDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+			out, err := cmd.Output()
+			opened := err == nil && strings.Contains(string(out), `"proposal"`)
+			if opened != tc.want {
+				t.Errorf("research opened = %v, want %v (%s)", opened, tc.want, out)
+			}
+		})
+	}
+}
