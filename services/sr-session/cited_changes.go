@@ -161,13 +161,29 @@ func putState(store sessionstate.Store, exists bool, content string) historyStat
 }
 
 // fileState is the file at abs as it stands now, and its content.
+//
+// Read the one way file events are (filemod.ReadRegular): never blocking on a
+// FIFO or a device a path links to, never past maxRead. Such a file is
+// unreadable, a state no point ever holds.
 func fileState(abs string) (historyState, string) {
-	b, err := os.ReadFile(abs)
-	if err != nil {
+	if _, err := os.Lstat(abs); err != nil {
 		return historyState{}, ""
 	}
-	return historyState{Exists: true, Hash: hashOf(string(b))}, string(b)
+	content, ok := filemod.ReadRegular(abs, maxRead)
+	if !ok {
+		if _, err := os.Stat(abs); err != nil {
+			return historyState{}, "" // a dangling link: nothing there
+		}
+		return unreadable, ""
+	}
+	return historyState{Exists: true, Hash: hashOf(content)}, content
 }
+
+// maxRead bounds a cited file's read, as a delete's is bounded.
+const maxRead = filemod.MaxDeleteReadBytes
+
+// unreadable is the state of a file that could not be read.
+var unreadable = historyState{Exists: true, Hash: "unreadable"}
 
 // pendingChanges is, for each Pre file event this call produces that carries
 // citations and whose result is KNOWN, the change it would make; wholes names
@@ -316,10 +332,13 @@ func beginCycle(store sessionstate.Store, dir string, now int64, selects citedPa
 	var points []pendingChange
 	for path := range paths {
 		abs := filepath.Join(root, path)
-		if fi, err := os.Stat(abs); err == nil && fi.Size() > snapshotMax {
+		if fi, err := os.Stat(abs); err == nil && (!fi.Mode().IsRegular() || fi.Size() > snapshotMax) {
 			continue
 		}
 		cur, content := fileState(abs)
+		if cur == unreadable {
+			continue
+		}
 		if selects != nil && !selects(path, cur.Exists, content) {
 			continue
 		}

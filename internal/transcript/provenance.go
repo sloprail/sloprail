@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -311,11 +312,16 @@ func underProjects(path string) bool {
 // moved out of the projects directory is still one; a data file of JSON lines
 // that merely carry a uuid is not.
 func readsAsTranscript(path string) bool {
-	f, err := os.Open(path)
+	// Non-blocking, and checked on the open file: a FIFO or a device a path
+	// links to is never read (it would block, or never end).
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	for i := 0; i < 20 && sc.Scan(); i++ {
