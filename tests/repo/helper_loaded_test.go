@@ -2,12 +2,15 @@ package repo
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // A guard script that sources a helper proves the helper loaded WHOLE. bash
@@ -19,167 +22,94 @@ import (
 // it; a script that reads on after a partial load can decide on nothing, and
 // for a `when`, exit 1 waives the requirement.
 
-// sourcedPaths returns the argument of every `.` or `source` command on one
-// line (see sourcedPathsIn).
-func sourcedPaths(line string) []string { return sourcedPathsIn([]string{line})[0] }
+// sourcedCall is one `.` or `source` a script runs: its argument as written in
+// the source, and the line it is on.
+type sourcedCall struct {
+	arg  string
+	line int
+}
 
-// sourcedPathsIn returns, per line of a script, the argument of every `.` or
-// `source` command on it: at the start of the line or of any command on it
-// (after ; && || { ( ! and the if/then/do/else/elif keywords), its argument read
-// as one shell word — quotes, $(…) and <(…) nesting included.
+// sourcedCalls parses a script with a real shell parser (mvdan.cc/sh, the one
+// commandmod uses) and returns every `.`/`source` it runs — at any depth: in a
+// command substitution ($(…) or backticks), a subshell, a case arm, an
+// if/while, either side of && and ||, behind `command`/`builtin`/`exec` (with
+// their flags) or `time`. The argument is the next word, printed from its
+// source span, so a resolver sees exactly what the script says.
 //
-// Only CODE counts. Quoting is tracked across lines — '…', "…", $'…' — along
-// with comments and heredoc bodies, so the `.` of a jq program in a multi-line
-// '…' string (`if . then`, `. as $x`, `. end`) or a sentence in a "…" message is
-// never read as a source. A `.` whose next token is a jq operator is not one
-// either, for a filter on a single line.
-func sourcedPathsIn(lines []string) [][]string {
-	out := make([][]string, len(lines))
-	var quote byte // '\'', '"', or 'E' for $'…'
-	heredoc := ""
-	for n, line := range lines {
-		if heredoc != "" {
-			if strings.TrimLeft(line, "\t") == heredoc {
-				heredoc = ""
-			}
-			continue
-		}
-		code := make([]bool, len(line))
-		pending := ""
-	scan:
-		for i := 0; i < len(line); i++ {
-			c := line[i]
-			switch quote {
-			case '\'':
-				if c == '\'' {
-					quote = 0
-				}
-				continue
-			case 'E', '"':
-				if c == '\\' {
-					i++
-					continue
-				}
-				if (quote == 'E' && c == '\'') || (quote == '"' && c == '"') {
-					quote = 0
-				}
-				continue
-			}
-			switch {
-			case c == '\\':
-				i++
-				continue
-			case c == '\'' && i > 0 && line[i-1] == '$':
-				quote = 'E'
-			case c == '\'':
-				quote = '\''
-			case c == '"':
-				quote = '"'
-			case c == '#' && (i == 0 || strings.IndexByte(" \t;|&(", line[i-1]) >= 0):
-				break scan
-			case c == '<' && strings.HasPrefix(line[i:], "<<") && !strings.HasPrefix(line[i:], "<<<"):
-				if m := heredocStart.FindStringSubmatch(line[i:]); m != nil {
-					pending = m[1]
-				}
-			}
-			code[i] = true
-		}
-		if pending != "" {
-			heredoc = pending
-		}
-		out[n] = sourcedPathsAt(line, code)
+// A script that does not parse is an ERROR, never a partial answer: a lexer
+// that loses track of a quote or heredoc would silently hide every source after
+// it, and a parse error names the file and position instead.
+//
+// Out of scope: a source built at run time — `eval ". $lib"`, a `.` inside a
+// string handed to `bash -c` — is data to the parser, not a command, and is not
+// found. Guard scripts source helpers directly.
+func sourcedCalls(src []byte, name string) ([]sourcedCall, error) {
+	lang := syntax.LangBash
+	if posixShebang(src) {
+		lang = syntax.LangPOSIX
 	}
-	return out
-}
-
-// heredocStart is a heredoc's opening: << or <<-, then its delimiter, quoted
-// or not.
-var heredocStart = regexp.MustCompile(`^<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?`)
-
-// sourcedPathsAt returns the sourced arguments on a line, considering only the
-// positions code marks as code.
-func sourcedPathsAt(line string, code []bool) []string {
-	var out []string
-	for i := 0; i < len(line); i++ {
-		if !code[i] {
-			continue
-		}
-		var cmdLen int
-		switch {
-		case strings.HasPrefix(line[i:], "source") && (i+6 == len(line) || line[i+6] == ' ' || line[i+6] == '\t'):
-			cmdLen = 6
-		case line[i] == '.' && i+1 < len(line) && (line[i+1] == ' ' || line[i+1] == '\t'):
-			cmdLen = 1
-		default:
-			continue
-		}
-		if !atCommandStart(line[:i]) {
-			continue
-		}
-		rest := strings.TrimLeft(line[i+cmdLen:], " \t")
-		word := shellWord(rest)
-		if word == "" || jqOperand(word) {
-			continue
-		}
-		out = append(out, word)
+	file, err := syntax.NewParser(syntax.Variant(lang)).Parse(bytes.NewReader(src), name)
+	if err != nil {
+		return nil, err
 	}
-	return out
-}
-
-// commandStart ends the text before a command: a list operator, a grouping,
-// or a keyword that takes a command after it.
-var commandStart = regexp.MustCompile(`(^|[;&|{(!]|\b(if|then|do|else|elif|while|until))\s*$`)
-
-func atCommandStart(before string) bool { return commandStart.MatchString(before) }
-
-// jqOperand reports whether what follows a `.` is a jq operator — the `.` is a
-// filter, not a source.
-func jqOperand(word string) bool {
-	switch word {
-	case "as", "|", "[", "==", "!=", ")", "]", ",", "+", "-", "*", "/", "//", "and", "or", "<", ">", "<=", ">=", "?", "}":
+	var out []sourcedCall
+	syntax.Walk(file, func(n syntax.Node) bool {
+		call, ok := n.(*syntax.CallExpr)
+		if !ok {
+			return true
+		}
+		args := call.Args
+		for len(args) > 0 {
+			switch args[0].Lit() {
+			case "command", "builtin", "exec":
+				args = args[1:]
+				for len(args) > 0 && strings.HasPrefix(args[0].Lit(), "-") {
+					args = args[1:]
+				}
+				continue
+			}
+			break
+		}
+		if len(args) >= 2 && (args[0].Lit() == "." || args[0].Lit() == "source") {
+			w := args[1]
+			out = append(out, sourcedCall{
+				arg:  string(src[w.Pos().Offset():w.End().Offset()]),
+				line: int(w.Pos().Line()),
+			})
+		}
 		return true
-	}
-	return strings.HasPrefix(word, "|") || strings.HasPrefix(word, ")") || strings.HasPrefix(word, "]")
+	})
+	return out, nil
 }
 
-// shellWord reads the first shell word of s: up to unquoted whitespace, a list
-// operator or a redirection, with "…", '…', $(…) and <(…) kept whole.
-func shellWord(s string) string {
-	var b strings.Builder
-	depth := 0 // $( or <( nesting
-	var quote byte
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case quote == '\'':
-			if c == '\'' {
-				quote = 0
-			}
-		case quote == '"' && depth == 0 && c == '"':
-			quote = 0
-		case c == '\\' && i+1 < len(s):
-			b.WriteByte(c)
-			i++
-			c = s[i]
-		case (c == '$' || c == '<') && i+1 < len(s) && s[i+1] == '(':
-			depth++
-			b.WriteByte(c)
-			i++
-			c = '('
-		case c == ')' && depth > 0:
-			depth--
-		case c == '"' && quote == 0:
-			quote = '"'
-		case c == '"' && depth > 0:
-			// a quote inside $(…) within "…": its own pair, kept verbatim
-		case c == '\'' && quote == 0 && depth == 0:
-			quote = '\''
-		case quote == 0 && depth == 0 && strings.IndexByte(" \t;&|<>", c) >= 0:
-			return b.String()
-		}
-		b.WriteByte(c)
+// posixShebang reports whether a script's shebang names sh rather than bash.
+func posixShebang(src []byte) bool {
+	first, _, _ := strings.Cut(string(src), "\n")
+	if !strings.HasPrefix(first, "#!") || strings.Contains(first, "bash") {
+		return false
 	}
-	return b.String()
+	fields := strings.Fields(strings.TrimPrefix(first, "#!"))
+	if len(fields) == 0 {
+		return false
+	}
+	last := fields[len(fields)-1]
+	if filepath.Base(fields[0]) == "env" && len(fields) > 1 {
+		last = fields[1]
+	}
+	return filepath.Base(last) == "sh" || filepath.Base(fields[0]) == "sh"
+}
+
+// sourcedArgs is the arguments sourcedCalls finds in a script.
+func sourcedArgs(script string) ([]string, error) {
+	calls, err := sourcedCalls([]byte(script), "script")
+	if err != nil {
+		return nil, err
+	}
+	var args []string
+	for _, c := range calls {
+		args = append(args, c.arg)
+	}
+	return args, nil
 }
 
 // sentinelLine is a helper's last line: its loaded sentinel.
@@ -196,9 +126,14 @@ func TestSourcedHelpersAreCheckedLoaded(t *testing.T) {
 			continue // eval scorers and tools source a shared harness, not a guard helper
 		}
 		lines := readLines(t, filepath.Join(root, f))
-		sourced := sourcedPathsIn(lines)
-		for i := range lines {
-			for _, arg := range sourced[i] {
+		calls, err := sourcedCalls(mustRead(t, filepath.Join(root, f)), f)
+		if err != nil {
+			t.Errorf("%s does not parse, so its sources cannot be checked: %v", f, err)
+			continue
+		}
+		for _, c := range calls {
+			i, arg := c.line-1, c.arg
+			{
 				checked++
 				helper := resolveHelper(filepath.Dir(filepath.Join(root, f)), arg, lines[:i])
 				if helper == "" {
@@ -218,8 +153,8 @@ func TestSourcedHelpersAreCheckedLoaded(t *testing.T) {
 			}
 		}
 	}
-	if checked < 8 {
-		t.Fatalf("found only %d helper-sourcing lines — the scan is wrong", checked)
+	if checked < 11 {
+		t.Fatalf("found only %d helper-sourcing lines, want at least the 11 guard scripts ship — the scan is wrong", checked)
 	}
 }
 
@@ -416,31 +351,35 @@ func readLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// The source matcher finds every way a script sources a file — whatever the
-// argument's quoting, and wherever the command sits on the line — and not the
-// `.` of a jq filter inside a string.
-func TestSourcedPathsCatchesEachForm(t *testing.T) {
+// The source finder finds every way a script sources a file — whatever the
+// argument's quoting, wherever the command sits — and never the `.` of a jq
+// filter inside a string or a heredoc. It is a real parser, so nothing that
+// confuses a hand-written lexer (a heredoc with a quote in it, a delimiter with
+// a dash, `$(( 1 << n ))`, CRLF) can hide a later source.
+func TestSourcedCallsFindEachForm(t *testing.T) {
 	// Multi-line strings and heredocs: only the real source is found.
-	script := []string{
-		`jq -r '`,
-		`  . as $all`,
-		`  | if . then 1 else . end'`,
-		`echo "a sentence.`,
-		`. Permitting."`,
-		`cat <<'EOF'`,
-		`. "$not_a_source"`,
-		`EOF`,
-		`x=$'it\'s'`,
-		`. "$lib"`,
+	script := "jq -r '\n  . as $all\n  | if . then 1 else . end'\n" +
+		"echo \"a sentence.\n. Permitting.\"\n" +
+		"cat <<'EOF'\n. \"$not_a_source\"\nEOF\n" +
+		"x=$'it\\'s'\n" +
+		". \"$lib\"\n"
+	if got, err := sourcedCalls([]byte(script), "multi"); err != nil || len(got) != 1 || got[0].arg != `"$lib"` || got[0].line != 10 {
+		t.Errorf("multi-line script: got %+v (err %v), want the one source on line 10", got, err)
 	}
-	got := sourcedPathsIn(script)
-	for n, g := range got {
-		if n == len(script)-1 {
-			if len(g) != 1 || g[0] != `"$lib"` {
-				t.Errorf("the real source on the last line was not found: %q", g)
-			}
-		} else if len(g) != 0 {
-			t.Errorf("line %d (%s) inside a string or heredoc was read as a source of %q", n+1, script[n], g)
+
+	// Scripts a hand-written lexer lost its place in: each ends with a real
+	// source that must still be found.
+	for name, prefix := range map[string]string{
+		"heredoc with a backslashed delimiter and a quote": "cat <<\\EOF\nit's here\nEOF\n",
+		"heredoc delimiter with a dash":                    "cat <<END-MARK\nit's\nEND-MARK\n",
+		"quoted heredoc delimiter with a dot":              "cat <<'END.X'\nit's\nEND.X\n",
+		"arithmetic shift, not a heredoc":                  "x=$(( 1 << n ))\n(( x << n ))\ny='a'\n",
+		"heredoc inside a command substitution":            "x=\"$(cat <<EOF\nsay \"hi\"\nEOF\n)\"\n",
+		"CRLF line endings":                                "a=1\r\nb='x'\r\n",
+	} {
+		got, err := sourcedArgs(prefix + ". \"$lib\"\n")
+		if err != nil || len(got) != 1 || got[0] != `"$lib"` {
+			t.Errorf("%s: got %q (err %v), want the trailing source", name, got, err)
 		}
 	}
 
@@ -456,21 +395,37 @@ func TestSourcedPathsCatchesEachForm(t *testing.T) {
 		`. <(cat lib)`:                              `<(cat lib)`,
 		`. $lib`:                                    `$lib`,
 		`[ -f "$lib" ] && . "$lib"`:                 `"$lib"`,
-		`if . "$lib"; then`:                         `"$lib"`,
+		`if . "$lib"; then :; fi`:                   `"$lib"`,
 		`{ . "$lib"; }`:                             `"$lib"`,
 		`  . "${SR_GUARDRAIL_DIR:-.}/pin.sh" || fail "x"`: `"${SR_GUARDRAIL_DIR:-.}/pin.sh"`,
+		"case $x in a) . \"$lib\" ;; esac":                `"$lib"`,
+		"x=`. \"$lib\"`":                                  `"$lib"`,
+		`command . "$lib"`:                                `"$lib"`,
+		`builtin source "$lib"`:                           `"$lib"`,
+		`command -p . "$lib"`:                             `"$lib"`,
+		`time . "$lib"`:                                   `"$lib"`,
+		`x=$(. "$lib")`:                                   `"$lib"`,
+		`(. "$lib")`:                                      `"$lib"`,
+		`while . "$lib"; do :; done`:                      `"$lib"`,
 	} {
-		got := sourcedPaths(line)
-		if len(got) != 1 || got[0] != want {
-			t.Errorf("%s: sourced %q, want [%s]", line, got, want)
+		got, err := sourcedArgs(line)
+		if err != nil || len(got) != 1 || got[0] != want {
+			t.Errorf("%s: sourced %q (err %v), want exactly [%s]", line, got, err, want)
 		}
 	}
 	for _, line := range []string{
-		`. as $all`, `  . as $x | .foo`, `select(. != "")`, `  . | length`, `map(. + 1)`, `echo "a. b"`,
-		`# . "$lib" in a comment`, `x=1. y`, `jq -r '.foo'`, `(.a // .) as $v`,
+		`jq '. as $all' f`, `jq -r '  . as $x | .foo' f`, `jq 'select(. != "")' f`, `jq '  . | length' f`,
+		`jq 'map(. + 1)' f`, `echo "a. b"`, `# . "$lib" in a comment`, `x=1. y`, `jq -r '.foo'`,
+		`jq '(.a // .) as $v' f`, `eval ". $lib"`, `bash -c '. "$lib"'`,
 	} {
-		if got := sourcedPaths(line); len(got) != 0 {
-			t.Errorf("%s: read as a source of %q", line, got)
+		got, err := sourcedArgs(line)
+		if err != nil || len(got) != 0 {
+			t.Errorf("%s: read as a source of %q (err %v)", line, got, err)
 		}
+	}
+
+	// A script that does not parse fails loudly, naming where.
+	if _, err := sourcedCalls([]byte("x='unclosed\n. \"$lib\"\n"), "broken.sh"); err == nil || !strings.Contains(err.Error(), "broken.sh") {
+		t.Errorf("a script with an unclosed quote parsed without an error naming it: %v", err)
 	}
 }
