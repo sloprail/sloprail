@@ -50,11 +50,11 @@ import (
 	"io"
 	"os"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/version"
 )
 
@@ -262,24 +262,27 @@ func readInput(cmd *cobra.Command, verb, path, as string) (Document, error) {
 // without bound.
 const maxInputBytes = 8 << 20
 
-// readRegular reads path, which must be a regular file, up to the cap. It opens
-// non-blocking and checks the OPENED file, so a FIFO (or a path swapped for one)
-// is refused at once instead of blocking the hook on a writer that never comes.
-// A symlink is followed to what it names, which must itself be regular.
+// readRegular reads path, which must be a regular file, up to the cap —
+// through filemod.ReadRegular, the one way this module reads a file an event
+// or a check depends on: opened non-blocking and typed on the OPEN file, so a
+// FIFO (or a path swapped for one) is refused at once instead of blocking the
+// hook on a writer that never comes. A symlink is followed to what it names,
+// which must itself be regular. ReadRegular says only whether it read; when it
+// did not, a stat (which never blocks) names why.
 func readRegular(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
+	if content, ok := filemod.ReadRegular(path, maxInputBytes); ok {
+		return []byte(content), nil
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
+	info, err := os.Stat(path)
+	switch {
+	case err != nil:
 		return nil, err
-	}
-	if !info.Mode().IsRegular() {
+	case !info.Mode().IsRegular():
 		return nil, fmt.Errorf("not a regular file (%s)", info.Mode().Type())
+	case info.Size() > maxInputBytes:
+		return nil, fmt.Errorf("the input is larger than %d bytes, the most sr-file reads", maxInputBytes)
 	}
-	return readCapped(f)
+	return nil, fmt.Errorf("could not be read")
 }
 
 // readCapped reads r to its end, refusing input larger than maxInputBytes.

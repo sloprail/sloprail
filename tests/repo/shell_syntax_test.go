@@ -4,12 +4,16 @@ package repo
 
 import (
 	"bufio"
+	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // Every shell script the repo ships parses under bash — the shell hooks, checks,
@@ -150,15 +154,13 @@ func TestShippedScriptsAreBash32Compatible(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for n, line := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "#") {
-				continue
-			}
-			for i, re := range compiled {
-				if re.MatchString(line) {
-					t.Errorf("%s:%d uses %s, which bash 3.2 does not have: %s", f, n+1, bash4Only[i].name, strings.TrimSpace(line))
-				}
-			}
+		findings, err := bash4Findings(b, f, compiled)
+		if err != nil {
+			t.Errorf("%s does not parse, so it cannot be checked for bash 3.2: %v", f, err)
+			continue
+		}
+		for _, finding := range findings {
+			t.Errorf("%s", finding)
 		}
 	}
 
@@ -175,6 +177,105 @@ func TestShippedScriptsAreBash32Compatible(t *testing.T) {
 					t.Errorf("%s does not parse under /bin/bash: %s", f, strings.TrimSpace(string(out)))
 				}
 			}
+		}
+	}
+}
+
+// bash4Findings scans a script's CODE for bash-4-only constructs: the script is
+// parsed, and string contents, heredoc bodies and comments are blanked first
+// (by their parsed spans, lines kept), so `|&` in a jq regex or `;&` in a
+// message is data, not a construct.
+func bash4Findings(src []byte, name string, compiled []*regexp.Regexp) ([]string, error) {
+	code, file, err := codeOnly(src, name)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	// Case fall-through (;& and ;;&) read from the parsed case items, wherever
+	// it sits on the line.
+	syntax.Walk(file, func(n syntax.Node) bool {
+		if item, ok := n.(*syntax.CaseItem); ok && (item.Op == syntax.Fallthrough || item.Op == syntax.Resume) {
+			out = append(out, fmt.Sprintf("%s:%d uses case fall-through (%s), which bash 3.2 does not have",
+				name, item.OpPos.Line(), item.Op))
+		}
+		return true
+	})
+	for n, line := range strings.Split(code, "\n") {
+		for i, re := range compiled {
+			if re.MatchString(line) {
+				out = append(out, fmt.Sprintf("%s:%d uses %s, which bash 3.2 does not have: %s",
+					name, n+1, bash4Only[i].name, strings.TrimSpace(strings.Split(string(src), "\n")[n])))
+			}
+		}
+	}
+	return out, nil
+}
+
+// codeOnly is src with every byte that is not code — inside a quoted string
+// ('…', $'…', the literal parts of "…"), a heredoc body, a comment — replaced
+// by a space. Newlines stay, so line numbers do.
+func codeOnly(src []byte, name string) (string, *syntax.File, error) {
+	lang := syntax.LangBash
+	if posixShebang(src) {
+		lang = syntax.LangPOSIX
+	}
+	file, err := syntax.NewParser(syntax.Variant(lang), syntax.KeepComments(true)).Parse(bytes.NewReader(src), name)
+	if err != nil {
+		return "", nil, err
+	}
+	out := []byte(string(src))
+	blank := func(from, to uint) {
+		for i := from; i < to && int(i) < len(out); i++ {
+			if out[i] != '\n' {
+				out[i] = ' '
+			}
+		}
+	}
+	syntax.Walk(file, func(n syntax.Node) bool {
+		switch x := n.(type) {
+		case *syntax.SglQuoted:
+			blank(x.Pos().Offset(), x.End().Offset())
+		case *syntax.DblQuoted:
+			for _, part := range x.Parts {
+				if lit, ok := part.(*syntax.Lit); ok {
+					blank(lit.Pos().Offset(), lit.End().Offset())
+				}
+			}
+		case *syntax.Redirect:
+			if x.Hdoc != nil {
+				blank(x.Hdoc.Pos().Offset(), x.Hdoc.End().Offset())
+			}
+		case *syntax.Comment:
+			blank(x.Pos().Offset(), x.End().Offset())
+		}
+		return true
+	})
+	return string(out), file, nil
+}
+
+// A construct in data — a string, a heredoc, a comment — is not flagged; the
+// same construct in code is.
+func TestBash4ScanReadsCodeNotData(t *testing.T) {
+	compiled := make([]*regexp.Regexp, len(bash4Only))
+	for i, c := range bash4Only {
+		compiled[i] = regexp.MustCompile(c.pattern)
+	}
+	for _, src := range []string{
+		"jq '[$raw | splits(\"\\n|;|&&|\\|\\|\")] | any(.[];' f\n",
+		"echo \"use |& or ;& carefully\"\n",
+		"cat <<'EOF'\ndeclare -A m\nmapfile x\nEOF\n",
+		"x=1 # coproc here is a comment\n",
+	} {
+		if got, err := bash4Findings([]byte(src), "data.sh", compiled); err != nil || len(got) != 0 {
+			t.Errorf("data flagged as code (err %v): %q", err, got)
+		}
+	}
+	for _, src := range []string{
+		"cmd |& tee log\n", "declare -A seen\n", "mapfile -t lines < f\n",
+		"case $x in a) echo a ;& b) echo b ;; esac\n", "if [[ -v name ]]; then :; fi\n",
+	} {
+		if got, err := bash4Findings([]byte(src), "code.sh", compiled); err != nil || len(got) == 0 {
+			t.Errorf("code not flagged (err %v): %s", err, src)
 		}
 	}
 }

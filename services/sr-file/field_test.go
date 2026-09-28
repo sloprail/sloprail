@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -200,6 +201,13 @@ func TestReadInput_RefusesFIFOAndOversizedInput(t *testing.T) {
 
 	big := "---\nstatus: drafting\n---\n" + strings.Repeat("x", maxInputBytes)
 	_, err := runField(t, big, "-", "status", "--as", ".md")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "larger than")
+
+	// The same cap on a file named by path.
+	bigFile := filepath.Join(t.TempDir(), "big.md")
+	require.NoError(t, os.WriteFile(bigFile, []byte(big), 0o644))
+	_, err = runField(t, "", bigFile, "status")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "larger than")
 }

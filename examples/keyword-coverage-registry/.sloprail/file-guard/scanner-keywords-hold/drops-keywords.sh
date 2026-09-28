@@ -28,8 +28,13 @@ command -v jq >/dev/null 2>&1 || exit 0
 [ -n "${SR_GUARDRAIL_DIR:-}" ] || exit 0
 lib="$SR_GUARDRAIL_DIR/../../context/scanner-declared/scanner-lib.sh"
 [ -f "$lib" ] || exit 0
+# A helper stopped early runs only partly (whether the `.` then fails depends
+# on the bash version); only its last-line sentinel proves it loaded whole.
+# Not loaded whole is undecidable: apply (exit 0), never waive.
+unset scanner_lib_loaded
 # shellcheck source=../../context/scanner-declared/scanner-lib.sh
 . "$lib" 2>/dev/null || exit 0
+[ "${scanner_lib_loaded:-}" = 1 ] || exit 0
 
 payload="$(cat)"
 field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
