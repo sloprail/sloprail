@@ -80,16 +80,24 @@ type fileGuardResult struct {
 // write before it lands, via the same deny() the gate and structure paths use.
 //
 // EVERY file the call changes is asked about, by every preventive guard that
-// selects it — not the first. One tool call can change several files (`rm a.go
-// b.go`, `sed -i … a b`, two sr-file calls joined by &&), and the call runs
-// whole or not at all: a guard that passed the first file and was never asked
-// about the second would admit the second's not-fine write before it lands,
-// leaving only the Stop after-check to see it. Every refusal is collected, and
-// the one deny names each refused file (see preventiveRefusals.render) — a
-// pre-tool hook can deny only once, so the agent should hear every file it must
-// fix in that one answer. The context[] map is read once and threaded into both
-// the match and the Request, so a guard's `match` reading `context[<name>]` and
-// its checks reading the same map see one consistent world.
+// selects it — not only the first FILE a guard is handed. One tool call can
+// change several files (`rm a.go b.go`, `sed -i … a b`, two sr-file calls
+// joined by &&), and the call runs whole or not at all: a guard that passed the
+// first file and was never asked about the second would admit the second's
+// not-fine write before it lands, leaving only the Stop after-check to see it.
+//
+// But once a FILE is refused by any guard, no further guard is asked about that
+// same file: the write is already prevented, and each further check on it is a
+// run that buys nothing — for a model-backed judge, a run that is not free
+// (T017_07's "the first refusal ends the matter for a pending action", pinned
+// before #87 and still true per-file). A guard is still asked about every OTHER
+// file the call touches that is not yet refused, which is the axis #87 was
+// missing. Every refusal is collected across files, and the one deny names each
+// refused file (see preventiveRefusals.render) — a pre-tool hook can deny only
+// once, so the agent should hear every file it must fix in that one answer. The
+// context[] map is read once and threaded into both the match and the Request,
+// so a guard's `match` reading `context[<name>]` and its checks reading the
+// same map see one consistent world.
 func runFileGuardsPreventive(
 	cmd *cobra.Command,
 	guards []declaration.FileGuard,
@@ -135,6 +143,11 @@ func runFileGuardsPreventive(
 
 		for _, e := range events {
 			if !isPreFileEvent(e.Kind) {
+				continue
+			}
+			// A file already refused by an earlier guard is already prevented: no
+			// further guard is asked about it. See runFileGuardsPreventive's doc.
+			if refusals.refused(eventPath(e)) {
 				continue
 			}
 			// The guard's `deletions:` decides whether this kind is its business at
@@ -325,6 +338,10 @@ type preventiveRefusals struct {
 	multiFile bool
 	workspace string
 	entries   []preventiveRefusal
+	// refusedDisplay is the set of files already refused, keyed by their display
+	// path (relative to the workspace) — what refused checks against, so a path
+	// spelled two ways (absolute vs. relative) for the same file is one entry.
+	refusedDisplay map[string]bool
 }
 
 // preventiveRefusal is one distinct refusal reason and the files it was given for,
@@ -354,6 +371,10 @@ func newPreventiveRefusals(events []event.Event, workspace string) *preventiveRe
 func (r *preventiveRefusals) add(path, reason string) {
 	if path != "" {
 		path = displayPath(path, r.workspace)
+		if r.refusedDisplay == nil {
+			r.refusedDisplay = map[string]bool{}
+		}
+		r.refusedDisplay[path] = true
 	}
 	for i := range r.entries {
 		if r.entries[i].reason == reason {
@@ -368,6 +389,18 @@ func (r *preventiveRefusals) add(path, reason string) {
 		entry.paths = []string{path}
 	}
 	r.entries = append(r.entries, entry)
+}
+
+// refused reports whether path has already been refused by an earlier guard —
+// the write is already prevented, so no further guard need be asked about it
+// (T017_07's per-file "first refusal ends the matter", which #87 leaves intact;
+// only the axis of asking about every OTHER file is new). "" (no path) never
+// reads as refused: it is never a file this checks against.
+func (r *preventiveRefusals) refused(path string) bool {
+	if path == "" || r.refusedDisplay == nil {
+		return false
+	}
+	return r.refusedDisplay[displayPath(path, r.workspace)]
 }
 
 // render is the call's deny text, or "" when nothing refused.

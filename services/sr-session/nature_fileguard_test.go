@@ -387,6 +387,51 @@ exit 0
 	assert.Equal(t, "src/ok.go\nsrc/bad1.go\nsrc/bad2.go\n", string(b), "the check is handed every file, in order")
 }
 
+// Once a file is refused by one guard, a SECOND guard that also selects it is
+// never asked about it — the write is already prevented, and each further
+// check on a file already refused is a run that buys nothing (the same
+// per-file "first refusal ends the matter" T017_07 pins for a single file; #87
+// only adds the axis of checking every OTHER file). The second guard's ledger
+// stays empty for the refused file, but is asked about a second, unrefused one.
+func TestRunFileGuardsPreventive_SecondGuardNotAskedAboutAnAlreadyRefusedFile(t *testing.T) {
+	dir := t.TempDir()
+	ledgerA := filepath.Join(dir, "ledgerA")
+	writeExecutable(t, dir, "refuse.sh", `#!/bin/sh
+p="$(cat)"
+path="$(printf '%s' "$p" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+case "$path" in
+  *bad*) echo '{"reason":"REFUSED BY A"}'; exit 1 ;;
+esac
+exit 0
+`)
+	ledgerB := filepath.Join(dir, "ledgerB")
+	writeExecutable(t, dir, "log.sh", `#!/bin/sh
+p="$(cat)"
+path="$(printf '%s' "$p" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+echo "$path" >> "`+ledgerB+`"
+exit 0
+`)
+	guardA := declaration.FileGuard{Name: "a", Match: "src/**", Preventive: true, Checks: []declaration.Check{{Script: "./refuse.sh"}}, Dir: dir}
+	guardB := declaration.FileGuard{Name: "b", Match: "src/**", Preventive: true, Checks: []declaration.Check{{Script: "./log.sh"}}, Dir: dir}
+	pre := func(path string) event.Event {
+		return event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{
+			filemod.FieldPath: path, filemod.FieldResultKnown: true, filemod.FieldNewContent: "x",
+		}}
+	}
+	events := []event.Event{pre("src/bad.go"), pre("src/other.go")}
+
+	reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{guardA, guardB}, events, hookScope{}, map[string]natures.ContextState{}, "")
+	require.NotEmpty(t, reason)
+	assert.Contains(t, reason, "src/bad.go")
+	assert.Contains(t, reason, "REFUSED BY A")
+
+	_ = ledgerA // refuse.sh does not log; the ledger name is kept for symmetry
+	b, err := os.ReadFile(ledgerB)
+	require.NoError(t, err)
+	assert.Equal(t, "src/other.go\n", string(b),
+		"guard b must be asked about src/other.go, but never about src/bad.go, which guard a already refused")
+}
+
 // A single-file call's one refusal keeps its wording exactly: no list, no path
 // prefix — the file is the only one the call touches.
 func TestPreventiveRefusals_SingleFileKeepsItsWording(t *testing.T) {
