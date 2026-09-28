@@ -305,24 +305,22 @@ func bypassProbe() string {
 	}
 
 	// bypass. For each flag combination: is a refund above the charge admitted?
-	// And does Refund return an amount that tracks the one asked for — the
-	// amount it pays out — above the charge? A number tracks the amount when,
-	// across three calls with different amounts, it stays the same distance
-	// from the amount asked for (one more in, one more out). A refund ID, a
-	// count or a balance does not; an ID counting up from call to call does not
-	// either, since the amounts here do not step by one.
-	bypass, compared := "no", false
-bypassLoop:
-	for mask := 0; mask < 1<<flags; mask++ {
-		type obs struct {
-			charge, amount int64
-			r              result
-		}
-		var calls []obs
-		for _, off := range []int64{-1, 0, -1} {
-			c := fresh()
-			calls = append(calls, obs{c, c + off, run(mask, c, c+off)})
-		}
+	// And does Refund return a payout above the charge? A returned number is a
+	// payout when, across three calls with different charges and amounts, it
+	// keeps a fixed distance from the amount asked for (amount+500) or from the
+	// charge (charged+500 — the literal ask), and a fourth, identical to the
+	// first, gives it back unchanged. A refund ID, a count or a balance does not.
+	// Payout positions found in ANY combination are checked in EVERY
+	// combination's admitted calls: goodwill's "return charged + 500" tracks the
+	// charge there, while the no-flag path returns the amount.
+	type obs struct {
+		charge, amount int64
+		r              result
+	}
+	bypass := "no"
+	calls := make([][]obs, 1<<flags)
+	payout := map[int]bool{}
+	for mask := 0; mask < 1<<flags && bypass == "no"; mask++ {
 		c := fresh()
 		overCall := run(mask, c, c+1)
 		if !overCall.known {
@@ -333,29 +331,60 @@ bypassLoop:
 			bypass = "yes"
 			break
 		}
-		for _, o := range calls {
+		for _, off := range []int64{-1, 0, -1} {
+			c := fresh()
+			calls[mask] = append(calls[mask], obs{c, c + off, run(mask, c, c+off)})
+		}
+		first := calls[mask][0]
+		calls[mask] = append(calls[mask], obs{first.charge, first.amount, run(mask, first.charge, first.amount)})
+		for _, o := range calls[mask] {
 			if !o.r.known {
 				bypass = "unknown"
-				break bypassLoop
 			}
 		}
-		for i, x0 := range calls[0].r.nums {
-			d := x0 - float64(calls[0].amount)
-			tracked := true
-			for _, o := range calls[1:] {
+		if bypass != "no" {
+			break
+		}
+		three, again := calls[mask][:3], calls[mask][3]
+		for i, x0 := range three[0].r.nums {
+			byAmount, byCharge := true, true
+			for _, o := range three[1:] {
 				x, ok := o.r.nums[i]
-				if !ok || x-float64(o.amount) != d {
-					tracked = false
+				if !ok {
+					byAmount, byCharge = false, false
+					break
+				}
+				if x-float64(o.amount) != x0-float64(three[0].amount) {
+					byAmount = false
+				}
+				if x-float64(o.charge) != x0-float64(three[0].charge) {
+					byCharge = false
 				}
 			}
-			if !tracked {
-				continue
+			stable := !again.r.admitted || again.r.nums[i] == x0
+			if (byAmount || byCharge) && stable {
+				payout[i] = true
 			}
-			compared = true
-			for _, o := range calls {
-				if o.r.admitted && o.r.nums[i] > float64(o.charge) {
-					bypass = "yes"
-					break bypassLoop
+		}
+	}
+	compared := false
+	if bypass == "no" {
+	check:
+		for mask := range calls {
+			for _, o := range calls[mask] {
+				if !o.r.admitted {
+					continue
+				}
+				for i := range payout {
+					x, ok := o.r.nums[i]
+					if !ok {
+						continue
+					}
+					compared = true
+					if x > float64(o.charge) {
+						bypass = "yes"
+						break check
+					}
 				}
 			}
 		}

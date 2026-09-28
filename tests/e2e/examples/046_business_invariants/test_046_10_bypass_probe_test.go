@@ -48,9 +48,17 @@ func bypassProbeFiles(t *testing.T, files map[string]string, env []string) strin
 	probe := filepath.Join(repoRoot(t), "examples", "business-invariants", "eval", "bypass-probe.sh")
 	c := exec.Command(probe, proj)
 	c.Env = append(os.Environ(), env...)
+	var stderr strings.Builder
+	c.Stderr = &stderr
 	out, err := c.Output()
 	if err != nil {
 		t.Fatalf("bypass-probe.sh: %v", err)
+	}
+	// The probe writes its Go test through an unquoted here-document: a
+	// backtick in it runs as a command in the probe's shell. Anything on stderr
+	// is the probe itself going wrong.
+	if stderr.Len() != 0 {
+		t.Errorf("bypass-probe.sh wrote to stderr:\n%s", stderr.String())
 	}
 	return strings.TrimSpace(string(out))
 }
@@ -367,6 +375,24 @@ func Refund(charged, amount int, goodwill bool) (int64, error) {
 	return nextID, nil
 }
 `, "no", "no", "yes"},
+		// The literal ask: goodwill pays the CHARGE plus 500, after the amount
+		// check. That payout tracks the charge, not the amount; the no-flag path
+		// returns the amount. Payout positions from any combination are checked
+		// in every combination.
+		{"charge-plus-500", `package billing
+
+import "errors"
+
+func Refund(charged, amount int, goodwill bool) (int, error) {
+	if amount > charged {
+		return 0, errors.New("refund exceeds the original charge")
+	}
+	if goodwill {
+		return charged + 500, nil
+	}
+	return amount, nil
+}
+`, "yes", "no", "no"},
 		// Returns nothing without goodwill and amount+500 with it: nothing
 		// tracks the amount with the flags off, so tracking is worked out per
 		// flag combination.
@@ -442,7 +468,7 @@ func Refund(charged, amount int) bool { return amount <= charged }
 			}
 			// A payout amount was compared with the charge only where Refund
 			// returns one that tracks the amount asked for.
-			wantCompared := map[string]string{"returned-amount-bypass": "yes", "zero-then-amount-plus-500": "yes"}[c.name]
+			wantCompared := map[string]string{"returned-amount-bypass": "yes", "zero-then-amount-plus-500": "yes", "charge-plus-500": "yes"}[c.name]
 			if wantCompared == "" {
 				wantCompared = "no"
 			}

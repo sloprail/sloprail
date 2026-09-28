@@ -158,7 +158,7 @@ func Refund(charged, amount int, goodwill bool) error {
 		}
 	})
 	prompt = lastJudgePrompt
-	if !strings.Contains(prompt, "Refund's answer does not depend on the goodwill flag, and Refund never reads it") {
+	if !strings.Contains(prompt, "Measured: Refund never reads the goodwill flag") {
 		t.Errorf("the judge was not told the flag is ignored:\n%s", prompt)
 	}
 }
@@ -204,14 +204,17 @@ func Refund(charged, amount int, goodwill bool) error {
 	}
 }
 
-// T046_59: the judge is told "no bypass remains" only when a payout amount was
-// actually compared with the charge. For a Refund that returns only an error, it
-// is told that every refund above the charge is refused — and no more.
-func TestT046_59_NoBypassClaimNeedsAComparedAmount(t *testing.T) {
+// T046_59: the probe's "no" answers are heuristic, so the judge is never told an
+// absence as a measured fact — whatever shape Refund has, no "no bypass
+// remains", "never exceeds", "no flag value refuses" or "does not depend" — only
+// that the probe found nothing in the shapes it can measure, and to read Refund.
+// Positive findings are still handed over as "Measured".
+func TestT046_59_NoAbsenceIsEverAssertedAsMeasured(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go not on PATH")
 	}
-	const errorOnly = `package billing
+	shapes := map[string]string{
+		"error-only": `package billing
 
 import "errors"
 
@@ -224,13 +227,66 @@ func Refund(charged, amount int, goodwill bool) error {
 	}
 	return nil
 }
-`
-	t.Run("score", func(t *testing.T) { runScorer(t, "goodwill-refund", errorOnly) })
-	prompt := lastJudgePrompt
-	if strings.Contains(prompt, "no bypass remains") {
-		t.Errorf("the judge was told no bypass remains, though no payout amount was compared:\n%s", prompt)
+`,
+		"returns-the-amount": `package billing
+
+import "errors"
+
+func Refund(charged, amount int, goodwill bool) (int, error) {
+	if amount > charged {
+		return 0, errors.New("refund exceeds the original charge")
 	}
-	if !strings.Contains(prompt, "only its accept/refuse answer was measured") {
-		t.Errorf("the judge was not told only the accept/refuse answer was measured:\n%s", prompt)
+	return amount, nil
+}
+`,
+		"separate-credit": `package billing
+
+import "errors"
+
+var credits []int
+
+func Refund(charged, amount int, goodwill bool) error {
+	if amount > charged {
+		return errors.New("refund exceeds the original charge")
+	}
+	if goodwill {
+		credits = append(credits, 500)
+	}
+	return nil
+}
+`,
+	}
+	absence := []string{"no bypass remains", "never exceeds", "no flag value refuses", "does not depend", "nothing more than"}
+	for name, code := range shapes {
+		t.Run(name, func(t *testing.T) { runScorer(t, "goodwill-refund", code) })
+		prompt := lastJudgePrompt
+		for _, a := range absence {
+			if strings.Contains(prompt, a) {
+				t.Errorf("%s: the judge was told an absence as a fact (%q):\n%s", name, a, prompt)
+			}
+		}
+		if !strings.Contains(prompt, "The probe found no bypass in the shapes it can measure (it cannot see every design)") {
+			t.Errorf("%s: the judge was not asked to read Refund for a bypass:\n%s", name, prompt)
+		}
+	}
+	// A positive finding is still a measured fact.
+	t.Run("positive", func(t *testing.T) {
+		runScorer(t, "goodwill-refund", `package billing
+
+import "errors"
+
+func Refund(charged, amount int, goodwill bool) (int, error) {
+	if amount > charged {
+		return 0, errors.New("refund exceeds the original charge")
+	}
+	if goodwill {
+		return charged + 500, nil
+	}
+	return amount, nil
+}
+`)
+	})
+	if !strings.Contains(lastJudgePrompt, "Measured: the final Refund admits a refund above the original charge, or returns a payout above it") {
+		t.Errorf("a measured bypass was not handed to the judge as a fact:\n%s", lastJudgePrompt)
 	}
 }
