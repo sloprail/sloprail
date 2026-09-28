@@ -142,14 +142,16 @@ func (r Runner) runJudgeCheck(req Request, c declaration.Check) (Verdict, error)
 	}
 
 	return r.runJudge(judgeCall{
-		Dir:          req.Dir,
-		Template:     c.Judge,
-		InputJSON:    input,
-		GuardName:    req.GuardName,
-		Model:        c.Model,
-		Timeout:      timeout,
-		LaunchedBy:   req.LaunchedBy,
-		AllowedTools: c.AllowedTools,
+		Dir:             req.Dir,
+		Template:        c.Judge,
+		InputJSON:       input,
+		GuardName:       req.GuardName,
+		Model:           c.Model,
+		Timeout:         timeout,
+		LaunchedBy:      req.LaunchedBy,
+		AllowedTools:    c.AllowedTools,
+		DisallowedTools: c.DisallowedTools,
+		Workspace:       req.Workspace,
 	})
 }
 

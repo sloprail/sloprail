@@ -320,12 +320,26 @@
     "long": "Run an agent without naming the harness that will run it.\n\nThe prompt is positional, as every harness takes it. --prompt is accepted\ninstead, for when the prompt comes from a file or a pipe and a positional\nwould be awkward.\n\n  sr-agent --model size-md \"does this uphold the invariant?\"\n  sr-agent --model claude-opus-5,size-lg --prompt \"$(cat question.txt)\"\n\nMODEL SETS\n\n--model takes preferences in order, first match wins. Two kinds of entry:\n\n  size-xs size-sm size-md size-lg size-xl size-xxl\n      A size, not a model. Every harness maps every one of them, so an alias\n      ALWAYS resolves — which means anything after an alias in a set can never\n      be reached. Writing size-md,claude-opus-5 probably meant the other order.\n\n  claude-opus-5, sonnet, ...\n      One harness's own model. Matches only under that harness, so a set may\n      name several harnesses' models and mean \"the best available here\".\n\nA set matching nothing under the running harness is REFUSED, not quietly run\non a default. A verdict from a model the author did not choose is one nobody\ncan account for.\n\nHARNESS\n\nWhich harness is running is read from the environment, not asked for. An\nenvironment naming no known harness is refused rather than guessed at; pass\n--harness for a hook running outside any harness at all.",
     "flags": [
       {
+        "name": "add-dir",
+        "default": "[]",
+        "usage": "A directory the agent may read and write, as claude's own --add-dir (repeatable)"
+      },
+      {
+        "name": "add-dir:readonly",
+        "default": "[]",
+        "usage": "A directory the agent may read but never write, e.g. the project a judge is judging (repeatable)"
+      },
+      {
         "name": "allowed-tools",
         "usage": "Tools the agent may use, comma- or space-separated (maps to the harness's own allowed-tools; e.g. \"Read WebFetch\")"
       },
       {
         "name": "claude-args",
         "usage": "Claude Code's own settings as a JSON object, passed through untouched (e.g. '{\"permission-mode\":\"plan\"}')"
+      },
+      {
+        "name": "disallowed-tools",
+        "usage": "Tool rules the agent is denied, in the same form; a deny beats every allow (e.g. \"Bash(curl * -o *)\")"
       },
       {
         "name": "dry-run",

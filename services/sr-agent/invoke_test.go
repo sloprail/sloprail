@@ -2,7 +2,9 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -138,7 +140,7 @@ func TestBuildInvocation_PromptIsLastAndPositional(t *testing.T) {
 	assert.Equal(t, "claude", inv.Binary)
 	assert.Equal(t, []string{
 		"-p", "--model", "sonnet",
-		"--settings", claudeIsolationSettings,
+		"--settings", claudeIsolationSettings, "--permission-mode", "default",
 		"--", "does this uphold the invariant?",
 	}, inv.Args)
 	assert.Equal(t, "does this uphold the invariant?", inv.Args[len(inv.Args)-1])
@@ -154,7 +156,7 @@ const claudeIsolationSettings = `{"hooks":{},"mcpServers":{},"enabledPlugins":{}
 // claudeSettingsArg is how the isolation settings render in Invocation.String() /
 // --dry-run output: the JSON contains quotes, so String() runs it through
 // strconv.Quote. A dry-run string assertion inserts this after `--settings`.
-var claudeSettingsArg = "--settings " + strconv.Quote(claudeIsolationSettings)
+var claudeSettingsArg = "--settings " + strconv.Quote(claudeIsolationSettings) + " --permission-mode default"
 
 // The falsifier for the ordering claim: a prompt that looks exactly like a flag
 // must still be the final argument, after everything else.
@@ -164,7 +166,7 @@ func TestBuildInvocation_DashLeadingPromptStaysLast(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"-p", "--model", "sonnet",
-		"--settings", claudeIsolationSettings,
+		"--settings", claudeIsolationSettings, "--permission-mode", "default",
 		"--permission-mode", "plan",
 		"--", "--model is not resolving, why?",
 	}, inv.Args)
@@ -185,7 +187,7 @@ func TestBuildInvocation_HarnessArgsPassThrough(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"-p", "--model", "opus",
-		"--settings", claudeIsolationSettings,
+		"--settings", claudeIsolationSettings, "--permission-mode", "default",
 		"--permission-mode", "plan", "--max-budget-usd", "5",
 		"--", "q",
 	}, inv.Args)
@@ -219,7 +221,7 @@ func TestBuildInvocation_VariadicFlagCannotSwallowThePrompt(t *testing.T) {
 
 	require.Equal(t, []string{
 		"-p", "--model", "haiku",
-		"--settings", claudeIsolationSettings,
+		"--settings", claudeIsolationSettings, "--permission-mode", "default",
 		"--add-dir", "/tmp/out",
 		"--", "count the lines",
 	}, inv.Args)
@@ -245,7 +247,7 @@ func indexOf(args []string, want string) int {
 // them together, so a change to claudeCodeSpec.baseArgs that forgot to update the
 // const (or vice-versa) fails here rather than letting the two disagree.
 func TestBaseArgs_IsolationSettingsMatchTheConst(t *testing.T) {
-	assert.Equal(t, []string{"--settings", claudeIsolationSettings}, claudeCodeSpec.baseArgs)
+	assert.Equal(t, []string{"--settings", claudeIsolationSettings, "--permission-mode", "default"}, claudeCodeSpec.baseArgs)
 }
 
 // The isolation --settings is ALWAYS present, whatever else the caller passed —
@@ -270,10 +272,58 @@ func TestParseAllowedTools_SeparatorsAndEmpties(t *testing.T) {
 		"Read":               {"Read"},
 	}
 	for in, want := range cases {
-		assert.Equal(t, want, ParseAllowedTools(in), "input %q", in)
+		got, err := ParseAllowedTools(in)
+		require.NoError(t, err, in)
+		assert.Equal(t, want, got, "input %q", in)
 	}
-	assert.Nil(t, ParseAllowedTools(""), "empty grants nothing")
-	assert.Nil(t, ParseAllowedTools("   , ,  "), "only separators grants nothing")
+	for _, empty := range []string{"", "   , ,  "} {
+		got, err := ParseAllowedTools(empty)
+		require.NoError(t, err)
+		assert.Nil(t, got, "%q grants nothing", empty)
+	}
+}
+
+// A scoped rule is ONE rule, whatever spaces or commas sit inside its
+// parentheses: claude reads `Bash(git show:*)` as one rule, and splitting it
+// into `Bash(git` + `show:*)` loses it once each piece is its own argv value.
+func TestParseAllowedTools_ScopedRulesStayWhole(t *testing.T) {
+	cases := map[string][]string{
+		"Bash(git show:*)":                       {"Bash(git show:*)"},
+		"Read Bash(curl -sL:*) WebFetch":         {"Read", "Bash(curl -sL:*)", "WebFetch"},
+		"WebFetch(domain:code.claude.com),Read":  {"WebFetch(domain:code.claude.com)", "Read"},
+		"Bash(printf a,b:*), Bash(git log -1:*)": {"Bash(printf a,b:*)", "Bash(git log -1:*)"},
+		"Bash(echo (nested) x:*) Read":           {"Bash(echo (nested) x:*)", "Read"},
+	}
+	for in, want := range cases {
+		got, err := ParseAllowedTools(in)
+		require.NoError(t, err, in)
+		assert.Equal(t, want, got, "input %q", in)
+	}
+}
+
+// Unbalanced parentheses are refused: there is no telling which rule was meant.
+func TestParseAllowedTools_UnbalancedIsRefused(t *testing.T) {
+	for _, bad := range []string{"Bash(git show:*", "Read) Write", "Bash((x:*)", "()", "(curl:*)", "Bash(x)y"} {
+		_, err := ParseAllowedTools(bad)
+		assert.ErrorIs(t, err, ErrBadAllowedTools, bad)
+	}
+}
+
+// Through the CLI: a scoped rule with a space reaches the harness as ONE
+// --allowed-tools value, beside the answer grant — not as two broken halves.
+func TestCLI_ScopedToolRuleReachesTheHarnessWhole(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+	t.Setenv(outputDirEnv, dir)
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--allowed-tools", "Bash(git show:*) Bash(curl -sL:*) WebFetch(domain:code.claude.com)",
+		"--verify", script, "q")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, ` "Bash(git show:*)" "Bash(curl -sL:*)" "WebFetch(domain:code.claude.com)" -- `,
+		"each scoped rule must be one argv value, in order, after the answer grant")
+	assert.NotContains(t, stdout, `"Bash(git"`)
 }
 
 func TestInvocation_StringQuotesArgumentsWithSpaces(t *testing.T) {
@@ -412,4 +462,176 @@ func TestResolveBinary_NilDetectFallsBackWithoutPanicking(t *testing.T) {
 	require.NotPanics(t, func() {
 		assert.Equal(t, "fake-binary", resolveBinary(spec, getenv))
 	})
+}
+
+// --- --add-dir[:<mode>] ------------------------------------------------------
+
+// Every path is made absolute (a permission rule matches absolute paths) and
+// must be a directory — a typo would otherwise surface only as a judge denied
+// every read. A path repeated in one mode is one grant; writable dirs come
+// first, then readonly ones, each in the order its flags were given.
+func TestResolveAddDirs(t *testing.T) {
+	dir := t.TempDir()
+	other := t.TempDir()
+	file := filepath.Join(dir, "f")
+	require.NoError(t, os.WriteFile(file, nil, 0o644))
+
+	got, err := resolveAddDirs(map[dirMode][]string{
+		dirWritable: {other},
+		dirReadonly: {dir, dir},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []dirGrant{{Path: other, Mode: dirWritable}, {Path: dir, Mode: dirReadonly}}, got,
+		"a repeated directory is one grant")
+
+	t.Chdir(dir)
+	got, err = resolveAddDirs(map[dirMode][]string{dirReadonly: {"."}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.True(t, filepath.IsAbs(got[0].Path), "a relative dir is made absolute: %s", got[0].Path)
+
+	for name, bad := range map[string]string{
+		"missing": filepath.Join(dir, "nope"),
+		"a file":  file,
+		"empty":   "",
+		"blank":   "  ",
+	} {
+		_, err := resolveAddDirs(map[dirMode][]string{dirReadonly: {bad}})
+		assert.ErrorIs(t, err, ErrBadAddDir, name)
+	}
+
+	got, err = resolveAddDirs(nil)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+// One directory cannot be both writable and never writable.
+func TestResolveAddDirs_OneDirInTwoModesIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	_, err := resolveAddDirs(map[dirMode][]string{dirWritable: {dir}, dirReadonly: {dir}})
+	require.ErrorIs(t, err, ErrBadAddDir)
+	assert.Contains(t, err.Error(), "both writable and readonly")
+}
+
+// One directory spelled two ways (a symlink and its target, as /var and
+// /private/var on macOS) is one directory: naming it writable one way and
+// readonly the other is refused, not granted twice.
+func TestResolveAddDirs_BothModesThroughASymlinkIsRefused(t *testing.T) {
+	real := realDir(t, "real")
+	link := filepath.Join(filepath.Dir(real), "link")
+	require.NoError(t, os.Symlink(real, link))
+
+	_, err := resolveAddDirs(map[dirMode][]string{dirWritable: {link}, dirReadonly: {real}})
+	require.ErrorIs(t, err, ErrBadAddDir)
+	assert.Contains(t, err.Error(), "both writable and readonly")
+}
+
+// A writable dir inside a readonly one is refused: the readonly deny covers it
+// and no exception can be expressed, so the grant would silently do nothing.
+// The reverse — readonly inside writable — is fine.
+func TestResolveAddDirs_WritableInsideReadonlyIsRefused(t *testing.T) {
+	project := realDir(t, "project")
+	sub := filepath.Join(project, "sub")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+
+	_, err := resolveAddDirs(map[dirMode][]string{dirWritable: {sub}, dirReadonly: {project}})
+	require.ErrorIs(t, err, ErrBadAddDir)
+	assert.Contains(t, err.Error(), "lies inside --add-dir:readonly")
+
+	got, err := resolveAddDirs(map[dirMode][]string{dirWritable: {project}, dirReadonly: {sub}})
+	require.NoError(t, err, "readonly inside writable is expressible: the deny wins")
+	assert.Len(t, got, 2)
+}
+
+// A path with a glob character turns its rule into a pattern that misses the
+// directory (measured in review: writes landed in a project named p[1]). It is
+// refused, in either mode, rather than granted a rule that does not match.
+func TestResolveAddDirs_GlobCharactersAreRefused(t *testing.T) {
+	root := realDir(t, "root")
+	for _, name := range []string{"p[1]", "p*", "p?", "p{a,b}", `p\x`} {
+		dir := filepath.Join(root, name)
+		require.NoError(t, os.MkdirAll(dir, 0o755), name)
+		for _, mode := range []dirMode{dirWritable, dirReadonly} {
+			_, err := resolveAddDirs(map[dirMode][]string{mode: {dir}})
+			require.ErrorIs(t, err, ErrBadAddDir, "%s must be refused", name)
+			assert.Contains(t, err.Error(), "glob character", name)
+		}
+	}
+	plain := filepath.Join(root, "my proj (1)")
+	require.NoError(t, os.MkdirAll(plain, 0o755))
+	_, err := resolveAddDirs(map[dirMode][]string{dirReadonly: {plain}})
+	assert.NoError(t, err, "spaces and parentheses are not glob characters")
+}
+
+// A harness that cannot express "read but never write" refuses a readonly dir
+// rather than dropping it (a blind judge) or granting it plainly (a writable
+// one). A writable dir costs it nothing — with no permission model everything
+// is already writable — and the tools still pass through.
+func TestHarnessGrant_NoPermissionModelRefusesReadonly(t *testing.T) {
+	bare := harnessSpec{name: "bare", binary: "bare"}
+
+	_, err := harnessGrant(bare, accessGrant{Dirs: []dirGrant{{Path: "/p", Mode: dirReadonly}}})
+	require.ErrorIs(t, err, ErrModeUnsupported)
+	assert.Contains(t, err.Error(), "--add-dir:readonly")
+
+	got, err := harnessGrant(bare, accessGrant{
+		Dirs:  []dirGrant{{Path: "/out", Mode: dirWritable}},
+		Tools: []string{"Read", "WebFetch"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"--allowed-tools", "Read WebFetch"}, got)
+}
+
+// A harness with no permission model cannot deny a tool, so a deny list is
+// refused rather than dropped — dropping it would run the agent with less
+// confinement than the caller asked for.
+func TestHarnessGrant_NoPermissionModelRefusesDenies(t *testing.T) {
+	bare := harnessSpec{name: "bare", binary: "bare"}
+	_, err := harnessGrant(bare, accessGrant{DenyTools: []string{"Bash(curl * -o *)"}})
+	require.ErrorIs(t, err, ErrModeUnsupported)
+	assert.Contains(t, err.Error(), "--disallowed-tools")
+}
+
+// Through the CLI: --disallowed-tools reaches the harness as whole rules, in the
+// same --disallowed-tools group as the readonly project's deny, after the flag.
+func TestCLI_DisallowedToolsReachTheHarnessWhole(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+	t.Setenv(outputDirEnv, dir)
+	project := filepath.Join(dir, "project")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir:readonly", project,
+		"--allowed-tools", "Bash(curl:*)",
+		"--disallowed-tools", "Bash(curl * -o *), Bash(curl * -d @*)",
+		"--verify", script, "q")
+	require.NoError(t, err)
+	flags, _, _ := strings.Cut(stdout, " -- ")
+	assert.Equal(t, 1, strings.Count(flags, "--disallowed-tools"), "one deny group")
+	assert.Contains(t, flags, `--disallowed-tools "Edit(/`+project+`/**)"`)
+	assert.True(t, strings.HasSuffix(flags, `"Bash(curl * -o *)" "Bash(curl * -d @*)"`),
+		"the caller's denies follow the readonly deny as whole rules: %s", flags)
+}
+
+// An unbalanced deny rule is refused before anything runs.
+func TestCLI_MalformedDisallowedToolsIsRefused(t *testing.T) {
+	_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--disallowed-tools", "Bash(curl * -o *", "q")
+	require.ErrorIs(t, err, ErrBadAllowedTools)
+	assert.Contains(t, err.Error(), "--disallowed-tools")
+}
+
+// `$` and backticks expand inside double quotes, so such an argument is
+// single-quoted: pasted back into a shell, it is the same one argument.
+func TestInvocationString_SingleQuotesExpansions(t *testing.T) {
+	inv := Invocation{Binary: "claude", Args: []string{"--", "cost $HOME `id` it's"}}
+	assert.Equal(t, `claude -- 'cost $HOME `+"`id`"+` it'\''s'`, inv.String())
+}
+
+// A permission rule's parentheses and `**` would break a pasted command.
+func TestInvocationString_QuotesPermissionRules(t *testing.T) {
+	inv := Invocation{Binary: "claude", Args: []string{"--allowed-tools", "Edit(//tmp/x/**)", "Read"}}
+	assert.Equal(t, `claude --allowed-tools "Edit(//tmp/x/**)" Read`, inv.String())
 }

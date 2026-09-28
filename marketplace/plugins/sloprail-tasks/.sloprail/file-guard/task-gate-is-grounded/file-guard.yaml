@@ -51,10 +51,11 @@ checks:
   # Post/Stop bytes — the same underivable-Pre defer every guard in this
   # plugin uses. model is size-md (engine default judge modelset), matching
   # the plugin's other judges; no explicit timeout — it runs under the
-  # engine's own default. allowed_tools: [Read] ADDS Read on top of the engine-granted Write
-  # for the verdict file — the task and gate content are both already IN the
-  # prompt, but Read lets the judge corroborate against the file on disk if
-  # useful.
+  # engine's own default. The task and gate content are both already IN the
+  # prompt; the judge can also read the project on disk without any grant (the
+  # engine passes it as readonly). allowed_tools: [Read] only adds reads
+  # outside the project. The verdict file's write is the engine's, not this
+  # list's.
   - prepare: ./resolve-gate-context.sh
     judge: ./judge-gate.md.j2
     model: size-md

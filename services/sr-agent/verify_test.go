@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,10 +39,19 @@ func requireSh(t *testing.T) {
 //
 // The fake learns where to write from SR_TEST_OUTPUT, which runVerified does
 // not set — a REAL agent learns the path from the prompt, and a fake cannot
-// read a prompt. The path is discovered by watching for the file runVerified
-// creates in the temp dir it makes.
+// read a prompt. The output directory is pinned with outputDirEnv so the path
+// is known before the run.
 func runVerifyHarness(
 	t *testing.T, spec harnessSpec, verifier, prompt string, attempts int, dir string,
+) (stdout, stderr string, err error) {
+	t.Helper()
+	return runVerifyHarnessWithStdin(t, spec, verifier, prompt, attempts, dir, strings.NewReader(""))
+}
+
+// runVerifyHarnessWithStdin is runVerifyHarness with sr-agent's OWN stdin set,
+// to show what the harness it launches does (not) inherit.
+func runVerifyHarnessWithStdin(
+	t *testing.T, spec harnessSpec, verifier, prompt string, attempts int, dir string, stdin io.Reader,
 ) (stdout, stderr string, err error) {
 	t.Helper()
 
@@ -49,7 +59,7 @@ func runVerifyHarness(
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetIn(strings.NewReader(""))
+	cmd.SetIn(stdin)
 
 	// The output directory is pinned so the fake knows where to write. A real
 	// agent learns the path from the prompt; a script cannot read a prompt.
@@ -58,7 +68,7 @@ func runVerifyHarness(
 	t.Setenv(outputDirEnv, outputDir)
 	t.Setenv("SR_TEST_OUTPUT", filepath.Join(outputDir, "answer"))
 
-	err = runVerified(cmd, spec, "fake-model", nil, nil, prompt, verifier, attempts, false, false)
+	err = runVerified(cmd, spec, "fake-model", nil, nil, nil, nil, prompt, verifier, attempts, false, false)
 	return out.String(), errOut.String(), err
 }
 
@@ -318,7 +328,7 @@ exit 0
 	assert.Error(t, statErr, "the agent must not run at all when the verifier cannot be resolved")
 }
 
-// The output file is truncated between attempts, or a second attempt that
+// The output file is removed between attempts, or a second attempt that
 // writes nothing would be judged on the answer that was already rejected.
 func TestVerified_OutputIsResetBetweenAttempts(t *testing.T) {
 	requireSh(t)
@@ -349,6 +359,108 @@ exit 1
 	require.NoError(t, readErr)
 	assert.Equal(t, 1, strings.Count(string(got), "first answer"),
 		"the stale answer must not be shown to the verifier a second time")
+}
+
+// The answer file does NOT exist when the agent starts. Claude Code's Write
+// refuses to overwrite a file the agent has not Read, so a pre-created empty
+// answer cost every judge a refused Write and a Read before its real Write —
+// measured on 5 of 5 real judge runs. It must be absent on EVERY attempt, not
+// only the first.
+func TestVerified_AnswerFileIsAbsentWhenTheAgentStarts(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	fakeHarness := writeScript(t, dir, "fake-claude.sh", fmt.Sprintf(`
+if [ -e "$SR_TEST_OUTPUT" ]; then echo present >> %[1]s; else echo absent >> %[1]s; fi
+printf 'an answer' > "$SR_TEST_OUTPUT"
+exit 0
+`, log))
+	verifier := writeScript(t, dir, "v.sh", "echo no >&2; exit 1\n")
+
+	// A stale answer left in the (test-pinned) output dir by an earlier run.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "out"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "out", "answer"), []byte("stale"), 0o644))
+
+	spec := harnessSpec{name: "fake", binary: fakeHarness}
+	_, _, err := runVerifyHarness(t, spec, verifier, "q", 2, dir)
+	require.ErrorIs(t, err, ErrVerifyFailed)
+
+	got, readErr := os.ReadFile(log)
+	require.NoError(t, readErr)
+	assert.Equal(t, "absent\nabsent\n", string(got),
+		"the answer file must not exist when the agent starts, on any attempt")
+}
+
+// "Never written" and "written empty" are different outcomes. Never written is
+// a missing file: sr-agent reports it itself, without running the verifier, and
+// says so to the agent on the retry. Written empty is a file the verifier
+// judges like any other.
+func TestVerified_NeverWrittenIsDistinctFromWrittenEmpty(t *testing.T) {
+	requireSh(t)
+
+	t.Run("never written", func(t *testing.T) {
+		dir := t.TempDir()
+		ran := filepath.Join(dir, "verifier-ran")
+		fakeHarness := writeScript(t, dir, "fake-claude.sh", "exit 0\n")
+		verifier := writeScript(t, dir, "v.sh", fmt.Sprintf("touch %s; exit 0\n", ran))
+
+		spec := harnessSpec{name: "fake", binary: fakeHarness}
+		_, _, err := runVerifyHarness(t, spec, verifier, "q", 1, dir)
+		require.ErrorIs(t, err, ErrVerifyFailed)
+		assert.Contains(t, err.Error(), "wrote no output")
+		assert.NoFileExists(t, ran, "a never-written answer is not handed to the verifier")
+	})
+
+	t.Run("written empty", func(t *testing.T) {
+		dir := t.TempDir()
+		fakeHarness := writeScript(t, dir, "fake-claude.sh", `: > "$SR_TEST_OUTPUT"; exit 0`+"\n")
+		verifier := writeScript(t, dir, "v.sh", `[ -f "$1" ] && [ ! -s "$1" ] && exit 0; echo "not an empty file" >&2; exit 1`+"\n")
+
+		spec := harnessSpec{name: "fake", binary: fakeHarness}
+		_, errOut, err := runVerifyHarness(t, spec, verifier, "q", 1, dir)
+		require.NoError(t, err, "the verifier judges an empty answer file; stderr: %s", errOut)
+	})
+}
+
+// A printed JSON reply stands in for an answer that was never written, as it
+// does for one written empty — the file no longer exists beforehand, so the
+// missing case is the common one.
+func TestVerified_PrintedJSONReplyFillsANeverWrittenAnswer(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	fakeHarness := writeScript(t, dir, "fake-claude.sh", `printf '{"pass": true}\n'; exit 0`+"\n")
+	verifier := writeScript(t, dir, "v.sh", `grep -q '"pass": true' "$1" || { echo empty >&2; exit 1; }`)
+
+	spec := harnessSpec{name: "fake", binary: fakeHarness}
+	out, errOut, err := runVerifyHarness(t, spec, verifier, "q", 1, dir)
+	require.NoError(t, err, "stderr: %s", errOut)
+	assert.Contains(t, out, `"pass": true`)
+}
+
+// Under --verify the harness gets an EMPTY stdin, whatever sr-agent's own stdin
+// holds. `claude -p` appends its stdin to the prompt and, when stdin is open but
+// silent, waits 3s for it (measured) — so an inherited stdin cost every judge
+// that wait, and a script check running sr-agent would hand the agent its own
+// check payload as part of the question.
+func TestVerified_HarnessGetsAnEmptyStdin(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	seen := filepath.Join(dir, "stdin-seen")
+	fakeHarness := writeScript(t, dir, "fake-claude.sh", fmt.Sprintf(`
+cat > %s
+printf 'ok' > "$SR_TEST_OUTPUT"
+exit 0
+`, seen))
+	verifier := writeScript(t, dir, "v.sh", "exit 0\n")
+
+	spec := harnessSpec{name: "fake", binary: fakeHarness}
+	_, errOut, err := runVerifyHarnessWithStdin(t, spec, verifier, "q", 1, dir,
+		strings.NewReader(`{"event":{"path":"a check payload"}}`))
+	require.NoError(t, err, "stderr: %s", errOut)
+
+	got, readErr := os.ReadFile(seen)
+	require.NoError(t, readErr)
+	assert.Empty(t, string(got), "sr-agent's own stdin must not reach the harness under --verify")
 }
 
 // --- CLI wiring -------------------------------------------------------------
@@ -453,12 +565,12 @@ func TestCLI_VerifyGrantsWriteAccessToTheOutputDirectory(t *testing.T) {
 	assert.Contains(t, stdout, outputDir)
 }
 
-// A judge's --allowed-tools are MERGED into the same --allowed-tools argument as
-// the Write the answer file needs — one flag carrying `Write <tools>`, never two
-// competing variadic groups. Under --verify (the judge path) the merge happens in
-// grantWrite, so the dry-run command shows the single merged argument with Write
-// first and the caller's tools after.
-func TestCLI_VerifyMergesAllowedToolsWithTheWriteGrant(t *testing.T) {
+// A judge's --allowed-tools are MERGED into the same --allowed-tools flag as the
+// grant the answer file needs — one flag, never two competing variadic groups —
+// and that grant is an Edit rule scoped to the answer directory, not an unscoped
+// Write: measured on claude 2.1.282, an unscoped Write allow wrote anywhere on
+// disk (see claudeCodeSpec.grant).
+func TestCLI_VerifyMergesAllowedToolsWithTheScopedAnswerGrant(t *testing.T) {
 	requireSh(t)
 	dir := t.TempDir()
 	script := writeScript(t, dir, "v.sh", "exit 0\n")
@@ -471,10 +583,159 @@ func TestCLI_VerifyMergesAllowedToolsWithTheWriteGrant(t *testing.T) {
 		"--allowed-tools", "Read WebFetch", "--verify", script, "judge this")
 	require.NoError(t, err)
 
-	// One argument, Write first then the requested tools — quoted by dry-run's
-	// printer because it contains spaces.
-	assert.Contains(t, stdout, `--allowed-tools "Write Read WebFetch"`,
-		"the judge's tools must be unioned into the Write grant as one --allowed-tools argument")
+	assert.Contains(t, stdout, `--allowed-tools "Edit(/`+outputDir+`/**)"`,
+		"the answer directory must be granted by an Edit rule scoped to it")
+	assert.Contains(t, stdout, " Read WebFetch -- ",
+		"the judge's tools must follow the answer grant as further values of the same flag")
+	assert.Equal(t, 1, strings.Count(stdout, "--allowed-tools"),
+		"one --allowed-tools flag, never two competing variadic groups")
+	flags, _, _ := strings.Cut(stdout, " -- ")
+	assert.NotContains(t, flags, " Write ",
+		"no unscoped Write: measured, it writes anywhere on disk")
+}
+
+// `--add-dir:readonly` makes the judge's project READABLE (a working directory,
+// where claude's Read/Grep/Glob need no grant) and NOT WRITABLE (an Edit deny,
+// which beats any allow). Both halves must reach the harness, beside the answer
+// folder — which is just one more writable dir, in the same --add-dir.
+func TestCLI_VerifyReadonlyDirIsReadableButDenied(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+
+	outputDir := filepath.Join(dir, "out")
+	require.NoError(t, os.MkdirAll(outputDir, 0o755))
+	t.Setenv(outputDirEnv, outputDir)
+	project := filepath.Join(dir, "project")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir:readonly", project, "--verify", script, "judge this")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "--add-dir "+project+" "+outputDir+" ",
+		"the project and the answer dir must both be working directories, in one --add-dir")
+	assert.Contains(t, stdout, `--disallowed-tools "Edit(/`+project+`/**)"`,
+		"the project must be denied to every file-writing tool")
+	assert.NotContains(t, stdout, `--allowed-tools "Edit(/`+project,
+		"the project must never be granted for writing")
+	assert.Contains(t, stdout, `--allowed-tools "Edit(/`+outputDir+`/**)"`,
+		"the answer folder is granted like any writable dir")
+}
+
+// With $TMPDIR INSIDE the readonly project — the engine hands a judge its own
+// environment, so this is one `TMPDIR=<project>/.tmp` away — the project is
+// still denied, and the answer folder is placed outside it. The review that
+// found this measured the old behaviour: the deny was dropped and a judge
+// granted Write wrote into the project.
+func TestCLI_VerifyTMPDIRInsideTheProjectKeepsTheDenyAndMovesTheAnswer(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+	project := filepath.Join(dir, "project")
+	tmp := filepath.Join(project, ".tmp")
+	require.NoError(t, os.MkdirAll(tmp, 0o755))
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("HOME", filepath.Join(dir, "home")) // os.UserCacheDir, outside the project
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir:readonly", project, "--allowed-tools", "Write", "--verify", script, "judge this")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, `--disallowed-tools "Edit(/`+project+`/**)"`, "the project must stay denied")
+	_, prompt, _ := strings.Cut(stdout, " -- ")
+	assert.Contains(t, prompt, "Write your answer to the file "+filepath.Join(dir, "home"),
+		"the answer must go to the first root outside the project (the user cache dir)")
+	assert.NotContains(t, prompt, "Write your answer to the file "+project)
+}
+
+// A test-pinned output dir inside a readonly dir is refused, not silently used.
+func TestCLI_VerifyOutputDirInsideAReadonlyDirIsRefused(t *testing.T) {
+	requireSh(t)
+	dir := t.TempDir()
+	script := writeScript(t, dir, "v.sh", "exit 0\n")
+	project := filepath.Join(dir, "project")
+	require.NoError(t, os.MkdirAll(filepath.Join(project, "out"), 0o755))
+	t.Setenv(outputDirEnv, filepath.Join(project, "out"))
+
+	_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir:readonly", project, "--verify", script, "q")
+	require.ErrorIs(t, err, ErrVerifierBroken)
+	assert.Contains(t, err.Error(), "inside the readonly")
+}
+
+// --- --add-dir[:<mode>] parsing ---------------------------------------------
+
+// addDirDirs makes two real directories under a fresh temp dir.
+func addDirDirs(t *testing.T) (a, b string) {
+	t.Helper()
+	root := t.TempDir()
+	a, b = filepath.Join(root, "a"), filepath.Join(root, "b")
+	require.NoError(t, os.MkdirAll(a, 0o755))
+	require.NoError(t, os.MkdirAll(b, 0o755))
+	return a, b
+}
+
+// Both modes, each repeatable, each taking its value as the next word OR after
+// '=' — the same affordances as sr-file's --cite:<source-types>.
+func TestCLI_AddDirModesRepeatAndTakeTheirValueEitherWay(t *testing.T) {
+	a, b := addDirDirs(t)
+	c := filepath.Join(filepath.Dir(a), "c")
+	require.NoError(t, os.MkdirAll(c, 0o755))
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir", a, "--add-dir:readonly="+b, "--add-dir:readonly", c, "q")
+	require.NoError(t, err)
+
+	assert.Contains(t, stdout, "--add-dir "+a+" "+b+" "+c+" ", "every dir, in one --add-dir")
+	assert.Contains(t, stdout, `--allowed-tools "Edit(/`+a+`/**)"`, "the bare --add-dir is writable")
+	assert.Contains(t, stdout, `--disallowed-tools "Edit(/`+b+`/**)"`, "readonly given with '='")
+	assert.Contains(t, stdout, `"Edit(/`+c+`/**)"`, "readonly given as the next word")
+	assert.NotContains(t, stdout, `--allowed-tools "Edit(/`+b, "a readonly dir is never allowed")
+}
+
+// '--' ends the flags: an --add-dir after it is prompt text, not a grant.
+func TestCLI_AddDirAfterDoubleDashIsPrompt(t *testing.T) {
+	a, _ := addDirDirs(t)
+
+	stdout, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--", "--add-dir:readonly", a)
+	require.NoError(t, err)
+
+	flags, prompt, _ := strings.Cut(stdout, " -- ")
+	assert.NotContains(t, flags, "--add-dir", "nothing after -- is a flag")
+	assert.Contains(t, prompt, "--add-dir:readonly "+a)
+}
+
+// An unknown mode is a usage error that names the modes that exist.
+func TestCLI_AddDirUnknownModeNamesTheValidOnes(t *testing.T) {
+	a, _ := addDirDirs(t)
+	for _, arg := range []string{"--add-dir:rw", "--add-dir:", "--add-dir:readonly:x"} {
+		_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run", arg, a, "q")
+		require.ErrorIs(t, err, ErrUnknownAddDirMode, arg)
+		assert.Contains(t, err.Error(), "--add-dir, --add-dir:readonly", "the refusal must name the modes: %s", arg)
+	}
+}
+
+// A mode flag with no value is refused, not read as granting nothing.
+func TestCLI_AddDirMissingValueIsRefused(t *testing.T) {
+	for _, flag := range []string{"--add-dir", "--add-dir:readonly"} {
+		_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run", flag)
+		require.Error(t, err, flag)
+		assert.Contains(t, err.Error(), "needs an argument", flag)
+	}
+	for _, empty := range []string{"--add-dir:readonly=", "--add-dir="} {
+		_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run", empty, "q")
+		require.ErrorIs(t, err, ErrBadAddDir, "%s: an empty value after '=' names no directory", empty)
+	}
+}
+
+// The same dir in both modes is a contradiction and refused.
+func TestCLI_AddDirSameDirInBothModesIsRefused(t *testing.T) {
+	a, _ := addDirDirs(t)
+	_, _, err := runCLI(t, underClaude, "--model", "size-md", "--dry-run",
+		"--add-dir", a, "--add-dir:readonly", a, "q")
+	require.ErrorIs(t, err, ErrBadAddDir)
 }
 
 func TestCLI_NonExecutableVerifierIsRefusedBeforeAnythingRuns(t *testing.T) {
