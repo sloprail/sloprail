@@ -19,7 +19,7 @@ unknowable.
 | --- | --- | --- |
 | `PreFileCreate` | `newContent` + **`resultKnown`** | `resultKnown` is false — ask it |
 | `PreFileUpdate` | `newContent` + **`resultKnown`** | `resultKnown` is false — ask it |
-| `PostFileCreate` / `PostFileUpdate` | `newContent` (settled, no `resultKnown`) | cannot happen — the bytes have landed |
+| `PostFileCreate` / `PostFileUpdate` | `newContent` (settled) + **`newContentKnown`** | `newContentKnown` is false — the settled file could not be READ (a link to a FIFO or a device, or past the read cap) |
 
 `PreFileCreate` carries `resultKnown` for the same reason `PreFileUpdate` does,
 and it can be **false** on a create: a `NotebookEdit` creating a fresh `.ipynb`
@@ -30,8 +30,11 @@ resulting bytes are **not derivable**. On that create `newContent == ""` does
 reads as, indistinguishable on the value alone from a real empty file. So the
 unknowable case on a create is `resultKnown: false`, exactly as on an update — it
 is not silence, and `newContent == ""` alone cannot tell "empty" from "unknown".
-Only a Post kind carries settled bytes with no `resultKnown`, because there the
-write has landed and nothing was predicted.
+A Post kind carries settled bytes with no `resultKnown`, because there the write
+has landed and nothing was predicted — but the engine still has to READ them,
+and a file that is not a regular file once links are followed, or is larger
+than one read takes, is reported with `newContent` `""` and `newContentKnown`
+false. On a Post kind that is the unknown state.
 
 **Instead:** decide, and write the decision in the body.
 
@@ -44,6 +47,8 @@ write has landed and nothing was predicted.
   produced it. A `Pre` rule that cannot predict should not guess.
 - If the rule can still say something useful without content — a path rule, a
   naming rule — say it at `Pre` and let a Post rule cover the rest.
+- On a **Post** kind, guard on `newContentKnown` before reading `newContent`,
+  and fail closed when it is false: the rule could not see the settled file.
 - Never write `newContent == ""` meaning "unknown". On a create `resultKnown`
   false is the unknown state; `newContent == ""` with `resultKnown` true is a
   real empty file, and the two are different.
@@ -53,6 +58,10 @@ prevented, only reported afterwards. That is the honest answer for the
 unknowable tier, and a rule's body should say which tier it relies on.
 
 ## How the check detects it
+
+Two floors. A script that handles a Post kind (names `PostFileCreate`,
+`PostFileUpdate`, `PostFileWrite` or `Post*`) and reads `newContent` without
+naming `newContentKnown` anywhere is flagged. And, for the Pre kinds:
 
 Reading `newContent` (in the new format, `.event.newContent`; the old envelope
 spelled it `.event.fields.newContent`) without mentioning `resultKnown` anywhere.

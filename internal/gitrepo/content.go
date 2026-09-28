@@ -1,6 +1,10 @@
 package gitrepo
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // ContentAt reads a file's bytes as of a commit, and reports whether they could
 // be read at all.
@@ -39,6 +43,33 @@ func ContentAt(dir, commit, path string) (string, bool) {
 	// The `<rev>:<path>` form is unambiguous — there is no pathspec parsing to be
 	// confused by a leading dash — so no `--` separator is needed or accepted.
 	out, err := run(dir, "show", fmt.Sprintf("%s:%s", commit, path))
+	if err != nil {
+		return "", false
+	}
+	return out, true
+}
+
+// ContentAtWithin reads a file's bytes as of a commit like ContentAt, but only
+// when the blob is at most limit bytes — its size is asked first (`git cat-file
+// -s`), so an oversize blob is never read. False for a path git cannot resolve
+// at that commit, and for a blob past the limit.
+//
+// The path may be spelled `./<path>`, which git resolves against dir (the
+// repository need not be rooted there).
+func ContentAtWithin(dir, commit, path string, limit int64) (string, bool) {
+	if commit == "" || path == "" {
+		return "", false
+	}
+	spec := fmt.Sprintf("%s:%s", commit, path)
+	size, err := run(dir, "cat-file", "-s", spec)
+	if err != nil {
+		return "", false
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(size), 10, 64)
+	if err != nil || n > limit {
+		return "", false
+	}
+	out, err := run(dir, "show", spec)
 	if err != nil {
 		return "", false
 	}

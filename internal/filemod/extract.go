@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/sloprail/sloprail/internal/commandmod"
 	"github.com/sloprail/sloprail/internal/event"
@@ -81,6 +83,24 @@ type Pending interface {
 	// matcher admits, and every Pre-kind rule about a path was inert.
 	Root() string
 }
+
+// HeadReader is what a Pending MAY also offer: a file's bytes as they stand in
+// the repository's HEAD commit, when they are at most limit bytes. This module
+// does not read git itself; the producer does (sr-session, through gitrepo).
+//
+// Used for one thing: a PreFileDelete whose bytes could not be read on disk
+// (oldContentKnown false — past the byte budget, too large, not a regular file)
+// still carries the MARKERS of HEAD's copy of the file, so a rule selecting
+// files by marker (`any(oldMarkers, .kind == "invariant")`) selects it before
+// the delete lands rather than only at Stop.
+type HeadReader interface {
+	HeadContent(path string, limit int64) (string, bool)
+}
+
+// maxHeadMarkerLookups bounds how many unread deletes of one command line have
+// their markers read from HEAD — each is a git call inside a hook the agent is
+// waiting on, and `rm -rf` of a large tree can leave many unread.
+const maxHeadMarkerLookups = 64
 
 // DirPending is a Pending that knows the directory its command runs in.
 //
@@ -636,7 +656,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 	targets = expandIntoDirectories(targets)
 	// A recursive removal of a DIRECTORY removes every file inside it, and
 	// only a walk can name them — see expandRemovedDirectories.
-	targets, walkProblems := expandRemovedDirectories(targets)
+	targets, unread, walkProblems := expandRemovedDirectories(targets)
 
 	var events []event.Event
 	problems := walkProblems
@@ -645,6 +665,8 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 	// effect named wins: a rule should be asked once about a file, and asking
 	// twice would run a judging hook twice over one decision.
 	seen := make(map[string]bool, len(targets))
+	// How many unread deletes have had their markers read from HEAD.
+	headLookups := 0
 
 	for _, t := range targets {
 		// Keyed on the CANONICAL spelling, not the raw one, because "one file"
@@ -744,9 +766,24 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 			// A delete carries the bytes about to be lost and the markers that go
 			// with them — the same oldContent/oldMarkers the tool-write delete
 			// path would carry, read off the file the command names.
-			before := m.contentOnDisk(t.Path)
-			f.OldContent = before
-			f.OldMarkers = Scan(before)
+			//
+			// Unless they cannot be read safely: past a recursive removal's byte
+			// budget, larger than one delete read takes, or not a regular file.
+			// The delete is predicted all the same — a rule about the PATH must
+			// still fire — with oldContentKnown false in place of the bytes.
+			if !unread[t.Path] {
+				f.OldContent, f.OldContentKnown = readContent(t.Path, MaxDeleteReadBytes)
+			}
+			f.OldMarkers = Scan(f.OldContent)
+			// Unread: the markers of HEAD's copy, when the producer can read
+			// it within the cap — oldContent stays "" and oldContentKnown
+			// false, since HEAD's bytes are not necessarily the file's now.
+			if hr, ok := pending.(HeadReader); ok && !f.OldContentKnown && headLookups < maxHeadMarkerLookups {
+				headLookups++
+				if head, ok := hr.HeadContent(key, MaxDeleteReadBytes); ok {
+					f.OldMarkers = Scan(head)
+				}
+			}
 		} else {
 			// An update carries oldContent — the file NOW — and its oldMarkers,
 			// the same as the tool-write path.
@@ -786,12 +823,37 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 }
 
 // maxRemovedDirectoryFiles bounds how many files one recursive directory
-// removal is expanded into. Each becomes a PreFileDelete carrying the file's
-// bytes, read here, inside a hook the agent is waiting on — and `rm -rf
-// node_modules` is an ordinary command. Past the bound the directory is named
-// as a problem and predicted as nothing; the tree diff still reports every
-// tracked file it removed, afterwards.
+// removal is expanded into, and maxRemovedDirectoryBytes how many of their
+// bytes it reads. Each file becomes a PreFileDelete, inside a hook the agent is
+// waiting on — and `rm -rf node_modules` is an ordinary command.
+//
+// The two bounds fail differently, on purpose:
+//
+//   - The BYTE budget never drops a prediction; it decides which files are
+//     READ. Every file is predicted. One whose size does not fit in what is left
+//     of the budget carries oldContentKnown false and no bytes, and charges
+//     nothing — so the smaller files after it are still read. Decided from sizes
+//     before anything is read. Dropping the whole directory here, as this once
+//     did, let `truncate -s 9M pad.bin` beside a guarded file walk its removal
+//     past every preventive delete rule; and stopping all reads once a large
+//     file had spent the budget blinded every content rule to the small guarded
+//     files sorting after it.
+//   - Past the FILE COUNT the directory is named as a problem and predicted as
+//     NOTHING: an event per file is what costs, and a rule bound to every path
+//     would run once per file. What is reported afterwards is only what the tree
+//     diff sees — a file in the session's baseline shows up as a PostFileDelete
+//     at Stop; one created and removed within the session leaves no difference
+//     and is never reported. So padding a directory past 1000 files still hides
+//     its removal from a preventive delete rule, and a rule that must survive
+//     that needs a backstop that does not depend on the prediction (the
+//     keyword-coverage-registry example keeps its obligation in a registry).
+//   - A part of the tree the walk cannot read is named as a problem and
+//     skipped; everything else found is still predicted.
 const maxRemovedDirectoryFiles = 1000
+
+// maxRemovedDirectoryBytes is a variable only so a test can lower it rather
+// than write megabytes to disk.
+var maxRemovedDirectoryBytes int64 = 8 << 20
 
 // ErrRemovedDirectoryTooLarge is a recursive removal whose directory holds more
 // files than maxRemovedDirectoryFiles, so none of them was predicted.
@@ -809,8 +871,10 @@ var ErrRemovedDirectoryTooLarge = errors.New("a recursively removed directory ho
 //
 // Each file found becomes its own Remove target, spelled as the directory was
 // spelled plus the file's path inside it, so it is classified by exactly the
-// same code as `rm scanners/x/scanner.yaml` — the same bytes read, the same
-// canonical path reported.
+// same code as `rm scanners/x/scanner.yaml` — the same canonical path reported.
+// The second result names the targets whose bytes must NOT be read, because
+// they do not fit in what is left of the removal's byte budget (see
+// maxRemovedDirectoryFiles).
 //
 // The walk does not follow links, as `rm -r` does not: a link inside the
 // directory is removed as a link (and lookAt sees the link), and a link AT the
@@ -818,8 +882,15 @@ var ErrRemovedDirectoryTooLarge = errors.New("a recursively removed directory ho
 // never listed. A non-recursive target, or one that is not a directory now,
 // passes through untouched; an empty directory expands to nothing, which is the
 // truth — no file stops existing.
-func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.FileTarget, []error) {
+//
+// A part of the tree the walk cannot read is named as a problem and skipped,
+// and everything else found is still predicted. Aborting the whole walk on it
+// used to discard the files already collected: one 0o000 subdirectory beside
+// scanners/x/scanner.yaml made `rm -rf scanners/x` predict nothing, although
+// rm still deletes the scanner — a way past every preventive delete rule.
+func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.FileTarget, map[string]bool, []error) {
 	var out []commandmod.FileTarget
+	unread := map[string]bool{}
 	var problems []error
 	for _, t := range targets {
 		if t.Effect != commandmod.Remove || !t.Recursive || !isDirectory(t.Path) {
@@ -827,10 +898,15 @@ func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.Fil
 			continue
 		}
 		var files []commandmod.FileTarget
+		var bytes int64
 		tooMany := false
-		err := filepath.WalkDir(t.Path, func(p string, d os.DirEntry, err error) error {
+		_ = filepath.WalkDir(t.Path, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
-				return err
+				problems = append(problems, fmt.Errorf("%w: %s: %w", ErrUnreadableTree, p, err))
+				if d != nil && d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			if d.IsDir() {
 				return nil
@@ -839,19 +915,26 @@ func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.Fil
 				tooMany = true
 				return filepath.SkipAll
 			}
+			// The bytes the delete event would read, from the size — before
+			// anything is read. A file that does not fit in what is left of the
+			// budget is predicted unread and charges nothing, so the smaller
+			// files after it are still read: one large asset sorting first must
+			// not blind every rule to the small, guarded files beside it.
+			if size := readSize(p); bytes+size > maxRemovedDirectoryBytes {
+				unread[p] = true
+			} else {
+				bytes += size
+			}
 			files = append(files, commandmod.FileTarget{Path: p, Effect: commandmod.Remove})
 			return nil
 		})
-		switch {
-		case err != nil:
-			problems = append(problems, fmt.Errorf("%w: %s: %w", ErrUnreadableTree, t.Path, err))
-		case tooMany:
-			problems = append(problems, fmt.Errorf("%w: %s (more than %d)", ErrRemovedDirectoryTooLarge, t.Path, maxRemovedDirectoryFiles))
-		default:
-			out = append(out, files...)
+		if tooMany {
+			problems = append(problems, fmt.Errorf("%w: %s (more than %d files)", ErrRemovedDirectoryTooLarge, t.Path, maxRemovedDirectoryFiles))
+			continue
 		}
+		out = append(out, files...)
 	}
-	return out, problems
+	return out, unread, problems
 }
 
 // expandIntoDirectories resolves the one ambiguity a copy's last operand
@@ -1050,12 +1133,55 @@ func (m *Module) resolvePayload(p commandmod.Payload, before string) (string, bo
 // The one case that reaches a result through here is an edit with an empty
 // old_string, which is refused on an existing file regardless. So no derived
 // `result` is ever built on bytes this failed to read.
+//
+// It reads only a regular file, and at most MaxContentReadBytes of it (see
+// ReadRegular): a path that is a link to a FIFO used to block this read — and
+// the hook the agent is waiting on — forever, and a link to /dev/zero read
+// without end.
 func (*Module) contentOnDisk(path string) string {
-	b, err := os.ReadFile(path)
+	s, _ := readContent(path, MaxContentReadBytes)
+	return s
+}
+
+// MaxContentReadBytes bounds any one read of a file's bytes into an event —
+// here, and in the services that build file events of their own (sr-file).
+const MaxContentReadBytes = 64 << 20
+
+// MaxDeleteReadBytes bounds the read of one file a delete is about to lose. A
+// larger file is still predicted, with its bytes marked not read
+// (oldContentKnown false).
+const MaxDeleteReadBytes = 8 << 20
+
+// readContent is the one way this module reads a file's bytes: ReadRegular,
+// through a variable only so a test can count the reads.
+var readContent = ReadRegular
+
+// ReadRegular reads a file whose bytes an event will carry, and says whether it
+// did. Exported so every builder of a file event reads the one way — sr-file's
+// delete and edit resolve included. False, with nothing read, for anything that is not a regular file once
+// links are followed — a FIFO, a socket, a device — and for a file larger than
+// limit.
+//
+// The open is non-blocking and the type is checked on the OPEN file (fstat), not
+// by a stat beforehand: opening a FIFO for reading blocks until a writer
+// appears, so a stat-then-open would still hang on a FIFO swapped in between;
+// with O_NONBLOCK the open returns at once and the fstat rejects it. The read
+// itself is capped as well, since a file can grow after the fstat.
+func ReadRegular(path string, limit int64) (string, bool) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return string(b)
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > limit {
+		return "", false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || int64(len(b)) > limit {
+		return "", false
+	}
+	return string(b), true
 }
 
 // extractObserved turns the difference between the tree and the session's
@@ -1238,7 +1364,10 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		f := FileEvent{Path: clean}
 		switch kind {
 		case KindPostCreate:
-			f.NewContent = m.contentOnDisk(full)
+			// Read the safe way, and say whether it was: a link to a FIFO or a
+			// device, or a file past the read cap, is reported unread
+			// (newContentKnown false) rather than as an empty file.
+			f.NewContent, f.NewContentKnown = readContent(full, MaxContentReadBytes)
 			f.NewMarkers = Scan(f.NewContent)
 		case KindPostDelete:
 			// The baseline bytes, about to be gone. A read that fails yields "",
@@ -1249,7 +1378,7 @@ func (m *Module) extractObserved(in module.Input) ([]event.Event, error) {
 		case KindPostUpdate:
 			f.OldContent, _ = observed.BaselineContent(clean)
 			f.OldMarkers = Scan(f.OldContent)
-			f.NewContent = m.contentOnDisk(full)
+			f.NewContent, f.NewContentKnown = readContent(full, MaxContentReadBytes)
 			f.NewMarkers = Scan(f.NewContent)
 		}
 		events = append(events, f.Event(kind))

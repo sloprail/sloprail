@@ -20,7 +20,7 @@ const activeScanner = "active: true\nkeywords:\n  - guardrail\n  - llm\n  - agen
 //
 // The "write it down anywhere real" half of the unit: a scanner must be declared
 // as a real file before any search, and the context records the declared keyword
-// set (keyed scanner:<name>) so a coverage check could later hold searches to it.
+// set (keyed scanner:<folder>, e.g. scanner:scanners/mine) so a coverage check could later hold searches to it.
 func TestT038_01_ContextLogsDeclaredScanner(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -35,7 +35,7 @@ func TestT038_01_ContextLogsDeclaredScanner(t *testing.T) {
 	))
 
 	reg := e.GuardrailState(proj, sess, "scanner-declared", "")
-	val, ok := reg["scanner:mine"]
+	val, ok := reg["scanner:scanners/mine"]
 	if !ok {
 		t.Fatalf("the context did not log the declared scanner; registry=%v", reg)
 	}
@@ -53,7 +53,7 @@ func TestT038_01_ContextLogsDeclaredScanner(t *testing.T) {
 //
 // The declarative "not active" path the unit names: a scanner switched off is not
 // a coverage obligation. enter emits {scanner, active:false} and writes NOTHING to
-// the registry, so no scanner:<name> entry exists to be required.
+// the registry, so no scanner:<folder> entry exists to be required.
 func TestT038_02_InactiveScannerNotLogged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -68,7 +68,7 @@ func TestT038_02_InactiveScannerNotLogged(t *testing.T) {
 	))
 
 	reg := e.GuardrailState(proj, sess, "scanner-declared", "")
-	if _, ok := reg["scanner:off"]; ok {
+	if _, ok := reg["scanner:scanners/off"]; ok {
 		t.Errorf("an inactive scanner was logged to the registry: %v", reg)
 	}
 	// And nothing is refused — an inactive scanner is not a coverage obligation.

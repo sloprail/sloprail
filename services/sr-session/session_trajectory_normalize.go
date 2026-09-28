@@ -59,6 +59,11 @@ events, not PreToolUse, not Stop.
                          re-derive is refused here.
   --whole-session        read the entire record, not just the part no cycle has
                          judged yet
+  --ran-only             keep only the tool calls that RAN: a call with no
+                         tool_result, or whose result is the harness saying it
+                         never ran (a hook block, a permission denied, an
+                         interrupt, a <tool_use_error>), is in the record as a
+                         tool_use but did nothing
 
 The answer is NormalizedEntry[] as JSON, for whatever the hook already uses to
 read JSON.`,
@@ -71,6 +76,8 @@ read JSON.`,
 		"Comma-separated event kinds to populate each entry's events (default: every re-derivable kind)")
 	cmd.Flags().Bool("whole-session", false,
 		"Read the entire record, not just the part no cycle has judged yet")
+	cmd.Flags().Bool("ran-only", false,
+		"Keep only tool calls that ran (not refused, denied, interrupted, or left without a result)")
 	return cmd
 }
 
@@ -120,6 +127,18 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 	// session" diagnostic — meant for a session that cannot open its own state —
 	// from firing on the ordinary --path case, where the empty payload has no state
 	// to open by design.
+	// The calls that ran, read off the WHOLE record before any slice: a call's
+	// tool_result is a later entry, and the slice must not decide whether a call
+	// in it counts as run. nil means every call is kept.
+	var ran map[string]bool
+	if ranOnly, _ := cmd.Flags().GetBool("ran-only"); ranOnly {
+		all := make([]transcript.Entry, 0, len(lined))
+		for _, le := range lined {
+			all = append(all, le.Entry)
+		}
+		ran = transcript.RanToolUseIDs(all)
+	}
+
 	// Each record's workspace, from the record's own cwd — computed over the
 	// WHOLE record before any slice, since a record without a cwd of its own
 	// inherits the last one written (the mock writes cwd on the first record
@@ -152,7 +171,7 @@ func runSessionTrajectoryNormalize(cmd *cobra.Command, _ []string) error {
 		out = append(out, normalizedEntry{
 			raw:    le.Entry,
 			Line:   le.Line,
-			Events: deriveEvents(le.Entry, reg, kinds, roots[le.Line], dirs[le.Line]),
+			Events: deriveEvents(le.Entry, reg, kinds, roots[le.Line], dirs[le.Line], ran),
 		})
 	}
 
@@ -215,7 +234,9 @@ func entryRoots(lined []transcript.LinedEntry, fallback string) (roots, dirs map
 // One entry can yield several events — an assistant turn with three tool calls is
 // three extractions — and an entry that yields none carries an empty array, which
 // is why this always returns a non-nil slice.
-func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root, dir string) []event.Event {
+//
+// With ran non-nil, a call whose id is not in it is skipped: it never ran.
+func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root, dir string, ran map[string]bool) []event.Event {
 	events := []event.Event{}
 
 	// The command and file events, one tool call at a time. The modules dispatch
@@ -224,6 +245,9 @@ func deriveEvents(e transcript.Entry, reg *module.Registry, kinds kindSet, root,
 	if kinds.wantsAny(commandFileKinds()) {
 		mods := reg.Needed(intersect(commandFileKinds(), kinds))
 		for _, call := range transcript.ToolCalls(e) {
+			if ran != nil && !ran[call.ID] {
+				continue
+			}
 			in := module.Input{
 				module.InputPhase:   module.PhasePre,
 				module.InputPayload: pendingCall{name: call.Name, input: call.Input, root: root, dir: dir},
