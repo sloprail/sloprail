@@ -147,10 +147,22 @@ var (
 	// Declaration fault.
 	ErrStrayAllowedTools = errors.New("declaration: allowed_tools set on a check with no judge")
 
-	// ErrBadAllowedTools: a check's `allowed_tools` carries an empty entry — a
-	// blank tool name grants nothing and can only be a stray or trailing list
-	// item. Mirrors ErrBadModel's empty-entry refusal. Declaration fault.
-	ErrBadAllowedTools = errors.New("declaration: judge allowed_tools has an empty entry")
+	// ErrBadAllowedTools: a check's `allowed_tools` carries an entry that is not
+	// one tool rule — empty (a blank name grants nothing), two rules run together
+	// in one item, or a scoped rule whose parentheses do not balance. Mirrors
+	// ErrBadModel's empty-entry refusal. Declaration fault.
+	ErrBadAllowedTools = errors.New("declaration: judge allowed_tools has a malformed entry")
+
+	// ErrStrayDisallowedTools: a check sets `disallowed_tools` without a `judge`.
+	// It denies tools to a judge's agent, and a script check has none. Declaration
+	// fault.
+	ErrStrayDisallowedTools = errors.New("declaration: disallowed_tools set on a check with no judge")
+
+	// ErrBadDisallowedTools: a check's `disallowed_tools` carries an entry that is
+	// not one tool rule, for the same reasons as ErrBadAllowedTools. A malformed
+	// deny is worse than a malformed allow: it would silently deny nothing.
+	// Declaration fault.
+	ErrBadDisallowedTools = errors.New("declaration: judge disallowed_tools has a malformed entry")
 
 	// ErrBadValue: a field that takes one of a fixed set of values names
 	// something outside it — a file-guard's `deletions:` other than skip /

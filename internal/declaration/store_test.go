@@ -483,6 +483,74 @@ checks:
 	assert.True(t, hasKind(iv, ErrBadAllowedTools), "an allowed_tools list with an empty entry is refused: %v", iv.Reason)
 }
 
+// A scoped rule is ONE entry, spaces and all, and loads as written.
+func TestLoad_Check_ScopedToolRulesLoadWhole(t *testing.T) {
+	loaded := loadOK(t, map[string]string{
+		"file-guard/scoped/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - judge: ./j.md.j2
+    allowed_tools: ["Bash(git show:*)", "WebFetch(domain:code.claude.com)", mcp__srv__tool, mcp__claude-in-chrome__navigate, mcp__my-server, "mcp__srv__*"]
+    disallowed_tools: ["Bash(curl * -o *)", "Bash(curl * -d @*)"]
+`,
+	})
+	c := loaded.FileGuards[0].Checks[0]
+	assert.Equal(t, []string{"Bash(git show:*)", "WebFetch(domain:code.claude.com)", "mcp__srv__tool",
+		"mcp__claude-in-chrome__navigate", "mcp__my-server", "mcp__srv__*"}, c.AllowedTools)
+	assert.Equal(t, []string{"Bash(curl * -o *)", "Bash(curl * -d @*)"}, c.DisallowedTools)
+}
+
+// disallowed_tools on a script-only check is a load error: it denies tools to a
+// judge's agent, and a script has none.
+func TestLoad_Check_StrayDisallowedToolsOnScript(t *testing.T) {
+	iv := loadOneInvalid(t, map[string]string{
+		"file-guard/straydeny/file-guard.yaml": `
+match: "**/*.md"
+checks:
+  - script: ./s.sh
+    disallowed_tools: ["Bash(curl * -o *)"]
+`,
+	})
+	assert.True(t, hasKind(iv, ErrStrayDisallowedTools), "disallowed_tools on a script-only check is refused: %v", iv.Reason)
+}
+
+// Every malformed shape is refused at load, naming the entry — for a deny,
+// silently denying nothing would be worse than refusing to load.
+func TestLoad_Check_MalformedToolRulesAreRefused(t *testing.T) {
+	for name, entry := range map[string]string{
+		"empty":           `""`,
+		"two in one item": `"Read WebFetch"`,
+		"never closes":    `"Bash(git show:*"`,
+		"trailing text":   `"Bash(curl:*) Read"`,
+		"no tool name":    `"(curl:*)"`,
+		"stray close":     `"Bash)"`,
+	} {
+		for _, key := range []string{"allowed_tools", "disallowed_tools"} {
+			iv := loadOneInvalid(t, map[string]string{
+				"file-guard/bad/file-guard.yaml": "match: \"**/*.md\"\nchecks:\n  - judge: ./j.md.j2\n    " + key + ": [" + entry + "]\n",
+			})
+			want := ErrBadAllowedTools
+			if key == "disallowed_tools" {
+				want = ErrBadDisallowedTools
+			}
+			assert.True(t, hasKind(iv, want), "%s %s must be refused: %v", key, name, iv.Reason)
+			assert.Contains(t, iv.Reason, "entry 1", "the refusal names the entry (%s %s)", key, name)
+		}
+	}
+}
+
+// A deny on Write or Edit would stop every judge of the rule writing its
+// verdict, so it is refused at load.
+func TestLoad_Check_DenyingTheVerdictWriteIsRefused(t *testing.T) {
+	for _, entry := range []string{"Write", "Edit", `"Edit(//tmp/**)"`} {
+		iv := loadOneInvalid(t, map[string]string{
+			"file-guard/denywrite/file-guard.yaml": "match: \"**/*.md\"\nchecks:\n  - judge: ./j.md.j2\n    disallowed_tools: [" + entry + "]\n",
+		})
+		assert.True(t, hasKind(iv, ErrBadDisallowedTools), "%s must be refused: %v", entry, iv.Reason)
+		assert.Contains(t, iv.Reason, "verdict", entry)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Gate: valid + at-least-one + on-kinds
 // ---------------------------------------------------------------------------

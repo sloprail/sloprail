@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -103,28 +104,283 @@ func scalarString(value any) (string, error) {
 	}
 }
 
-// ParseAllowedTools splits the --allowed-tools value into individual tool names.
+// ErrBadAllowedTools is returned when an --allowed-tools value has a rule whose
+// parentheses do not balance.
+var ErrBadAllowedTools = errors.New("invalid --allowed-tools")
+
+// ParseAllowedTools splits the --allowed-tools value into individual tool rules.
 //
 // The flag takes the SAME comma-or-space-separated form claude's own
 // `--allowed-tools <tools...>` documents, so an author who knows one knows this.
 // Both separators are honoured and empty fields dropped, so "Read, WebFetch" and
 // "Read WebFetch" and "Read,WebFetch" all yield the same two tools and a stray
-// comma grants nothing rather than an empty tool name. Returns nil for an empty or
-// whitespace-only value, which the caller reads as "grant only what the run itself
-// needs".
+// comma grants nothing rather than an empty tool name.
+//
+// A separator INSIDE parentheses is part of the rule, not a split: a scoped rule
+// like `Bash(git show:*)` or `Bash(curl -sL:*)` is one rule, as claude itself
+// reads it (measured on claude 2.1.282: `--allowed-tools "Write Bash(curl
+// -sL:*)"` as one argument granted both). Splitting at every space turned it into
+// `Bash(git` and `show:*)`, which is harmless only while the pieces are joined
+// back into one argument; passed as separate argv values — which the grant does,
+// so that a path with a space stays one rule — the second piece begins with a
+// dash or means nothing, and the rule the author wrote is lost. A value whose
+// parentheses do not balance is refused rather than guessed at.
+//
+// Measured end to end on 2026-09-27 (claude 2.1.282, haiku, `sr-agent --verify
+// --allowed-tools "Bash(curl -sL:*) Bash(git show:*)"`): the rules reached
+// claude as two whole values, `curl -sL <url> | head -3` ran, and nothing
+// broader did — `curl -s <url>` (no -L), `touch`, `git commit` and `git -C
+// <dir> show` (which is not the prefix `git show`) were all refused.
 //
 // A tool name is not otherwise validated here: like a concrete model name in a
 // model set, whether the harness HAS a tool by that name is the harness's to
 // answer, not this binary's — sr-agent's job is to pass the request through in the
 // harness's own spelling.
-func ParseAllowedTools(raw string) []string {
-	fields := strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
-	})
-	if len(fields) == 0 {
+func ParseAllowedTools(raw string) ([]string, error) {
+	var (
+		tools []string
+		cur   strings.Builder
+		depth int
+	)
+	flush := func() {
+		if cur.Len() > 0 {
+			tools = append(tools, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, r := range raw {
+		switch {
+		case r == '(':
+			depth++
+			cur.WriteRune(r)
+		case r == ')':
+			depth--
+			if depth < 0 {
+				return nil, fmt.Errorf("%w: %q has a ')' with no '(' before it", ErrBadAllowedTools, raw)
+			}
+			cur.WriteRune(r)
+		case depth == 0 && (r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'):
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if depth != 0 {
+		return nil, fmt.Errorf("%w: %q has a '(' that is never closed", ErrBadAllowedTools, raw)
+	}
+	flush()
+	// The same shape the loader checks (internal/declaration validateToolRule):
+	// a name, then at most one scope that closes at the rule's end. `()` or
+	// `(x)` names no tool, and `Bash(x)y` trails text after its scope.
+	for _, t := range tools {
+		name, scope, scoped := strings.Cut(t, "(")
+		if name == "" {
+			return nil, fmt.Errorf("%w: %q names no tool before its '('", ErrBadAllowedTools, t)
+		}
+		if scoped && !strings.HasSuffix(scope, ")") {
+			return nil, fmt.Errorf("%w: %q has text after its closing ')'", ErrBadAllowedTools, t)
+		}
+	}
+	return tools, nil
+}
+
+// ErrBadAddDir is returned when an `--add-dir[:<mode>]` names no existing
+// directory, or names one in two modes at once.
+var ErrBadAddDir = errors.New("invalid --add-dir")
+
+// ErrUnknownAddDirMode is returned for an `--add-dir:<mode>` whose mode is not
+// one of addDirModes.
+var ErrUnknownAddDirMode = errors.New("unknown --add-dir mode")
+
+// ErrModeUnsupported is returned when a harness is asked for an --add-dir mode
+// its permission model cannot express.
+var ErrModeUnsupported = errors.New("harness cannot honour an --add-dir mode")
+
+// addDirFlag is the flag a caller gives a directory to the agent with. It
+// mirrors claude's own --add-dir, and takes a MODE the way sr-file's
+// `--cite:<source-types>` takes its pools: `--add-dir <path>` is readable and
+// writable, `--add-dir:readonly <path>` readable only. One flag spelling per
+// mode keeps the mode on the flag, where a reader of the command line sees it,
+// rather than in a second flag that would have to be paired with the right
+// path.
+const addDirFlag = "add-dir"
+
+// addDirModes is every mode `--add-dir:<mode>` accepts, by suffix; "" is the
+// bare `--add-dir`. Each entry becomes its own repeatable flag (see newRoot),
+// so the flag parser gives both of sr-file's affordances for free: the value
+// as the next word or after '=', and '--' ending the flags.
+var addDirModes = []struct {
+	suffix string
+	mode   dirMode
+	usage  string
+}{
+	{"", dirWritable, "A directory the agent may read and write, as claude's own --add-dir (repeatable)"},
+	{"readonly", dirReadonly, "A directory the agent may read but never write, e.g. the project a judge is judging (repeatable)"},
+}
+
+// addDirFlagName is the flag spelling for a mode suffix: `add-dir` or
+// `add-dir:<suffix>`.
+func addDirFlagName(suffix string) string {
+	if suffix == "" {
+		return addDirFlag
+	}
+	return addDirFlag + ":" + suffix
+}
+
+// addDirModeNames lists the accepted spellings, for a refusal to name.
+func addDirModeNames() string {
+	names := make([]string, 0, len(addDirModes))
+	for _, m := range addDirModes {
+		names = append(names, "--"+addDirFlagName(m.suffix))
+	}
+	return strings.Join(names, ", ")
+}
+
+// unknownAddDirMode recognises the flag parser's "unknown flag: --add-dir:<x>"
+// and turns it into a refusal naming the modes that exist. Without it a typo'd
+// mode reads as an unrelated unknown flag, and the caller is left to guess that
+// the mode — not the flag — was the problem.
+func unknownAddDirMode(err error) error {
+	const prefix = "unknown flag: --" + addDirFlag + ":"
+	msg := err.Error()
+	if !strings.HasPrefix(msg, prefix) {
 		return nil
 	}
-	return fields
+	return fmt.Errorf("%w %q in %s: the modes are %s",
+		ErrUnknownAddDirMode, strings.TrimPrefix(msg, prefix), strings.TrimPrefix(msg, "unknown flag: "), addDirModeNames())
+}
+
+// resolveAddDirs turns the given `--add-dir[:<mode>]` values into grants: each
+// path made absolute and checked to be a directory. Grants come out writable
+// dirs first, then readonly ones, each mode in the order its flags were given.
+//
+// Absolute because a harness permission rule is matched on an absolute path — a
+// relative one would be read against whatever the harness takes as its base,
+// which is not this process's cwd. Checked because a missing directory would not
+// fail loudly anywhere: the agent would simply be denied every read in it, and a
+// judge would reach its verdict blind.
+//
+// Refused, rather than granted in a form that does not mean what it says:
+//   - a directory named in TWO modes: "writable" and "never writable" cannot
+//     both be true of it. Compared by resolved path, so /var/x and
+//     /private/var/x (the same dir on macOS) are one directory, not two;
+//   - a writable dir INSIDE a readonly one: the readonly dir's Edit deny beats
+//     every allow, and claude has no "except this sub-dir" form, so the nested
+//     dir could never actually be written — the caller would get a grant that
+//     silently does nothing. (A readonly dir inside a writable one is fine:
+//     its deny wins, which is what it asks for.);
+//   - a path with a glob character in it (see unsafeRulePath).
+func resolveAddDirs(byMode map[dirMode][]string) ([]dirGrant, error) {
+	var grants []dirGrant
+	modeOf := map[string]dirMode{}
+	for _, m := range addDirModes {
+		for _, entry := range byMode[m.mode] {
+			flag := "--" + addDirFlagName(m.suffix)
+			if strings.TrimSpace(entry) == "" {
+				return nil, fmt.Errorf("%w: %s was given an empty path", ErrBadAddDir, flag)
+			}
+			abs, err := filepath.Abs(entry)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %s %q: %s", ErrBadAddDir, flag, entry, err)
+			}
+			info, err := os.Stat(abs)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %s %q: %s", ErrBadAddDir, flag, entry, err)
+			}
+			if !info.IsDir() {
+				return nil, fmt.Errorf("%w: %s %q is not a directory", ErrBadAddDir, flag, entry)
+			}
+			if bad := unsafeRulePath(abs); bad != "" {
+				return nil, fmt.Errorf("%w: %s %q: %s", ErrBadAddDir, flag, entry, bad)
+			}
+			key := resolvedPath(abs)
+			if prev, seen := modeOf[key]; seen {
+				if prev != m.mode {
+					return nil, fmt.Errorf("%w: %s is given both writable and readonly; name it once, in the mode you mean",
+						ErrBadAddDir, abs)
+				}
+				continue
+			}
+			modeOf[key] = m.mode
+			grants = append(grants, dirGrant{Path: abs, Mode: m.mode})
+		}
+	}
+	for _, w := range grants {
+		if w.Mode != dirWritable {
+			continue
+		}
+		for _, r := range grants {
+			if r.Mode == dirReadonly && within(w.Path, r.Path) {
+				return nil, fmt.Errorf("%w: --add-dir %s lies inside --add-dir:readonly %s; a readonly dir's deny covers everything under it and cannot make an exception, so the nested dir could never be written. Add a writable dir outside it",
+					ErrBadAddDir, w.Path, r.Path)
+			}
+		}
+	}
+	return grants, nil
+}
+
+// resolvedPath is path with its symlinks resolved, or cleaned when it does not
+// resolve: the form two spellings of one directory agree on.
+func resolvedPath(path string) string {
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return r
+	}
+	return filepath.Clean(path)
+}
+
+// ruleGlobChars are the characters a Claude Code path rule reads as a glob
+// rather than as a literal.
+const ruleGlobChars = "*?[]{}\\"
+
+// unsafeRulePath reports why a directory cannot be granted as a path rule, or ""
+// when it can. A path is turned into `Edit(//<path>/**)`, and claude reads that
+// path as a GLOB: a project named `p[1]` becomes a character class that does not
+// match the directory itself, so the readonly deny covered nothing (measured in
+// review: writes landed in the project with Write granted, and with no tools at
+// all under a user's acceptEdits). No escaping of these characters was proven to
+// work against the real CLI, so such a path is refused — fail closed — in both
+// its given and its resolved spelling, since a rule is emitted for each.
+// Re-measured through sr-agent (2026-09-27, claude 2.1.282, haiku): a project
+// at `.../p[1]` is refused before claude starts; a project at `.../my proj (1)`
+// — spaces and parentheses are not glob characters — is granted, and its deny
+// held (Write into it refused, Read of it allowed).
+func unsafeRulePath(path string) string {
+	for _, form := range []string{path, resolvedPath(path)} {
+		if i := strings.IndexAny(form, ruleGlobChars); i >= 0 {
+			return fmt.Sprintf("the path contains %q, which a permission rule reads as a glob character, so a rule for it would not match the directory. Rename or move the directory", form[i])
+		}
+	}
+	return ""
+}
+
+// harnessGrant turns the access a run needs into the harness's own flags, via
+// the harness's grant.
+//
+// A harness with no grant still gets the caller's tools, as its own
+// `--allowed-tools`, and writable dirs cost it nothing — with no permission
+// model everything is already writable. A READONLY dir is refused there rather
+// than dropped or passed as a plain directory: "read but never write" is a
+// promise about what the agent cannot do, and a harness that cannot express it
+// would either leave the judge blind or hand it write access, and the caller
+// asked for neither.
+func harnessGrant(spec harnessSpec, g accessGrant) ([]string, error) {
+	if spec.grant != nil {
+		return spec.grant(g), nil
+	}
+	if len(g.DenyTools) > 0 {
+		return nil, fmt.Errorf("%w: %s has no permission model to deny tools in; drop --disallowed-tools or run a harness that has one",
+			ErrModeUnsupported, spec.name)
+	}
+	for _, d := range g.Dirs {
+		if d.Mode == dirReadonly {
+			return nil, fmt.Errorf("%w: %s has no permission model to express --%s in; drop it or run a harness that has one",
+				ErrModeUnsupported, spec.name, addDirFlagName("readonly"))
+		}
+	}
+	if len(g.Tools) > 0 {
+		return []string{"--allowed-tools", strings.Join(g.Tools, " ")}, nil
+	}
+	return nil, nil
 }
 
 // CheckHarnessArgs reports a harness-args flag given while a different harness
@@ -154,13 +410,23 @@ type Invocation struct {
 }
 
 // String renders the invocation for diagnostics. Arguments containing spaces
-// are quoted so a printed command can be pasted back into a shell and mean the
-// same thing — a prompt is almost always such an argument.
+// or shell metacharacters are quoted so a printed command can be pasted back
+// into a shell and mean the same thing — a prompt is almost always such an
+// argument, and a permission rule like `Edit(//dir/**)` is another: unquoted,
+// its parentheses are a shell syntax error and its `**` a glob.
+//
+// An argument holding `$` or a backtick is SINGLE-quoted: inside strconv.Quote's
+// double quotes a shell still expands `$VAR` and `$(cmd)`, so a pasted command
+// would run something the argv never held.
 func (inv Invocation) String() string {
 	parts := make([]string, 0, len(inv.Args)+1)
 	parts = append(parts, inv.Binary)
 	for _, arg := range inv.Args {
-		if strings.ContainsAny(arg, " \t\n\"'") {
+		if strings.ContainsAny(arg, "$`") {
+			parts = append(parts, "'"+strings.ReplaceAll(arg, "'", `'\''`)+"'")
+			continue
+		}
+		if strings.ContainsAny(arg, " \t\n\"'()*?[]<>|&;$`\\") {
 			parts = append(parts, strconv.Quote(arg))
 			continue
 		}
