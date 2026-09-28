@@ -123,7 +123,8 @@ A **match expression** reads the same facts, but the three scopes differ in
 shape — this is the one asymmetry to keep straight:
 
 - A **file-guard**'s match sees the file's own facts **bare**: `path`,
-  `markers`, `context`. `path endsWith "SKILL.md"`.
+  `markers`, `oldMarkers` (what it carried before the change), `context`.
+  `path endsWith "SKILL.md"`.
 - A **gate**'s and a **context**'s match **nest** the event under `event`:
   `event.path`, `event.invocations`, `event.tags`, plus `context`.
   `event.path startsWith "memories/decisions/"`.

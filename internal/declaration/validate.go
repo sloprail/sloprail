@@ -70,7 +70,7 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 			"a file-guard must say which files it covers"))
 	} else if _, err := guardrail.CompileFileMatch(g.Match); err != nil {
 		problems = append(problems, prob(ErrBadMatch, "match",
-			"%s — a file-guard's match reads a file's own facts (path, markers, context)", oneLine(err.Error())))
+			"%s — a file-guard's match reads a file's own facts (path, markers, oldMarkers, context)", oneLine(err.Error())))
 	}
 
 	// `deletions:` is a closed enum. An unknown value is refused, not read as

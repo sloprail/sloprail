@@ -90,15 +90,17 @@ func TestT039_15_CloneInSubshell(t *testing.T) {
 	)
 }
 
-// T039_16: the Grep tool over a cloned source directory counts as reading it.
-// The mock does not implement Grep, so its result is supplied as a record
-// (ToolUseWithResult) — placed last, since that record closes the mock's turn.
+// T039_16: the Grep tool over a cloned source directory counts as reading it
+// when it shows content (output_mode "content"; its default lists file names
+// only, which reads nothing — see T039_33). The mock does not implement Grep,
+// so its result is supplied as a record (ToolUseWithResult) — placed last,
+// since that record closes the mock's turn.
 func TestT039_16_GrepToolCounts(t *testing.T) {
 	e, proj := research(t)
 	src := sourceRepo(t, e, "retry-lib")
 	dst := filepath.Join(scratch(t), "retry-lib")
 	grepUse, grepResult := harness.ToolUseWithResult("g1", "Grep",
-		map[string]string{"pattern": "backoff", "path": filepath.Join(dst, "lib")},
+		map[string]string{"pattern": "backoff", "path": filepath.Join(dst, "lib"), "output_mode": "content"},
 		`"lib/retry.js:1:const backoff = require('./backoff');"`)
 	admitted(t, e, proj, "s-039-16",
 		SayBash("b1", "#research", "git clone "+src+" "+dst),
@@ -115,7 +117,7 @@ func TestT039_17_FailedCloneIntoExistingDirectoryRefused(t *testing.T) {
 	e, proj := research(t)
 	src := sourceRepo(t, e, "retry-lib")
 	dst := filepath.Join(scratch(t), "retry-lib")
-	e.Git(filepath.Dir(dst), "clone", src, dst) // left over from an earlier session
+	staleClone(t, src, dst) // left over from an earlier session
 
 	joined := refused(t, e, proj, "s-039-17",
 		SayBash("b1", "#research", "git clone "+src+" "+dst+" 2>&1 | tail -n 3"),

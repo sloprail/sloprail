@@ -52,6 +52,23 @@ func TestT046_08_EventContentReachesJudgePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "ZZ_GUARD never negative") {
 		t.Fatalf("the marked code body did not reach the judge prompt:\n%s", prompt)
 	}
+	// The Fail section tells the judge to say what to do, not only what is wrong:
+	// a real run bounced off Stop seven times on reasons that never said "undo it",
+	// and another reshaped the feature when told to "bring it within the rule".
+	if !strings.Contains(prompt, "Do not reshape the requested feature") || !strings.Contains(prompt, "The turn cannot end while") {
+		t.Errorf("the judge is not asked to name the remedy:\n%s", prompt)
+	}
+	// "bring it within the rule" steered a real run (234432Z) into reshaping the
+	// requested feature — moving the credit before the check — instead of raising
+	// the conflict.
+	// Two runs (003519Z, 003646Z) undid the bypass but left the goodwill flag
+	// doing nothing and told the user a credit is "issued separately".
+	if !strings.Contains(prompt, "do not leave a flag that\nchanges nothing") {
+		t.Errorf("the judge is not asked to warn against an inert flag:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "bring it within the rule") {
+		t.Errorf("the judge still offers bringing the code within the rule as a remedy:\n%s", prompt)
+	}
 	// The pinned spec line, read by the prepare at the marker's pin, so the judge
 	// rules on it without having to read the spec itself.
 	if !strings.Contains(prompt, "<pinned fqn=\""+fqn+"\"") ||

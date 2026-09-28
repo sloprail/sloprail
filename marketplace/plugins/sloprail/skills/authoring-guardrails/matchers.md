@@ -22,13 +22,19 @@ directly:
 |---|---|---|
 | `path` | string | the file's repository-relative path |
 | `markers` | list | the `sr:` markers the file carries, elements `{kind, fqn, line}` |
+| `oldMarkers` | list | the markers it carried before this change (empty on a create; the session baseline's on a Post kind) |
 | `context` | map | every declared context, by name, `{active, payload}` |
 
 ```
 path endsWith "SKILL.md"
 any(markers, .kind == "invariant")
 context["refactoring"].active and any(markers, .kind == "moved-from")
+any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")
 ```
+
+The last form is how a rule sees a marker **leave**: an update that strips a
+file's last marker has `markers` empty, so `any(markers, …)` alone never selects
+the very write that removes what the rule guards.
 
 ### Gate and context: the event, **nested under `event`**
 

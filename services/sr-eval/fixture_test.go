@@ -115,7 +115,7 @@ func TestSetup_RunsInProjectAndMayCommit(t *testing.T) {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	w := &workspace{project: project}
-	if err := w.runSetup(context.Background(), fx); err != nil {
+	if err := w.runSetup(context.Background(), fx, os.Environ()); err != nil {
 		t.Fatalf("runSetup: %v", err)
 	}
 	where, err := os.ReadFile(filepath.Join(project, "where.txt"))
@@ -130,7 +130,7 @@ func TestSetup_RunsInProjectAndMayCommit(t *testing.T) {
 	}
 
 	mustWriteFile(t, filepath.Join(dir, "setup.sh"), "#!/bin/sh\necho broke >&2\nexit 3\n")
-	if err := w.runSetup(context.Background(), fx); err == nil || !strings.Contains(err.Error(), "broke") {
+	if err := w.runSetup(context.Background(), fx, os.Environ()); err == nil || !strings.Contains(err.Error(), "broke") {
 		t.Fatalf("a failing setup must fail with its own output, got %v", err)
 	}
 }

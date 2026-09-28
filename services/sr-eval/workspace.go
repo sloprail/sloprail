@@ -143,32 +143,76 @@ func cloneRepoAt(ctx context.Context, url, ref, dest string) error {
 
 func (w *workspace) Close() error { return os.RemoveAll(w.root) }
 
+// setUp runs the fixture's setup script, then commits everything the harness
+// and the setup left in the tree as the baseline the agent starts from. In that
+// order: a setup may leave its work uncommitted, and it must land in the
+// baseline commit rather than read as the agent's own first change.
+func (w *workspace) setUp(ctx context.Context, fx Fixture, env []string) error {
+	if err := w.runSetup(ctx, fx, env); err != nil {
+		return fmt.Errorf("fixture setup: %w", err)
+	}
+	if err := w.commitSetup(); err != nil {
+		return fmt.Errorf("commit harness setup: %w", err)
+	}
+	return nil
+}
+
 // runSetup runs the fixture's setup script, if it names one, in the project
-// directory. The git identity is set in its environment for the same reason
-// commitSetup passes one: a machine with none configured must not fail the
-// eval for a reason unrelated to it.
-func (w *workspace) runSetup(ctx context.Context, fx Fixture) error {
+// directory, in env — the agent's own environment (agentHome), not the
+// operator's: its HOME is the workspace's, so nothing the setup does reaches the
+// operator's real one.
+//
+// Git is pinned for it (setupEnv): a git identity, for the same reason
+// commitSetup passes one, and no signing and no hooks, for the reason
+// commitSetup passes --no-gpg-sign. The agent's HOME carries a copy of the
+// operator's ~/.gitconfig, so an operator with commit.gpgsign or core.hooksPath
+// set would otherwise see a setup's `git commit` ask for a key or run a hook,
+// and the eval fail for a reason that has nothing to do with it.
+func (w *workspace) runSetup(ctx context.Context, fx Fixture, env []string) error {
 	if fx.Setup == "" {
 		return nil
 	}
 	script := filepath.Join(fx.Dir, fx.Setup)
 	c := exec.CommandContext(ctx, script)
 	c.Dir = w.project
-	c.Env = append(os.Environ(),
-		"SR_EVAL_PROJECT_DIR="+w.project,
-		"GIT_AUTHOR_NAME=sr-eval", "GIT_AUTHOR_EMAIL=sr-eval@localhost",
-		"GIT_COMMITTER_NAME=sr-eval", "GIT_COMMITTER_EMAIL=sr-eval@localhost",
-	)
+	c.Env = setupEnv(env, w.project)
 	if out, err := c.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s: %w: %s", script, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
+// setupEnv is env, with the project named (SR_EVAL_PROJECT_DIR), a git identity,
+// and git's signing and hooks turned off through GIT_CONFIG_COUNT — which
+// outranks every config file, global or not. Any GIT_CONFIG_COUNT env already
+// carries is dropped rather than extended: its keys are the operator's.
+func setupEnv(env []string, project string) []string {
+	out := make([]string, 0, len(env)+14)
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if key == "GIT_CONFIG_COUNT" || strings.HasPrefix(key, "GIT_CONFIG_KEY_") || strings.HasPrefix(key, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out,
+		"SR_EVAL_PROJECT_DIR="+project,
+		"GIT_AUTHOR_NAME=sr-eval", "GIT_AUTHOR_EMAIL=sr-eval@localhost",
+		"GIT_COMMITTER_NAME=sr-eval", "GIT_COMMITTER_EMAIL=sr-eval@localhost",
+		"GIT_CONFIG_COUNT=3",
+		"GIT_CONFIG_KEY_0=commit.gpgsign", "GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_KEY_1=tag.gpgsign", "GIT_CONFIG_VALUE_1=false",
+		"GIT_CONFIG_KEY_2=core.hooksPath", "GIT_CONFIG_VALUE_2=/dev/null",
+	)
+}
+
 // commitSetup commits every change sr-eval itself made to the tree (the
 // overlay, .claude/settings.json) as one commit, so the agent-under-test's
 // first turn starts on a clean tree — see the call site in run.go for why
 // this matters to the engine's own baseline diff.
+//
+// No signing and no hooks, for the reason runSetup's setupEnv turns them off:
+// the operator's global config must not decide whether an eval can start.
 //
 // Committer identity is passed explicitly via -c rather than relying on the
 // operator's global git config, which a machine running this for the first
@@ -183,7 +227,8 @@ func (w *workspace) commitSetup() error {
 	commit := exec.Command("git",
 		"-c", "user.name=sr-eval",
 		"-c", "user.email=sr-eval@localhost",
-		"-C", w.project, "commit", "--quiet", "--no-gpg-sign",
+		"-c", "core.hooksPath=/dev/null",
+		"-C", w.project, "commit", "--quiet", "--no-gpg-sign", "--no-verify",
 		"-m", "sr-eval: harness setup (.claude/settings.json, overlay)")
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %w: %s", err, strings.TrimSpace(string(out)))

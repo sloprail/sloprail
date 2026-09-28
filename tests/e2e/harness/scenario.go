@@ -397,10 +397,10 @@ func (s Scenario) script() string {
 		marker := fmt.Sprintf("slop-turn-%d-%s", i, turnID(t.jsonl))
 		line := injectMarker(t.jsonl, marker)
 		fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
-  printf '%%s\n' %s
+  %s
   exit 0
 fi
-`, marker, shQuote(line))
+`, marker, emitStamped(line))
 	}
 	fmt.Fprintf(&b, `printf '%%s\n' %s`, shQuote(result(s.result)))
 	return b.String()
@@ -472,6 +472,27 @@ func injectMarker(jsonl, marker string) string {
 		return jsonl
 	}
 	return jsonl[:j] + jsonl[j:j+end] + "-" + marker + jsonl[j+end:]
+}
+
+// msNow is the shell that prints the current UTC time to the millisecond, as
+// Claude Code stamps its records — `date` cannot on macOS (no %N), and a
+// whole-second stamp would tie records written within one second, which a
+// check ordering calls by time (research-rigor's scorer cuts every record at a
+// call's time) must not see. perl is on every platform this suite runs on.
+// Without perl it falls back to a whole-second stamp rather than none.
+const msNow = `perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime($t)), ($t-int($t))*1000' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%S.000Z`
+
+// emitStamped is the shell that prints one scenario record, stamped with the
+// time it is EMITTED — the moment the mock plays that turn, as real Claude Code
+// stamps every record it writes. A check asking what happened during a cycle
+// (research-rigor dates a file's change against the cycle's first record)
+// needs those times; a stamp taken when the script was generated would predate
+// the session. A record that already carries a timestamp is printed as is.
+func emitStamped(line string) string {
+	if !strings.HasPrefix(line, "{") || strings.Contains(line, `"timestamp"`) {
+		return "printf '%s\\n' " + shQuote(line)
+	}
+	return `printf '{"timestamp":"%s",%s\n' "$(` + msNow + `)" ` + shQuote(line[1:])
 }
 
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
