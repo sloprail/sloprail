@@ -125,8 +125,13 @@ func markUsageErrors(root *cobra.Command) {
 // `delete` change one, grounded in cited words (see grounded.go).
 func newRoot() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "sr-file <command>",
-		Short:         "Check a file's contents, or change a file grounded in citations",
+		Use:   "sr-file <command>",
+		Short: "Check a file's contents, or change a file grounded in citations",
+		Long: "Check a file's contents, or change a file grounded in citations.\n\n" +
+			"EXIT STATUS, for every subcommand: 0 success; 1 the input or the change was refused\n" +
+			"(each subcommand's help says what its 1 means, and `field` adds 2 and 3); 64 a usage\n" +
+			"error — an unknown command or flag, a wrong argument count, a flag with no value, --as\n" +
+			"missing, misapplied or naming no format, an unknown --cite pool.",
 		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -168,6 +173,9 @@ func newValidateCmd() *cobra.Command {
 			"--emit prints the validated document as JSON on success, so a caller can take a field\n" +
 			"out of it with jq instead of parsing the same bytes a second time. Nothing is printed\n" +
 			"for a document that failed.\n\n" +
+			"A path must be a regular file (a FIFO or device is refused rather than read), and input\n" +
+			"— a file or stdin — larger than 8 MiB is refused: a document this checks is frontmatter\n" +
+			"or a config file, and reading without bound would let one input stall the hook.\n\n" +
 			"EXAMPLES:\n" +
 			"  sr-file validate memories/note.md --schema .sloprail/schemas/note.cue\n" +
 			"  sr-file validate config.yaml --schema schema.cue --path '#Config'\n" +
@@ -211,7 +219,7 @@ func readInput(cmd *cobra.Command, verb, path, as string) (Document, error) {
 		// two answers to one question, with the flag silently winning over the
 		// name the caller can see.
 		if as != "" {
-			return Document{}, fmt.Errorf("sr-file %s: --as applies to bytes read from stdin ('-'), but a path was given: %s already says what it is", verb, path)
+			return Document{}, usageError{fmt.Errorf("sr-file %s: --as applies to bytes read from stdin ('-'), but a path was given: %s already says what it is", verb, path)}
 		}
 		data, err := readRegular(path)
 		if err != nil {
@@ -229,7 +237,7 @@ func readInput(cmd *cobra.Command, verb, path, as string) (Document, error) {
 	// produces a complaint about the wrong bytes — the failure document.go
 	// exists to prevent. A default would make that the common case.
 	if as == "" {
-		return Document{}, fmt.Errorf("sr-file %s: reading from stdin needs --as to say how (.md, .yaml or .json) — which bytes are the document is decided by the format, and there is no file name here to read one from", verb)
+		return Document{}, usageError{fmt.Errorf("sr-file %s: reading from stdin needs --as to say how (.md, .yaml or .json) — which bytes are the document is decided by the format, and there is no file name here to read one from", verb)}
 	}
 	data, err := readCapped(cmd.InOrStdin())
 	if err != nil {
@@ -239,6 +247,11 @@ func readInput(cmd *cobra.Command, verb, path, as string) (Document, error) {
 	// the caller asked to be called.
 	doc, err := ExtractDocumentAs(stdinArg, as, data)
 	if err != nil {
+		var unknown *ErrUnknownExtension
+		if errors.As(err, &unknown) {
+			// --as named no format: the command line is wrong, not the bytes.
+			return Document{}, usageError{fmt.Errorf("sr-file %s: --as: %w", verb, err)}
+		}
 		return Document{}, fmt.Errorf("sr-file %s: %w", verb, err)
 	}
 	return doc, nil

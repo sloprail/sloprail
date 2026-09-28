@@ -62,6 +62,8 @@ fi
 # shellcheck source=publish-claim.sh
 . "${SR_GUARDRAIL_DIR:-.}/publish-claim.sh" 2>/dev/null \
   || refuse "unit-publish-approved: publish-claim.sh is missing beside this check, so whether $path claims published could not be read"
+declare -F publish_claim >/dev/null \
+  || refuse "unit-publish-approved: publish-claim.sh did not load (it defines no publish_claim), so whether $path claims published could not be read"
 
 # WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on
 # BOTH Pre kinds before newContent is read — an underivable result is deferred

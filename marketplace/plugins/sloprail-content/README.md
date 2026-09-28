@@ -211,14 +211,16 @@ would reject (an integer key, a custom tag) still answers.
   YAML document, `status` (or a `<<` merge key) defined twice — cannot be read
   for a status, so it is treated as a claim to publish: the approval is
   required, and the write is refused until the frontmatter reads.
-- A `---` fence that is never closed is read too: if the text under it is YAML
-  claiming `status: published`, or does not parse, it is treated as a claim to
-  publish (a reader that tolerates a missing close would publish it); prose
-  under a horizontal rule claims nothing. A frontmatter placed after a
+- A `---` fence that is never closed is read too — its first paragraph, where
+  a forgotten frontmatter would be: YAML claiming `status: published` is treated
+  as a claim to publish (a reader that tolerates a missing close would publish
+  it), and so is text that does not parse but names a `status` key. Prose under
+  a horizontal rule — however many colons it has — claims nothing. A frontmatter placed after a
   byte-order mark or blank lines is treated the same way: harmless unless it
   claims published. A file with no frontmatter at all claims nothing.
-- The status is read with `sr-file field`, so the sloprail binaries must be a
-  release newer than 0.2.1. Against an older `sr-file` every unit write is
+- The status is read with `sr-file field`, so the sloprail binaries must be the
+  release this plugin ships with, or newer (plugin versions move in lockstep
+  with releases). Against an older `sr-file` every unit write is
   refused with a message naming the upgrade (`install.sh`, or
   `make distribute-local`).
 - A unit that is not published is not this guard's business, valid or not.

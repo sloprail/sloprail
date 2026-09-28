@@ -233,7 +233,7 @@ func checkNamedArgument(e *exec.Evaluator, filter string, params *exec.VarArgs) 
 	if spec.test && !e.Tests.Exists(named) {
 		errors.ThrowTemplateRuntimeError("unknown test %q (passed to %s)", named, filter)
 	}
-	if !spec.test && !e.Filters.Exists(named) {
+	if !spec.test && (!e.Filters.Exists(named) || reservedFilters[named]) {
 		errors.ThrowTemplateRuntimeError("unknown filter %q (passed to %s)", named, filter)
 	}
 }

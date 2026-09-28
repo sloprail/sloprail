@@ -62,7 +62,9 @@ func newGroundedCmd(verb, use, short, long string) *cobra.Command {
 				return cmd.Help()
 			}
 			if err != nil {
-				return err
+				// Everything ParseFile refuses is the command line itself: a
+				// missing path, a flag with no value, an unknown pool.
+				return usageError{err}
 			}
 			return runGrounded(cmd, fc)
 		},

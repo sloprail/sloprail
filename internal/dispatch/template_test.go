@@ -135,9 +135,15 @@ func TestTemplate_AttributeValuesEscapeQuotes(t *testing.T) {
 // The attribute escape is the engine's, applied by context: a template that
 // names it is refused as naming an unknown filter, so no value is escaped twice.
 func TestTemplate_AttributeEscapeIsReservedToTheEngine(t *testing.T) {
-	_, err := renderTemplate(`<c k="{{ p | attrescape }}">`, map[string]any{"p": `a"b`})
-	if assert.Error(t, err) {
-		assert.Contains(t, err.Error(), `"attrescape"`)
+	for _, src := range []string{
+		`<c k="{{ p | attrescape }}">`,
+		`{{ list | map("attrescape") | join(",") }}`,
+		`{{ list | map(f) | join(",") }}`, // the name only known at render time
+	} {
+		_, err := renderTemplate(src, map[string]any{"p": `a"b`, "list": []any{`a"b`}, "f": "attrescape"})
+		if assert.Error(t, err, src) {
+			assert.Contains(t, err.Error(), `"attrescape"`, src)
+		}
 	}
 }
 

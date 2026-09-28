@@ -76,7 +76,10 @@ func runFieldCmd(cmd *cobra.Command, args []string) error {
 	as, _ := cmd.Flags().GetString("as")
 	doc, err := readInput(cmd, "field", args[0], as)
 	if err != nil {
+		var usage usageError
 		switch {
+		case errors.As(err, &usage):
+			return err
 		case errors.Is(err, errNoFrontmatter):
 			return &exitCodeError{fieldExitNoFrontmatter, err}
 		case errors.Is(err, errUnterminatedFrontmatter):

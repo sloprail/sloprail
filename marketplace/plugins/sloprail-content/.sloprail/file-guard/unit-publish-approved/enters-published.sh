@@ -20,6 +20,9 @@ set -uo pipefail
 command -v jq >/dev/null 2>&1 || exit 0
 # shellcheck source=publish-claim.sh
 . "${SR_GUARDRAIL_DIR:-.}/publish-claim.sh" 2>/dev/null || exit 0
+# A helper that sourced only partly (a syntax error stops bash mid-file without
+# failing the `.`) defines no reader: apply rather than read "no".
+declare -F publish_claim >/dev/null || exit 0
 
 event="$(cat)"
 field() { printf '%s' "$event" | jq -r "$1" 2>/dev/null; }

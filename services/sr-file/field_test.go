@@ -162,7 +162,16 @@ func TestField_SecondDocumentOrMergeKeyIsUnreadable(t *testing.T) {
 // status, so a caller can tell "this sr-file cannot do that" from "the document
 // is unreadable".
 func TestExitStatus_UsageErrorsAreDistinct(t *testing.T) {
-	for _, args := range [][]string{{"nosuch"}, {"field", "-"}, {"field", "-", "status", "--nosuchflag"}} {
+	for _, args := range [][]string{
+		{"nosuch"}, {"field", "-"}, {"field", "-", "status", "--nosuchflag"},
+		{"field", "-", "status"},                   // stdin with no --as
+		{"field", "a.md", "status", "--as", ".md"}, // --as with a path
+		{"field", "-", "status", "--as", ".txt"},   // --as naming no format
+		{"validate", "-", "--schema", "/dev/null"}, // the same, through validate
+		{"write"},                        // no file path
+		{"edit", "a.md", "--old-string"}, // a flag with no value
+		{"delete", "a.md", "--cite:nosuchpool", "quote"}, // a pool that does not exist
+	} {
 		root := newRoot()
 		root.SetOut(&bytes.Buffer{})
 		root.SetErr(&bytes.Buffer{})

@@ -367,18 +367,25 @@ func TestPublish_UncitedPublishSpellingsRefused(t *testing.T) {
 // guard's business — an uncited write of it lands.
 func TestPublish_InvalidNonPublishedUnitPermitted(t *testing.T) {
 	for name, unit := range map[string]string{
-		"invalid type, drafting":           "---\ncreated: 2026-09-25\ntype: article\nstatus: drafting\n---\n\nAnnouncing the launch.\n",
-		"status unpublished":               "---\ntype: post\nstatus: unpublished\n---\n",
-		"comment naming publish":           "---\ntype: post\nstatus: drafting # not published yet\n---\n",
-		"no frontmatter at all":            "Announcing the launch; status: published later.\n",
-		"integer key":                      "---\ntype: post\nstatus: drafting\n1: x\n---\n",
-		"null key and custom tag":          "---\nnull: x\nx: !custom foo\nstatus: drafting\n---\n",
-		"complex key":                      "---\n? [a, b]\n: c\nstatus: drafting\n---\n",
-		"inf, nan and a huge int":          "---\na: .inf\nb: .nan\nn: 123456789012345678901234567890\nstatus: drafting\n---\n",
-		"horizontal rule, no frontmatter":  "---\n\nAnnouncing the launch.\n",
-		"drafting after a byte-order mark": "\ufeff---\nstatus: drafting\n---\n",
-		"drafting after a blank line":      "\n---\nstatus: drafting\n---\n",
-		"drafting, fence never closed":     "---\ntype: post\nstatus: drafting\n",
+		"invalid type, drafting":                  "---\ncreated: 2026-09-25\ntype: article\nstatus: drafting\n---\n\nAnnouncing the launch.\n",
+		"status unpublished":                      "---\ntype: post\nstatus: unpublished\n---\n",
+		"comment naming publish":                  "---\ntype: post\nstatus: drafting # not published yet\n---\n",
+		"no frontmatter at all":                   "Announcing the launch; status: published later.\n",
+		"integer key":                             "---\ntype: post\nstatus: drafting\n1: x\n---\n",
+		"null key and custom tag":                 "---\nnull: x\nx: !custom foo\nstatus: drafting\n---\n",
+		"complex key":                             "---\n? [a, b]\n: c\nstatus: drafting\n---\n",
+		"inf, nan and a huge int":                 "---\na: .inf\nb: .nan\nn: 123456789012345678901234567890\nstatus: drafting\n---\n",
+		"horizontal rule, no frontmatter":         "---\n\nAnnouncing the launch.\n",
+		"drafting after a byte-order mark":        "\ufeff---\nstatus: drafting\n---\n",
+		"drafting after a blank line":             "\n---\nstatus: drafting\n---\n",
+		"drafting, fence never closed":            "---\ntype: post\nstatus: drafting\n",
+		"prose under a rule, colons":              "---\n\nWhy it matters: speed. Also: cost.\n",
+		"prose under a rule, heading":             "---\n\n# Launch post\n\nNote: this ships Monday: be ready.\n",
+		"prose under a rule, list":                "---\n\n- item one\nplain text after list\n",
+		"prose under a rule, code and link":       "---\n\n`code`: and [link](http://x) {braces}\n",
+		"prose under a rule, quote":               "---\n\nJust a paragraph.\n\n> quote: here\n",
+		"prose under a rule, mention":             "---\n\n@mention starts a line\n",
+		"prose under a rule, a later status line": "---\n\nRelease notes below.\n\nstatus: shipped to everyone, published today\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			e, proj := installPublishProject(t, draftingUnit)
