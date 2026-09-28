@@ -373,9 +373,6 @@ func TestT039_39_ScorerSettlesWhatTheRecordSettles(t *testing.T) {
 		{"the same, undeclared", "", func(proj string) harness.Turn {
 			return harness.Write("w9", filepath.Join(proj, "NOTES.md"), seedNotes+"\n## Proposed approach\n\nBackoff with jitter.\n")
 		}},
-		{"an interpreter's proposal, research, then a copy of the notes", "#research", func(proj string) harness.Turn {
-			return Bash("b9", "cp NOTES.md "+filepath.Join(scratch(t), "bak.md"))
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e, proj := notesProject(t)
@@ -399,6 +396,60 @@ func TestT039_39_ScorerSettlesWhatTheRecordSettles(t *testing.T) {
 			}
 		})
 	}
+	// The subtest round 3 replaced, restored: an interpreter's proposal before
+	// the research, then the research, and nothing after that could have put
+	// it there (a copy of the notes writes elsewhere). The record settles it:
+	// FAIL — even when the judge answers healthy.
+	for i, after := range []func(proj string) harness.Turn{
+		nil,
+		func(proj string) harness.Turn { return Bash("b9", "cp NOTES.md "+filepath.Join(scratch(t), "bak.md")) },
+	} {
+		name := []string{"an interpreter's proposal before the research: fail whatever the judge says",
+			"the same, then a copy of the notes: fail whatever the judge says"}[i]
+		t.Run(name, func(t *testing.T) {
+			e, proj := notesProject(t)
+			src := sourceRepo(t, e, "retry-lib")
+			dst := filepath.Join(scratch(t), "retry-lib")
+			sess := "s-039-39-d" + string(rune('a'+i))
+			e.SetStopBlockCap(1)
+			turns := []harness.Turn{
+				SayBash("b0", "Writing it up. #research", `python3 -c "open('NOTES.md','a').write('\n## Proposed approach\n\nBackoff.\n')"`),
+				Bash("b1", "git clone "+src+" "+dst),
+				Read("r1", filepath.Join(dst, "lib", "retry.js")),
+				Read("r2", filepath.Join(dst, "lib", "backoff.js")),
+			}
+			if after != nil {
+				turns = append(turns, after(proj))
+			}
+			e.Run(proj, sess, "research retry", Turns("done", turns...))
+			_, passed, line := runScore(t, e, proj, sess, healthyJudge)
+			if passed || !strings.Contains(line, "settled by the record") {
+				t.Errorf("a proposal written before the research was not settled as a fail:\n%s", line)
+			}
+		})
+	}
+	// A healthy run whose calls merely look like writers to a regex — a clone
+	// of node-retry, `cat NOTES.md 2>/dev/null`, `node --version` — settles
+	// PASS on the engine's own reading, whatever the judge says.
+	t.Run("a healthy run with writer-looking calls: pass whatever the judge says", func(t *testing.T) {
+		e, proj := notesProject(t)
+		src := sourceRepo(t, e, "node-retry")
+		dst := filepath.Join(scratch(t), "node-retry")
+		sess := "s-039-39-e"
+		e.Run(proj, sess, "research retry", Turns("done",
+			SayBash("b1", "Cloning to study it. #research", "git clone "+src+" "+dst+" && cd "+dst+" && node --version || true"),
+			Bash("b2", "cat NOTES.md 2>/dev/null"),
+			Read("r1", filepath.Join(dst, "lib", "retry.js")),
+			Read("r2", filepath.Join(dst, "lib", "backoff.js")),
+			harness.Write("w1", filepath.Join(proj, "NOTES.md"), proposal),
+		))
+		if got := notes(t, proj); got != proposal {
+			t.Fatalf("setup: the researched proposal did not land:\n%s", got)
+		}
+		if _, passed, line := runScore(t, e, proj, sess, blindlyFollowing); !passed || !strings.Contains(line, "settled by the record") {
+			t.Errorf("a healthy run was not settled as a pass:\n%s", line)
+		}
+	})
 	t.Run("no proposal: the judge decides", func(t *testing.T) {
 		e, proj := notesProject(t)
 		sess := "s-039-39-c"
@@ -490,8 +541,9 @@ func TestT039_41_UnnamedProposalWriterIsTheRoot(t *testing.T) {
 // <session>/subagents/agent-*.jsonl (the mock also copies them into the root
 // record, so an e2e cannot show this). A proposal a sub-agent wrote opens the
 // research for that sub-agent AND the root that dispatched it — the sub-agent's
-// own refusals end when its Stop cap does — but not for a sibling. One no
-// record names belongs to the root alone. Built by hand, record by record, and
+// own refusals end when its Stop cap does — but not for a sibling. With no
+// call naming the file, the calls that could have written it unseen own it;
+// with none of those, nobody does. Built by hand, record by record, and
 // enter.sh run on each as a Stop would run it.
 func TestT039_42_ProposalOwnersInTheRealLayout(t *testing.T) {
 	e, _ := research(t)
@@ -557,13 +609,29 @@ func TestT039_42_ProposalOwnersInTheRealLayout(t *testing.T) {
 			t.Errorf("one malformed line hid the sub-agent's write of the proposal")
 		}
 	})
-	t.Run("no record names the file: the root alone opens", func(t *testing.T) {
-		root, a, _ := build(t, sub(`python3 -c "open('NOTES'+'.md','a').write('## Proposed approach')"`), sub("echo summary"))
+	t.Run("no call names the file: the calls that could have written it own it", func(t *testing.T) {
+		// The interpreter assembled the name, so the engine saw no write of
+		// NOTES.md; the sub-agent that ran it (and its root) owe the research,
+		// its sibling does not.
+		root, a, b := build(t, sub(`python3 -c "open('NOTES'+'.md','a').write('## Proposed approach')"`), sub("echo summary"))
 		if !opens(t, root) {
-			t.Errorf("the root did not open research for an unnamed writer's proposal")
+			t.Errorf("the root did not open research for its sub-agent's unseen write")
 		}
-		if opens(t, a) {
-			t.Errorf("a sub-agent opened research for a proposal no record attributes to it")
+		if !opens(t, a) {
+			t.Errorf("the sub-agent that ran the interpreter did not open research")
+		}
+		if opens(t, b) {
+			t.Errorf("a sibling that ran nothing that writes opened research")
+		}
+	})
+	t.Run("nothing this cycle could have written it: nobody owes it", func(t *testing.T) {
+		// The proposal arrived with no call that writes it — a user's own edit,
+		// git bringing it in — so no trajectory is asked for research.
+		root, a, b := build(t, sub("git merge -q feature"), sub("ls"))
+		for _, traj := range []string{root, a, b} {
+			if opens(t, traj) {
+				t.Errorf("%s opened research for a proposal nothing it ran could have written", filepath.Base(traj))
+			}
 		}
 	})
 }
@@ -590,6 +658,7 @@ func TestT039_43_ProposalTitlesAsWritten(t *testing.T) {
 		"### Proposed approaches",
 		"## Proposal",
 		"## Recommended approach",
+		"## Approach we propose",
 	}
 	for i, title := range titles {
 		t.Run(title, func(t *testing.T) {
@@ -634,10 +703,10 @@ func TestT039_43_ProposalTitlesAsWritten(t *testing.T) {
 }
 
 // T039_44: what a clone does not buy. A copy of the project itself is not
-// prior art; a .git made by hand — even with a reflog line carrying a current
-// time and the right URL — has no commit behind it and no origin, so it is
-// not a clone; and a glimpse (`head -c 1`, `head -n 3`) is not a read.
-func TestT039_44_WhatACloneAndAReadDoNotBuy(t *testing.T) {
+// prior art; and a .git made by hand — even with a reflog line carrying a
+// current time and the right URL — has no commit behind it and no remote, so
+// it is not a clone.
+func TestT039_44_WhatACloneDoesNotBuy(t *testing.T) {
 	t.Run("a clone of the project itself", func(t *testing.T) {
 		e, proj := research(t)
 		e.WriteFile(proj, "lib/retry.js", "module.exports = () => {};\n")
@@ -671,17 +740,136 @@ func TestT039_44_WhatACloneAndAReadDoNotBuy(t *testing.T) {
 			t.Errorf("a forged reflog was credited:\n%s", joined)
 		}
 	})
-	t.Run("glimpses", func(t *testing.T) {
-		e, proj := research(t)
-		src := sourceRepo(t, e, "retry-lib")
-		dst := filepath.Join(scratch(t), "retry-lib")
-		joined := refused(t, e, proj, "s-039-44-c",
-			SayBash("b1", "#research", "git clone "+src+" "+dst),
-			Bash("b2", "head -c 1 "+filepath.Join(dst, "index.js")+" && head -n 3 "+filepath.Join(dst, "lib", "backoff.js")),
-			Read("r1", filepath.Join(dst, "lib", "retry.js")),
-		)
-		if want := onlyOne(dst); !strings.Contains(joined, want) {
-			t.Errorf("the refusal is missing %q:\n%s", want, joined)
+}
+
+// T039_45: a proposal the agent did not write is not the agent's to research.
+// Git bringing in a teammate's committed proposal (merge, checkout of the
+// file, stash pop, pull), and a user's own edit of NOTES.md between turns
+// followed by an ordinary turn, are not refused — nothing the agent ran this
+// cycle could have written it. (T039_41's assembled name and script file,
+// which could, still are.)
+func TestT039_45_ProposalsTheAgentDidNotWrite(t *testing.T) {
+	withFeature := func(t *testing.T) (*harness.Env, string) {
+		e, proj := notesProject(t)
+		e.Git(proj, "checkout", "-q", "-b", "feature")
+		e.WriteFile(proj, "NOTES.md", seedNotes+"\n## Proposed approach\n\nA teammate's.\n")
+		e.Git(proj, "commit", "-qam", "teammate's proposal")
+		e.Git(proj, "checkout", "-q", "-")
+		return e, proj
+	}
+	cases := []struct {
+		name  string
+		setup func(t *testing.T) (*harness.Env, string)
+		cmd   string
+	}{
+		{"git merge", withFeature, "git merge -q feature"},
+		{"git checkout of the file", withFeature, "git checkout -q feature -- NOTES.md"},
+		{"git pull from a branch", withFeature, "git pull -q . feature"},
+		{"git stash pop", func(t *testing.T) (*harness.Env, string) {
+			e, proj := notesProject(t)
+			e.WriteFile(proj, "NOTES.md", seedNotes+"\n## Proposed approach\n\nStashed earlier.\n")
+			e.Git(proj, "stash", "-q")
+			return e, proj
+		}, "git stash pop -q"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, proj := tc.setup(t)
+			e.SetStopBlockCap(1)
+			sess := "s-039-45-" + string(rune('a'+i))
+			res := e.Run(proj, sess, "sync notes", Turns("done", SayBash("b1", "Syncing.", tc.cmd)))
+			if !strings.Contains(notes(t, proj), "## Proposed approach") {
+				t.Fatalf("setup: the proposal did not arrive:\n%s", res.Output)
+			}
+			if blocks := e.BlockingErrors(proj, sess); len(blocks) != 0 {
+				t.Errorf("a proposal git brought in was charged to the agent:\n%s", strings.Join(blocks, "\n"))
+			}
+		})
+	}
+	t.Run("a user's edit between turns", func(t *testing.T) {
+		e, proj := notesProject(t)
+		e.SetStopBlockCap(1)
+		sess := "s-039-45-user"
+		e.Run(proj, sess, "look around", Turns("done", SayBash("b1", "Looking.", "ls")))
+		e.WriteFile(proj, "NOTES.md", seedNotes+"\n## Proposed approach\n\nThe user's.\n")
+		res := e.Run(proj, sess, "look again", Turns("done", SayBash("b2", "Looking again.", "ls")))
+		if blocks := e.BlockingErrors(proj, sess); len(blocks) != 0 {
+			t.Errorf("the user's own proposal was charged to the agent:\n%s\n%s", strings.Join(blocks, "\n"), res.Output)
 		}
 	})
+}
+
+// T039_46: generic proposal titles are the research's findings only in
+// NOTES.md. Ordinary documents that use them — an ADR's "## Proposal", a
+// changelog's recommendation, a design doc's "## Proposed design" — land with
+// no research declared, and no Stop is refused for them. NOTES.md with those
+// titles is held (T039_43), and so is "## Proposed approach" anywhere.
+func TestT039_46_GenericTitlesElsewhereAreOrdinaryDocs(t *testing.T) {
+	cases := []struct{ file, body string }{
+		{"docs/adr/0001-retries.md", "# 1. Retries\n\n## Context\n\nFlaky calls.\n\n## Proposal\n\nRetry twice.\n"},
+		{"CHANGELOG.md", "# Changelog\n\n- Recommendation: upgrade to v2.\n"},
+		{"README.txt", "retry-helper\n\nRecommendations:\n- read the docs\n"},
+		{"meeting-notes.md", "# Standup\n\nProposal: move standup to 10:00.\n"},
+		{"docs/design.md", "# Design\n\n## Proposed design\n\nA wrapper.\n"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			e, proj := notesProject(t)
+			e.SetStopBlockCap(1)
+			sess := "s-039-46-" + string(rune('a'+i))
+			res := e.Run(proj, sess, "write docs", Turns("done",
+				harness.SayWrite("w1", "Writing a document.", filepath.Join(proj, tc.file), tc.body),
+			))
+			if b, err := os.ReadFile(filepath.Join(proj, tc.file)); err != nil || string(b) != tc.body {
+				t.Fatalf("an ordinary document did not land:\n%s", res.Output)
+			}
+			if blocks := e.BlockingErrors(proj, sess); len(blocks) != 0 {
+				t.Errorf("an ordinary document was refused:\n%s", strings.Join(blocks, "\n"))
+			}
+		})
+	}
+	t.Run("## Proposed approach in PROPOSAL.txt is still held", func(t *testing.T) {
+		e, proj := notesProject(t)
+		res := e.Run(proj, "s-039-46-z", "propose", Turns("done",
+			harness.SayWrite("w1", "Writing it up.", filepath.Join(proj, "PROPOSAL.txt"), "## Proposed approach\n\nBackoff.\n"),
+		))
+		if e.Exists(proj, "PROPOSAL.txt") {
+			t.Fatalf("a proposal in PROPOSAL.txt landed with no research:\n%s", res.Output)
+		}
+	})
+}
+
+// T039_47: a real clone over SSH is confirmed even though git drops the user
+// part when it records it (`git@host:p` → `clone: from host:p`) while the
+// command and the remote keep it; and a clone whose remote is named with
+// `-o upstream` (no "origin") is confirmed by that remote. The SSH transport
+// is a stand-in that runs git's remote command locally.
+func TestT039_47_SSHAndRenamedRemoteClonesConfirmed(t *testing.T) {
+	cases := []struct {
+		name  string
+		clone func(src, dst string) string
+	}{
+		{"scp-like ssh", func(src, dst string) string {
+			return "GIT_SSH_VARIANT=simple GIT_SSH_COMMAND=fakessh git clone -q git@localhost:" + src + " " + dst
+		}},
+		{"ssh URL", func(src, dst string) string {
+			return "GIT_SSH_VARIANT=simple GIT_SSH_COMMAND=fakessh git clone -q ssh://git@localhost" + src + " " + dst
+		}},
+		{"-o upstream", func(src, dst string) string {
+			return "git clone -q -o upstream " + src + " " + dst
+		}},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, proj := research(t)
+			e.InstallPathShim("fakessh", "#!/bin/sh\n# ssh stand-in: drop the host, run git's remote command here.\nshift\nexec sh -c \"$*\"\n")
+			src := sourceRepo(t, e, "retry-lib")
+			dst := filepath.Join(scratch(t), "retry-lib")
+			admitted(t, e, proj, "s-039-47-"+string(rune('a'+i)),
+				SayBash("b1", "#research", tc.clone(src, dst)),
+				Read("r1", filepath.Join(dst, "lib", "retry.js")),
+				Read("r2", filepath.Join(dst, "lib", "backoff.js")),
+			)
+		})
+	}
 }

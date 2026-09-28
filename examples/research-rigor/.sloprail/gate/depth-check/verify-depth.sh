@@ -18,12 +18,6 @@ set -uo pipefail
 # measure of quality — and meeting it costs the agent real reading either way.
 MIN_SOURCE_FILES=2
 
-# A partial read counts only when it shows at least this much: `head -c 1`,
-# `head -n 3`, a Read with `limit: 2` are glimpses. Whole-file reads and
-# searches that print matches are not measured.
-MIN_READ_LINES=10
-MIN_READ_BYTES=500
-
 here="$(cd "$(dirname "$0")" && pwd)"
 input="$(cat)"
 transcript_path="$(printf '%s' "$input" | jq -r '.transcriptPath // empty')"
@@ -64,8 +58,7 @@ while IFS= read -r traj; do
   if ! entries="$(sr-session trajectory normalize --path "$traj" --events PreCommandInvoke 2>"$errf")"; then
     unreadable "$traj" "$(errtext)"
   fi
-  if ! one="$(printf '%s' "$entries" | jq -c -L "$here" --arg ws "${SR_WORKSPACE:-}" --arg home "${HOME:-}" \
-    --arg min_lines "$MIN_READ_LINES" --arg min_bytes "$MIN_READ_BYTES" -f "$here/research-facts.jq" 2>"$errf")" \
+  if ! one="$(printf '%s' "$entries" | jq -c -L "$here" --arg ws "${SR_WORKSPACE:-}" --arg home "${HOME:-}" -f "$here/research-facts.jq" 2>"$errf")" \
     || [ -z "$one" ]; then
     unreadable "$traj" "its research facts could not be computed: $(errtext)"
   fi
@@ -95,14 +88,15 @@ while IFS= read -r dest; do
   fi
   first="$(head -n 1 "$gitdir/logs/HEAD" 2>/dev/null)"
   # Beyond the line itself: the commit it says the clone checked out exists in
-  # the repository, and the repository's origin is what it was cloned from — a
+  # the repository, and one of its remotes is what it was cloned from — a
   # hand-written reflog over hand-made files has neither.
   newsha="$(printf '%s' "$first" | cut -f1 | awk '{print $2}')"
   hascommit=false
   [ -n "$newsha" ] && git --git-dir="$gitdir" cat-file -e "$newsha^{commit}" 2>/dev/null && hascommit=true
-  origin="$(git --git-dir="$gitdir" config --get remote.origin.url 2>/dev/null)"
-  reflogs="$(printf '%s' "$reflogs" | jq -c --arg d "$dest" --arg l "$first" --argjson c "$hascommit" --arg o "$origin" \
-    '. + [{dest: $d, line: $l, commit: $c, origin: $o}]')"
+  # Every remote's URL: `git clone -o upstream` names its remote otherwise.
+  remotes="$(git --git-dir="$gitdir" config --get-regexp '^remote\..*\.url$' 2>/dev/null | cut -d' ' -f2- | jq -R -s -c 'split("\n") | map(select(. != ""))')"
+  reflogs="$(printf '%s' "$reflogs" | jq -c --arg d "$dest" --arg l "$first" --argjson c "$hascommit" --argjson r "${remotes:-[]}" \
+    '. + [{dest: $d, line: $l, commit: $c, remotes: $r}]')"
 done <<EOF
 $(printf '%s' "$facts" | jq -r '[ .[].clones[].dest ] | unique[]')
 EOF
@@ -156,7 +150,7 @@ verdict="$(printf '%s' "$facts" | jq -c -L "$here" --argjson min "$MIN_SOURCE_FI
       | ($parts[0] | split(" ") | .[-2] | tonumber? // null) as $ts
       | ($parts[1:] | join("\t") | capture("^clone: from (?<url>.*)$")? | .url | repokey(null)) as $url
       | select($ts != null and $since != null and $ts >= ($since | floor))
-      | select(.commit == true and (.origin | repokey(null)) == $url)
+      | select(.commit == true and any(.remotes[]; repokey(null) == $url))
       | {key: $d, value: $url} ] | from_entries) as $cloned
   # A clone of this project itself is not prior art: it reads what the agent
   # is meant to be researching FOR.

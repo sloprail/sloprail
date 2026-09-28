@@ -37,9 +37,11 @@ open() { printf '%s' "$input" | jq -c '{declared: false, proposal: .event.path}'
 # the sub-agent's own refusals end when its Stop cap does, and the research was
 # the dispatcher's to see done. So the proposal belongs to the trajectory that
 # wrote it AND every trajectory above it (its parentPath chain), never to a
-# sibling or one below. A write no record names — an interpreter assembling
-# the path, a script run from a file — belongs to the session's root. Anything
-# that cannot be read opens the run (fail closed).
+# sibling or one below. A write no call names is owed by the calls of this
+# cycle that could have made it unseen (an interpreter, a script, eval of a
+# variable); with none of those either, it is not the agent's (a user's edit,
+# git bringing in committed content). Anything that cannot be read opens the
+# run (fail closed).
 me="$(printf '%s' "$input" | jq -r '.transcriptPath // empty')"
 path="$(printf '%s' "$input" | jq -r '.event.path // empty' | tr '[:upper:]' '[:lower:]')"
 [ -n "$me" ] || open
@@ -57,31 +59,49 @@ done
 if ! desc="$(sr-session trajectory describe --path "$root" 2>/dev/null)"; then open; fi
 records="$(printf '%s\n' "$root"; printf '%s' "$desc" | jq -r '.subagentPaths[]?' 2>/dev/null)"
 
-# Writers: records with a tool call that names the path as something it
-# writes — the Write/Edit tools, or a shell line naming it alongside a writer
-# (redirect, tee, sed -i, cp/mv/rsync/ln, dd, patch, git apply, an
-# interpreter, eval). One malformed line does not hide the rest.
-writers=""
+# This cycle: what ran since the root's last prompt (a human message, or the
+# feedback of a refused Stop). A write made in an earlier cycle was judged at
+# that cycle's Stop; a change arriving now that no call of this cycle made —
+# a user's own edit between turns — is not the agent's.
+entries_of() { sr-session trajectory normalize --path "$1" --events PreCommandInvoke,PreFileCreate,PreFileUpdate 2>/dev/null; }
+root_entries="$(entries_of "$root")" || open
+since="$(printf '%s' "$root_entries" | jq -r '
+  [ .[] | select(.type == "user" and (.isSidechain | not))
+    | select(.message.content | if type == "string" then true else (map(.type) | index("tool_result") | not) end)
+  ] | last | if . == null then "0\t" else "\(.line)\t\(.timestamp // "")" end' 2>/dev/null)" || open
+since_line="$(printf '%s' "$since" | cut -f1)"
+since_ts="$(printf '%s' "$since" | cut -f2)"
+
+# Writers this cycle: a call the engine derived a write of the path from
+# (named), else a call that could write without naming it (unnamed:
+# writers.jq). Git bringing in committed content is neither.
+named=""
+unnamed=""
 while IFS= read -r rec; do
   [ -n "$rec" ] || continue
   [ -r "$rec" ] || open
-  hit="$(jq -R -r --arg p "$path" '
-    fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use")
-    | select(
-        ((.name | IN("Write", "Edit", "MultiEdit")) and ((.input.file_path // "") | ascii_downcase | . == $p or endswith("/" + $p)))
-        or (.name == "Bash" and ((.input.command // "") | ascii_downcase
-            | (index($p) != null)
-              and test("(>>?|\\btee\\b|\\bsed\\s+-i|\\bcp\\b|\\bmv\\b|\\brsync\\b|\\bln\\b|\\bdd\\b|\\bpatch\\b|\\bgit\\s+apply\\b|\\bpython|\\bnode\\b|\\bperl\\b|\\bruby\\b|\\beval\\b)"))))
-    | "yes"' "$rec" 2>/dev/null | head -n 1)"
-  [ "$hit" = "yes" ] && writers="$writers$rec
-"
+  if [ "$rec" = "$root" ]; then ents="$root_entries"; else ents="$(entries_of "$rec")" || open; fi
+  kinds="$(printf '%s' "$ents" | jq -r -L "$here/../../gate/findings-need-depth" \
+      --arg p "$path" --argjson root "$([ "$rec" = "$root" ] && echo true || echo false)" \
+      --argjson sl "${since_line:-0}" --arg st "$since_ts" 'include "writers";
+    [ .[] | select(if $root then .line > $sl
+                   elif $st != "" and (.timestamp // "") != "" then .timestamp >= $st
+                   else true end)
+      | if names_write($p) then "named" elif runs_unnamed_writer then "unnamed" else empty end ]
+    | unique | join(" ")' 2>/dev/null)" || open
+  case " $kinds " in *" named "*) named="$named$rec
+" ;; esac
+  case " $kinds " in *" unnamed "*) unnamed="$unnamed$rec
+" ;; esac
 done <<EOF
 $records
 EOF
 
-# No record names it: the session's root owes it.
-[ -n "$writers" ] || writers="$root
-"
+# A named writer is the writer. With none, the calls that could have written
+# it unseen are; with neither, nothing the agent ran this cycle wrote it.
+writers="$named"
+[ -n "$writers" ] || writers="$unnamed"
+[ -n "$writers" ] || exit 1
 
 # Open when this trajectory is a writer or above one.
 while IFS= read -r w; do

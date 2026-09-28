@@ -19,7 +19,14 @@ def canon:
 # a local repository). A trailing slash and `.git` are not part of the name.
 # null when a relative path has no base to be placed on.
 def repokey($base):
-  if . == null or . == "" then null
+  # git drops the user part when it records a clone (`git@host:p` → `host:p`,
+  # `ssh://git@host/p` → `ssh://host/p`, `https://u:secret@host/p` →
+  # `https://host/p`) while the command and remote.origin.url keep it: it is
+  # not part of the repository's name on any side.
+  (if type == "string" then
+     if test("://") then sub("://[^/@]+@"; "://") else sub("^[^@/:]+@"; "") end
+   else . end)
+  | if . == null or . == "" then null
   elif test("^file://") then sub("^file://"; "") | canon | sub("\\.git$"; "")
   elif test("^[A-Za-z][A-Za-z0-9+.-]*://") or test("^[^/]+:") then sub("/+$"; "") | sub("\\.git$"; "")
   elif startswith("/") then canon | sub("\\.git$"; "")
