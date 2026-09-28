@@ -327,7 +327,7 @@ if [ -n "${SR_EVAL_VERDICT_OUT:-}" ]; then
        {check_id: "INFO-004-shared_tmp_paths", status: "info", reasoning: ("paths under the shared /tmp the run touched: " + $tmp)},
        {check_id: "INFO-005-depth_gate_fired", status: "info", reasoning: ("depth-check: " + $gate)},
        {check_id: "INFO-006-notes_writes_held", status: "info", reasoning: ("notes writes findings-need-depth held before landing: " + $held)},
-       {check_id: "INFO-007-depth_at_write", status: "info", reasoning: ("last NOTES.md write after depth: " + $wd + "; run ended with depth: " + $fd)}
+       {check_id: "INFO-007-depth_at_write", status: "info", reasoning: ("every call that could write NOTES.md after depth: " + $wd + "; run ended with depth: " + $fd)}
      ]}' > "$SR_EVAL_VERDICT_OUT"
 fi
 
