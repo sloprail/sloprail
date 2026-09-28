@@ -19,12 +19,168 @@ import (
 // it; a script that reads on after a partial load can decide on nothing, and
 // for a `when`, exit 1 waives the requirement.
 
-// sourceLine matches a line that sources a file: `.` or `source`, then
-// something that is a path — quoted, a variable, holding a `/`, or ending in
-// .sh — and nothing after it but a redirection, a list operator, a line
-// continuation or a comment. (A bare word
-// such as the `. as $x` of a jq program inside a string is not one.)
-var sourceLine = regexp.MustCompile(`^\s*(\.|source)\s+("[^"]+"|'[^']+'|\$\S+|\S*/\S*|\S+\.sh)\s*($|[;&|#<>\\]|[0-9]+>)`)
+// sourcedPaths returns the argument of every `.` or `source` command on one
+// line (see sourcedPathsIn).
+func sourcedPaths(line string) []string { return sourcedPathsIn([]string{line})[0] }
+
+// sourcedPathsIn returns, per line of a script, the argument of every `.` or
+// `source` command on it: at the start of the line or of any command on it
+// (after ; && || { ( ! and the if/then/do/else/elif keywords), its argument read
+// as one shell word — quotes, $(…) and <(…) nesting included.
+//
+// Only CODE counts. Quoting is tracked across lines — '…', "…", $'…' — along
+// with comments and heredoc bodies, so the `.` of a jq program in a multi-line
+// '…' string (`if . then`, `. as $x`, `. end`) or a sentence in a "…" message is
+// never read as a source. A `.` whose next token is a jq operator is not one
+// either, for a filter on a single line.
+func sourcedPathsIn(lines []string) [][]string {
+	out := make([][]string, len(lines))
+	var quote byte // '\'', '"', or 'E' for $'…'
+	heredoc := ""
+	for n, line := range lines {
+		if heredoc != "" {
+			if strings.TrimLeft(line, "\t") == heredoc {
+				heredoc = ""
+			}
+			continue
+		}
+		code := make([]bool, len(line))
+		pending := ""
+	scan:
+		for i := 0; i < len(line); i++ {
+			c := line[i]
+			switch quote {
+			case '\'':
+				if c == '\'' {
+					quote = 0
+				}
+				continue
+			case 'E', '"':
+				if c == '\\' {
+					i++
+					continue
+				}
+				if (quote == 'E' && c == '\'') || (quote == '"' && c == '"') {
+					quote = 0
+				}
+				continue
+			}
+			switch {
+			case c == '\\':
+				i++
+				continue
+			case c == '\'' && i > 0 && line[i-1] == '$':
+				quote = 'E'
+			case c == '\'':
+				quote = '\''
+			case c == '"':
+				quote = '"'
+			case c == '#' && (i == 0 || strings.IndexByte(" \t;|&(", line[i-1]) >= 0):
+				break scan
+			case c == '<' && strings.HasPrefix(line[i:], "<<") && !strings.HasPrefix(line[i:], "<<<"):
+				if m := heredocStart.FindStringSubmatch(line[i:]); m != nil {
+					pending = m[1]
+				}
+			}
+			code[i] = true
+		}
+		if pending != "" {
+			heredoc = pending
+		}
+		out[n] = sourcedPathsAt(line, code)
+	}
+	return out
+}
+
+// heredocStart is a heredoc's opening: << or <<-, then its delimiter, quoted
+// or not.
+var heredocStart = regexp.MustCompile(`^<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?`)
+
+// sourcedPathsAt returns the sourced arguments on a line, considering only the
+// positions code marks as code.
+func sourcedPathsAt(line string, code []bool) []string {
+	var out []string
+	for i := 0; i < len(line); i++ {
+		if !code[i] {
+			continue
+		}
+		var cmdLen int
+		switch {
+		case strings.HasPrefix(line[i:], "source") && (i+6 == len(line) || line[i+6] == ' ' || line[i+6] == '\t'):
+			cmdLen = 6
+		case line[i] == '.' && i+1 < len(line) && (line[i+1] == ' ' || line[i+1] == '\t'):
+			cmdLen = 1
+		default:
+			continue
+		}
+		if !atCommandStart(line[:i]) {
+			continue
+		}
+		rest := strings.TrimLeft(line[i+cmdLen:], " \t")
+		word := shellWord(rest)
+		if word == "" || jqOperand(word) {
+			continue
+		}
+		out = append(out, word)
+	}
+	return out
+}
+
+// commandStart ends the text before a command: a list operator, a grouping,
+// or a keyword that takes a command after it.
+var commandStart = regexp.MustCompile(`(^|[;&|{(!]|\b(if|then|do|else|elif|while|until))\s*$`)
+
+func atCommandStart(before string) bool { return commandStart.MatchString(before) }
+
+// jqOperand reports whether what follows a `.` is a jq operator — the `.` is a
+// filter, not a source.
+func jqOperand(word string) bool {
+	switch word {
+	case "as", "|", "[", "==", "!=", ")", "]", ",", "+", "-", "*", "/", "//", "and", "or", "<", ">", "<=", ">=", "?", "}":
+		return true
+	}
+	return strings.HasPrefix(word, "|") || strings.HasPrefix(word, ")") || strings.HasPrefix(word, "]")
+}
+
+// shellWord reads the first shell word of s: up to unquoted whitespace, a list
+// operator or a redirection, with "…", '…', $(…) and <(…) kept whole.
+func shellWord(s string) string {
+	var b strings.Builder
+	depth := 0 // $( or <( nesting
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case quote == '"' && depth == 0 && c == '"':
+			quote = 0
+		case c == '\\' && i+1 < len(s):
+			b.WriteByte(c)
+			i++
+			c = s[i]
+		case (c == '$' || c == '<') && i+1 < len(s) && s[i+1] == '(':
+			depth++
+			b.WriteByte(c)
+			i++
+			c = '('
+		case c == ')' && depth > 0:
+			depth--
+		case c == '"' && quote == 0:
+			quote = '"'
+		case c == '"' && depth > 0:
+			// a quote inside $(…) within "…": its own pair, kept verbatim
+		case c == '\'' && quote == 0 && depth == 0:
+			quote = '\''
+		case quote == 0 && depth == 0 && strings.IndexByte(" \t;&|<>", c) >= 0:
+			return b.String()
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
 
 // sentinelLine is a helper's last line: its loaded sentinel.
 var sentinelLine = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*_loaded)=1$`)
@@ -40,26 +196,25 @@ func TestSourcedHelpersAreCheckedLoaded(t *testing.T) {
 			continue // eval scorers and tools source a shared harness, not a guard helper
 		}
 		lines := readLines(t, filepath.Join(root, f))
-		for i, l := range lines {
-			m := sourceLine.FindStringSubmatch(l)
-			if m == nil {
-				continue
-			}
-			checked++
-			helper := resolveHelper(filepath.Dir(filepath.Join(root, f)), m[2], lines[:i])
-			if helper == "" {
-				t.Errorf("%s:%d sources %s, which this check cannot resolve to a file — name it so it can", f, i+1, m[2])
-				continue
-			}
-			sentinel := lastLineSentinel(t, helper)
-			if sentinel == "" {
-				t.Errorf("%s (sourced by %s:%d) does not end with a loaded sentinel (`<name>_loaded=1` as its last line)", rel(root, helper), f, i+1)
-				continue
-			}
-			before := strings.Join(lines[max(0, i-6):i], "\n")
-			after := strings.Join(lines[i+1:min(len(lines), i+5)], "\n")
-			if !strings.Contains(before, "unset "+sentinel) || !strings.Contains(after, "${"+sentinel) {
-				t.Errorf("%s:%d sources %s without `unset %s` before and a check of it after — a partly-loaded helper would decide", f, i+1, rel(root, helper), sentinel)
+		sourced := sourcedPathsIn(lines)
+		for i := range lines {
+			for _, arg := range sourced[i] {
+				checked++
+				helper := resolveHelper(filepath.Dir(filepath.Join(root, f)), arg, lines[:i])
+				if helper == "" {
+					t.Errorf("%s:%d sources %s, which this check cannot resolve to a file — name it so it can", f, i+1, arg)
+					continue
+				}
+				sentinel := lastLineSentinel(t, helper)
+				if sentinel == "" {
+					t.Errorf("%s (sourced by %s:%d) does not end with a loaded sentinel (`<name>_loaded=1` as its last line)", rel(root, helper), f, i+1)
+					continue
+				}
+				before := strings.Join(lines[max(0, i-6):i], "\n")
+				after := strings.Join(lines[i+1:min(len(lines), i+5)], "\n")
+				if !strings.Contains(before, "unset "+sentinel) || !strings.Contains(after, "${"+sentinel) {
+					t.Errorf("%s:%d sources %s without `unset %s` before and a check of it after — a partly-loaded helper would decide", f, i+1, rel(root, helper), sentinel)
+				}
 			}
 		}
 	}
@@ -171,7 +326,8 @@ func resolveHelper(dir, arg string, preceding []string) string {
 			return ""
 		}
 	}
-	for _, guardDir := range []string{"${SR_GUARDRAIL_DIR:-.}", "$SR_GUARDRAIL_DIR", "${gdir}", "$gdir", "."} {
+	for _, guardDir := range []string{"${SR_GUARDRAIL_DIR:-.}", "$SR_GUARDRAIL_DIR", "${gdir}", "$gdir",
+		`$(dirname "$0")`, `$(dirname "${BASH_SOURCE[0]}")`, "$(dirname $0)", "."} {
 		if strings.HasPrefix(arg, guardDir+"/") {
 			p := filepath.Join(dir, strings.TrimPrefix(arg, guardDir+"/"))
 			if _, err := os.Stat(p); err == nil {
@@ -258,4 +414,63 @@ func readLines(t *testing.T, path string) []string {
 		lines = append(lines, sc.Text())
 	}
 	return lines
+}
+
+// The source matcher finds every way a script sources a file — whatever the
+// argument's quoting, and wherever the command sits on the line — and not the
+// `.` of a jq filter inside a string.
+func TestSourcedPathsCatchesEachForm(t *testing.T) {
+	// Multi-line strings and heredocs: only the real source is found.
+	script := []string{
+		`jq -r '`,
+		`  . as $all`,
+		`  | if . then 1 else . end'`,
+		`echo "a sentence.`,
+		`. Permitting."`,
+		`cat <<'EOF'`,
+		`. "$not_a_source"`,
+		`EOF`,
+		`x=$'it\'s'`,
+		`. "$lib"`,
+	}
+	got := sourcedPathsIn(script)
+	for n, g := range got {
+		if n == len(script)-1 {
+			if len(g) != 1 || g[0] != `"$lib"` {
+				t.Errorf("the real source on the last line was not found: %q", g)
+			}
+		} else if len(g) != 0 {
+			t.Errorf("line %d (%s) inside a string or heredoc was read as a source of %q", n+1, script[n], g)
+		}
+	}
+
+	for line, want := range map[string]string{
+		`. "$(dirname "$0")/lib.sh"`:                `"$(dirname "$0")/lib.sh"`,
+		`. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"`: `"$(dirname "${BASH_SOURCE[0]}")/lib.sh"`,
+		`. "$lib" arg1`:                             `"$lib"`,
+		`. lib.bash`:                                `lib.bash`,
+		`. helpers`:                                 `helpers`,
+		`source helpers.inc`:                        `helpers.inc`,
+		`. "$lib" 2>/dev/null || exit 0`:            `"$lib"`,
+		`. ./lib.sh`:                                `./lib.sh`,
+		`. <(cat lib)`:                              `<(cat lib)`,
+		`. $lib`:                                    `$lib`,
+		`[ -f "$lib" ] && . "$lib"`:                 `"$lib"`,
+		`if . "$lib"; then`:                         `"$lib"`,
+		`{ . "$lib"; }`:                             `"$lib"`,
+		`  . "${SR_GUARDRAIL_DIR:-.}/pin.sh" || fail "x"`: `"${SR_GUARDRAIL_DIR:-.}/pin.sh"`,
+	} {
+		got := sourcedPaths(line)
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("%s: sourced %q, want [%s]", line, got, want)
+		}
+	}
+	for _, line := range []string{
+		`. as $all`, `  . as $x | .foo`, `select(. != "")`, `  . | length`, `map(. + 1)`, `echo "a. b"`,
+		`# . "$lib" in a comment`, `x=1. y`, `jq -r '.foo'`, `(.a // .) as $v`,
+	} {
+		if got := sourcedPaths(line); len(got) != 0 {
+			t.Errorf("%s: read as a source of %q", line, got)
+		}
+	}
 }
