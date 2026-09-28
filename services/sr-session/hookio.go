@@ -166,12 +166,15 @@ func (p HookPayload) record() (string, error) {
 }
 
 // relocate finds a reported record the harness wrote somewhere other than
-// where it reported it (transcript.RelocateRecord) — except at a fresh
+// where it reported it (transcript.RelocateRecord) — except at a FRESH
 // session's SessionStart, whose record does not exist yet by design: searching
 // for it there would only ever find another project's transcript that
-// happens to share a fixed --session-id.
+// happens to share a fixed --session-id. Both "startup" and "clear" are fresh
+// in this sense — "clear" is a fresh session too (the previous conversation is
+// discarded), reported under a --session-id that may just as well be reused,
+// so it carries the identical hazard "startup" does.
 func (p HookPayload) relocate(path string) string {
-	if p.Source == "startup" {
+	if p.Source == "startup" || p.Source == "clear" {
 		return path
 	}
 	return transcript.RelocateRecord(transcript.ConfigDir(), path)

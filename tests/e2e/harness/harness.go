@@ -1950,6 +1950,29 @@ func (e *Env) SubagentBlockingErrors(projDir, sessionID string) []string {
 	return out
 }
 
+// AnySubagentBlockingErrors returns the text of every SubagentStop
+// hook_blocking_error attachment recorded in the sub-agents' OWN transcripts
+// of a session, in order — WITHOUT requiring the "Stop hook feedback" turn
+// SubagentBlockingErrors also requires alongside it.
+//
+// For a NEGATIVE check only: "no refusal was recorded", asked as strictly as
+// possible, so it must not pass by accident when a refusal WAS recorded but
+// (through some other defect) without its feedback turn. A positive claim —
+// "the sub-agent was refused, and told" — still belongs to
+// SubagentBlockingErrors, which is the one that proves delivery.
+func (e *Env) AnySubagentBlockingErrors(projDir, sessionID string) []string {
+	e.t.Helper()
+	var out []string
+	for _, sub := range e.SubagentRecordPaths(projDir, sessionID) {
+		b, err := os.ReadFile(sub)
+		if err != nil {
+			e.t.Fatalf("harness: read sub-agent record %s: %v", sub, err)
+		}
+		out = append(out, blockingErrorsIn(string(b), "SubagentStop")...)
+	}
+	return out
+}
+
 // blockingErrorsIn reads the refusals out of a record's lines, optionally
 // narrowed to one lifecycle event.
 func blockingErrorsIn(record, hookEvent string) []string {

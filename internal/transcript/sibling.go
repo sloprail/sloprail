@@ -55,10 +55,15 @@ import (
 //
 // A file that holds no parentless record at all is not a transcript anyone
 // continues from and is skipped, as is one that vanished between the listing
-// and the read. Any OTHER failure to read a file is returned: a predecessor on
-// disk that cannot be read is not a predecessor that is gone, and deciding it
-// is would key the session on a fallback that flips back to the origin the day
-// the file reads again.
+// and the read. A file that IS on disk but cannot be read to a decision (a
+// record past maxRecordBytes, a permission error) is skipped too, rather than
+// aborting the whole search — one bad file elsewhere in the project directory
+// must never stop the walk from finding a different, readable predecessor. It
+// is not treated as "gone" either: dropping it silently would key the session
+// on a fallback that flips back to the origin the day the file reads again, so
+// its path is remembered (walk.noteUnreadable) and reported once the search is
+// over — by ResolveStableSessionID, or by the SessionStart notice when it is
+// the reason the walk degraded (see noteDegradedIdentity).
 func (w *walk) predecessors(root Entry) ([]candidate, error) {
 	all, err := w.transcripts()
 	if err != nil {
@@ -74,7 +79,8 @@ func (w *walk) predecessors(root Entry) ([]candidate, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s is on disk but cannot be read, so whether it is what this continues cannot be decided: %w", c.path, err)
+			w.noteUnreadable(c.path)
+			continue
 		}
 		if holds {
 			out = append(out, c)
@@ -84,7 +90,9 @@ func (w *walk) predecessors(root Entry) ([]candidate, error) {
 }
 
 // transcripts lists the project directory's transcripts with their roots,
-// once per walk.
+// once per walk. A file that cannot be read to a decision is skipped and
+// remembered (walk.noteUnreadable) rather than aborting the listing — see
+// predecessors.
 func (w *walk) transcripts() ([]candidate, error) {
 	if w.listed {
 		return w.listing, nil
@@ -103,7 +111,8 @@ func (w *walk) transcripts() ([]candidate, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s is on disk but cannot be read, so whether it is what this continues cannot be decided: %w", path, err)
+			w.noteUnreadable(path)
+			continue
 		}
 		w.listing = append(w.listing, candidate{path: path, root: root})
 	}

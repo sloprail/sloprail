@@ -154,6 +154,22 @@ func TestStartupDoesNotRelocate(t *testing.T) {
 	assert.NotEqual(t, reported, got, "a resume does look for the record where the session began")
 }
 
+// TestClearDoesNotRelocate: "clear" is a fresh session too — the previous
+// conversation is discarded — so it carries the identical fixed---session-id
+// hazard "startup" does, and must be skipped the same way.
+func TestClearDoesNotRelocate(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	const sid = "fixed-session-id-2"
+	writeProjectRecord(t, cfg, "-another-project", sid,
+		`{"parentUuid":null,"type":"user","uuid":"someone-elses","sessionId":"`+sid+`"}`)
+	reported := filepath.Join(cfg, "projects", "-this-project", sid+".jsonl")
+
+	got, err := HookPayload{TranscriptPath: reported, SessionID: sid, Source: "clear"}.record()
+	require.NoError(t, err)
+	assert.Equal(t, reported, got, "clear must not adopt another project's transcript")
+}
+
 // TestSubagentOfAResumedSessionIsRelocated: a sub-agent's record nests under
 // its session's, so in a session resumed from another directory the reported
 // agent_transcript_path is missing too. It resolves to the same identity as the
@@ -176,4 +192,42 @@ func TestSubagentOfAResumedSessionIsRelocated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sub-origin", byPath)
 	assert.Equal(t, byPath, byID)
+}
+
+// TestDegradedByAnUnreadableSiblingIsReportedNotAsGone: a continuation whose
+// predecessor is genuinely unreachable because an unrelated file in its
+// project directory could not be read (not because anything was deleted)
+// degrades and is reported the same way — once, at SessionStart, on stdout —
+// but the notice says its predecessor could not be REACHED, not that it is
+// gone: those are different situations, and a person reading it should not be
+// told a file was deleted when it was actually sitting there unreadable.
+func TestDegradedByAnUnreadableSiblingIsReportedNotAsGone(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	tree := initRepo(t)
+	commitFile(t, tree, "seed.txt", "seed")
+
+	const sid = "unreadable-sib"
+	huge := `{"type":"assistant","uuid":"big","parentUuid":"whatever","sessionId":"other","message":{"content":"` +
+		strings.Repeat("x", 16*1024*1024+1) + `"}}`
+	writeProjectRecord(t, cfg, "-p", "the-only-predecessor",
+		huge,
+		`{"parentUuid":null,"type":"user","uuid":"origin","sessionId":"other"}`,
+	)
+	path := writeProjectRecord(t, cfg, "-p", sid,
+		`{"parentUuid":null,"logicalParentUuid":"origin","type":"system","subtype":"compact_boundary","uuid":"continuation-root","sessionId":"`+sid+`"}`,
+	)
+	p := HookPayload{TranscriptPath: path, SessionID: sid, Cwd: tree, Source: "resume"}
+
+	id, err := stableIdentity(p)
+	require.NoError(t, err, "an unreadable sibling must not abort the resolution")
+	assert.Equal(t, "continuation-root", id.ID)
+	require.Error(t, id.Degraded)
+	assert.NotEmpty(t, id.UnreadableSiblings)
+
+	var out, errOut bytes.Buffer
+	noteDegradedIdentity(&out, &errOut, p, id)
+	assert.Contains(t, out.String(), "could not be reached")
+	assert.NotContains(t, out.String(), "is gone")
 }

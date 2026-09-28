@@ -47,8 +47,9 @@ type Identity struct {
 	// walk reached a continuation it could not cross, and ID is then that
 	// continuation's own root, the furthest-back record the walk reached. The
 	// error says why it stopped: ErrContinuationMissing when no transcript on
-	// disk holds what the continuation names (the predecessor was deleted), or
-	// ErrChainRunaway when the continuations close on themselves or run past
+	// disk holds what the continuation names (the predecessor was deleted, or
+	// every candidate that held it could not be read — see UnreadableSiblings),
+	// or ErrChainRunaway when the continuations close on themselves or run past
 	// maxRestartHops — shapes no real harness writes, so malformed files.
 	//
 	// Where the walk falls back depends on where it started only for a
@@ -69,6 +70,16 @@ type Identity struct {
 	// identity at all, and a session with no store has no baseline, no recorded
 	// citations and no guardrail state for the rest of its life.
 	Degraded error
+
+	// UnreadableSiblings lists every transcript the walk found in a project
+	// directory it searched but could not read to a decision (a record past
+	// maxRecordBytes, a permission error) — present whether or not the walk
+	// resolved. A file like that is not a predecessor that is GONE: unlike a
+	// deleted file, it might hold the very record being searched for, so its
+	// unreadability is reported rather than silently treated as absence, but it
+	// must never by itself stop the walk from finding a DIFFERENT, readable
+	// predecessor that does resolve. See predecessors.
+	UnreadableSiblings []string
 }
 
 // StableSessionID resolves the identity of the conversation the transcript at
@@ -88,23 +99,32 @@ func StableSessionID(projectDir, path string) (string, error) {
 // definition in an older file. Derive it with ProjectDir rather than by
 // searching: see path.go on the 1067-directory sweep that replaces.
 //
-// What fails is what leaves nothing trustworthy to key on: no path, a
-// transcript that cannot be read, one with no parentless record at all, a
-// restart with no project directory to cross it in, and a candidate
-// predecessor that is ON DISK but cannot be read (a record past
-// maxRecordBytes, a permission error). That last one is not "gone": treating
-// it as gone would key the session on a fallback today and on the origin
-// tomorrow, if the file became readable, splitting its state in two. A hook
-// runs where the harness's transcripts must be readable, so all of these are a
-// broken environment, and returning the reported id instead would restore the
-// exact silent orphaning this exists to prevent.
+// What fails is what leaves nothing trustworthy to key on at all: no path, the
+// STARTING transcript itself cannot be read, it has no parentless record, or a
+// restart has no project directory to cross it in. A hook runs where the
+// harness's own transcript must be readable, so these are a broken
+// environment, and returning the reported id instead would restore the exact
+// silent orphaning this exists to prevent.
 //
-// A predecessor that is genuinely gone is NOT one of those. The session has a
-// record and a continuation root, so it resolves to that root with Degraded
-// set — see Identity. Measured on one ~/.claude: of 19 transcripts opening on a
-// continuation, 3 name a predecessor no file holds any more, because Claude
-// Code deletes transcripts older than its cleanup period while a later
-// continuation of the same conversation is still resumable.
+// A candidate PREDECESSOR elsewhere in the project directory that is ON DISK
+// but cannot be read (a record past maxRecordBytes, a permission error) does
+// NOT fail the walk — it is not this session's own record, and one unrelated
+// bad file must never take down every continuation in the directory. It is
+// also not treated as "gone": unlike a deleted file it might hold the very
+// record being searched for, so the walk keeps looking for a DIFFERENT,
+// readable predecessor first, and only falls back to Degraded, with the path
+// remembered in Identity.UnreadableSiblings, when nothing readable resolves.
+// Silently calling it "gone" would key the session on a fallback today and on
+// the origin tomorrow, if the file became readable, splitting its state in
+// two — this is why the two are told apart.
+//
+// A predecessor that is genuinely gone is likewise NOT a hard failure. The
+// session has a record and a continuation root, so it resolves to that root
+// with Degraded set — see Identity. Measured on one ~/.claude: of 19
+// transcripts opening on a continuation, 3 name a predecessor no file holds
+// any more, because Claude Code deletes transcripts older than its cleanup
+// period while a later continuation of the same conversation is still
+// resumable.
 func ResolveStableSessionID(projectDir, path string) (Identity, error) {
 	if path == "" {
 		return Identity{}, fmt.Errorf("transcript: stable session id: %w", ErrNoTranscriptPath)
@@ -131,6 +151,7 @@ func ResolveStableSessionID(projectDir, path string) (Identity, error) {
 	if err != nil {
 		return Identity{}, fmt.Errorf("transcript: stable session id: %w", err)
 	}
+	id.UnreadableSiblings = w.unreadable
 	return id, nil
 }
 
@@ -140,6 +161,26 @@ type walk struct {
 	visits  int
 	listing []candidate
 	listed  bool
+
+	// unreadable collects, once each, the path of every transcript the walk
+	// SAW in the directory listing but could not read to a decision. Recorded
+	// rather than raised, so one bad file never stops the search from finding
+	// a different, readable predecessor — see predecessors and
+	// Identity.UnreadableSiblings.
+	unreadable []string
+	seenUnread map[string]bool
+}
+
+// noteUnreadable records path as seen-but-unreadable, once.
+func (w *walk) noteUnreadable(path string) {
+	if w.seenUnread == nil {
+		w.seenUnread = map[string]bool{}
+	}
+	if w.seenUnread[path] {
+		return
+	}
+	w.seenUnread[path] = true
+	w.unreadable = append(w.unreadable, path)
 }
 
 // candidate is a transcript in the project directory and the root it opens on.
@@ -208,9 +249,14 @@ func (w *walk) from(cur string, root Entry, inPath map[string]bool, depth int) (
 			"resolving what %s continues: the only transcript holding it, %s, is one the walk already crossed: %w",
 			cur, looped, ErrChainRunaway)}, nil
 	}
+	unreadNote := ""
+	if len(w.unreadable) > 0 {
+		unreadNote = fmt.Sprintf(" (%d file(s) in that directory could not be read and were skipped rather than assumed to hold it: %s)",
+			len(w.unreadable), strings.Join(w.unreadable, ", "))
+	}
 	return Identity{ID: root.UUID, Degraded: fmt.Errorf(
-		"resolving what %s continues: no transcript in %s opening on another root holds the record %s or %s itself: %w",
-		cur, w.dir, root.LogicalParentUUID, root.UUID, ErrContinuationMissing)}, nil
+		"resolving what %s continues: no readable transcript in %s opening on another root holds the record %s or %s itself%s: %w",
+		cur, w.dir, root.LogicalParentUUID, root.UUID, unreadNote, ErrContinuationMissing)}, nil
 }
 
 // rootRecord returns the first record in path that has no parent — the

@@ -117,3 +117,52 @@ func TestRelocateRecordFindsASubagentsRecord(t *testing.T) {
 	reported := filepath.Join(cfg, "projects", "-repo", sid, "subagents", "agent-a1.jsonl")
 	assert.Equal(t, real, RelocateRecord(cfg, reported))
 }
+
+// TestRelocateRecordWorksThroughASymlinkedConfigDir pins the case a
+// filepath.Rel-based derivation of the "projects" root breaks on: configDir and
+// the reported path spell the SAME directory differently — one goes through a
+// symlink, the other does not, the same divergence macOS's /var →
+// /private/var produces between two independently-built paths. filepath.Rel
+// does not resolve symlinks, so joining configDir+"projects" and Rel-ing a
+// differently-spelled path against it either errors or walks out of the tree
+// with "../…", and relocation silently turns itself off. Climbing from the
+// reported path's own ancestry, confirmed against configDir only after both
+// are resolved (sameTree), must find it regardless of which one a caller
+// happened to resolve first.
+func TestRelocateRecordWorksThroughASymlinkedConfigDir(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "cfg-symlink")
+	require.NoError(t, os.Symlink(real, link))
+
+	const sid = "06f7418e-0000-4000-8000-000000000005"
+	writeAt(t, real, "-repo--claude-worktrees-feature", sid+".jsonl",
+		sessionRecordLine(sid, "origin", ""),
+	)
+	realWant, err := filepath.EvalSymlinks(filepath.Join(real, "projects", "-repo--claude-worktrees-feature", sid+".jsonl"))
+	require.NoError(t, err)
+
+	// configDir resolved (the real directory); the reported path spelled
+	// through the symlink, as a caller building it from an UNRESOLVED
+	// CLAUDE_CONFIG_DIR env value would.
+	t.Run("configDir resolved, reported path symlinked", func(t *testing.T) {
+		reported := filepath.Join(link, "projects", "-repo", sid+".jsonl")
+		got := RelocateRecord(real, reported)
+		assert.NotEqual(t, reported, got, "relocation must not silently turn itself off through a symlinked config dir")
+		resolved, err := filepath.EvalSymlinks(got)
+		require.NoError(t, err)
+		assert.Equal(t, realWant, resolved)
+	})
+
+	// The other way round: configDir given as the symlink, the reported path
+	// already resolved — a caller that resolved its own working directory
+	// before building the transcript path, as several callers in this package
+	// do (ResolveWorkDir), while configDir stays whatever CLAUDE_CONFIG_DIR said.
+	t.Run("configDir symlinked, reported path resolved", func(t *testing.T) {
+		reported := filepath.Join(real, "projects", "-repo", sid+".jsonl")
+		got := RelocateRecord(link, reported)
+		assert.NotEqual(t, reported, got, "relocation must not silently turn itself off through a symlinked config dir")
+		resolved, err := filepath.EvalSymlinks(got)
+		require.NoError(t, err)
+		assert.Equal(t, realWant, resolved)
+	})
+}

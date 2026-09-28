@@ -188,8 +188,11 @@ func noteDegradedIdentity(stdout, stderr io.Writer, p HookPayload, id transcript
 		}
 	}
 	why := "whose earlier transcript is gone"
-	if errors.Is(id.Degraded, transcript.ErrChainRunaway) {
+	switch {
+	case errors.Is(id.Degraded, transcript.ErrChainRunaway):
 		why = "whose chain of earlier transcripts loops or runs past any real conversation's length"
+	case len(id.UnreadableSiblings) > 0:
+		why = "whose earlier transcript could not be reached — some of this project's other transcripts could not be read"
 	}
 	msg := fmt.Sprintf("sloprail: identity: this session continues a conversation %s, "+
 		"so its state is kept under the continuation (%s) rather than the conversation's origin; "+

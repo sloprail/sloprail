@@ -164,7 +164,7 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 		t.Fatalf("the permitting guardrail never ran, so this proves nothing about a cycle that "+
 			"was judged and allowed:\n%s", res.Output)
 	}
-	if blocking := e.SubagentBlockingErrors(proj, "s-013-07"); len(blocking) > 0 {
+	if blocking := e.AnySubagentBlockingErrors(proj, "s-013-07"); len(blocking) > 0 {
 		t.Fatalf("a sub-agent cycle nothing objected to was recorded as refused (%v) — a refusal "+
 			"that appears without one stops meaning anything:\n%s", blocking, res.Output)
 	}

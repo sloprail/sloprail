@@ -2,7 +2,6 @@ package transcript
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -202,6 +201,42 @@ func TestStableSessionIDDoesNotWalkIntoALaterContinuation(t *testing.T) {
 	assert.NoError(t, got.Degraded)
 }
 
+// TestStableSessionIDDoesNotWalkIntoALaterContinuationThatAlsoResolves is the
+// case where "not a later root" is load-bearing rather than merely narrowing:
+// a candidate that sorts FIRST, carries a copy of the record being searched
+// for, AND itself resolves cleanly (to a DIFFERENT, wrong origin) if the
+// timestamp check does not exclude it. Backtracking alone cannot recover here
+// — the walk takes the first candidate whose own resolution is not degraded,
+// and a later continuation that also resolves is exactly that, so without the
+// "not later" rule the walk would return the wrong origin rather than trying
+// the next candidate.
+func TestStableSessionIDDoesNotWalkIntoALaterContinuationThatAlsoResolves(t *testing.T) {
+	p := newProject(t)
+	p.write("z-true-predecessor",
+		originAt("origin", "2026-08-01T00:00:00.000Z"),
+		turnAt("point", "origin", "2026-08-02T00:00:00.000Z"),
+	)
+	// Sorts FIRST, carries a copy of "point", and resolves cleanly on its own —
+	// to a DIFFERENT origin — but its own root is timestamped AFTER m-current's,
+	// so it is a later continuation, not an earlier one.
+	p.write("a-later-but-resolves",
+		compactAt("later-compact", "unrelated-origin", "2026-08-20T00:00:00.000Z"),
+		turnAt("point", "origin", "2026-08-02T00:00:00.000Z"),
+	)
+	p.write("unrelated-predecessor",
+		originAt("unrelated-origin", "2026-08-15T00:00:00.000Z"),
+	)
+	current := p.write("m-current",
+		compactAt("compact", "point", "2026-08-10T00:00:00.000Z"),
+	)
+
+	got, err := ResolveStableSessionID(p.dir, current)
+	require.NoError(t, err)
+	assert.Equal(t, "origin", got.ID,
+		"a later continuation that also resolves cleanly must still be excluded by timestamp, or the walk returns the wrong origin")
+	assert.NoError(t, got.Degraded)
+}
+
 // TestStableSessionIDBacktracksPastADeadEnd: a file can hold a copy of the
 // record a boundary names without being where the conversation came from.
 // When the first candidate in name order dead-ends further back, the walk
@@ -286,26 +321,31 @@ func TestStableSessionIDPastTheHopLimitDegradesLikeARing(t *testing.T) {
 	assert.NoError(t, within.Degraded)
 }
 
-// TestStableSessionIDRefusesAnUnreadablePredecessor: a candidate on disk that
-// cannot be read is not a predecessor that is gone. Calling it gone would key
-// the session on a fallback now and on the origin once the file reads again,
-// splitting its state in two — so the walk fails instead.
-func TestStableSessionIDRefusesAnUnreadablePredecessor(t *testing.T) {
+// TestStableSessionIDWhenTheOnlyCandidateIsUnreadable: a candidate on disk
+// that cannot be read is not a predecessor that is gone, but it is also not
+// this session's own transcript — one bad file elsewhere in the project
+// directory must not abort every continuation in it. So when it is the ONLY
+// file that could hold what the continuation names, the walk degrades to its
+// own root (as it would for a genuinely deleted predecessor) rather than
+// hard-failing, and names the unreadable file in Identity.UnreadableSiblings
+// so the fallback is reported rather than silently taken for "gone".
+func TestStableSessionIDWhenTheOnlyCandidateIsUnreadable(t *testing.T) {
 	t.Run("a record past the size bound", func(t *testing.T) {
 		p := newProject(t)
 		huge := `{"type":"assistant","uuid":"big","parentUuid":"origin","message":{"content":"` +
 			strings.Repeat("x", maxRecordBytes+1) + `"}}`
-		p.write("a-predecessor",
+		unreadable := p.write("a-predecessor",
 			originAt("origin", "2026-08-01T00:00:00.000Z"),
 			huge,
 			turnAt("point", "origin", "2026-08-02T00:00:00.000Z"),
 		)
 		current := p.write("m-current", compactAt("compact", "point", "2026-08-10T00:00:00.000Z"))
 
-		_, err := ResolveStableSessionID(p.dir, current)
-		require.Error(t, err, "an unreadable predecessor must not be reported as gone")
-		assert.Contains(t, err.Error(), "cannot be read")
-		assert.NotErrorIs(t, err, ErrContinuationMissing)
+		got, err := ResolveStableSessionID(p.dir, current)
+		require.NoError(t, err, "an unreadable predecessor must not abort the walk")
+		assert.Equal(t, "compact", got.ID, "falls back to this continuation's own root, same as a deleted predecessor")
+		require.ErrorIs(t, got.Degraded, ErrContinuationMissing)
+		assert.Contains(t, got.UnreadableSiblings, unreadable, "the unreadable file must be named, not silently folded into 'gone'")
 	})
 	t.Run("a file that cannot be opened", func(t *testing.T) {
 		if os.Geteuid() == 0 {
@@ -320,8 +360,40 @@ func TestStableSessionIDRefusesAnUnreadablePredecessor(t *testing.T) {
 		t.Cleanup(func() { _ = os.Chmod(locked, 0o644) })
 		current := p.write("m-current", compactAt("compact", "point", "2026-08-10T00:00:00.000Z"))
 
-		_, err := ResolveStableSessionID(p.dir, current)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, fs.ErrPermission)
+		got, err := ResolveStableSessionID(p.dir, current)
+		require.NoError(t, err)
+		assert.Equal(t, "compact", got.ID)
+		require.ErrorIs(t, got.Degraded, ErrContinuationMissing)
+		assert.Contains(t, got.UnreadableSiblings, locked)
 	})
+}
+
+// TestStableSessionIDSkipsAnUnrelatedUnreadableFile is the reviewer's
+// reproduction: an unrelated, unreadable file in the SAME project directory as
+// the real, readable predecessor must never stop the walk from finding that
+// predecessor — in either sort order, since the walk cannot know in advance
+// which candidate is the real one.
+func TestStableSessionIDSkipsAnUnrelatedUnreadableFile(t *testing.T) {
+	for _, name := range []string{"a-unrelated-huge", "z-unrelated-huge"} {
+		t.Run(name, func(t *testing.T) {
+			p := newProject(t)
+			huge := `{"type":"assistant","uuid":"unrelated-big","parentUuid":"unrelated-origin","message":{"content":"` +
+				strings.Repeat("x", maxRecordBytes+1) + `"}}`
+			p.write(name,
+				originAt("unrelated-origin", "2020-01-01T00:00:00.000Z"),
+				huge,
+			)
+			p.write("the-real-predecessor",
+				originAt("origin", "2026-08-01T00:00:00.000Z"),
+				turnAt("point", "origin", "2026-08-02T00:00:00.000Z"),
+			)
+			current := p.write("m-current", compactAt("compact", "point", "2026-08-10T00:00:00.000Z"))
+
+			got, err := ResolveStableSessionID(p.dir, current)
+			require.NoError(t, err)
+			assert.Equal(t, "origin", got.ID,
+				"an unrelated unreadable file must not stop the walk from finding the real, readable predecessor")
+			assert.NoError(t, got.Degraded)
+		})
+	}
 }

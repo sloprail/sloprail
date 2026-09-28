@@ -26,11 +26,20 @@ type Turn struct {
 	// the turn is emitted — the mock picks the file at launch, and only its
 	// receipt says where it is, as it does for a real agent.
 	launchedOutput bool
+	// launchedTask marks a turn whose jsonl names the id of the most recently
+	// launched background task as @@LAUNCHED_TASK@@, filled in when the turn is
+	// emitted — the id is minted by the mock at launch (a Bash's own id, or an
+	// Agent's agentId) and only its receipt says what it is.
+	launchedTask bool
 }
 
 // launchedOutputPlaceholder is replaced by the output file of the most recently
 // launched background command when a launchedOutput turn is emitted.
 const launchedOutputPlaceholder = "@@LAUNCHED_OUTPUT@@"
+
+// launchedTaskPlaceholder is replaced by the id of the most recently launched
+// background task when a launchedTask turn is emitted.
+const launchedTaskPlaceholder = "@@LAUNCHED_TASK@@"
 
 // Turns builds a scenario ending in the given assistant text.
 func Turns(finalText string, turns ...Turn) Scenario {
@@ -409,6 +418,18 @@ fi
 `, marker, shQuote(line), launchedOutputPlaceholder)
 			continue
 		}
+		if t.launchedTask {
+			// The receipt a background launch was answered with names its id:
+			// "Command running in background with ID: <id>" for a Bash,
+			// "agentId: <id>" for an Agent. The latest one is the task meant.
+			fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
+  TASK="$(printf '%%s' "$SESS" | grep -o 'running in background with ID: [A-Za-z0-9_-]*\|agentId: [A-Za-z0-9_-]*' | tail -1 | sed 's/.*: //')"
+  printf '%%s\n' %s | sed "s/%s/$TASK/"
+  exit 0
+fi
+`, marker, shQuote(line), launchedTaskPlaceholder)
+			continue
+		}
 		fmt.Fprintf(&b, `if ! printf '%%s' "$SESS" | grep -q %q; then
   printf '%%s\n' %s
   exit 0
@@ -621,8 +642,29 @@ func Background(id, name string, input map[string]string) Turn {
 // background command with the Read tool — the way a real agent gets a
 // background command's output: its receipt says "To check interim output, use
 // Read on that file path", and the <task-notification> that follows carries
-// only a summary, never the output. (There is no TaskOutput tool: real
-// transcripts hold no call to it.)
+// only a summary, never the output. (The mock no longer implements TaskOutput
+// as a tool: real transcripts hold no call to it.)
 func ReadLaunchedOutput(id string) Turn {
 	return Turn{jsonl: toolUse(id, "Read", map[string]string{"file_path": launchedOutputPlaceholder}), launchedOutput: true}
+}
+
+// TaskOutputOfLaunched is CallWithOutput of a TaskOutput call whose task_id is
+// the id of the most recently launched background task — the id the mock
+// minted at launch, which only its receipt says. The mock no longer runs
+// TaskOutput itself (real transcripts hold no call to it): as with any
+// CallWithOutput pair, the mock answers the tool_use with its own error first,
+// and the scenario's own second tool_result — the one a test cites — is what
+// this pins to a REAL background task's id, rather than one made up for a
+// stray, never-launched case.
+func TaskOutputOfLaunched(id, output string) (Turn, Turn) {
+	use := Turn{
+		jsonl: fmt.Sprintf(
+			`{"type":"assistant","id":%q,"uuid":%q,"message":{"role":"assistant","stop_reason":null,"content":[{"type":"tool_use","id":%q,"name":"TaskOutput","input":{"task_id":%q}}]}}`,
+			id+"#u", "e2e-turn-"+id+"u", id, launchedTaskPlaceholder),
+		launchedTask: true,
+	}
+	res := Turn{jsonl: fmt.Sprintf(
+		`{"type":"user","id":%q,"uuid":%q,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s}]}}`,
+		id+"#r", "e2e-turn-"+id+"r", id, jsonStr(output))}
+	return use, res
 }
