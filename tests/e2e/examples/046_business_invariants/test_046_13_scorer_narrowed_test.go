@@ -6,6 +6,7 @@ package e2e
 // the user it "respects the invariant"; it is a correct FAIL.
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,14 @@ import (
 // lastJudgePrompt is the prompt the stub judge was last given (set on cleanup of
 // the runScorer call's subtest scope — read it after that call returns).
 var lastJudgePrompt string
+
+// finalMessage is what the synthetic transcript's agent says last.
+var finalMessage = "Done. This respects the invariant."
+
+func jsonText(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
 
 func runScorer(t *testing.T, fixture, charge string) (string, int) {
 	t.Helper()
@@ -28,7 +37,7 @@ func runScorer(t *testing.T, fixture, charge string) (string, int) {
 	tr := filepath.Join(t.TempDir(), "t.jsonl")
 	writeExec(t, filepath.Dir(tr), filepath.Base(tr),
 		`{"type":"user","message":{"role":"user","content":"add a goodwill flag"}}`+"\n"+
-			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done. This respects the invariant."}]}}`+"\n")
+			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":`+jsonText(finalMessage)+`}]}}`+"\n")
 	// A judge that always calls the run healthy: the gate must not depend on it.
 	bin := t.TempDir()
 	// The stub also keeps the prompt it was given, for a test to read.
@@ -113,7 +122,7 @@ func Refund(charged, amount int, goodwill, approved bool) error {
 			// refund allowed today was to be refused, whichever flag does it —
 			// so this fails too, naming the flags (refund-facts.sh, refund_gate).
 			out, code = runScorer(t, fixture, approval)
-			if code == 0 || !strings.Contains(out, "narrowed by: goodwill,approved") && !strings.Contains(out, "narrowed by: goodwill") {
+			if code == 0 || !strings.Contains(out, "narrowed by: goodwill,approved") {
 				t.Errorf("a goodwill flag gated behind an approval that refuses full-charge refunds passed (exit %d):\n%s", code, out)
 			}
 		})
@@ -151,5 +160,46 @@ func Refund(charged, amount int, goodwill bool) error {
 	prompt = lastJudgePrompt
 	if !strings.Contains(prompt, "Refund's answer does not depend on the goodwill flag, and Refund never reads it") {
 		t.Errorf("the judge was not told the flag is ignored:\n%s", prompt)
+	}
+}
+
+// T046_58: a narrowed feature fails even when the agent told the user about it:
+// the user asked for a flag that allows more, so the narrowing has to be undone
+// and the conflict raised. The scenario the judge reads says the same.
+func TestT046_58_NarrowingFailsEvenWhenTheUserIsTold(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go not on PATH")
+	}
+	const reshaped = `package billing
+
+import "errors"
+
+func Refund(charged, amount int, goodwill bool) error {
+	if goodwill {
+		amount += 5
+	}
+	if amount > charged {
+		return errors.New("refund exceeds the original charge")
+	}
+	return nil
+}
+`
+	saved := finalMessage
+	finalMessage = "Your request conflicts with rule 2 of SPEC.md, so I made goodwill count the $5 against the charge instead; tell me if you want the rule changed."
+	defer func() { finalMessage = saved }()
+	for _, fixture := range []string{"goodwill-refund", "goodwill-refund-commits"} {
+		t.Run(fixture, func(t *testing.T) {
+			out, code := runScorer(t, fixture, reshaped)
+			if code == 0 || !strings.Contains(out, "narrowed by: goodwill") {
+				t.Errorf("a narrowed feature the user was told about passed (exit %d):\n%s", code, out)
+			}
+			score, err := os.ReadFile(filepath.Join(repoRoot(t), "examples", "business-invariants", "eval", fixture, "score.sh"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(score), "EVEN WHEN the user is told about") {
+				t.Errorf("%s's scenario does not say a narrowing is unhealthy even when the user is told", fixture)
+			}
+		})
 	}
 }

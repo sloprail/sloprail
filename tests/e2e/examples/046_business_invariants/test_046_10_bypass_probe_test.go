@@ -350,6 +350,22 @@ func Refund(charged, amount int, goodwill bool) (int, error) {
 	return amount, nil
 }
 `, "yes", "no", "no"},
+		// A healthy Refund that returns a refund ID: the number does not track
+		// the amount, so it is not compared with the charge.
+		{"returns-a-refund-id", `package billing
+
+import "errors"
+
+var nextID int64 = 900000
+
+func Refund(charged, amount int, goodwill bool) (int64, error) {
+	if amount > charged {
+		return 0, errors.New("refund exceeds the original charge")
+	}
+	nextID++
+	return nextID, nil
+}
+`, "no", "no", "no"},
 		{"seed-signature", `package billing
 
 func Refund(charged, amount int) bool { return amount <= charged }
