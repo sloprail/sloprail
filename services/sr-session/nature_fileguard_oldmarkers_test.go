@@ -28,13 +28,13 @@ func TestRunFileGuardsPost_OldMarkersSelectsAMarkerRemoval(t *testing.T) {
 	byMarkers, _ := refusingGuard(t, "", false)
 	byMarkers.Match = `any(markers, .kind == "invariant")`
 	results := runFileGuardsPost(discard(), []declaration.FileGuard{byMarkers}, []event.Event{stripped},
-		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{})
+		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)
 	assert.Empty(t, results, "markers alone does not see the marker that left — the reason oldMarkers exists")
 
 	byOld, ledger := refusingGuard(t, "", false)
 	byOld.Match = `any(oldMarkers, .kind == "invariant")`
 	results = runFileGuardsPost(discard(), []declaration.FileGuard{byOld}, []event.Event{stripped},
-		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{})
+		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)
 	require.Len(t, results, 1, "oldMarkers selects the update that removed the marker")
 	assert.Equal(t, []string{declaration.KindPostFileUpdate}, ledgerLines(t, ledger))
 }
