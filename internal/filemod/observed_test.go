@@ -3,7 +3,9 @@ package filemod
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -267,6 +269,7 @@ func TestObserved_OneEventPerFile(t *testing.T) {
 		{Kind: KindPostCreate, Fields: map[string]any{
 			FieldPath:                "a.md",
 			FieldNewContent:          "content of a.md\n",
+			FieldNewContentKnown:     true,
 			FieldNewMarkers:          []any{},
 			FieldSeen:                false,
 			grounding.FieldCitations: []any{},
@@ -275,6 +278,7 @@ func TestObserved_OneEventPerFile(t *testing.T) {
 			FieldPath:                "b.md",
 			FieldOldContent:          "", // no baseline content supplied
 			FieldNewContent:          "content of b.md\n",
+			FieldNewContentKnown:     true,
 			FieldOldMarkers:          []any{},
 			FieldNewMarkers:          []any{},
 			FieldSeen:                false,
@@ -613,5 +617,32 @@ func TestObserved_ProducesOnlyDeclaredKinds(t *testing.T) {
 	require.Len(t, events, 3)
 	for _, e := range events {
 		assert.True(t, declared[e.Kind], "undeclared kind %q", e.Kind)
+	}
+}
+
+// A Post create or update of a file that cannot be read safely — a link to a
+// FIFO, whose read blocks, or to a device, whose read never ends — is reported
+// with newContentKnown false and no bytes, not as an empty file, and returns.
+func TestObserved_AnUnreadableSettledFileIsFlaggedNotRead(t *testing.T) {
+	root := tree(t)
+	fifo := filepath.Join(t.TempDir(), "fifo")
+	require.NoError(t, syscall.Mkfifo(fifo, 0o644))
+	require.NoError(t, os.Symlink(fifo, filepath.Join(root, "to-fifo.md")))
+	require.NoError(t, os.Symlink("/dev/zero", filepath.Join(root, "to-zero.md")))
+
+	done := make(chan []event.Event, 1)
+	go func() {
+		done <- observe(t, fakeObserved{root: root, paths: []string{"to-fifo.md", "to-zero.md"}})
+	}()
+	select {
+	case events := <-done:
+		require.Len(t, events, 2)
+		for _, e := range events {
+			assert.Equal(t, KindPostCreate, e.Kind)
+			assert.Equal(t, false, e.Fields[FieldNewContentKnown], "%v", e.Fields[FieldPath])
+			assert.Equal(t, "", e.Fields[FieldNewContent])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("observing a link to a FIFO or a device blocked")
 	}
 }

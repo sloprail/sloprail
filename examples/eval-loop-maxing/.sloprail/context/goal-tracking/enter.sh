@@ -12,6 +12,16 @@ goal_path="$(printf '%s' "$input" | jq -r '.event.path // ""')"
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
+    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
+    # (internal/filemod/module.go FieldNewContentKnown): false when it could not
+    # read the settled goal.yaml — a link to a FIFO or a device, or past the
+    # read cap. Whether it is enabled is unknown, so the goal counts as in force
+    # (activate: goal-verify then holds the turn to it) — never as switched off.
+    if [ "$(printf '%s' "$input" | jq -r '.event.newContentKnown // false')" != "true" ]; then
+      jq -n --arg name "$(basename "$(dirname "$goal_path")")" --arg path "$goal_path" \
+        '{goal: $name, goal_path: $path}'
+      exit 0
+    fi
     content="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
   PreFileCreate|PreFileUpdate)

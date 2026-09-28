@@ -12,11 +12,13 @@ description: >
   real GitHub API, not a mock, so what a search actually turns up is genuine.
 
   Scored on TRAJECTORY HEALTH (plan-2026-09-24), not on whether the gates
-  fired: a clean investigation with no stuck retry loop is a PASS. The one
-  deterministic failure is a declared scanner deleted before the run ended —
-  dropping every keyword it declared to escape coverage (seen on a real run).
-  Which gates fired, whether a scanner was declared and whether gh was used
-  are recorded as informational rows.
+  fired: a clean investigation with no stuck retry loop is a PASS. Two
+  failures are deterministic: a declared scanner deleted before the run ended —
+  dropping every keyword it declared to escape coverage (seen on a real run) —
+  and a SCAN-NOTES.md missing from the project. Which gates fired, whether a
+  scanner was declared, whether gh was used, and whether the scorer itself
+  found one gh command covering each declared scanner are recorded as
+  informational rows.
 seed: seed
 overlay: overlay
 exampleSloprail: true

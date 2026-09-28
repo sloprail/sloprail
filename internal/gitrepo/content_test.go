@@ -125,3 +125,20 @@ func TestContentAt_OutsideARepositoryIsAbsent(t *testing.T) {
 	_, ok := ContentAt(dir, "HEAD", "a.md")
 	assert.False(t, ok)
 }
+
+// ContentAtWithin reads a blob only within the limit, asking its size first, and
+// resolves a `./` path against the directory it runs in.
+func TestContentAtWithin_ReadsOnlyWithinTheLimit(t *testing.T) {
+	dir := initRepo(t)
+	commit(t, dir, "notes.md", "# Notes\nbody\n")
+
+	got, ok := ContentAtWithin(dir, "HEAD", "./notes.md", 1<<20)
+	require.True(t, ok)
+	assert.Equal(t, "# Notes\nbody\n", got)
+
+	_, ok = ContentAtWithin(dir, "HEAD", "./notes.md", 4)
+	assert.False(t, ok, "a blob past the limit is not read")
+
+	_, ok = ContentAtWithin(dir, "HEAD", "./missing.md", 1<<20)
+	assert.False(t, ok, "a path not in the commit is not read")
+}

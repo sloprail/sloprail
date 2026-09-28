@@ -24,6 +24,15 @@ skip() { printf '{"skip": true}\n'; exit 0; }
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
+    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
+    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
+    # events.md): false when it could not read the settled file — a link to a
+    # FIFO or a device, or past the read cap. The gates are unseen: the prepare
+    # fails, so the check fails closed (never a skip).
+    if [ "$(printf '%s' "$event" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
+      echo "task-gates-hold: $path could not be read (not a regular file, or too large), so its gates could not be judged" >&2
+      exit 1
+    fi
     abs="$root/$path"
     [ -f "$abs" ] || skip
     new_content="$(cat "$abs" 2>/dev/null || true)"

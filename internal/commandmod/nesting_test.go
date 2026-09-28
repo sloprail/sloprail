@@ -1260,6 +1260,14 @@ func TestNesting_PreviouslyUnlistedWrappersAreNowUnwrapped(t *testing.T) {
 		{`proxychains npm publish`, []string{"proxychains", "npm"}, "same as torify"},
 		{`proxychains -f c.conf npm publish`, []string{"proxychains", "npm"},
 			"the config is proxychains's own argument"},
+		{`caffeinate -i npm publish`, []string{"caffeinate", "npm"},
+			"macOS: runs the utility while holding a power assertion; what follows is a vector"},
+		{`caffeinate -t 60 npm publish`, []string{"caffeinate", "npm"},
+			"the timeout is caffeinate's own argument"},
+		{`script -q /dev/null npm publish`, []string{"script", "npm"},
+			"BSD script: the transcript file comes before the command"},
+		{`script -q -c "npm publish" /dev/null`, []string{"script", "npm"},
+			"util-linux script: -c is a command string, run through the shell"},
 
 		// A mandatory bare word before the command, the same shape as
 		// timeout's duration. Without the positional count the path would be
