@@ -560,6 +560,15 @@ type Check struct {
 	// a load error, mirroring the stray-model/timeout rule. See
 	// dot-dir-file-store/main.tsp Check.allowed_tools.
 	AllowedTools []string `yaml:"allowed_tools"`
+
+	// DisallowedTools are harness permission rules the Judge's agent is DENIED,
+	// threaded to sr-agent's `--disallowed-tools` (claude's own
+	// `--disallowed-tools`). A deny beats every allow, so this is how a rule that
+	// grants a command family — `Bash(curl:*)` — takes back the forms of it the
+	// judge must not use (`Bash(curl * -o *)`). Each entry is one rule in the
+	// harness's own syntax, parentheses and spaces included. Judge-only, like
+	// AllowedTools.
+	DisallowedTools []string `yaml:"disallowed_tools"`
 }
 
 // hasModel reports whether this check sets a judge model override.
@@ -570,6 +579,9 @@ func (c Check) hasTimeout() bool { return c.Timeout != "" }
 
 // hasAllowedTools reports whether this check sets a judge allowed-tools list.
 func (c Check) hasAllowedTools() bool { return len(c.AllowedTools) > 0 }
+
+// hasDisallowedTools reports whether this check sets a judge disallowed-tools list.
+func (c Check) hasDisallowedTools() bool { return len(c.DisallowedTools) > 0 }
 
 // isScript reports whether this check is the script half of the union.
 func (c Check) isScript() bool { return c.Script != "" }

@@ -172,6 +172,9 @@ func reportLoadCheck(cmd *cobra.Command, loaded declaration.Loaded) {
 	if len(loaded.Invalid) > 0 {
 		failed = fmt.Sprintf(", %d could not load (above)", len(loaded.Invalid))
 	}
+	if broken := reportJudgeTemplates(cmd, loaded); broken > 0 {
+		failed += fmt.Sprintf(", %d judge template(s) cannot be rendered (above)", broken)
+	}
 	fmt.Fprintf(cmd.ErrOrStderr(),
 		"sloprail: %d rules loaded%s. This only checked that they load: no rule ran against any file or action.\n",
 		n, failed)

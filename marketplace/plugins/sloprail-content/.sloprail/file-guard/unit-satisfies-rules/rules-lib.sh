@@ -89,3 +89,9 @@ rule_applies() {
   # is the verdict (the top-level expression is truthy -> 0, falsy -> 1),
   # which this function returns as-is.
 }
+
+# LOADED SENTINEL — keep this the LAST line. bash runs a sourced file up to its
+# first syntax error, so a helper can load partly: some functions defined, a
+# later one missing. A caller unsets this, sources, and checks it, which proves
+# the whole file ran.
+rules_lib_loaded=1

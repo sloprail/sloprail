@@ -23,8 +23,13 @@ field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
 
 lib="${SR_GUARDRAIL_DIR:-.}/lib-body.sh"
 [ -f "$lib" ] || exit 0
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version); only its last-line sentinel proves it
+# loaded whole. Not loaded whole is undecidable: apply (exit 0), never waive.
+unset lib_body_loaded
 # shellcheck source=lib-body.sh
 . "$lib"
+[ "${lib_body_loaded:-}" = 1 ] || exit 0
 
 # applies: the write sets the ask. The hint the refusal carries says what to
 # cite and that frontmatter changes need nothing.

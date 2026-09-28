@@ -255,3 +255,39 @@ func TestT042_04_PreparedActionReachesTemplate(t *testing.T) {
 		t.Errorf("the template still carried the previous run's action — the render is not following the trajectory:\n%s", prompt2)
 	}
 }
+
+// T042_05: an action's structured input and a structured proof reach the judge
+// as JSON, every value readable.
+//
+// The judge is asked to check the values the agent supplied against the proof,
+// so a number, a nested object or a content-block array must reach it as the
+// value, not as a Go placeholder (`<float64 Value>`, `<map[string]interface {}
+// Value>`) — which is what printing a map straight into the template gives.
+func TestT042_05_StructuredInputAndProofReachJudgeAsJSON(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installExampleTree(t, proj)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
+
+	shotUse, shotRes := harness.ToolUseWithResult("w2", "screenshot", map[string]string{"target": "contact-form"},
+		`{"content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"PROOFPIXELS"}}],"width":1280}`)
+	e.Run(proj, "s-042-05", "fill the form and prove it with a screenshot", Turns("done",
+		harness.ToolUseJSON("w1", "fill_form", `{"name":"Ada","age":36,"address":{"city":"London"},"tags":["vip"]}`),
+		shotUse,
+		shotRes,
+	))
+
+	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
+	if prompt == "" {
+		t.Fatalf("the judge never ran for the structured fill_form action")
+	}
+	for _, want := range []string{`"age":36`, `"city":"London"`, `"tags":["vip"]`, `"media_type":"image/png"`, `"width":1280`} {
+		if !containsStr(prompt, want) {
+			t.Errorf("the judge prompt does not carry %s as JSON:\n%s", want, prompt)
+		}
+	}
+	if containsStr(prompt, "interface {} Value") || containsStr(prompt, "float64 Value") || containsStr(prompt, "[]interface") {
+		t.Errorf("a structured value reached the judge as a Go placeholder, not its value:\n%s", prompt)
+	}
+}

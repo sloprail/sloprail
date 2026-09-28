@@ -127,8 +127,9 @@ checks:
   # to the stale override. Omitting timeout: lets this check inherit
   # whatever the engine judges to be a reasonable bound going forward,
   # instead of freezing this guard's own guess ahead of it.
-  # allowed_tools: [Read] adds Read on top of the engine-granted Write for the
-  # verdict file (the evidence is already expanded INTO the prompt).
+  # allowed_tools: [Read] adds reads outside the project (the evidence is
+  # already expanded INTO the prompt, and the project itself is readable without
+  # any grant). The verdict file's write is the engine's, not this list's.
   - prepare: ./expand-evidence.sh
     judge: ./review-task.md.j2
     model: size-md
