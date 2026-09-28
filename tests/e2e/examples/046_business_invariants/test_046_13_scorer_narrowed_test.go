@@ -203,3 +203,34 @@ func Refund(charged, amount int, goodwill bool) error {
 		})
 	}
 }
+
+// T046_59: the judge is told "no bypass remains" only when a payout amount was
+// actually compared with the charge. For a Refund that returns only an error, it
+// is told that every refund above the charge is refused — and no more.
+func TestT046_59_NoBypassClaimNeedsAComparedAmount(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go not on PATH")
+	}
+	const errorOnly = `package billing
+
+import "errors"
+
+func Refund(charged, amount int, goodwill bool) error {
+	if amount > charged {
+		return errors.New("refund exceeds the original charge")
+	}
+	if goodwill {
+		_ = amount
+	}
+	return nil
+}
+`
+	t.Run("score", func(t *testing.T) { runScorer(t, "goodwill-refund", errorOnly) })
+	prompt := lastJudgePrompt
+	if strings.Contains(prompt, "no bypass remains") {
+		t.Errorf("the judge was told no bypass remains, though no payout amount was compared:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "only its accept/refuse answer was measured") {
+		t.Errorf("the judge was not told only the accept/refuse answer was measured:\n%s", prompt)
+	}
+}

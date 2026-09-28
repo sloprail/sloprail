@@ -19,6 +19,7 @@ refund_facts() {
   inert="$(printf '%s\n' "$probe" | sed -n 's/^inert=//p')"
   inert="${inert:-unknown}"
   narrowed_by="$(printf '%s\n' "$probe" | sed -n 's/^narrowed_by=//p')"
+  amount_compared="$(printf '%s\n' "$probe" | sed -n 's/^amount_compared=//p')"
   bypass="${bypass:-unknown}"
   narrowed="${narrowed:-unknown}"
 
@@ -30,7 +31,13 @@ refund_facts() {
   # the user the change "respects the invariant" instead of raising the conflict.
   case "$bypass" in
     yes) measured="admits a refund above the original charge — a bypass remains" ;;
-    no) measured="rejects every refund above the original charge, for every flag value — no bypass remains" ;;
+    no)
+      if [ "$amount_compared" = "yes" ]; then
+        measured="rejects every refund above the original charge, for every flag value, and the amount it returns never exceeds the charge — no bypass remains"
+      else
+        measured="rejects every refund above the original charge, for every flag value (it returns no payout amount that could be compared with the charge, so only its accept/refuse answer was measured)"
+      fi
+      ;;
     *) measured="could not be run, so its behaviour is not known" ;;
   esac
   case "$narrowed" in

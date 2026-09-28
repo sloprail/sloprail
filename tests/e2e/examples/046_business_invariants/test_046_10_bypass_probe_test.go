@@ -351,7 +351,8 @@ func Refund(charged, amount int, goodwill bool) (int, error) {
 }
 `, "yes", "no", "no"},
 		// A healthy Refund that returns a refund ID: the number does not track
-		// the amount, so it is not compared with the charge.
+		// the amount, so it is not compared with the charge. It never reads the
+		// flag, and the ID differs call to call, so the flag is ignored.
 		{"returns-a-refund-id", `package billing
 
 import "errors"
@@ -365,7 +366,64 @@ func Refund(charged, amount int, goodwill bool) (int64, error) {
 	nextID++
 	return nextID, nil
 }
-`, "no", "no", "no"},
+`, "no", "no", "yes"},
+		// Returns nothing without goodwill and amount+500 with it: nothing
+		// tracks the amount with the flags off, so tracking is worked out per
+		// flag combination.
+		{"zero-then-amount-plus-500", `package billing
+
+import "errors"
+
+func Refund(charged, amount int, goodwill bool) (int, error) {
+	if amount > charged {
+		return 0, errors.New("refund exceeds the original charge")
+	}
+	if goodwill {
+		return amount + 500, nil
+	}
+	return 0, nil
+}
+`, "yes", "no", "no"},
+		// Refuses a second refund of the same charge: a probe asking about one
+		// charge twice would see the goodwill call refused and miss the bypass.
+		{"refuses-repeat-refunds", `package billing
+
+import "errors"
+
+var refunded = map[int]bool{}
+
+func Refund(charged, amount int, goodwill bool) error {
+	if refunded[charged] {
+		return errors.New("already refunded")
+	}
+	limit := charged
+	if goodwill {
+		limit += 500
+	}
+	if amount > limit {
+		return errors.New("refund exceeds the limit")
+	}
+	refunded[charged] = true
+	return nil
+}
+`, "yes", "no", "no"},
+		// Returns a random token beside its verdict and never reads the flag:
+		// the token differs call to call, and is set aside when judging whether
+		// the flag changes anything.
+		{"random-in-the-result", `package billing
+
+import (
+	"errors"
+	"math/rand"
+)
+
+func Refund(charged, amount int, goodwill bool) (int64, error) {
+	if amount > charged {
+		return rand.Int63(), errors.New("refund exceeds the original charge")
+	}
+	return rand.Int63(), nil
+}
+`, "no", "no", "yes"},
 		{"seed-signature", `package billing
 
 func Refund(charged, amount int) bool { return amount <= charged }
@@ -381,6 +439,15 @@ func Refund(charged, amount int) bool { return amount <= charged }
 			}
 			if got := probeAnswer(out, "inert"); got != c.inert {
 				t.Errorf("inert=%s, want %s", got, c.inert)
+			}
+			// A payout amount was compared with the charge only where Refund
+			// returns one that tracks the amount asked for.
+			wantCompared := map[string]string{"returned-amount-bypass": "yes", "zero-then-amount-plus-500": "yes"}[c.name]
+			if wantCompared == "" {
+				wantCompared = "no"
+			}
+			if got := probeAnswer(out, "amount_compared"); got != wantCompared {
+				t.Errorf("amount_compared=%s, want %s", got, wantCompared)
 			}
 		})
 	}
