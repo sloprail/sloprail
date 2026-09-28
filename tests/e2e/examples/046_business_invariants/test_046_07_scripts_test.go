@@ -262,3 +262,35 @@ func TestT046_53_PinnedMockMissingSaysRunMakeMock(t *testing.T) {
 		t.Errorf("stamp present: %q, want none", msg)
 	}
 }
+
+// T046_57: under CI a missing mock fails the test instead of skipping it, so a
+// job without the mock cannot pass by running nothing.
+func TestT046_57_MissingMockFailsUnderCI(t *testing.T) {
+	ciRec := &recordingTB{}
+	func() {
+		defer func() { recover() }()
+		missingMock(ciRec, "true", "no mock")
+	}()
+	if !ciRec.fatal || ciRec.skipped {
+		t.Errorf("CI set: fatal=%v skipped=%v, want a failure", ciRec.fatal, ciRec.skipped)
+	}
+	devRec := &recordingTB{}
+	func() {
+		defer func() { recover() }()
+		missingMock(devRec, "", "no mock")
+	}()
+	if !devRec.skipped || devRec.fatal {
+		t.Errorf("CI unset: fatal=%v skipped=%v, want a skip", devRec.fatal, devRec.skipped)
+	}
+}
+
+// recordingTB records Fatal and Skip instead of ending a test; each panics to
+// stop the caller, as the real ones stop the goroutine.
+type recordingTB struct {
+	testing.TB
+	fatal, skipped bool
+}
+
+func (r *recordingTB) Helper()           {}
+func (r *recordingTB) Fatal(args ...any) { r.fatal = true; panic("fatal") }
+func (r *recordingTB) Skip(args ...any)  { r.skipped = true; panic("skip") }

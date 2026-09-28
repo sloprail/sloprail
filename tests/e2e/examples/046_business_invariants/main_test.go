@@ -31,14 +31,24 @@ var (
 // drives the session differently (no CLAUDE_CODE_SESSION_ID, so sr-file cannot
 // find the session) — the tests then fail for a reason that is not theirs. With
 // A10N_CLAUDE_MOCK unset and no .bin/ stamp for tests/e2e/harness/MOCK_VERSION,
-// every test here that drives the mock is skipped with the fix. CI runs
-// `make mock` and checks .bin/ itself, so it never takes this skip.
+// every test here that drives the mock is skipped with the fix — except under CI,
+// where a missing mock is a broken job, not a laptop without `make mock`, and
+// fails instead (CI also checks .bin/ itself before the tests).
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	if msg := pinnedMockMissing(repoRoot(t), os.Getenv("A10N_CLAUDE_MOCK")); msg != "" {
-		t.Skip(msg)
+		missingMock(t, os.Getenv("CI"), msg)
 	}
 	return harness.New(t)
+}
+
+// missingMock skips (a developer's machine) or fails (CI set) for a missing mock.
+func missingMock(t testing.TB, ci, msg string) {
+	t.Helper()
+	if ci != "" {
+		t.Fatal(msg + " (CI is set: a missing mock fails rather than skips)")
+	}
+	t.Skip(msg)
 }
 
 // pinnedMockMissing says why the pinned mock is not installed, or "" when it is

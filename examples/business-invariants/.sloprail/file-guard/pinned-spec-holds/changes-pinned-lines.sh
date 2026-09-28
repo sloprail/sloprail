@@ -110,6 +110,7 @@ case "$kind" in *Delete) new="" new_fqns="" ;; esac
 # hold the path: `git mv SPEC.md SPEC.old` is not seen as a delete, and the Write
 # that follows is a create of a file HEAD still has.
 had_old=1
+emptied=""
 case "$kind" in
   *Create)
     old=""
@@ -125,6 +126,7 @@ case "$kind" in
     # least what HEAD holds, so an empty oldContent is read from HEAD instead.
     if [ -z "$old" ] && [ "$has_head" = 1 ]; then
       old="$(git -C "$workspace" cat-file blob "HEAD:$npath" 2>/dev/null)"
+      [ -n "$old" ] && emptied=1
     fi
     ;;
 esac
@@ -376,6 +378,10 @@ fi
 
 # It applies. The hint the refusal carries: a pinned rule is the user's decision.
 what=""
-[ -n "$changed" ] && what="This change rewrites $path $changed, which code in this project pins as a business rule. "
+if [ -n "$changed" ] && [ -n "$emptied" ]; then
+  what="This change deletes $path, which was emptied before the delete (or not read by the engine): at HEAD it holds $changed, which code in this project pins as a business rule. "
+elif [ -n "$changed" ]; then
+  what="This change rewrites $path $changed, which code in this project pins as a business rule. "
+fi
 [ -n "$moved" ] && what="${what}This change moves $path off the spec wording its sr:invariant pin $moved named (the pin is removed, or re-pinned to different text), so the code would stop answering to that rule as written. To move marked code rather than drop its pin, write it with its marker in the new place first, then remove it here. "
 apply "${what% }"

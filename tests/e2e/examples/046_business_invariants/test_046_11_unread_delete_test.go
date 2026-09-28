@@ -46,6 +46,13 @@ func unreadDelete(path string) string {
 // T046_40: pinned-spec-holds' predicate applies the citation to an unread delete
 // of a pinned spec, and of a file HEAD shows carrying a pin; it still waives an
 // unread delete of a file nothing pins and that carries no pin.
+//
+// The marked-file case is the predicate's answer, not something the engine asks
+// before the write: the guard's match (a spec path, or any(markers|oldMarkers,
+// …)) cannot select a marked file whose unread delete carries no oldMarkers, so
+// that delete is caught only at Stop, when the baseline's markers arrive. #84
+// filling oldMarkers from HEAD for an unread delete would let the match select
+// it before the write.
 func TestT046_40_UnreadDeleteOfAPinnedFileApplies(t *testing.T) {
 	repo, _ := unreadDeleteRepo(t)
 	writeExec(t, repo, "notes.md", "nothing pinned here\n")
@@ -55,6 +62,11 @@ func TestT046_40_UnreadDeleteOfAPinnedFileApplies(t *testing.T) {
 		if out, code := runRuleScript(t, dir, "changes-pinned-lines.sh", repo, unreadDelete(path)); code != 0 {
 			t.Errorf("an unread delete of %s was waived (exit %d): %s", path, code, out)
 		}
+	}
+	// The hint says what happened: the spec was emptied (or not read) before the
+	// delete — not that the delete "rewrites" lines it never saw.
+	if out, _ := runRuleScript(t, dir, "changes-pinned-lines.sh", repo, unreadDelete("SPEC.md")); !strings.Contains(out, "which was emptied before the delete") {
+		t.Errorf("the hint for an emptied-then-deleted spec does not say so: %s", out)
 	}
 	if out, code := runRuleScript(t, dir, "changes-pinned-lines.sh", repo, unreadDelete("notes.md")); code != 1 {
 		t.Errorf("an unread delete of a file nothing pins was not waived (exit %d): %s", code, out)
