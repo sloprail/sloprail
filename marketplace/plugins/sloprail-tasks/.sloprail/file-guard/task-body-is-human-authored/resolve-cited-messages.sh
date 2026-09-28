@@ -33,8 +33,16 @@ if [ ! -f "$lib" ]; then
   echo "task-body-is-human-authored: lib-body.sh not found at $lib, so the cited messages could not be assembled" >&2
   exit 1
 fi
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version); only its last-line sentinel proves it
+# loaded whole.
+unset lib_body_loaded
 # shellcheck source=lib-body.sh
 . "$lib"
+if [ "${lib_body_loaded:-}" != 1 ]; then
+  echo "task-body-is-human-authored: lib-body.sh did not load whole (its last-line sentinel lib_body_loaded is unset), so the cited messages could not be assembled" >&2
+  exit 1
+fi
 
 # The same kind dispatch as stage 1, so the two never disagree about which bytes
 # are the body. resultKnown is consulted on both Pre kinds before newContent is read.

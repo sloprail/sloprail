@@ -20,7 +20,7 @@ judge, not a command.
 - Inputs the agent supplied, inside <action_input>:
 
 <action_input>
-{{ additionalContext.action_input }}
+{{ additionalContext.action_input | tojson }}
 </action_input>
 
 ## The proof supplied
@@ -29,7 +29,7 @@ judge, not a command.
 The screenshot tool's output, inside <proof>:
 
 <proof>
-{{ additionalContext.proof }}
+{{ additionalContext.proof | tojson }}
 </proof>
 {% else %}
 **No proof artifact was found.** The action happened but no screenshot

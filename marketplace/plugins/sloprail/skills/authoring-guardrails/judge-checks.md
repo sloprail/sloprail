@@ -55,7 +55,22 @@ overwrite `event` or `transcriptPath` (it renders only under the single
 
 Every value renders escaped: the engine breaks `</` to `<\/`, so a value cannot
 close the tag it sits in, and changes nothing else. `| raw` undoes it for a value
-meant as markup. A rule grounded in citations judges `change` against them —
+meant as markup. A value inside a tag's quoted attribute (`path="{{ event.path }}"`)
+also has its quotes and `&` escaped, so it cannot end the attribute and add one of
+its own; the engine sees the attribute and does this itself (a template cannot name
+that filter), and `| raw` does not undo it there. Always quote an attribute value: an unquoted one (`path={{ event.path }}`)
+is not an attribute value to the engine and is not escaped. A `{% raw %}` block is
+literal output and is left as written. A non-string value — a map or list a
+`prepare` handed over as JSON — renders `| tojson`
+(`{{ additionalContext.action_input | tojson }}`): printed bare, its numbers and
+nested values come out as Go placeholders the judge cannot read. The engine's
+`tojson` keeps `&`, `<` and `>` as written and breaks only `</` (as JSON's own
+`<\/`), so the value reads back exactly. Wrap a value in a named tag, never a
+markdown code fence: a value with a fence line of its own would close it. A filter
+name the engine does not have (a typo like `| uppper`) is not rendered as garbage:
+the judge refuses, naming the template and the filter, and the load check
+(`sr-session start < /dev/null`) reports it before any rule runs.
+A rule grounded in citations judges `change` against them —
 [grounding.md](grounding.md).
 
 The template is **just the rubric and the material** — it does not tell the model

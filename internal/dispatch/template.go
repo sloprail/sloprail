@@ -1,12 +1,15 @@
 package dispatch
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/aisbergg/gonja/pkg/gonja"
+	"github.com/aisbergg/gonja/pkg/gonja/errors"
 	"github.com/aisbergg/gonja/pkg/gonja/exec"
 )
 
@@ -89,6 +92,27 @@ var renderTimeout = 5 * time.Second
 // the tags do not already give. `| raw` restores a value a template means to
 // embed as markup; `| e` (and `| escape`) is the same cheap escape, a no-op on an
 // already-escaped value.
+//
+// # A value inside a tag's quoted attribute is attribute-escaped too
+//
+// `<file path="{{ event.path }}">` puts a value between quotes, where `</` is not
+// the danger — a `"` is: `x" evil="1` would end the attribute and add one of its
+// own. So before rendering, every `{{ … }}` that sits inside a quoted attribute
+// value of a tag is wrapped in the `attrescape` filter, which escapes `&`, `"`
+// and `'` (on top of the `</` break every value already had). This is contextual, like
+// html/template: the same value in a tag's BODY keeps its quotes (a diff full of
+// `&#34;` is harder to judge), and a template author writes nothing extra — the
+// context decides, so no template can forget it. templateattr.go holds the scan.
+//
+// # Non-string values render `| tojson`
+//
+// A map or list printed straight into a template comes out in gonja's Python-ish
+// form, with nested values as Go placeholders (`<float64 Value>`), so a judge
+// cannot read them. A template that shows one renders it `| tojson`. This engine's
+// tojson (toJSON, below) keeps `&`, `<` and `>` as they are — no `\u0026` for the
+// judge to decode — and breaks `</` only in the JSON text it produces, as `<\/`,
+// which JSON reads back as `</`: the value round-trips, and still cannot close
+// the tag it sits in.
 
 // escapeClose breaks every closing-tag opener in s.
 func escapeClose(s string) string { return strings.ReplaceAll(s, "</", "<\\/") }
@@ -134,7 +158,14 @@ func renderTemplate(src string, vars map[string]any) (string, error) {
 	done := make(chan result, 1)
 	escaped, _ := escapeStrings(vars).(map[string]any)
 	go func() {
-		out, err := renderGonja(src, escaped)
+		// A panic while rendering — gonja's unknown test is one, and its value
+		// panics again when printed — is a render error, not a dead process.
+		defer func() {
+			if r := recover(); r != nil {
+				done <- result{"", fmt.Errorf("template: render: %s", panicText(r))}
+			}
+		}()
+		out, err := renderJudgeTemplate(src, escaped)
 		done <- result{out, err}
 	}()
 
@@ -153,10 +184,45 @@ func cheapEscape(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Va
 	return e.ValueFactory.Value(escapeClose(in.String()))
 }
 
-// renderGonja is the actual gonja render: a fresh environment, the two registered
+// renderJudgeTemplate renders a judge's template with its attribute values
+// escaped (escapeAttributeValues). The author's template is checked AS WRITTEN
+// first (CheckTemplate), so one that does not parse, or names a filter this
+// engine does not have, is reported in its own terms — its own positions,
+// nothing the engine injected — and only a template that passes is rewritten and
+// rendered. A runtime error is reported from the template as written too.
+func renderJudgeTemplate(src string, vars map[string]any) (string, error) {
+	if err := CheckTemplate(src); err != nil {
+		return "", err
+	}
+	out, err := renderGonja(escapeAttributeValues(src), vars)
+	if err != nil {
+		// A runtime error does not depend on the rewrite, but its position does:
+		// the author's own template, rendered as written (output discarded),
+		// reports it where the author wrote it.
+		if _, asWritten := renderGonja(src, vars); asWritten != nil {
+			return "", asWritten
+		}
+	}
+	return out, err
+}
+
+// renderGonja is the actual gonja render: a fresh environment, the registered
 // filters, parse, execute. Split out so renderTemplate can run it under a
 // watchdog without the timeout machinery obscuring the mirror of a10n's jinja.go.
 func renderGonja(src string, vars map[string]any) (string, error) {
+	tpl, err := newTemplateEnv().FromString(src)
+	if err != nil {
+		return "", fmt.Errorf("template: parse: %w", err)
+	}
+	out, err := tpl.Execute(vars)
+	if err != nil {
+		return "", fmt.Errorf("template: render: %w", err)
+	}
+	return out, nil
+}
+
+// newTemplateEnv is a fresh gonja environment with this engine's filters.
+func newTemplateEnv() *gonja.Environment {
 	env := gonja.NewEnvironment()
 	// This gonja fork ships no string `.split`, slicing, or `dirname`, so a
 	// template cannot derive a path's directory on its own. Register the same two
@@ -165,8 +231,10 @@ func renderGonja(src string, vars map[string]any) (string, error) {
 	//   {{ some_path | dirname }}   -> the directory of a path
 	//   {{ "e2e.TestFoo" | funcname }} -> "TestFoo"
 	env.Filters.Update(exec.FilterSet{
-		"e":      cheapEscape,
-		"escape": cheapEscape,
+		"e":          cheapEscape,
+		"escape":     cheapEscape,
+		"attrescape": attrEscape,
+		"tojson":     toJSON,
 		"raw": func(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
 			return e.ValueFactory.Value(strings.ReplaceAll(in.String(), "<\\/", "</"))
 		},
@@ -181,13 +249,52 @@ func renderGonja(src string, vars map[string]any) (string, error) {
 			return e.ValueFactory.Value(s)
 		},
 	})
-	tpl, err := env.FromString(src)
-	if err != nil {
-		return "", fmt.Errorf("template: parse: %w", err)
+	raiseFilterErrors(env.Filters)
+	return env
+}
+
+// toJSON is `| tojson` (gonja's `indent` keyword kept). The value is marshalled
+// as it arrived — its `<\/` breaks undone first — without HTML escaping, so `&`,
+// `<` and `>` reach the judge as themselves; then `</` is broken in the JSON
+// TEXT, where `<\/` is a legal escape that decodes back to `</`. The value
+// round-trips through json.Unmarshal and still cannot close the tag around it.
+func toJSON(e *exec.Evaluator, in exec.Value, params *exec.VarArgs) exec.Value {
+	p := params.Expect(0, []*exec.Kwarg{{Name: "indent", Default: nil}})
+	if p.IsError() {
+		errors.ThrowFilterArgumentError("tojson(indent=nil)", p.Error())
 	}
-	out, err := tpl.Execute(vars)
-	if err != nil {
-		return "", fmt.Errorf("template: render: %w", err)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if indent := p.GetKwarg("indent"); !indent.IsNil() {
+		if !indent.IsInteger() {
+			errors.ThrowFilterArgumentError("tojson(indent=nil)", "expected an integer for 'indent', got '%s'", indent.String())
+		}
+		enc.SetIndent("", strings.Repeat(" ", indent.Integer()))
 	}
-	return out, nil
+	if err := enc.Encode(unescapeClose(in.Interface())); err != nil {
+		errors.ThrowFilterArgumentError("tojson(indent=nil)", "unable to marshal to json: %s", err.Error())
+	}
+	return e.ValueFactory.SafeValue(escapeClose(strings.TrimSuffix(buf.String(), "\n")))
+}
+
+// unescapeClose undoes escapeStrings: every `<\/` in a string inside v back to `</`.
+func unescapeClose(v any) any {
+	switch t := v.(type) {
+	case string:
+		return strings.ReplaceAll(t, "<\\/", "</")
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, x := range t {
+			out[k] = unescapeClose(x)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = unescapeClose(x)
+		}
+		return out
+	}
+	return v
 }

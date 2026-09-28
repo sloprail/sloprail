@@ -65,8 +65,16 @@ if [ ! -f "$lib" ]; then
   echo "task-review: cite-links.sh not found at $lib, so the evidence could not be assembled" >&2
   exit 1
 fi
+# A helper stopped by a syntax error runs only up to it (whether the `.` then
+# fails depends on the bash version); only its last-line sentinel proves it
+# loaded whole.
+unset cite_links_loaded
 # shellcheck source=../task-evidence-resolves/cite-links.sh
 . "$lib"
+if [ "${cite_links_loaded:-}" != 1 ]; then
+  echo "task-review: cite-links.sh did not load whole (its last-line sentinel cite_links_loaded is unset), so the evidence could not be assembled" >&2
+  exit 1
+fi
 
 # The schema is the PLUGIN's, read from the plugin's own tree — see
 # task-evidence-resolves/check-task.sh for why it is never a consumer-side copy.
