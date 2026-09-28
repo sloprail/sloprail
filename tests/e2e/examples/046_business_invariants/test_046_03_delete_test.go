@@ -20,7 +20,8 @@ import "testing"
 // This proves the fix: seed a file with a STALE pin (HEAD has moved past what
 // the marker pins to — the same drift T046_02 proves the script catches on a
 // create) directly on disk AND commit it, BEFORE the session starts — so the
-// file is present at the session's baseline — then DELETE it via Bash.
+// file is present at the session's baseline — then DELETE it via Bash
+// (`sr-file delete`, citing the user, since the delete drops the file's pin).
 // filemod's observed-phase classify() only reports a PostFileDelete for a path
 // that existed at baseline and is gone now (internal/filemod/observed.go's
 // classify table), and "the baseline" is read from GIT, not merely the disk
@@ -46,10 +47,17 @@ func TestT046_10_DeletingStalePinnedFileStillBlocksAtStop(t *testing.T) {
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "seed src/charge.go")
 
+	// The delete cites the user's words: removing the file removes its pin, which
+	// pinned-spec-holds refuses without them (T046_16). Cited, the delete lands,
+	// and what is tested here is what pinned-invariant makes of it.
+	const ask = "delete the invariant-pinned file"
 	sess := "s-046-10"
-	e.Run(proj, sess, "delete the invariant-pinned file", Turns("done",
-		Bash("b1", "rm src/charge.go"),
+	e.Run(proj, sess, ask, Turns("done",
+		Bash("b1", "sr-file delete src/charge.go --cite:user '"+ask+"'"),
 	))
+	if e.Exists(proj, "src/charge.go") {
+		t.Fatalf("the cited delete did not land, so there is no delete for pinned-invariant to judge")
+	}
 
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
 	if len(blocks) == 0 {

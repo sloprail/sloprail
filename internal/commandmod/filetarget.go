@@ -214,6 +214,12 @@ func fileTargetsAt(raw string, depth int) (targets []FileTarget) {
 			targets = append(targets, resolveAgainst(fromRedirs(cfg, node), stmtAt(cwds, stmt))...)
 		case *syntax.CallExpr:
 			targets = append(targets, resolveAgainst(fromCall(cfg, node, depth, stmtHdoc(stmt)), stmtAt(cwds, stmt))...)
+			// `eval 'echo x >> NOTES.md'` writes NOTES.md in this shell: a
+			// literal eval payload names files the way `sh -c`'s does, and is
+			// re-parsed the same way (see evalPayloadText).
+			if text, isEval, ok := evalPayloadText(cfg, node); isEval && ok && depth < maxUnwrapDepth {
+				targets = append(targets, resolveAgainst(fileTargetsAt(text, depth+1), stmtAt(cwds, stmt))...)
+			}
 		}
 		return true
 	})

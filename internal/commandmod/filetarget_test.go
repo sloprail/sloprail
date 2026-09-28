@@ -693,3 +693,42 @@ func TestFileTargets_DirectoryFlagsOnUnmodelledBinariesStayUnmodelled(t *testing
 	check(t, "make -C /elsewhere build", "(nothing)")
 	check(t, "npm --prefix /elsewhere run build", "(nothing)")
 }
+
+// TestFileTargets_AChdirWrapperMovesItsTargets: `env -C DIR` and `sudo -D DIR`
+// run what they wrap in DIR, so its relative targets are there — the same
+// directory Invocation.Cwd reports for the program (wrapperChdir). Before,
+// `env -C /tmp tee NOTES.md` was reported as the project's NOTES.md (a false
+// hold) and `cd /tmp && env -C /proj tee NOTES.md` as /tmp/NOTES.md (a missed
+// write of /proj/NOTES.md).
+func TestFileTargets_AChdirWrapperMovesItsTargets(t *testing.T) {
+	check(t, `env -C /tmp tee NOTES.md`, "write:/tmp/NOTES.md")
+	check(t, `env --chdir=/tmp tee NOTES.md`, "write:/tmp/NOTES.md")
+	check(t, `env --chdir /tmp rm a.md`, "remove:/tmp/a.md")
+	check(t, `cd /tmp && env -C /proj tee NOTES.md`, "write:/proj/NOTES.md")
+	check(t, `cd /w && env -C sub tee NOTES.md`, "write:/w/sub/NOTES.md")
+	check(t, `sudo -D /srv rm a.md`, "remove:/srv/a.md")
+	check(t, `sudo --chdir=/srv tee a.md`, "write:/srv/a.md")
+	check(t, `env -C /tmp sh -c 'echo x > a.md'`, "write:/tmp/a.md")
+	// An absolute target is where it says, wherever the wrapper moved.
+	check(t, `env -C /tmp tee /abs/a.md`, "write:/abs/a.md")
+	// A directory from a variable is unknown: a relative target under it is
+	// not guessed at, as after `cd "$D"`.
+	check(t, `env -C "$D" tee NOTES.md`, "(nothing)")
+	check(t, `env -C"$D" tee NOTES.md`, "(nothing)")
+	// No chdir, no move.
+	check(t, `env FOO=1 tee NOTES.md`, "write:NOTES.md")
+}
+
+// TestFileTargets_RsyncCopiesLikeCp: rsync was not a known writer, so `rsync
+// draft.md NOTES.md` rewrote NOTES.md unseen by every file guard.
+func TestFileTargets_RsyncCopiesLikeCp(t *testing.T) {
+	check(t, `rsync draft.md NOTES.md`, "write:NOTES.md")
+	check(t, `rsync -av --exclude '*.tmp' draft.md NOTES.md`, "write:NOTES.md")
+	check(t, `rsync -e ssh draft.md NOTES.md`, "write:NOTES.md")
+	// A remote side is not a file in this tree.
+	check(t, `rsync draft.md host:NOTES.md`, "(nothing)")
+	check(t, `rsync user@host:draft.md NOTES.md`, "(nothing)")
+	check(t, `rsync rsync://host/mod/draft.md NOTES.md`, "(nothing)")
+	// One operand copies nothing.
+	check(t, `rsync -av src/`, "(nothing)")
+}

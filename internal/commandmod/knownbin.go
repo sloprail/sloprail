@@ -1,6 +1,7 @@
 package commandmod
 
 import (
+	"path"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/grounding"
@@ -143,6 +144,25 @@ var knownBins = map[string]binSpec{
 		ops := operandsSkipping(argv, map[string]bool{"-S": true, "--suffix": true})
 		if len(ops) < 2 {
 			return nil
+		}
+		return copyTargets(ops)
+	},
+	// rsync copies like cp: sources, then the destination last. It was not in
+	// the table, so `rsync draft.md NOTES.md` wrote NOTES.md unseen by every
+	// file guard. A remote side (`host:path`, `rsync://…`) is not a file in
+	// this tree: a line with a remote DESTINATION writes nothing here, and a
+	// remote source is not a copy reference whose bytes can be read, so such
+	// lines are declined rather than half-read. Options that take a separated
+	// value are skipped so the value is not read as an operand.
+	"rsync": func(argv []string) []FileTarget {
+		ops := operandsSkipping(argv, rsyncValued)
+		if len(ops) < 2 {
+			return nil
+		}
+		for _, op := range ops {
+			if isRemoteSpec(op) {
+				return nil
+			}
 		}
 		return copyTargets(ops)
 	},
@@ -938,7 +958,21 @@ func targetsForArgv(argv []string, depth int, stdin Payload) []FileTarget {
 		// The heredoc travels with it: `sudo tee f.md <<'EOF'` attaches the
 		// document to the outer statement, and the wrapper is transparent to
 		// what the inner program does with its stdin.
-		targets = append(targets, targetsForArgv(values(nested), depth, stdin)...)
+		//
+		// A wrapper that changes directory (`env -C /tmp tee NOTES.md`) puts
+		// what it wraps there — the same wrapperChdir Invocation.Cwd uses, so
+		// the two halves agree. A directory that is not a literal word is
+		// unknown, and a relative target under it is dropped rather than
+		// guessed, as after `cd "$D"`.
+		inner := targetsForArgv(values(nested), depth, stdin)
+		if dir, known, moves := wrapperChdir(asWords(argv[:len(argv)-len(nested)])); moves {
+			at := cwd{unknown: true}
+			if known {
+				at = cwd{dir: path.Clean(dir)}
+			}
+			inner = resolveAgainst(inner, at)
+		}
+		targets = append(targets, inner...)
 	}
 	// The infix form — `find . -exec rm notes.md \;` — for the same reason the
 	// payload branch below exists: without it the two halves of this package
@@ -1020,4 +1054,36 @@ func asWords(argv []string) []word {
 		out = append(out, word{value: v, literal: v != ""})
 	}
 	return out
+}
+
+// rsyncValued are rsync's options that take a separated value (`-e ssh`,
+// `--exclude '*.tmp'`); the value is not an operand.
+var rsyncValued = map[string]bool{
+	"-e": true, "--rsh": true, "-f": true, "--filter": true, "-T": true, "--temp-dir": true,
+	"-B": true, "--block-size": true, "-M": true, "--remote-option": true,
+	"--exclude": true, "--include": true, "--exclude-from": true, "--include-from": true,
+	"--files-from": true, "--backup-dir": true, "--suffix": true, "--chmod": true, "--chown": true,
+	"--usermap": true, "--groupmap": true, "--log-file": true, "--log-file-format": true,
+	"--partial-dir": true, "--compare-dest": true, "--copy-dest": true, "--link-dest": true,
+	"--timeout": true, "--contimeout": true, "--port": true, "--bwlimit": true,
+	"--max-size": true, "--min-size": true, "--max-delete": true, "--modify-window": true,
+	"--rsync-path": true, "--out-format": true, "--password-file": true, "--info": true,
+	"--debug": true, "--iconv": true, "--skip-compress": true, "--checksum-choice": true,
+	"--compress-choice": true, "--compress-level": true, "--sockopts": true, "--address": true,
+	"--write-batch": true, "--only-write-batch": true, "--read-batch": true, "--protocol": true,
+	"--stop-after": true, "--stop-at": true,
+}
+
+// isRemoteSpec reports whether an rsync operand names another host:
+// `rsync://…`, or `host:path` / `user@host:path` — a colon before any slash.
+func isRemoteSpec(op string) bool {
+	if strings.HasPrefix(op, "rsync://") {
+		return true
+	}
+	colon := strings.Index(op, ":")
+	if colon <= 0 {
+		return false
+	}
+	slash := strings.Index(op, "/")
+	return slash < 0 || colon < slash
 }
