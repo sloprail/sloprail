@@ -16,8 +16,6 @@ import UseCase from '../../_components/UseCase.astro';
   `?raw` imports (never copied inline). docs/ and examples/ are siblings.
 */}
 import fileGuardYaml from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/file-guard.yaml?raw';
-import hasRefSh      from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/has-message-reference.sh?raw';
-import resolveSh     from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/resolve-referenced-message.sh?raw';
 import judgeJ2       from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/reference-is-true-and-only-this.md.j2?raw';
 
 ## The failure
@@ -39,11 +37,17 @@ can't be rewritten into something the user never said.
 
 <Steps>
 
-1. A script confirms the ask carries a reference to the message it came from —
-   no reference, no valid ask.
+1. Every write to `ASK.md` must carry a citation of the user's own words —
+   `sr-file write|edit ASK.md --cite:user '<their exact words>' …`. The engine
+   resolves the quote against the session's own record before a byte is
+   written; a write that carries none that resolves (a plain Write/Edit tool
+   call, a shell redirect, a quote the user never said) is refused before any
+   check runs.
 
-2. That referenced message is resolved, and a judge rules that the ask is true to
-   it and describes only that message — not a narrowed rewrite.
+2. A judge reads the resolved citations straight off the event — each cited
+   quote, the whole message it was taken from — beside the change to `ASK.md`,
+   and rules that the ask is true to those words and describes only them, not
+   a narrowed rewrite.
 
 </Steps>
 
@@ -62,19 +66,18 @@ names:
   - file-guard/
     - ask-is-human-authored/
       - file-guard.yaml
-      - has-message-reference.sh
-      - resolve-referenced-message.sh
       - reference-is-true-and-only-this.md.j2
 
 </FileTree>
 
 ### file-guard
 
-Matches the task ask file and runs preventively. The script gates the judge: the
-reference must exist, then the resolved message is handed to the model, which
-rules that the ask is faithful to it and scoped to only it.
+Matches the task ask file and runs preventively. A native `require: citation`
+prerequisite refuses any write to `ASK.md` that doesn't cite the user's own
+words — checked deterministically, no model involved — before the judge ever
+runs. Only once a citation resolves does the judge see the change: it reads the
+cited words straight off the event and rules that the ask is faithful to them
+and scoped to only them.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/ask-is-human-authored/file-guard.yaml" />
-<Code code={hasRefSh} lang="bash" title=".sloprail/file-guard/ask-is-human-authored/has-message-reference.sh" />
-<Code code={resolveSh} lang="bash" title=".sloprail/file-guard/ask-is-human-authored/resolve-referenced-message.sh" />
 <Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/ask-is-human-authored/reference-is-true-and-only-this.md.j2" />
