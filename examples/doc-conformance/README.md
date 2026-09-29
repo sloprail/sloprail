@@ -1,5 +1,23 @@
 # doc-conformance (file-guard)
 
+Code that emulates something documented carries a marker naming the doc
+section it follows, and a judge checks each change still matches what that
+doc says now.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/doc-conformance/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then change marked code so it drifts from the doc it claims to follow, and
+confirm you see the refusal below.
+
 ## The rule
 
 A mock or emulator must follow the same contract as the real thing. Code that

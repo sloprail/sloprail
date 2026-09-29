@@ -1,5 +1,23 @@
 # required-context-precondition (gate)
 
+Before touching an artifact of a given kind, the agent must have actually
+loaded the required context first — a skill, doc, or rulebook — checked
+against the real session record, not a claim.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/required-context-precondition/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then touch the guarded artifact without loading the required context first,
+and confirm you see the refusal below.
+
 ## The rule
 
 Before touching an artifact of a given kind, the required context must have

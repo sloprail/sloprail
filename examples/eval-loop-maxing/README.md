@@ -2,6 +2,24 @@
 
 **Nature:** goal (composite) + context + gate
 
+A self-improving loop needs proof its measurement actually happened, was
+recorded, and was computed deterministically — and that the agent doesn't
+stop while its target is still unmet.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/eval-loop-maxing/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then try to stop the loop before the target is met, and confirm you see the
+refusal below.
+
 ## The rule
 
 A self-improving loop (modify → measure → repeat until a metric target is

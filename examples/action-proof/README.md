@@ -1,5 +1,22 @@
 # action-proof (gate)
 
+Automation must carry proof of the action it took — a screenshot showing the
+form was filled or the download happened, not just a claim that it did.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/action-proof/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then try an automated action with no proof attached, and confirm you see the
+refusal below.
+
 ## The rule
 
 Automation must carry PROOF of the action it took. Filling a contact form,

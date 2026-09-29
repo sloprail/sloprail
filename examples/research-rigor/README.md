@@ -2,6 +2,24 @@
 
 **Natures:** context + gate
 
+Research declared with `#research` must read real prior art — cloning a
+repository and reading at least two of its source files, not just its
+README — or the run is refused at Stop.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/research-rigor/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then declare `#research`, skim only a README, and confirm you see the
+refusal below.
+
 ## The rule
 
 Research declared with `#research` must read real prior art, not skim it: the
