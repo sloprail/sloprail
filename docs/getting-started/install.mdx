@@ -51,17 +51,24 @@ or, with Go, `go install ./services/...` from a checkout of
 binaries are missing the next file write is refused with the install command,
 never silently let through.
 
+A missing binary does **not**, however, block a plain shell command — a
+`git commit` guarded only by a gate on `Bash` goes through silently if
+`sr-session` can't be found, since there is no file write for that check to
+attach to. Confirm the install actually worked (see below) before you rely on
+a guardrail whose action runs through `Bash` rather than a file write.
+
 ## Verify it worked
 
 ```bash
-sr-session start < /dev/null
+sr-session --version
 ```
 
-should print the load check with no errors. If you skipped step 1 or
-`~/.local/bin` isn't on `$PATH`, the very next tool call in your agent will say
-so loudly — sloprail never fails silently on a missing install; the guarded
-action is blocked with the install command repeated until it can find
-`sr-session`.
+should print a version, not a "command not found" error. If you skipped step
+1 or `~/.local/bin` isn't on `$PATH`, this is how you find out — check it
+before trying a guardrail, especially one that guards a `Bash` command rather
+than a file write. Once it prints a version, a file-write guardrail's own
+missing-binary refusal (the install command, repeated until it can find
+`sr-session`) is the fallback safety net, not the first check.
 
 ## Next
 

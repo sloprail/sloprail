@@ -1,5 +1,23 @@
 # task-management (file-guard)
 
+An agent may append a result to a task; it may never edit the ask itself to
+match the work — every change to the ask must cite the human message that
+authorized it.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/task-management/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then edit a task's ask without citing the message that authorized it, and
+confirm you see the refusal below.
+
 ## The rule
 
 An agent may append a result to a task; it may never edit the ask to match the

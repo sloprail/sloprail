@@ -2,6 +2,24 @@
 
 **Natures:** context + gate + file-guard
 
+A refactor must be mechanical, not regenerated: the agent declares the scope
+of moves upfront, and every declared move must land and reconcile
+byte-identically against its origin before the turn can end.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/deterministic-refactoring-mode/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then declare a refactor, leave a move unfinished, and confirm you see the
+refusal below.
+
 ## The rule
 
 A refactor — splitting one file into several, moving a function between files

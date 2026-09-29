@@ -1,5 +1,23 @@
 # no-unasked-commit (gate)
 
+`git commit` and `git push` must not run unless the user's own **latest**
+message actually asks for it — citing an older message from earlier in the
+session, even a real one, does not authorize a commit or push now.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/no-unasked-commit/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then try an uncited `git commit` in a project with the rule installed, and
+confirm you see the refusal below.
+
 ## The rule
 
 `git commit` and `git push` must not run unless the user's own **latest**
@@ -45,8 +63,8 @@ So the rule is grounded in two separate facts, checked cheap-first:
    front of the command:
 
    ```bash
-   sr-session trajectory cite '<exact quote>' && git commit -m "..."
-   sr-session trajectory cite '<exact quote>' && git push
+   sr-session trajectory cite --source-types user '<exact quote>' && git commit -m "..."
+   sr-session trajectory cite --source-types user '<exact quote>' && git push
    ```
 
    The engine resolves the quote against the session's record before any
@@ -150,16 +168,3 @@ outside this rule's business. It also only recognizes `git commit` and
 event's `invocations` list) — a commit made through some other tool wrapping
 `git` in a way the parser cannot resolve is outside the mechanism's
 resolution floor, the same limit any `PreCommandInvoke` rule has.
-
-## Installing this example
-
-Copy `.sloprail/gate/require-live-ask-for-commit/` into your project's own
-`.sloprail/gate/`, keeping the folder name (it is the rule's name, and what a
-refusal cites). Confirm it loads:
-
-```
-sr-session start < /dev/null
-```
-
-Then cause the case it guards against — an uncited `git commit` in a project
-with the rule installed — and confirm you see the refusal above.

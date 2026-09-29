@@ -1,5 +1,23 @@
 # content-de-layering (file-guard)
 
+Each fact belongs in exactly one file: an update should reference a person
+file rather than duplicate it inline, and strategy reasoning shouldn't leak
+into branding copy.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/content-de-layering/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then write a change that duplicates content that already lives elsewhere,
+and confirm you see the refusal below.
+
 ## The rule
 
 Right content in the right file: an update references a person file, it

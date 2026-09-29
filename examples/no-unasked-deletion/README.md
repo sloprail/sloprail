@@ -1,5 +1,23 @@
 # no-unasked-deletion (file-guard)
 
+An edit must not silently drop content nobody asked to remove — appending
+instead of rewriting, since a "better" rewrite that quietly destroys
+information is still a violation.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/no-unasked-deletion/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then rewrite a file so it drops content nobody asked to remove, and confirm
+you see the refusal below.
+
 ## The rule
 
 An edit must not silently drop content nobody asked to remove. Append instead

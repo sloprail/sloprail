@@ -1,5 +1,23 @@
 # keyword-coverage-registry (context + gates + file-guard)
 
+GitHub research must happen against a declared scanner — a keyword list the
+agent commits to before searching — so a keyword can't be added after the
+fact to make a convenient result look like it was expected.
+
+## Install
+
+Make sure sloprail is installed — see the docs
+[install page](https://sloprail.com/docs/getting-started/install/).
+
+Then copy this example into your project:
+
+```bash
+git clone --depth 1 https://github.com/sloprail/sloprail /tmp/sloprail-clone && mkdir -p .sloprail && cp -R /tmp/sloprail-clone/examples/keyword-coverage-registry/.sloprail/. .sloprail/ && rm -rf /tmp/sloprail-clone
+```
+
+Then search GitHub without a declared scanner, and confirm you see the
+refusal below.
+
 ## The rule
 
 GitHub research happens **against a declared scanner, through `gh`**. Before

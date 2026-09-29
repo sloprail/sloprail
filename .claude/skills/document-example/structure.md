@@ -67,21 +67,45 @@ At minimum, per guardrail nature (see [authoring-guardrails](../authoring-guardr
 ## README sections a shipped example is expected to have
 
 Every current `examples/*/README.md` follows roughly this shape (see
-`examples/no-unasked-deletion/README.md` for a full worked example):
+`examples/no-unasked-commit/README.md` for a full worked example, including
+the Install section below):
 
-1. **`# <name> (<nature>)`** — title names the nature up front
-2. **`## The rule`** — one paragraph, plain language, what it catches and why
+1. **`# <name> (<nature>)`**, immediately followed by a **short overview** —
+   1-3 plain-language sentences on what the rule catches, no heading of its
+   own. This is the only thing a skimming reader is guaranteed to see before
+   they decide whether to keep reading.
+2. **`## Install`** — comes right after the overview and before every
+   detailed section below it, so trying the example never requires
+   scrolling past the design discussion first. Simple and non-technical by
+   design:
+   - One line saying to make sure sloprail itself is installed, linking the
+     docs [install page](https://sloprail.com/docs/getting-started/install/)
+     — never a local verification command here (no `sr-session start`, no
+     `--version`; that belongs in the docs page, not every example).
+   - One concrete copy command a stranger can paste from their project root
+     with no repo already cloned — a shallow clone to a temp dir plus
+     `cp -R .../examples/<name>/.sloprail/. .sloprail/` (this single form
+     covers an example with several nature/rule folders at once), or an
+     equivalent single-line curl/tar. Note the folder name only if it isn't
+     obvious from the command.
+   - Optionally, one plain sentence: cause the case it guards against and
+     confirm you see the refusal. Nothing more — no internal
+     verification/debugging steps belong in this section.
+3. **`## The rule`** — one paragraph, plain language, what it catches and why
    it matters (a real incident it prevents, if there is one — concrete beats
    abstract)
-3. **`## Why <nature>`** (or `Why a file-guard, and why preventive`, etc.) —
+4. **`## Why <nature>`** (or `Why a file-guard, and why preventive`, etc.) —
    the design justification: why THIS nature and not one of the other two,
    why `preventive`/`deletions:`/whatever nature-specific knobs are set
-4. One or more sections on **the mechanism** — what a script checks
+5. One or more sections on **the mechanism** — what a script checks
    deterministically vs. what a judge decides, in that cheap-first order
-5. Optionally, **what it does NOT catch** / **the failure this catches** —
+6. Optionally, **what it does NOT catch** / **the failure this catches** —
    the boundary of the rule, so a reader doesn't assume it covers more than
    it does
 
 A README that only restates the YAML in prose is not done — the "why this
 nature, why these knobs" reasoning is the part a reader cannot get from the
-config alone.
+config alone. Same for Install: a README whose install section reads like a
+CLI reference (multiple verification commands, internal debugging steps) is
+not done either — a stranger with no context on sloprail's internals should
+be able to follow it.
