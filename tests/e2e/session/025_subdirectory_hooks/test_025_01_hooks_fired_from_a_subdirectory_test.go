@@ -90,7 +90,6 @@ func subProject(t *testing.T) (e *harness.Env, proj, sub, ledger string) {
 	sub = filepath.Join(proj, "sub", "deep")
 	ledger = filepath.Join(t.TempDir(), "seen")
 	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
-	e.DisableShippedFileGuards(sub)
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, sub, ledger
 }
@@ -160,7 +159,6 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 	sub := filepath.Join(proj, "sub", "deep")
 	ledger := filepath.Join(t.TempDir(), "seen")
 	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
-	e.DisableShippedFileGuards(sub)
 	e.CommitAll(proj, "the project before the session")
 
 	// The session reports the subdirectory and edits the file ABOVE it, which is
@@ -361,7 +359,6 @@ exit 0
 	ledger := filepath.Join(t.TempDir(), "seen")
 	judgeScript := strings.Replace(judgeTemplate, "LEDGER", ledger, 1)
 	e.FileGuard(sub, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
-	e.DisableShippedFileGuards(sub)
 	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-025-05"

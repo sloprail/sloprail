@@ -78,7 +78,6 @@ func setUpBilling(t *testing.T, e *Env, proj string) (string, *harness.Ledger) {
 	e.WriteFile(proj, "src/charge.go", "package src\n\nfunc Charge(cents int) int { return cents }\n")
 	led := e.NewLedger("ledger")
 	e.FileGuard(proj, "charge-invariant", chargeGuard, map[string]string{"check.sh": refuseRefunds(led)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "setup: billing and its guard")
 	return e.Git(proj, "rev-parse", "HEAD"), led
 }

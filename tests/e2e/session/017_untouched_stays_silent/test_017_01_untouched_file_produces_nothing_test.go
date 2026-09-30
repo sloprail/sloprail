@@ -51,7 +51,6 @@ func seedUntouched(e *Env, proj string) {
 // seed committed together with the rule would fall inside the first range.
 func installWatcher(e *Env, proj string, led *harness.Ledger) {
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "install the rule")
 }
 

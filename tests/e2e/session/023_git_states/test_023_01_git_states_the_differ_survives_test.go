@@ -71,7 +71,6 @@ func project(t *testing.T, pre func(e *harness.Env, proj string)) (*harness.Env,
 		pre(e, proj)
 	}
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
 }

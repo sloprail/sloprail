@@ -8,7 +8,6 @@ import (
 )
 
 var (
-	New   = harness.New
 	Turns = harness.Turns
 	Bash  = harness.Bash
 	Write = harness.Write
@@ -35,3 +34,7 @@ func project(t *testing.T) (*harness.Env, string) {
 	e.GitInit(proj)
 	return e, proj
 }
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

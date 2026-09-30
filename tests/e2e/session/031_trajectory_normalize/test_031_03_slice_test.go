@@ -77,7 +77,6 @@ func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T
 	// earlier passes.
 	ledgers := t.TempDir()
 	e.FileGuard(proj, "slicer", sliceWatch, map[string]string{"slice.sh": strings.ReplaceAll(sliceTemplate, "DIR", ledgers)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "before the session")
 
 	const sess = "s-031-09"

@@ -142,7 +142,6 @@ func TestT027_02_AMatcherErrorAtTheCyclesHookPointRefuses(t *testing.T) {
 	// A file-guard whose match compiles and cannot be evaluated on the settled file.
 	// See postErroringGuard for why this shape and not one borrowed from the gate side.
 	e.FileGuard(proj, "post-error", postErroringGuard, map[string]string{"check.sh": refuseCheck})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-027-02", "write a note", Turns("done",
@@ -172,7 +171,6 @@ func TestT027_02_AMatcherErrorAtTheCyclesHookPointRefuses(t *testing.T) {
 func TestT027_03_AnAnswerablePostMatcherIsConsulted(t *testing.T) {
 	e, proj := project(t)
 	e.FileGuard(proj, "post-sound", soundPostGuard, map[string]string{"check.sh": refuseCheck})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-027-03", "write a note", Turns("done",
@@ -198,7 +196,6 @@ func TestT027_03_AnAnswerablePostMatcherIsConsulted(t *testing.T) {
 func TestT027_04_APostMatcherThatDeclinesPermits(t *testing.T) {
 	e, proj := project(t)
 	e.FileGuard(proj, "post-sound", soundPostGuard, map[string]string{"check.sh": refuseCheck})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	// A file the match does not select: the guard narrows on ".md".

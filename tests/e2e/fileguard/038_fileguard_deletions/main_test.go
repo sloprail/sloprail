@@ -27,7 +27,6 @@ import (
 // PreFileWrite and/or PreFileDelete to prevent. Observed through a ledger each
 // check appends `<kind> <path>` to, and, for a gate that refuses deletes, through
 // whether the `rm` is denied.
-var New = harness.New
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -40,3 +39,7 @@ var (
 	Write = harness.Write
 	Bash  = harness.Bash
 )
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

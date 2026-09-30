@@ -37,7 +37,6 @@ func TestT037_01_PureRequireFileGuardValidates(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "require-topic", pureRequireGuard, nil)
-	e.DisableShippedFileGuards(proj)
 	e.Gate(proj, "require-topic", pureRequireGate, nil)
 
 	res := e.CLIDirect(proj, "sr-file", "declarations", proj)

@@ -20,7 +20,6 @@ import (
 //   - a context's payload is readable by a gate's require:[{context}];
 //   - the eval-loop-maxing composite (a goal-tracking context + a goal-verify gate
 //     reading the goal) works end to end.
-var New = harness.New
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -49,3 +48,7 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

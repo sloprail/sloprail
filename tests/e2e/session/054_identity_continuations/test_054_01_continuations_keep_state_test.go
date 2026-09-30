@@ -26,7 +26,6 @@ func installProbe(t *testing.T, e *harness.Env, dir string) string {
 	t.Helper()
 	ledger := filepath.Join(t.TempDir(), "log")
 	e.FileGuard(dir, "control", harness.ControlGuard, map[string]string{"probe.sh": probeScript(ledger)})
-	e.DisableShippedFileGuards(dir)
 	return ledger
 }
 

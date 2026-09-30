@@ -78,7 +78,6 @@ func TestT020_01_RevertedContentIsNotJudgedAgain(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": led.RecordScript()})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-020-01"
@@ -131,7 +130,6 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": led.RecordScript()})
-	e.DisableShippedFileGuards(proj)
 
 	const sess = "s-020-02"
 	const content = "content that will move\n"

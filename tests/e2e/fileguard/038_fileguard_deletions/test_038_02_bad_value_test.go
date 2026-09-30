@@ -17,7 +17,6 @@ func TestT038_07_UnknownDeletionsValueIsRefusedAtLoad(t *testing.T) {
 	proj := e.Project()
 	e.FileGuard(proj, "typo", "match: \"docs/**\"\ndeletions: inlcude\nchecks:\n  - script: ./check.sh\n",
 		map[string]string{"check.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n"})
-	e.DisableShippedFileGuards(proj)
 	e.FileGuard(proj, "fine", guardYAML("only"),
 		map[string]string{"check.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n"})
 

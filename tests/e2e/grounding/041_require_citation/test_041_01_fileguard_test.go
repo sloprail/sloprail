@@ -38,7 +38,6 @@ checks:
 func installPre(e *harness.Env, proj string) {
 	e.Gate(proj, "grounded-memories", preventGate, map[string]string{"record.sh": failClosedRecordScript})
 	e.FileGuard(proj, "grounded-memories", settledGuard, map[string]string{"record.sh": recordScript})
-	e.DisableShippedFileGuards(proj)
 }
 
 // preLedger is what both halves' checks were handed, the gate's (Pre events)
@@ -87,7 +86,6 @@ func guarded(t *testing.T, guard string) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "grounded-memories", guard, map[string]string{"record.sh": recordScript})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "baseline")
 	return e, proj
 }

@@ -79,7 +79,6 @@ func project(t *testing.T) (*harness.Env, string, string) {
 	ledger := filepath.Join(t.TempDir(), "seen")
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
 }
@@ -142,7 +141,6 @@ func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
 	e.WriteFile(proj, "other.md", "original\n")
 	e.CommitAll(proj, "a file the session will chmod")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	// The premise: git is actually tracking the mode. On a filesystem or a
@@ -304,7 +302,6 @@ func TestT026_04_CreatedThenModifiedInOneCycleIsOneCreateOfTheFinalBytes(t *test
 		"case \"$payload\" in *drafted.md*) [ -f \"$root/drafted.md\" ] && printf 'drafted.md=%s\\n' \"$(cat \"$root/drafted.md\")\" >> '" + content + "' ;; esac\n" +
 		"exit 0\n"
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": readsContent})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule reads content")
 
 	got := runOne(t, e, proj, ledger, "s-026-04", Turns("done",

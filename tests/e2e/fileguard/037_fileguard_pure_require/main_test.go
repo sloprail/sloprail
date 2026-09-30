@@ -27,7 +27,6 @@ import (
 // The enforcement half mirrors the gate's pure-require pair (032_01's
 // T032_03/T032_04) one nature over: same skill, same loaded-vs-not distinction,
 // against a file-guard instead of a gate.
-var New = harness.New
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -41,3 +40,7 @@ var (
 	Skill = harness.Skill
 	Bash  = harness.Bash
 )
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

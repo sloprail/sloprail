@@ -88,12 +88,3 @@ var shippedFileGuards = []string{
 	"sloprail/file-guard/read-script-checks-doc",
 	"sloprail/file-guard/read-structure-gate-doc",
 }
-
-// DisableShippedFileGuards switches off the sloprail plugin's authoring guards in a
-// project, so a test about ONE rule is not also a test of those. The commit that
-// adds a rule is judged by the rule, which puts the rule's own files in every range
-// that starts before it — exactly what the authoring guards exist to judge.
-func (e *Env) DisableShippedFileGuards(projDir string) {
-	e.t.Helper()
-	e.DisablePluginGuardrail(projDir, shippedFileGuards...)
-}

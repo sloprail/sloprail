@@ -47,7 +47,6 @@ func TestT034_01_NotFineFileBlocksTurn(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("ledger")
 	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret(led)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 
 	e.Run(proj, "s-034-01", "write a memory with a secret", Turns("done",
@@ -80,7 +79,6 @@ func TestT034_02_FineFileAdmits(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("ledger")
 	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret(led)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 
 	e.Run(proj, "s-034-02", "write a clean memory", Turns("done",
@@ -114,7 +112,6 @@ func TestT034_03_NotFineFileKeepsRefusingUntilFixed(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("ledger")
 	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret(led)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 
 	sess := "s-034-03"

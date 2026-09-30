@@ -121,7 +121,6 @@ func projectWith(t *testing.T, chk check, rules map[string]string, gates bool) (
 		}
 		e.FileGuard(proj, name, guardYAML(deletions), map[string]string{"check.sh": chk(leds[name])})
 	}
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rules, before the session")
 	return e, proj, leds
 }
@@ -345,7 +344,6 @@ func TestT038_06_AFileAddedAndDeletedInOneRangeIsNotJudged(t *testing.T) {
 	e.WriteFile(proj, "README", "a project\n")
 	observed := e.NewLedger("observer")
 	e.FileGuard(proj, "says-ok", guardYAML(""), map[string]string{"check.sh": contentCheck})
-	e.DisableShippedFileGuards(proj)
 	e.FileGuard(proj, "observer", guardYAML("only"), map[string]string{"check.sh": ledgerCheck(observed)})
 	e.CommitAll(proj, "the project before the session")
 

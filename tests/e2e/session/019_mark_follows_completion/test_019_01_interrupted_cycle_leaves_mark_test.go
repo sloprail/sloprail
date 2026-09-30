@@ -117,7 +117,6 @@ func TestT019_01_AnUnfinishedCycleDoesNotMoveTheMarkPastItsTurns(t *testing.T) {
 
 	// A cycle whose judging is cut short.
 	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": crashingAskScript(led)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guards")
 	first := e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "interrupted cycle\n"),
@@ -187,7 +186,6 @@ func TestT019_02_AFinishedCycleDoesMoveTheMark(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("answers")
 	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guards")
 
 	const sess = "s-019-02"

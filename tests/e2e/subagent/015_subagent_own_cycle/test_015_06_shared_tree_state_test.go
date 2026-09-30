@@ -28,7 +28,6 @@ func TestT015_06_InOneTreeTheSubagentIsJudgedAtTheRootsStopWithTheRootsState(t *
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
-	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	// The sub-agent writes into the SAME tree the root is working in and commits

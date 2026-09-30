@@ -91,7 +91,6 @@ func project(t *testing.T, seed ...[2]string) (*harness.Env, string, string) {
 		e.CommitAll(proj, "the project before the rule")
 	}
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule, before the session")
 	return e, proj, ledger
 }

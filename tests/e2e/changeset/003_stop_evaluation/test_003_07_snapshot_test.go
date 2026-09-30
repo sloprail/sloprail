@@ -28,7 +28,6 @@ cat >/dev/null
 exit 0
 `
 	e.CommitAll(proj, "the project")
-	e.DisableShippedFileGuards(proj)
 	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": script})
 	e.CommitAll(proj, "the rule")
 	e.Run(proj, "s-003-07", "hello", Turns("done", Bash("b1", "true")))

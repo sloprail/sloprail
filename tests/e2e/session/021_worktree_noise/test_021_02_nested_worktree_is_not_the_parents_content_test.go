@@ -229,7 +229,6 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	// The mock does not APPLY a sub-agent's tool calls, so this script's Write

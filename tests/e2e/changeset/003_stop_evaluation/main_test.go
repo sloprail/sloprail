@@ -20,7 +20,6 @@ import (
 type Env = harness.Env
 
 var (
-	New   = harness.New
 	Turns = harness.Turns
 	Bash  = harness.Bash
 )
@@ -114,8 +113,11 @@ func project(t *testing.T, ruleYAML string) (*Env, string, string) {
 	e.WriteFile(proj, "notes/scratch.md", "scratch\n")
 	led := filepath.Join(t.TempDir(), "ledger.jsonl")
 	e.CommitAll(proj, "the project")
-	e.DisableShippedFileGuards(proj)
 	e.FileGuard(proj, "docs", ruleYAML, map[string]string{"check.sh": recorder(led)})
 	e.CommitAll(proj, "the rule")
 	return e, proj, led
 }
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

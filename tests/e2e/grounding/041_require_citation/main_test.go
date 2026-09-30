@@ -16,7 +16,6 @@ import (
 // its own record before any rule sees the event, and a rule requiring a citation
 // refuses an action carrying none — so a guarded file can only be changed the
 // grounded way, and a guarded command only run behind a resolving cite.
-var New = harness.New
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -60,3 +59,7 @@ case "$(printf '%s' "$payload" | jq -r '.event.kind')" in
 esac
 exit 0
 `
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

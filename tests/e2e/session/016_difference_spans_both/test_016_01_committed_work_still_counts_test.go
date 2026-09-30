@@ -40,7 +40,6 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	e.Run(proj, "s-016-01", "write and commit", Turns("done",
@@ -85,7 +84,6 @@ func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	const sess = "s-016-02"

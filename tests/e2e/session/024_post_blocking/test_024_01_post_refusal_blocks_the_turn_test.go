@@ -73,7 +73,6 @@ func refusingGuardrail(t *testing.T, e *harness.Env, proj, name, message string)
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + log + "\n" +
 			"echo " + shq(`{"reason":"`+message+`"}`) + "\nexit 1\n",
 	})
-	e.DisableShippedFileGuards(proj)
 	return log
 }
 
@@ -220,7 +219,6 @@ func TestT024_03_ARefusalDoesNotSilenceThePassingRuleAfterIt(t *testing.T) {
 checks:
   - script: ./record.sh
 `, map[string]string{"record.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + afterLog + "\nexit 0\n"})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-024-03", "write a file", Turns("done",
@@ -298,7 +296,6 @@ func TestT024_05_APassingRuleDoesNotBlockTheTurn(t *testing.T) {
 	e.FileGuard(proj, "passer", refuseCreates, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\nexit 0\n",
 	})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-024-05", "write a file", Turns("done",
@@ -338,7 +335,6 @@ func TestT024_06_ARefusalAndAPassNameOnlyTheRefuser(t *testing.T) {
 	e.FileGuard(proj, "zzpermitter", refuseCreates, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + passerLog + "\nexit 0\n",
 	})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-024-06", "write a file", Turns("done",

@@ -28,7 +28,6 @@ func TestT034_07_GuardDoesNotFireOutsidePathMatch(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("ledger")
 	e.FileGuard(proj, "no-secrets", forbidSecretGuard, map[string]string{"check.sh": checkForbidSecret(led)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 
 	// A file OUTSIDE memories/ holding the very content the guard refuses, committed
@@ -78,7 +77,6 @@ func markerProject(t *testing.T) (*harness.Env, string, *harness.Ledger) {
 	e.GitInit(proj)
 	led := e.NewLedger("ledger")
 	e.FileGuard(proj, "invariant-done", markerGuard, map[string]string{"check.sh": checkInvariantDone(led)})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 	return e, proj, led
 }

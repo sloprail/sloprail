@@ -54,7 +54,6 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
-	e.DisableShippedFileGuards(proj)
 
 	// The guardrail is committed to the ROOT, before either branch diverges, so
 	// it exists on both lines of history.
@@ -133,7 +132,6 @@ func TestT014_02_ANewBranchOffOwnWorkKeepsItInTheDifference(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	e.Run(proj, "s-014-02", "commit then branch", Turns("done",

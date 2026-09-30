@@ -82,7 +82,6 @@ exit 0
 		proj := e.Project()
 		e.GitInit(proj)
 		e.FileGuard(proj, "grounded-memories", whenGuard, map[string]string{"body-changed.sh": bodyChanged})
-		e.DisableShippedFileGuards(proj)
 		e.CommitAll(proj, "baseline")
 		// The ask, written with a citation: passed, so the rule's next range starts here.
 		e.Run(proj, id, prompt, Turns("done",

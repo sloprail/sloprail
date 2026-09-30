@@ -21,7 +21,6 @@ import (
 //     lands, is asked about every file of a call, and fails CLOSED (its check's
 //     job) when the engine could not compute the write's result;
 //   - a guard only judges the files its `match` selects.
-var New = harness.New
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -49,3 +48,7 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// New is harness.New with the plugin's authoring file-guards switched off: this package
+// is about other rules, and the authoring guards would judge the rules' own files.
+func New(t *testing.T) *harness.Env { return harness.New(t, harness.WithoutShippedFileGuards()) }

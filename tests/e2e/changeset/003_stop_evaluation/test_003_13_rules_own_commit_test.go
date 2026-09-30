@@ -17,7 +17,6 @@ func TestT003_13_ACommitThatTouchesTheRulesFolderAndViolatesItIsRefused(t *testi
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/seed.md", "seed\n")
-	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the rule")
 	e.Run(proj, "s-003-13", "hello", Turns("done", Bash("b1", "true")))
 

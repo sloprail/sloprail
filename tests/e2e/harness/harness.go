@@ -55,10 +55,11 @@ type Env struct {
 	// tmpDir is the mock's CLAUDE_CODE_TMPDIR: where it writes a background
 	// task's output file (<tmpdir>/claude-<uid>/<cwd>/<session>/tasks/), as real
 	// Claude Code does. Per test, so no run writes into the shared /tmp.
-	tmpDir   string
-	repoRoot string
-	mock     string
-	shimDir  string // a `claude` that is really the mock, ahead of the real one on PATH
+	tmpDir          string
+	repoRoot        string
+	mock            string
+	noShippedGuards bool   // GitInit disables the plugin's authoring file-guards in the initial commit (WithoutShippedFileGuards)
+	shimDir         string // a `claude` that is really the mock, ahead of the real one on PATH
 
 	// stopBlockCap, when > 0, sets CLAUDE_CODE_STOP_HOOK_BLOCK_CAP for this Env's
 	// mock runs — how many times the mock re-runs the agent when a Stop hook
@@ -247,8 +248,20 @@ func fileExists(p string) bool {
 	return err == nil && !fi.IsDir()
 }
 
+// Option changes how New stands the environment up.
+type Option func(*Env)
+
+// WithoutShippedFileGuards switches off the sloprail plugin's authoring file-guards for
+// every project of this environment: GitInit writes the disabled list into
+// `.sloprail/config.yaml` of the repository's INITIAL commit, so it sits in the base of
+// every range, before any rule's floor, and never shows up in a changeset's `others`.
+// For a package about some other rule: the commit that adds a rule puts the rule's own
+// files in every range that starts before it, which is exactly what the authoring guards
+// exist to judge. A package about authoring must not use it.
+func WithoutShippedFileGuards() Option { return func(e *Env) { e.noShippedGuards = true } }
+
 // New stands up an isolated environment.
-func New(t *testing.T) *Env {
+func New(t *testing.T, opts ...Option) *Env {
 	t.Helper()
 	mock := findMock(t)
 	if mock == "" {
@@ -273,6 +286,9 @@ func New(t *testing.T) *Env {
 		repoRoot:     repoRoot(t),
 		mock:         mock,
 		seenSessions: map[string]bool{},
+	}
+	for _, opt := range opts {
+		opt(e)
 	}
 	for _, d := range []string{e.home, e.configDir, e.pluginDir, e.tmpDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -965,6 +981,9 @@ func (e *Env) GitInit(dir string) {
 	e.t.Helper()
 	InitRepo(e.t, dir)
 	e.excludeMockFiles(dir)
+	if e.noShippedGuards {
+		e.DisablePluginGuardrail(dir, shippedFileGuards...)
+	}
 	e.CommitAll(dir, "initial")
 }
 
