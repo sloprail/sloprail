@@ -168,10 +168,10 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 // the revert, leaving a file silently changed back) nor from when they were written.
 func TestT020_03_ContentPutBackAcrossCyclesIsJudgedAsAChange(t *testing.T) {
 	e := New(t)
-	ledger := ledgerFile(t)
+	led := e.NewLedger("seen")
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": judgeScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": changesetkit.RecordScript(led.Path())})
 	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-020-03"
@@ -180,7 +180,7 @@ func TestT020_03_ContentPutBackAcrossCyclesIsJudgedAsAChange(t *testing.T) {
 		e.Run(proj, sess, turn, Turns("done",
 			Write("w-"+turn, "subject.md", content),
 		).ThenCommit(turn))
-		return seen(t, ledger)
+		return changesetkit.Files(t, led.Lines())
 	}
 
 	afterA := cycle("write A", a)

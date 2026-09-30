@@ -432,7 +432,9 @@ func TestT015_06_TwoSessionsInOneTreeHoldTheirRefusalsApart(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the sessions")
 
 	e.Run(proj, "s-015-06-one", "write a bad file", Turns("done",
@@ -442,13 +444,13 @@ func TestT015_06_TwoSessionsInOneTreeHoldTheirRefusalsApart(t *testing.T) {
 	if oneBefore == 0 {
 		t.Fatalf("premise: session one's bad file was not refused")
 	}
-	first := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	first := changesetkit.Files(t, led.Lines())
 
 	e.Run(proj, "s-015-06-two", "write something else", Turns("done",
 		Write("w2", "unrelated.md", "fine\n"),
 	).ThenCommit("unrelated work"))
 
-	after := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	after := changesetkit.Files(t, led.Lines())
 	second := after[len(first):]
 	if len(second) == 0 {
 		t.Fatalf("session two's Stop never evaluated the rule: session one's state stood in for it")
