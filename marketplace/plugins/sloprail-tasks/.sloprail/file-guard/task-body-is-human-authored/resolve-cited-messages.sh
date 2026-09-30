@@ -41,7 +41,7 @@ unset lib_body_loaded
 
 # The changeset's files are read through this plugin's one library (a missing
 # content field is undecidable, never an empty file).
-cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+cs_lib="$(dirname "$0")/../../lib/changeset.sh"
 unset changeset_lib_loaded
 . "$cs_lib" 2>/dev/null || fail "the changeset library (lib/changeset.sh) could not be loaded"
 [ "${changeset_lib_loaded:-}" = 1 ] || fail "the changeset library (lib/changeset.sh) could not be loaded"

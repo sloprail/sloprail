@@ -59,6 +59,9 @@ func TestRules_GlobalJudgeRuleAppliesToUnitWithNoTags(t *testing.T) {
 	e.GitInit(proj)
 	installGlobalRule(t, e, proj, "01_global-tone", "must_not",
 		"Rule: no hype language.")
+	// Seeds are history before the rules exist (a rule's range starts at the parent
+	// of the commit that installs it).
+	e.CommitAll(proj, "the seeded rules and unit")
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "WRITING RULE VIOLATION: 01_global-tone [must_not]: the unit uses hype language the rule forbids"}`)
@@ -97,6 +100,9 @@ func TestRules_TaggedRuleAppliesOnlyWhenTagMatches(t *testing.T) {
 	e.GitInit(proj)
 	installTaggedRule(t, e, proj, "02_x-tone", "must_not", "x",
 		"Rule: no rhetorical-question openers on X.")
+	// Seeds are history before the rules exist (a rule's range starts at the parent
+	// of the commit that installs it).
+	e.CommitAll(proj, "the seeded rules and unit")
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "WRITING RULE VIOLATION: 02_x-tone [must_not]: opens with a rhetorical question"}`)
@@ -128,6 +134,9 @@ func TestRules_TaggedRuleDoesNotApplyToOtherTag(t *testing.T) {
 	e.GitInit(proj)
 	installTaggedRule(t, e, proj, "02_x-tone", "must_not", "x",
 		"Rule: no rhetorical-question openers on X.")
+	// Seeds are history before the rules exist (a rule's range starts at the parent
+	// of the commit that installs it).
+	e.CommitAll(proj, "the seeded rules and unit")
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
 	// FAIL, not PASS: if this test's own setup accidentally applied the X rule
@@ -171,6 +180,9 @@ func TestRules_DeterministicRuleRefusesViaJudgeStub(t *testing.T) {
 	e.WriteFile(proj, unitPath, unitFrontmatter(
 		"transcript_path: /abs/s.jsonl\ncreated: 2026-09-25\ntype: post\nstatus: drafting\ntags: [x]\n",
 		"Announcing the launch."))
+	// Seeds are history before the rules exist (a rule's range starts at the parent
+	// of the commit that installs it).
+	e.CommitAll(proj, "the seeded rules and unit")
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "WRITING RULE VIOLATION: 03_x-limit [must]: measured 312 characters via wc -m, over the 280 limit"}`)
@@ -279,6 +291,9 @@ func TestRules_UnitWriteJudgesTheDraft(t *testing.T) {
 	e.GitInit(proj)
 	installTaggedRule(t, e, proj, "02_x-tone", "must_not", "x",
 		"Rule: no rhetorical-question openers on X.")
+	// Seeds are history before the rules exist (a rule's range starts at the parent
+	// of the commit that installs it).
+	e.CommitAll(proj, "the seeded rules and unit")
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
 	e.WriteFile(proj, "memories/topics/20260101_launch/units/01_announce/02_draft.md",

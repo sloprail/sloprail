@@ -102,6 +102,9 @@ func TestUnitMdFirst_DeletionNotRefused(t *testing.T) {
 	e.GitInit(proj)
 	e.WriteFile(proj, unitPath, draftingUnit)
 	e.WriteFile(proj, draftPath, "# Announce\n\nDraft body.\n")
+	// Seeds are history before the rules exist (a rule's range starts at the parent
+	// of the commit that installs it).
+	e.CommitAll(proj, "the seeded rules and unit")
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)

@@ -24,7 +24,7 @@ field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
   refuse "task-body-is-human-authored: expected a Changeset event, so the tasks could not be judged"
 # The changeset's files are read through this plugin's one library (a missing
 # content field is undecidable, never an empty file).
-cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+cs_lib="$(dirname "$0")/../../lib/changeset.sh"
 unset changeset_lib_loaded
 . "$cs_lib" 2>/dev/null || refuse "task-body-is-human-authored: the changeset library (lib/changeset.sh) could not be loaded, so nothing could be judged"
 [ "${changeset_lib_loaded:-}" = 1 ] || refuse "task-body-is-human-authored: the changeset library (lib/changeset.sh) could not be loaded, so nothing could be judged"

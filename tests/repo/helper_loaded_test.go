@@ -230,7 +230,23 @@ func TestWhenScriptsApplyWhenTheirHelperLoadsPartly(t *testing.T) {
 		t.Run(tc.script, func(t *testing.T) {
 			env := []string{"PATH=" + stubBin + string(os.PathListSeparator) + os.Getenv("PATH")}
 
-			control := t.TempDir()
+			// A guard folder laid out as in the plugin (<plugin>/.sloprail/file-guard/<rule>),
+			// with the plugin's shared changeset library beside it when it ships one, so
+			// a script's `../../lib/changeset.sh` resolves as it does installed.
+			newGuardDir := func() string {
+				dir := filepath.Join(t.TempDir(), "file-guard", "rule")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if shared := filepath.Join(root, tc.guard, "..", "..", "lib", "changeset.sh"); fileExists(shared) {
+					if err := os.MkdirAll(filepath.Join(dir, "..", "..", "lib"), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					copyFile(t, shared, filepath.Join(dir, "..", "..", "lib", "changeset.sh"))
+				}
+				return dir
+			}
+			control := newGuardDir()
 			lib := strings.TrimSuffix(tc.script, ".sh") + "-lib.sh"
 			copyFile(t, filepath.Join(root, tc.guard, tc.script), filepath.Join(control, tc.script))
 			copyFile(t, filepath.Join(root, tc.guard, lib), filepath.Join(control, lib))
@@ -240,7 +256,7 @@ func TestWhenScriptsApplyWhenTheirHelperLoadsPartly(t *testing.T) {
 			}
 
 			for stop, stopper := range map[string]string{"syntax error": syntaxError, "returns early": returnsEarly} {
-				partial := t.TempDir()
+				partial := newGuardDir()
 				copyFile(t, filepath.Join(root, tc.guard, tc.script), filepath.Join(partial, tc.script))
 				copyFile(t, filepath.Join(root, tc.guard, lib), filepath.Join(partial, lib))
 				helper := tc.reader + stopper + tc.sentinel
@@ -451,4 +467,9 @@ func TestSourcedCallsFindEachForm(t *testing.T) {
 	if _, err := sourcedCalls([]byte("x='unclosed\n. \"$lib\"\n"), "broken.sh"); err == nil || !strings.Contains(err.Error(), "broken.sh") {
 		t.Errorf("a script with an unclosed quote parsed without an error naming it: %v", err)
 	}
+}
+
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
 }

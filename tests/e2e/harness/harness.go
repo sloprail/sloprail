@@ -1577,11 +1577,22 @@ func (e *Env) DisablePluginGuardrail(projDir string, qualified ...string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatalf("harness: mkdir .sloprail: %v", err)
 	}
-	body := "disabled:\n"
+	// Merged into whatever the project's config already holds (a test may have written
+	// `stop_hook_block_cap:` before the initial commit), never overwriting it.
+	path := filepath.Join(dir, "config.yaml")
+	body := ""
+	if existing, err := os.ReadFile(path); err == nil {
+		body = string(existing)
+	} else if !os.IsNotExist(err) {
+		e.t.Fatalf("harness: read config: %v", err)
+	}
+	if !strings.Contains(body, "disabled:") {
+		body += "disabled:\n"
+	}
 	for _, name := range qualified {
 		body += "  - " + name + "\n"
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		e.t.Fatalf("harness: write config: %v", err)
 	}
 }
