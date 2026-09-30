@@ -176,3 +176,45 @@ func TestT020_02_TheSameContentAtANewPathIsJudged(t *testing.T) {
 			"somewhere it has never been checked", got)
 	}
 }
+
+// T020_03: content put back across cycles is a change, judged as what it is.
+//
+// The cross-cycle half of T020_01. The file is A and passed; B and passed (the
+// watermark now sits on B); then A again. On the changeset model nothing "already
+// judged" is remembered per file: the rule judges the difference between the
+// watermark and head, and A against B is a real one — so it IS judged, handed B as
+// the old content and A as the new. Identity is derived from what the file holds
+// against what it held, not from having seen those bytes before (which would skip
+// the revert, leaving a file silently changed back) nor from when they were written.
+func TestT020_03_ContentPutBackAcrossCyclesIsJudgedAsAChange(t *testing.T) {
+	e := New(t)
+	ledger := ledgerFile(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": judgeScript(ledger)})
+	e.CommitAll(proj, "the project before the session")
+
+	const sess = "s-020-03"
+	const a, b = "content A\n", "content B\n"
+	cycle := func(turn, content string) []changesetkit.Observed {
+		e.Run(proj, sess, turn, Turns("done",
+			Write("w-"+turn, "subject.md", content),
+		).ThenCommit(turn))
+		return seen(t, ledger)
+	}
+
+	afterA := cycle("write A", a)
+	afterB := cycle("write B", b)
+	if countPath(afterB, "subject.md") <= countPath(afterA, "subject.md") {
+		t.Fatalf("changed content was not judged, so the revert below proves nothing")
+	}
+	afterBack := cycle("put A back", a)
+	if countPath(afterBack, "subject.md") <= countPath(afterB, "subject.md") {
+		t.Fatalf("content put back to an earlier body was not judged at all (%d then %d): "+
+			"a revert is a change against what the file held last", countPath(afterB, "subject.md"), countPath(afterBack, "subject.md"))
+	}
+	last := afterBack[len(afterBack)-1]
+	if last.Path != "subject.md" || last.Status != "M" || last.OldContent != b || last.NewContent != a {
+		t.Fatalf("the revert was handed %+v; want an M of subject.md from B to A", last)
+	}
+}
