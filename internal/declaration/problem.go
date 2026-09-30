@@ -171,6 +171,12 @@ var (
 	// author wrote the key to catch. Declaration fault.
 	ErrBadValue = errors.New("declaration: field value is not one of its allowed values")
 
+	// ErrRetiredKey: a declaration carries a key the engine no longer reads and
+	// whose silent tolerance would leave a rule unenforced — a file-guard's
+	// `preventive:`. Refused by name, with what to write instead. Declaration
+	// fault.
+	ErrRetiredKey = errors.New("declaration: key was removed")
+
 	// ErrBadScope: a structure gate's `scope` is wrong for where it was found or
 	// for what a scope is — a project's own structure declaring one (the
 	// project's covers the whole tree), a scope entry that is a regex (glob-only

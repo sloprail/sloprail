@@ -3,6 +3,7 @@ package declaration
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -121,7 +122,6 @@ func TestLoad_FileGuard_Valid(t *testing.T) {
 	loaded := loadOK(t, map[string]string{
 		"file-guard/pinned/file-guard.yaml": `
 match: any(markers, .kind == "invariant")
-preventive: true
 checks:
   - script: ./check.sh
   - judge: ./judge.md.j2
@@ -130,7 +130,7 @@ checks:
 	require.Len(t, loaded.FileGuards, 1)
 	g := loaded.FileGuards[0]
 	assert.Equal(t, "pinned", g.Name)
-	assert.True(t, g.Preventive)
+	assert.False(t, g.HadPreventiveKey)
 	assert.Len(t, g.Checks, 2)
 	assert.True(t, g.Checks[0].isScript())
 	assert.True(t, g.Checks[1].isJudge())
@@ -1239,3 +1239,18 @@ on:
 enter: ./enter.sh
 exit: ./exit.sh
 `
+
+// `preventive:` was removed: a file-guard carrying it — with any value — is
+// refused at load, and the refusal says how to split it.
+func TestLoad_FileGuard_PreventiveIsRefusedWithTheSplit(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		iv := loadOneInvalid(t, map[string]string{
+			"file-guard/pinned/file-guard.yaml": "match: \"**/*.md\"\npreventive: " + value + "\nchecks:\n  - script: ./check.sh\n",
+		})
+		assert.True(t, hasKind(iv, ErrRetiredKey), "preventive: %s must be refused as a retired key: %v", value, iv.Problems)
+		msg := strings.Join(Messages(iv.Problems), "\n")
+		assert.Contains(t, msg, "PreFileWrite")
+		assert.Contains(t, msg, "gate")
+		assert.Contains(t, msg, "file-guard")
+	}
+}

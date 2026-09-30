@@ -652,6 +652,7 @@ func parseFileGuards(root string, origin Origin) ([]FileGuard, []Invalid, error)
 		g.Name = name
 		g.Dir = filepath.Join(root, dirFileGuard, name)
 		g.Origin = origin
+		g.HadPreventiveKey = declaresKey(path, "preventive")
 		decls = append(decls, g)
 	}
 	return decls, invalid, nil
@@ -765,6 +766,24 @@ func parseYAMLFile(path string, dst any) []Problem {
 		return []Problem{prob(ErrMalformed, "", "read: %v", err)}
 	}
 	return parseYAML(path, data, dst)
+}
+
+// declaresKey reports whether the YAML file names key at its top level, whatever
+// its value — including an empty one, which a typed field cannot tell from an
+// absent key. Used for a RETIRED key, which is refused by name rather than
+// tolerated (ValidateFileGuard). An unreadable file answers false: parseYAMLFile
+// already reported it.
+func declaresKey(path, key string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var top map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &top); err != nil {
+		return false
+	}
+	_, ok := top[key]
+	return ok
 }
 
 // parseYAML unmarshals declaration bytes into dst. Strict decoding (KnownFields)

@@ -49,12 +49,10 @@ type natureVerdict struct {
 // first refusal is the same shape the old path takes.
 func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) natureVerdict {
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
-	preventiveGuards := preventiveFileGuards(loaded.FileGuards)
 	grounds := requiresCitation(loaded)
-	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && len(preventiveGuards) == 0 && !grounds {
+	if len(loaded.Gates) == 0 && len(loaded.Structures) == 0 && len(loaded.Contexts) == 0 && !grounds {
 		// Nothing new-format can act at pre-tool: no gate to block, no structure
-		// gate, no context to enter, no preventive file-guard to pre-check.
-		// (Non-preventive file-guards act only at Stop.)
+		// gate, no context to enter. (File-guards act only at Stop.)
 		return natureVerdict{}
 	}
 
@@ -104,8 +102,8 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	events = grounded.events
 
 	// The state maps, loaded once so contexts/gates/guards this dispatch runs read
-	// one consistent world. Contexts enter FIRST, so a gate or a preventive
-	// file-guard whose match/require reads a context sees what the enter left.
+	// one consistent world. Contexts enter FIRST, so a gate whose
+	// match/require reads a context sees what the enter left.
 	contextMap := loadContextMap(cmd, store, loaded.Contexts)
 	gatesMap := loadGatesMap(cmd, store)
 
@@ -124,19 +122,11 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 		}
 	}
 
-	// Preventive file-guards next: a `preventive: true` guard whose match selects a
-	// pre-write file refuses a not-fine write before it lands. Every file the call
-	// would change is checked, and the one deny names each refused file.
-	if reason := runFileGuardsPreventive(cmd, preventiveGuards, events, scope, contextMap, grounded.notes); reason != "" {
+	// Then the gates bound to these pre-events. Every file the call would change
+	// is asked about (runGatesForEvents), and the one deny names each refused
+	// file; the first refusal of any other kind (a command, a tool) is what blocks.
+	if reason := gateRefusal(runGatesForEvents(cmd, reg, loaded.Gates, events, scope, store, contextMap, gatesMap, grounded.notes), events, scope.Workspace); reason != "" {
 		return natureVerdict{Blocked: reason}
-	}
-
-	// Then the gates bound to these pre-events. The first that refuses blocks.
-	results := runGatesForEvents(cmd, reg, loaded.Gates, events, scope, store, contextMap, gatesMap)
-	for _, r := range results {
-		if r.Refused {
-			return natureVerdict{Blocked: fmt.Sprintf("%s (gate %s)", r.Reason, r.Attribution)}
-		}
 	}
 	// Permitted: the cited changes this call makes are pending until the next
 	// hook finds them landed (settleCitedChanges).
@@ -154,17 +144,29 @@ func dispatchNaturePreTool(cmd *cobra.Command, p HookPayload, reg *module.Regist
 	return natureVerdict{}
 }
 
-// preventiveFileGuards filters the loaded file-guards to the preventive ones — the
-// only file-guards that act at pre-tool. A small helper so the empty-work check
-// and the dispatch read the same set.
-func preventiveFileGuards(guards []declaration.FileGuard) []declaration.FileGuard {
-	var out []declaration.FileGuard
-	for _, g := range guards {
-		if g.Preventive {
-			out = append(out, g)
+// gateRefusal is the one deny a pre-tool call gets from its gates' results, or ""
+// when nothing refused. Refusals about a file are collected across every file the
+// call changes and every gate that refused one (preRefusals names each refused
+// file in the one deny); the first refusal about the call as a whole (a command, a
+// tool, a trigger that could not be decided) is added in the order it was reached.
+func gateRefusal(results []gateResult, events []event.Event, workspace string) string {
+	refusals := newPreRefusals(events, workspace)
+	sawWhole := false
+	for _, r := range results {
+		if !r.Refused {
+			continue
+		}
+		reason := fmt.Sprintf("%s (gate %s)", r.Reason, r.Attribution)
+		if r.Path != "" {
+			refusals.add(r.Path, reason)
+			continue
+		}
+		if !sawWhole {
+			sawWhole = true
+			refusals.add("", reason)
 		}
 	}
-	return out
+	return refusals.render()
 }
 
 // checkStructureGate refuses the first file-write event whose target path the
@@ -399,33 +401,18 @@ func natureBoundKinds(loaded declaration.Loaded) []string {
 
 // naturePreToolBoundKinds is every event kind the new-format declarations ask
 // about AT PRE-TOOL — the gate/structure kinds (natureBoundKinds) plus each
-// context's `on` trigger kinds (a context enters on pre events during a cycle)
-// and each preventive file-guard's file-write kinds (a preventive guard fires on
-// the pre write).
+// context's `on` trigger kinds (a context enters on pre events during a cycle).
+// A file-guard binds nothing here: it judges the settled file at Stop.
 //
 // A context's Post triggers are included harmlessly — the pre-tool extraction
 // emits no Post event, so a Post-only context contributes a kind no module here
-// produces. A preventive file-guard is bound to a file's STATE, not an event, but
-// it fires on the PRE file events, so the ones it covers are bound so those
-// events are extracted for it to match against — create/update unless it is
-// `deletions: only`, and the delete only when its `deletions:` includes it
-// (FileGuard.Covers, the same filter the dispatch applies).
+// produces.
 func naturePreToolBoundKinds(loaded declaration.Loaded) []string {
 	bound := natureBoundKinds(loaded)
 	for _, c := range loaded.Contexts {
 		for _, trig := range c.On {
 			kinds, _ := declaration.ExpandContextEvent(trig.Event)
 			bound = append(bound, kinds...)
-		}
-	}
-	for _, g := range loaded.FileGuards {
-		if !g.Preventive {
-			continue
-		}
-		for _, k := range []string{declaration.KindPreFileCreate, declaration.KindPreFileUpdate, declaration.KindPreFileDelete} {
-			if g.Covers(k) {
-				bound = append(bound, k)
-			}
 		}
 	}
 	return bound

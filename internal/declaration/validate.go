@@ -74,6 +74,16 @@ func ValidateFileGuard(g FileGuard, env Env) []Problem {
 			"%s — a file-guard's match reads a file's own facts (path, markers, oldMarkers, context)", oneLine(err.Error())))
 	}
 
+	// `preventive:` is gone. A file-guard judges the settled result at Stop;
+	// refusing a write BEFORE it lands is a gate. Tolerating the key would leave
+	// the write it was written to stop unguarded, so it is refused by name.
+	if g.HadPreventiveKey {
+		problems = append(problems, prob(ErrRetiredKey, "preventive",
+			"`preventive:` no longer exists — a file-guard checks only the settled result at Stop. "+
+				"Split the rule: a `PreFileWrite` gate (add a `PreFileDelete` trigger if it covers deletions) "+
+				"that refuses the write before it lands, plus a plain file-guard without `preventive:` for the result"))
+	}
+
 	// `deletions:` is a closed enum. An unknown value is refused, not read as
 	// the default: `deletions: inlcude` quietly becoming `skip` would switch off
 	// the very deletions the author wrote the key to catch.

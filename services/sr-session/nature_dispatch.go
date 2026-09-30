@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/sloprail/sloprail/internal/module"
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionstate"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // This file is the NEW nature-based dispatch, wired ALONGSIDE the old GUARDRAIL.md
@@ -320,6 +322,10 @@ type gateResult struct {
 	Attribution string
 	Refused     bool
 	Reason      string
+	// Path is the file a refusal on a Pre file event is about; "" for a refusal
+	// that is about the whole call (a command, a tool, Stop, or a trigger that
+	// could not be decided).
+	Path string
 }
 
 // runGatesForEvents runs every gate whose `on` trigger matches one of the fired
@@ -327,11 +333,27 @@ type gateResult struct {
 // order.
 //
 // This is the shared body both hook points call — pre-tool with its pre-events,
-// Stop with the Stop event. For each gate, the FIRST of its triggers that matches
-// any fired event wakes it (a gate runs once per dispatch even if two triggers
-// match; it decides at the moment, one-shot). The check-runner then evaluates
-// require + checks and produces the verdict, which is recorded into the gates[]
-// map here so a later cycle or a context can read it.
+// Stop with the Stop event. A gate is woken by the triggers that match a fired
+// event, and the check-runner then evaluates require + checks per event and
+// produces the verdict, which is recorded into the gates[] map here so a later
+// cycle or a context can read it.
+//
+// # Every file a call changes is asked about
+//
+// One tool call can change several files (`rm a.go b.go`, `sed -i … a b`, two
+// sr-file calls joined by &&) and the call runs whole or not at all. So a gate is
+// run once per matching PRE FILE event, not only for the first: a gate that
+// passed the first file and was never asked about the second would admit the
+// second's not-fine change. Each refused file is its own result carrying its
+// Path, so the one deny can name every file to fix. Once a file is refused by
+// any gate, no further gate is asked about that same file — the write is already
+// prevented, and each further check on it buys nothing (for a judge, a model
+// call). Every other event kind — a command, a tool, Stop — is one-shot: the
+// first matching event wakes the gate once.
+//
+// notes is what a pure sr-file line's dry run said about a change it could not
+// compute (nil at Stop): it is quoted with a refusal of that uncomputed change so
+// the agent hears sr-file's own reason rather than guessing.
 //
 // The context[]/gates[] maps read by the runner come from the store (loadGatesMap)
 // — for THIS slice the context map is whatever context state exists (empty until
@@ -346,6 +368,7 @@ func runGatesForEvents(
 	store sessionstate.Store,
 	contextMap map[string]natures.ContextState,
 	gatesMap map[string]natures.GateState,
+	notes resolveNotes,
 ) []gateResult {
 	if len(gates) == 0 {
 		return nil
@@ -358,9 +381,10 @@ func runGatesForEvents(
 	// and passes the populated map. gatesMap is read and written back per verdict.
 	runner := dispatchcore.Runner{}
 	var results []gateResult
+	refusedFiles := map[string]bool{}
 
 	for _, g := range gates {
-		fired, ok, err := firstMatchingEvent(cmd, reg, g, events, contextMap)
+		fired, err := matchingEvents(cmd, reg, g, events, contextMap)
 		if err != nil {
 			// A trigger's match could not be COMPILED or EVALUATED. That is not the
 			// gate cleanly not waking — it is the engine unable to answer whether the
@@ -380,7 +404,7 @@ func runGatesForEvents(
 			recordGateVerdict(cmd, store, gatesMap, g.Name, natures.GateStatusFail)
 			continue
 		}
-		if !ok {
+		if len(fired) == 0 {
 			continue
 		}
 
@@ -395,61 +419,96 @@ func runGatesForEvents(
 			continue
 		}
 
-		verdict, err := runner.Run(dispatchcore.Request{
-			Nature:         dispatchcore.NatureGate,
-			Require:        g.Require,
-			Checks:         g.Checks,
-			Event:          fired,
-			TranscriptPath: scope.Transcript,
-			Context:        contextMap,
-			Gates:          gatesMap,
-			Dir:            g.Dir,
-			GuardName:      g.Name,
-			Workspace:      scope.Workspace,
-			SessionID:      scope.SessionID,
-			// The re-entry provenance to hand a check that spawns sr-agent: this
-			// gate appended to whatever launched checks are already on the stack.
-			// So a judge check's own agent, whose Write re-fires this dispatch,
-			// finds this gate in SLOPRAIL_LAUNCHED_BY and is not re-enforced by it
-			// (isLaunchedBy above, one exec down). appendLaunchedBy dedups and keeps
-			// any outer entry, so a nested launch carries the whole chain.
-			LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
-		})
-		if err != nil {
-			// The runner itself could not decide (a programming error, not a check
-			// refusal — the runner turns a check that cannot run into a refusal
-			// rather than an error). Fail-closed: refuse, naming the gate.
-			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: gate %s: %v\n", g.Attribution(), err)
-			results = append(results, gateResult{
-				Name:        g.Name,
-				Attribution: g.Attribution(),
-				Refused:     true,
-				Reason:      fmt.Sprintf("the gate %s could not be evaluated (%v); refusing because a gate that could not decide must not be read as approval", g.Attribution(), err),
-			})
-			recordGateVerdict(cmd, store, gatesMap, g.Name, natures.GateStatusFail)
-			continue
-		}
-
 		status := natures.GateStatusPass
-		if verdict.Refused {
+		for _, e := range fired {
+			path := ""
+			if isPreFileEvent(e.Kind) {
+				path = displayPath(eventPath(e), scope.Workspace)
+				if path != "" && refusedFiles[path] {
+					// Already prevented by an earlier gate: no further gate is asked.
+					continue
+				}
+			}
+
+			verdict, err := runner.Run(dispatchcore.Request{
+				Nature:         dispatchcore.NatureGate,
+				Require:        g.Require,
+				Checks:         g.Checks,
+				Event:          e,
+				TranscriptPath: scope.Transcript,
+				Context:        contextMap,
+				Gates:          gatesMap,
+				Dir:            g.Dir,
+				GuardName:      g.Name,
+				Workspace:      scope.Workspace,
+				SessionID:      scope.SessionID,
+				// The re-entry provenance to hand a check that spawns sr-agent: this
+				// gate appended to whatever launched checks are already on the stack.
+				// So a judge check's own agent, whose Write re-fires this dispatch,
+				// finds this gate in SLOPRAIL_LAUNCHED_BY and is not re-enforced by it
+				// (isLaunchedBy above, one exec down). appendLaunchedBy dedups and keeps
+				// any outer entry, so a nested launch carries the whole chain.
+				LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
+			})
+			if err != nil {
+				// The runner itself could not decide (a programming error, not a check
+				// refusal — the runner turns a check that cannot run into a refusal
+				// rather than an error). Fail-closed: refuse, naming the gate.
+				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: gate %s: %v\n", g.Attribution(), err)
+				results = append(results, gateResult{
+					Name:        g.Name,
+					Attribution: g.Attribution(),
+					Refused:     true,
+					Reason:      fmt.Sprintf("the gate %s could not be evaluated (%v); refusing because a gate that could not decide must not be read as approval", g.Attribution(), err),
+					Path:        path,
+				})
+				status = natures.GateStatusFail
+				if path != "" {
+					refusedFiles[path] = true
+				}
+				continue
+			}
+			if !verdict.Refused {
+				continue
+			}
 			status = natures.GateStatusFail
+			reason := verdict.Reason
+			if isUnderivablePreWrite(e) {
+				// A change the engine could not compute: when sr-file's dry run said
+				// why, that is worth more than the check's own words.
+				if note := notes.For(eventPath(e)); note != "" {
+					reason = withResolveNote(reason, note)
+				}
+			}
+			results = append(results, gateResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: reason, Path: path})
+			if path != "" {
+				refusedFiles[path] = true
+			}
 		}
 		recordGateVerdict(cmd, store, gatesMap, g.Name, status)
-
-		if verdict.Refused {
-			results = append(results, gateResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: verdict.Reason})
-		}
 	}
 	return results
 }
 
-// firstMatchingEvent returns the first fired event a gate's `on` triggers match,
-// whether any did, and an error when a trigger's match could not be decided.
+// withResolveNote adds what sr-file said about a change it could not compute to
+// a refusal of that change. Its words already carry the sub-agent advice when it
+// applies, so the refusal's own copy of that advice is dropped.
+func withResolveNote(reason, note string) string {
+	if strings.Contains(note, transcript.SubagentUserAdvice) {
+		reason = strings.TrimSuffix(reason, "\n"+transcript.SubagentUserAdvice)
+	}
+	return fmt.Sprintf("%s sr-file said:\n%s", reason, note)
+}
+
+// matchingEvents returns the fired events a gate's `on` triggers match, and an
+// error when a trigger's match could not be decided.
 //
-// A gate wakes when one of its triggers names an event kind that fired AND that
-// trigger's `match` (compiled against the gate scope for the kind) evaluates true.
-// The first such (trigger, event) pair is what the gate decides about — a gate is
-// one-shot, so it runs once even if several triggers or events would match.
+// A gate wakes on an event when one of its triggers names that event's kind AND
+// that trigger's `match` (compiled against the gate scope for the kind) evaluates
+// true. Every matching PRE FILE event is returned, in the order fired, so the
+// dispatch asks the gate about each file a call changes. For every other kind the
+// first matching event only is returned — the gate is one-shot on a command, a
+// tool or Stop.
 //
 // A trigger's match is compiled here rather than at load because the KIND the
 // event carries is needed to build the scope — the same reason the old dispatch
@@ -473,13 +532,14 @@ func runGatesForEvents(
 // triggers cannot be said to have cleanly not matched, so it refuses rather than
 // hunting for a later trigger that might wake it — a broken trigger is a fault to
 // surface, not a condition to route around.
-func firstMatchingEvent(cmd *cobra.Command, reg *module.Registry, g declaration.Gate, events []event.Event, contextMap map[string]natures.ContextState) (event.Event, bool, error) {
+func matchingEvents(cmd *cobra.Command, reg *module.Registry, g declaration.Gate, events []event.Event, contextMap map[string]natures.ContextState) ([]event.Event, error) {
+	matched := make([]bool, len(events))
 	for _, trig := range g.On {
 		// The trigger's `event` may be the PreFileWrite alias; expand it to the
 		// concrete kinds it fires on, the same table the loader validated it
 		// against. A trigger that loaded is always known.
 		kinds, _ := declaration.ExpandGateEvent(trig.Event)
-		for _, e := range events {
+		for i, e := range events {
 			if !containsKind(kinds, e.Kind) {
 				continue
 			}
@@ -492,20 +552,35 @@ func firstMatchingEvent(cmd *cobra.Command, reg *module.Registry, g declaration.
 				// Compile disagreeing with load: fail closed. The trigger match is
 				// quoted in the error so the refusal an author sees points at the
 				// expression to fix.
-				return event.Event{}, false, fmt.Errorf("its trigger match %q on %s could not be compiled (%w)", trig.Match, trig.Event, err)
+				return nil, fmt.Errorf("its trigger match %q on %s could not be compiled (%w)", trig.Match, trig.Event, err)
 			}
 			ok, err := m.Match(gateMatchEvent(e, contextMap))
 			if err != nil {
 				// The match compiled but could not be EVALUATED against this event.
 				// Fail closed, quoting the trigger match.
-				return event.Event{}, false, fmt.Errorf("its trigger match %q on %s could not be evaluated (%w)", trig.Match, trig.Event, err)
+				return nil, fmt.Errorf("its trigger match %q on %s could not be evaluated (%w)", trig.Match, trig.Event, err)
 			}
 			if ok {
-				return e, true, nil
+				matched[i] = true
 			}
 		}
 	}
-	return event.Event{}, false, nil
+	var out []event.Event
+	sawOther := false
+	for i, e := range events {
+		if !matched[i] {
+			continue
+		}
+		if isPreFileEvent(e.Kind) {
+			out = append(out, e)
+			continue
+		}
+		if !sawOther {
+			sawOther = true
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 // containsKind reports whether kind is one of the concrete kinds a trigger

@@ -122,7 +122,7 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// 3. Stop gates, reading the now-populated context[]/gates[]. The Stop event is
 	//    the subjectless one cyclemod produces. Refusals block the turn.
 	stop := cyclemod.Event()
-	for _, r := range runGatesForEvents(cmd, reg, loaded.Gates, []event.Event{stop}, scope, store, contextMap, gatesMap) {
+	for _, r := range runGatesForEvents(cmd, reg, loaded.Gates, []event.Event{stop}, scope, store, contextMap, gatesMap, resolveNotes{}) {
 		if r.Refused {
 			refusals = append(refusals, r.Reason+" (gate "+r.Attribution+")")
 		}
