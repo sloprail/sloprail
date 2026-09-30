@@ -4,8 +4,9 @@ package e2e
 // on PATH; today InstallJudgeClaude supplies the verdict.
 //
 // Use case: business-invariants (unit 04 + its 02_pinned-spec-reference addendum).
-// A file-guard bound to a file carrying an `sr:invariant` marker whose fqn is a
-// pinned spec reference `<repo>@<sha>:<path>#L<start>-<end>`. Two checks divide
+// pinned-invariant, a plain file-guard (it acts at Stop, on the settled file;
+// pinned-spec-holds is the rule that ships a gate too), bound to a file carrying
+// an `sr:invariant` marker whose fqn is a pinned spec reference `<repo>@<sha>:<path>#L<start>-<end>`. Two checks divide
 // the work, cheap-gates-expensive:
 //
 //   - SCRIPT (pin-still-matches-head.sh): does the pin resolve (real commit, real
@@ -14,7 +15,7 @@ package e2e
 //   - JUDGE (code-upholds-invariant.md.j2): given the pinned text, does the marked
 //     code actually enforce what it says?
 //
-// The guard is NOT preventive, so every refusal here arrives at Stop and is read
+// A file-guard acts only at Stop, so every refusal here arrives there and is read
 // with BlockingErrorsFrom(proj, sess, "Stop"); res.Refused() (the PreToolUse deny
 // marker) stays false for this rule.
 //

@@ -1,6 +1,9 @@
 # In this project a markdown file restates what other files say — a summary, a
 # migration note — so every claim must be referenced, not regenerated: grounded in
-# the tool output the agent actually read.
+# the tool output the agent actually read. This is the PRE-WRITE half: an ungrounded
+# claim is refused before it lands, while the agent still has the source in view.
+# The file-guard of the same name is the other half, judging the settled file at
+# Stop.
 #
 # The citation rides on the write, never in the file. The agent reads the source
 # (a Read, a `cat`), then writes the markdown with sr-file, quoting that output
@@ -19,12 +22,16 @@
 # form. The judge answers what existence cannot: does the file say what the cited
 # output says?
 #
-# The gate of the same name refuses an ungrounded claim BEFORE it lands, while the
-# agent still has the source in view. This file-guard is the after-check: at Stop it
-# judges the settled file, so a markdown change the gate could not see (a script
-# rewriting the file) is grounded too.
-match: "**/*.md"
+# Fail closed: the judge reads the pending bytes (`event.newContent`), so a write
+# whose result the engine cannot compute (`resultKnown: false`, `newContent` "")
+# is refused by require-known-result.sh before the judge would read an empty file.
+# PreFileWrite covers both a create and an update; a delete restates nothing, so
+# there is no PreFileDelete trigger.
+on:
+  - event: PreFileWrite
+    match: 'event.path endsWith ".md"'
 require:
   - citation: {source_types: [tool_result]}
 checks:
+  - script: ./require-known-result.sh
   - judge: ./claims-match-cited-output.md.j2

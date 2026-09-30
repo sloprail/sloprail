@@ -1,6 +1,7 @@
 package e2e
 
-// Use case: grounding-citations. A PREVENTIVE file-guard bound to `**/*.md`: every
+// Use case: grounding-citations. A GATE on PreFileWrite of `*.md`, and a plain
+// file-guard of the same name on `**/*.md` for the Stop after-check: every
 // markdown write restates a source, so it must cite the tool output it comes from
 // — `sr-file write <doc> --cite:tool_result '<exact output>'` — and a judge rules
 // whether the file says what that output says.
@@ -10,12 +11,17 @@ package e2e
 //     tool output, or only in the user's words, is no citation.
 //   - JUDGE (claims-match-cited-output.md.j2): handed the file and each citation —
 //     the quote and the whole tool output it came from.
+//   - FAIL CLOSED (the gate's require-known-result.sh): a write whose result the
+//     engine could not work out ahead is refused before the judge reads no bytes.
 //
-// Refusals arrive at pre-tool, read with res.Refused() and res.Saw(reason). The
+// The gate's refusals arrive at pre-tool, read with res.Refused() and
+// res.Saw(reason); the file-guard's arrive at Stop. The
 // source reaches the transcript through a real `cat` turn, so its tool_result is
 // there to cite. The example is installed VERBATIM.
 
 import (
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -100,6 +106,9 @@ func TestT047_03_CitedWriteJudgeFailRefused(t *testing.T) {
 	if !res.Refused() || !res.Saw("SR047 the file says 5 retries") {
 		t.Fatalf("the judge's refusal did not reach the agent:\n%s", res.Output)
 	}
+	if !res.Saw(`gate \"citations-resolve\"`) {
+		t.Errorf("the refusal did not come from the pre-write gate:\n%s", res.Output)
+	}
 	if e.Exists(proj, "MIGRATION.md") {
 		t.Errorf("the refused write landed")
 	}
@@ -175,5 +184,91 @@ func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "<call>Bash: cat ") {
 		t.Errorf("the call that produced the cited output is not in the judge prompt:\n%s", prompt)
+	}
+}
+
+// T047_07: a call that writes several markdown files is asked about EVERY one, and
+// one refusal names the file that is not grounded — the call runs for none.
+func TestT047_07_OneUngroundedFileRefusesTheWholeCall(t *testing.T) {
+	e := newEnv(t)
+	proj := gcProject(t, e)
+	gcSource(t, e, proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses the uncited file"}`)
+
+	res := e.Run(proj, "s-047-07", "summarize the changelog twice", Turns("done",
+		readSource("r1", "CHANGELOG.md"),
+		Bash("w1", "sr-file write A.md --content "+shq(summary)+" "+citeTool(sourceLine)+
+			" && sr-file write B.md --content "+shq(summary)),
+	))
+	if !res.Refused() || !res.Saw("B.md") {
+		t.Fatalf("a call with one uncited markdown file was not refused, naming it:\n%s", res.Output)
+	}
+	if e.Exists(proj, "A.md") || e.Exists(proj, "B.md") {
+		t.Errorf("a refused call still wrote a file (A.md: %v, B.md: %v)", e.Exists(proj, "A.md"), e.Exists(proj, "B.md"))
+	}
+}
+
+// T047_08: an uncited redirect (`>`), a result the engine cannot compute, carries
+// no citation either and is refused before it lands — the gate does not admit
+// bytes nobody saw.
+func TestT047_08_ShellRedirectIsRefused(t *testing.T) {
+	e := newEnv(t)
+	proj := gcProject(t, e)
+	gcSource(t, e, proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
+
+	res := e.Run(proj, "s-047-08", "summarize the changelog", Turns("done",
+		readSource("r1", "CHANGELOG.md"),
+		Bash("w1", "printf 'Retries now default to 3.\\n' > MIGRATION.md"),
+	))
+	if !res.Refused() || !res.Saw(`gate \"citations-resolve\"`) {
+		t.Fatalf("an uncited shell write of markdown was not refused by the gate:\n%s", res.Output)
+	}
+	if e.Exists(proj, "MIGRATION.md") {
+		t.Errorf("the refused redirect landed")
+	}
+}
+
+// T047_10: the Stop after-check. A script rewriting markdown is not a write the
+// engine sees ahead, so the gate never asks; the file-guard of the same name asks
+// at Stop, and the change carries no citation, so it blocks the turn.
+func TestT047_10_ScriptRewriteIsCaughtAtStop(t *testing.T) {
+	e := newEnv(t)
+	proj := gcProject(t, e)
+	gcSource(t, e, proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
+
+	sess := "s-047-10"
+	e.Run(proj, sess, "summarize the changelog", Turns("done",
+		readSource("r1", "CHANGELOG.md"),
+		Bash("w1", `python3 -c "open('MIGRATION.md','w').write('Retries now default to 3.\\n')"`),
+	))
+	if !e.Exists(proj, "MIGRATION.md") {
+		t.Fatalf("the script rewrite did not land, so this no longer tests the Stop after-check")
+	}
+	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
+	if !containsAll(joined, "citations-resolve", "MIGRATION.md") {
+		t.Fatalf("an uncited script-written markdown file was not refused at Stop:\n%s", joined)
+	}
+}
+
+// T047_11: the gate's require-known-result.sh refuses a create or update whose
+// result the engine could not work out, and admits one whose result is known.
+func TestT047_11_UnknownResultIsRefused(t *testing.T) {
+	script := filepath.Join(repoRoot(t), "examples", "grounding-citations", ".sloprail", "gate", "citations-resolve", "require-known-result.sh")
+	for _, c := range []struct {
+		known string
+		want  int
+	}{{"false", 1}, {"true", 0}} {
+		cmd := exec.Command(script)
+		cmd.Stdin = strings.NewReader(`{"event":{"kind":"PreFileUpdate","path":"NOTES.md","resultKnown":` + c.known + `,"newContent":""}}`)
+		out, _ := cmd.Output()
+		code := cmd.ProcessState.ExitCode()
+		if code != c.want {
+			t.Errorf("resultKnown %s: exit %d, want %d (%s)", c.known, code, c.want, out)
+		}
+		if c.want == 1 && !strings.Contains(string(out), "cannot be worked out before it runs") {
+			t.Errorf("the refusal does not say why: %s", out)
+		}
 	}
 }

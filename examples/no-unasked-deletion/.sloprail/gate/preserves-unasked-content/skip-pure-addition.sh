@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# prepare (the file-guard's copy, reading the settled Post* events at Stop): decide
-# whether the judge is asked at all. What it rules on — the
+# prepare (the gate's copy, reading Pre* events): decide whether the judge is asked
+# at all. What it rules on — the
 # change's unified diff and the cited words — needs no preparing: the template
 # reads `change` and `.event.citations` straight off its input.
 #
@@ -22,17 +22,17 @@ empty() {
   exit 0
 }
 
-# Content by event kind, as removes-content.sh reads it. A Post event's bytes are
-# settled; only newContentKnown says whether the engine could read them.
+# Content by event kind, as removes-content.sh reads it. resultKnown is declared
+# on the Pre create/update kinds: a result the engine could not compute hands the
+# judge an empty context (require-known-result.sh has refused it before this).
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
 case "$kind" in
-  PostFileCreate|PostFileUpdate)
-    # Settled bytes the engine could not read (newContentKnown false): what
-    # the change removed is unknown — ask the judge, never skip it.
-    [ "$(printf '%s' "$input" | jq -r 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')" = "true" ] || empty
+  PreFileCreate|PreFileUpdate)
+    known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
+    [ "$known" = "true" ] || empty
     new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
-  PostFileDelete)
+  PreFileDelete)
     # A delete whose bytes the engine did not read (oldContentKnown false: past
     # a recursive removal's read budget, larger than a delete read, or not a
     # regular file) loses content nobody can see — never "nothing removed". An

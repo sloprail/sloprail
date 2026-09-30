@@ -1,0 +1,46 @@
+# An edit must not silently drop content nobody asked to remove. The load-bearing word
+# is UNASKED: the removal's relationship to the user's own words.
+#
+# A gate, so the diff is computed at Pre time, before the loss — a Post check is too
+# late, and git-restore is gone on an uncommitted file. The judge lives HERE, not
+# only in the file-guard of the same name: the rule's whole point is refusing the
+# removal before it happens, and a judge that ran only at Stop would rule on a file
+# already destroyed. The file-guard is the after-check: same rule on the settled
+# file, so a removal the gate could not see (a script rewriting the file) is caught
+# at Stop.
+#
+# "Asked" is deterministic: a removal must CITE the user's own words. The agent
+# makes the change with `sr-file edit|write|delete <path> ... --cite:user
+# '<quote>'`; the engine resolves the quote against the session's record (a
+# message or an AskUserQuestion answer) and hands it to the checks on
+# `.event.citations`. The quote rides on the command, never in the file.
+#
+# The requirement is declared, conditionally: a pure append needs no ask, so
+# `require` demands a user citation only `when` removes-content.sh says the change
+# removes something. An uncited removal is refused by the engine before the judge
+# is paid for; a cited one goes to the judge, which rules the model-only
+# properties (the change covers only what the cited words asked, and is stated
+# absolutely).
+#
+# Fail closed: a create or update whose result the engine could not work out ahead
+# (`sed -i`, `>`) carries `resultKnown: false` and an empty `newContent`, which
+# reads as an emptied file. require-known-result.sh refuses it, so a write that
+# cannot be shown to preserve content is not waved through.
+#
+# Two triggers, because deleting a memory is the largest removal there is: the whole-file
+# form of the same loss. PreFileWrite covers create and update; PreFileDelete
+# means `rm memories/x.md` cites nothing and is refused, while `sr-file delete
+# memories/x.md --cite:user '<quote>'` goes to the judge like any removal. (Without
+# the delete trigger every `rm` would get a free pass.)
+on:
+  - event: PreFileWrite
+    match: 'event.path startsWith "memories/" and event.path endsWith ".md"'
+  - event: PreFileDelete
+    match: 'event.path startsWith "memories/" and event.path endsWith ".md"'
+require:
+  - citation: {source_types: [user]}
+    when: ./removes-content.sh
+checks:
+  - script: ./require-known-result.sh
+  - judge: ./change-is-clean-and-absolute.md.j2
+    prepare: ./skip-pure-addition.sh

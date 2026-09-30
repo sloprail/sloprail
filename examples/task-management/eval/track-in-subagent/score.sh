@@ -34,7 +34,8 @@ parent agent wrote, and --cite:user resolves only against the user's messages
 in the main conversation. So a sub-agent can cite the user only if the parent
 passed the user's words to it verbatim."
 
-GUARDRAIL="A PREVENTIVE file-guard (ask-is-human-authored) matches
+GUARDRAIL="A PreFileWrite gate (ask-is-human-authored, with a same-named file-guard as
+the Stop after-check) matches
 **/tasks/*/*/ASK.md: every write must cite the user's own words; a judge checks
 ASK.md says what the cited message says and nothing else. An uncited write is
 refused naming the sr-file form. A sub-agent's --cite:user quote that is not in

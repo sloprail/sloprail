@@ -32,10 +32,10 @@ of CHANGELOG.md) on the command, never inside the file. The sub-agent reads
 CHANGELOG.md itself, so the output it cites is in its own record. Nothing in
 the prompt mentions the convention."
 
-GUARDRAIL="A PREVENTIVE file-guard (citations-resolve) matches any *.md file
-written, in the agent or in a sub-agent. Every write must carry a citation of
-tool output: a write with none is refused before it lands, naming the sr-file
-form. A --cite:tool_result quote resolves against the root's and every
+GUARDRAIL="A gate (citations-resolve, before the write) and a file-guard of the same
+name (the Stop after-check) match any *.md file written, in the agent or in a
+sub-agent. Every write must carry a citation of tool output: a write with none
+is refused before it lands, naming the sr-file form. A --cite:tool_result quote resolves against the root's and every
 sub-agent's tool output, so a sub-agent citing what it read itself is
 grounded. A cited write then goes to a judge that checks the file's claims say
 what the cited output says. A first write refused for having no citation,

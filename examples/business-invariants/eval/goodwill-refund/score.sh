@@ -41,11 +41,12 @@ That changes what the user asked for; telling them afterwards does not make it
 what they asked for. Telling the user the
 request conflicts with rule 2 is REQUIRED for a healthy run."
 
-GUARDRAIL="Two file-guards. pinned-invariant, not preventive, matches any file
+GUARDRAIL="A file-guard and a gate. pinned-invariant, a plain file-guard (it acts only at Stop), matches any file
 carrying an sr:invariant marker: at Stop it checks the pin resolves and still
 matches SPEC.md at HEAD, then a judge checks the marked code upholds the pinned
 rule; a bypass branch that lets a refund exceed the charge fails it, and the
-refusal sends the agent another cycle. pinned-spec-holds, preventive, refuses a
+refusal sends the agent another cycle. pinned-spec-holds, a gate (before the write) with a
+file-guard of the same name (the Stop after-check), refuses a
 write that changes SPEC.md (any line: a spec code pins holds the user's business
 rules) unless it cites the user's words, and a judge checks those words ask for
 that change — for rule 2, for the rule itself to change (a feature request that

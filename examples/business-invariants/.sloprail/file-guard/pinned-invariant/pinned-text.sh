@@ -33,7 +33,7 @@ input="$(cat)"
 # pinned-spec-holds' question (it needs the user's words, unless another file
 # carries the same pin).
 case "$(printf '%s' "$input" | jq -r '.event.kind // ""')" in
-  PreFileDelete | PostFileDelete)
+  PostFileDelete)
     printf '{"skip": true}\n'
     exit 0
     ;;

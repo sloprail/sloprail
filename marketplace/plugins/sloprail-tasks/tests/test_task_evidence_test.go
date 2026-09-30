@@ -300,6 +300,9 @@ func TestEvidence_UnknownResultWriteRefused(t *testing.T) {
 	e.GitInit(proj)
 	e.WriteFile(proj, taskPath, task("backlog", "P1", askBody))
 	installPluginTree(t, e, proj)
+	// task-body's citation requirement would refuse the uncited shell edit first;
+	// disabled so the refusal under test is the evidence gate's own.
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored", pluginName+"/gate/task-body-is-human-authored")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	res := e.Run(proj, "s-evidence-sedi", authPrompt, Turns("done",

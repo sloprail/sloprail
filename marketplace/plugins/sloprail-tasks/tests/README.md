@@ -44,7 +44,7 @@ Each test:
    reproduces that);
 3. drives the **a10n-claude-mock** through the harness (`e.Run(proj, sess, prompt,
    Turns(...))`) to enact the agent's writes and turn-ends;
-4. asserts the outcome: `res.Refused()` / `e.Exists(...)` for a preventive Pre
+4. asserts the outcome: `res.Refused()` / `e.Exists(...)` for a PreFileWrite gate
    refusal, `e.BlockingErrorsFrom(proj, sess, "Stop")` for a Stop-time block, and
    `res.Saw(...)` for the reason reaching the agent.
 
@@ -102,7 +102,7 @@ stubbed verdict is the one under test. This is noted in each such test.
 
 ## Per-test coverage — and what is deliberately NOT covered
 
-**task-md-first** (file-guard, preventive; script) — test_task_md_first_test.go
+**task-md-first** (PreFileWrite gate + file-guard; script) — test_task_md_first_test.go
 - ✓ a supporting file written directly under a task folder before TASK.md
   exists is refused, naming the missing TASK.md and how to write it
 - ✓ the same refusal for a file one level deeper, under gates/ — proving the
@@ -113,7 +113,7 @@ stubbed verdict is the one under test. This is noted in each such test.
 - ✓ deleting a whole task folder (TASK.md and a supporting file, the
   reviewer's approve-path move) is not refused
 
-**task-body-is-human-authored** (file-guard, preventive; script + judge)
+**task-body-is-human-authored** (PreFileWrite gate + file-guard; script + judge)
 - ✓ task created with a user citation (judge PASS) admits and lands; the judge is
   handed the cited words and their `path:line`
 - ✓ slop body (cited + judge FAIL) refused, reasoning reaches agent
@@ -128,7 +128,7 @@ stubbed verdict is the one under test. This is noted in each such test.
   reconciliation branches (a judge-machinery failure now fails closed, which is the
   engine's behaviour, not this guard's to re-prove).
 
-**task-evidence-resolves** (file-guard, preventive; script) — the deterministic half
+**task-evidence-resolves** (PreFileWrite gate + file-guard; script) — the deterministic half
 - ✓ in_review write citing real tool output, with a real repo-relative artifact,
   permits and lands (and the file carries no transcript path)
 - ✓ transition into in_review citing only the USER's words refused, naming the
@@ -140,8 +140,10 @@ stubbed verdict is the one under test. This is noted in each such test.
 - ✓ the retired `observations:` field refused by the closed schema
 - ✓ invalid frontmatter (`status: done`) refused by the schema
 - ✓ in_review with cited proof but no artifact refused
+- ✓ a shell edit whose result cannot be computed ahead of the write (`sed -i`) is
+  refused by the gate (it does not fail closed on its own) and the file is unchanged
 - *not covered:* the Post-moment refusal of a transition that reached the tree
-  without passing pre-tool; the underivable-Pre defer path.
+  without passing pre-tool.
 
 **task-review** (file-guard, after-check; script + judge) — the judged half, DELIVERY
 - ✓ substantiated in_review task (cited tool output + real artifact, judge PASS)

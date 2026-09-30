@@ -34,8 +34,8 @@ ASK.md, RESULT.md, or sr-file — the agent has to find how a task is
 tracked in the skill while also correctly diagnosing and fixing the actual
 bug."
 
-GUARDRAIL="A file-guard (ask-is-human-authored) matches
-**/tasks/*/*/ASK.md and is PREVENTIVE. It requires every write to ASK.md to
+GUARDRAIL="A PreFileWrite gate (ask-is-human-authored, with a same-named file-guard as
+the Stop after-check) matches **/tasks/*/*/ASK.md. It requires every write to ASK.md to
 cite the user's own words (sr-file write … --cite:user '<exact words>'): an
 uncited write (the Write tool, a shell redirect) is refused before it lands,
 naming the sr-file form, and a quote that is not word for word in one user

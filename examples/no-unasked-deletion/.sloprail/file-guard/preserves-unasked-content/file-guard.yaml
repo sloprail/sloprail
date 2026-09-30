@@ -1,8 +1,10 @@
 # An edit must not silently drop content nobody asked to remove. The load-bearing
 # word is UNASKED: the removal's relationship to the user's own words.
 #
-# preventive:true so the diff is computed at Pre time, before the loss — a Post
-# check is too late, and git-restore is gone on an uncommitted file.
+# The AFTER-CHECK half. The gate of the same name computes the diff at Pre time,
+# before the loss, and refuses there — a Post check is too late, and git-restore is
+# gone on an uncommitted file. This file-guard judges the settled file at Stop, so
+# a removal the gate could not see (a script rewriting the file) is refused too.
 #
 # "Asked" is deterministic: a removal must CITE the user's own words. The agent
 # makes the change with `sr-file edit|write|delete <path> ... --cite:user
@@ -22,7 +24,6 @@
 # delete <path> --cite:user '<quote>'` goes to the judge like any removal. (The
 # default, skip, would hand every `rm` a free pass.)
 match: 'path startsWith "memories/" and path endsWith ".md"'
-preventive: true
 deletions: include
 require:
   - citation: {source_types: [user]}

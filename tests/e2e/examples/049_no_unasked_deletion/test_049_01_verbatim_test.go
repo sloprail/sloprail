@@ -3,10 +3,11 @@ package e2e
 // TODO(D3): drive verdict via a10n-claude-mock once a10n-cli#470 lands + new mock
 // on PATH; today InstallJudgeClaude supplies the verdict.
 //
-// Use case: no-unasked-deletion (unit 17). A file-guard bound to
-// `path startsWith "memories/" and path endsWith ".md"`, PREVENTIVE (fires at
-// PreFileUpdate/PreFileDelete, refusing BEFORE the write lands — the content that
-// would be lost is still on disk at Pre time). "Asked" is a CITATION of the user's
+// Use case: no-unasked-deletion (unit 17). A GATE on `event.path startsWith
+// "memories/" and event.path endsWith ".md"` (PreFileWrite and PreFileDelete,
+// refusing BEFORE the write lands — the content that would be lost is still on
+// disk at Pre time), with a plain file-guard of the same name as the Stop
+// after-check. "Asked" is a CITATION of the user's
 // words on the command that makes the change (`sr-file ... --cite:user '<quote>'`),
 // never a marker in the file.
 //
@@ -20,7 +21,7 @@ package e2e
 //     what the cited words asked) and absolute (states the final content, not a
 //     delta narrative).
 //
-// Because the guard is PREVENTIVE, refusals arrive at PRE-TOOL as a deny — read
+// Because the rule is a GATE, refusals arrive at PRE-TOOL as a deny — read
 // with res.Refused() and res.Saw(reason), NOT at Stop. A cited ADMIT lets the
 // change land.
 //
@@ -31,7 +32,22 @@ package e2e
 //   - UNCITED: a plain Write turn, or an `rm` Bash turn — neither can carry one.
 //   - JUDGE verdict: InstallJudgeClaude supplies the model's pass/fail.
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// readMemory reads a file of the project as text.
+func readMemory(t *testing.T, proj, rel string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(proj, rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
 
 // nudProject stands up a project with the no-unasked-deletion example installed
 // verbatim (its scripts ship executable, so no chmod is needed).
@@ -95,7 +111,7 @@ func TestT049_02_RemovalWithoutMarkerBlocks(t *testing.T) {
 	}
 	// The write was denied, so the file still holds its original content.
 	if !e.Exists(proj, "memories/topic.md") {
-		t.Fatalf("a preventive deny should leave the original file on disk")
+		t.Fatalf("a pre-write deny should leave the original file on disk")
 	}
 }
 
@@ -200,7 +216,7 @@ func TestT049_06_NonMemoriesFileDoesNotFire(t *testing.T) {
 // the marker, so this isolates the marker as what authorizes the removal — it is
 // read and acted on, not ignored.
 //
-// Separate projects, not two cycles in one: a preventive deny leaves the original
+// Separate projects, not two cycles in one: a pre-write deny leaves the original
 // file on disk, and a leftover not-fine file from the WITHOUT branch would be
 // re-checked in a shared project and confuse the WITH branch's admit.
 func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
@@ -321,5 +337,70 @@ func TestT049_10_FabricatedAskBlocksViaScript(t *testing.T) {
 	// its own reason rather than a generic "could not compute".
 	if !res.Saw("sr-file said") || !res.Saw("does not resolve") {
 		t.Fatalf("the fabricated-ask reason did not reach the agent:\n%s", res.Output)
+	}
+}
+
+// T049_20: a `sed -i` of a memory is a write whose result the engine cannot work
+// out ahead, so the gate cannot show it preserves content and refuses it before
+// it runs — the file is untouched. Nothing here can carry a citation.
+func TestT049_20_SedInPlaceIsRefusedByTheGate(t *testing.T) {
+	e := newEnv(t)
+	proj := nudProject(t, e)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the gate refuses first"}`)
+
+	e.WriteFile(proj, "memories/topic.md", "keep this line\nremove this line\n")
+
+	res := e.Run(proj, "s-049-20", "tidy the memory", Turns("done",
+		Bash("b1", "sed -i.bak '/remove this line/d' memories/topic.md"),
+	))
+	if !res.Refused() || !res.Saw(`gate \"preserves-unasked-content\"`) {
+		t.Fatalf("a sed -i of a memory was not refused by the gate:\n%s", res.Output)
+	}
+	if got := readMemory(t, proj, "memories/topic.md"); got != "keep this line\nremove this line\n" {
+		t.Errorf("the refused sed -i reached the memory:\n%s", got)
+	}
+}
+
+// T049_21: one `rm` of two memories is asked about EVERY file: both are named in
+// the one refusal, and neither is deleted.
+func TestT049_21_RmOfTwoMemoriesNamesBoth(t *testing.T) {
+	e := newEnv(t)
+	proj := nudProject(t, e)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
+
+	e.WriteFile(proj, "memories/a.md", "fact a\n")
+	e.WriteFile(proj, "memories/b.md", "fact b\n")
+
+	res := e.Run(proj, "s-049-21", "clean up", Turns("done",
+		Bash("d1", "rm memories/a.md memories/b.md"),
+	))
+	if !res.Refused() || !res.Saw("memories/a.md") || !res.Saw("memories/b.md") {
+		t.Fatalf("an rm of two memories was not refused naming both:\n%s", res.Output)
+	}
+	if !e.Exists(proj, "memories/a.md") || !e.Exists(proj, "memories/b.md") {
+		t.Errorf("a refused rm still deleted a memory")
+	}
+}
+
+// T049_22: the Stop after-check. A script rewriting a memory is not a write the
+// engine sees ahead, so the gate never asks; the file-guard of the same name asks
+// at Stop, and the settled change removes a line with no citation, so it blocks.
+func TestT049_22_ScriptRewriteIsCaughtAtStop(t *testing.T) {
+	e := newEnv(t)
+	proj := nudProject(t, e)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
+
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "keep this line\nremove this line\n")
+
+	sess := "s-049-22"
+	e.Run(proj, sess, "tidy the memory", Turns("done",
+		Bash("b1", `python3 -c "open('memories/topic.md','w').write('keep this line\\n')"`),
+	))
+	if got := readMemory(t, proj, "memories/topic.md"); got != "keep this line\n" {
+		t.Fatalf("the script rewrite did not land, so this no longer tests the Stop after-check:\n%s", got)
+	}
+	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n---\n")
+	if !strings.Contains(joined, "preserves-unasked-content") || !strings.Contains(joined, "without citing the user's own words") {
+		t.Fatalf("an uncited script rewrite that dropped a line was not refused at Stop:\n%s", joined)
 	}
 }

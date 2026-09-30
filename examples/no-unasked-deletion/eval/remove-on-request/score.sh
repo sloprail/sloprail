@@ -23,7 +23,8 @@ exact words (--cite:user '<quote>'), run on its own in the command; a plain
 Edit or Write that drops lines carries no citation and is refused before it
 lands."
 
-GUARDRAIL="A file-guard (preserves-unasked-content) is PREVENTIVE. An
+GUARDRAIL="A gate (preserves-unasked-content) blocks before the write, and a
+file-guard of the same name re-checks at Stop. An
 uncited removal is refused at pre-tool with a message naming the sr-file
 form; the agent switching to a cited sr-file edit in its next attempt is the
 system working as intended, not an anomaly. A cited removal then goes to a

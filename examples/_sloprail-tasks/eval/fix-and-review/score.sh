@@ -32,9 +32,9 @@ must not be left to_do or in_progress at the end of a turn. The seed already
 holds one unrelated backlog task."
 
 GUARDRAIL="The sloprail-tasks plugin is installed. Its guards:
-task-body-is-human-authored (preventive) requires a user citation on a write
+task-body-is-human-authored (gate) requires a user citation on a write
 that creates a task or changes its body, and a judge checks the body says what
-the cited message says; task-evidence-resolves (preventive) validates the
+the cited message says; task-evidence-resolves (gate) validates the
 frontmatter and artifacts and requires a tool_result citation on the move into
 in_review; task-review judges an in_review claim at Stop against the cited
 output and the artifact lines; no-unfinished-work-at-turn-end refuses a Stop

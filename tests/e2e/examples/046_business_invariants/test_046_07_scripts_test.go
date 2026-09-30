@@ -239,7 +239,7 @@ func TestT046_35_AnUnpinnedFileIsAnsweredCheaply(t *testing.T) {
 // file has no code left to rule on (whether it may drop its pins is
 // pinned-spec-holds' question).
 func TestT046_37_PrepareSkipsTheJudgeOnADelete(t *testing.T) {
-	for _, kind := range []string{"PreFileDelete", "PostFileDelete"} {
+	for _, kind := range []string{"PostFileDelete"} {
 		payload := `{"event":{"kind":"` + kind + `","path":"src/charge.go","oldContent":"x",` +
 			`"oldMarkers":[{"kind":"invariant","fqn":"/r@abcdef1:SPEC.md#L1-1","line":1}]}}`
 		out, code := runRuleScript(t, ruleDir(t, "pinned-invariant"), "pinned-text.sh", t.TempDir(), payload)
