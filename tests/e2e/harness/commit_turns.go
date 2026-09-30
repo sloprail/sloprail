@@ -25,6 +25,16 @@ func Commit(id, msg string, trailers ...string) Turn {
 	return Bash(id, commitCmd(msg, trailers...))
 }
 
+// CommitPaths is a scenario turn in which the AGENT commits only the given paths,
+// leaving everything else (an untracked nested clone, say) uncommitted.
+func CommitPaths(id, msg string, paths ...string) Turn {
+	args := make([]string, len(paths))
+	for i, p := range paths {
+		args[i] = shQuote(p)
+	}
+	return Bash(id, "git add -- "+strings.Join(args, " ")+" && git commit -q -m "+shQuote(msg))
+}
+
 // ThenCommit is the scenario followed by the agent committing its work: the
 // "write, commit, stop" of a test that wants a file-guard to judge what the agent
 // wrote. Its id comes from the message and the scenario's own turns, so two runs in

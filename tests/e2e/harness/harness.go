@@ -983,7 +983,9 @@ func (e *Env) excludeLedgers(dir string) {
 	e.t.Helper()
 	path := filepath.Join(e.Git(dir, "rev-parse", "--absolute-git-dir"), "info", "exclude")
 	patterns := ".sloprail/*/*/*\n!.sloprail/*/*/*/\n" +
-		"!.sloprail/*/*/*.sh\n!.sloprail/*/*/*.yaml\n!.sloprail/*/*/*.yml\n!.sloprail/*/*/*.j2\n!.sloprail/*/*/*.md\n!.sloprail/*/*/*.cue\n"
+		"!.sloprail/*/*/*.sh\n!.sloprail/*/*/*.yaml\n!.sloprail/*/*/*.yml\n!.sloprail/*/*/*.j2\n!.sloprail/*/*/*.md\n!.sloprail/*/*/*.cue\n" +
+		// the mock's own scenario files are not the project's work either
+		"/.scenario.sh\n/.inner-scenario.sh\n"
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		e.t.Fatalf("harness: exclude ledgers: %v", err)
 	}

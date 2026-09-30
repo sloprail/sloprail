@@ -12,8 +12,9 @@ import (
 
 // Observed is one file entry of one recorded changeset.
 type Observed struct {
-	Status string // A, M or D
-	Path   string
+	Status  string // A, M or D
+	Path    string
+	OldPath string // the path a rename came from; empty otherwise
 }
 
 // Files decodes every recorded payload line into its file entries, in order.
@@ -26,8 +27,9 @@ func Files(t testing.TB, lines []string) []Observed {
 		var p struct {
 			Changeset struct {
 				Files []struct {
-					Path   string `json:"path"`
-					Status string `json:"status"`
+					Path    string `json:"path"`
+					Status  string `json:"status"`
+					OldPath string `json:"oldPath"`
 				} `json:"files"`
 			} `json:"changeset"`
 		}
@@ -35,7 +37,7 @@ func Files(t testing.TB, lines []string) []Observed {
 			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
 		}
 		for _, f := range p.Changeset.Files {
-			got = append(got, Observed{Status: f.Status, Path: f.Path})
+			got = append(got, Observed{Status: f.Status, Path: f.Path, OldPath: f.OldPath})
 		}
 	}
 	return got
@@ -54,3 +56,14 @@ func Statuses(got []Observed, path string) []string {
 
 // Saw reports whether any recorded changeset names the path.
 func Saw(got []Observed, path string) bool { return len(Statuses(got, path)) > 0 }
+
+// RenamedFrom reports whether some recorded changeset holds an entry for path
+// that says it was renamed from old.
+func RenamedFrom(got []Observed, path, old string) bool {
+	for _, o := range got {
+		if o.Path == path && o.OldPath == old {
+			return true
+		}
+	}
+	return false
+}

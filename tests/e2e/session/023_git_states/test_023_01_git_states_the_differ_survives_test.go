@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,35 +118,6 @@ func runOne(t *testing.T, e *harness.Env, proj, ledger, sess string, s harness.S
 	return ledgerFiles(t, ledger)
 }
 
-// renamedFrom reports whether some recorded changeset holds an entry for path that
-// says it was renamed from old (the payload's `oldPath`).
-func renamedFrom(t *testing.T, ledger, path, old string) bool {
-	t.Helper()
-	body, err := os.ReadFile(ledger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, line := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		var p struct {
-			Changeset struct {
-				Files []struct{ Path, Status, OldPath string } `json:"files"`
-			} `json:"changeset"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatal(err)
-		}
-		for _, f := range p.Changeset.Files {
-			if f.Path == path && f.OldPath == old {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func hasStatus(got []changesetkit.Observed, path, status string) bool {
 	k := changesetkit.Statuses(got, path)
 	return len(k) > 0 && k[0] == status
@@ -185,7 +155,7 @@ func TestT023_01_ARenameIsADeleteAndACreate(t *testing.T) {
 		t.Fatalf("the rename's destination was not reported as a rename: %v (all: %v)\n"+
 			"a file arrived at a path no rule was asked about", k, got)
 	}
-	if !renamedFrom(t, ledger, "after.md", "before.md") {
+	if !changesetkit.RenamedFrom(got, "after.md", "before.md") {
 		t.Fatalf("the rename entry does not name the path it came from, so a rule bound to the " +
 			"old path never learns the file left")
 	}
@@ -216,7 +186,7 @@ func TestT023_02_ARenameChainWithinARangeEndsAtTheLastPath(t *testing.T) {
 	if k := changesetkit.Statuses(got, "c.md"); len(k) != 1 || k[0] != "R" {
 		t.Fatalf("the chain's final path was not reported as a rename: %v (all: %v)", k, got)
 	}
-	if !renamedFrom(t, ledger, "c.md", "a.md") {
+	if !changesetkit.RenamedFrom(got, "c.md", "a.md") {
 		t.Fatalf("the final path does not name the range's base path a.md as its origin (all: %v)", got)
 	}
 	if k := changesetkit.Statuses(got, "b.md"); len(k) > 0 {

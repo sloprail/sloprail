@@ -435,10 +435,18 @@ func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
 	git(t, other, "add", "-A")
 	git(t, other, "commit", "-m", "a repository that is not this one")
 
-	got := runOne(t, e, proj, ledger, "s-026-05", Turns("done",
+	// The agent commits its own file only: the clone stays an untracked nested
+	// repository, which commit-required must not count as guarded work.
+	sess := "s-026-05"
+	e.Run(proj, sess, "cycle", Turns("done",
 		Bash("b1", "git clone -q "+shellArg(other)+" vendor/clone"),
 		Write("w1", "root-own.md", "the root's own work\n"),
+		harness.CommitPaths("c1", "the agent's work", "root-own.md"),
 	))
+	if errs := harness.CommitRequired(e.BlockingErrorsFrom(proj, sess, "Stop")); len(errs) != 0 {
+		t.Fatalf("an untracked nested clone was treated as uncommitted guarded work: %q", errs)
+	}
+	got := changesetkit.Files(t, readLedger(t, ledger))
 	// The premise: the clone really is a separate checkout sitting in the tree.
 	if _, err := os.Stat(filepath.Join(proj, "vendor", "clone", ".git")); err != nil {
 		t.Fatalf("the nested clone is not a repository of its own, so there is no foreign "+
@@ -451,11 +459,7 @@ func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
 			"the silence below proves nothing", got)
 	}
 
-	// TODO(track B): once commit-required ignores UNTRACKED nested repos, the scenario's
-	// `git add -A` no longer stages the clone as a gitlink; assert instead that the untracked
-	// clone is ignored altogether (no commit-required, no rule sees it).
-	// The committed checkout is one tree entry (a gitlink, `vendor/clone`) — what
-	// git itself records — and never the files inside it.
+	// The clone was never committed (no gitlink), and no path inside it reached the rule.
 	for _, o := range got {
 		if strings.HasPrefix(o.Path, "vendor/clone/") {
 			t.Fatalf("a path inside an unrelated nested repository reached a rule about this "+
