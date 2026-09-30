@@ -69,7 +69,7 @@ func TestDeps_UnfinishedDependencyBlocksThenPermits(t *testing.T) {
 	// prompt), and a quote matching two messages resolves to neither.
 	res2 := e.Run(proj, sess, "CI is set up now, so file the token migration task again.", Turns("done",
 		srWrite("b2", taskPath, depsDoc, citeUser("file the token migration task again")),
-	))
+	).ThenCommit("File the token migration task", CitesUser("file the token migration task again")))
 	if res2.Refused() {
 		t.Fatalf("a task whose dependency is gone was still refused:\n%s", res2.Output)
 	}
@@ -135,7 +135,7 @@ func TestDeps_UnknownIdIsRefused(t *testing.T) {
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b1", taskPath, doc, citeUser(askQuote)),
-	))
+	).ThenCommit("File the task", CitesUser(askQuote)))
 	if res.Refused() {
 		t.Fatalf("an id naming a task that never existed was refused by task-dependencies-resolve -- this guard treats a non-existent folder as \"done\" regardless of whether it was ever real; if this now refuses, the design note in check-dependencies.sh is stale and this test's expectation should be revisited together with it:\n%s", res.Output)
 	}

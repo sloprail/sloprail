@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// unit-md-first is a PreFileWrite gate (refuses before the write lands) plus a plain file-guard (the Stop re-check), script only, path-based: any file
+// unit-md-first is a PreFileWrite gate (refuses before the write lands) plus a file-guard (over the committed tree at Stop), script only, path-based: any file
 // under memories/topics/<topic>/units/<unit>/ other than UNIT.md may only be
 // written once that unit's own UNIT.md exists on disk. Without it, a folder's
 // UNIT.md-less files are orphaned — unit-satisfies-rules and
@@ -65,7 +65,7 @@ func TestUnitMdFirst_UnitMdItselfAdmitted(t *testing.T) {
 
 	res := e.Run(proj, "s-unitmd-itself", authPrompt, Turns("done",
 		Write("w1", unitPath, draftingUnit),
-	))
+	).ThenCommit("Add the unit"))
 	if res.Refused() {
 		t.Fatalf("writing UNIT.md itself was refused:\n%s", res.Output)
 	}
@@ -83,7 +83,7 @@ func TestUnitMdFirst_NonEntryFileAfterUnitMdAdmitted(t *testing.T) {
 	res := e.Run(proj, "s-unitmd-after", authPrompt, Turns("done",
 		Write("w1", unitPath, draftingUnit),
 		Write("w2", draftPath, "# Announce\n\nDraft body.\n"),
-	))
+	).ThenCommit("Add the unit and its draft"))
 	if res.Refused() {
 		t.Fatalf("a draft written after UNIT.md existed was refused:\n%s", res.Output)
 	}
@@ -108,7 +108,7 @@ func TestUnitMdFirst_DeletionNotRefused(t *testing.T) {
 
 	res := e.Run(proj, "s-unitmd-delete", authPrompt, Turns("done",
 		Bash("b1", "rm "+draftPath),
-	))
+	).ThenCommit("Remove the draft"))
 	if res.Refused() {
 		t.Fatalf("deleting a unit's non-entry file was refused:\n%s", res.Output)
 	}

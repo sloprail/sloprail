@@ -33,17 +33,17 @@ lib_setup
 event="$(cat)"
 printf '%s' "$event" | jq -e '.event.kind == "Changeset"' >/dev/null 2>&1 \
   || refuse "unit-publish-approved: the check payload is not a readable Changeset, so these writes could not be checked"
-n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" \
+file_n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" \
   || refuse "unit-publish-approved: could not read the changeset's files, so they could not be checked"
-case "$n" in '' | *[!0-9]*) refuse "unit-publish-approved: could not read the changeset's files, so they could not be checked" ;; esac
+case "$file_n" in '' | *[!0-9]*) refuse "unit-publish-approved: could not read the changeset's files, so they could not be checked" ;; esac
 
-i=0
-while [ "$i" -lt "$n" ]; do
-  path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" ||
-    refuse "unit-publish-approved: could not read file $i of the changeset, so it could not be checked"
-  content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" ||
+file_i=0
+while [ "$file_i" -lt "$file_n" ]; do
+  path="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].path')" ||
+    refuse "unit-publish-approved: could not read file $file_i of the changeset, so it could not be checked"
+  content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent')" ||
     refuse "unit-publish-approved: could not read $path from the changeset, so it could not be checked"
-  i=$((i + 1))
+  file_i=$((file_i + 1))
   [ -n "$path" ] || refuse "unit-publish-approved: a file of the changeset named no path, so there is nothing to check"
   lib_check
 done

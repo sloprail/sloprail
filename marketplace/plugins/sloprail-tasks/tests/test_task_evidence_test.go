@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// task-evidence-resolves is a PREVENTIVE file-guard over
+// task-evidence-resolves is a PreFileWrite gate and a file-guard (Stop, over the committed changeset) over
 // memories/tasks/<cat>/<name>/TASK.md with one deterministic SCRIPT check:
 //
 //   - the frontmatter satisfies task.cue (closed; no `done`, no `observations`);
@@ -16,8 +16,9 @@ import (
 //     '<exact output>'` — the proof the work happened, riding on the claim itself.
 //     The file holds no transcript path of any kind.
 //
-// The PreFileWrite gate refuses a not-fine write at PRE-tool, before it lands; the plain file-guard
-// of the same name re-checks the settled file at Stop.
+// The PreFileWrite gate refuses a not-fine write at PRE-tool, before it lands; the file-guard
+// of the same name re-checks the committed task at Stop, the tool-output proof taken from
+// the commit's Sloprail-Cites-Tool trailer.
 //
 // This is the DETERMINISTIC half of the review lifecycle: it answers only "is the
 // evidence there", the gate task-review's judge depends on. task-body-is-human-
@@ -49,7 +50,7 @@ func TestEvidence_CitedTransitionPermits(t *testing.T) {
 	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
 	res := e.Run(proj, "s-evidence-ok", authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
-	)...))
+	)...).ThenCommit("Deliver the task", CitesUser(askQuote), CitesTool(proofMarker)))
 
 	if res.Refused() {
 		t.Fatalf("an in_review task citing real tool output was refused:\n%s", res.Output)
@@ -59,6 +60,9 @@ func TestEvidence_CitedTransitionPermits(t *testing.T) {
 	}
 	if got := readFile(t, proj, taskPath); containsStr(got, ".jsonl") {
 		t.Errorf("the task file carries a transcript path; it should hold derived text only:\n%s", got)
+	}
+	if blocks := stopBlocks(e, proj, "s-evidence-ok"); containsStr(blocks, "EVIDENCE") || containsStr(blocks, "TASK FRONTMATTER") {
+		t.Errorf("the committed in_review task was refused at Stop by the evidence check:\n%s", blocks)
 	}
 }
 

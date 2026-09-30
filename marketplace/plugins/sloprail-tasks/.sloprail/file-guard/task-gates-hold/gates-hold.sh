@@ -51,20 +51,20 @@ event="$(cat)"
 root="${SR_TREE:-}"
 [ -n "$root" ] || refuse "task-gates-hold: SR_TREE is not set, so the committed tasks could not be read"
 
-n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" || true
-case "$n" in '' | *[!0-9]*) refuse "task-gates-hold: the changeset's files could not be read, so the tasks could not be checked" ;; esac
+file_n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" || true
+case "$file_n" in '' | *[!0-9]*) refuse "task-gates-hold: the changeset's files could not be read, so the tasks could not be checked" ;; esac
 
-i=0
-while [ "$i" -lt "$n" ]; do
-  path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" ||
-    refuse "task-gates-hold: could not read file $i of the changeset"
-  status="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].status')" ||
+file_i=0
+while [ "$file_i" -lt "$file_n" ]; do
+  path="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].path')" ||
+    refuse "task-gates-hold: could not read file $file_i of the changeset"
+  status="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].status')" ||
     refuse "task-gates-hold: could not read $path from the changeset"
-  new_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" ||
+  new_content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent')" ||
     refuse "task-gates-hold: could not read $path from the changeset"
-  old_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].oldContent')" ||
+  old_content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].oldContent')" ||
     refuse "task-gates-hold: could not read the earlier $path from the changeset"
-  i=$((i + 1))
+  file_i=$((file_i + 1))
   [ -n "$new_content" ] || continue
   # A task the range added had no status before ("" covers a new task written
   # straight to to_do/in_progress).

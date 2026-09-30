@@ -44,7 +44,7 @@ func TestStructure_AllowedUnitShapePasses(t *testing.T) {
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", unitPath, body),
-	))
+	).ThenCommit("Add the unit"))
 	if res.Refused() {
 		t.Fatalf("a unit at the plugin's own allowed shape was refused:\n%s", res.Output)
 	}

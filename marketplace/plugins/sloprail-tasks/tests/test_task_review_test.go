@@ -5,21 +5,21 @@ import (
 	"testing"
 )
 
-// task-review is an AFTER-CHECK file-guard over
-// memories/tasks/<cat>/<name>/TASK.md — it fires at the Post/Stop after-check on the
-// SETTLED file, never at Pre. It reviews a task written into `in_review`, and it
+// task-review is a file-guard over
+// memories/tasks/<cat>/<name>/TASK.md — it judges the COMMITTED changeset at Stop,
+// never at Pre. It reviews a task written into `in_review`, and it
 // proves DELIVERY, not the ask: a SCRIPT pre-flight (only in_review; the claim
 // must carry cited tool output and resolving artifacts), then a PREPARE + JUDGE
 // that decides whether that delivered evidence SUBSTANTIATES the claim. The judge
 // FAILING refuses the turn (REVIEW REJECTED); the task stays in_review, and because
-// a Post refusal does not advance the read mark it re-fires next cycle until fixed.
+// a failed rule's range does not advance it is refused again until the input changes.
 //
 // # The evidence
 //
-//   - CITED TOOL RESULTS — the write that moved the task into in_review carried
-//     `sr-file … --cite:tool_result '<exact output>'`; the Post event at Stop
-//     carries those citations, and the prepare hands the judge each quote AND the
-//     full tool result at its line.
+//   - CITED TOOL RESULTS — the commit that moved the task into in_review carried
+//     a `Sloprail-Cites-Tool: <exact output>` trailer; the changeset at Stop
+//     carries those citations (every commit of the range counts), and the prepare
+//     hands the judge each quote AND the full tool result at its line.
 //   - ARTIFACTS — `artifacts: ["src/auth.go:3-5"]` in the frontmatter, expanded to
 //     the cited tree lines.
 //
@@ -53,7 +53,7 @@ func TestReview_SubstantiatedPermits(t *testing.T) {
 	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
 	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
-	)...))
+	)...).ThenCommit("Deliver the task", CitesUser(askQuote), CitesTool(proofMarker)))
 
 	if res.Refused() {
 		t.Fatalf("a substantiated in_review task write was refused at Pre:\n%s", res.Output)
@@ -98,7 +98,7 @@ func TestReview_UnsubstantiatedBlocksAtStop(t *testing.T) {
 	doc := taskWithArtifacts("in_review", "P1", "Migrated the auth module.", []string{deliveredLines})
 	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		srWrite("b1", taskPath, doc, citeTool(proofMarker)),
-	)...))
+	)...).ThenCommit("Deliver the task", CitesTool(proofMarker)))
 	if res.Refused() {
 		t.Fatalf("the in_review write itself was refused at Pre (setup broken):\n%s", res.Output)
 	}
@@ -134,7 +134,7 @@ func TestReview_NotInReviewSkipsTheJudge(t *testing.T) {
 
 	res := e.Run(proj, "s-review-todo", authPrompt, Turns("done",
 		Write("w1", taskPath, taskWithArtifacts("to_do", "P1", "Will migrate the auth module later.", nil)),
-	))
+	).ThenCommit("Plan the task"))
 
 	if res.Refused() {
 		t.Fatalf("a to_do task write was refused at Pre — it should land and reach Stop:\n%s", res.Output)
@@ -169,7 +169,7 @@ func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
 	sess := "s-review-no-proof"
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", taskPath, taskWithArtifacts("in_review", "P2", askBody, []string{deliveredLines})),
-	))
+	).ThenCommit("Change the priority"))
 	if res.Refused() {
 		t.Fatalf("a frontmatter-only edit of an in_review task was refused at Pre (setup broken):\n%s", res.Output)
 	}
@@ -183,12 +183,14 @@ func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
 	}
 }
 
-// TestReview_UncitedEditAfterCitedTransitionIsRefused: in ONE session the task
-// is moved into in_review with cited tool output, then edited again with the
-// plain Write tool (a priority change). A citation grounds only the change it
-// rode on: the transition's proof does not ground the later uncited edit of an
-// in_review task, so Stop refuses it and says how to cite.
-func TestReview_UncitedEditAfterCitedTransitionIsRefused(t *testing.T) {
+// TestReview_UncitedEditAfterCitedTransitionAccumulates: in ONE session the task
+// is moved into in_review by a commit citing tool output, then edited by a second
+// commit with no citation (a priority change). The rule's range does not move
+// until it passes, so the range holds BOTH commits and the transition's proof is
+// on the changeset: an uncited later commit rides on it, by design, and the Stop
+// is not refused for missing proof. (Retired: the per-write rule that refused the
+// later edit because a citation grounded only the change it rode on.)
+func TestReview_UncitedEditAfterCitedTransitionAccumulates(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -199,27 +201,24 @@ func TestReview_UncitedEditAfterCitedTransitionIsRefused(t *testing.T) {
 	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
 	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
+		Commit("c1", "Deliver the task", CitesUser(askQuote), CitesTool(proofMarker)),
 		Write("w2", taskPath, taskWithArtifacts("in_review", "P2", askBody, []string{deliveredLines})),
-	)...))
+	)...).ThenCommit("Change the priority"))
 	if res.Refused() {
 		t.Fatalf("the cited transition or the uncited priority edit was refused at Pre:\n%s", res.Output)
 	}
 	if got := readFile(t, proj, taskPath); !strings.Contains(got, "priority: P2") {
 		t.Fatalf("the uncited edit did not land:\n%s", got)
 	}
-	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !containsStr(joined, "was changed without a citation") || !containsStr(joined, "--cite:tool_result") {
-		t.Fatalf("an uncited edit of an in_review task passed at Stop on an earlier change's citation:\n%s", joined)
+	if joined := stopBlocks(e, proj, sess); containsStr(joined, "without citing") || containsStr(joined, "without a citation") {
+		t.Fatalf("the range's earlier commit cited the proof, yet the Stop refused for missing proof:\n%s", joined)
 	}
 }
 
 // TestReview_CitedEditAfterCitedTransitionKeepsEvidence: the same flow with the
-// later edit made the grounded way. task-review requires tool output for every
-// change to an in_review task (TestReview_EditedClaimWithoutProofRefusedAtStop:
-// even a priority-only edit), and a change counts only in the pool it was cited
-// in — so the priority edit cites tool output of its own (a second run),
-// beside the user's words. The claim reaching Stop carries BOTH changes' proof,
-// the pre-flight passes and the reviewer is handed each.
+// later commit citing tool output of its own (a second run's output), beside the
+// user's words. The changeset carries BOTH commits' proof, the pre-flight passes
+// and the reviewer is handed each.
 func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -231,9 +230,10 @@ func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
 	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
+		Commit("c1", "Deliver the task", CitesUser(askQuote), CitesTool(proofMarker)),
 		Bash("p2", "echo 'PROOF-TWO-7715 re-ran the suite, still green'"),
 		srEdit("b2", taskPath, "priority: P1", "priority: P2", citeUser(askQuote), citeTool("PROOF-TWO-7715")),
-	)...))
+	)...).ThenCommit("Raise the priority", CitesUser(askQuote), CitesTool("PROOF-TWO-7715")))
 	if res.Refused() {
 		t.Fatalf("the cited transition or the cited priority edit was refused at Pre:\n%s", res.Output)
 	}
@@ -241,10 +241,10 @@ func TestReview_CitedEditAfterCitedTransitionKeepsEvidence(t *testing.T) {
 		t.Fatalf("the cited edit did not land:\n%s", got)
 	}
 	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
-		t.Fatalf("an in_review claim whose transition cited tool output was blocked at Stop after a cited edit:\n%v", blocks)
+		t.Fatalf("an in_review claim whose commits cited tool output was blocked at Stop:\n%v", blocks)
 	}
-	// Cited changes accumulate: the reviewer is handed the transition's proof AND
-	// the later edit's, each with its own tool output.
+	// Cited commits accumulate: the reviewer is handed the transition's proof AND
+	// the later commit's, each with its own tool output.
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	for _, marker := range []string{proofMarker, "PROOF-TWO-7715"} {
 		if !containsStr(prompt, "quoted: "+marker) {
@@ -289,13 +289,13 @@ func TestReview_ShGateNoLongerHoldingBlocksAtStop(t *testing.T) {
 	res0 := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b0", reviewGateTaskPath, task("backlog", "P1", askBody), citeUser(askQuote)),
 		Write("w1", reviewGateShPath, passingGate),
-	))
+	).ThenCommit("Add the task and its gate", CitesUser(askQuote)))
 	if res0.Refused() {
 		t.Fatalf("landing the task and its passing gate was refused (setup broken):\n%s", res0.Output)
 	}
 	res1 := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w2", reviewGateTaskPath, task("to_do", "P1", askBody)),
-	))
+	).ThenCommit("Start the task"))
 	if res1.Refused() {
 		t.Fatalf("moving to to_do with a passing gate was refused (setup broken):\n%s", res1.Output)
 	}
@@ -303,14 +303,14 @@ func TestReview_ShGateNoLongerHoldingBlocksAtStop(t *testing.T) {
 	// The gate REGRESSES -- rewritten to fail, after the task has already started.
 	res2 := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w3", reviewGateShPath, failingGate),
-	))
+	).ThenCommit("Regress the gate"))
 	if res2.Refused() {
 		t.Fatalf("rewriting the gate to fail was itself refused (setup broken):\n%s", res2.Output)
 	}
 
 	res3 := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		toReviewEdit("b4", reviewGateTaskPath),
-	)...))
+	)...).ThenCommit("Deliver the task", CitesTool(proofMarker)))
 	if res3.Refused() {
 		t.Fatalf("the in_review write itself was refused at Pre (setup broken):\n%s", res3.Output)
 	}
@@ -347,13 +347,13 @@ func TestReview_MdGateJudgeRejectionBlocksAtStop(t *testing.T) {
 	res0 := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w0", reviewGateTaskPath, task("backlog", "P1", "Ship the launch page.")),
 		Write("w1", reviewGateMdPath, "The launch video exists and shows a working demo.\n"),
-	))
+	).ThenCommit("Add the task and its gate"))
 	if res0.Refused() {
 		t.Fatalf("landing the task and its judgment gate was refused (setup broken):\n%s", res0.Output)
 	}
 	res1 := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w2", reviewGateTaskPath, task("to_do", "P1", "Ship the launch page.")),
-	))
+	).ThenCommit("Start the task"))
 	if res1.Refused() {
 		t.Fatalf("moving to to_do was refused (setup broken):\n%s", res1.Output)
 	}
@@ -365,7 +365,7 @@ func TestReview_MdGateJudgeRejectionBlocksAtStop(t *testing.T) {
 
 	res2 := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		toReviewEdit("b3", reviewGateTaskPath),
-	)...))
+	)...).ThenCommit("Deliver the task", CitesTool(proofMarker)))
 	if res2.Refused() {
 		t.Fatalf("the in_review write itself was refused at Pre (setup broken):\n%s", res2.Output)
 	}
