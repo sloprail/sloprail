@@ -1,0 +1,20 @@
+# A file inside a content unit folder (memories/topics/<topic>/units/<unit>/)
+# may only be written once that unit's UNIT.md exists. Without it the folder
+# is not a unit: nothing declares its type, status or tags, so
+# unit-satisfies-rules and unit-publish-approved have nothing to select and
+# the file is orphaned. Seen in practice: an agent wrote a draft into a unit
+# folder that had no UNIT.md yet.
+#
+# Proven first in the strategy repo's own .sloprail/file-guard/unit-md-first/
+# before being generalized here so every project installing this plugin gets
+# it, not just the one that hit the failure.
+#
+# preventive: refuse the write before it lands; the after-check re-judges the
+# settled file (catches a shell write whose pre-write result could not be
+# derived). deletions is left at its default (skip): removing a file from a
+# unit folder invents nothing, and TASK-style folder deletion is not this
+# plugin's shape to begin with.
+match: path matches "^memories/topics/[^/]+/units/[^/]+/[^/]+$" and not (path endsWith "/UNIT.md")
+preventive: true
+checks:
+  - script: ./check.sh

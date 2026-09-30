@@ -10,8 +10,13 @@
 // engine deciding, and the refusal travelling back all run as production
 // would.
 //
-// The three guardrails and what each test file covers:
+// The four guardrails and what each test file covers:
 //
+//   - unit-md-first (file-guard, preventive, script): a file other than
+//     UNIT.md written into a unit folder before UNIT.md exists is refused;
+//     UNIT.md itself, and any file written after UNIT.md exists, are
+//     admitted; deleting a file inside an existing unit folder is not
+//     refused (see test_unit_md_first_test.go).
 //   - unit-satisfies-rules (file-guard, Stop after-check, one judge check): a
 //     global rule applies to a unit with no tags; a tag-scoped rule applies
 //     only when the tag matches; a rule written to ask for a deterministic

@@ -8,7 +8,8 @@ and how, using Bash), and a unit cannot move into `status: published` unless
 the change that moves it **cites the user's approval**. Rules and approvals
 are grounded on the ACTION — `sr-file write|edit ... --cite:user '<exact
 quote>'` — never by storing a transcript quote or path in the file, so the
-repository holds derived text only. Three guardrails, in the nature format —
+repository holds derived text only. A unit folder is not a unit until its
+`UNIT.md` exists — nothing else may be written there first. Four guardrails, in the nature format —
 file-guards under `.sloprail/`, with `match:` / `checks:`, flat `.event`
 fields, and refusals delivered as a non-zero exit carrying `{"reason": …}` on
 stdout.
@@ -154,6 +155,21 @@ set:
    topic rules omit it entirely, exactly as before.
 
 ## The guardrails
+
+### unit-md-first — file-guard, **preventive**
+
+Over any file under `memories/topics/<topic>/units/<unit>/` other than
+`UNIT.md` itself. A unit folder with no `UNIT.md` declares no `type`,
+`status` or `tags`, so `unit-satisfies-rules` and `unit-publish-approved`
+have nothing to select and the file is orphaned — seen in practice, an agent
+wrote a draft into a unit folder before its `UNIT.md` existed. The check is
+purely path-based: it refuses the write unless `<unit folder>/UNIT.md`
+already exists on disk, and says to write that first. Deletions are not this
+guard's business (`deletions` is left at its default, `skip`).
+
+Proven first as a project-local rule in the strategy repo's own
+`.sloprail/file-guard/unit-md-first/` before being generalized here so every
+project installing this plugin gets it.
 
 ### unit-satisfies-rules — file-guard, Stop after-check
 

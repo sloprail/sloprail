@@ -167,6 +167,11 @@ func TestRules_DeterministicRuleRefusesViaJudgeStub(t *testing.T) {
 	e.GitInit(proj)
 	installTaggedRule(t, e, proj, "03_x-limit", "must", "x",
 		"Rule: each tweet is at most 280 characters. Measure with wc -m against the unit file; do not estimate.")
+	// unit-md-first requires UNIT.md to exist before the draft can be written;
+	// seed it into the baseline so this test stays about unit-satisfies-rules.
+	e.WriteFile(proj, unitPath, unitFrontmatter(
+		"transcript_path: /abs/s.jsonl\ncreated: 2026-09-25\ntype: post\nstatus: drafting\ntags: [x]\n",
+		"Announcing the launch."))
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "WRITING RULE VIOLATION: 03_x-limit [must]: measured 312 characters via wc -m, over the 280 limit"}`)
@@ -209,6 +214,11 @@ func TestRules_DeterministicRulePassesViaJudgeStub(t *testing.T) {
 	e.GitInit(proj)
 	installTaggedRule(t, e, proj, "03_x-limit", "must", "x",
 		"Rule: each tweet is at most 280 characters. Measure with wc -m against the unit file; do not estimate.")
+	// unit-md-first requires UNIT.md to exist before the draft can be written;
+	// seed it into the baseline so this test stays about unit-satisfies-rules.
+	e.WriteFile(proj, unitPath, unitFrontmatter(
+		"transcript_path: /abs/s.jsonl\ncreated: 2026-09-25\ntype: post\nstatus: drafting\ntags: [x]\n",
+		"Announcing the launch."))
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
