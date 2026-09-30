@@ -97,7 +97,7 @@ i=0
 while [ "$i" -lt "$n" ]; do
   path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" ||
     refuse "task-review: could not read file $i of the changeset"
-  content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" ||
+  content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end')" ||
     refuse "task-review: could not read $path from the changeset"
   i=$((i + 1))
   [ -n "$content" ] || continue

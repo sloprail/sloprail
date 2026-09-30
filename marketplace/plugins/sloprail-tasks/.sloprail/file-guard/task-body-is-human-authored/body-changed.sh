@@ -36,8 +36,12 @@ while [ "$i" -lt "$n" ]; do
   [ "$status" = "D" ] && continue
   # A created task sets its ask.
   [ "$status" = "A" ] && applies
-  content="$(f '.newContent // ""')" || exit 0
-  old_content="$(f '.oldContent // ""')" || exit 0
+  # A field the status should carry and lacks is undecidable, not empty: apply.
+  content="$(f '.newContent | if type == "string" then . else error("missing newContent") end')" || exit 0
+  old_content=""
+  if [ "$status" != "A" ]; then
+    old_content="$(f '.oldContent | if type == "string" then . else error("missing oldContent") end')" || exit 0
+  fi
   lib_check
 done
 exit 1

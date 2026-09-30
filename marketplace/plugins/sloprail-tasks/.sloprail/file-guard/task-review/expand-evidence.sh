@@ -130,7 +130,7 @@ review_docs=()
 i=0
 while [ "$i" -lt "$n" ]; do
   path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" || exit 1
-  body="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" || exit 1
+  body="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end')" || exit 1
   i=$((i + 1))
   doc="$(printf '%s' "$body" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)"
   status="$(printf '%s' "$doc" | jq -r '.status // empty' 2>/dev/null)"

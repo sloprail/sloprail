@@ -49,7 +49,7 @@ file_i=0
 while [ "$file_i" -lt "$file_n" ]; do
   path="$(printf '%s' "$payload" | jq -r --argjson i "$file_i" '.changeset.files[$i].path')" ||
     refuse "task-evidence-resolves: could not read file $file_i of the changeset"
-  content="$(printf '%s' "$payload" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent')" ||
+  content="$(printf '%s' "$payload" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end')" ||
     refuse "task-evidence-resolves: could not read $path from the changeset"
   file_i=$((file_i + 1))
   lib_check

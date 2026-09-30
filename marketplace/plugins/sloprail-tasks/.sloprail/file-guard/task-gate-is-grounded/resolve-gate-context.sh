@@ -43,7 +43,7 @@ gates='[]'
 i=0
 while [ "$i" -lt "$n" ]; do
   path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" || fail "could not read file $i of the changeset"
-  gate_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" || fail "could not read $path from the changeset"
+  gate_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end')" || fail "could not read $path from the changeset"
   i=$((i + 1))
 
   case "$path" in

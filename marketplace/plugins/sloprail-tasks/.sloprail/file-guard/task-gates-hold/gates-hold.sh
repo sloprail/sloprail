@@ -60,9 +60,9 @@ while [ "$file_i" -lt "$file_n" ]; do
     refuse "task-gates-hold: could not read file $file_i of the changeset"
   status="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].status')" ||
     refuse "task-gates-hold: could not read $path from the changeset"
-  new_content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent')" ||
+  new_content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end')" ||
     refuse "task-gates-hold: could not read $path from the changeset"
-  old_content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].oldContent')" ||
+  old_content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].oldContent | if type == "string" then . else error("missing oldContent") end')" ||
     refuse "task-gates-hold: could not read the earlier $path from the changeset"
   file_i=$((file_i + 1))
   [ -n "$new_content" ] || continue

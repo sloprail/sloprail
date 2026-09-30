@@ -10,6 +10,11 @@
 lib_setup() {
 set -uo pipefail
 
+# Only lib_waive's DECIDED "drops nothing" may exit 1: any other exit 1 (a tool
+# that failed, an incidental status) would waive the citation, so it becomes 0.
+waived=""
+trap 'rc=$?; if [ "$rc" = 1 ] && [ "$waived" != 1 ]; then exit 0; fi' EXIT
+
 # Undecidable without jq: apply the requirement (exit 0, fail-closed).
 # DELIBERATE, and fail-closed: in a `when` predicate exit 0 APPLIES the requirement (only exit 1 waives it), so a missing tool or helper applies it rather than permitting.
 command -v jq >/dev/null 2>&1 || exit 0
@@ -60,6 +65,12 @@ path="$(field '.event.path // ""')"
 lib_owed
 
 kind="$(field '.event.kind // ""')"
+}
+
+# lib_waive: the change was decided to drop nothing: the only exit 1.
+lib_waive() {
+  waived=1
+  exit 1
 }
 
 lib_check() {

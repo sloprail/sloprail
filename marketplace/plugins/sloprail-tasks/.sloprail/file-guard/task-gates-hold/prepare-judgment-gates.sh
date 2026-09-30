@@ -34,8 +34,8 @@ i=0
 while [ "$i" -lt "$n" ]; do
   path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" || fail "task-gates-hold: could not read file $i of the changeset"
   status="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].status')" || fail "task-gates-hold: could not read $path from the changeset"
-  new_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" || fail "task-gates-hold: could not read $path from the changeset"
-  old_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].oldContent')" || fail "task-gates-hold: could not read the earlier $path from the changeset"
+  new_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end')" || fail "task-gates-hold: could not read $path from the changeset"
+  old_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].oldContent | if type == "string" then . else error("missing oldContent") end')" || fail "task-gates-hold: could not read the earlier $path from the changeset"
   i=$((i + 1))
   [ -n "$new_content" ] || continue
 

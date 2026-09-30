@@ -37,8 +37,10 @@ while [ "$i" -lt "$n" ]; do
     D) empty ;;
     A) continue ;;
   esac
-  old="$(printf '%s' "$input" | jq -r --argjson i "$idx" '.changeset.files[$i].oldContent // ""')" || empty
-  new="$(printf '%s' "$input" | jq -r --argjson i "$idx" '.changeset.files[$i].newContent // ""')" || empty
+  # A status that carries content and has none (absent, or not a string) is
+  # undecidable, not empty: ask the judge.
+  old="$(printf '%s' "$input" | jq -r --argjson i "$idx" '.changeset.files[$i].oldContent | if type == "string" then . else error("missing oldContent") end' 2>/dev/null)" || empty
+  new="$(printf '%s' "$input" | jq -r --argjson i "$idx" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end' 2>/dev/null)" || empty
   count="$(comm -23 <(printf '%s' "$old" | sort -u) <(printf '%s' "$new" | sort -u) | grep -c . || true)"
   removed=$((removed + ${count:-0}))
 done

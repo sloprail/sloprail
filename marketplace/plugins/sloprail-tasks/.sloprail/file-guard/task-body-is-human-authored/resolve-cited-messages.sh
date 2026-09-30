@@ -51,10 +51,10 @@ while [ "$i" -lt "$n" ]; do
   status="$(f '.status')" || fail "could not read file $idx of the changeset"
   path="$(f '.path')" || fail "could not read file $idx of the changeset"
   [ "$status" = "D" ] && continue
-  content="$(f '.newContent')" || fail "could not read $path from the changeset"
+  content="$(f '.newContent | if type == "string" then . else error("missing newContent") end')" || fail "could not read $path from the changeset"
   body="$(task_body "$content")"
   if [ "$status" != "A" ]; then
-    old="$(f '.oldContent // ""')" || fail "could not read the earlier $path from the changeset"
+    old="$(f '.oldContent | if type == "string" then . else error("missing oldContent") end')" || fail "could not read the earlier $path from the changeset"
     [ "$body" = "$(task_body "$old")" ] && continue
   fi
   bodies="$(printf '%s' "$bodies" | jq -c --arg path "$path" --arg body "$body" '. + [{path: $path, body: $body}]')" ||
