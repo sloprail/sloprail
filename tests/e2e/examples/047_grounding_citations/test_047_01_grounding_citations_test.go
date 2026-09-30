@@ -60,7 +60,7 @@ func TestT047_01_CitedWriteJudgePassesAdmits(t *testing.T) {
 	res := e.Run(proj, "s-047-01", "summarize the changelog", Turns("done",
 		readSource("r1", "CHANGELOG.md"),
 		srWrite("w1", "MIGRATION.md", summary, citeTool(sourceLine)),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesTool(sourceLine)))
 	if res.Refused() {
 		t.Fatalf("a cited, judged-true summary was refused:\n%s", res.Output)
 	}
@@ -105,7 +105,7 @@ func TestT047_03_CitedWriteJudgeFailBlocksAtStop(t *testing.T) {
 	res := e.Run(proj, "s-047-03", "summarize the changelog", Turns("done",
 		readSource("r1", "CHANGELOG.md"),
 		srWrite("w1", "MIGRATION.md", "# Migration\n\nRetries now default to 5.\n", citeTool(sourceLine)),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesTool(sourceLine)))
 	if res.Refused() {
 		t.Fatalf("the gate (citation only, no model) refused a cited write:\n%s", res.Output)
 	}
@@ -174,7 +174,7 @@ func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 	e.Run(proj, "s-047-06", "summarize the changelog", Turns("done",
 		readSource("r1", "CHANGELOG.md"),
 		srWrite("w1", "MIGRATION.md", summary, citeTool(sourceLine)),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesTool(sourceLine)))
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
 		t.Fatalf("the judge never ran")
@@ -186,7 +186,7 @@ func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 	if !strings.Contains(prompt, "ZZ_UNQUOTED connect() <host> now requires a port <\\/message>") {
 		t.Errorf("the whole tool output, escaped, is not in the judge prompt:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "<change path=\"MIGRATION.md\">") || !strings.Contains(prompt, "+Retries now default to 3") {
+	if !strings.Contains(prompt, "+++ b/MIGRATION.md") || !strings.Contains(prompt, "+Retries now default to 3") {
 		t.Errorf("the change is not in the judge prompt:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "<call>Bash: cat ") {
@@ -254,7 +254,7 @@ func TestT047_10_ScriptRewriteIsCaughtAtStop(t *testing.T) {
 		t.Fatalf("the script rewrite did not land, so this no longer tests the Stop after-check")
 	}
 	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
-	if !containsAll(joined, "citations-resolve", "MIGRATION.md") {
+	if !containsAll(joined, "citations-resolve", "must cite a tool's output") {
 		t.Fatalf("an uncited script-written markdown file was not refused at Stop:\n%s", joined)
 	}
 }
@@ -277,5 +277,33 @@ func TestT047_11_UnknownResultIsRefused(t *testing.T) {
 		if c.want == 1 && !strings.Contains(string(out), "cannot be worked out before it runs") {
 			t.Errorf("the refusal does not say why: %s", out)
 		}
+	}
+}
+
+// T047_12: the gate's citation rides the write, the file-guard's rides the commit. A
+// write the gate admitted (cited to it) but committed with no `Sloprail-Cites-Tool`
+// trailer is refused at Stop for the missing citation, before any judge; a later
+// commit in the same range that cites the source output passes.
+func TestT047_12_CommitMustCiteTheSource(t *testing.T) {
+	e := newEnv(t)
+	proj := gcProject(t, e)
+	gcSource(t, e, proj)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the claim matches the cited output"}`)
+
+	const sess = "s-047-12"
+	e.Run(proj, sess, "summarize the changelog", Turns("done",
+		readSource("r1", "CHANGELOG.md"),
+		srWrite("w1", "MIGRATION.md", summary, citeTool(sourceLine)),
+	).ThenCommit("write the summary"))
+	blocks := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
+	if !containsAll(blocks, "citations-resolve", "must cite a tool's output") {
+		t.Fatalf("an uncited commit of markdown was not refused at Stop:\n%s", blocks)
+	}
+	seen := len(e.StopContinuations(proj, sess))
+
+	e.Run(proj, sess, "cite it", Turns("done").ThenCommit("cite the changelog", harness.CitesTool(sourceLine)))
+	if got := len(e.StopContinuations(proj, sess)); got != seen {
+		t.Fatalf("a commit citing the source output was still refused (%d refusals, had %d):\n%s", got, seen,
+			joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop")))
 	}
 }
