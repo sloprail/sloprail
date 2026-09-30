@@ -167,7 +167,8 @@ func TestT007_03_DisabledBindingDoesNotRunTheModule(t *testing.T) {
 	e.DisablePluginGuardrail(proj, "gate/off")
 	// Switched on, and asks only about files — so nothing enabled binds to commands,
 	// and the module has no reason to run.
-	e.FileGuard(proj, "on", recordFileGuard, map[string]string{"record.sh": recordScript})
+	onLedger := e.NewLedger("seen")
+	e.FileGuard(proj, "on", recordFileGuard, map[string]string{"record.sh": onLedger.RecordScript()})
 
 	e.Run(proj, "s-007-03", "run something", Turns("done",
 		Bash("b1", theCommand),
@@ -178,7 +179,7 @@ func TestT007_03_DisabledBindingDoesNotRunTheModule(t *testing.T) {
 	}
 	// And the enabled file rule was never handed a command event either — a bash
 	// turn produces no file event for a file-guard to see.
-	if kinds := fileKindsSeen(t, e.FileGuardLedgerLines(proj, "on", "seen")); len(kinds) != 0 {
+	if kinds := fileKindsSeen(t, onLedger.Lines()); len(kinds) != 0 {
 		t.Errorf("only a disabled rule bound to commands, yet a file rule was handed events on a bash turn: %v", kinds)
 	}
 }
