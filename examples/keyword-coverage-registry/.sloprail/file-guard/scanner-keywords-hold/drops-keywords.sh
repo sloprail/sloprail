@@ -67,7 +67,11 @@ case "$kind" in
     # Settled bytes the engine could not read (newContentKnown false):
     # undecidable, apply.
     [ "$(field 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')" = "true" ] || exit 0
-    old="$(field '.event.oldContent // ""')"
+    # oldContent exists on PostFileUpdate only: a create has nothing before it.
+    case "$kind" in
+      PostFileCreate) old="" ;;
+      *) old="$(field '.event.oldContent // ""')" ;;
+    esac
     new="$(field '.event.newContent // ""')"
     ;;
   PostFileDelete)

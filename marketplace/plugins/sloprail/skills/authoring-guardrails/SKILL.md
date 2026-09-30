@@ -136,9 +136,12 @@ checks:
 - A **script** is the deterministic half: the check payload on stdin, and its
   **exit code is the verdict** — `0` permits, non-zero refuses.
   → [script-checks.md](script-checks.md). **For a file-guard, start from
-  [check-template.sh](check-template.sh)**: copy it beside the YAML and change
-  only `fine()`. It already reads each event kind correctly, which a script
-  written from scratch almost never does first time.
+  [check-template.sh](check-template.sh)** (settled `Post*` bytes, fails closed on
+  `newContentKnown`); **for a pre-write gate, from
+  [gate-check-template.sh](gate-check-template.sh)** (refuses an unknown
+  `resultKnown`). Copy it beside the YAML and change only `fine()`. It already
+  reads each event kind correctly, which a script written from scratch almost
+  never does first time.
 - A **judge** is the model half: a Jinja2 prompt template rendered against the
   payload (and any `additionalContext` a `prepare` script assembled), asked for a
   `{"pass": true|false, "reasoning": "…"}` verdict via `sr-agent`. Its file

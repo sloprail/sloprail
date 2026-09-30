@@ -37,7 +37,7 @@ case "$kind" in
     fi
     abs="$root/$path"
     [ -f "$abs" ] || skip
-    new_content="$(cat "$abs")" || FAIL "task-gates-hold: could not read $path"
+    new_content="$(cat "$abs")" || fail "task-gates-hold: could not read $path"
     ;;
   *)
     skip

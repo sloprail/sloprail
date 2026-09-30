@@ -77,7 +77,7 @@ case "$kind" in
     if [ ! -f "$abs" ]; then
       exit 0
     fi
-    new_content="$(cat "$abs")" || FAIL "task-gates-hold: could not read $path"
+    new_content="$(cat "$abs")" || refuse "task-gates-hold: could not read $path"
     if [ ! -s "$abs" ]; then
       exit 0
     fi
