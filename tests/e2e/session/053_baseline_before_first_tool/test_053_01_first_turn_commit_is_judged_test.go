@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // chargeGuard is a file-guard over the billing code: its check
@@ -121,10 +123,11 @@ func TestT053_01_FirstTurnCommitIsStillJudged(t *testing.T) {
 
 // T053_02: the same session, uncommitted — the control.
 //
-// The change is judged whether or not the agent commits it; this is the run
-// that always worked, because a first-Stop point on an unmoved HEAD happens to
-// be the right one. It pins that the arrangement above breaks nothing else: the
-// guard fires, and the point is still the setup commit.
+// The change is guarded work whether or not the agent commits it; a file-guard
+// judges commits, so an uncommitted one is refused with "commit your work" at
+// Stop and the guard is not asked. The point is still the setup commit. Once the
+// agent commits, the very same change is judged and the guard refuses it: the
+// first-tool baseline changes nothing about that.
 func TestT053_02_FirstTurnUncommittedIsJudged(t *testing.T) {
 	e := New(t)
 	e.SetStopBlockCap(1)
@@ -140,8 +143,17 @@ func TestT053_02_FirstTurnUncommittedIsJudged(t *testing.T) {
 	if got := e.Meta(proj, sess, metaBaselineCommit); got != setup {
 		t.Errorf("baseline commit = %q, want %q", got, setup)
 	}
+	// Refusal first: nothing is committed, so the Stop asks for the commit and the
+	// guard has not been asked anything.
+	e.AssertCommitRequired(proj, sess, "src/charge.go")
+	if n := e.FileGuardLedger(proj, "charge-invariant", "ledger"); n != 0 {
+		t.Fatalf("the guard was asked (%d times) about work that was never committed", n)
+	}
+
+	// Then the pass: the agent commits, and the change is judged.
+	e.Run(proj, sess, "commit it", Turns("done", harness.Commit("c1", "goodwill refund")))
 	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
 	if !strings.Contains(blocks, "no-negative-charge invariant") {
-		t.Fatalf("the guard's refusal did not block the turn; Stop said:\n%s", blocks)
+		t.Fatalf("the guard's refusal of the committed change did not block the turn; Stop said:\n%s", blocks)
 	}
 }
