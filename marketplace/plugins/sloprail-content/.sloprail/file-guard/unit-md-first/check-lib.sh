@@ -23,7 +23,10 @@ lib_init() {
 
   kind="$(field '.event.kind // ""')"
   path="$(field '.event.path // ""')"
-  lib_root="${SR_WORKSPACE:-.}"
+  # The project's working tree: right for the gate ONLY. The file-guard entry never
+  # calls lib_init; it sets lib_root to SR_TREE, the committed snapshot.
+  lib_root="${SR_WORKSPACE:-}"
+  [ -n "$lib_root" ] || refuse "SR_WORKSPACE is not set, so the project's units could not be read"
 }
 
 lib_check() {

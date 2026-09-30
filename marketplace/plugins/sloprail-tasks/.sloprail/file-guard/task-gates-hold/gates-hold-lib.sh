@@ -35,8 +35,11 @@ lib_init() {
     refuse "task-gates-hold: the event named no path, so there is nothing to check"
   fi
 
-  # The tree the task's gates are read from and run in: the project for the gate.
-  root="${SR_WORKSPACE:-.}"
+  # The tree the task's gates are read from and run in: the project's working tree,
+  # which is right for the gate ONLY. A file-guard entry never calls lib_init: it
+  # sets root to SR_TREE, the committed snapshot. No "." fallback.
+  root="${SR_WORKSPACE:-}"
+  [ -n "$root" ] || refuse "task-gates-hold: SR_WORKSPACE is not set, so the project's tasks could not be read"
 
   kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)" || refuse "task-gates-hold: could not read the event's kind, so the task could not be checked"
   [ -n "$kind" ] || refuse "task-gates-hold: the event named no kind, so the task could not be checked"

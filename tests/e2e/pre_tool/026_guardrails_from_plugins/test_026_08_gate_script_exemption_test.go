@@ -35,3 +35,33 @@ func TestT026_08_GateScriptCannotBorrowTheChangesetExemption(t *testing.T) {
 		t.Errorf("the gate script landed despite the refusal")
 	}
 }
+
+// scriptMentioningChangesetInAComment reads newContent without resultKnown and mentions
+// `.changeset` only in a comment.
+const scriptMentioningChangesetInAComment = `#!/bin/sh
+# Not a file-guard: it reads the pending write, not .changeset.files[].
+payload="$(cat)"
+body="$(printf '%s' "$payload" | jq -r '.event.newContent')"
+if printf '%s' "$body" | grep -q TODO; then
+  echo '{"reason":"remove the TODO"}'
+  exit 1
+fi
+exit 0
+`
+
+// T026_09: a mention of `.changeset` in a comment exempts nothing, in a gate or in any
+// other folder: only a script under .sloprail/file-guard/ is exempt.
+func TestT026_09_ChangesetInACommentExemptsNothing(t *testing.T) {
+	for _, path := range []string{".sloprail/gate/mine/check.sh", ".sloprail/context/mine/check.sh"} {
+		t.Run(path, func(t *testing.T) {
+			e := New(t)
+			proj := e.Project()
+			got := e.Run(proj, "s-026-09", "write a script", Turns("done",
+				Write("w1", path, scriptMentioningChangesetInAComment),
+			))
+			if !got.Refused() || !strings.Contains(got.Output, "without .resultKnown") {
+				t.Errorf("a script reading newContent without resultKnown, mentioning .changeset in a comment, was not flagged:\n%s", got.Output)
+			}
+		})
+	}
+}
