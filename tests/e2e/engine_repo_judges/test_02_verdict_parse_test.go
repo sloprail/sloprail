@@ -46,7 +46,7 @@ func TestVerdictParseRefusesAFlaggedRule(t *testing.T) {
 
 	e.Run(proj, "s-erj-parse-rule", "write a rule", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nBody that the judge flags.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	if !sawRefusal(e.BlockingErrors(proj, "s-erj-parse-rule"), "RULE QUALITY") {
 		t.Fatalf("a verdict flagging the rule did not refuse — the greedy parse would have permitted it:")
@@ -67,7 +67,7 @@ func TestVerdictParseRefusesAFlaggedSkill(t *testing.T) {
 
 	e.Run(proj, "s-erj-parse-skill", "write a skill", Turns("done",
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\nBody that the judge flags.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	if !sawRefusal(e.BlockingErrors(proj, "s-erj-parse-skill"), "SKILL QUALITY") {
 		t.Fatalf("a verdict flagging the skill did not refuse — the greedy parse would have permitted it:")
@@ -87,7 +87,7 @@ func TestVerdictParsePermitsACleanRule(t *testing.T) {
 
 	e.Run(proj, "s-erj-clean-rule", "write a clean rule", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA clean body.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	if sawRefusal(e.BlockingErrors(proj, "s-erj-clean-rule"), "RULE QUALITY") {
 		t.Fatalf("a clean verdict refused:")
@@ -103,7 +103,7 @@ func TestVerdictParsePermitsACleanSkill(t *testing.T) {
 
 	e.Run(proj, "s-erj-clean-skill", "write a clean skill", Turns("done",
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\nA clean body.\n"),
-	))
+	).ThenCommit("write the file"))
 
 	if sawRefusal(e.BlockingErrors(proj, "s-erj-clean-skill"), "SKILL QUALITY") {
 		t.Fatalf("a clean verdict refused:")

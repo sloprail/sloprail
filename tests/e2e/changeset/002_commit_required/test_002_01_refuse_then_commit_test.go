@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,7 @@ func TestT002_01_UncommittedGuardedWorkRefusesTheStopUntilItIsCommitted(t *testi
 		Write("w1", "docs/new.md", "new doc\n"),
 	))
 
-	refused := commitRequired(e.BlockingErrorsFrom(proj, "s-002-01", "Stop"))
+	refused := harness.CommitRequired(e.BlockingErrorsFrom(proj, "s-002-01", "Stop"))
 	if len(refused) == 0 {
 		t.Fatalf("an uncommitted guarded file did not refuse the Stop; blocking errors: %q", e.BlockingErrors(proj, "s-002-01"))
 	}
@@ -44,7 +45,7 @@ func TestT002_01_UncommittedGuardedWorkRefusesTheStopUntilItIsCommitted(t *testi
 	e.Run(proj, "s-002-01", "now commit it", Turns("committed",
 		Bash("c1", "git add -A && git commit -q -m 'add the doc'"),
 	))
-	if n := len(commitRequired(e.BlockingErrorsFrom(proj, "s-002-01", "Stop"))); n != seen {
+	if n := len(harness.CommitRequired(e.BlockingErrorsFrom(proj, "s-002-01", "Stop"))); n != seen {
 		t.Fatalf("after committing, the Stop was refused again (%d refusals, had %d)", n, seen)
 	}
 }
@@ -57,7 +58,7 @@ func TestT002_02_UnguardedWorkNeverTriggersIt(t *testing.T) {
 		Write("w1", "notes/more.md", "notes\n"),
 		Write("w2", "scratch.txt", "scratch\n"),
 	))
-	if errs := commitRequired(e.BlockingErrorsFrom(proj, "s-002-02", "Stop")); len(errs) != 0 {
+	if errs := harness.CommitRequired(e.BlockingErrorsFrom(proj, "s-002-02", "Stop")); len(errs) != 0 {
 		t.Fatalf("work no rule selects was refused: %q", errs)
 	}
 }
@@ -69,7 +70,7 @@ func TestT002_03_StatusesAndDeletions(t *testing.T) {
 	// not selected.
 	e, proj := project(t)
 	e.Run(proj, "s-002-03a", "remove the seed", Turns("done", Bash("b1", "rm docs/seed.md")))
-	if errs := commitRequired(e.BlockingErrorsFrom(proj, "s-002-03a", "Stop")); len(errs) != 0 {
+	if errs := harness.CommitRequired(e.BlockingErrorsFrom(proj, "s-002-03a", "Stop")); len(errs) != 0 {
 		t.Fatalf("a deletion under `deletions: skip` was refused: %q", errs)
 	}
 
@@ -78,7 +79,7 @@ func TestT002_03_StatusesAndDeletions(t *testing.T) {
 	e2.FileGuard(proj2, "docs", rule+"deletions: include\n", map[string]string{"check.sh": passing})
 	e2.CommitAll(proj2, "the rule admits deletions")
 	e2.Run(proj2, "s-002-03b", "remove the seed", Turns("done", Bash("b1", "rm docs/seed.md")))
-	errs := commitRequired(e2.BlockingErrorsFrom(proj2, "s-002-03b", "Stop"))
+	errs := harness.CommitRequired(e2.BlockingErrorsFrom(proj2, "s-002-03b", "Stop"))
 	if len(errs) == 0 || !strings.Contains(errs[0], "docs/seed.md") || !strings.Contains(errs[0], "deleted") {
 		t.Fatalf("a deletion under `deletions: include` was not refused: %q", errs)
 	}
@@ -88,7 +89,7 @@ func TestT002_03_StatusesAndDeletions(t *testing.T) {
 	e3.Run(proj3, "s-002-03c", "edit and stage", Turns("done",
 		Bash("b1", "echo more >> docs/seed.md && git add docs/seed.md"),
 	))
-	if errs := commitRequired(e3.BlockingErrorsFrom(proj3, "s-002-03c", "Stop")); len(errs) == 0 {
+	if errs := harness.CommitRequired(e3.BlockingErrorsFrom(proj3, "s-002-03c", "Stop")); len(errs) == 0 {
 		t.Fatal("a staged modification of a guarded file was not refused")
 	}
 }
@@ -99,7 +100,7 @@ func TestT002_04_NoFileGuardsNoCommitRequired(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Run(proj, "s-002-04", "write anything", Turns("done", Write("w1", "docs/x.md", "x\n")))
-	if errs := commitRequired(e.BlockingErrorsFrom(proj, "s-002-04", "Stop")); len(errs) != 0 {
+	if errs := harness.CommitRequired(e.BlockingErrorsFrom(proj, "s-002-04", "Stop")); len(errs) != 0 {
 		t.Fatalf("refused with no file-guard declared: %q", errs)
 	}
 }

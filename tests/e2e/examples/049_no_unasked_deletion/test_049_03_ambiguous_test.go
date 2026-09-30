@@ -53,7 +53,7 @@ func TestT049_13_AmbiguousAskBlocksViaScript(t *testing.T) {
 
 	res := e.Run(proj, sess, shared, Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("an ambiguous grounded ask (cite rc2) was NOT refused:\n%s", res.Output)

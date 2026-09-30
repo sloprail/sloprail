@@ -137,8 +137,7 @@ func project(t *testing.T) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "asker", askAndMaybeRefuse, map[string]string{"ask.sh": askScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 	return e, proj
 }
 

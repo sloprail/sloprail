@@ -28,8 +28,7 @@ func notesProject(t *testing.T) (*harness.Env, string) {
 	t.Helper()
 	e, proj := research(t)
 	e.WriteFile(proj, "NOTES.md", seedNotes)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "notes")
+	e.CommitAll(proj, "notes")
 	return e, proj
 }
 

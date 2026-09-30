@@ -104,8 +104,7 @@ func TestT032_12_PreWriteGateSeesMarkersAndResultKnown(t *testing.T) {
 	e.WriteFile(proj, "src/pinned.go", "// sr:invariant refunds-capped\npackage src\n")
 	e.WriteFile(proj, "src/plain.go", "package src\n")
 	e.Gate(proj, "pinned", markerGate, map[string]string{"check.sh": echoesMarkers})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	res := e.Run(proj, "s-032-12a", "add a pinned file", Turns("done",
 		Write("w1", "src/new.go", "// sr:invariant new-rule\npackage src\n"),

@@ -37,7 +37,7 @@ func TestT046_08_EventContentReachesJudgePrompt(t *testing.T) {
 	sess := "s-046-08"
 	e.Run(proj, sess, "add invariant-upholding code", Turns("done",
 		Write("w1", "src/charge.go", code),
-	))
+	).ThenCommit("write the files"))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
@@ -89,7 +89,7 @@ func TestT046_09_DifferentContentYieldsDifferentPrompt(t *testing.T) {
 		e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 		e.Run(proj, "s-046-09-"+tag, "add code", Turns("done",
 			Write("w1", "src/charge.go", invariantCode(fqn, body)),
-		))
+		).ThenCommit("write the files"))
 		p := e.JudgePrompt(proj, "judge-prompt.txt")
 		if p == "" {
 			t.Fatalf("[%s] the judge never ran — no prompt captured", tag)

@@ -71,7 +71,7 @@ func TestT037_02_UnmetSkillRequireRefusesWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "require-topic", pureRequireGate, nil)
-	commitGuards(t, proj) // keep the gate's own gate.yaml out of the cycle diff
+	e.CommitAll(proj, "the guards")
 
 	res := e.Run(proj, "s-037-02", "write a topic without loading the skill", Turns("done",
 		Write("w1", "memories/topics/idea.md", "# an idea"),
@@ -101,7 +101,7 @@ func TestT037_03_LoadedSkillRequirePermitsWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "require-topic", pureRequireGate, nil)
-	commitGuards(t, proj) // keep the gate's own gate.yaml out of the cycle diff
+	e.CommitAll(proj, "the guards")
 
 	res := e.Run(proj, "s-037-03", "load the skill then write a topic", Turns("done",
 		Skill("s1", "document-topic"),

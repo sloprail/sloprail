@@ -3,7 +3,6 @@ package e2e
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -59,16 +58,4 @@ func subScenario(t *testing.T, s harness.Scenario) string {
 		t.Fatalf("write sub-agent scenario: %v", err)
 	}
 	return path
-}
-
-// commitRequired counts the Stop refusals in the session's record that are this
-// gate's, by its own words.
-func commitRequired(errs []string) []string {
-	var out []string
-	for _, e := range errs {
-		if strings.Contains(e, "Commit your work before ending this turn") {
-			out = append(out, e)
-		}
-	}
-	return out
 }

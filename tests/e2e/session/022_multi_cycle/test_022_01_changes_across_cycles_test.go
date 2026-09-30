@@ -133,8 +133,7 @@ func project(t *testing.T) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 	return e, proj
 }
 
@@ -194,8 +193,7 @@ func TestT022_01_AFileThisSessionCreatedStaysACreateAcrossCycles(t *testing.T) {
 func TestT022_01b_AFileAtTheBaselineIsAnUpdateInEveryCycle(t *testing.T) {
 	e, proj := project(t)
 	e.WriteFile(proj, "pre-existing.md", "original\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "a file the session will edit")
+	e.CommitAll(proj, "a file the session will edit")
 
 	got := cycles(t, e, proj, "s-022-01b",
 		Turns("done", Write("w1", "pre-existing.md", "edited once\n")),
@@ -273,8 +271,7 @@ func TestT022_03_DeletedThenRecreatedIsADeleteThenAnUpdate(t *testing.T) {
 	// Committed before the session so the file is unambiguously part of the
 	// baseline rather than this session's own work.
 	e.WriteFile(proj, "revenant.md", "original\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "a file the session will delete")
+	e.CommitAll(proj, "a file the session will delete")
 
 	got := cycles(t, e, proj, "s-022-03",
 		Turns("done", Bash("b1", "rm revenant.md")),
@@ -313,8 +310,7 @@ func TestT022_03b_RecreatedWithTheBaselinesBytesIsSilent(t *testing.T) {
 
 	const original = "original\n"
 	e.WriteFile(proj, "round-trip.md", original)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "a file the session will delete and restore")
+	e.CommitAll(proj, "a file the session will delete and restore")
 
 	got := cycles(t, e, proj, "s-022-03b",
 		Turns("done", Bash("b1", "rm round-trip.md")),

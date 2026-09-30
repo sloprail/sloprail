@@ -118,8 +118,7 @@ func project(t *testing.T) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 	return e, proj
 }
 
@@ -144,8 +143,7 @@ func runOne(t *testing.T, e *harness.Env, proj, sess string, s harness.Scenario)
 func TestT023_01_ARenameIsADeleteAndACreate(t *testing.T) {
 	e, proj := project(t)
 	e.WriteFile(proj, "before.md", "content that will move\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the file that will be renamed")
+	e.CommitAll(proj, "the file that will be renamed")
 
 	got := runOne(t, e, proj, "s-023-01", Turns("done",
 		Bash("b1", "git mv before.md after.md"),
@@ -182,8 +180,7 @@ func TestT023_01_ARenameIsADeleteAndACreate(t *testing.T) {
 func TestT023_02_ARenameChainAcrossCyclesEndsAtTheLastPath(t *testing.T) {
 	e, proj := project(t)
 	e.WriteFile(proj, "a.md", "travelling content\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the file that will travel")
+	e.CommitAll(proj, "the file that will travel")
 
 	const sess = "s-023-02"
 	e.Run(proj, sess, "first move", Turns("done", Bash("b1", "git mv a.md b.md")))
@@ -228,8 +225,7 @@ func TestT023_02_ARenameChainAcrossCyclesEndsAtTheLastPath(t *testing.T) {
 func TestT023_03_ACopyReportsOnlyTheDestination(t *testing.T) {
 	e, proj := project(t)
 	e.WriteFile(proj, "source.md", "content that will be copied\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the file that will be copied")
+	e.CommitAll(proj, "the file that will be copied")
 
 	got := runOne(t, e, proj, "s-023-03", Turns("done",
 		Bash("b1", "cp source.md copy.md && git add copy.md"),
@@ -260,8 +256,7 @@ func TestT023_04_AFileReplacedByASymlinkIsAnUpdate(t *testing.T) {
 	e, proj := project(t)
 	e.WriteFile(proj, "target.md", "the link's target\n")
 	e.WriteFile(proj, "shifty.md", "an ordinary file, for now\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "an ordinary file that will become a link")
+	e.CommitAll(proj, "an ordinary file that will become a link")
 
 	got := runOne(t, e, proj, "s-023-04", Turns("done",
 		Bash("b1", "rm shifty.md && ln -s target.md shifty.md && git add shifty.md"),
@@ -379,8 +374,7 @@ func TestT023_06_ATrackedButIgnoredFileIsStillReported(t *testing.T) {
 func TestT023_07_AnIgnoredUntrackedFileStaysOut(t *testing.T) {
 	e, proj := project(t)
 	e.WriteFile(proj, ".gitignore", "junk/\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the ignore rules")
+	e.CommitAll(proj, "the ignore rules")
 
 	got := runOne(t, e, proj, "s-023-07", Turns("done",
 		Write("w1", "real-work.md", "the agent's actual work\n"),
@@ -518,8 +512,7 @@ func TestT023_10_ASubmoduleIsAGitlinkNotItsContents(t *testing.T) {
 	e.Git(sub, "config", "user.email", "e2e@example.invalid")
 	e.Git(sub, "config", "user.name", "E2E")
 	e.WriteFile(sub, "inner.md", "a file inside the submodule\n")
-	e.Git(sub, "add", "-A")
-	e.Git(sub, "commit", "-m", "the submodule's own content")
+	e.CommitAll(sub, "the submodule's own content")
 
 	got := runOne(t, e, proj, "s-023-10", Turns("done",
 		Write("w1", "ordinary.md", "the control\n"),
@@ -650,19 +643,16 @@ func TestT023_13_ARebaseInProgressDoesNotRetakeThePoint(t *testing.T) {
 	// Two lines of history that touch the same file, so rebasing one onto the
 	// other conflicts and stops.
 	e.WriteFile(proj, "contested.md", "base\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the contested file")
+	e.CommitAll(proj, "the contested file")
 	root := e.Git(proj, "rev-parse", "HEAD")
 
 	e.Git(proj, "checkout", "-b", "side", root)
 	e.WriteFile(proj, "contested.md", "side version\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "on side")
+	e.CommitAll(proj, "on side")
 
 	e.Git(proj, "checkout", "main")
 	e.WriteFile(proj, "contested.md", "main version\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "on main")
+	e.CommitAll(proj, "on main")
 
 	const sess = "s-023-13"
 

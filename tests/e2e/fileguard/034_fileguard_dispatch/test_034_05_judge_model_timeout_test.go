@@ -35,7 +35,7 @@ func TestT034_11_JudgeModelAndTimeoutReachTheInvocation(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "substantive-memory", judgeGuardModelTimeout, map[string]string{"judge.md.j2": judgeGuardTemplate})
-	commitGuards(t, proj) // keep the guard's own judge.md.j2 out of the cycle diff
+	e.CommitAll(proj, "the rule and its scripts")
 
 	// A recording shim: writes the failing verdict AND records the claude argv, so
 	// the test can assert the check's model reached the harness invocation.
@@ -44,7 +44,7 @@ func TestT034_11_JudgeModelAndTimeoutReachTheInvocation(t *testing.T) {
 
 	e.Run(proj, "s-034-11", "write a thin memory", Turns("done",
 		Write("w1", "memories/note.md", "meh"),
-	))
+	).ThenCommit("add the memory"))
 
 	// The judge ran to a verdict and blocked — the custom model/timeout did not
 	// break the judge path.
@@ -100,14 +100,14 @@ func TestT034_12_ScopedAllowedToolsReachTheHarnessIntact(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "substantive-memory", judgeGuardScopedTools, map[string]string{"judge.md.j2": judgeGuardTemplate})
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the rule and its scripts")
 
 	argvFile := filepath.Join(proj, "claude-argv.txt")
 	e.InstallJudgeClaudeRecordingArgv(argvFile, `{"pass": true, "reasoning": ""}`)
 
 	e.Run(proj, "s-034-12", "write a memory", Turns("done",
 		Write("w1", "memories/note.md", "a substantive memory"),
-	))
+	).ThenCommit("add the memory"))
 
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {
@@ -161,14 +161,14 @@ func TestT034_13_DisallowedToolsReachTheHarnessIntact(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "substantive-memory", judgeGuardDisallowedTools, map[string]string{"judge.md.j2": judgeGuardTemplate})
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the rule and its scripts")
 
 	argvFile := filepath.Join(proj, "claude-argv.txt")
 	e.InstallJudgeClaudeRecordingArgv(argvFile, `{"pass": true, "reasoning": ""}`)
 
 	e.Run(proj, "s-034-13", "write a memory", Turns("done",
 		Write("w1", "memories/note.md", "a substantive memory"),
-	))
+	).ThenCommit("add the memory"))
 
 	argv, err := os.ReadFile(argvFile)
 	if err != nil {

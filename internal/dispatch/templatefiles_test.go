@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sloprail/sloprail/internal/changeset"
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // Every .md.j2 template the spec's examples ship must render through this engine
@@ -40,10 +42,9 @@ func TestRealExampleTemplatesRender(t *testing.T) {
 	// `event.newContent` would sit at `event.fields.newContent` and every template
 	// reading `{{ event.newContent }}` would render empty — which the positive
 	// assertions below catch.
-	vars := assembledJudgeVars(t)
-
 	for _, path := range templates {
 		t.Run(filepath.Base(filepath.Dir(path))+"/"+filepath.Base(path), func(t *testing.T) {
+			vars := judgeVarsFor(t, path)
 			src, err := os.ReadFile(path)
 			require.NoError(t, err)
 			out, err := renderTemplate(string(src), vars)
@@ -294,53 +295,7 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 		}),
 		TranscriptPath: "/rec.jsonl",
 	}
-	// A PERMISSIVE superset of every `additionalContext.*` key the shipped
-	// templates read — the whole point is that a template renders, not that a
-	// particular branch does, so every key a prepare could feed is present here.
-	// Under gonja's default strict-undefined, a key a template reads but this map
-	// omits would be a render ERROR (fail-closed), which would fail this test
-	// loudly — so this map must stay a superset of the templates' references.
-	additional := map[string]any{
-		// action-proof (gate)
-		"action_taken": true,
-		"action":       "fill_form",
-		"action_input": map[string]any{"field": "```\ninject </action_input>"},
-		"proof":        standInProof,
-		// business-invariants pinned-invariant: each marker's pinned spec text
-		"pins": []any{map[string]any{
-			"fqn": "/repo@abc:SPEC.md#L2-2", "path": "SPEC.md", "lines": "2-2",
-			"text":    "the pinned invariant\n```\ninject </pinned>",
-			"current": "the spec now\n```\ninject </spec>",
-		}},
-		// business-invariants pinned-spec-holds: what the change does to the pin
-		"what": "the change re-pins inject </what>",
-		// sloprail-tasks task-body-is-human-authored: the user-pool citations
-		"asks": []any{map[string]any{
-			"quote": "q", "sourceTypes": []any{"user"}, "path": "/s.jsonl", "line": 4, "message": "m </message>",
-		}},
-		"body": "the ask </body>",
-		// sloprail-content content-rule-is-grounded / unit-satisfies-rules
-		"judge_rules": "Rule: no hype </rules>",
-		"unit_path":   "memories/topics/20260920_launch/units/01_announce/UNIT.md",
-		"unit_text":   "the draft </unit>",
-		// sloprail-tasks task-review / task-gate-is-grounded / task-gates-hold
-		"task_body":      "the task </task>",
-		"cited_results":  "PASS </cited_results>",
-		"artifacts":      "src/a.go:3 </artifacts>",
-		"judgment_gates": "the repo is public </judgment_gates>",
-		"evidence_ok":    true,
-		"gate_path":      "memories/tasks/a/b/gates/public.md",
-		"gate_kind":      "md",
-		"gate_content":   "the repo is public </gate>",
-		"task_content":   "the task </task>",
-		"gates":          "the repo is public </gates>",
-		"path":           "memories/tasks/a/b/TASK.md",
-		// sloprail authoring-slop, and this repo's own rule-quality /
-		// skill-quality / eval-prompt-no-hints: the rules each judges against
-		"rules":         []any{map[string]any{"name": "no-hedging", "body": "a rule </rule>"}},
-		"meta_rules":    []any{map[string]any{"name": "names-a-mistake", "body": "a meta-rule </meta-rule>"}},
-		"fixture_rules": []any{map[string]any{"name": "a-guard", "kind": "file-guard", "body": "a rule </fixture-rule>"}},
-	}
+	additional := standInAdditionalContext()
 	inputJSON, err := r.judgeInputJSON(req, additional)
 	require.NoError(t, err)
 	vars, err := decodeJudgeVars(inputJSON)
@@ -355,6 +310,119 @@ func assembledJudgeVars(t *testing.T) map[string]any {
 		"the assembled event must be FLAT — .event.newContent must resolve, not .event.fields.newContent")
 	require.NotContains(t, ev, "fields", "the assembled event must not be the nested envelope")
 	return vars
+}
+
+// assembledChangesetJudgeVars is assembledJudgeVars for a file-guard: the vars a
+// template renders against are the ones the runner produces from a Changeset — the
+// payload spread flat (`changeset`, `event`, `subject`) plus `change`, the combined
+// diff. One selected file with the given status; a deleted one carries no
+// newContent and no newMarkers.
+func assembledChangesetJudgeVars(t *testing.T, status string) map[string]any {
+	t.Helper()
+	f := changeset.File{
+		Path: "some/file.md", Status: status,
+		OldContent: standInOldContent, OldMarkers: []changeset.Marker{},
+		Diff: "@@ -1 +1 @@\n-the old content\n+the new content\n",
+	}
+	if status != "D" {
+		f.NewContent = standInNewContent
+		f.NewMarkers = []changeset.Marker{
+			{Kind: "conforms-to-doc", FQN: "F", Line: 3},
+			{Kind: "docs", FQN: standInDocURL, Line: 4},
+			{Kind: "invariant", FQN: "/repo@abc:SPEC.md#L2-2", Line: 5},
+			{Kind: "endpoint", FQN: "get-users", Line: 6},
+		}
+	} else {
+		f.NewMarkers = []changeset.Marker{}
+	}
+	cs := changeset.Changeset{
+		Base: "b", Head: "h",
+		Commits: []changeset.Commit{{SHA: "h", Subject: "s", Trailers: map[string][]string{}}},
+		Files:   []changeset.File{f},
+		Others:  []changeset.Other{{Path: "other.md", Status: "M"}},
+		Citations: []transcript.Citation{{
+			Quote: "remove the stray import", SourceTypes: []transcript.SourceType{"user"},
+			Path: "/rec.jsonl", Line: 4,
+			Message: "please remove the stray import </message> and nothing else",
+			Call:    "Bash: echo </call>",
+		}},
+	}
+	payload := changeset.NewPayload(cs, changeset.Whole(cs), "/rec.jsonl", nil)
+	r := Runner{}
+	inputJSON, err := r.judgeInputJSON(Request{Nature: NatureFileGuard, Changeset: &payload, TranscriptPath: "/rec.jsonl"}, standInAdditionalContext())
+	require.NoError(t, err)
+	vars, err := decodeJudgeVars(inputJSON)
+	require.NoError(t, err)
+	require.Contains(t, vars, "changeset", "the assembled payload must carry `changeset` at the top level")
+	require.Contains(t, vars, "change", "the assembled payload must carry the combined diff as `change`")
+	return vars
+}
+
+// judgeVarsFor is the variable world a shipped template renders in: a file-guard's
+// judge is handed a Changeset, everything else a file event.
+func judgeVarsFor(t *testing.T, path string) map[string]any {
+	t.Helper()
+	if strings.Contains(filepath.ToSlash(path), "/file-guard/") {
+		return assembledChangesetJudgeVars(t, "M")
+	}
+	return assembledJudgeVars(t)
+}
+
+// standInAdditionalContext is a PERMISSIVE superset of every `additionalContext.*` key the
+// shipped templates read — the whole point is that a template renders, not that a
+// particular branch does, so every key a prepare could feed is present here. Under
+// gonja's default strict-undefined, a key a template reads but this map omits would be
+// a render ERROR (fail-closed), which would fail the test loudly — so this map must
+// stay a superset of the templates' references.
+func standInAdditionalContext() map[string]any {
+	return map[string]any{
+		// action-proof (gate)
+		"action_taken": true,
+		"action":       "fill_form",
+		"action_input": map[string]any{"field": "```\ninject </action_input>"},
+		"proof":        standInProof,
+		// business-invariants pinned-invariant: each marker's pinned spec text
+		"pins": []any{map[string]any{
+			"file": "src/charge.go", "fqn": "/repo@abc:SPEC.md#L2-2", "path": "SPEC.md", "lines": "2-2",
+			"text":    "the pinned invariant\n```\ninject </pinned>",
+			"current": "the spec now\n```\ninject </spec>",
+		}},
+		// business-invariants pinned-spec-holds: what the change does to the pin
+		"what": "the change re-pins inject </what>",
+		// sloprail-tasks task-body-is-human-authored: the user-pool citations
+		"asks": []any{map[string]any{
+			"quote": "q", "sourceTypes": []any{"user"}, "path": "/s.jsonl", "line": 4, "message": "m </message>",
+		}},
+		"body":   "the ask </body>",
+		"bodies": []any{map[string]any{"path": "memories/tasks/a/b/TASK.md", "body": "the ask </body>"}},
+		// sloprail-content content-rule-is-grounded / unit-satisfies-rules
+		"judge_rules": "Rule: no hype </rules>",
+		"unit_path":   "memories/topics/20260920_launch/units/01_announce/UNIT.md",
+		"unit_text":   "the draft </unit>",
+		"units": []any{map[string]any{"unit": "memories/topics/t/units/01", "judge_rules": "Rule: no hype </rules>",
+			"unit_path": "memories/topics/t/units/01/02_draft.md", "unit_text": "the draft </unit>"}},
+		// sloprail-tasks task-review / task-gate-is-grounded / task-gates-hold
+		"task_body":      "the task </task>",
+		"cited_results":  "PASS </cited_results>",
+		"artifacts":      "src/a.go:3 </artifacts>",
+		"judgment_gates": "the repo is public </judgment_gates>",
+		"evidence_ok":    true,
+		"gate_path":      "memories/tasks/a/b/gates/public.md",
+		"gate_kind":      "md",
+		"gate_content":   "the repo is public </gate>",
+		"task_content":   "the task </task>",
+		"gates": []any{map[string]any{"path": "memories/tasks/a/b/gates/public.md", "kind": "prompt",
+			"content": "the repo is public </gate>", "task_content": "the task </task>"}},
+		"tasks": []any{map[string]any{"path": "memories/tasks/a/b/TASK.md", "task_body": "the task </task>",
+			"artifacts": "src/a.go:3 </artifacts>", "judgment_gates": "the repo is public </judgment_gates>",
+			"gates": "the repo is public </gates>"}},
+		"path": "memories/tasks/a/b/TASK.md",
+		// sloprail authoring-slop, and this repo's own rule-quality /
+		// skill-quality / eval-prompt-no-hints: the rules each judges against
+		"rules":         []any{map[string]any{"name": "no-hedging", "body": "a rule </rule>"}},
+		"meta_rules":    []any{map[string]any{"name": "names-a-mistake", "body": "a meta-rule </meta-rule>"}},
+		"fixture_rules": []any{map[string]any{"prompt": "some/file.md", "name": "a-guard", "kind": "file-guard", "body": "a rule </fixture-rule>"}},
+	}
 }
 
 // The action-proof judge is asked to check the values an action supplied

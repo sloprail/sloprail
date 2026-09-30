@@ -22,8 +22,7 @@ func pinnedSpecProject(t *testing.T, e *env) string {
 	sha := commitSpec(t, e, proj, "SPEC.md", billingSpec, "spec")
 	e.WriteFile(proj, "src/charge.go", invariantCode(proj+"@"+sha+":SPEC.md#L3-3",
 		"func Refund(charged, amount int) bool { return amount <= charged }\n"))
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "pinned refund")
+	e.CommitAll(proj, "pinned refund")
 	return proj
 }
 
@@ -47,7 +46,7 @@ func TestT046_11_UncitedPinnedRuleChangeRefused(t *testing.T) {
 
 	res := e.Run(proj, "s-046-11", "allow goodwill refunds", Turns("done",
 		Write("w1", "SPEC.md", relaxedSpec),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() {
 		t.Fatalf("an uncited change to a pinned rule was not refused:\n%s", res.Output)
 	}
@@ -77,7 +76,7 @@ func TestT046_12_UnpinnedLineOfAPinnedSpecNeedsTheUsersWords(t *testing.T) {
 	edited := strings.Replace(billingSpec, "never be negative", "never be below zero", 1)
 	res := e.Run(proj, "s-046-12a", "reword rule 1", Turns("done",
 		Write("w1", "SPEC.md", edited),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw("every rule in a pinned spec is the user's") {
 		t.Fatalf("an uncited change to an unpinned line of a pinned spec was not refused:\n%s", res.Output)
 	}
@@ -88,7 +87,7 @@ func TestT046_12_UnpinnedLineOfAPinnedSpecNeedsTheUsersWords(t *testing.T) {
 	const ask = "reword rule 1 of the spec to say below zero instead of negative"
 	res = e.Run(proj, "s-046-12b", ask, Turns("done",
 		Bash("b1", "sr-file edit SPEC.md --old-string 'never be negative' --new-string 'never be below zero' --cite:user '"+ask+"'"),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("a cited change the user asked for was refused:\n%s", res.Output)
 	}
@@ -113,7 +112,7 @@ func TestT046_13_CitedRuleChangeAdmits(t *testing.T) {
 	const ask = "change rule 2 of the spec so goodwill refunds may exceed the charge"
 	res := e.Run(proj, "s-046-13", ask, Turns("done",
 		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("a rule change the user asked for was refused:\n%s", res.Output)
 	}
@@ -133,7 +132,7 @@ func TestT046_14_CitingAConflictingFeatureBlockedAtStop(t *testing.T) {
 	const ask = "let Refund allow the charge plus a courtesy credit"
 	res := e.Run(proj, "s-046-14", ask, Turns("done",
 		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("the gate (citation only, no model) refused a cited rule change:\n%s", res.Output)
 	}
@@ -156,7 +155,7 @@ func TestT046_26_ChangeAndCitationsReachTheRuleChangeJudge(t *testing.T) {
 	const ask = "change rule 2 of the spec so goodwill refunds may exceed the charge"
 	res := e.Run(proj, "s-046-26", ask, Turns("done",
 		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("the cited rule change was refused:\n%s", res.Output)
 	}

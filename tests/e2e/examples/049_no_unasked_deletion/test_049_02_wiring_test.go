@@ -57,7 +57,7 @@ func TestT049_11_PreparedQuoteAndDiffReachJudgePrompt(t *testing.T) {
 	e.Run(proj, sess, prompt, Turns("done",
 		// Removes the asked line AND the collateral provenance line.
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-	))
+	).ThenCommit("write the files"))
 
 	captured := e.JudgePrompt(proj, "judge-prompt.txt")
 	if captured == "" {
@@ -91,7 +91,7 @@ func TestT049_12_DifferentRemovalYieldsDifferentPrompt(t *testing.T) {
 		e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 		e.Run(proj, "s-049-12-"+tag, prompt, Turns("done",
 			srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-		))
+		).ThenCommit("write the files"))
 		p := e.JudgePrompt(proj, "judge-prompt.txt")
 		if p == "" {
 			t.Fatalf("[%s] the judge never ran — no prompt captured", tag)

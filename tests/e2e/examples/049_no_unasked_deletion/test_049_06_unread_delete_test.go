@@ -45,7 +45,7 @@ func TestT049_19_AnUnreadDeleteIsJudged(t *testing.T) {
 			const prompt = "tidy up the build folder"
 			res := e.Run(proj, "s-049-19", prompt, Turns("done",
 				Bash("d1", "sr-session trajectory cite "+shq(prompt)+" --source-types user && rm -rf memories"),
-			))
+			).ThenCommit("write the files"))
 			// The gate (citation only) admits the cited delete, so it runs; the judge in
 			// the file-guard rules on it at Stop, and the turn is blocked.
 			blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-049-19", "Stop"), "\n")

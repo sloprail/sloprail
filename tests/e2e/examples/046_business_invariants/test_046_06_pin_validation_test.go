@@ -27,7 +27,7 @@ func TestT046_20_OutOfRangePinIsRefusedBeforeTheJudge(t *testing.T) {
 	sess := "s-046-20"
 	e.Run(proj, sess, "add code pinned past the end of the spec", Turns("done",
 		Write("w1", "src/charge.go", invariantCode(fqn, "func charge(total int) {}\n")),
-	))
+	).ThenCommit("write the files"))
 
 	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
 	if !containsAll(joined, "L99-99", "pinned-invariant") {
@@ -48,7 +48,7 @@ func TestT046_21_BackwardsRangeIsRefused(t *testing.T) {
 	sess := "s-046-21"
 	e.Run(proj, sess, "add code with a backwards pin", Turns("done",
 		Write("w1", "src/charge.go", invariantCode(proj+"@"+sha+":SPEC.md#L3-2", "func charge(total int) {}\n")),
-	))
+	).ThenCommit("write the files"))
 	if joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop")); !containsAll(joined, "L3-2", "pinned-invariant") {
 		t.Fatalf("a backwards pin range was not refused:\n%s", joined)
 	}
@@ -66,7 +66,7 @@ func TestT046_22_OptionAsShaIsRefusedAndWritesNothing(t *testing.T) {
 	sess := "s-046-22"
 	e.Run(proj, sess, "add code with an option for a sha", Turns("done",
 		Write("w1", "src/charge.go", invariantCode(fqn, "func charge(total int) {}\n")),
-	))
+	).ThenCommit("write the files"))
 
 	entries, err := os.ReadDir(proj)
 	if err != nil {

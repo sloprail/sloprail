@@ -198,8 +198,7 @@ func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
 	sub := proj + "/sub"
 	e.WriteFile(proj, "sub/.keep", "")
 	e.FileGuard(sub, "control", harness.ControlGuard, map[string]string{"probe.sh": harness.ControlScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "sub")
+	e.CommitAll(proj, "sub")
 
 	e.Run(proj, "moved-04", "start", Turns("done", Write("w1", "one.md", "first")))
 	readsBack(t, e, sub, "the cycle resumed from below", func() {

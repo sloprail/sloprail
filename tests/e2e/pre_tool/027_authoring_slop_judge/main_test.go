@@ -113,8 +113,7 @@ func project(t *testing.T, e *harness.Env) string {
 	proj := e.Project()
 	e.GitInit(proj)
 	installAuthoringSlop(t, proj)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install authoring-slop")
+	e.CommitAll(proj, "install authoring-slop")
 	return proj
 }
 

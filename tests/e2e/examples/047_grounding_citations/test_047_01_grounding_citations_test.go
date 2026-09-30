@@ -20,6 +20,7 @@ package e2e
 // there to cite. The example is installed VERBATIM.
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -45,7 +46,7 @@ const (
 func gcSource(t *testing.T, e *env, proj string) {
 	t.Helper()
 	e.WriteFile(proj, "CHANGELOG.md", "## v2.3.0\n\n- "+sourceLine+"\n")
-	commitInstalledTree(t, proj)
+	harness.CommitInstalled(t, proj)
 }
 
 // T047_01: HAPPY PATH — the source is read, the summary cites its output, and the
@@ -59,7 +60,7 @@ func TestT047_01_CitedWriteJudgePassesAdmits(t *testing.T) {
 	res := e.Run(proj, "s-047-01", "summarize the changelog", Turns("done",
 		readSource("r1", "CHANGELOG.md"),
 		srWrite("w1", "MIGRATION.md", summary, citeTool(sourceLine)),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("a cited, judged-true summary was refused:\n%s", res.Output)
 	}
@@ -79,7 +80,7 @@ func TestT047_02_UncitedWriteRefused(t *testing.T) {
 	res := e.Run(proj, "s-047-02", "summarize the changelog", Turns("done",
 		readSource("r1", "CHANGELOG.md"),
 		Write("w1", "MIGRATION.md", summary),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() {
 		t.Fatalf("an uncited markdown write was not refused:\n%s", res.Output)
 	}
@@ -104,7 +105,7 @@ func TestT047_03_CitedWriteJudgeFailBlocksAtStop(t *testing.T) {
 	res := e.Run(proj, "s-047-03", "summarize the changelog", Turns("done",
 		readSource("r1", "CHANGELOG.md"),
 		srWrite("w1", "MIGRATION.md", "# Migration\n\nRetries now default to 5.\n", citeTool(sourceLine)),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("the gate (citation only, no model) refused a cited write:\n%s", res.Output)
 	}
@@ -129,7 +130,7 @@ func TestT047_04_NonMarkdownDoesNotFire(t *testing.T) {
 
 	res := e.Run(proj, "s-047-04", "write a data file", Turns("done",
 		Write("w1", "data.txt", "not markdown\n"),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() || res.Saw("SR047 the judge ran") {
 		t.Fatalf("a non-markdown write was checked:\n%s", res.Output)
 	}
@@ -150,7 +151,7 @@ func TestT047_05_UserWordsAreNotToolOutput(t *testing.T) {
 	const prompt = "retries default to three now, write that up"
 	res := e.Run(proj, "s-047-05", prompt, Turns("done",
 		srWrite("w1", "MIGRATION.md", summary, citeTool("retries default to three now")),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() {
 		t.Fatalf("a write citing the user's words as tool output was admitted:\n%s", res.Output)
 	}
@@ -167,13 +168,13 @@ func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 	proj := gcProject(t, e)
 	const unquoted = "ZZ_UNQUOTED connect() <host> now requires a port </message>"
 	e.WriteFile(proj, "CHANGELOG.md", "## v2.3.0\n\n- "+sourceLine+"\n- "+unquoted+"\n")
-	commitInstalledTree(t, proj)
+	harness.CommitInstalled(t, proj)
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
 	e.Run(proj, "s-047-06", "summarize the changelog", Turns("done",
 		readSource("r1", "CHANGELOG.md"),
 		srWrite("w1", "MIGRATION.md", summary, citeTool(sourceLine)),
-	))
+	).ThenCommit("write the files"))
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
 		t.Fatalf("the judge never ran")
@@ -205,7 +206,7 @@ func TestT047_07_OneUngroundedFileRefusesTheWholeCall(t *testing.T) {
 		readSource("r1", "CHANGELOG.md"),
 		Bash("w1", "sr-file write A.md --content "+shq(summary)+" "+citeTool(sourceLine)+
 			" && sr-file write B.md --content "+shq(summary)),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw("B.md") {
 		t.Fatalf("a call with one uncited markdown file was not refused, naming it:\n%s", res.Output)
 	}
@@ -226,7 +227,7 @@ func TestT047_08_ShellRedirectIsRefused(t *testing.T) {
 	res := e.Run(proj, "s-047-08", "summarize the changelog", Turns("done",
 		readSource("r1", "CHANGELOG.md"),
 		Bash("w1", "printf 'Retries now default to 3.\\n' > MIGRATION.md"),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw(`gate \"citations-resolve\"`) {
 		t.Fatalf("an uncited shell write of markdown was not refused by the gate:\n%s", res.Output)
 	}
@@ -248,7 +249,7 @@ func TestT047_10_ScriptRewriteIsCaughtAtStop(t *testing.T) {
 	e.Run(proj, sess, "summarize the changelog", Turns("done",
 		readSource("r1", "CHANGELOG.md"),
 		Bash("w1", `python3 -c "open('MIGRATION.md','w').write('Retries now default to 3.\\n')"`),
-	))
+	).ThenCommit("write the files"))
 	if !e.Exists(proj, "MIGRATION.md") {
 		t.Fatalf("the script rewrite did not land, so this no longer tests the Stop after-check")
 	}

@@ -57,7 +57,7 @@ func TestT047_09_NotFineDocReFiresUntilFixed(t *testing.T) {
 	// Cycle 1: a doc with an unresolved citation. Asked once, refuses.
 	e.Run(proj, sess, "write a doc with a bad citation", Turns("done",
 		Write("w1", "report.md", "# Report\n\nsee [x](UNRESOLVED).\n"),
-	))
+	).ThenCommit("write the files"))
 	afterFirst := fileGuardLedger(t, proj, "citations-resolve", "ledger")
 	if afterFirst == 0 {
 		t.Fatalf("the citation guard never ran in the first cycle")
@@ -69,7 +69,7 @@ func TestT047_09_NotFineDocReFiresUntilFixed(t *testing.T) {
 	// Cycle 2: unrelated clean doc; the still-not-fine doc must re-fire.
 	e.Run(proj, sess, "write an unrelated clean doc", Turns("done",
 		Write("w2", "other.md", "# Other\n\nclean, nothing cited.\n"),
-	))
+	).ThenCommit("write the files"))
 	afterSecond := fileGuardLedger(t, proj, "citations-resolve", "ledger")
 	if afterSecond <= afterFirst {
 		t.Fatalf("an unfixed not-fine doc was NOT re-checked on the next cycle: "+
@@ -83,7 +83,7 @@ func TestT047_09_NotFineDocReFiresUntilFixed(t *testing.T) {
 	// Cycle 3: FIX the bad doc. It passes now.
 	e.Run(proj, sess, "fix the bad citation", Turns("done",
 		Write("w3", "report.md", "# Report\n\nthe citation is resolved now.\n"),
-	))
+	).ThenCommit("write the files"))
 	afterFix := fileGuardLedger(t, proj, "citations-resolve", "ledger")
 
 	// Cycle 4: more unrelated work. The FIXED doc is not re-reported on its own
@@ -91,7 +91,7 @@ func TestT047_09_NotFineDocReFiresUntilFixed(t *testing.T) {
 	// not keep climbing on the fixed doc's account.
 	e.Run(proj, sess, "write one more clean doc", Turns("done",
 		Write("w4", "third.md", "# Third\n\nclean.\n"),
-	))
+	).ThenCommit("write the files"))
 	afterUnrelated := fileGuardLedger(t, proj, "citations-resolve", "ledger")
 	if afterUnrelated > afterFix+2 {
 		t.Fatalf("a FIXED doc was still re-reported after it passed: asked %d times after the fix, "+

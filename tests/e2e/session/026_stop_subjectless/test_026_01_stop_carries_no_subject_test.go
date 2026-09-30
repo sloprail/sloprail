@@ -138,8 +138,7 @@ func project(t *testing.T) (*Env, string) {
 }
 
 func commitGuardrails(e *Env, proj string) {
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 }
 
 // T026_01: the Stop event a check is given carries an empty subject, on the wire,

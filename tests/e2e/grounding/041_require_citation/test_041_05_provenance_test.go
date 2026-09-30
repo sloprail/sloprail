@@ -34,7 +34,7 @@ func provenanceProject(t *testing.T) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installBoth(e, proj, toolResultGate, toolResultGuard)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 	return e, proj
 }
 

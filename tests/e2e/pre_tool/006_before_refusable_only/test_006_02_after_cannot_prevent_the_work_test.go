@@ -79,8 +79,7 @@ func TestT006_02_AnAfterRefusalCannotPreventTheWork(t *testing.T) {
 
 	// Committed before the session, so the guard's own files are part of the
 	// baseline rather than part of what the cycle appears to have changed.
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-006-02", "write a note", Turns("done",
 		Write("w1", "some/notes.md", "hello"),

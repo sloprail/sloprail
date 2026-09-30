@@ -24,8 +24,7 @@ func TestT040_04_TagWithArtifactAdmits(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-040-04"
 	res := e.Run(proj, sess, "record a complete update", Turns("done",
@@ -59,8 +58,7 @@ func TestT040_05_SkipAdmits(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-040-05"
 	res := e.Run(proj, sess, "declare a skip", Turns("done",
@@ -95,8 +93,7 @@ func TestT040_06_TagWithoutArtifactRefused(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-040-06"
 	res := e.Run(proj, sess, "claim an update, write nothing", Turns("done",

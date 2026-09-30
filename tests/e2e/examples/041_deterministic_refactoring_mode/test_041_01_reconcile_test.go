@@ -54,8 +54,7 @@ func setupOrigin(t *testing.T) (env *scene, sha string) {
 	installExampleTree(t, proj, exampleName)
 	// origin lines 1-3 are the function itself, so the moved chunk is just it.
 	e.WriteFile(proj, "origin.go", "func Beta() int {\n\treturn 1\n}\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install + origin")
+	e.CommitAll(proj, "install + origin")
 	return &scene{e: e, proj: proj}, e.Git(proj, "rev-parse", "HEAD")
 }
 
@@ -80,7 +79,7 @@ func TestT041_01_ReconcilingMoveAdmits(t *testing.T) {
 	moved := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 1\n}\n"
 	res := e.Run(proj, sess, "move the function", Turns("done",
 		SayWrite("w1", declRefactor(sha), "dest.go", moved),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Errorf("a reconciling move was refused:\n%s", res.Output)
@@ -105,7 +104,7 @@ func TestT041_02_NonReconcilingMoveRefused(t *testing.T) {
 	movedBad := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 999\n}\n"
 	res := e.Run(proj, sess, "move the function", Turns("done",
 		SayWrite("w1", declRefactor(sha), "dest.go", movedBad),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("a regenerated (non-reconciling) move was NOT refused:\n%s", res.Output)
@@ -141,7 +140,7 @@ func TestT041_03_UnfetchableOriginRefused(t *testing.T) {
 	// origin is unfetchable, so it never lands.
 	res := e.Run(proj, sess, "move the function", Turns("done",
 		SayWrite("w1", "Refactoring. #refactor scope=origin.go@"+bogus+":1-3", "dest.go", moved),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("a move against an unfetchable origin was NOT refused:\n%s", res.Output)
@@ -175,7 +174,7 @@ func TestT041_04_UnmarkedWriteNotGuarded(t *testing.T) {
 	sess := "s-041-04"
 	res := e.Run(proj, sess, "write an ordinary file", Turns("done",
 		SayWrite("w1", "Refactoring. #refactor (no scope)", "plain.go", "package x\n\nfunc Y() int { return 42 }\n"),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Errorf("the guard fired on a file carrying no sr:moved-from marker:\n%s", res.Output)
@@ -204,7 +203,7 @@ func TestT041_05_NonReconcilingReFiresUntilFixed(t *testing.T) {
 	// Cycle 1: bad move — refused, does not land.
 	res1 := e.Run(proj, sess, "move (regenerated)", Turns("done",
 		SayWrite("w1", declRefactor(sha), "dest.go", movedBad),
-	))
+	).ThenCommit("write the files"))
 	if !res1.Refused() || e.Exists(proj, "dest.go") {
 		t.Fatalf("cycle 1: the bad move was not blocked (refused=%v, exists=%v)", res1.Refused(), e.Exists(proj, "dest.go"))
 	}
@@ -213,7 +212,7 @@ func TestT041_05_NonReconcilingReFiresUntilFixed(t *testing.T) {
 	// used up by having refused once).
 	res2 := e.Run(proj, sess, "move (still regenerated)", Turns("done",
 		SayWrite("w2", declRefactor(sha), "dest.go", movedBad),
-	))
+	).ThenCommit("write the files"))
 	if !res2.Refused() {
 		t.Fatalf("cycle 2: the still-bad move was NOT refused again — the guard was wrongly used up:\n%s", res2.Output)
 	}
@@ -225,7 +224,7 @@ func TestT041_05_NonReconcilingReFiresUntilFixed(t *testing.T) {
 	movedGood := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 1\n}\n"
 	res3 := e.Run(proj, sess, "move (correct bytes)", Turns("done",
 		SayWrite("w3", declRefactor(sha), "dest.go", movedGood),
-	))
+	).ThenCommit("write the files"))
 	if res3.Refused() {
 		t.Errorf("cycle 3: the corrected (reconciling) move was refused:\n%s", res3.Output)
 	}
@@ -247,12 +246,11 @@ func TestT041_10_UnderivableInPlaceEditIsRefused(t *testing.T) {
 
 	good := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 1\n}\n"
 	e.WriteFile(proj, "dest.go", good)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "an admitted move")
+	e.CommitAll(proj, "an admitted move")
 
 	res := e.Run(proj, "s-041-10", "tweak the moved function", Turns("done",
 		Bash("b1", "sed -i.bak s/return\\ 1/return\\ 999/ dest.go"),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("a sed -i regeneration of a moved file was not refused before the write:\n%s", res.Output)

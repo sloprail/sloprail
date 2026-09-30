@@ -38,7 +38,7 @@ func TestT045_01_UncitedWriteRefused(t *testing.T) {
 
 	res := e.Run(proj, "s-045-01", authPrompt, Turns("done",
 		Write("w1", askPath, "Migrate the auth module to the new token format."),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("an uncited ASK.md write was not refused:\n%s", res.Output)
@@ -175,7 +175,7 @@ func TestT045_06_NonAskWritesAreNeverJudged(t *testing.T) {
 	res := e.Run(proj, "s-045-06", "implement the migration", Turns("done",
 		Write("w1", "memories/tasks/auth/001/RESULT.md", "Implemented the token migration."),
 		Write("w2", "memories/notes/scratch.md", "a scratch note"),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("a write outside ASK.md was refused — the guard fired where it must not:\n%s", res.Output)
@@ -198,7 +198,7 @@ func TestT045_07_UncitedEditOfAskRefused(t *testing.T) {
 
 	res := e.Run(proj, "s-045-07", "the migration is half done", Turns("done",
 		Write("w1", askPath, "Migrate part of the auth module.\n"),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("an uncited rewrite of the ask was not refused:\n%s", res.Output)

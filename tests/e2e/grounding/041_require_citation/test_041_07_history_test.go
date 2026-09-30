@@ -84,7 +84,7 @@ func TestT041_38_AChangeCitedInAnotherPoolIsUncited(t *testing.T) {
 func TestT041_39_DirtyAtSessionStartIsNotCharged(t *testing.T) {
 	e, proj := guarded(t, afterCitationGuard)
 	e.WriteFile(proj, "memories/a.md", "base\n")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 	e.WriteFile(proj, "memories/a.md", "base\nthe user's uncommitted line\n")
 
 	e.Run(proj, "s-041-39", prompt, Turns("done",
@@ -124,7 +124,7 @@ func TestT041_41_ACheckoutFilterIsNotACharge(t *testing.T) {
 	e, proj := guarded(t, afterCitationGuard)
 	e.WriteFile(proj, ".gitattributes", "*.md text eol=crlf\n")
 	e.WriteFile(proj, "memories/a.md", "one\r\ntwo\r\n")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	e.Run(proj, "s-041-41", prompt, Turns("done",
 		Bash("b1", `sr-file edit memories/a.md --old-string 'two' --new-string 'TWO' --cite:user 'adopt a decision log'`),
@@ -143,7 +143,7 @@ func TestT041_41_ACheckoutFilterIsNotACharge(t *testing.T) {
 func TestT041_42_TheUsersBranchSwitchIsNotCharged(t *testing.T) {
 	e, proj := guarded(t, afterCitationGuard)
 	e.WriteFile(proj, "memories/a.md", "base\n")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 	git(t, proj, "branch", "other")
 	git(t, proj, "checkout", "-q", "other")
 	e.WriteFile(proj, "memories/a.md", "the other branch's version\n")
@@ -199,7 +199,7 @@ func TestT041_44_ACitedWriteThatFailsForRealGroundsNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.WriteFile(proj, "memories/.keep", "")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 	if err := os.Chmod(filepath.Join(proj, "memories"), 0o555); err != nil {
 		t.Fatal(err)
 	}

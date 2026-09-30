@@ -28,7 +28,7 @@ require:
 func TestT041_33_AFailedCitedCallGroundsNothing(t *testing.T) {
 	e, proj := guarded(t, afterCitationGuard)
 	e.WriteFile(proj, "memories/a.md", "# a\nkeep this\n")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	e.Run(proj, "s-041-33", prompt, Turns("done",
 		Bash("b1", `sr-file edit memories/a.md --old-string 'NOT THERE' --new-string 'x' --cite:user 'adopt a decision log'`),
@@ -95,7 +95,7 @@ exit 0
 		proj := e.Project()
 		e.GitInit(proj)
 		e.FileGuard(proj, "grounded-memories", whenGuard, map[string]string{"body-changed.sh": bodyChanged})
-		commitAll(t, proj)
+		e.CommitAll(proj, "baseline")
 		e.Run(proj, id, prompt, Turns("done", turns...))
 		return e.BlockingErrorsFrom(proj, id, "Stop")
 	}
@@ -123,7 +123,7 @@ adopt a decision log'`),
 func TestT041_36_EachDryRunFailureIsQuotedBesideItsFile(t *testing.T) {
 	e, proj := guardedPre(t)
 	e.WriteFile(proj, "notes/b.md", "# b\n")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-36", prompt, Turns("done",
 		Bash("b1", `sr-file write memories/a.md --cite:user 'QUOTE-NOBODY-SAID-4410' --content x; sr-file edit notes/b.md --cite:user 'adopt a decision log' --old-string 'no such line' --new-string x`),

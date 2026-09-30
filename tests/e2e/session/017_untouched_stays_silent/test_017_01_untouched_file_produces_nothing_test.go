@@ -89,8 +89,7 @@ func sawPath(got []observed, path string) bool {
 // start is outstanding work in the tree, and whether it belongs to the cycle is
 // a different question (016's). Here the files must be unambiguously old.
 func seedUntouched(e *Env, proj string) {
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "pre-existing project files")
+	e.CommitAll(proj, "pre-existing project files")
 }
 
 // T017_01: the control — a file the cycle DID touch is reported.

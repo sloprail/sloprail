@@ -89,8 +89,7 @@ exit 0
 // part of the baseline and the cycle's difference does not report them as newly
 // created files (and a check writing into its own folder is not itself reported).
 func commitRules(e *Env, proj string) {
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 }
 
 // hasEvent reports whether the recorded events hold one of the given kind naming

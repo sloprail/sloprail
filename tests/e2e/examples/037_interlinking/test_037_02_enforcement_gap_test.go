@@ -26,8 +26,7 @@ func TestT037_05_CreatedButUnlinkedRefused(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-037-05"
 	// Create a person, link them nowhere. A real created-but-unlinked violation.
@@ -74,8 +73,7 @@ func TestT037_07_LinkedPersonAdmits(t *testing.T) {
 	installExampleTree(t, proj, exampleName)
 	// An update that links to "erin" already exists in the tree.
 	e.WriteFile(proj, "updates/2026-08-20-standup.md", "# Standup\n\nCaught up with erin about the plan.\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install + update linking erin")
+	e.CommitAll(proj, "install + update linking erin")
 
 	sess := "s-037-07"
 	res := e.Run(proj, sess, "add erin, already linked", Turns("done",
@@ -111,8 +109,7 @@ func TestT037_08_DeletedPersonDanglingRefused(t *testing.T) {
 	// baseline. The reference matches the stem ("frank") the gate greps for.
 	e.WriteFile(proj, "people/frank.md", "# Frank")
 	e.WriteFile(proj, "updates/note.md", "# Note\n\nOwnership: frank drives the rollout.\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install + frank(referenced)")
+	e.CommitAll(proj, "install + frank(referenced)")
 
 	// Deleting frank leaves a dangling link → refused.
 	sess := "s-037-08a"
@@ -142,8 +139,7 @@ func TestT037_09_DeletedUnreferencedPersonAdmits(t *testing.T) {
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
 	e.WriteFile(proj, "people/grace.md", "# Grace")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install + grace(unreferenced)")
+	e.CommitAll(proj, "install + grace(unreferenced)")
 
 	sess := "s-037-09"
 	res := e.Run(proj, sess, "remove grace", Turns("done",
@@ -175,8 +171,7 @@ func TestT037_06_UnrelatedTurnNotBlocked(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-037-06"
 	res := e.Run(proj, sess, "do work unrelated to people", Turns("done",

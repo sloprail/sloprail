@@ -27,8 +27,7 @@ func TestT040_01_NoTagRefused(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-040-01"
 	res := e.Run(proj, sess, "do work without declaring a tag", Turns("done",
@@ -67,8 +66,7 @@ func TestT040_02_ContextAccumulatesTagAndArtifact(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-040-02"
 	// #update declared atomically with the artifact write (a combined turn — a
@@ -99,8 +97,7 @@ func TestT040_03_StructureAllowlist(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	// In-allowlist: an update artifact. The WRITE is admitted (it lands), even
 	// though the Stop gate will separately object — structure runs at PreToolUse.

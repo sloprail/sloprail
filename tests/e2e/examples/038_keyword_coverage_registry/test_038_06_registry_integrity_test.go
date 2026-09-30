@@ -21,8 +21,7 @@ func researchProjectWithScanner(t *testing.T) (*harness.Env, string) {
 	t.Helper()
 	e, proj := researchProject(t)
 	e.WriteFile(proj, "scanners/mine/scanner.yaml", activeScanner)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "scanner")
+	e.CommitAll(proj, "scanner")
 	return e, proj
 }
 
@@ -43,7 +42,7 @@ func TestT038_27_ScannersSharingAFolderNameAreTwoObligations(t *testing.T) {
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Write("w2", "zz/scanners/mine/scanner.yaml", "active: true\nkeywords:\n  - guardrail\n"),
 		Bash("b1", stubbed(`gh search repos guardrail`)),
-	))
+	).ThenCommit("write the files"))
 
 	reg := e.GuardrailState(proj, sess, "scanner-declared", "scanner:")
 	if len(reg) != 2 {
@@ -76,7 +75,7 @@ func TestT038_28_ACitedDeleteRetiresTheObligation(t *testing.T) {
 	res := e.Run(proj, sess, ask, Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", "sr-session trajectory cite '"+ask+"' --source-types user && rm -rf scanners/mine"),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("the delete the user asked for was refused:\n%s", res.Output)
 	}
@@ -91,7 +90,7 @@ func TestT038_28_ACitedDeleteRetiresTheObligation(t *testing.T) {
 	// declaration the user removed, not of the name.
 	e.Run(proj, sess, "declare it again", Turns("done",
 		Write("w2", "scanners/mine/scanner.yaml", activeScanner),
-	))
+	).ThenCommit("write the files"))
 	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)); n == 0 {
 		t.Errorf("a scanner declared again after its retirement was not owed a search")
 	}
@@ -110,7 +109,7 @@ func TestT038_29_AnUnreadableRegistryRefuses(t *testing.T) {
 	res := e.Run(proj, sess, "research guardrails", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw("could not be checked against a declared scanner") {
 		t.Errorf("a search was let through although the registry could not be read:\n%s", res.Output)
 	}
@@ -178,7 +177,7 @@ func TestT038_31_TheGuardReadsKeywordsAsTheRegistryDoes(t *testing.T) {
 		res := e.Run(proj, sess, "search for guardrail work", Turns("done",
 			Write("w1", "scanners/mine/scanner.yaml", commented),
 			Write("w2", "scanners/mine/scanner.yaml", "active: true\nkeywords:\n  - guardrail\n# the rest\n"),
-		))
+		).ThenCommit("write the files"))
 		if !res.Refused() || !res.Saw("drops the declared keyword(s) agent") {
 			t.Errorf("dropping the keyword after the comment was not refused:\n%s", res.Output)
 		}
@@ -192,7 +191,7 @@ func TestT038_31_TheGuardReadsKeywordsAsTheRegistryDoes(t *testing.T) {
 		e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR038 the judge ran on a restyle"}`)
 		res := e.Run(proj, "s-038-31b", "tidy the scanner", Turns("done",
 			Write("w1", "scanners/mine/scanner.yaml", "active: true\nkeywords:\n  - \"guardrail\"\n  - 'llm'\n  - agent   # the agent keyword\n"),
-		))
+		).ThenCommit("write the files"))
 		if res.Refused() || res.Saw("SR038 the judge ran") {
 			t.Errorf("a quote-only restyle was refused or judged as a drop:\n%s", res.Output)
 		}

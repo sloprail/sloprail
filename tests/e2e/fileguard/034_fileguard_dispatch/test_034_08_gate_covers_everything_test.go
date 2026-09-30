@@ -59,8 +59,7 @@ func coverProject(t *testing.T, files map[string]string) (*harness.Env, string) 
 		e.WriteFile(proj, path, body)
 	}
 	e.Gate(proj, "cover", deleteAndUnknownGate, map[string]string{"verify.sh": verifyScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 	return e, proj
 }
 

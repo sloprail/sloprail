@@ -257,8 +257,7 @@ func TestT039_37_UndeclaredUnrelatedMarkdownUnaffected(t *testing.T) {
 			e, proj := notesProject(t)
 			if tc.seed != "" {
 				e.WriteFile(proj, tc.file, tc.seed)
-				e.Git(proj, "add", "-A")
-				e.Git(proj, "commit", "-m", "seed")
+				e.CommitAll(proj, "seed")
 			}
 			sess := "s-039-37-" + string(rune('a'+i))
 			res := e.Run(proj, sess, "tidy notes", Turns("done",
@@ -774,8 +773,7 @@ func TestT039_44_WhatACloneDoesNotBuy(t *testing.T) {
 		e, proj := research(t)
 		e.WriteFile(proj, "lib/retry.js", "module.exports = () => {};\n")
 		e.WriteFile(proj, "lib/backoff.js", "module.exports = () => 1;\n")
-		e.Git(proj, "add", "-A")
-		e.Git(proj, "commit", "-m", "code")
+		e.CommitAll(proj, "code")
 		d := filepath.Join(scratch(t), "self")
 		joined := refused(t, e, proj, "s-039-44-a",
 			SayBash("b1", "#research", "git clone . "+d),

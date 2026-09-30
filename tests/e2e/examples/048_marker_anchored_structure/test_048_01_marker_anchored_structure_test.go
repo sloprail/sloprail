@@ -60,7 +60,7 @@ func TestT048_01_GoodNameConformingCodeAdmits(t *testing.T) {
 	sess := "s-048-01"
 	res := e.Run(proj, sess, "add a conforming endpoint", Turns("done",
 		Write("w1", "get-users.ts", conformingEndpoint),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("a well-named conforming endpoint was refused at pre-tool:\n%s", res.Output)
@@ -86,7 +86,7 @@ func TestT048_02_BadFileNameBlocksViaScript(t *testing.T) {
 	e.Run(proj, sess, "add a badly-named endpoint", Turns("done",
 		// CamelCase, no verb-resource hyphen — violates the naming pattern.
 		Write("w1", "GetUsers.ts", conformingEndpoint),
-	))
+	).ThenCommit("write the files"))
 
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
 	if len(blocks) == 0 {
@@ -117,7 +117,7 @@ func TestT048_03_NonConformingStackBlocksViaJudge(t *testing.T) {
 	sess := "s-048-03"
 	e.Run(proj, sess, "add a non-conforming endpoint", Turns("done",
 		Write("w1", "get-users.ts", nonConforming),
-	))
+	).ThenCommit("write the files"))
 
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
 	if len(blocks) == 0 {
@@ -142,7 +142,7 @@ func TestT048_04_NoMarkerDoesNotFire(t *testing.T) {
 	sess := "s-048-04"
 	res := e.Run(proj, sess, "add a badly-named file with no marker", Turns("done",
 		Write("w1", "GetUsers.ts", "const x = 1\nconst y = 2\n"), // bad name, NO marker
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("an unmarked file was refused at pre-tool — the guard fired without a marker:\n%s", res.Output)
@@ -165,7 +165,7 @@ func TestT048_05_DifferentMarkerKindDoesNotFire(t *testing.T) {
 	sess := "s-048-05"
 	res := e.Run(proj, sess, "add a doc-marked file with a bad name", Turns("done",
 		Write("w1", "GetUsers.ts", "// sr:doc some.thing\nconst x = 1\n"), // sr:doc, not sr:endpoint
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("a file with a non-endpoint marker was refused at pre-tool — the guard overreached:\n%s", res.Output)

@@ -288,8 +288,7 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	// The mock does not APPLY a sub-agent's tool calls, so this script's Write
 	// creates nothing. What matters is the dispatch itself, which binds a real

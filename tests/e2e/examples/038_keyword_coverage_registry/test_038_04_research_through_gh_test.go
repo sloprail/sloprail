@@ -38,8 +38,7 @@ func researchProject(t *testing.T) (*harness.Env, string) {
 	e.WriteExecutable(proj, ".stub/curl", "#!/bin/sh\necho stub-curl \"$@\"\n")
 	e.WriteExecutable(proj, ".stub/wget", "#!/bin/sh\necho stub-wget \"$@\"\n")
 	e.WriteFile(proj, "sub/.keep", "")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 	return e, proj
 }
 
@@ -212,7 +211,7 @@ func TestT038_16_SearchWithoutScannerRefused(t *testing.T) {
 			e, proj := researchProject(t)
 			res := e.Run(proj, "s-038-16", "research auth token leaks", Turns("done",
 				Bash("b1", stubbed(command)),
-			))
+			).ThenCommit("write the files"))
 			if !res.Refused() {
 				t.Fatalf("an undeclared gh search was not refused: %s\n%s", command, res.Output)
 			}
@@ -235,7 +234,7 @@ func TestT038_17_SearchWithDeclaredScannerAllowed(t *testing.T) {
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", stubbed(`cd sub && gh search repos "guardrail llm agent"`)),
 		Bash("b2", stubbed(`gh api search/issues -f q=guardrail`)),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("a search after a declared scanner was refused:\n%s", res.Output)
 	}
@@ -256,7 +255,7 @@ func TestT038_18_ScannerFromEarlierTurnStillCounts(t *testing.T) {
 	res := e.Run(proj, sess, "research guardrails", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("turn 1 refused:\n%s", res.Output)
 	}
@@ -265,7 +264,7 @@ func TestT038_18_ScannerFromEarlierTurnStillCounts(t *testing.T) {
 	}
 	res = e.Run(proj, sess, "search a bit more", Turns("done",
 		Bash("b2", stubbed(`gh search issues guardrail llm agent`)),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("a search in a later turn, with the scanner declared earlier, was refused:\n%s", res.Output)
 	}
@@ -318,7 +317,7 @@ func TestT038_19_ScannerWriteAndNonSearchGhAllowed(t *testing.T) {
 			e, proj := researchProject(t)
 			res := e.Run(proj, "s-038-19", "look at one issue", Turns("done",
 				Bash("b1", stubbed(command)),
-			))
+			).ThenCommit("write the files"))
 			if res.Refused() {
 				t.Fatalf("a non-search gh call was refused: %s\n%s", command, res.Output)
 			}
@@ -328,7 +327,7 @@ func TestT038_19_ScannerWriteAndNonSearchGhAllowed(t *testing.T) {
 	e, proj := researchProject(t)
 	res := e.Run(proj, "s-038-19w", "declare a scanner", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("writing the scanner itself was refused:\n%s", res.Output)
 	}
@@ -340,12 +339,11 @@ func TestT038_19_ScannerWriteAndNonSearchGhAllowed(t *testing.T) {
 func TestT038_20_RewritingAnExistingScannerRegistersIt(t *testing.T) {
 	e, proj := researchProject(t)
 	e.WriteFile(proj, "scanners/mine/scanner.yaml", activeScanner)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "scanner")
+	e.CommitAll(proj, "scanner")
 
 	res := e.Run(proj, "s-038-20", "research guardrails", Turns("done",
 		Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !strings.Contains(res.Output, searchRefusal) {
 		t.Fatalf("precondition: a committed-but-unregistered scanner should not count yet:\n%s", res.Output)
 	}
@@ -353,7 +351,7 @@ func TestT038_20_RewritingAnExistingScannerRegistersIt(t *testing.T) {
 	res = e.Run(proj, "s-038-20b", "research guardrails", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("re-writing the existing scanner did not register it:\n%s", res.Output)
 	}
@@ -393,7 +391,7 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 			e, proj := researchProject(t)
 			res := e.Run(proj, "s-038-25", "read an issue", Turns("done",
 				Bash("b1", stubbed(command)),
-			))
+			).ThenCommit("write the files"))
 			if !res.Refused() {
 				t.Fatalf("a shell fetch of GitHub was not refused: %s\n%s", command, res.Output)
 			}
@@ -423,7 +421,7 @@ func TestT038_25_ShellFetchOfGitHubRefused(t *testing.T) {
 			e, proj := researchProject(t)
 			res := e.Run(proj, "s-038-25b", "read a page", Turns("done",
 				Bash("b1", stubbed(command)),
-			))
+			).ThenCommit("write the files"))
 			if res.Refused() {
 				t.Fatalf("a non-GitHub fetch was refused: %s\n%s", command, res.Output)
 			}
@@ -442,7 +440,7 @@ func TestT038_26_SearchRefusalNamesTheNearMiss(t *testing.T) {
 		res := e.Run(proj, "s-038-26a", "research auth token leaks", Turns("done",
 			Write("w1", ".sloprail/scanners/auth-token-logs.yaml", activeScanner),
 			Bash("b1", stubbed(`gh search issues "auth token leaked logs"`)),
-		))
+		).ThenCommit("write the files"))
 		if !res.Refused() {
 			t.Fatalf("a search after a misplaced scanner was not refused:\n%s", res.Output)
 		}
@@ -454,11 +452,10 @@ func TestT038_26_SearchRefusalNamesTheNearMiss(t *testing.T) {
 	t.Run("right path, not registered", func(t *testing.T) {
 		e, proj := researchProject(t)
 		e.WriteFile(proj, "scanners/mine/scanner.yaml", activeScanner)
-		e.Git(proj, "add", "-A")
-		e.Git(proj, "commit", "-m", "scanner")
+		e.CommitAll(proj, "scanner")
 		res := e.Run(proj, "s-038-26b", "research guardrails", Turns("done",
 			Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
-		))
+		).ThenCommit("write the files"))
 		if !res.Refused() || !res.Saw("scanners/mine/scanner.yaml is in the right place but was not registered") {
 			t.Fatalf("the refusal does not explain the unregistered scanner:\n%s", res.Output)
 		}

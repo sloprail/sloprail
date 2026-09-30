@@ -90,8 +90,7 @@ func project(t *testing.T) (*harness.Env, string) {
 }
 
 func commitGuardrails(e *harness.Env, proj string) {
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 }
 
 // T024_01: one refusal — the file survives AND the turn is blocked AND the

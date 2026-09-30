@@ -966,8 +966,35 @@ func (e *Env) GitInit(dir string) {
 	e.Git(dir, "init", "--initial-branch=main")
 	e.Git(dir, "config", "user.email", "e2e@example.invalid")
 	e.Git(dir, "config", "user.name", "E2E")
+	e.excludeLedgers(dir)
 	e.Git(dir, "add", "-A")
 	e.Git(dir, "commit", "--allow-empty", "-m", "initial")
+}
+
+// excludeLedgers keeps a check's own recordings out of every commit the test
+// makes. A check writes its ledger (log, seen, ledger, answers…) into its own rule
+// folder, through $SR_GUARDRAIL_DIR; a `git add -A` would sweep it into a commit,
+// which changes the rule's hash and moves the floor of its range to that commit,
+// and neither has anything to do with what the test is about. The pattern excludes
+// only UNTRACKED files at the top of a rule folder that are not code or config
+// (scripts, YAML, templates, markdown, schemas) and not directories; anything a
+// commit already holds is tracked, and untouched by this.
+func (e *Env) excludeLedgers(dir string) {
+	e.t.Helper()
+	path := filepath.Join(e.Git(dir, "rev-parse", "--absolute-git-dir"), "info", "exclude")
+	patterns := ".sloprail/*/*/*\n!.sloprail/*/*/*/\n" +
+		"!.sloprail/*/*/*.sh\n!.sloprail/*/*/*.yaml\n!.sloprail/*/*/*.yml\n!.sloprail/*/*/*.j2\n!.sloprail/*/*/*.md\n!.sloprail/*/*/*.cue\n"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		e.t.Fatalf("harness: exclude ledgers: %v", err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		e.t.Fatalf("harness: exclude ledgers: %v", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(patterns); err != nil {
+		e.t.Fatalf("harness: exclude ledgers: %v", err)
+	}
 }
 
 // Git runs a git command in dir and returns its trimmed output.

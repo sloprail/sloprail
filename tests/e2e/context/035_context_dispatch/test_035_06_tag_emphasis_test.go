@@ -32,8 +32,7 @@ func TestT035_13_ContextEntersOnEmphasisedTag(t *testing.T) {
 				"enter.sh": enterOnResearch,
 				"exit.sh":  exitNever,
 			})
-			e.Git(proj, "add", "-A")
-			e.Git(proj, "commit", "-m", "before the session")
+			e.CommitAll(proj, "before the session")
 
 			sess := "s-035-13-" + string(rune('a'+i))
 			e.Run(proj, sess, "declare research", Turns("done",
@@ -72,8 +71,7 @@ func TestT035_14_EmphasisedTagShownOrIntrawordDoesNotEnter(t *testing.T) {
 				"enter.sh": enterOnResearch,
 				"exit.sh":  exitNever,
 			})
-			e.Git(proj, "add", "-A")
-			e.Git(proj, "commit", "-m", "before the session")
+			e.CommitAll(proj, "before the session")
 
 			sess := "s-035-14-" + string(rune('a'+i))
 			e.Run(proj, sess, "talk about research", Turns("done",

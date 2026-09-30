@@ -45,15 +45,22 @@ func (e *Env) CommitAllExcept(dir, msg string, exclude ...string) string {
 	return e.Git(dir, "rev-parse", "HEAD")
 }
 
+// commitCmd is the shell line of an agent's commit: everything staged, the subject,
+// and the trailers as their own paragraph of the message. An empty commit is allowed,
+// so a commit turn after a write a gate refused (which left nothing) is harmless.
+func commitCmd(subject string, trailers ...string) string {
+	cmd := "git add -A && git commit -q --allow-empty -m " + shQuote(subject)
+	if len(trailers) > 0 {
+		cmd += " -m " + shQuote(strings.Join(trailers, "\n"))
+	}
+	return cmd
+}
+
 // CommitFile is a scenario turn in which the AGENT writes a file and commits it —
 // the way a file-guard's range comes to hold work. Bash rather than Write, so it
 // also works inside a sub-agent (whose Write the mock does not apply). trailers
 // are `Key: value` lines (CitesUser, CitesTool, ...) carried in the message.
 func CommitFile(id, path, content, subject string, trailers ...string) Turn {
-	cmd := "mkdir -p \"$(dirname " + shQuote(path) + ")\" && printf '%s' " + shQuote(content) + " > " + shQuote(path) +
-		" && git add -A && git commit -q -m " + shQuote(subject)
-	if len(trailers) > 0 {
-		cmd += " -m " + shQuote(strings.Join(trailers, "\n"))
-	}
-	return Bash(id, cmd)
+	return Bash(id, "mkdir -p \"$(dirname "+shQuote(path)+")\" && printf '%s' "+shQuote(content)+" > "+shQuote(path)+
+		" && "+commitCmd(subject, trailers...))
 }

@@ -34,8 +34,7 @@ func TestT036_06_SkipDeclaredLaterCycleExcusesEarlierMessage(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install example")
+	e.CommitAll(proj, "install example")
 
 	sess := "s-036-06"
 

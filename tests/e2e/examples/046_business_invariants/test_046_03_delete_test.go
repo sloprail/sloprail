@@ -44,8 +44,7 @@ func TestT046_10_DeletingStalePinnedFileStillBlocksAtStop(t *testing.T) {
 	fqn := proj + "@" + shaV1 + ":SPEC.md#L2-2" // pinned to the OLD, since-reworded wording
 	code := invariantCode(fqn, "func charge(total int) { if total < 0 { panic(\"never negative\") } }\n")
 	e.WriteFile(proj, "src/charge.go", code)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed src/charge.go")
+	e.CommitAll(proj, "seed src/charge.go")
 
 	// The delete cites the user's words: removing the file removes its pin, which
 	// pinned-spec-holds refuses without them (T046_16). Cited, the delete lands,
@@ -54,7 +53,7 @@ func TestT046_10_DeletingStalePinnedFileStillBlocksAtStop(t *testing.T) {
 	sess := "s-046-10"
 	e.Run(proj, sess, ask, Turns("done",
 		Bash("b1", "sr-file delete src/charge.go --cite:user '"+ask+"'"),
-	))
+	).ThenCommit("write the files"))
 	if e.Exists(proj, "src/charge.go") {
 		t.Fatalf("the cited delete did not land, so there is no delete for pinned-invariant to judge")
 	}

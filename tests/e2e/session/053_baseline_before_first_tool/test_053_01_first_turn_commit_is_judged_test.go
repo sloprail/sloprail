@@ -73,8 +73,7 @@ func setUpBilling(t *testing.T, e *Env, proj string) string {
 	e.GitInit(proj)
 	e.WriteFile(proj, "src/charge.go", "package src\n\nfunc Charge(cents int) int { return cents }\n")
 	e.FileGuard(proj, "charge-invariant", chargeGuard, map[string]string{"check.sh": refuseRefunds})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "setup: billing and its guard")
+	e.CommitAll(proj, "setup: billing and its guard")
 	return e.Git(proj, "rev-parse", "HEAD")
 }
 

@@ -32,7 +32,7 @@ func TestT041_08_UncitedCommandIsRefused(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "grounded-touch", touchGate, map[string]string{"record.sh": recordScript})
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-08", prompt, Turns("done", Bash("b1", `touch released.txt`)))
 	if !res.Refused() || e.Exists(proj, "released.txt") {
@@ -51,7 +51,7 @@ func TestT041_09_CiteChainGroundsTheCommand(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "grounded-touch", touchGate, map[string]string{"record.sh": recordScript})
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-09", prompt, Turns("done",
 		Bash("b1", `sr-session trajectory cite 'adopt a decision log' && touch released.txt`),
@@ -74,7 +74,7 @@ func TestT041_10_UnresolvedCiteChainIsRefused(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "grounded-touch", touchGate, map[string]string{"record.sh": recordScript})
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-10", prompt, Turns("done",
 		Bash("b1", `sr-session trajectory cite 'never said' ; touch released.txt`),
@@ -98,7 +98,7 @@ require:
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "proven-touch", gate, nil)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-11", prompt, Turns("done",
 		Bash("b0", `echo BUILD-GREEN-7731`),

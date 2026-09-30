@@ -58,7 +58,7 @@ func TestT048_06_NotFineEndpointReFiresUntilFixed(t *testing.T) {
 	// Cycle 1: a forbidden endpoint. Asked once, refuses.
 	e.Run(proj, sess, "add a forbidden endpoint", Turns("done",
 		Write("w1", "get-users.ts", "// sr:endpoint users.list\nFORBIDDEN construct here\n"),
-	))
+	).ThenCommit("write the files"))
 	afterFirst := fileGuardLedger(t, proj, "endpoint-conforms", "ledger")
 	if afterFirst == 0 {
 		t.Fatalf("the endpoint guard never ran in the first cycle")
@@ -70,7 +70,7 @@ func TestT048_06_NotFineEndpointReFiresUntilFixed(t *testing.T) {
 	// Cycle 2: unrelated clean endpoint; the still-not-fine file must re-fire.
 	e.Run(proj, sess, "add an unrelated clean endpoint", Turns("done",
 		Write("w2", "get-orders.ts", "// sr:endpoint orders.list\nclean body\n"),
-	))
+	).ThenCommit("write the files"))
 	afterSecond := fileGuardLedger(t, proj, "endpoint-conforms", "ledger")
 	if afterSecond <= afterFirst {
 		t.Fatalf("an unfixed not-fine endpoint was NOT re-checked on the next cycle: "+
@@ -84,7 +84,7 @@ func TestT048_06_NotFineEndpointReFiresUntilFixed(t *testing.T) {
 	// Cycle 3: FIX the bad file. It passes now.
 	e.Run(proj, sess, "fix the forbidden endpoint", Turns("done",
 		Write("w3", "get-users.ts", "// sr:endpoint users.list\nnow a clean body\n"),
-	))
+	).ThenCommit("write the files"))
 	afterFix := fileGuardLedger(t, proj, "endpoint-conforms", "ledger")
 
 	// Cycle 4: more unrelated work. The FIXED file is not re-reported on its own
@@ -92,7 +92,7 @@ func TestT048_06_NotFineEndpointReFiresUntilFixed(t *testing.T) {
 	// not keep climbing on the fixed file's account.
 	e.Run(proj, sess, "add one more clean endpoint", Turns("done",
 		Write("w4", "get-carts.ts", "// sr:endpoint carts.list\nclean body\n"),
-	))
+	).ThenCommit("write the files"))
 	afterUnrelated := fileGuardLedger(t, proj, "endpoint-conforms", "ledger")
 	if afterUnrelated > afterFix+2 {
 		t.Fatalf("a FIXED endpoint was still re-reported after it passed: asked %d times after the fix, "+

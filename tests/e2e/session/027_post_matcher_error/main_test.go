@@ -41,6 +41,5 @@ func project(t *testing.T) (*harness.Env, string) {
 // the cycle's own work. The new-format equivalent of the old-format
 // commitGuardrails, which committed .sloprail/guardrails/….
 func commitProject(e *harness.Env, proj string) {
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 }

@@ -30,7 +30,7 @@ func TestT038_21_RemovingTheScannerDirectoryRefused(t *testing.T) {
 		e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 		res := e.Run(proj, "s-038-21a", "research guardrails", Turns("done",
 			Bash("b1", "rm -rf scanners/mine"),
-		))
+		).ThenCommit("write the files"))
 		if !res.Refused() || !res.Saw(deleteHint) || !res.Saw("guardrail,llm") {
 			t.Fatalf("rm -rf of the scanner's directory was not refused with the hint:\n%s", res.Output)
 		}
@@ -46,7 +46,7 @@ func TestT038_21_RemovingTheScannerDirectoryRefused(t *testing.T) {
 			Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 			Bash("b1", stubbed(`gh search repos guardrail`)),
 			Bash("b2", "cd scanners && rm -rf mine"),
-		))
+		).ThenCommit("write the files"))
 		if !res.Refused() || !res.Saw(deleteHint) {
 			t.Fatalf("removing a just-declared scanner's directory was not refused:\n%s", res.Output)
 		}
@@ -62,7 +62,7 @@ func TestT038_22_RemovingTheScannerFileRefused(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	res := e.Run(proj, "s-038-22", "research guardrails", Turns("done",
 		Bash("b1", "rm scanners/mine/scanner.yaml"),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw(deleteHint) {
 		t.Fatalf("rm of the scanner file was not refused with the hint:\n%s", res.Output)
 	}
@@ -79,7 +79,7 @@ func TestT038_23_CitedScannerDeleteAdmits(t *testing.T) {
 	const ask = "remove the mine scanner, we no longer track it"
 	res := e.Run(proj, "s-038-23", ask, Turns("done",
 		Bash("b1", "sr-session trajectory cite '"+ask+"' --source-types user && rm -rf scanners/mine"),
-	))
+	).ThenCommit("write the files"))
 	if res.Refused() {
 		t.Fatalf("a scanner delete the user asked for was refused:\n%s", res.Output)
 	}
@@ -117,7 +117,7 @@ func TestT038_24_ObligationSurvivesAnUnseenDelete(t *testing.T) {
 	e.Run(proj, sess, "research guardrails", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", stubbed(`gh search repos guardrail`)),
-	))
+	).ThenCommit("write the files"))
 	after1 := coverageRefusals(t, e.TranscriptPath(proj, sess))
 	if after1 == 0 {
 		t.Fatalf("precondition: turn 1 should be refused for the uncovered scanner")
@@ -130,7 +130,7 @@ func TestT038_24_ObligationSurvivesAnUnseenDelete(t *testing.T) {
 	// reaches scanner-keywords-hold: the file really goes.
 	e.Run(proj, sess, "clean up", Turns("done",
 		Bash("b2", "find scanners -name scanner.yaml -delete"),
-	))
+	).ThenCommit("write the files"))
 	if _, err := os.Stat(filepath.Join(proj, "scanners", "mine", "scanner.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("precondition: the unseen delete should have removed the file: %v", err)
 	}

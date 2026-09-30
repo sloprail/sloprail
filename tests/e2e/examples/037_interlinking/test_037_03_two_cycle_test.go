@@ -20,8 +20,7 @@ func TestT037_10_FailedCycleStaysActiveThenPassingCycleDeactivates(t *testing.T)
 	proj := e.Project()
 	e.GitInit(proj)
 	installExampleTree(t, proj, exampleName)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install")
+	e.CommitAll(proj, "install")
 
 	sess := "s-037-10"
 

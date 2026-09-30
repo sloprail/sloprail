@@ -101,23 +101,7 @@ func installExampleTree(t *testing.T, projDir, name string) {
 	// after-check would judge the example's own scripts and, with no model in the
 	// e2e, fail closed. Production installs before the session (baseline), so it is
 	// never in the cycle diff — this reproduces that. No-op when proj is not a repo.
-	commitInstalledTree(t, projDir)
-}
-
-// commitInstalledTree stages and commits everything in proj so a freshly
-// installed guardrail tree is part of the session baseline rather than the first
-// cycle's diff. A no-op when proj is not a git repository.
-func commitInstalledTree(t *testing.T, proj string) {
-	t.Helper()
-	if err := exec.Command("git", "-C", proj, "rev-parse", "--is-inside-work-tree").Run(); err != nil {
-		return
-	}
-	if out, err := exec.Command("git", "-C", proj, "add", "-A").CombinedOutput(); err != nil {
-		t.Fatalf("commitInstalledTree: git add: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", proj, "commit", "--allow-empty", "-m", "install example tree").CombinedOutput(); err != nil {
-		t.Fatalf("commitInstalledTree: git commit: %v\n%s", err, out)
-	}
+	harness.CommitInstalled(t, projDir)
 }
 
 // joinBlocks renders a slice of blocking-error texts for a log/assert message.

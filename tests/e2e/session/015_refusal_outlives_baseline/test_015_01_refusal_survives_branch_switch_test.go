@@ -199,8 +199,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	// else the other branch does not hold, the project then loads no rules, and
 	// the ledger stops growing for a reason that has nothing to do with
 	// refusals surviving — which is exactly the false pass this test is about.
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the guardrail, on every line of history")
+	e.CommitAll(proj, "the guardrail, on every line of history")
 	root := e.Git(proj, "rev-parse", "HEAD")
 
 	// A branch that diverges from that point, prepared before the session so the
@@ -389,8 +388,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the guardrail, on every line of history")
+	e.CommitAll(proj, "the guardrail, on every line of history")
 	root := e.Git(proj, "rev-parse", "HEAD")
 
 	// The branch already carries the offending file, so switching to it leaves

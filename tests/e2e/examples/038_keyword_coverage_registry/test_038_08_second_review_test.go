@@ -29,7 +29,7 @@ func TestT038_34_AnEmptiedScannerIsNotRetiredUncited(t *testing.T) {
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", emptyingWrite("active: true\n")),
 		Bash("b2", "rm -rf scanners/mine"),
-	))
+	).ThenCommit("write the files"))
 	if !res.Saw(deleteHint) {
 		t.Errorf("the delete of the emptied scanner was not refused for its owed keywords:\n%s", res.Output)
 	}
@@ -53,7 +53,7 @@ func TestT038_35_AnUnseenNarrowingDoesNotShrinkTheRegistry(t *testing.T) {
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
 		Bash("b1", emptyingWrite("active: true\nkeywords:\n  - guardrail\n")),
 		Bash("b2", stubbed(`gh search repos guardrail`)),
-	))
+	).ThenCommit("write the files"))
 	joined := stopRefusals(e, proj, sess)
 	if !strings.Contains(joined, `scanners/mine: "guardrail" "llm" "agent"`) {
 		t.Errorf("Stop did not hold the search to llm and agent, which the user never dropped:\n%s", joined)
@@ -80,7 +80,7 @@ func TestT038_36_APaddedFolderStillPredictsTheDelete(t *testing.T) {
 	}
 	res := e.Run(proj, "s-038-36", "tidy up", Turns("done",
 		Bash("b1", "rm -rf scanners/mine"),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() {
 		t.Errorf("rm -rf of a padded scanner folder was not refused:\n%s", res.Output)
 	}
@@ -98,7 +98,7 @@ func TestT038_37_ARefusedSearchIsNotCoverage(t *testing.T) {
 	res := e.Run(proj, sess, "research guardrails", Turns("done",
 		Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
-	))
+	).ThenCommit("write the files"))
 	if !res.Saw(searchRefusal) {
 		t.Fatalf("precondition: the search before any scanner should be refused:\n%s", res.Output)
 	}
@@ -120,18 +120,17 @@ func TestT038_38_FollowingTheHintRegistersTheScanner(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			e, proj := researchProject(t)
 			e.WriteFile(proj, "scanners/mine/scanner.yaml", body)
-			e.Git(proj, "add", "-A")
-			e.Git(proj, "commit", "-m", "scanner")
+			e.CommitAll(proj, "scanner")
 			res := e.Run(proj, "s-038-38", "research guardrails", Turns("done",
 				Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
-			))
+			).ThenCommit("write the files"))
 			if !res.Saw("scanners/mine/scanner.yaml is in the right place but was not registered") {
 				t.Fatalf("precondition: the refusal should say to write the scanner again:\n%s", res.Output)
 			}
 			res = e.Run(proj, "s-038-38b", "research guardrails", Turns("done",
 				Write("w1", "scanners/mine/scanner.yaml", body),
 				Bash("b1", stubbed(`gh search repos guardrail llm agent`)),
-			))
+			).ThenCommit("write the files"))
 			if res.Refused() || !res.Saw("stub-gh search repos") {
 				t.Errorf("writing the scanner again, as the hint says, did not let the search run:\n%s", res.Output)
 			}
@@ -145,11 +144,10 @@ func TestT038_38_FollowingTheHintRegistersTheScanner(t *testing.T) {
 		t.Run(cause, func(t *testing.T) {
 			e, proj := researchProject(t)
 			e.WriteFile(proj, "scanners/mine/scanner.yaml", body)
-			e.Git(proj, "add", "-A")
-			e.Git(proj, "commit", "-m", "scanner")
+			e.CommitAll(proj, "scanner")
 			res := e.Run(proj, "s-038-38c", "research guardrails", Turns("done",
 				Bash("b1", stubbed(`gh search repos guardrail`)),
-			))
+			).ThenCommit("write the files"))
 			if !res.Saw("scanners/mine/scanner.yaml "+cause) || res.Saw("unchanged is fine") {
 				t.Errorf("the refusal does not name why the scanner cannot register (%s):\n%s", cause, res.Output)
 			}
@@ -164,7 +162,7 @@ func TestT038_39_GitRmOfTheScannerFolderRefused(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	res := e.Run(proj, "s-038-39", "research guardrails", Turns("done",
 		Bash("b1", "git rm -r -q scanners/mine"),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw(deleteHint) {
 		t.Fatalf("git rm -r of the scanner's folder was not refused with the hint:\n%s", res.Output)
 	}
@@ -182,7 +180,7 @@ func TestT038_40_AnUnrecordedDeclarationDoesNotEnter(t *testing.T) {
 	const sess = "s-038-40"
 	e.Run(proj, sess, "declare a scanner", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
-	))
+	).ThenCommit("write the files"))
 	if active, _ := e.ContextState(proj, sess, "scanner-declared"); active {
 		t.Errorf("the context entered although the declaration's stamp could not be recorded")
 	}
@@ -285,7 +283,7 @@ func TestT038_43_ACitedDropNarrowsTheObligation(t *testing.T) {
 	res := e.Run(proj, sess, ask, Turns("done",
 		srWriteScanner("b1", narrowedScanner, ask),
 		Bash("b2", stubbed(`gh search repos guardrail llm`)),
-	))
+	).ThenCommit("write the files"))
 	if got := readScanner(t, proj); strings.Contains(got, "agent") {
 		t.Fatalf("precondition: the cited drop should have landed:\n%s\n%s", got, res.Output)
 	}

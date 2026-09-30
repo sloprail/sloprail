@@ -76,7 +76,7 @@ func guardedPre(t *testing.T) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installPre(e, proj)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 	return e, proj
 }
 
@@ -86,7 +86,7 @@ func guarded(t *testing.T, guard string) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "grounded-memories", guard, map[string]string{"record.sh": recordScript})
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 	return e, proj
 }
 
@@ -171,7 +171,7 @@ func TestT041_03_UnresolvedQuoteIsRefused(t *testing.T) {
 func TestT041_13_DryRunFailureIsQuoted(t *testing.T) {
 	e, proj := guardedPre(t)
 	e.WriteFile(proj, "memories/decisions.md", "# decisions\n")
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-13", prompt, Turns("done",
 		Bash("b1", `sr-file edit memories/decisions.md --cite:user 'adopt a decision log' --old-string 'no such line' --new-string x`),
@@ -208,7 +208,7 @@ func TestT041_05_EditWithEchoIsResolved(t *testing.T) {
 	e.GitInit(proj)
 	e.WriteFile(proj, "memories/decisions.md", "# decisions\n- none yet\n")
 	installPre(e, proj)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-05", prompt, Turns("done",
 		Bash("b1", `sr-file edit memories/decisions.md --old-string '- none yet' --new-string '- adopt a decision log' --cite:user 'adopt a decision log' && echo ok`),
@@ -230,7 +230,7 @@ func TestT041_06_DeletionsNeedACitation(t *testing.T) {
 	e.GitInit(proj)
 	e.WriteFile(proj, "memories/old.md", "stale\n")
 	installPre(e, proj)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	res := e.Run(proj, "s-041-06", prompt, Turns("done", Bash("b1", `rm memories/old.md`)))
 	if !res.Refused() || !e.Exists(proj, "memories/old.md") {

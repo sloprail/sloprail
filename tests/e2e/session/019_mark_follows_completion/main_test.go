@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -31,23 +30,6 @@ func writeFile(t *testing.T, projDir, name, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("seed %s: %v", name, err)
-	}
-}
-
-// commitGuards commits the project's `.sloprail` tree so the "asker" file-guard's
-// own ask.sh — installed after the baseline — is part of it, not the first cycle's
-// diff. The sloprail plugin ships authoring-slop, a gate paired with a file-guard whose
-// Stop after-check judges a guardrail's own `.sh`; an uncommitted ask.sh reads as
-// this cycle's write and is judged (failing closed with no model in the e2e).
-// Production installs guards before the session (baseline), so committing keeps
-// ask.sh out of the cycle diff. Scoped to `.sloprail`.
-func commitGuards(t *testing.T, proj string) {
-	t.Helper()
-	if out, err := exec.Command("git", "-C", proj, "add", ".sloprail").CombinedOutput(); err != nil {
-		t.Fatalf("commitGuards: git add .sloprail: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", proj, "commit", "-m", "baseline .sloprail").CombinedOutput(); err != nil {
-		t.Fatalf("commitGuards: git commit: %v\n%s", err, out)
 	}
 }
 

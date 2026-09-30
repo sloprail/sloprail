@@ -39,7 +39,7 @@ func TestT041_06_ContextActivatesWithoutRefactorDeclaration(t *testing.T) {
 	movedBad := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 999\n}\n"
 	res := e.Run(proj, sess, "write a marked file without declaring a refactor", Turns("done",
 		Write("w1", "dest.go", movedBad),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("EXPECTED the guard to still fire on a moved-from marker with no #refactor "+
@@ -91,7 +91,7 @@ func TestT041_07_IncompleteRefactorBlocksAtStop(t *testing.T) {
 	// Declare a move (by its fqn) but write NOTHING that carries that marker.
 	res := e.Run(proj, sess, "declare a move but never make it", Turns("done",
 		SayWrite("w1", declRefactor(sha), "unrelated.md", "nothing to do with any marker"),
-	))
+	).ThenCommit("write the files"))
 
 	// The completeness gate must refuse the Stop, naming the incomplete refactor.
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
@@ -129,7 +129,7 @@ func TestT041_08_CompletedRefactorPermitsAtStop(t *testing.T) {
 	moved := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 1\n}\n"
 	res := e.Run(proj, sess, "declare and complete the move", Turns("done",
 		SayWrite("w1", declRefactor(sha), "dest.go", moved),
-	))
+	).ThenCommit("write the files"))
 
 	// The reconciling move landed — the reconcile gate admitted it.
 	if res.Refused() {

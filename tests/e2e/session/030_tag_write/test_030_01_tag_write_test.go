@@ -95,8 +95,7 @@ func TestT030_01_TagsTheAgentWroteReachTheRule(t *testing.T) {
 		"enter.sh": enterRecordsTags,
 		"exit.sh":  exitStayActive,
 	})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	sess := "s-030-01"
 	e.Run(proj, sess, "do some tagged work", Turns("done",
@@ -139,8 +138,7 @@ func TestT030_02_AnEmptyCycleStillDispatchesPostTagWrite(t *testing.T) {
 		"enter.sh": enterRecordsTags,
 		"exit.sh":  exitStayActive,
 	})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	sess := "s-030-02"
 	e.Run(proj, sess, "say something untagged", Turns("done",

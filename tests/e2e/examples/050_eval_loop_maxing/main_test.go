@@ -108,24 +108,7 @@ func installExampleTree(t *testing.T, proj string) {
 	// before the session, so it is part of the baseline and never in the cycle
 	// diff; committing here reproduces that. No-op when the project is not a git
 	// repo (some tests install before GitInit, whose own commit then covers it).
-	commitInstalledTree(t, proj)
-}
-
-// commitInstalledTree stages and commits everything in proj, so a freshly
-// installed guardrail tree is part of the session baseline rather than the first
-// cycle's diff. A no-op when proj is not a git repository.
-func commitInstalledTree(t *testing.T, proj string) {
-	t.Helper()
-	if err := exec.Command("git", "-C", proj, "rev-parse", "--is-inside-work-tree").Run(); err != nil {
-		return // not a repo yet; GitInit's own commit will baseline the tree
-	}
-	if out, err := exec.Command("git", "-C", proj, "add", "-A").CombinedOutput(); err != nil {
-		t.Fatalf("commitInstalledTree: git add: %v\n%s", err, out)
-	}
-	// --allow-empty so a re-install that changed nothing still succeeds.
-	if out, err := exec.Command("git", "-C", proj, "commit", "--allow-empty", "-m", "install example tree").CombinedOutput(); err != nil {
-		t.Fatalf("commitInstalledTree: git commit: %v\n%s", err, out)
-	}
+	harness.CommitInstalled(t, proj)
 }
 
 func repoRoot(t *testing.T) string {

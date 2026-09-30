@@ -43,7 +43,7 @@ func TestT037_04_UnderivableWriteWithUnmetRequireNamesTheSkill(t *testing.T) {
 	e.GitInit(proj)
 	e.Gate(proj, "require-topic", pureRequireGate, nil)
 	e.WriteFile(proj, "memories/topics/idea.md", "# an idea\n")
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the guards")
 	commitFile037(t, proj, "memories/topics/idea.md")
 
 	res := e.Run(proj, "s-037-04", "update a topic the hard way, no skill loaded", Turns("done",
@@ -76,7 +76,7 @@ func TestT037_05_UnderivableWriteWithMetRequireIsPermittedByAPureRequireGate(t *
 	e.GitInit(proj)
 	e.Gate(proj, "require-topic", pureRequireGate, nil)
 	e.WriteFile(proj, "memories/topics/idea.md", "# an idea\n")
-	commitGuards(t, proj)
+	e.CommitAll(proj, "the guards")
 	commitFile037(t, proj, "memories/topics/idea.md")
 
 	res := e.Run(proj, "s-037-05", "load the skill, then update a topic the hard way", Turns("done",

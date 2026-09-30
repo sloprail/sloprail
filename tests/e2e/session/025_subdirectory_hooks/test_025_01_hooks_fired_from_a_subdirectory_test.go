@@ -136,8 +136,7 @@ func subProject(t *testing.T) (e *harness.Env, proj, sub string) {
 	e.GitInit(proj)
 	sub = filepath.Join(proj, "sub", "deep")
 	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 	return e, proj, sub
 }
 
@@ -200,8 +199,7 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 	// A file at the top of the tree, committed before the session so it is
 	// unambiguously at the baseline. It is the one a cwd-rooted differ loses.
 	e.WriteFile(proj, "top.md", "original\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "a file at the top of the tree")
+	e.CommitAll(proj, "a file at the top of the tree")
 
 	// The session reports the subdirectory and edits the file ABOVE it, which is
 	// the ordinary thing an agent does after cd'ing somewhere to work.
@@ -400,8 +398,7 @@ esac
 exit 0
 `
 	e.FileGuard(sub, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-025-05"
 

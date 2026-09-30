@@ -127,8 +127,7 @@ func project(t *testing.T) (*harness.Env, string) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 	return e, proj
 }
 
@@ -194,8 +193,7 @@ func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
 
 	e.WriteFile(proj, "script.sh", "#!/bin/sh\necho hello\n")
 	e.WriteFile(proj, "other.md", "original\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "a file the session will chmod")
+	e.CommitAll(proj, "a file the session will chmod")
 
 	// The premise: git is actually tracking the mode. On a filesystem or a
 	// configuration where core.fileMode is off, `chmod` is invisible to git and
@@ -369,8 +367,7 @@ fi
 exit 0
 `
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": readsContent})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	got := runOne(t, e, proj, "s-026-04", Turns("done",
 		Write("w1", "drafted.md", "FIRSTDRAFT"),

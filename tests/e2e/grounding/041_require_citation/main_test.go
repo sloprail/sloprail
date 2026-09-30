@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -33,17 +32,6 @@ var (
 
 // prompt is the user's own message every scenario cites.
 const prompt = "record the decision to adopt a decision log"
-
-// commitAll commits the project's current tree so installed rules (and any
-// seeded file) are the baseline, not the first cycle's difference.
-func commitAll(t *testing.T, proj string) {
-	t.Helper()
-	for _, args := range [][]string{{"add", "-A"}, {"commit", "-m", "baseline"}} {
-		if out, err := exec.Command("git", append([]string{"-C", proj}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-}
 
 // recordScript appends what the check was handed — kind, path, citation count and
 // the first quote — so a test sees the citations the event carried.

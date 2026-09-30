@@ -72,7 +72,7 @@ func TestT049_01_PureAdditionAdmits(t *testing.T) {
 	sess := "s-049-01"
 	res := e.Run(proj, sess, "append a line to the memory", Turns("done",
 		Write("w1", "memories/topic.md", "first line\nsecond line appended\n"),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("a pure-addition write was refused:\n%s", res.Output)
@@ -96,7 +96,7 @@ func TestT049_02_RemovalWithoutMarkerBlocks(t *testing.T) {
 	sess := "s-049-02"
 	res := e.Run(proj, sess, "silently drop a line", Turns("done",
 		Write("w1", "memories/topic.md", "keep this line\n"), // dropped a line, NO marker
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("a removal with no sr:asked marker was NOT refused at pre-tool:\n%s", res.Output)
@@ -128,7 +128,7 @@ func TestT049_03_PureAdditionSkipsTheJudge(t *testing.T) {
 	sess := "s-049-03"
 	res := e.Run(proj, sess, "append a line to the memory", Turns("done",
 		Write("w1", "memories/topic.md", "first line\nsecond line appended\n"),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() || res.Saw("SR049 the judge ran on a pure addition") {
 		t.Fatalf("a pure addition was judged:\n%s", res.Output)
@@ -150,7 +150,7 @@ func TestT049_05_RmDeleteFailsClosed(t *testing.T) {
 	sess := "s-049-05"
 	res := e.Run(proj, sess, "delete the memory file", Turns("done",
 		Bash("d1", "rm memories/topic.md"),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("an rm of a memories file was NOT refused at pre-tool:\n%s", res.Output)
@@ -177,7 +177,7 @@ func TestT049_18_CitedDeleteAdmits(t *testing.T) {
 
 	res := e.Run(proj, "s-049-18", "delete the memory file", Turns("done",
 		Bash("d1", "sr-file delete memories/topic.md --cite:user 'delete the memory file'"),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("a cited sr-file delete was refused:\n%s", res.Output)
@@ -202,7 +202,7 @@ func TestT049_06_NonMemoriesFileDoesNotFire(t *testing.T) {
 	sess := "s-049-06"
 	res := e.Run(proj, sess, "rewrite a non-memories file", Turns("done",
 		Write("w1", "notes.md", "keep\n"), // dropped a line, but outside the guard's scope
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("a rewrite of a file outside memories/ was refused — the guard overreached:\n%s", res.Output)
@@ -231,7 +231,7 @@ func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
 		sess := "s-049-07-without"
 		res := e.Run(proj, sess, prompt, Turns("done",
 			Write("w1", "memories/topic.md", "keep this line\n"),
-		))
+		).ThenCommit("write the files"))
 		if !res.Refused() || !res.Saw("must cite the user's own words (--cite:user)") {
 			t.Fatalf("WITHOUT the marker, expected the no-marker refusal:\n%s", res.Output)
 		}
@@ -247,7 +247,7 @@ func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
 		sess := "s-049-07-with"
 		res := e.Run(proj, sess, prompt, Turns("done",
 			srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-		))
+		).ThenCommit("write the files"))
 		if res.Refused() {
 			t.Fatalf("WITH a grounded marker, the identical removal was refused — the marker did not authorize it:\n%s", res.Output)
 		}
@@ -269,7 +269,7 @@ func TestT049_08_GroundedAskAdmits(t *testing.T) {
 	sess := "s-049-08"
 	res := e.Run(proj, sess, prompt, Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-	))
+	).ThenCommit("write the files"))
 
 	if res.Refused() {
 		t.Fatalf("a grounded-ask removal was refused by the shipped rule:\n%s", res.Output)
@@ -299,7 +299,7 @@ func TestT049_09_GroundedAskUncleanChangeBlocksViaJudge(t *testing.T) {
 	res := e.Run(proj, sess, prompt, Turns("done",
 		// Removes the asked line AND, collaterally, the provenance line.
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-	))
+	).ThenCommit("write the files"))
 
 	// The gate holds no judge: the cited removal lands. The judge (in the
 	// file-guard) blocks the turn at Stop.
@@ -331,7 +331,7 @@ func TestT049_10_FabricatedAskBlocksViaScript(t *testing.T) {
 	sess := "s-049-10"
 	res := e.Run(proj, sess, prompt, Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\n", "delete absolutely everything in the project"),
-	))
+	).ThenCommit("write the files"))
 
 	if !res.Refused() {
 		t.Fatalf("a fabricated ask (quote the user never said) was NOT refused:\n%s", res.Output)
@@ -355,7 +355,7 @@ func TestT049_20_SedInPlaceIsRefusedByTheGate(t *testing.T) {
 
 	res := e.Run(proj, "s-049-20", "tidy the memory", Turns("done",
 		Bash("b1", "sed -i.bak '/remove this line/d' memories/topic.md"),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw(`gate \"preserves-unasked-content\"`) {
 		t.Fatalf("a sed -i of a memory was not refused by the gate:\n%s", res.Output)
 	}
@@ -376,7 +376,7 @@ func TestT049_21_RmOfTwoMemoriesNamesBoth(t *testing.T) {
 
 	res := e.Run(proj, "s-049-21", "clean up", Turns("done",
 		Bash("d1", "rm memories/a.md memories/b.md"),
-	))
+	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw("memories/a.md") || !res.Saw("memories/b.md") {
 		t.Fatalf("an rm of two memories was not refused naming both:\n%s", res.Output)
 	}
@@ -398,7 +398,7 @@ func TestT049_22_ScriptRewriteIsCaughtAtStop(t *testing.T) {
 	sess := "s-049-22"
 	e.Run(proj, sess, "tidy the memory", Turns("done",
 		Bash("b1", `python3 -c "open('memories/topic.md','w').write('keep this line\\n')"`),
-	))
+	).ThenCommit("write the files"))
 	if got := readMemory(t, proj, "memories/topic.md"); got != "keep this line\n" {
 		t.Fatalf("the script rewrite did not land, so this no longer tests the Stop after-check:\n%s", got)
 	}

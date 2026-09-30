@@ -95,7 +95,7 @@ func TestT032_09_JudgeCheckAdmits(t *testing.T) {
 		"prepare.sh":  prepareScript,
 		"judge.md.j2": judgeTemplate,
 	})
-	commitGuards(t, proj) // keep the guard's own prepare.sh/judge.md.j2 out of the cycle diff
+	e.CommitAll(proj, "the guards")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	e.Run(proj, "s-032-09", "do an action then stop", Turns("done",

@@ -109,21 +109,18 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 	// correctly reported nothing", and it is how this test first passed for the
 	// wrong reason. Committing the rule to the shared root is what keeps it
 	// alive across the switch.
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the guardrail, on every line of history")
+	e.CommitAll(proj, "the guardrail, on every line of history")
 	root := e.Git(proj, "rev-parse", "HEAD")
 
 	// A file that lives only on main. Committed on main, absent from feature.
 	writeFile(t, proj, "only-on-main.md", "belongs to main\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "a file only main has")
+	e.CommitAll(proj, "a file only main has")
 
 	// feature is cut from the commit holding only the guardrail, so it does not
 	// contain only-on-main.md and the delta between the two lines is real.
 	e.Git(proj, "checkout", "-b", "feature", root)
 	writeFile(t, proj, "only-on-feature.md", "belongs to feature\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "a file only feature has")
+	e.CommitAll(proj, "a file only feature has")
 	e.Git(proj, "checkout", "main")
 
 	// The premise this test rests on: the rule survived the round trip and is

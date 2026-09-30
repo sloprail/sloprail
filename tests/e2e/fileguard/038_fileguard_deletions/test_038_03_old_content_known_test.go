@@ -114,8 +114,7 @@ func TestT038_10_AnUnreadMarkedFileIsSelectedBeforeItsDelete(t *testing.T) {
 				t.Fatal(err)
 			}
 			e.WriteFile(proj, "docs/specs/spec.md", "// sr:invariant \"refunds-capped\"\n# Refunds\n"+strings.Repeat("Refunds are capped at the order total.\n", 1<<15))
-			e.Git(proj, "add", "-A")
-			e.Git(proj, "commit", "-m", "specs")
+			e.CommitAll(proj, "specs")
 
 			res := e.Run(proj, "s-038-10", "clean up the specs", Turns("done", Bash("b1", "rm -rf docs/specs")))
 			if !res.Refused() || !res.Saw("DELETE-REFUSED") {

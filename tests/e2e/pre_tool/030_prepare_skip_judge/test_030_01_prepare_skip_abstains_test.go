@@ -135,8 +135,7 @@ exit 0
 func installReviewGuard(e *harness.Env, proj, guardYAML string, files map[string]string) {
 	files["require-known-result.sh"] = requireKnownResult
 	e.Gate(proj, "skip-review", guardYAML, files)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install skip-review guard")
+	e.CommitAll(proj, "install skip-review guard")
 }
 
 // T030_01: prepare emits `{"skip": true}` on a guard whose only check is the judge

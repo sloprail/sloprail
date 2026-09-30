@@ -72,8 +72,7 @@ func TestT031_09_DefaultSliceSkipsJudgedTurnsAndWholeSessionDoesNot(t *testing.T
 	// hook — the same setup 018 needs.
 	e.GitInit(proj)
 	e.FileGuard(proj, "slicer", sliceWatch, map[string]string{"slice.sh": sliceScript})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "before the session")
+	e.CommitAll(proj, "before the session")
 
 	const sess = "s-031-09"
 	// Distinctive command lines, one per cycle, that show up as a PreCommandInvoke

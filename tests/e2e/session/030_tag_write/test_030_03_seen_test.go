@@ -67,8 +67,7 @@ func TestT030_03_ARetrysPostEventsMarkWhatTheRefusedStopWasShown(t *testing.T) {
 			"echo $((n + 1)) > " + stopsPath + "\n" +
 			"if [ ! -e " + marker + " ]; then touch " + marker + "; echo '{\"reason\":\"not yet\"}'; exit 1; fi\nexit 0\n",
 	})
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "the project before the session")
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-030-03", "do the work", Turns("done",
 		SayWrite("w1", "Writing the notes. #alpha", "notes.md", "the notes\n"),

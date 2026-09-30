@@ -39,7 +39,7 @@ func TestT049_17_DeltaNarratingReplacementReachesJudgePrompt(t *testing.T) {
 	sess := "s-049-16"
 	res := e.Run(proj, sess, prompt, Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\n"+deltaNarrating+"\n", "please correct the deadline"),
-	))
+	).ThenCommit("write the files"))
 
 	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) == 0 {
 		t.Fatalf("the delta-narrating replacement did not block the turn at Stop:\n%s", res.Output)

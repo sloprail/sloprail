@@ -141,7 +141,7 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installBoth(e, proj, toolResultGate, toolResultGuard)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	// The sub-agent measures something.
 	measure := subagentScript(t, harness.Turns("measured",
@@ -204,7 +204,7 @@ func TestT041_22_SubagentCannotCiteItsDispatchAsTheUser(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installBoth(e, proj, userGate, userGuard)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	sub := subagentScript(t, harness.Turns("sub done",
 		Bash("sb1", `sr-file write memories/findings.md --cite:user 'measure the retry budget' --content '# findings'`),
@@ -297,7 +297,7 @@ checks:
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "proven-touch", gate, map[string]string{"record.sh": citedRecordScript})
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	measure := subagentScript(t, harness.Turns("measured",
 		Bash("sb1", `echo 'build finished: CHAINPROBE-9051 green'`),
@@ -330,7 +330,7 @@ func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installBoth(e, proj, toolResultGate, toolResultGuard)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	parrot := subagentScript(t, harness.Turns("all 40 tests pass"))
 	res := e.Run(proj, "s-041-25", prompt, Turns("done",
@@ -358,7 +358,7 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installBoth(e, proj, toolResultGate, toolResultGuard)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	measure := subagentScript(t, harness.Turns("measured it: coverage REPLYPROBE-7 lines",
 		Bash("sb1", `echo 'coverage REPLYPROBE-7 lines'`),
@@ -395,7 +395,7 @@ func TestT041_27_SubagentCitesTheUsersWordsRelayedVerbatim(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installBoth(e, proj, userGate, userGuard)
-	commitAll(t, proj)
+	e.CommitAll(proj, "baseline")
 
 	sub := subagentScript(t, harness.Turns("sub done",
 		Bash("sb1", `sr-file write memories/decisions.md --cite:user 'adopt a decision log' --content '# decisions'`),
