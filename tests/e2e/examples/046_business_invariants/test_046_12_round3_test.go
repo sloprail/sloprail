@@ -242,7 +242,8 @@ func TestT046_50_CitedNewRuleTheUserAskedForIsAdmitted(t *testing.T) {
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": "the user asked for rule 3"}`)
 
 	const ask = "add a rule 3 to the spec: a refund must be issued within 30 days of the charge"
-	res := e.Run(proj, "s-046-50", ask, Turns("done",
+	settleBaseline(t, e, proj, "s-046-50", ask)
+	res := e.Run(proj, "s-046-50", "go on", Turns("done",
 		Bash("b1", "sr-file edit SPEC.md --old-string '(end)' --new-string '3. A refund must be issued within 30 days of the charge.\n(end)' --cite:user '"+ask+"'"),
 	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {

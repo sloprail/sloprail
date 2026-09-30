@@ -175,7 +175,7 @@ func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
 	}
 
 	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
-	if !containsStr(joined, "must cite a tool's output from this session, and no commit in its range carries a citation") {
+	if !containsStr(joined, "must cite a tool's output from this session in the commit that last changed it, and that commit carries none that resolves") {
 		t.Fatalf("an in_review claim with no cited tool output was not refused at Stop:\n%s", joined)
 	}
 	if !containsStr(joined, "Sloprail-Cites-Tool: <exact quote>") {
@@ -183,14 +183,14 @@ func TestReview_EditedClaimWithoutProofRefusedAtStop(t *testing.T) {
 	}
 }
 
-// TestReview_UncitedEditAfterCitedTransitionAccumulates: in ONE session the task
-// is moved into in_review by a commit citing tool output, then edited by a second
-// commit with no citation (a priority change). The rule's range does not move
-// until it passes, so the range holds BOTH commits and the transition's proof is
-// on the changeset: an uncited later commit rides on it, by design, and the Stop
-// is not refused for missing proof. (Retired: the per-write rule that refused the
-// later edit because a citation grounded only the change it rode on.)
-func TestReview_UncitedEditAfterCitedTransitionAccumulates(t *testing.T) {
+// TestReview_UncitedEditAfterCitedTransitionRefused: in ONE session the task is
+// moved into in_review by a commit citing tool output, then edited by a second
+// commit with no citation (a priority change). A citation grounds only the files of
+// the commit it rides, per file: the LAST commit that changed the task is the
+// uncited one, so the transition's proof does not carry over to it and the Stop is
+// refused for missing proof, before any judge. (Supersedes the earlier rule that an
+// uncited later commit rides on an earlier commit's citation in the same range.)
+func TestReview_UncitedEditAfterCitedTransitionRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -210,13 +210,12 @@ func TestReview_UncitedEditAfterCitedTransitionAccumulates(t *testing.T) {
 	if got := readFile(t, proj, taskPath); !strings.Contains(got, "priority: P2") {
 		t.Fatalf("the uncited edit did not land:\n%s", got)
 	}
-	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
-		t.Fatalf("the range's earlier commit cited the proof, yet the Stop was blocked:\n%v", blocks)
+	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !containsStr(joined, "must cite a tool's output from this session in the commit that last changed it, and that commit carries none that resolves") {
+		t.Fatalf("an uncited later edit of an in_review task was not refused at Stop, though an earlier commit cited the proof:\n%s", joined)
 	}
-	// The positive outcome: the review ran over the whole range and was handed the
-	// proof the EARLIER commit cited, although the later commit cites nothing.
-	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); !containsStr(prompt, "quoted: "+proofMarker) {
-		t.Fatalf("the reviewer was not handed the earlier commit's proof:\n%s", prompt)
+	if !containsStr(joined, "Sloprail-Cites-Tool: <exact quote>") {
+		t.Errorf("the refusal does not say how to cite the proof:\n%s", joined)
 	}
 }
 
