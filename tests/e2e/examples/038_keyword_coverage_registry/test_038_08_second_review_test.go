@@ -262,7 +262,7 @@ func TestT038_42_NothingIsRecordedWithoutTheUsersWords(t *testing.T) {
 			cmd.Env = append(os.Environ(),
 				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"SR_GUARDRAIL_DIR="+filepath.Dir(script))
-			cmd.Stdin = strings.NewReader(`{"event":{"kind":"PreFileDelete","path":"scanners/mine/scanner.yaml","oldContent":"","oldContentKnown":true,"citations":` + tc.citations + `}}`)
+			cmd.Stdin = strings.NewReader(`{"event":{"kind":"PostFileDelete","path":"scanners/mine/scanner.yaml","oldContent":"","citations":` + tc.citations + `}}`)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("the check refused: %v\n%s", err, out)
 			}

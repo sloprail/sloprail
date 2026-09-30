@@ -90,9 +90,10 @@ checks:
   - script: ./verify.sh
 ```
 
-- **What it sees.** A create carries `newContent`, `resultKnown`, `newMarkers`,
-  `citations`; an update adds `oldContent` and `oldMarkers`; a delete carries
-  `oldContent`, `oldContentKnown`, `oldMarkers`, `citations` — the bytes about to
+- **What it sees.** A create carries `event.newContent`, `event.resultKnown`,
+  `event.newMarkers`, `event.citations`; an update adds `event.oldContent` and
+  `event.oldMarkers`; a delete carries `event.oldContent`,
+  `event.oldContentKnown`, `event.oldMarkers`, `event.citations` — the bytes about to
   be lost ([events.md](events.md)).
 - **Every file, once each.** One tool call can change several files (`rm a.go
   b.go`, two `sr-file` calls joined by `&&`) and runs whole or not at all. The gate
@@ -102,7 +103,7 @@ checks:
 - **An unknown result is yours to refuse.** The engine adds nothing for you here.
   When it cannot compute what a write will leave (`sed -i`, `git apply`, a
   notebook create, an `sr-file` line it could not resolve), the event carries
-  `resultKnown: false` and an empty `newContent` — the same observation as a write
+  `event.resultKnown: false` and an empty `event.newContent` — the same observation as a write
   that empties the file. A gate whose decision reads the content says what to do in
   its `match` or in a check, or the write lands unchecked. To refuse them outright,
   select them in the trigger and let a check refuse:
@@ -115,10 +116,14 @@ checks:
     - script: ./cannot-verify.sh   # prints {"reason": "…write the file directly"}, exit 1
   ```
 
-  A gate that reads `newContent` in a check refuses on `resultKnown != true` first
-  (see [file-guard.md](file-guard.md), "The resultKnown discipline"). A gate holds
-  only cheap checks — a `require`, a script; the judge belongs to the file-guard of
-  the same name, which judges the settled file at Stop.
+  A gate that reads `event.newContent` in a check refuses on `event.resultKnown != true` first
+  (see [file-guard.md](file-guard.md), "The resultKnown discipline"). A
+  `PreFileWrite` or `PreFileDelete` gate holds only cheap checks — a `require`, a
+  script; the judge belongs to the file-guard of the same name, which judges the
+  settled file at Stop. The exception is a gate whose judge is not about a file
+  write: a `Stop` gate or a `PreCommandInvoke` gate may keep its judge
+  (`examples/action-proof` `screenshot-proves-fields`, `examples/no-unasked-commit`
+  `require-live-ask-for-commit`).
 - **Grounding.** `require: [{citation: …}]` works on a `PreFileWrite` or
   `PreFileDelete` gate exactly as on any gate ([grounding.md](grounding.md)); when
   an `sr-file` line could not be resolved, the refusal quotes what `sr-file` said.

@@ -40,8 +40,8 @@ func copyFile(t *testing.T, src, dst string, mode os.FileMode) {
 // admitted the drop. The engine's own `when` contract is the same: anything but
 // exit 1 applies.
 func TestT038_32_ThePrepareSkipsOnlyOnADecidedNoDrop(t *testing.T) {
-	prepare := exampleFile(t, ".sloprail/gate/scanner-keywords-hold/only-when-dropped.sh")
-	payload := `{"event":{"kind":"PreFileDelete","path":"scanners/mine/scanner.yaml","oldContent":"active: true\nkeywords:\n  - agent\n"}}`
+	prepare := exampleFile(t, ".sloprail/file-guard/scanner-keywords-hold/only-when-dropped.sh")
+	payload := `{"event":{"kind":"PostFileDelete","path":"scanners/mine/scanner.yaml","oldContent":"active: true\nkeywords:\n  - agent\n"}}`
 
 	run := func(t *testing.T, dir string) string {
 		t.Helper()
@@ -61,7 +61,7 @@ func TestT038_32_ThePrepareSkipsOnlyOnADecidedNoDrop(t *testing.T) {
 		want string
 	}{
 		{"not executable", func(t *testing.T, dir string) {
-			copyFile(t, exampleFile(t, ".sloprail/gate/scanner-keywords-hold/drops-keywords.sh"), filepath.Join(dir, "drops-keywords.sh"), 0o644)
+			copyFile(t, exampleFile(t, ".sloprail/file-guard/scanner-keywords-hold/drops-keywords.sh"), filepath.Join(dir, "drops-keywords.sh"), 0o644)
 		}, `"additionalContext"`},
 		{"missing", func(t *testing.T, dir string) {}, `"additionalContext"`},
 		{"crashes", func(t *testing.T, dir string) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// task-evidence-resolves is a PREVENTIVE file-guard over
+// task-evidence-resolves is a file-guard over
 // memories/tasks/<cat>/<name>/TASK.md with one deterministic SCRIPT check:
 //
 //   - the frontmatter satisfies task.cue (closed; no `done`, no `observations`);

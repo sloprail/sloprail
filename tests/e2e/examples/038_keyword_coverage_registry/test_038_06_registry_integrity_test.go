@@ -69,13 +69,27 @@ func TestT038_27_ScannersSharingAFolderNameAreTwoObligations(t *testing.T) {
 // retires nothing.)
 func TestT038_28_ACitedDeleteRetiresTheObligation(t *testing.T) {
 	e, proj := researchProject(t)
+	// The scanner is committed before the session: a file-guard sees a delete
+	// at Stop only for a file that existed in the tree at the session's start.
+	e.WriteFile(proj, "scanners/mine/scanner.yaml", activeScanner)
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "the scanner")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to remove the scanner"}`)
 	const sess = "s-038-28"
 	const ask = "remove the mine scanner, we no longer track it"
 
-	res := e.Run(proj, sess, ask, Turns("done",
+	// The retirement is recorded by the file-guard at Stop, on the delete of a
+	// scanner that was in the tree before this cycle.
+	e.Run(proj, sess, "research guardrails", Turns("done",
 		Write("w1", "scanners/mine/scanner.yaml", activeScanner),
-		Bash("b1", "sr-session trajectory cite '"+ask+"' --source-types user && rm -rf scanners/mine"),
+	))
+	before := coverageRefusals(t, e.TranscriptPath(proj, sess))
+	if before == 0 {
+		t.Fatalf("precondition: the declared scanner should be owed a search")
+	}
+
+	res := e.Run(proj, sess, ask, Turns("done",
+		Bash("b1", "sr-file delete scanners/mine/scanner.yaml --cite:user '"+ask+"'"),
 	))
 	if res.Refused() {
 		t.Fatalf("the delete the user asked for was refused:\n%s", res.Output)
@@ -83,8 +97,8 @@ func TestT038_28_ACitedDeleteRetiresTheObligation(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(proj, "scanners", "mine", "scanner.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("precondition: the cited delete should have landed: %v", err)
 	}
-	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)); n != 0 {
-		t.Fatalf("Stop was refused %d time(s) for a scanner the user asked to remove:\n%s", n, stopRefusals(e, proj, sess))
+	if n := coverageRefusals(t, e.TranscriptPath(proj, sess)); n != before {
+		t.Fatalf("Stop was refused %d more time(s) for a scanner the user asked to remove:\n%s", n-before, stopRefusals(e, proj, sess))
 	}
 
 	// Declared again, it is a new obligation — the retirement was of the

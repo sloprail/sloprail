@@ -97,7 +97,7 @@ func TestT038_10_CitedKeywordDropAdmits(t *testing.T) {
 	}
 }
 
-// T038_11: a drop citing words that do not ask for it is refused by the judge.
+// T038_11: a drop citing words that do not ask for it is blocked at Stop by the file-guard's judge.
 func TestT038_11_DropCitingUnrelatedWordsRefused(t *testing.T) {
 	e, proj := keywordsProject(t)
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR038 the cited words ask for a search, not to drop agent"}`)
@@ -106,8 +106,12 @@ func TestT038_11_DropCitingUnrelatedWordsRefused(t *testing.T) {
 	res := e.Run(proj, "s-038-11", ask, Turns("done",
 		srWriteScanner("b1", narrowedScanner, ask),
 	))
-	if !res.Refused() || !res.Saw("SR038 the cited words ask for a search") {
-		t.Fatalf("a drop citing unrelated words was not refused by the judge:\n%s", res.Output)
+	if res.Refused() {
+		t.Fatalf("the gate (citation only, no model) refused a cited drop:\n%s", res.Output)
+	}
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-038-11", "Stop"), "\n")
+	if !strings.Contains(blocks, "SR038 the cited words ask for a search") {
+		t.Fatalf("a drop citing unrelated words was not blocked by the judge at Stop:\n%s", blocks)
 	}
 }
 
