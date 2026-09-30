@@ -254,7 +254,7 @@ func TestT047_10_ScriptRewriteIsCaughtAtStop(t *testing.T) {
 		t.Fatalf("the script rewrite did not land, so this no longer tests the Stop after-check")
 	}
 	joined := joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop"))
-	if !containsAll(joined, "citations-resolve", "must cite a tool's output") {
+	if !containsAll(joined, "citations-resolve", "MIGRATION.md", "must cite a tool's output") {
 		t.Fatalf("an uncited script-written markdown file was not refused at Stop:\n%s", joined)
 	}
 }
