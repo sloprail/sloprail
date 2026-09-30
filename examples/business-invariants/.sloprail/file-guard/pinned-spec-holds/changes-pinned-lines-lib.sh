@@ -63,12 +63,18 @@ lib_tree() {
 workspace="$1" base="$2" grep_flags="${3:-}"
 
 command -v git >/dev/null 2>&1 || exit 0
-# A pin names <repo>@<sha>: outside a git work tree nothing can be pinned, which
-# is a decided answer, not an undecidable one.
-git -C "$workspace" rev-parse --is-inside-work-tree >/dev/null 2>&1 || waive "not a git work tree"
+# Outside a git work tree no marker can be scanned: undecidable, so it applies
+# (never a waive).
+git -C "$workspace" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 ws_abs="$(cd "$workspace" 2>/dev/null && pwd -P)" || exit 0
 has_head=0
-git -C "$workspace" rev-parse -q --verify "$base" >/dev/null 2>&1 && has_head=1
+if git -C "$workspace" rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1; then
+  has_head=1
+elif [ "$base" = HEAD ] && git -C "$workspace" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  : # an unborn HEAD (no commit yet): there is no base to scan, a decided answer
+else
+  exit 0 # a base that does not resolve cannot be scanned: undecidable, apply
+fi
 
 # A per-run memo, so a sha or a blob named by several pins is read from git once.
 memo="$(mktemp -d "${TMPDIR:-/tmp}/pinned-spec-holds.XXXXXX")" || exit 0
