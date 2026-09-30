@@ -61,7 +61,7 @@ func TestT013_01_AFileWrittenByAShellRedirectIsReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
@@ -92,7 +92,7 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 

@@ -78,7 +78,7 @@ func TestT006_01_ACycleReportsWhatItChanged(t *testing.T) {
 	// The rule goes in its own commit: its range starts at that commit's parent, so
 	// the files above are the base, not part of the first range.
 	led := e.NewLedger("events")
-	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": led.RecordScript()})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule, before the session")
 
@@ -121,7 +121,7 @@ func TestT006_02_WorkInSeparateCommitsIsOneChangeset(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	led := e.NewLedger("events")
-	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": led.RecordScript()})
 	e.DisableShippedFileGuards(proj)
 	base := e.CommitAll(proj, "the project before the session")
 
@@ -168,7 +168,7 @@ func TestT006_03_StopFiresOnceWithNoSubject(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	led := e.NewLedger("events")
-	e.Gate(proj, "cyclestop", recordStopGate, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.Gate(proj, "cyclestop", recordStopGate, map[string]string{"record.sh": led.RecordScript()})
 	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-03", "write several files", Turns("done",
@@ -344,7 +344,7 @@ func TestT006_05_UncommittedWorkIsRefusedUntilCommitted(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	led := e.NewLedger("events")
-	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": led.RecordScript()})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 

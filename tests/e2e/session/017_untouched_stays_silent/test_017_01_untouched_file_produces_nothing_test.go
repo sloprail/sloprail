@@ -50,7 +50,7 @@ func seedUntouched(e *Env, proj string) {
 // range starts at the parent of the commit that last touched its folder, so a
 // seed committed together with the rule would fall inside the first range.
 func installWatcher(e *Env, proj string, led *harness.Ledger) {
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": led.RecordScript()})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "install the rule")
 }

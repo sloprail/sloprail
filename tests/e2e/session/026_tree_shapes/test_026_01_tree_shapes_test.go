@@ -78,7 +78,7 @@ func project(t *testing.T) (*harness.Env, string, string) {
 	proj := e.Project()
 	ledger := filepath.Join(t.TempDir(), "seen")
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
@@ -89,7 +89,7 @@ func project(t *testing.T) (*harness.Env, string, string) {
 func runOne(t *testing.T, e *harness.Env, proj, ledger, sess string, s harness.Scenario) []changesetkit.Observed {
 	t.Helper()
 	e.Run(proj, sess, "cycle", s.ThenCommit("the agent's work"))
-	return changesetkit.Files(t, changesetkit.Ledger(t, ledger))
+	return changesetkit.Files(t, harness.ReadLedgerLines(t, ledger))
 }
 
 // cycles drives a sequence of cycles under one session id, the agent committing
@@ -107,7 +107,7 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 	seen := 0
 	for i, s := range scenarios {
 		e.Run(proj, sess, "cycle", s.ThenCommit("the agent's work"))
-		lines := changesetkit.Ledger(t, ledger)
+		lines := harness.ReadLedgerLines(t, ledger)
 		if len(lines) < seen {
 			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
 		}
@@ -141,7 +141,7 @@ func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
 	e.WriteFile(proj, "script.sh", "#!/bin/sh\necho hello\n")
 	e.WriteFile(proj, "other.md", "original\n")
 	e.CommitAll(proj, "a file the session will chmod")
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
@@ -333,7 +333,7 @@ func TestT026_04_CreatedThenModifiedInOneCycleIsOneCreateOfTheFinalBytes(t *test
 	// word therefore matches the scenario file and fails against a correct
 	// engine, which is what this assertion did before it was scoped.
 	var line string
-	for _, l := range changesetkit.Ledger(t, content) {
+	for _, l := range harness.ReadLedgerLines(t, content) {
 		if strings.HasPrefix(l, "drafted.md=") {
 			line = strings.TrimPrefix(l, "drafted.md=")
 		}
@@ -341,7 +341,7 @@ func TestT026_04_CreatedThenModifiedInOneCycleIsOneCreateOfTheFinalBytes(t *test
 	if line == "" {
 		t.Fatalf("the rule never read the file it was told about, so which bytes it would have "+
 			"been judging cannot be observed and the assertion below would be vacuous: %v",
-			changesetkit.Ledger(t, content))
+			harness.ReadLedgerLines(t, content))
 	}
 	if line != "FINALVERSION" {
 		t.Fatalf("the rule was shown %q, want %q — only what the tree holds when the "+
@@ -404,7 +404,7 @@ func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
 	if errs := harness.CommitRequired(e.BlockingErrorsFrom(proj, sess, "Stop")); len(errs) != 0 {
 		t.Fatalf("an untracked nested clone was treated as uncommitted guarded work: %q", errs)
 	}
-	got := changesetkit.Files(t, changesetkit.Ledger(t, ledger))
+	got := changesetkit.Files(t, harness.ReadLedgerLines(t, ledger))
 	// The premise: the clone really is a separate checkout sitting in the tree.
 	if _, err := os.Stat(filepath.Join(proj, "vendor", "clone", ".git")); err != nil {
 		t.Fatalf("the nested clone is not a repository of its own, so there is no foreign "+

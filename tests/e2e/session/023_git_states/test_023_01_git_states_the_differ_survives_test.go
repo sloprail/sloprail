@@ -70,7 +70,7 @@ func project(t *testing.T, pre func(e *harness.Env, proj string)) (*harness.Env,
 	if pre != nil {
 		pre(e, proj)
 	}
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
@@ -88,7 +88,7 @@ func seed(msg string, files ...[2]string) func(e *harness.Env, proj string) {
 
 func ledgerFiles(t *testing.T, ledger string) []changesetkit.Observed {
 	t.Helper()
-	return changesetkit.Files(t, changesetkit.Ledger(t, ledger))
+	return changesetkit.Files(t, harness.ReadLedgerLines(t, ledger))
 }
 
 // runOne drives a single cycle and returns everything the rule was handed.
