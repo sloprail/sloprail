@@ -171,7 +171,8 @@ func TestT020_03_ContentPutBackAcrossCyclesIsJudgedAsAChange(t *testing.T) {
 	led := e.NewLedger("seen")
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": changesetkit.RecordScript(led.Path())})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"judge.sh": led.RecordScript()})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-020-03"
