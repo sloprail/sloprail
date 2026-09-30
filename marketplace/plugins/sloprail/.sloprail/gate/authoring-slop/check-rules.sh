@@ -71,26 +71,26 @@ esac
 
 # The bytes to judge.
 #
-# This file-guard checks the SETTLED file at Stop (the PreFileWrite gate of the
-# same name, beside it under gate/, refuses a slop hook before it lands). The
-# event's kind is a Post kind, whose bytes were read by the engine the one safe
-# way (a regular file, capped): `newContentKnown` says whether it could.
+# This is the PRE-WRITE gate (the plain file-guard of the same name, beside it
+# under file-guard/, is the check of the settled file at Stop). On either Pre kind
+# `newContent` is present only when the result is derivable — `resultKnown` is the
+# flag that says so. This is symmetric across create and update: an underivable
+# PreFileUpdate (a command-derived edit) and an underivable PreFileCreate (a
+# NotebookEdit fresh-.ipynb, whose cell source is not the JSON document) BOTH carry
+# newContent "" with resultKnown false. A gate that cannot see the bytes it is
+# about to admit has not checked them, so it REFUSES rather than passing: the agent
+# is told to write the script directly.
 #
 # All fields read FLAT under `.event`, the CheckPayload shape.
 kind="$(printf '%s' "$event" | jq -r '.event.kind // empty' 2>/dev/null)"
-if [ "$kind" = "PostFileCreate" ] || [ "$kind" = "PostFileUpdate" ]; then
-  # The engine could not read the settled bytes (newContentKnown false): a
-  # script this check cannot see is refused, not permitted unread.
-  if [ "$(printf '%s' "$event" | jq -r 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end' 2>/dev/null)" != "true" ]; then
-    echo "authoring-slop: the engine could not read the settled $path (newContentKnown false: not a regular file, or too large), so it could not be checked. Make it an ordinary script file." >&2
-    exit 1
-  fi
+if [ "$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)" != "true" ]; then
+  echo "authoring-slop: the engine could not compute what this $kind would write to $path (an in-place or environment-dependent edit, or a notebook create), so it could not be checked before it lands. Refusing: a check that could not run has not approved. Write the file's content directly." >&2
+  exit 1
 fi
 body="$(printf '%s' "$event" | jq -r '.event.newContent // empty' 2>/dev/null)"
 if [ -z "$body" ]; then
-  abs="${SR_WORKSPACE:-.}/$path"
-  [ -f "$abs" ] || exit 0
-  body="$(cat "$abs" 2>/dev/null)" || exit 0
+  # A known, genuinely-empty script has nothing to flag.
+  exit 0
 fi
 
 findings=""

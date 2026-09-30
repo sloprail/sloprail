@@ -264,6 +264,13 @@ type GateJudgeInput struct {
 	// GateCheckPayload's fields render unprefixed at the template's top level.
 	GateCheckPayload `json:",inline"`
 
+	// Change is the unified diff from the event's oldContent to its newContent
+	// (`{{ change }}`), the same as a file-guard's: what a pending PreFileWrite or
+	// PreFileDelete would do to the file. A gate that prevents a write judges the
+	// change, not the whole file, so it needs the diff a file-guard's judge is
+	// handed. Empty when the event carries no content (a command, a tool, Stop).
+	Change string `json:"change"`
+
 	// AdditionalContext is present only when the check's own prepare returned one.
 	AdditionalContext PreparedContext `json:"additionalContext,omitempty"`
 }

@@ -5,7 +5,13 @@
 # then has to catch, one model call at a time. See
 # read-script-checks-doc/file-guard.yaml (its sibling, for the script half)
 # for the full argument; this is the identical mechanism for the judge half.
-match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and path endsWith ".md.j2"
+#
+# This is the PREVENTION half of the rule: a PreFileWrite gate refuses the write
+# before it lands. The plain file-guard of the same name, beside it under
+# file-guard/, is the settled-result backstop at Stop.
+on:
+  - event: PreFileWrite
+    match: '(event.path contains ".sloprail/file-guard/" or event.path contains ".sloprail/gate/" or event.path contains ".sloprail/context/") and event.path endsWith ".md.j2"'
 
 require:
   - skill: authoring-guardrails

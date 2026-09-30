@@ -1,0 +1,20 @@
+# No slop in the guardrails themselves — the PRE-WRITE half. Refuses a guardrail
+# HOOK SCRIPT that carries a shape measured to make a rule silently inert BEFORE it
+# lands. The full argument lives in file-guard/authoring-slop (its yaml, README.md
+# and rules/), which is this rule's other half: the same grep on the settled file,
+# plus the judge that reasons about what a signature cannot decide.
+#
+# The gate is the cheap, deterministic prevention: check-rules.sh is one grep over
+# the pending bytes (`newContent`). A write whose result the engine cannot compute
+# (a sed -i, a notebook create) carries `resultKnown: false`; check-rules.sh refuses
+# it rather than admit bytes nobody saw.
+#
+# match: a guardrail's own hook script under the three nature dirs. A gate's match
+# reads the event nested (`event.path`); the file-guard's reads `path` bare. The
+# grep self-scopes to `.sh`, so a `.md.j2` prompt is permitted here and left to the
+# file-guard's judge at Stop.
+on:
+  - event: PreFileWrite
+    match: '(event.path contains ".sloprail/file-guard/" or event.path contains ".sloprail/gate/" or event.path contains ".sloprail/context/") and event.path endsWith ".sh"'
+checks:
+  - script: ./check-rules.sh

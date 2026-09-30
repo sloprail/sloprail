@@ -29,7 +29,13 @@
 # check (checkRequire runs first in internal/dispatch), so this refuses ahead
 # of authoring-slop's own judge: cheaper (a trajectory lookup, no model call)
 # and earlier (before a turn is spent writing something wrong).
-match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and path endsWith ".sh"
+#
+# This is the PREVENTION half of the rule: a PreFileWrite gate refuses the write
+# before it lands. The plain file-guard of the same name, beside it under
+# file-guard/, is the settled-result backstop at Stop.
+on:
+  - event: PreFileWrite
+    match: '(event.path contains ".sloprail/file-guard/" or event.path contains ".sloprail/gate/" or event.path contains ".sloprail/context/") and event.path endsWith ".sh"'
 
 require:
   - skill: authoring-guardrails

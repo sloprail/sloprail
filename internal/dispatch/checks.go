@@ -273,6 +273,7 @@ func (r Runner) judgeInputJSON(req Request, additional declaration.PreparedConte
 				TranscriptPath: req.TranscriptPath,
 				Context:        req.contextMap(),
 			},
+			Change:            fileChange(req.Event),
 			AdditionalContext: additional,
 		})
 	default:
