@@ -56,8 +56,9 @@ can't be rewritten into something the user never said.
 
 This is a **gate plus a file-guard**. The gate runs before the write to the task's
 ask lands, so a diluting edit is refused rather than caught after the fact. The
-file-guard of the same name holds the settled `ASK.md` to the same rule at Stop,
-the backstop for a write the gate could not see.
+file-guard of the same name holds the committed `ASK.md` to the same rule at Stop
+(the commits carry the user's words as `Sloprail-Cites-User:` trailers), the
+backstop for a write the gate could not see.
 
 ## The actual configuration
 
@@ -94,8 +95,10 @@ ask is faithful to them and scoped to only them — runs in the file-guard, at S
 ### file-guard
 
 The after-check: the same match and citation requirement plus the judge, applied at
-Stop to the settled `ASK.md`. It carries no prevention of its own — a file-guard
-only acts on what settled.
+Stop to the committed `ASK.md` — the range of commits since the rule last passed, as
+one diff, with the citations those commits carry. It carries no prevention of its own
+— a file-guard judges commits, and Stop refuses uncommitted `ASK.md` changes with
+"commit these".
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/ask-is-human-authored/file-guard.yaml" />
 <Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/ask-is-human-authored/reference-is-true-and-only-this.md.j2" />

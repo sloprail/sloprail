@@ -52,7 +52,6 @@ package e2e
 import (
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -157,7 +156,7 @@ func installPluginTree(t *testing.T, projDir string) {
 	if copied == 0 {
 		t.Fatalf("install plugin tree: %s held no files", src)
 	}
-	commitInstalledTree(t, projDir)
+	harness.CommitInstalled(t, projDir)
 }
 
 // installPluginStructure installs THIS plugin's own real
@@ -175,22 +174,6 @@ func installPluginStructure(t *testing.T, e *Env, projDir string) {
 		t.Fatalf("installPluginStructure: read structure.yaml: %v", err)
 	}
 	e.EnablePluginShippingStructure(projDir, "sloprail-content", string(body))
-}
-
-// commitInstalledTree stages and commits everything in proj so a freshly
-// installed guardrail tree is part of the session baseline rather than the
-// first cycle's diff. A no-op when proj is not a git repository.
-func commitInstalledTree(t *testing.T, proj string) {
-	t.Helper()
-	if err := exec.Command("git", "-C", proj, "rev-parse", "--is-inside-work-tree").Run(); err != nil {
-		return
-	}
-	if out, err := exec.Command("git", "-C", proj, "add", "-A").CombinedOutput(); err != nil {
-		t.Fatalf("commitInstalledTree: git add: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", proj, "commit", "--allow-empty", "-m", "install sloprail-content guardrails").CombinedOutput(); err != nil {
-		t.Fatalf("commitInstalledTree: git commit: %v\n%s", err, out)
-	}
 }
 
 // pluginRoot is this plugin's install root — the directory holding

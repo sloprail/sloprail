@@ -44,13 +44,19 @@ something). A check at Stop could only report a deletion already done, and the
 natural remedy, restore from git, is gone if the file was never committed.
 
 The plain **file-guard** (`file-guard/preserves-unasked-content`) is the
-after-check, and it holds the **judge**. It acts only at Stop, on the settled file,
-with the same `deletions: include` and `require`: it asks whether the removal is
-clean and asked for, and it sees what the gate cannot — a removal made by a script
-the engine did not see as a write. The judge belongs here because a judge is a
-model call: the gate stays deterministic, the file-guard rules on the result.
+after-check, and it holds the **judge**. It judges **commits**: at Stop, uncommitted
+changes to a `memories/` file refuse the turn with "commit these", and the rule then
+runs over the range from where it last passed to `HEAD`, as one squashed diff of every
+file it touched (so a removal a later commit put back still shows), with the same
+`deletions: include` and `require`: it asks whether the removal is clean and asked
+for. The user's words come from the commits' `Sloprail-Cites-User: <quote>` trailers.
+It sees what the gate cannot — a removal made by a script the engine did not see as a
+write. The judge belongs here because a judge is a model call: the gate stays
+deterministic, the file-guard rules on the result.
 
-One library per script, in the file-guard folder (`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry that reads its own event kind (the gate's `Pre*`, the file-guard's `Post*`) and sources it.
+One library per script, in the file-guard folder (`<script>-lib.sh`), holds the shared
+logic; each half keeps a thin entry that reads its own input (the gate's `Pre*` event,
+the file-guard's Changeset, committed content that is always known) and sources it.
 
 `resultKnown` is false on a create or update whose result the engine could not
 precompute (a `sed -i`, or `sr-file` mixed into a longer command line), and then
@@ -72,9 +78,9 @@ file past a recursive removal's read budget, larger than a delete read, or not a
 regular file — still needs the citation, and **always** goes to the judge: an
 empty `oldContent` there is "not read", not "nothing removed". The prepare used
 to read it as nothing removed and skip the judge, so any resolvable quote of the
-user's admitted `rm -rf` of a memory the engine had not read. The same on a Post
-create or update whose settled bytes the engine could not read
-(`newContentKnown: false`): the citation applies and the judge is asked.
+user's admitted `rm -rf` of a memory the engine had not read. The file-guard has no such case: it reads committed
+blobs, which are always known, and a deleted file's `oldContent` is what the range's
+base held.
 
 ## "Asked" is a cited quote, not a keyword grep
 
@@ -92,7 +98,9 @@ sr-file edit memories/runbook.md --old-string '<old>' --new-string '<new>' \
 
 Before the check runs, the engine resolves the quote against the session's
 record — it must land on exactly one of the user's messages or AskUserQuestion
-answers — and delivers it on `.event.citations`. A quote that resolves nowhere
+answers — and delivers it on `.event.citations` (to the gate). The file-guard takes
+the same grounding from the commit, as a `Sloprail-Cites-User: <quote>` trailer,
+resolved the same way and delivered on `changeset.citations`. A quote that resolves nowhere
 is not a citation at all, so a fabricated or paraphrased ask cites nothing.
 `sr-file` runs on its own line so its result can be computed before it runs;
 mixed into a longer command, the result is unknown and refused (see above).
@@ -114,7 +122,9 @@ require:
 
 - **`removes-content.sh`** (`when`) — the deterministic half. A line-by-line
   diff of old vs new decides whether the citation applies:
-  - no removed lines → **waived**: pure additions is "append, not rewrite".
+  - no removed lines → **waived**: pure additions is "append, not rewrite"
+    (over the squashed range: a line removed by one commit and put back by
+    another is not removed).
   - removed lines, or a deletion → **applies**: an uncited removal is refused by
     the engine before the judge is paid for (the incident; a fabricated quote
     never became a citation).

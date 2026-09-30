@@ -66,7 +66,7 @@ words, and — at Stop — a judge checks that those words ask for that change; 
 line, that they ask for the rule itself to change rather than for a feature that
 conflicts with it.
 
-`pinned-invariant` is a plain **file-guard**: it judges the settled file at Stop,
+`pinned-invariant` is a plain **file-guard**: it judges the committed files at Stop,
 and the markers decide which files carry an invariant and which spec lines are
 pinned. `pinned-spec-holds` is a **gate** plus a file-guard: the gate prevents
 the change to the rules (a citation requirement, no model), and the file-guard
@@ -132,8 +132,8 @@ matching every path would refuse every `sed -i` in the project.
 `refuse-unknown-result.sh` is that refusal, and it lets a write through only when
 the predicate has decided nothing pinned is at stake.
 `changes-pinned-lines.sh` is the `when` of a user citation: it applies the
-requirement when the write changes a spec some marker pins (in the working tree
-or at HEAD) — any line of it — or moves a marker off the wording it pinned —
+requirement when the change touches a spec some marker pins (at the committed head
+or at the range's base) — any line of it — or moves a marker off the wording it pinned —
 marked code moved to another file keeps its pin — and waives it only when it has
 decided the write does neither. The judge (with `only-when-pinned.sh`, which asks it
 about exactly those writes) lives in the file-guard and rules at Stop.
@@ -142,10 +142,11 @@ about exactly those writes) lives in the file-guard and rules at Stop.
 <Code code={unknownSh} lang="bash" title=".sloprail/gate/pinned-spec-holds/refuse-unknown-result.sh" />
 
 The **file-guard** of the same name is the after-check. It acts at Stop on the
-settled file, against the session's baseline, and catches what the gate cannot:
-a script rewriting a spec, or one command deleting every holder of a pin. Its
-copy of `changes-pinned-lines.sh` reads the settled `Post*` events; the gate's reads
-the `Pre*` ones.
+committed changeset, each file at the range's base against head, and catches what
+the gate cannot: a script rewriting a spec, or one command deleting every holder of
+a pin. The shared logic of `changes-pinned-lines.sh` is one library; the file-guard's
+entry reads the Changeset (`.changeset.files[]`), with the user's words taken from the
+commits' `Sloprail-Cites-User:` trailers, and the gate's reads the `Pre*` events.
 
 <Code code={holdsYaml} lang="yaml" title=".sloprail/file-guard/pinned-spec-holds/file-guard.yaml" />
 <Code code={changesSh} lang="bash" title=".sloprail/file-guard/pinned-spec-holds/changes-pinned-lines.sh" />

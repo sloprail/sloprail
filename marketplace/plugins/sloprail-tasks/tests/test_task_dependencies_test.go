@@ -42,8 +42,7 @@ func TestDeps_UnfinishedDependencyBlocksThenPermits(t *testing.T) {
 	// The dependency: a real task folder, committed as part of the baseline so
 	// it is not read as this session's own diff.
 	e.WriteFile(proj, depTaskPath, task("to_do", "P1", "Set up CI."))
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed the dependency task")
+	e.CommitAll(proj, "seed the dependency task")
 
 	sess := "s-deps-unfinished"
 	depsDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\n" + askBody + "\n"
@@ -94,8 +93,7 @@ func TestDeps_CycleRefused(t *testing.T) {
 	// committed as baseline.
 	bDoc := "---\nstatus: backlog\npriority: P1\ndepends_on: [\"auth/migrate-tokens\"]\n---\n\nSet up CI, blocked on the auth migration.\n"
 	e.WriteFile(proj, depTaskPath, bDoc)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed task B depending on task A")
+	e.CommitAll(proj, "seed task B depending on task A")
 
 	// Now task A (this write) tries to depend on task B -- a cycle: A -> B -> A.
 	aDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\n" + askBody + "\n"

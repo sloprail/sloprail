@@ -36,8 +36,7 @@ func TestDangling_DeleteWithoutStrippingRefusesAtStop(t *testing.T) {
 	e.WriteFile(proj, danglingDepPath, task("to_do", "P1", "Set up CI."))
 	dependentDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\nDepends on CI. Placeholder body, no citation needed for a BASELINE file the guard never Pre-checked.\n"
 	e.WriteFile(proj, taskPath, dependentDoc)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed dependent and dependency, both correct")
+	e.CommitAll(proj, "seed dependent and dependency, both correct")
 
 	sess := "s-dangling-nostrip"
 
@@ -82,8 +81,7 @@ func TestDangling_DeleteWithStripPermits(t *testing.T) {
 	e.WriteFile(proj, danglingDepPath, task("to_do", "P1", "Set up CI."))
 	dependentDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\nDepends on CI. Placeholder body, no citation needed for a BASELINE file the guard never Pre-checked.\n"
 	e.WriteFile(proj, taskPath, dependentDoc)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed dependent and dependency, both correct")
+	e.CommitAll(proj, "seed dependent and dependency, both correct")
 
 	sess := "s-dangling-strip"
 	// The rewritten dependent: depends_on stripped, body untouched. Stripping an

@@ -45,9 +45,19 @@ repo, sha, path, line range. The sha buys two things:
 
 The rule is about the file's state — "does this marker's code still hold" —
 not about the event that touched it. A marker that starts failing because the
-spec moved underneath it stays failing every cycle until either the code
-catches up or the marker is re-pinned; it does not matter which event last
-touched the file. That is why `pinned-invariant` is a plain file-guard with no gate: nothing about the code has to be refused before it is written, only judged once it stands. The second rule below is the opposite case.
+spec moved underneath it stays failing until either the code catches up or the
+marker is re-pinned: the file-guard judges the **commits** the rule has not yet
+passed, and a refused range is never partly passed, so the fix is judged together
+with the commit it fixes. That is why `pinned-invariant` is a plain file-guard
+with no gate: nothing about the code has to be refused before it is written, only
+judged once it is committed. The second rule below is the opposite case.
+
+A file-guard needs the work **committed**: at Stop, uncommitted changes to a file
+the rule selects refuse the turn with "commit these" (nothing is committed for the
+agent), and the rule then runs on the range from where it last passed to `HEAD`.
+Its checks read that range as a Changeset (`.changeset.files[]`, each with
+`oldContent`, `newContent`, `oldMarkers`, `newMarkers`) and a read-only snapshot of
+head (`$SR_TREE`); a script loops over the files.
 
 ## What the two checks divide
 
@@ -103,13 +113,16 @@ the write lands (`PreFileCreate`, `PreFileUpdate` and `PreFileDelete`, one
 trigger each because the marker fields differ per kind), so the rule is refused
 before it changes, while the agent can still keep it and tell the user. The
 plain **file-guard** (`file-guard/pinned-spec-holds`) is the after-check and holds
-the **judge**: at Stop it judges the settled file against the session's baseline,
-and so sees what the gate cannot. The gate is cheap — a citation requirement and
-a script, no model. Each carries its own copy of `changes-pinned-lines.sh` (the
-`when` predicate): the two really differ — the gate reads `Pre*` events and compares
-against HEAD, the file-guard reads the settled `Post*` ones and compares against the
-session baseline — so they are kept apart. The judge prompt and `only-when-pinned.sh`
-live in the file-guard only.
+the **judge**: at Stop it judges the committed changeset, each file at the range's
+base against head, and so sees what the gate cannot. The gate is cheap — a citation
+requirement and a script, no model. The shared logic of `changes-pinned-lines.sh`
+(the `when` predicate) lives in one library, `changes-pinned-lines-lib.sh`, in the
+file-guard folder, and each half keeps a thin entry: the gate's reads `Pre*` events
+and compares against HEAD and the working tree, the file-guard's reads the Changeset
+and compares against the range's base and the committed head. The judge prompt and
+`only-when-pinned.sh` live in the file-guard only. The user's words come from the
+commits: a `Sloprail-Cites-User: <their words>` trailer, resolved against the
+transcripts like `sr-file --cite:user`.
 
 ### Which files it watches
 
@@ -159,10 +172,12 @@ to waive the citation for each:
 - **It changes a pinned spec line** — the stronger case: the judge checks the
   user asked for the rule itself to change, not only for a feature that
   conflicts with it. An edit, a delete, or a create at a path
-  HEAD still holds (`git mv SPEC.md SPEC.old` is not seen as a delete, so the
-  Write that puts a relaxed SPEC.md back is a create). The pinned lines are read
-  from every marker in the working tree **and at HEAD**, so dropping or moving
-  the marker first does not unpin the rule. Markers are read with the engine's
+  the range's base still held (a rename is the old path deleted and the new one
+  created, so `git mv SPEC.md SPEC.old` is a delete of the spec; the rule also
+  selects every rename, `status == "R"`, because `match` sees a renamed file under
+  its new path). The pinned lines are read from every marker in the committed head
+  **and at the range's base**, so dropping or moving the marker first does not
+  unpin the rule. Markers are read with the engine's
   own grammar (quoted or bare fqn, any whitespace), and a pin's path is
   normalized, so `./SPEC.md` pins `SPEC.md`. A line is compared byte for byte, as
   `pin-still-matches-head.sh` compares it: a whitespace-only or line-ending change
@@ -170,13 +185,12 @@ to waive the citation for each:
 - **It moves the code off the wording it was pinned to** — a marker removed (or
   its file deleted), or re-pinned to different text. A re-pin to the same text at
   a new place (a line inserted above the rule) changes nothing and needs nothing.
-  Only the pins the file held before the session's work count — HEAD's before a
-  write, the session baseline's at Stop — so a pin the agent wrote this session
-  can be corrected freely, and so can a pin that is not a real one (it pinned
-  nothing).
+  Only the pins the file held at the range's base count — the last commit the rule
+  passed, or its floor — so a pin the agent wrote since can be corrected freely,
+  and so can a pin that is not a real one (it pinned nothing).
 
 **Moving marked code is not dropping its pin.** A pin that leaves one file while
-another file in the working tree carries it (the same fqn, or a pin to the same
+another file at the committed head carries it (the same fqn, or a pin to the same
 text) is held: write the code with its marker in the new place first, then
 remove it from the old one. `git mv` is the same move. A plain `mv` is seen as a
 delete before the new file exists, and is refused with that advice. Copying the
@@ -233,24 +247,23 @@ Some answers are decided, and waive:
   it cannot pass `pinned-invariant`.
 
 **What happens only at Stop.** An edit the engine does not see as a write at
-all (a script rewriting the file) is caught by the file-guard at Stop, against
-the session's baseline. So is one command removing every holder of a pin at
-once: the gate is asked about each file a command touches before it runs, but
-each against the tree as it stands, so `rm a.go b.go` of two files carrying the
-same pin is let through (each sees the other still holding it) and both deletes
-are refused at Stop (T046_47). So is a delete the engine did not read of a file
-carrying a pin (an `rm -r` past its byte budget): its event carries no
-oldMarkers, so the gate's `PreFileDelete` trigger cannot select it before the
-write; at Stop the baseline's markers arrive and the dropped pin is refused.
-(The engine filling oldMarkers from HEAD for an unread delete would close this
-before the write.)
+all (a script rewriting the file) is caught by the file-guard once it is committed
+(Stop refuses until it is), against the range's base. So is one command removing
+every holder of a pin at once: the gate is asked about each file a command touches
+before it runs, but each against the tree as it stands, so `rm a.go b.go` of two
+files carrying the same pin is let through (each sees the other still holding it)
+and both deletes are refused at Stop (T046_47). So is a delete the engine did not
+read of a file carrying a pin (an `rm -r` past its byte budget): its event carries
+no oldMarkers, so the gate's `PreFileDelete` trigger cannot select it before the
+write; in the changeset the deleted file's `oldMarkers` come from the base commit
+and the dropped pin is refused. (The engine filling oldMarkers from HEAD for an
+unread delete would close this before the write.)
 
-**A known gap: rewriting history.** The Stop check measures from the commit the
-session started on, and the engine takes a new starting point when that commit
-stops being reachable from HEAD. So a spec line rewritten by a script and then
-folded into the starting commit with `git commit --amend` leaves the session's
-difference: the Stop check no longer sees it. This is tracked as
-[sloprail#86](https://github.com/sloprail/sloprail/issues/86); until it is fixed,
-the pre-write refusal of every edit it can see is the gate.
+**Rewriting history.** The range starts at a commit SHA the rule passed at (or at
+the commit that last touched the rule's folder), checked with
+`git merge-base --is-ancestor` on every run. A spec line rewritten by a script and
+then folded into an earlier commit with `git commit --amend` orphans that base; the
+engine drops it and falls back to the next one, so the rewritten line is still
+inside the range the rule judges.
 
 Markers inside a git submodule are not seen (`git grep` does not enter one).

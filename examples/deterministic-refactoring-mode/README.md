@@ -34,7 +34,8 @@ Two independent failures, two natures:
 - **A move that regenerated instead of carrying the bytes** — refused BEFORE the
   write lands by the `moved-content-reconciles` gate (on `PreFileCreate` /
   `PreFileUpdate`); the same-named file-guard re-runs the reconcile at `Stop` on
-  the settled file.
+  the committed files (the moves have to be committed first: Stop refuses
+  uncommitted work on a file the guard selects).
 - **A declared move that never happened at all** — caught at `Stop` by the
   `refactor-complete` GATE, which refuses the turn.
 
@@ -60,8 +61,8 @@ So the split is:
 ## Why the reconcile is a gate AND a file-guard
 
 A move that regenerated is a loss to refuse before it happens, and only a gate
-sees a write before it lands: a file-guard acts only at `Stop`, on the settled
-file. So the reconcile is split:
+sees a write before it lands: a file-guard acts only at `Stop`, on the committed
+changeset. So the reconcile is split:
 
 - **`gate/moved-content-reconciles`** is the prevention. It reads the pending
   bytes and refuses a non-reconciling move, so the write never lands. It also
@@ -69,8 +70,12 @@ file. So the reconcile is split:
   already carries a `moved-from` marker): a gate does not fail closed on that by
   itself, and reconciling against bytes nobody saw is no check.
 - **`file-guard/moved-content-reconciles`** is the after-check, the same
-  reconcile on the settled file at `Stop`. It is the backstop for a write the gate
-  could not see. One library per script, in the file-guard folder (`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry that reads its own event kind (the gate's `Pre*`, the file-guard's `Post*`) and sources it.
+  reconcile on the committed files at `Stop` (every file of the range that carries
+  a `moved-from` marker, from `changeset.files[].newContent`). It is the backstop
+  for a write the gate could not see. One library per script, in the file-guard
+  folder (`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry
+  that reads its own input (the gate's `Pre*` event, the file-guard's Changeset) and
+  sources it.
 
 ## The declared-scope ↔ landed-marker correspondence (the design choice)
 
@@ -133,7 +138,7 @@ This was a deliberate choice among three:
   pinned origin, dropping imports and whitespace (the exception rules), and refuses
   before the write lands.
 - **`file-guard/moved-content-reconciles/`** — the same check at `Stop`, on the
-  settled file.
+  committed files of the changeset.
 
 ## The refusal contract
 

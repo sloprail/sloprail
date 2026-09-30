@@ -36,8 +36,7 @@ import (
 func seedBaselineTask(t *testing.T, e *Env, proj, path, doc string) {
 	t.Helper()
 	e.WriteFile(proj, path, doc)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "seed a task")
+	e.CommitAll(proj, "seed a task")
 }
 
 // TestBody_CitedCreatePasses: a task created with sr-file, citing the user's own

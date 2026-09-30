@@ -35,6 +35,13 @@ wrong as one that got it in a single write. There is no gate here: there is no
 cheap, reliable way to predict before the write whether new prose duplicates a
 fact that lives elsewhere, so this guard is after-only.
 
+It judges **commits**: at Stop, uncommitted changes to a file the rule selects
+refuse the turn with "commit these" (nothing is committed for the agent), and the
+rule then runs once over the range from where it last passed to `HEAD`, handed to
+the judge as one squashed diff (`{{ change }}`) and the files (`changeset.files`).
+A refused range is never partly passed, so a fix is judged together with the
+commit it fixes.
+
 ## Why judge-only, no script tier
 
 Unlike the other file-guard examples in this set, this rule has no

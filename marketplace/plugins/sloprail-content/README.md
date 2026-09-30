@@ -7,8 +7,12 @@ phrases — which are rules written to tell the judge exactly what to measure
 and how, using Bash), and a unit cannot move into `status: published` unless
 the change that moves it **cites the user's approval**. Rules and approvals
 are grounded on the ACTION — `sr-file write|edit ... --cite:user '<exact
-quote>'` — never by storing a transcript quote or path in the file, so the
-repository holds derived text only. A unit folder is not a unit until its
+quote>'` at a pre-write gate, or a `Sloprail-Cites-User: <exact quote>` trailer
+on the commit that carries the change, which is what the file-guards read —
+never by storing a transcript quote or path in the file, so the repository
+holds derived text only. The file-guards judge **commits**: at Stop, uncommitted
+changes to a file they select refuse the turn with "commit these", and each rule
+then runs over the range from where it last passed to `HEAD`. A unit folder is not a unit until its
 `UNIT.md` exists — nothing else may be written there first. Four guardrails, in the nature format —
 file-guards under `.sloprail/`, with `match:` / `checks:`, flat `.event`
 fields, and refusals delivered as a non-zero exit carrying `{"reason": …}` on
@@ -166,7 +170,8 @@ wrote a draft into a unit folder before its `UNIT.md` existed. The check is
 purely path-based: it refuses the write unless `<unit folder>/UNIT.md`
 already exists on disk, and says to write that first. It is a `PreFileWrite`
 gate (refuses before the write lands) plus a plain file-guard of the same name
-that re-checks the settled file at Stop. Deletions are not this rule's
+that re-checks the committed files at Stop (a `UNIT.md` still uncommitted does not
+count: the file-guard reads the committed head). Deletions are not this rule's
 business (no `PreFileDelete` trigger; the file-guard skips deletions).
 
 Proven first as a project-local rule in the strategy repo's own
@@ -175,8 +180,10 @@ project installing this plugin gets it.
 
 ### unit-satisfies-rules — file-guard, Stop after-check
 
-On a unit's `UNIT.md` or `02_draft.md` write: collects every rule the unit's
-own tags select (project-wide + its topic's `constraints/`), and sends all of
+On a unit's `UNIT.md` or `02_draft.md` in the committed range: for each unit the
+range touches, collects every rule the unit's own tags select (from its committed
+`UNIT.md`, so a change to only the draft is judged against the tags its `UNIT.md`
+carries) (project-wide + its topic's `constraints/`), and sends all of
 them in one call to the engine's judge (`model: size-md` — the cheapest
 adequate tier for a real judgement call, not the largest default and not the
 smallest; `allowed_tools: [Read, Bash]` so a deterministic rule's own
@@ -190,11 +197,11 @@ passes trivially — nothing to check is not a violation.
 
 Over a unit's `UNIT.md` only. Publishing needs **both**:
 
-- **The user's approval, cited on the change that publishes.** A write that
+- **The user's approval, cited on the change that publishes.** A change that
   moves a unit INTO `status: published` — from any other status, or by
   creating it published — must carry at least one citation in the `user`
   pool: the user's own words approving it. Ask the user; once they approve,
-  publish with `sr-file`:
+  publish with `sr-file` (the gate reads that citation):
 
   ```bash
   sr-file edit memories/topics/20260101_launch/units/01_announce/UNIT.md \
@@ -203,6 +210,9 @@ Over a unit's `UNIT.md` only. Publishing needs **both**:
   published_urls: ["https://x.com/nikita/status/1234567890"]' \
     --cite:user 'ship it'
   ```
+
+  The file-guard reads the same approval from the commit that carries the publish:
+  `git commit -m 'Publish the launch post' -m 'Sloprail-Cites-User: ship it'`.
 
   The session resolves the quote against its own record. An agent's own
   prior turn, a tool result, or a harness-injected message is not in the
@@ -253,13 +263,12 @@ must not be able to publish on its own say-so — so this rule, like
 `content-rule-is-grounded` below, is a `PreFileWrite` gate (it refuses before
 the write lands, and refuses a write whose result it cannot derive, such as
 `sed -i`) plus a plain file-guard of the same name. The file-guard is the Stop
-after-check and the backstop: there, "before" is the session baseline, and a
-citation grounds only the change it rode on — citations do not accumulate. A
-cited change counts only if it landed, only for a requirement whose pools it
-was cited in, and every other part of the unit's change the agent made must be
-one `enters-published.sh` waives (a cited `sr-file write` of the whole unit
-grounds everything before it; a change the agent did not make, such as the
-user's own edit between turns, is not charged). So a publish that slipped
+after-check and the backstop: there, "before" is the range's base (the commit the
+rule last passed at), and the citations are the ones the range's commits carry
+(`Sloprail-Cites-User:` trailers, resolved against the transcripts). A rule's base
+does not move until it passes, so the range accumulates its commits and their
+citations. `enters-published.sh` says whether any unit in the changeset entered
+`published`; if so, the range must cite the user. So a publish that slipped
 through uncited is still refused, with the steps to redo it. The
 citation is required only on the transition, so the guard declares it with a
 `when:` script — a draft edit needs none:
@@ -277,18 +286,19 @@ plays for a task's ask. Grounding is unconditional: every create or update of
 a rule must cite the user. A `PreFileWrite` gate refuses an ungrounded rule
 before it lands (and refuses a write whose result it cannot derive, such as one
 mixing `sr-file` with another program); a plain file-guard of the same name runs
-the same require, script and judge on the settled file at Stop.
+the same require, script and judge on the committed rules at Stop.
 
 0. **`require: [{citation: {source_types: [user]}}]`.** A change carrying no citation that
    resolves to the user's own words is refused by the engine before any
-   check runs, with a remedy naming `sr-file ... --cite:user`. The Write and
+   check runs: for the gate a remedy naming `sr-file ... --cite:user`, for the
+   file-guard commits without a `Sloprail-Cites-User:` trailer. The Write and
    Edit tools, and a quote the user never said, are refused here.
 1. **Script (`check-rule.sh`), deterministic, fail-closed.** The frontmatter
    satisfies `rule.cue` and the body is not empty.
 2. **Prepare + judge (`resolve-cited-rule-quotes.sh` +
    `judge-rule-body.md.j2`).** The prepare hands the judge the cited quotes
-   (with their transcript path and line) off `event.citations`, the rule's
-   body, and on an update the body before the change. The rule must
+   (with their transcript path and line) off `changeset.citations`, each rule's
+   body, and the change (one diff of every rule in the range). The rule must
    correspond to the cited words and hold that and nothing else — a valid
    citation wrapped in agent-invented scope, threshold, exception or
    rationale the user never stated is refused. On an update, only what the
