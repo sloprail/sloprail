@@ -16,6 +16,10 @@ const (
 	// point recorded on the line it left describes a history the tree no longer
 	// has.
 	MetaBaselineBranch = "baseline_branch"
+	// MetaBaselineAtStop marks a baseline that was first recorded at a sub-agent's
+	// OWN Stop, not as its work began. It is the HEAD the sub-agent's commits had
+	// already produced, so a file-guard's range must not be measured from it.
+	MetaBaselineAtStop = "baseline_at_stop"
 	// MetaTranscriptRead is how far the session's own record has been read. A
 	// position rather than a state, because a record only grows.
 	MetaTranscriptRead = "transcript_read"
