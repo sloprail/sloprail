@@ -76,7 +76,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	e.FileGuard(proj, "onceonly", refusesOnceThenRelents, map[string]string{"record.sh": refuseOnceScript})
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo one > first.md"),
 		Bash("sb2", "echo two > second.md"),
 	))
@@ -166,7 +166,7 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing
 	writeBlockCap(t, proj, 1)
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo x > refused-work.md"),
 	))
 
@@ -216,7 +216,7 @@ func TestT015_08b_ByDefaultAReFiredSubagentStopIsJudged(t *testing.T) {
 	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysScript})
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo x > refused-work.md"),
 	))
 	res := e.Run(proj, "s-015-08b", "delegate work that is always refused", Turns("root done",
@@ -284,7 +284,7 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 			e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 			e.GitInit(proj)
 
-			sub := subScenario(t, harness.Turns("sub done", Bash("sb1", tc.command)))
+			sub := harness.SubagentScript(t, harness.Turns("sub done", Bash("sb1", tc.command)))
 
 			res := e.Run(proj, "s-015-09-"+strings.ReplaceAll(tc.name, " ", "-"),
 				"delegate work that leaves nothing", Turns("root done",
@@ -346,7 +346,7 @@ func TestT015_10_ASubagentThatCommitsStillHasItsWorkJudged(t *testing.T) {
 	// Identity given on the command line so the run does not depend on whatever
 	// the machine has configured, and --no-gpg-sign so a signing setup cannot
 	// make this hang.
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo committed > committed-by-the-sub.md && git add -A && "+
 			"git -c user.email=sub@example.invalid -c user.name=sub commit -q -m 'sub work' --no-gpg-sign"),
 	))

@@ -113,8 +113,7 @@ func TestT003_06_AFailIsReplayedUntilTheInputChanges(t *testing.T) {
 	if out := e.ChecksStatus(proj, "s-003-06", "--failing"); strings.TrimSpace(out) != "" {
 		t.Fatalf("a stale failure is still outstanding:\n%s", out)
 	}
-	sql := e.CLIDirectEnv(proj, []string{"CLAUDE_CODE_SESSION_ID=s-003-06", "CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE="},
-		"sr-checks", "sql", "select status, json_extract(metadata, '$.reason') as reason from checks where json_extract(metadata, '$.reasoning') like '%JUDGE-SAYS-NO%'")
+	sql := e.ChecksSQL(proj, "s-003-06", "select status, json_extract(metadata, '$.reason') as reason from checks where json_extract(metadata, '$.reasoning') like '%JUDGE-SAYS-NO%'")
 	if !strings.Contains(sql.Output, `"skip"`) || !strings.Contains(sql.Output, "stale") {
 		t.Fatalf("the superseded failure should be a stale skip:\n%s", sql.Output)
 	}

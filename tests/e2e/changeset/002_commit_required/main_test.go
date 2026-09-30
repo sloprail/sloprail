@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -50,15 +49,6 @@ func project(t *testing.T) (*Env, string) {
 	e.FileGuard(proj, "docs", rule, map[string]string{"check.sh": passing})
 	e.CommitAll(proj, "the project and its rule")
 	return e, proj
-}
-
-func subScenario(t *testing.T, s harness.Scenario) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "sub.sh")
-	if err := s.Script(path); err != nil {
-		t.Fatalf("write sub-agent scenario: %v", err)
-	}
-	return path
 }
 
 // commitRequired counts the Stop refusals in the session's record that are this

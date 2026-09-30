@@ -42,7 +42,7 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	// Bash, not Write. The mock executes Bash and applies it in whatever tree the
 	// agent is bound to; a Write in a sub-agent's scenario creates no file at
 	// all, which is what made this look untestable.
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo 'the sub-agent did this' > only-the-sub-made-this.md"),
 	))
 
@@ -137,7 +137,7 @@ func TestT015_02_ASharedTreeSubagentAndItsParentEachJudgeAsThemselves(t *testing
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo 'delegated' > from-the-sub.md"),
 	))
 
@@ -212,7 +212,7 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo sub > the-subs-file.md"),
 	))
 
@@ -317,8 +317,8 @@ func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
 	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
 	e.GitInit(proj)
 
-	first := subScenario(t, harness.Turns("one done", Bash("a1", "echo one > first-subs-file.md")))
-	second := subScenario(t, harness.Turns("two done", Bash("a2", "echo two > second-subs-file.md")))
+	first := harness.SubagentScript(t, harness.Turns("one done", Bash("a1", "echo one > first-subs-file.md")))
+	second := harness.SubagentScript(t, harness.Turns("two done", Bash("a2", "echo two > second-subs-file.md")))
 
 	res := e.Run(proj, "s-015-04", "delegate twice", Turns("root done",
 		Dispatch("d1", "first job", first, "worktree"),
@@ -391,7 +391,7 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo one > sub-one.md"),
 		Bash("sb2", "echo two > sub-two.md"),
 		Bash("sb3", "echo three > sub-three.md"),

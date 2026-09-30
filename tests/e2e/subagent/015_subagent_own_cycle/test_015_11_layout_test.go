@@ -29,7 +29,7 @@ func TestT015_11_ASubagentInASubdirectoryIsJudgedOnTreeRelativePaths(t *testing.
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
 	e.GitInit(proj)
 
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "mkdir -p pkg/deep && echo nested > pkg/deep/nested.md"),
 	))
 
@@ -108,13 +108,13 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 	e.GitInit(proj)
 
 	// What the inner dispatch would run, if the harness executed it.
-	innermost := subScenario(t, harness.Turns("inner done",
+	innermost := harness.SubagentScript(t, harness.Turns("inner done",
 		Bash("i1", "echo innermost > from-the-innermost.md"),
 	))
 	// The sub-agent that both delegates AND does work of its own. The work comes
 	// after the dispatch, so a dispatch that swallowed the rest of the cycle
 	// would leave from-the-middle.md unjudged.
-	middle := subScenario(t, harness.Turns("middle done",
+	middle := harness.SubagentScript(t, harness.Turns("middle done",
 		Dispatch("md1", "delegate further", innermost, ""),
 		Bash("m1", "echo middle > from-the-middle.md"),
 	))
