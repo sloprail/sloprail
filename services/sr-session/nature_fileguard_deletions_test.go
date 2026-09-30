@@ -17,7 +17,7 @@ import (
 )
 
 // These pin a file-guard's `deletions:` filter at every place a guard is
-// dispatched on a file event — the preventive (Pre) path, the after-check (Post)
+// dispatched on a file event — the after-check (Post)
 // path, and the pre-tool event binding — and the revalidation consequence: a
 // refusal a guard left on a file that has since been deleted is settled whenever
 // the guard does not refuse the delete, so it cannot stay outstanding forever.

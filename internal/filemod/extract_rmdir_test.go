@@ -208,7 +208,7 @@ func deleteEvents(t *testing.T, events []event.Event) map[string]FileEvent {
 // file that does not fit in what is left of the byte budget carries no bytes
 // and oldContentKnown false, is never read, and charges nothing: the smaller
 // files after it are still read. Dropping the whole directory, as this once
-// did, let one padding file hide the removal from every preventive delete rule;
+// did, let one padding file hide the removal from every PreFileDelete gate;
 // and stopping every read once a big file had spent the budget blinded content
 // rules to the small guarded files sorting after it.
 func TestExtractCommand_PastTheByteBudgetEveryFileIsPredictedUnread(t *testing.T) {
