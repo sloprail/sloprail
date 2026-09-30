@@ -1,36 +1,45 @@
 #!/usr/bin/env bash
 # Shared by the task-gates-hold gate and its file-guard: one library, two thin entries.
-# Each entry reads the event kind and its own bytes; nothing that follows branches
-# on it.
+# The gate entry reads the pending write (lib_init, then a Pre kind); the file-guard
+# entry reads the Changeset and calls lib_check once per task that is making the
+# transition, with `path`, `old_content`, `new_status` and `root` (the committed head)
+# set. lib_check reads no event.
 
-lib_init() {
-set -uo pipefail
+lib_setup() {
+  set -uo pipefail
 
-refuse() {
-  jq -n --arg reason "$1" '{reason: $reason}'
-  exit 1
+  refuse() {
+    jq -n --arg reason "$1" '{reason: $reason}'
+    exit 1
+  }
+
+  gdir="${SR_GUARDRAIL_DIR:-.}"
+
+  # The schema is the PLUGIN's, read from the plugin's own tree — never a
+  # consumer-side copy. See task-evidence-resolves/check-task.sh for why.
+  schema="$gdir/../../schemas/task.cue"
+
+  if [ ! -f "$schema" ]; then
+    refuse "task-gates-hold: schema not found at $schema — the rule cannot check anything without it."
+  fi
 }
 
-event="$(cat)"
+# lib_init is the gate's: the pending write's own bytes.
+lib_init() {
+  lib_setup
 
-path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
-if [ -z "$path" ]; then
-  refuse "task-gates-hold: the event named no path, so there is nothing to check"
-fi
+  event="$(cat)"
 
-root="${SR_WORKSPACE:-.}"
-gdir="${SR_GUARDRAIL_DIR:-.}"
+  path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
+  if [ -z "$path" ]; then
+    refuse "task-gates-hold: the event named no path, so there is nothing to check"
+  fi
 
-# The schema is the PLUGIN's, read from the plugin's own tree — never a
-# consumer-side copy. See task-evidence-resolves/check-task.sh for why.
-schema="$gdir/../../schemas/task.cue"
+  # The tree the task's gates are read from and run in: the project for the gate.
+  root="${SR_WORKSPACE:-.}"
 
-if [ ! -f "$schema" ]; then
-  refuse "task-gates-hold: schema not found at $schema — the rule cannot check anything without it."
-fi
-
-kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)" || refuse "task-gates-hold: could not read the event's kind, so the task could not be checked"
-[ -n "$kind" ] || refuse "task-gates-hold: the event named no kind, so the task could not be checked"
+  kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)" || refuse "task-gates-hold: could not read the event's kind, so the task could not be checked"
+  [ -n "$kind" ] || refuse "task-gates-hold: the event named no kind, so the task could not be checked"
 }
 
 lib_check() {
@@ -43,7 +52,7 @@ fi
 case "$old_status" in
   backlog|blocked|"") : ;;   # "" covers a new task written straight to to_do/in_progress.
   to_do|in_progress|in_review)
-    exit 0   # not the backlog/blocked departure moment.
+    return 0   # not the backlog/blocked departure moment.
     ;;
 esac
 
@@ -55,7 +64,7 @@ if [ ! -d "$gates_dir" ]; then
   # No gates/ directory at all: nothing declared, nothing to hold on. A
   # DELIBERATE fail-open — an absent gates/ is not evidence of an unmet
   # condition, it is the absence of any condition.
-  exit 0
+  return 0
 fi
 
 problems=""
@@ -83,10 +92,10 @@ if [ -n "$problems" ]; then
   refuse "GATES NOT SATISFIED: $path cannot move to $new_status — a deterministic gate failed.
 
 $problems
-Fix the underlying condition each gate tests. Do not edit or delete a gate to get past it — a change to a gates/*.sh or gates/*.md file is itself refused unless it stays derived from the task (see task-gate-is-grounded). This SAME set of gates/*.sh files is also re-checked when the task later reaches in_review (task-review) — see run-sh-gates.sh."
+Fix the underlying condition each gate tests. Do not edit or delete a gate to get past it — a change to a gates/*.sh or gates/*.md file is itself refused unless it stays derived from the task (see task-gate-is-grounded). This SAME set of gates/*.sh files is also re-checked when the task later reaches in_review (task-review)."
 fi
 
-exit 0
+return 0
 }
 
 gates_hold_lib_loaded=1

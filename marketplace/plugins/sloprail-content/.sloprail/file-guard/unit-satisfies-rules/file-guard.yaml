@@ -33,8 +33,9 @@
 match: path matches "^memories/topics/[^/]+/units/[^/]+/(UNIT|02_draft)\\.md$"
 
 # A plain file-guard with no gate — same reasoning as unit-satisfies-constraints:
-# a writing-rule judgement is inherently after-the-fact, and the Stop after-check
-# on the settled file is where it belongs.
+# a writing-rule judgement is inherently after-the-fact. It judges the committed
+# changeset: each unit the range touched (UNIT.md and/or 02_draft.md) is one entry
+# in the judge's input, with the rules its own UNIT.md tags select.
 checks:
   # Collects the applicable rules and asks one model call to weigh the unit
   # against all of them together (not one call per rule — the constraints
@@ -48,7 +49,7 @@ checks:
   # [Read, Bash] — Read for the rules/unit text (already in the prompt, but
   # a rule may point the judge at a related file), Bash so the judge can run
   # the actual measurement a deterministic rule's text asks for (wc, grep,
-  # …) against the real unit file at additionalContext.unit_path, rather
+  # …) against the committed unit file (additionalContext.units[].unit_path), rather
   # than estimate it.
   - prepare: ./prepare-judge-rules.sh
     judge: ./judge-rules.md.j2

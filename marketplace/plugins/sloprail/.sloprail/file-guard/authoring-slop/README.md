@@ -11,7 +11,7 @@ review, and each one produced a rule that looked correct and enforced nothing.
 
 This guardrail is a `file-guard` plus a `PreFileWrite` gate of the same name (the
 new format): the gate is the cheap deterministic prevention, this file-guard
-judges what settled. Its `match`, the gate/file-guard split, and the field-by-field payload reasoning live in `file-guard.yaml` and
+judges the committed changeset at Stop. Its `match`, the gate/file-guard split, and the field-by-field payload reasoning live in `file-guard.yaml` and
 in `check-rules.sh`'s own comments; this file is the argument for *why* the rule
 exists and what each shape is.
 

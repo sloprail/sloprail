@@ -8,9 +8,9 @@
 # gates/ to already be a meaningful, honestly authorized test (see its own
 # header) and nothing else re-checks a gate's content once it exists.
 #
-# A GATE CARRIES NO CITATIONS OF ITS OWN. Only a write that creates a
-# TASK.md or changes its body is grounded in the user's words (cited on the
-# sr-file command), and that grounding is task-body-is-human-authored's
+# A GATE CARRIES NO CITATIONS OF ITS OWN. Only a commit that creates a
+# TASK.md or changes its body is grounded in the user's words (a
+# Sloprail-Cites-User: trailer), and that grounding is task-body-is-human-authored's
 # subject — already validated separately, every time TASK.md's body is
 # written. A gate is DERIVED FROM the task, not from the transcript, so this
 # guard asks one question with one check: is this gate file traceable to,
@@ -42,12 +42,12 @@ match: path matches "^memories/tasks/[^/]+/[^/]+/gates/[^/]+\\.(sh|md)$"
 
 # The PREVENTION half — a gate that fails the grounding bar must never land — is
 # the PreFileWrite gate of the same name, beside this guard under gate/. This
-# file-guard judges the settled file at Stop, backstopping a write the gate could
-# not derive.
+# file-guard judges the committed gates, backstopping a write the gate could not
+# derive. All the gates in the changeset go to one judge.
 
 checks:
-  # The judge. prepare (resolve-gate-context.sh) reads the settled
-  # file (a Post kind). model is size-md (engine default judge modelset), matching
+  # The judge. prepare (resolve-gate-context.sh) reads each gate from
+  # the changeset and its task from SR_TREE. model is size-md (engine default judge modelset), matching
   # the plugin's other judges; no explicit timeout — it runs under the
   # engine's own default. The task and gate content are both already IN the
   # prompt; the judge can also read the project on disk without any grant (the

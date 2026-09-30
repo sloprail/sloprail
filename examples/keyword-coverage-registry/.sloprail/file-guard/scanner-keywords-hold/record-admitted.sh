@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# STOP-TIME copy (the file-guard): reads settled bytes. A file-guard never sees a
-# Pre event, so the Pre-only `resultKnown` field does not apply here (the gate of
-# the same name keeps the pre-write copy and consults it).
+# FILE-GUARD copy: reads the Changeset (each scanner as committed at head against the
+# range's base). The gate of the same name keeps the pre-write copy.
 # The LAST check: reached only once everything before it admitted the event —
 # the citation requirement (when drops-keywords.sh applied it) and the judge.
 # It records what the user asked for, so the registry stops owing it:
@@ -14,7 +13,7 @@
 #     only ever grows (scanner-declared's enter.sh); this is the one way a
 #     keyword stops being owed.
 #
-# Only with a resolved citation of the user's own words on the event. That is
+# Only with a resolved citation of the user's own words on the changeset. That is
 # what "the user asked for it" means here, and it is checked again rather than
 # inferred from having been reached: drops-keywords.sh waives the citation for a
 # change it decides drops nothing, and a scanner emptied by a write the engine
@@ -46,45 +45,55 @@ unset scanner_lib_loaded
 [ "${scanner_lib_loaded:-}" = 1 ] || refuse "The change could not be recorded against the scanner registry (scanner-lib.sh did not load whole: its last-line sentinel scanner_lib_loaded is unset), so it was not let through."
 
 payload="$(cat)"
-field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
 
 # Not asked for in the user's own words: record nothing.
 has_user_citation "$payload" || exit 0
 
-path="$(field '.event.path // ""')"
-[ -n "$path" ] || refuse "The change named no path, so its scanner could not be recorded; nothing was changed."
-scanner="$(scanner_dir "$path")"
+[ "$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)" = "Changeset" ] || refuse "The change could not be recorded (expected a Changeset event), so it was not let through."
 
-stamp="$(sr-session state list --owner scanner-declared "stamp:${scanner}" \
-  | jq -r -s --arg k "stamp:${scanner}" '[.[] | select(.key == $k) | .value][0] // ""')" \
-  || refuse "Could not read scanner-declared's registry to record the change to ${scanner}, so it was not let through. Retry it; if it keeps failing, the sloprail install is broken."
+# The changeset's scanners as the changes to record, each {op, path, new}: a
+# rename is the old scanner deleted and the new one created.
+changes="$(printf '%s' "$payload" | jq -c '
+  [ .changeset.files[]
+    | if .status == "R" then
+        ({op: "delete", path: .oldPath, new: ""}, {op: "write", path: .path, new: .newContent})
+      elif .status == "D" then {op: "delete", path: .path, new: ""}
+      else {op: "write", path: .path, new: .newContent} end ]')" \
+  || refuse "The changeset could not be read to record its changes, so it was not let through."
+n="$(printf '%s' "$changes" | jq 'length')" || refuse "The changeset could not be read to record its changes, so it was not let through."
 
-# Never declared this session: nothing is owed, so there is nothing to record.
-[ -n "$stamp" ] || exit 0
+i=0
+while [ "$i" -lt "$n" ]; do
+  f() { printf '%s' "$changes" | jq -r --argjson i "$i" ".[\$i].$1"; }
+  op="$(f op)" || refuse "The changeset could not be read to record its changes, so it was not let through."
+  path="$(f path)" || refuse "The changeset could not be read to record its changes, so it was not let through."
+  content="$(f new)" || refuse "The changeset could not be read to record its changes, so it was not let through."
+  i=$((i + 1))
+  [ -n "$path" ] || refuse "The change named no path, so its scanner could not be recorded; nothing was changed."
+  scanner="$(scanner_dir "$path")"
 
-kind="$(field '.event.kind // ""')"
-case "$kind" in
-  PostFileDelete)
+  stamp="$(sr-session state list --owner scanner-declared "stamp:${scanner}" \
+    | jq -r -s --arg k "stamp:${scanner}" '[.[] | select(.key == $k) | .value][0] // ""')" \
+    || refuse "Could not read scanner-declared's registry to record the change to ${scanner}, so it was not let through. Retry it; if it keeps failing, the sloprail install is broken."
+
+  # Never declared this session: nothing is owed, so there is nothing to record.
+  [ -n "$stamp" ] || continue
+
+  if [ "$op" = delete ]; then
     sr-session state set "retired:${scanner}" "$stamp" \
       || refuse "Could not record ${scanner} as retired (sr-session state set failed), so the delete was not let through."
-    exit 0
-    ;;
-  PostFileCreate | PostFileUpdate)
-    # Settled bytes the engine could not read (newContentKnown false): what
-    # the scanner now declares is unknown, so no narrowing is recorded.
-    [ "$(field 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')" = "true" ] || exit 0
-    ;;
-  *) exit 0 ;;
-esac
+    continue
+  fi
 
-new="$(scanner_keywords "$(field '.event.newContent // ""')" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
-owed="$(registry_keywords "$scanner")" \
-  || refuse "Could not read the scanner registry to record the change to ${scanner}, so it was not let through."
+  new="$(scanner_keywords "$content" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+  owed="$(registry_keywords "$scanner")" \
+    || refuse "Could not read the scanner registry to record the change to ${scanner}, so it was not let through."
 
-# Something owed that the scanner no longer declares: the admitted drop.
-if printf '%s' "$owed" | jq -e --argjson new "$new" 'any(.[]; . as $k | ($new | index($k)) == null)' >/dev/null 2>&1; then
-  record="$(jq -n -c --arg s "$stamp" --argjson k "$new" '{stamp: $s, keywords: $k}')"
-  sr-session state set "narrowed:${scanner}" "$record" \
-    || refuse "Could not record the dropped keywords of ${scanner} (sr-session state set failed), so the change was not let through."
-fi
+  # Something owed that the scanner no longer declares: the admitted drop.
+  if printf '%s' "$owed" | jq -e --argjson new "$new" 'any(.[]; . as $k | ($new | index($k)) == null)' >/dev/null 2>&1; then
+    record="$(jq -n -c --arg s "$stamp" --argjson k "$new" '{stamp: $s, keywords: $k}')"
+    sr-session state set "narrowed:${scanner}" "$record" \
+      || refuse "Could not record the dropped keywords of ${scanner} (sr-session state set failed), so the change was not let through."
+  fi
+done
 exit 0

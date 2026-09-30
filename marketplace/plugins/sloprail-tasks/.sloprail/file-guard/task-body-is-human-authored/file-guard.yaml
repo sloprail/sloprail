@@ -6,41 +6,37 @@
 # then on every verification passes because the spec was rewritten to match the
 # work. The full argument lives in the plugin's README.
 #
-# THE CITATION RIDES ON THE WRITE, NOT IN THE FILE. A task's body used to quote the
+# THE CITATION RIDES ON THE COMMIT, NOT IN THE FILE. A task's body used to quote the
 # user as inline `[quote](/abs/session.jsonl:N)` links — a transcript path that
-# resolves on no other machine. Now the file keeps derived text only, and the write
-# that creates a task or changes its body carries the user's words as a citation:
+# resolves on no other machine. Now the file keeps derived text only, and the commit
+# that creates a task or changes its body carries the user's words as a trailer:
 #
-#   sr-file write|edit memories/tasks/<group>/<name>/TASK.md … --cite:user '<exact words>'
+#   git commit -m 'Add the task' -m 'Sloprail-Cites-User: <exact words>'
 #
-# run on its own line, so the pre-tool hook resolves it exactly. The session
-# resolves every quote against its record before any check runs and puts the ones
-# that resolve on `.event.citations`, so a citation a check sees EXISTS.
+# The session resolves every quote against its transcripts before any check runs
+# and puts the ones that resolve on `changeset.citations`, so a citation a check
+# sees EXISTS. A rule's range does not move until it passes, so the commits since
+# it last passed all count.
 #
 # THE REQUIREMENT IS DECLARED, CONDITIONALLY. `require` below demands a user
-# citation, but only `when` body-changed.sh says the write sets the ask: a create,
-# or a BODY change. A status/priority/depends_on edit leaves the body
-# byte-identical, so body-changed.sh exits 1 and the write needs no citation. An
-# uncited write that does set the ask is refused by the engine before any check
-# runs, naming the sr-file form.
+# citation, but only `when` body-changed.sh says the changeset sets an ask: a task
+# created, or a BODY changed. A status/priority/depends_on edit leaves the body
+# byte-identical, so body-changed.sh exits 1 and no citation is required.
 #
 # TWO checks, cheap first:
 #
 #   1. SCRIPT (body-is-stated.sh): deterministic, no model. The task must have a
 #      body — prose under the frontmatter.
 #   2. PREPARE + JUDGE: prepare (resolve-cited-messages.sh) SKIPS the judge when
-#      the body did not change (no model call on a status-only change); otherwise
-#      it hands the judge the body. judge-body.md.j2 renders each citation — the
+#      no body changed (no model call on a status-only change); otherwise
+#      it hands the judge each changed body. judge-body.md.j2 renders each citation — the
 #      quote and the whole message it came from — and asks whether the body
 #      CORRESPONDS to the cited words and holds THAT AND NOTHING ELSE.
 #
-# THE POST MOMENT AND UNCITED FRONTMATTER EDITS. A Post event at Stop carries
-# the citations of every cited change that landed on the path this session, and
-# each part of the change no citation rode on must be one body-changed.sh waives
-# (run on that part alone). A status-only edit leaves the body byte-identical, so
-# a task created with a citation and then moved to in_progress by a plain edit
-# still reaches Stop with its ask's citation. Each uncited BODY change is refused
-# at pre-tool by the gate — and at Stop too, should one reach the tree some other way.
+# THE RANGE AND UNCITED FRONTMATTER EDITS. The changeset is the squashed range, so a
+# task created with a cited commit and then moved to in_progress by an uncited
+# one still carries its ask's citation. Each uncited BODY change is refused at
+# pre-tool by the gate — and here too, should one reach a commit some other way.
 #
 # FAIL-OPEN RECONCILIATION (flagged, not hidden). The old judge failed OPEN on its
 # own machinery (no sr-agent, a timeout, an unparseable verdict). A judge: check

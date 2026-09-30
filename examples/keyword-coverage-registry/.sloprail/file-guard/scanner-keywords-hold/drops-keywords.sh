@@ -4,14 +4,13 @@
 # the user's words asking for it. Exit 1 — it does not (a new scanner, or one that
 # only adds keywords), so no citation is required. Deleting the scanner drops
 # every keyword it declared, so a delete of one that declared any applies too.
-# A create can drop keywords too: the settled file of a scanner declared this
-# session reaches Stop as a PostFileCreate, and it drops whatever the registry
-# owes that the file no longer declares.
+# A created scanner can drop keywords too: one declared this session and committed
+# as a new file drops whatever the registry owes that the file no longer declares.
 #
-# This is the STOP-TIME copy (the file-guard): it reads settled bytes, guarded by
-# `newContentKnown`. A file-guard never sees a Pre event, so the Pre-only
-# `resultKnown` field does not apply here; the gate of the same name keeps the
-# pre-write copy.
+# This is the file-guard entry: it reads the Changeset, each scanner as it stood at
+# the range's base against how it stands at head (a rename is the old scanner
+# deleted and the new one created). The gate of the same name keeps the pre-write
+# copy.
 #
 # THIS IS A `when` PREDICATE, NOT A CHECK: exit 0 does not permit anything — it
 # APPLIES the requirement. So every path this script cannot decide exits 0, the
@@ -26,37 +25,36 @@ lib_dir="$(cd "$(dirname "$0")" && pwd)"
 unset drops_keywords_lib_loaded
 . "$lib_dir/drops-keywords-lib.sh" || exit 2
 [ "${drops_keywords_lib_loaded:-}" = 1 ] || exit 2
-lib_init
-case "$kind" in
-  PostFileCreate | PostFileUpdate)
-    # Settled bytes the engine could not read (newContentKnown false):
-    # undecidable, apply.
-    [ "$(field 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')" = "true" ] || exit 0
-    # oldContent exists on PostFileUpdate only: a create has nothing before it.
-    case "$kind" in
-      PostFileCreate) old="" ;;
-      *) old="$(field '.event.oldContent // ""')" ;;
-    esac
-    new="$(field '.event.newContent // ""')"
-    ;;
-  PostFileDelete)
-    # Deleting a scanner drops EVERY keyword it declared — measured on a real
-    # run: refused by the coverage gate, a sub-agent ran `rm -rf scanners/<name>`
-    # instead of searching. Nothing remains, so the new side is empty.
-    old="$(field '.event.oldContent // ""')"
-    # A PostFileDelete carries the baseline's bytes in oldContent (oldContentKnown
-    # exists only on PreFileDelete, which the gate's copy handles).
-    dropped="$( { keywords_of "$old"; printf '%s\n' "$owed"; } | sed '/^$/d' | sort -u | paste -sd ',' -)"
-    # A scanner that declares no keyword, and owes none, drops none.
-    [ -n "$dropped" ] || exit 1
-    jq -n --arg dropped "$dropped" '{hint: (
-      "Deleting this scanner drops every keyword it declared (" + $dropped + "). A scanner declared this session stays owed a search covering all its keywords even once its file is gone (verify-scanner-coverage reads what was logged, not the file), so cover them in one gh search instead. " +
-      "Delete a scanner only if the user asked for it, citing their words.")}'
-    exit 0
-    ;;
-  *)
-    # A kind this script does not know: undecidable, so apply (fail-closed).
-    exit 0
-    ;;
-esac
-lib_check
+lib_setup
+
+payload="$(cat)"
+[ "$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)" = "Changeset" ] || exit 0
+
+# The changeset's scanners as the changes to judge, each {op, path, old, new}: a
+# rename is the old scanner deleted and the new one created.
+changes="$(printf '%s' "$payload" | jq -c '
+  [ .changeset.files[]
+    | if .status == "R" then
+        ({op: "delete", path: .oldPath, old: .oldContent, new: ""}, {op: "create", path: .path, old: "", new: .newContent})
+      elif .status == "D" then {op: "delete", path: .path, old: .oldContent, new: ""}
+      elif .status == "A" then {op: "create", path: .path, old: "", new: .newContent}
+      else {op: "update", path: .path, old: .oldContent, new: .newContent} end ]' 2>/dev/null)" || exit 0
+n="$(printf '%s' "$changes" | jq 'length' 2>/dev/null)" || exit 0
+case "$n" in '' | *[!0-9]*) exit 0 ;; esac
+
+i=0
+while [ "$i" -lt "$n" ]; do
+  f() { printf '%s' "$changes" | jq -r --argjson i "$i" ".[\$i].$1" 2>/dev/null; }
+  op="$(f op)" || exit 0
+  path="$(f path)" || exit 0
+  old="$(f old)" || exit 0
+  new="$(f new)" || exit 0
+  i=$((i + 1))
+  lib_owed
+  if [ "$op" = delete ]; then
+    lib_check_delete
+  else
+    lib_check
+  fi
+done
+exit 1

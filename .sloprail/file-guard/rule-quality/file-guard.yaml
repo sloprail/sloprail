@@ -11,8 +11,7 @@
 # enforced-only meta-rule selection — lives in prepare.sh, which emits the
 # meta-rules as additionalContext.meta_rules (an array of {name, body}); the
 # judge template holds the rubric frame and renders that array with a {% for %}
-# loop, against the file's own content (event.newContent, read flat off the
-# event). There is no RUBRIC.md and no splice marker: the frame is in the template
+# loop, against the changeset's files. There is no RUBRIC.md and no splice marker: the frame is in the template
 # where it is visible and versioned, and the rules are structured data.
 #
 # FAIL-OPEN RECONCILIATION (flagged, not hidden). The old script failed OPEN —
@@ -27,20 +26,16 @@
 # deliberate asymmetry), preserved exactly.
 #
 # match: every RULE.md in the repo, path-anchored on the file's own name. A
-# file-guard matches a FILE'S STATE (FileMatchScope: flat `path`, `markers`,
-# `context`), so the expression reads `path`, NOT `event.path`. No directory
+# file-guard matches a FILE'S STATE (flat `path`, `status`, `markers`, `oldMarkers`,
+# `context`, `trailers`), so the expression reads `path`. No directory
 # prefix, so a rule written anywhere is caught, not only the ones under a guard's
 # rules/ today — a prefix matcher would go stale, silently, the first time a
 # guardrail is added somewhere new.
 match: path endsWith "RULE.md"
 
-# This is the STOP after-check: a file-guard acts only on the settled file. The
-# refusal BEFORE the write lands is the sibling gate of the same name
-# (.sloprail/gate/rule-quality/), which judges the same file with the same rubric on
-# PreFileWrite. The file-guard is the backstop for a write no Pre event covers
-# (a command/sed/git edit whose result the engine could not derive, which the gate
-# refuses to judge unseen): event.newContent here carries the settled bytes off
-# the tree diff, which the template reads the same way.
+# A file-guard judges committed changesets: every RULE.md the range touched goes to
+# one judge, which loops over `changeset.files`. The refusal BEFORE the write lands
+# is the sibling gate of the same name (.sloprail/gate/rule-quality/).
 
 checks:
   # prepare loads the meta-rules; the judge renders them against the file and asks

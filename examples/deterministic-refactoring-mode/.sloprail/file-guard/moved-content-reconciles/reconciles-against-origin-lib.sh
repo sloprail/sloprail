@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Shared by the moved-content-reconciles gate and its file-guard: one library, two thin entries.
-# Each entry reads the event kind and its own bytes; nothing that follows branches
-# on it.
+# The gate entry reads the pending write (lib_init, lib_check); the file-guard entry
+# reads the Changeset and calls lib_reconcile once per file, with `markers` (the
+# file's markers as JSON) and `new` (its bytes) set. lib_reconcile reads no event.
 
 lib_init() {
 set -uo pipefail
@@ -9,12 +10,16 @@ set -uo pipefail
 input="$(cat)"
 }
 
+# lib_check is the gate's: the pending write's markers, off its event.
 lib_check() {
 markers="$(printf '%s' "$input" | jq -c '.event.newMarkers // []')"
+lib_reconcile
+}
 
+lib_reconcile() {
 fqn="$(printf '%s' "$markers" | jq -r '[.[] | select(.kind == "moved-from")][0].fqn // ""')"
 if [ -z "$fqn" ]; then
-  exit 0
+  return 0
 fi
 
 # <path>@<sha>:<start>-<end>
@@ -42,7 +47,7 @@ EOF
   exit 1
 fi
 
-exit 0
+return 0
 }
 
 reconciles_against_origin_lib_loaded=1

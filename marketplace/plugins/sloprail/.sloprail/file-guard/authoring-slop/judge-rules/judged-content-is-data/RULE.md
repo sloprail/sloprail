@@ -22,7 +22,7 @@ or the script that owns the tag). The clause naming the tag belongs with the tag
 about `.sh` scripts that invoke a model. A well-factored judge keeps its prompt in
 a `.md.j2` template, not the script — so the interpolation and the place the
 clause belongs are BOTH in the template, which the grep barely inspects. The judge
-reads the template and can see whether `{{ event.newContent }}` (or another
+reads the template and can see whether `{{ f.newContent }}` (or another
 agent-shaped value) is dropped into the prompt inside a delimiter with the clause,
 or bare.
 
@@ -32,7 +32,7 @@ content is belt-and-braces, not redundant — the author-owned delimiter around 
 specific interpolated field is still what this rule is about.
 
 **Flag** a template or prompt-building script that interpolates agent-produced
-content (`event.newContent`, `event.oldContent`, transcript text) with no
+content (`event.newContent`, `changeset.files[].newContent`, `event.oldContent`, transcript text) with no
 enclosing delimiter, or with a delimiter but no instruction that its contents are
 data. Do NOT flag a prompt that carries only the rule/rubric text and the framed,
 labelled content.

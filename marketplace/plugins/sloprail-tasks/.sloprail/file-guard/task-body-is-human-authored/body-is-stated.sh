@@ -6,8 +6,8 @@
 # script's business — the guard's `require` declares it, conditioned on
 # body-changed.sh — and whether the words ground THIS body is stage 2's judge.
 #
-# THIS IS THE STOP (file-guard) COPY: it reads the settled bytes. The PreFileWrite gate
-# of the same name carries the pending-bytes copy.
+# THIS IS THE FILE-GUARD ENTRY: it reads each task's committed bytes from the Changeset. The
+# PreFileWrite gate of the same name carries the pending-bytes entry.
 #
 # THE REFUSAL CONTRACT (internal/dispatch/exec.go): exit 0 permits; non-zero
 # refuses with `{"reason": "..."}` on stdout. Fails CLOSED on every path it cannot
@@ -16,24 +16,22 @@ lib_dir="$(cd "$(dirname "$0")" && pwd)"
 unset body_is_stated_lib_loaded
 . "$lib_dir/body-is-stated-lib.sh" || exit 2
 [ "${body_is_stated_lib_loaded:-}" = 1 ] || exit 2
-lib_init
-# WHICH BYTES. The settled file on disk.
-case "$kind" in
-  PostFileCreate | PostFileUpdate)
-    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
-    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
-    # events.md): false when it could not read the settled file — a link to a
-    # FIFO or a device, or past the read cap. Unseen: refuse, not pass.
-    [ "$(field '.event.newContentKnown // false')" = "true" ] ||
-      refuse "task-body-is-human-authored: $path could not be read (not a regular file, or too large), so its body could not be judged"
-    abs="${SR_WORKSPACE:-.}/$path"
-    # Written and removed within the cycle: nothing landed, nothing to judge.
-    [ -f "$abs" ] || exit 0
-    content="$(cat "$abs")" || refuse "task-body-is-human-authored: could not read $path to judge its body"
-    ;;
-  *)
-    # A delete is not this guard's business (deletions default to skip).
-    exit 0
-    ;;
-esac
-lib_check
+lib_setup
+
+payload="$(cat)"
+field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
+[ "$(field '.event.kind // ""')" = "Changeset" ] ||
+  refuse "task-body-is-human-authored: expected a Changeset event, so the tasks could not be judged"
+n="$(field '.changeset.files | length')" || true
+case "$n" in '' | *[!0-9]*) refuse "task-body-is-human-authored: the changeset's files could not be read, so nothing could be judged" ;; esac
+
+i=0
+while [ "$i" -lt "$n" ]; do
+  path="$(printf '%s' "$payload" | jq -r --argjson i "$i" '.changeset.files[$i].path')" \
+    || refuse "task-body-is-human-authored: could not read file $i of the changeset"
+  content="$(printf '%s' "$payload" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" \
+    || refuse "task-body-is-human-authored: could not read $path from the changeset"
+  i=$((i + 1))
+  lib_check
+done
+exit 0

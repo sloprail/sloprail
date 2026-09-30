@@ -39,16 +39,16 @@
 #
 # match: the task file, TWO directory levels deep — the same regex every
 # guard in this plugin uses. (The gates/ FILES themselves are
-# task-gate-is-grounded's match, not this one's — this guard reads them off
-# disk from its own script rather than firing per gate file, because the
-# decision it makes is about the TASK's transition, one verdict per task
-# write, not one per gate file.)
+# task-gate-is-grounded's match, not this one's — this guard reads them from the
+# committed tree in its own script rather than selecting per gate file, because
+# the decision it makes is about the TASK's transition, not one per gate file.)
 match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 
 # The PREVENTION half — the transition into to_do/in_progress is the moment gates
 # are about — is the PreFileWrite gate of the same name, beside this guard under
-# gate/. This file-guard checks the settled file at Stop, so a write the gate could
-# not derive is judged on its settled bytes.
+# gate/. This file-guard checks the committed changeset: each task's status at the
+# range's base against its status at head, with its gates read from the committed
+# tree.
 
 checks:
   # Deterministic, fail-closed on the logic and on an unrunnable gate; fails

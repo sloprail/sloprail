@@ -1,73 +1,70 @@
 #!/usr/bin/env bash
-# prepare for task-gate-is-grounded's judge: hand it the gate file's own text,
-# its kind, and the sibling TASK.md's FULL content (frontmatter and body
-# together) — so judge-gate.md.j2 never has to read the tree itself.
+# prepare for task-gate-is-grounded's judge: for every gate file the changeset
+# touches, hand the judge the gate's own text, its kind, and the sibling TASK.md's
+# FULL content (frontmatter and body together), so judge-gate.md.j2 never has to
+# read the tree itself.
 #
-# NO CITATION EXTRACTION OR GROUNDING HAPPENS HERE. A gate carries no
-# citations of its own — only the write that sets a TASK.md's body does, and
-# that grounding is task-body-is-human-authored's subject, already validated
-# separately. This
-# guard's only question is whether the gate is DERIVED FROM the task: for
-# that, the judge is handed the task's content as it stands (whatever it
-# currently says) and decides traceability directly against it, the same way
-# a reviewer reads the ticket before reading the PR — no second citation
-# pipeline duplicating what already validated the ticket itself.
+# NO CITATION EXTRACTION OR GROUNDING HAPPENS HERE. A gate carries no citations of
+# its own — only the commit that sets a TASK.md's body does, and that grounding is
+# task-body-is-human-authored's subject, already validated separately. This
+# guard's only question is whether the gate is DERIVED FROM the task: for that, the
+# judge is handed the task's content as it stands at head (whatever it currently
+# says) and decides traceability directly against it, the same way a reviewer
+# reads the ticket before reading the PR.
 #
-# Output nests under `additionalContext`. Emits .gate_path, .gate_kind
-# (script|prompt), .gate_content (the gate file's own bytes), and
-# .task_content (the whole TASK.md, frontmatter and body).
+# The gates come from the changeset (committed bytes), the tasks from SR_TREE (the
+# committed head), so an uncommitted task edit is never what a gate is judged
+# against.
 #
-# THE PREPARE CONTRACT: exit 0 with additionalContext proceeds to the judge;
-# exit 0 with `{"skip": true}` ABSTAINS — no model call, no verdict; a non-zero
-# exit fails the check closed.
+# Output nests under `additionalContext`: .gates, one {path, kind (script|prompt),
+# content (the gate file's bytes), task_content (the whole TASK.md)} per gate.
+#
+# THE PREPARE CONTRACT: exit 0 with additionalContext proceeds to the judge; exit 0
+# with `{"skip": true}` ABSTAINS — no model call, no verdict; a non-zero exit fails
+# the check closed.
 set -uo pipefail
 
 skip() { printf '{"skip": true}\n'; exit 0; }
 
+fail() {
+  echo "task-gate-is-grounded: $1" >&2
+  exit 1
+}
+
 event="$(cat)"
+[ "$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)" = "Changeset" ] ||
+  fail "expected a Changeset event, so the gates could not be judged"
+[ -n "${SR_TREE:-}" ] || fail "SR_TREE is not set, so the committed tasks could not be read"
 
-path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
-root="${SR_WORKSPACE:-.}"
+n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" || fail "the changeset's files could not be read"
+case "$n" in '' | *[!0-9]*) fail "the changeset's files could not be read" ;; esac
 
-# WHERE THE GATE'S OWN BYTES COME FROM. This is the file-guard's copy: the settled
-# file at Stop, off the disk.
-kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
-[ -n "$kind" ] || { echo "task-gate-is-grounded: could not read the event's kind, so it could not be checked" >&2; exit 2; }
-case "$kind" in
-  PostFileCreate|PostFileUpdate)
-    # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
-    # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
-    # events.md): false when it could not read the settled file — a link to a
-    # FIFO or a device, or past the read cap. The gate is unseen: the prepare
-    # fails, so the check fails closed (never a skip).
-    if [ "$(printf '%s' "$event" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
-      echo "task-gate-is-grounded: $path could not be read (not a regular file, or too large), so its gate could not be judged" >&2
-      exit 1
-    fi
-    abs="$root/$path"
-    [ -f "$abs" ] || skip
-    gate_content="$(cat "$abs")" || { echo "task-gate-is-grounded: could not read $path, so its gate could not be judged" >&2; exit 1; }
-    ;;
-  *)
-    skip
-    ;;
-esac
+gates='[]'
+i=0
+while [ "$i" -lt "$n" ]; do
+  path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" || fail "could not read file $i of the changeset"
+  gate_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" || fail "could not read $path from the changeset"
+  i=$((i + 1))
 
-case "$path" in
-  *.sh) gate_kind="script" ;;
-  *.md) gate_kind="prompt" ;;
-  *)    gate_kind="unknown" ;;
-esac
+  case "$path" in
+    *.sh) gate_kind="script" ;;
+    *.md) gate_kind="prompt" ;;
+    *)    gate_kind="unknown" ;;
+  esac
 
-# The sibling TASK.md is two levels up from gates/<file>.
-gates_dir="$(dirname "$path")"
-task_dir="$(dirname "$gates_dir")"
-task_md="$root/$task_dir/TASK.md"
-task_content="$(cat "$task_md" 2>/dev/null || true)"
+  # The sibling TASK.md is two levels up from gates/<file>. A task that is not
+  # there (never committed, or removed) leaves the judge an empty task to judge
+  # the gate against, which it fails as untraceable.
+  task_dir="$(dirname "$(dirname "$path")")"
+  task_content=""
+  if [ -f "$SR_TREE/$task_dir/TASK.md" ]; then
+    task_content="$(cat "$SR_TREE/$task_dir/TASK.md")" || fail "could not read $task_dir/TASK.md"
+  fi
 
-jq -n \
-  --arg path "$path" \
-  --arg kind "$gate_kind" \
-  --arg gate "$gate_content" \
-  --arg task "$task_content" \
-  '{additionalContext: {gate_path: $path, gate_kind: $kind, gate_content: $gate, task_content: $task}}'
+  gates="$(printf '%s' "$gates" | jq -c --arg path "$path" --arg kind "$gate_kind" --arg gate "$gate_content" --arg task "$task_content" \
+    '. + [{path: $path, kind: $kind, content: $gate, task_content: $task}]')" || fail "could not assemble the input for $path"
+done
+
+[ "$gates" = "[]" ] && skip
+
+jq -n --argjson gates "$gates" '{additionalContext: {gates: $gates}}'

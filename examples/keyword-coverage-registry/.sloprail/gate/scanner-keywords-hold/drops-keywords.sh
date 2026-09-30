@@ -43,13 +43,8 @@ case "$kind" in
     if [ "$(field 'if .event | has("oldContentKnown") then .event.oldContentKnown else true end')" != "true" ] && [ -z "$owed" ]; then
       exit 0
     fi
-    dropped="$( { keywords_of "$old"; printf '%s\n' "$owed"; } | sed '/^$/d' | sort -u | paste -sd ',' -)"
-    # A scanner that declares no keyword, and owes none, drops none.
-    [ -n "$dropped" ] || exit 1
-    jq -n --arg dropped "$dropped" '{hint: (
-      "Deleting this scanner drops every keyword it declared (" + $dropped + "). A scanner declared this session stays owed a search covering all its keywords even once its file is gone (verify-scanner-coverage reads what was logged, not the file), so cover them in one gh search instead. " +
-      "Delete a scanner only if the user asked for it, citing their words.")}'
-    exit 0
+    lib_check_delete
+    exit $?
     ;;
   *)
     # A kind this script does not know: undecidable, so apply (fail-closed).

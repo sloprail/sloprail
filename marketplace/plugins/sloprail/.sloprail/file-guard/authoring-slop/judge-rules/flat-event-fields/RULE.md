@@ -31,6 +31,14 @@ value, silently):
 | `PostFileUpdate` | `path`, `oldContent`, `newContent`, `newContentKnown`, `oldMarkers`, `newMarkers` |
 | `PostFileDelete` | `path`, `oldContent`, `oldMarkers` |
 
+A **file-guard's** check does not receive a file event at all. Its event is
+`{"kind": "Changeset"}` and the files are under `.changeset.files[]`, each
+`{path, status, oldPath, oldContent, newContent, oldMarkers, newMarkers, diff}`
+(committed content, always known), with `.changeset.others`, `.changeset.commits`
+and `.changeset.citations` beside it. A file-guard script that reads
+`.event.path` or `.event.newContent`, or branches on a `Post*` kind, is reading
+what is never there.
+
 So there is no `oldContent` on a create, no `newContent`/`newMarkers` on a
 delete, and `resultKnown` on the two Pre write kinds only. A script that reads
 `.event.oldContent` on a create, or `.event.newMarkers` on a delete, is reading a
@@ -40,5 +48,6 @@ field that is never there.
 GATE's command event, not a file-guard's file event; a file-guard script reading
 them off `.event` gets nothing. Match the field to the nature.
 
-**Flag** a read of `.event.fields.*` (the old envelope), or a read of a field the
-handled kind does not carry per the table above.
+**Flag** a read of `.event.fields.*` (the old envelope), a read of a field the
+handled kind does not carry per the table above, or a file-guard script reading a
+file event's fields instead of `.changeset.files[]`.

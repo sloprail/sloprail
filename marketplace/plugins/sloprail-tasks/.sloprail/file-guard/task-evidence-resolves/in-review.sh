@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # `when` for the tool_result citation that proves a task's work: is the task in
-# review? Exit 0 — it is, so the write must cite tool output. Exit 1 — it is not,
+# review? Exit 0 — one is, so the range's commits must cite tool output. Exit 1 — it is not,
 # so no citation is required.
 #
 # THIS IS A `when` PREDICATE, NOT A CHECK: exit 0 does not permit anything — it
@@ -8,15 +8,17 @@
 # fail-closed direction; only exit 1 waives the citation, and only on a decided
 # "not in review".
 #
-#   in-review.sh             the task's status after the write is in_review
+#   in-review.sh             some task's status at head is in_review
 #                            (task-review: an in_review task always carries proof)
-#   in-review.sh --entering  the write MOVES the task into in_review — it was not
+#   in-review.sh --entering  the range MOVES some task into in_review — it was not
 #                            there before (task-evidence-resolves: the transition
 #                            is the claim). A create has no prior status, so
 #                            creating a task directly in in_review enters it.
 #
-# This copy serves the file-guard at Stop and task-review (settled bytes,
-# `newContentKnown`); the PreFileWrite gate of the same name carries the pending copy.
+# This copy serves the file-guards (task-evidence-resolves, task-review) and reads
+# a Changeset: each file's newContent is its status at head, its oldContent its
+# status at the range's base. The PreFileWrite gate of the same name carries the
+# pending copy.
 #
 # The status is read with the product's own `sr-file validate --emit` against the
 # plugin's schema, never a second opinion about where frontmatter ends. A task
@@ -34,43 +36,39 @@ status_of() {
   printf '%s' "$1" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null | jq -r '.status // empty' 2>/dev/null
 }
 
-kind="$(field '.event.kind // ""')"
-case "$kind" in
-  PostFileCreate | PostFileUpdate)
-    # newContentKnown (declared on the Post kinds, internal/filemod/module.go)
-    # false: the engine could not read the settled file — a link to a FIFO or a
-    # device, or past the read cap. Undecidable: apply (exit 0).
-    [ "$(field '.event.newContentKnown // false')" = "true" ] || exit 0
-    # The settled content, off the event rather than the disk: at Stop the
-    # engine also asks about each PART of a change no citation rode on, with
-    # the event narrowed to that part, and the disk holds only the last state.
-    content="$(field '.event.newContent // ""')"
-    ;;
-  *)
-    # A delete claims nothing.
-    exit 1
-    ;;
-esac
+[ "$(field '.event.kind // ""')" = "Changeset" ] || exit 0
+n="$(field '.changeset.files | length')" || exit 0
+case "$n" in '' | *[!0-9]*) exit 0 ;; esac
 
-[ "$(status_of "$content")" = "in_review" ] || exit 1
+i=0
+while [ "$i" -lt "$n" ]; do
+  idx="$i"
+  i=$((i + 1))
+  f() { field ".changeset.files[$idx]$1"; }
+  status="$(f '.status')" || exit 0
+  path="$(f '.path')" || exit 0
 
-old_status=""
-case "$kind" in
-  *Update) old_status="$(status_of "$(field '.event.oldContent // ""')")" ;;
-esac
-if [ "${1:-}" = "--entering" ] && [ "$old_status" = "in_review" ]; then
-  exit 1
-fi
+  # A delete claims nothing.
+  [ "$status" = "D" ] && continue
 
-# It applies. The hint the refusal carries: what proof is, and the exact command —
-# an edit of the status, or for a task created in review, a write.
-path="$(field '.event.path // ""')"
-case "$kind" in
-  *Create) how="  sr-file write $path --cite:tool_result '<exact line of the output>' <<'TASK' ... TASK" ;;
-  *) how="  sr-file edit $path --old-string 'status: ${old_status:-in_progress}' --new-string 'status: in_review' --cite:tool_result '<exact line of the output>'" ;;
-esac
-jq -n --arg how "$how" '{hint: (
-  "An in_review task claims the work is finished, so it must cite the tool output that proves it. " +
-  "Run what proves the work (the tests, the build), then make the change citing a line of that output:\n" +
-  $how + "\nYour own summary, the user'\''s words, or an answer to a question are not tool output.")}'
-exit 0
+  content="$(f '.newContent // ""')" || exit 0
+  [ "$(status_of "$content")" = "in_review" ] || continue
+
+  old_status=""
+  if [ "$status" != "A" ]; then
+    old_status="$(status_of "$(f '.oldContent // ""')")"
+  fi
+  if [ "${1:-}" = "--entering" ] && [ "$old_status" = "in_review" ]; then
+    continue
+  fi
+
+  # It applies. The hint the refusal carries: what proof is, and the exact command —
+  # the commit that moves the task to in_review carries the output as a trailer.
+  how="  git commit -m 'Move the task to in_review' -m 'Sloprail-Cites-Tool: <exact line of the output>'   ($path)"
+  jq -n --arg how "$how" '{hint: (
+    "An in_review task claims the work is finished, so its commit must cite the tool output that proves it. " +
+    "Run what proves the work (the tests, the build), then commit the change citing a line of that output:\n" +
+    $how + "\nYour own summary, the user'\''s words, or an answer to a question are not tool output.")}'
+  exit 0
+done
+exit 1

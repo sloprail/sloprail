@@ -1,44 +1,23 @@
 #!/bin/sh
-# Permits a .sloprail/ YAML only where the engine reads one; refuses anything
-# else with the place it belongs. Reads only the event's path, never its
-# content, so it decides the same whether or not the new content is known.
-set -u
+# The file-guard entry of misplaced-declaration: every .sloprail/ YAML of the
+# changeset must sit where the engine reads one, or the refusal says where it
+# belongs. A deleted file is not one of them: `deletions:` is left at its default,
+# so removing a declaration is never this rule's business. Reads only paths.
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
+unset check_path_lib_loaded
+. "$lib_dir/check-path-lib.sh" || exit 2
+[ "${check_path_lib_loaded:-}" = 1 ] || exit 2
+lib_setup
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo '{"reason":"sloprail/file-guard/misplaced-declaration needs jq, which is not on PATH. Install jq, or disable this rule in .sloprail/config.yaml: disabled: [sloprail/file-guard/misplaced-declaration]"}'
+paths="$(jq -r '.changeset.files[].path')" || {
+  echo '{"reason":"sloprail/file-guard/misplaced-declaration could not read the changeset on stdin, so it could not check the declarations in it."}'
   exit 1
-fi
+}
 
-path="$(jq -r '.event.path // ""')"
-
-case "$path" in
-.sloprail/config.yaml | .sloprail/config.yml) exit 0 ;;
-.sloprail/file-guard/structure.yaml | .sloprail/file-guard/structure.yml) exit 0 ;;
-.sloprail/file-guard/*/file-guard.yaml | .sloprail/gate/*/gate.yaml | .sloprail/context/*/context.yaml) exit 0 ;;
-esac
-
-rest="${path#.sloprail/}"
-case "$path" in
-*/structure.yaml | */structure.yml)
-  want=".sloprail/file-guard/structure.yaml" ;;
-*/file-guard.yaml)
-  want=".sloprail/file-guard/<rule-name>/file-guard.yaml" ;;
-*/gate.yaml)
-  want=".sloprail/gate/<rule-name>/gate.yaml" ;;
-*/context.yaml)
-  want=".sloprail/context/<rule-name>/context.yaml" ;;
-*)
-  case "$rest" in
-  */*)
-    # Any other YAML inside a folder (a data file a check reads, say) is
-    # the author's business, not a misplaced declaration.
-    exit 0 ;;
-  esac
-  # A YAML straight under .sloprail/ that is not config.yaml: a declaration
-  # with no nature folder.
-  want="a rule's own folder: .sloprail/<file-guard|gate|context>/<rule-name>/<file-guard|gate|context>.yaml, or .sloprail/file-guard/structure.yaml for where files may land" ;;
-esac
-
-jq -n --arg path "$path" --arg want "$want" \
-  '{reason: ("The engine never reads " + $path + ", so a rule written there would silently not be in force. It belongs at " + $want + " (see the sloprail:authoring-guardrails skill).")}'
-exit 1
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  lib_check
+done <<SR_EOF
+$paths
+SR_EOF
+exit 0

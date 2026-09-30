@@ -3,17 +3,20 @@
 # published_urls:. An agent must not be able to publish on its own say-so —
 # see check-publish.sh's header for the full mechanism.
 #
-# The approval is a citation carried by the command, never text in the unit:
-#   sr-file edit <UNIT.md> --old-string 'status: drafting' --new-string 'status: published' --cite:user 'ship it'
+# The approval is a citation carried by the commit, never text in the unit:
+#   git commit -m 'Publish the launch post' -m 'Sloprail-Cites-User: ship it'
 # The session resolves the quote against its own record, and `require` below
 # demands one in the `user` pool — an agent's own turn or a tool result is not
 # the user's approval. Only `when` enters-published.sh says the write moves the
 # unit INTO published: a draft edit, or an edit to an already-published unit,
 # stays uncited.
 #
-# THE STOP AFTER-CHECK. The gate of the same name (../../gate/
-# unit-publish-approved) refuses the pending publish before it lands; this
-# re-judges the settled UNIT.md — the same require and check — as the backstop.
+# THE COMMITTED CHANGESET. The gate of the same name (../../gate/
+# unit-publish-approved) refuses the pending publish before it lands; this judges
+# every UNIT.md in the commits since the rule last passed — the same require and
+# check — as the backstop. The approval comes from the commits: a
+# `Sloprail-Cites-User: <the user's words>` trailer, resolved against the
+# transcript like sr-file --cite:user.
 #
 # match: ONLY the unit's own frontmatter file, UNIT.md — status: published is a
 # UNIT.md field (see unit.cue), never 02_draft.md's. unit-satisfies-rules

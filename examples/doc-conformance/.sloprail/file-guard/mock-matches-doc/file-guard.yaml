@@ -3,6 +3,8 @@
 # a10n-cli convention of citing a doc section with `a10n:docs <URL>` in a
 # comment, spelled as an sr: marker so sloprail's own tooling can bind a rule
 # to it. The marker's fqn is a REMOTE URL; the judge fetches it itself.
+# A file-guard judges a committed changeset: `markers` are the markers the file
+# carries at head, so a file that has one is in `changeset.files`.
 match: any(markers, .kind == "docs")
 checks:
   - judge: ./code-conforms-to-linked-doc.md.j2

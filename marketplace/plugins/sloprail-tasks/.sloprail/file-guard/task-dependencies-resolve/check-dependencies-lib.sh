@@ -1,48 +1,54 @@
 #!/usr/bin/env bash
 # Shared by the task-dependencies-resolve gate and its file-guard: one library, two thin entries.
-# Each entry reads the event kind and its own bytes; nothing that follows branches
-# on it.
+# The gate entry reads the pending write (lib_init, then a Pre kind); the file-guard
+# entry reads the Changeset and calls lib_check once per file, with `path`,
+# `new_content` and `root` (the committed head) set. lib_check reads no event.
 
-lib_init() {
-set -uo pipefail
+lib_setup() {
+  set -uo pipefail
 
-refuse() {
-  jq -n --arg reason "$1" '{reason: $reason}'
-  exit 1
+  refuse() {
+    jq -n --arg reason "$1" '{reason: $reason}'
+    exit 1
+  }
+
+  # $SR_GUARDRAIL_DIR is this guard's own folder, set by the engine
+  # (internal/dispatch/exec.go) — never guessed from $PWD.
+  gdir="${SR_GUARDRAIL_DIR:-.}"
+
+  # The schema is the PLUGIN's, read from the plugin's own tree — never copied
+  # into a consumer's .sloprail/schemas/ (see task-evidence-resolves/check-task.sh
+  # for the same pattern). $gdir is this guard's own folder, two levels under the
+  # plugin's .sloprail/, so ../../schemas/task.cue is the plugin's schemas/.
+  schema="$gdir/../../schemas/task.cue"
+  if [ ! -f "$schema" ]; then
+    refuse "task-dependencies-resolve: schema not found at $schema — the rule cannot check anything without it."
+  fi
 }
 
-event="$(cat)"
+# lib_init is the gate's: the pending write's own bytes.
+lib_init() {
+  lib_setup
 
-path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
-if [ -z "$path" ]; then
-  refuse "task-dependencies-resolve: the event named no path, so there is nothing to check"
-fi
+  event="$(cat)"
 
-# $SR_WORKSPACE is the project root the engine names; $SR_GUARDRAIL_DIR is this
-# guard's own folder. Both are set by the engine (internal/dispatch/exec.go) —
-# never guessed from $PWD.
-root="${SR_WORKSPACE:-.}"
-gdir="${SR_GUARDRAIL_DIR:-.}"
+  path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
+  if [ -z "$path" ]; then
+    refuse "task-dependencies-resolve: the event named no path, so there is nothing to check"
+  fi
 
-# The schema is the PLUGIN's, read from the plugin's own tree — never copied
-# into a consumer's .sloprail/schemas/ (see task-evidence-resolves/check-task.sh
-# for the same pattern). $gdir is this guard's own folder, two levels under the
-# plugin's .sloprail/, so ../../schemas/task.cue is the plugin's schemas/.
-schema="$gdir/../../schemas/task.cue"
-if [ ! -f "$schema" ]; then
-  refuse "task-dependencies-resolve: schema not found at $schema — the rule cannot check anything without it."
-fi
+  # The tree the tasks are read from: the project for the gate.
+  root="${SR_WORKSPACE:-.}"
+
+  kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+  [ -n "$kind" ] || { echo "task-dependencies-resolve: could not read the event's kind, so it could not be checked" >&2; exit 2; }
+}
+
+lib_check() {
 
 # THIS task's own id, derived from its path:
 # memories/tasks/<group>/<name>/TASK.md -> <group>/<name>.
 self_id="$(printf '%s' "$path" | sed -E 's#^memories/tasks/([^/]+)/([^/]+)/TASK\.md$#\1/\2#')"
-
-kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
-[ -n "$kind" ] || { echo "task-dependencies-resolve: could not read the event's kind, so it could not be checked" >&2; exit 2; }
-[ -n "$kind" ] || refuse "task-dependencies-resolve: the event named no kind, so the task could not be checked"
-}
-
-lib_check() {
 
 # A malformed document is task-evidence-resolves's refusal to make.
 # A document sr-file cannot validate (malformed frontmatter, an artifact that
@@ -50,16 +56,16 @@ lib_check() {
 # reason — a DELIBERATE hand-off, not a fail-open: this rule has no dependencies to
 # resolve in a document nobody can read, and refusing here would mask the schema
 # reason the agent needs.
-new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)" || exit 0
+new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)" || return 0
 new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty' 2>/dev/null)"
 
 case "$new_status" in
   to_do|in_progress|in_review) : ;;
-  *) exit 0 ;;
+  *) return 0 ;;
 esac
 
 deps="$(printf '%s' "$new_doc" | jq -r '(.depends_on // [])[]' 2>/dev/null)"
-[ -n "$deps" ] || exit 0   # no dependencies declared.
+[ -n "$deps" ] || return 0   # no dependencies declared.
 
 problems=""
 
@@ -82,7 +88,6 @@ EOF
 # this pending write's own edges (self_id -> deps) so a cycle this very write
 # would CREATE is caught before it lands, not just a pre-existing one.
 graph_file="$(mktemp)"
-trap 'rm -f "$graph_file"' EXIT
 
 if [ -d "$root/memories/tasks" ]; then
   while IFS= read -r -d '' f; do
@@ -138,6 +143,7 @@ cycle_report="$(awk -F'\t' -v start="$self_id" '
     }
   }
 ' "$graph_file")"
+rm -f "$graph_file"
 
 if [ -n "$cycle_report" ]; then
   problems="${problems}  depends_on forms a CYCLE: $cycle_report
@@ -157,7 +163,7 @@ $problems
 $tail"
 fi
 
-exit 0
+return 0
 }
 
 check_dependencies_lib_loaded=1

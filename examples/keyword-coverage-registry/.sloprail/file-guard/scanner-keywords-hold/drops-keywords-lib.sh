@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Shared by the scanner-keywords-hold gate and its file-guard: one library, two thin entries.
-# Each entry reads the event kind and its own bytes; nothing that follows branches
-# on it.
+# The gate entry reads the pending write (lib_init, then a Pre kind); the file-guard
+# entry reads the Changeset and, per scanner, sets `path`, `old` and `new`, calls
+# lib_owed, and then lib_check or lib_check_delete. Neither reads an event.
+#
+# lib_check and lib_check_delete return 1 when the change drops nothing (the citation
+# is waived), and exit 0 with a hint when it drops a keyword.
 
-lib_init() {
+lib_setup() {
 set -uo pipefail
 
 # Undecidable without jq: apply the requirement (exit 0, fail-closed).
@@ -23,25 +27,35 @@ unset scanner_lib_loaded
 . "$lib" 2>/dev/null || exit 0
 [ "${scanner_lib_loaded:-}" = 1 ] || exit 0
 
-payload="$(cat)"
-field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
-
 # keywords_of CONTENT — the declared keywords, one per line, as a set.
 keywords_of() {
   scanner_keywords "$1" | sort -u
 }
+}
 
-# What a change drops is measured against everything the scanner is known to
-# declare: the file before the change AND what the registry holds owed for it.
-# The file alone is not enough — a write the engine cannot parse (`python3 -c
+# lib_owed sets `owed` from the registry, for the scanner at `path`. What a change
+# drops is measured against everything the scanner is known to declare: the file
+# before the change AND what the registry holds owed for it. The file alone is not
+# enough — a write the engine cannot parse (`python3 -c
 # "open(…).write('active: true\n')"`) empties the file behind every rule's back,
-# after which a delete, or a PostFileCreate of a scanner declared this session,
-# compared only against the file dropped nothing, needed no citation, and the
-# scanner was retired or narrowed with the user never asked.
-path="$(field '.event.path // ""')"
+# after which a delete, or a create of a scanner declared this session, compared
+# only against the file dropped nothing, needed no citation, and the scanner was
+# retired or narrowed with the user never asked.
+lib_owed() {
 [ -n "$path" ] || exit 0
 owed_json="$(registry_keywords "$(scanner_dir "$path")" 2>/dev/null)" || exit 0
 owed="$(printf '%s' "$owed_json" | jq -r '.[]?' 2>/dev/null)" || exit 0
+}
+
+# lib_init is the gate's: the pending write's own bytes.
+lib_init() {
+lib_setup
+
+payload="$(cat)"
+field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
+
+path="$(field '.event.path // ""')"
+lib_owed
 
 kind="$(field '.event.kind // ""')"
 }
@@ -49,12 +63,25 @@ kind="$(field '.event.kind // ""')"
 lib_check() {
 
 dropped="$(comm -23 <( { keywords_of "$old"; printf '%s\n' "$owed"; } | sed '/^$/d' | sort -u) <(keywords_of "$new") | paste -sd ',' -)"
-[ -n "$dropped" ] || exit 1
+[ -n "$dropped" ] || return 1
 
 # It applies. The hint the refusal carries: meet the declaration, don't weaken it.
 jq -n --arg dropped "$dropped" '{hint: (
   "This change drops the declared keyword(s) " + $dropped + ". A scanner'\''s keywords are what the search must cover, so cover them all in one gh search rather than weakening the scanner to fit a search already run — that one search counts even if GitHub returns nothing for it; narrower searches besides it can find the results. " +
-  "Drop a keyword only if the user asked for it, citing their words.")}'
+  "Drop a keyword only if the user asked for it, citing their words (in a commit, a Sloprail-Cites-User: trailer).")}'
+exit 0
+}
+
+# lib_check_delete: deleting a scanner drops EVERY keyword it declared — measured on a
+# real run: refused by the coverage gate, a sub-agent ran `rm -rf scanners/<name>`
+# instead of searching. Nothing remains, so the new side is empty.
+lib_check_delete() {
+dropped="$( { keywords_of "$old"; printf '%s\n' "$owed"; } | sed '/^$/d' | sort -u | paste -sd ',' -)"
+# A scanner that declares no keyword, and owes none, drops none.
+[ -n "$dropped" ] || return 1
+jq -n --arg dropped "$dropped" '{hint: (
+  "Deleting this scanner drops every keyword it declared (" + $dropped + "). A scanner declared this session stays owed a search covering all its keywords even once its file is gone (verify-scanner-coverage reads what was logged, not the file), so cover them in one gh search instead. " +
+  "Delete a scanner only if the user asked for it, citing their words (in a commit, a Sloprail-Cites-User: trailer).")}'
 exit 0
 }
 

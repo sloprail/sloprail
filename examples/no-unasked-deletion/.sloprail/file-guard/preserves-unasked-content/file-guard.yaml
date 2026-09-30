@@ -2,15 +2,17 @@
 # word is UNASKED: the removal's relationship to the user's own words.
 #
 # The AFTER-CHECK half. The gate of the same name computes the diff at Pre time,
-# before the loss, and refuses there — a Post check is too late, and git-restore is
-# gone on an uncommitted file. This file-guard judges the settled file at Stop, so
-# a removal the gate could not see (a script rewriting the file) is refused too.
+# before the loss, and refuses there — a check after the commit is too late to keep
+# the bytes. This file-guard judges the committed changeset: every file the range
+# touched, its content at the range's base against head, as one squashed diff — so a
+# removal the gate could not see (a script rewriting the file) is refused too, and a
+# removal that a later commit put back still shows.
 #
 # "Asked" is deterministic: a removal must CITE the user's own words. The agent
-# makes the change with `sr-file edit|write|delete <path> ... --cite:user
-# '<quote>'`; the engine resolves the quote against the session's record (a
-# message or an AskUserQuestion answer) and hands it to the checks on
-# `.event.citations`. The quote rides on the command, never in the file.
+# commits the change with `Sloprail-Cites-User: <quote>` trailers; the engine
+# resolves each quote against the session's transcripts (a message or an
+# AskUserQuestion answer) and hands them to the checks on `changeset.citations`. The
+# quote rides on the commit, never in the file.
 #
 # The requirement is declared, conditionally: a pure append needs no ask, so
 # `require` demands a user citation only `when` removes-content.sh says the change
@@ -20,9 +22,9 @@
 # absolutely).
 #
 # deletions: include — deleting a memory is the largest removal there is, so the
-# rule covers it as well as edits: `rm` cites nothing and is refused, `sr-file
-# delete <path> --cite:user '<quote>'` goes to the judge like any removal. (The
-# default, skip, would hand every `rm` a free pass.)
+# rule covers it as well as edits: a commit deleting one that cites nothing is
+# refused, a cited one goes to the judge like any removal. (The default, skip, would
+# hand every `rm` a free pass.)
 match: 'path startsWith "memories/" and path endsWith ".md"'
 deletions: include
 require:
