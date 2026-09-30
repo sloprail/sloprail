@@ -230,10 +230,15 @@ func TestT045_08_CommitMustCiteTheUsersWords(t *testing.T) {
 		t.Fatalf("an uncited commit of ASK.md was not refused at Stop for its citation:\n%s", blocks)
 	}
 
-	seen := len(e.BlockingErrorsFrom(proj, "s-045-08", "Stop"))
-	e.Run(proj, "s-045-08", "go on", Turns("done").ThenCommit("cite the ask",
-		harness.CitesUser("migrate the auth module to the new token format")))
-	if got := len(e.BlockingErrorsFrom(proj, "s-045-08", "Stop")); got != seen {
+	seen := len(e.StopContinuations(proj, "s-045-08"))
+	if seen == 0 {
+		t.Fatalf("the refusal did not hold the turn")
+	}
+	// A citation grounds the files its own commit changed, so it is added by amending
+	// the commit that changed the ask.
+	e.Run(proj, "s-045-08", "go on", Turns("done", harness.AmendLast("amend", "record the ask",
+		harness.CitesUser("migrate the auth module to the new token format"))))
+	if got := len(e.StopContinuations(proj, "s-045-08")); got != seen {
 		t.Fatalf("a commit citing the user's words was still refused (%d refusals, had %d):\n%s", got, seen,
 			strings.Join(e.BlockingErrorsFrom(proj, "s-045-08", "Stop"), "\n"))
 	}

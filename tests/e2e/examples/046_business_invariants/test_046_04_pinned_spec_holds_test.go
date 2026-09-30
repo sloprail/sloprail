@@ -179,7 +179,7 @@ func TestT046_26_ChangeAndCitationsReachTheRuleChangeJudge(t *testing.T) {
 // T046_61: the gate's citation rides the write, the file-guard's rides the commit. A
 // spec change made with sr-file and cited to the gate, but committed with no
 // `Sloprail-Cites-User` trailer, is refused at Stop for the missing citation before
-// any judge; a later commit in the range carrying the trailer passes.
+// any judge; amending the commit that changed it to carry the trailer passes.
 func TestT046_61_CommitMustCiteTheUsersWords(t *testing.T) {
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
@@ -197,7 +197,7 @@ func TestT046_61_CommitMustCiteTheUsersWords(t *testing.T) {
 	}
 	seen := len(e.StopContinuations(proj, sess))
 
-	e.Run(proj, sess, "cite it", Turns("done").ThenCommit("cite the ask", harness.CitesUser(ask)))
+	e.Run(proj, sess, "cite it", Turns("done", harness.AmendLast("amend", "reword rule 1", harness.CitesUser(ask))))
 	if got := len(e.StopContinuations(proj, sess)); got != seen {
 		t.Fatalf("a commit citing the user's words was still refused (%d refusals, had %d):\n%s", got, seen,
 			strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"))
