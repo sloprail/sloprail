@@ -20,7 +20,7 @@ import (
 //   - it VALIDATES: `sr-file declarations` accepts the checks-less guard and reports
 //     it loaded (no ErrMissingField), the CLI-level reconciliation the loader change
 //     is about;
-//   - it ENFORCES: driven through the mock as a real session, a preventive guard
+//   - it ENFORCES: driven through the mock as a real session, a pure-require gate
 //     with only a skill `require` REFUSES a matching write when the skill was not
 //     loaded and PERMITS it once a real Skill tool_use for it is in the record —
 //     the native skill precondition, with no check anywhere in the guard.
@@ -45,11 +45,11 @@ var (
 
 // commitGuards commits the project's `.sloprail` tree so a guard installed after
 // the baseline is part of it, not the first cycle's diff — the same reason 034's
-// suite commits (the sloprail plugin ships authoring-slop, a preventive file-guard
+// suite commits (the sloprail plugin ships authoring-slop, a gate and a file-guard
 // whose Stop after-check judges a guardrail's own files; an uncommitted one reads
 // as this cycle's write). This guard ships no scripts at all (its whole rule is a
 // `require:`), so there is nothing for that judge to catch here, but committing
-// keeps the recipe identical to the working preventive tests and keeps the guard's
+// keeps the recipe identical to the working gate tests and keeps the guard's
 // own file-guard.yaml out of the cycle difference. Requires a git repo (callers
 // GitInit before installing). Scoped to `.sloprail` so it never sweeps in the
 // memories/ files the scenarios write.

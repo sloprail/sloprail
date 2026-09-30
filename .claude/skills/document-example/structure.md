@@ -62,7 +62,7 @@ At minimum, per guardrail nature (see [authoring-guardrails](../authoring-guardr
 - **The specific mechanism** — a script's exact refusal reason, a judge
   prompt actually carrying the fields it claims to (see e.g.
   `TestT046_08_EventContentReachesJudgePrompt`-style wiring tests), a
-  `deletions:`/`preventive:` edge if the guard declares one
+  `deletions:` edge if the guard declares one, and the gate's `resultKnown` fail-closed if it prevents writes
 
 ## README sections a shipped example is expected to have
 
@@ -94,9 +94,9 @@ the Install section below):
 3. **`## The rule`** — one paragraph, plain language, what it catches and why
    it matters (a real incident it prevents, if there is one — concrete beats
    abstract)
-4. **`## Why <nature>`** (or `Why a file-guard, and why preventive`, etc.) —
+4. **`## Why <nature>`** (or `Why a gate plus a file-guard`, etc.) —
    the design justification: why THIS nature and not one of the other two,
-   why `preventive`/`deletions:`/whatever nature-specific knobs are set
+   why a gate (prevention) plus a file-guard (the result), `deletions:`, whatever nature-specific knobs are set
 5. One or more sections on **the mechanism** — what a script checks
    deterministically vs. what a judge decides, in that cheap-first order
 6. Optionally, **what it does NOT catch** / **the failure this catches** —

@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// This file covers a file-guard's AFTER-check (the default, non-preventive): a
+// This file covers a file-guard's AFTER-check (the only moment a file-guard acts): a
 // not-fine file blocks the TURN at Stop, a fine file admits, and — the
 // file-guard's defining property — a not-fine file RE-FIRES on the next cycle
 // until it is fixed. All drive a real Write turn against a file-guard whose match
 // selects the written path.
 
-// forbidSecretGuard is a non-preventive file-guard: a memories/ markdown file is
+// forbidSecretGuard is a file-guard: a memories/ markdown file is
 // not fine if it holds the word SECRET. The check reads the CheckPayload's
 // event.newContent (the settled file's content) and refuses on a match, appending
 // a line to its own ledger each time it is ASKED — so a test can count re-fires.

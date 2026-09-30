@@ -34,7 +34,7 @@ var (
 // GitInit's own baseline commit (e.Gate writes straight to disk, uncommitted) is
 // part of the baseline the engine diffs against, not this cycle's own work —
 // the same reason 037_fileguard_pure_require's own commitGuards commits: the
-// sloprail plugin ships preventive rules that judge a guardrail's OWN files
+// sloprail plugin ships gates and file-guards that judge a guardrail's OWN files
 // (authoring-slop's script/template check, and the shipped read-*-doc rules
 // requiring the skill be read before writing one), and an uncommitted guard
 // reads as this cycle's write to THOSE rules too, not only to the rule under

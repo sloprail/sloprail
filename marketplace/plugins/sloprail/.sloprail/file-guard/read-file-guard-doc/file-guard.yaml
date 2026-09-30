@@ -1,4 +1,4 @@
-# A file-guard's own YAML (match/preventive/require/checks, the whole shape a
+# A file-guard's own YAML (match/deletions/require/checks, the whole shape a
 # file-guard declaration takes) is documented in file-guard.md — the page that
 # shows the resultKnown discipline, the per-event-kind script skeleton, and
 # markers, none of which SKILL.md itself carries in full. See

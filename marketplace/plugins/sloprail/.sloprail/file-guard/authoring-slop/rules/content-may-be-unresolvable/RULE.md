@@ -42,8 +42,11 @@ false. On a Post kind that is the unknown state.
   before reading `newContent`. The correct shape is `resultKnown && <predicate
   over newContent>`; a script that reads `newContent` in a branch that *assumes*
   it is present is wrong on both kinds.
-- If the rule needs content it cannot get (`resultKnown` false), **defer to the
-  Post kind**. The tree diff after the cycle sees what actually landed, whatever
+- If the rule needs content it cannot get (`resultKnown` false), **decide**. A
+  gate whose job is to prevent **refuses** (fail closed): the engine does not do
+  it for a gate, and a write nobody saw the bytes of has not been checked. A gate
+  that only supplements a file-guard of the same name may **defer to the Post
+  kind**: the tree diff after the cycle sees what actually landed, whatever
   produced it. A `Pre` rule that cannot predict should not guess.
 - If the rule can still say something useful without content — a path rule, a
   naming rule — say it at `Pre` and let a Post rule cover the rest.
@@ -53,8 +56,8 @@ false. On a Post kind that is the unknown state.
   false is the unknown state; `newContent == ""` with `resultKnown` true is a
   real empty file, and the two are different.
 
-**The trade, stated plainly:** silence at `Pre` means the action is not
-prevented, only reported afterwards. That is the honest answer for the
+**The trade, stated plainly:** silence at `Pre` (deferring) means the action is
+not prevented, only reported afterwards. That is the honest answer for the
 unknowable tier, and a rule's body should say which tier it relies on.
 
 ## How the check detects it
