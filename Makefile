@@ -174,7 +174,9 @@ cut-release-tag:
 # it carries its OWN copy of each plugin's version (bump-version.sh writes
 # both), and a tag whose plugin.json files matched but whose marketplace.json
 # was left stale would ship a marketplace listing lying about what it points
-# to — the exact gap this loop closes.
+# to — the exact gap this loop closes. The same goes for each plugin's source
+# `ref` (a git-subdir pin to the tag): a stale one would install the plugin
+# files from the previous release while the binaries come from this one.
 .PHONY: verify-version
 verify-version:
 	@if [ -z "$(TAG)" ]; then \
@@ -193,6 +195,12 @@ verify-version:
 	for got in $$(jq -r '.plugins[].version' .claude-plugin/marketplace.json); do \
 		if [ "$$got" != "$$want" ]; then \
 			echo "make: .claude-plugin/marketplace.json has a plugin at version $$got, tag $(TAG) wants $$want — run make cut-release VERSION='$$want' instead of tagging by hand" >&2; \
+			exit 1; \
+		fi; \
+	done
+	@for got in $$(jq -r '.plugins[].source.ref' .claude-plugin/marketplace.json); do \
+		if [ "$$got" != "$(TAG)" ]; then \
+			echo "make: .claude-plugin/marketplace.json pins a plugin to ref $$got, tag $(TAG) wants that ref — run make cut-release VERSION='$${TAG#v}' instead of tagging by hand" >&2; \
 			exit 1; \
 		fi; \
 	done
