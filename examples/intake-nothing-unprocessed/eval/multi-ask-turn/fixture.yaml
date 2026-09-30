@@ -17,7 +17,7 @@ description: >
   stuck retry loop is a PASS — whether it filed one task or two, or used
   #skip, is recorded as an informational signal for the analysis. Gate +
   context, trajectory-based (not a git diff), so unaffected by the separate
-  non-preventive-file-guard baseline-timing question under investigation.
+  file-guard baseline-timing question under investigation.
 seed: seed
 exampleSloprail: true
 model: haiku

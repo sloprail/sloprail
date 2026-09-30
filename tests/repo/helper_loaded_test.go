@@ -209,20 +209,22 @@ func TestWhenScriptsApplyWhenTheirHelperLoadsPartly(t *testing.T) {
 			"marketplace/plugins/sloprail-tasks/.sloprail/file-guard/task-body-is-human-authored",
 			"body-changed.sh", "lib-body.sh",
 			"task_body() { printf 'same body\\n'; }\n", "lib_body_loaded=1\n",
-			`{"event":{"kind":"PreFileUpdate","path":"memories/tasks/a/b/TASK.md","resultKnown":true,"oldContent":"---\nstatus: open\n---\nsame body\n","newContent":"---\nstatus: open\n---\nsame body\n"}}`,
+			`{"event":{"kind":"PostFileUpdate","path":"memories/tasks/a/b/TASK.md","newContentKnown":true,"oldContent":"---\nstatus: open\n---\nsame body\n","newContent":"---\nstatus: open\n---\nsame body\n"}}`,
 		},
 		{
 			"marketplace/plugins/sloprail-content/.sloprail/file-guard/unit-publish-approved",
 			"enters-published.sh", "publish-claim.sh",
 			"publish_claim_norm() { printf '%s' \"$1\"; }\npublish_claim() { claim=no claim_status=drafting claim_why=; }\n", "publish_claim_loaded=1\n",
-			`{"event":{"kind":"PreFileUpdate","path":"memories/topics/t/units/01/UNIT.md","resultKnown":true,"oldContent":"---\nstatus: drafting\n---\n","newContent":"---\nstatus: drafting\n---\nedited\n"}}`,
+			`{"event":{"kind":"PostFileUpdate","path":"memories/topics/t/units/01/UNIT.md","newContentKnown":true,"oldContent":"---\nstatus: drafting\n---\n","newContent":"---\nstatus: drafting\n---\nedited\n"}}`,
 		},
 	} {
 		t.Run(tc.script, func(t *testing.T) {
 			env := []string{"PATH=" + stubBin + string(os.PathListSeparator) + os.Getenv("PATH")}
 
 			control := t.TempDir()
+			lib := strings.TrimSuffix(tc.script, ".sh") + "-lib.sh"
 			copyFile(t, filepath.Join(root, tc.guard, tc.script), filepath.Join(control, tc.script))
+			copyFile(t, filepath.Join(root, tc.guard, lib), filepath.Join(control, lib))
 			copyFile(t, filepath.Join(root, tc.guard, tc.helper), filepath.Join(control, tc.helper))
 			if code, out := runScript(t, control, tc.script, env, tc.payload); code != 1 {
 				t.Fatalf("control: with the real %s this payload should waive (exit 1), got %d — the test's premise is wrong:\n%s", tc.helper, code, out)
@@ -231,6 +233,7 @@ func TestWhenScriptsApplyWhenTheirHelperLoadsPartly(t *testing.T) {
 			for stop, stopper := range map[string]string{"syntax error": syntaxError, "returns early": returnsEarly} {
 				partial := t.TempDir()
 				copyFile(t, filepath.Join(root, tc.guard, tc.script), filepath.Join(partial, tc.script))
+				copyFile(t, filepath.Join(root, tc.guard, lib), filepath.Join(partial, lib))
 				helper := tc.reader + stopper + tc.sentinel
 				if err := os.WriteFile(filepath.Join(partial, tc.helper), []byte(helper), 0o644); err != nil {
 					t.Fatal(err)
@@ -259,6 +262,17 @@ func resolveHelper(dir, arg string, preceding []string) string {
 		}
 		if arg == "" {
 			return ""
+		}
+	}
+	// A gate's entry sources its library from the file-guard folder of the same rule
+	// (`$lib_dir`); a library sources its own siblings the same way.
+	libDirs := []string{dir, strings.Replace(dir, string(filepath.Separator)+"gate"+string(filepath.Separator), string(filepath.Separator)+"file-guard"+string(filepath.Separator), 1)}
+	if strings.HasPrefix(arg, "$lib_dir/") {
+		for _, d := range libDirs {
+			p := filepath.Join(d, strings.TrimPrefix(arg, "$lib_dir/"))
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
 		}
 	}
 	for _, guardDir := range []string{"${SR_GUARDRAIL_DIR:-.}", "$SR_GUARDRAIL_DIR", "${gdir}", "$gdir",

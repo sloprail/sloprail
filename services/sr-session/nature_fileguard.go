@@ -14,26 +14,21 @@ import (
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/natures"
-	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // This file is the FILE-GUARD half of the new nature dispatch (3c): a rule bound
 // to a FILE'S STATE, not to an event trigger (dot-dir-file-store/main.tsp
-// FileGuardDeclaration). It runs at two moments, mirroring the old format's
-// preventive/after split and the spec's `preventive` doc:
+// FileGuardDeclaration). It runs at ONE moment: at Stop, on the POST file events,
+// checking the settled content. A file-guard never acts before a write — refusing
+// a write or a delete BEFORE it lands is a gate's job (runGatesForEvents on a
+// PreFileWrite / PreFileDelete trigger); the `preventive:` key that once let a
+// file-guard do both was removed, and the loader refuses a declaration carrying it.
 //
-//   - PREVENTIVE, at pre-tool: a guard with `preventive: true` also fires on the
-//     PRE file event, to refuse a not-fine write BEFORE it lands. This is
-//     best-effort (the engine cannot always predict a write), and when the Pre
-//     event could not compute the result (a command-derived update whose
-//     newContent is absent), a preventive guard fails CLOSED — it cannot verify,
-//     so it must not admit.
-//   - AFTER, at Stop: EVERY guard (preventive or not) fires on the POST file
-//     event, checking the settled content. A refusal here does not undo the
-//     write (it is on disk); it blocks the TURN and, crucially, is RECORDED in
-//     the same revalidation store the old format uses — which is what makes a
-//     not-fine file RE-FIRE every cycle until its content satisfies the checks,
-//     the file-guard's defining "re-fires until fine" semantics.
+// A refusal here does not undo the write (it is on disk); it blocks the TURN and,
+// crucially, is RECORDED in the same revalidation store the old format uses —
+// which is what makes a not-fine file RE-FIRE every cycle until its content
+// satisfies the checks, the file-guard's defining "re-fires until fine"
+// semantics.
 //
 // # How the file's STATE is matched (not an event trigger)
 //
@@ -71,372 +66,6 @@ type fileGuardResult struct {
 	Reason      string
 	// Path is the file a Post refusal is about; "" otherwise.
 	Path string
-}
-
-// runFileGuardsPreventive runs the PREVENTIVE file-guards against a cycle's PRE
-// file events and returns the refusal to block on (or "").
-//
-// Only guards with `preventive: true` fire here — the default (preventive false)
-// is checked only after the write lands, at Stop. A preventive guard whose match
-// selects the file runs the check-runner on the Pre event; a refusal blocks the
-// write before it lands, via the same deny() the gate and structure paths use.
-//
-// EVERY file the call changes is asked about, by every preventive guard that
-// selects it — not only the first FILE a guard is handed. One tool call can
-// change several files (`rm a.go b.go`, `sed -i … a b`, two sr-file calls
-// joined by &&), and the call runs whole or not at all: a guard that passed the
-// first file and was never asked about the second would admit the second's
-// not-fine write before it lands, leaving only the Stop after-check to see it.
-//
-// But once a FILE is refused by any guard, no further guard is asked about that
-// same file: the write is already prevented, and each further check on it is a
-// run that buys nothing — for a model-backed judge, a run that is not free
-// (T017_07's "the first refusal ends the matter for a pending action", pinned
-// before #87 and still true per-file). A guard is still asked about every OTHER
-// file the call touches that is not yet refused, which is the axis #87 was
-// missing. Every refusal is collected across files, and the one deny names each
-// refused file (see preventiveRefusals.render) — a pre-tool hook can deny only
-// once, so the agent should hear every file it must fix in that one answer. The
-// context[] map is read once and threaded into both the match and the Request,
-// so a guard's `match` reading `context[<name>]` and its checks reading the
-// same map see one consistent world.
-func runFileGuardsPreventive(
-	cmd *cobra.Command,
-	guards []declaration.FileGuard,
-	events []event.Event,
-	scope hookScope,
-	contextMap map[string]natures.ContextState,
-	notes resolveNotes,
-) string {
-	runner := dispatchcore.Runner{}
-	refusals := newPreventiveRefusals(events, scope.Workspace)
-
-	for _, g := range guards {
-		if !g.Preventive {
-			// Non-preventive guards are checked only after the write settles.
-			continue
-		}
-		// This session is running underneath THIS guard's own launched check (a
-		// judge launches sr-agent, whose writes fire pre-tool). Do not enforce the
-		// guard against itself — the same re-entry guard the gate dispatch applies.
-		if isLaunchedBy(os.Getenv, g.Name) {
-			fmt.Fprintf(cmd.ErrOrStderr(),
-				"sloprail: file-guard %q not enforced here — this session was launched by its own check (%s)\n",
-				g.Name, LaunchedByEnv)
-			continue
-		}
-
-		match, err := guardrail.CompileFileMatch(g.Match)
-		if err != nil {
-			// Unreachable for a loaded guard (the loader compiled the same match), but
-			// on the off chance the compile disagrees with load it must fail CLOSED,
-			// not decide enforcement silently: a preventive guard whose match the engine
-			// cannot even build has not established the write is fine, and admitting it
-			// would read the engine's own gap as approval. Refuse, naming the guard and
-			// quoting the expression — the same fail-closed direction matcher.go:121
-			// takes for a rule that could not be prepared.
-			fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q match: %v\n", g.Name, err)
-			refusals.add("", fmt.Sprintf(
-				"the file-guard %q could not be evaluated: its match %q could not be compiled (%v); "+
-					"refusing because a guard that could not decide must not be read as approval (file-guard %s)",
-				g.Name, g.Match, err, g.Attribution()))
-			continue
-		}
-
-		for _, e := range events {
-			if !isPreFileEvent(e.Kind) {
-				continue
-			}
-			// A file already refused by an earlier guard is already prevented: no
-			// further guard is asked about it. See runFileGuardsPreventive's doc.
-			if refusals.refused(eventPath(e)) {
-				continue
-			}
-			// The guard's `deletions:` decides whether this kind is its business at
-			// all: a PreFileDelete reaches only a guard that includes deletions
-			// (include / only), and a create or update never reaches a
-			// deletions-only guard. Filtered BEFORE the match, so a guard that does
-			// not cover the kind can neither refuse nor fail closed on it.
-			if !g.Covers(e.Kind) {
-				continue
-			}
-			selected, err := fileGuardSelects(match, e, contextMap)
-			if err != nil {
-				// The match COMPILED at load but could not be EVALUATED against this
-				// event (e.g. `int(path) > 0` on path "notes.md", which the vm refuses).
-				// That is not the guard cleanly declining —
-				// it is the engine unable to ANSWER whether this write is fine. Fail
-				// CLOSED: refuse the write, the same direction the old dispatch takes
-				// (internal/guardrail/matcher.go:121 — the pre-tool path refuses the
-				// events the broken rule was bound to) and the sibling runner-error
-				// branch below. A preventive guard exists precisely to keep the file
-				// always-fine, and a match it cannot evaluate must not be read as
-				// approval. The raw expression is quoted so an author can find and fix it.
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %q match on %s: %v\n", g.Name, e.Kind, err)
-				refusals.add(eventPath(e), fmt.Sprintf(
-					"the file-guard %q could not be evaluated: its match %q could not be evaluated against this %s (%v); "+
-						"refusing because a guard that could not decide must not be read as approval (file-guard %s)",
-					g.Name, g.Match, e.Kind, err, g.Attribution()))
-				continue
-			}
-			if !selected {
-				continue
-			}
-
-			// A preventive guard on a Pre write whose result the engine could NOT
-			// compute cannot verify the file will be fine — newContent is empty with
-			// ResultKnown false, so the checks would judge a file whose settled
-			// content is unknown. Fail CLOSED: refuse the write, because a preventive
-			// guard exists precisely to keep the file always-fine and a write it
-			// cannot verify must not be admitted. (spec: preventive is best-effort; a
-			// guard that must prevent cannot treat "unknown" as "fine".)
-			//
-			// BOTH the update and the create case, not update alone. A command-derived
-			// PreFileUpdate marks its result unknown — the case this originally
-			// covered. But a NotebookEdit creating a fresh .ipynb emits a
-			// PreFileCreate with an empty newContent whose bytes are NOT derivable
-			// (its cell source is not the document); resultKnown is now carried on the
-			// create kind for exactly this reason, and false there means the same
-			// "unknown result" it means on an update. Checking only the update let that
-			// create through — the preventive guard false-passed and the write landed
-			// transiently (the Stop after-check still caught it, but the preventive
-			// GUARANTEE was silently lost). A derivable create (a stated body,
-			// including a genuinely-empty one) has resultKnown true and is judged
-			// normally, so this refuses only the truly-underivable write.
-			if isUnderivablePreWrite(e) {
-				// What sr-file's dry run said about THIS file, never another's.
-				refusals.add(eventPath(e), underivableRefusal(cmd, runner, g, e, scope, contextMap, notes.For(eventPath(e))))
-				continue
-			}
-
-			verdict, err := runner.Run(dispatchcore.Request{
-				Nature:         dispatchcore.NatureFileGuard,
-				Require:        g.Require,
-				Checks:         g.Checks,
-				Event:          e,
-				TranscriptPath: scope.Transcript,
-				Context:        contextMap,
-				Dir:            g.Dir,
-				GuardName:      g.Name,
-				Workspace:      scope.Workspace,
-				SessionID:      scope.SessionID,
-				// Re-entry provenance for a preventive check that spawns sr-agent:
-				// this guard appended to any launched checks already on the stack, so
-				// the launched agent's own Write does not re-fire this guard on itself
-				// (isLaunchedBy above, one exec down). See the gate dispatch.
-				LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
-			})
-			if err != nil {
-				// The runner itself could not decide. Fail-closed: refuse, naming
-				// the guard, the same as the gate dispatch.
-				fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %s: %v\n", g.Attribution(), err)
-				refusals.add(eventPath(e), fmt.Sprintf(
-					"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval (file-guard %s)",
-					g.Name, err, g.Attribution()))
-				continue
-			}
-			if verdict.Refused {
-				refusals.add(eventPath(e), fmt.Sprintf("%s (file-guard %s)", verdict.Reason, g.Attribution()))
-			}
-			// Passed or refused, go on to the call's next file: this guard is asked
-			// about every file the call would change, not only the first it selects.
-		}
-	}
-	return refusals.render()
-}
-
-// underivableRefusal is the refusal a preventive guard gives a Pre write whose
-// result the engine could NOT compute (isUnderivablePreWrite) — the guard cannot
-// verify the file will be fine, so it fails CLOSED. Always a refusal; what it
-// returns is the most useful reason for it.
-//
-// require FIRST, even here. `{skill}`/`{context}` need no content at all — they
-// read the trajectory, not the write — so when BOTH a missing prerequisite and an
-// unverifiable write are true of this event, the missing prerequisite is the
-// reason worth giving: it names exactly what to fix ("load the skill"), where
-// "could not verify this write" is true of a Bash-derived write to this path
-// REGARDLESS of the skill, and does not tell the agent what would have made it
-// pass. This was the smoke test's P2 finding — a raw Bash write refused for the
-// generic content-unverifiable reason even though require was the rule that
-// actually applied. Same fail-closed direction either way: a missing require
-// still refuses, so this is a message improvement, not a change in what is
-// enforced.
-func underivableRefusal(
-	cmd *cobra.Command,
-	runner dispatchcore.Runner,
-	g declaration.FileGuard,
-	e event.Event,
-	scope hookScope,
-	contextMap map[string]natures.ContextState,
-	resolveNote string,
-) string {
-	reqReq := dispatchcore.Request{
-		Nature:         dispatchcore.NatureFileGuard,
-		Require:        g.Require,
-		Event:          e,
-		TranscriptPath: scope.Transcript,
-		Context:        contextMap,
-		// A prerequisite's `when` script runs from the guard's folder.
-		Dir:        g.Dir,
-		GuardName:  g.Name,
-		Workspace:  scope.Workspace,
-		SessionID:  scope.SessionID,
-		LaunchedBy: appendLaunchedBy(os.Getenv, g.Name),
-	}
-	if v, err := runner.CheckRequire(reqReq); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "sloprail: file-guard %s require: %v\n", g.Attribution(), err)
-		return fmt.Sprintf(
-			"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval (file-guard %s)",
-			g.Name, err, g.Attribution())
-	} else if v.Refused {
-		if resolveNote != "" {
-			// A citation the rule required did not resolve, and sr-file
-			// said which one and why — worth more than "cites nothing".
-			// Its words already carry the sub-agent advice when it applies.
-			reason := v.Reason
-			if strings.Contains(resolveNote, transcript.SubagentUserAdvice) {
-				reason = strings.TrimSuffix(reason, "\n"+transcript.SubagentUserAdvice)
-			}
-			return fmt.Sprintf("%s sr-file said:\n%s\n(file-guard %s)", reason, resolveNote, g.Attribution())
-		}
-		return fmt.Sprintf("%s (file-guard %s)", v.Reason, g.Attribution())
-	}
-	if resolveNote != "" {
-		// The line was pure sr-file and its dry run failed: sr-file's
-		// own reason is the cause, and the generic one below would
-		// only send the agent guessing.
-		return fmt.Sprintf(
-			"the %q file-guard is preventive and could not verify this write before it lands: sr-file could not compute the change, and said:\n%s\n"+
-				"Refusing: a preventive guard must not admit a write it cannot verify. Fix what sr-file named and run it again; "+
-				"to check a quote on its own: `sr-session trajectory cite '<quote>'`. (file-guard %s)",
-			g.Name, resolveNote, g.Attribution())
-	}
-	return fmt.Sprintf(
-		"the %q file-guard is preventive and could not verify this write before it lands: the engine could not compute the result of this %s "+
-			"(a change whose settled bytes are not known ahead of time — a command-derived edit, or a notebook create whose cell source is not the document), "+
-			"so whether the file would still be fine is unknown. "+
-			"Refusing: a preventive guard must not admit a write it cannot verify. "+
-			"Write the file's content directly, or make the change with sr-file ON ITS OWN in the command (call it by its bare name `sr-file`, not a path; nothing else in the line but sr-file calls, && and echo; no cd, no export or VAR= prefix, no $ expansion, no unquoted glob or brace (* ? [ { ^ # ~name) — quote every value verbatim) "+
-			"so its result is computed before it runs — and check that each --cite: quote resolves to exactly one message: `sr-session trajectory cite '<quote>'`. (file-guard %s)",
-		g.Name, underivableKindNoun(e.Kind), g.Attribution())
-}
-
-// preventiveRefusals collects every refusal the preventive guards give one tool
-// call, keyed by the file each is about, and renders them as the call's one deny.
-//
-// Why one deny names every file: a pre-tool hook answers once per call, and a
-// call that changes several files is refused whole. Naming only the first
-// refused file sends the agent back to fix that one, run again, and be refused
-// for the next — as many turns as there are refused files — or, worse, to guess
-// the call was refused for the file it does not know about. So each refused file
-// is named, beside the reason it was refused for.
-//
-// The same reason given for several files (`sed -i` over three files, each an
-// update the engine cannot compute) is said once, followed by every file it
-// applies to, rather than repeated per file.
-type preventiveRefusals struct {
-	// multiFile is true when the call changes more than one file. Only then is a
-	// refusal prefixed with the file it is about: a single-file call's refusal
-	// names its file by being about the only one, and keeps the wording it had.
-	multiFile bool
-	workspace string
-	entries   []preventiveRefusal
-	// refusedDisplay is the set of files already refused, keyed by their display
-	// path (relative to the workspace) — what refused checks against, so a path
-	// spelled two ways (absolute vs. relative) for the same file is one entry.
-	refusedDisplay map[string]bool
-}
-
-// preventiveRefusal is one distinct refusal reason and the files it was given for,
-// in the order they were refused.
-type preventiveRefusal struct {
-	reason string
-	paths  []string
-}
-
-// newPreventiveRefusals starts an empty collection for a call whose Pre events
-// are events. It counts the distinct files the call changes, which decides
-// whether each refusal must name its file.
-func newPreventiveRefusals(events []event.Event, workspace string) *preventiveRefusals {
-	files := map[string]bool{}
-	for _, e := range events {
-		if isPreFileEvent(e.Kind) {
-			if p := eventPath(e); p != "" {
-				files[displayPath(p, workspace)] = true
-			}
-		}
-	}
-	return &preventiveRefusals{multiFile: len(files) > 1, workspace: workspace}
-}
-
-// add records a refusal about path ("" for one that is about the guard itself,
-// such as a match that does not compile, rather than about any one file).
-func (r *preventiveRefusals) add(path, reason string) {
-	if path != "" {
-		path = displayPath(path, r.workspace)
-		if r.refusedDisplay == nil {
-			r.refusedDisplay = map[string]bool{}
-		}
-		r.refusedDisplay[path] = true
-	}
-	for i := range r.entries {
-		if r.entries[i].reason == reason {
-			if path != "" && !containsString(r.entries[i].paths, path) {
-				r.entries[i].paths = append(r.entries[i].paths, path)
-			}
-			return
-		}
-	}
-	entry := preventiveRefusal{reason: reason}
-	if path != "" {
-		entry.paths = []string{path}
-	}
-	r.entries = append(r.entries, entry)
-}
-
-// refused reports whether path has already been refused by an earlier guard —
-// the write is already prevented, so no further guard need be asked about it
-// (T017_07's per-file "first refusal ends the matter", which #87 leaves intact;
-// only the axis of asking about every OTHER file is new). "" (no path) never
-// reads as refused: it is never a file this checks against.
-func (r *preventiveRefusals) refused(path string) bool {
-	if path == "" || r.refusedDisplay == nil {
-		return false
-	}
-	return r.refusedDisplay[displayPath(path, r.workspace)]
-}
-
-// render is the call's deny text, or "" when nothing refused.
-//
-// One refusal of a single-file call is its reason exactly as before. Anything
-// more — several refusals, or any refusal of a call that changes several files —
-// is a list, one line per distinct reason, each naming the files it refused.
-func (r *preventiveRefusals) render() string {
-	if len(r.entries) == 0 {
-		return ""
-	}
-	if len(r.entries) == 1 && !r.multiFile {
-		return r.entries[0].reason
-	}
-	var refused []string
-	lines := make([]string, 0, len(r.entries))
-	for _, entry := range r.entries {
-		line := entry.reason
-		if r.multiFile && len(entry.paths) > 0 {
-			line = strings.Join(entry.paths, ", ") + ": " + entry.reason
-		}
-		for _, p := range entry.paths {
-			if !containsString(refused, p) {
-				refused = append(refused, p)
-			}
-		}
-		lines = append(lines, line)
-	}
-	head := "this call was refused before it ran"
-	if r.multiFile && len(refused) > 0 {
-		head += "; every file it would change was checked, and the file-guards refused " + strings.Join(refused, ", ")
-	}
-	return head + ":\n  - " + strings.Join(lines, "\n  - ")
 }
 
 // eventPath is the file a file event is about, as the event spells it.
@@ -546,7 +175,7 @@ func runFileGuardsPost(
 			selected, err := fileGuardSelects(match, e, contextMap)
 			if err != nil {
 				// The match COMPILED at load but could not be EVALUATED against this
-				// settled file. As at the preventive path and in the old dispatch
+				// settled file. As in the gate path and in the old dispatch
 				// (matcher.go:186 — the caller refuses the action and says why), a match
 				// the engine cannot answer is NOT a rule that cleanly did not match: it
 				// is the engine unable to decide, which must not be read as approval.
@@ -708,10 +337,8 @@ func fileGuardSelects(match *guardrail.Matcher, e event.Event, contextMap map[st
 // map in wire form, all flat.
 //
 // markers comes from the event's NEW markers — on a Post event these are the
-// settled file's markers (Scan of what is on disk), on a Pre create/update the
-// would-be result's. That is the "the markers the file carries" FileMatchScope
-// names: for a settled file it is exactly what the file holds; for a preventive
-// pre-check it is what the write would leave. The wire form (a list of
+// settled file's markers (Scan of what is on disk). That is the "the markers the
+// file carries" FileMatchScope names: exactly what the settled file holds. The wire form (a list of
 // {kind,fqn,line} objects) is what filemod already puts on the event under
 // `newMarkers`, reused rather than re-scanned. On a delete, which has no result,
 // it is the markers the file carried — see fileMarkers.
@@ -775,8 +402,8 @@ func fileOldMarkers(e event.Event) []any {
 // arrive either way (PreFileUpdate and, since the notebook-create fix,
 // PreFileCreate). Absent or false means the engine could not compute the write's
 // outcome (a command-derived update, or a notebook create whose cell source is
-// not the document), which a preventive guard treats as unverifiable and fails
-// closed on. On a kind that does not carry the field, the value is absent and
+// not the document), which a gate that reads the content must treat as unverifiable and
+// fail closed on. On a kind that does not carry the field, the value is absent and
 // this returns false — which is why isUnderivablePreWrite gates on the kind
 // first, so a delete (no result, no field) is not mistaken for an unknown one.
 func resultKnown(e event.Event) bool {
@@ -785,12 +412,13 @@ func resultKnown(e event.Event) bool {
 }
 
 // isUnderivablePreWrite reports whether a Pre event is a create or update whose
-// result the engine could NOT derive — the case a preventive guard must fail
-// closed on, because it cannot verify a file whose settled bytes are unknown.
+// result the engine could NOT derive — the case a pre-write gate must fail
+// closed on, because it cannot verify a file whose settled bytes are unknown (the
+// dispatch uses it to quote what sr-file said about a change it could not compute).
 //
 // Gated on the kind so it fires ONLY where resultKnown is a meaningful signal: a
 // create or an update. A delete carries no result and no `resultKnown` field, so
-// it is never "underivable" in this sense — a preventive guard on a deletion
+// it is never "underivable" in this sense — a PreFileDelete gate
 // judges the bytes about to be lost, which are known. Both the create and the
 // update case are covered (the create was the silently-lost one: a NotebookEdit
 // fresh-.ipynb PreFileCreate marks resultKnown false, and checking only the
@@ -804,16 +432,6 @@ func isUnderivablePreWrite(e event.Event) bool {
 	}
 }
 
-// underivableKindNoun is the word for what an underivable Pre write is, for the
-// refusal message — "create" or "update", so the agent hears which write could
-// not be verified rather than a generic "write".
-func underivableKindNoun(kind string) string {
-	if kind == declaration.KindPreFileCreate {
-		return "create"
-	}
-	return "update"
-}
-
 // fileGuardRevKey namespaces a file-guard's revalidation key so it cannot collide
 // with an old-format guardrail of the same folder name.
 //
@@ -824,10 +442,9 @@ func underivableKindNoun(kind string) string {
 // keeps them apart in the one shared file_checks table.
 func fileGuardRevKey(name string) string { return "file-guard:" + name }
 
-// isPreFileEvent reports whether a kind is a PRE file event a preventive guard
-// can fire on. A delete is included — a preventive guard with `deletions:
-// include` or `only` may refuse an unasked deletion — and whether a particular
-// guard sees it is FileGuard.Covers' decision, applied next to this one.
+// isPreFileEvent reports whether a kind is a PRE file event a gate can fire on.
+// A delete is included: a gate bound to PreFileDelete may refuse an unasked
+// deletion.
 func isPreFileEvent(kind string) bool {
 	switch kind {
 	case declaration.KindPreFileCreate, declaration.KindPreFileUpdate, declaration.KindPreFileDelete:

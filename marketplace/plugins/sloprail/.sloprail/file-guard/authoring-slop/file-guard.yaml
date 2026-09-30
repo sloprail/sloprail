@@ -40,18 +40,12 @@
 # "what this applies to" text.
 match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and (path endsWith ".sh" or path endsWith ".md.j2")
 
-# preventive: true reproduces the old format's binding, which was Pre-only
-# (PreFileCreate + PreFileUpdate) — block a slop hook BEFORE it lands, "the useful
-# moment". A preventive file-guard fires on the PRE write to refuse there, AND,
-# like every guard, fires the after-check at Stop on the SETTLED file. Keeping the
-# Pre-prevention is the whole point of the old rule; the Stop after-check is a
-# free backstop the old Pre-only binding lacked — a command/sed/git edit whose
-# result the engine cannot derive reaches the Pre stage unverifiable, where a
-# preventive guard fails CLOSED engine-side (before this script runs) and the
-# settled file is judged at Stop instead. check-rules.sh handles both moments:
-# it dispatches on `.event.kind`, reading the PENDING bytes from the event on a
-# Pre kind and the SETTLED bytes from disk on a Post kind.
-preventive: true
+# The PREVENTION half — refusing a slop hook BEFORE it lands, "the useful moment" —
+# is the PreFileWrite gate of the same name, beside this guard under gate/: it runs
+# the deterministic grep (check-rules.sh) on the pending bytes and refuses a write
+# whose result the engine cannot compute. This file-guard judges what SETTLED, at
+# Stop: the same grep on the file on disk, then the judge, which needs a model call
+# and so belongs with the result, not with every pre-write.
 
 # An ORDERED list: the cheap grep first, the judge second — the same script+judge
 # pattern the sibling rule-quality guard uses. First-refusal-ends-it, so a shape

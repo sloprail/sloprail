@@ -25,13 +25,13 @@ func TestRunFileGuardsPost_OldMarkersSelectsAMarkerRemoval(t *testing.T) {
 		filemod.FieldNewMarkers: []any{},
 	}}
 
-	byMarkers, _ := refusingGuard(t, "", false)
+	byMarkers, _ := refusingGuard(t, "")
 	byMarkers.Match = `any(markers, .kind == "invariant")`
 	results := runFileGuardsPost(discard(), []declaration.FileGuard{byMarkers}, []event.Event{stripped},
 		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)
 	assert.Empty(t, results, "markers alone does not see the marker that left — the reason oldMarkers exists")
 
-	byOld, ledger := refusingGuard(t, "", false)
+	byOld, ledger := refusingGuard(t, "")
 	byOld.Match = `any(oldMarkers, .kind == "invariant")`
 	results = runFileGuardsPost(discard(), []declaration.FileGuard{byOld}, []event.Event{stripped},
 		newRevalidation(t), hookScope{}, t.TempDir(), map[string]natures.ContextState{}, nil)

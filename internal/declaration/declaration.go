@@ -101,20 +101,21 @@ type FileGuard struct {
 	// never matching.
 	Match string `yaml:"match"`
 
-	// Preventive asks the engine to also try to prevent the file from becoming
-	// not-fine BEFORE the write lands, in addition to the always-available check
-	// after. Best-effort by nature (the engine cannot always predict a write),
-	// which is why it is opt-in. A boolean, not an array of events: the only two
-	// cases are "fine at the end" (the default) and "always fine" (checked before
-	// too), and they nest.
-	Preventive bool `yaml:"preventive"`
+	// HadPreventiveKey records that the RETIRED `preventive:` key was present,
+	// whatever its value. A file-guard judges only the settled result at Stop;
+	// preventing a write is a gate's job (a PreFileWrite or PreFileDelete gate).
+	// The field exists only so the loader can SEE the key and refuse the
+	// declaration by name (ValidateFileGuard, ErrRetiredKey) — unknown keys are
+	// otherwise tolerated, and a `preventive: true` quietly ignored would leave
+	// the write it was written to stop unguarded. Nothing else reads it.
+	HadPreventiveKey bool `yaml:"-"`
 
 	// Deletions says whether a DELETED file is this guard's business: `skip`
 	// (the default, and what an absent key means), `include`, or `only`. See
 	// Deletions for the three values.
 	//
 	// One axis with three values, NOT a list of events — the same reasoning that
-	// makes Preventive a boolean rather than an array. A file-guard binds to a
+	// keeps a file-guard's other axes small. A file-guard binds to a
 	// file's STATE, not to events; the one place the state question genuinely
 	// forks is a file that no longer exists, which has no end state, no
 	// newContent and no newMarkers. Most guards validate content and have nothing
@@ -213,9 +214,8 @@ func IsFileDeleteKind(kind string) bool {
 // true — this filter has no opinion on it; whether a guard runs on it at all is
 // the dispatch's to decide.
 //
-// The ONE place the filter is written, so the preventive (Pre) path, the
-// after-check (Post) path, and the event-extraction binding cannot disagree
-// about which events a guard sees.
+// The ONE place the filter is written, so the after-check (Post) path and the
+// event-extraction binding cannot disagree about which events a guard sees.
 func (g FileGuard) Covers(kind string) bool {
 	mode := g.Deletions.Mode()
 	if IsFileDeleteKind(kind) {

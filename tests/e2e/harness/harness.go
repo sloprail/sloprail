@@ -701,6 +701,52 @@ func (e *Env) EnablePluginShippingFileGuard(projDir, pluginName, name, guardYAML
 	return root
 }
 
+// EnablePluginShippingGate installs a synthetic plugin named pluginName that
+// ships a GATE — `<root>/.sloprail/gate/<name>/gate.yaml` with the given body,
+// plus its sibling scripts — and enables it in the project, returning the
+// plugin's install root. The gate twin of EnablePluginShippingFileGuard: prevention
+// is a gate's job, so a plugin's pre-write rule ships as one. Nothing is copied
+// into the project. Must be called BEFORE Run/RunFrom.
+func (e *Env) EnablePluginShippingGate(projDir, pluginName, name, gateYAML string, files map[string]string) string {
+	e.t.Helper()
+
+	root := e.newSyntheticPlugin(projDir, pluginName, "e2e synthetic plugin shipping a gate")
+	dir := filepath.Join(root, ".sloprail", "gate", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		e.t.Fatalf("harness: mkdir plugin gate: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gate.yaml"), []byte(gateYAML), 0o644); err != nil {
+		e.t.Fatalf("harness: write plugin gate.yaml: %v", err)
+	}
+	for file, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o755); err != nil {
+			e.t.Fatalf("harness: write plugin gate file %s: %v", file, err)
+		}
+	}
+	return root
+}
+
+// PluginGateLedger reads the ledger a plugin-shipped gate's check appended to,
+// inside the PLUGIN's own gate folder, counting how many times the check was
+// asked. Absent means it never ran.
+func (e *Env) PluginGateLedger(pluginRoot, name, ledgerFile string) int {
+	e.t.Helper()
+	body, err := os.ReadFile(filepath.Join(pluginRoot, ".sloprail", "gate", name, ledgerFile))
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		e.t.Fatalf("harness: read plugin gate ledger: %v", err)
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+		if line != "" {
+			n++
+		}
+	}
+	return n
+}
+
 // EnablePluginShippingStructure installs a synthetic plugin named pluginName that
 // ships a STRUCTURE gate — `<root>/.sloprail/file-guard/structure.yaml` with the
 // given body — and enables it in the project, returning the plugin's install
@@ -1309,7 +1355,7 @@ func (e *Env) GateState(projDir, sessionID, gateName string) string {
 // scripts/templates into a project, at `.sloprail/file-guard/<name>/file-guard.yaml`.
 //
 // A file-guard is bound to a FILE'S STATE (its `match` over path/markers/context),
-// checked after a write settles and — when `preventive: true` — before it lands.
+// checked at Stop, after a write settles. It never sees a write before it lands — refusing before the write is a gate (see Gate).
 // Scripts (a check's `./verify.sh`, a `prepare`, a judge template) are written as
 // siblings of file-guard.yaml, executable, where the guard's own relative paths
 // resolve them. It shares the file-guard/ directory with the structure gate (structure.yaml).

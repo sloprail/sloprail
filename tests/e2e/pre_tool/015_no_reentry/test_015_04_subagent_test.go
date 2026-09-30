@@ -11,8 +11,9 @@ import (
 // Two launching rules is what makes the sub-agent case reachable: the agent
 // judge-notes launches writes under review/, which is where THIS rule is bound,
 // so its check fires inside the launched agent and launches one of its own.
-const reviewByAgent = `match: path startsWith "review/"
-preventive: true
+const reviewByAgent = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "review/"
 checks:
   - script: ./review.sh
 `
@@ -60,8 +61,8 @@ exit 0
 func TestT015_04_SubagentDoesNotReenterEitherRule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": depthScript})
-	e.FileGuard(proj, "review-docs", reviewByAgent, map[string]string{"review.sh": depthScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": depthScript})
+	e.Gate(proj, "review-docs", reviewByAgent, map[string]string{"review.sh": depthScript})
 	e.InstallClaudeShim(proj)
 	// Every launched agent runs this same scenario: it writes under review/
 	// (reaching review-docs) and then under notes/ (reaching judge-notes again).
@@ -77,7 +78,7 @@ func TestT015_04_SubagentDoesNotReenterEitherRule(t *testing.T) {
 	))
 
 	for _, rule := range []string{"judge-notes", "review-docs"} {
-		ledger := fileGuardLedgerLines(t, proj, rule, "ledger.txt")
+		ledger := gateLedgerLines(t, proj, rule, "ledger.txt")
 		t.Logf("%s ledger: %v", rule, ledger)
 
 		for _, l := range ledger {

@@ -25,7 +25,7 @@ import (
 // for an isolated sub-agent is the folder inside ITS worktree — so the count is
 // per-sub-agent and a second sub-agent does not inherit the first's.
 //
-// A file-guard after-check (preventive omitted): it fires at the sub-agent's
+// A file-guard after-check (a file-guard acts only at Stop): it fires at the sub-agent's
 // SubagentStop against the settled `.md` file it made, and a refusal blocks that
 // stop the same as the old Post hook did. New-format refusal contract: exit
 // non-zero with the reason as `{"reason":"…"}` on stdout (scriptRefusalReason

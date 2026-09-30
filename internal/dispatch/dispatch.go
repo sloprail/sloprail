@@ -302,28 +302,6 @@ func (r Runner) Run(req Request) (Verdict, error) {
 	return pass(), nil
 }
 
-// CheckRequire evaluates only req.Require and returns its verdict, without
-// running any check.
-//
-// It exists for a caller that has its OWN fail-closed reason to refuse before
-// Run's checks could even be attempted — services/sr-session's preventive
-// file-guard dispatch is the one caller: a Pre write whose bytes are not yet
-// derivable (a command-derived edit) cannot be judged by a content check, but a
-// `{skill}` or `{context}` prerequisite needs no content at all, and evaluating
-// it first lets that caller give the MORE SPECIFIC reason ("the skill was never
-// loaded") instead of the generic "could not verify this write" — when both are
-// true, require's reason is the actionable one; the write being unverifiable is
-// true of every write this session might attempt, while the missing
-// prerequisite names exactly what to fix.
-//
-// Requires no defaulting beyond what checkRequire itself needs (skillLoaded);
-// withDefaults is applied here for the same reason Run applies it, so a caller
-// need not construct a Runner any differently to use this instead of Run.
-func (r Runner) CheckRequire(req Request) (Verdict, error) {
-	r = r.withDefaults()
-	return r.checkRequire(req)
-}
-
 // withDefaults fills in the production collaborators for any left unset, so the
 // zero-value Runner is the real one and a test overrides exactly what it must.
 func (r Runner) withDefaults() Runner {

@@ -1,0 +1,18 @@
+# A file-guard's own YAML (match/deletions/require/checks, the whole shape a
+# file-guard declaration takes) is documented in file-guard.md — the page that
+# shows the resultKnown discipline, the per-event-kind script skeleton, and
+# markers, none of which SKILL.md itself carries in full. See
+# read-script-checks-doc/file-guard.yaml for the shared argument for why
+# `require: [{skill, files}]` is the right mechanism here rather than trusting
+# that loading the skill was enough.
+#
+# This is the PREVENTION half of the rule: a PreFileWrite gate refuses the write
+# before it lands. The plain file-guard of the same name, beside it under
+# file-guard/, is the settled-result backstop at Stop.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^\\.sloprail/file-guard/[^/]+/file-guard\\.ya?ml$"'
+
+require:
+  - skill: authoring-guardrails
+    files: [file-guard.md]

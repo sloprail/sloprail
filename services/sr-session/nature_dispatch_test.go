@@ -151,9 +151,9 @@ func TestNaturePreToolBoundKinds_ABrokenDeclarationAsksForNothing(t *testing.T) 
 		"a broken declaration carries no author-declared kind in the new format, so bound-kinds must read only the sound loaded set")
 }
 
-// firstMatchingEvent wakes a gate when a fired event's kind is one its trigger
+// matchingEvents wakes a gate when a fired event's kind is one its trigger
 // expands to AND the trigger's match holds — and reports no match otherwise.
-func TestFirstMatchingEvent(t *testing.T) {
+func TestMatchingEvents(t *testing.T) {
 	reg, err := modules.Registry()
 	require.NoError(t, err)
 
@@ -168,34 +168,34 @@ func TestFirstMatchingEvent(t *testing.T) {
 
 	// A create under memories/ matches (the alias covers create).
 	match := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{"path": "memories/a.md"}}
-	fired, ok, err := firstMatchingEvent(discard(), reg, g, []event.Event{match}, nil)
+	fired, err := matchingEvents(discard(), reg, g, []event.Event{match}, nil)
 	require.NoError(t, err)
-	assert.True(t, ok, "a create under memories/ wakes a PreFileWrite gate narrowed to memories/")
-	assert.Equal(t, match.Kind, fired.Kind)
+	require.Len(t, fired, 1, "a create under memories/ wakes a PreFileWrite gate narrowed to memories/")
+	assert.Equal(t, match.Kind, fired[0].Kind)
 
 	// A create OUTSIDE memories/ does not match (the trigger's match narrows it).
 	outside := event.Event{Kind: declaration.KindPreFileCreate, Fields: map[string]any{"path": "src/a.go"}}
-	_, ok, err = firstMatchingEvent(discard(), reg, g, []event.Event{outside}, nil)
+	fired, err = matchingEvents(discard(), reg, g, []event.Event{outside}, nil)
 	require.NoError(t, err)
-	assert.False(t, ok, "a write outside the match does not wake the gate")
+	assert.Empty(t, fired, "a write outside the match does not wake the gate")
 
 	// A Stop event does not match a PreFileWrite gate at all (wrong kind).
 	stop := event.Event{Kind: declaration.KindStop, Fields: map[string]any{}}
-	_, ok, err = firstMatchingEvent(discard(), reg, g, []event.Event{stop}, nil)
+	fired, err = matchingEvents(discard(), reg, g, []event.Event{stop}, nil)
 	require.NoError(t, err)
-	assert.False(t, ok, "a Stop does not wake a PreFileWrite gate")
+	assert.Empty(t, fired, "a Stop does not wake a PreFileWrite gate")
 }
 
 // A gate with no match on its trigger wakes on every occurrence of the kind.
-func TestFirstMatchingEvent_NoMatchWakesAlways(t *testing.T) {
+func TestMatchingEvents_NoMatchWakesAlways(t *testing.T) {
 	reg, err := modules.Registry()
 	require.NoError(t, err)
 
 	g := declaration.Gate{Name: "g", On: []declaration.GateTrigger{{Event: declaration.KindStop}}}
 	stop := event.Event{Kind: declaration.KindStop, Fields: map[string]any{}}
-	_, ok, err := firstMatchingEvent(discard(), reg, g, []event.Event{stop}, nil)
+	fired, err := matchingEvents(discard(), reg, g, []event.Event{stop}, nil)
 	require.NoError(t, err)
-	assert.True(t, ok, "a Stop gate with no match wakes on a Stop")
+	assert.Len(t, fired, 1, "a Stop gate with no match wakes on a Stop")
 }
 
 // A gate trigger match that COMPILES but cannot be EVALUATED against the fired
@@ -204,8 +204,8 @@ func TestFirstMatchingEvent_NoMatchWakesAlways(t *testing.T) {
 // pinned at the dispatch level.
 //
 // This is where a broken or adversarial trigger would otherwise silently DISABLE a
-// gate: firstMatchingEvent returning (_, false, nil) means "no trigger matched, the
-// gate stays asleep" — approval of the event it was bound to — while (_, false,
+// gate: matchingEvents returning (nil, nil) means "no trigger matched, the
+// gate stays asleep" — approval of the event it was bound to — while (nil,
 // err) means the engine could not DECIDE. runGatesForEvents turns the error into a
 // REFUSAL naming the gate; treating an unevaluable match as a non-wake is exactly
 // the fail-OPEN this regressed to and was corrected for. The e2e proves the refusal
@@ -215,7 +215,7 @@ func TestFirstMatchingEvent_NoMatchWakesAlways(t *testing.T) {
 // branch: int of a string is well-formed, so the trigger LOADS clean, and at run
 // time the vm refuses int("npm"). It is the same expression 014 and 027 ride on
 // the gate side. (An absent flag no longer errors: it reads as an empty list.)
-func TestFirstMatchingEvent_UnevaluableMatchErrorsNotSkip(t *testing.T) {
+func TestMatchingEvents_UnevaluableMatchErrorsNotSkip(t *testing.T) {
 	reg, err := modules.Registry()
 	require.NoError(t, err)
 
@@ -234,10 +234,10 @@ func TestFirstMatchingEvent_UnevaluableMatchErrorsNotSkip(t *testing.T) {
 		}},
 	}}
 
-	_, ok, err := firstMatchingEvent(discard(), reg, g, []event.Event{cmd}, nil)
+	fired, err := matchingEvents(discard(), reg, g, []event.Event{cmd}, nil)
 	require.Error(t, err,
 		"a trigger match that cannot be evaluated must surface the error (fail-closed), not be read as the gate not waking")
-	assert.False(t, ok, "no clean wake is reported alongside the error")
+	assert.Empty(t, fired, "no clean wake is reported alongside the error")
 }
 
 // writePath returns the path for a create/update and nothing for a delete — the
@@ -332,4 +332,40 @@ func TestGateMatchEvent_NestsUnderEvent(t *testing.T) {
 	inner, ok := nested.Fields["event"].(map[string]any)
 	require.True(t, ok, "the fired event's fields are nested under `event`")
 	assert.Equal(t, "memories/a.md", inner["path"])
+}
+
+// A gate is woken once per matching PRE FILE event — every file a call changes —
+// but once only for any other kind: two commands (or a command and a file) do not
+// wake a one-shot command gate twice.
+func TestMatchingEvents_EveryFileOfACallButOneOfAnythingElse(t *testing.T) {
+	reg, err := modules.Registry()
+	require.NoError(t, err)
+
+	pre := func(kind, path string) event.Event {
+		return event.Event{Kind: kind, Fields: map[string]any{"path": path}}
+	}
+	g := declaration.Gate{Name: "g", On: []declaration.GateTrigger{
+		{Event: declaration.AliasPreFileWrite, Match: `event.path startsWith "src/"`},
+		{Event: declaration.KindPreFileDelete, Match: `event.path startsWith "src/"`},
+	}}
+	events := []event.Event{
+		pre(declaration.KindPreFileCreate, "src/a.go"),
+		pre(declaration.KindPreFileUpdate, "docs/x.md"),
+		pre(declaration.KindPreFileDelete, "src/b.go"),
+		pre(declaration.KindPreFileUpdate, "src/c.go"),
+	}
+	fired, err := matchingEvents(discard(), reg, g, events, nil)
+	require.NoError(t, err)
+	var paths []string
+	for _, e := range fired {
+		paths = append(paths, e.Fields["path"].(string))
+	}
+	assert.Equal(t, []string{"src/a.go", "src/b.go", "src/c.go"}, paths,
+		"the gate is asked about every matching file, in order, and not about the one its match excludes")
+
+	stops := []event.Event{{Kind: declaration.KindStop, Fields: map[string]any{}}, {Kind: declaration.KindStop, Fields: map[string]any{}}}
+	stopGate := declaration.Gate{Name: "s", On: []declaration.GateTrigger{{Event: declaration.KindStop}}}
+	fired, err = matchingEvents(discard(), reg, stopGate, stops, nil)
+	require.NoError(t, err)
+	assert.Len(t, fired, 1, "a non-file event wakes the gate once")
 }

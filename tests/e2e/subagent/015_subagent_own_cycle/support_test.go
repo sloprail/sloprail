@@ -68,7 +68,7 @@ import (
 //
 // A sub-agent's OWN cycle is a Post cycle: the sub-agent's work has settled in its
 // tree, and the guardrail fires at the sub-agent's SubagentStop against that
-// difference. That is exactly a file-guard's after-check — a non-preventive
+// difference. That is exactly a file-guard's after-check — a
 // file-guard fires on the settled Post file event and records into the same
 // revalidation store the old format used (services/sr-session/nature_fileguard.go's
 // runFileGuardsPost, driven from the SubagentStop path the same as the root's Stop).

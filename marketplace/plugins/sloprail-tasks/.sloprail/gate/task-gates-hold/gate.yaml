@@ -1,0 +1,10 @@
+# PREVENTION half of task-gates-hold: moving a task to to_do / in_progress is refused,
+# before it lands, when a gate script under gates/ does not pass (gates-hold.sh), and a
+# write whose result the engine could not compute is refused (a gate does not fail
+# closed on that by itself). Whether each JUDGMENT gate (gates/*.md) holds is the
+# judge's question, and the judge lives in the plain file-guard of the same name (Stop).
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"'
+checks:
+  - script: ./gates-hold.sh

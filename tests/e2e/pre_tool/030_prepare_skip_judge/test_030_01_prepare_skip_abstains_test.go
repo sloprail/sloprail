@@ -17,7 +17,7 @@
 //
 // Everything runs through a10n-claude-mock exactly as the rest of the e2e: the
 // mock's Write tool fires this repo's real plugin, which reaches the real
-// file-guard dispatch out of the installed `.sloprail/file-guard/`. Only the MODEL
+// gate dispatch out of the installed `.sloprail/gate/`. Only the MODEL
 // a judge invokes is replaced — by InstallJudgeClaudeCapturing, a `claude` on PATH
 // that both RECORDS the rendered prompt and writes a fixed verdict. The verdict is
 // pinned to `pass: false` (a REFUSAL) on purpose: if a skip ever leaked into a
@@ -25,7 +25,7 @@
 // secretly judged cannot pass here. And JudgePrompt reading back EMPTY is the
 // direct witness that no prompt was ever rendered, i.e. no model was invoked.
 //
-// The guard is PREVENTIVE, so a verdict lands on the PRE write and is observable on
+// The guard is a PreFileWrite gate, so a verdict lands on the PRE write and is observable on
 // the same Run (a refusal marker in the stream, or a permitted write). prepare
 // records every path it saw into its own ledger, so "prepare ran but the judge did
 // not" is a checkable pair rather than an inference.
@@ -39,8 +39,11 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// skipReviewGuard is a preventive file-guard on guarded/ markdown whose one JUDGE
-// check carries a prepare. The prepare inspects the file's path off the FLAT
+// skipReviewGuard is a PreFileWrite gate on guarded/ markdown whose JUDGE check
+// carries a prepare. It is preceded by the standing require-known-result.sh check:
+// the judge reads the pending bytes, so a write whose result the engine could not
+// compute is refused before the judge (a Write always carries a known result, so
+// it never fires here). The prepare inspects the file's path off the FLAT
 // payload (`.event.path`) and:
 //   - for a path under guarded/skip-me/, emits `{"skip": true}` — the judge is not
 //     invoked and the check abstains (the "not in_review, nothing to judge" case);
@@ -49,9 +52,11 @@ import (
 //
 // Either way it appends the path it saw to its own ledger (SR_GUARDRAIL_DIR/seen),
 // so a test can prove prepare ran in BOTH cases while the model ran in only one.
-const skipReviewGuard = `match: "guarded/**/*.md"
-preventive: true
+const skipReviewGuard = `on:
+  - event: PreFileWrite
+    match: 'event.path startsWith "guarded/" and event.path endsWith ".md"'
 checks:
+  - script: ./require-known-result.sh
   - prepare: ./prepare.sh
     judge: ./judge.md.j2
     model: size-md
@@ -101,24 +106,35 @@ Answer with a verdict.`
 
 // seenPaths is the list of payloads prepare recorded — one per ask.
 func seenPaths(e *harness.Env, proj string) []string {
-	return e.FileGuardLedgerLines(proj, "skip-review", "seen")
+	return e.GateLedgerLines(proj, "skip-review", "seen")
 }
 
-// installReviewGuard writes the test's file-guard AND COMMITS it before the cycle.
+// requireKnownResult refuses a write whose result the engine could not compute
+// (`resultKnown != true`), because the judge below decides on the pending bytes.
+const requireKnownResult = `#!/bin/sh
+if [ "$(jq -r '.event.resultKnown // false')" != "true" ]; then
+  echo '{"reason":"the pending content could not be computed; write the file content directly"}'
+  exit 1
+fi
+exit 0
+`
+
+// installReviewGuard writes the test's gate AND COMMITS it before the cycle.
 //
 // The commit is not incidental — it is the same discipline engine_repo_judges'
 // project() keeps. This repo's plugin is enabled in every mock project, and the
-// plugin SHIPS the authoring-slop file-guard, which matches any `.sh` / `.md.j2`
-// under `.sloprail/file-guard/` — exactly where this guard's own prepare.sh and
+// plugin SHIPS the authoring-slop gate and file-guard, which match any `.sh` / `.md.j2`
+// under `.sloprail/gate/` — exactly where this gate's own prepare.sh and
 // judge.md.j2 sit. Left UNCOMMITTED, those files are part of the cycle's git diff,
 // so authoring-slop fires on THEM and its judge writes into the SAME shared
 // judge-prompt.txt this test captures — making "no prompt captured on a skip" fail
 // for a reason that has nothing to do with the guard under test. Committing the
 // guard's own files takes them out of the cycle's diff, so only the test's own
 // write (guarded/…) drives the guards, and the only judge that can render is this
-// test's own. files are the guard's scripts/templates beside its yaml.
+// test's own. files are the gate's scripts/templates beside its yaml.
 func installReviewGuard(e *harness.Env, proj, guardYAML string, files map[string]string) {
-	e.FileGuard(proj, "skip-review", guardYAML, files)
+	files["require-known-result.sh"] = requireKnownResult
+	e.Gate(proj, "skip-review", guardYAML, files)
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "install skip-review guard")
 }
@@ -170,7 +186,7 @@ func TestT030_01_PrepareSkipAbstainsAndPermitsWithoutModel(t *testing.T) {
 //
 // Here the model IS invoked: the captured prompt exists and carries prepare's
 // review_note (so additionalContext reached the template) and the file's own
-// content (so event.newContent did too). The stub refuses, so the preventive write
+// content (so event.newContent did too). The stub refuses, so the write
 // is blocked — which is the observable proof the judge actually decided.
 func TestT030_02_NoSkipRunsTheJudgeWithPreparedContext(t *testing.T) {
 	e := New(t)
@@ -187,7 +203,7 @@ func TestT030_02_NoSkipRunsTheJudgeWithPreparedContext(t *testing.T) {
 		Write("w1", "guarded/in-review/note.md", "# note\n\n"+marker+"\n"),
 	))
 
-	// The judge ran and refused (pass:false), so the preventive write is blocked.
+	// The judge ran and refused (pass:false), so the write is blocked.
 	assert.True(t, res.Refused(),
 		"a non-skip prepare must let the judge run; the refusing stub should have blocked the write:\n"+res.Output)
 

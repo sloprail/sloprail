@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// unit-md-first is a PREVENTIVE file-guard, script only, path-based: any file
+// unit-md-first is a PreFileWrite gate (refuses before the write lands) plus a plain file-guard (the Stop re-check), script only, path-based: any file
 // under memories/topics/<topic>/units/<unit>/ other than UNIT.md may only be
 // written once that unit's own UNIT.md exists on disk. Without it, a folder's
 // UNIT.md-less files are orphaned — unit-satisfies-rules and
@@ -49,7 +49,7 @@ func TestUnitMdFirst_NonEntryFileBeforeUnitMdRefused(t *testing.T) {
 		t.Fatalf("a draft written before UNIT.md existed was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, draftPath) {
-		t.Errorf("the preventive guard let a draft land before UNIT.md existed")
+		t.Errorf("the gate let a draft land before UNIT.md existed")
 	}
 	if !res.Saw(unitDir+" has no UNIT.md") || !res.Saw("Write "+unitDir+"/UNIT.md first") {
 		t.Errorf("the refusal does not name the missing UNIT.md and how to fix it:\n%s", res.Output)
@@ -94,7 +94,7 @@ func TestUnitMdFirst_NonEntryFileAfterUnitMdAdmitted(t *testing.T) {
 
 // TestUnitMdFirst_DeletionNotRefused: a unit folder already on disk (UNIT.md
 // and its draft, seeded into the session baseline) has its draft file
-// deleted. deletions is left at its default (skip), so this guard is not
+// deleted. Neither the gate nor the file-guard covers deletions, so neither is
 // even asked about the delete, and it is not refused.
 func TestUnitMdFirst_DeletionNotRefused(t *testing.T) {
 	e := New(t)

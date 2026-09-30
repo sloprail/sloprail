@@ -1,0 +1,36 @@
+# A unit may not move INTO `status: published` without a CITED USER APPROVAL
+# on the action that moves it, and may not sit at published without
+# published_urls:. An agent must not be able to publish on its own say-so —
+# see check-publish.sh's header for the full mechanism.
+#
+# The approval is a citation carried by the command, never text in the unit:
+#   sr-file edit <UNIT.md> --old-string 'status: drafting' --new-string 'status: published' --cite:user 'ship it'
+# The session resolves the quote against its own record, and `require` below
+# demands one in the `user` pool — an agent's own turn or a tool result is not
+# the user's approval. Only `when` enters-published.sh says the write moves the
+# unit INTO published: a draft edit, or an edit to an already-published unit,
+# stays uncited.
+#
+# THE GATE. Publishing is the irreversible step; refusing only at Stop would
+# report the damage after status: published already landed on disk (and, in the
+# real world, after the content may already have gone out). So the pending
+# write is refused before it lands — including an sr-file line mixed with other
+# programs, whose result cannot be known ahead of time (check-publish.sh refuses
+# resultKnown false). The file-guard of the same name (../../file-guard/
+# unit-publish-approved) re-checks the settled UNIT.md at Stop.
+#
+# match: ONLY the unit's own frontmatter file, UNIT.md — status: published is a
+# UNIT.md field (see unit.cue), never 02_draft.md's. Deletions are not covered:
+# deleting a unit publishes nothing.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^memories/topics/[^/]+/units/[^/]+/UNIT\\.md$"'
+
+require:
+  - citation: {source_types: [user]}
+    when: ./enters-published.sh
+
+checks:
+  # Deterministic, fail-closed throughout — no model call: a published unit
+  # records where it went out.
+  - script: ./check-publish.sh

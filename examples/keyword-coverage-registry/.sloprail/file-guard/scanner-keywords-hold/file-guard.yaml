@@ -10,17 +10,21 @@
 # drop goes to the judge, which checks the cited words ask for THESE keywords to
 # go — citing some unrelated thing the user said does not.
 #
-# preventive: a weakened declaration refused before it lands, while the agent can
-# still meet it with a search instead.
+# This is the after-check: at Stop, on the settled scanner. The PREVENTION — a
+# weakened declaration refused before it lands, while the agent can still meet it
+# with a search — is the PreFileWrite/PreFileDelete gate of the same name
+# (gate/scanner-keywords-hold); a file-guard only acts on what settled, so what is
+# left here is the backstop for a change the gate could not see (a command the
+# engine does not parse).
 #
 # deletions: include — deleting a scanner drops ALL its keywords, the same
 # weakening taken to the limit. Measured on a real run: refused by the coverage
-# gate, a sub-agent ran `rm -rf scanners/<name>` rather than search, and the
-# gate went quiet. The delete is refused the same way an uncited drop is; `rm -r`
-# of the scanner's DIRECTORY reaches this guard as a PreFileDelete of the
-# scanner.yaml inside it. (Whatever still gets a scanner deleted — a command the
-# engine cannot parse — does not clear the obligation: scanner-declared keeps
-# the scanner in its registry and stays open until coverage passes.)
+# gate, a sub-agent ran `rm -rf scanners/<name>` rather than search, and the gate
+# went quiet. A delete that got past the gate reaches this guard as a
+# PostFileDelete of the scanner.yaml, and is refused the same way an uncited drop
+# is. (Whatever still gets a scanner deleted — a command the engine cannot parse —
+# does not clear the obligation: scanner-declared keeps the scanner in its
+# registry and stays open until coverage passes.)
 #
 # What "drops" means is measured against the file before the change AND what
 # scanner-declared's registry holds owed: a write the engine cannot parse can
@@ -33,7 +37,6 @@
 # never shrinks; these records are the only way an obligation goes, and both
 # need the user's citation on the event.
 match: 'path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"'
-preventive: true
 deletions: include
 require:
   - citation: {source_types: [user]}

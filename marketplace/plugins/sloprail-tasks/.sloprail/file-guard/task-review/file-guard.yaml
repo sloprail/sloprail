@@ -32,9 +32,8 @@
 # X happening is APPROVED even if X was a poor idea; it checks the gap between what
 # the task says was done and what the evidence shows.
 #
-# NO preventive — this is an AFTER-CHECK, the migration of the old-format Post-only
-# binding (PostFileCreate + PostFileUpdate). A file-guard with no `preventive:` key
-# fires ONLY on the settled Post event, at Stop, where the bytes on disk are what
+# A plain file-guard — this is an AFTER-CHECK, the migration of the old-format Post-only
+# binding (PostFileCreate + PostFileUpdate). A file-guard fires ONLY on the settled Post event, at Stop, where the bytes on disk are what
 # actually landed. The old rule chose Post deliberately (README, "The event, and
 # why Post only"): a Pre binding would judge only the cases Post already judges, at
 # the cost of a second model call, and a judged rule evadable by writing the file a

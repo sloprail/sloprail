@@ -61,13 +61,12 @@ func newWorkspace(ctx context.Context, fx Fixture) (*workspace, error) {
 		}
 		// A Seed tree carries no .git — but the engine's own change detection
 		// (internal/gitrepo.Root/Changed) resolves a write's repository-relative
-		// path via `git rev-parse --show-toplevel`, and a NON-PREVENTIVE
-		// file-guard is judged entirely against the git-observed diff at Stop
+		// path via `git rev-parse --show-toplevel`, and a file-guard is judged entirely against the git-observed diff at Stop
 		// (see cloneRepoAt's doc comment: stripping .git from a Repo fixture was
 		// measured to leave a gate silently never firing). Without a .git here,
 		// EVERY after-only file-guard is unreachable regardless of what the
 		// agent does — measured on a real run (content-de-layering's
-		// one-fact-one-home, after-only, no preventive:) where the guardrail
+		// one-fact-one-home, an after-only file-guard) where the guardrail
 		// never fired even though the agent's write plainly matched its rule.
 		// `git init` gives a Seed fixture the same repository presence a Repo
 		// fixture already has; commitSetup below establishes the baseline

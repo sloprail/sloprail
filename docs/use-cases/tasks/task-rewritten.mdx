@@ -3,6 +3,7 @@ title: Dilutes the goal
 description: Task rewritten to match the partial work that got done
 kind: guide
 related:
+  - guides/gate
   - guides/file-guard
   - guides/script-checks
   - guides/matchers
@@ -15,6 +16,8 @@ import UseCase from '../../_components/UseCase.astro';
   Config blocks below are the real shipped example, loaded from source via Vite
   `?raw` imports (never copied inline). docs/ and examples/ are siblings.
 */}
+import gateYaml       from '../../../examples/task-management/.sloprail/gate/ask-is-human-authored/gate.yaml?raw';
+import gateScript     from '../../../examples/task-management/.sloprail/gate/ask-is-human-authored/require-known-result.sh?raw';
 import fileGuardYaml from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/file-guard.yaml?raw';
 import judgeJ2       from '../../../examples/task-management/.sloprail/file-guard/ask-is-human-authored/reference-is-true-and-only-this.md.j2?raw';
 
@@ -51,18 +54,24 @@ can't be rewritten into something the user never said.
 
 </Steps>
 
-This is a **preventive file-guard**: it runs before the write to the task's ask
-lands, so a diluting edit is refused rather than caught after the fact.
+This is a **gate plus a file-guard**. The gate runs before the write to the task's
+ask lands, so a diluting edit is refused rather than caught after the fact. The
+file-guard of the same name holds the settled `ASK.md` to the same rule at Stop,
+the backstop for a write the gate could not see.
 
 ## The actual configuration
 
-This is the real example shipped at `examples/task-management/`. One nature, a
-directory under `.sloprail/` — a `file-guard.yaml` declaration plus the checks it
-names:
+This is the real example shipped at `examples/task-management/`. Two natures, each
+a directory under `.sloprail/` with its declaration plus the checks it names:
 
 <FileTree>
 
 - .sloprail/
+  - gate/
+    - ask-is-human-authored/
+      - gate.yaml
+      - require-known-result.sh
+      - reference-is-true-and-only-this.md.j2
   - file-guard/
     - ask-is-human-authored/
       - file-guard.yaml
@@ -70,14 +79,23 @@ names:
 
 </FileTree>
 
+### gate
+
+Fires on `PreFileWrite` for the task ask file. A native `require: citation`
+prerequisite refuses any write to `ASK.md` that doesn't cite the user's own
+words — checked deterministically, no model involved — before any check runs.
+The first check refuses a write whose resulting bytes cannot be computed (a
+`sed -i`), since a gate does not fail closed on that by itself. No model runs in the gate;
+the judge — which reads the cited words straight off the event and rules that the
+ask is faithful to them and scoped to only them — runs in the file-guard, at Stop.
+
+<Code code={gateYaml} lang="yaml" title=".sloprail/gate/ask-is-human-authored/gate.yaml" />
+<Code code={gateScript} lang="bash" title=".sloprail/gate/ask-is-human-authored/require-known-result.sh" />
 ### file-guard
 
-Matches the task ask file and runs preventively. A native `require: citation`
-prerequisite refuses any write to `ASK.md` that doesn't cite the user's own
-words — checked deterministically, no model involved — before the judge ever
-runs. Only once a citation resolves does the judge see the change: it reads the
-cited words straight off the event and rules that the ask is faithful to them
-and scoped to only them.
+The after-check: the same match and citation requirement plus the judge, applied at
+Stop to the settled `ASK.md`. It carries no prevention of its own — a file-guard
+only acts on what settled.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/ask-is-human-authored/file-guard.yaml" />
 <Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/ask-is-human-authored/reference-is-true-and-only-this.md.j2" />

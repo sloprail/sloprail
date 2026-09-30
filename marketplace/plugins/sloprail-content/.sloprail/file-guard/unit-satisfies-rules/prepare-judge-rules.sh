@@ -1,28 +1,21 @@
 #!/usr/bin/env bash
 # prepare for unit-satisfies-rules's single check: collect every rule that
 # applies to this unit (rules-lib.sh, by tags) and hand them to the judge
-# template as the rubric — exactly the shape unit-satisfies-constraints's
-# prepare.sh hands its constraints, generalized from "this topic's
-# constraints" to "every rule (project-wide + this unit's topic) this unit's
-# tags select".
+# template as the rubric: every rule (project-wide + this unit's topic) this
+# unit's tags select.
 #
-# EVERY rule is a judge rule now — there is no separate deterministic script
-# stage (see file-guard.yaml's header for why: a rule that needs a
-# measurement, like a character limit, is a PROMPT telling the judge to run
-# `wc -c`/similar itself via the Bash tool granted through allowed_tools,
-# not a shipped script). This prepare's job is to assemble every applicable
+# Every rule is a judge rule; a rule that needs a measurement, like a character
+# limit, is a prompt telling the judge to run `wc -c`/similar itself via the Bash
+# tool granted through allowed_tools. This prepare assembles every applicable
 # rule's text as ground truth for the model, the unit's own file path (so a
-# Bash-run measurement targets the real file on disk), and the size gate
-# this repo's other judge-fed guards already carry.
+# Bash-run measurement targets the real file on disk), and the size gate.
 #
 # EXIT 0 with additionalContext on stdout: the judge runs. EXIT 1: a REFUSAL
 # (a prepare failure fails closed), carrying this script's own reason.
 #
-# THE "NO RULE APPLIES" CASE, same shape as unit-satisfies-constraints's
-# "topic has no constraints": a judge: check's prepare has only two outcomes
+# THE "NO RULE APPLIES" CASE: a judge: check's prepare has only two outcomes
 # (refuse or proceed-to-judge), so when NO rule applies this still proceeds
-# with the sentinel "NONE", and the judge template passes trivially on it —
-# the same behavioural note that guard's file-guard.yaml documents.
+# with the sentinel "NONE", and the judge template passes trivially on it.
 set -uo pipefail
 
 payload="$(cat)"
@@ -72,16 +65,8 @@ case "$kind" in
     fi
     content="$(printf '%s' "$payload" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
-  PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$payload" | jq -r '.event.resultKnown // false' 2>/dev/null)"
-    if [ "$known" != "true" ]; then
-      content=""
-    else
-      content="$(printf '%s' "$payload" | jq -r '.event.newContent // ""' 2>/dev/null)"
-    fi
-    ;;
   *)
-    content=""
+    refuse "unit-satisfies-rules: unexpected event kind '$kind' for $path; this rule only judges settled unit writes"
     ;;
 esac
 
@@ -140,8 +125,7 @@ if [ "$count" -eq 0 ]; then
   proceed "NONE" "$unit_file"
 fi
 
-# THE SIZE GATE — same threshold and reasoning as unit-satisfies-constraints's
-# prepare.sh: the whole unit goes into the judge's prompt, and past roughly
+# THE SIZE GATE: the whole unit goes into the judge's prompt, and past roughly
 # 600000 bytes the request cannot be assembled or exceeds the model's context.
 max_bytes=600000
 body_bytes="$(printf '%s' "$unit_text" | wc -c | tr -d ' ')"

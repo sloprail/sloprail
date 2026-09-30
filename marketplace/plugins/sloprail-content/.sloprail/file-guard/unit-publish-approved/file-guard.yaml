@@ -11,21 +11,15 @@
 # unit INTO published: a draft edit, or an edit to an already-published unit,
 # stays uncited.
 #
+# THE STOP AFTER-CHECK. The gate of the same name (../../gate/
+# unit-publish-approved) refuses the pending publish before it lands; this
+# re-judges the settled UNIT.md — the same require and check — as the backstop.
+#
 # match: ONLY the unit's own frontmatter file, UNIT.md — status: published is a
 # UNIT.md field (see unit.cue), never 02_draft.md's. unit-satisfies-rules
 # covers both UNIT.md and 02_draft.md for the writing-rules judgement; this
 # guard's subject is narrower on purpose.
 match: path matches "^memories/topics/[^/]+/units/[^/]+/UNIT\\.md$"
-
-# PREVENTIVE: true — the one place in this plugin where prevention matters more
-# than anywhere else. Publishing is the irreversible step; a Post-only refusal
-# would report the damage after status: published already landed on disk
-# (and, in the real world, after the content may already have gone out). It
-# also refuses an sr-file line mixed with other programs, whose result cannot
-# be known ahead of time. The Stop after-check remains the backstop for a
-# write the engine cannot derive at Pre (resultKnown false), exactly like
-# every other preventive guard in this repo.
-preventive: true
 
 require:
   - citation: {source_types: [user]}

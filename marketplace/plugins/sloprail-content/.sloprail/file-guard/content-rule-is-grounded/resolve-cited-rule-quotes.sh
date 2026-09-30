@@ -51,17 +51,8 @@ case "$kind" in
       fail "the settled rule file could not be read (not a regular file, or too large)"
     content="$(field '.event.newContent // ""')" || exit 1
     ;;
-  PreFileCreate|PreFileUpdate)
-    # newContent is only meaningful alongside resultKnown; an unknown result
-    # leaves the body empty (the engine already fails a preventive guard
-    # closed on an underivable pre-write, so the judge never sees one).
-    known="$(field '.event.resultKnown // false')" || exit 1
-    if [ "$known" = "true" ]; then
-      content="$(field '.event.newContent // ""')" || exit 1
-    fi
-    ;;
   *)
-    fail "unexpected event kind '$kind'; this guard judges only rule creates and updates"
+    fail "unexpected event kind '$kind'; this guard judges only settled rule creates and updates"
     ;;
 esac
 

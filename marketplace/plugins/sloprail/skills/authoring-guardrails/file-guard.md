@@ -1,8 +1,9 @@
 # File-guard
 
-A file-guard judges **one file's state**: what a file holds after a change, and —
-when it is `preventive` — what a write is about to make it hold. Its whole job is
-to answer "is this file OK?", and to keep re-firing until it is.
+A file-guard judges **one file's settled state**: what a file holds after a
+change, at the end of the turn. Its whole job is to answer "is this file OK?", and
+to keep re-firing until it is. It never acts before a write lands — refusing a
+write or a delete *before* it happens is a **gate's** job (below).
 
 ```
 .sloprail/file-guard/<name>/file-guard.yaml
@@ -10,9 +11,8 @@ to answer "is this file OK?", and to keep re-firing until it is.
 
 ```yaml
 # preserves-unasked-content — an edit must not silently drop content nobody
-# asked to remove.
+# asked to remove. (Its gate of the same name refuses the loss before it lands.)
 match: 'path startsWith "memories/" and path endsWith ".md"'
-preventive: true
 deletions: include
 require:
   - citation: {source_types: [user]}
@@ -27,8 +27,8 @@ checks:
 runs — here a citation of the user's words, `when` the change removes something
 ([grounding.md](grounding.md)). `checks` is the list of checks, run in order, first
 refusal ending it — each a script ([script-checks.md](script-checks.md)) or a
-judge ([judge-checks.md](judge-checks.md)). `preventive` and `deletions` are the
-two nature-specific knobs, below; both are optional.
+judge ([judge-checks.md](judge-checks.md)). `deletions` is the one
+nature-specific knob, below; it is optional.
 
 A file-guard's match sees the file's own facts **bare**: `path`, `markers`,
 `context` — not `event.path`. It reasons about a settled file, so `markers` is
@@ -37,43 +37,67 @@ the one set of markers that file carries; test them with a quantifier,
 this change, for a rule that must also see a marker removed:
 `any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")`.
 
-## After-check (default) vs preventive
+## When it fires: at Stop, on the settled file
 
 A file-guard fires at the **end of a turn**, on the file's **settled** state,
 established by diffing the tree against the baseline taken at session start —
-never by trusting what any action announced. This is the **after-check**, and it
-is the default. The change is already on disk, so refusing does not undo it; it
-tells the agent the cycle is not finished and it must fix what it did. That makes
-the after-check right for a rule about the **result** of a turn ("every new file
-under `memories/` has frontmatter").
+never by trusting what any action announced. The change is already on disk, so
+refusing does not undo it; it tells the agent the cycle is not finished and it must
+fix what it did. That makes a file-guard right for a rule about the **result** of a
+turn ("every new file under `memories/` has frontmatter"). Its events are `Post*`
+kinds only; it is never handed a `Pre*` event.
 
-Add `preventive: true` and the guard **also** fires on the **pre-write**, before
-the bytes land, so it can refuse the write outright — the useful moment for a
-rule you would rather enforce *before* the loss than report *after* it. A
-preventive guard therefore fires at both moments: the pre-write to prevent, and
-the after-check at Stop on the settled file as a backstop.
+## Preventing a write is a gate, not a file-guard
+
+There is no `preventive:` key. A file-guard declaration still carrying one (with
+any value) is **refused at load**, with a message telling you to split it. To
+refuse a write before it lands — the useful moment for a rule you would rather
+enforce *before* the loss than report *after* it — write a **gate** bound to the
+pre-write event, and keep a plain file-guard for the settled result:
 
 ```yaml
-preventive: true
+# .sloprail/gate/preserves-unasked-content/gate.yaml — the prevention
+on:
+  - event: PreFileWrite
+    match: 'event.path startsWith "memories/" and event.path endsWith ".md"'
+  - event: PreFileDelete            # only when losing the file is the rule's business
+    match: 'event.path startsWith "memories/"'
+require:
+  - citation: {source_types: [user]}
+    when: ./removes-content.sh
+checks:
+  - script: ./require-known-result.sh   # refuse a write whose result is unknown
 ```
 
-A call that changes several files (`rm a.go b.go`, two `sr-file` calls joined by
-`&&`) is checked file by file before it runs: a guard is asked about every file
-it selects that no other guard has already refused, and the call is refused if
-any file fails. The refusal names each refused file. Once a file is refused,
-no further guard is asked about it — the write is already prevented, and
-asking again buys nothing.
+```yaml
+# .sloprail/file-guard/preserves-unasked-content/file-guard.yaml — the result
+match: 'path startsWith "memories/" and path endsWith ".md"'
+deletions: include
+checks:
+  - judge: ./change-is-clean-and-absolute.md.j2
+```
 
-The two moments are one script's job, and the event's `kind` tells them apart —
-a `Pre*` kind at the pre-write (read the pending bytes off the event), a
-`Post*` kind at Stop (the bytes are on disk). See "The pending bytes" below.
+The gate gets everything a create or an update carries — `newContent`,
+`resultKnown`, `newMarkers`, `citations` — and `require: citation` works on it
+exactly as on a file-guard ([gate.md](gate.md), [grounding.md](grounding.md)). A
+`PreFileDelete` gate reads `oldContent`, `oldContentKnown` and `oldMarkers`, the
+bytes about to be lost. A call that changes several files (`rm a.go b.go`, two
+`sr-file` calls joined by `&&`) wakes the gate **once per file**, and the one
+refusal names every file it refused.
 
-Why keep the after-check even when preventive: a command / `sed` / `git` edit
-whose result the engine **cannot derive** reaches the pre-write stage
-unverifiable. For a preventive guard the engine **fails closed on that pre-write
-itself, before the check runs**, and re-judges the settled file at Stop instead
-— so the after-check is the backstop no unusual writer slips past. Dropping
-`preventive` loses the prevention; the after-check you get either way.
+Keep what the gate decides small and cheap (a `require`, a script); keep the judge
+in the file-guard, which rules on the settled result at Stop.
+A script both halves need is written once, as a library that keeps no event-kind
+logic (in the file-guard folder, `<script>-lib.sh`); each half keeps a thin entry
+that reads its own kind — `Pre*` in the gate, `Post*` in the file-guard — and sources
+it (`. "$lib_dir/<script>-lib.sh"`; the gate's entry finds it at
+`../../file-guard/<rule>/`).
+
+**A gate does not fail closed on an unknown result by itself — the engine adds nothing.** A command, `sed`
+or `git` edit whose result the engine cannot derive reaches the gate with
+`resultKnown: false` and an empty `newContent`. A gate whose decision reads the
+content must refuse it (see [The resultKnown discipline](#the-resultknown-discipline)),
+or the write slips through to be judged only at Stop.
 
 ## Grounded changes
 
@@ -83,8 +107,9 @@ quote stored in the file. When every change must be grounded, use
 `require: [{citation: {source_types: [user]}}]`. When only some must be (a removal, a status
 transition), use a script check that reads `.event.citations`. Either way the
 agent makes the change with `sr-file ... --cite:user '<quote>'`, and Write, Edit,
-`sed` and `rm` are refused. Keep such a guard `preventive`. The full pattern is
-in [grounding.md](grounding.md).
+`sed` and `rm` are refused. Put the requirement on a `PreFileWrite` gate, so the
+ungrounded write is refused before it lands, and keep a plain file-guard beside
+it for the settled result. The full pattern is in [grounding.md](grounding.md).
 
 ## Deleted files: `deletions`
 
@@ -102,11 +127,10 @@ is this guard's business:
 deletions: include
 ```
 
-It applies at both moments: with `preventive: true`, a guard that includes
-deletions is also asked on the `PreFileDelete`, so it can refuse the delete
-before it happens; every guard that includes them is asked on the
-`PostFileDelete` at Stop. A guard on the default never sees either — do not
-write a script branch to wave deletes through, leave the key off.
+A file-guard that includes deletions is asked on the `PostFileDelete` at Stop. A
+guard on the default never sees one — do not write a script branch to wave deletes
+through, leave the key off. To refuse a delete **before** it happens, bind a
+gate to `PreFileDelete` (below).
 
 On a delete, a check reads what was lost: `oldContent` and `oldMarkers`. The
 guard's own `match` sees the deleted file's markers too — for a delete, the
@@ -122,9 +146,9 @@ and `git rm <file>` name the file directly. A recursive removal of a DIRECTORY �
 `rm -r`/`-R`/`--recursive` (or an abbreviation, `--rec`), `git rm -r`, or `mv`
 of the directory — is expanded into one `PreFileDelete` per file inside it, so a
 guard on `scanners/x/scanner.yaml` fires on `rm -rf scanners/x`. The expansion
-has limits, and a preventive guard that must hold past them needs a backstop
-that does not depend on the prediction (the Post-phase tree diff, or state the
-rule keeps itself):
+has limits, and a `PreFileDelete` gate that must hold past them needs the
+file-guard beside it as the backstop that does not depend on the prediction (the
+Post-phase tree diff, or state the rule keeps itself):
 
 - **Files:** past 1000 files the directory predicts **nothing** — the command
   runs, and only files in the session's baseline surface afterwards as
@@ -149,6 +173,25 @@ state, and "is a file that no longer exists my business" is the one place that
 question forks. Anything other than the three values is refused when the rule
 loads (`sr-file declarations .sloprail` reports it).
 
+### Refusing a delete before it happens
+
+A gate on `PreFileDelete` sees the bytes about to be lost and refuses the delete
+before it runs:
+
+```yaml
+# .sloprail/gate/no-silent-removal/gate.yaml
+on:
+  - event: PreFileDelete
+    match: 'event.path startsWith "memories/"'
+checks:
+  - script: ./refuse-unless-asked.sh   # reads .event.oldContent, .event.oldContentKnown
+```
+
+`rm a b` wakes the gate once per file, so a call is refused if any of its files
+fails, and none is deleted. The gate's `match` reads the kind's own fields
+(`event.path`, `event.oldMarkers`); a marker-scoped delete rule is
+`any(event.oldMarkers, .kind == "invariant")` on the `PreFileDelete` trigger.
+
 ## Re-fire and revalidation
 
 A refused after-check does not advance the cycle's read mark. The engine
@@ -162,107 +205,67 @@ rewrite that produces **byte-identical** content fires **no event at all** —
 worth remembering when a cross-cycle rule records what it saw
 ([state-management.md](state-management.md)).
 
-## The pending bytes
+## The settled bytes
 
-Create and update differ in how they answer "what will this file hold
-afterwards", and the difference decides which field a check reads. ([events.md](events.md)
-has the exact field set each file kind carries; this section is how a file-guard
-*uses* them.)
-
-A **create** carries the pending body in `newContent`. The file does not exist
-yet, so a check that wants to look at what would be written has nowhere else to
-look. A create's `newContent` is its whole result — there are no prior bytes, so
-a create has **no `oldContent`**.
-
-An **update** carries the file's current bytes in `oldContent` and the post-edit
-bytes in `newContent`, paired with a **`resultKnown`** boolean saying whether the
-engine could work `newContent` out. The pair exists because absence cannot say
-it: a declared field the event omits is filled with its type's zero value, so an
-uncomputable `newContent` and a genuinely emptied file would be the same
-observation. A `sed -i` whose outcome is unknowable would otherwise look like a
-command that empties the file.
-
-**A delete** carries `oldContent` and `oldMarkers` — the bytes about to be lost
-and their markers — but no `newContent` or `newMarkers`. Nothing remains, so
-there is no result to read. A delete reaches only a guard whose `deletions:` is
-`include` or `only` (above).
-
-### The resultKnown discipline
-
-This is the trap that makes a preventive file-guard silently permissive. On a
-`PreFileUpdate` an **absent `newContent` reads as the empty string**, which is
-indistinguishable from a write that empties the file. So:
-
-**Guard on `resultKnown` before you read `newContent`.** In a match:
-
-```
-resultKnown and not (newContent contains "---")
-```
-
-refuses a write that would strip the frontmatter, **and says nothing where the
-engine cannot see** — because the `resultKnown &&` short-circuits false when the
-result is underivable. To deliberately catch the underivable cases instead:
-
-```
-not resultKnown
-```
-
-In a **script** that reads the bytes, check presence first:
-
-```bash
-if ! printf '%s' "$input" | jq -e '.event | has("newContent")' >/dev/null 2>&1; then
-  echo "Refusing the write to $path: its result cannot be computed (an in-place or environment-dependent command), so it cannot be checked. Write the file directly." >&2
-  exit 1
-fi
-```
-
-A **judge** bound to an update should **defer** when the result is not known
-(`resultKnown` is false / `newContent` absent) and let the after-check judge what
-actually landed at Stop — `exit 0` silently, because that is the designed path,
-not an anomaly. Neither moment alone covers the ground: the pre-write catches
-the derivable writes early, the after-check catches everything on the settled
-file.
-
-For a `preventive` guard the engine already fails closed on an underivable
-pre-write before the script runs (so the script never sees it), but writing the
-guard anyway keeps the script correct on its own and readable to the next
-author.
-
-A create needs none of this: `PreFileCreate` always carries `newContent`, so a
-create-only check can read it directly.
-
-### Which bytes, at which moment
-
-Since a preventive guard fires at both moments, a script dispatches on
-`.event.kind`:
-
-```bash
-kind="$(printf '%s' "$event" | jq -r '.event.kind // empty')"
-case "$kind" in
-  PreFileCreate) body="$(printf '%s' "$event" | jq -r '.event.newContent // ""')" ;;
-  PreFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false')"
-    [ "$known" = "true" ] || exit 0            # defer to the after-check
-    body="$(printf '%s' "$event" | jq -r '.event.newContent // ""')" ;;
-  PostFileCreate|PostFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.newContentKnown // false')"
-    [ "$known" = "true" ] || { echo "could not read $path" >&2; exit 1; }  # fail closed
-    body="$(printf '%s' "$event" | jq -r '.event.newContent // ""')" ;;
-esac
-```
+A file-guard reads the file as it settled. A **create** carries the body in
+`newContent`; an **update** carries the baseline's bytes in `oldContent` and the
+settled bytes in `newContent`; a **delete** carries `oldContent` and `oldMarkers`
+— the bytes that were lost — but no `newContent` or `newMarkers`. A delete reaches
+only a guard whose `deletions:` is `include` or `only` (above). ([events.md](events.md)
+has the exact field set each kind carries.)
 
 The `Post` kinds carry the settled bytes in `newContent`, read by the engine the
 one safe way (a regular file, capped). When it could not read them —
 `newContentKnown` false: a link to a FIFO or a device, or a file past the cap —
 `newContent` is `""`, and a rule that treats that as an empty file has seen
-nothing. Reading the file from disk yourself (`cat "$SR_WORKSPACE/$path"`) is
-the same bytes when it works, and blocks the hook on a FIFO when it does not.
+nothing. Check `newContentKnown` first, and fail closed when it is false:
+
+```bash
+known="$(printf '%s' "$event" | jq -r '.event.newContentKnown // false')"
+[ "$known" = "true" ] || { echo "could not read $path" >&2; exit 1; }   # fail closed
+body="$(printf '%s' "$event" | jq -r '.event.newContent // ""')"
+```
+
+Reading the file from disk yourself (`cat "$SR_WORKSPACE/$path"`) is the same
+bytes when it works, and blocks the hook on a FIFO when it does not.
+
+### The resultKnown discipline
+
+This is the trap that makes a **pre-write gate** silently permissive. On a
+`PreFileCreate` or `PreFileUpdate` an **absent `newContent` reads as the empty
+string**, which is indistinguishable from a write that empties the file. The
+engine could not work the result out — a `sed -i`, a `git apply`, a notebook
+create whose cell source is not the document, an `sr-file` line it could not
+resolve — and says so with **`resultKnown: false`**.
+
+**Guard on `resultKnown` before you read `newContent`**, and decide what an
+unknown result means for your rule. A gate that exists to *prevent* must fail
+closed:
+
+```bash
+if [ "$(printf '%s' "$event" | jq -r '.event.resultKnown // false')" != "true" ]; then
+  echo '{"reason":"the result of this write could not be computed (an in-place or environment-dependent edit), so it cannot be checked before it lands. Write the file content directly."}'
+  exit 1
+fi
+```
+
+In a gate's trigger `match` (which reads the event under `event`),
+`event.resultKnown and not (event.newContent contains "---")` selects a strip and
+says nothing where the engine cannot see — the `event.resultKnown and` short-circuits
+false — and `not event.resultKnown` selects the underivable cases deliberately. A create from an ordinary Write always carries
+`newContent`, but `PreFileCreate` carries `resultKnown` too (a notebook create can
+be false), so check it on both kinds.
+
+A file-guard needs none of this: it reads settled bytes (above), never a
+prediction.
 
 ## Markers
 
 A file event carries the `// sr:<kind>` markers as a **list** of `{kind, fqn,
 line}` — `newMarkers` (the result's markers) on the create and update kinds,
-`oldMarkers` (the file's current markers) on the update and delete kinds. The
+`oldMarkers` (the file's current markers) on the update and delete kinds. A gate
+on `PreFileWrite` reads them as `event.newMarkers` / `event.oldMarkers`, per
+trigger kind (`PreFileCreate` has no `oldMarkers`). The
 per-kind field set and the element shape are in [events.md](events.md); read them
 in a check with a quantifier:
 

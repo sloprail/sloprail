@@ -10,6 +10,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -48,15 +49,15 @@ func unreadDelete(path string) string {
 // unread delete of a file nothing pins and that carries no pin.
 //
 // The marked-file case is the predicate's answer, not something the engine asks
-// before the write: the guard's match (a spec path, or any(markers|oldMarkers,
-// …)) cannot select a marked file whose unread delete carries no oldMarkers, so
-// that delete is caught only at Stop, when the baseline's markers arrive. #84
-// filling oldMarkers from HEAD for an unread delete would let the match select
-// it before the write.
+// before the write: the gate's PreFileDelete match (a spec path, or
+// any(event.oldMarkers, …)) cannot select a marked file whose unread delete
+// carries no oldMarkers, so that delete is caught only by the file-guard at
+// Stop, when the baseline's markers arrive. #84 filling oldMarkers from HEAD for
+// an unread delete would let the match select it before the write.
 func TestT046_40_UnreadDeleteOfAPinnedFileApplies(t *testing.T) {
 	repo, _ := unreadDeleteRepo(t)
 	writeExec(t, repo, "notes.md", "nothing pinned here\n")
-	dir := ruleDir(t, "pinned-spec-holds")
+	dir := gateDir(t, "pinned-spec-holds")
 
 	for _, path := range []string{"SPEC.md", "charge.go"} {
 		if out, code := runRuleScript(t, dir, "changes-pinned-lines.sh", repo, unreadDelete(path)); code != 0 {
@@ -79,17 +80,22 @@ func TestT046_40_UnreadDeleteOfAPinnedFileApplies(t *testing.T) {
 	}
 }
 
-// T046_41: pinned-invariant is not preventive, so no PreFileDelete — the only
-// kind that can arrive unread — ever reaches it: it judges a delete at Stop, as a
-// PostFileDelete whose oldContent and oldMarkers are the session baseline's, read
-// from git. That is what keeps it from passing an unread delete on an empty
-// marker list; if it were ever made preventive, this test says why it must not be
-// without reading an unread delete's pins from HEAD.
+// T046_41: pinned-invariant is a plain file-guard (a rule's prevention is a gate,
+// and it has none), so no PreFileDelete — the only kind that can arrive unread —
+// ever reaches it: it judges a delete at Stop, as a PostFileDelete whose
+// oldContent and oldMarkers are the session baseline's, read from git. That is
+// what keeps it from passing an unread delete on an empty marker list; if it were
+// ever given a gate, this test says why it must not be without reading an unread
+// delete's pins from HEAD.
 func TestT046_41_PinnedInvariantNeverSeesAPreDelete(t *testing.T) {
-	yaml := readFile(t, filepath.Join(repoRoot(t), "examples", "business-invariants", ".sloprail", "file-guard", "pinned-invariant"), "file-guard.yaml")
+	root := filepath.Join(repoRoot(t), "examples", "business-invariants", ".sloprail")
+	if _, err := os.Stat(filepath.Join(root, "gate", "pinned-invariant")); err == nil {
+		t.Fatal("pinned-invariant has a gate, so an unread PreFileDelete (no oldMarkers) would reach it and pass")
+	}
+	yaml := readFile(t, filepath.Join(root, "file-guard", "pinned-invariant"), "file-guard.yaml")
 	for _, line := range strings.Split(yaml, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "preventive:") && !strings.Contains(line, "false") {
-			t.Fatalf("pinned-invariant is preventive, so an unread PreFileDelete (no oldMarkers) would reach it and pass: %s", line)
+		if strings.HasPrefix(strings.TrimSpace(line), "preventive:") {
+			t.Fatalf("pinned-invariant declares preventive, which the engine refuses at load: %s", line)
 		}
 	}
 }

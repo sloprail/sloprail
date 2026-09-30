@@ -41,8 +41,8 @@ func TestT049_17_DeltaNarratingReplacementReachesJudgePrompt(t *testing.T) {
 		srWrite("w1", "memories/topic.md", "keep this line\n"+deltaNarrating+"\n", "please correct the deadline"),
 	))
 
-	if !res.Refused() {
-		t.Fatalf("the delta-narrating replacement was not blocked:\n%s", res.Output)
+	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) == 0 {
+		t.Fatalf("the delta-narrating replacement did not block the turn at Stop:\n%s", res.Output)
 	}
 
 	captured := e.JudgePrompt(proj, "judge-prompt.txt")

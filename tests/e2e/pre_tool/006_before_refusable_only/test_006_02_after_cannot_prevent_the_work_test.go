@@ -11,21 +11,21 @@ import (
 // TURN — which is the mechanism by which an after-the-fact rule gets anything
 // corrected.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+// # Vehicle: a plain file-guard (was old GUARDRAIL.md hooks)
 //
 // The old copy of this half hand-wrote a PostToolUse hook into settings.json —
 // wiring no user has — and was then deleted because `sr-session stop` dispatched
 // nothing, so a Post binding loaded without complaint and never ran. Both reasons
-// have expired for the new dispatch: a non-preventive file-guard IS the product's
-// own "after the fact" binding, and its after-check runs at Stop on the settled
+// have expired for the new dispatch: a file-guard IS the product's own
+// "after the fact" binding, and its after-check runs at Stop on the settled
 // file. So this is the mirror of T006_01 — the SAME refusing check, on a
-// NON-preventive guard instead of a preventive one — and where T006_01 asserts the
+// file-guard instead of a gate — and where T006_01 asserts the
 // file is absent, this asserts it is present. Between them they are the whole of
 // before_refusable_only, and neither means much without the other.
 //
 // # WHAT "CANNOT PREVENT THE WORK" MEANS, PRECISELY
 //
-// A non-preventive (after) refusal CANNOT undo the write: the file is on disk and
+// A file-guard (after) refusal CANNOT undo the write: the file is on disk and
 // the cycle is over (nature_fileguard.go's runFileGuardsPost — "a refusal here
 // does not undo the write"). But it MUST still block the turn. Conflating those
 // two was a real design error before it was corrected, so this test asserts BOTH,
@@ -40,10 +40,9 @@ import (
 // channel fileguard/034_01 reads). The ledger under the guard's own folder proves
 // the check RAN, which is what separates "correctly permitted" from "never fired".
 
-// refuseAfterTheWriteLanded is the NON-preventive counterpart of T006_01's
-// preventive guard: the only difference is the ABSENCE of `preventive: true`, so
-// the same check runs one timing later — after the write settles, at Stop, where
-// it cannot undo the file. That single-line difference is what makes the pair a
+// refuseAfterTheWriteLanded is the file-guard counterpart of T006_01's gate: the
+// same check, bound to the same files, runs one timing later — after the write
+// settles, at Stop, where it cannot undo the file. That is what makes the pair a
 // comparison rather than two unrelated tests.
 const refuseAfterTheWriteLanded = `match: "**/*.md"
 checks:

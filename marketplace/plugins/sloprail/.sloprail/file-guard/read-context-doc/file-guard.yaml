@@ -5,8 +5,6 @@
 # argument for why `require: [{skill, files}]` is the right mechanism here.
 match: path matches "^\\.sloprail/context/[^/]+/context\\.ya?ml$"
 
-preventive: true
-
 require:
   - skill: authoring-guardrails
     files: [context.md]

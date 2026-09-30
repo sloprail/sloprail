@@ -12,17 +12,18 @@ first decision is which one — because the nature fixes the directory, the YAML
 keys, what is in scope for its match, and when it fires.
 
 - **file-guard** — judges a **file's state**. "Every file under `memories/`
-  carries frontmatter." It fires on the file, re-fires until the file is fine,
-  and by default judges the *settled* result at the end of a turn. Optionally
-  `preventive`, to also refuse the write before it lands, and `deletions:
-  include`/`only` when losing the file is the rule's business too (by default a
-  deleted file is skipped).
+  carries frontmatter." It fires on the file at the end of a turn, judges the
+  *settled* result, and re-fires until the file is fine. It never acts before a
+  write — prevention is a gate's job. `deletions: include`/`only` when losing the
+  file is the rule's business too (by default a deleted file is skipped).
   → [file-guard.md](file-guard.md)
 
 - **gate** — a **checkpoint on an event**. "Block a write under
-  `memories/decisions/` unless `document-strategy` was loaded." "On Stop, the
-  turn must have produced the artifact it promised." It fires once on the event,
-  blocks, and is done.
+  `memories/decisions/` unless `document-strategy` was loaded." "Refuse the
+  deletion of a pinned file." "On Stop, the turn must have produced the artifact
+  it promised." It fires once per event (once per file a call changes), blocks,
+  and is done. **Prevention is always a gate**: to refuse a write or a delete
+  before it lands, bind a gate to `PreFileWrite` / `PreFileDelete`.
   → [gate.md](gate.md)
 
 - **context** — an **activatable scope**. "A refactor was declared; stay in
@@ -31,9 +32,12 @@ keys, what is in scope for its match, and when it fires.
   `active`/`payload` in a match.
   → [context.md](context.md)
 
-Pick by the shape of the question. Is it about **what a file holds** →
-file-guard. Is it about **whether an event may happen / whether a turn is done**
-→ gate. Is it a **mode that other rules depend on** → context.
+Pick by the shape of the question. Is it about **what a file holds when the
+turn is done** → file-guard. Is it about **whether an event may happen** (a write,
+a delete, a command) **or whether a turn is done** → gate. A rule that must both
+refuse a bad write *and* keep judging what settled is two rules with one name: a
+`PreFileWrite` gate plus a plain file-guard (the old `preventive: true` on a
+file-guard was removed; a declaration still carrying it is refused at load). Is it a **mode that other rules depend on** → context.
 
 One more thing lives alongside the three, and it is **not** a nature: the
 **structure gate** — an allowlist of paths that may be written, everything else
@@ -132,9 +136,12 @@ checks:
 - A **script** is the deterministic half: the check payload on stdin, and its
   **exit code is the verdict** — `0` permits, non-zero refuses.
   → [script-checks.md](script-checks.md). **For a file-guard, start from
-  [check-template.sh](check-template.sh)**: copy it beside the YAML and change
-  only `fine()`. It already reads each event kind correctly, which a script
-  written from scratch almost never does first time.
+  [check-template.sh](check-template.sh)** (settled `Post*` bytes, fails closed on
+  `newContentKnown`); **for a pre-write gate, from
+  [gate-check-template.sh](gate-check-template.sh)** (refuses an unknown
+  `resultKnown`). Copy it beside the YAML and change only `fine()`. It already
+  reads each event kind correctly, which a script written from scratch almost
+  never does first time.
 - A **judge** is the model half: a Jinja2 prompt template rendered against the
   payload (and any `additionalContext` a `prepare` script assembled), asked for a
   `{"pass": true|false, "reasoning": "…"}` verdict via `sr-agent`. Its file
@@ -189,9 +196,9 @@ loaded `document-strategy`" is decidable by a script. "The change is clean and
 targeted" is not — unless you hand it to a judge, which is what a `judge` check
 and its `RUBRIC.md` are for.
 
-**Refusing is the right response.** A gate, or a `preventive` file-guard,
-prevents the action. A default (after-check) file-guard, or a Stop gate, reports
-after the fact and sends the agent round again. If the honest response is neither
+**Refusing is the right response.** A pre-action gate prevents the action. A
+file-guard, or a Stop gate, reports after the fact and sends the agent round
+again. If the honest response is neither
 — "note it and move on" — a guardrail is the wrong instrument.
 
 **The question is answerable from what a check can reach.** That is more than the

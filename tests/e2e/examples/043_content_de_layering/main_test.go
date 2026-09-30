@@ -91,8 +91,8 @@ func installExampleTree(t *testing.T, projDir string) {
 	}
 
 	// Commit the installed tree so it is part of the session baseline, not the
-	// first cycle's diff. The sloprail plugin ships authoring-slop, a preventive
-	// file-guard whose Stop after-check judges a guardrail's own `.sh`/`.md.j2`
+	// first cycle's diff. The sloprail plugin ships authoring-slop, a gate plus
+	// a file-guard whose Stop after-check judges a guardrail's own `.sh`/`.md.j2`
 	// machinery; an uncommitted example tree reads as this cycle's writes, so that
 	// after-check would judge the example's own scripts and, with no model in the
 	// e2e, fail closed. Production installs before the session (baseline), so it is

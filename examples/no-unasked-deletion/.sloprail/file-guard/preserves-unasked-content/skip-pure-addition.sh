@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# prepare: decide whether the judge is asked at all. What it rules on — the
+# prepare (the file-guard's copy, reading the settled Post* events at Stop): decide
+# whether the judge is asked at all. What it rules on — the
 # change's unified diff and the cited words — needs no preparing: the template
 # reads `change` and `.event.citations` straight off its input.
 #
@@ -21,30 +22,20 @@ empty() {
   exit 0
 }
 
-# Content by event kind — the same fail-closed-on-Pre / trust-Post split
-# removes-content.sh uses. resultKnown is declared ONLY on the Pre
-# create/update kinds; reading it on a Post kind defaults it to false and hands
-# the judge an empty context for a perfectly good, settled change.
+# Content by event kind, as removes-content.sh reads it. A Post event's bytes are
+# settled; only newContentKnown says whether the engine could read them.
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
+[ -n "$kind" ] || { echo "preserves-unasked-content: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 case "$kind" in
-  PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"
-    [ "$known" = "true" ] || empty
-    new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
-    ;;
   PostFileCreate|PostFileUpdate)
     # Settled bytes the engine could not read (newContentKnown false): what
     # the change removed is unknown — ask the judge, never skip it.
     [ "$(printf '%s' "$input" | jq -r 'if (.event | has("newContentKnown")) then .event.newContentKnown else true end')" = "true" ] || empty
     new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
     ;;
-  PreFileDelete|PostFileDelete)
-    # A delete whose bytes the engine did not read (oldContentKnown false: past
-    # a recursive removal's read budget, larger than a delete read, or not a
-    # regular file) loses content nobody can see — never "nothing removed". An
-    # empty oldContent there used to skip the judge, and any resolvable quote
-    # of the user's then admitted the delete. Ask the judge.
-    [ "$(printf '%s' "$input" | jq -r 'if (.event | has("oldContentKnown")) then .event.oldContentKnown else true end')" = "true" ] || empty
+  PostFileDelete)
+    # A PostFileDelete carries the baseline's bytes in oldContent; nothing remains.
+    # (oldContentKnown exists only on PreFileDelete — the gate's copy reads it.)
     new=""
     ;;
   *)

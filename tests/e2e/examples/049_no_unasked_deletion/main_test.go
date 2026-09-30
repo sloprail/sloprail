@@ -87,4 +87,4 @@ func installExampleTree(t *testing.T, projDir, name string) {
 }
 
 // (This package asserts on res.Refused()/res.Saw() and e.Exists(), so it needs no
-// blocking-error helpers; the guard is preventive and refuses at pre-tool.)
+// blocking-error helpers; the gate refuses at pre-tool.)

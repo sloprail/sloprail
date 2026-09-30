@@ -18,9 +18,8 @@
 # .task_content (the whole TASK.md, frontmatter and body).
 #
 # THE PREPARE CONTRACT: exit 0 with additionalContext proceeds to the judge;
-# exit 0 with `{"skip": true}` ABSTAINS — no model call, no verdict, deferred
-# to the Post/Stop after-check on the settled bytes; a non-zero exit fails the
-# check closed.
+# exit 0 with `{"skip": true}` ABSTAINS — no model call, no verdict; a non-zero
+# exit fails the check closed.
 set -uo pipefail
 
 skip() { printf '{"skip": true}\n'; exit 0; }
@@ -30,11 +29,10 @@ event="$(cat)"
 path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
 root="${SR_WORKSPACE:-.}"
 
-# WHERE THE GATE'S OWN BYTES COME FROM — same Pre/Post dispatch every guard in
-# this plugin uses. An underivable Pre write (resultKnown != true) ABSTAINS
-# rather than judging an empty/guessed gate_content — the settled bytes are
-# judged once the Post event carries them instead.
+# WHERE THE GATE'S OWN BYTES COME FROM. This is the file-guard's copy: the settled
+# file at Stop, off the disk.
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+[ -n "$kind" ] || { echo "task-gate-is-grounded: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 case "$kind" in
   PostFileCreate|PostFileUpdate)
     # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
@@ -48,12 +46,7 @@ case "$kind" in
     fi
     abs="$root/$path"
     [ -f "$abs" ] || skip
-    gate_content="$(cat "$abs" 2>/dev/null || true)"
-    ;;
-  PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
-    [ "$known" = "true" ] || skip
-    gate_content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
+    gate_content="$(cat "$abs")" || { echo "task-gate-is-grounded: could not read $path, so its gate could not be judged" >&2; exit 1; }
     ;;
   *)
     skip

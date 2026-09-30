@@ -9,8 +9,9 @@ import (
 // inside the installed plugin, is in force in a project that copied nothing.
 //
 // authoring-slop was migrated from the old GUARDRAIL.md format to the new
-// file-guard nature, and it now lives at
-// marketplace/plugins/sloprail/.sloprail/file-guard/authoring-slop/ — where the
+// natures: its pre-write half is a PreFileWrite gate at
+// marketplace/plugins/sloprail/.sloprail/gate/authoring-slop/ (and a plain
+// file-guard of the same name judges the settled file at Stop) — where the
 // new plugin-loader reads it (declaration.NewWithPlugins over each enabled
 // plugin's `.sloprail`). So this exercises the SAME invariants 026 always proved,
 // now against the migrated guardrail and through the NEW nature dispatch:
@@ -97,7 +98,7 @@ func TestT026_01_PluginGuardrailFiresAndNamesThePlugin(t *testing.T) {
 	}
 	// The refusal must say where the rule came from — a plugin — with the plugin's
 	// name, exactly as the migrated new-format guard's Attribution renders
-	// (`"authoring-slop" from plugin "sloprail"`).
+	// (`gate "authoring-slop" from plugin "sloprail"`).
 	if !strings.Contains(got.Output, "sloprail") ||
 		!strings.Contains(got.Output, "from plugin") {
 		t.Errorf("the refusal never says the rule came from a plugin, so a user meets a rule "+

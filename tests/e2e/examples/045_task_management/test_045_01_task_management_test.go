@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// task-management is a PREVENTIVE file-guard over `**/tasks/*/*/ASK.md`: every
+// task-management is a PreFileWrite gate (with a same-named file-guard for the Stop after-check) over `**/tasks/*/*/ASK.md`: every
 // write must cite the user's own words (`require: [{citation: {source_types:
 // [user]}}]`), and a prepare + judge then rules that the ask is TRUE to the cited
 // words and holds THAT AND NOTHING ELSE. The citation rides on the write —
-// `sr-file write …/ASK.md --cite:user '<quote>'` — never inside the file. Being
-// preventive, a not-fine write is refused at PRE-tool, before it lands.
+// `sr-file write …/ASK.md --cite:user '<quote>'` — never inside the file. Being a
+// gate, a not-fine write is refused at PRE-tool, before it lands.
 //
 // The judge verdict is a stub (InstallJudgeClaude); the capturing variant records
 // the rendered prompt so a test can see what the judge was handed.
@@ -51,9 +51,10 @@ func TestT045_01_UncitedWriteRefused(t *testing.T) {
 	}
 }
 
-// T045_02: cited, but the judge rejects the ask as padded beyond the cited words —
-// it blocks at pre-tool and the judge's reasoning reaches the agent.
-func TestT045_02_CitedButRejectedByJudgeBlocks(t *testing.T) {
+// T045_02: cited, so the cheap gate admits and the ask lands; but the judge (in the
+// file-guard, at Stop) rejects the ask as padded beyond the cited words — the turn
+// is blocked and the judge's reasoning reaches the agent.
+func TestT045_02_CitedButRejectedByJudgeBlocksAtStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
@@ -64,14 +65,15 @@ func TestT045_02_CitedButRejectedByJudgeBlocks(t *testing.T) {
 		writeAsk("w1", "Migrate the auth module — and also refactor logging, add metrics, and write docs.", "migrate the auth module"),
 	))
 
-	if !res.Refused() {
-		t.Fatalf("a judge-rejected ask was not refused:\n%s", res.Output)
+	if res.Refused() {
+		t.Fatalf("the gate (citation only, no model) refused a cited ask:\n%s", res.Output)
 	}
-	if !res.Saw("agent-authored scope the human never asked for") {
-		t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)
+	if !e.Exists(proj, askPath) {
+		t.Errorf("the cited ask did not land: a gate holds no judge")
 	}
-	if e.Exists(proj, askPath) {
-		t.Errorf("the rejected write landed")
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-045-02", "Stop"), "\n")
+	if !strings.Contains(blocks, "agent-authored scope the human never asked for") {
+		t.Errorf("the judge's reasoning did not block the turn at Stop:\n%s", blocks)
 	}
 }
 

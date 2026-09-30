@@ -49,7 +49,6 @@ func writeFileGuardYAML(t *testing.T, proj, name, yaml string, scripts map[strin
 func TestPreTool_MalformedFileGuardIsReportedAndDoesNotDeny(t *testing.T) {
 	proj := initRepo(t)
 	writeFileGuardYAML(t, proj, "typo", `match: marker.kind == "endpoint"
-preventive: true
 checks:
   - script: ./refuse.sh
 `, map[string]string{"refuse.sh": "#!/bin/sh\ncat >/dev/null\nexit 1\n"})

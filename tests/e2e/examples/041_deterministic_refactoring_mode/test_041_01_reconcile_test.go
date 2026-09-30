@@ -1,16 +1,19 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// This file drives the deterministic-refactoring file-guard end to end against
-// the SHIPPED example: a write of a file carrying an `sr:moved-from origin@sha:
+// This file drives the deterministic-refactoring reconcile end to end against
+// the SHIPPED example (the moved-content-reconciles gate, with a same-named
+// file-guard as the Stop after-check): a write of a file carrying an `sr:moved-from origin@sha:
 // s-e` marker is admitted only when its body reconciles (byte-identical minus
 // imports/whitespace) against the origin range at that commit, and refused
-// otherwise — PREVENTIVELY, at PreToolUse, before the write lands.
+// otherwise — by the gate, at PreToolUse, before the write lands.
 //
 // The origin is a real committed file; the marker's fqn is `<path>@<sha>:<start>-
 // <end>` (path BEFORE the @, then the commit, then the line range). The moved
@@ -88,7 +91,7 @@ func TestT041_01_ReconcilingMoveAdmits(t *testing.T) {
 }
 
 // T041_02: a move whose content does NOT reconcile (the body was regenerated, not
-// carried) is REFUSED preventively, the write never lands, and the guard's own
+// carried) is REFUSED by the gate, the write never lands, and the guard's own
 // reason reaches the agent.
 //
 // The core violation the unit exists to catch: an agent claiming to MOVE code
@@ -108,14 +111,14 @@ func TestT041_02_NonReconcilingMoveRefused(t *testing.T) {
 		t.Fatalf("a regenerated (non-reconciling) move was NOT refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, "dest.go") {
-		t.Errorf("the non-reconciling write LANDED despite the preventive guard")
+		t.Errorf("the non-reconciling write LANDED despite the gate")
 	}
 	if !res.Saw(reconcileRefusal) {
 		t.Errorf("the guard's reconcile refusal reason did not reach the agent:\n%s", res.Output)
 	}
 	// The refusal names the guard so the agent can attribute it.
 	if !res.Saw("moved-content-reconciles") {
-		t.Errorf("the refusal did not name the file-guard:\n%s", res.Output)
+		t.Errorf("the refusal did not name the gate:\n%s", res.Output)
 	}
 }
 
@@ -185,8 +188,8 @@ func TestT041_04_UnmarkedWriteNotGuarded(t *testing.T) {
 // T041_05: a not-reconciling write RE-FIRES — it is refused every time it is
 // attempted, and a corrected (reconciling) write is admitted.
 //
-// The re-fire property for a PREVENTIVE guard reads slightly differently than for
-// an after-check: a preventive guard blocks the write BEFORE it lands, so a bad
+// The re-fire property for a GATE reads slightly differently than for
+// an after-check: a gate blocks the write BEFORE it lands, so a bad
 // move never reaches disk, and re-attempting the same bad move is refused again
 // (the guard is a pure function of the pending content, so it cannot be "used
 // up"). A corrected move — the exact origin bytes — is then admitted. Two cycles
@@ -229,4 +232,40 @@ func TestT041_05_NonReconcilingReFiresUntilFixed(t *testing.T) {
 	if !e.Exists(proj, "dest.go") {
 		t.Errorf("cycle 3: the corrected move did not land")
 	}
+}
+
+// T041_10: a marked file rewritten in place by a command whose result the engine
+// cannot compute (`sed -i`) is refused by the gate, before the write.
+//
+// A gate reads the pending bytes, and for sed -i there are none to read
+// (resultKnown false, pending markers unknown). The gate still selects the update
+// because the file ALREADY carries the moved-from marker, and refuses it: the
+// regenerated body (999 for the origin's 1) never lands.
+func TestT041_10_UnderivableInPlaceEditIsRefused(t *testing.T) {
+	env, sha := setupOrigin(t)
+	e, proj := env.e, env.proj
+
+	good := "// sr:moved-from origin.go@" + sha + ":1-3\nfunc Beta() int {\n\treturn 1\n}\n"
+	e.WriteFile(proj, "dest.go", good)
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "an admitted move")
+
+	res := e.Run(proj, "s-041-10", "tweak the moved function", Turns("done",
+		Bash("b1", "sed -i.bak s/return\\ 1/return\\ 999/ dest.go"),
+	))
+
+	if !res.Refused() {
+		t.Fatalf("a sed -i regeneration of a moved file was not refused before the write:\n%s", res.Output)
+	}
+	if !res.Saw("cannot be worked out") || !res.Saw("moved-content-reconciles") {
+		t.Errorf("the refusal is not the reconcile gate's:\n%s", res.Output)
+	}
+	if body, _ := readFile(proj, "dest.go"); body != good {
+		t.Errorf("the in-place edit landed despite the refusal: %q", body)
+	}
+}
+
+func readFile(proj, rel string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(proj, rel))
+	return string(b), err
 }

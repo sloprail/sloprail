@@ -87,7 +87,7 @@ func TestT040_02_ContextAccumulatesTagAndArtifact(t *testing.T) {
 }
 
 // T040_03: the structure.yaml path allowlist ADMITS an in-allowlist write and
-// REFUSES an out-of-allowlist write, preventively.
+// REFUSES an out-of-allowlist write, before it lands.
 //
 // structure.yaml is a real, working file-guard: an update artifact must be
 // memories/updates/*.md and a decision a memories/decisions/<YYYYMMDD_slug>/*.md.
@@ -111,8 +111,8 @@ func TestT040_03_StructureAllowlist(t *testing.T) {
 		t.Errorf("the structure allowlist refused an in-allowlist write (memories/updates/ok.md)")
 	}
 
-	// Out-of-allowlist: a path the allowlist does not permit. Refused preventively,
-	// the file never lands.
+	// Out-of-allowlist: a path the allowlist does not permit. Refused before it
+	// lands, the file never lands.
 	res := e.Run(proj, "s-040-03b", "write a disallowed path", Turns("done",
 		SayWrite("w1", "note #skip", "src/random.md", "x"),
 	))

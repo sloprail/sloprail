@@ -13,17 +13,17 @@ import (
 // check, and still lets it write files, read the tree, or make a network call. So
 // these tests read the check's own ledger, not just the outcome.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
 //
 // The old format switched a rule off with `enabled: false` INSIDE the declaration.
 // The new format keeps that decision on the CONSUMER's side, in
 // `.sloprail/config.yaml`'s `disabled:` list, keyed on the qualified name — for a
-// project's own file-guard, `file-guard/<name>` (internal/declaration/config.go,
+// project's own gate, `gate/<name>` (internal/declaration/config.go,
 // applied by store.go's applyDisable, which filters the disabled declaration out
 // of the loaded set entirely so it never dispatches and no check runs). This is
 // the right home: a plugin's `enabled: false` edit lives in an install cache the
 // next reinstall overwrites, so the switch-off has to survive on the project's
-// side. These tests install a NEW-format file-guard and disable it that way, then
+// side. These tests install a NEW-format gate and disable it that way, then
 // re-prove the SAME inertness against the NEW pre-tool dispatch.
 //
 // Every "did not happen" test below is paired with the same declaration left
@@ -31,15 +31,15 @@ import (
 // the guardrail were misspelled, unparseable, or bound to a match nothing hits —
 // proving only that the test cannot fail.
 
-// switchableGuard is a NEW-FORMAT preventive file-guard that refuses every
-// markdown write, recording each run first. Preventive so a refusal is observable
-// as a pre-tool deny; the ledger under the guard's own folder (SR_GUARDRAIL_DIR,
-// no .md suffix so the `**/*.md` match never re-selects it) is how a RUN is
+// switchableGuard is a NEW-FORMAT gate on PreFileWrite that refuses every
+// markdown write, recording each run first. A gate, so a refusal is observable as a
+// pre-tool deny; the ledger under the gate's own folder (SR_GUARDRAIL_DIR) is how a RUN is
 // observed independently of the verdict. It is the SAME declaration whether or not
 // the project disables it — only config.yaml differs, so the enabled case is a
 // genuine control.
-const switchableGuard = `match: "**/*.md"
-preventive: true
+const switchableGuard = `on:
+  - event: PreFileWrite
+    match: event.path endsWith ".md"
 checks:
   - script: ./refuse.sh
 `
@@ -70,7 +70,7 @@ func TestT011_01_EnabledGuardrailRunsAndRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "switchable", switchableGuard, map[string]string{"refuse.sh": recordThenRefuse})
+	e.Gate(proj, "switchable", switchableGuard, map[string]string{"refuse.sh": recordThenRefuse})
 
 	got := e.Run(proj, "s-011-01", "write a note", Turns("done",
 		Write("w1", "some/notes.md", "hello"),
@@ -82,7 +82,7 @@ func TestT011_01_EnabledGuardrailRunsAndRefuses(t *testing.T) {
 	if !got.Saw("this rule is in force") {
 		t.Fatalf("the enabled guardrail's reason did not reach the agent:\n%s", got.Output)
 	}
-	if runs := e.FileGuardLedger(proj, "switchable", "ledger"); runs != 1 {
+	if runs := len(e.GateLedgerLines(proj, "switchable", "ledger")); runs != 1 {
 		t.Fatalf("the enabled guardrail's check ran %d times, want 1", runs)
 	}
 }
@@ -96,9 +96,9 @@ func TestT011_02_DisabledGuardrailNeitherRunsNorRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "switchable", switchableGuard, map[string]string{"refuse.sh": recordThenRefuse})
+	e.Gate(proj, "switchable", switchableGuard, map[string]string{"refuse.sh": recordThenRefuse})
 	// Switched off from the project's own side, by qualified name.
-	e.DisablePluginGuardrail(proj, "file-guard/switchable")
+	e.DisablePluginGuardrail(proj, "gate/switchable")
 
 	got := e.Run(proj, "s-011-02", "write a note", Turns("done",
 		Write("w1", "some/notes.md", "hello"),
@@ -110,7 +110,7 @@ func TestT011_02_DisabledGuardrailNeitherRunsNorRefuses(t *testing.T) {
 	if got.Saw("this rule is in force") {
 		t.Errorf("a disabled guardrail's reason reached the agent:\n%s", got.Output)
 	}
-	if runs := e.FileGuardLedger(proj, "switchable", "ledger"); runs != 0 {
+	if runs := len(e.GateLedgerLines(proj, "switchable", "ledger")); runs != 0 {
 		t.Errorf("a disabled guardrail ran its check %d times, want none", runs)
 	}
 	// The write the disabled guard would have blocked actually landed.
@@ -127,7 +127,7 @@ func TestT011_02_DisabledGuardrailNeitherRunsNorRefuses(t *testing.T) {
 // deliberate switch-off into a silent disarming of the whole project — and the
 // project would look guarded.
 //
-// Both file-guards bind the SAME match here, so the disabled one is genuinely a
+// Both gates bind the SAME match here, so the disabled one is genuinely a
 // candidate the dispatch would otherwise reach on this write. The enabled rule
 // PERMITS (recording that it ran) rather than refuses, so its being in force is
 // proven by its ledger rather than by a deny that could have come from either — a
@@ -137,9 +137,9 @@ func TestT011_03_DisablingOneLeavesTheOthersInForce(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "switchable", switchableGuard, map[string]string{"refuse.sh": recordThenRefuse})
-	e.FileGuard(proj, "still-on", switchableGuard, map[string]string{"refuse.sh": recordThenPermit})
-	e.DisablePluginGuardrail(proj, "file-guard/switchable")
+	e.Gate(proj, "switchable", switchableGuard, map[string]string{"refuse.sh": recordThenRefuse})
+	e.Gate(proj, "still-on", switchableGuard, map[string]string{"refuse.sh": recordThenPermit})
+	e.DisablePluginGuardrail(proj, "gate/switchable")
 
 	got := e.Run(proj, "s-011-03", "write a note", Turns("done",
 		Write("w1", "some/notes.md", "hello"),
@@ -147,16 +147,14 @@ func TestT011_03_DisablingOneLeavesTheOthersInForce(t *testing.T) {
 
 	// The enabled rule ran. Read from its ledger, not the stream: it permits, and a
 	// permitted check's stderr reaches no agent. Without this the disabled-side
-	// assertion below could hold because nothing ran at all. A permitting preventive
-	// guard runs at pre-tool AND again at Stop's after-check (the write landed, so a
-	// Post event exists for it), so the count is >= 1 rather than exactly 1 — what
+	// assertion below could hold because nothing ran at all. What
 	// matters here is that it ran, against the disabled rule's zero.
-	if runs := e.FileGuardLedger(proj, "still-on", "ledger"); runs == 0 {
+	if runs := len(e.GateLedgerLines(proj, "still-on", "ledger")); runs == 0 {
 		t.Fatalf("the enabled guardrail's check never ran — the disabled-side assertion below would prove nothing:\n%s", got.Output)
 	}
 	// And the disabled rule, bound to the same match and reached on the same pass,
 	// did not.
-	if runs := e.FileGuardLedger(proj, "switchable", "ledger"); runs != 0 {
+	if runs := len(e.GateLedgerLines(proj, "switchable", "ledger")); runs != 0 {
 		t.Errorf("the disabled guardrail ran its check %d times, want none", runs)
 	}
 	// Nor did it refuse. The rule's own words never reached the agent.

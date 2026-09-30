@@ -518,10 +518,24 @@ checks:
 `
 
 // noMatchFileGuard omits the required `match`.
-const noMatchFileGuard = `preventive: true
-checks:
+const noMatchFileGuard = `checks:
   - script: ./h.sh
 `
+
+// T003_16b: the skill no longer teaches a `preventive:` key.
+//
+// A file-guard acts only at Stop, and the load REFUSES `preventive:` (any value),
+// naming the split into a PreFileWrite gate plus a plain file-guard. A YAML example
+// carrying the key would teach an author a declaration this build refuses to load.
+// The word may still appear in prose that explains the removal; only a `preventive:`
+// KEY at the start of a line (as in a yaml example) is what this pins.
+func TestT003_16b_SkillDoesNotTeachPreventive(t *testing.T) {
+	for _, line := range strings.Split(skillCorpusText(t), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "preventive:") {
+			t.Errorf("the skill shows a `preventive:` key, which the loader refuses: %q", line)
+		}
+	}
+}
 
 // T003_17: the skill's check contract matches what the engine sends and accepts.
 //

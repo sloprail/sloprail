@@ -27,8 +27,8 @@ package commandmod
 // write whatever the tool is named, so a rename cost nothing. That protected
 // against a write going unnoticed. It also meant a call carrying `file_path`
 // and NO write-shaped key — Read's shape — could not be told apart from a
-// notebook edit whose bytes are real but underivable, and a preventive
-// file-guard bound to PreFileCreate/PreFileUpdate refused the READ itself.
+// notebook edit whose bytes are real but underivable, and a gate
+// bound to PreFileCreate/PreFileUpdate refused the READ itself.
 // See pendingArgs.statesAWrite (filemod/pendingshape.go) for that fix's own
 // account, and extractPending's doc comment for the measured repro.
 //

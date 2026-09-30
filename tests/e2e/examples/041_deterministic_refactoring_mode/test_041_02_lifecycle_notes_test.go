@@ -11,7 +11,7 @@ import (
 // gate `gate/refactor-complete`, not in the context's exit. These tests prove the
 // gate blocks an incomplete refactor (T041_07) and permits a completed one
 // (T041_08), and pin the context-activation behavior the file-guard rests on
-// (T041_06). None of this disturbs the preventive file-guard (T041_01..05).
+// (T041_06). None of this disturbs the reconcile gate (T041_01..05).
 
 // T041_06: the `refactoring` context activates on ANY PreToolUse, not only when a
 // `#refactor` was declared — so the file-guard fires on a moved-from marker even
@@ -105,8 +105,8 @@ func TestT041_07_IncompleteRefactorBlocksAtStop(t *testing.T) {
 		t.Fatalf("EXPECTED the completeness gate to block the Stop for a declared-but-unwritten "+
 			"refactor, naming it. Stop blocks seen: %v\n%s", blocks, res.Output)
 	}
-	// The unrelated write itself carries no moved-from marker, so the preventive
-	// file-guard leaves it alone — the block is the GATE's, not the file-guard's.
+	// The unrelated write itself carries no moved-from marker, so the reconcile
+	// gate leaves it alone — the block is the completeness gate's, not the reconcile gate's.
 	if res.Refused() {
 		t.Errorf("the unrelated write was refused at PreToolUse; it carries no moved-from marker "+
 			"and should pass the file-guard — the completeness block belongs at Stop, not here:\n%s", res.Output)
@@ -118,8 +118,8 @@ func TestT041_07_IncompleteRefactorBlocksAtStop(t *testing.T) {
 // once the declared move is present.
 //
 // The agent declares scope=origin.go@<sha>:1-3 AND writes dest.go carrying
-// `sr:moved-from origin.go@<sha>:1-3` with the exact origin bytes. The preventive
-// file-guard admits the reconciling write, it lands, and at Stop the completeness
+// `sr:moved-from origin.go@<sha>:1-3` with the exact origin bytes. The reconcile
+// gate admits the reconciling write, it lands, and at Stop the completeness
 // gate finds the declared move's marker in the tree and permits — no Stop block.
 func TestT041_08_CompletedRefactorPermitsAtStop(t *testing.T) {
 	env, sha := setupOrigin(t)
@@ -131,7 +131,7 @@ func TestT041_08_CompletedRefactorPermitsAtStop(t *testing.T) {
 		SayWrite("w1", declRefactor(sha), "dest.go", moved),
 	))
 
-	// The reconciling move landed — the preventive file-guard admitted it.
+	// The reconciling move landed — the reconcile gate admitted it.
 	if res.Refused() {
 		t.Fatalf("the reconciling declared move was refused at PreToolUse:\n%s", res.Output)
 	}

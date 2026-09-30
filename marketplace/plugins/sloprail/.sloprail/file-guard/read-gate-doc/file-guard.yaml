@@ -6,8 +6,6 @@
 # `require: [{skill, files}]` is the right mechanism here.
 match: path matches "^\\.sloprail/gate/[^/]+/gate\\.ya?ml$"
 
-preventive: true
-
 require:
   - skill: authoring-guardrails
     files: [gate.md]

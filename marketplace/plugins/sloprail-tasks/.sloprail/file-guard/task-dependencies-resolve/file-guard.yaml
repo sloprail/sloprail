@@ -15,7 +15,7 @@
 #      on disk) must have no cycle reachable from this task's own id.
 #
 # WHY THIS IS A SEPARATE GUARD FROM task-evidence-resolves. Both are
-# deterministic, preventive, and read the same schema, but they ask
+# deterministic and read the same schema, but they ask
 # structurally different questions over different STATE: task-evidence-resolves
 # reads only the file being written (its own frontmatter, the transcript, the
 # tree at cited paths); this guard reads the WHOLE task tree and git history to
@@ -28,10 +28,10 @@
 # in this plugin uses.
 match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 
-# preventive: true — refuse the move before it lands, the same Pre/Post shape
-# every other guard in this plugin uses; the Stop after-check backstops a
-# write the engine cannot derive at Pre.
-preventive: true
+# The PREVENTION half — refusing the move before it lands — is the PreFileWrite
+# gate of the same name, beside this guard under gate/. This file-guard is the
+# Stop after-check on the settled file: it backstops a write the gate could not
+# derive or never saw.
 
 checks:
   # Deterministic, fail-closed throughout except the documented git-history

@@ -9,17 +9,18 @@ import (
 // under a DIFFERENT guardrail's name; the second reads it back with `state list
 // --owner <that name>` and reports what it saw. SHARED machinery — the
 // cross-guard `--owner` read a shipped gate uses to cross-reference a context's
-// registry, exercised through the real CLI against a NEW-format file-guard.
+// registry, exercised through the real CLI against a NEW-format gate.
 //
-// Two checks of one guard rather than two guards because the new preventive
-// dispatch runs guards in name order but stops at the first refusal — two checks
+// Two checks of one guard rather than two guards because the gate
+// dispatch runs gates in name order but stops at the first refusal — two checks
 // of one guard run in declaration order, so the reader genuinely runs after the
 // registry exists. Planting the owner's rows by naming it on the way in is
 // legitimate and already pinned by T008_04: a check is an arbitrary command and may
 // set SR_GUARDRAIL before calling the CLI. The behaviour under test is the READER's
 // --owner.
-const ownerReadGuard = `match: "owner/**"
-preventive: true
+const ownerReadGuard = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "owner/"
 checks:
   - script: ./plant.sh
   - script: ./read.sh
@@ -70,7 +71,7 @@ func TestT008_07_OwnerReadsSiblingRegistry(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "gate", ownerReadGuard, map[string]string{
+	e.Gate(proj, "gate", ownerReadGuard, map[string]string{
 		"plant.sh": ownerPlantScript, "read.sh": ownerReadScript,
 	})
 

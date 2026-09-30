@@ -12,7 +12,7 @@
 //
 // The four guardrails and what each test file covers:
 //
-//   - unit-md-first (file-guard, preventive, script): a file other than
+//   - unit-md-first (gate + file-guard, script): a file other than
 //     UNIT.md written into a unit folder before UNIT.md exists is refused;
 //     UNIT.md itself, and any file written after UNIT.md exists, are
 //     admitted; deleting a file inside an existing unit folder is not
@@ -23,12 +23,12 @@
 //     measurement (character limit) is judged (via a stub — see
 //     test_unit_rules_test.go's header for what this can and cannot prove,
 //     now that there is no separate script-rule stage).
-//   - unit-publish-approved (file-guard, preventive, script): a write moving
+//   - unit-publish-approved (gate + file-guard, script): a write moving
 //     a unit INTO status: published without a citation of the user's words
 //     on the action is refused; a quote the user never said is refused; a
 //     cited transition plus published_urls (a list) passes; a write that is
 //     not a transition into published needs no citation.
-//   - content-rule-is-grounded (file-guard, preventive, require citation +
+//   - content-rule-is-grounded (gate + file-guard, require citation +
 //     script + judge): an uncited rule write (the Write tool) is refused by
 //     require, naming sr-file; a quote the user never said is refused; a
 //     cited rule the judge accepts passes, the judge having been handed the

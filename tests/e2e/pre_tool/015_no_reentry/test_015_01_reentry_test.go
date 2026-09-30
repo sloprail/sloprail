@@ -6,21 +6,22 @@ import (
 	"testing"
 )
 
-// A file-guard whose CHECK LAUNCHES AN AGENT to judge the write, in the very
+// A gate whose CHECK LAUNCHES AN AGENT to judge the write, in the very
 // project it is guarding.
 //
 // This is the docs use-case as the owner described it, and it is the shape the
-// whole recursion problem lives in: the guard is preventive (so it fires on the
-// PRE file write), the agent it launches works in the same tree, and the agent's
+// whole recursion problem lives in: the gate fires on the
+// PRE file write, the agent it launches works in the same tree, and the agent's
 // own first Write under notes/ fires the guard again.
 //
-// `preventive: true` is what puts the check on the pre-tool path — the moment a
+// Being a PreFileWrite gate is what puts the check on the pre-tool path — the moment a
 // launched agent's write is about to land — so the launching check runs through
 // the new dispatch that must set SLOPRAIL_LAUNCHED_BY. The check exits 0 (it only
 // launches and permits), so the write it judges is admitted and the recursion is
 // through the agent, not through a refusal.
-const judgeByAgent = `match: path startsWith "notes/"
-preventive: true
+const judgeByAgent = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "notes/"
 checks:
   - script: ./judge.sh
 `
@@ -91,7 +92,7 @@ func maxDepth(t *testing.T, lines []string) int {
 func TestT015_01_LaunchedAgentDoesNotReenterTheRuleThatLaunchedIt(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeScript})
 	e.InstallClaudeShim(proj)
 	// The launched agent EDITS A FILE. That is the case worth protecting: a
 	// judging agent that could not write could not be the thing this guards.
@@ -101,7 +102,7 @@ func TestT015_01_LaunchedAgentDoesNotReenterTheRuleThatLaunchedIt(t *testing.T) 
 		Write("w1", "notes/first.md", "hello"),
 	))
 
-	ledger := fileGuardLedgerLines(t, proj, "judge-notes", "ledger.txt")
+	ledger := gateLedgerLines(t, proj, "judge-notes", "ledger.txt")
 	t.Logf("ledger: %v", ledger)
 
 	for _, l := range ledger {

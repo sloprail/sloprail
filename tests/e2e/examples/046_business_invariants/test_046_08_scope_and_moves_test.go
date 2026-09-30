@@ -98,11 +98,11 @@ func TestT046_30_ShellRewriteOfAPinnedLineIsCaughtAtStop(t *testing.T) {
 	}
 }
 
-// T046_31: pinned-spec-holds is preventive, and a preventive guard refuses a write
-// whose result the engine cannot work out ahead on any file it matches. It
-// matches only files a pin can involve — specs and marker-carrying files — so a
+// T046_31: pinned-spec-holds ships a gate, and a gate refuses a write whose result
+// the engine cannot work out ahead when its decision reads the bytes. It triggers
+// only on files a pin can involve — specs and marker-carrying files — so a
 // `sed -i` of an unrelated file is not its business, while a `sed -i` of a pinned
-// spec line is still refused before it lands.
+// spec line is still refused before it lands, by the gate.
 func TestT046_31_ShellEditsOutsideAPinsReachAreAdmitted(t *testing.T) {
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
@@ -126,8 +126,8 @@ func TestT046_31_ShellEditsOutsideAPinsReachAreAdmitted(t *testing.T) {
 	res = e.Run(proj, "s-046-31b", "allow goodwill refunds", Turns("done",
 		Bash("b1", "sed -i.bak 's/charge amount\\./charge amount, except goodwill refunds./' SPEC.md"),
 	))
-	if !res.Refused() || !res.Saw("pinned-spec-holds") {
-		t.Fatalf("a shell edit of a pinned spec line was not refused before it landed:\n%s", res.Output)
+	if !res.Refused() || !res.Saw(`gate \"pinned-spec-holds\"`) {
+		t.Fatalf("a shell edit of a pinned spec line was not refused before it landed, by the gate:\n%s", res.Output)
 	}
 	// The hint names the cases a result is unknown in, including the one where it
 	// is sr-file's own dry run that failed — not a bare "cannot be worked out",

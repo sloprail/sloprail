@@ -121,7 +121,7 @@ adopt a decision log'`),
 // own file. The refusal of memories/a.md (the guarded one) says what sr-file
 // said about it — not what it said about notes/b.md, which no rule guards.
 func TestT041_36_EachDryRunFailureIsQuotedBesideItsFile(t *testing.T) {
-	e, proj := guarded(t, preventiveGuard)
+	e, proj := guardedPre(t)
 	e.WriteFile(proj, "notes/b.md", "# b\n")
 	commitAll(t, proj)
 

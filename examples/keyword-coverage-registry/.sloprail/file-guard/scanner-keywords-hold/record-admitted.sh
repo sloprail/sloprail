@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# STOP-TIME copy (the file-guard): reads settled bytes. A file-guard never sees a
+# Pre event, so the Pre-only `resultKnown` field does not apply here (the gate of
+# the same name keeps the pre-write copy and consults it).
 # The LAST check: reached only once everything before it admitted the event —
 # the citation requirement (when drops-keywords.sh applied it) and the judge.
 # It records what the user asked for, so the registry stops owing it:
@@ -61,15 +64,10 @@ stamp="$(sr-session state list --owner scanner-declared "stamp:${scanner}" \
 
 kind="$(field '.event.kind // ""')"
 case "$kind" in
-  PreFileDelete | PostFileDelete)
+  PostFileDelete)
     sr-session state set "retired:${scanner}" "$stamp" \
       || refuse "Could not record ${scanner} as retired (sr-session state set failed), so the delete was not let through."
     exit 0
-    ;;
-  PreFileCreate | PreFileUpdate)
-    # A result the engine could not compute cannot be recorded; the settled
-    # file is judged again at Stop and recorded then.
-    [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
     ;;
   PostFileCreate | PostFileUpdate)
     # Settled bytes the engine could not read (newContentKnown false): what

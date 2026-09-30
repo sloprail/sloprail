@@ -13,7 +13,7 @@ package e2e
 //     project's required stack (Express + Prisma, kebab-case routes, camelCase
 //     fields)?
 //
-// The guard is NOT preventive, so refusals arrive at Stop, read with
+// The guard is a plain file-guard, so refusals arrive at Stop, read with
 // BlockingErrorsFrom(proj, sess, "Stop"); res.Refused() stays false.
 //
 // How each mechanism is driven:

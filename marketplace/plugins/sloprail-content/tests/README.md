@@ -36,7 +36,7 @@ Each test:
    declare `scope`;
 3. drives the **a10n-claude-mock** through the harness (`e.Run(proj, sess,
    prompt, Turns(...))`);
-4. asserts the outcome: `res.Refused()` for a preventive Pre refusal,
+4. asserts the outcome: `res.Refused()` for a gate's pre-write refusal,
    `e.BlockingErrorsFrom(proj, sess, "Stop")` for an after-check Stop block,
    `e.Exists(...)` for whether a write landed, and `res.Saw(...)` for the
    reason reaching the agent.
@@ -89,7 +89,7 @@ prove.
 
 ## Per-file coverage
 
-**test_unit_md_first_test.go — unit-md-first** (file-guard, preventive,
+**test_unit_md_first_test.go — unit-md-first** (gate + file-guard,
 script)
 - a non-entry file (the draft) written into a unit folder before UNIT.md
   exists is refused, naming the missing UNIT.md and how to write it first
@@ -107,7 +107,7 @@ after-check, one judge check with `allowed_tools: [Read, Bash]`)
 - a unit selecting no applicable rule at all passes (the guard does not block
   by default)
 
-**test_publish_gate_test.go — unit-publish-approved** (file-guard, preventive,
+**test_publish_gate_test.go — unit-publish-approved** (gate + file-guard,
 script)
 - creating a unit at `status: published` with the Write tool (no citation) is
   refused, and the refusal names `sr-file write` and `--cite:user`
@@ -121,8 +121,8 @@ script)
 - a drafting unit created, or edited, uncited is unaffected by the gate
 - an uncited edit of an already-published unit (not a transition) passes
 
-**test_content_rule_grounded_test.go — content-rule-is-grounded** (file-guard,
-preventive, require citation + script + judge)
+**test_content_rule_grounded_test.go — content-rule-is-grounded** (gate + file-guard,
+require citation + script + judge)
 - an uncited rule write (the Write tool) is refused by `require` before the
   judge, and the refusal names `sr-file` and `--cite:user`
 - a rule citing words the user never said is refused

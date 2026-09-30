@@ -2,7 +2,7 @@ package e2e
 
 import "testing"
 
-// unit-satisfies-rules is a file-guard, NOT preventive (a Stop after-check —
+// unit-satisfies-rules is a file-guard with no gate (a Stop after-check —
 // the same binding unit-satisfies-constraints used, and for the same reason:
 // a writing-rule judgement is inherently after-the-fact). ONE check: collect
 // every rule the unit's tags select (rules-lib.sh) and put them all to one
@@ -21,8 +21,8 @@ import "testing"
 // measurement is actually correct (the stub never runs Bash) — what they DO
 // prove is real: which rules are SELECTED for a given unit (the tag
 // intersection, exercised by installing rules whose folder names differ and
-// asserting which one's stub-driven block appears), that the guard is not
-// preventive (writes land, refusals arrive only via the Stop after-check),
+// asserting which one's stub-driven block appears), that the guard has no gate
+// (writes land, refusals arrive only via the Stop after-check),
 // and that a unit with no applicable rule is never even judged into a false
 // block. The deterministic-measurement CLAIM itself (does `wc -m` really
 // catch an over-limit tweet) is proven by hand against the shipped rule text
@@ -73,7 +73,7 @@ func TestRules_GlobalJudgeRuleAppliesToUnitWithNoTags(t *testing.T) {
 		Write("w1", unitPath, body),
 	))
 	if res.Refused() {
-		t.Fatalf("the unit write itself was refused at Pre (setup broken, guard is not preventive):\n%s", res.Output)
+		t.Fatalf("the unit write itself was refused at Pre (setup broken, guard has no gate):\n%s", res.Output)
 	}
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
 	if len(blocks) == 0 {
@@ -189,7 +189,7 @@ func TestRules_DeterministicRuleRefusesViaJudgeStub(t *testing.T) {
 		Write("w1", draftPath, body),
 	))
 	if res.Refused() {
-		t.Fatalf("the draft write was refused at Pre (setup broken, guard is not preventive):\n%s", res.Output)
+		t.Fatalf("the draft write was refused at Pre (setup broken, guard has no gate):\n%s", res.Output)
 	}
 	blocks := e.BlockingErrorsFrom(proj, sess, "Stop")
 	if len(blocks) == 0 {

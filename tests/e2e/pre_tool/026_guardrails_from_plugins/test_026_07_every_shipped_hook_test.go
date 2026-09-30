@@ -11,8 +11,8 @@ import (
 )
 
 // Every hook script this repo ships — its own .sloprail, every example, every
-// marketplace plugin — must pass authoring-slop's own grep. authoring-slop is
-// preventive: a shipped script its grep refuses can never be edited again in a
+// marketplace plugin — must pass authoring-slop's own grep. authoring-slop has a
+// PreFileWrite gate half: a shipped script its grep refuses can never be edited again in a
 // project that has the plugin (the edit is refused), which is how 16 scripts
 // became uneditable when the Post newContentKnown floor landed (issue #91).
 
@@ -59,7 +59,7 @@ func shippedHookScripts(t *testing.T, root string) []string {
 // T026_07: authoring-slop's grep (check-rules.sh) passes every shipped hook.
 func TestT026_07_EveryShippedHookPassesTheGrep(t *testing.T) {
 	root := repoRootDir(t)
-	check := filepath.Join(root, "marketplace/plugins/sloprail/.sloprail/file-guard/authoring-slop/check-rules.sh")
+	check := filepath.Join(root, "marketplace/plugins/sloprail/.sloprail/gate/authoring-slop/check-rules.sh")
 	scripts := shippedHookScripts(t, root)
 	if len(scripts) < 50 {
 		t.Fatalf("found only %d shipped hook scripts — the walk is not reaching them", len(scripts))

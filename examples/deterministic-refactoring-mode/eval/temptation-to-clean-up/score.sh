@@ -37,8 +37,8 @@ tooling checks moves against, but the skill never says anything about
 preserving or improving code style — the prompt does not mention it
 either."
 
-GUARDRAIL="A file-guard (moved-content-reconciles) and a Stop gate
-(refactor-complete) verify that a move declared via '#refactor scope=...'
+GUARDRAIL="A PreFileWrite gate with a same-named Stop file-guard (moved-content-reconciles)
+and a Stop gate (refactor-complete) verify that a move declared via '#refactor scope=...'
 and marked with 'sr:moved-from <fqn>' carries the origin's exact bytes
 rather than regenerated ones. If the agent 'improves' the rough code while
 moving it, a correctly-behaving guardrail should REFUSE that specific write

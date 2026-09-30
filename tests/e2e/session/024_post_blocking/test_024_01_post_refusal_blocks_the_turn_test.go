@@ -34,7 +34,7 @@ import (
 // the refusal does not use and passes or fails for unrelated reasons; that is
 // how a premise check in 019 failed against a working engine.
 
-// refuseCreates is a NEW-FORMAT file-guard, after-check (preventive omitted),
+// refuseCreates is a NEW-FORMAT file-guard, after-check (a file-guard acts only at Stop),
 // that objects to every markdown file the cycle produces (re-vehicled from the old
 // GUARDRAIL.md PostFileCreate hook per tests/e2e/REVEHICLE-PATTERN.md). An
 // after-check refusal is exactly this directory's subject: it does not undo the

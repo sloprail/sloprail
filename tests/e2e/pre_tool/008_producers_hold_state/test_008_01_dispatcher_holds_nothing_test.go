@@ -12,33 +12,33 @@ import (
 // what it hands a check is the event and the session facts, the same surface for
 // every kind, so adding a kind costs it nothing.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
 //
 // This is SHARED machinery the new dispatch reuses: the per-guard `sr-session
 // state` keyspace, the environment a check runs in, and the fixed payload surface.
 // The old rules installed via `e.Guardrail` and read the NESTED payload; these
-// install NEW-format file-guards (`e.FileGuard`) and read the FLAT CheckPayload,
+// install NEW-format gates (`e.Gate`) and read the FLAT CheckPayload,
 // whose surface is `{event, transcriptPath, context}` by construction
-// (internal/declaration/payload.go). A file-guard's check runs in the guard's own
+// (internal/declaration/payload.go). A gate's check runs in the guard's own
 // folder with SR_GUARDRAIL set to the guard's name and SR_GUARDRAIL_DIR to its
 // folder (internal/dispatch/exec.go), so `sr-session state` reaches the guard's own
 // keyspace exactly as an old hook's did — which is why the state tests in this
 // directory re-vehicle without weakening.
 //
-// The guard here is PREVENTIVE and RECORDS then PERMITS, so both a create and an
+// The gate here (PreFileWrite) RECORDS then PERMITS, so both a create and an
 // update are observed (the first write must land for the second to be an update).
-// The permit means the Stop after-check records again; every recorded line is
-// asserted to have the same surface regardless, which is exactly the "carries
-// nothing kind-specific" claim.
+// Every recorded line is asserted to have the same surface, which is exactly the
+// "carries nothing kind-specific" claim.
 
-const recordPayload = `match: "**/*.md"
-preventive: true
+const recordPayload = `on:
+  - event: PreFileWrite
+    match: event.path endsWith ".md"
 checks:
   - script: ./record.sh
 `
 
 // The check records the whole payload it is handed into the guard's own folder
-// (SR_GUARDRAIL_DIR — not $PWD, which a file-guard check does not have pointed at
+// (SR_GUARDRAIL_DIR — not $PWD, which a gate check does not have pointed at
 // its folder), then permits so the write lands and the next one is an update.
 const recordScript = `#!/bin/sh
 cat >> "$SR_GUARDRAIL_DIR/seen"
@@ -57,7 +57,7 @@ func TestT008_01_DispatcherCarriesNothingKindSpecific(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "recorder", recordPayload, map[string]string{"record.sh": recordScript})
+	e.Gate(proj, "recorder", recordPayload, map[string]string{"record.sh": recordScript})
 
 	// The first write creates; the second updates the file the first left behind.
 	e.Run(proj, "s-008-01", "write twice", Turns("done",
@@ -65,7 +65,7 @@ func TestT008_01_DispatcherCarriesNothingKindSpecific(t *testing.T) {
 		Write("w2", "notes.md", "hello again"),
 	))
 
-	lines := e.FileGuardLedgerLines(proj, "recorder", "seen")
+	lines := e.GateLedgerLines(proj, "recorder", "seen")
 	if len(lines) < 2 {
 		t.Fatalf("want at least one dispatch per write, got %d: %v", len(lines), lines)
 	}

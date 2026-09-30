@@ -31,8 +31,8 @@ belongs to this file's subject.
 The guard is about the file's own content being right, independent of
 whether this write created it or merely modified it — a file that
 accumulated a duplicated fact over several unrelated edits is exactly as
-wrong as one that got it in a single write. No `preventive` here: there is no
-cheap, reliable way to predict at Pre time whether new prose duplicates a
+wrong as one that got it in a single write. There is no gate here: there is no
+cheap, reliable way to predict before the write whether new prose duplicates a
 fact that lives elsewhere, so this guard is after-only.
 
 ## Why judge-only, no script tier

@@ -39,7 +39,7 @@ var (
 // commitGuards commits the project's `.sloprail` tree so a context/file-guard
 // installed after the baseline is part of it, not the first cycle's diff.
 //
-// The sloprail plugin ships authoring-slop, a preventive file-guard whose Stop
+// The sloprail plugin ships authoring-slop, a gate plus a file-guard whose Stop
 // after-check judges a guardrail's own `.sh` machinery. A context's enter/exit
 // scripts and a file-guard's check.sh installed here are uncommitted, so the Stop
 // after-check would read them as this cycle's writes and judge them — and with no

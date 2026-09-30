@@ -1,4 +1,4 @@
-# business-invariants (file-guard)
+# business-invariants (file-guard + gate)
 
 Code that claims to implement a business invariant carries a marker naming
 it; a judge checks the marked code actually upholds that invariant, and that
@@ -41,13 +41,13 @@ repo, sha, path, line range. The sha buys two things:
   script, before any judge runs — if the spec moved and the marker did not,
   that is a fact, not an impression.
 
-## Why file-guard
+## Why file-guard (pinned-invariant)
 
 The rule is about the file's state — "does this marker's code still hold" —
 not about the event that touched it. A marker that starts failing because the
 spec moved underneath it stays failing every cycle until either the code
 catches up or the marker is re-pinned; it does not matter which event last
-touched the file.
+touched the file. That is why `pinned-invariant` is a plain file-guard with no gate: nothing about the code has to be refused before it is written, only judged once it stands. The second rule below is the opposite case.
 
 ## What the two checks divide
 
@@ -92,25 +92,42 @@ re-pinned its code to the new wording, so code and pin agreed.
 
 `pinned-spec-holds` closes that. A write that changes what a marker pins must
 cite the user's own words (`require: citation`, `when: changes-pinned-lines.sh`),
-and a judge checks those words ask for the rule itself to change, not merely for
-a feature that conflicts with it. Whether a business rule changes is the user's
+and, at Stop, a judge checks those words ask for the rule itself to change, not
+merely for a feature that conflicts with it. Whether a business rule changes is the user's
 decision, made knowingly; an agent whose task conflicts with one keeps the rule,
-undoes any code that breaks it, and tells the user. It is preventive, so the rule
-is refused before it changes.
+undoes any code that breaks it, and tells the user.
+
+It ships as two halves with the same name, split by what each is for. The **gate**
+(`gate/pinned-spec-holds`) is the prevention: it runs on the file event *before*
+the write lands (`PreFileCreate`, `PreFileUpdate` and `PreFileDelete`, one
+trigger each because the marker fields differ per kind), so the rule is refused
+before it changes, while the agent can still keep it and tell the user. The
+plain **file-guard** (`file-guard/pinned-spec-holds`) is the after-check and holds
+the **judge**: at Stop it judges the settled file against the session's baseline,
+and so sees what the gate cannot. The gate is cheap — a citation requirement and
+a script, no model. Each carries its own copy of `changes-pinned-lines.sh` (the
+`when` predicate): the two really differ — the gate reads `Pre*` events and compares
+against HEAD, the file-guard reads the settled `Post*` ones and compares against the
+session baseline — so they are kept apart. The judge prompt and `only-when-pinned.sh`
+live in the file-guard only.
 
 ### Which files it watches
 
-A preventive guard refuses a write whose result the engine cannot work out ahead
-(`sed -i`, `>`, `cp`, `tee`) on any file it matches, so the guard matches only
-the files a pin can involve — matching every path refused every shell edit in
-the project:
+The gate refuses a write whose result the engine cannot work out ahead
+(`sed -i`, `>`, `cp`, `tee`) on any file it triggers on, because it decides from
+the bytes: on such a write `resultKnown` is false and `newContent` is empty,
+which reads like an emptied file. The predicate applies the citation to it, and
+the gate's `refuse-unknown-result.sh` refuses it unless the predicate decided
+nothing pinned is at stake. So the rule watches only the files a pin can
+involve — matching every path refused every shell edit in the project:
 
 - **Specs, by convention:** `SPEC.md` at any depth, or a `.md` file under a
   `specs/` directory, case-insensitively (`spec.md` is the same file on a macOS
   disk). `pinned-invariant` holds pins to the same convention (`pin.sh` refuses
   a pin into any other file), so no accepted pin names a file this guard does
-  not watch. To use another layout, change the guard's `match` and
-  `SPEC_PATH_RE` in `pin.sh` together; T046_46 fails if they disagree.
+  not watch. To use another layout, change the file-guard's `match`, the gate's
+  three triggers and `SPEC_PATH_RE` in `pin.sh` together; T046_46 fails if
+  they disagree.
 
 **Upgrading:** if your code already pins rules in a file outside this
 convention (say `docs/rules.md`), `pinned-invariant` now refuses those pins at
@@ -118,8 +135,9 @@ Stop. Either move the rules into `SPEC.md` or `specs/`, or widen both statements
 of the convention to take your layout in. Pins with a short sha are refused too:
 re-pin with the full sha (`git log -1 --format=%H -- <spec>`).
 - **Files carrying an `sr:invariant` marker, before or after the write** —
-  `any(oldMarkers, …)` is what sees a write that removes the marker, which
-  `any(markers, …)` alone reads as a file with none.
+  `any(oldMarkers, …)` (the gate: `event.oldMarkers`) is what sees a write that
+  removes the marker, which `any(markers, …)` (`event.newMarkers`) alone reads
+  as a file with none.
 
 Which lines of a spec are pinned is still decided by the markers pointing at
 them, not by the file name.
@@ -194,7 +212,7 @@ other exit 1, such as a crash, is turned into 0). The judge's `prepare` skips th
 model only on that sentinel. So:
 
 - A shell edit of a pinned spec or a marked file (`sed -i`, `>`) is refused
-  before it lands, and the refusal leads with making it checkable — the same
+  by the gate before it lands, and the refusal leads with making it checkable — the same
   edit made with Edit, Write or `sr-file edit` needs no citation when it keeps
   every pinned line and pin.
 - A delete whose bytes the engine did not read (e.g. `rm -r` past its byte
@@ -215,17 +233,17 @@ Some answers are decided, and waive:
   it cannot pass `pinned-invariant`.
 
 **What happens only at Stop.** An edit the engine does not see as a write at
-all (a script rewriting the file) is caught at Stop, against the session's
-baseline. So is one command removing every holder of a pin at once: the engine
-asks a preventive guard about each file a command touches before it runs, but
+all (a script rewriting the file) is caught by the file-guard at Stop, against
+the session's baseline. So is one command removing every holder of a pin at
+once: the gate is asked about each file a command touches before it runs, but
 each against the tree as it stands, so `rm a.go b.go` of two files carrying the
 same pin is let through (each sees the other still holding it) and both deletes
-are refused at Stop (T046_47). So is a delete
-the engine did not read of a file carrying a pin (an `rm -r` past its byte
-budget): its event carries no oldMarkers, so the guard's match cannot select it
-before the write; at Stop the baseline's markers arrive and the dropped pin is
-refused. (The engine filling oldMarkers from HEAD for an unread delete would
-close this before the write.)
+are refused at Stop (T046_47). So is a delete the engine did not read of a file
+carrying a pin (an `rm -r` past its byte budget): its event carries no
+oldMarkers, so the gate's `PreFileDelete` trigger cannot select it before the
+write; at Stop the baseline's markers arrive and the dropped pin is refused.
+(The engine filling oldMarkers from HEAD for an unread delete would close this
+before the write.)
 
 **A known gap: rewriting history.** The Stop check measures from the commit the
 session started on, and the engine takes a new starting point when that commit
@@ -233,6 +251,6 @@ stops being reachable from HEAD. So a spec line rewritten by a script and then
 folded into the starting commit with `git commit --amend` leaves the session's
 difference: the Stop check no longer sees it. This is tracked as
 [sloprail#86](https://github.com/sloprail/sloprail/issues/86); until it is fixed,
-the pre-write refusal of every edit it can see is the guard.
+the pre-write refusal of every edit it can see is the gate.
 
 Markers inside a git submodule are not seen (`git grep` does not enter one).

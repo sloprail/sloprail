@@ -99,7 +99,7 @@ func installExampleTree(t *testing.T, proj string) {
 	}
 
 	// Commit the installed tree so it is in history BEFORE any cycle runs. The
-	// sloprail plugin ships authoring-slop, a preventive file-guard whose Stop
+	// sloprail plugin ships authoring-slop, a gate plus a file-guard whose Stop
 	// after-check judges a guardrail's own `.sh`/`.md.j2` machinery. The example's
 	// own `.sloprail/**` scripts would otherwise read as files THIS cycle created
 	// (the baseline is the GitInit commit, taken before this install), so that

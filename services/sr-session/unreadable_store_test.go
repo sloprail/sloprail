@@ -38,7 +38,6 @@ import (
 func unreadableDeclarationDir(t *testing.T, proj string) {
 	t.Helper()
 	writeFileGuardYAML(t, proj, "real", `match: "**/*.md"
-preventive: true
 checks:
   - script: ./refuse.sh
 `, map[string]string{"refuse.sh": alwaysRefuse})

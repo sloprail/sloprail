@@ -29,8 +29,8 @@ being an executable). Only `judge` is required; the others are optional.
 
 The template renders against the same facts a script's stdin carries — the payload
 spread flat at the template's top level — plus, on a file-guard, `change`: the
-unified diff of this change (the event's `oldContent` to its `newContent`; at Stop,
-everything since the session baseline). Wrap what the model judges in tags:
+unified diff of this change (the event's `oldContent` to its `newContent`; on a
+file-guard at Stop, everything since the session baseline). Wrap what the model judges in tags:
 
 ```markdown
 ## The change

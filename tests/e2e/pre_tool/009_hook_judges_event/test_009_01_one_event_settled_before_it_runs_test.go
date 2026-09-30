@@ -15,12 +15,12 @@ import (
 // happened, so nothing the match excluded arrives; and the payload carries the
 // event and the session facts, not the history a match is forbidden to read.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
 //
 // It used to install an OLD-format rule (`hooks: PreFileCreate: [matcher: path
 // startsWith "guarded/"]`) whose hook read the NESTED payload (`.event.fields.path`)
 // and asserted the surface was `{event, guardrailDir}`. The NEW dispatch hands a
-// file-guard's check the FLAT CheckPayload (internal/declaration/payload.go): the
+// gate's check the FLAT CheckPayload (internal/declaration/payload.go): the
 // event's own fields spread directly under `event` (`.event.path`, `.event.kind`,
 // never `.event.fields.path`), and the payload's whole surface is `{event,
 // transcriptPath, context}` — there is NO `guardrailDir` field (a check finds its
@@ -28,20 +28,20 @@ import (
 // against the new payload shape: narrowing by `match`, a single flat event, and a
 // surface a matcher cannot smuggle history through.
 //
-// The guard is PREVENTIVE and its check RECORDS then REFUSES, so the observation
-// is the PRE file event and nothing lands (a landed write would also run the Stop
-// after-check, mixing a Post event into the ledger). A denied pre-write is retried
+// The gate's check RECORDS then REFUSES, so the observation is the PRE file
+// event and nothing lands. A denied pre-write is retried
 // by the mock, so the ledger holds the SAME single event repeated; every assertion
 // reads a representative line, and the claim is about the SHAPE of what the check
 // is handed, not how many retries happened.
 
-// narrowed is a NEW-FORMAT preventive file-guard that admits only what is under
+// narrowed is a NEW-FORMAT gate on PreFileWrite that admits only what is under
 // guarded/. Two writes go out per test, one admitted and one not, so "the check
 // was handed only its own" is a claim with something to exclude rather than a
 // description of the only write there was. It records what it is handed, then
 // refuses (so nothing lands).
-const narrowed = `match: "guarded/**"
-preventive: true
+const narrowed = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "guarded/"
 checks:
   - script: ./record.sh
 `
@@ -78,14 +78,14 @@ func TestT009_01_CheckIsHandedOneAlreadyNarrowedEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "narrow", narrowed, map[string]string{"record.sh": recordScript})
+	e.Gate(proj, "narrow", narrowed, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-009-01", "write two notes", Turns("done",
 		Write("w1", "guarded/notes.md", "hello"),
 		Write("w2", "elsewhere/notes.md", "hello"),
 	))
 
-	lines := e.FileGuardLedgerLines(proj, "narrow", "seen")
+	lines := e.GateLedgerLines(proj, "narrow", "seen")
 	if len(lines) == 0 {
 		t.Fatalf("the check never ran on the admitted write")
 	}
@@ -133,13 +133,13 @@ func TestT009_02_PayloadCarriesTheEventAndNothingToMatchHistoryOn(t *testing.T) 
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "narrow", narrowed, map[string]string{"record.sh": recordScript})
+	e.Gate(proj, "narrow", narrowed, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-009-02", "write a note", Turns("done",
 		Write("w1", "guarded/notes.md", "hello"),
 	))
 
-	lines := e.FileGuardLedgerLines(proj, "narrow", "seen")
+	lines := e.GateLedgerLines(proj, "narrow", "seen")
 	if len(lines) == 0 {
 		t.Fatalf("the check never ran")
 	}
@@ -165,30 +165,30 @@ func TestT009_02_PayloadCarriesTheEventAndNothingToMatchHistoryOn(t *testing.T) 
 // T009_03: a check bound to files is never handed a command event.
 //
 // What reaches a check is settled by its binding before the check runs. A
-// file-guard matches a FILE's state, and the dispatch only ever hands it file
-// events (nature_fileguard.go's isPreFileEvent) — a rule about files asked to judge
-// a command event would have to detect and ignore it, re-implementing the routing
-// the binding already declared. A write and a bash go out; only the write reaches
-// the guard.
+// gate's triggers name the event kinds it fires on, and the dispatch only hands it
+// those — a rule about files asked to judge a command event would have to detect
+// and ignore it, re-implementing the routing the binding already declared. A write
+// and a bash go out; only the write reaches the gate.
 func TestT009_03_CheckIsNeverHandedACommandEvent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 
 	// Bound to markdown writes alone.
-	const filesOnly = `match: "**/*.md"
-preventive: true
+	const filesOnly = `on:
+  - event: PreFileWrite
+    match: event.path endsWith ".md"
 checks:
   - script: ./record.sh
 `
-	e.FileGuard(proj, "files-only", filesOnly, map[string]string{"record.sh": recordScript})
+	e.Gate(proj, "files-only", filesOnly, map[string]string{"record.sh": recordScript})
 
 	e.Run(proj, "s-009-03", "write then run", Turns("done",
 		Write("w1", "some/notes.md", "hello"),
 		Bash("b1", "npm publish --access public"),
 	))
 
-	lines := e.FileGuardLedgerLines(proj, "files-only", "seen")
+	lines := e.GateLedgerLines(proj, "files-only", "seen")
 	if len(lines) == 0 {
 		t.Fatalf("the check never ran on the file write")
 	}

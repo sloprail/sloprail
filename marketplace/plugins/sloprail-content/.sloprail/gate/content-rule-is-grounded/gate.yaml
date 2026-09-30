@@ -1,0 +1,13 @@
+# PREVENTION half of content-rule-is-grounded: a write to a RULE.md / CONSTRAINT.md
+# must cite the user's words (`require: citation`), and check-rule.sh refuses, before
+# it lands, a rule that fails the deterministic floor (and a write whose result the
+# engine could not compute: a gate does not fail closed on that by itself). Whether
+# the rule's body says only what the cited words ask is the judge's question, and the
+# judge lives in the plain file-guard of the same name (Stop).
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^\\.sloprail/content-rules/[^/]+/RULE\\.md$" or event.path matches "^memories/topics/[^/]+/constraints/[^/]+/CONSTRAINT\\.md$"'
+require:
+  - citation: {source_types: [user]}
+checks:
+  - script: ./check-rule.sh

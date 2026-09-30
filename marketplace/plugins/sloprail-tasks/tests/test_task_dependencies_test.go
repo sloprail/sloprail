@@ -2,12 +2,12 @@ package e2e
 
 import "testing"
 
-// task-dependencies-resolve is a PREVENTIVE file-guard over
+// task-dependencies-resolve is a file-guard over
 // memories/tasks/<cat>/<name>/TASK.md with one deterministic SCRIPT check: every
 // id in depends_on must resolve to a task folder that no longer exists (done
 // means deleted, per the plugin's lifecycle), and the depends_on graph must have
-// no cycle reachable from the task's own id. Being preventive, a not-fine write
-// is refused at PRE-tool, before it lands.
+// no cycle reachable from the task's own id. A not-fine write is refused at PRE-tool by the
+// gate, before it lands.
 //
 // This guard fires on entering to_do/in_progress/in_review -- moving among
 // backlog/blocked, or staying in to_do/in_progress, costs nothing.
@@ -55,7 +55,7 @@ func TestDeps_UnfinishedDependencyBlocksThenPermits(t *testing.T) {
 		t.Fatalf("a task depending on an unfinished task was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, taskPath) {
-		t.Errorf("the preventive guard let a task with an unfinished dependency land")
+		t.Errorf("the gate let a task with an unfinished dependency land")
 	}
 	if !res.Saw("still exists") {
 		t.Errorf("the refusal was not the unfinished-dependency reason:\n%s", res.Output)
@@ -107,7 +107,7 @@ func TestDeps_CycleRefused(t *testing.T) {
 		t.Fatalf("a depends_on cycle was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, taskPath) {
-		t.Errorf("the preventive guard let a cyclic dependency land")
+		t.Errorf("the gate let a cyclic dependency land")
 	}
 	if !res.Saw("CYCLE") {
 		t.Errorf("the refusal was not the cycle reason:\n%s", res.Output)

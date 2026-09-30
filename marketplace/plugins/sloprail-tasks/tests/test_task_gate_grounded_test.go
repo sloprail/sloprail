@@ -1,8 +1,11 @@
 package e2e
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// task-gate-is-grounded is a PREVENTIVE file-guard over
+// task-gate-is-grounded is a file-guard over
 // memories/tasks/<cat>/<name>/gates/<gate-name>.{sh,md} with ONE check: a
 // JUDGE, no script stage. A gate carries NO citations of its own -- only the
 // write that creates a TASK.md or changes its body cites the user's words, and
@@ -15,10 +18,10 @@ import "testing"
 // for a .sh gate -- not TRIVIAL (a script whose control flow can never
 // actually fail).
 //
-// Being preventive, a not-fine gate write is refused at PRE-tool, before it
-// lands.
+// The judge runs at Stop on the settled gate file (a gate holds no judge), so a
+// not-fine gate blocks the turn at Stop with the judge's reasoning.
 //
-// These prove: the judge is what refuses a gate it finds
+// These prove: the judge is what blocks a gate it finds
 // untraceable/trivial/contradicting and admits one it finds derived from the
 // task -- proven by flipping the SAME stubbed verdict; and the judge is
 // invoked (and can reject) even when the task was written with no citation,
@@ -46,7 +49,7 @@ func TestGateGrounded_JudgeRunsEvenWithoutTaskBodyCitation(t *testing.T) {
 	installPluginTree(t, e, proj)
 	// The guard is PLUGIN-shipped (see installPluginTree), so disabling it
 	// needs the qualified form <plugin>/<nature>/<name>.
-	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored")
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored", pluginName+"/gate/task-body-is-human-authored")
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "GATE: this condition has nothing to do with what the task describes."}`)
 
 	sess := "s-gate-grounded-nocitation"
@@ -61,25 +64,20 @@ func TestGateGrounded_JudgeRunsEvenWithoutTaskBodyCitation(t *testing.T) {
 		t.Fatalf("landing the uncited task (task-body disabled) was itself refused (setup broken):\n%s", res0.Output)
 	}
 
-	res := e.Run(proj, sess, authPrompt, Turns("done",
+	e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w2", groundedGatePath, passingGate),
 	))
-	if !res.Refused() {
-		t.Fatalf("the judge did not run (or did not refuse) on a gate under an uncited task -- task-gate-is-grounded should not depend on the task body carrying a citation:\n%s", res.Output)
-	}
-	if e.Exists(proj, groundedGatePath) {
-		t.Errorf("the preventive guard let a judge-rejected gate land")
-	}
-	if !res.Saw("nothing to do with what the task describes") {
-		t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !strings.Contains(blocks, "nothing to do with what the task describes") {
+		t.Fatalf("the judge did not run (or did not block at Stop) on a gate under an uncited task -- task-gate-is-grounded should not depend on the task body carrying a citation:\n%s", blocks)
 	}
 }
 
 // TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate: the sibling task
 // exists (created with a cited ask, so task-body's own judge passes it), but the
-// task-gate-is-grounded judge rejects the gate itself (untraceable,
+// task-gate-is-grounded judge rejects the gate itself at Stop (untraceable,
 // contradicting, invented, or trivial -- the judge is stubbed, so this
-// proves the REFUSAL PATH reaches the agent, not any one specific
+// proves the STOP BLOCK reaches the agent, not any one specific
 // judgement).
 func TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate(t *testing.T) {
 	e := New(t)
@@ -107,17 +105,12 @@ func TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate(t *testing.T) {
 
 	// A gate that is a bare, unconditional pass -- the trivial shape the judge
 	// is stubbed to reject.
-	res := e.Run(proj, sess, authPrompt, Turns("done",
+	e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w2", groundedGatePath, passingGate),
 	))
-	if !res.Refused() {
-		t.Fatalf("a gate the judge rejects (untraceable/trivial) was not refused:\n%s", res.Output)
-	}
-	if e.Exists(proj, groundedGatePath) {
-		t.Errorf("the preventive guard let a judge-rejected gate land")
-	}
-	if !res.Saw("can never fail") {
-		t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !strings.Contains(blocks, "can never fail") {
+		t.Fatalf("a gate the judge rejects (untraceable/trivial) was not blocked at Stop with its reasoning:\n%s", blocks)
 	}
 }
 

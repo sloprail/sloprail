@@ -10,8 +10,6 @@
 # is the right mechanism here.
 match: path matches "^\\.sloprail/file-guard/structure\\.ya?ml$"
 
-preventive: true
-
 require:
   - skill: authoring-guardrails
     files: [structure-gate.md]

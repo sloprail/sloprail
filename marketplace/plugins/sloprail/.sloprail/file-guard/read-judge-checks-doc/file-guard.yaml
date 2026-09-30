@@ -7,8 +7,6 @@
 # for the full argument; this is the identical mechanism for the judge half.
 match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and path endsWith ".md.j2"
 
-preventive: true
-
 require:
   - skill: authoring-guardrails
     files: [judge-checks.md]

@@ -92,7 +92,8 @@ len(event.invocations) > 1
 any(markers, .kind == "invariant")
 ```
 
-A `bool` field is used directly: `resultKnown and not (newContent contains "---")`.
+A `bool` field is used directly, in a gate trigger: `event.resultKnown and not
+(event.newContent contains "---")`.
 
 Check the type printed beside each field — the groups are not interchangeable.
 

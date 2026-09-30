@@ -1,6 +1,6 @@
-# deterministic-refactoring (context + Stop gate)
+# deterministic-refactoring (context + gates + file-guard)
 
-**Natures:** context + gate + file-guard
+**Natures:** context + two gates + file-guard
 
 A refactor must be mechanical, not regenerated: the agent declares the scope
 of moves upfront, and every declared move must land and reconcile
@@ -31,8 +31,10 @@ move must have LANDED **and** the moved content must reconcile byte-identically
 
 Two independent failures, two natures:
 
-- **A move that regenerated instead of carrying the bytes** — caught PREVENTIVELY
-  by the `moved-content-reconciles` file-guard, before the write lands.
+- **A move that regenerated instead of carrying the bytes** — refused BEFORE the
+  write lands by the `moved-content-reconciles` gate (on `PreFileCreate` /
+  `PreFileUpdate`); the same-named file-guard re-runs the reconcile at `Stop` on
+  the settled file.
 - **A declared move that never happened at all** — caught at `Stop` by the
   `refactor-complete` GATE, which refuses the turn.
 
@@ -55,6 +57,21 @@ So the split is:
   close (this is the same context+gate pairing `research-rigor` and
   `completeness-artifact-on-trigger` use).
 
+## Why the reconcile is a gate AND a file-guard
+
+A move that regenerated is a loss to refuse before it happens, and only a gate
+sees a write before it lands: a file-guard acts only at `Stop`, on the settled
+file. So the reconcile is split:
+
+- **`gate/moved-content-reconciles`** is the prevention. It reads the pending
+  bytes and refuses a non-reconciling move, so the write never lands. It also
+  refuses a write whose result the engine cannot compute (`sed -i` on a file that
+  already carries a `moved-from` marker): a gate does not fail closed on that by
+  itself, and reconciling against bytes nobody saw is no check.
+- **`file-guard/moved-content-reconciles`** is the after-check, the same
+  reconcile on the settled file at `Stop`. It is the backstop for a write the gate
+  could not see. One library per script, in the file-guard folder (`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry that reads its own event kind (the gate's `Pre*`, the file-guard's `Post*`) and sources it.
+
 ## The declared-scope ↔ landed-marker correspondence (the design choice)
 
 For the completeness check to work, a declared move has to be recognisable once it
@@ -74,9 +91,8 @@ logical-nickname-to-marker mapping to guess.
 This was a deliberate choice among three:
 
 - **(chosen) declare the actual fqns.** Zero change to the marker convention: the
-  marker's kind stays `moved-from`, so the file-guard's `any(markers, .kind ==
-  "moved-from")` and the reconcile script's `.kind == "moved-from"` selection are
-  untouched. The declaration and the landed marker share one vocabulary.
+  marker's kind stays `moved-from`, so the gate's and the file-guard's `moved-from` marker match and the reconcile
+  script's `.kind == "moved-from"` selection are untouched. The declaration and the landed marker share one vocabulary.
 - *embed a nickname in the marker kind* (`sr:moved-from:beta …`) — rejected: that
   changes the marker's kind to `moved-from:beta`, which would break every reader
   that matches `moved-from`, rippling through the file-guard and reconcile script.
@@ -88,7 +104,7 @@ This was a deliberate choice among three:
 - **`context/refactoring/context.yaml`** — `on: [{event: PreToolUse}, {event:
   PostTagWrite}]`. Two triggers because the context is read at two moments:
   - **PreToolUse** activates the scope BEFORE a marked write, which is what the
-    file-guard's `match: context["refactoring"].active` reads at that write. (At
+    reconcile gate's `match: context["refactoring"].active` reads at that write. (At
     this moment the current assistant turn is not yet in the transcript, so `enter`
     cannot read the scope here — it just opens the scope.)
   - **PostTagWrite** fires at `Stop`, once the turn IS settled, so `enter` can read
@@ -112,9 +128,12 @@ This was a deliberate choice among three:
   and, for each declared fqn, searches the workspace for a file carrying
   `sr:moved-from <fqn>`. Any missing → refuse the turn with a `{"reason": …}`
   object on stdout. All present → permit.
-- **`file-guard/moved-content-reconciles/`** — the per-file byte check, active only
-  while the context is. Reconciles a moved file against its pinned origin, dropping
-  imports and whitespace (the exception rules).
+- **`gate/moved-content-reconciles/`** — the pre-write byte check, active only
+  while the context is. Reconciles the pending bytes of a moved file against its
+  pinned origin, dropping imports and whitespace (the exception rules), and refuses
+  before the write lands.
+- **`file-guard/moved-content-reconciles/`** — the same check at `Stop`, on the
+  settled file.
 
 ## The refusal contract
 

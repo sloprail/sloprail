@@ -103,7 +103,7 @@ func runFixture(cmd *cobra.Command, _ []string) error {
 	// settled-file judging both read off) would count sr-eval's setup as
 	// part of what the agent did. Unconditional now: newWorkspace's Seed
 	// branch runs `git init` too (a Seed tree used to have no .git at all,
-	// which left every non-preventive file-guard unreachable — measured on a
+	// which left every file-guard unreachable — measured on a
 	// real run where a guardrail never fired despite the agent's write
 	// plainly matching its rule), so both branches now have a repository to
 	// commit into.

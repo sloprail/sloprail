@@ -43,10 +43,9 @@ import "testing"
 // sends a pre-action block keyed to an event KIND to a GATE — here a gate
 // triggering on the file events a command DERIVES (PreFileDelete for `rm`,
 // PreFileUpdate for an in-place edit), narrowed on `event.path`. A gate is the
-// faithful vehicle rather than a preventive file-guard, because a preventive
-// file-guard fails CLOSED on a command-derived update (its result is not known
-// ahead of time), which would turn "record the update and permit" into a refusal;
-// a gate has no such shortcut and decides on the check alone. The check reads the
+// faithful vehicle: prevention is a gate's job (a file-guard acts only on the
+// settled result at Stop, after a command has already run), and a gate decides on
+// its check alone. The check reads the
 // FLAT GateCheckPayload (`.event.path`, `.event.kind`), refuses with a
 // `{"reason":...}` on stdout, and its refusal blocks the command — the file never
 // leaves disk.

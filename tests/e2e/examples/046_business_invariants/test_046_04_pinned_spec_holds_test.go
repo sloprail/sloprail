@@ -123,8 +123,9 @@ func TestT046_13_CitedRuleChangeAdmits(t *testing.T) {
 }
 
 // T046_14: a pinned rule changed citing a feature request that only conflicts with
-// it is refused by the judge, and SPEC.md keeps the rule.
-func TestT046_14_CitingAConflictingFeatureRefused(t *testing.T) {
+// it passes the cheap gate (the citation resolves) and lands, and the judge in the
+// file-guard blocks the turn at Stop with its reasoning.
+func TestT046_14_CitingAConflictingFeatureBlockedAtStop(t *testing.T) {
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR046 the cited words ask for a feature, not for rule 2 to change"}`)
@@ -133,11 +134,12 @@ func TestT046_14_CitingAConflictingFeatureRefused(t *testing.T) {
 	res := e.Run(proj, "s-046-14", ask, Turns("done",
 		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
 	))
-	if !res.Refused() || !res.Saw("SR046 the cited words ask for a feature") {
-		t.Fatalf("a rule change citing a conflicting feature request was not refused by the judge:\n%s", res.Output)
+	if res.Refused() {
+		t.Fatalf("the gate (citation only, no model) refused a cited rule change:\n%s", res.Output)
 	}
-	if got := readSpec(t, proj); got != billingSpec {
-		t.Errorf("the refused rule change reached SPEC.md:\n%s", got)
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-046-14", "Stop"), "\n")
+	if !strings.Contains(blocks, "SR046 the cited words ask for a feature") {
+		t.Fatalf("a rule change citing a conflicting feature request was not blocked by the judge at Stop:\n%s", blocks)
 	}
 }
 

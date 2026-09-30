@@ -166,7 +166,9 @@ that can never actually fail. See that guard's own section below.
 
 ## The nine guardrails
 
-### task-md-first — file-guard, **preventive**
+### task-md-first — PreFileWrite gate + file-guard
+
+*Prevention is a gate, the settled-state check a plain file-guard: every rule below of this shape ships two folders of the same name, `gate/<name>/` (refuses the write before it lands; a write whose result the engine cannot compute — `sed -i`, a notebook create — is refused by the gate's script) and `file-guard/<name>/` (the same check on the settled file at Stop). A refusal names `(gate <name>)` at pre-tool and `(file-guard <name>)` at Stop.*
 
 Over any file inside a task folder (`memories/tasks/<group>/<task>/`, gate
 files under its `gates/` included) other than `TASK.md` itself. A task folder
@@ -186,7 +188,7 @@ included — as its own commit once `task-review` passes (see that guard's
 The same failure `unit-md-first` guards for a content unit in
 `sloprail-content`, relocated to the task shape.
 
-### task-body-is-human-authored — file-guard, preventive
+### task-body-is-human-authored — PreFileWrite gate + file-guard
 
 The body of a `TASK.md` is the human's ask, grounded, and **nothing else**. This
 is the one guard that protects the **oracle** rather than an artifact: the
@@ -195,14 +197,15 @@ detector once it happens — an agent implements 70% of an ask, edits the body t
 describe that 70%, and from then on every verification passes because the spec was
 rewritten to match the work.
 
-Two checks, cheap first:
-1. **Script** — a write that **creates** the task, or **changes its body** (the
+Two checks, cheap first. The gate half runs only the first — no model runs before a
+write lands — and the file-guard runs both at Stop:
+1. **Script** (gate and file-guard) — a write that **creates** the task, or **changes its body** (the
    prose after the frontmatter, compared with the file on disk at Pre and with the
    session baseline at Stop), must carry at least one citation of the user's own
    words (`--cite:user`). None is refused deterministically before the model, and
    the refusal spells out the `sr-file` form to use. A write that leaves the body
    byte-identical — a status change — is permitted uncited.
-2. **Judge** — the body must correspond to the cited words and hold that **and
+2. **Judge** (file-guard, at Stop) — the body must correspond to the cited words and hold that **and
    nothing else**. It is handed each cited quote and the transcript `path:line` it
    resolved to. A valid citation wrapped in agent-authored elaboration — inferred
    requirements, a suggested approach, invented rationale — is slop around a
@@ -226,7 +229,7 @@ citation and then moved to `in_progress` with a plain edit still reaches Stop
 with its ask's citation. Each uncited *body* change is refused at pre-tool, and
 at Stop should one reach the tree another way.
 
-### task-evidence-resolves — file-guard, preventive
+### task-evidence-resolves — PreFileWrite gate + file-guard
 
 The **deterministic floor** — the `in_review` split's structural half, no model.
 
@@ -313,7 +316,7 @@ exist. task-review is **judged**: given it is there, does the delivered evidence
 *substantiate* the `in_review` claim. The first is a script; the second is a model
 call gated behind it.
 
-### task-dependencies-resolve — file-guard, preventive
+### task-dependencies-resolve — PreFileWrite gate + file-guard
 
 `depends_on` enforced at the moment a task tries to enter `to_do`,
 `in_progress` or `in_review`. Two deterministic questions, no model:
@@ -330,15 +333,16 @@ call gated behind it.
 2. **no cycles.** The `depends_on` graph — every `TASK.md` on disk, plus this
    pending write's own edges — must have no path back to this task's own id.
 
-### task-gates-hold — file-guard, preventive (script + judge)
+### task-gates-hold — PreFileWrite gate (script) + file-guard (script + judge)
 
 Every file under a task's `gates/` must hold before the task may leave
-`backlog`/`blocked` for `to_do`/`in_progress`. Two checks, cheap first:
+`backlog`/`blocked` for `to_do`/`in_progress`. Two checks, cheap first; the gate
+half runs only the script, the file-guard both:
 
 1. **Script**: every `gates/*.sh`, run in name order with `SR_WORKSPACE` set.
    `exit 0` passes; the first failing (or non-executable, or unrunnable) gate
    refuses, naming it. `.md` files are untouched here.
-2. **Prepare + judge**: reached only once every `.sh` gate passed. The prepare
+2. **Prepare + judge** (file-guard, at Stop): reached only once every `.sh` gate passed. The prepare
    collects every `gates/*.md` file's text (skipping the model call entirely
    — `{"skip": true}` — when none exist, the same transition-gate discipline
    the script uses); the judge decides, by actually looking (it may Read
@@ -351,10 +355,11 @@ whether a gate is a *meaningful* test. That is `task-gate-is-grounded`'s job,
 at write time, so a trivial or fabricated gate never reaches this guard to be
 faithfully "passed."
 
-### task-gate-is-grounded — file-guard, preventive (judge)
+### task-gate-is-grounded — file-guard (judge, at Stop)
 
 The protection against weakening, rubber-stamping, or fabricating a gate.
-Fires on a write to any `gates/*.sh` or `gates/*.md` file — the same failure
+Fires at Stop on any `gates/*.sh` or `gates/*.md` file written this turn — it is a
+file-guard only, because its whole check is a judge (no cheap pre-write half) — the same failure
 `task-body-is-human-authored` guards for the ask itself, relocated to gate
 files: nothing else re-checks a gate's *content* once it exists, only whether
 it currently passes.

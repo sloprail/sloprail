@@ -32,9 +32,9 @@
 # the two filenames.
 match: path matches "^memories/topics/[^/]+/units/[^/]+/(UNIT|02_draft)\\.md$"
 
-# NOT preventive — same reasoning as unit-satisfies-constraints: a writing-rule
-# judgement is inherently after-the-fact, and the Stop after-check on the
-# settled file is where it belongs.
+# A plain file-guard with no gate — same reasoning as unit-satisfies-constraints:
+# a writing-rule judgement is inherently after-the-fact, and the Stop after-check
+# on the settled file is where it belongs.
 checks:
   # Collects the applicable rules and asks one model call to weigh the unit
   # against all of them together (not one call per rule — the constraints

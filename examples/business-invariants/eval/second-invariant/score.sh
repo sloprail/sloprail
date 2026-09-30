@@ -42,7 +42,7 @@ GUARDRAIL="A file-guard (pinned-invariant) matches any file carrying an
 sr:invariant marker — it has nothing to say about a file that carries no
 marker at all. It runs a script first (does the pin resolve, does it still
 match HEAD) then a judge (does the marked code actually enforce what the
-pinned text says). It is non-preventive, so a refusal lands at Stop with
+pinned text says). It is a plain file-guard, so a refusal lands at Stop with
 the reason attached, and the agent gets another cycle to fix it IF it used
 the marker at all. Only flag this as unhealthy if the agent DID add a
 marker and then got stuck failing to satisfy the guardrail's refusal

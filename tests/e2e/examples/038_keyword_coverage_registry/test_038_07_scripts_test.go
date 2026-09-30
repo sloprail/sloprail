@@ -41,7 +41,7 @@ func copyFile(t *testing.T, src, dst string, mode os.FileMode) {
 // exit 1 applies.
 func TestT038_32_ThePrepareSkipsOnlyOnADecidedNoDrop(t *testing.T) {
 	prepare := exampleFile(t, ".sloprail/file-guard/scanner-keywords-hold/only-when-dropped.sh")
-	payload := `{"event":{"kind":"PreFileDelete","path":"scanners/mine/scanner.yaml","oldContent":"active: true\nkeywords:\n  - agent\n"}}`
+	payload := `{"event":{"kind":"PostFileDelete","path":"scanners/mine/scanner.yaml","oldContent":"active: true\nkeywords:\n  - agent\n"}}`
 
 	run := func(t *testing.T, dir string) string {
 		t.Helper()

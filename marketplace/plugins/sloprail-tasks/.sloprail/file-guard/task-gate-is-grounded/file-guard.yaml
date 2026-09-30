@@ -40,16 +40,14 @@
 # own two-level regex plus the gates/ segment and the two extensions.
 match: path matches "^memories/tasks/[^/]+/[^/]+/gates/[^/]+\\.(sh|md)$"
 
-# preventive: true — a gate that fails the grounding bar must never land, the
-# same Pre/Post shape every other guard in this plugin uses; the Stop
-# after-check backstops a write the engine cannot derive at Pre.
-preventive: true
+# The PREVENTION half — a gate that fails the grounding bar must never land — is
+# the PreFileWrite gate of the same name, beside this guard under gate/. This
+# file-guard judges the settled file at Stop, backstopping a write the gate could
+# not derive.
 
 checks:
-  # The judge. prepare (resolve-gate-context.sh) ABSTAINS ({"skip": true})
-  # when the Pre write's result is underivable, deferring to the settled
-  # Post/Stop bytes — the same underivable-Pre defer every guard in this
-  # plugin uses. model is size-md (engine default judge modelset), matching
+  # The judge. prepare (resolve-gate-context.sh) reads the settled
+  # file (a Post kind). model is size-md (engine default judge modelset), matching
   # the plugin's other judges; no explicit timeout — it runs under the
   # engine's own default. The task and gate content are both already IN the
   # prompt; the judge can also read the project on disk without any grant (the

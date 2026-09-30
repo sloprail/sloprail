@@ -31,8 +31,6 @@
 # and earlier (before a turn is spent writing something wrong).
 match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and path endsWith ".sh"
 
-preventive: true
-
 require:
   - skill: authoring-guardrails
     files: [script-checks.md, check-template.sh]

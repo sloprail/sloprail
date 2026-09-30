@@ -17,8 +17,8 @@ import (
 // which sends an author to debug an exit path never taken.
 //
 // This suite drives the compiled sr-session through a10n-claude-mock against a
-// project holding a real .sloprail/file-guard whose PREVENTIVE check kills itself
-// with SIGKILL. Preventive puts the check on the pre-tool path, so the refusal it
+// project holding a real .sloprail/gate whose check kills itself
+// with SIGKILL. A PreFileWrite gate puts the check on the pre-tool path, so the refusal it
 // produces surfaces in the tool result stream (res.Refused()/res.Saw), where the
 // message the author is shown can be asserted. It STILL refuses (fail-closed is
 // preserved — a check the OS killed must not read as approval); only the wording

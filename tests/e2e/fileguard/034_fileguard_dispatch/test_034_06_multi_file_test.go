@@ -7,19 +7,21 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// This file covers a PREVENTIVE file-guard asked about a call that changes
-// SEVERAL files (issue #87). One tool call — `rm a b`, two sr-file calls joined
-// by && — runs whole or not at all, so the guard must be asked about every file
-// the call would change before it runs, not only the first it selects: a guard
-// that passes the first file and is never asked about the second admits the
-// second's not-fine change, and only the Stop after-check sees it, once the file
-// is already gone. The one deny names every file that was refused.
+// This file covers a GATE asked about a call that changes SEVERAL files (issue
+// #87). One tool call — `rm a b`, two sr-file calls joined by && — runs whole or
+// not at all, so the gate must be asked about every file the call would change
+// before it runs, not only the first it selects: a gate that passes the first file
+// and is never asked about the second admits the second's not-fine change, and only
+// the Stop after-check sees it, once the file is already gone. The one deny names
+// every file that was refused.
 
-// keepGuard is a preventive guard over src/ that is handed deletes too, so it
-// can refuse an `rm` before it runs.
-const keepGuard = `match: "src/**"
-preventive: true
-deletions: include
+// keepGate is a gate over src/ bound to deletes as well as writes, so it can
+// refuse an `rm` before it runs.
+const keepGate = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "src/"
+  - event: PreFileDelete
+    match: event.path startsWith "src/"
 checks:
   - script: ./check.sh
 `
@@ -40,7 +42,7 @@ exit 0
 `
 
 // keepProject is a repository whose src/ holds the given files, committed with
-// the guard before the session, so an `rm` of them is a delete of tracked files.
+// the gate before the session, so an `rm` of them is a delete of tracked files.
 func keepProject(t *testing.T, files ...string) (*harness.Env, string) {
 	t.Helper()
 	e := New(t)
@@ -49,7 +51,7 @@ func keepProject(t *testing.T, files ...string) (*harness.Env, string) {
 	for _, f := range files {
 		e.WriteFile(proj, f, "package src\n")
 	}
-	e.FileGuard(proj, "keep-files", keepGuard, map[string]string{"check.sh": refuseKeepDeletes})
+	e.Gate(proj, "keep-files", keepGate, map[string]string{"check.sh": refuseKeepDeletes})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 	return e, proj
@@ -67,11 +69,11 @@ func denyText(res harness.Result) string {
 	return strings.Join(res.Refusals(), "\n")
 }
 
-// T034_12: `rm src/a.go src/keep.go` — the FIRST file passes the guard, the
+// T034_12: `rm src/a.go src/keep.go` — the FIRST file passes the gate, the
 // SECOND does not. The call is refused before it runs: both files are still on
 // disk, and the deny names src/keep.go (and not src/a.go, which was fine).
 //
-// On origin/main the guard was asked about src/a.go only, passed it, and broke
+// On origin/main the gate was asked about src/a.go only, passed it, and broke
 // out of its loop — the rm ran and both files were gone before any check saw
 // src/keep.go.
 func TestT034_12_SecondFileOfMultiFileCallIsChecked(t *testing.T) {
@@ -82,7 +84,7 @@ func TestT034_12_SecondFileOfMultiFileCallIsChecked(t *testing.T) {
 	))
 
 	if !res.Refused() {
-		t.Fatalf("an rm whose second file the preventive guard refuses was not refused before it ran:\n%s", res.Output)
+		t.Fatalf("an rm whose second file the gate refuses was not refused before it ran:\n%s", res.Output)
 	}
 	if !e.Exists(proj, "src/keep.go") || !e.Exists(proj, "src/a.go") {
 		t.Errorf("the refused rm ran anyway: src/a.go exists=%v, src/keep.go exists=%v",
@@ -90,10 +92,10 @@ func TestT034_12_SecondFileOfMultiFileCallIsChecked(t *testing.T) {
 	}
 	deny := denyText(res)
 	if !strings.Contains(deny, "KEEP-REFUSED") || !strings.Contains(deny, "src/keep.go") {
-		t.Errorf("the deny does not give the guard's reason for src/keep.go:\n%s", deny)
+		t.Errorf("the deny does not give the gate's reason for src/keep.go:\n%s", deny)
 	}
 	if strings.Contains(deny, "src/a.go") {
-		t.Errorf("the deny names src/a.go, which the guard passed:\n%s", deny)
+		t.Errorf("the deny names src/a.go, which the gate passed:\n%s", deny)
 	}
 }
 
@@ -108,7 +110,7 @@ func TestT034_13_EveryRefusedFileIsNamed(t *testing.T) {
 	))
 
 	if !res.Refused() {
-		t.Fatalf("an rm of two files the preventive guard refuses was not refused:\n%s", res.Output)
+		t.Fatalf("an rm of two files the gate refuses was not refused:\n%s", res.Output)
 	}
 	for _, f := range []string{"src/keep1.go", "src/a.go", "src/keep2.go"} {
 		if !e.Exists(proj, f) {
@@ -122,11 +124,11 @@ func TestT034_13_EveryRefusedFileIsNamed(t *testing.T) {
 		}
 	}
 	if strings.Contains(deny, "src/a.go") {
-		t.Errorf("the deny names src/a.go, which the guard passed:\n%s", deny)
+		t.Errorf("the deny names src/a.go, which the gate passed:\n%s", deny)
 	}
 }
 
-// T034_14: the control — `rm src/a.go src/b.go`, where the guard passes every
+// T034_14: the control — `rm src/a.go src/b.go`, where the gate passes every
 // file. Checking every file does not refuse a call whose files are all fine:
 // the rm runs and both files are gone.
 func TestT034_14_MultiFileCallOfFineFilesRuns(t *testing.T) {
@@ -137,7 +139,7 @@ func TestT034_14_MultiFileCallOfFineFilesRuns(t *testing.T) {
 	))
 
 	if res.Refused() {
-		t.Fatalf("an rm of files the guard passes was refused:\n%s", res.Output)
+		t.Fatalf("an rm of files the gate passes was refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, "src/a.go") || e.Exists(proj, "src/b.go") {
 		t.Errorf("the admitted rm did not run: src/a.go exists=%v, src/b.go exists=%v",
@@ -150,13 +152,13 @@ func TestT034_14_MultiFileCallOfFineFilesRuns(t *testing.T) {
 // second holds a plaintext key. The call is refused and NEITHER file lands; the
 // deny names secrets/b.env.
 //
-// On origin/main the guard passed secrets/a.env, never looked at secrets/b.env,
+// On origin/main the gate passed secrets/a.env, never looked at secrets/b.env,
 // and the key was written to disk.
 func TestT034_15_SecondWriteOfMultiFileCallIsChecked(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "no-plaintext-keys", preventiveGuard, map[string]string{"check.sh": checkNoPlaintextKey})
+	e.Gate(proj, "no-plaintext-keys", preventGate, map[string]string{"check.sh": checkNoPlaintextKey})
 	commitGuards(t, proj)
 
 	res := e.Run(proj, "s-034-15", "write two secrets", Turns("done",
@@ -167,13 +169,13 @@ func TestT034_15_SecondWriteOfMultiFileCallIsChecked(t *testing.T) {
 		t.Fatalf("a call whose second write holds a plaintext key was not refused before it ran:\n%s", res.Output)
 	}
 	if e.Exists(proj, "secrets/b.env") {
-		t.Errorf("the plaintext key LANDED: the preventive guard was not asked about the call's second file")
+		t.Errorf("the plaintext key LANDED: the gate was not asked about the call's second file")
 	}
 	if e.Exists(proj, "secrets/a.env") {
 		t.Errorf("part of the refused call ran: secrets/a.env landed")
 	}
 	deny := denyText(res)
 	if !strings.Contains(deny, "plaintext KEY") || !strings.Contains(deny, "secrets/b.env") {
-		t.Errorf("the deny does not give the guard's reason for secrets/b.env:\n%s", deny)
+		t.Errorf("the deny does not give the gate's reason for secrets/b.env:\n%s", deny)
 	}
 }

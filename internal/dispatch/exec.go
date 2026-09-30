@@ -51,7 +51,7 @@ import (
 // A THIRD deadline sits between this one and Claude Code's 600s: one
 // PreToolUse (or Stop) invocation of `sr-session` can run SEVERAL checks in
 // sequence — the structure gate, every context's enter, every gate, every
-// preventive file-guard — each individually bounded by this constant, so the
+// file-guard — each individually bounded by this constant, so the
 // whole invocation's wall-clock is not this constant alone. That outer,
 // per-hook-INVOCATION bound is Claude Code's own `timeout` field on a
 // hooks.json entry (marketplace/plugins/sloprail/hooks/hooks.json sets it to

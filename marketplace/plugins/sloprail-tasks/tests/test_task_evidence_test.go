@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// task-evidence-resolves is a PREVENTIVE file-guard over
+// task-evidence-resolves is a file-guard over
 // memories/tasks/<cat>/<name>/TASK.md with one deterministic SCRIPT check:
 //
 //   - the frontmatter satisfies task.cue (closed; no `done`, no `observations`);
@@ -16,7 +16,8 @@ import (
 //     '<exact output>'` — the proof the work happened, riding on the claim itself.
 //     The file holds no transcript path of any kind.
 //
-// Being preventive, a not-fine write is refused at PRE-tool, before it lands.
+// The PreFileWrite gate refuses a not-fine write at PRE-tool, before it lands; the plain file-guard
+// of the same name re-checks the settled file at Stop.
 //
 // This is the DETERMINISTIC half of the review lifecycle: it answers only "is the
 // evidence there", the gate task-review's judge depends on. task-body-is-human-
@@ -176,7 +177,7 @@ func TestEvidence_ArtifactMissingFromTreeRefused(t *testing.T) {
 		t.Fatalf("an artifact absent from the tree was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, taskPath) {
-		t.Errorf("the preventive guard let a missing-artifact task land on disk")
+		t.Errorf("the gate let a missing-artifact task land on disk")
 	}
 	if !res.Saw("not in the tree") {
 		t.Errorf("the refusal was not the missing-artifact reason:\n%s", res.Output)
@@ -202,7 +203,7 @@ func TestEvidence_AbsoluteArtifactRefusedBySchema(t *testing.T) {
 		t.Fatalf("an absolute-path artifact was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, taskPath) {
-		t.Errorf("the preventive guard let an absolute-artifact task land on disk")
+		t.Errorf("the gate let an absolute-artifact task land on disk")
 	}
 	if !res.Saw("does not satisfy .sloprail/schemas/task.cue") {
 		t.Errorf("the refusal was not the schema reason:\n%s", res.Output)
@@ -252,7 +253,7 @@ func TestEvidence_InvalidFrontmatterRefused(t *testing.T) {
 		t.Fatalf("a task with an invalid status was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, taskPath) {
-		t.Errorf("the preventive guard let a status:done task land on disk")
+		t.Errorf("the gate let a status:done task land on disk")
 	}
 	if !res.Saw("does not satisfy .sloprail/schemas/task.cue") {
 		t.Errorf("the refusal was not task-evidence's schema reason:\n%s", res.Output)
@@ -279,12 +280,42 @@ func TestEvidence_InReviewNeedsArtifacts(t *testing.T) {
 		t.Fatalf("an in_review task missing its artifacts was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, taskPath) {
-		t.Errorf("the preventive guard let an in_review task with no artifacts land")
+		t.Errorf("the gate let an in_review task with no artifacts land")
 	}
 	if !res.Saw("EVIDENCE REQUIRED") || !res.Saw("names no artifacts") {
 		t.Errorf("the refusal was not the missing-artifacts reason:\n%s", res.Output)
 	}
 	if res.Saw("a tool's output from this session") {
 		t.Errorf("the refusal claims no tool output was cited, though one was:\n%s", res.Output)
+	}
+}
+
+// TestEvidence_UnknownResultWriteRefused: a shell edit whose result the engine cannot
+// compute ahead of the write (`sed -i`) reaches the task-evidence-resolves GATE with
+// resultKnown false. A gate does not fail closed on its own, so the gate's script
+// refuses it rather than admit bytes nobody saw; the file keeps its old status.
+func TestEvidence_UnknownResultWriteRefused(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.WriteFile(proj, taskPath, task("backlog", "P1", askBody))
+	installPluginTree(t, e, proj)
+	// task-body's citation requirement would refuse the uncited shell edit first;
+	// disabled so the refusal under test is the evidence gate's own.
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored", pluginName+"/gate/task-body-is-human-authored")
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+
+	res := e.Run(proj, "s-evidence-sedi", authPrompt, Turns("done",
+		Bash("b1", "sed -i.bak 's/status: backlog/status: to_do/' "+taskPath),
+	))
+
+	if !res.Refused() {
+		t.Fatalf("a write whose result could not be computed was not refused:\n%s", res.Output)
+	}
+	if got := readFile(t, proj, taskPath); !strings.Contains(got, "status: backlog") {
+		t.Errorf("the gate let an unverifiable edit land:\n%s", got)
+	}
+	if !res.Saw("could not be computed ahead of the write") {
+		t.Errorf("the refusal did not say the result could not be computed:\n%s", res.Output)
 	}
 }

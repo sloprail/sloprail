@@ -1,0 +1,14 @@
+# PREVENTION half of task-body-is-human-authored: a change to a task's body must cite
+# the user's words (`require: citation`, `when` body-changed.sh), and body-is-stated.sh
+# refuses, before it lands, a body the deterministic check cannot accept (including a
+# write whose result the engine could not compute). Whether the body says only what
+# the cited messages ask is the judge's question, and the judge lives in the plain
+# file-guard of the same name (Stop).
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"'
+require:
+  - citation: {source_types: [user]}
+    when: ./body-changed.sh
+checks:
+  - script: ./body-is-stated.sh

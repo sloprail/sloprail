@@ -46,7 +46,7 @@ const distinctivePhraseHighSignal = "shortest text that still carries its meanin
 // enforced meta-rule) AND the file content both reach the judge's prompt.
 func TestRubricReachesRuleJudgePrompt(t *testing.T) {
 	e := New(t)
-	proj := project(t, e, "rule-quality")
+	proj := guardProject(t, e, "rule-quality")
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
 	const marker = "ZZ_RULE_BODY_MARKER a distinctive line in the rule body"
@@ -73,7 +73,7 @@ func TestRubricReachesRuleJudgePrompt(t *testing.T) {
 // TestRubricReachesSkillJudgePrompt: the same for skill-quality.
 func TestRubricReachesSkillJudgePrompt(t *testing.T) {
 	e := New(t)
-	proj := project(t, e, "skill-quality")
+	proj := guardProject(t, e, "skill-quality")
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
 	const marker = "ZZ_SKILL_BODY_MARKER a distinctive line in the skill body"
@@ -103,7 +103,7 @@ func TestRubricReachesSkillJudgePrompt(t *testing.T) {
 // just the unit-level judgeCommand.
 func TestJudgeConfigReachesTheHarness(t *testing.T) {
 	e := New(t)
-	proj := project(t, e, "rule-quality")
+	proj := guardProject(t, e, "rule-quality")
 
 	// A recording shim: writes a passing verdict AND records the claude argv.
 	argvFile := filepath.Join(proj, "claude-argv.txt")
@@ -153,7 +153,7 @@ func TestJudgeConfigReachesTheHarness(t *testing.T) {
 // is the answer directory. The engine also tells the judge where the project is.
 func TestJudgeReadsTheWorkspaceButCannotWriteIt(t *testing.T) {
 	e := New(t)
-	proj := project(t, e, "rule-quality")
+	proj := guardProject(t, e, "rule-quality")
 
 	argvFile := filepath.Join(t.TempDir(), "claude-argv.txt")
 	e.InstallJudgeClaudeRecordingArgv(argvFile, `{"pass": true, "reasoning": ""}`)
@@ -266,7 +266,7 @@ func hasAdjacent(lines []string, flag, value string) bool {
 // that was always fail-closed, unchanged by the migration.
 func TestEmptyRulesIsRefusalNotFailOpen(t *testing.T) {
 	e := New(t)
-	proj := project(t, e, "rule-quality")
+	proj := guardProject(t, e, "rule-quality")
 	// A passing verdict, so if the guard wrongly reached the judge it would ADMIT —
 	// the test would then fail, which is what makes the refusal meaningful.
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
@@ -278,13 +278,13 @@ func TestEmptyRulesIsRefusalNotFailOpen(t *testing.T) {
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "disable the only enforced meta-rule")
 
-	got := e.Run(proj, "s-erj-emptyrules", "write a rule", Turns("done",
+	e.Run(proj, "s-erj-emptyrules", "write a rule", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA body.\n"),
 	))
 
-	// The preventive Pre refusal reaches the mock's stream. prepare refuses with
-	// its "no standard to judge" message rather than permitting — the asymmetry.
-	if !got.Saw("no standard to judge") {
-		t.Fatalf("an empty (no-enforced-rule) rules/ did not refuse — the empty-rules asymmetry was lost:\n%s", got.Output)
+	// The file-guard's refusal blocks the turn at Stop: prepare refuses with its
+	// "no standard to judge" message rather than permitting — the asymmetry.
+	if !sawRefusal(e.BlockingErrors(proj, "s-erj-emptyrules"), "no standard to judge") {
+		t.Fatalf("an empty (no-enforced-rule) rules/ did not refuse — the empty-rules asymmetry was lost:\n%v", e.BlockingErrors(proj, "s-erj-emptyrules"))
 	}
 }

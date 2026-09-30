@@ -10,7 +10,7 @@ in force that is not. In the onboarding eval, fresh agents wrote
 `.sloprail/structure.yaml` (one level too high) and `.sloprail/guardrails/...`
 (an old layout), and nothing told them.
 
-Preventive, script-only: `check-path.sh` reads the event's path and nothing else.
+A `PreFileWrite` gate (prevention) with a file-guard of the same name as the Stop backstop, script-only: `check-path.sh` reads the event's path and nothing else.
 It refuses a `structure.yaml`, `file-guard.yaml`, `gate.yaml` or `context.yaml`
 outside its place, and any YAML straight under `.sloprail/` other than
 `config.yaml`. Any other YAML inside a folder (a data file a check reads) is left

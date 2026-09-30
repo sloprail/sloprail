@@ -5,35 +5,36 @@ import (
 	"testing"
 )
 
-// pureRequireFilesGuard is a PURE-require file-guard, like 037's own, but naming a
+// pureRequireFilesGate is a PURE-require GATE, like 037's own, but naming a
 // `files` entry alongside the skill: a write under memories/topics/ is permitted
 // only once BOTH the document-topic skill was loaded AND its own "detail.md"
-// subpage was read this session. Preventive, so the write never lands while the
+// subpage was read this session. A gate, so the write never lands while the
 // precondition is unmet.
-const pureRequireFilesGuard = `match: "memories/topics/**/*.md"
-preventive: true
+const pureRequireFilesGate = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "memories/topics/" and event.path endsWith ".md"
 require:
   - skill: document-topic
     files: [detail.md]
 `
 
-// T039_01: the guard VALIDATES — `sr-file declarations` accepts a file-guard whose
+// T039_01: the gate VALIDATES — `sr-file declarations` accepts a gate whose
 // require carries a `files` entry alongside `skill`.
-func TestT039_01_PureRequireFilesGuardValidates(t *testing.T) {
+func TestT039_01_PureRequireFilesGateValidates(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	writeProjectSkill(t, proj, "document-topic", "detail.md")
-	e.FileGuard(proj, "require-topic-detail", pureRequireFilesGuard, nil)
+	e.Gate(proj, "require-topic-detail", pureRequireFilesGate, nil)
 
 	res := e.CLIDirect(proj, "sr-file", "declarations", proj)
 	if res.Code != 0 {
-		t.Fatalf("a require-with-files file-guard must load clean, got exit %d:\n%s", res.Code, res.Output)
+		t.Fatalf("a require-with-files gate must load clean, got exit %d:\n%s", res.Code, res.Output)
 	}
-	if !strings.Contains(res.Output, "file-guards (1): require-topic-detail") {
-		t.Errorf("the loaded report did not name the guard:\n%s", res.Output)
+	if !strings.Contains(res.Output, "gates (1): require-topic-detail") {
+		t.Errorf("the loaded report did not name the gate:\n%s", res.Output)
 	}
 	if strings.Contains(res.Output, "could not be loaded") {
-		t.Errorf("the require-with-files guard was reported invalid — it must load:\n%s", res.Output)
+		t.Errorf("the require-with-files gate was reported invalid — it must load:\n%s", res.Output)
 	}
 }
 
@@ -48,7 +49,7 @@ func TestT039_02_SkillLoadedButFileUnreadStillRefuses(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	writeProjectSkill(t, proj, "document-topic", "detail.md")
-	e.FileGuard(proj, "require-topic-detail", pureRequireFilesGuard, nil)
+	e.Gate(proj, "require-topic-detail", pureRequireFilesGate, nil)
 	commitGuards(t, proj)
 
 	res := e.Run(proj, "s-039-02", "load the skill but not its detail page, then write a topic", Turns("done",
@@ -74,7 +75,7 @@ func TestT039_03_NeitherSkillNorFileRefusesNamingTheSkillFirst(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	writeProjectSkill(t, proj, "document-topic", "detail.md")
-	e.FileGuard(proj, "require-topic-detail", pureRequireFilesGuard, nil)
+	e.Gate(proj, "require-topic-detail", pureRequireFilesGate, nil)
 	commitGuards(t, proj)
 
 	res := e.Run(proj, "s-039-03", "write a topic with neither skill nor detail read", Turns("done",
@@ -102,7 +103,7 @@ func TestT039_04_SkillLoadedAndFileReadPermitsWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	subpagePath := writeProjectSkill(t, proj, "document-topic", "detail.md")
-	e.FileGuard(proj, "require-topic-detail", pureRequireFilesGuard, nil)
+	e.Gate(proj, "require-topic-detail", pureRequireFilesGate, nil)
 	commitGuards(t, proj)
 
 	res := e.Run(proj, "s-039-04", "load the skill, read its detail page, then write a topic", Turns("done",
@@ -127,7 +128,7 @@ func TestT039_05_CatOnTheSubpagePermitsWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	subpagePath := writeProjectSkill(t, proj, "document-topic", "detail.md")
-	e.FileGuard(proj, "require-topic-detail", pureRequireFilesGuard, nil)
+	e.Gate(proj, "require-topic-detail", pureRequireFilesGate, nil)
 	commitGuards(t, proj)
 
 	res := e.Run(proj, "s-039-05", "load the skill, cat its detail page, then write a topic", Turns("done",

@@ -17,12 +17,14 @@ import (
 // the guarded/skip-me/ path so the judge's prepare abstains; they differ only in
 // whether the file content trips the second check.
 
-// maskGuard is a preventive file-guard whose FIRST check is the skipping judge and
-// whose SECOND is a content gate. The judge reuses the shared prepare/template
+// maskGuard is a PreFileWrite gate whose checks are, in order: the standing
+// require-known-result.sh, the skipping judge, and a content check. The judge reuses the shared prepare/template
 // (skip-me path -> abstain); the gate refuses on VETO.
-const maskGuard = `match: "guarded/**/*.md"
-preventive: true
+const maskGuard = `on:
+  - event: PreFileWrite
+    match: 'event.path startsWith "guarded/" and event.path endsWith ".md"'
 checks:
+  - script: ./require-known-result.sh
   - prepare: ./prepare.sh
     judge: ./judge.md.j2
     model: size-md

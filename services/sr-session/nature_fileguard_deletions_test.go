@@ -17,7 +17,7 @@ import (
 )
 
 // These pin a file-guard's `deletions:` filter at every place a guard is
-// dispatched on a file event — the preventive (Pre) path, the after-check (Post)
+// dispatched on a file event — the after-check (Post)
 // path, and the pre-tool event binding — and the revalidation consequence: a
 // refusal a guard left on a file that has since been deleted is settled whenever
 // the guard does not refuse the delete, so it cannot stay outstanding forever.
@@ -43,7 +43,7 @@ func wantRuns(mode declaration.Deletions, kind string) bool {
 // refusingGuard is a guard whose one script check appends the event kind it was
 // handed to a ledger and then REFUSES, so a test can tell "ran" from "did not run"
 // both by the ledger and by whether a refusal came back.
-func refusingGuard(t *testing.T, mode declaration.Deletions, preventive bool) (declaration.FileGuard, string) {
+func refusingGuard(t *testing.T, mode declaration.Deletions) (declaration.FileGuard, string) {
 	t.Helper()
 	dir := t.TempDir()
 	ledger := filepath.Join(dir, "ledger")
@@ -54,12 +54,11 @@ echo "{\"reason\":\"REFUSED-$kind\"}"
 exit 1
 `)
 	return declaration.FileGuard{
-		Name:       "g",
-		Match:      "docs/**",
-		Preventive: preventive,
-		Deletions:  mode,
-		Checks:     []declaration.Check{{Script: "./refuse.sh"}},
-		Dir:        dir,
+		Name:      "g",
+		Match:     "docs/**",
+		Deletions: mode,
+		Checks:    []declaration.Check{{Script: "./refuse.sh"}},
+		Dir:       dir,
 	}, ledger
 }
 
@@ -103,36 +102,13 @@ func postFileEvent(kind, path string) event.Event {
 	return event.Event{Kind: kind, Fields: f}
 }
 
-// The PREVENTIVE path runs a guard on exactly the Pre kinds its `deletions:`
-// covers: a refusing guard refuses there and nowhere else, and its check is not
-// even started on a kind it does not cover.
-func TestRunFileGuardsPreventive_DeletionsFilter(t *testing.T) {
-	kinds := []string{declaration.KindPreFileCreate, declaration.KindPreFileUpdate, declaration.KindPreFileDelete}
-	for _, mode := range deletionModes {
-		for _, kind := range kinds {
-			t.Run(string(mode.Mode())+"/"+kind, func(t *testing.T) {
-				g, ledger := refusingGuard(t, mode, true)
-				reason := runFileGuardsPreventive(discard(), []declaration.FileGuard{g},
-					[]event.Event{preEvent(kind, "docs/a.md")}, hookScope{}, map[string]natures.ContextState{}, resolveNotes{})
-				if wantRuns(mode, kind) {
-					assert.Contains(t, reason, "REFUSED-"+kind, "deletions=%q must run on %s", mode, kind)
-					assert.Equal(t, []string{kind}, ledgerLines(t, ledger))
-				} else {
-					assert.Empty(t, reason, "deletions=%q must not run on %s", mode, kind)
-					assert.Empty(t, ledgerLines(t, ledger), "the check must not even start")
-				}
-			})
-		}
-	}
-}
-
 // The AFTER-CHECK path applies the same filter to the Post kinds.
 func TestRunFileGuardsPost_DeletionsFilter(t *testing.T) {
 	kinds := []string{declaration.KindPostFileCreate, declaration.KindPostFileUpdate, declaration.KindPostFileDelete}
 	for _, mode := range deletionModes {
 		for _, kind := range kinds {
 			t.Run(string(mode.Mode())+"/"+kind, func(t *testing.T) {
-				g, ledger := refusingGuard(t, mode, false)
+				g, ledger := refusingGuard(t, mode)
 				root := t.TempDir()
 				rev := newRevalidation(t)
 				results := runFileGuardsPost(discard(), []declaration.FileGuard{g},
@@ -155,7 +131,7 @@ func TestRunFileGuardsPost_DeletionsFilter(t *testing.T) {
 // the deleted file's markers are its oldMarkers. Without that, `deletions:
 // include` would be inert for every marker-scoped guard.
 func TestRunFileGuardsPost_MarkerMatchSelectsDeleteByOldMarkers(t *testing.T) {
-	g, ledger := refusingGuard(t, declaration.DeletionsInclude, false)
+	g, ledger := refusingGuard(t, declaration.DeletionsInclude)
 	g.Match = `any(markers, .kind == "invariant")`
 	del := event.Event{Kind: declaration.KindPostFileDelete, Fields: map[string]any{
 		filemod.FieldPath:       "src/pinned.go",
@@ -185,21 +161,13 @@ func TestFileMarkers_DeleteReadsOldMarkers(t *testing.T) {
 	assert.NotNil(t, fileMarkers(upd))
 }
 
-// The pre-tool binding asks for exactly the Pre kinds the preventive guards cover.
-func TestNaturePreToolBoundKinds_FollowsDeletions(t *testing.T) {
-	want := map[declaration.Deletions][]string{
-		"":                           {declaration.KindPreFileCreate, declaration.KindPreFileUpdate},
-		declaration.DeletionsSkip:    {declaration.KindPreFileCreate, declaration.KindPreFileUpdate},
-		declaration.DeletionsInclude: {declaration.KindPreFileCreate, declaration.KindPreFileUpdate, declaration.KindPreFileDelete},
-		declaration.DeletionsOnly:    {declaration.KindPreFileDelete},
+// A file-guard binds nothing at pre-tool, whatever its `deletions:`: it judges the
+// settled file at Stop, and only a gate acts before a write.
+func TestNaturePreToolBoundKinds_FileGuardsBindNothing(t *testing.T) {
+	for _, mode := range deletionModes {
+		loaded := declaration.Loaded{FileGuards: []declaration.FileGuard{{Name: "g", Deletions: mode}}}
+		assert.Empty(t, naturePreToolBoundKinds(loaded), "deletions=%q", mode)
 	}
-	for mode, kinds := range want {
-		loaded := declaration.Loaded{FileGuards: []declaration.FileGuard{{Name: "g", Preventive: true, Deletions: mode}}}
-		assert.ElementsMatch(t, kinds, naturePreToolBoundKinds(loaded), "deletions=%q", mode)
-	}
-	// A non-preventive guard asks for nothing at pre-tool, whatever its deletions.
-	loaded := declaration.Loaded{FileGuards: []declaration.FileGuard{{Name: "g", Deletions: declaration.DeletionsInclude}}}
-	assert.Empty(t, naturePreToolBoundKinds(loaded))
 }
 
 // --- the re-fire path ---------------------------------------------------------
@@ -243,7 +211,7 @@ func outstandingFor(t *testing.T, rev *revalidation, guard string) []string {
 func TestRunFileGuardsPost_SkipGuardSettlesRefusalOnDeletedFile(t *testing.T) {
 	for _, mode := range []declaration.Deletions{"", declaration.DeletionsSkip} {
 		t.Run(string(mode.Mode()), func(t *testing.T) {
-			g, ledger := refusingGuard(t, mode, false)
+			g, ledger := refusingGuard(t, mode)
 			rev := newRevalidation(t)
 			seedRefusal(t, rev, g.Name, "docs/a.md")
 
@@ -278,7 +246,7 @@ func TestRunFileGuardsPost_IncludeGuardPassingDeleteSettlesRefusal(t *testing.T)
 // outstanding: that is its live answer, and it must re-fire until the file is
 // back and fine.
 func TestRunFileGuardsPost_IncludeGuardRefusingDeleteKeepsRefusal(t *testing.T) {
-	g, _ := refusingGuard(t, declaration.DeletionsInclude, false)
+	g, _ := refusingGuard(t, declaration.DeletionsInclude)
 	rev := newRevalidation(t)
 	seedRefusal(t, rev, g.Name, "docs/a.md")
 

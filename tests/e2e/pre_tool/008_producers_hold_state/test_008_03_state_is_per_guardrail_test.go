@@ -6,23 +6,23 @@ import "testing"
 // This is SHARED machinery the new dispatch reuses unchanged — the keyspace is
 // keyed on the guard's name, set into SR_GUARDRAIL by the engine when it runs a
 // check (internal/dispatch/exec.go). These tests re-prove it against NEW-format
-// file-guards.
+// gates.
 //
 // # Ordering, and why some rules share a guard here
 //
-// The new preventive dispatch runs file-guards in NAME order and STOPS at the
-// first refusal (nature_fileguard.go runFileGuardsPreventive). So where a test
-// needs a writer to run before a reader across two guards, the writer's guard is
-// named to sort first and PERMITS (a permit falls through to the next guard; only
-// a refusal stops the pass). Where two steps must share one keyspace, they are two
+// The gate dispatch runs gates in NAME order, and a file already refused by
+// a gate is not asked of later gates. So where a test needs a writer to run before
+// a reader across two gates, the writer's gate is named to sort first and PERMITS
+// (a permit falls through to the next gate; only a refusal stops the pass). Where two steps must share one keyspace, they are two
 // `checks:` of one guard, run in declaration order.
 
 // sharedKeyGuard is one guard with two checks: the first stores a value, the
 // second reads it back and refuses with what it saw (a check's output only travels
 // back when it refuses, so refusing is how a test observes what a check read).
 // Both checks belong to one guard, so both share one keyspace.
-const sharedKeyGuard = `match: "shared/**"
-preventive: true
+const sharedKeyGuard = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "shared/"
 checks:
   - script: ./write.sh
   - script: ./report.sh
@@ -58,7 +58,7 @@ func TestT008_03a_SameGuardrailSharesItsKeyspace(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "writer-a", sharedKeyGuard, map[string]string{
+	e.Gate(proj, "writer-a", sharedKeyGuard, map[string]string{
 		"write.sh": writerScript, "report.sh": reportScript,
 	})
 
@@ -76,16 +76,18 @@ func TestT008_03a_SameGuardrailSharesItsKeyspace(t *testing.T) {
 
 // a-writer is the writer as its own guard, named to sort BEFORE the reader so it
 // runs first, and PERMITS so the pass reaches the reader.
-const isolationWriterGuard = `match: "isolated/**"
-preventive: true
+const isolationWriterGuard = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "isolated/"
 checks:
   - script: ./write.sh
 `
 
 // z-reader reads a key another rule wrote, and must not see its value. Named to
 // sort AFTER the writer.
-const readerGuard = `match: "isolated/**"
-preventive: true
+const readerGuard = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "isolated/"
 checks:
   - script: ./read.sh
 `
@@ -115,8 +117,8 @@ func TestT008_03b_StateIsPerGuardrail(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "a-writer", isolationWriterGuard, map[string]string{"write.sh": writerScript})
-	e.FileGuard(proj, "z-reader", readerGuard, map[string]string{"read.sh": readerScript})
+	e.Gate(proj, "a-writer", isolationWriterGuard, map[string]string{"write.sh": writerScript})
+	e.Gate(proj, "z-reader", readerGuard, map[string]string{"read.sh": readerScript})
 
 	got := e.Run(proj, "s-008-03b", "write a note", Turns("done",
 		Write("w1", "isolated/notes.md", "hello"),
@@ -146,8 +148,9 @@ func TestT008_03b_StateIsPerGuardrail(t *testing.T) {
 
 // impostorGuard names another rule's keyspace by setting the variable itself
 // before calling in. One guard, two checks in order.
-const impostorGuard = `match: "impostor/**"
-preventive: true
+const impostorGuard = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "impostor/"
 checks:
   - script: ./write.sh
   - script: ./impostor.sh
@@ -192,7 +195,7 @@ func TestT008_04_NamingAnotherGuardrailIsNotPrevented(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "impostor", impostorGuard, map[string]string{
+	e.Gate(proj, "impostor", impostorGuard, map[string]string{
 		"write.sh": impostorOwnWrite, "impostor.sh": impostorScript,
 	})
 

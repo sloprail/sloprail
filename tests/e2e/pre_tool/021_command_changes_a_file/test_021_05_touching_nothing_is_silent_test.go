@@ -30,9 +30,9 @@ import "testing"
 // `rm`, an update for an in-place edit, nothing for a read. A gate triggering on
 // the derived file events (PreFileDelete + PreFileUpdate) narrowed to notes.md is
 // the faithful vehicle: it sees the command-derived pre file events with their
-// real kinds and records them, and unlike a preventive file-guard it has no
-// fail-closed shortcut on a command-derived update — so the recording check can
-// permit and the ledger reflects exactly which kinds arrived. The check reads the
+// real kinds and records them, and a gate decides on its check alone —
+// so the recording check can permit and the ledger reflects exactly which kinds
+// arrived. The check reads the
 // FLAT GateCheckPayload (`.event.kind`) and the ledger is read with
 // e.GateLedgerLines from `.sloprail/gate/<name>/`.
 

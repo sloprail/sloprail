@@ -42,7 +42,7 @@ import (
 // refuseNamedGuard is a NEW-FORMAT file-guard that refuses any file whose path
 // contains "bad", and records every file it was handed.
 //
-// After-check (preventive omitted, the default): it observes at Stop and RE-FIRES
+// After-check (a file-guard acts only at Stop): it observes at Stop and RE-FIRES
 // next cycle, which is exactly the point where refusal-survival is measured — a
 // pre-block would stop the write and there would be nothing on disk to re-report.
 //

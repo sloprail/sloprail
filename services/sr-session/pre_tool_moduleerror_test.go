@@ -83,7 +83,7 @@ const alwaysRefuse = "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"nothing is 
 //
 // The assertion is on the DENIAL, not on stderr. The error was always printed;
 // what a test watching stderr cannot see is whether the event survived, and
-// that is precisely why the defect went unnoticed. A preventive file-guard whose
+// that is precisely why the defect went unnoticed. A PreFileDelete gate whose
 // match selects guarded.md refuses the deletion of the bytes about to be lost, so
 // a denial on stdout is proof the good PreFileDelete event reached the matching
 // stage rather than being dropped alongside the errored one.
@@ -99,14 +99,11 @@ func TestPreTool_ModuleErrorDoesNotDiscardItsEvents(t *testing.T) {
 	// The file the rule is actually about.
 	require.NoError(t, os.WriteFile(filepath.Join(proj, "guarded.md"), []byte("x"), 0o644))
 
-	// A preventive file-guard that refuses every markdown write or deletion. A
-	// preventive guard that includes deletions fires on PreFileDelete (it may
-	// refuse an unasked deletion — nature_fileguard.go isPreFileEvent, and
-	// `deletions: include`, since a guard skips deleted files by default), so the
+	// A gate on PreFileDelete that refuses the deletion of any markdown file: the
 	// `rm` of guarded.md is exactly the event it must receive.
-	writeFileGuardYAML(t, proj, "nodelete", `match: "**/*.md"
-preventive: true
-deletions: include
+	writeGateYAML(t, proj, "nodelete", `on:
+  - event: PreFileDelete
+    match: event.path endsWith ".md"
 checks:
   - script: ./refuse.sh
 `, map[string]string{"refuse.sh": alwaysRefuse})
@@ -136,5 +133,5 @@ checks:
 	assert.Contains(t, stdout, `"permissionDecision":"deny"`,
 		"the module produced a PreFileDelete for guarded.md alongside an error about the "+
 			"unreadable path; discarding the slice let the guarded deletion through")
-	assert.Contains(t, stdout, "nodelete", "the refusal must name the file-guard")
+	assert.Contains(t, stdout, "nodelete", "the refusal must name the gate")
 }

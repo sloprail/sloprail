@@ -33,7 +33,7 @@ func provenanceProject(t *testing.T) (*harness.Env, string) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "grounded-memories", toolResultGuard, map[string]string{"record.sh": citedRecordScript})
+	installBoth(e, proj, toolResultGate, toolResultGuard)
 	commitAll(t, proj)
 	return e, proj
 }

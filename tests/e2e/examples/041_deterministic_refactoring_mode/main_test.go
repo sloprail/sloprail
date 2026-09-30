@@ -13,11 +13,12 @@ import (
 // This package is the end-to-end for the deterministic-refactoring-mode USE CASE
 // (strategy unit 12): a refactor must be MECHANICAL, not regenerated. Two halves:
 //
-//   - a PREVENTIVE file-guard (`moved-content-reconciles`, PreToolUse) blocks any
+//   - a PreFileWrite gate (`gate/moved-content-reconciles`, PreToolUse) blocks any
 //     write of a file carrying an `sr:moved-from` marker whose body does not
 //     reconcile byte-for-byte (minus imports/whitespace) against the origin range
 //     the marker pins. Relevant only inside the refactoring context (its match
-//     reads `context["refactoring"].active`). T041_01..05.
+//     reads `context["refactoring"].active`). The same-named file-guard
+//     re-runs the reconcile at Stop on the settled file. T041_01..05, T041_10.
 //   - a COMPLETENESS check: a declared refactor's every promised move must land.
 //     This BLOCKS, so it is a Stop GATE (`gate/refactor-complete`), NOT the
 //     context's exit — a context's exit is pure lifecycle and cannot refuse a Stop
@@ -51,6 +52,7 @@ var (
 	New      = harness.New
 	Turns    = harness.Turns
 	Write    = harness.Write
+	Bash     = harness.Bash
 	SayWrite = harness.SayWrite
 )
 

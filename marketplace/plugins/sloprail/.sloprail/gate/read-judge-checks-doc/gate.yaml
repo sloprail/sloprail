@@ -1,0 +1,18 @@
+# A judge prompt template (.md.j2, under file-guard/gate/context) must be
+# authored against judge-checks.md's contract — the prepare/judge/model shape,
+# the {"pass", "reasoning"} verdict, treating judged content as DATA never
+# instructions — or it is wrong in a predictable way authoring-slop's judge
+# then has to catch, one model call at a time. See
+# read-script-checks-doc/file-guard.yaml (its sibling, for the script half)
+# for the full argument; this is the identical mechanism for the judge half.
+#
+# This is the PREVENTION half of the rule: a PreFileWrite gate refuses the write
+# before it lands. The plain file-guard of the same name, beside it under
+# file-guard/, is the settled-result backstop at Stop.
+on:
+  - event: PreFileWrite
+    match: '(event.path contains ".sloprail/file-guard/" or event.path contains ".sloprail/gate/" or event.path contains ".sloprail/context/") and event.path endsWith ".md.j2"'
+
+require:
+  - skill: authoring-guardrails
+    files: [judge-checks.md]

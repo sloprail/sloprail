@@ -45,11 +45,10 @@
 # write, not one per gate file.)
 match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 
-# preventive: true — the transition into to_do/in_progress is the moment
-# gates are about; the same Pre/Post shape every other guard in this plugin
-# uses, so a write the engine cannot derive at Pre is deferred to the
-# Post/Stop after-check on the settled bytes.
-preventive: true
+# The PREVENTION half — the transition into to_do/in_progress is the moment gates
+# are about — is the PreFileWrite gate of the same name, beside this guard under
+# gate/. This file-guard checks the settled file at Stop, so a write the gate could
+# not derive is judged on its settled bytes.
 
 checks:
   # Deterministic, fail-closed on the logic and on an unrunnable gate; fails

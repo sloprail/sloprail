@@ -5,10 +5,9 @@ import "testing"
 // T045_11: a command-derived edit to ASK.md whose resulting bytes this engine
 // cannot predict.
 //
-// `ask-is-human-authored` is PREVENTIVE, and for a preventive guard the engine
-// refuses an underivable Pre write before its checks run — but evaluates `require`
-// first (nature_fileguard.go's isUnderivablePreWrite branch), because an unmet
-// prerequisite names the actual fix. `sed -i` carries no citation, so the refusal
+// `ask-is-human-authored` is a gate; the engine evaluates `require` before any
+// check, because an unmet prerequisite names the actual fix (the gate's own
+// require-known-result.sh check would otherwise refuse an underivable result). `sed -i` carries no citation, so the refusal
 // is the citation requirement's, naming ASK.md and the sr-file form. sed's
 // transformation is not modeled, so filemod emits PreFileUpdate with
 // resultKnown:false; ASK.md must already exist (sed -i edits).

@@ -12,7 +12,7 @@
 #   - Pre (the write is about to land): the union of what is owed, what the
 #     file on disk declares now (`oldContent`), and what this write declares.
 #     The write may still be refused after this runs (contexts enter before the
-#     preventive scanner-keywords-hold guard), and a refused narrowing of a
+#     scanner-keywords-hold gate), and a refused narrowing of a
 #     committed scanner this session never logged is followed by no Post event
 #     at all (the file never changed).
 #   - Post (the settled file, at Stop): the union of what is owed and the

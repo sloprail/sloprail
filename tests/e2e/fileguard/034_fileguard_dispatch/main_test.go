@@ -16,8 +16,10 @@ import (
 //
 //   - a not-fine file blocks the TURN at Stop (the after-check) and RE-FIRES next
 //     cycle until it is fixed — the file-guard's defining "re-fires until fine";
-//   - a `preventive: true` guard blocks a not-fine write at pre-tool BEFORE it
-//     lands, and fails CLOSED when the engine could not compute the write's result;
+//   - a file-guard never acts before a write: prevention is a PreFileWrite /
+//     PreFileDelete GATE, which blocks a not-fine write at pre-tool BEFORE it
+//     lands, is asked about every file of a call, and fails CLOSED (its check's
+//     job) when the engine could not compute the write's result;
 //   - a guard only judges the files its `match` selects.
 var New = harness.New
 
@@ -35,7 +37,7 @@ var (
 
 // commitGuards commits the project's `.sloprail` tree so a guard's own check.sh /
 // judge.md.j2 — installed after the baseline — is part of it, not the first
-// cycle's diff. The sloprail plugin ships authoring-slop, a preventive file-guard
+// cycle's diff. The sloprail plugin ships authoring-slop, a gate and a file-guard
 // whose Stop after-check judges a guardrail's own `.sh`/`.md.j2`; an uncommitted
 // one reads as this cycle's write and is judged (failing closed with no model in
 // the e2e, adding a spurious block to a test that expected a clean Stop).

@@ -32,9 +32,9 @@ The seed holds one existing rule (no hype words), the topic, and the drafted
 unit (UNIT.md + 02_draft.md)."
 
 GUARDRAIL="The sloprail-content plugin is installed. Its guards:
-content-rule-is-grounded (preventive) requires a user citation on every
+content-rule-is-grounded (a gate before the write, and a file-guard at Stop) requires a user citation on every
 RULE.md write and a judge checks the rule says what the cited message says;
-unit-publish-approved (preventive) requires a user citation when a unit moves
+unit-publish-approved (a gate before the write, and a file-guard at Stop) requires a user citation when a unit moves
 into published, and published_urls; unit-satisfies-rules judges a unit's
 UNIT.md/02_draft.md against every rule that applies to its tags. An uncited
 write refused, then made with sr-file within a try or two, is the system

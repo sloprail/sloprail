@@ -16,7 +16,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/sloprail/sloprail/internal/event"
+	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/guardrail"
+	"github.com/sloprail/sloprail/internal/module"
 )
 
 // T046_43: a short-sha pin still pins its lines when a branch named like the sha
@@ -114,10 +116,10 @@ func TestT046_45_PinIntoAnotherRepositoryIsRefused(t *testing.T) {
 	}
 }
 
-// T046_46: the spec convention is stated twice — pinned-spec-holds' match (what
-// the guard watches) and pin.sh's SPEC_PATH_RE (where a pin may point). If they
-// disagree, a pin can name a file the guard does not watch. Both are run over the
-// same paths and must agree.
+// T046_46: the spec convention is stated three times — pinned-spec-holds' match in
+// its file-guard and in its gate's triggers (what the rule watches) and pin.sh's
+// SPEC_PATH_RE (where a pin may point). If they disagree, a pin can name a file
+// the rule does not watch. All are run over the same paths and must agree.
 func TestT046_46_SpecConventionAgrees(t *testing.T) {
 	root := filepath.Join(repoRoot(t), "examples", "business-invariants", ".sloprail", "file-guard")
 	raw, err := os.ReadFile(filepath.Join(root, "pinned-spec-holds", "file-guard.yaml"))
@@ -152,14 +154,25 @@ func TestT046_46_SpecConventionAgrees(t *testing.T) {
 		if watched != want || pinnable != want {
 			t.Errorf("%s: the guard watches it: %v, a pin may name it: %v, want both %v", p, watched, pinnable, want)
 		}
+		for _, trig := range gateTriggers(t) {
+			gated, err := trig.match.Match(event.Event{Fields: map[string]any{
+				"event": map[string]any{"path": p, "newMarkers": []any{}, "oldMarkers": []any{}}, "context": map[string]any{},
+			}})
+			if err != nil {
+				t.Fatalf("%s: gate %s match: %v", p, trig.event, err)
+			}
+			if gated != want {
+				t.Errorf("%s: the gate's %s trigger watches it: %v, want %v", p, trig.event, gated, want)
+			}
+		}
 	}
 }
 
-// T046_47: `rm a.go b.go`, both carrying the same pin. The engine asks a
-// preventive guard about every file a command touches, before it runs, and each
-// file sees the other still holding the pin, so the command runs. At Stop both
-// are gone, neither holds the pin, and both deletes are refused: the after-check
-// is the backstop, and names both files.
+// T046_47: `rm a.go b.go`, both carrying the same pin. The engine asks the gate
+// about every file a command touches, before it runs, and each file sees the
+// other still holding the pin, so the command runs. At Stop both
+// are gone, neither holds the pin, and both deletes are refused by the file-guard:
+// the after-check is the backstop, and names both files.
 func TestT046_47_DeletingTwoHoldersOfOnePinInOneCommand(t *testing.T) {
 	e := newEnv(t)
 	proj := biProject(t, e)
@@ -264,5 +277,77 @@ func TestT046_54_WhitespaceOutsidePinnedLinesNeedsNothing(t *testing.T) {
 	}
 	if got := readSpec(t, proj); got != reformatted {
 		t.Errorf("the whitespace change did not land:\n%q", got)
+	}
+}
+
+type gateTrigger struct {
+	event string
+	match *guardrail.Matcher
+}
+
+// gateTriggers compiles every trigger of the shipped pinned-spec-holds gate
+// against the file event kind it fires on.
+func gateTriggers(t *testing.T) []gateTrigger {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "examples", "business-invariants", ".sloprail", "gate", "pinned-spec-holds", "gate.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g struct {
+		On []struct {
+			Event string `yaml:"event"`
+			Match string `yaml:"match"`
+		} `yaml:"on"`
+	}
+	if err := yaml.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]module.KindDecl{}
+	for _, k := range (&filemod.Module{}).Kinds() {
+		kinds[k.Name] = k
+	}
+	var out []gateTrigger
+	for _, on := range g.On {
+		kind, ok := kinds[on.Event]
+		if !ok {
+			t.Fatalf("the gate triggers on %s, which is not a file event kind", on.Event)
+		}
+		m, err := guardrail.CompileGateMatch(on.Match, kind)
+		if err != nil {
+			t.Fatalf("compile the gate's %s match: %v", on.Event, err)
+		}
+		out = append(out, gateTrigger{on.Event, m})
+	}
+	if len(out) != 3 {
+		t.Fatalf("the gate has %d triggers, want PreFileCreate, PreFileUpdate and PreFileDelete", len(out))
+	}
+	return out
+}
+
+// T046_61: the gate's refuse-unknown-result.sh refuses a create or an update whose
+// result the engine could not work out (resultKnown false: a `sed -i`, `>`, `cp`)
+// unless the predicate decided nothing pinned is at stake, and never a write whose
+// result is known nor a delete (which has no result to work out).
+func TestT046_61_GateRefusesAnUnknownResultOnlyWherePinned(t *testing.T) {
+	repo, _ := unreadDeleteRepo(t)
+	dir := gateDir(t, "pinned-spec-holds")
+	write := func(kind, path, known string) string {
+		return `{"event":{"kind":"` + kind + `","path":"` + path + `","resultKnown":` + known +
+			`,"oldContent":"","newContent":"","oldMarkers":[],"newMarkers":[]}}`
+	}
+	for _, kind := range []string{"PreFileCreate", "PreFileUpdate"} {
+		out, code := runRuleScript(t, dir, "refuse-unknown-result.sh", repo, write(kind, "SPEC.md", "false"))
+		if code != 1 || !strings.Contains(out, "cannot be worked out before it runs") {
+			t.Errorf("%s of a pinned spec with an unknown result was not refused (exit %d): %s", kind, code, out)
+		}
+		if out, code := runRuleScript(t, dir, "refuse-unknown-result.sh", repo, write(kind, "SPEC.md", "true")); code != 0 {
+			t.Errorf("%s with a known result was refused (exit %d): %s", kind, code, out)
+		}
+		if out, code := runRuleScript(t, dir, "refuse-unknown-result.sh", repo, write(kind, "notes.md", "false")); code != 0 {
+			t.Errorf("%s of a file nothing pins was refused for an unknown result (exit %d): %s", kind, code, out)
+		}
+	}
+	if out, code := runRuleScript(t, dir, "refuse-unknown-result.sh", repo, unreadDelete("SPEC.md")); code != 0 {
+		t.Errorf("a delete was refused for an unknown result (exit %d): %s", code, out)
 	}
 }

@@ -3,14 +3,19 @@
 # …/ASK.md --cite:user '<their exact words>'` — never inside the file, which keeps
 # only the ask as derived text.
 #
+# This is the after-check: at Stop, on the settled ASK.md, the same requirement and
+# the same judge as the gate of the same name. The PREVENTION — refusing an
+# ungrounded write before it lands — is that gate, on PreFileWrite (gate/
+# ask-is-human-authored); a file-guard only acts on what settled. What remains
+# here is the backstop for a write the gate could not see (a command the engine
+# does not parse).
+#
 # require: unconditional — ASK.md holds nothing but the ask, so there is no write
-# to it that needs no grounding. The engine refuses an uncited write (Write, Edit,
-# a shell redirect) before any check runs, naming the sr-file form.
+# to it that needs no grounding.
 #
 # The judge answers what existence cannot: does ASK.md say what the cited words
 # say, and nothing else?
 match: "**/tasks/*/*/ASK.md"
-preventive: true
 require:
   - citation: {source_types: [user]}
 checks:

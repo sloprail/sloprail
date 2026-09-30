@@ -1,4 +1,4 @@
-# no-unasked-deletion (file-guard)
+# no-unasked-deletion (gate + file-guard)
 
 An edit must not silently drop content nobody asked to remove — appending
 instead of rewriting, since a "better" rewrite that quietly destroys
@@ -31,24 +31,41 @@ It exists because of a real incident — a 27-line `TOPIC.md` overwritten
 wholesale, destroying its provenance link and the author's scope wording, with
 no deletion ever requested.
 
-## Why a file-guard, and why `preventive`
+## Why a gate, and a file-guard of the same name
 
-Bound to a file's state (`PreFileUpdate`), `preventive: true`. The content that
-would be lost is still on disk at Pre time, so the diff is computed *before* the
-loss. A `Post` version could only report a deletion already done — and the
+The rule ships as two folders with one name, split by what each is for.
+
+The **gate** (`gate/preserves-unasked-content`) is the prevention, and it is cheap:
+no model runs in it. It triggers on `PreFileWrite` (a create or an update) and
+`PreFileDelete` of a `memories/*.md` file, and refuses — before the loss, while the
+content is still on disk — a change that removes content without the user's words
+cited (`require: citation`, `when` `removes-content.sh` says the change removes
+something). A check at Stop could only report a deletion already done, and the
 natural remedy, restore from git, is gone if the file was never committed.
 
-`newContent` is optional on `PreFileUpdate` (a `sed -i`, or `sr-file` mixed
-into a longer command line, has a result that cannot be precomputed). The guard
-**fails closed** when it is absent: a write whose result cannot be shown to
-preserve content is refused, not waved through — a check that could not run has
-established nothing.
+The plain **file-guard** (`file-guard/preserves-unasked-content`) is the
+after-check, and it holds the **judge**. It acts only at Stop, on the settled file,
+with the same `deletions: include` and `require`: it asks whether the removal is
+clean and asked for, and it sees what the gate cannot — a removal made by a script
+the engine did not see as a write. The judge belongs here because a judge is a
+model call: the gate stays deterministic, the file-guard rules on the result.
 
-`deletions: include`, because deleting a memory file is the whole-file form of
-the same loss. A file-guard skips deleted files by default; this one opts in, so
-a deletion reaches it as a `PreFileDelete` and needs a citation like any other
-removal: `rm memories/x.md` cites nothing and is refused; `sr-file delete
-memories/x.md --cite:user '<quote>'` goes to the judge.
+One library per script, in the file-guard folder (`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry that reads its own event kind (the gate's `Pre*`, the file-guard's `Post*`) and sources it.
+
+`resultKnown` is false on a create or update whose result the engine could not
+precompute (a `sed -i`, or `sr-file` mixed into a longer command line), and then
+`newContent` is empty — indistinguishable from an emptied file. The gate **fails
+closed**: `require-known-result.sh` runs first and refuses such a write, so a
+write that cannot be shown to preserve content is refused, not waved through — a
+check that could not run has established nothing.
+
+The gate has a `PreFileDelete` trigger, and the file-guard `deletions: include`,
+because deleting a memory file is the whole-file form of the same loss. A
+file-guard skips deleted files by default and a gate only sees what it triggers
+on; this rule opts in on both, so a deletion reaches it and needs a citation like
+any other removal: `rm memories/x.md` cites nothing and is refused; `sr-file
+delete memories/x.md --cite:user '<quote>'` passes the gate and is judged at Stop. The gate is asked
+about every file a command deletes, so `rm a.md b.md` is refused naming both.
 
 A delete whose bytes the engine did not read — `oldContentKnown: false`, for a
 file past a recursive removal's read budget, larger than a delete read, or not a
@@ -80,7 +97,7 @@ is not a citation at all, so a fabricated or paraphrased ask cites nothing.
 `sr-file` runs on its own line so its result can be computed before it runs;
 mixed into a longer command, the result is unknown and refused (see above).
 
-The requirement is declared on the guard, conditionally — a pure append asks
+The requirement is declared on the rule, conditionally — a pure append asks
 nothing and needs no citation:
 
 ```yaml
@@ -91,6 +108,10 @@ require:
 
 ## The parts — cheap gates expensive
 
+- **`require-known-result.sh`** (gate only, script check) — refuses a create or
+  update whose result the engine could not compute, before anything reads the
+  empty `newContent`.
+
 - **`removes-content.sh`** (`when`) — the deterministic half. A line-by-line
   diff of old vs new decides whether the citation applies:
   - no removed lines → **waived**: pure additions is "append, not rewrite".
@@ -100,7 +121,7 @@ require:
   - a result the engine could not compute → **applies** (fail-closed).
 
 - **`skip-pure-addition.sh`** (prepare) + **`change-is-clean-and-absolute.md.j2`**
-  (judge) — reached only when a real removal cites the user's words (the
+  (judge), **file-guard only** — reached at Stop only when a real removal cites the user's words (the
   prepare skips the judge on a pure addition — never on a delete whose bytes
   were not read). The judge reads the change's
   diff and its citations straight off its input, and

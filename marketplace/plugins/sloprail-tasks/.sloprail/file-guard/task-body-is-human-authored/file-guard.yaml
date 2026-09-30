@@ -40,8 +40,7 @@
 # (run on that part alone). A status-only edit leaves the body byte-identical, so
 # a task created with a citation and then moved to in_progress by a plain edit
 # still reaches Stop with its ask's citation. Each uncited BODY change is refused
-# at pre-tool, which is why the guard is preventive — and at Stop too, should one
-# reach the tree some other way.
+# at pre-tool by the gate — and at Stop too, should one reach the tree some other way.
 #
 # FAIL-OPEN RECONCILIATION (flagged, not hidden). The old judge failed OPEN on its
 # own machinery (no sr-agent, a timeout, an unparseable verdict). A judge: check
@@ -55,11 +54,12 @@
 # precisely. The file-match scope compiles `matches` as a regex over `path`.
 match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 
-# preventive: true — an edit to the ask must be refused BEFORE it lands: a Post
-# refusal reports damage already done to the oracle, and the agent's remedy would be
-# to edit the task again — the prohibited act itself. The Stop after-check is the
-# backstop for a write that reached the tree without passing pre-tool.
-preventive: true
+# The PREVENTION half — an edit to the ask must be refused BEFORE it lands: a Stop
+# refusal reports damage already done to the oracle, and the agent's remedy would
+# be to edit the task again — the prohibited act itself — is the PreFileWrite gate
+# of the same name, beside this guard under gate/, which carries the same
+# requirement, script and judge. This file-guard is the Stop backstop for a write
+# that reached the tree without passing pre-tool.
 
 require:
   - citation: {source_types: [user]}

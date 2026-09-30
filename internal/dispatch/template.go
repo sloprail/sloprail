@@ -57,7 +57,7 @@ import (
 // rather than returning a parse error (verified against the pinned version). This
 // render runs in the Go process BEFORE the sr-agent shell timeout, so a hang here
 // is not caught by that timeout — it would wedge the hook forever, and a wedged
-// preventive check is the opposite of fail-closed. So the gonja call is run under
+// pre-write check is the opposite of fail-closed. So the gonja call is run under
 // a WATCHDOG: it renders in a goroutine, and if it does not finish within
 // renderTimeout the render is reported as an error (→ refusal). The goroutine may
 // leak on a true hang, but the hook process refuses and exits, taking the leaked

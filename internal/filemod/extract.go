@@ -170,8 +170,8 @@ func anchorTargets(targets []commandmod.FileTarget, dir string) []commandmod.Fil
 // asked by name broke silently). That version of this function is preserved
 // in git history rather than restated here; the short version is that shape
 // dispatch initially treated ANY path-naming call as a write — so `Read`
-// yielded a `PreFileCreate` — until a PREVENTIVE file-guard bound to those
-// kinds was measured refusing the READ itself (a guard failing closed on an
+// yielded a `PreFileCreate` — until a PreFileWrite gate bound to those
+// kinds was measured refusing the READ itself (a gate failing closed on an
 // unverifiable result cannot tell "a real write with unknown bytes" apart
 // from "no write at all"; `Read` never carries `content`, so it looked like
 // the former). That was fixed by asking the ARGUMENTS whether they stated a
@@ -313,10 +313,10 @@ func (m *Module) extractPending(in module.Input) ([]event.Event, error) {
 		// a genuinely-empty create, exactly as on an update. A notebook create
 		// is the case that matters: it names a real file with a real pending
 		// write whose bytes are not derivable, so it reaches here with
-		// derivable=false and newContent="", and a preventive file-guard reads
+		// derivable=false and newContent="", and a pre-write gate reads
 		// resultKnown=false to fail closed rather than judging the empty string
 		// as the file. A stated empty body (`Write content:""`) is
-		// derivable=true, so the same "" is a KNOWN empty file the guard may
+		// derivable=true, so the same "" is a KNOWN empty file the gate may
 		// legitimately judge. newMarkers are scanned only when the result is
 		// real — an underivable "" has none.
 		f.NewContent = result
@@ -835,7 +835,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 //     nothing — so the smaller files after it are still read. Decided from sizes
 //     before anything is read. Dropping the whole directory here, as this once
 //     did, let `truncate -s 9M pad.bin` beside a guarded file walk its removal
-//     past every preventive delete rule; and stopping all reads once a large
+//     past every PreFileDelete gate; and stopping all reads once a large
 //     file had spent the budget blinded every content rule to the small guarded
 //     files sorting after it.
 //   - Past the FILE COUNT the directory is named as a problem and predicted as
@@ -844,7 +844,7 @@ func (m *Module) extractCommand(pending Pending) ([]event.Event, error) {
 //     diff sees — a file in the session's baseline shows up as a PostFileDelete
 //     at Stop; one created and removed within the session leaves no difference
 //     and is never reported. So padding a directory past 1000 files still hides
-//     its removal from a preventive delete rule, and a rule that must survive
+//     its removal from a PreFileDelete gate, and a rule that must survive
 //     that needs a backstop that does not depend on the prediction (the
 //     keyword-coverage-registry example keeps its obligation in a registry).
 //   - A part of the tree the walk cannot read is named as a problem and
@@ -887,7 +887,7 @@ var ErrRemovedDirectoryTooLarge = errors.New("a recursively removed directory ho
 // and everything else found is still predicted. Aborting the whole walk on it
 // used to discard the files already collected: one 0o000 subdirectory beside
 // scanners/x/scanner.yaml made `rm -rf scanners/x` predict nothing, although
-// rm still deletes the scanner — a way past every preventive delete rule.
+// rm still deletes the scanner — a way past every PreFileDelete gate.
 func expandRemovedDirectories(targets []commandmod.FileTarget) ([]commandmod.FileTarget, map[string]bool, []error) {
 	var out []commandmod.FileTarget
 	unread := map[string]bool{}

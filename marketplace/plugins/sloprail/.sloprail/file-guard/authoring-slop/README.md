@@ -9,8 +9,9 @@ This rule is that argument applied to sloprail's own artifacts. Every shape it
 refuses is a mistake made in a real hook, found by measurement rather than
 review, and each one produced a rule that looked correct and enforced nothing.
 
-This guardrail is a `file-guard` (the new format). Its `match`, `preventive`
-decision, and the field-by-field payload reasoning live in `file-guard.yaml` and
+This guardrail is a `file-guard` plus a `PreFileWrite` gate of the same name (the
+new format): the gate is the cheap deterministic prevention, this file-guard
+judges what settled. Its `match`, the gate/file-guard split, and the field-by-field payload reasoning live in `file-guard.yaml` and
 in `check-rules.sh`'s own comments; this file is the argument for *why* the rule
 exists and what each shape is.
 

@@ -125,7 +125,7 @@ func TestExtractPending_EditCreateIsDistinguishableFromAGenuinelyEmptyFile(t *te
 // TestExtractPending_GenuineEmptyCreateIsResultKnown is the positive side of the
 // underivable-create distinction: a create whose empty body was STATED (a Write
 // of "", an Edit to "") is derivable, so resultKnown is TRUE — the empty file is
-// KNOWN, and a preventive file-guard may legitimately judge it. This is what a
+// KNOWN, and a pre-write gate may legitimately judge it. This is what a
 // notebook create (resultKnown false, its cell source not the document) must be
 // tellable from; the two share `newContent: ""` and differ only in this boolean.
 func TestExtractPending_GenuineEmptyCreateIsResultKnown(t *testing.T) {
@@ -489,7 +489,7 @@ func TestExtractPending_ContentWinsOverAnEditShapeWhenBothArePresent(t *testing.
 // This test used to assert the opposite value on purpose, holding the old
 // "Read still produces a PreFileCreate" behaviour in place while a fix was
 // pending — see git history on this comment. That trade stopped being
-// accepted once a live preventive file-guard was observed refusing a plain
+// accepted once a live pre-write gate was observed refusing a plain
 // Read as though it were the write the guard exists to catch (the guard sees
 // PreFileCreate/PreFileUpdate with resultKnown false and fails closed on it,
 // unable to tell a Read's synthesized event apart from a real underivable
@@ -775,7 +775,7 @@ func TestExtractPending_ANotebookNeverReportsCellSourceAsFileContent(t *testing.
 	assert.NotEqual(t, "print(1)", events[0].Fields[FieldNewContent],
 		"the tempting wrong fix, named so it cannot be introduced quietly")
 	// The empty newContent here is UNDERIVABLE, not a genuinely-empty file, and
-	// resultKnown is what says so — the signal a preventive file-guard reads to
+	// resultKnown is what says so — the signal a pre-write gate reads to
 	// fail closed rather than judging "" as if it were the file's bytes.
 	assert.Equal(t, false, events[0].Fields[FieldResultKnown],
 		"a notebook create's bytes are not derivable, so resultKnown must be false — not the empty-file case")

@@ -33,8 +33,8 @@ PROMPT mentions this convention — the agent has to recall it from the skill
 on its own while also getting the summary's actual content right (which
 changes are real, which version they landed in)."
 
-GUARDRAIL="A PREVENTIVE file-guard (citations-resolve) matches any *.md file
-written. It requires every write to carry a citation of tool output: a write
+GUARDRAIL="A gate (citations-resolve, before the write) and a file-guard of the same
+name (the Stop after-check) match any *.md file written. The gate requires every write to carry a citation of tool output: a write
 with none (the Write tool, a shell redirect) is refused before it lands, and
 the refusal names the sr-file form. A cited write then goes to a judge that
 reads each quote with the full tool output it came from and asks whether the

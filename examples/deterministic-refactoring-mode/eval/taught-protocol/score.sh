@@ -32,8 +32,8 @@ updating every import across the codebase so nothing breaks, deleting the
 old file. A project skill teaches the agent a #refactor/sr:moved-from
 declaration convention this project's tooling checks moves against."
 
-GUARDRAIL="A file-guard (moved-content-reconciles) and a Stop gate
-(refactor-complete) verify that a move declared via '#refactor scope=...'
+GUARDRAIL="A PreFileWrite gate with a same-named Stop file-guard (moved-content-reconciles)
+and a Stop gate (refactor-complete) verify that a move declared via '#refactor scope=...'
 and marked with 'sr:moved-from <fqn>' actually carries the origin's exact
 bytes rather than regenerated ones, and that every declared move actually
 landed. The agent was taught this convention by a skill, so it is expected

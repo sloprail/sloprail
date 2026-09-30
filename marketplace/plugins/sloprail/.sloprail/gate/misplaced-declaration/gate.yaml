@@ -1,0 +1,16 @@
+# A declaration written where the engine does not look loads nothing and
+# faults nothing: `.sloprail/structure.yaml` (instead of
+# `.sloprail/file-guard/structure.yaml`) or `.sloprail/guardrails/…` is simply
+# never read, so the author believes a rule is in force that is not. Measured
+# in the onboarding eval: two of six fresh agents wrote the structure one level
+# too high, and nothing told them. This gate refuses the write itself, naming the
+# path it belongs at, while the author is still writing it; the plain file-guard of
+# the same name, beside it under file-guard/, is the backstop at Stop.
+#
+# check-path.sh reads only the event's path, never its content, so it decides the
+# same whether or not the new content is known.
+on:
+  - event: PreFileWrite
+    match: 'event.path startsWith ".sloprail/" and (event.path endsWith ".yaml" or event.path endsWith ".yml")'
+checks:
+  - script: ./check-path.sh

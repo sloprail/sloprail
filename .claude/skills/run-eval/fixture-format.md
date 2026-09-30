@@ -118,7 +118,7 @@ user:                   # optional — makes the run multi-turn, see below
 
 1. Seed (copied) or Repo (cloned at `ref`) — `git init` is run afterward for
    a Seed tree with no `.git`, since the engine's own change detection needs
-   a real repository present (a non-preventive file-guard is judged entirely
+   a real repository present (a file-guard is judged entirely
    against the git-observed diff at Stop — without `.git`, it never fires).
 2. `exampleSloprail`'s `.sloprail/`, if declared — into `project/.sloprail/`.
 3. `overlay/`, if declared — its contents copied into `project/` as-is,

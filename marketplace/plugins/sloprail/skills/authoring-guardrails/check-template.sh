@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Template for a file-guard's script check. Copy it next to your file-guard.yaml
-# and change only fine(). Everything else — reading the event, choosing which
-# bytes to judge for each event kind, the resultKnown discipline, the refusal
-# format — is already right; the plugin's authoring-slop rule refuses scripts
-# that get those wrong.
+# Template for a FILE-GUARD's script check. Copy it next to your file-guard.yaml
+# and change only fine(). Everything else — reading the event, the newContentKnown
+# discipline, the refusal format — is already right; the plugin's authoring-slop
+# rule refuses scripts that get those wrong.
+#
+# A file-guard judges the settled file at Stop, so it only ever receives Post*
+# kinds. To refuse a write BEFORE it lands, write a gate instead: see
+# gate-check-template.sh.
 #
 # Contract: stdin is the CheckPayload ({"event":{...},"transcriptPath":...}).
 # exit 0 permits. To refuse, print {"reason":"..."} and exit 1.
@@ -31,33 +34,24 @@ fine() {
   return 1
 }
 
-# The bytes to judge, per event kind.
+# The bytes to judge.
 case "$kind" in
-  PreFileCreate | PreFileUpdate)
-    # Before the write lands. newContent is only reliable when resultKnown is
-    # true (a shell edit's result can't be known in advance). Unknown: permit
-    # here and let the settled file be judged after the write.
-    if [ "$(field '.event.resultKnown')" != "true" ]; then
-      exit 0
-    fi
-    content="$(field '.event.newContent // ""')"
-    ;;
   PostFileCreate | PostFileUpdate)
-    # After the write: the settled bytes, which the engine read for you — unless
-    # it could not (newContentKnown false: a link to a FIFO or a device, or a
-    # file past the read cap). A file this rule cannot see is refused, not
-    # waved through as empty.
+    # The settled bytes, which the engine read for you — unless it could not
+    # (newContentKnown false: a link to a FIFO or a device, or a file past the read
+    # cap). A file this rule cannot see is refused, not waved through as empty.
     [ -n "$path" ] || refuse "the event named no path, so this rule could not check it"
     [ "$(field '.event.newContentKnown')" = "true" ] ||
       refuse "$path could not be read (not a regular file, or too large), so this rule could not check it"
     content="$(field '.event.newContent // ""')"
     ;;
-  PreFileDelete | PostFileDelete)
-    # Deleting a file is not this rule's business.
+  PostFileDelete)
+    # Only reaches a guard whose `deletions:` is include/only. Nothing remains to
+    # judge here; read .event.oldContent if losing the file is the rule's business.
     exit 0
     ;;
   *)
-    refuse "unexpected event kind '$kind' for $path; this rule only judges file writes"
+    refuse "unexpected event kind '$kind' for $path; a file-guard only judges settled files"
     ;;
 esac
 

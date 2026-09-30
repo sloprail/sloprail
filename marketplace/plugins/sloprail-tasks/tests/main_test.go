@@ -8,8 +8,8 @@
 // What fires during a test is exactly what a user installing this plugin gets:
 // the base `sloprail` plugin's hooks (enabled by the harness's Project()) run
 // the nature dispatch, which discovers this plugin from its OWN root — nothing
-// is copied into the project — and loads its .sloprail tree: six file-guards, two
-// gates, and (since sloprail#29 landed composition) a structure gate scoped to
+// is copied into the project — and loads its .sloprail tree: six file-guards, eight
+// gates (six of them the PreFileWrite prevention halves of those file-guards), and (since sloprail#29 landed composition) a structure gate scoped to
 // memories/tasks/. A test controls only what the mock tries to do; the hook
 // firing, the engine deciding, and the refusal travelling back all run as
 // production would. See README.md for the model.

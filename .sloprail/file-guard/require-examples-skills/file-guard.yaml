@@ -1,14 +1,12 @@
-# A write under examples/ is blocked until document-example and run-eval
+# A write under examples/ is refused until document-example and run-eval
 # were both loaded this session — a shipped guardrail sample has several
 # pieces that must stay in sync (config, README, e2e test, eval fixture; see
 # .claude/skills/document-example/SKILL.md), and nothing about a single file
 # edit makes that obvious without having read the skill first.
 #
-# FILE-GUARD, not a gate: this is a rule about a FILE'S STATE under
-# examples/ — "may this file be touched at all without the skill in hand" —
-# not a one-shot checkpoint on a single event. preventive: true so it
-# refuses the write itself, before it lands, rather than only reporting
-# after the fact at Stop.
+# Two natures, one name: the GATE (.sloprail/gate/require-examples-skills/)
+# refuses the write itself, before it lands; this FILE-GUARD is the Stop
+# backstop over the settled file, for a write no Pre event covered.
 #
 # run-eval is required alongside document-example, not left to be discovered
 # from document-example's own link to it, because a write under
@@ -17,7 +15,6 @@
 # fixture lives and how it relates to the shipped config, not how to write
 # or verify one.
 match: path startsWith "examples/"
-preventive: true
 require:
   - skill: document-example
   - skill: run-eval

@@ -21,16 +21,17 @@ import (
 //
 // The old rules installed via `e.Guardrail` and read the NESTED payload; these
 // install NEW-format rules and read the FLAT event. A file occurrence is observed
-// through file-guards (T005_01); a command occurrence is a GATE trigger, not a
+// through gates on PreFileWrite (T005_01); a command occurrence is a GATE trigger, not a
 // file-guard match, so it is observed through gates bound to PreCommandInvoke
 // (T005_02) — the faithful new-format home for "one command line, walked once".
 
-// recordAndPermitGuard is a preventive file-guard that records the event it
-// received and permits. Recording rather than refusing, because a refusal stops the
-// preventive pass at the first guard and this test needs every binding to have been
-// reached. It records to the guard's own folder (SR_GUARDRAIL_DIR).
-const recordAndPermitGuard = `match: "**/*.md"
-preventive: true
+// recordAndPermitGate is a PreFileWrite gate that records the event it received and
+// permits. Recording rather than refusing, so this test sees every binding reached
+// (a refused file is not asked of later gates). It records to the gate's own folder
+// (SR_GUARDRAIL_DIR).
+const recordAndPermitGate = `on:
+  - event: PreFileWrite
+    match: event.path endsWith ".md"
 checks:
   - script: ./record.sh
 `
@@ -49,10 +50,8 @@ type prePayload struct {
 	} `json:"event"`
 }
 
-// preLines keeps only the PreFileCreate payloads a guard recorded. A permitting
-// preventive guard records at pre-tool AND again at Stop's after-check (as a Post
-// event); the pre-tool derivation is the one this invariant is about, so the Post
-// lines are filtered out.
+// preLines keeps only the PreFileCreate payloads a guard recorded. A gate only
+// ever sees the Pre kinds; the filter keeps the create this invariant is about.
 func preLines(t *testing.T, lines []string) []prePayload {
 	t.Helper()
 	var out []prePayload
@@ -70,7 +69,7 @@ func preLines(t *testing.T, lines []string) []prePayload {
 
 // T005_01: every binding that sees one write is handed the same event.
 //
-// Not merely an equal one. Three guards bound to the same write must all receive
+// Not merely an equal one. Three gates bound to the same write must all receive
 // the same kind and the same subject, because there is one occurrence to describe.
 // Two derivations that disagreed would show up here as two different subjects for a
 // single write — a match admitting an occurrence its check then judges on different
@@ -80,7 +79,7 @@ func TestT005_01_EveryBindingSeesTheSameEvent(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	for _, name := range []string{"first", "second", "third"} {
-		e.FileGuard(proj, name, recordAndPermitGuard, map[string]string{"record.sh": recordScript})
+		e.Gate(proj, name, recordAndPermitGate, map[string]string{"record.sh": recordScript})
 	}
 
 	e.Run(proj, "s-005-01", "write a note", Turns("done",
@@ -89,12 +88,12 @@ func TestT005_01_EveryBindingSeesTheSameEvent(t *testing.T) {
 
 	var subjects []string
 	for _, name := range []string{"first", "second", "third"} {
-		pre := preLines(t, e.FileGuardLedgerLines(proj, name, "seen"))
+		pre := preLines(t, e.GateLedgerLines(proj, name, "seen"))
 		if len(pre) != 1 {
-			t.Fatalf("guardrail %q saw the pre event %d times for one write, want exactly 1: %v", name, len(pre), pre)
+			t.Fatalf("gate %q saw the pre event %d times for one write, want exactly 1: %v", name, len(pre), pre)
 		}
 		if pre[0].Event.Path == "" {
-			t.Fatalf("guardrail %q got an event naming no file", name)
+			t.Fatalf("gate %q got an event naming no file", name)
 		}
 		subjects = append(subjects, pre[0].Event.Path)
 	}

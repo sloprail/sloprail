@@ -15,7 +15,7 @@ import (
 // workflows: a citation grounds only the change it rode on, in the pool it was
 // cited in — but a cited write restating the file settles what came before
 // it, and a change the agent never made is never charged to it. Every rule
-// here is the non-preventive afterCitationGuard (`memories/**`, a user
+// here is the file-guard afterCitationGuard (`memories/**`, a user
 // citation, judged at Stop).
 
 func git(t *testing.T, dir string, args ...string) {
@@ -244,7 +244,7 @@ func TestT041_46_BackgroundWorkLandingAfterStopIsCharged(t *testing.T) {
 
 // T041_47 (P15): a cited sr-file named by the path of the engine's own sr-file
 // is the same program, so it is dry-run like the bare name: the change lands
-// and passes at Stop (non-preventive) and is admitted (preventive). A cited
+// and passes at Stop (file-guard) and is admitted (gate). A cited
 // call the dry run cannot compute (here behind an `export`) lands with its
 // citations untied to what landed — and the Stop refusal says why, and how to
 // run sr-file so they count.
@@ -261,12 +261,12 @@ func TestT041_47_TheEnginesOwnSRFileByPath(t *testing.T) {
 		t.Errorf("a cited write by the engine's own sr-file path was refused at Stop:\n%s", blocks)
 	}
 
-	e2, proj2 := guarded(t, preventiveGuard)
+	e2, proj2 := guardedPre(t)
 	res := e2.Run(proj2, "s-041-47b", prompt, Turns("done",
 		Bash("b1", filepath.Join(e2.BinDir(), "sr-file")+` write memories/a.md --cite:user 'adopt a decision log' --content 'by path'`),
 	))
 	if !e2.Exists(proj2, "memories/a.md") {
-		t.Errorf("a preventive rule refused a cited write by the engine's own sr-file path:\n%s", res.Output)
+		t.Errorf("the gate refused a cited write by the engine's own sr-file path:\n%s", res.Output)
 	}
 
 	e3, proj3 := guarded(t, afterCitationGuard)

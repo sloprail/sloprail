@@ -9,12 +9,12 @@
 # before being generalized here so every project installing this plugin gets
 # it, not just the one that hit the failure.
 #
-# preventive: refuse the write before it lands; the after-check re-judges the
-# settled file (catches a shell write whose pre-write result could not be
-# derived). deletions is left at its default (skip): removing a file from a
-# unit folder invents nothing, and TASK-style folder deletion is not this
-# plugin's shape to begin with.
+# THE STOP AFTER-CHECK. The gate of the same name (../../gate/unit-md-first)
+# refuses the write before it lands; this re-judges the settled file, which
+# catches a shell write whose pre-write result could not be derived.
+# deletions is left at its default (skip): removing a file from a unit folder
+# invents nothing, and TASK-style folder deletion is not this plugin's shape to
+# begin with.
 match: path matches "^memories/topics/[^/]+/units/[^/]+/[^/]+$" and not (path endsWith "/UNIT.md")
-preventive: true
 checks:
   - script: ./check.sh

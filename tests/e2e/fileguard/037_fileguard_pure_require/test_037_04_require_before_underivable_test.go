@@ -8,7 +8,7 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// T037_04: when a preventive guard's write is BOTH underivable (its settled
+// T037_04: when a gate's write is BOTH underivable (its settled
 // bytes cannot be computed ahead of time — here, a Bash pipeline through `tr`,
 // which internal/commandmod cannot resolve to a literal payload) AND its
 // `require` precondition is unmet, the refusal must name the MISSING
@@ -18,18 +18,13 @@ import (
 // (memories/tasks/distribution/soft-launch-pain-priorities/02_smoke-test.md,
 // Part 2c): a raw Bash write, no skill loaded, was refused with
 //
-//	"...could not verify this write before it lands: the engine could not
-//	compute the result of this create/update... Refusing: a preventive guard
-//	must not admit a write it cannot verify."
+//	"...could not verify this write before it lands..."
 //
 // which is fail-closed and correct, but does not tell a user that loading the
-// skill is the fix — someone debugging it would conclude preventive
-// file-guards categorically cannot apply to Bash writes, when the real,
-// actionable cause is the unmet require. `require` needs no content at all
-// (it reads the trajectory, not the write), so it is now checked BEFORE the
-// underivable-write fail-closed fallback in services/sr-session's preventive
-// file-guard dispatch — see nature_fileguard.go's isUnderivablePreWrite branch.
-// Both reasons fail closed; this test pins which ONE reaches the agent.
+// skill is the fix. `require` needs no content at all (it reads the trajectory,
+// not the write), so it is evaluated BEFORE any check — on a gate the unmet
+// prerequisite is the refusal, whether or not the write's bytes are known. This
+// test pins that the actionable reason reaches the agent.
 //
 // The write here is an UPDATE, not a create, deliberately: internal/filemod's
 // extractCommand reports NO Pre event at all for a command-derived CREATE whose
@@ -46,7 +41,7 @@ func TestT037_04_UnderivableWriteWithUnmetRequireNamesTheSkill(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "require-topic", pureRequireGuard, nil)
+	e.Gate(proj, "require-topic", pureRequireGate, nil)
 	e.WriteFile(proj, "memories/topics/idea.md", "# an idea\n")
 	commitGuards(t, proj)
 	commitFile037(t, proj, "memories/topics/idea.md")
@@ -56,7 +51,7 @@ func TestT037_04_UnderivableWriteWithUnmetRequireNamesTheSkill(t *testing.T) {
 	))
 
 	if !res.Refused() {
-		t.Fatalf("a file-guard requiring an unloaded skill did not block an underivable update:\n%s", res.Output)
+		t.Fatalf("a gate requiring an unloaded skill did not block an underivable update:\n%s", res.Output)
 	}
 	if !res.Saw("document-topic") {
 		t.Errorf("the refusal does not name the required skill — it gave the generic "+
@@ -69,20 +64,17 @@ func TestT037_04_UnderivableWriteWithUnmetRequireNamesTheSkill(t *testing.T) {
 	}
 }
 
-// T037_05: the negative control — the SAME underivable update, with the skill
-// loaded first, is STILL refused (correctly: the write is genuinely
-// unverifiable regardless of the skill, and a preventive guard must not admit
-// what it cannot verify), but now for the GENERIC unverifiable-write reason
-// rather than the skill one. This is what proves T037_04 refused for the
-// require specifically — once require is satisfied, the SAME underivable write
-// falls through to the (still correct) fail-closed check below it, and the
-// message changes accordingly. If require-checking here somehow suppressed the
-// underivable-write guarantee entirely, this write would be wrongly permitted.
-func TestT037_05_UnderivableWriteWithMetRequireStillFailsClosedOnContent(t *testing.T) {
+// T037_05: the control — the SAME underivable update, with the skill loaded first,
+// is PERMITTED by a pure-require gate: its decision (was the skill loaded?) needs
+// no content, so an unknown result gives it nothing to fail on. This is what proves
+// T037_04 refused for the require specifically. A gate whose decision reads the
+// content DOES refuse the same write (fileguard/034 T034_18), and the plain
+// file-guard beside the rule judges what settled at Stop.
+func TestT037_05_UnderivableWriteWithMetRequireIsPermittedByAPureRequireGate(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "require-topic", pureRequireGuard, nil)
+	e.Gate(proj, "require-topic", pureRequireGate, nil)
 	e.WriteFile(proj, "memories/topics/idea.md", "# an idea\n")
 	commitGuards(t, proj)
 	commitFile037(t, proj, "memories/topics/idea.md")
@@ -92,23 +84,12 @@ func TestT037_05_UnderivableWriteWithMetRequireStillFailsClosedOnContent(t *test
 		underivableUpdate037("memories/topics/idea.md"),
 	))
 
-	if !res.Refused() {
-		t.Fatalf("an underivable update was permitted once the skill was loaded — the "+
-			"preventive guard's own fail-closed guarantee on unverifiable content must "+
-			"survive require passing:\n%s", res.Output)
+	if res.Refused() {
+		t.Fatalf("a pure-require gate whose skill require was met refused an underivable update — "+
+			"its decision needs no content:\n%s", res.Output)
 	}
-	if !strings.Contains(res.Output, "could not verify this write before it lands") {
-		t.Errorf("the refusal is no longer the fail-closed unverifiable-content reason — "+
-			"require passing must not change WHY an unverifiable write is refused, only "+
-			"whether the require reason pre-empts it:\n%s", res.Output)
-	}
-	// "document-topic" legitimately appears in the transcript regardless (the
-	// Skill turn itself names it), so the assertion is on the SKILL REMEDY
-	// TEXT specifically, not on the skill's name appearing anywhere at all.
 	if strings.Contains(res.Output, "SKILL REQUIRED") {
-		t.Errorf("the refusal still carries the skill-remedy text even though require was "+
-			"satisfied — the require check must not leak into a later refusal it did not "+
-			"cause:\n%s", res.Output)
+		t.Errorf("the refusal carries the skill-remedy text even though require was satisfied:\n%s", res.Output)
 	}
 }
 

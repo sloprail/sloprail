@@ -1,4 +1,4 @@
-# task-management (file-guard)
+# task-management (gate + file-guard)
 
 An agent may append a result to a task; it may never edit the ask itself to
 match the work — every change to the ask must cite the human message that
@@ -35,18 +35,27 @@ happens: an agent implements 70% of an ask, edits the task to describe that
 70%, and from then on every verification passes — the work matches the spec,
 because the spec was rewritten to match the work.
 
-## Why file-guard, and the structural split behind it
+## Why a gate and a file-guard, and the structural split behind it
 
-The guard binds `ASK.md` specifically — not the whole task folder — because
+The rule binds `ASK.md` specifically — not the whole task folder — because
 the engine has no notion of "which region of a file changed", only that a
 path changed. Splitting the ask and the result into separate files, with only
-the ask guarded, turns "no uncited edit to the ask" back into a plain path rule
+the ask bound, turns "no uncited edit to the ask" back into a plain path rule
 rather than needing a diff-region distinction the engine does not have.
 
-`preventive: true`: an ungrounded edit to the ask must be refused **before** it
-lands. A post-write refusal reports damage already done to the oracle, and
-the agent's remedy would be to edit ASK.md again — another edit the user never
-asked for.
+Two natures, both named `ask-is-human-authored`:
+
+- **The gate** (`PreFileWrite`) is the prevention. An ungrounded edit to the
+  ask must be refused **before** it lands. A post-write refusal reports damage
+  already done to the oracle, and the agent's remedy would be to edit ASK.md
+  again — another edit the user never asked for. The gate carries the
+  citation requirement and the judge, and first refuses a write whose
+  resulting bytes cannot be computed (`sed -i`), because a gate does not fail
+  closed on that by itself and the judge reads those bytes.
+- **The file-guard** is the after-check: at Stop it holds the settled
+  `ASK.md` to the same requirement and judge, the backstop for a write the
+  gate could not see. A file-guard only acts on what settled; it never sees
+  the write before it lands.
 
 ## What the requirement and the judge divide
 

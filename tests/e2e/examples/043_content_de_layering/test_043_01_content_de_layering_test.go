@@ -43,7 +43,7 @@ Progress from [Dana Per](../people/dana-per.md) on the ingest cutover this week.
 // T043_01: a file that duplicates a fact BLOCKS at Stop, and the judge's reasoning
 // reaches the agent.
 //
-// The write LANDS (a non-preventive file-guard's after-check cannot undo it), but
+// The write LANDS (a file-guard's Stop after-check cannot undo it), but
 // the turn is blocked so the agent is sent round again with the judge's words. The
 // stub returns pass:false with the reasoning the rule would give; the verify
 // script refuses, sr-agent exits non-zero, the guard blocks at Stop.
@@ -69,9 +69,9 @@ func TestT043_01_DuplicatedFactBlocks(t *testing.T) {
 	if !containsStr(joined, "restated inline") {
 		t.Errorf("the judge's reasoning did not reach the agent:\n%s", joined)
 	}
-	// The write landed — this is an after-check, not a preventive one.
+	// The write landed — this is an after-check, not a pre-write refusal.
 	if !e.Exists(proj, "memories/updates/2026-08-18.md") {
-		t.Errorf("the after-check undid the write; a non-preventive file-guard must not")
+		t.Errorf("the after-check undid the write; a file-guard must not")
 	}
 }
 

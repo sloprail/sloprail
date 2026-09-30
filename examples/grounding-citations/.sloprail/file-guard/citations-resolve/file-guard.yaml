@@ -19,10 +19,11 @@
 # form. The judge answers what existence cannot: does the file say what the cited
 # output says?
 #
-# preventive: an ungrounded claim is refused before it lands, while the agent still
-# has the source in view.
+# The gate of the same name refuses an ungrounded claim BEFORE it lands, while the
+# agent still has the source in view. This file-guard is the after-check: at Stop it
+# judges the settled file, so a markdown change the gate could not see (a script
+# rewriting the file) is grounded too.
 match: "**/*.md"
-preventive: true
 require:
   - citation: {source_types: [tool_result]}
 checks:

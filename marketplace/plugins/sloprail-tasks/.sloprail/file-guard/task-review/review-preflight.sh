@@ -28,7 +28,7 @@
 #      task already in_review when the session began and edited with no tool
 #      output cited, so the judge is never asked to weigh a claim with no proof.
 #
-# This is an AFTER-CHECK (the guard is not preventive), so it only ever fires on a
+# This is an AFTER-CHECK (a file-guard acts only at Stop), so it only ever fires on a
 # settled Post event: the bytes on disk ARE the answer, and `.event.citations` are
 # the citations recorded for this path at pre-tool.
 #

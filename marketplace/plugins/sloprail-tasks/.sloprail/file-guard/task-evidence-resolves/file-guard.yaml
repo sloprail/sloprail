@@ -38,19 +38,14 @@
 # (internal/guardrail/scopes.go), the same operator the old format used.
 match: path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"
 
-# preventive: true reproduces the old Pre+Post binding. A preventive file-guard
-# fires on the PRE write to refuse a malformed or unproven TASK.md before it lands
-# (the right moment for a rule about permission to act), AND, like every guard,
-# fires the after-check at Stop on the SETTLED file. The Post after-check is the
-# backstop Pre cannot cover: a write whose result the engine cannot derive reaches
-# Pre unverifiable — a preventive guard fails CLOSED engine-side there — and a
-# write that reached the tree without passing pre-tool is judged at Stop, where the
-# event's oldContent is the session baseline and its citations are those recorded
-# for the cited changes that landed on the path this session. check-task.sh
-# handles both moments: it dispatches on .event.kind, consulting .event.resultKnown
-# on the Pre kinds before reading .event.newContent, and reading the file on disk
-# on Post.
-preventive: true
+# The PREVENTION half — refusing a malformed or unproven TASK.md before it lands
+# (the right moment for a rule about permission to act) — is the PreFileWrite gate
+# of the same name, beside this guard under gate/. This file-guard is the Stop
+# after-check on the SETTLED file: the backstop for a write the gate could not
+# cover (its result underivable at pre-tool, or a write that reached the tree
+# without passing it), where the event's oldContent is the session baseline and its
+# citations are those recorded for the cited changes that landed on the path this
+# session. check-task.sh here reads the file on disk (a Post kind).
 
 require:
   - citation: {source_types: [tool_result]}

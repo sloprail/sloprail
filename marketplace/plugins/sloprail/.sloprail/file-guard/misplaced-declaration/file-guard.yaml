@@ -3,11 +3,9 @@
 # `.sloprail/file-guard/structure.yaml`) or `.sloprail/guardrails/…` is simply
 # never read, so the author believes a rule is in force that is not. Measured
 # in the onboarding eval: two of six fresh agents wrote the structure one level
-# too high, and nothing told them. preventive: refuse the write itself, naming
-# the path it belongs at, while the author is still writing it.
+# too high, and nothing told them. The gate of the same name refuses the write
+# before it lands; this guard is the backstop that checks what settled at Stop.
 match: path startsWith ".sloprail/" and (path endsWith ".yaml" or path endsWith ".yml")
-
-preventive: true
 
 checks:
   - script: ./check-path.sh

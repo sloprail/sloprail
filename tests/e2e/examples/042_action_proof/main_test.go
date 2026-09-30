@@ -96,8 +96,8 @@ func installExampleTree(t *testing.T, projDir string) {
 	}
 
 	// Committed into the baseline every caller already expects (installExampleTree
-	// is always called right after GitInit): the sloprail plugin ships preventive
-	// rules that judge a guardrail's OWN files (authoring-slop's script/template
+	// is always called right after GitInit): the sloprail plugin ships gates and
+	// file-guards that judge a guardrail's OWN files (authoring-slop's script/template
 	// check, and the shipped read-*-doc rules requiring the skill be read before
 	// writing one), and an uncommitted copy of the example's gate/prepare/template
 	// reads as THIS cycle's write to those rules, not only to the gate under test —

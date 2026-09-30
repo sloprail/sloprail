@@ -1,0 +1,23 @@
+# Reconcile a moved file against its origin BEFORE the write lands — but only
+# inside a declared refactor (the context link is a variable in the match, not a
+# flat active_in) and only for a file carrying an sr:moved-from marker. The same
+# marker outside the context is not this gate's business.
+#
+# A move that regenerated instead of carrying the bytes is the loss to prevent,
+# so the check is a gate on PreFileCreate/PreFileUpdate: the write is refused and
+# never lands. The file-guard of the same name keeps the Stop-time reconcile on the
+# settled file. The gate's match reads the event nested (`event.newMarkers`); the
+# file-guard's reads `markers` bare.
+#
+# Two triggers, not the PreFileWrite alias, because the second reads a field only
+# an update carries. On an update whose result the engine cannot compute (`sed -i`)
+# the pending markers are unknown, so the trigger also selects a file that ALREADY
+# carries the marker (`oldMarkers`): an in-place edit of a moved file cannot be
+# reconciled, and the script refuses it rather than let it through unseen.
+on:
+  - event: PreFileCreate
+    match: 'context["refactoring"].active and any(event.newMarkers, .kind == "moved-from")'
+  - event: PreFileUpdate
+    match: 'context["refactoring"].active and (any(event.newMarkers, .kind == "moved-from") or (not event.resultKnown and any(event.oldMarkers, .kind == "moved-from")))'
+checks:
+  - script: ./reconciles-against-origin.sh

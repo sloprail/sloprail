@@ -1,10 +1,14 @@
-// The engine repo's OWN judges — rule-quality and skill-quality, the two
-// file-guards in this repo's .sloprail/ that judge the repo's own rules and skills.
+// The engine repo's OWN judges — rule-quality and skill-quality, the two rules in
+// this repo's .sloprail/ that judge the repo's own rules and skills. Each is a
+// pair of natures under one name: a GATE (.sloprail/gate/<name>/) that judges the
+// pending write on PreFileWrite and refuses before it lands, and a plain
+// FILE-GUARD (.sloprail/file-guard/<name>/) that judges the settled file at Stop.
+// A test installs only the nature it is about, so a refusal can only come from it.
 //
 // Each test here maps to an invariant those judges must uphold, driven through
 // the claude-MOCK exactly as the rest of the e2e is: the harness runs
 // a10n-claude-mock, whose tool calls fire this repo's real plugin, which reaches
-// the real file-guard files out of .sloprail/file-guard/. Only the MODEL the
+// the real gate and file-guard files out of .sloprail/. Only the MODEL the
 // judge itself invokes is replaced — by InstallJudgeClaude, which puts a `claude`
 // on PATH that reads the prompt sr-agent hands it and writes a fixed verdict to
 // the output file sr-agent named — because a check whose whole subject is the
@@ -25,18 +29,19 @@
 //
 // Nothing here restates a declaration or a check: a test carrying its own copy
 // would prove the copy works and say nothing about the files that are actually
-// enforcing. The file-guards are installed FROM this repo's own .sloprail/ and
+// enforcing. The rules are installed FROM this repo's own .sloprail/ and
 // committed before the cycle runs.
 //
 // (These invariants were first written as a round-3 adversarial review of the two
 // judges — the tests formerly under tests/e2e/review3. They are ordinary e2e now,
 // named for the invariant each proves rather than for the review that found it.
 // The judges were migrated from the deprecated GUARDRAIL.md hooks format to the
-// file-guard nature in Wave-3, and from a hand-rolled script check to a judge:
-// check in the PR-19 review; these tests were retargeted each time, proving the
-// SAME invariants: the Pre stage reads the pending body from the flat event, the
-// narrow verdict parse refuses a flagged verdict carrying two objects, and the
-// Post after-check judges a create the engine could not derive.)
+// file-guard nature in Wave-3, from a hand-rolled script check to a judge: check
+// in the PR-19 review, and split into gate + file-guard when a file-guard lost its
+// Pre binding; these tests were retargeted each time, proving the SAME invariants:
+// the GATE reads the pending body from the flat event, the narrow verdict parse
+// refuses a flagged verdict carrying two objects, and the FILE-GUARD judges a
+// create the engine could not derive.)
 package e2e
 
 import (
@@ -69,18 +74,24 @@ func repoRoot(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
-// installGuardrail copies one of THIS repo's own .sloprail/file-guard/<name>
+// The natures a test can install one of this repo's rules as.
+const (
+	gateNature      = "gate"
+	fileGuardNature = "file-guard"
+)
+
+// installGuardrail copies one of THIS repo's own .sloprail/<nature>/<name>
 // into a test project, verbatim and recursively — the rules/ subtree is the
 // whole standard for these two judges, so a copier that skipped directories
 // would install a judge with an empty rules/ and every test would observe the
-// empty-rules refusal instead of the behaviour under test. The file-guard.yaml,
-// prepare.sh, judge-*.md.j2 and the whole rules/ tree all come across, so the
-// installed guard is byte-for-byte the one enforcing in this repo.
-func installGuardrail(t *testing.T, projDir, name string) string {
+// empty-rules refusal instead of the behaviour under test. The gate.yaml or
+// file-guard.yaml, prepare.sh, judge-*.md.j2 and the whole rules/ tree all come
+// across, so the installed rule is byte-for-byte the one enforcing in this repo.
+func installGuardrail(t *testing.T, projDir, nature, name string) string {
 	t.Helper()
 
-	src := filepath.Join(repoRoot(t), ".sloprail", "file-guard", name)
-	dst := filepath.Join(projDir, ".sloprail", "file-guard", name)
+	src := filepath.Join(repoRoot(t), ".sloprail", nature, name)
+	dst := filepath.Join(projDir, ".sloprail", nature, name)
 	copyTree(t, src, dst)
 	return dst
 }
@@ -123,23 +134,35 @@ func copyTree(t *testing.T, src, dst string) {
 	}
 }
 
-// project builds a git-backed project with one of this repo's own file-guards
-// installed and committed.
+// project builds a git-backed project with one of this repo's own GATES
+// installed and committed (the write-time judge: it refuses before the write lands).
+// guardProject is the same for the FILE-GUARD of that name (the Stop after-check).
 //
 // The commit is not incidental. The engine reads a git diff to decide which
-// paths a cycle changed, so a file-guard's own files must already be in history
-// before the cycle under test runs — otherwise the guard's own rules/*/RULE.md
+// paths a cycle changed, so the rule's own files must already be in history
+// before the cycle under test runs — otherwise the rule's own rules/*/RULE.md
 // files (which `match: path endsWith "RULE.md"` selects) are part of the cycle's
 // changes and the judge fires on them, which turns every assertion below into a
 // statement about the wrong file.
 func project(t *testing.T, e *harness.Env, guardrail string) string {
 	t.Helper()
+	return projectOf(t, e, gateNature, guardrail)
+}
+
+// guardProject is project for the plain file-guard nature.
+func guardProject(t *testing.T, e *harness.Env, guardrail string) string {
+	t.Helper()
+	return projectOf(t, e, fileGuardNature, guardrail)
+}
+
+func projectOf(t *testing.T, e *harness.Env, nature, guardrail string) string {
+	t.Helper()
 
 	proj := e.Project()
 	e.GitInit(proj)
-	installGuardrail(t, proj, guardrail)
+	installGuardrail(t, proj, nature, guardrail)
 	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install "+guardrail)
+	e.Git(proj, "commit", "-m", "install "+nature+" "+guardrail)
 	return proj
 }
 
