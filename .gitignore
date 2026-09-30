@@ -8,6 +8,10 @@
 /sr
 /sr-*
 
+# A service built in place (`go build` inside services/<name>/) leaves its binary
+# beside the source; unanchored on purpose, so it is caught at any depth.
+services/*/sr-*
+
 # Where `make build` puts the same binaries. The entries above cover a bare
 # `go build ./services/...`, which drops them at the root; the Makefile builds
 # with -o bin/ instead, so both layouts have to be listed or whichever one is
