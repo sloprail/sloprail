@@ -43,6 +43,8 @@ var (
 	Bash           = harness.Bash
 	ToolResult     = harness.ToolResult
 	AnswerQuestion = harness.AnswerQuestion
+	CitesUser      = harness.CitesUser
+	CitesTool      = harness.CitesTool
 )
 
 func TestMain(m *testing.M) {
