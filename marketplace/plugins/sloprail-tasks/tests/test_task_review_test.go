@@ -195,7 +195,7 @@ func TestReview_UncitedEditAfterCitedTransitionAccumulates(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installPluginTree(t, e, proj)
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
+	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
 	sess := "s-review-uncited-after"
 	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
@@ -210,8 +210,13 @@ func TestReview_UncitedEditAfterCitedTransitionAccumulates(t *testing.T) {
 	if got := readFile(t, proj, taskPath); !strings.Contains(got, "priority: P2") {
 		t.Fatalf("the uncited edit did not land:\n%s", got)
 	}
-	if joined := stopBlocks(e, proj, sess); containsStr(joined, "no commit in its range carries a citation") {
-		t.Fatalf("the range's earlier commit cited the proof, yet the Stop refused for missing proof:\n%s", joined)
+	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
+		t.Fatalf("the range's earlier commit cited the proof, yet the Stop was blocked:\n%v", blocks)
+	}
+	// The positive outcome: the review ran over the whole range and was handed the
+	// proof the EARLIER commit cited, although the later commit cites nothing.
+	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); !containsStr(prompt, "quoted: "+proofMarker) {
+		t.Fatalf("the reviewer was not handed the earlier commit's proof:\n%s", prompt)
 	}
 }
 

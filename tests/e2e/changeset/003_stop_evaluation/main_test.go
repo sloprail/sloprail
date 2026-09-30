@@ -106,16 +106,45 @@ func ledger(t *testing.T, path string) []Run {
 // project is a committed repository with a committed "docs" rule recording to a
 // ledger outside the tree. Returns the env, the project, the ledger path.
 func project(t *testing.T, ruleYAML string) (*Env, string, string) {
+	return seededProject(t, ruleYAML, map[string]string{"docs/seed.md": "seed\n", "notes/scratch.md": "scratch\n"}, recorder)
+}
+
+// seededProject is project with the files the tree holds before the rule arrives
+// given by the test, for a scenario that needs its own starting content, and the
+// check's script given from the ledger path it records to (recorder is the usual one).
+func seededProject(t *testing.T, ruleYAML string, seed map[string]string, check func(ledger string) string) (*Env, string, string) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.WriteFile(proj, "docs/seed.md", "seed\n")
-	e.WriteFile(proj, "notes/scratch.md", "scratch\n")
+	for path, content := range seed {
+		e.WriteFile(proj, path, content)
+	}
 	led := filepath.Join(t.TempDir(), "ledger.jsonl")
 	e.CommitAll(proj, "the project")
 	e.DisableShippedFileGuards(proj)
-	e.FileGuard(proj, "docs", ruleYAML, map[string]string{"check.sh": recorder(led)})
+	e.FileGuard(proj, "docs", ruleYAML, map[string]string{"check.sh": check(led)})
 	e.CommitAll(proj, "the rule")
 	return e, proj, led
+}
+
+// stopBlocks is how many times a session's Stop has refused and been gone past so
+// far. Every refusal counts, the same words or not (BlockingErrors de-duplicates).
+func stopBlocks(e *Env, proj, sess string) int {
+	return len(e.StopContinuations(proj, sess))
+}
+
+// newBlocks is what a session's Stop refused with since `seen` refusals ago.
+func newBlocks(e *Env, proj, sess string, seen int) string {
+	return strings.Join(e.StopContinuations(proj, sess)[seen:], "\n")
+}
+
+// lastRun is the newest ledger line: the most recent thing a check was handed.
+func lastRun(t *testing.T, path string) Run {
+	t.Helper()
+	runs := ledger(t, path)
+	if len(runs) == 0 {
+		t.Fatal("the check never ran")
+	}
+	return runs[len(runs)-1]
 }
