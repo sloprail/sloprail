@@ -85,8 +85,7 @@ exit 0
 // project is a repository with docs/pinned.md and docs/notes.md COMMITTED before
 // the session — a delete is in a changeset only for a file the range's base holds —
 // and with the given rules (name → `deletions:` value) installed
-// as a gate AND a file-guard of that name, and committed, so their own files are
-// part of the baseline rather than the diff.
+// as a gate AND a file-guard of that name, committed after the docs.
 func project(t *testing.T, check string, rules map[string]string) (*harness.Env, string) {
 	t.Helper()
 	e := New(t)
@@ -94,11 +93,16 @@ func project(t *testing.T, check string, rules map[string]string) (*harness.Env,
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/pinned.md", "pinned\n")
 	e.WriteFile(proj, "docs/notes.md", "notes v1\n")
+	e.CommitAll(proj, "the project before the rules")
+	// The rules go in their own commit: a range starts at the parent of the commit
+	// that last touched the rule's folder, so the docs above are the base (M, not A)
+	// and the rules' own files land in `others`.
 	for name, deletions := range rules {
 		e.Gate(proj, name, gateYAML(deletions), map[string]string{"check.sh": check})
 		e.FileGuard(proj, name, guardYAML(deletions), map[string]string{"check.sh": check})
 	}
-	e.CommitAll(proj, "the project before the session")
+	e.DisableShippedFileGuards(proj)
+	e.CommitAll(proj, "the rules, before the session")
 	return e, proj
 }
 

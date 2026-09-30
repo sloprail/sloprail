@@ -51,6 +51,15 @@ func seedUntouched(e *Env, proj string) {
 	e.CommitAll(proj, "pre-existing project files")
 }
 
+// installWatcher adds the rule in its OWN commit, after the seed: a file-guard's
+// range starts at the parent of the commit that last touched its folder, so a
+// seed committed together with the rule would fall inside the first range.
+func installWatcher(e *Env, proj string) {
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
+	e.CommitAll(proj, "install the rule")
+}
+
 // T017_01: the control — a file the cycle DID touch is reported.
 //
 // This must come first and must be read as part of every test below it. The
@@ -61,10 +70,10 @@ func TestT017_01_ATouchedFileIsReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 	writeFile(t, proj, "old-one.md", "original\n")
 	writeFile(t, proj, "old-two.md", "original\n")
 	seedUntouched(e, proj)
+	installWatcher(e, proj)
 
 	e.Run(proj, "s-017-01", "touch one file", Turns("done",
 		Write("w1", "old-one.md", "changed by the agent\n"),
@@ -92,10 +101,10 @@ func TestT017_02_AnUntouchedFileProducesNothing(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 	writeFile(t, proj, "touched.md", "original\n")
 	writeFile(t, proj, "untouched.md", "original\n")
 	seedUntouched(e, proj)
+	installWatcher(e, proj)
 
 	e.Run(proj, "s-017-02", "touch one of two", Turns("done",
 		Write("w1", "touched.md", "changed by the agent\n"),
@@ -129,10 +138,10 @@ func TestT017_03_AFileRestoredToItsOriginalIsNotReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 	writeFile(t, proj, "round-trip.md", "original\n")
 	writeFile(t, proj, "genuinely-changed.md", "original\n")
 	seedUntouched(e, proj)
+	installWatcher(e, proj)
 
 	e.Run(proj, "s-017-03", "change one back", Turns("done",
 		Write("w1", "round-trip.md", "temporarily different\n"),

@@ -74,8 +74,12 @@ exit 0
 func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "onceonly", refusesOnceThenRelents, map[string]string{"record.sh": refuseOnceScript})
 	e.GitInit(proj)
+	// The rule goes in its own commit, after the initial one: its range starts at
+	// that commit's parent, so the project's own files are the base.
+	e.FileGuard(proj, "onceonly", refusesOnceThenRelents, map[string]string{"record.sh": refuseOnceScript})
+	e.DisableShippedFileGuards(proj)
+	e.CommitAll(proj, "the rule, before the session")
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo one > first.md"),
