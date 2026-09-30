@@ -6,6 +6,7 @@ package e2e
 // code to it, so code and pin agreed and pinned-invariant had nothing to refuse.
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,7 +88,7 @@ func TestT046_12_UnpinnedLineOfAPinnedSpecNeedsTheUsersWords(t *testing.T) {
 	const ask = "reword rule 1 of the spec to say below zero instead of negative"
 	res = e.Run(proj, "s-046-12b", ask, Turns("done",
 		Bash("b1", "sr-file edit SPEC.md --old-string 'never be negative' --new-string 'never be below zero' --cite:user '"+ask+"'"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("a cited change the user asked for was refused:\n%s", res.Output)
 	}
@@ -112,7 +113,7 @@ func TestT046_13_CitedRuleChangeAdmits(t *testing.T) {
 	const ask = "change rule 2 of the spec so goodwill refunds may exceed the charge"
 	res := e.Run(proj, "s-046-13", ask, Turns("done",
 		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("a rule change the user asked for was refused:\n%s", res.Output)
 	}
@@ -132,7 +133,7 @@ func TestT046_14_CitingAConflictingFeatureBlockedAtStop(t *testing.T) {
 	const ask = "let Refund allow the charge plus a courtesy credit"
 	res := e.Run(proj, "s-046-14", ask, Turns("done",
 		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("the gate (citation only, no model) refused a cited rule change:\n%s", res.Output)
 	}
@@ -155,7 +156,7 @@ func TestT046_26_ChangeAndCitationsReachTheRuleChangeJudge(t *testing.T) {
 	const ask = "change rule 2 of the spec so goodwill refunds may exceed the charge"
 	res := e.Run(proj, "s-046-26", ask, Turns("done",
 		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {
 		t.Fatalf("the cited rule change was refused:\n%s", res.Output)
 	}
@@ -166,11 +167,39 @@ func TestT046_26_ChangeAndCitationsReachTheRuleChangeJudge(t *testing.T) {
 	if !strings.Contains(prompt, "<quote>"+ask+"</quote>") {
 		t.Errorf("the cited words did not reach the judge prompt:\n%s", prompt)
 	}
-	start, end := strings.Index(prompt, "<change path=\"SPEC.md\">"), strings.Index(prompt, "</change>")
+	start, end := strings.Index(prompt, "<change>"), strings.Index(prompt, "</change>")
 	if start < 0 || end < start || !strings.Contains(prompt[start:end], "+2. A refund must never exceed the original charge amount, except goodwill refunds.") {
 		t.Errorf("the rewritten rule did not reach the judge prompt inside <change>:\n%s", prompt)
 	}
 	if strings.Contains(prompt, "This change cites nothing") {
 		t.Errorf("the judge was told the change cites nothing:\n%s", prompt)
+	}
+}
+
+// T046_61: the gate's citation rides the write, the file-guard's rides the commit. A
+// spec change made with sr-file and cited to the gate, but committed with no
+// `Sloprail-Cites-User` trailer, is refused at Stop for the missing citation before
+// any judge; a later commit in the range carrying the trailer passes.
+func TestT046_61_CommitMustCiteTheUsersWords(t *testing.T) {
+	e := newEnv(t)
+	proj := pinnedSpecProject(t, e)
+	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to reword rule 1"}`)
+
+	const ask = "reword rule 1 of the spec to say below zero instead of negative"
+	const sess = "s-046-61"
+	settleBaseline(t, e, proj, sess, ask)
+	e.Run(proj, sess, "go on", Turns("done",
+		Bash("b1", "sr-file edit SPEC.md --old-string 'never be negative' --new-string 'never be below zero' --cite:user '"+ask+"'"),
+	).ThenCommit("reword rule 1"))
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !strings.Contains(blocks, "must cite the user's own words") || !strings.Contains(blocks, "pinned-spec-holds") {
+		t.Fatalf("an uncited commit of a pinned spec change was not refused at Stop:\n%s", blocks)
+	}
+	seen := len(e.StopContinuations(proj, sess))
+
+	e.Run(proj, sess, "cite it", Turns("done").ThenCommit("cite the ask", harness.CitesUser(ask)))
+	if got := len(e.StopContinuations(proj, sess)); got != seen {
+		t.Fatalf("a commit citing the user's words was still refused (%d refusals, had %d):\n%s", got, seen,
+			strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"))
 	}
 }

@@ -48,9 +48,21 @@ func biProject(t *testing.T, e *env) string {
 func commitSpec(t *testing.T, e *env, proj, path, body, msg string) string {
 	t.Helper()
 	e.WriteFile(proj, path, body)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", msg)
-	return e.Git(proj, "rev-parse", "HEAD")
+	return e.CommitAll(proj, msg)
+}
+
+// settleBaseline is the session's first turn, doing nothing: its Stop passes what
+// the test seeded, which moves every rule's base past the seed. A test about what a
+// LATER change does to something seeded needs it, because a rule judges the whole
+// range since it last passed, and a file created and then deleted (or reworded)
+// inside one range nets to nothing. The prompt is the session's first user message:
+// what a later command cites must be said once. It fails the test if the seed itself is refused.
+func settleBaseline(t *testing.T, e *env, proj, sess, prompt string) {
+	t.Helper()
+	e.Run(proj, sess, prompt, Turns("done"))
+	if blocks := e.BlockingErrorsFrom(proj, sess, "Stop"); len(blocks) != 0 {
+		t.Fatalf("the seeded state was refused before the test changed anything:\n%s", joinBlocks(blocks))
+	}
 }
 
 // specV1 is a spec whose line 2 is the invariant the code pins to.
