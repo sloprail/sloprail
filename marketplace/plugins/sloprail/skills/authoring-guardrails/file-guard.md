@@ -180,10 +180,9 @@ is this guard's business:
 deletions: include
 ```
 
-With `include` or `only`, a deleted file is an entry in `.changeset.files[]` with
-`status: "D"`, its `oldContent` and `oldMarkers`, and no `newContent`. A guard on
-the default never gets one (the file is named in `others`) — do not write a script
-branch to wave deletes through, leave the key off. To refuse a delete **before**
+With `include` or `only`, a deleted file is a `D` entry in `.changeset.files[]`.
+A guard on the default never gets one — do not write a script branch to wave
+deletes through, leave the key off. To refuse a delete **before**
 it happens, bind a gate to `PreFileDelete` (below).
 
 On a `D` entry, a check reads what was lost: `oldContent` and `oldMarkers`. The
@@ -270,14 +269,10 @@ remains on the Post events a **context** binds.
 
 ## Reading the change
 
-A file-guard reads the committed change from `changeset.files[]`. A **created**
-file has `status` `A` and its body in `newContent`; a **modified** one has `M`, the
-range's first bytes in `oldContent`, the last in `newContent`; a **renamed** one
-has `R` and `oldPath` (a rename is not a deletion); a **deleted** one has `D`, its
-`oldContent` and `oldMarkers`, and no `newContent` — and reaches the rule only when
-`deletions:` is `include` or `only` (above), in which case it is in `files`; under
-the default `skip` it is listed in `others`. `diff` is that file's part of the
-squashed diff.
+A file-guard reads the committed change from `changeset.files[]`
+([events.md](events.md#changeset--what-a-file-guards-checks-receive)); a deleted
+file is in `files` only under `deletions: include` or `only` (above), and under
+the default `skip` is listed in `others`.
 
 Read the file from `SR_TREE` (`cat "$SR_TREE/$path"`), never from
 `$SR_WORKSPACE`: the working tree may hold work that was never committed.

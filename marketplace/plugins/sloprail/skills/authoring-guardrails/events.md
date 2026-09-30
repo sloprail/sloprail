@@ -293,12 +293,11 @@ checks are handed one `Changeset` per rule per range. `event` is always
   base is chosen).
 - `commits` — every commit in the range, oldest first; `trailers` maps the
   trailer key in canonical case (`Sloprail-Cites-User`) to its values.
-- `files` — the files `match` selected, in full: `status` is `A`, `M`, `D` or `R`;
-  `oldPath` is set on a rename; `diff` is that file's part of the squashed diff.
-  A `D` entry has `oldContent` and `oldMarkers`, no `newContent`, and is present
-  only under `deletions: include|only`.
-- `others` — the rest of the range, `{path, status}` only (under the default
-  `deletions: skip`, deleted files are named here).
+- `files` — the files `match` selected, in full. `status` is `A` (body in
+  `newContent`), `M` (`oldContent` is the range's first bytes, `newContent` the
+  last), `R` (`oldPath` set; a rename is not a deletion) or `D` (`oldContent` and
+  `oldMarkers`, no `newContent`). `diff` is that file's part of the squashed diff.
+- `others` — the rest of the range, `{path, status}` only.
 - `citations` — the range's resolved `Sloprail-Cites-*` quotes
   ([grounding.md](grounding.md)); empty outside a session.
 - `subject` — the unit judged; `transcriptPath` and `context` as everywhere.
