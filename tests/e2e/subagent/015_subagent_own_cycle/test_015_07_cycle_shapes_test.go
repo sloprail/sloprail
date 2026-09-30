@@ -37,11 +37,12 @@ checks:
 
 const refuseOnceScript = `#!/bin/sh
 payload=$(cat)
-path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
 n=$(cat "$SR_GUARDRAIL_DIR/count" 2>/dev/null || echo 0)
 n=$((n + 1))
 echo "$n" > "$SR_GUARDRAIL_DIR/count"
-echo "call $n path=[$path]" >> "$SR_GUARDRAIL_DIR/log"
+for path in $(` + pathsOfPayload + `); do
+  echo "call $n path=[$path]" >> "$SR_GUARDRAIL_DIR/log"
+done
 if [ "$n" -le 1 ]; then
   echo '{"reason":"the first attempt is refused"}'
   exit 1
@@ -79,7 +80,7 @@ func TestT015_07_ARefusedSubagentCycleRetriesAndThenFinishes(t *testing.T) {
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo one > first.md"),
 		Bash("sb2", "echo two > second.md"),
-	))
+	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-015-07", "delegate work that gets refused once", Turns("root done",
 		Dispatch("d1", "do the job", sub, "worktree"),
@@ -168,7 +169,7 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo x > refused-work.md"),
-	))
+	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-015-08", "delegate work that is always refused", Turns("root done",
 		Dispatch("d1", "do the job", sub, "worktree"),
@@ -218,7 +219,7 @@ func TestT015_08b_ByDefaultAReFiredSubagentStopIsJudged(t *testing.T) {
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo x > refused-work.md"),
-	))
+	).ThenCommit("the sub-agent's work"))
 	res := e.Run(proj, "s-015-08b", "delegate work that is always refused", Turns("root done",
 		Dispatch("d1", "do the job", sub, "worktree"),
 	))

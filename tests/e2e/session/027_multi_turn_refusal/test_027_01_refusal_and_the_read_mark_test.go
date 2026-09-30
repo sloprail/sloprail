@@ -81,7 +81,7 @@ checks:
 // The answer is bracketed so one cycle's span can be told from the next's even
 // when a cycle is driven round more than once by a block.
 //
-// The refusal keys on the event's own `"path"` field, NOT on "bad" appearing
+// The refusal keys on a file's own `"path"` field, NOT on "bad" appearing
 // anywhere in the payload. That distinction was load-bearing under the old broad
 // binding, because the `answers` ledger quoted the offending file's name and the
 // guard could re-observe it. Under `match: "**/*.md"` the guard never sees its own
@@ -93,13 +93,6 @@ checks:
 // stdout is the reason the agent is told, replacing the old exit-2-with-stderr.
 const askScript = `#!/bin/sh
 payload="$(cat)"
-# The old rule bound only PostFileCreate + PostFileUpdate. A file-guard fires on
-# deletes too, so drop them here: this keeps removing the offending file (the
-# recovering cycle's fix) from being refused as a "bad" path, and keeps the
-# recorded span the same set of events the old binding produced.
-case "$payload" in
-  *'"kind":"PostFileDelete"'*) exit 0 ;;
-esac
 if [ -z "${SR_TRANSCRIPT:-}" ]; then
   echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "$SR_GUARDRAIL_DIR/answers"
   exit 0
@@ -171,7 +164,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	// Cycle one: clean, and it completes.
 	e.Run(proj, sess, "cycle one", Turns("done",
 		Write("w1", "one.md", "cycle one\n"),
-	))
+	).ThenCommit("the cycle"))
 	afterFirst := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
 	if afterFirst == 0 {
 		t.Fatalf("the first cycle never reached the hook, so nothing here can be observed")
@@ -189,7 +182,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	// Cycle two: writes a file the rule objects to, and is blocked.
 	e.Run(proj, sess, "cycle two", Turns("done",
 		Write("w2", "bad-file.md", "violates\n"),
-	))
+	).ThenCommit("the cycle"))
 	// The premise: the cycle really did not finish. Read from the blocking
 	// attachments rather than the stream — a Post hook's refusal blocks the Stop
 	// and its words travel as a hook_blocking_error record, never as a line on
@@ -235,7 +228,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	e.Run(proj, sess, "cycle three", Turns("done",
 		Bash("b1", "rm bad-file.md"),
 		Write("w3", "three.md", "cycle three\n"),
-	))
+	).ThenCommit("the cycle"))
 	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= afterSecond {
 		t.Fatalf("the third cycle never asked the engine anything (%d answers, was %d)",
@@ -292,7 +285,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 	// A cycle that is refused.
 	e.Run(proj, sess, "the refused cycle", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
-	))
+	).ThenCommit("the cycle"))
 	if blocking := e.BlockingErrors(proj, sess); len(blocking) == 0 {
 		t.Fatalf("the first cycle was not refused, so there is no held mark under test here")
 	}
@@ -302,7 +295,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 	e.Run(proj, sess, "the recovering cycle", Turns("done",
 		Bash("b1", "rm bad-file.md"),
 		Write("w2", "two.md", "recovered\n"),
-	))
+	).ThenCommit("the cycle"))
 	afterRecovered := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
 	if afterRecovered == 0 {
 		t.Fatalf("the recovering cycle never reached the hook, so nothing can be observed")
@@ -311,7 +304,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 	// A further clean cycle, which must be offered neither of the two before it.
 	e.Run(proj, sess, "a later cycle", Turns("done",
 		Write("w3", "three.md", "later\n"),
-	))
+	).ThenCommit("the cycle"))
 	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= afterRecovered {
 		t.Fatalf("the later cycle never asked the engine anything (%d answers, was %d)",

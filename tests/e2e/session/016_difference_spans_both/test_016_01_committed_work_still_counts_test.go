@@ -3,6 +3,8 @@ package e2e
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // difference_spans_both: a cycle's difference covers work that has been
@@ -38,28 +40,32 @@ echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
+// observed is one file a recorded changeset selected.
 type observed struct {
-	Kind string
-	Path string
+	Status string
+	Path   string
 }
 
-// observedFiles decodes what a file-guard's check was handed — the FLAT event,
-// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
-// the old nested `event.fields` envelope.
+// observedFiles decodes what a file-guard's check was handed: the Changeset
+// payload, whose `files` are what the range's commits changed.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
+			Changeset struct {
+				Files []struct {
+					Path   string `json:"path"`
+					Status string `json:"status"`
+				} `json:"files"`
+			} `json:"changeset"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
 		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
+		for _, f := range p.Changeset.Files {
+			got = append(got, observed{Status: f.Status, Path: f.Path})
+		}
 	}
 	return got
 }
@@ -84,11 +90,12 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	e.CommitAll(proj, "the guardrail, before the session")
 
 	e.Run(proj, "s-016-01", "write and commit", Turns("done",
 		Write("w1", "committed-work.md", "written then committed\n"),
 		Bash("b1", "git add -A && git commit -m 'agent commit'"),
-	))
+	).ThenCommit("nothing more"))
 
 	// The premise: the agent's work really was committed, so an engine looking
 	// only at outstanding work genuinely has nothing to find. Without this check
@@ -115,7 +122,7 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 	}
 }
 
-// T016_02: committed and uncommitted work are reported together.
+// T016_02: committed work is judged; uncommitted work is owed a commit first.
 //
 // "Spans both" is a claim about one difference covering two kinds of work at
 // once, and an engine could satisfy T016_01 by looking ONLY at what is
@@ -130,32 +137,27 @@ func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	e.CommitAll(proj, "the guardrail, before the session")
 
+	// One file committed, one not. The rule is handed the committed one; the
+	// uncommitted one is owed a commit (a file-guard judges commits, and never
+	// makes one for the agent), so the Stop is refused for it.
 	e.Run(proj, "s-016-02", "commit one, leave one", Turns("done",
 		Write("w1", "committed.md", "this one is committed\n"),
-		Bash("b1", "git add -A && git commit -m 'agent commit'"),
+		Bash("b1", "git add committed.md && git commit -m 'agent commit'"),
 		Write("w2", "outstanding.md", "this one is not\n"),
 	))
-
-	// The premise: one is committed, the other is not. Asked per path, because
-	// the guardrail's own ledger is untracked and would satisfy a whole-tree
-	// check on its own.
-	if status := e.Git(proj, "status", "--porcelain", "--", "committed.md"); status != "" {
-		t.Fatalf("the file meant to be committed is still outstanding (%q)", status)
+	e.AssertCommitRequired(proj, "s-016-02", "outstanding.md")
+	if got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen")); sawPath(got, "outstanding.md") {
+		t.Fatalf("a file nobody committed was judged: %v", got)
 	}
-	if status := e.Git(proj, "status", "--porcelain", "--", "outstanding.md"); status == "" {
-		t.Fatalf("the file meant to be outstanding was committed, so the uncommitted half " +
-			"of this test is not set up")
-	}
+	seen := len(harness.CommitRequired(e.BlockingErrorsFrom(proj, "s-016-02", "Stop")))
 
+	// Committed, it arrives with the rest of the range.
+	e.Run(proj, "s-016-02", "commit the rest", Turns("done").ThenCommit("the rest"))
+	e.NoCommitRequired(proj, "s-016-02", seen)
 	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
-	if !sawPath(got, "committed.md") {
-		t.Fatalf("the committed half of the cycle's work is missing: %v — an engine looking only "+
-			"at outstanding work reports this cycle as smaller than it was", got)
-	}
-	if !sawPath(got, "outstanding.md") {
-		t.Fatalf("the uncommitted half of the cycle's work is missing: %v — an engine looking only "+
-			"at commits since the point loses everything the agent has not committed, "+
-			"which is most cycles", got)
+	if !sawPath(got, "committed.md") || !sawPath(got, "outstanding.md") {
+		t.Fatalf("the range's committed work is missing a file: %v", got)
 	}
 }

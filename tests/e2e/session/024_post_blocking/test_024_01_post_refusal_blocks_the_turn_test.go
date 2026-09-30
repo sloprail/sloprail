@@ -108,7 +108,7 @@ func TestT024_01_OneRefusalBlocksTheTurnWithoutUndoingTheWrite(t *testing.T) {
 
 	got := e.Run(proj, "s-024-01", "write a file", Turns("done",
 		Write("w1", "unwanted.md", "it landed anyway\n"),
-	))
+	).ThenCommit("the cycle"))
 
 	// The rule ran and refused. Without this the rest is a test about a file
 	// existing after nothing tried to stop it.
@@ -169,7 +169,7 @@ func TestT024_02_SeveralRefusalsAreAllReportedAndBlockOnce(t *testing.T) {
 
 	got := e.Run(proj, "s-024-02", "write a file", Turns("done",
 		Write("w1", "contested.md", "one file, three objections\n"),
-	))
+	).ThenCommit("the cycle"))
 
 	// Every rule really ran. Without this, "all three were reported" could hold
 	// because only one ran and the assertion below is checking a string that
@@ -228,7 +228,7 @@ checks:
 
 	got := e.Run(proj, "s-024-03", "write a file", Turns("done",
 		Write("w1", "watched.md", "the subject\n"),
-	))
+	).ThenCommit("the cycle"))
 
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the refusing hook never ran, so there is no refusal here to survive:\n%s", got.Output)
@@ -261,7 +261,7 @@ func TestT024_04_ARefusingSessionStillTerminates(t *testing.T) {
 
 	got := e.Run(proj, "s-024-04", "write a file", Turns("done",
 		Write("w1", "looped.md", "the subject\n"),
-	))
+	).ThenCommit("the cycle"))
 
 	body, err := os.ReadFile(ranLog)
 	if err != nil {
@@ -305,7 +305,7 @@ func TestT024_05_APassingRuleDoesNotBlockTheTurn(t *testing.T) {
 
 	got := e.Run(proj, "s-024-05", "write a file", Turns("done",
 		Write("w1", "fine.md", "nothing wrong with this\n"),
-	))
+	).ThenCommit("the cycle"))
 
 	// The rule ran. Without this the absence of a block says only that no rule
 	// was ever consulted.
@@ -344,7 +344,7 @@ func TestT024_06_ARefusalAndAPassNameOnlyTheRefuser(t *testing.T) {
 
 	got := e.Run(proj, "s-024-06", "write a file", Turns("done",
 		Write("w1", "mixed.md", "one rule objects, one does not\n"),
-	))
+	).ThenCommit("the cycle"))
 
 	for name, log := range map[string]string{"zzrefuser": refuserLog, "zzpermitter": passerLog} {
 		if _, err := os.Stat(log); err != nil {
@@ -388,7 +388,7 @@ func TestT024_07_AnUnfixedRefusalBlocksTheNextCycleToo(t *testing.T) {
 	const sess = "s-024-07"
 	first := e.Run(proj, sess, "write the bad file", Turns("done",
 		Write("w1", "offending.md", "violates\n"),
-	))
+	).ThenCommit("the cycle"))
 	if _, err := os.Stat(ranLog); err != nil {
 		t.Fatalf("the rule never ran in the first cycle:\n%s", first.Output)
 	}
@@ -400,7 +400,7 @@ func TestT024_07_AnUnfixedRefusalBlocksTheNextCycleToo(t *testing.T) {
 	// A second cycle that does not touch the offending file at all.
 	second := e.Run(proj, sess, "do something else", Turns("done",
 		Write("w2", "unrelated.md", "fine\n"),
-	))
+	).ThenCommit("the cycle"))
 
 	if continuations(e, proj, sess) <= firstBlocks {
 		t.Fatalf("a cycle that left an unfixed violation in place was allowed to end:\n%s\n"+

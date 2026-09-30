@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -42,9 +41,12 @@ func TestT037_04_UnderivableWriteWithUnmetRequireNamesTheSkill(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "require-topic", pureRequireGate, nil)
+	// Committed with the guards, so an underivable UPDATE to the file is a change
+	// against a committed baseline rather than this cycle's own uncommitted create
+	// — the file must already exist on disk for PreFileUpdate, rather than
+	// PreFileCreate, to be the kind extractCommand reports.
 	e.WriteFile(proj, "memories/topics/idea.md", "# an idea\n")
 	e.CommitAll(proj, "the guards")
-	commitFile037(t, proj, "memories/topics/idea.md")
 
 	res := e.Run(proj, "s-037-04", "update a topic the hard way, no skill loaded", Turns("done",
 		underivableUpdate037("memories/topics/idea.md"),
@@ -75,9 +77,12 @@ func TestT037_05_UnderivableWriteWithMetRequireIsPermittedByAPureRequireGate(t *
 	proj := e.Project()
 	e.GitInit(proj)
 	e.Gate(proj, "require-topic", pureRequireGate, nil)
+	// Committed with the guards, so an underivable UPDATE to the file is a change
+	// against a committed baseline rather than this cycle's own uncommitted create
+	// — the file must already exist on disk for PreFileUpdate, rather than
+	// PreFileCreate, to be the kind extractCommand reports.
 	e.WriteFile(proj, "memories/topics/idea.md", "# an idea\n")
 	e.CommitAll(proj, "the guards")
-	commitFile037(t, proj, "memories/topics/idea.md")
 
 	res := e.Run(proj, "s-037-05", "load the skill, then update a topic the hard way", Turns("done",
 		Skill("s1", "document-topic"),
@@ -103,19 +108,4 @@ func TestT037_05_UnderivableWriteWithMetRequireIsPermittedByAPureRequireGate(t *
 // keeps its own local commitGuards instead of reaching across packages.
 func underivableUpdate037(path string) harness.Turn {
 	return Bash("w1", "printf '%s\\n' 'updated' | tr -d '\\r' > "+path)
-}
-
-// commitFile037 commits one file so an underivable UPDATE to it is a change
-// against a committed baseline rather than this cycle's own uncommitted create —
-// the file must already exist on disk (and be off this cycle's diff) for
-// PreFileUpdate, rather than PreFileCreate, to be the kind extractCommand
-// reports.
-func commitFile037(t *testing.T, proj, path string) {
-	t.Helper()
-	if out, err := exec.Command("git", "-C", proj, "add", path).CombinedOutput(); err != nil {
-		t.Fatalf("commitFile037: git add %s: %v\n%s", path, err, out)
-	}
-	if out, err := exec.Command("git", "-C", proj, "commit", "-m", "baseline "+path).CombinedOutput(); err != nil {
-		t.Fatalf("commitFile037: git commit: %v\n%s", err, out)
-	}
 }

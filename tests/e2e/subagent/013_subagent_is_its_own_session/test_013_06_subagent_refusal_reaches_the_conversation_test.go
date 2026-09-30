@@ -54,11 +54,11 @@ import (
 // transcript as the feedback turn it is re-run with, and the SubagentStop
 // attachment beside it.
 //
-// The sub-agent shares the dispatching session's tree rather than taking a
-// worktree, because the refusal has to be about work that really landed. The
-// mock does not APPLY a sub-agent's tool calls — a Write in a sub-agent's
-// scenario creates no file — so the delegated work is done with Bash, which the
-// mock does execute, in the tree the guardrail is watching.
+// The sub-agent takes its own worktree and commits there: a file-guard judges
+// commits, and only an agent that owns a tree is judged at its own stop (a
+// sub-agent sharing the dispatching session's tree is judged at the root's). The
+// mock does not APPLY a sub-agent's Write, so the delegated work is done with
+// Bash, which the mock executes inside the worktree.
 //
 // Asserted against the sub-agent's own record specifically, not against every
 // refusal anywhere. Sharing the tree means the root's own Stop sees from-sub.md
@@ -82,10 +82,10 @@ func TestT013_06_ASubagentRefusalReachesTheConversation(t *testing.T) {
 	subScript := filepath.Join(t.TempDir(), "sub.sh")
 	writeScenario(t, subScript, harness.Turns("sub done",
 		Bash("sb1", "echo 'delegated work' > from-sub.md"),
-	))
+	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-013-06", "delegate some work", Turns("root done",
-		Dispatch("d1", "do the job", subScript, ""),
+		Dispatch("d1", "do the job", subScript, "worktree"),
 	))
 
 	// The rule ran at the sub-agent's own cycle. Without this the rest is a test
@@ -98,9 +98,9 @@ func TestT013_06_ASubagentRefusalReachesTheConversation(t *testing.T) {
 	// The file the sub-agent made is really there. A refusal is an objection to
 	// work that landed, not an undo — and if the Bash never executed, the rule
 	// above fired on something else.
-	if !e.Exists(proj, "from-sub.md") {
-		t.Fatalf("the sub-agent's own work never reached the tree, so the refusal was not about "+
-			"delegated work:\n%s", res.Output)
+	if !inSomeWorktree(t, proj, "from-sub.md") {
+		t.Fatalf("the sub-agent's own work never reached its worktree, so the refusal was not "+
+			"about delegated work:\n%s", res.Output)
 	}
 
 	// THE CLAIM. The refusal reached the sub-agent, with its own words: in the
@@ -154,10 +154,10 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 	subScript := filepath.Join(t.TempDir(), "sub.sh")
 	writeScenario(t, subScript, harness.Turns("sub done",
 		Bash("sb1", "echo 'delegated work' > from-sub.md"),
-	))
+	).ThenCommit("the sub-agent's work"))
 
 	res := e.Run(proj, "s-013-07", "delegate some work", Turns("root done",
-		Dispatch("d1", "do the job", subScript, ""),
+		Dispatch("d1", "do the job", subScript, "worktree"),
 	))
 
 	if _, err := os.Stat(ranLog); err != nil {
@@ -187,3 +187,19 @@ const refuseCreatedFiles = `match: "**/*.md"
 checks:
   - script: ./refuse.sh
 `
+
+// inSomeWorktree reports whether a file exists in any worktree bound under the
+// project's .claude/worktrees — where an isolated sub-agent's work lands.
+func inSomeWorktree(t *testing.T, proj, rel string) bool {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(proj, ".claude", "worktrees"))
+	if err != nil {
+		return false
+	}
+	for _, en := range entries {
+		if _, err := os.Stat(filepath.Join(proj, ".claude", "worktrees", en.Name(), rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}

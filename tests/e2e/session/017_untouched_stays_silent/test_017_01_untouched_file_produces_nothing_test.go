@@ -46,28 +46,32 @@ echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
+// observed is one file a recorded changeset selected.
 type observed struct {
-	Kind string
-	Path string
+	Status string
+	Path   string
 }
 
-// observedFiles decodes what a file-guard's check was handed — the FLAT event,
-// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
-// the old nested `event.fields` envelope.
+// observedFiles decodes what a file-guard's check was handed: the Changeset
+// payload, whose `files` are what the range's commits changed.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
+			Changeset struct {
+				Files []struct {
+					Path   string `json:"path"`
+					Status string `json:"status"`
+				} `json:"files"`
+			} `json:"changeset"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
 		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
+		for _, f := range p.Changeset.Files {
+			got = append(got, observed{Status: f.Status, Path: f.Path})
+		}
 	}
 	return got
 }
@@ -109,7 +113,7 @@ func TestT017_01_ATouchedFileIsReported(t *testing.T) {
 
 	e.Run(proj, "s-017-01", "touch one file", Turns("done",
 		Write("w1", "old-one.md", "changed by the agent\n"),
-	))
+	).ThenCommit("touch one file"))
 
 	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if !sawPath(got, "old-one.md") {
@@ -140,7 +144,7 @@ func TestT017_02_AnUntouchedFileProducesNothing(t *testing.T) {
 
 	e.Run(proj, "s-017-02", "touch one of two", Turns("done",
 		Write("w1", "touched.md", "changed by the agent\n"),
-	))
+	).ThenCommit("touch one of two"))
 
 	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	// The positive half, in this same session. Without it the next assertion
@@ -180,7 +184,7 @@ func TestT017_03_AFileRestoredToItsOriginalIsNotReported(t *testing.T) {
 		Write("w2", "genuinely-changed.md", "left different\n"),
 		// Restored to the exact bytes the baseline holds.
 		Write("w3", "round-trip.md", "original\n"),
-	))
+	).ThenCommit("change one back"))
 
 	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if !sawPath(got, "genuinely-changed.md") {

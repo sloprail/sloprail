@@ -121,11 +121,12 @@ func TestT053_01_FirstTurnCommitIsStillJudged(t *testing.T) {
 
 // T053_02: the same session, uncommitted — the control.
 //
-// The change is judged whether or not the agent commits it; this is the run
-// that always worked, because a first-Stop point on an unmoved HEAD happens to
-// be the right one. It pins that the arrangement above breaks nothing else: the
-// guard fires, and the point is still the setup commit.
-func TestT053_02_FirstTurnUncommittedIsJudged(t *testing.T) {
+// A file-guard judges commits, so an agent that stops without committing is asked
+// to (the guard is not consulted, and nothing is committed for it); once it does,
+// the same guard refuses the change. It pins that the arrangement above breaks
+// nothing else: the point is still the setup commit, and the commit-required
+// refusal comes first.
+func TestT053_02_FirstTurnUncommittedIsAskedToCommitThenJudged(t *testing.T) {
 	e := New(t)
 	e.SetStopBlockCap(1)
 	proj := e.Project()
@@ -140,8 +141,14 @@ func TestT053_02_FirstTurnUncommittedIsJudged(t *testing.T) {
 	if got := e.Meta(proj, sess, metaBaselineCommit); got != setup {
 		t.Errorf("baseline commit = %q, want %q", got, setup)
 	}
+	e.AssertCommitRequired(proj, sess, "src/charge.go")
+	if n := e.FileGuardLedger(proj, "charge-invariant", "ledger"); n != 0 {
+		t.Fatalf("the guard was asked about uncommitted work (%d times)", n)
+	}
+
+	e.Run(proj, sess, "now commit it", Turns("done").ThenCommit("goodwill refund"))
 	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
 	if !strings.Contains(blocks, "no-negative-charge invariant") {
-		t.Fatalf("the guard's refusal did not block the turn; Stop said:\n%s", blocks)
+		t.Fatalf("the guard's refusal of the committed change did not block the turn; Stop said:\n%s", blocks)
 	}
 }

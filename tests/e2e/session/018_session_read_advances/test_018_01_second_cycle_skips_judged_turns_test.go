@@ -152,7 +152,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 
 	e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "first cycle\n"),
-	))
+	).ThenCommit("first cycle"))
 	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) == 0 {
 		t.Fatalf("the hook never asked the engine anything, so nothing here can be observed")
@@ -168,7 +168,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "second cycle\n"),
-	))
+	).ThenCommit("second cycle"))
 	answers = e.FileGuardLedgerLines(proj, "asker", "answers")
 	if len(answers) <= firstCount {
 		t.Fatalf("the second cycle never asked the engine anything (%d answers, was %d)",
@@ -224,7 +224,7 @@ func TestT018_02_TurnsNothingJudgedAreStillGivenToTheNextCycle(t *testing.T) {
 	e.CommitAll(proj, "the guards")
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "judged cycle\n"),
-	))
+	).ThenCommit("judged cycle"))
 
 	answers := strings.Join(e.FileGuardLedgerLines(proj, "asker", "answers"), "\n")
 	if answers == "" {
