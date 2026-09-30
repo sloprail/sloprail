@@ -51,18 +51,24 @@ event="$(cat)"
 root="${SR_TREE:-}"
 [ -n "$root" ] || refuse "task-gates-hold: SR_TREE is not set, so the committed tasks could not be read"
 
-file_n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" || true
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || refuse "task-gates-hold: the changeset library (lib/changeset.sh) could not be loaded, so the tasks could not be checked"
+[ "${changeset_lib_loaded:-}" = 1 ] || refuse "task-gates-hold: the changeset library (lib/changeset.sh) could not be loaded, so the tasks could not be checked"
+file_n="$(cs_count "$event")" || true
 case "$file_n" in '' | *[!0-9]*) refuse "task-gates-hold: the changeset's files could not be read, so the tasks could not be checked" ;; esac
 
 file_i=0
 while [ "$file_i" -lt "$file_n" ]; do
-  path="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].path')" ||
+  path="$(cs_get "$event" "$file_i" .path)" ||
     refuse "task-gates-hold: could not read file $file_i of the changeset"
-  status="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].status')" ||
+  status="$(cs_get "$event" "$file_i" .status)" ||
     refuse "task-gates-hold: could not read $path from the changeset"
-  new_content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end')" ||
+  new_content="$(cs_text "$event" "$file_i" newContent)" ||
     refuse "task-gates-hold: could not read $path from the changeset"
-  old_content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].oldContent | if type == "string" then . else error("missing oldContent") end')" ||
+  old_content="$(cs_text "$event" "$file_i" oldContent)" ||
     refuse "task-gates-hold: could not read the earlier $path from the changeset"
   file_i=$((file_i + 1))
   [ -n "$new_content" ] || continue

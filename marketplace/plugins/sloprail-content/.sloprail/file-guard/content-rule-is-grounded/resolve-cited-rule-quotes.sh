@@ -19,17 +19,12 @@ event="$(cat)"
 printf '%s' "$event" | jq -e '.event.kind == "Changeset"' >/dev/null 2>&1 \
   || fail "the check payload is not a readable Changeset, so the cited words could not be assembled"
 
-# body_of CONTENT — the prose after the frontmatter, the same extraction every
-# guard in this plugin uses.
-body_of() {
-  printf '%s\n' "$1" | awk '
-    BEGIN { seen = 0 }
-    NR == 1 && $0 == "---" { seen = 1; next }
-    seen == 1 && $0 == "---" { seen = 2; next }
-    seen == 1 { next }
-    { print }
-  '
-}
+# body_of CONTENT — the prose after the frontmatter: check-rule-lib.sh's, the one
+# extraction every guard in this plugin uses. Sourcing it only defines functions.
+lib_dir="$(cd "$(dirname "$0")" && pwd)"
+unset check_rule_lib_loaded
+. "$lib_dir/check-rule-lib.sh" || fail "check-rule-lib.sh could not be loaded, so the rule bodies could not be read"
+[ "${check_rule_lib_loaded:-}" = 1 ] || fail "check-rule-lib.sh did not load whole, so the rule bodies could not be read"
 
 n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" \
   || fail "could not read the changeset's files"

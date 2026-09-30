@@ -22,14 +22,20 @@ payload="$(cat)"
 field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
 [ "$(field '.event.kind // ""')" = "Changeset" ] ||
   refuse "task-body-is-human-authored: expected a Changeset event, so the tasks could not be judged"
-file_n="$(field '.changeset.files | length')" || true
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || refuse "task-body-is-human-authored: the changeset library (lib/changeset.sh) could not be loaded, so nothing could be judged"
+[ "${changeset_lib_loaded:-}" = 1 ] || refuse "task-body-is-human-authored: the changeset library (lib/changeset.sh) could not be loaded, so nothing could be judged"
+file_n="$(cs_count "$payload")" || true
 case "$file_n" in '' | *[!0-9]*) refuse "task-body-is-human-authored: the changeset's files could not be read, so nothing could be judged" ;; esac
 
 file_i=0
 while [ "$file_i" -lt "$file_n" ]; do
-  path="$(printf '%s' "$payload" | jq -r --argjson i "$file_i" '.changeset.files[$i].path')" \
+  path="$(cs_get "$payload" "$file_i" .path)" \
     || refuse "task-body-is-human-authored: could not read file $file_i of the changeset"
-  content="$(printf '%s' "$payload" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end')" \
+  content="$(cs_text "$payload" "$file_i" newContent)" \
     || refuse "task-body-is-human-authored: could not read $path from the changeset"
   file_i=$((file_i + 1))
   lib_check

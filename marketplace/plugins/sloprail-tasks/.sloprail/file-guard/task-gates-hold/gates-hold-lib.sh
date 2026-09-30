@@ -71,9 +71,7 @@ if [ ! -d "$gates_dir" ]; then
 fi
 
 problems=""
-n=0
 while IFS= read -r -d '' g; do
-  n=$((n + 1))
   gname="$(basename "$g")"
   # Invoked via `bash "$g"` rather than executing it directly: a gate is a
   # file an AGENT wrote (through an ordinary file write, which never sets the

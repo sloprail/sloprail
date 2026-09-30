@@ -91,6 +91,8 @@ EOF
 # this pending write's own edges (self_id -> deps) so a cycle this very write
 # would CREATE is caught before it lands, not just a pre-existing one.
 graph_file="$(mktemp)"
+# Every exit path (a refuse included) removes it, not only the normal one.
+trap 'rm -f "$graph_file"' EXIT
 
 if [ -d "$root/memories/tasks" ]; then
   while IFS= read -r -d '' f; do

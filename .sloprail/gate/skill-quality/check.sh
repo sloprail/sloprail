@@ -23,12 +23,12 @@ esac
 [ "$(field '.event.resultKnown // false')" = "true" ] ||
   refuse "the result of this write to $path could not be computed ahead of time (an in-place or environment-dependent edit, or a notebook create), so its size could not be checked before it lands. Write the file content directly."
 
-lib_dir="$(cd "$(dirname "$0")/../../file-guard/skill-quality" && pwd)"
-. "$lib_dir/size-cap-lib.sh" || refuse "skill-quality: size-cap-lib.sh could not be loaded, so the size cap could not be applied"
+lib_dir="$(cd "$(dirname "$0")/../../file-guard/rule-quality" && pwd)"
+. "$lib_dir/size-cap-lib.sh" || refuse "skill-quality: rule-quality's size-cap-lib.sh could not be loaded, so the size cap could not be applied"
 
 bytes="$(printf '%s' "$payload" | jq -j '.event.newContent // ""' | wc -c | tr -d ' ')" ||
   refuse "the pending content of $path could not be read, so its size could not be checked"
-if why="$(size_cap_refuses "$bytes" "$path" 2>&1)"; then
+if why="$(size_cap_refuses "$bytes" "$path" skill 2>&1)"; then
   refuse "$why"
 fi
 exit 0

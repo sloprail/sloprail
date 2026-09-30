@@ -35,6 +35,18 @@ lib_init() {
   [ -n "$kind" ] || { echo "content-rule-is-grounded: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 }
 
+# body_of CONTENT — the prose after the frontmatter. The one extraction: the
+# file-guard's resolve-cited-rule-quotes.sh sources this file for it.
+body_of() {
+  printf '%s\n' "$1" | awk '
+    BEGIN { seen = 0 }
+    NR == 1 && $0 == "---" { seen = 1; next }
+    seen == 1 && $0 == "---" { seen = 2; next }
+    seen == 1 { next }
+    { print }
+  '
+}
+
 lib_check() {
 
 if ! doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)"; then
@@ -46,13 +58,7 @@ fi
 
 # THE BODY IS THE PROSE AFTER THE FRONTMATTER — same extraction every guard
 # in this plugin uses.
-body="$(printf '%s\n' "$content" | awk '
-  BEGIN { seen = 0 }
-  NR == 1 && $0 == "---" { seen = 1; next }
-  seen == 1 && $0 == "---" { seen = 2; next }
-  seen == 1 { next }
-  { print }
-')"
+body="$(body_of "$content")"
 
 body_trimmed="$(printf '%s' "$body" | tr -d '[:space:]')"
 if [ -z "$body_trimmed" ]; then

@@ -85,13 +85,13 @@ body_bytes="$(printf '%s' "$payload" | jq -j '.changeset.files[].newContent' | w
 }
 
 # A changeset too large to judge is REFUSED, not permitted. The cap and its
-# reasoning live in size-cap-lib.sh, which the pre-write gate of the same name
-# sources too.
-. "$guardrail_dir/size-cap-lib.sh" || {
-  echo "skill-quality: size-cap-lib.sh could not be loaded, so the size cap could not be applied. REFUSING." >&2
+# reasoning live in rule-quality's size-cap-lib.sh, the one copy, which the
+# pre-write gate of the same name sources too.
+. "$guardrail_dir/../rule-quality/size-cap-lib.sh" || {
+  echo "skill-quality: rule-quality's size-cap-lib.sh could not be loaded, so the size cap could not be applied. REFUSING." >&2
   exit 1
 }
-if size_cap_refuses "$body_bytes" "the skill files in this changeset"; then
+if size_cap_refuses "$body_bytes" "the skill files in this changeset" skill; then
   exit 1
 fi
 

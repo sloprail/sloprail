@@ -36,14 +36,20 @@ event="$(cat)"
   fail "expected a Changeset event, so the gates could not be judged"
 [ -n "${SR_TREE:-}" ] || fail "SR_TREE is not set, so the committed tasks could not be read"
 
-n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" || fail "the changeset's files could not be read"
+# The changeset's files are read through this plugin's one library (a missing
+# content field is undecidable, never an empty file).
+cs_lib="$(cd "$(dirname "$0")" && pwd)/../../lib/changeset.sh"
+unset changeset_lib_loaded
+. "$cs_lib" 2>/dev/null || fail "the changeset library (lib/changeset.sh) could not be loaded"
+[ "${changeset_lib_loaded:-}" = 1 ] || fail "the changeset library (lib/changeset.sh) could not be loaded"
+n="$(cs_count "$event")" || fail "the changeset's files could not be read"
 case "$n" in '' | *[!0-9]*) fail "the changeset's files could not be read" ;; esac
 
 gates='[]'
 i=0
 while [ "$i" -lt "$n" ]; do
-  path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" || fail "could not read file $i of the changeset"
-  gate_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent | if type == "string" then . else error("missing newContent") end')" || fail "could not read $path from the changeset"
+  path="$(cs_get "$event" "$i" .path)" || fail "could not read file $i of the changeset"
+  gate_content="$(cs_text "$event" "$i" newContent)" || fail "could not read $path from the changeset"
   i=$((i + 1))
 
   case "$path" in
