@@ -9,8 +9,6 @@ import (
 // is given are the same one, derived once for the occurrence — not re-derived per
 // binding.
 //
-// # RE-VEHICLED onto the NEW file-guard / gate natures (was old GUARDRAIL.md hooks)
-//
 // This is SHARED extraction machinery the new dispatch reuses: extractPreEvents
 // runs each module ONCE per pre-tool dispatch and hands the SAME event objects to
 // every file-guard and gate bound to that kind (services/sr-session/

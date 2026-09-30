@@ -77,6 +77,9 @@ func TestT047_09_NotFineDocBlocksUntilFixed(t *testing.T) {
 		Write("w3", "report.md", "# Report\n\nthe citation is resolved now.\n"),
 	).ThenCommit("fix the report"))
 	afterFix := refusals()
+	if afterFix != afterSecond {
+		t.Fatalf("the fixing commit was refused: %d refusals after cycle 2, %d after the fix", afterSecond, afterFix)
+	}
 
 	e.Run(proj, sess, "write one more clean doc", Turns("done",
 		Write("w4", "third.md", "# Third\n\nclean.\n"),

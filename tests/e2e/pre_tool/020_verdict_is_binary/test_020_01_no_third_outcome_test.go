@@ -20,8 +20,6 @@
 // a vocabulary that exists somewhere in the ecosystem, and each asserts the
 // attempt collapses into one of the two outcomes there are.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // The binary verdict is a PRE-ACTION property — a pending write either lands or
 // it does not — so the vehicle is a GATE on the pre-write event. The new-format
 // check contract is where "binary" now lives: exit 0 permits, exit non-zero

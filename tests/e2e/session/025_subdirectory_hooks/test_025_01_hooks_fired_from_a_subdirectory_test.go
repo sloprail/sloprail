@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,12 +57,9 @@ import (
 // this arrangement reports nothing at all, and "no spurious delete arrived" is
 // satisfied perfectly by that.
 
-// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
-// file event it is handed (re-vehicled from the old GUARDRAIL.md hooks per
-// tests/e2e/REVEHICLE-PATTERN.md). It is installed in the SUBDIRECTORY the session
+// recordEverything is a NEW-FORMAT file-guard that records every Changeset it is handed . It is installed in the SUBDIRECTORY the session
 // reports, because the engine loads rules from `<cwd>/.sloprail` and every cycle
-// here reports that subdirectory. `match: "**/*.md"` fires on whichever Post kind
-// each change produced; every path this directory drives is `.md`, and — crucially
+// here reports that subdirectory. `match: "**/*.md"` fires on every committed change; every path this directory drives is `.md`, and — crucially
 // for this suite — the paths arrive REPOSITORY-relative (`sub/deep/inner.md`,
 // `top.md`), which the `**/` optional-leading-directory glob matches at the root
 // and at any depth alike. The ledger (`seen`, no `.md`) is not matched, so the
@@ -75,33 +71,6 @@ deletions: include
 checks:
   - script: ./record.sh
 `
-
-// recordScript appends the whole payload as one line to a ledger OUTSIDE the
-// repository. Inside the rule's own folder the ledger would be committed with the
-// agent's work, and a rule whose folder changed no longer has its earlier passes as
-// a watermark: every later cycle's range would collapse to the last commit.
-func recordScript(ledger string) string {
-	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
-}
-
-// readLedger is the recorded payloads, one per line.
-func readLedger(t *testing.T, path string) []string {
-	t.Helper()
-	body, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lines []string
-	for _, l := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return lines
-}
 
 // subProject is a repository whose guardrail lives in a subdirectory two levels
 // down, with the whole arrangement committed so none of it is any cycle's work.
@@ -120,7 +89,7 @@ func subProject(t *testing.T) (e *harness.Env, proj, sub, ledger string) {
 	e.GitInit(proj)
 	sub = filepath.Join(proj, "sub", "deep")
 	ledger = filepath.Join(t.TempDir(), "seen")
-	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": recordScript(ledger)})
+	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, sub, ledger
 }
@@ -153,7 +122,7 @@ func TestT025_01_ACycleFromASubdirectoryReportsItsWork(t *testing.T) {
 			"it, so this is not testing the arrangement it claims to")
 	}
 
-	got := changesetkit.Files(t, readLedger(t, ledger))
+	got := changesetkit.Files(t, changesetkit.Ledger(t, ledger))
 	if !changesetkit.Saw(got, "sub/deep/inner.md") {
 		t.Fatalf("a file written by a cycle reporting a subdirectory was not reported under its "+
 			"repository-relative path: %v — either the session could not be identified from "+
@@ -189,7 +158,7 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 	e.CommitAll(proj, "a file at the top of the tree")
 	sub := filepath.Join(proj, "sub", "deep")
 	ledger := filepath.Join(t.TempDir(), "seen")
-	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": recordScript(ledger)})
+	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
 
 	// The session reports the subdirectory and edits the file ABOVE it, which is
@@ -209,7 +178,7 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 			"the cycle to report and its silence would be correct")
 	}
 
-	got := changesetkit.Files(t, readLedger(t, ledger))
+	got := changesetkit.Files(t, changesetkit.Ledger(t, ledger))
 	k := changesetkit.Statuses(got, "top.md")
 	if len(k) == 0 {
 		t.Fatalf("a file modified outside the reported subdirectory was not reported at all: %v — "+
@@ -308,7 +277,7 @@ func TestT025_04_AVerdictRecordedEarlierHoldsForASubdirectoryCycle(t *testing.T)
 	e.RunFrom(proj, "sub/deep", sess, "settle a file", Turns("done",
 		Write("w1", "settled.md", "judged and passed\n"),
 	).ThenCommit("the agent's work"))
-	first := readLedger(t, ledger)
+	first := changesetkit.Ledger(t, ledger)
 	if len(changesetkit.Statuses(changesetkit.Files(t, first), "sub/deep/settled.md")) == 0 {
 		t.Fatalf("the file was never judged in the first cycle (%v), so there is no verdict for "+
 			"the second cycle to inherit and the skip below would hold for the wrong reason",
@@ -319,7 +288,7 @@ func TestT025_04_AVerdictRecordedEarlierHoldsForASubdirectoryCycle(t *testing.T)
 		Write("w2", "other.md", "cycle two\n"),
 	).ThenCommit("the agent's work"))
 
-	all := readLedger(t, ledger)
+	all := changesetkit.Ledger(t, ledger)
 	if len(all) <= len(first) {
 		t.Fatalf("the second cycle dispatched nothing at all (%d lines, was %d) — a session "+
 			"whose hooks report a subdirectory judged nothing", len(all), len(first))
@@ -398,7 +367,7 @@ exit 0
 	e.RunFrom(proj, "sub/deep", sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
 	).ThenCommit("the agent's work"))
-	first := readLedger(t, ledger)
+	first := changesetkit.Ledger(t, ledger)
 	if len(changesetkit.Statuses(changesetkit.Files(t, first), "sub/deep/bad-file.md")) == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle (%v), so there "+
 			"is no refusal on record and nothing for the second cycle to carry",
@@ -424,7 +393,7 @@ exit 0
 		Write("w2", "fine.md", "acceptable\n"),
 	).ThenCommit("the agent's work"))
 
-	all := readLedger(t, ledger)
+	all := changesetkit.Ledger(t, ledger)
 	if len(all) <= len(first) {
 		t.Fatalf("the second cycle dispatched nothing at all (%d lines, was %d)", len(all), len(first))
 	}

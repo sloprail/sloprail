@@ -14,8 +14,6 @@ import (
 // the guardrail is what makes a refusal actionable rather than merely obstructive,
 // and the NEW pre-tool dispatch must carry that name as well.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // It used to install OLD-format rules (`hooks: PreFileCreate: [matcher: path
 // startsWith "<dir>/"]`) and rely on the old dispatch attaching the guardrail's
 // name to the refusal. The new dispatch attributes a gate's refusal itself:

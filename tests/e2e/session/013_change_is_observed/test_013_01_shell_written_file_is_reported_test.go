@@ -34,17 +34,12 @@ import (
 // `match: "**/*.md"` selects every markdown file the cycle's difference produces,
 // at the repository root or any depth (`**/` compiles to an OPTIONAL leading
 // directory), which is the faithful stand-in for the old binding to all three
-// after-the-fact kinds: a file-guard fires on whichever Post kind the change
-// produced, so create, update and delete all reach the one check. Every path
+// after-the-fact kinds: a file-guard fires on every committed change, so create, update and delete all reach the one check. Every path
 // this directory writes is `.md`, and the guard's own ledger (`seen`, no `.md`)
-// is not matched — so, unlike the old $PWD-under-.sloprail/ ledger, the guard
+// is not matched — so the guard
 // cannot re-observe its own bookkeeping.
 //
-// (Re-vehicled from the old GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md:
-// the new declaration store does not read GUARDRAIL.md, so this coverage of the
-// shared tree-difference machinery would vanish once the old dispatch is deleted.
-// It observes the SAME behavior through the NEW dispatch — the flat CheckPayload
-// (`.changeset.files[]`) via the file-guard's own ledger.)
+// The recorded payloads (`.changeset.files[]`) are read from the file-guard's own ledger.
 const recordEverything = `match: "**/*.md"
 checks:
   - script: ./record.sh
@@ -53,8 +48,7 @@ checks:
 // recordScript appends the whole payload as one line.
 //
 // The ledger is $SR_GUARDRAIL_DIR/seen — the folder the engine sets for a
-// file-guard check (`.sloprail/file-guard/<name>/`), the new-format ledger idiom
-// that replaces the old hook's $PWD (which the mock never set a project dir for).
+// file-guard check (`.sloprail/file-guard/<name>/`), the new-format ledger idiom.
 const recordScript = `#!/bin/sh
 cat >> "$SR_GUARDRAIL_DIR/seen"
 echo >> "$SR_GUARDRAIL_DIR/seen"

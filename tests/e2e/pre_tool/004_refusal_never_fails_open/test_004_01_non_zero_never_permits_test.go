@@ -11,8 +11,6 @@ import (
 // looks exactly like success, so this is the critical safety invariant of the
 // pre-tool dispatch, and it must hold against the NEW dispatch as well.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // It used to install a rule via the OLD format (`hooks: PreFileCreate:
 // [command: ./refuse.sh]`) and vary HOW the hook refused, observing the OLD
 // dispatch fail closed. The NEW pre-tool dispatch

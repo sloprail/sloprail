@@ -1,7 +1,7 @@
 package e2e
 
 import (
-	"os"
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,8 +50,7 @@ import (
 // askAndMaybeRefuse asks the engine what the session has done, records the
 // answer, and refuses when the tree holds a file the rule objects to.
 //
-// A NEW-FORMAT file-guard, after-check (re-vehicled from the old GUARDRAIL.md
-// hooks per tests/e2e/REVEHICLE-PATTERN.md), so it runs at a cycle's end — where
+// A NEW-FORMAT file-guard, after-check , so it runs at a cycle's end — where
 // the refusal-and-read-mark interaction is measured — and its refusal RE-FIRES
 // next cycle, the retained-refusal behavior this suite depends on. One rule for
 // every cycle, so the refusing cycle and the clean ones write to ONE ledger in
@@ -137,25 +136,6 @@ func project(t *testing.T) (*harness.Env, string, string) {
 	return e, proj, ledger
 }
 
-// readLedger is the recorded answers, one per line.
-func readLedger(t *testing.T, path string) []string {
-	t.Helper()
-	body, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lines []string
-	for _, l := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return lines
-}
-
 // T027_01: a refusal on cycle two leaves cycle two's turns for cycle three,
 // while cycle one's stay settled.
 //
@@ -187,11 +167,11 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	e.Run(proj, sess, "cycle one", Turns("done",
 		Write("w1", "one.md", "cycle one\n"),
 	).ThenCommit("the agent's work"))
-	afterFirst := len(readLedger(t, ledger))
+	afterFirst := len(changesetkit.Ledger(t, ledger))
 	if afterFirst == 0 {
 		t.Fatalf("the first cycle never reached the hook, so nothing here can be observed")
 	}
-	answered(t, strings.Join(readLedger(t, ledger), "\n"))
+	answered(t, strings.Join(changesetkit.Ledger(t, ledger), "\n"))
 
 	// Where the mark stands after a cycle that COMPLETED. The refused cycle
 	// below must leave it exactly here.
@@ -214,7 +194,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 		t.Fatalf("the second cycle completed normally (blocking: %v), so there is no "+
 			"interrupted cycle here and the mark had every right to move", blocking)
 	}
-	afterSecond := len(readLedger(t, ledger))
+	afterSecond := len(changesetkit.Ledger(t, ledger))
 	if afterSecond <= afterFirst {
 		t.Fatalf("the second cycle never reached the hook (%d answers, was %d), so it read "+
 			"nothing and there is no span for the third cycle to be re-offered",
@@ -251,7 +231,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 		Bash("b1", "rm bad-file.md"),
 		Write("w3", "three.md", "cycle three\n"),
 	).ThenCommit("the agent's work"))
-	answers := readLedger(t, ledger)
+	answers := changesetkit.Ledger(t, ledger)
 	if len(answers) <= afterSecond {
 		t.Fatalf("the third cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), afterSecond)
@@ -318,7 +298,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 		Bash("b1", "rm bad-file.md"),
 		Write("w2", "two.md", "recovered\n"),
 	).ThenCommit("the agent's work"))
-	afterRecovered := len(readLedger(t, ledger))
+	afterRecovered := len(changesetkit.Ledger(t, ledger))
 	if afterRecovered == 0 {
 		t.Fatalf("the recovering cycle never reached the hook, so nothing can be observed")
 	}
@@ -327,7 +307,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 	e.Run(proj, sess, "a later cycle", Turns("done",
 		Write("w3", "three.md", "later\n"),
 	).ThenCommit("the agent's work"))
-	answers := readLedger(t, ledger)
+	answers := changesetkit.Ledger(t, ledger)
 	if len(answers) <= afterRecovered {
 		t.Fatalf("the later cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), afterRecovered)

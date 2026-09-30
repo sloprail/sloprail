@@ -76,6 +76,9 @@ func TestT048_06_NotFineEndpointBlocksUntilFixed(t *testing.T) {
 		Write("w3", "get-users.ts", "// sr:endpoint users.list\nnow a clean body\n"),
 	).ThenCommit("fix the users endpoint"))
 	afterFix := refusals()
+	if afterFix != afterSecond {
+		t.Fatalf("the fixing commit was refused: %d refusals after cycle 2, %d after the fix", afterSecond, afterFix)
+	}
 
 	e.Run(proj, sess, "add one more clean endpoint", Turns("done",
 		Write("w4", "get-carts.ts", "// sr:endpoint carts.list\nclean body\n"),

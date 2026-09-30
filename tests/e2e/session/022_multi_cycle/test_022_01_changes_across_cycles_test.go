@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,14 +46,6 @@ checks:
   - script: ./record.sh
 `
 
-// recordScript appends the payload to a ledger OUTSIDE the rule's folder, at a
-// path the test bakes in: a rule's hash covers its whole folder, and a ledger
-// growing inside it would change the hash between cycles and drop the rule's
-// watermark, so every cycle would be judged from the floor again.
-func recordScript(ledger string) string {
-	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
-}
-
 // cycles drives a sequence of cycles under one session id and returns, for each,
 // only the events THAT cycle added to the ledger.
 //
@@ -69,7 +60,7 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 	seen := 0
 	for i, s := range scenarios {
 		e.Run(proj, sess, "cycle", s)
-		lines := readLedger(t, ledger)
+		lines := changesetkit.Ledger(t, ledger)
 		if len(lines) < seen {
 			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
 		}
@@ -77,24 +68,6 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 		seen = len(lines)
 	}
 	return out
-}
-
-func readLedger(t *testing.T, path string) []string {
-	t.Helper()
-	body, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lines []string
-	for _, l := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return lines
 }
 
 // project is a repository with the recording guardrail already committed, so the
@@ -113,7 +86,7 @@ func project(t *testing.T, seed ...[2]string) (*harness.Env, string, string) {
 	for _, f := range seed {
 		e.WriteFile(proj, f[0], f[1])
 	}
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
 }

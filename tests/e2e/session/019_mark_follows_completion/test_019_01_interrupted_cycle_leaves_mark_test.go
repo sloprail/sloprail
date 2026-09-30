@@ -26,12 +26,10 @@ import (
 // is NOT covered there is the consequence for a cycle that judged SOME of its
 // turns and was then cut short, which is what this directory adds.
 
-// askWhatHappened is a NEW-FORMAT file-guard (re-vehicled from the old
-// GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md), after-check so it runs
-// at a cycle's end. `match: "**/*.md"` fires on whichever Post kind each cycle's
-// write produced — the same two kinds the old hooks bound. The check reaches the
-// session's record through SR_TRANSCRIPT / SR_WORKSPACE, which the new dispatch
-// sets on a file-guard check exactly as the old-format hook env did.
+// askWhatHappened is a NEW-FORMAT file-guard , after-check so it runs
+// at a cycle's end. `match: "**/*.md"` fires on every committed change. —. The check reaches the
+// session's record through SR_TRANSCRIPT / SR_WORKSPACE, which the dispatch sets
+// on a file-guard check.
 const askWhatHappened = `match: "**/*.md"
 checks:
   - script: ./ask.sh

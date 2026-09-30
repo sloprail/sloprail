@@ -36,8 +36,6 @@ import (
 // the shell alone leaves the child alive and holding the inherited pipes, so
 // Wait blocks anyway and the deadline achieves nothing.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // The per-check timeout and the process-group kill are the new check-runner's own
 // (internal/dispatch/exec.go: defaultCheckTimeout, 600s in production — every test
 // in this file lowers it via SetCheckTimeout so the mechanism is proven without

@@ -24,17 +24,12 @@
 // asserted as the literal wire shape: the flat `event` object carries `kind` and
 // NO subject key, rather than being null.
 //
-// # RE-VEHICLED onto the NEW-format nature dispatch (was old GUARDRAIL.md hooks)
-//
 // Stop is a GateEventKind, so a rule bound to Stop is now a GATE that wakes on it,
 // and the gate's check is what the Stop event is handed to. Every OTHER kind here
 // (PreFileCreate, PreCommandInvoke) is a GateEventKind too, so the subject-naming
-// half is a gate on those pre-action kinds. The mechanical transformation is the
-// one in tests/e2e/REVEHICLE-PATTERN.md: the check receives the FLAT event
-// (`.event.kind`, `.event.invocations`), never the old nested
-// `.event.fields`, and the subjectless-Stop assertion is read against that flat
-// shape — `{"kind":"Stop"}`, an object with no subject, which is the flat-form
-// version of the old `"fields":{}`.
+// half is a gate on those pre-action kinds. The check receives the FLAT event (`.event.kind`, `.event.invocations`) and the
+// subjectless-Stop assertion is read against that shape — `{"kind":"Stop"}`, an
+// object with no subject.
 //
 // # Where Stop comes from
 //
@@ -137,10 +132,6 @@ func project(t *testing.T) (*Env, string) {
 	return e, proj
 }
 
-func commitGuardrails(e *Env, proj string) {
-	e.CommitAll(proj, "the project before the session")
-}
-
 // T026_01: the Stop event a check is given carries an empty subject, on the wire,
 // as an object.
 //
@@ -158,7 +149,7 @@ func commitGuardrails(e *Env, proj string) {
 func TestT026_01_StopCarriesAnEmptySubject(t *testing.T) {
 	e, proj := project(t)
 	e.Gate(proj, "cycle-watch", boundToStop, map[string]string{"record.sh": recordEvent})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-026-01", "do a little work", Turns("done",
 		Write("w1", "notes.md", "some work\n"),
@@ -206,7 +197,7 @@ func TestT026_01_StopCarriesAnEmptySubject(t *testing.T) {
 func TestT026_02_StopFiresWhenNothingChanged(t *testing.T) {
 	e, proj := project(t)
 	e.Gate(proj, "cycle-watch", boundToStop, map[string]string{"record.sh": recordEvent})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-026-02", "look around and change nothing", Turns("done",
 		Bash("b1", "true"),
@@ -246,7 +237,7 @@ func TestT026_03_EveryOtherKindNamesItsSubject(t *testing.T) {
 checks:
   - script: ./record.sh
 `, map[string]string{"record.sh": recordEvent})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-026-03", "write a file and run a command", Turns("done",
 		Write("w1", "docs/guide.md", "hello\n"),
@@ -311,7 +302,7 @@ func TestT026_04_AMatchOnStopDoesNotLoad(t *testing.T) {
 checks:
   - script: ./record.sh
 `, map[string]string{"record.sh": recordEvent})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-026-04", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello\n"),
@@ -334,7 +325,7 @@ checks:
 func TestT026_04b_TheSameRuleWithoutTheMatchRuns(t *testing.T) {
 	e, proj := project(t)
 	e.Gate(proj, "narrowed-cycle", boundToStop, map[string]string{"record.sh": recordEvent})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-026-04b", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello\n"),
@@ -365,7 +356,7 @@ echo '{"reason":"the cycle produced no CHANGELOG entry"}'
 exit 1
 `,
 	})
-	commitGuardrails(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-026-05", "do some work", Turns("done",
 		Write("w1", "notes.md", "work\n"),

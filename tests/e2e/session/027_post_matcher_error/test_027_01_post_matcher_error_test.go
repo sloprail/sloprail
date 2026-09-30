@@ -1,6 +1,5 @@
 // Package e2e asks the matcher half of "a mechanism that fails must not read as
-// approval" at the hook point that ends a cycle, in the NEW nature format. It is
-// the re-vehicled 027.
+// approval" at the hook point that ends a cycle, in the NEW nature format.
 //
 // 014 establishes it at the pre-tool point: a gate trigger `match` that cannot be
 // EVALUATED is the engine unable to answer whether a rule applies, which is not the
@@ -102,7 +101,7 @@ exit 1
 func TestT027_01_TheSameMatcherErrorRefusesBeforeTheAction(t *testing.T) {
 	e, proj := project(t)
 	e.Gate(proj, "npm-access", gateErroringMatcher, map[string]string{"check.sh": permitCheck})
-	commitProject(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-027-01", "publish the package", Turns("done",
 		Bash("b1", "npm publish"),
@@ -143,7 +142,7 @@ func TestT027_02_AMatcherErrorAtTheCyclesHookPointRefuses(t *testing.T) {
 	// A file-guard whose match compiles and cannot be evaluated on the settled file.
 	// See postErroringGuard for why this shape and not one borrowed from the gate side.
 	e.FileGuard(proj, "post-error", postErroringGuard, map[string]string{"check.sh": refuseCheck})
-	commitProject(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-027-02", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello\n"),
@@ -172,7 +171,7 @@ func TestT027_02_AMatcherErrorAtTheCyclesHookPointRefuses(t *testing.T) {
 func TestT027_03_AnAnswerablePostMatcherIsConsulted(t *testing.T) {
 	e, proj := project(t)
 	e.FileGuard(proj, "post-sound", soundPostGuard, map[string]string{"check.sh": refuseCheck})
-	commitProject(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	got := e.Run(proj, "s-027-03", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello\n"),
@@ -197,7 +196,7 @@ func TestT027_03_AnAnswerablePostMatcherIsConsulted(t *testing.T) {
 func TestT027_04_APostMatcherThatDeclinesPermits(t *testing.T) {
 	e, proj := project(t)
 	e.FileGuard(proj, "post-sound", soundPostGuard, map[string]string{"check.sh": refuseCheck})
-	commitProject(e, proj)
+	e.CommitAll(proj, "the project before the session")
 
 	// A file the match does not select: the guard narrows on ".md".
 	e.Run(proj, "s-027-04", "write a text file", Turns("done",

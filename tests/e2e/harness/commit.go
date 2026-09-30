@@ -49,7 +49,13 @@ func (e *Env) CommitAllExcept(dir, msg string, exclude ...string) string {
 // and the trailers as their own paragraph of the message. An empty commit is allowed,
 // so a commit turn after a write a gate refused (which left nothing) is harmless.
 func commitCmd(subject string, trailers ...string) string {
-	cmd := "git add -A && git commit -q --allow-empty -m " + shQuote(subject)
+	return commitStagedCmd("git add -A", subject, trailers...)
+}
+
+// commitStagedCmd is commitCmd with the staging step given: `git add -A` commits
+// everything, `git add -- <paths>` only the named paths.
+func commitStagedCmd(stage, subject string, trailers ...string) string {
+	cmd := stage + " && git commit -q --allow-empty -m " + shQuote(subject)
 	if len(trailers) > 0 {
 		cmd += " -m " + shQuote(strings.Join(trailers, "\n"))
 	}

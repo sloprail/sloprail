@@ -33,15 +33,11 @@ import (
 // passes the second's letter and fails its spirit; one keying on modification
 // time fails both.
 
-// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
-// file event it is handed and passes everything (re-vehicled from the old
-// GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md). `match: "**/*.md"` fires
-// on whichever Post kind each change produced, the same three kinds the old hooks
-// bound. The content-identity SKIP this directory is about is the file-guard's own
+// recordEverything is a NEW-FORMAT file-guard that records every Changeset it is handed and passes everything . `match: "**/*.md"` fires
+// on every committed change. The content-identity SKIP this directory is about is the file-guard's own
 // revalidation record — a guard that judged AND passed a fingerprint of content
 // skips that content when it recurs, keyed per guard (rev.Skip/rev.Record in the
-// post dispatch) — the exact mechanism the old dispatch used, so the same
-// behavior is observed through the new one. The ledger (`seen`, no `.md`) is not
+// post dispatch). The ledger (`seen`, no `.md`) is not
 // matched, so the guard cannot re-observe its own bookkeeping.
 const recordEverything = `match: "**/*.md"
 checks:

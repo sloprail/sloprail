@@ -55,15 +55,6 @@ checks:
   - script: ./record.sh
 `
 
-// recordScript appends each payload to a ledger OUTSIDE the rule's folder, at a
-// path the test bakes in: a rule's hash covers its whole folder, and a ledger
-// growing inside it would change the hash between cycles and drop the rule's
-// watermark. Outside the project too, so the guard cannot observe (or dirty the
-// tree with) its own bookkeeping.
-func recordScript(ledger string) string {
-	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
-}
-
 // project is a repository with the recording guardrail committed LAST, after
 // whatever the test's `pre` puts into the history: a rule's range floors at the
 // last commit touching its own folder, so anything committed after the rule would
@@ -78,7 +69,7 @@ func project(t *testing.T, pre func(e *harness.Env, proj string)) (*harness.Env,
 	if pre != nil {
 		pre(e, proj)
 	}
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
 }

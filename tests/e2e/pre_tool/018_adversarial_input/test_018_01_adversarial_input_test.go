@@ -22,8 +22,6 @@
 // its input is, if anything is confused, able to put an agent's content on the
 // channel the engine reads verdicts from. T018_04 drives exactly that.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // Robustness of the pre-action dispatch is what this suite pins, so the vehicle
 // is a GATE on the pre-write event. The observer records the FLAT GateCheckPayload
 // (`.event.path`, `.event.newContent`) and permits; the narrowed rules narrow with

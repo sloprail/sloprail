@@ -46,11 +46,9 @@ import (
 // T021_01 reproduced the defect and was deleted when the fix landed, on its own
 // instructions. T021_02 is the invariant it guarded and is now live.
 
-// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
-// file event the cycle dispatches, so a test can read exactly which paths were put
+// recordEverything is a NEW-FORMAT file-guard that records every Changeset the cycle dispatches, so a test can read exactly which paths were put
 // in front of a rule bound to the ROOT's own work. `match: "**/*.md"` fires on
-// whichever Post kind each change produced. (Re-vehicled from the old GUARDRAIL.md
-// hooks per tests/e2e/REVEHICLE-PATTERN.md; used by T021_03, which drives the real
+// every committed change. ; used by T021_03, which drives the real
 // dispatch. T021_02 above reads gitrepo.Changed directly and is format-neutral.)
 // The ledger (`seen`, no `.md`) is not matched, so the guard cannot re-observe its
 // own bookkeeping.

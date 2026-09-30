@@ -28,8 +28,8 @@ with what the doc says now.
 ## Why file-guard
 
 The question is about the file's state: does the marked code still match its
-doc? A file that drifts keeps failing every cycle until it is fixed or its
-marker is corrected, whichever commit last touched it. The match is the marker
+doc? A file that drifts keeps failing every cycle until a commit fixes it or corrects
+its marker. The match is the marker
 (`any(markers, .kind == "docs")`), not a path, so any file that makes the claim
 is held to it and no other file is.
 

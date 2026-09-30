@@ -43,15 +43,12 @@ import (
 
 // askWhatHappened runs the query and records the answer, one cycle per line.
 //
-// A NEW-FORMAT file-guard (re-vehicled from the old GUARDRAIL.md hooks per
-// tests/e2e/REVEHICLE-PATTERN.md), after-check so it runs at the END of a cycle —
+// A NEW-FORMAT file-guard , after-check so it runs at the END of a cycle —
 // the moment the question "what has this session done since I last looked" is
-// asked. `match: "**/*.md"` fires on whichever Post kind each cycle's write
-// produced (create or update), the same two kinds the old hooks bound. The check
-// reaches its workspace and the session's read mark exactly as the old hook did:
-// the new dispatch sets SR_TRANSCRIPT / SR_WORKSPACE / SR_SESSION_ID on a
-// file-guard check just as the old-format hook env did (internal/dispatch/exec.go
-// mirrors services/sr-session's hookScope.env). The ledger (`answers`, no `.md`)
+// asked. `match: "**/*.md"` fires on every committed change (create or update). The check
+// reaches its workspace and the session's read mark through SR_TRANSCRIPT /
+// SR_WORKSPACE / SR_SESSION_ID, which the dispatch sets on a file-guard check
+// (internal/dispatch/exec.go). The ledger (`answers`, no `.md`)
 // is not matched, so the guard cannot re-observe its own bookkeeping.
 const askWhatHappened = `match: "**/*.md"
 checks:

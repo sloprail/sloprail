@@ -173,16 +173,11 @@ func TestT013_07_AnUnobjectionableSubagentCycleRecordsNoRefusal(t *testing.T) {
 	}
 }
 
-// refuseCreatedFiles is a file-guard whose after-check objects to every `.md`
-// file created — the settled Post event a sub-agent's own cycle raises for the
-// work it did.
-//
-// RE-VEHICLED onto the new file-guard nature (was old GUARDRAIL.md PostFileCreate
-// hooks). A sub-agent's own cycle is a Post cycle, which is exactly the
-// file-guard's after-check; it fires at the sub-agent's SubagentStop and a refusal
-// blocks that stop, read with e.SubagentBlockingErrors from the sub-agent's own
-// record. `match: "**/*.md"` selects the
-// delegated `.md` work the sub-agent's Bash creates.
+// refuseCreatedFiles is a file-guard that refuses every `.md` file the sub-agent
+// committed. A sub-agent's own cycle ends at its SubagentStop, where the file-guard
+// judges what it committed; a refusal blocks that stop, read with
+// e.SubagentBlockingErrors from the sub-agent's own record. `match: "**/*.md"`
+// selects the delegated `.md` work the sub-agent's Bash creates.
 const refuseCreatedFiles = `match: "**/*.md"
 checks:
   - script: ./refuse.sh

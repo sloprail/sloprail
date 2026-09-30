@@ -17,8 +17,6 @@ import (
 // asking" economy (services/sr-session/nature_pre_tool.go's extractPreEvents over
 // reg.Needed(naturePreToolBoundKinds)).
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // A command occurrence is a GATE trigger (PreCommandInvoke), not a file-guard match
 // — so the binding that asks about commands is a gate's `on`, and these tests
 // install gates. The old rules installed via `e.Guardrail` and read the NESTED

@@ -62,22 +62,16 @@ import (
 // parent's — but its "never from the agent itself" half is a statement about an
 // absence in the environment, and is pinned at unit level.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
 //
-// A sub-agent's OWN cycle is a Post cycle: the sub-agent's work has settled in its
-// tree, and the guardrail fires at the sub-agent's SubagentStop against that
-// difference. That is exactly a file-guard's after-check — a
-// file-guard fires on the settled Post file event and records into the same
-// revalidation store the old format used (services/sr-session/nature_fileguard.go's
-// runFileGuardsPost, driven from the SubagentStop path the same as the root's Stop).
-// So every observation this package rests on — that the sub-agent's cycle judges the
-// file IT made, under the SUB-AGENT'S own SR_SESSION_ID, and that its state does not
-// pool with the parent's — is reached identically through the file-guard's own
-// after-check. The exact transformation is in tests/e2e/REVEHICLE-PATTERN.md.
+// A sub-agent's OWN cycle settles in its tree, and the guardrail fires at the
+// sub-agent's SubagentStop against what it committed: a file-guard's Stop check,
+// driven from the SubagentStop path the same as the root's Stop. So every
+// observation this package rests on — that the sub-agent's cycle judges the file IT
+// made, under the SUB-AGENT'S own SR_SESSION_ID, and that its state does not pool
+// with the parent's — is reached through that check.
 //
-// The rules here observe the sub-agent's own file EVENTS and its own SR_SESSION_ID,
-// which the file-guard check is handed the same way the old hook was. `match:
-// "**/*.md"` selects the sub-agent's `.md` work at any depth (all of it lands as
+// The rules here observe the sub-agent's own changeset and its own SR_SESSION_ID.
+// `match: // "**/*.md"` selects the sub-agent's `.md` work at any depth (all of it lands as
 // `.md`), and never matches the guard's own ledger (`log`, `count` — no `.md`
 // suffix) so no self-observation doubles the ledger. Refusals (T015_07, T015_08)
 // still surface at SubagentStop and are read with e.SubagentBlockingErrors, from

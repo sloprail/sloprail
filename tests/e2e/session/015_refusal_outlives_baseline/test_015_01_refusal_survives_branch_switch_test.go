@@ -23,17 +23,11 @@ import (
 // baseline-derived difference — otherwise the file arrives because it is still
 // in the diff, and the refusal's own contribution is unproven.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
 //
-// This directory tests SHARED engine machinery — baseline movement, tree-diff,
-// readdOutstanding, refusal survival across a branch switch — that the new format
-// still uses. It used to install that machinery's rule via an OLD-format guardrail
-// (`.sloprail/guardrails/watcher/GUARDRAIL.md`, `hooks: PostFileCreate: …`) and
-// observe it fire through the OLD dispatch. It now runs on e.FileGuard on the
-// commit-based model: a file-guard judges the committed changeset at Stop, and an
-// unfixed refusal survives because the next Stop's changeset still holds the file
-// (the range is unchanged until the agent commits a fix). The exact mechanical
-// transformation is in tests/e2e/REVEHICLE-PATTERN.md.
+// This directory tests what a refusal does across a branch switch: a file-guard
+// judges the committed changeset at Stop, and an unfixed refusal survives because
+// the range does not move until a passing Stop (the next Stop's changeset still
+// holds the file).
 //
 // The observation channel is a file-guard's own ledger under
 // `.sloprail/file-guard/watcher/seen` (written via $SR_GUARDRAIL_DIR), read with
@@ -51,7 +45,7 @@ import (
 // compiles to an OPTIONAL leading directory (`(?:.*/)?`), so it matches
 // `bad-file.md` at the repo root AND `sub/x.md` at any depth. Crucially it does
 // NOT match the guard's own ledger (`seen`, no `.md`), its `file-guard.yaml`, or
-// its `judge.sh` — so, unlike the old $PWD-under-.sloprail/ ledger, the guard
+// its `judge.sh` — so the guard
 // cannot re-observe its own bookkeeping and there is no ledger-doubling blowup.
 //
 // The check records BEFORE deciding, so the ledger shows arrival independently of

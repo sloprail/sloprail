@@ -30,8 +30,6 @@ import (
 // `event.tool == "Skill"` therefore fires on a tool call that no other event
 // describes.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // PreToolUse is the harness-native PRE-ACTION event, and the new dispatch's
 // pre-action rule is a GATE: it triggers `on: [{event: PreToolUse}]`, exactly the
 // vehicle the decision rule names for a pre-action block keyed to an event kind.

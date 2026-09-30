@@ -7,6 +7,8 @@ package changesetkit
 
 import (
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -62,6 +64,45 @@ func Saw(got []Observed, path string) bool { return len(Statuses(got, path)) > 0
 func RenamedFrom(got []Observed, path, old string) bool {
 	for _, o := range got {
 		if o.Path == path && o.OldPath == old {
+			return true
+		}
+	}
+	return false
+}
+
+// RecordScript is the check script of a recording file-guard: it appends each
+// payload to ledger as one line and passes. The ledger lives OUTSIDE the rule's
+// folder and the repository: a rule's hash covers its whole folder, so a ledger
+// growing inside it would change the hash between cycles and void the rule's
+// watermark (see the trap test in tests/e2e/fileguard/034).
+func RecordScript(ledger string) string {
+	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
+}
+
+// Ledger is the recorded payloads, one per line; a ledger not yet written is empty.
+func Ledger(t testing.TB, path string) []string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// Has reports whether some recorded changeset holds the path with the given
+// status, both on the same file entry.
+func Has(got []Observed, status, path string) bool {
+	for _, o := range got {
+		if o.Path == path && o.Status == status {
 			return true
 		}
 	}

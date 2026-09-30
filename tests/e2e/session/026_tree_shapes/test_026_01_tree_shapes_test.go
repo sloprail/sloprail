@@ -46,9 +46,7 @@ import (
 // over on an odd tree reports nothing at all, and "the strange path was not
 // reported" is satisfied perfectly by that.
 
-// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
-// file event it is handed (re-vehicled from the old GUARDRAIL.md hooks per
-// tests/e2e/REVEHICLE-PATTERN.md).
+// recordEverything is a NEW-FORMAT file-guard that records every Changeset it is handed .
 //
 // `match: path != ""` — an expression that admits every real path, the file-guard
 // "match everything" this directory needs: it drives non-`.md` paths a `**/*.md`
@@ -56,8 +54,7 @@ import (
 // asserts what does or does not reach the rule for them. It is an expression rather
 // than the `**` glob because `**` compiles to the regexp `.*`, whose `.` does not
 // match a newline — the same blind spot 023 documents — and an empty match is
-// rejected at load. A single file-guard fires on whichever Post kind each change
-// produced, so the create/update/delete classification the kind assertions read
+// rejected at load. A single file-guard fires on every committed change, so the create/update/delete classification the kind assertions read
 // comes through the new dispatch unchanged.
 //
 // Because the match is this wide it WOULD also select the guard's own ledger
@@ -68,35 +65,9 @@ checks:
   - script: ./record.sh
 `
 
-// recordScript appends the whole payload as one line to a ledger OUTSIDE the
-// repository, so the guard's own bookkeeping is never a change it could judge (and
-// never moves the rule's folder, which would forget its earlier passes).
-func recordScript(ledger string) string {
-	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
-}
-
 // countPath is how many times a path was put in front of the rule.
 func countPath(got []changesetkit.Observed, path string) int {
 	return len(changesetkit.Statuses(got, path))
-}
-
-// readLedger is the recorded payloads, one per line.
-func readLedger(t *testing.T, path string) []string {
-	t.Helper()
-	body, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lines []string
-	for _, l := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return lines
 }
 
 // project is a repository with the recording guardrail committed, so the rule's
@@ -108,7 +79,7 @@ func project(t *testing.T) (*harness.Env, string, string) {
 	proj := e.Project()
 	ledger := filepath.Join(t.TempDir(), "seen")
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
 }
@@ -118,7 +89,7 @@ func project(t *testing.T) (*harness.Env, string, string) {
 func runOne(t *testing.T, e *harness.Env, proj, ledger, sess string, s harness.Scenario) []changesetkit.Observed {
 	t.Helper()
 	e.Run(proj, sess, "cycle", s.ThenCommit("the agent's work"))
-	return changesetkit.Files(t, readLedger(t, ledger))
+	return changesetkit.Files(t, changesetkit.Ledger(t, ledger))
 }
 
 // cycles drives a sequence of cycles under one session id, the agent committing
@@ -136,7 +107,7 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 	seen := 0
 	for i, s := range scenarios {
 		e.Run(proj, sess, "cycle", s.ThenCommit("the agent's work"))
-		lines := readLedger(t, ledger)
+		lines := changesetkit.Ledger(t, ledger)
 		if len(lines) < seen {
 			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
 		}
@@ -182,7 +153,7 @@ func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
 	e.WriteFile(proj, "script.sh", "#!/bin/sh\necho hello\n")
 	e.WriteFile(proj, "other.md", "original\n")
 	e.CommitAll(proj, "a file the session will chmod")
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
 	e.CommitAll(proj, "the project before the session")
 
 	// The premise: git is actually tracking the mode. On a filesystem or a
@@ -372,7 +343,7 @@ func TestT026_04_CreatedThenModifiedInOneCycleIsOneCreateOfTheFinalBytes(t *test
 	// word therefore matches the scenario file and fails against a correct
 	// engine, which is what this assertion did before it was scoped.
 	var line string
-	for _, l := range readLedger(t, content) {
+	for _, l := range changesetkit.Ledger(t, content) {
 		if strings.HasPrefix(l, "drafted.md=") {
 			line = strings.TrimPrefix(l, "drafted.md=")
 		}
@@ -380,7 +351,7 @@ func TestT026_04_CreatedThenModifiedInOneCycleIsOneCreateOfTheFinalBytes(t *test
 	if line == "" {
 		t.Fatalf("the rule never read the file it was told about, so which bytes it would have "+
 			"been judging cannot be observed and the assertion below would be vacuous: %v",
-			readLedger(t, content))
+			changesetkit.Ledger(t, content))
 	}
 	if line != "FINALVERSION" {
 		t.Fatalf("the rule was shown %q, want %q — only what the tree holds when the "+
@@ -446,7 +417,7 @@ func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
 	if errs := harness.CommitRequired(e.BlockingErrorsFrom(proj, sess, "Stop")); len(errs) != 0 {
 		t.Fatalf("an untracked nested clone was treated as uncommitted guarded work: %q", errs)
 	}
-	got := changesetkit.Files(t, readLedger(t, ledger))
+	got := changesetkit.Files(t, changesetkit.Ledger(t, ledger))
 	// The premise: the clone really is a separate checkout sitting in the tree.
 	if _, err := os.Stat(filepath.Join(proj, "vendor", "clone", ".git")); err != nil {
 		t.Fatalf("the nested clone is not a repository of its own, so there is no foreign "+

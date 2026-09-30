@@ -4,8 +4,6 @@
 // to have narrowed anything, so it must not refuse), must not disarm a sound rule
 // beside it, and is REPORTED rather than silently swallowed.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // The new dispatch loads new-format declarations through a store that separates the
 // ones that loaded from the ones that could not (internal/declaration/store.go: a
 // malformed gate.yaml becomes an entry in loaded.Invalid with its reasons,

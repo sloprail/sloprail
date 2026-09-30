@@ -13,8 +13,6 @@ import (
 // check, and still lets it write files, read the tree, or make a network call. So
 // these tests read the check's own ledger, not just the outcome.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // The old format switched a rule off with `enabled: false` INSIDE the declaration.
 // The new format keeps that decision on the CONSUMER's side, in
 // `.sloprail/config.yaml`'s `disabled:` list, keyed on the qualified name — for a

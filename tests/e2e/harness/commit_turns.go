@@ -32,7 +32,7 @@ func CommitPaths(id, msg string, paths ...string) Turn {
 	for i, p := range paths {
 		args[i] = shQuote(p)
 	}
-	return Bash(id, "git add -- "+strings.Join(args, " ")+" && git commit -q -m "+shQuote(msg))
+	return Bash(id, commitStagedCmd("git add -- "+strings.Join(args, " "), msg))
 }
 
 // ThenCommit is the scenario followed by the agent committing its work: the

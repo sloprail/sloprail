@@ -27,15 +27,9 @@ import (
 // failures — an engine could re-take the point and still diff against the wrong
 // thing, or take it correctly and dispatch from a stale cache.
 
-// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
-// file event it is handed and permits unconditionally. `match: "**/*.md"` selects
-// every markdown file at any depth — the faithful stand-in for the old binding to
-// all three after-the-fact kinds, which a single file-guard now covers because it
-// fires on whichever Post kind the change produced. The ledger (`seen`, no `.md`)
-// is not matched, so the guard cannot re-observe its own bookkeeping. Re-vehicled
-// from the old GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md so this
-// coverage of the shared baseline/tree-diff machinery survives the old dispatch's
-// deletion, observed through the new flat CheckPayload.
+// recordEverything is a NEW-FORMAT file-guard that records every Changeset it is handed and permits unconditionally. `match: "**/*.md"` selects
+// every markdown file at any depth — a single file-guard that fires on every committed change. The ledger (`seen`, no `.md`)
+// is not matched, so the guard cannot re-observe its own bookkeeping.
 const recordEverything = `match: "**/*.md"
 checks:
   - script: ./record.sh

@@ -35,11 +35,3 @@ func project(t *testing.T) (*harness.Env, string) {
 	e.GitInit(proj)
 	return e, proj
 }
-
-// commitProject commits the whole project — including the new-format
-// .sloprail/{gate,file-guard}/… declarations — so they are the baseline and not
-// the cycle's own work. The new-format equivalent of the old-format
-// commitGuardrails, which committed .sloprail/guardrails/….
-func commitProject(e *harness.Env, proj string) {
-	e.CommitAll(proj, "the project before the session")
-}

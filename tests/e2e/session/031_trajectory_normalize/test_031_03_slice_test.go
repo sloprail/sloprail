@@ -30,10 +30,9 @@ import (
 // it reconstructs the payload from SR_TRANSCRIPT/SR_WORKSPACE the way the shipped
 // examples do — the same idiom 018's askScript uses.
 
-// sliceWatch is a NEW-FORMAT file-guard, after-check (re-vehicled from the old
-// GUARDRAIL.md hooks per tests/e2e/REVEHICLE-PATTERN.md), so it runs at a cycle's
+// sliceWatch is a NEW-FORMAT file-guard, after-check , so it runs at a cycle's
 // end and records both a default and a whole-session normalize read of the session.
-// `match: "**/*.md"` fires on whichever Post kind each cycle's write produced. The
+// `match: "**/*.md"` fires on every committed change. The
 // check reaches the session's record and read mark through SR_TRANSCRIPT /
 // SR_WORKSPACE, which the new dispatch sets on a file-guard check exactly as the
 // old-format hook env did. The `scoped`/`whole` ledgers have no `.md` suffix, so

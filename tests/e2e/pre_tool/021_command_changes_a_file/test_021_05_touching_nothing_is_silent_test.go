@@ -24,8 +24,6 @@ import "testing"
 // so when the reading commands leave it empty, that is the rule declining to fire
 // rather than the rule being broken.
 //
-// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
-//
 // What is observed here is WHICH file events a command derives — a delete for
 // `rm`, an update for an in-place edit, nothing for a read. A gate triggering on
 // the derived file events (PreFileDelete + PreFileUpdate) narrowed to notes.md is
