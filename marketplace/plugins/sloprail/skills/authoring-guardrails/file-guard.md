@@ -110,7 +110,7 @@ There is no `preventive:` key. A file-guard declaration still carrying one (with
 any value) is **refused at load**, with a message telling you to split it. To
 refuse a write before it lands — the useful moment for a rule you would rather
 enforce *before* the loss than report *after* it — write a **gate** bound to the
-pre-write event, and keep a plain file-guard for the settled result:
+pre-write event, and keep a plain file-guard for the committed result:
 
 ```yaml
 # .sloprail/gate/preserves-unasked-content/gate.yaml — the prevention
@@ -143,11 +143,11 @@ bytes about to be lost. A call that changes several files (`rm a.go b.go`, two
 refusal names every file it refused.
 
 Keep what the gate decides small and cheap (a `require`, a script); keep the judge
-in the file-guard, which rules on the settled result at Stop.
+in the file-guard, which rules on the committed result at Stop.
 A script both halves need is written once, as a library that keeps no event-kind
 logic (in the file-guard folder, `<script>-lib.sh`); each half keeps a thin entry
-that reads its own kind — `Pre*` in the gate, `Post*` in the file-guard — and sources
-it (`. "$lib_dir/<script>-lib.sh"`; the gate's entry finds it at
+that reads its own input — the `Pre*` event in the gate, the `Changeset` in the
+file-guard — and sources it (`. "$lib_dir/<script>-lib.sh"`; the gate's entry finds it at
 `../../file-guard/<rule>/`).
 
 **A gate does not fail closed on an unknown result by itself — the engine adds nothing.** A command, `sed`
@@ -162,11 +162,11 @@ A file whose changes must trace to something the user said, such as a goal, a
 rule or an ask, requires a **citation** on the change instead of a transcript
 quote stored in the file. When every change must be grounded, use
 `require: [{citation: {source_types: [user]}}]`. When only some must be (a removal, a status
-transition), use a script check that reads `.event.citations`. Either way the
+transition), use a script check that reads `.changeset.citations` (on a gate, `.event.citations`). Either way the
 agent makes the change with `sr-file ... --cite:user '<quote>'`, and Write, Edit,
 `sed` and `rm` are refused. Put the requirement on a `PreFileWrite` gate, so the
 ungrounded write is refused before it lands, and keep a plain file-guard beside
-it for the settled result. The full pattern is in [grounding.md](grounding.md).
+it for the committed result. The full pattern is in [grounding.md](grounding.md).
 
 ## Deleted files: `deletions`
 
@@ -184,16 +184,17 @@ is this guard's business:
 deletions: include
 ```
 
-A file-guard that includes deletions is asked on the `PostFileDelete` at Stop. A
-guard on the default never sees one — do not write a script branch to wave deletes
-through, leave the key off. To refuse a delete **before** it happens, bind a
-gate to `PreFileDelete` (below).
+With `include` or `only`, a deleted file is an entry in `.changeset.files[]` with
+`status: "D"`, its `oldContent` and `oldMarkers`, and no `newContent`. A guard on
+the default never gets one (the file is named in `others`) — do not write a script
+branch to wave deletes through, leave the key off. To refuse a delete **before**
+it happens, bind a gate to `PreFileDelete` (below).
 
-On a delete, a check reads what was lost: `oldContent` and `oldMarkers`. The
+On a `D` entry, a check reads what was lost: `oldContent` and `oldMarkers`. The
 guard's own `match` sees the deleted file's markers too — for a delete, the
 scope's `markers` is the file's `oldMarkers` — so a marker-scoped guard
 (`any(markers, .kind == "invariant")`) that includes deletions still selects the
-file it is about. On a `PreFileDelete`, read `oldContentKnown` before
+file it is about. On a `PreFileDelete` (a gate), read `oldContentKnown` before
 `oldContent`: it is `false`, with `oldContent` `""`, when the bytes were not
 read (below) — "the file was empty" and "the engine did not look" are otherwise
 the same string.
@@ -205,12 +206,12 @@ of the directory — is expanded into one `PreFileDelete` per file inside it, so
 guard on `scanners/x/scanner.yaml` fires on `rm -rf scanners/x`. The expansion
 has limits, and a `PreFileDelete` gate that must hold past them needs the
 file-guard beside it as the backstop that does not depend on the prediction (the
-Post-phase tree diff, or state the rule keeps itself):
+committed changeset, or state the rule keeps itself):
 
 - **Files:** past 1000 files the directory predicts **nothing** — the command
-  runs, and only files in the session's baseline surface afterwards as
-  `PostFileDelete` at Stop (a file created and removed in the same session
-  leaves no difference at all).
+  runs, and a file-guard with `deletions: include` sees the files tracked in its
+  range as `D` entries once the deletion is committed (a file created and
+  removed without ever being committed leaves no difference at all).
 - **Bytes:** at most 8 MiB is read across the directory. Every file is still
   predicted; one that does not fit in what is left of that budget is not read
   (`oldContentKnown: false`) and charges nothing, so smaller files after it are
@@ -222,8 +223,8 @@ Post-phase tree diff, or state the rule keeps itself):
 - **Unreadable paths:** a subdirectory the walk cannot read is skipped and
   reported on the hook's stderr; the files around it are still predicted.
 - **Unseen commands:** a delete the parser does not model — `find … -delete`, a
-  script, a program named by a variable — predicts nothing; only the tree diff
-  sees it.
+  script, a program named by a variable — predicts nothing; only the committed
+  changeset sees it.
 
 One key with three values, not a list of events: a file-guard binds to a file's
 state, and "is a file that no longer exists my business" is the one place that
@@ -249,7 +250,7 @@ fails, and none is deleted. The gate's `match` reads the kind's own fields
 (`event.path`, `event.oldMarkers`); a marker-scoped delete rule is
 `any(event.oldMarkers, .kind == "invariant")` on the `PreFileDelete` trigger.
 
-## What replaces re-firing and `seen`
+## Passed ranges and replayed fails
 
 Every evaluation is recorded (`sr-checks status`, `sr-checks sql`), and three
 rules follow from it:
@@ -268,8 +269,8 @@ rules follow from it:
   commits it fixes. A stored failure whose input has left the range is cleared as
   stale, not left standing.
 
-`seen` no longer exists for a file-guard: there is no per-file Post event to
-re-send. It remains on the Post events a **context** binds.
+A file-guard has no `seen`: it is handed a changeset, not Post events. `seen`
+remains on the Post events a **context** binds.
 
 ## Reading the change
 
@@ -317,31 +318,26 @@ prediction.
 
 ## Markers
 
-A file event carries the `// sr:<kind>` markers as a **list** of `{kind, fqn,
-line}` — `newMarkers` (the result's markers) on the create and update kinds,
-`oldMarkers` (the file's current markers) on the update and delete kinds. A gate
-on `PreFileWrite` reads them as `event.newMarkers` / `event.oldMarkers`, per
-trigger kind (`PreFileCreate` has no `oldMarkers`). The
+Markers (`// sr:<kind>`) are a **list** of `{kind, fqn, line}`. A file-guard's
+script reads them per file, `.changeset.files[].newMarkers` (at `head`) and
+`.oldMarkers` (at the range's base); its `match` reads the same two sets bare, as
+`markers` and `oldMarkers` (on a delete, `markers` are the ones the deleted file
+carried). A gate on `PreFileWrite` reads the event's `event.newMarkers` /
+`event.oldMarkers`, per trigger kind (`PreFileCreate` has no `oldMarkers`). The
 per-kind field set and the element shape are in [events.md](events.md); read them
-in a check with a quantifier:
+with a quantifier:
 
 ```
 any(newMarkers, .kind == "decision")     would the result carry one
 len(newMarkers) == 0                      does the result carry none
-any(oldMarkers, .kind == "asked")         does the file already carry one
+any(oldMarkers, .kind == "asked")         did the file already carry one
 ```
 
-Note the distinction from a **file-guard's own match scope**, which exposes the
-settled file's markers as `markers` (`any(markers, .kind == "invariant")`) — on a
-delete, the markers the deleted file carried — and the markers it carried before
-the change as `oldMarkers` (empty on a create; the session baseline's at Stop).
-`newMarkers`/`oldMarkers` are also the **event's** fields — what a `Pre`/`Post`
-file event carries, read by a check off `.event.newMarkers`. In a
-script, a marker's quote is on `.fqn`:
+A marker's quote is on `.fqn`:
 
 ```bash
-quote="$(printf '%s' "$input" \
-  | jq -r '(.event.newMarkers // [])[] | select(.kind == "asked") | .fqn' | head -1)"
+quote="$(printf '%s' "$payload" \
+  | jq -r '.changeset.files[0].newMarkers[] | select(.kind == "asked") | .fqn' | head -1)"
 ```
 
 Write markers with `sr-mark`; see its `--help`.

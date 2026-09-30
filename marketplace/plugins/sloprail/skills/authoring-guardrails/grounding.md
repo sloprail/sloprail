@@ -75,8 +75,13 @@ own call.
 
 - An `sr-file` citation lands on that file's events and on the command event. A
   chained `cite` lands on every event the command produces.
-- A `Post` file event at Stop carries the citations of the cited changes that
-  **landed** on its path this session: a cited call that failed, was denied, or
+- A file-guard's `changeset.citations` are the quotes its range's commits cite
+  as `Sloprail-Cites-User` / `Sloprail-Cites-Tool` trailers, resolved as above
+  ([changeset.md](changeset.md));
+  the rest of this list describes a gate's events. A `require: citation` on a
+  file-guard is satisfied by a citation in the range, and its `when` reads the
+  same `Changeset` payload.
+- A cited call that failed, was denied, or
   never ran grounds nothing. A citation grounds only the change it rode on, and
   only for a requirement whose pools it resolved in (a `--cite:tool_result`
   change does not ground a `user` requirement). Every other part of the file's
@@ -140,8 +145,8 @@ require:
 ```
 
 Pair it with a plain file-guard of the same name (`match: 'path startsWith
-"memories/rules/"'` with the same `require`), which refuses at Stop a change that
-reached the tree without a citation — a command the engine could not model, say.
+"memories/rules/"'` with the same `require`), which refuses at Stop commits that
+carry no citation trailer — a change a command made that the engine could not model, say.
 `preventive:` on the file-guard no longer exists; a declaration carrying it is
 refused at load.
 
@@ -159,7 +164,8 @@ require:
 ```
 
 ```bash
-# removes-content.sh: exit 0 when a line present before is gone after.
+# removes-content.sh, a gate's `when` (a file-guard's loops .changeset.files[],
+# see examples/no-unasked-deletion): exit 0 when a line present before is gone after.
 input="$(cat)"
 old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
 new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
@@ -177,9 +183,10 @@ move from, what counts as proof). A hint that spells the exact command (an
 forms' place; one that only advises follows the form for this kind of change,
 so a refusal always carries a command the agent can run.
 
-On `Post` kinds `oldContent` is the session baseline, so a transition such as
-"status became `published` this session" reads the same on the gate and on the
-file-guard beside it. A change whose result the engine could not compute
+A transition such as "status became `published`" reads the same on the gate
+(`event.oldContent` to `event.newContent`) and on the file-guard beside it
+(`oldContent` at the range's base to `newContent` at `head`, per
+`.changeset.files[]`). A change whose result the engine could not compute
 (`resultKnown: false`) is an unknown result: a `require: citation` gate is checked
 first, and a content-dependent check after it must refuse an unknown result
 itself ([file-guard.md](file-guard.md), "The resultKnown discipline"). The
@@ -193,9 +200,9 @@ A judge decides whether the cited words support **this** change — the change,
 not the whole file: a citation grounds what the write it rode on added, altered or
 removed, and lines the change leaves alone were grounded, or not, when they were
 written. It needs no `prepare`: the template reads `{{ change }}` (the unified diff
-of the event's `oldContent` to its `newContent`; at Stop, everything since the
-session baseline, matching the citations recorded this session) and
-`event.citations` directly. Each citation
+of the event's `oldContent` to its `newContent`; on a file-guard, the combined
+diff of the selected files over the range) and `event.citations` (on a
+file-guard, `changeset.citations`) directly. Each citation
 carries its `quote` (the fragment the agent cited, often a short search key) and
 its `message` (the whole entry it was taken from: the user's full message, the
 question with the selected answers, or the tool's output, capped at 16 KB). A
