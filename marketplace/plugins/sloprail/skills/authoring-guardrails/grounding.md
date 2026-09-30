@@ -76,11 +76,16 @@ own call.
 - An `sr-file` citation lands on that file's events and on the command event. A
   chained `cite` lands on every event the command produces.
 - A file-guard's `changeset.citations` are the quotes its range's commits cite
-  as `Sloprail-Cites-User` / `Sloprail-Cites-Tool` trailers, resolved as above
-  ([changeset.md](changeset.md));
-  the rest of this list describes a gate's events. A `require: citation` on a
-  file-guard is satisfied by a citation in the range, and its `when` reads the
-  same `Changeset` payload.
+  as `Sloprail-Cites-User: <quote>` and `Sloprail-Cites-Tool: <quote>` trailers,
+  resolved like `sr-file --cite:user` / `--cite:tool_result`: the quote must match
+  exactly one real user message (or tool output), model text is never citable, and
+  a quote that resolves nowhere is not a citation (`sr-session changeset` lists it
+  under `unresolvedCitations`). The current session's transcript is searched
+  first, then the project's other sessions newest to oldest; the first session
+  containing the quote must match it exactly once. Outside a session (no
+  `CLAUDE_CODE_SESSION_ID`) `citations` is empty. The rest of this list describes
+  a gate's events. A `require: citation` on a file-guard is satisfied by a
+  citation in the range, and its `when` reads the same `Changeset` payload.
 - A cited call that failed, was denied, or
   never ran grounds nothing. A citation grounds only the change it rode on, and
   only for a requirement whose pools it resolved in (a `--cite:tool_result`

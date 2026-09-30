@@ -32,15 +32,9 @@ refusal ending it — each a script ([script-checks.md](script-checks.md)) or a
 judge ([judge-checks.md](judge-checks.md)). `deletions` is the one
 nature-specific knob, below; it is optional.
 
-A file-guard's match sees a file's own facts **bare**: `path`, `status` (`A`, `M`,
-`D` or `R` in the changeset), `markers`, `oldMarkers`, `trailers` and `context` —
-not `event.path`. `markers` is the set of markers the file carries at the end of
-the range (a deleted file's are the ones it carried); test them with a quantifier,
-`any(markers, .kind == "invariant")`. `oldMarkers` is the set it carried before
-the range, for a rule that must also see a marker removed:
-`any(markers, .kind == "invariant") or any(oldMarkers, .kind == "invariant")`.
-`trailers` maps each commit-message trailer key to its values across the range's
-commits: `"move-only" in (trailers["Sloprail-Refactor"] ?? [])`.
+A file-guard's match sees a file's own facts **bare** — `path`, `status`,
+`markers`, `oldMarkers`, `trailers`, `context`, not `event.path`
+([matchers.md](matchers.md)).
 
 ## When it fires: at Stop, over the commits since it last passed
 
@@ -48,15 +42,21 @@ A file-guard is evaluated **once per rule at Stop**, over its range of commits:
 from its base to `HEAD`, as one squashed net diff (`git diff -M base head`). The
 base is the first of these that exists and is still an ancestor of `HEAD`:
 **the rule's watermark** (the last head it passed, at its current definition),
-**the last commit that touched the rule's folder** (a rule in this repository),
-**the HEAD recorded when the session began** (a plugin's rule, or one not
-committed yet). Every base is a SHA, checked with `git merge-base --is-ancestor`
-on every run, so an amend, rebase or branch switch drops a base that no longer
-exists instead of silently shrinking the diff. `sr-session changeset --rule
-<name>` prints the range and the payload without running anything
-([changeset.md](changeset.md)).
+**the last commit that touched the rule's folder** (a rule in this repository: it
+applies going forward from the commit that added or changed it, so files already
+on `main` are not judged until a change touches them), **the HEAD recorded when the
+session began** (a plugin's rule, whose folder is in the plugin cache, or a repo
+rule not committed yet). Every base is a SHA, checked with
+`git merge-base --is-ancestor` on every run, so an amend, rebase or branch switch
+drops a base that no longer exists instead of silently shrinking the diff. If none
+is usable (the session start was never recorded, or the tree left its history) the
+evaluation **fails** and Stop refuses, rather than guess; a range where `match`
+selects nothing is a pass with no `files`, never the same as a range that could
+not be computed.
 
-A file-guard must not write into its own rule folder (ledgers, caches): the rule hash covers the whole folder, so any write changes it, voids the watermark, and re-judges forever. Keep such state in `sr-session state` or under `.git/`.
+A file-guard must not write into its own rule folder (ledgers, caches): the rule
+hash covers the whole folder, so any write changes it, voids the watermark, and
+re-judges forever. Keep such state in `sr-session state` or under `.git/`.
 
 **Commit required.** Work that is not committed cannot be judged, so at Stop an
 uncommitted change to a path some file-guard's `match` selects refuses the Stop:
@@ -74,35 +74,31 @@ That makes a file-guard right for a rule about the **result** of a piece of work
 ("every new file under `memories/` has frontmatter"). It is never handed a `Pre*`
 event, and its checks read the commits, never the working tree.
 
-## What a check receives: the Changeset payload
+## What a check receives
 
-A script gets the payload on stdin; a judge's template renders it. `event` is
-always `{"kind": "Changeset"}`:
+A `Changeset` payload, shaped in [events.md](events.md#changeset--what-a-file-guards-checks-receive).
+A script loops over `.changeset.files[]` (a rule about one file at a time — size,
+frontmatter — is that loop), reading whatever else it needs from `SR_TREE`
+([environment.md](environment.md)); a judge renders `{{ changeset }}` and
+`{{ change }}` ([judge-checks.md](judge-checks.md)).
 
-```json
-{"event": {"kind": "Changeset"},
- "changeset": {
-   "base": "…", "head": "…",
-   "commits": [{"sha": "…", "subject": "…", "body": "…",
-                "trailers": {"Sloprail-Cites-User": ["…"]}}],
-   "files": [{"path": "…", "status": "M", "oldPath": "", "oldContent": "…",
-              "newContent": "…", "oldMarkers": [], "newMarkers": [], "diff": "…"}],
-   "others": [{"path": "README.md", "status": "M"}],
-   "citations": [{"quote": "…", "sourceTypes": ["user"], "path": "…", "line": 3, "message": "…"}]},
- "subject": {"id": "changeset", "files": ["…"]},
- "transcriptPath": "…", "context": {}}
+## Seeing what a rule will be handed
+
+```bash
+sr-session changeset --rule size-limit
 ```
 
-`files` is what `match` selected, in full; `others` is the rest of the range as
-names only. A script loops over `.changeset.files[]` (a rule about one file at a
-time — size, frontmatter — is that loop). It also gets `SR_TREE`, a **read-only
-snapshot of `head`** to read whatever else it needs (a sibling spec, a test file)
-as committed, and `SR_BASE` and `SR_HEAD`. A judge's template renders
-`{{ changeset }}`, `{{ subject }}`, and `{{ change }}` — the combined diff of the
-selected files.
-
-Do not write into your own rule folder from a check (a ledger, a cache): the rule's
-hash covers the whole folder, and a changed hash starts the rule again from its floor.
+prints JSON and **runs nothing**: no check, no judge, no verdict recorded, no
+watermark moved. Use it to write a rule's `match`, script and rubric against real
+input, and to find out why a rule selected (or missed) a file. `--rule` is the
+folder name (`size-limit`) or the qualified name a refusal cites
+(`file-guard/size-limit`, `<plugin>/file-guard/size-limit`). Its keys: `rule`;
+`origin` (which base was used: `watermark`, `floor` or `session-start`); `base`,
+`head`; `droppedWatermark` (a watermark no longer reachable after an amend or
+rebase, when there was one); `ruleHash` (a hash of the rule's whole folder — edit
+anything in it and old verdicts stop applying); `unresolvedCitations` (the
+`Sloprail-Cites-*` trailers whose quote did not resolve); and `payload`, exactly
+what a check receives on stdin.
 
 ## Preventing a write is a gate, not a file-guard
 

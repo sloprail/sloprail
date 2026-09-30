@@ -270,13 +270,38 @@ re-judged rather than skipped.
 ### `Changeset` — what a file-guard's checks receive
 
 Not a kind a gate or a context binds to: a file-guard binds to no event, and its
-checks are handed one `Changeset` per rule per range, with `event: {"kind":
-"Changeset"}` and the change under `changeset` (`base`, `head`, `commits`, `files`,
-`others`, `citations`), the unit judged under `subject`, and `transcriptPath` and
-`context` as everywhere. The `.event.path`, `.event.newContent` and
-`.event.oldContent` of a file event do not exist for a file-guard: loop over
-`.changeset.files[]`. Full shape, and how the range is chosen:
-[file-guard.md](file-guard.md#what-a-check-receives-the-changeset-payload).
+checks are handed one `Changeset` per rule per range. `event` is always
+`{"kind": "Changeset"}`; the `.event.path`, `.event.newContent` and
+`.event.oldContent` of a file event do not exist for a file-guard — loop over
+`.changeset.files[]`.
+
+```json
+{"event": {"kind": "Changeset"},
+ "changeset": {
+   "base": "…", "head": "…",
+   "commits": [{"sha": "…", "subject": "…", "body": "…",
+                "trailers": {"Sloprail-Cites-User": ["…"]}}],
+   "files": [{"path": "…", "status": "M", "oldPath": "", "oldContent": "…",
+              "newContent": "…", "oldMarkers": [], "newMarkers": [], "diff": "…"}],
+   "others": [{"path": "README.md", "status": "M"}],
+   "citations": [{"quote": "…", "sourceTypes": ["user"], "path": "…", "line": 3, "message": "…"}]},
+ "subject": {"id": "changeset", "files": ["…"]},
+ "transcriptPath": "…", "context": {}}
+```
+
+- `base`, `head` — the range, as SHAs ([file-guard.md](file-guard.md) for how the
+  base is chosen).
+- `commits` — every commit in the range, oldest first; `trailers` maps the
+  trailer key in canonical case (`Sloprail-Cites-User`) to its values.
+- `files` — the files `match` selected, in full: `status` is `A`, `M`, `D` or `R`;
+  `oldPath` is set on a rename; `diff` is that file's part of the squashed diff.
+  A `D` entry has `oldContent` and `oldMarkers`, no `newContent`, and is present
+  only under `deletions: include|only`.
+- `others` — the rest of the range, `{path, status}` only (under the default
+  `deletions: skip`, deleted files are named here).
+- `citations` — the range's resolved `Sloprail-Cites-*` quotes
+  ([grounding.md](grounding.md)); empty outside a session.
+- `subject` — the unit judged; `transcriptPath` and `context` as everywhere.
 
 ### `Stop` — a work cycle ended
 

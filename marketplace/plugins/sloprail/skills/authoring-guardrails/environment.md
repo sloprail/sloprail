@@ -20,6 +20,8 @@ its append/dedup). This doc mirrors it.
 | `SR_WORKSPACE` | the repository root — prepend it to a `.event.path` to reach the file on disk | on every check, prepare, enter, exit |
 | `SR_SESSION_ID` | the session id, so one session's state is not another's | on every check, prepare, enter, exit |
 | `SR_TRANSCRIPT` | the session record (same value as the payload's `transcriptPath`) | on every check, prepare, enter, exit |
+| `SR_TREE` | a **read-only snapshot of the range's `head`**, for a file-guard check to read files `match` did not select (a sibling spec, a test file) as committed, never the working tree | file-guard checks only |
+| `SR_BASE`, `SR_HEAD` | the range's two SHAs ([file-guard.md](file-guard.md)) | file-guard checks only |
 | `SLOPRAIL_LAUNCHED_BY` | the guardrails whose checks are on the current call stack — the re-entry provenance | only when a check runs underneath a judging rule (see below) |
 
 Each `SR_*` variable is **left unset when its value is empty**, deliberately —
