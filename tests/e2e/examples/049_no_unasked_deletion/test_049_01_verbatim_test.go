@@ -301,11 +301,14 @@ func TestT049_09_GroundedAskUncleanChangeBlocksViaJudge(t *testing.T) {
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
 	))
 
-	if !res.Refused() {
-		t.Fatalf("an unclean grounded-ask removal (collateral deletion) was NOT refused by the judge:\n%s", res.Output)
+	// The gate holds no judge: the cited removal lands. The judge (in the
+	// file-guard) blocks the turn at Stop.
+	if res.Refused() {
+		t.Fatalf("the gate (citation only, no model) refused a cited removal:\n%s", res.Output)
 	}
-	if !res.Saw("SR049J the diff also removed a provenance line") {
-		t.Fatalf("the judge's clean/absolute reasoning did not reach the agent:\n%s", res.Output)
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+	if !strings.Contains(blocks, "SR049J the diff also removed a provenance line") {
+		t.Fatalf("the judge's clean/absolute reasoning did not block the turn at Stop:\n%s", blocks)
 	}
 }
 

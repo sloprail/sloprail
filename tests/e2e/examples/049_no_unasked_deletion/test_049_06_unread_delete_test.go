@@ -3,6 +3,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,8 +19,9 @@ import (
 //     (oldContentKnown false), and the prepare must send it to the judge
 //     rather than read the empty bytes as nothing removed.
 //
-// The judge refuses (the cited words ask for something else), so each delete
-// must be refused and every memory survive.
+// The gate admits the cited delete (it holds no judge) and the delete runs; the
+// judge in the file-guard refuses it at Stop (the cited words ask for something
+// else), so the turn is blocked with the judge's reasoning.
 func TestT049_19_AnUnreadDeleteIsJudged(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -44,11 +46,11 @@ func TestT049_19_AnUnreadDeleteIsJudged(t *testing.T) {
 			res := e.Run(proj, "s-049-19", prompt, Turns("done",
 				Bash("d1", "sr-session trajectory cite "+shq(prompt)+" --source-types user && rm -rf memories"),
 			))
-			if !res.Refused() || !res.Saw("SR049 the cited words do not ask") {
-				t.Errorf("the cited-but-unrelated rm -rf was not judged:\n%s", res.Output)
-			}
-			if !e.Exists(proj, "memories/topic.md") {
-				t.Errorf("the memory is gone: the delete was admitted unjudged")
+			// The gate (citation only) admits the cited delete, so it runs; the judge in
+			// the file-guard rules on it at Stop, and the turn is blocked.
+			blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-049-19", "Stop"), "\n")
+			if !strings.Contains(blocks, "SR049 the cited words do not ask") {
+				t.Errorf("the cited-but-unrelated rm -rf was not judged at Stop:\n%s\n%s", blocks, res.Output)
 			}
 		})
 	}

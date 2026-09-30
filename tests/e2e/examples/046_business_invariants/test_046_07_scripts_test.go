@@ -32,6 +32,12 @@ func gateDir(t *testing.T, rule string) string {
 	return filepath.Join(repoRoot(t), "examples", "business-invariants", ".sloprail", "gate", rule)
 }
 
+// guardDir is the file-guard half of a rule: the judge and its prepare live there.
+func guardDir(t *testing.T, rule string) string {
+	t.Helper()
+	return filepath.Join(repoRoot(t), "examples", "business-invariants", ".sloprail", "file-guard", rule)
+}
+
 // runRuleScript runs dir/script with payload on stdin and returns its stdout and
 // exit code.
 func runRuleScript(t *testing.T, dir, script, workspace, payload string) (string, int) {
@@ -104,7 +110,7 @@ func TestT046_23_PredicateOutsideARepoWaives(t *testing.T) {
 // the judge would let any citation through.
 func TestT046_24_PrepareRunsTheJudgeWhenThePredicateCrashes(t *testing.T) {
 	dir := t.TempDir()
-	prepare, err := os.ReadFile(filepath.Join(gateDir(t, "pinned-spec-holds"), "only-when-pinned.sh"))
+	prepare, err := os.ReadFile(filepath.Join(guardDir(t, "pinned-spec-holds"), "only-when-pinned.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +143,7 @@ func TestT046_24_PrepareRunsTheJudgeWhenThePredicateCrashes(t *testing.T) {
 			if err := os.Chmod(pred, mode); err != nil {
 				t.Fatal(err)
 			}
-			out, code := runRuleScript(t, dir, "only-when-pinned.sh", t.TempDir(), `{"event":{"kind":"PreFileUpdate","path":"SPEC.md"}}`)
+			out, code := runRuleScript(t, dir, "only-when-pinned.sh", t.TempDir(), `{"event":{"kind":"PostFileUpdate","path":"SPEC.md"}}`)
 			if code != 0 {
 				t.Fatalf("the prepare exited %d: %s", code, out)
 			}
