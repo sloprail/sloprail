@@ -189,10 +189,19 @@ checks:
   - script: ./record.sh
 `
 
+// pathsOfPayload is the shell that lists every file path in the Changeset payload
+// a check is handed, one per line. A file-guard is evaluated once per Stop over the
+// whole range, so one run of the check covers every file the range changed and the
+// recorder writes one ledger line per file.
+const pathsOfPayload = `printf '%s' "$payload" | grep -o '"path":"[^"]*"' | sed 's/^"path":"//; s/"$//'`
+
+// recordScript writes one line per file in the changeset: what it was asked about
+// and WHOSE session it was asked as.
 const recordScript = `#!/bin/sh
 payload=$(cat)
-path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
-echo "judged path=[$path] session=[$SR_SESSION_ID]" >> "$SR_GUARDRAIL_DIR/log"
+for path in $(` + pathsOfPayload + `); do
+  echo "judged path=[$path] session=[$SR_SESSION_ID]" >> "$SR_GUARDRAIL_DIR/log"
+done
 exit 0
 `
 
@@ -201,9 +210,9 @@ exit 0
 //
 // This is the only shape that can tell pooled state from separate state. A rule
 // that merely WROTE would leave two stores looking alike from outside; what
-// distinguishes them is whether one scope can READ what another wrote. So each
-// invocation reports `before=[...]` — the value standing in ITS scope when it
-// ran — and then writes its own path there.
+// distinguishes them is whether one scope can READ what another wrote. So each run
+// reports `before=[...]` — the value standing in ITS scope when it ran — and then
+// writes a note of its own: the paths of the changeset it judged, comma-joined.
 const readsBackItsOwnState = `match: "**/*.md"
 checks:
   - script: ./record.sh
@@ -211,9 +220,12 @@ checks:
 
 const readsBackScript = `#!/bin/sh
 payload=$(cat)
-path=$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
-echo "judged path=[$path] session=[$SR_SESSION_ID] before=[$(sr-session state get seen 2>&1)]" >> "$SR_GUARDRAIL_DIR/log"
-sr-session state set seen "$path" >/dev/null 2>&1
+paths=$(` + pathsOfPayload + `)
+before=$(sr-session state get seen 2>&1)
+for path in $paths; do
+  echo "judged path=[$path] session=[$SR_SESSION_ID] before=[$before]" >> "$SR_GUARDRAIL_DIR/log"
+done
+sr-session state set seen "$(printf '%s' "$paths" | tr '\n' ',')" >/dev/null 2>&1
 exit 0
 `
 
