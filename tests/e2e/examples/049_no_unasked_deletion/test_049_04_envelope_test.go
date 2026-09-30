@@ -63,7 +63,7 @@ func TestT049_15_AnsweredQuestionReachesJudgePrompt(t *testing.T) {
 	// the envelope from run 1; the prepare fetches the whole envelope there.
 	e.Run(proj, sess, "now make the edit", Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\nprovenance: kept\n", "remove the second line please"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser("remove the second line please")))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
 	if prompt == "" {
@@ -103,7 +103,7 @@ func TestT049_16_MessageGroundedRemovalHasNoEnvelopeButStillJudges(t *testing.T)
 	const prompt = "please remove the second line"
 	res := e.Run(proj, "s-049-16", prompt, Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser("please remove the second line")))
 
 	if res.Refused() {
 		t.Fatalf("a message-grounded removal was refused — an empty envelope must not turn a passed removal into a refusal:\n%s", res.Output)

@@ -33,6 +33,7 @@ package e2e
 //   - JUDGE verdict: InstallJudgeClaude supplies the model's pass/fail.
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,7 +68,7 @@ func TestT049_01_PureAdditionAdmits(t *testing.T) {
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "append only, nothing removed"}`)
 
-	e.WriteFile(proj, "memories/topic.md", "first line\n")
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "first line\n")
 
 	sess := "s-049-01"
 	res := e.Run(proj, sess, "append a line to the memory", Turns("done",
@@ -91,7 +92,7 @@ func TestT049_02_RemovalWithoutMarkerBlocks(t *testing.T) {
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 
-	e.WriteFile(proj, "memories/topic.md", "keep this line\nremove this line\n")
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "keep this line\nremove this line\n")
 
 	sess := "s-049-02"
 	res := e.Run(proj, sess, "silently drop a line", Turns("done",
@@ -123,7 +124,7 @@ func TestT049_03_PureAdditionSkipsTheJudge(t *testing.T) {
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR049 the judge ran on a pure addition"}`)
 
-	e.WriteFile(proj, "memories/topic.md", "first line\n")
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "first line\n")
 
 	sess := "s-049-03"
 	res := e.Run(proj, sess, "append a line to the memory", Turns("done",
@@ -145,7 +146,7 @@ func TestT049_05_RmDeleteFailsClosed(t *testing.T) {
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — a delete has no computable result"}`)
 
-	e.WriteFile(proj, "memories/topic.md", "some content\nmore content\n")
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "some content\nmore content\n")
 
 	sess := "s-049-05"
 	res := e.Run(proj, sess, "delete the memory file", Turns("done",
@@ -173,11 +174,11 @@ func TestT049_18_CitedDeleteAdmits(t *testing.T) {
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the user asked to delete this file"}`)
 
-	e.WriteFile(proj, "memories/topic.md", "some content\nmore content\n")
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "some content\nmore content\n")
 
 	res := e.Run(proj, "s-049-18", "delete the memory file", Turns("done",
 		Bash("d1", "sr-file delete memories/topic.md --cite:user 'delete the memory file'"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser("delete the memory file")))
 
 	if res.Refused() {
 		t.Fatalf("a cited sr-file delete was refused:\n%s", res.Output)
@@ -227,7 +228,7 @@ func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
 		e := newEnv(t)
 		proj := nudProject(t, e)
 		e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
-		e.WriteFile(proj, "memories/topic.md", "keep this line\nremove the second line\n")
+		seedCommittedMemory(t, e, proj, "memories/topic.md", "keep this line\nremove the second line\n")
 		sess := "s-049-07-without"
 		res := e.Run(proj, sess, prompt, Turns("done",
 			Write("w1", "memories/topic.md", "keep this line\n"),
@@ -243,11 +244,11 @@ func TestT049_07_MarkerAuthorizesTheRemoval(t *testing.T) {
 		e := newEnv(t)
 		proj := nudProject(t, e)
 		e.InstallJudgeClaude(`{"pass": true, "reasoning": "only the asked line removed"}`)
-		e.WriteFile(proj, "memories/topic.md", "keep this line\nremove the second line\n")
+		seedCommittedMemory(t, e, proj, "memories/topic.md", "keep this line\nremove the second line\n")
 		sess := "s-049-07-with"
 		res := e.Run(proj, sess, prompt, Turns("done",
 			srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-		).ThenCommit("write the files"))
+		).ThenCommit("write the files", harness.CitesUser("please remove the second line")))
 		if res.Refused() {
 			t.Fatalf("WITH a grounded marker, the identical removal was refused — the marker did not authorize it:\n%s", res.Output)
 		}
@@ -263,13 +264,13 @@ func TestT049_08_GroundedAskAdmits(t *testing.T) {
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "only the asked line was removed; content stated absolutely"}`)
 
-	e.WriteFile(proj, "memories/topic.md", "keep this line\nremove the second line\n")
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "keep this line\nremove the second line\n")
 
 	prompt := "please remove the second line"
 	sess := "s-049-08"
 	res := e.Run(proj, sess, prompt, Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser("please remove the second line")))
 
 	if res.Refused() {
 		t.Fatalf("a grounded-ask removal was refused by the shipped rule:\n%s", res.Output)
@@ -291,7 +292,7 @@ func TestT049_09_GroundedAskUncleanChangeBlocksViaJudge(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR049J the diff also removed a provenance line the ask did not cover"}`)
 
 	// The file has a provenance line the ask says nothing about.
-	e.WriteFile(proj, "memories/topic.md",
+	seedCommittedMemory(t, e, proj, "memories/topic.md",
 		"keep this line\nremove the second line\nprovenance: derived from source X\n")
 
 	prompt := "please remove the second line"
@@ -299,7 +300,7 @@ func TestT049_09_GroundedAskUncleanChangeBlocksViaJudge(t *testing.T) {
 	res := e.Run(proj, sess, prompt, Turns("done",
 		// Removes the asked line AND, collaterally, the provenance line.
 		srWrite("w1", "memories/topic.md", "keep this line\n", "please remove the second line"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser("please remove the second line")))
 
 	// The gate holds no judge: the cited removal lands. The judge (in the
 	// file-guard) blocks the turn at Stop.
@@ -323,7 +324,7 @@ func TestT049_10_FabricatedAskBlocksViaScript(t *testing.T) {
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the script refuses a fabricated ask"}`)
 
-	e.WriteFile(proj, "memories/topic.md", "keep this line\nremove the second line\n")
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "keep this line\nremove the second line\n")
 
 	// The user asked to remove the second line; the marker quotes something else
 	// entirely, which resolves to nothing in the trajectory.
@@ -331,7 +332,7 @@ func TestT049_10_FabricatedAskBlocksViaScript(t *testing.T) {
 	sess := "s-049-10"
 	res := e.Run(proj, sess, prompt, Turns("done",
 		srWrite("w1", "memories/topic.md", "keep this line\n", "delete absolutely everything in the project"),
-	).ThenCommit("write the files"))
+	).ThenCommit("write the files", harness.CitesUser("delete absolutely everything in the project")))
 
 	if !res.Refused() {
 		t.Fatalf("a fabricated ask (quote the user never said) was NOT refused:\n%s", res.Output)
@@ -351,7 +352,7 @@ func TestT049_20_SedInPlaceIsRefusedByTheGate(t *testing.T) {
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the gate refuses first"}`)
 
-	e.WriteFile(proj, "memories/topic.md", "keep this line\nremove this line\n")
+	seedCommittedMemory(t, e, proj, "memories/topic.md", "keep this line\nremove this line\n")
 
 	res := e.Run(proj, "s-049-20", "tidy the memory", Turns("done",
 		Bash("b1", "sed -i.bak '/remove this line/d' memories/topic.md"),
@@ -371,8 +372,8 @@ func TestT049_21_RmOfTwoMemoriesNamesBoth(t *testing.T) {
 	proj := nudProject(t, e)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 
-	e.WriteFile(proj, "memories/a.md", "fact a\n")
-	e.WriteFile(proj, "memories/b.md", "fact b\n")
+	seedCommittedMemory(t, e, proj, "memories/a.md", "fact a\n")
+	seedCommittedMemory(t, e, proj, "memories/b.md", "fact b\n")
 
 	res := e.Run(proj, "s-049-21", "clean up", Turns("done",
 		Bash("d1", "rm memories/a.md memories/b.md"),
@@ -403,7 +404,7 @@ func TestT049_22_ScriptRewriteIsCaughtAtStop(t *testing.T) {
 		t.Fatalf("the script rewrite did not land, so this no longer tests the Stop after-check:\n%s", got)
 	}
 	joined := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n---\n")
-	if !strings.Contains(joined, "preserves-unasked-content") || !strings.Contains(joined, "without citing the user's own words") {
+	if !strings.Contains(joined, "preserves-unasked-content") || !strings.Contains(joined, "must cite the user's own words") {
 		t.Fatalf("an uncited script rewrite that dropped a line was not refused at Stop:\n%s", joined)
 	}
 }

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,11 +29,11 @@ func TestT049_19_AnUnreadDeleteIsJudged(t *testing.T) {
 		lay  func(t *testing.T, e *env, proj string)
 	}{
 		{"a big asset sorting before a small memory", func(t *testing.T, e *env, proj string) {
-			e.WriteFile(proj, "memories/topic.md", "a fact worth keeping\n")
+			seedCommittedMemory(t, e, proj, "memories/topic.md", "a fact worth keeping\n")
 			sparse(t, filepath.Join(proj, "memories", "0big.bin"), 9<<20)
 		}},
 		{"a memory too large to read", func(t *testing.T, e *env, proj string) {
-			e.WriteFile(proj, "memories/topic.md", "")
+			seedCommittedMemory(t, e, proj, "memories/topic.md", "")
 			sparse(t, filepath.Join(proj, "memories", "topic.md"), 9<<20)
 		}},
 	} {
@@ -41,11 +42,12 @@ func TestT049_19_AnUnreadDeleteIsJudged(t *testing.T) {
 			proj := nudProject(t, e)
 			e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR049 the cited words do not ask to delete the memories"}`)
 			tc.lay(t, e, proj)
+			e.CommitAll(proj, "seed memories")
 
 			const prompt = "tidy up the build folder"
 			res := e.Run(proj, "s-049-19", prompt, Turns("done",
 				Bash("d1", "sr-session trajectory cite "+shq(prompt)+" --source-types user && rm -rf memories"),
-			).ThenCommit("write the files"))
+			).ThenCommit("write the files", harness.CitesUser(prompt)))
 			// The gate (citation only) admits the cited delete, so it runs; the judge in
 			// the file-guard rules on it at Stop, and the turn is blocked.
 			blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-049-19", "Stop"), "\n")

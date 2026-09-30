@@ -42,6 +42,13 @@ func resolveRuleRange(root string, g declaration.FileGuard, ruleHash string, res
 		if sessionStart, _, err = state.Meta(sessionstate.MetaBaselineCommit); err != nil {
 			return gitrepo.Range{}, err
 		}
+		// A baseline first taken at a sub-agent's own Stop is where its work ENDED, not
+		// where it began: not a floor. Without another, the range fails closed.
+		if _, atStop, err := state.Meta(sessionstate.MetaBaselineAtStop); err != nil {
+			return gitrepo.Range{}, err
+		} else if atStop {
+			sessionStart = ""
+		}
 	}
 	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Dir), watermark, sessionStart)
 	if err != nil {
