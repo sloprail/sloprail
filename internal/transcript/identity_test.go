@@ -292,3 +292,25 @@ func TestStableSessionIDNoPath(t *testing.T) {
 	require.Error(t, err, "an empty transcript path must be an error")
 	require.ErrorIs(t, err, ErrNoTranscriptPath)
 }
+
+func TestStartCwd_IsTheFirstDirectoryNotTheLast(t *testing.T) {
+	p := newProject(t)
+	path := p.write("s",
+		`{"type":"user","uuid":"u1","parentUuid":null,"cwd":"/repo","message":{"role":"user","content":"hi"}}`,
+		`{"type":"assistant","uuid":"a1","parentUuid":"u1","cwd":"/repo/.claude/worktrees/agent-1","message":{"role":"assistant","content":"x"}}`)
+	got, err := StartCwd(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/repo", got)
+}
+
+func TestStartCwd_NoDirectoryNamedIsEmptyNotAnError(t *testing.T) {
+	p := newProject(t)
+	got, err := StartCwd(p.write("s", userMsg("u1", "hi")))
+	require.NoError(t, err)
+	assert.Equal(t, "", got)
+}
+
+func TestStartCwd_UnreadableIsAnError(t *testing.T) {
+	_, err := StartCwd("/no/such/record.jsonl")
+	assert.Error(t, err)
+}

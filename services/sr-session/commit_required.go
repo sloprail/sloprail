@@ -189,29 +189,51 @@ func failClosed(err error) string {
 func isNotARepo(err error) bool { return errors.Is(err, gitrepo.ErrNotARepository) }
 
 // ownsTree reports whether this agent is the one whose commits the tree's rules
-// judge: the session's root always, and a sub-agent only when it works in a tree
-// of its own. A sub-agent whose tree is the session's own (the root's record was
-// written in it) shares the root's uncommitted work and is not gated for it; one
-// whose root record cannot be found is not gated either — declining to gate is
-// the safe failure here, since the root's own Stop still refuses uncommitted work.
+// judge: the session's root always, and a sub-agent only when its git tree is not
+// the root's — a10n's rule. `git rev-parse --show-toplevel` of the sub-agent's cwd
+// against that of the directory the session began in: the same top level means the
+// sub-agent works in the root's own tree, whose commits the root's Stop judges
+// (refusing the sub-agent for them blocked a10n's read-only sub-agent 17 times in a
+// row), and a different one means a worktree of its own.
+//
+// The root's directory is where its record says it began, never where it last
+// stood, so a root that has since `cd`'d into a worktree does not change the
+// answer. No other record is consulted. Every doubt is a gate: a root directory
+// that cannot be determined, or a top level that cannot be read, means the
+// sub-agent IS gated — declining to gate on a guess is how a sub-agent's commit
+// goes unjudged.
 func ownsTree(p HookPayload) bool {
 	if !p.IsSubagent() {
 		return true
 	}
-	record, err := p.record()
-	if err != nil || record == "" {
-		return false
+	rootRecord, err := p.sessionRecord()
+	if err != nil || rootRecord == "" {
+		return true
 	}
-	sessionDir := transcript.SessionDirOfSubagent(record)
-	if sessionDir == "" {
-		return false
+	rootCwd, err := transcript.StartCwd(rootRecord)
+	if err != nil || rootCwd == "" {
+		return true
 	}
-	rootRecord := filepath.Join(filepath.Dir(sessionDir), filepath.Base(sessionDir)+".jsonl")
-	if _, err := os.Stat(rootRecord); err != nil {
-		return false
+	rootTree, err := gitrepo.Root(rootCwd)
+	if err != nil {
+		return true
 	}
-	shared, _ := transcript.BelongsToTree(rootRecord, p.Cwd)
-	return !shared
+	subTree, err := gitrepo.Root(p.Cwd)
+	if err != nil {
+		return true
+	}
+	return !sameDir(rootTree, subTree)
+}
+
+// sameDir compares two directories as the filesystem sees them (macOS reports
+// /var where the disk holds /private/var).
+func sameDir(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ra == rb
 }
 
 // commitRequiredReleased is the loop breaker. It counts this refusal, and reports
