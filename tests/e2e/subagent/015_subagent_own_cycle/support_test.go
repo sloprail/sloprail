@@ -183,11 +183,13 @@ checks:
   - script: ./record.sh
 `
 
-// pathsOfPayload is the shell that lists every file path in the Changeset payload
-// a check is handed, one per line. A file-guard is evaluated once per Stop over the
-// whole range, so one run of the check covers every file the range changed and the
+// pathsOfPayload is the shell that lists every file path the rule was asked to judge
+// in the Changeset payload a check is handed, one per line: `.changeset.files[]`,
+// not `.changeset.others` (the rule's own files, which the commit that installed
+// it puts in the range). A file-guard is evaluated once per Stop over the whole
+// range, so one run of the check covers every file the range changed and the
 // recorder writes one ledger line per file.
-const pathsOfPayload = `printf '%s' "$payload" | grep -o '"path":"[^"]*"' | sed 's/^"path":"//; s/"$//'`
+const pathsOfPayload = `printf '%s' "$payload" | jq -r '.changeset.files[].path'`
 
 // recordScript writes one line per file in the changeset: what it was asked about
 // and WHOSE session it was asked as.
