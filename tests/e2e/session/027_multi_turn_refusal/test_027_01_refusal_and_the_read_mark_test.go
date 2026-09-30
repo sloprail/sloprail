@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -54,13 +56,10 @@ import (
 // next cycle, the retained-refusal behavior this suite depends on. One rule for
 // every cycle, so the refusing cycle and the clean ones write to ONE ledger in
 // order: the point is a session that carries on with the same rule, and a rule
-// that changed mid-session would be a second variable. `match: "**/*.md"` fires on
-// whichever Post kind each write produced — including a DELETE, which the old
-// hooks did NOT bind (they bound PostFileCreate + PostFileUpdate only). A
-// file-guard selects by a file's state, not by kind, so the check restores that
-// scope itself: it short-circuits on a PostFileDelete (see ask.sh), so removing the
-// offending file — which is how the recovering cycle clears the violation — is not
-// itself refused as a "bad" path. The `answers` ledger has no `.md` suffix, so the
+// that changed mid-session would be a second variable. `match: "**/*.md"` selects every
+// markdown file in the committed changeset, whatever its status (A, M or D). The
+// check refuses on a "bad" path, so the recovering cycle clears the violation by
+// committing a change after which the range holds no such file (see ask.sh). The `answers` ledger has no `.md` suffix, so the
 // guard is never handed its own bookkeeping.
 const askAndMaybeRefuse = `match: "**/*.md"
 checks:
@@ -91,17 +90,10 @@ checks:
 //
 // New-format refusal contract: exit non-zero refuses and a `{"reason":…}` on
 // stdout is the reason the agent is told, replacing the old exit-2-with-stderr.
-const askScript = `#!/bin/sh
+const askTemplate = `#!/bin/sh
 payload="$(cat)"
-# The old rule bound only PostFileCreate + PostFileUpdate. A file-guard fires on
-# deletes too, so drop them here: this keeps removing the offending file (the
-# recovering cycle's fix) from being refused as a "bad" path, and keeps the
-# recorded span the same set of events the old binding produced.
-case "$payload" in
-  *'"kind":"PostFileDelete"'*) exit 0 ;;
-esac
 if [ -z "${SR_TRANSCRIPT:-}" ]; then
-  echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "$SR_GUARDRAIL_DIR/answers"
+  echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "LEDGER"
   exit 0
 fi
 {
@@ -109,7 +101,7 @@ fi
   printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
     sr-session query 2>&1 | tr -d '\n'
   printf '>>>\n'
-} >> "$SR_GUARDRAIL_DIR/answers"
+} >> "LEDGER"
 case "$payload" in
   *'"path":"bad'*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
 esac
@@ -131,14 +123,37 @@ func answered(t *testing.T, answer string) {
 
 // project is a repository with the asking rule committed, so the rule's own
 // folder is part of the baseline rather than of every difference.
-func project(t *testing.T) (*harness.Env, string) {
+func project(t *testing.T) (*harness.Env, string, string) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "asker", askAndMaybeRefuse, map[string]string{"ask.sh": askScript})
+	// The ledger is outside the repository: in the rule's own folder it would be
+	// committed with the agent's work, and a rule whose folder changed forgets its
+	// earlier passes.
+	ledger := filepath.Join(t.TempDir(), "answers")
+	e.FileGuard(proj, "asker", askAndMaybeRefuse, map[string]string{"ask.sh": strings.ReplaceAll(askTemplate, "LEDGER", ledger)})
 	e.CommitAll(proj, "the project before the session")
-	return e, proj
+	return e, proj, ledger
+}
+
+// readLedger is the recorded answers, one per line.
+func readLedger(t *testing.T, path string) []string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
 }
 
 // T027_01: a refusal on cycle two leaves cycle two's turns for cycle three,
@@ -158,7 +173,7 @@ func project(t *testing.T) (*harness.Env, string) {
 // resurfacing: with the file gone there is nothing outstanding, so anything
 // cycle three is handed comes from where the reading resumed.
 func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t)
 
 	const sess = "s-027-01"
 	// Each cycle is identified by the file its tool call names, because that is
@@ -171,12 +186,12 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	// Cycle one: clean, and it completes.
 	e.Run(proj, sess, "cycle one", Turns("done",
 		Write("w1", "one.md", "cycle one\n"),
-	))
-	afterFirst := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
+	).ThenCommit("the agent's work"))
+	afterFirst := len(readLedger(t, ledger))
 	if afterFirst == 0 {
 		t.Fatalf("the first cycle never reached the hook, so nothing here can be observed")
 	}
-	answered(t, strings.Join(e.FileGuardLedgerLines(proj, "asker", "answers"), "\n"))
+	answered(t, strings.Join(readLedger(t, ledger), "\n"))
 
 	// Where the mark stands after a cycle that COMPLETED. The refused cycle
 	// below must leave it exactly here.
@@ -189,7 +204,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	// Cycle two: writes a file the rule objects to, and is blocked.
 	e.Run(proj, sess, "cycle two", Turns("done",
 		Write("w2", "bad-file.md", "violates\n"),
-	))
+	).ThenCommit("the agent's work"))
 	// The premise: the cycle really did not finish. Read from the blocking
 	// attachments rather than the stream — a Post hook's refusal blocks the Stop
 	// and its words travel as a hook_blocking_error record, never as a line on
@@ -199,7 +214,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 		t.Fatalf("the second cycle completed normally (blocking: %v), so there is no "+
 			"interrupted cycle here and the mark had every right to move", blocking)
 	}
-	afterSecond := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
+	afterSecond := len(readLedger(t, ledger))
 	if afterSecond <= afterFirst {
 		t.Fatalf("the second cycle never reached the hook (%d answers, was %d), so it read "+
 			"nothing and there is no span for the third cycle to be re-offered",
@@ -235,8 +250,8 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	e.Run(proj, sess, "cycle three", Turns("done",
 		Bash("b1", "rm bad-file.md"),
 		Write("w3", "three.md", "cycle three\n"),
-	))
-	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
+	).ThenCommit("the agent's work"))
+	answers := readLedger(t, ledger)
 	if len(answers) <= afterSecond {
 		t.Fatalf("the third cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), afterSecond)
@@ -281,7 +296,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 // cycle three's turns all over again, and every cycle after that would carry
 // more, which is the compounding the mark exists to end.
 func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
-	e, proj := project(t)
+	e, proj, ledger := project(t)
 
 	const sess = "s-027-02"
 	// Named by the tool call each cycle makes, for the reason given in T027_01.
@@ -292,7 +307,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 	// A cycle that is refused.
 	e.Run(proj, sess, "the refused cycle", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
-	))
+	).ThenCommit("the agent's work"))
 	if blocking := e.BlockingErrors(proj, sess); len(blocking) == 0 {
 		t.Fatalf("the first cycle was not refused, so there is no held mark under test here")
 	}
@@ -302,8 +317,8 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 	e.Run(proj, sess, "the recovering cycle", Turns("done",
 		Bash("b1", "rm bad-file.md"),
 		Write("w2", "two.md", "recovered\n"),
-	))
-	afterRecovered := len(e.FileGuardLedgerLines(proj, "asker", "answers"))
+	).ThenCommit("the agent's work"))
+	afterRecovered := len(readLedger(t, ledger))
 	if afterRecovered == 0 {
 		t.Fatalf("the recovering cycle never reached the hook, so nothing can be observed")
 	}
@@ -311,8 +326,8 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 	// A further clean cycle, which must be offered neither of the two before it.
 	e.Run(proj, sess, "a later cycle", Turns("done",
 		Write("w3", "three.md", "later\n"),
-	))
-	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
+	).ThenCommit("the agent's work"))
+	answers := readLedger(t, ledger)
 	if len(answers) <= afterRecovered {
 		t.Fatalf("the later cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), afterRecovered)
