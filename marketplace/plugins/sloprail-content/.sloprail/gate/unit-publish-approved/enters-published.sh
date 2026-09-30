@@ -30,4 +30,5 @@ case "$kind" in
     exit 1
     ;;
 esac
+new_content="$(field '.event.newContent // ""')"
 lib_check

@@ -16,9 +16,7 @@ kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
 
 lib_check() {
 
-old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
-new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
-
+# The entry sets $old and $new (after deciding they can be trusted).
 # Any line present in old but absent in new. (Order/whitespace refinements are
 # elided in this sample.)
 removed="$(comm -23 <(printf '%s' "$old" | sort -u) <(printf '%s' "$new" | sort -u) | grep -c . || true)"

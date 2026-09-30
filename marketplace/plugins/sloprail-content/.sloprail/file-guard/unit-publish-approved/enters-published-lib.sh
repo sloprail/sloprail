@@ -26,7 +26,7 @@ kind="$(field '.event.kind // ""')"
 lib_check() {
 
 # Only a decided "not published" waives; yes and undecidable both apply.
-publish_claim "$(field '.event.newContent // ""')"
+publish_claim "$new_content"   # set by the entry, once the bytes are known to be read
 [ "$claim" = "no" ] && exit 1
 # The sr-file on PATH cannot read a status at all: apply, and the refusal's
 # hint is the upgrade (check-publish.sh refuses with the same words).

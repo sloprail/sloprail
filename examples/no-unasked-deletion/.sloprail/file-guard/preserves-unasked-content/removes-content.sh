@@ -32,4 +32,6 @@ case "$kind" in
     exit 0
     ;;
 esac
+old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
+new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
 lib_check
