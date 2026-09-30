@@ -8,14 +8,44 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-const preventiveGuard = `match: "memories/**"
-preventive: true
+// preventGate is the PREVENTION half of a grounded rule: a gate on PreFileWrite and
+// PreFileDelete that refuses a change to memories/ carrying no citation of the
+// user's words, before it lands. record.sh notes what it was handed and fails
+// closed on a write whose result the engine could not compute.
+const preventGate = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "memories/"
+  - event: PreFileDelete
+    match: event.path startsWith "memories/"
+require:
+  - citation: {source_types: [user]}
+checks:
+  - script: ./record.sh
+`
+
+// settledGuard is the plain file-guard of the same rule: the same requirement,
+// judged on the settled file at Stop.
+const settledGuard = `match: "memories/**"
 deletions: include
 require:
   - citation: {source_types: [user]}
 checks:
   - script: ./record.sh
 `
+
+// installPre installs the grounded rule as a gate plus a plain file-guard, the two
+// halves sharing a name, and each recording what its check was handed.
+func installPre(e *harness.Env, proj string) {
+	e.Gate(proj, "grounded-memories", preventGate, map[string]string{"record.sh": failClosedRecordScript})
+	e.FileGuard(proj, "grounded-memories", settledGuard, map[string]string{"record.sh": recordScript})
+}
+
+// preLedger is what both halves' checks were handed, the gate's (Pre events)
+// first, then the file-guard's (Post events).
+func preLedger(e *harness.Env, proj string) []string {
+	return append(e.GateLedgerLines(proj, "grounded-memories", "ledger"),
+		e.FileGuardLedgerLines(proj, "grounded-memories", "ledger")...)
+}
 
 type ledgerEntry struct {
 	Kind        string `json:"kind"`
@@ -39,6 +69,17 @@ func ledger(t *testing.T, lines []string) []ledgerEntry {
 	return out
 }
 
+// guardedPre is a project with the grounded rule installed as gate + file-guard.
+func guardedPre(t *testing.T) (*harness.Env, string) {
+	t.Helper()
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	installPre(e, proj)
+	commitAll(t, proj)
+	return e, proj
+}
+
 func guarded(t *testing.T, guard string) (*harness.Env, string) {
 	t.Helper()
 	e := New(t)
@@ -52,7 +93,7 @@ func guarded(t *testing.T, guard string) (*harness.Env, string) {
 // T041_01: the harness Write tool carries no citation, so a guarded write is
 // refused before it lands, and the refusal names the grounded way.
 func TestT041_01_WriteToolIsRefused(t *testing.T) {
-	e, proj := guarded(t, preventiveGuard)
+	e, proj := guardedPre(t)
 
 	res := e.Run(proj, "s-041-01", prompt, Turns("done",
 		Write("w1", "memories/decisions.md", "# decisions"),
@@ -71,7 +112,7 @@ func TestT041_01_WriteToolIsRefused(t *testing.T) {
 // T041_02: sr-file write with a resolving citation lands; the check is handed an
 // exact result (resolved by running sr-file in resolve mode) and the citation.
 func TestT041_02_CitedSRFileWriteLands(t *testing.T) {
-	e, proj := guarded(t, preventiveGuard)
+	e, proj := guardedPre(t)
 
 	res := e.Run(proj, "s-041-02", prompt, Turns("done",
 		Bash("b1", `sr-file write memories/decisions.md --cite:user 'adopt a decision log' --content '# decisions'`),
@@ -82,7 +123,7 @@ func TestT041_02_CitedSRFileWriteLands(t *testing.T) {
 	if !e.Exists(proj, "memories/decisions.md") {
 		t.Fatalf("the cited write did not land:\n%s", res.Output)
 	}
-	entries := ledger(t, e.FileGuardLedgerLines(proj, "grounded-memories", "ledger"))
+	entries := ledger(t, preLedger(e, proj))
 	var pre *ledgerEntry
 	for i := range entries {
 		if entries[i].Kind == "PreFileCreate" {
@@ -108,7 +149,7 @@ func TestT041_02_CitedSRFileWriteLands(t *testing.T) {
 // T041_03: a quote the user never said resolves to nothing, so the write is
 // refused and does not land.
 func TestT041_03_UnresolvedQuoteIsRefused(t *testing.T) {
-	e, proj := guarded(t, preventiveGuard)
+	e, proj := guardedPre(t)
 
 	res := e.Run(proj, "s-041-03", prompt, Turns("done",
 		Bash("b1", `sr-file write memories/decisions.md --cite:user 'the user never said this' --content '# decisions'`),
@@ -128,7 +169,7 @@ func TestT041_03_UnresolvedQuoteIsRefused(t *testing.T) {
 // citations (here an --old-string that is not in the file) is refused, and the
 // refusal quotes sr-file's own error rather than a generic "could not compute".
 func TestT041_13_DryRunFailureIsQuoted(t *testing.T) {
-	e, proj := guarded(t, preventiveGuard)
+	e, proj := guardedPre(t)
 	e.WriteFile(proj, "memories/decisions.md", "# decisions\n")
 	commitAll(t, proj)
 
@@ -144,9 +185,9 @@ func TestT041_13_DryRunFailureIsQuoted(t *testing.T) {
 }
 
 // T041_04: sr-file mixed with another program is never run ahead of time; its
-// result is unknown, so a preventive rule refuses it and nothing lands.
+// result is unknown, so the gate refuses it and nothing lands.
 func TestT041_04_ImpureLineIsRefused(t *testing.T) {
-	e, proj := guarded(t, preventiveGuard)
+	e, proj := guardedPre(t)
 
 	res := e.Run(proj, "s-041-04", prompt, Turns("done",
 		Bash("b1", `sr-file write memories/decisions.md --cite:user 'adopt a decision log' --content x && touch other.txt`),
@@ -166,7 +207,7 @@ func TestT041_05_EditWithEchoIsResolved(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "memories/decisions.md", "# decisions\n- none yet\n")
-	e.FileGuard(proj, "grounded-memories", preventiveGuard, map[string]string{"record.sh": recordScript})
+	installPre(e, proj)
 	commitAll(t, proj)
 
 	res := e.Run(proj, "s-041-05", prompt, Turns("done",
@@ -188,7 +229,7 @@ func TestT041_06_DeletionsNeedACitation(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "memories/old.md", "stale\n")
-	e.FileGuard(proj, "grounded-memories", preventiveGuard, map[string]string{"record.sh": recordScript})
+	installPre(e, proj)
 	commitAll(t, proj)
 
 	res := e.Run(proj, "s-041-06", prompt, Turns("done", Bash("b1", `rm memories/old.md`)))
@@ -207,7 +248,7 @@ func TestT041_06_DeletionsNeedACitation(t *testing.T) {
 	}
 }
 
-// T041_07: a non-preventive guard judges at Stop: an uncited change is refused
+// T041_07: a plain file-guard judges at Stop: an uncited change is refused
 // there, and a cited one — whose citation was recorded at pre-tool — passes.
 func TestT041_07_AfterCheckUsesRecordedCitations(t *testing.T) {
 	const afterGuard = `match: "memories/**"

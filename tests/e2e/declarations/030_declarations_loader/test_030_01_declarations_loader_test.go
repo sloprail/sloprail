@@ -239,3 +239,35 @@ func repoRootForExamples(t *testing.T) string {
 		dir = parent
 	}
 }
+
+// T030_07: `preventive:` was removed from file-guards. A file-guard still carrying
+// it — true or false — is refused at load, by name, and the message says how to
+// split it: a PreFileWrite gate for the prevention plus a plain file-guard for the
+// result. The sound gate beside it still loads. The command exits 1, the status a
+// CI step or a session start reads.
+func TestT030_07_PreventiveFileGuardIsRefusedWithTheSplit(t *testing.T) {
+	e := New(t)
+	for _, value := range []string{"true", "false"} {
+		value := value
+		t.Run("preventive: "+value, func(t *testing.T) {
+			proj := t.TempDir()
+			writeTree(t, proj, map[string]string{
+				".sloprail/file-guard/old-way/file-guard.yaml": "match: \"memories/**\"\npreventive: " + value + "\nchecks:\n  - script: ./check.sh\n",
+				".sloprail/gate/new-way/gate.yaml":             "on:\n  - event: PreFileWrite\n    match: event.path startsWith \"memories/\"\nchecks:\n  - script: ./check.sh\n",
+			})
+
+			res := e.CLIDirect(proj, "sr-file", "declarations", proj)
+			if res.Code != 1 {
+				t.Fatalf("a file-guard carrying `preventive:` must be refused (exit 1), got %d:\n%s", res.Code, res.Output)
+			}
+			for _, want := range []string{"file-guard/old-way", "preventive", "PreFileWrite", "gate", "plain file-guard"} {
+				if !strings.Contains(res.Output, want) {
+					t.Errorf("the refusal does not say %q:\n%s", want, res.Output)
+				}
+			}
+			if !strings.Contains(res.Output, "gates (1): new-way") {
+				t.Errorf("the sound gate beside it must still load:\n%s", res.Output)
+			}
+		})
+	}
+}

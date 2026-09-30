@@ -18,21 +18,17 @@ import (
 
 // This file is the FILE-GUARD half of the new nature dispatch (3c): a rule bound
 // to a FILE'S STATE, not to an event trigger (dot-dir-file-store/main.tsp
-// FileGuardDeclaration). It runs at two moments, mirroring the old format's
-// preventive/after split and the spec's `preventive` doc:
+// FileGuardDeclaration). It runs at ONE moment: at Stop, on the POST file events,
+// checking the settled content. A file-guard never acts before a write — refusing
+// a write or a delete BEFORE it lands is a gate's job (runGatesForEvents on a
+// PreFileWrite / PreFileDelete trigger); the `preventive:` key that once let a
+// file-guard do both was removed, and the loader refuses a declaration carrying it.
 //
-//   - PREVENTIVE, at pre-tool: a guard with `preventive: true` also fires on the
-//     PRE file event, to refuse a not-fine write BEFORE it lands. This is
-//     best-effort (the engine cannot always predict a write), and when the Pre
-//     event could not compute the result (a command-derived update whose
-//     newContent is absent), a preventive guard fails CLOSED — it cannot verify,
-//     so it must not admit.
-//   - AFTER, at Stop: EVERY guard (preventive or not) fires on the POST file
-//     event, checking the settled content. A refusal here does not undo the
-//     write (it is on disk); it blocks the TURN and, crucially, is RECORDED in
-//     the same revalidation store the old format uses — which is what makes a
-//     not-fine file RE-FIRE every cycle until its content satisfies the checks,
-//     the file-guard's defining "re-fires until fine" semantics.
+// A refusal here does not undo the write (it is on disk); it blocks the TURN and,
+// crucially, is RECORDED in the same revalidation store the old format uses —
+// which is what makes a not-fine file RE-FIRE every cycle until its content
+// satisfies the checks, the file-guard's defining "re-fires until fine"
+// semantics.
 //
 // # How the file's STATE is matched (not an event trigger)
 //
@@ -179,7 +175,7 @@ func runFileGuardsPost(
 			selected, err := fileGuardSelects(match, e, contextMap)
 			if err != nil {
 				// The match COMPILED at load but could not be EVALUATED against this
-				// settled file. As at the preventive path and in the old dispatch
+				// settled file. As in the gate path and in the old dispatch
 				// (matcher.go:186 — the caller refuses the action and says why), a match
 				// the engine cannot answer is NOT a rule that cleanly did not match: it
 				// is the engine unable to decide, which must not be read as approval.
@@ -341,10 +337,8 @@ func fileGuardSelects(match *guardrail.Matcher, e event.Event, contextMap map[st
 // map in wire form, all flat.
 //
 // markers comes from the event's NEW markers — on a Post event these are the
-// settled file's markers (Scan of what is on disk), on a Pre create/update the
-// would-be result's. That is the "the markers the file carries" FileMatchScope
-// names: for a settled file it is exactly what the file holds; for a preventive
-// pre-check it is what the write would leave. The wire form (a list of
+// settled file's markers (Scan of what is on disk). That is the "the markers the
+// file carries" FileMatchScope names: exactly what the settled file holds. The wire form (a list of
 // {kind,fqn,line} objects) is what filemod already puts on the event under
 // `newMarkers`, reused rather than re-scanned. On a delete, which has no result,
 // it is the markers the file carried — see fileMarkers.
@@ -408,8 +402,8 @@ func fileOldMarkers(e event.Event) []any {
 // arrive either way (PreFileUpdate and, since the notebook-create fix,
 // PreFileCreate). Absent or false means the engine could not compute the write's
 // outcome (a command-derived update, or a notebook create whose cell source is
-// not the document), which a preventive guard treats as unverifiable and fails
-// closed on. On a kind that does not carry the field, the value is absent and
+// not the document), which a gate that reads the content must treat as unverifiable and
+// fail closed on. On a kind that does not carry the field, the value is absent and
 // this returns false — which is why isUnderivablePreWrite gates on the kind
 // first, so a delete (no result, no field) is not mistaken for an unknown one.
 func resultKnown(e event.Event) bool {
@@ -418,12 +412,13 @@ func resultKnown(e event.Event) bool {
 }
 
 // isUnderivablePreWrite reports whether a Pre event is a create or update whose
-// result the engine could NOT derive — the case a preventive guard must fail
-// closed on, because it cannot verify a file whose settled bytes are unknown.
+// result the engine could NOT derive — the case a pre-write gate must fail
+// closed on, because it cannot verify a file whose settled bytes are unknown (the
+// dispatch uses it to quote what sr-file said about a change it could not compute).
 //
 // Gated on the kind so it fires ONLY where resultKnown is a meaningful signal: a
 // create or an update. A delete carries no result and no `resultKnown` field, so
-// it is never "underivable" in this sense — a preventive guard on a deletion
+// it is never "underivable" in this sense — a PreFileDelete gate
 // judges the bytes about to be lost, which are known. Both the create and the
 // update case are covered (the create was the silently-lost one: a NotebookEdit
 // fresh-.ipynb PreFileCreate marks resultKnown false, and checking only the
@@ -437,16 +432,6 @@ func isUnderivablePreWrite(e event.Event) bool {
 	}
 }
 
-// underivableKindNoun is the word for what an underivable Pre write is, for the
-// refusal message — "create" or "update", so the agent hears which write could
-// not be verified rather than a generic "write".
-func underivableKindNoun(kind string) string {
-	if kind == declaration.KindPreFileCreate {
-		return "create"
-	}
-	return "update"
-}
-
 // fileGuardRevKey namespaces a file-guard's revalidation key so it cannot collide
 // with an old-format guardrail of the same folder name.
 //
@@ -457,10 +442,9 @@ func underivableKindNoun(kind string) string {
 // keeps them apart in the one shared file_checks table.
 func fileGuardRevKey(name string) string { return "file-guard:" + name }
 
-// isPreFileEvent reports whether a kind is a PRE file event a preventive guard
-// can fire on. A delete is included — a preventive guard with `deletions:
-// include` or `only` may refuse an unasked deletion — and whether a particular
-// guard sees it is FileGuard.Covers' decision, applied next to this one.
+// isPreFileEvent reports whether a kind is a PRE file event a gate can fire on.
+// A delete is included: a gate bound to PreFileDelete may refuse an unasked
+// deletion.
 func isPreFileEvent(kind string) bool {
 	switch kind {
 	case declaration.KindPreFileCreate, declaration.KindPreFileUpdate, declaration.KindPreFileDelete:

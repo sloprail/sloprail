@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `when` for the user's approval to publish: does this write move the unit INTO
+# File-guard copy (Stop, settled bytes). `when` for the user's approval to publish: does this write move the unit INTO
 # `status: published`? Exit 0 — it does (the status before was anything else, or
 # there was no file), so the write must cite the user's approval. Exit 1 — it
 # does not (a draft edit, an edit to an already-published unit), so no citation
@@ -32,10 +32,6 @@ field() { printf '%s' "$event" | jq -r "$1" 2>/dev/null; }
 
 kind="$(field '.event.kind // ""')"
 case "$kind" in
-  PreFileCreate | PreFileUpdate)
-    # A result the engine could not compute is undecidable: apply (exit 0).
-    [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
-    ;;
   PostFileCreate | PostFileUpdate)
     # Settled bytes the engine could not read — newContentKnown false, a field
     # declared on PostFileCreate/PostFileUpdate (internal/filemod/module.go

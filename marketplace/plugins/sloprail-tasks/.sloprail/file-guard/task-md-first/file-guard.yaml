@@ -11,15 +11,14 @@
 # matching anything past the two-segment <group>/<task> prefix and excluding
 # only the TASK.md leaf itself, wherever it sits relative to that prefix.
 #
-# preventive: refuse the write before it lands; the after-check re-judges the
-# settled file (catches a shell write whose pre-write result could not be
-# derived). deletions is left at its default (skip): the reviewer deletes an
+# The PREVENTION half — refusing the write before it lands — is the PreFileWrite
+# gate of the same name, beside this guard under gate/. This file-guard is the
+# Stop backstop: it re-judges the settled file (catches a shell write the gate
+# could not see). deletions is left at its default (skip): the reviewer deletes an
 # APPROVED task's whole folder (TASK.md included) as its own next step
 # (task-review's README, "the accepted task is deleted by the agent in a
 # commit of its own") — that delete must not be this guard's business, and a
-# default file-guard's PreFileDelete/PostFileDelete are never dispatched to
-# it at all.
+# default file-guard's PostFileDelete is never dispatched to it at all.
 match: path matches "^memories/tasks/[^/]+/[^/]+/.+$" and not (path endsWith "/TASK.md")
-preventive: true
 checks:
   - script: ./check.sh

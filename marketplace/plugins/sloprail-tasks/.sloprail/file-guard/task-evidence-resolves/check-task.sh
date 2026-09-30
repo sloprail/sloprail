@@ -20,8 +20,8 @@
 # judgement about whether the cited output SUBSTANTIATES the claim — that is
 # task-review's model call. See the plugin README for the three-way split.
 #
-# THE TWO MOMENTS. Preventive: a Pre kind reads the pending bytes; a Post kind at
-# Stop reads the settled bytes on disk.
+# THE STOP HALF. This is the file-guard's copy: it reads the settled bytes on disk.
+# The PreFileWrite gate of the same name carries the pending-bytes copy.
 #
 # THE REFUSAL CONTRACT (internal/dispatch/exec.go): exit 0 permits; any non-zero
 # exit refuses, carrying `{"reason": "..."}` on stdout. Fails closed throughout —
@@ -81,10 +81,8 @@ unset cite_links_loaded
 [ "${cite_links_loaded:-}" = 1 ] \
   || refuse "task-evidence-resolves: cite-links.sh did not load whole (its last-line sentinel cite_links_loaded is unset), so no artifact could be resolved"
 
-# WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on BOTH
-# Pre kinds before newContent is read — an underivable result is deferred to the
-# Post kind (exit 0), which the Stop after-check judges (for a preventive guard the
-# engine refuses such a write before this script runs).
+# WHERE THE BYTES COME FROM. This is the file-guard's copy: the settled file at
+# Stop, off the disk.
 kind="$(field '.event.kind // ""')"
 case "$kind" in
   PostFileCreate | PostFileUpdate)
@@ -97,13 +95,6 @@ case "$kind" in
     # Written and then removed within the cycle: nothing to check, nothing wrong.
     [ -f "$abs" ] || exit 0
     content="$(cat "$abs")" || refuse "task-evidence-resolves: could not read $path to check it"
-    ;;
-  PreFileCreate | PreFileUpdate)
-    if [ "$(field '.event.resultKnown // false')" != "true" ]; then
-      # Not derivable ahead of the write: the settled content is checked at Stop.
-      exit 0
-    fi
-    content="$(field '.event.newContent // ""')"
     ;;
   *)
     # A delete, or a kind this guard is not about: nothing to check.

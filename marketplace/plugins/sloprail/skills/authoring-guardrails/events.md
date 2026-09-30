@@ -111,11 +111,12 @@ resultKnown and not (newContent contains "---")   refuse a strip, say nothing wh
 not resultKnown                                    catch the underivable cases deliberately
 ```
 
-In a script, check presence first (`.event | has("newContent")`); in a judge,
-`exit 0` / defer when the result is not known and let the after-check judge the
-settled file. A create bound only to `PreFileCreate` from an ordinary write always
-carries `newContent` and can read it directly. Details and the dispatch-on-`kind`
-skeleton are in [file-guard.md](file-guard.md).
+In a script, check `resultKnown` first; a **gate that prevents** a write refuses
+(exit 1) when the result is not known, because a write whose bytes nobody saw has
+not been checked — and in a judge-only gate, a first script check does that before
+the judge sees an empty file. A file-guard never meets this: it reads the settled
+`Post*` kinds. `PreFileCreate` carries `resultKnown` too, so check it on both kinds.
+Details are in [file-guard.md](file-guard.md) ("The resultKnown discipline").
 
 ### `PreCommandInvoke` — a shell command line about to run
 
@@ -302,10 +303,10 @@ shapes are in `internal/declaration/payload.go`.
  "context":{"some-context":{"active":true,"payload":{…}}}}
 ```
 
-- `event` — the file event, flat. A `Pre*` only when the guard is `preventive`,
-  otherwise a `Post*`. A `*FileDelete` only when the guard's `deletions:` is
-  `include` or `only`; with `only`, never a create or update
-  ([file-guard.md](file-guard.md)).
+- `event` — the file event, flat. Always a `Post*` kind: a file-guard judges the
+  settled file at Stop and is never handed a `Pre*` event. A `*FileDelete` only
+  when the guard's `deletions:` is `include` or `only`; with `only`, never a
+  create or update ([file-guard.md](file-guard.md)).
 - `transcriptPath` — the session record, for reading what the event does not carry
   (which human message grounds this write). Also on `$SR_TRANSCRIPT`.
 - `context` — every declared context by name, `{active, payload}`, at parity with
@@ -314,7 +315,10 @@ shapes are in `internal/declaration/payload.go`.
 ### GateCheckPayload — a gate's script / prepare / judge
 
 The same three keys, but `event` is any **gate** kind — a gate wakes on command,
-tool and `Stop` events too, never a `Post` variant. `context` is carried at top
+tool and `Stop` events too, never a `Post` variant. A gate on a pre-write event
+(`PreFileWrite`, `PreFileDelete`) is where a write or a delete is prevented, and
+it is run **once per file** a call changes. A gate's judge template also reads
+`{{ change }}`, the unified diff of the pending write. `context` is carried at top
 level, at parity with the gate's match scope, so a gate's checks can read what an
 upstream context left behind.
 

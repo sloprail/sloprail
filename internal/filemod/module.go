@@ -216,8 +216,8 @@ func (*Module) Kinds() []module.KindDecl {
 			// resultKnown is the boolean beside the value that tells the two apart,
 			// exactly as it does on PreFileUpdate: `newContent == ""` asks about the
 			// bytes, `resultKnown` asks whether the engine knew them. Without it a
-			// preventive file-guard could not fail closed on an underivable create —
-			// it would judge the empty string as if it were the file and false-pass.
+			// gate could not fail closed on an underivable create — it would judge
+			// the empty string as if it were the file and false-pass.
 			Fields: []module.FieldDecl{path, newContent, resultKnown, newMarkers, citations},
 		},
 

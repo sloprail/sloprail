@@ -79,21 +79,14 @@ fi
 
 # The content being judged, read FLAT off the event. The judge TEMPLATE reads
 # this same field for the prompt; prepare reads it only to enforce the size gate
-# below, so the two never disagree about what is judged. A Post event carries the
-# settled bytes in newContent too (internal/filemod/extract.go KindPostCreate), so
-# this is correct whether the guard fired at Pre or at the Stop after-check —
-# provided those bytes are really there. A Pre write whose result was not
-# derivable (resultKnown false) or a settled file the engine could not read
-# (newContentKnown false, declared on the Post kinds: a link to a FIFO or a
-# device, or past the read cap) carries "" instead, and judging "" would judge
-# nothing. So both refuse here: the check fails closed.
-case "$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)" in
-  PreFileCreate|PreFileUpdate) known_field="resultKnown" ;;
-  PostFileCreate|PostFileUpdate) known_field="newContentKnown" ;;
-  *) known_field="" ;;
-esac
-if [ -n "$known_field" ] && [ "$(printf '%s' "$payload" | jq -r --arg f "$known_field" '.event[$f] // false' 2>/dev/null)" != "true" ]; then
-  echo "rule-quality: the bytes of $path are not known ($known_field false), so the rule could not be judged" >&2
+# below, so the two never disagree about what is judged. This is the file-guard:
+# it fires at Stop on the SETTLED file (PostFileCreate/PostFileUpdate), where
+# newContent carries the settled bytes off the tree diff. A settled file the
+# engine could not read (newContentKnown false: a link to a FIFO or a device, or
+# past the read cap) carries "" instead, and judging "" would judge nothing, so
+# it refuses here: the check fails closed.
+if [ "$(printf '%s' "$payload" | jq -r '.event.newContentKnown // false' 2>/dev/null)" != "true" ]; then
+  echo "rule-quality: the bytes of $path are not known (newContentKnown false), so the rule could not be judged" >&2
   exit 1
 fi
 body="$(printf '%s' "$payload" | jq -r '.event.newContent // ""' 2>/dev/null)"

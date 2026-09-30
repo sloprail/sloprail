@@ -57,7 +57,7 @@ func TestStructure_AllowedUnitShapePasses(t *testing.T) {
 // that is none of the shapes this plugin declares (not TOPIC.md, UNIT.md,
 // a numbered draft, CONSTRAINT.md, or a distribution file) is refused by
 // THIS PLUGIN's own structure gate, before it lands — the structure gate is
-// preventive by nature (it gates the write itself, at Pre).
+// a gate by nature (it gates the write itself, at Pre).
 func TestStructure_StrayFileUnderTopicsRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()

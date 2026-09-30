@@ -8,12 +8,11 @@
 # script cannot decide exits 0 rather than waive it: no jq, the sibling library
 # missing, an unreadable settled file, a Pre result the engine could not compute.
 #
-# THE TWO MOMENTS match the checks': a Pre kind compares the pending bytes with
-# `.event.oldContent` (the file on disk); a Post kind compares `.event.newContent`
-# (the settled file) with `.event.oldContent` (the session baseline). Both are
-# read off the event, never the disk: at Stop the engine also asks about each
-# PART of a change no citation rode on, with the event narrowed to that part,
-# and the file on disk is only its last state.
+# This is the file-guard's copy: a Post kind compares `.event.newContent` (the settled
+# file) with `.event.oldContent` (the session baseline). Both are read off the event,
+# never the disk: at Stop the engine also asks about each PART of a change no
+# citation rode on, with the event narrowed to that part, and the file on disk is
+# only its last state.
 set -uo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -43,12 +42,8 @@ applies() {
 
 kind="$(field '.event.kind // ""')"
 case "$kind" in
-  PreFileCreate | PostFileCreate)
+  PostFileCreate)
     applies
-    ;;
-  PreFileUpdate)
-    [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
-    content="$(field '.event.newContent // ""')"
     ;;
   PostFileUpdate)
     # The engine declares newContentKnown on PostFileCreate and PostFileUpdate

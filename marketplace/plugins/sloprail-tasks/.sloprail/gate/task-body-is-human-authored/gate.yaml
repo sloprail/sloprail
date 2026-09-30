@@ -1,0 +1,36 @@
+# A task's BODY is the human's ask, grounded, and nothing else — the PRE-WRITE
+# half. An edit to the ask must be refused BEFORE it lands: a Stop refusal reports
+# damage already done to the oracle, and the agent's remedy would be to edit the
+# task again — the prohibited act itself. So this gate carries the whole rule: the
+# citation requirement, the deterministic body check, and the judge. The plain
+# file-guard of the same name, beside it under file-guard/, is the backstop at Stop
+# for a write that reached the tree without passing pre-tool. The full argument
+# lives in file-guard/task-body-is-human-authored/file-guard.yaml and the plugin's
+# README.
+#
+# THE CITATION RIDES ON THE WRITE. `require` demands a user citation, but only
+# `when` body-changed.sh says the write sets the ask (a create, or a body change).
+# An uncited write that does is refused by the engine before any check runs.
+#
+# A write whose result the engine could not compute (`resultKnown: false`) is
+# REFUSED by body-is-stated.sh (stage 1) before the judge: a body nobody saw
+# cannot be judged.
+#
+# match: the task file, TWO directory levels deep.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"'
+require:
+  - citation: {source_types: [user]}
+    when: ./body-changed.sh
+checks:
+  # Stage 1 — deterministic, fail-closed; refuses an unknown result and an empty body.
+  - script: ./body-is-stated.sh
+
+  # Stage 2 — the judge, reached only when stage 1 passed and skipped by its
+  # prepare when the body did not change. model is size-md; allowed_tools: [Read]
+  # opens a cited transcript line under ~/.claude.
+  - prepare: ./resolve-cited-messages.sh
+    judge: ./judge-body.md.j2
+    model: size-md
+    allowed_tools: [Read]

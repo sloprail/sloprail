@@ -1,0 +1,27 @@
+# A task's frontmatter is valid, its artifacts resolve, and its move into in_review
+# is grounded in tool output — the DETERMINISTIC floor of task management, the
+# PRE-WRITE half. This gate refuses a malformed or unproven TASK.md before it
+# lands; the plain file-guard of the same name, beside it under file-guard/, runs
+# the same requirement and check on the settled file at Stop. The full argument
+# (the two kinds of delivery evidence, why the requirement is conditional) lives in
+# file-guard/task-evidence-resolves/file-guard.yaml and the plugin's README.
+#
+# THE REQUIREMENT IS DECLARED, CONDITIONALLY: only the TRANSITION into in_review
+# (`when: ./in-review.sh --entering`) demands a tool_result citation; an uncited
+# transition is refused by the engine before check-task.sh runs, naming the
+# sr-file form. `require` is evaluated first.
+#
+# check-task.sh reads the pending bytes from `event.newContent`. A write whose
+# result the engine could not compute (`resultKnown: false`) is REFUSED by the
+# script rather than admitted unseen; the agent is told to write the file content
+# directly, or to use sr-file on its own line.
+#
+# match: the task file, TWO directory levels deep.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"'
+require:
+  - citation: {source_types: [tool_result]}
+    when: ./in-review.sh --entering
+checks:
+  - script: ./check-task.sh

@@ -63,7 +63,7 @@ import (
 // something that must NOT be — so that a build where nothing happens fails
 // rather than passes.
 
-// forbidSecretGuard is a non-preventive file-guard: a `.md` file is not fine if
+// forbidSecretGuard is a file-guard (acts only at Stop): a `.md` file is not fine if
 // its settled content holds SECRET. It records every time it is asked, and its
 // refusal names the path.
 const forbidSecretGuard = `match: "**/*.md"

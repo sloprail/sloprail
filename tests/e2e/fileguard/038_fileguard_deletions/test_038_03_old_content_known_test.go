@@ -10,7 +10,7 @@ import (
 )
 
 // A PreFileDelete says whether its oldContent was read (oldContentKnown). This
-// guard refuses every delete and names the flag, so the refusal shows what the
+// gate refuses every delete and names the flag, so the refusal shows what the
 // engine told it.
 const echoKnownCheck = `#!/bin/sh
 payload="$(cat)"
@@ -33,7 +33,7 @@ func TestT038_08_ADeleteThatWasReadSaysSo(t *testing.T) {
 		"sr-file delete docs/pinned.md --cite:user 'delete the pinned doc'",
 	} {
 		t.Run(command, func(t *testing.T) {
-			e, proj := project(t, echoKnownCheck, map[string]string{"echo-known": guardYAML("include", true)})
+			e, proj := project(t, echoKnownCheck, map[string]string{"echo-known": "include"})
 			res := e.Run(proj, "s-038-08", "delete the pinned doc", Turns("done",
 				Bash("b1", command),
 			))
@@ -55,7 +55,7 @@ func TestT038_09_DeletingALinkToAFIFOReturns(t *testing.T) {
 		"sr-file delete docs/to-zero.md --cite:user 'delete the links'",
 	} {
 		t.Run(command, func(t *testing.T) {
-			e, proj := project(t, echoKnownCheck, map[string]string{"echo-known": guardYAML("include", true)})
+			e, proj := project(t, echoKnownCheck, map[string]string{"echo-known": "include"})
 			fifo := filepath.Join(t.TempDir(), "fifo")
 			if err := syscall.Mkfifo(fifo, 0o644); err != nil {
 				t.Fatal(err)
@@ -83,15 +83,16 @@ func TestT038_09_DeletingALinkToAFIFOReturns(t *testing.T) {
 	}
 }
 
-// markerGuard selects files by marker — `any(markers, .kind == "invariant")`,
-// the business-invariants shape — and refuses deleting one before it happens.
-const markerGuard = "match: 'any(markers, .kind == \"invariant\")'\npreventive: true\ndeletions: include\nchecks:\n  - script: ./check.sh\n"
+// markerGate selects deletes by marker — `any(event.oldMarkers, .kind ==
+// "invariant")`, the business-invariants shape — and refuses deleting one before
+// it happens. A PreFileDelete carries the markers the file held (`oldMarkers`).
+const markerGate = "on:\n  - event: PreFileDelete\n    match: 'any(event.oldMarkers, .kind == \"invariant\")'\nchecks:\n  - script: ./check.sh\n"
 
-// T038_10: a marker-matched preventive guard selects a marked file's delete
+// T038_10: a marker-matched PreFileDelete gate selects a marked file's delete
 // BEFORE it lands even when the engine did not read the file's bytes. A
 // recursive removal reads at most 8 MiB: here 7.5 MiB of padding sorts first
 // and fits, and the marked spec after it does not — so the spec is predicted
-// unread (no oldContent), and without its markers a marker-scoped guard never
+// unread (no oldContent), and without its markers a marker-scoped gate never
 // selected it; only Stop did, after the fact. Its markers now come from HEAD's
 // copy. A 9 MiB file sorting first charges nothing and the spec is read on disk
 // (the second layout).
@@ -107,7 +108,7 @@ func TestT038_10_AnUnreadMarkedFileIsSelectedBeforeItsDelete(t *testing.T) {
 			e := New(t)
 			proj := e.Project()
 			e.GitInit(proj)
-			e.FileGuard(proj, "keep-invariants", markerGuard, map[string]string{"check.sh": refuseDeletesCheck})
+			e.Gate(proj, "keep-invariants", markerGate, map[string]string{"check.sh": refuseDeletesCheck})
 			e.WriteFile(proj, "docs/specs/0pad.bin", "")
 			if err := os.Truncate(filepath.Join(proj, "docs", "specs", "0pad.bin"), tc.pad); err != nil {
 				t.Fatal(err)
@@ -121,7 +122,7 @@ func TestT038_10_AnUnreadMarkedFileIsSelectedBeforeItsDelete(t *testing.T) {
 				t.Errorf("the marked spec's delete was not refused before it ran:\n%s", res.Output)
 			}
 			if !e.Exists(proj, "docs/specs/spec.md") {
-				t.Errorf("the marked spec is gone: the guard never selected its delete")
+				t.Errorf("the marked spec is gone: the gate never selected its delete")
 			}
 		})
 	}

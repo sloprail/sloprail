@@ -239,7 +239,7 @@ func TestT038_41_TheKeywordParserReadsEveryListShape(t *testing.T) {
 // since a delete that drops nothing needs no citation to reach it. Run directly,
 // against a stub registry that records every write.
 func TestT038_42_NothingIsRecordedWithoutTheUsersWords(t *testing.T) {
-	script := exampleFile(t, ".sloprail/file-guard/scanner-keywords-hold/record-admitted.sh")
+	script := exampleFile(t, ".sloprail/gate/scanner-keywords-hold/record-admitted.sh")
 	for _, tc := range []struct {
 		name      string
 		citations string

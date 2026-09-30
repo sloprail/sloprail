@@ -7,8 +7,9 @@ import "testing"
 // memory: the first write and the second are identical events, and only what the
 // rule stored tells them apart. SHARED machinery — the per-guard `sr-session state`
 // keyspace the new dispatch reuses.
-const countingGuard = `match: "counted/**"
-preventive: true
+const countingGuard = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "counted/"
 checks:
   - script: ./count.sh
 `
@@ -39,7 +40,7 @@ func TestT008_05_HookReachesItsState(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "counter", countingGuard, map[string]string{"count.sh": countScript})
+	e.Gate(proj, "counter", countingGuard, map[string]string{"count.sh": countScript})
 
 	got := e.Run(proj, "s-008-05", "write a note", Turns("done",
 		Write("w1", "counted/first.md", "hello"),
@@ -52,8 +53,7 @@ func TestT008_05_HookReachesItsState(t *testing.T) {
 		t.Fatalf("SR_GUARDRAIL never reached the check:\n%s", got.Output)
 	}
 	// The first write in a fresh session must not be refused at pre-tool as a
-	// repeat. (The stream carries the pre-tool deny; a Stop after-check that later
-	// re-observes the landed file does not surface on this channel.)
+	// repeat. (The stream carries the gate's pre-tool deny.)
 	if got.Refused() {
 		t.Fatalf("the first write in a fresh session was refused — its state read wrongly, or the environment was missing:\n%s", got.Output)
 	}
@@ -70,7 +70,7 @@ func TestT008_06_StateSurvivesAcrossWrites(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "counter", countingGuard, map[string]string{"count.sh": countScript})
+	e.Gate(proj, "counter", countingGuard, map[string]string{"count.sh": countScript})
 
 	got := e.Run(proj, "s-008-06", "write two notes", Turns("done",
 		Write("w1", "counted/first.md", "hello"),

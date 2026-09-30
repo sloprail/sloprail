@@ -28,9 +28,9 @@ being an executable). Only `judge` is required; the others are optional.
 ## The template
 
 The template renders against the same facts a script's stdin carries — the payload
-spread flat at the template's top level — plus, on a file-guard, `change`: the
-unified diff of this change (the event's `oldContent` to its `newContent`; at Stop,
-everything since the session baseline). Wrap what the model judges in tags:
+spread flat at the template's top level — plus, on a file-guard or on a gate bound to a pre-write event, `change`: the
+unified diff of this change (the event's `oldContent` to its `newContent`; on a
+file-guard at Stop, everything since the session baseline). Wrap what the model judges in tags:
 
 ```markdown
 ## The change
@@ -44,7 +44,7 @@ everything since the session baseline). Wrap what the model judges in tags:
 </rules>
 ```
 
-Available at the top level: `{{ change }}` (file-guards), `{{ event.newContent }}`,
+Available at the top level: `{{ change }}` (file-guards and pre-write gates), `{{ event.newContent }}`,
 `{{ event.path }}`, `{{ event.kind }}` and the rest of the event's flat fields;
 `{{ transcriptPath }}`; `{{ context }}`; and `{{ additionalContext.* }}` when
 `prepare` ran. The full field set and the `FileJudgeInput` / `GateJudgeInput`

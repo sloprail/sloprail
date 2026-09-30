@@ -10,18 +10,18 @@ import (
 // format's way: on (nature, name), and on the qualified name
 // `<plugin>/<nature>/<name>`.
 
-// shadowingGuardYAML is a project's OWN new-format file-guard named
-// `authoring-slop` — the same (nature, name) the plugin ships. It matches the
-// same new-format guardrail scripts, and its check permits while recording that
-// it ran.
+// shadowingGuardYAML is a project's OWN new-format gate named `authoring-slop` —
+// the same (nature, name) the plugin's pre-write half ships. It matches the same
+// new-format guardrail scripts, and its check permits while recording that it ran.
 //
 // Precedence is keyed on (nature, name): a project declaration of the same nature
 // and name SHADOWS the plugin's, so the plugin's authoring-slop is dropped and
 // only this one runs. It permits deliberately — the point of the test is that the
 // PLUGIN's rule (which would refuse the slop hook) does not get a say, and a
 // permitted write that lands is the visible proof of that.
-const shadowingGuardYAML = `match: (path contains ".sloprail/file-guard/" or path contains ".sloprail/gate/" or path contains ".sloprail/context/") and path endsWith ".sh"
-preventive: true
+const shadowingGuardYAML = `on:
+  - event: PreFileWrite
+    match: (event.path contains ".sloprail/file-guard/" or event.path contains ".sloprail/gate/" or event.path contains ".sloprail/context/") and event.path endsWith ".sh"
 checks:
   - script: ./check.sh
 `
@@ -45,9 +45,9 @@ func TestT026_03_ProjectRuleTakesPrecedenceOverThePlugins(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 
-	// The same (nature, name) the plugin ships — a file-guard named
+	// The same (nature, name) the plugin ships — a gate named
 	// authoring-slop — written by the project.
-	e.FileGuard(proj, "authoring-slop", shadowingGuardYAML, map[string]string{"check.sh": recordThenPermit})
+	e.Gate(proj, "authoring-slop", shadowingGuardYAML, map[string]string{"check.sh": recordThenPermit})
 
 	// Content the PLUGIN's rule would refuse (the tool-name allowlist). If the
 	// plugin's version were still in force, this write would be blocked. Reads
@@ -61,7 +61,7 @@ func TestT026_03_ProjectRuleTakesPrecedenceOverThePlugins(t *testing.T) {
 	// The project's own rule ran. Read from its ledger rather than the stream — it
 	// permits, and a permitted hook's stderr reaches no agent. Without this the
 	// assertion below could hold because nothing ran at all.
-	if runs := e.FileGuardLedger(proj, "authoring-slop", "ledger"); runs == 0 {
+	if runs := len(e.GateLedgerLines(proj, "authoring-slop", "ledger")); runs == 0 {
 		t.Fatalf("the project's own rule never ran, so whether it displaced the plugin's "+
 			"cannot be concluded:\n%s", got.Output)
 	}
@@ -93,8 +93,9 @@ func TestT026_03_ProjectRuleTakesPrecedenceOverThePlugins(t *testing.T) {
 // `enabled: false` lives in the declaration, which the consumer does not own —
 // and an edit inside the install cache is undone by the next reinstall. So the
 // switch-off is made from the project's own side, naming the rule by its
-// qualified name `<plugin>/<nature>/<name>` — for the migrated new-format guard,
-// `sloprail/file-guard/authoring-slop`.
+// qualified name `<plugin>/<nature>/<name>` — for the migrated new-format pre-write
+// gate, `sloprail/gate/authoring-slop` (and its Stop-time file-guard half,
+// `sloprail/file-guard/authoring-slop`).
 //
 // The write here is the one T026_01 proved is refused, so this is that test's own
 // control inverted: the same project, the same content, one config file
@@ -103,6 +104,7 @@ func TestT026_04_ADisabledPluginRuleIsInert(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 
+	e.DisablePluginGuardrail(proj, "sloprail/gate/authoring-slop")
 	e.DisablePluginGuardrail(proj, "sloprail/file-guard/authoring-slop")
 
 	// Reads the skill first — disabling authoring-slop is a DIFFERENT (nature,
@@ -124,12 +126,12 @@ func TestT026_04_ADisabledPluginRuleIsInert(t *testing.T) {
 // T026_05: disabling is per RULE, keyed on the qualified name — not per plugin,
 // and not shared across natures.
 //
-// A project that disables `sloprail/file-guard/authoring-slop` must not thereby
+// A project that disables `sloprail/gate/authoring-slop` must not thereby
 // disable a rule of its own that happens to be called `authoring-slop`. Those are
 // different rules with different authors, and conflating them would switch off a
 // rule the consumer wrote while they were trying to switch off one they installed.
 //
-// Here the project's own authoring-slop file-guard REFUSES, so its being in force
+// Here the project's own authoring-slop gate REFUSES, so its being in force
 // is visible on the stream. (It shadows the plugin's anyway; the disable of the
 // plugin's qualified name must leave the project's untouched.)
 func TestT026_05_DisablingAPluginRuleLeavesTheProjectsOwnInForce(t *testing.T) {
@@ -138,10 +140,10 @@ func TestT026_05_DisablingAPluginRuleLeavesTheProjectsOwnInForce(t *testing.T) {
 
 	// The project's own rule, named the same, which REFUSES so its being in force
 	// is visible on the stream.
-	e.FileGuard(proj, "authoring-slop", shadowingGuardYAML, map[string]string{
+	e.Gate(proj, "authoring-slop", shadowingGuardYAML, map[string]string{
 		"check.sh": "#!/bin/sh\ncat >/dev/null\necho \"the project's own rule is in force\" >&2\nexit 1\n",
 	})
-	e.DisablePluginGuardrail(proj, "sloprail/file-guard/authoring-slop")
+	e.DisablePluginGuardrail(proj, "sloprail/gate/authoring-slop")
 
 	got := e.Run(proj, "s-026-05", "write a guardrail hook", Turns("done",
 		Write("w1", ".sloprail/context/other/check.sh", cleanHook),
@@ -150,6 +152,6 @@ func TestT026_05_DisablingAPluginRuleLeavesTheProjectsOwnInForce(t *testing.T) {
 	if !got.Saw("the project's own rule is in force") {
 		t.Fatalf("disabling %q also switched off the PROJECT's own rule of that name — "+
 			"the disable list must be keyed on the qualified name:\n%s",
-			"sloprail/file-guard/authoring-slop", got.Output)
+			"sloprail/gate/authoring-slop", got.Output)
 	}
 }

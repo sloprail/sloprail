@@ -28,6 +28,9 @@
 #      this pending write's own edges), and refuse if this task's id is
 #      reachable from itself.
 #
+# THE STOP HALF: this is the file-guard's copy (settled bytes on disk); the PreFileWrite
+# gate of the same name carries the pending-bytes copy.
+#
 # THE GATE: like task-gates-hold, this only matters on entering
 # to_do/in_progress/in_review — moving among backlog/blocked, or staying
 # in_progress, costs nothing. Unlike gates (checked only on the
@@ -92,13 +95,6 @@ case "$kind" in
     if [ ! -s "$abs" ]; then
       exit 0
     fi
-    ;;
-  PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
-    if [ "$known" != "true" ]; then
-      exit 0
-    fi
-    new_content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
   *)
     exit 0

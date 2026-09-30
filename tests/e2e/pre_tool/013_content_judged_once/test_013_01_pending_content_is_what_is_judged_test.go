@@ -17,7 +17,7 @@
 // has a different fingerprint and is always judged. These tests re-prove that
 // against the new dispatch, reading the FLAT CheckPayload (`.event.newContent`).
 //
-// The check is an AFTER-check (non-preventive), because the skip/re-fire is a
+// The check is an AFTER-check (a plain file-guard), because the skip/re-fire is a
 // property of the settled-content path — a Post event carries the settled bytes,
 // and revalidation keys on those. The ledger under the guard's own folder records
 // every time the check is ASKED, which is what separates "judged" from "skipped".

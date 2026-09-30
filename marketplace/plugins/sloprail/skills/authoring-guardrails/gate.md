@@ -64,9 +64,55 @@ The gate refuses **before** the action, preventing it. Examples:
   `PreFileUpdate`, so one trigger covers both. `event.path startsWith
   "memories/decisions/"`. (A gate cannot use `PostFileWrite` — that alias is
   context-only.)
+- **`PreFileDelete`** — a file about to be deleted (`rm`, `git rm`, `mv` away, a
+  recursive removal expanded per file). Not part of the `PreFileWrite` alias.
 - **`PreCommandInvoke`** — a shell command line about to run. It carries the
   **flattened `invocations`** it parsed (below).
 - **`PreToolUse`** — a tool call about to run.
+
+### Preventing a write or a delete — `PreFileWrite` and `PreFileDelete`
+
+This is where writes and deletes are **prevented**. A file-guard judges only what
+settled at Stop; the gate is the one that refuses before the bytes land or the
+file goes. (A `preventive:` key on a file-guard no longer exists — such a
+declaration is refused at load. Split it into a gate like the ones below plus a
+plain file-guard for the settled result; see [file-guard.md](file-guard.md).)
+
+```yaml
+on:
+  - event: PreFileWrite            # PreFileCreate + PreFileUpdate
+    match: 'event.path startsWith "spec/"'
+  - event: PreFileDelete           # a delete is not a write: name it to cover it
+    match: 'event.path startsWith "spec/"'
+require:
+  - citation: {source_types: [user]}
+checks:
+  - script: ./verify.sh
+```
+
+- **What it sees.** A create carries `newContent`, `resultKnown`, `newMarkers`,
+  `citations`; an update adds `oldContent` and `oldMarkers`; a delete carries
+  `oldContent`, `oldContentKnown`, `oldMarkers`, `citations` — the bytes about to
+  be lost ([events.md](events.md)). A gate's judge reads `{{ change }}`, the diff
+  of the pending write.
+- **Every file, once each.** One tool call can change several files (`rm a.go
+  b.go`, two `sr-file` calls joined by `&&`) and runs whole or not at all. The gate
+  is run once per matching file event, so a call whose *second* file fails is
+  refused before it runs and none of them is changed; the one refusal names every
+  refused file. Once a file is refused by one gate, no other gate is asked about
+  it. A command, a tool call or `Stop` still wakes a gate once.
+- **An unknown result is yours to refuse.** When the engine cannot compute what a
+  write will leave (`sed -i`, `git apply`, a notebook create, an `sr-file` line it
+  could not resolve), the event carries `resultKnown: false` and an empty
+  `newContent` — the same observation as a write that empties the file. The gate
+  does **not** fail closed for you: a gate whose decision reads the content refuses
+  when `resultKnown` is not `true` (a first `script` check does it for a judge-only
+  gate), or the write lands unchecked. The file-guard beside it judges the settled
+  file at Stop as the backstop. See [file-guard.md](file-guard.md), "The
+  resultKnown discipline".
+- **Grounding.** `require: [{citation: …}]` works on a `PreFileWrite` or
+  `PreFileDelete` gate exactly as on any gate ([grounding.md](grounding.md)); when
+  an `sr-file` line could not be resolved, the refusal quotes what `sr-file` said.
 
 ### The turn as a whole — the Stop gate
 

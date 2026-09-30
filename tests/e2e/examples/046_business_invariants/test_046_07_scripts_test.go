@@ -22,6 +22,16 @@ func ruleDir(t *testing.T, rule string) string {
 	return filepath.Join(repoRoot(t), "examples", "business-invariants", ".sloprail", "file-guard", rule)
 }
 
+// gateDir is the shipped GATE folder of a rule that ships in two halves
+// (pinned-spec-holds): the gate reads Pre* events before the write, the
+// file-guard of the same name reads the settled Post* ones at Stop, and each
+// carries its own copy of the predicate, so a payload goes to the copy that
+// reads its kind.
+func gateDir(t *testing.T, rule string) string {
+	t.Helper()
+	return filepath.Join(repoRoot(t), "examples", "business-invariants", ".sloprail", "gate", rule)
+}
+
 // runRuleScript runs dir/script with payload on stdin and returns its stdout and
 // exit code.
 func runRuleScript(t *testing.T, dir, script, workspace, payload string) (string, int) {
@@ -60,7 +70,7 @@ func TestT046_23_PredicateOutsideARepoWaives(t *testing.T) {
 	notRepo := t.TempDir()
 	payload := `{"event":{"kind":"PreFileUpdate","path":"SPEC.md","resultKnown":true,` +
 		`"oldContent":"a\nb\n","newContent":"a\nc\n","oldMarkers":[],"newMarkers":[]}}`
-	dir := ruleDir(t, "pinned-spec-holds")
+	dir := gateDir(t, "pinned-spec-holds")
 	out, code := runRuleScript(t, dir, "changes-pinned-lines.sh", notRepo, payload)
 	if code != 1 || !strings.Contains(out, `"waived"`) {
 		t.Fatalf("outside a git work tree the predicate exited %d (%s); nothing can be pinned there, so it must waive", code, out)
@@ -94,7 +104,7 @@ func TestT046_23_PredicateOutsideARepoWaives(t *testing.T) {
 // the judge would let any citation through.
 func TestT046_24_PrepareRunsTheJudgeWhenThePredicateCrashes(t *testing.T) {
 	dir := t.TempDir()
-	prepare, err := os.ReadFile(filepath.Join(ruleDir(t, "pinned-spec-holds"), "only-when-pinned.sh"))
+	prepare, err := os.ReadFile(filepath.Join(gateDir(t, "pinned-spec-holds"), "only-when-pinned.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +214,7 @@ func TestT046_35_AnUnpinnedFileIsAnsweredCheaply(t *testing.T) {
 	}
 	payload := `{"event":{"kind":"PreFileUpdate","path":"specs/other.md","resultKnown":true,` +
 		`"oldContent":"x\n","newContent":"y\n","oldMarkers":[],"newMarkers":[]}}`
-	out, code := runRuleScriptEnv(t, ruleDir(t, "pinned-spec-holds"), "changes-pinned-lines.sh", repo, payload,
+	out, code := runRuleScriptEnv(t, gateDir(t, "pinned-spec-holds"), "changes-pinned-lines.sh", repo, payload,
 		"PATH="+shims+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if code != 1 || !strings.Contains(out, "waived") {
 		t.Fatalf("an unpinned spec was not waived (exit %d): %s", code, out)

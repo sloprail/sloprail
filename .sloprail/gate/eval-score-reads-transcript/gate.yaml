@@ -1,0 +1,12 @@
+# GATE half of the old preventive file-guard of the same name: refuses BEFORE the
+# write lands. The sibling file-guard (.sloprail/file-guard/eval-score-reads-transcript/) judges the
+# settled file at Stop.
+# A first script check refuses an underivable write (resultKnown false) before the
+# judge reads event.newContent.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^examples/.+/eval/.+/score\\.sh$"'
+checks:
+  - script: ./require-known-result.sh
+  - judge: ./judge.md.j2
+    model: size-md

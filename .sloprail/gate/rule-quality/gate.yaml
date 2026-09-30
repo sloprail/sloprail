@@ -1,0 +1,15 @@
+# GATE half of the old preventive file-guard of the same name: refuses BEFORE the
+# write lands. The sibling file-guard (.sloprail/file-guard/rule-quality/) judges the
+# settled file at Stop.
+# rule-quality: every RULE.md in the repo, path-anchored on the file's own name (no
+# directory prefix, so one written anywhere is caught). prepare.sh loads the
+# enforced meta-rules and refuses when the write's result is not derivable
+# (resultKnown false): judging an unseen file would judge nothing.
+on:
+  - event: PreFileWrite
+    match: 'event.path endsWith "RULE.md"'
+checks:
+  - prepare: ./prepare.sh
+    judge: ./judge-rule.md.j2
+    model: size-md
+    allowed_tools: [Read]

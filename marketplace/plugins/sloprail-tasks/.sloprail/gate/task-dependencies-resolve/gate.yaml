@@ -1,0 +1,18 @@
+# A task's `depends_on` — other tasks that must be DONE first — is enforced at the
+# moment a task tries to enter to_do, in_progress or in_review: the PRE-WRITE half.
+# This gate refuses the move before it lands; the plain file-guard of the same name,
+# beside it under file-guard/, judges the settled file at Stop. The full argument
+# (the three deterministic questions, and why this is separate from
+# task-evidence-resolves) lives in file-guard/task-dependencies-resolve/file-guard.yaml
+# and check-dependencies.sh.
+#
+# check-dependencies.sh reads the pending bytes from `event.newContent`. A write
+# whose result the engine could not compute (`resultKnown: false` — a sed -i, an
+# unresolvable sr-file line) is REFUSED by the script rather than admitted unseen.
+#
+# match: the task file, TWO directory levels deep.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"'
+checks:
+  - script: ./check-dependencies.sh

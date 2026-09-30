@@ -123,7 +123,7 @@ func TestT038_29_AnUnreadableRegistryRefuses(t *testing.T) {
 }
 
 // T038_30: a refused narrowing write never shrinks the obligation. The context
-// enters before the preventive guard refuses, so its Pre log must not narrow
+// enters before the keywords-hold gate refuses, so its Pre log must not narrow
 // the entry. It took the union with what was LOGGED only — so for a committed
 // scanner this session never logged, a refused write dropping `agent` logged
 // the narrowed set, no Post event followed (the file never changed), and a

@@ -28,8 +28,8 @@ func newSessionPreToolCmd() *cobra.Command {
 //
 // The nature dispatch reads the project's own `.sloprail/gate/*`,
 // `.sloprail/file-guard/*` and `.sloprail/file-guard/structure.yaml` (plus those
-// shipped by the plugins the project has enabled), runs the gates and preventive
-// file-guards whose trigger matches a fired pre-event, and blocks the tool call on
+// shipped by the plugins the project has enabled), runs the gates whose
+// trigger matches a fired pre-event (file-guards act only at Stop), and blocks the tool call on
 // a refusal via deny(). A permit falls through and the action proceeds.
 //
 // It never refuses because a declaration is broken: newNatureDeclarations reports

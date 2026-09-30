@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// task-review is an AFTER-CHECK file-guard (NO preventive) over
+// task-review is an AFTER-CHECK file-guard over
 // memories/tasks/<cat>/<name>/TASK.md — it fires at the Post/Stop after-check on the
 // SETTLED file, never at Pre. It reviews a task written into `in_review`, and it
 // proves DELIVERY, not the ask: a SCRIPT pre-flight (only in_review; the claim
@@ -91,7 +91,7 @@ func TestReview_UnsubstantiatedBlocksAtStop(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installPluginTree(t, e, proj)
-	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored")
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored", pluginName+"/gate/task-body-is-human-authored")
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "REVIEW REJECTED: cited_results[0] shows a test run but its output does not mention the auth token work the task claims"}`)
 
 	sess := "s-review-reject"
@@ -129,7 +129,7 @@ func TestReview_NotInReviewSkipsTheJudge(t *testing.T) {
 	// would be refused at Pre, and its judge shares the single capturing stub.
 	// Disabling it leaves task-review's judge as the ONLY one that could capture a
 	// prompt, so an empty capture proves the REVIEW judge specifically did not run.
-	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored")
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored", pluginName+"/gate/task-body-is-human-authored")
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
 	res := e.Run(proj, "s-review-todo", authPrompt, Turns("done",
@@ -336,7 +336,7 @@ func TestReview_MdGateJudgeRejectionBlocksAtStop(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	installPluginTree(t, e, proj)
-	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored")
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored", pluginName+"/gate/task-body-is-human-authored")
 
 	// SETUP needs every OTHER judge in the run (task-gate-is-grounded's on the
 	// gate write, task-gates-hold's on the to_do transition) to PASS; only

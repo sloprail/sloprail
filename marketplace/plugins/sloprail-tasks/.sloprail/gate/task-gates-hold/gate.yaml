@@ -1,0 +1,22 @@
+# Every gate under a task's gates/ must hold BEFORE the task may leave backlog or
+# blocked for to_do or in_progress — the PRE-WRITE half. The transition into
+# to_do/in_progress is the moment gates are about, so this gate refuses it before
+# it lands; the plain file-guard of the same name, beside it under file-guard/,
+# checks the settled file at Stop. The full argument lives in
+# file-guard/task-gates-hold/file-guard.yaml.
+#
+# TWO checks, cheap first: gates-hold.sh runs every gates/*.sh; only once it passed
+# does the judge ask whether each gates/*.md holds. A write whose result the engine
+# could not compute (`resultKnown: false`) is REFUSED by gates-hold.sh before the
+# judge rather than admitted unseen.
+#
+# match: the task file, TWO directory levels deep.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^memories/tasks/[^/]+/[^/]+/TASK\\.md$"'
+checks:
+  - script: ./gates-hold.sh
+  - prepare: ./prepare-judgment-gates.sh
+    judge: ./judge-gates.md.j2
+    model: size-md
+    allowed_tools: [Read]

@@ -15,6 +15,9 @@
 #                            is the claim). A create has no prior status, so
 #                            creating a task directly in in_review enters it.
 #
+# This copy serves the file-guard at Stop and task-review (settled bytes,
+# `newContentKnown`); the PreFileWrite gate of the same name carries the pending copy.
+#
 # The status is read with the product's own `sr-file validate --emit` against the
 # plugin's schema, never a second opinion about where frontmatter ends. A task
 # whose frontmatter does not validate has no status and is not in review — the
@@ -33,11 +36,6 @@ status_of() {
 
 kind="$(field '.event.kind // ""')"
 case "$kind" in
-  PreFileCreate | PreFileUpdate)
-    # A result the engine could not compute is undecidable: apply (exit 0).
-    [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
-    content="$(field '.event.newContent // ""')"
-    ;;
   PostFileCreate | PostFileUpdate)
     # newContentKnown (declared on the Post kinds, internal/filemod/module.go)
     # false: the engine could not read the settled file — a link to a FIFO or a

@@ -11,16 +11,16 @@ import (
 // looks exactly like success, so this is the critical safety invariant of the
 // pre-tool dispatch, and it must hold against the NEW dispatch as well.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
 //
 // It used to install a rule via the OLD format (`hooks: PreFileCreate:
 // [command: ./refuse.sh]`) and vary HOW the hook refused, observing the OLD
 // dispatch fail closed. The NEW pre-tool dispatch
-// (services/sr-session/nature_pre_tool.go) runs a PREVENTIVE file-guard's check
+// (services/sr-session/nature_pre_tool.go) runs a gate's check
 // through internal/dispatch's Runner, and that runner is fail-closed throughout
 // (internal/dispatch/exec.go runScriptExec): a clean exit passes, and EVERY other
 // outcome — a non-zero exit, a check that could not be run, a check that emitted
-// garbage — refuses. runFileGuardsPreventive turns that refusal into a pre-tool
+// garbage — refuses. the gate dispatch turns that refusal into a pre-tool
 // deny, so the write never lands. This directory re-proves that guarantee against
 // the new dispatch by driving each misbehavior mode and asserting the write is
 // blocked every way.
@@ -36,13 +36,14 @@ import (
 // The observation is res.Refused / res.Saw — the harness's own pre-tool deny
 // marker (with the reason appended), format-neutral across old and new dispatch.
 
-// bindEveryWrite is a NEW-FORMAT preventive file-guard bound to every markdown
-// write. `**/*.md` selects a write at the repo root or at any depth; `preventive:
-// true` makes it fire on the PRE write so a refusal denies before the file lands.
+// bindEveryWrite is a NEW-FORMAT gate bound to every markdown write on
+// PreFileWrite. `event.path endsWith ".md"` selects a write at the repo root or at
+// any depth; a gate fires on the PRE write so a refusal denies before the file lands.
 // The check is swapped per test — what varies is only HOW the check misbehaves,
 // never whether it meant to refuse.
-const bindEveryWrite = `match: "**/*.md"
-preventive: true
+const bindEveryWrite = `on:
+  - event: PreFileWrite
+    match: event.path endsWith ".md"
 checks:
   - script: ./refuse.sh
 `
@@ -58,7 +59,7 @@ func TestT004_01_StderrRefusalReachesTheAgent(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "stderr-refuse", bindEveryWrite, map[string]string{
+	e.Gate(proj, "stderr-refuse", bindEveryWrite, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho \"this path is guarded\" >&2\nexit 1\n",
 	})
 
@@ -93,14 +94,14 @@ func TestT004_02_UnrunnableCheckRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "unrunnable", bindEveryWrite, map[string]string{
+	e.Gate(proj, "unrunnable", bindEveryWrite, map[string]string{
 		"refuse.sh": "#!/bin/sh\nexit 0\n",
 	})
 
 	// chmod 000: no read, no execute — genuinely unrunnable, not merely
 	// missing its own execute bit (which the engine now runs through the
 	// script's interpreter instead of refusing).
-	script := filepath.Join(proj, ".sloprail", "file-guard", "unrunnable", "refuse.sh")
+	script := filepath.Join(proj, ".sloprail", "gate", "unrunnable", "refuse.sh")
 	if err := os.Chmod(script, 0o000); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
@@ -127,11 +128,11 @@ func TestT004_02b_MissingExecuteBitAloneStillRuns(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "chmod-forgotten", bindEveryWrite, map[string]string{
+	e.Gate(proj, "chmod-forgotten", bindEveryWrite, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"refused by the script\"}'\nexit 1\n",
 	})
 
-	script := filepath.Join(proj, ".sloprail", "file-guard", "chmod-forgotten", "refuse.sh")
+	script := filepath.Join(proj, ".sloprail", "gate", "chmod-forgotten", "refuse.sh")
 	if err := os.Chmod(script, 0o644); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
@@ -161,7 +162,7 @@ func TestT004_03_SilentNonZeroRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "silent", bindEveryWrite, map[string]string{
+	e.Gate(proj, "silent", bindEveryWrite, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\nexit 1\n",
 	})
 
@@ -175,7 +176,7 @@ func TestT004_03_SilentNonZeroRefuses(t *testing.T) {
 	// The refusal names the guard that produced it, even with nothing of the
 	// check's own to quote.
 	if !got.Saw("silent") {
-		t.Errorf("the refusal does not name the file-guard that produced it:\n%s", got.Output)
+		t.Errorf("the refusal does not name the gate that produced it:\n%s", got.Output)
 	}
 }
 
@@ -192,7 +193,7 @@ func TestT004_04_GarbageOutputStillRefusesWithoutLeaking(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	// An empty structured reason on stdout, plus noise, exit non-zero.
-	e.FileGuard(proj, "empty-reason", bindEveryWrite, map[string]string{
+	e.Gate(proj, "empty-reason", bindEveryWrite, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"\"}'\nexit 1\n",
 	})
 
@@ -221,7 +222,7 @@ func TestT004_04b_PlainNonZeroOutputRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "plain-refuse", bindEveryWrite, map[string]string{
+	e.Gate(proj, "plain-refuse", bindEveryWrite, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho 'nope, not allowed'\nexit 3\n",
 	})
 
@@ -247,7 +248,7 @@ func TestT004_05_ZeroExitStillPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "permits", bindEveryWrite, map[string]string{
+	e.Gate(proj, "permits", bindEveryWrite, map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\necho 'chatter on stdout'\necho 'chatter on stderr' >&2\nexit 0\n",
 	})
 

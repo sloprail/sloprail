@@ -1,0 +1,21 @@
+# A gate file — memories/tasks/<group>/<name>/gates/<gate-name>.(sh|md) — must be
+# DERIVED FROM the task it belongs to before it is allowed to land: the PRE-WRITE
+# half. A gate that fails the grounding bar must never land, so this gate carries
+# the judge; the plain file-guard of the same name, beside it under file-guard/,
+# judges the settled file at Stop. The full argument lives in
+# file-guard/task-gate-is-grounded/file-guard.yaml.
+#
+# A judge-only gate reads the pending bytes (`event.newContent`), so its first
+# check refuses a write whose result the engine could not compute
+# (`resultKnown: false`) rather than judging an empty gate.
+#
+# match: any gates/*.sh or gates/*.md file under a task.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^memories/tasks/[^/]+/[^/]+/gates/[^/]+\\.(sh|md)$"'
+checks:
+  - script: ./require-known-result.sh
+  - prepare: ./resolve-gate-context.sh
+    judge: ./judge-gate.md.j2
+    model: size-md
+    allowed_tools: [Read]

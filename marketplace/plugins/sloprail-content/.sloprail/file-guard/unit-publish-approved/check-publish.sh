@@ -18,9 +18,10 @@
 # can say whether it claims published (publish-claim.sh, shared with
 # enters-published.sh, is the one reading of that).
 #
-# Bound preventive: true in file-guard.yaml — publish is the irreversible
-# step — with the Stop after-check as the backstop for a write the engine
-# could not derive at Pre (resultKnown false, below).
+# THE STOP AFTER-CHECK copy: it judges the SETTLED file (PostFileCreate/
+# PostFileUpdate). The gate of the same name refuses the pending write first —
+# publish is the irreversible step — and this is the backstop for whatever
+# landed past it.
 #
 # REFUSAL CONTRACT: exit 0 permits; non-zero refuses with `{"reason": "..."}` on
 # stdout. `set -uo pipefail`, never `set -e`.
@@ -69,18 +70,9 @@ unset publish_claim_loaded
 [ "${publish_claim_loaded:-}" = 1 ] \
   || refuse "unit-publish-approved: publish-claim.sh did not load whole (its last-line sentinel publish_claim_loaded is unset), so whether $path claims published could not be read"
 
-# WHERE THE BYTES COME FROM depends on the kind. resultKnown is consulted on
-# BOTH Pre kinds before newContent is read — an underivable result is deferred
-# to the Post kind, checked at Stop.
+# A Post kind carries the SETTLED bytes directly on the flat event.
 kind="$(field '.event.kind // ""')" || exit 1
 case "$kind" in
-  PreFileCreate|PreFileUpdate)
-    known="$(field '.event.resultKnown // false')" || exit 1
-    if [ "$known" != "true" ]; then
-      exit 0
-    fi
-    content="$(field '.event.newContent // ""')" || exit 1
-    ;;
   PostFileCreate|PostFileUpdate)
     # A Post kind carries the SETTLED bytes directly on the flat event — when
     # the engine could read them (newContentKnown). Unread: refuse, unchecked.
@@ -88,12 +80,8 @@ case "$kind" in
       refuse "unit-publish-approved: $path could not be read (not a regular file, or too large), so its publish state could not be checked"
     content="$(field '.event.newContent // ""')" || exit 1
     ;;
-  PreFileDelete|PostFileDelete)
-    # Deleting a unit is not this rule's business (deletions: skip).
-    exit 0
-    ;;
   *)
-    refuse "unit-publish-approved: unexpected event kind '$kind' for $path; this rule only judges unit writes"
+    refuse "unit-publish-approved: unexpected event kind '$kind' for $path; this rule only judges settled unit writes"
     ;;
 esac
 

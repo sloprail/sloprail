@@ -26,7 +26,7 @@ import (
 //   - the FILE cases (a create/update/delete observed with the right kind, an
 //     untouched file staying silent, committed and untracked work still counted)
 //     are file-STATE facts, so they ride a NEW-FORMAT file-guard after-check
-//     (preventive omitted). It fires on whichever Post kind the change produced —
+//     (a file-guard acts only at Stop). It fires on whichever Post kind the change produced —
 //     runFileGuardsPost hands one check every create, update and delete — so the
 //     old binding to all three Post kinds collapses into the one `match: "**/*.md"`.
 //   - the STOP cases (Stop fires once and subjectless; a Stop-bound rule still

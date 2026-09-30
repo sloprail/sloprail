@@ -230,7 +230,7 @@ func groundPreEvents(cmd interface{ ErrOrStderr() io.Writer }, p HookPayload, ci
 		for _, inv := range commandmod.ExtractCommand(in.Command).Invocations {
 			// An invocation's argv DROPS an unreadable word, so `sr-file delete
 			// a.md $X` still names a.md here where FileTargets sees two paths. That
-			// makes it a target — an unknown result a preventive rule refuses —
+			// makes it a target — an unknown result a gate refuses —
 			// but never a key for citations, which a shifted argv could misplace.
 			if args, ok := grounding.FileArgs(inv.Argv); ok {
 				if fc, ok := grounding.TargetOf(args); ok {
@@ -420,7 +420,7 @@ func siblingPath() string {
 // replaceWithResolved swaps the modules' static Pre file events for the paths
 // sr-file resolved with exact ones built from its records. A path it did NOT
 // resolve — an invocation that would fail, which changes nothing — keeps its
-// static event: an unknown result that a preventive rule refuses, never a
+// static event: an unknown result that a gate refuses, never a
 // silent pass.
 //
 // A record's citations are sr-file's say-so, so each is kept only when the
@@ -494,7 +494,7 @@ func replaceWithResolved(events []event.Event, records []grounding.Resolved, roo
 // bytes it cannot state, so without this an sr-file write that was not resolved
 // — a line mixing it with other programs, or one whose resolve failed — would
 // reach no rule at pre-tool and land unjudged. With an unknown result, a
-// preventive rule refuses it instead.
+// gate refuses it instead.
 func ensureFileEvents(events []event.Event, targets map[string]string, root string) []event.Event {
 	have := map[string]bool{}
 	for _, e := range events {

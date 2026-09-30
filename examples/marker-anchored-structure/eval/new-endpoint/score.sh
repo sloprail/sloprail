@@ -39,7 +39,7 @@ GUARDRAIL="A file-guard (endpoint-conforms) matches any file carrying an
 sr:endpoint marker — it has nothing to say about an endpoint file with no
 marker at all. It runs a script first (does the file name follow
 <verb>-<resource>.ext) then a judge (does the code actually use Express +
-Prisma, kebab-case routes, camelCase fields). It is non-preventive, so a
+Prisma, kebab-case routes, camelCase fields). It is a plain file-guard (no gate), so a
 refusal lands at Stop with the reason attached, and the agent gets another
 cycle to fix it. A correct, working DELETE endpoint written with NO marker
 at all is a completely normal, healthy outcome, not an anomaly (see

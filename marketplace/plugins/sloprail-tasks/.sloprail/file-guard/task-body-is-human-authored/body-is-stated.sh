@@ -6,8 +6,8 @@
 # script's business — the guard's `require` declares it, conditioned on
 # body-changed.sh — and whether the words ground THIS body is stage 2's judge.
 #
-# THE TWO MOMENTS. Preventive, so this runs at pre-tool (a Pre kind: the pending
-# bytes) and again at Stop (a Post kind: the settled bytes on disk).
+# THIS IS THE STOP (file-guard) COPY: it reads the settled bytes. The PreFileWrite gate
+# of the same name carries the pending-bytes copy.
 #
 # THE REFUSAL CONTRACT (internal/dispatch/exec.go): exit 0 permits; non-zero
 # refuses with `{"reason": "..."}` on stdout. Fails CLOSED on every path it cannot
@@ -45,15 +45,8 @@ unset lib_body_loaded
 [ "${lib_body_loaded:-}" = 1 ] \
   || refuse "task-body-is-human-authored: lib-body.sh did not load whole (its last-line sentinel lib_body_loaded is unset), so the body could not be read"
 
-# WHICH BYTES. resultKnown is consulted on BOTH Pre kinds before newContent is
-# read: an underivable result exits 0 here and is judged on the settled bytes at
-# Stop (for a preventive guard the engine refuses such a write before this script
-# runs, so this is the script staying correct on its own).
+# WHICH BYTES. The settled file on disk.
 case "$kind" in
-  PreFileCreate | PreFileUpdate)
-    [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
-    content="$(field '.event.newContent // ""')"
-    ;;
   PostFileCreate | PostFileUpdate)
     # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
     # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/

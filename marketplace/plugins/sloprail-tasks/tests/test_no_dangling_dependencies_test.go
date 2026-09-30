@@ -31,7 +31,7 @@ func TestDangling_DeleteWithoutStrippingRefusesAtStop(t *testing.T) {
 
 	// Baseline: the dependency task AND the dependent, already correctly
 	// pointing at it (depends_on is only re-verified going forward by the
-	// preventive guard -- writing a baseline both tasks lets this test isolate
+	// task-dependencies-resolve gate -- writing a baseline both tasks lets this test isolate
 	// the Stop gate's OWN behaviour rather than task-dependencies-resolve's).
 	e.WriteFile(proj, danglingDepPath, task("to_do", "P1", "Set up CI."))
 	dependentDoc := "---\nstatus: to_do\npriority: P1\ndepends_on: [\"infra/setup-ci\"]\n---\n\nDepends on CI. Placeholder body, no citation needed for a BASELINE file the guard never Pre-checked.\n"

@@ -44,7 +44,7 @@ import (
 // # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
 //
 // The revalidation POST path is EXACTLY the file-guard's after-check: a
-// non-preventive file-guard fires on the settled POST file event and records its
+// file-guard fires on the settled POST file event and records its
 // verdict into the same revalidation store this directory measures — the same
 // rev.Subject / rev.Skip / rev.Record the old Post dispatch drove (see
 // services/sr-session/nature_fileguard.go's runFileGuardsPost). So the disk-read

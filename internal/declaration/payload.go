@@ -125,8 +125,8 @@ func (e FlatEvent) Event() event.Event { return event.Event(e) }
 // (which human message grounds this write); `context` is every declared context
 // by name, at parity with the file-guard's match scope.
 type CheckPayload struct {
-	// Event is the file event — a FileEvent variant (a Pre* only when the guard
-	// is preventive, otherwise a Post*). A FlatEvent, so its `kind` and fields are
+	// Event is the file event — a FileEvent variant (always a Post*: a file-guard
+	// judges the settled file at Stop and never sees a Pre*). A FlatEvent, so its `kind` and fields are
 	// read FLAT under `event` (`.event.path`, `.event.newContent`,
 	// `.event.newMarkers`) the way the spec models it and every example reads it —
 	// not through the nested `{kind, fields}` envelope the old format used.

@@ -273,7 +273,7 @@ func TestEmptyRulesIsRefusalNotFailOpen(t *testing.T) {
 
 	// Neuter the one enforced meta-rule by flipping its flag, so rules/ has zero
 	// enforced rules — the empty-standard case prepare refuses on.
-	e.WriteFile(proj, ".sloprail/file-guard/rule-quality/rules/high-signal/RULE.md",
+	e.WriteFile(proj, ".sloprail/gate/rule-quality/rules/high-signal/RULE.md",
 		"---\nenforced: false\n---\n# high-signal\n\nno longer enforced\n")
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "disable the only enforced meta-rule")
@@ -282,7 +282,7 @@ func TestEmptyRulesIsRefusalNotFailOpen(t *testing.T) {
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA body.\n"),
 	))
 
-	// The preventive Pre refusal reaches the mock's stream. prepare refuses with
+	// The gate's refusal reaches the mock's stream. prepare refuses with
 	// its "no standard to judge" message rather than permitting — the asymmetry.
 	if !got.Saw("no standard to judge") {
 		t.Fatalf("an empty (no-enforced-rule) rules/ did not refuse — the empty-rules asymmetry was lost:\n%s", got.Output)

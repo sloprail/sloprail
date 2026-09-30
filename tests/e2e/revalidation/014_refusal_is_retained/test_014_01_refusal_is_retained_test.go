@@ -66,7 +66,7 @@ import (
 // file-guard). It lives there rather than here because it needs a branch switch
 // this directory's fixtures do not have.
 
-// forbidSecretGuard is a non-preventive file-guard: a `.md` file is not fine if
+// forbidSecretGuard is a file-guard (acts only at Stop): a `.md` file is not fine if
 // its settled content holds SECRET. The after-check fires on the POST file event,
 // re-fires next cycle until the file is fixed, and records every time it is ASKED
 // so a test can count re-fires.

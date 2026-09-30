@@ -67,3 +67,70 @@ func TestT032_10_CheckScriptReadsEventFlat(t *testing.T) {
 		t.Errorf(".event.fields.path was present — the runtime event is still nested:\n%s", res.Output)
 	}
 }
+
+// A gate on the pre-write events is where a marker-scoped write is prevented. A
+// create carries `newMarkers`; an update carries `oldMarkers` too, which is how a
+// gate sees a write that REMOVES a marker (its `newMarkers` are empty, so a match
+// on them alone never selects it). Each kind has its own fields, so each is its
+// own trigger. The check echoes what it was handed and refuses.
+const markerGate = `on:
+  - event: PreFileCreate
+    match: any(event.newMarkers, .kind == "invariant")
+  - event: PreFileUpdate
+    match: any(event.newMarkers, .kind == "invariant") or any(event.oldMarkers, .kind == "invariant")
+checks:
+  - script: ./check.sh
+`
+
+const echoesMarkers = `#!/bin/sh
+payload="$(cat)"
+kind="$(printf '%s' "$payload" | jq -r '.event.kind')"
+known="$(printf '%s' "$payload" | jq -r '.event.resultKnown')"
+newn="$(printf '%s' "$payload" | jq -r '(.event.newMarkers // []) | length')"
+oldn="$(printf '%s' "$payload" | jq -r '(.event.oldMarkers // []) | length')"
+printf '{"reason":"MARKERS kind=%s resultKnown=%s new=%s old=%s"}' "$kind" "$known" "$newn" "$oldn"
+exit 1
+`
+
+// T032_12: a PreFileWrite gate sees `resultKnown`, `newMarkers` and `oldMarkers`.
+// A create that carries a marker is selected and refused before it lands; an
+// update that strips the marker is selected by `oldMarkers` and refused, the file
+// unchanged; a write carrying no marker, on a file that held none, is not selected
+// and lands.
+func TestT032_12_PreWriteGateSeesMarkersAndResultKnown(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	e.WriteFile(proj, "src/pinned.go", "// sr:invariant refunds-capped\npackage src\n")
+	e.WriteFile(proj, "src/plain.go", "package src\n")
+	e.Gate(proj, "pinned", markerGate, map[string]string{"check.sh": echoesMarkers})
+	e.Git(proj, "add", "-A")
+	e.Git(proj, "commit", "-m", "the project before the session")
+
+	res := e.Run(proj, "s-032-12a", "add a pinned file", Turns("done",
+		Write("w1", "src/new.go", "// sr:invariant new-rule\npackage src\n"),
+	))
+	if !res.Refused() || e.Exists(proj, "src/new.go") {
+		t.Fatalf("a create carrying an invariant marker was not refused before it landed:\n%s", res.Output)
+	}
+	if !res.Saw("kind=PreFileCreate resultKnown=true new=1 old=0") {
+		t.Errorf("the create's event did not carry resultKnown and newMarkers:\n%s", res.Output)
+	}
+
+	res = e.Run(proj, "s-032-12b", "strip the marker", Turns("done",
+		Write("w2", "src/pinned.go", "package src\n"),
+	))
+	if !res.Refused() {
+		t.Fatalf("an update that removes an invariant marker was not refused (oldMarkers must select it):\n%s", res.Output)
+	}
+	if !res.Saw("kind=PreFileUpdate resultKnown=true new=0 old=1") {
+		t.Errorf("the update's event did not carry oldMarkers:\n%s", res.Output)
+	}
+
+	res = e.Run(proj, "s-032-12c", "edit a plain file", Turns("done",
+		Write("w3", "src/plain.go", "package src // edited\n"),
+	))
+	if res.Refused() {
+		t.Fatalf("a write with no marker on either side was refused:\n%s", res.Output)
+	}
+}

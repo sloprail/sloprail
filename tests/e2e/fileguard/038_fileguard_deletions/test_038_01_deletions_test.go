@@ -7,19 +7,41 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// guardYAML is a file-guard over docs/ with one script check, preventive or not,
-// with the given `deletions:` value ("" leaves the key out — the default).
-//
-// Preventive by default in these tests, so ONE guard is observed on both paths:
-// the Pre events at pre-tool and the Post events at Stop. A filter applied on
-// only one of them shows up as a Pre line without its Post line, or the reverse.
-func guardYAML(deletions string, preventive bool) string {
+// guardYAML is a file-guard over docs/ with one script check, with the given
+// `deletions:` value ("" leaves the key out — the default). A file-guard acts at
+// Stop only, so it is handed Post events.
+func guardYAML(deletions string) string {
 	y := "match: \"docs/**\"\n"
-	if preventive {
-		y += "preventive: true\n"
-	}
 	if deletions != "" {
 		y += "deletions: " + deletions + "\n"
+	}
+	return y + "checks:\n  - script: ./check.sh\n"
+}
+
+// gateYAML is the PRE-write half of the same rule: a gate over docs/ whose
+// triggers follow the same `deletions:` vocabulary — a file-guard's `deletions:`
+// filter is a STATUS filter on what it is asked about, and a gate says the same
+// thing with the events it binds to: PreFileWrite (create + update), PreFileDelete,
+// or both.
+//
+//	skip (default)  PreFileWrite
+//	include         PreFileWrite + PreFileDelete
+//	only            PreFileDelete
+//
+// So ONE rule (a gate and a file-guard sharing a name) is observed on both paths:
+// the Pre events at pre-tool and the Post events at Stop. A filter applied on only
+// one of them shows up as a Pre line without its Post line, or the reverse.
+func gateYAML(deletions string) string {
+	const write = "  - event: PreFileWrite\n    match: event.path startsWith \"docs/\"\n"
+	const del = "  - event: PreFileDelete\n    match: event.path startsWith \"docs/\"\n"
+	y := "on:\n"
+	switch deletions {
+	case "include":
+		y += write + del
+	case "only":
+		y += del
+	default:
+		y += write
 	}
 	return y + "checks:\n  - script: ./check.sh\n"
 }
@@ -51,17 +73,19 @@ exit 0
 
 // project is a repository with docs/pinned.md and docs/notes.md COMMITTED before
 // the session — a delete produces a PostFileDelete only for a file the session's
-// baseline holds — and with the given guards (name → yaml) installed and
-// committed, so their own files are part of the baseline rather than the diff.
-func project(t *testing.T, check string, guards map[string]string) (*harness.Env, string) {
+// baseline holds — and with the given rules (name → `deletions:` value) installed
+// as a gate AND a file-guard of that name, and committed, so their own files are
+// part of the baseline rather than the diff.
+func project(t *testing.T, check string, rules map[string]string) (*harness.Env, string) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/pinned.md", "pinned\n")
 	e.WriteFile(proj, "docs/notes.md", "notes v1\n")
-	for name, y := range guards {
-		e.FileGuard(proj, name, y, map[string]string{"check.sh": check})
+	for name, deletions := range rules {
+		e.Gate(proj, name, gateYAML(deletions), map[string]string{"check.sh": check})
+		e.FileGuard(proj, name, guardYAML(deletions), map[string]string{"check.sh": check})
 	}
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
@@ -83,7 +107,8 @@ func editCreateDelete() harness.Scenario {
 // how a Pre event spells it.
 func seen(e *harness.Env, proj, guard string) map[string]bool {
 	out := map[string]bool{}
-	for _, line := range e.FileGuardLedgerLines(proj, guard, "ledger") {
+	lines := append(e.GateLedgerLines(proj, guard, "ledger"), e.FileGuardLedgerLines(proj, guard, "ledger")...)
+	for _, line := range lines {
 		kind, path, _ := strings.Cut(line, " ")
 		if i := strings.Index(path, "docs/"); i >= 0 {
 			path = path[i:]
@@ -134,7 +159,7 @@ func keys(m map[string]bool) []string {
 //
 // On the old engine the guard was handed PreFileDelete and PostFileDelete too.
 func TestT038_01_DefaultSkipsDeletes(t *testing.T) {
-	e, proj := project(t, ledgerCheck, map[string]string{"watch": guardYAML("", true)})
+	e, proj := project(t, ledgerCheck, map[string]string{"watch": ""})
 
 	res := e.Run(proj, "s-038-01", "edit, create, delete", editCreateDelete())
 	if res.Refused() {
@@ -155,8 +180,8 @@ func TestT038_01_DefaultSkipsDeletes(t *testing.T) {
 // writes and not the delete, so the difference is the key and nothing else.
 func TestT038_02_IncludeSeesDeletesAndWrites(t *testing.T) {
 	e, proj := project(t, ledgerCheck, map[string]string{
-		"watch-include": guardYAML("include", true),
-		"watch-default": guardYAML("", true),
+		"watch-include": "include",
+		"watch-default": "",
 	})
 
 	res := e.Run(proj, "s-038-02", "edit, create, delete", editCreateDelete())
@@ -178,7 +203,7 @@ func TestT038_02_IncludeSeesDeletesAndWrites(t *testing.T) {
 //
 // On the old engine it was handed all six events.
 func TestT038_03_OnlySeesOnlyDeletes(t *testing.T) {
-	e, proj := project(t, ledgerCheck, map[string]string{"watch": guardYAML("only", true)})
+	e, proj := project(t, ledgerCheck, map[string]string{"watch": "only"})
 
 	res := e.Run(proj, "s-038-03", "edit, create, delete", editCreateDelete())
 	if res.Refused() {
@@ -193,22 +218,22 @@ func TestT038_03_OnlySeesOnlyDeletes(t *testing.T) {
 	}
 }
 
-// T038_04: a PREVENTIVE guard that refuses deletes, with `include` and with
-// `only`, BLOCKS the `rm` at PreFileDelete — the file stays on disk and the
-// guard's reason reaches the agent.
-func TestT038_04_PreventiveIncludeOrOnlyBlocksTheDelete(t *testing.T) {
+// T038_04: a GATE that refuses deletes, with `include` and with `only`, BLOCKS the
+// `rm` at PreFileDelete — the file stays on disk and the gate's reason reaches the
+// agent.
+func TestT038_04_GateIncludeOrOnlyBlocksTheDelete(t *testing.T) {
 	for _, mode := range []string{"include", "only"} {
 		t.Run(mode, func(t *testing.T) {
-			e, proj := project(t, refuseDeletesCheck, map[string]string{"keep-docs": guardYAML(mode, true)})
+			e, proj := project(t, refuseDeletesCheck, map[string]string{"keep-docs": mode})
 
 			res := e.Run(proj, "s-038-04-"+mode, "delete the pinned doc", Turns("done",
 				Bash("b1", "rm docs/pinned.md"),
 			))
 			if !res.Refused() {
-				t.Fatalf("deletions: %s — the preventive guard did not block the delete:\n%s", mode, res.Output)
+				t.Fatalf("deletions: %s — the gate did not block the delete:\n%s", mode, res.Output)
 			}
 			if !res.Saw("DELETE-REFUSED") {
-				t.Errorf("deletions: %s — the guard's reason did not reach the agent:\n%s", mode, res.Output)
+				t.Errorf("deletions: %s — the gate's reason did not reach the agent:\n%s", mode, res.Output)
 			}
 			if !e.Exists(proj, "docs/pinned.md") {
 				t.Errorf("deletions: %s — the file is gone although the delete was refused before it ran", mode)
@@ -217,20 +242,21 @@ func TestT038_04_PreventiveIncludeOrOnlyBlocksTheDelete(t *testing.T) {
 	}
 }
 
-// T038_05: the SAME refusing guard with the key left off (the default, skip) is
-// never asked about the delete: the `rm` goes through, and nothing blocks the
-// turn at Stop either.
+// T038_05: the SAME refusing rule with the key left off (the default, skip) is
+// never asked about the delete — by the gate (no PreFileDelete trigger) or by the
+// file-guard (skip): the `rm` goes through, and nothing blocks the turn at Stop
+// either.
 //
 // On the old engine the delete was refused — every file-guard was handed it.
-func TestT038_05_PreventiveDefaultLetsTheDeleteThrough(t *testing.T) {
-	e, proj := project(t, refuseDeletesCheck, map[string]string{"keep-docs": guardYAML("", true)})
+func TestT038_05_DefaultLetsTheDeleteThrough(t *testing.T) {
+	e, proj := project(t, refuseDeletesCheck, map[string]string{"keep-docs": ""})
 
 	const sess = "s-038-05"
 	res := e.Run(proj, sess, "delete the pinned doc", Turns("done",
 		Bash("b1", "rm docs/pinned.md"),
 	))
 	if res.Refused() {
-		t.Fatalf("a guard on the default deletions: skip refused a delete:\n%s", res.Output)
+		t.Fatalf("a rule on the default deletions: skip refused a delete:\n%s", res.Output)
 	}
 	if e.Exists(proj, "docs/pinned.md") {
 		t.Errorf("the delete did not go through")
@@ -289,8 +315,8 @@ func TestT038_06_RefusalOnADeletedFileIsSettled(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.WriteFile(proj, "README", "a project\n")
-	e.FileGuard(proj, "says-ok", guardYAML("", false), map[string]string{"check.sh": contentCheck})
-	e.FileGuard(proj, "observer", guardYAML("only", false), map[string]string{"check.sh": ledgerCheck})
+	e.FileGuard(proj, "says-ok", guardYAML(""), map[string]string{"check.sh": contentCheck})
+	e.FileGuard(proj, "observer", guardYAML("only"), map[string]string{"check.sh": ledgerCheck})
 	e.Git(proj, "add", "-A")
 	e.Git(proj, "commit", "-m", "the project before the session")
 

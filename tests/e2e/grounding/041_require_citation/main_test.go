@@ -8,7 +8,7 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// require_citation: `require: [{citation}]` on a file-guard and on a gate,
+// require_citation: `require: [{citation}]` on a gate (prevention) and on a file-guard (Stop),
 // driven through the mock as a real session.
 //
 // A citation rides on the ACTION: `sr-file write|edit|delete ... --cite:user
@@ -51,5 +51,24 @@ const recordScript = `#!/usr/bin/env bash
 set -uo pipefail
 payload="$(cat)"
 printf '%s' "$payload" | jq -c '{kind: .event.kind, path: (.event.path // ""), resultKnown: (.event.resultKnown // null), n: (.event.citations | length), quote: (.event.citations[0].quote // ""), line: (.event.citations[0].line // 0)}' >> "$SR_GUARDRAIL_DIR/ledger"
+exit 0
+`
+
+// failClosedRecordScript is recordScript for a GATE bound to a pre-write event: it
+// notes what it was handed, then refuses a create or update whose result the
+// engine could not compute (`resultKnown` not true). A gate does not fail closed
+// on an unknown result by itself: a write whose bytes nobody saw has not been
+// checked, so the gate that exists to prevent refuses it.
+const failClosedRecordScript = `#!/usr/bin/env bash
+set -uo pipefail
+payload="$(cat)"
+printf '%s' "$payload" | jq -c '{kind: .event.kind, path: (.event.path // ""), resultKnown: (.event.resultKnown // null), n: (.event.citations | length), quote: (.event.citations[0].quote // ""), line: (.event.citations[0].line // 0)}' >> "$SR_GUARDRAIL_DIR/ledger"
+case "$(printf '%s' "$payload" | jq -r '.event.kind')" in
+  PreFileCreate|PreFileUpdate)
+    if [ "$(printf '%s' "$payload" | jq -r '.event.resultKnown')" != "true" ]; then
+      echo '{"reason":"the result of this write could not be computed, so it cannot be checked before it lands"}'
+      exit 1
+    fi ;;
+esac
 exit 0
 `

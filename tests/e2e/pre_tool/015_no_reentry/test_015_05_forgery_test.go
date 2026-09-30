@@ -2,15 +2,16 @@ package e2e
 
 import "testing"
 
-// A file-guard whose check runs a command that FORGES the provenance variable
+// A gate whose check runs a command that FORGES the provenance variable
 // before doing the work, naming a rule that never launched anything.
 //
 // This stands in for the agent-side attack. The variable is inherited by
 // everything a check spawns, and an agent running Bash can export whatever it
 // likes into its own children — so the honest question is what an actor who
 // writes the variable himself can switch off.
-const forgeSecrets = `match: path startsWith "notes/"
-preventive: true
+const forgeSecrets = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "notes/"
 checks:
   - script: ./forge.sh
 `
@@ -70,8 +71,8 @@ exit 0
 func TestT015_05_ForgedProvenanceIsAKnownLimitation(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "judge-notes", forgeSecrets, map[string]string{"forge.sh": forgeScript})
-	e.FileGuard(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
+	e.Gate(proj, "judge-notes", forgeSecrets, map[string]string{"forge.sh": forgeScript})
+	e.Gate(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	e.InnerScenario(proj, Turns("judged", Write("i1", "secrets/leak.md", "oops")))
 
@@ -79,7 +80,7 @@ func TestT015_05_ForgedProvenanceIsAKnownLimitation(t *testing.T) {
 		Write("w1", "notes/first.md", "hello"),
 	))
 
-	if len(fileGuardLedgerLines(t, proj, "judge-notes", "ledger.txt")) == 0 {
+	if len(gateLedgerLines(t, proj, "judge-notes", "ledger.txt")) == 0 {
 		t.Fatalf("the launching guardrail never ran, so nothing was forged:\n%s", got.Output)
 	}
 

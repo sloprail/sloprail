@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// content-rule-is-grounded is a PREVENTIVE file-guard over RULE.md/
+// content-rule-is-grounded is a PreFileWrite gate plus a plain file-guard (the Stop re-check) over RULE.md/
 // CONSTRAINT.md. Every change must be grounded in the user's own words,
 // cited on the ACTION (`sr-file write|edit ... --cite:user '<quote>'`), never
 // stored in the rule:
@@ -65,7 +65,7 @@ func TestRuleGrounded_UncitedWriteRefused(t *testing.T) {
 		t.Fatalf("an uncited rule write was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, rulePath) {
-		t.Errorf("the preventive guard let an uncited rule land on disk")
+		t.Errorf("the gate let an uncited rule land on disk")
 	}
 	if !res.Saw("sr-file") || !res.Saw("--cite:user") {
 		t.Errorf("the refusal does not tell the agent to ground the change with sr-file --cite:user:\n%s", res.Output)
@@ -86,7 +86,7 @@ func TestRuleGrounded_UnresolvedQuoteRefused(t *testing.T) {
 		t.Fatalf("a rule citing words the user never said was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, rulePath) {
-		t.Errorf("the preventive guard let an ungrounded rule land on disk")
+		t.Errorf("the gate let an ungrounded rule land on disk")
 	}
 }
 
@@ -141,7 +141,7 @@ func TestRuleGrounded_SlopBodyRefusedByJudge(t *testing.T) {
 		t.Fatalf("a slop rule body the judge rejected was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, rulePath) {
-		t.Errorf("the preventive guard let a judge-rejected rule land on disk")
+		t.Errorf("the gate let a judge-rejected rule land on disk")
 	}
 	if !res.Saw("threshold and an exception the user never stated") {
 		t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)

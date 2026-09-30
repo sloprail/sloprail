@@ -30,23 +30,19 @@
 # unit-satisfies-rules/file-guard.yaml's header): every rule is a judge rule
 # now, so an untraceable, vacuous or self-contradicting rule fails stage 2.
 #
+# THE STOP AFTER-CHECK. The gate of the same name (../../gate/
+# content-rule-is-grounded) refuses an ungrounded or invented rule before it
+# lands; this judges the settled file, the backstop. A citation grounds only the
+# change it rode on — citations do not accumulate: `event.citations` are those of
+# the cited changes that landed on the path this session, and since this
+# requirement has no `when`, every part of the change the agent made must come
+# from a cited change in the user pool (a cited `sr-file write` restating the
+# file grounds everything before it; a change the agent did not make, such as the
+# user's own edit between turns, is not charged).
+#
 # match: EITHER rule location — project-wide RULE.md or topic-scoped
 # CONSTRAINT.md, the same two paths rules-lib.sh collects from.
 match: path matches "^\\.sloprail/content-rules/[^/]+/RULE\\.md$" or path matches "^memories/topics/[^/]+/constraints/[^/]+/CONSTRAINT\\.md$"
-
-# PREVENTIVE: true — an ungrounded or invented rule should never land in the
-# first place; refusing it after the fact would mean it already had a chance
-# to gate a unit write before being caught. It also matters for the citation:
-# a line mixing sr-file with any other program has an unknown result, which a
-# preventive guard refuses before it runs. The Stop after-check remains the
-# backstop. There a citation grounds only the change it rode on — citations do
-# not accumulate: `event.citations` are those of the cited changes that landed
-# on the path this session, and since this requirement has no `when`, every
-# part of the change the agent made must come from a cited change in the user
-# pool (a cited `sr-file write` restating the file grounds everything before
-# it; a change the agent did not make, such as the user's own edit between
-# turns, is not charged).
-preventive: true
 
 # deletions: left at the default (skip). Deleting a rule removes a constraint
 # rather than inventing one, so it is not this guard's business.

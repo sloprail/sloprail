@@ -2,14 +2,15 @@ package e2e
 
 import "testing"
 
-// A SECOND, ordinary file-guard that did not launch anything.
+// A SECOND, ordinary gate that did not launch anything.
 //
 // It refuses writes under secrets/, which is the kind of rule a project has
 // regardless of whether anything judges anything. Nothing about it knows an
-// agent was launched. It is preventive so it acts at pre-tool, the same moment
+// agent was launched. It is a PreFileWrite gate so it acts at pre-tool, the same moment
 // the launched agent's write is about to land — which is where it must still bite.
-const refuseSecrets = `match: path startsWith "secrets/"
-preventive: true
+const refuseSecrets = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "secrets/"
 checks:
   - script: ./refuse.sh
 `
@@ -45,8 +46,8 @@ exit 0
 func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
-	e.FileGuard(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
+	e.Gate(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	// The launched agent reaches for a path the OTHER rule guards.
 	e.InnerScenario(proj, Turns("judged", Write("i1", "secrets/leak.md", "oops")))
@@ -54,11 +55,11 @@ func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 	got := e.Run(proj, "s-015-02", "write a note", Turns("done",
 		Write("w1", "notes/first.md", "hello"),
 	))
-	t.Logf("judge ledger: %v", fileGuardLedgerLines(t, proj, "judge-notes", "ledger.txt"))
+	t.Logf("judge ledger: %v", gateLedgerLines(t, proj, "judge-notes", "ledger.txt"))
 
 	// The launching rule ran, so an agent really was launched — without this the
 	// test could pass by the check never firing at all.
-	if len(fileGuardLedgerLines(t, proj, "judge-notes", "ledger.txt")) == 0 {
+	if len(gateLedgerLines(t, proj, "judge-notes", "ledger.txt")) == 0 {
 		t.Fatalf("the launching guardrail never ran, so nothing was launched:\n%s", got.Output)
 	}
 
@@ -81,8 +82,8 @@ func TestT015_02_LaunchedAgentIsStillGuardedByOtherRules(t *testing.T) {
 func TestT015_03_LaunchedAgentCanStillDoItsWork(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
-	e.FileGuard(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
+	e.Gate(proj, "judge-notes", judgeByAgent, map[string]string{"judge.sh": judgeOnlyScript})
+	e.Gate(proj, "no-secrets", refuseSecrets, map[string]string{"refuse.sh": refuseSecretsScript})
 	e.InstallClaudeShim(proj)
 	// A path judge-notes guards (notes/) and no-secrets does not.
 	e.InnerScenario(proj, Turns("judged", Write("i1", "notes/judged.md", "ok")))

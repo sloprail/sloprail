@@ -25,7 +25,7 @@ Pick the vehicle from **what the test OBSERVES**, not from cosmetics:
 | The test observes…                                                              | Vehicle                                    |
 |---------------------------------------------------------------------------------|--------------------------------------------|
 | an AFTER-the-write refusal / a file RE-FIRING next cycle until fixed             | **file-guard**, after-check (default)      |
-| a PRE-write BLOCK (write never lands, denied at pre-tool)                        | **file-guard** with `preventive: true`     |
+| a PRE-write BLOCK (write never lands, denied at pre-tool)                        | a **gate** on `PreFileWrite` (`PreFileDelete` for deletes) |
 | a Stop-CHECKPOINT gate: `require` + `checks`, subjectless Stop, a gate blocking the turn as a whole (completeness, "was an artifact produced") | **gate** |
 | a PRE-action block keyed to an event kind (a command about to run, a tool)       | a **gate** trigger on that event kind      |
 
@@ -90,9 +90,10 @@ checks:
   - The old fixture keyed its refusal on the event's `path` rather than on content
     appearing "anywhere in the payload"; `match` over `path` is the direct analogue.
   - A content/marker rule can match on `markers` (e.g. `any(markers, .kind == "invariant")`).
-- `preventive: false` is the default (after-check, fires on the Post event, re-fires
-  next cycle) — OMIT it for the after-check case. Add `preventive: true` only for a
-  test that observes a PRE-write block.
+- A file-guard is ALWAYS an after-check: it fires at Stop on the settled Post event and
+  re-fires next cycle until fixed. It never sees a Pre event, and `preventive:` is
+  refused at load — a test that observes a PRE-write block installs a gate instead
+  (see "Gate case" below).
 - The three old kinds (`PostFileCreate/Update/Delete`) collapse into the ONE file-guard,
   which fires on whichever Post kind the change produced. A re-added outstanding refusal
   arrives as **`PostFileUpdate`** (see 015 T015_04) — assert that kind if the test does.
@@ -182,7 +183,34 @@ DECLARATION re-vehicled but keeps that assertion verbatim.
 
 Use `e.Gate(proj, name, gateYAML, files)` → `.sloprail/gate/<name>/gate.yaml`. A gate's
 check receives `GateCheckPayload` — same flat `.event.*` wire form, but its `event` is a
-gate event kind (command / tool / Stop), never a Post file variant. Observe the verdict
+gate event kind (command / tool / Stop / `PreFileCreate` / `PreFileUpdate` /
+`PreFileDelete`), never a Post file variant.
+
+A PRE-write block is a gate triggered on `PreFileWrite` (= create + update):
+
+```yaml
+on:
+  - event: PreFileWrite
+    match: 'event.path startsWith "src/"'   # nested scope: event.path, event.newContent, event.resultKnown, …
+checks:
+  - script: ./refuse.sh
+```
+
+- No glob shorthand in a gate `match`: `docs/**` → `event.path startsWith "docs/"`,
+  `**/*.md` → `event.path endsWith ".md"`, a middle wildcard → `event.path matches "^a/.*/x\\.md$"`.
+- Deletes are a separate trigger (`- event: PreFileDelete`); an old `deletions: only`
+  becomes a PreFileDelete-only gate.
+- Marker matches read kind-specific fields (`newMarkers` on create/update, `oldMarkers`
+  on update/delete), so use separate `PreFileCreate` / `PreFileUpdate` triggers instead of
+  the `PreFileWrite` alias when the match reads them.
+- A gate is asked about EVERY file a call changes, once per file event.
+- A gate does NOT fail closed on an underivable write (`sed -i`, an unresolvable sr-file
+  line): `event.resultKnown` is false and `newContent` is "". A content-dependent check
+  must refuse on `resultKnown != true` itself.
+- A pre-write block is observed on the tool-call channel (`res.Refused()` / `res.Saw()`),
+  the refusal naming `(gate <name>)`; an after-check refusal is a Stop block naming
+  `(file-guard <name>)`. Ledgers a gate's script writes go to `$SR_GUARDRAIL_DIR`, read
+  with `e.GateLedgerLines(proj, name, file)`. Observe the verdict
 with `e.GateState`; observe a turn block with `e.BlockingErrorsFrom(…, "Stop")`. A gate
 whose check calls a model uses a judge template + one of the `InstallJudgeClaude*` shims
 (already in the harness). See `tests/e2e/fileguard/034_*` for file-guard check idioms

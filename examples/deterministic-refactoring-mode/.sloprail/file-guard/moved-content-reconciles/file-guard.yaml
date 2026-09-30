@@ -1,8 +1,13 @@
-# Reconcile a moved file against its origin — but only inside a declared refactor
-# (the context link is a variable in the match, not a flat active_in) and only
-# for a file carrying an sr:moved-from marker. The same marker outside the
+# Reconcile a moved file against its origin at Stop — but only inside a declared
+# refactor (the context link is a variable in the match, not a flat active_in) and
+# only for a file carrying an sr:moved-from marker. The same marker outside the
 # context is not this guard's business.
+#
+# This is the after-check on the settled file. The PREVENTION — refusing a move
+# that regenerated instead of carrying the bytes, before the write lands — is the
+# PreFileWrite gate of the same name (gate/moved-content-reconciles); a file-guard
+# only acts on what settled, so it is the backstop for a write the gate could not
+# see (a command the engine does not parse).
 match: context["refactoring"].active and any(markers, .kind == "moved-from")
-preventive: true
 checks:
   - script: ./reconciles-against-origin.sh

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// task-md-first is a PREVENTIVE file-guard, script only, path-based: any file
+// task-md-first is a PreFileWrite gate (plus a backstop file-guard), script only, path-based: any file
 // inside a task folder (memories/tasks/<group>/<task>/, a gates/ file
 // included) other than TASK.md may only be written once that task's own
 // TASK.md exists on disk. Without it, a folder's TASK.md-less files are
@@ -45,7 +45,7 @@ func TestTaskMdFirst_NonEntryFileBeforeTaskMdRefused(t *testing.T) {
 		t.Fatalf("a supporting file written before TASK.md existed was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, notes) {
-		t.Errorf("the preventive guard let a supporting file land before TASK.md existed")
+		t.Errorf("the gate let a supporting file land before TASK.md existed")
 	}
 	if !res.Saw(taskDir+" has no TASK.md") || !res.Saw("Write "+taskDir+"/TASK.md first") {
 		t.Errorf("the refusal does not name the missing TASK.md and how to fix it:\n%s", res.Output)
@@ -68,7 +68,7 @@ func TestTaskMdFirst_GateFileBeforeTaskMdRefused(t *testing.T) {
 		t.Fatalf("a gate file written before TASK.md existed was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, gate) {
-		t.Errorf("the preventive guard let a gate file land before TASK.md existed")
+		t.Errorf("the gate let a gate file land before TASK.md existed")
 	}
 	if !res.Saw(taskDir + " has no TASK.md") {
 		t.Errorf("the refusal did not name the missing TASK.md (task folder resolved wrong for a gates/ file?):\n%s", res.Output)

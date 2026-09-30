@@ -1,0 +1,72 @@
+# A writing RULE must be traceable to a human ask — the RULE SET's own
+# protection, the same role task-body-is-human-authored plays for a task's
+# ask. Without it, an agent could invent a rule nobody asked for and have it
+# silently start gating every future unit.
+#
+# GROUNDING RIDES ON THE ACTION, NOT IN THE FILE. Every change to a RULE.md /
+# CONSTRAINT.md is made with `sr-file write|edit ... --cite:user '<exact
+# quote>'`, and the session resolves that quote against its own record before
+# any check runs. The rule file itself stores only the derived rule text — no
+# `[quote](/abs/session.jsonl:N)` link, which would not resolve on any other
+# machine. (Rules written before this carry such links; they are NOT forbidden
+# and are simply not read — see the plugin README.)
+#
+# THREE stages, cheapest first:
+#   0. REQUIRE (citation, user pool): the engine refuses a change
+#      carrying no citation that resolves to the user's own words, before any
+#      check runs, with a remedy naming sr-file. The Write and Edit tools
+#      cannot carry a citation, so they are always refused here.
+#   1. SCRIPT (check-rule.sh): the frontmatter satisfies rule.cue and the body
+#      is not empty.
+#   2. PREPARE + JUDGE (resolve-cited-rule-quotes.sh + judge-rule-body.md.j2):
+#      the rule must correspond to the cited words and hold THAT AND NOTHING
+#      ELSE — no invented scope, threshold, exception or rationale the user
+#      never stated. `require` proves the quote EXISTS; the judge decides
+#      whether it actually GROUNDS the change.
+#
+# An earlier version of this guard also checked that a rule's `script:` field
+# named a script capable of refusing. That check is GONE along with `script:`
+# itself — there is no more script-rule mechanism (see
+# unit-satisfies-rules/file-guard.yaml's header): every rule is a judge rule
+# now, so an untraceable, vacuous or self-contradicting rule fails stage 2.
+#
+# THE GATE refuses an ungrounded or invented rule before it lands: refusing it
+# only after the fact would mean it already had a chance to gate a unit write
+# before being caught. The gate is also where a citation matters most: a line
+# mixing sr-file with any other program has an unknown result, which
+# check-rule.sh refuses (resultKnown false) before it runs. The file-guard of
+# the same name (../../file-guard/content-rule-is-grounded) is the Stop
+# backstop on the settled file: there a citation grounds only the change it rode
+# on — citations do not accumulate: `event.citations` are those of the cited
+# changes that landed on the path this session, and since this requirement has
+# no `when`, every part of the change the agent made must come from a cited
+# change in the user pool (a cited `sr-file write` restating the file grounds
+# everything before it; a change the agent did not make, such as the user's own
+# edit between turns, is not charged).
+#
+# match: EITHER rule location — project-wide RULE.md or topic-scoped
+# CONSTRAINT.md, the same two paths rules-lib.sh collects from. Deletions are
+# not covered: deleting a rule removes a constraint rather than inventing one,
+# so it is not this gate's business.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^\\.sloprail/content-rules/[^/]+/RULE\\.md$" or event.path matches "^memories/topics/[^/]+/constraints/[^/]+/CONSTRAINT\\.md$"'
+
+# UNCONDITIONAL: every create or update must cite the user's own words.
+require:
+  - citation: {source_types: [user]}
+checks:
+  # Stage 1 — deterministic, fail-closed. Refuses with `{"reason": "..."}` on
+  # stdout.
+  - script: ./check-rule.sh
+
+  # Stage 2 — reached only because require and stage 1 passed. model: size-md
+  # (engine default judge modelset); no explicit timeout — it runs under the
+  # engine's own default (internal/dispatch/exec.go's defaultCheckTimeout).
+  # allowed_tools: [Read] — the cited quotes and the body are both already IN
+  # the prompt; Read lets the judge open a cited transcript line for its
+  # surrounding context, matching task-body-is-human-authored's grant.
+  - prepare: ./resolve-cited-rule-quotes.sh
+    judge: ./judge-rule-body.md.j2
+    model: size-md
+    allowed_tools: [Read]

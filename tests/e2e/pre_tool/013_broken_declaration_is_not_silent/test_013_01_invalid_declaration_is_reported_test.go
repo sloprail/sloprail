@@ -4,15 +4,15 @@
 // to have narrowed anything, so it must not refuse), must not disarm a sound rule
 // beside it, and is REPORTED rather than silently swallowed.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
 //
 // The new dispatch loads new-format declarations through a store that separates the
 // ones that loaded from the ones that could not (internal/declaration/store.go: a
-// malformed file-guard.yaml becomes an entry in loaded.Invalid with its reasons,
-// never a loaded guard). At every pre-tool dispatch newNatureDeclarations reports
-// that invalid set on stderr via reportNatureInvalid, and the invalid guards
+// malformed gate.yaml becomes an entry in loaded.Invalid with its reasons,
+// never a loaded gate). At every pre-tool dispatch newNatureDeclarations reports
+// that invalid set on stderr via reportNatureInvalid, and the invalid gates
 // dispatch NOTHING — the same "an invalid guardrail blocks nothing, but is named"
-// stance the old format settled on. These tests install malformed file-guard.yaml
+// stance the old format settled on. These tests install malformed gate.yaml
 // files and re-prove the OBSERVABLE half against the new dispatch.
 //
 // # What is and is not observable here, precisely
@@ -25,8 +25,7 @@
 // the permitted case. That is why the report's own delivery is pinned one layer
 // down — the store's Invalid production is asserted in internal/declaration
 // (store_test.go loadOneInvalid), and the stderr report itself is pinned in
-// services/sr-session (TestPreTool_MalformedFileGuardIsReportedAndDoesNotDeny and
-// TestPreTool_UnparseableFileGuardIsReportedAndDoesNotDeny, which drive this same
+// services/sr-session (nature_reportinvalid_test.go, whose tests drive this same
 // dispatch with stderr captured and assert both "not loaded, naming the guard" and
 // "does not deny"). A test that looks like it pins the report and cannot is worse
 // than one that says plainly where the report is pinned; this file asserts the
@@ -40,30 +39,31 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// badMatchGuard is a file-guard whose match names a field the file scope does not
-// carry — the singular `marker` (the scope exposes `markers`, a list). This is the
+// badMatchGuard is a gate whose trigger match names a field the event scope does not
+// carry — the bare `marker` (the scope exposes `event.newMarkers`). This is the
 // shape of an ordinary typo: nothing about it announces itself, and only the
 // scope's declared fields tell it from a rule that legitimately does not match. It
-// would be a preventive guard refusing every write if the match compiled.
-const badMatchGuard = `match: marker.kind == "endpoint"
-preventive: true
+// would be a gate refusing every write if the match compiled.
+const badMatchGuard = `on:
+  - event: PreFileWrite
+    match: marker.kind == "endpoint"
 checks:
   - script: ./refuse.sh
 `
 
-// soundGuard is a correct preventive file-guard that refuses every markdown write —
+// soundGuard is a correct gate that refuses every markdown write —
 // the control proving a write under test is one a sound rule really does refuse.
-const soundGuard = `match: "**/*.md"
-preventive: true
+const soundGuard = `on:
+  - event: PreFileWrite
+    match: event.path endsWith ".md"
 checks:
   - script: ./refuse.sh
 `
 
-// missingMatchGuard omits `match` entirely — the other way a file-guard is
+// missingMatchGuard omits `on` entirely — the other way a gate is
 // disqualified at load (a required field absent, ErrMissingField). As audible as
 // the first, and it must block nothing.
-const missingMatchGuard = `preventive: true
-checks:
+const missingMatchGuard = `checks:
   - script: ./refuse.sh
 `
 
@@ -85,14 +85,14 @@ func TestT013_01_MalformedMatchDoesNotStopTheWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "typo", badMatchGuard, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "typo", badMatchGuard, map[string]string{"refuse.sh": refuseScript})
 
 	got := e.Run(proj, "s-013-01", "write a note", Turns("done",
 		Write("w1", "guarded/notes.md", "hello"),
 	))
 
 	if !got.Permitted() {
-		t.Fatalf("a file-guard that could not load must not refuse the write:\n%s", got.Output)
+		t.Fatalf("a gate that could not load must not refuse the write:\n%s", got.Output)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestT013_02_TheSameRuleSpelledRightRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "correct", soundGuard, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "correct", soundGuard, map[string]string{"refuse.sh": refuseScript})
 
 	got := e.Run(proj, "s-013-02", "write a note", Turns("done",
 		Write("w1", "guarded/notes.md", "hello"),
@@ -125,7 +125,7 @@ func TestT013_03_ABrokenRuleStopsNothing(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "typo", badMatchGuard, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "typo", badMatchGuard, map[string]string{"refuse.sh": refuseScript})
 
 	got := e.Run(proj, "s-013-03", "write a note", Turns("done",
 		Write("w1", "elsewhere/notes.md", "hello"),
@@ -136,7 +136,7 @@ func TestT013_03_ABrokenRuleStopsNothing(t *testing.T) {
 	}
 }
 
-// T013_04: a file-guard missing its required `match` refuses nothing.
+// T013_04: a gate missing its required `on` refuses nothing.
 //
 // The other disqualifying fault (ErrMissingField). A fix that refused on any
 // invalid declaration would block this write for a rule that could not say what it
@@ -145,14 +145,14 @@ func TestT013_04_ARuleMissingItsMatchBlocksNothing(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "nomatch", missingMatchGuard, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "nomatch", missingMatchGuard, map[string]string{"refuse.sh": refuseScript})
 
 	got := e.Run(proj, "s-013-04", "write a note", Turns("done",
 		Write("w1", "any/notes.md", "hello"),
 	))
 
 	if got.Refused() {
-		t.Fatalf("a file-guard with no match blocked an unrelated write:\n%s", got.Output)
+		t.Fatalf("a gate with no trigger blocked an unrelated write:\n%s", got.Output)
 	}
 }
 
@@ -167,8 +167,8 @@ func TestT013_06_ASoundRuleStillRefusesOnItsOwnTerms(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "typo", badMatchGuard, map[string]string{"refuse.sh": refuseScript})
-	e.FileGuard(proj, "correct", soundGuard, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "typo", badMatchGuard, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "correct", soundGuard, map[string]string{"refuse.sh": refuseScript})
 
 	got := e.Run(proj, "s-013-06", "write a note", Turns("done",
 		Write("w1", "guarded/notes.md", "hello"),
@@ -184,7 +184,7 @@ func TestT013_06_ASoundRuleStillRefusesOnItsOwnTerms(t *testing.T) {
 
 // T013_07: a declaration that cannot be parsed at all permits, and goes quiet.
 //
-// An unparseable file-guard.yaml names no bindings, so it cannot scope a refusal —
+// An unparseable gate.yaml names no bindings, so it cannot scope a refusal —
 // and the engine does NOT respond by refusing everything (the old fail-closed this
 // change removed). The project is unguarded by that rule and quiet about it at this
 // point; the mitigation lives at session start and on stderr, where the author who
@@ -193,7 +193,7 @@ func TestT013_07_AnUnparseableDeclarationPermits(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "unreadable", unparseableGuard, nil)
+	e.Gate(proj, "unreadable", unparseableGuard, nil)
 
 	got := e.Run(proj, "s-013-07", "write a note", Turns("done",
 		Write("w1", "any/notes.md", "hello"),
@@ -215,16 +215,16 @@ func TestT013_08_TheRemedyIsNotRefused(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "unreadable", unparseableGuard, nil)
+	e.Gate(proj, "unreadable", unparseableGuard, nil)
 
 	// Remedy one: overwrite the broken declaration with a valid one. Reads the
-	// skill and its file-guard.md page first — the shipped read-file-guard-doc
-	// guard requires it for any write under .sloprail/file-guard/*/file-guard.yaml,
+	// skill and its gate.md page first — the shipped read-gate-doc
+	// gate requires it for any write under .sloprail/gate/*/gate.yaml,
 	// the same precondition a real repair now meets.
 	got := e.Run(proj, "s-013-08-fix", "fix the declaration", Turns("done",
 		Skill("s1", "authoring-guardrails"),
-		ToolUse("r1", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "file-guard.md")}),
-		Write("w1", ".sloprail/file-guard/unreadable/file-guard.yaml", soundGuard),
+		ToolUse("r1", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "gate.md")}),
+		Write("w1", ".sloprail/gate/unreadable/gate.yaml", soundGuard),
 	))
 	if !got.Permitted() {
 		t.Fatalf("the write that REPAIRS the broken declaration was refused, so the fix could not be carried out:\n%s", got.Output)
@@ -247,7 +247,7 @@ func TestT013_09_ASoundProjectStillEnforces(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "correct", soundGuard, map[string]string{"refuse.sh": refuseScript})
+	e.Gate(proj, "correct", soundGuard, map[string]string{"refuse.sh": refuseScript})
 
 	// Under guarded — the sound rule refuses (its match is every .md).
 	got := e.Run(proj, "s-013-09-refuse", "write a note", Turns("done",

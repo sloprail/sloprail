@@ -81,13 +81,6 @@ case "$kind" in
       exit 0
     fi
     ;;
-  PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
-    if [ "$known" != "true" ]; then
-      exit 0
-    fi
-    new_content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
-    ;;
   *)
     exit 0
     ;;
@@ -103,7 +96,7 @@ esac
 
 old_content=""
 case "$kind" in
-  PreFileUpdate|PostFileUpdate)
+  PostFileUpdate)
     old_content="$(printf '%s' "$event" | jq -r '.event.oldContent // ""' 2>/dev/null)"
     ;;
 esac

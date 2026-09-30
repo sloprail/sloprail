@@ -2,7 +2,7 @@
 # plan-2026-09-24: scored on TRAJECTORY HEALTH via the shared judge
 # (examples/_shared/eval/trajectory-health.sh). The user asks for the work to
 # be tracked as a task, so ASK.md is expected; whether it was cited and the
-# (preventive) guard fired are informational signals, not the bar.
+# ask-is-human-authored gate fired are informational signals, not the bar.
 set -eu
 
 if [ -z "${SR_EVAL_TRANSCRIPT:-}" ]; then

@@ -10,7 +10,7 @@ import "testing"
 // allowed to rest.
 //
 // The gate itself is DETERMINISTIC (no judge). But the task WRITE that sets up each
-// test fires the preventive file guards (task-evidence, task-body) at Pre, and
+// test fires the PreFileWrite gates (task-evidence, task-body) at Pre, and
 // task-body has a judge — so a passing judge stub (pass:true) is installed to let
 // the write land, isolating the gate's own Stop decision. The write is an sr-file
 // call citing the user's words, resolved against the seeded transcript for real.

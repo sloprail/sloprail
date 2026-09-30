@@ -44,7 +44,7 @@ var (
 // commitGuards commits the project's `.sloprail` and `.claude` trees so a guard
 // (and the skill it requires) installed after the baseline is part of it, not the
 // first cycle's diff — the same reason 037's suite commits (the sloprail plugin
-// ships authoring-slop, a preventive file-guard whose Stop after-check judges a
+// ships authoring-slop, a file-guard whose Stop after-check judges a
 // guardrail's own files; an uncommitted one reads as this cycle's write).
 // Requires a git repo (callers GitInit before installing).
 func commitGuards(t *testing.T, proj string) {

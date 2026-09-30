@@ -34,16 +34,13 @@
 # guardrail is added somewhere new.
 match: path endsWith "RULE.md"
 
-# preventive: true reproduces the old Pre+Post binding exactly. A preventive
-# file-guard fires on the PRE write to REFUSE a bloated RULE.md before it lands,
-# AND, like every guard, fires the after-check at Stop on the SETTLED file. The
-# Post after-check is the backstop no unusual writer slips past: a command/sed/git
-# edit whose result the engine cannot derive is failed CLOSED at Pre by the engine
-# (services/sr-session/nature_fileguard.go isUnderivablePreWrite) and the settled
-# file is judged at Stop — where event.newContent carries the settled bytes off
-# the tree diff, which the template reads the same way. Dropping preventive would
-# lose the Pre-prevention the old rule was built around.
-preventive: true
+# This is the STOP after-check: a file-guard acts only on the settled file. The
+# refusal BEFORE the write lands is the sibling gate of the same name
+# (.sloprail/gate/rule-quality/), which judges the same file with the same rubric on
+# PreFileWrite. The file-guard is the backstop for a write no Pre event covers
+# (a command/sed/git edit whose result the engine could not derive, which the gate
+# refuses to judge unseen): event.newContent here carries the settled bytes off
+# the tree diff, which the template reads the same way.
 
 checks:
   # prepare loads the meta-rules; the judge renders them against the file and asks

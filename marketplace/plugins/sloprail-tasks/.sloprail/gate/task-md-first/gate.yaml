@@ -1,0 +1,22 @@
+# A file inside a task folder (memories/tasks/<group>/<task>/) may only be
+# written once that task's TASK.md exists — the PRE-WRITE half. Without it the
+# folder names no ask, no status, no priority: task-body-is-human-authored,
+# task-evidence-resolves and task-review all key off TASK.md, so anything else in
+# the folder is orphaned. This gate refuses the write before it lands; the plain
+# file-guard of the same name, beside it under file-guard/, is the backstop at Stop
+# (it catches a write that reached the tree by a shell path the gate could not
+# see). The full argument lives in file-guard/task-md-first/file-guard.yaml.
+#
+# check.sh reads only the event's path and the tree, never the new content, so it
+# decides the same whether or not the result of the write is known: no
+# require-known-result check is needed.
+#
+# on: PreFileWrite only — the reviewer deletes an APPROVED task's whole folder
+# (TASK.md included) as its own next step, so a delete is never this gate's
+# business. match: anything past the two-segment <group>/<task> prefix, excluding
+# the TASK.md leaf itself.
+on:
+  - event: PreFileWrite
+    match: 'event.path matches "^memories/tasks/[^/]+/[^/]+/.+$" and not (event.path endsWith "/TASK.md")'
+checks:
+  - script: ./check.sh

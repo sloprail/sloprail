@@ -52,7 +52,7 @@ import (
 // context's exit runs after the gates so the gate reads the context still open,
 // then the context closes for the next cycle. runNatureStopCycle orchestrates
 // this; the enters also run at PRE-tool (on the pre events) so a context a
-// preventive file-guard's match reads is populated before that guard runs.
+// gate's match reads is populated before that gate runs.
 //
 // # Persistence
 //

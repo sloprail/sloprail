@@ -52,7 +52,7 @@ import (
 //
 // # The measurement
 //
-// Two file-guards bind the same paths (preventive, so they fire at pre-tool):
+// Two gates bind the same paths (PreFileWrite, so they fire at pre-tool):
 //
 //	judge-notes   launches an agent — the rule that must NOT re-enter itself.
 //	env-witness   launches nothing and only records the environment it sees.
@@ -77,14 +77,16 @@ import (
 // The same experiment run against a binary that does not set SLOPRAIL_LAUNCHED_BY
 // recurses to the depth-2 kill switch, which is what shows the measurement
 // discriminates rather than passing on a technicality.
-const realJudgeDecl = `match: path startsWith "notes/"
-preventive: true
+const realJudgeDecl = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "notes/"
 checks:
   - script: ./judge.sh
 `
 
-const realWitnessDecl = `match: path startsWith "notes/"
-preventive: true
+const realWitnessDecl = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "notes/"
 checks:
   - script: ./witness.sh
 `
@@ -95,7 +97,7 @@ checks:
 // A check runs with its working directory set to the GUARD'S OWN FOLDER, so
 // an agent launched without it starts there — outside the project, where the
 // plugin is not installed and no check fires. Measured: the inner agent wrote its
-// file into .sloprail/file-guard/judge-notes/notes/ and the witness never ran,
+// file into .sloprail/gate/judge-notes/notes/ and the witness never ran,
 // which reads exactly like a guard that works. The guarded tree is where a real
 // judging agent works, and it is the only place the recursion exists.
 //
@@ -155,8 +157,8 @@ func TestT015_06_RealAgentInheritsProvenanceAndTheRuleDeclines(t *testing.T) {
 	// hook at all — a green run that proves nothing. The mock has no such
 	// condition, which is why no other test in this package needs the call.
 	e.GitInit(proj)
-	e.FileGuard(proj, "judge-notes", realJudgeDecl, map[string]string{"judge.sh": realJudgeScript})
-	e.FileGuard(proj, "env-witness", realWitnessDecl, map[string]string{"witness.sh": realWitnessScript})
+	e.Gate(proj, "judge-notes", realJudgeDecl, map[string]string{"judge.sh": realJudgeScript})
+	e.Gate(proj, "env-witness", realWitnessDecl, map[string]string{"witness.sh": realWitnessScript})
 
 	// Deliberately NO InstallClaudeShim: the whole point is the real binary.
 	ledger := filepath.Join(proj, "ledger.txt")

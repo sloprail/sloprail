@@ -19,8 +19,8 @@ import (
 //      AND NOTHING ELSE. The prepare skips the judge when the body did not change.
 //      The judge is the model; its verdict is stubbed.
 //
-// Being preventive, a not-fine write is refused at PRE-tool, before it lands; the
-// same checks re-run at Stop on the settled file (Post, against the session
+// The PreFileWrite gate refuses a not-fine write at PRE-tool, before it lands; the
+// plain file-guard re-runs the same checks at Stop on the settled file (Post, against the session
 // baseline).
 //
 // The judge verdict is a fixed stub (InstallJudgeClaude) — pass:true admits,
@@ -81,7 +81,7 @@ func TestBody_CitedCreatePasses(t *testing.T) {
 // which ALSO carries agent-authored elaboration the human never asked for — the
 // "and nothing else" violation — passes stage 1 (a user citation is on the write)
 // and is then REFUSED by the judge (stub pass:false), with the judge's reasoning
-// reaching the agent. The preventive guard keeps it off disk.
+// reaching the agent. The gate keeps it off disk.
 func TestBody_SlopBodyRefusedByJudge(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -98,7 +98,7 @@ func TestBody_SlopBodyRefusedByJudge(t *testing.T) {
 		t.Fatalf("a slop body the judge rejected was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, taskPath) {
-		t.Errorf("the preventive guard let a judge-rejected body land on disk")
+		t.Errorf("the gate let a judge-rejected body land on disk")
 	}
 	if !res.Saw("acceptance criteria and a suggested approach the user never stated") {
 		t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)
@@ -124,7 +124,7 @@ func TestBody_UncitedCreateRefusedByRequire(t *testing.T) {
 		t.Fatalf("an uncited task create was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, taskPath) {
-		t.Errorf("the preventive guard let an uncited task land on disk")
+		t.Errorf("the gate let an uncited task land on disk")
 	}
 	if !res.Saw("must cite the user's own words (--cite:user)") {
 		t.Errorf("the refusal was not the citation requirement's reason:\n%s", res.Output)

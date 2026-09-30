@@ -26,20 +26,74 @@ import (
 // that the root's cycle end — which sees the same change in a shared tree —
 // reads them too.
 
-const toolResultGuard = `match: "memories/**"
-preventive: true
+// toolResultGate refuses, before it lands, a write to memories/ that does not cite
+// a tool's output; toolResultGuard is the same requirement judged on the settled
+// file at Stop. The two halves of one rule share a name.
+const toolResultGate = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "memories/"
 require:
   - citation: {source_types: [tool_result]}
 checks:
   - script: ./record.sh
 `
 
+const toolResultGuard = `match: "memories/**"
+require:
+  - citation: {source_types: [tool_result]}
+checks:
+  - script: ./record.sh
+`
+
+const userGate = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "memories/"
+require:
+  - citation: {source_types: [user]}
+checks:
+  - script: ./record.sh
+`
+
+const userGuard = `match: "memories/**"
+require:
+  - citation: {source_types: [user]}
+checks:
+  - script: ./record.sh
+`
+
+// installBoth installs a grounded rule as its gate and its plain file-guard, both
+// recording what their check was handed.
+func installBoth(e *harness.Env, proj, gate, guard string) {
+	e.Gate(proj, "grounded-memories", gate, map[string]string{"record.sh": citedGateRecordScript})
+	e.FileGuard(proj, "grounded-memories", guard, map[string]string{"record.sh": citedRecordScript})
+}
+
+// bothLedger is what both halves' checks were handed: the gate's, then the guard's.
+func bothLedger(e *harness.Env, proj string) []string {
+	return append(e.GateLedgerLines(proj, "grounded-memories", "ledger"),
+		e.FileGuardLedgerLines(proj, "grounded-memories", "ledger")...)
+}
+
 // citedRecordScript records, beside the quote, which record the citation
 // resolved in and in which pool.
-const citedRecordScript = `#!/usr/bin/env bash
+const citedRecordScript_ = `#!/usr/bin/env bash
 set -uo pipefail
 payload="$(cat)"
-printf '%s' "$payload" | jq -c '{kind: .event.kind, path: (.event.path // ""), n: (.event.citations | length), quote: (.event.citations[0].quote // ""), record: (.event.citations[0].path // ""), types: (.event.citations[0].sourceTypes // [])}' >> "$SR_GUARDRAIL_DIR/ledger"
+printf '%s' "$payload" | jq -c '{kind: .event.kind, path: (.event.path // ""), n: (.event.citations | length), quote: (.event.citations[0].quote // ""), record: (.event.citations[0].path // ""), types: (.event.citations[0].sourceTypes // [])}' >> "$SR_GUARDRAIL_DIR/ledger"`
+const citedRecordScript = citedRecordScript_ + `
+exit 0
+`
+
+// citedGateRecordScript is citedRecordScript for a gate: after recording, it
+// refuses a create or update whose result the engine could not compute.
+const citedGateRecordScript = citedRecordScript_ + `
+case "$(printf '%s' "$payload" | jq -r '.event.kind')" in
+  PreFileCreate|PreFileUpdate)
+    [ "$(printf '%s' "$payload" | jq -r '.event.resultKnown')" = "true" ] || {
+      echo '{"reason":"the result of this write could not be computed, so it cannot be checked before it lands"}'
+      exit 1
+    } ;;
+esac
 exit 0
 `
 
@@ -86,7 +140,7 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "grounded-memories", toolResultGuard, map[string]string{"record.sh": citedRecordScript})
+	installBoth(e, proj, toolResultGate, toolResultGuard)
 	commitAll(t, proj)
 
 	// The sub-agent measures something.
@@ -118,7 +172,7 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 	}
 
 	var pre string
-	for _, l := range e.FileGuardLedgerLines(proj, "grounded-memories", "ledger") {
+	for _, l := range bothLedger(e, proj) {
 		if strings.Contains(l, `"kind":"PreFileCreate"`) {
 			pre = l
 		}
@@ -146,17 +200,10 @@ func TestT041_21_SubagentCitesItsOwnToolOutput(t *testing.T) {
 // T041_22: a sub-agent citing its dispatch prompt as the user's words is
 // refused — those are the parent agent's words — and nothing lands.
 func TestT041_22_SubagentCannotCiteItsDispatchAsTheUser(t *testing.T) {
-	const userGuard = `match: "memories/**"
-preventive: true
-require:
-  - citation: {source_types: [user]}
-checks:
-  - script: ./record.sh
-`
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "grounded-memories", userGuard, map[string]string{"record.sh": citedRecordScript})
+	installBoth(e, proj, userGate, userGuard)
 	commitAll(t, proj)
 
 	sub := subagentScript(t, harness.Turns("sub done",
@@ -189,7 +236,7 @@ checks:
 		!strings.Contains(said, "You are a sub-agent: your prompt is the parent agent's, not the user's.") {
 		t.Errorf("the refusal does not tell the sub-agent it quoted its dispatch prompt:\n%s", record)
 	}
-	for _, l := range e.FileGuardLedgerLines(proj, "grounded-memories", "ledger") {
+	for _, l := range bothLedger(e, proj) {
 		if strings.Contains(l, "measure the retry budget") {
 			t.Errorf("the dispatch prompt reached the guard as a citation: %s", l)
 		}
@@ -282,7 +329,7 @@ func TestT041_25_ASubagentsReplyIsNotToolOutput(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "grounded-memories", toolResultGuard, map[string]string{"record.sh": citedRecordScript})
+	installBoth(e, proj, toolResultGate, toolResultGuard)
 	commitAll(t, proj)
 
 	parrot := subagentScript(t, harness.Turns("all 40 tests pass"))
@@ -310,7 +357,7 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "grounded-memories", toolResultGuard, map[string]string{"record.sh": citedRecordScript})
+	installBoth(e, proj, toolResultGate, toolResultGuard)
 	commitAll(t, proj)
 
 	measure := subagentScript(t, harness.Turns("measured it: coverage REPLYPROBE-7 lines",
@@ -330,7 +377,7 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 		t.Fatalf("output a sub-agent quoted in its reply did not ground once:\n%s", res.Output)
 	}
 	var pre string
-	for _, l := range e.FileGuardLedgerLines(proj, "grounded-memories", "ledger") {
+	for _, l := range bothLedger(e, proj) {
 		if strings.Contains(l, `"kind":"PreFileCreate"`) {
 			pre = l
 		}
@@ -344,17 +391,10 @@ func TestT041_26_OutputQuotedInAReplyIsNotAmbiguous(t *testing.T) {
 // as the user's: they resolve in the main conversation, where the user wrote
 // them.
 func TestT041_27_SubagentCitesTheUsersWordsRelayedVerbatim(t *testing.T) {
-	const userGuard = `match: "memories/**"
-preventive: true
-require:
-  - citation: {source_types: [user]}
-checks:
-  - script: ./record.sh
-`
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "grounded-memories", userGuard, map[string]string{"record.sh": citedRecordScript})
+	installBoth(e, proj, userGate, userGuard)
 	commitAll(t, proj)
 
 	sub := subagentScript(t, harness.Turns("sub done",
@@ -367,7 +407,7 @@ checks:
 		t.Fatalf("a sub-agent citing the user's relayed words did not land:\n%s", res.Output)
 	}
 	var pre string
-	for _, l := range e.FileGuardLedgerLines(proj, "grounded-memories", "ledger") {
+	for _, l := range bothLedger(e, proj) {
 		if strings.Contains(l, `"kind":"PreFileCreate"`) {
 			pre = l
 		}

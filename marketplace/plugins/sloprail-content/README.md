@@ -156,7 +156,7 @@ set:
 
 ## The guardrails
 
-### unit-md-first — file-guard, **preventive**
+### unit-md-first — gate + file-guard
 
 Over any file under `memories/topics/<topic>/units/<unit>/` other than
 `UNIT.md` itself. A unit folder with no `UNIT.md` declares no `type`,
@@ -164,8 +164,10 @@ Over any file under `memories/topics/<topic>/units/<unit>/` other than
 have nothing to select and the file is orphaned — seen in practice, an agent
 wrote a draft into a unit folder before its `UNIT.md` existed. The check is
 purely path-based: it refuses the write unless `<unit folder>/UNIT.md`
-already exists on disk, and says to write that first. Deletions are not this
-guard's business (`deletions` is left at its default, `skip`).
+already exists on disk, and says to write that first. It is a `PreFileWrite`
+gate (refuses before the write lands) plus a plain file-guard of the same name
+that re-checks the settled file at Stop. Deletions are not this rule's
+business (no `PreFileDelete` trigger; the file-guard skips deletions).
 
 Proven first as a project-local rule in the strategy repo's own
 `.sloprail/file-guard/unit-md-first/` before being generalized here so every
@@ -184,7 +186,7 @@ measured number for a deterministic rule). A unit selecting no rules at all
 (no global rules configured, no matching tag rule, no topic constraints)
 passes trivially — nothing to check is not a violation.
 
-### unit-publish-approved — file-guard, **preventive**
+### unit-publish-approved — gate + file-guard
 
 Over a unit's `UNIT.md` only. Publishing needs **both**:
 
@@ -247,9 +249,11 @@ would reject (an integer key, a custom tag) still answers.
 A broken field is never a way to publish unchecked.
 
 Publishing is the irreversible step, and the task is explicit that an agent
-must not be able to publish on its own say-so — so this guard, like
-`content-rule-is-grounded` below, is bound `preventive: true`. The Stop
-after-check is the backstop: there, "before" is the session baseline, and a
+must not be able to publish on its own say-so — so this rule, like
+`content-rule-is-grounded` below, is a `PreFileWrite` gate (it refuses before
+the write lands, and refuses a write whose result it cannot derive, such as
+`sed -i`) plus a plain file-guard of the same name. The file-guard is the Stop
+after-check and the backstop: there, "before" is the session baseline, and a
 citation grounds only the change it rode on — citations do not accumulate. A
 cited change counts only if it landed, only for a requirement whose pools it
 was cited in, and every other part of the unit's change the agent made must be
@@ -266,11 +270,14 @@ require:
     when: ./enters-published.sh
 ```
 
-### content-rule-is-grounded — file-guard, **preventive**
+### content-rule-is-grounded — gate + file-guard
 
 Protects the RULE SET itself — the same role `task-body-is-human-authored`
 plays for a task's ask. Grounding is unconditional: every create or update of
-a rule must cite the user.
+a rule must cite the user. A `PreFileWrite` gate refuses an ungrounded rule
+before it lands (and refuses a write whose result it cannot derive, such as one
+mixing `sr-file` with another program); a plain file-guard of the same name runs
+the same require, script and judge on the settled file at Stop.
 
 0. **`require: [{citation: {source_types: [user]}}]`.** A change carrying no citation that
    resolves to the user's own words is refused by the engine before any
@@ -287,8 +294,8 @@ a rule must cite the user.
    rationale the user never stated is refused. On an update, only what the
    change adds or alters is judged against the cited words.
 
-Deleting a rule is not guarded (`deletions` is left at its default, `skip`):
-removing a rule invents nothing.
+Deleting a rule is not guarded (no `PreFileDelete` trigger; the file-guard
+skips deletions): removing a rule invents nothing.
 
 An earlier draft also checked that a rule's `script:` field named a script
 capable of refusing. That check is gone along with `script:` itself — every

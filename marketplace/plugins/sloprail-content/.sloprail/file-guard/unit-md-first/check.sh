@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Refuse a write inside a unit folder whose UNIT.md does not exist yet.
-# Path-based, not content-based, so an unresolvable pre-write result is still
-# judged.
+# Stop after-check of unit-md-first: refuse a SETTLED file inside a unit folder
+# whose UNIT.md does not exist. The gate of the same name refuses the pending
+# write; this catches what only lands past it (a shell write whose result the
+# gate could not see). Path-based, not content-based.
 set -euo pipefail
 
 payload="$(cat)"
@@ -16,9 +17,8 @@ refuse() {
 }
 
 case "$kind" in
-  PreFileCreate | PreFileUpdate | PostFileCreate | PostFileUpdate) ;;
-  PreFileDelete | PostFileDelete) exit 0 ;;
-  *) refuse "unexpected event kind '$kind' for $path; this rule only judges file writes" ;;
+  PostFileCreate | PostFileUpdate) ;;
+  *) refuse "unexpected event kind '$kind' for $path; this rule only judges settled file writes" ;;
 esac
 
 [ -n "$path" ] || refuse "the event named no path, so this rule could not check it"

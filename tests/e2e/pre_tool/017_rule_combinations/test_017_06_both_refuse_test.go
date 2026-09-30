@@ -28,32 +28,27 @@ import (
 // T017_07 exists: it pins that a pending action is refused ONCE, with one rule's
 // reason, rather than being reported twice or having two reasons spliced together.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+// # Vehicle: PreFileWrite gates
 //
 // Unlike T017_01..05, these three turn on the "first refusal ENDS the matter"
-// short-circuit of the pre-tool point — and that short-circuit lives in the
-// PREVENTIVE FILE-GUARD path (runFileGuardsPreventive returns on the first
-// refusal), NOT in the gate path (which runs every matching gate and only blocks
-// on the first refusal). So these use preventive file-guards, the vehicle whose
-// pre-write behaviour matches the invariant: a not-fine write is refused before it
-// lands, and once one guard refuses the rest are not asked. Because a permitting
-// preventive guard fires BOTH at the pre-write and again at Stop (the after-check
-// every guard runs), the permit-and-record check records ONLY on the PRE kinds, so
-// "asked once" counts pre-write questions rather than the after-the-fact re-check.
-// Refusing guards need no such filter: a PRE refusal blocks the write, so there is
-// no settled file and no Stop after-check to record.
+// short-circuit of the pre-tool point: a file already refused by a gate is not
+// asked of the gates after it, so the pending action is refused once, before it
+// lands. The vehicle is a set of gates triggering on the same PreFileWrite event.
+// A gate runs once per matching pre file event, so a permit-and-record check
+// records exactly one line per question — there is no settled-file re-check to
+// filter out.
 
-// preventiveEveryCreate is a preventive file-guard that fires on every created
-// file (match: every .md path; the writes here are all .md).
-const preventiveEveryCreate = `match: "**/*.md"
-preventive: true
+// gateEveryCreate is a gate that fires on every created or updated markdown file
+// (the writes here are all .md).
+const gateEveryCreate = `on:
+  - event: PreFileWrite
+    match: event.path endsWith ".md"
 checks:
   - script: ./h.sh
 `
 
-// refusesEveryCreate is the check body of a preventive file-guard that objects to
-// any creation it is shown, in words the test can attribute to it, recording that
-// it ran. A PRE refusal blocks the write, so it only ever runs at the pre-write.
+// refusesEveryCreate is the check body of a gate that objects to any creation it
+// is shown, in words the test can attribute to it, recording that it ran.
 func refusesEveryCreate(reason string) string {
 	return "#!/bin/sh\ncat >/dev/null\necho ran >> \"$SR_GUARDRAIL_DIR/log\"\necho '{\"reason\":\"" + reason + "\"}'\nexit 1\n"
 }
@@ -75,9 +70,9 @@ func refusesEveryCreate(reason string) string {
 func TestT017_06_TwoRefusalsPreventTheWorkAndNameARule(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "first-rule", preventiveEveryCreate,
+	e.Gate(proj, "first-rule", gateEveryCreate,
 		map[string]string{"h.sh": refusesEveryCreate("the first rule objects")})
-	e.FileGuard(proj, "second-rule", preventiveEveryCreate,
+	e.Gate(proj, "second-rule", gateEveryCreate,
 		map[string]string{"h.sh": refusesEveryCreate("the second rule objects")})
 
 	res := e.Run(proj, "s-017-06", "write a note", Turns("done",
@@ -89,8 +84,7 @@ func TestT017_06_TwoRefusalsPreventTheWorkAndNameARule(t *testing.T) {
 		"the work must actually be prevented, not merely reported as refused")
 
 	// One of the two, by name. Whichever ran first is the engine's business. The
-	// file-guard attribution ("file-guard <name>") carries the folder name into
-	// the refusal.
+	// gate attribution ("gate <name>") carries the folder name into the refusal.
 	named := res.Saw("first-rule") || res.Saw("second-rule")
 	assert.True(t, named,
 		"the refusal must name the guardrail that produced it — an agent told only that it "+
@@ -120,9 +114,9 @@ func TestT017_06_TwoRefusalsPreventTheWorkAndNameARule(t *testing.T) {
 func TestT017_07_TheFirstRefusalEndsTheMatterForAPendingAction(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "first-rule", preventiveEveryCreate,
+	e.Gate(proj, "first-rule", gateEveryCreate,
 		map[string]string{"h.sh": refusesEveryCreate("the first rule objects")})
-	e.FileGuard(proj, "second-rule", preventiveEveryCreate,
+	e.Gate(proj, "second-rule", gateEveryCreate,
 		map[string]string{"h.sh": refusesEveryCreate("the second rule objects")})
 
 	res := e.Run(proj, "s-017-07", "write a note", Turns("done",
@@ -130,7 +124,7 @@ func TestT017_07_TheFirstRefusalEndsTheMatterForAPendingAction(t *testing.T) {
 	))
 	require.True(t, res.Refused(), "the write must be refused for this to be about what follows one")
 
-	ran := len(e.FileGuardLedgerLines(proj, "first-rule", "log")) + len(e.FileGuardLedgerLines(proj, "second-rule", "log"))
+	ran := len(e.GateLedgerLines(proj, "first-rule", "log")) + len(e.GateLedgerLines(proj, "second-rule", "log"))
 	assert.Equal(t, 1, ran,
 		"a pending action refused by one rule must not be put in front of the others — the "+
 			"action is already prevented, and each further check is a run that buys nothing")
@@ -139,38 +133,32 @@ func TestT017_07_TheFirstRefusalEndsTheMatterForAPendingAction(t *testing.T) {
 // T017_08: both rules are asked when the first one PERMITS.
 //
 // The control for T017_07, and it is what stops "exactly one ran" being
-// satisfied by an engine that asks only ever one rule. Same two preventive
-// guards, same match; the only change is that the first one permits, so the
+// satisfied by an engine that asks only ever one rule. Same two gates, same
+// match; the only change is that the first one permits, so the
 // dispatch must continue to the second.
 //
 // Both permit here, so neither can end the dispatch — which makes the count a
 // measurement of how many rules the engine consults rather than of where it
-// stopped. The check records ONLY on the pre-write kinds, so the after-the-fact
-// re-check every guard runs at Stop does not inflate the count.
+// stopped. Each gate records once per question, so the count is exact.
 func TestT017_08_BothRulesAreAskedWhenNeitherRefuses(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
-	// Record only when this is the PRE write (a create/update about to happen),
-	// not the Stop after-check — so the count is "asked once at the pre-tool
-	// point" rather than "asked at pre and again at post".
+	// Record each question asked at the pre-tool point.
 	const permitAndLog = `#!/bin/sh
-p="$(cat)"
-kind="$(printf '%s' "$p" | sed -n 's/.*"kind":"\([A-Za-z]*\)".*/\1/p')"
-case "$kind" in
-  PreFile*) echo ran >> "$SR_GUARDRAIL_DIR/log" ;;
-esac
+cat >/dev/null
+echo ran >> "$SR_GUARDRAIL_DIR/log"
 exit 0
 `
-	e.FileGuard(proj, "first-rule", preventiveEveryCreate, map[string]string{"h.sh": permitAndLog})
-	e.FileGuard(proj, "second-rule", preventiveEveryCreate, map[string]string{"h.sh": permitAndLog})
+	e.Gate(proj, "first-rule", gateEveryCreate, map[string]string{"h.sh": permitAndLog})
+	e.Gate(proj, "second-rule", gateEveryCreate, map[string]string{"h.sh": permitAndLog})
 
 	res := e.Run(proj, "s-017-08", "write a note", Turns("done",
 		Write("w1", "notes.md", "hello"),
 	))
 	require.False(t, res.Refused(), "two permitting rules must not refuse")
 
-	assert.Len(t, e.FileGuardLedgerLines(proj, "first-rule", "log"), 1, "the first rule must be asked")
-	assert.Len(t, e.FileGuardLedgerLines(proj, "second-rule", "log"), 1,
+	assert.Len(t, e.GateLedgerLines(proj, "first-rule", "log"), 1, "the first rule must be asked")
+	assert.Len(t, e.GateLedgerLines(proj, "second-rule", "log"), 1,
 		"the second rule must be asked too when the first one permits — otherwise every rule "+
 			"but one in a real project is silently disarmed")
 }

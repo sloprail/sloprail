@@ -8,25 +8,24 @@ import (
 
 // INVARIANT: the PRE stage reads the PENDING body, from the right field.
 //
-// Both engine-repo judges are `preventive: true` file-guards, so they fire at
-// the PRE write as well as the after-check at Stop, and the preventive Pre run
-// is the one that PREVENTS a bad SKILL.md/RULE.md from landing rather than
-// reporting it after the fact. It works only if the judge reads the pending body
-// out of the flat FileJudgeInput event — which the file kinds carry as
+// Both engine-repo judges have a GATE on PreFileWrite (a file-guard acts only at
+// Stop), and the gate is the one that PREVENTS a bad SKILL.md/RULE.md from landing
+// rather than reporting it after the fact. It works only if the judge reads the
+// pending body out of the flat event — which the file kinds carry as
 // `event.newContent`, the field the judge TEMPLATE interpolates. A template
 // reading the wrong field would render an empty file, the model would find
-// nothing to flag, and the Pre stage would be silently dead while the Post
-// after-check still fires off disk.
+// nothing to flag, and the gate would be silently dead while the Stop
+// file-guard still fires off disk.
 //
-// These tests pin the Pre behaviour directly: a Write TOOL (which lets the
-// engine derive the pending bytes, so the preventive guard's Pre run fires and
-// can block) creating a flagged file must be REFUSED. That refusal is only
+// These tests pin the gate's behaviour directly: a Write TOOL (which lets the
+// engine derive the pending bytes, so the gate can decide) creating a flagged
+// file must be REFUSED. That refusal is only
 // possible if the judge saw the content the write states, so the assertion is a
 // proof the field reaches the prompt — the exact regression the flat-event
 // migration could have left behind.
 //
 // The whole path runs through the mock: the harness drives a10n-claude-mock to
-// attempt the write, the real plugin fires this repo's real file-guard, prepare
+// attempt the write, the real plugin fires this repo's real gate, prepare
 // assembles the rubric, sr-agent runs the judge, and the only substitution is the
 // judge's own model verdict (InstallJudgeClaude). Distinct from the verdict-PARSE
 // invariant, whose subject is the greedy span rather than the stage — those also
@@ -44,13 +43,13 @@ func TestPreStageRefusesAFlaggedSkillWrite(t *testing.T) {
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\nA body the judge flags.\n"),
 	))
 
-	// A Pre refusal reaches the agent on the tool-call channel, so the mock's
+	// A gate refusal reaches the agent on the tool-call channel, so the mock's
 	// own stream carries it — unlike a Post refusal, which surfaces as a
 	// blocking error. Asserting on the stream is therefore correct here and is
 	// what distinguishes a prevented write from an after-the-fact objection.
 	if !got.Saw("SKILL QUALITY") {
 		t.Fatalf("a Write creating a flagged SKILL.md was not refused at the Pre stage — "+
-			"the judge did not see the pending body (event.newContent), so the preventive Pre run is silently dead:\n%s", got.Output)
+			"the judge did not see the pending body (event.newContent), so the gate is silently dead:\n%s", got.Output)
 	}
 }
 
@@ -68,7 +67,7 @@ func TestPreStageRefusesAFlaggedRuleWrite(t *testing.T) {
 
 	if !got.Saw("RULE QUALITY") {
 		t.Fatalf("a Write creating a flagged RULE.md was not refused at the Pre stage — "+
-			"the judge did not see the pending body (event.newContent), so the preventive Pre run is silently dead:\n%s", got.Output)
+			"the judge did not see the pending body (event.newContent), so the gate is silently dead:\n%s", got.Output)
 	}
 }
 

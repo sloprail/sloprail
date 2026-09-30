@@ -2,15 +2,16 @@ package e2e
 
 import "testing"
 
-// A preventive file-guard whose check dies by a signal it did not survive.
+// A gate whose check dies by a signal it did not survive.
 //
 // The check reads its payload, then sends SIGKILL to its own shell (`kill -9
 // $$`) — standing in for any violent death (a crash, an OOM kill, an outside
 // `kill`). It never reaches a clean exit and never times out; it dies in
-// milliseconds. Preventive so it runs at pre-tool, where the refusal reaches the
+// milliseconds. A PreFileWrite gate, so it runs at pre-tool, where the refusal reaches the
 // agent's stream and its wording can be read back.
-const crasherGuard = `match: path startsWith "notes/"
-preventive: true
+const crasherGuard = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "notes/"
 checks:
   - script: ./crash.sh
 `
@@ -38,7 +39,7 @@ func TestT036_01_ACrashedCheckSaysItWasKilledNotExitMinusOne(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "crasher", crasherGuard, map[string]string{"crash.sh": crashScript})
+	e.Gate(proj, "crasher", crasherGuard, map[string]string{"crash.sh": crashScript})
 
 	res := e.Run(proj, "s-036-01", "write a note", Turns("done",
 		Write("w1", "notes/first.md", "hello"),

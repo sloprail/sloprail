@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// chargeGuard is a NON-preventive file-guard over the billing code: its check
+// chargeGuard is a file-guard over the billing code: its check
 // runs at Stop, over the files the cycle's difference holds. Nothing stops the
 // write; the difference is the only way the guard ever sees the change — which
 // is exactly what makes it blind when the difference is measured from the wrong

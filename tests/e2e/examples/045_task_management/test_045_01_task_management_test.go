@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// task-management is a PREVENTIVE file-guard over `**/tasks/*/*/ASK.md`: every
+// task-management is a PreFileWrite gate (with a same-named file-guard for the Stop after-check) over `**/tasks/*/*/ASK.md`: every
 // write must cite the user's own words (`require: [{citation: {source_types:
 // [user]}}]`), and a prepare + judge then rules that the ask is TRUE to the cited
 // words and holds THAT AND NOTHING ELSE. The citation rides on the write —
-// `sr-file write …/ASK.md --cite:user '<quote>'` — never inside the file. Being
-// preventive, a not-fine write is refused at PRE-tool, before it lands.
+// `sr-file write …/ASK.md --cite:user '<quote>'` — never inside the file. Being a
+// gate, a not-fine write is refused at PRE-tool, before it lands.
 //
 // The judge verdict is a stub (InstallJudgeClaude); the capturing variant records
 // the rendered prompt so a test can see what the judge was handed.

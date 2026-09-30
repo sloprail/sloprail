@@ -22,8 +22,11 @@ import (
 //   - `include` — creates, updates and deletes (the old behaviour);
 //   - `only` — deletes only.
 //
-// Observed through a ledger each guard's check appends `<kind> <path>` to, and,
-// for a preventive guard that refuses deletes, through whether the `rm` is denied.
+// The same vocabulary drives both halves of a rule: a file-guard's `deletions:`
+// filters the Post events it is asked about at Stop, and a gate binds to
+// PreFileWrite and/or PreFileDelete to prevent. Observed through a ledger each
+// check appends `<kind> <path>` to, and, for a gate that refuses deletes, through
+// whether the `rm` is denied.
 var New = harness.New
 
 func TestMain(m *testing.M) {

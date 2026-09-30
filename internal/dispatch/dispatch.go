@@ -306,8 +306,8 @@ func (r Runner) Run(req Request) (Verdict, error) {
 // running any check.
 //
 // It exists for a caller that has its OWN fail-closed reason to refuse before
-// Run's checks could even be attempted — services/sr-session's preventive
-// file-guard dispatch is the one caller: a Pre write whose bytes are not yet
+// Run's checks could even be attempted — services/sr-session's gate
+// dispatch was the one caller: a Pre write whose bytes are not yet
 // derivable (a command-derived edit) cannot be judged by a content check, but a
 // `{skill}` or `{context}` prerequisite needs no content at all, and evaluating
 // it first lets that caller give the MORE SPECIFIC reason ("the skill was never

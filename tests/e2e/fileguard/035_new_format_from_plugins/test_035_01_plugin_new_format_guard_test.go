@@ -4,29 +4,30 @@ import (
 	"testing"
 )
 
-// The plugin under test ships two NEW-format file-guards. Both live inside the
-// plugin's own `.sloprail/file-guard/` and are never copied into any project these
-// tests create, so "it fired" and "it was discovered inside the plugin" are the
-// same fact — there is no project copy that could account for it.
+// The plugin under test ships a NEW-format gate and a NEW-format file-guard. Both
+// live inside the plugin's own `.sloprail/` and are never copied into any project
+// these tests create, so "it fired" and "it was discovered inside the plugin" are
+// the same fact — there is no project copy that could account for it.
 
-// preventiveGuardYAML is a PREVENTIVE file-guard: it fires at PRE-tool, blocking a
+// preGateYAML is a PreFileWrite GATE: it fires at PRE-tool, blocking a
 // not-fine write before it lands. That is the pre-tool half of "loads at both pre
 // and Stop".
-const preventiveGuardYAML = `match: "secrets/**"
-preventive: true
+const preGateYAML = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "secrets/"
 checks:
   - script: ./check.sh
 `
 
-// afterGuardYAML is a plain (non-preventive) file-guard: it fires at STOP, on the
-// settled file's content, blocking the turn. That is the Stop half.
+// afterGuardYAML is a file-guard: it fires at STOP, on the settled file's content,
+// blocking the turn. That is the Stop half.
 const afterGuardYAML = `match: "memories/**/*.md"
 checks:
   - script: ./check.sh
 `
 
 // checkRefuseSecret refuses a write whose content holds the word SECRET, on
-// whichever event it is handed (pre for the preventive guard, post for the
+// whichever event it is handed (pre for the gate, post for the
 // after-check). The refusal reason is the guard's own words, so a test can see
 // them reach the agent.
 const checkRefuseSecret = `#!/bin/sh
@@ -40,7 +41,7 @@ exit 0
 `
 
 // T035_01: the headline for pre-tool. A project that installed a plugin shipping a
-// NEW-format PREVENTIVE file-guard, and copied nothing, has that guard blocking a
+// NEW-format GATE, and copied nothing, has that guard blocking a
 // not-fine write BEFORE it lands — and the refusal NAMES THE PLUGIN.
 //
 // The plugin-naming half is question 3 of the old-format task, ported: a refusal
@@ -49,13 +50,13 @@ exit 0
 // is nothing — the file is inside an install directory the project never wrote to.
 // Without the plugin in the message a user meets a rule they never wrote and
 // cannot find.
-func TestT035_01_PluginPreventiveGuardFiresAtPreToolAndNamesThePlugin(t *testing.T) {
+func TestT035_01_PluginGateFiresAtPreToolAndNamesThePlugin(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
 
 	// The guard ships INSIDE the plugin. Nothing is written into proj/.sloprail.
-	pluginRoot := e.EnablePluginShippingFileGuard(proj, "acme-guards", "no-secrets", preventiveGuardYAML,
+	pluginRoot := e.EnablePluginShippingGate(proj, "acme-guards", "no-secrets", preGateYAML,
 		map[string]string{"check.sh": checkRefuseSecret})
 
 	res := e.Run(proj, "s-035-01", "write a secret file", Turns("done",
@@ -63,11 +64,11 @@ func TestT035_01_PluginPreventiveGuardFiresAtPreToolAndNamesThePlugin(t *testing
 	))
 
 	if !res.Refused() {
-		t.Fatalf("a NEW-format preventive file-guard shipped in the installed plugin did not block the "+
+		t.Fatalf("a NEW-format gate shipped in the installed plugin did not block the "+
 			"pre-write — nothing discovered it, which is the whole defect this closes:\n%s", res.Output)
 	}
 	if e.Exists(proj, "secrets/prod.txt") {
-		t.Errorf("the write LANDED despite the preventive plugin guard refusing it — the work was not prevented")
+		t.Errorf("the write LANDED despite the plugin gate refusing it — the work was not prevented")
 	}
 	if !res.Saw("not fine") {
 		t.Errorf("the plugin guard's refusal reason did not reach the agent:\n%s", res.Output)
@@ -79,7 +80,7 @@ func TestT035_01_PluginPreventiveGuardFiresAtPreToolAndNamesThePlugin(t *testing
 	}
 	// And the guard actually ran inside the plugin (its ledger is in the plugin's
 	// own folder, not the project's).
-	if n := e.PluginFileGuardLedger(pluginRoot, "no-secrets", "ledger"); n == 0 {
+	if n := e.PluginGateLedger(pluginRoot, "no-secrets", "ledger"); n == 0 {
 		t.Errorf("the plugin-shipped guard's check never ran")
 	}
 }
@@ -95,7 +96,7 @@ func TestT035_02_PluginGuardStillPermitsWhatItDoesNotObjectTo(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 
-	e.EnablePluginShippingFileGuard(proj, "acme-guards", "no-secrets", preventiveGuardYAML,
+	e.EnablePluginShippingGate(proj, "acme-guards", "no-secrets", preGateYAML,
 		map[string]string{"check.sh": checkRefuseSecret})
 
 	res := e.Run(proj, "s-035-02", "write a clean secret reference", Turns("done",
@@ -188,17 +189,17 @@ func TestT035_05_ADisabledPluginNewFormatGuardIsInert(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 
-	e.EnablePluginShippingFileGuard(proj, "acme-guards", "no-secrets", preventiveGuardYAML,
+	e.EnablePluginShippingGate(proj, "acme-guards", "no-secrets", preGateYAML,
 		map[string]string{"check.sh": checkRefuseSecret})
 	// Disable it from the project's own config, by qualified name.
-	e.WriteFile(proj, ".sloprail/config.yaml", "disabled:\n  - acme-guards/file-guard/no-secrets\n")
+	e.WriteFile(proj, ".sloprail/config.yaml", "disabled:\n  - acme-guards/gate/no-secrets\n")
 
 	res := e.Run(proj, "s-035-05", "write a secret file", Turns("done",
 		Write("w1", "secrets/prod.txt", "the value is SECRET"),
 	))
 
 	if res.Refused() {
-		t.Fatalf("a plugin new-format guard the project disabled still refused — a consumer who cannot "+
+		t.Fatalf("a plugin new-format gate the project disabled still refused — a consumer who cannot "+
 			"switch off a shipped rule can only uninstall the plugin:\n%s", res.Output)
 	}
 	if !e.Exists(proj, "secrets/prod.txt") {

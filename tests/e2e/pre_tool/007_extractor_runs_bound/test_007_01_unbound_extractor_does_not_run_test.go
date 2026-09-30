@@ -59,7 +59,6 @@ checks:
 // handed. A file-guard never binds a command kind, so it is the "asks nothing about
 // commands" side.
 const recordFileGuard = `match: "**/*.md"
-preventive: true
 checks:
   - script: ./record.sh
 `

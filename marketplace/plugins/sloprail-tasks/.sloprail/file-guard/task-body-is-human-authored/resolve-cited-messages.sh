@@ -6,9 +6,7 @@
 #
 # SKIPS THE JUDGE when no grounding was required — a status/frontmatter-only change
 # leaves the body byte-identical, and body-changed.sh waived the citation — so
-# no model call is spent on a write that changed nothing the judge rules on. Also
-# skips an underivable Pre write (resultKnown false): the settled bytes are judged
-# at Stop instead.
+# no model call is spent on a write that changed nothing the judge rules on. This is the file-guard's copy (settled bytes); the PreFileWrite gate's carries the pending copy.
 #
 # Output nests under `additionalContext` (the one key the engine reads from a
 # prepare): .body (the prose the judge rules on) and .asks (the event's citations
@@ -45,12 +43,8 @@ if [ "${lib_body_loaded:-}" != 1 ]; then
 fi
 
 # The same kind dispatch as stage 1, so the two never disagree about which bytes
-# are the body. resultKnown is consulted on both Pre kinds before newContent is read.
+# are the body.
 case "$kind" in
-  PreFileCreate | PreFileUpdate)
-    [ "$(field '.event.resultKnown // false')" = "true" ] || skip
-    content="$(field '.event.newContent // ""')"
-    ;;
   PostFileCreate | PostFileUpdate)
     # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
     # (internal/filemod/module.go FieldNewContentKnown; authoring-guardrails/
@@ -77,7 +71,7 @@ body="$(task_body "$content")"
 
 # Grounding not required: the body is unchanged, so there is nothing to judge.
 case "$kind" in
-  PreFileUpdate | PostFileUpdate)
+  PostFileUpdate)
     [ "$body" = "$(task_body "$(field '.event.oldContent // ""')")" ] && skip
     ;;
 esac

@@ -36,7 +36,7 @@ func writeFile(t *testing.T, projDir, name, content string) {
 
 // commitGuards commits the project's `.sloprail` tree so the "asker" file-guard's
 // own ask.sh — installed after the baseline — is part of it, not the first cycle's
-// diff. The sloprail plugin ships authoring-slop, a preventive file-guard whose
+// diff. The sloprail plugin ships authoring-slop, a gate paired with a file-guard whose
 // Stop after-check judges a guardrail's own `.sh`; an uncommitted ask.sh reads as
 // this cycle's write and is judged (failing closed with no model in the e2e,
 // adding spurious blocking errors). Production installs guards before the session

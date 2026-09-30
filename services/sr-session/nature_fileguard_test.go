@@ -17,7 +17,7 @@ import (
 
 // These cover the file-guard's MATCH SELECTION — how a guard's `match`
 // (glob/expression over FileMatchScope) selects a file event — and the FileEvent
-// preventive helpers. The check-running is the Runner's (unit-tested there); what
+// helpers. The check-running is the Runner's (unit-tested there); what
 // these pin is that a guard is asked about the right files, reading path, markers
 // and context off the file's state.
 
@@ -188,7 +188,7 @@ func TestFileMarkers_UpdateWithEmptyNewMarkersDoesNotFallBack(t *testing.T) {
 }
 
 // resultKnown reads the PreFileUpdate resultKnown flag: true only when the write's
-// outcome was computable, which is what a preventive guard requires to verify.
+// outcome was computable, which is what a pre-write gate requires to verify.
 func TestResultKnown(t *testing.T) {
 	known := event.Event{Kind: declaration.KindPreFileUpdate, Fields: map[string]any{
 		filemod.FieldPath: "x.md", filemod.FieldResultKnown: true,
@@ -204,7 +204,7 @@ func TestResultKnown(t *testing.T) {
 	assert.False(t, resultKnown(absent), "an absent resultKnown reads as not-known")
 }
 
-// A preventive file-guard's revalidation key is namespaced so it cannot pool with
+// A file-guard's revalidation key is namespaced so it cannot pool with
 // an old-format guardrail of the same folder name.
 func TestFileGuardRevKey_Namespaced(t *testing.T) {
 	assert.Equal(t, "file-guard:no-secrets", fileGuardRevKey("no-secrets"))

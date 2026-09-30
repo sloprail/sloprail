@@ -8,6 +8,11 @@
 # session reaches Stop as a PostFileCreate, and it drops whatever the registry
 # owes that the file no longer declares.
 #
+# This is the STOP-TIME copy (the file-guard): it reads settled bytes, guarded by
+# `newContentKnown`. A file-guard never sees a Pre event, so the Pre-only
+# `resultKnown` field does not apply here; the gate of the same name keeps the
+# pre-write copy.
+#
 # THIS IS A `when` PREDICATE, NOT A CHECK: exit 0 does not permit anything — it
 # APPLIES the requirement. So every path this script cannot decide exits 0, the
 # fail-closed direction; only exit 1 waives the citation, and only on a decided
@@ -58,12 +63,6 @@ owed="$(printf '%s' "$owed_json" | jq -r '.[]?' 2>/dev/null)" || exit 0
 
 kind="$(field '.event.kind // ""')"
 case "$kind" in
-  PreFileCreate)
-    # A result the engine could not compute is undecidable: apply (exit 0).
-    [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
-    old=""
-    new="$(field '.event.newContent // ""')"
-    ;;
   PostFileCreate | PostFileUpdate)
     # Settled bytes the engine could not read (newContentKnown false):
     # undecidable, apply.
@@ -71,12 +70,7 @@ case "$kind" in
     old="$(field '.event.oldContent // ""')"
     new="$(field '.event.newContent // ""')"
     ;;
-  PreFileUpdate)
-    [ "$(field '.event.resultKnown // false')" = "true" ] || exit 0
-    old="$(field '.event.oldContent // ""')"
-    new="$(field '.event.newContent // ""')"
-    ;;
-  PreFileDelete | PostFileDelete)
+  PostFileDelete)
     # Deleting a scanner drops EVERY keyword it declared — measured on a real
     # run: refused by the coverage gate, a sub-agent ran `rm -rf scanners/<name>`
     # instead of searching. Nothing remains, so the new side is empty.

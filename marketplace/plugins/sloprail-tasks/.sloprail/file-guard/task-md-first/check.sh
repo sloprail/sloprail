@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Refuse a write inside a task folder whose TASK.md does not exist yet.
 # Path-based, not content-based, so an unresolvable pre-write result is still
-# judged.
+# judged. Shared by the gate (pending writes, refused before they land) and the
+# plain file-guard (settled writes, at Stop): each folder carries its own copy.
 #
 # The task folder is the FIRST TWO segments after memories/tasks/, not simply
 # dirname(path): a gates/*.sh or gates/*.md file sits one level deeper than
@@ -21,9 +22,8 @@ refuse() {
 }
 
 case "$kind" in
-  PreFileCreate | PreFileUpdate | PostFileCreate | PostFileUpdate) ;;
-  PreFileDelete | PostFileDelete) exit 0 ;;
-  *) refuse "unexpected event kind '$kind' for $path; this rule only judges file writes" ;;
+  PostFileCreate | PostFileUpdate) ;;
+  *) refuse "unexpected event kind '$kind' for $path; this rule only judges settled file writes" ;;
 esac
 
 [ -n "$path" ] || refuse "the event named no path, so this rule could not check it"

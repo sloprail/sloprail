@@ -59,7 +59,8 @@ unquoted heredoc delimiter), or an unquoted glob or brace (`*`, `?`, `[`, `{`,
 zsh's `^` and `#`, or a `~name` other than a leading `~/` — bash, which runs the
 line ahead of time, and zsh expand them differently), it is never run ahead of
 time. Its result is then
-unknown, and a preventive rule refuses it (`sr-file write` creates missing
+unknown (`resultKnown: false`), and a gate that requires a citation or reads the
+content refuses it (`sr-file write` creates missing
 directories, so no `mkdir` is needed). Harness Write/Edit tools, `sed` and `rm`
 cannot carry a citation at all.
 
@@ -125,15 +126,24 @@ own call.
 ## Requiring one
 
 **Every** change to the file must be grounded, for example a rule set: use the
-native prerequisite. It refuses before any check runs, with a remedy that names
-`sr-file`:
+native prerequisite on a **`PreFileWrite` gate** (add a `PreFileDelete` trigger
+when a delete is a change too). It refuses before any check runs, and before the
+write lands, with a remedy that names `sr-file`:
 
 ```yaml
-match: 'path startsWith "memories/rules/"'
-preventive: true
+# .sloprail/gate/rules-are-grounded/gate.yaml
+on:
+  - event: PreFileWrite
+    match: 'event.path startsWith "memories/rules/"'
 require:
   - citation: {source_types: [user]}   # or [user, tool_result]
 ```
+
+Pair it with a plain file-guard of the same name (`match: 'path startsWith
+"memories/rules/"'` with the same `require`), which refuses at Stop a change that
+reached the tree without a citation — a command the engine could not model, say.
+`preventive:` on the file-guard no longer exists; a declaration carrying it is
+refused at load.
 
 **Some** changes must be grounded, for example a removal, a body edit, or a
 status transition: add `when`, a script that says whether the prerequisite
@@ -168,10 +178,13 @@ forms' place; one that only advises follows the form for this kind of change,
 so a refusal always carries a command the agent can run.
 
 On `Post` kinds `oldContent` is the session baseline, so a transition such as
-"status became `published` this session" reads the same at both moments. Keep
-such a guard `preventive`: an unknown result is refused before it lands, and the
-after-check still refuses a change that reached the tree without a citation
-(one `when` does not waive).
+"status became `published` this session" reads the same on the gate and on the
+file-guard beside it. A change whose result the engine could not compute
+(`resultKnown: false`) is an unknown result: a `require: citation` gate is checked
+first, and a content-dependent check after it must refuse an unknown result
+itself ([file-guard.md](file-guard.md), "The resultKnown discipline"). The
+file-guard's after-check still refuses a change that reached the tree without a
+citation (one `when` does not waive).
 `when` works on any prerequisite, on every nature.
 
 ## Judging it

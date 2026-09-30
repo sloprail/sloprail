@@ -5,19 +5,26 @@ import (
 	"testing"
 )
 
-// pureRequireGuard is a PURE-require file-guard: a write under memories/topics/ is
+// pureRequireGate is a PURE-require GATE: a write under memories/topics/ is
 // permitted only once the document-topic skill was loaded this session. There are
-// NO checks — the `require:` is the whole rule. `preventive: true` so the
-// precondition is enforced at pre-tool, before the write lands (the same
-// before-block 034's preventive tests pin), which is what lets the enforcement
+// NO checks — the `require:` is the whole rule. A gate, so the precondition is
+// enforced at pre-tool, before the write lands, which is what lets the enforcement
 // tests assert the write did not reach disk.
-const pureRequireGuard = `match: "memories/topics/**/*.md"
-preventive: true
+const pureRequireGate = `on:
+  - event: PreFileWrite
+    match: event.path startsWith "memories/topics/" and event.path endsWith ".md"
 require:
   - skill: document-topic
 `
 
-// T037_01: a pure-require file-guard (no checks) VALIDATES.
+// pureRequireGuard is the plain file-guard of the same rule: it judges the settled
+// file at Stop with the same `require:` and no checks.
+const pureRequireGuard = `match: "memories/topics/**/*.md"
+require:
+  - skill: document-topic
+`
+
+// T037_01: a pure-require file-guard and gate (no checks) VALIDATE.
 //
 // The half of the change that lives at load time: `sr-file declarations` loads the
 // project's `.sloprail` and reports what is in force. Before the change this guard
@@ -30,6 +37,7 @@ func TestT037_01_PureRequireFileGuardValidates(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "require-topic", pureRequireGuard, nil)
+	e.Gate(proj, "require-topic", pureRequireGate, nil)
 
 	res := e.CLIDirect(proj, "sr-file", "declarations", proj)
 	if res.Code != 0 {
@@ -37,6 +45,9 @@ func TestT037_01_PureRequireFileGuardValidates(t *testing.T) {
 	}
 	if !strings.Contains(res.Output, "file-guards (1): require-topic") {
 		t.Errorf("the loaded report did not name the pure-require file-guard:\n%s", res.Output)
+	}
+	if !strings.Contains(res.Output, "gates (1): require-topic") {
+		t.Errorf("the loaded report did not name the pure-require gate:\n%s", res.Output)
 	}
 	// Non-vacuity: the OLD engine refused this guard with a "checks" missing-field
 	// fault. Prove that fault is gone, not merely that some line mentions the name.
@@ -48,19 +59,19 @@ func TestT037_01_PureRequireFileGuardValidates(t *testing.T) {
 	}
 }
 
-// T037_02: the same pure-require guard ENFORCES — an unmet skill require REFUSES
+// T037_02: the same pure-require gate ENFORCES — an unmet skill require REFUSES
 // the write, and it does not land.
 //
 // The write happens with no Skill turn before it, so the record holds no Skill
-// tool_use for document-topic and the require fails. Being preventive, the guard
+// tool_use for document-topic and the require fails. Being a gate, it
 // denies at pre-tool, so the write never reaches disk — proving the require is
 // evaluated and enforced even though the guard carries no check at all.
 func TestT037_02_UnmetSkillRequireRefusesWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "require-topic", pureRequireGuard, nil)
-	commitGuards(t, proj) // keep the guard's own file-guard.yaml out of the cycle diff
+	e.Gate(proj, "require-topic", pureRequireGate, nil)
+	commitGuards(t, proj) // keep the gate's own gate.yaml out of the cycle diff
 
 	res := e.Run(proj, "s-037-02", "write a topic without loading the skill", Turns("done",
 		Write("w1", "memories/topics/idea.md", "# an idea"),
@@ -77,7 +88,7 @@ func TestT037_02_UnmetSkillRequireRefusesWrite(t *testing.T) {
 	}
 }
 
-// T037_03: the SAME guard PERMITS the write once the skill was loaded earlier in
+// T037_03: the SAME gate PERMITS the write once the skill was loaded earlier in
 // the session — the write lands.
 //
 // A Skill turn precedes the write, so a real Skill tool_use for document-topic is
@@ -89,8 +100,8 @@ func TestT037_03_LoadedSkillRequirePermitsWrite(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "require-topic", pureRequireGuard, nil)
-	commitGuards(t, proj) // keep the guard's own file-guard.yaml out of the cycle diff
+	e.Gate(proj, "require-topic", pureRequireGate, nil)
+	commitGuards(t, proj) // keep the gate's own gate.yaml out of the cycle diff
 
 	res := e.Run(proj, "s-037-03", "load the skill then write a topic", Turns("done",
 		Skill("s1", "document-topic"),

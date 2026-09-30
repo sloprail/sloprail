@@ -11,12 +11,13 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// These tests drive the SHIPPED task-management example — a PREVENTIVE file-guard
-// over `**/tasks/*/*/ASK.md` that requires every write to cite the user's own
+// These tests drive the SHIPPED task-management example — a PreFileWrite gate
+// (ask-is-human-authored) over `**/tasks/*/*/ASK.md`, with a plain file-guard of
+// the same name as the Stop after-check, that requires every write to cite the user's own
 // words (`require: [{citation: {source_types: [user]}}]`), then asks a judge
 // (resolve-cited-messages.sh + reference-is-true-and-only-this.md.j2) whether the
-// ask is TRUE to the cited words and holds THAT AND NOTHING ELSE. Being preventive,
-// it refuses a not-fine write at PRE-tool, before it lands. What fires is this
+// ask is TRUE to the cited words and holds THAT AND NOTHING ELSE. Being a gate, it
+// refuses a not-fine write at PRE-tool, before it lands. What fires is this
 // repo's plugin against the example's own .sloprail tree, copied in verbatim.
 //
 // The judge's model verdict is a fixed stub (InstallJudgeClaude) — pass:false
@@ -92,7 +93,7 @@ func installExampleTree(t *testing.T, projDir string) {
 	}
 
 	// Commit the installed tree so it is part of the session baseline, not the
-	// first cycle's diff. The sloprail plugin ships authoring-slop, a preventive
+	// first cycle's diff. The sloprail plugin ships authoring-slop, a gate plus
 	// file-guard whose Stop after-check judges a guardrail's own `.sh`/`.md.j2`
 	// machinery; an uncommitted example tree reads as this cycle's writes, so that
 	// after-check would judge the example's own scripts and, with no model in the

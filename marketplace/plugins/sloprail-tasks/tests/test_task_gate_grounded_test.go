@@ -15,7 +15,7 @@ import "testing"
 // for a .sh gate -- not TRIVIAL (a script whose control flow can never
 // actually fail).
 //
-// Being preventive, a not-fine gate write is refused at PRE-tool, before it
+// The PreFileWrite gate refuses a not-fine gate write at PRE-tool, before it
 // lands.
 //
 // These prove: the judge is what refuses a gate it finds
@@ -46,7 +46,7 @@ func TestGateGrounded_JudgeRunsEvenWithoutTaskBodyCitation(t *testing.T) {
 	installPluginTree(t, e, proj)
 	// The guard is PLUGIN-shipped (see installPluginTree), so disabling it
 	// needs the qualified form <plugin>/<nature>/<name>.
-	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored")
+	e.DisablePluginGuardrail(proj, pluginName+"/file-guard/task-body-is-human-authored", pluginName+"/gate/task-body-is-human-authored")
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "GATE: this condition has nothing to do with what the task describes."}`)
 
 	sess := "s-gate-grounded-nocitation"
@@ -68,7 +68,7 @@ func TestGateGrounded_JudgeRunsEvenWithoutTaskBodyCitation(t *testing.T) {
 		t.Fatalf("the judge did not run (or did not refuse) on a gate under an uncited task -- task-gate-is-grounded should not depend on the task body carrying a citation:\n%s", res.Output)
 	}
 	if e.Exists(proj, groundedGatePath) {
-		t.Errorf("the preventive guard let a judge-rejected gate land")
+		t.Errorf("the gate let a judge-rejected gate land")
 	}
 	if !res.Saw("nothing to do with what the task describes") {
 		t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)
@@ -114,7 +114,7 @@ func TestGateGrounded_JudgeRefusesUntraceableOrTrivialGate(t *testing.T) {
 		t.Fatalf("a gate the judge rejects (untraceable/trivial) was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, groundedGatePath) {
-		t.Errorf("the preventive guard let a judge-rejected gate land")
+		t.Errorf("the gate let a judge-rejected gate land")
 	}
 	if !res.Saw("can never fail") {
 		t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)

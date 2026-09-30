@@ -37,11 +37,6 @@ case "$kind" in
     [ -f "$abs" ] || skip
     new_content="$(cat "$abs" 2>/dev/null || true)"
     ;;
-  PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
-    [ "$known" = "true" ] || skip
-    new_content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
-    ;;
   *)
     skip
     ;;
@@ -56,7 +51,7 @@ esac
 
 old_content=""
 case "$kind" in
-  PreFileUpdate|PostFileUpdate)
+  PostFileUpdate)
     old_content="$(printf '%s' "$event" | jq -r '.event.oldContent // ""' 2>/dev/null)"
     ;;
 esac

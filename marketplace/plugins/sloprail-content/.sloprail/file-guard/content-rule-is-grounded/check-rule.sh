@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage 1 of content-rule-is-grounded: the DETERMINISTIC half, no model. A
+# Stage 1 of content-rule-is-grounded (file-guard copy — judges the settled file at Stop): the DETERMINISTIC half, no model. A
 # writing RULE (`.sloprail/content-rules/<NN>/RULE.md` or a topic's
 # `constraints/<NN>/CONSTRAINT.md`) must have frontmatter satisfying
 # .sloprail/schemas/rule.cue and a non-empty body stating the rule.
@@ -51,18 +51,8 @@ case "$kind" in
     fi
     content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
-  PreFileCreate|PreFileUpdate)
-    # newContent is only meaningful alongside resultKnown. Unknown: defer to
-    # the Stop after-check on the settled file (the engine already fails a
-    # preventive guard closed on an underivable pre-write).
-    known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"
-    if [ "$known" != "true" ]; then
-      exit 0
-    fi
-    content="$(printf '%s' "$event" | jq -r '.event.newContent // ""' 2>/dev/null)"
-    ;;
   *)
-    exit 0
+    refuse "content-rule-is-grounded: unexpected event kind '$kind' for $path; this rule only judges settled rule creates and updates"
     ;;
 esac
 

@@ -44,7 +44,7 @@ once it did declare one, it rewrote the keywords to match a search it had
 already run; and a sub-agent refused for coverage ran `rm -rf scanners/<name>`
 instead of searching — after which nothing refused it again.
 
-## The five rules
+## The six rules
 
 | rule | nature | fires on | refuses |
 |---|---|---|---|
@@ -52,7 +52,8 @@ instead of searching — after which nothing refused it again.
 | `github-research-through-gh` | gate | `PreToolUse`: `WebSearch`, `WebFetch`. `PreCommandInvoke`: `curl`/`wget`/httpie | any WebSearch; a fetch of a GitHub content host, of URLs from a file, or of a URL the line hides |
 | `search-needs-declared-scanner` | gate | `PreCommandInvoke`: any line running or naming `gh` | a gh call that searches GitHub (or that it cannot see into), with no scanner declared this session |
 | `verify-scanner-coverage` | gate | `Stop`, while `scanner-declared` is active | a declared scanner no single gh call covered |
-| `scanner-keywords-hold` | file-guard, preventive, `deletions: include` | the scanner file | dropping a keyword, or deleting the scanner, without the user's words; records what the user did ask for |
+| `scanner-keywords-hold` | gate | `PreFileWrite` and `PreFileDelete` of the scanner file | dropping a keyword, or deleting the scanner, without the user's words; records what the user did ask for |
+| `scanner-keywords-hold` | file-guard, `deletions: include` | the settled scanner file, at `Stop` | the same, as the after-check on what settled |
 
 ## Why a context and gates
 
@@ -96,7 +97,7 @@ Twice, because its two readers need it at different moments:
   Stop only — a Post-only context is still empty when that search runs, and
   `search-needs-declared-scanner` then refused every search that followed a
   declaration. A write may still be refused after a context enters (contexts
-  enter before preventive file-guards), so at Pre the entry only ever grows: it
+  enter before the `scanner-keywords-hold` gate), so at Pre the entry only ever grows: it
   becomes the union of what was logged, what the file on disk declares now, and
   what the write declares. The file on disk matters for a committed scanner
   this session never logged: a refused write narrowing it is followed by no
@@ -245,12 +246,26 @@ rephrasing. A project that needs general web search alongside this registry
 should narrow the WebSearch trigger with `event.input.query` or
 `event.input.allowed_domains`, and accept that research can leak through it.
 
-## Why `scanner-keywords-hold` is a preventive file-guard
+## Why `scanner-keywords-hold` is a gate and a file-guard
 
 It judges what the scanner **file** holds — its keyword set may grow but not
-shrink — so it is a file-guard, `preventive` so a weakened declaration is
-refused before it lands, while the agent can still meet it with a search. The
-citation requirement is conditional: `drops-keywords.sh` (a `when`) applies it
+shrink — and a weakened declaration must be refused before it lands, while the
+agent can still meet it with a search. Only a gate sees a write before it lands
+(a file-guard acts only at `Stop`, on the settled file), so the prevention is a
+`PreFileWrite` + `PreFileDelete` gate. The same-named file-guard is the
+after-check: the same requirement, judge and record on the settled scanner,
+the backstop for a change the gate could not see. Each rule folder is
+self-contained, so the scripts are copied into both, each keeping only its own
+moment's branch (the gate reads the pending bytes and `resultKnown`; the
+file-guard reads settled bytes and `newContentKnown`); both read the one shared
+parser in `scanner-declared`.
+
+A gate does not fail closed on a write whose result the engine cannot compute
+(`sed -i`, a `python3 -c` it cannot parse), and every later check reads the
+pending keywords, so the gate's first check, `require-known-result.sh`, refuses
+one: write the whole `scanner.yaml` directly instead.
+
+The citation requirement is conditional: `drops-keywords.sh` (a `when`) applies it
 only when the write drops a declared keyword; an uncited drop is refused with
 its hint, a cited one goes to a judge that checks the cited words ask for
 THESE keywords to go. "Drops" is measured against the file before the change
@@ -261,9 +276,10 @@ nothing on its later delete — no citation, no judge — and was retired. The j
 not run at all — not executable, missing, crashed — used to read as "drops
 nothing" too, skip the judge, and let any quote of the user's admit the drop.
 
-`deletions: include`, because deleting the scanner drops every keyword at once.
+The gate takes a `PreFileDelete` trigger and the file-guard `deletions: include`,
+because deleting the scanner drops every keyword at once.
 `rm -rf scanners/<name>` — the directory, as the real run did it — reaches the
-guard as a `PreFileDelete` of the scanner file inside: the engine expands a
+gate as a `PreFileDelete` of the scanner file inside: the engine expands a
 recursive removal of a directory (`rm -r`/`-R`/`--recursive` or an
 abbreviation of it, `git rm -r`, `mv` or `git mv` of it) into one delete per file it
 holds, even past its read budget (the files it did not read carry
@@ -276,8 +292,8 @@ registry keeps it and the context stays open.
 ### Retiring or narrowing: what the user asked for
 
 A change the user asked for — its citation of their own words resolved on the
-event, and judged to be what they ask — is **recorded** by the guard's last
-check, `record-admitted.sh`, which runs only once the checks before it admitted
+event, and judged to be what they ask — is **recorded** by the last check of the
+gate (and of the file-guard), `record-admitted.sh`, which runs only once the checks before it admitted
 the event:
 
 - a **delete retires** the scanner: `retired:<folder>`. Without that, a scanner
@@ -325,7 +341,7 @@ reaches the check and records nothing.
   (`python3 -c "urllib…"`, `nc`).
 - **A folder padded past 1000 files.** The engine predicts a recursive
   removal's deletes up to 1000 files; past that it predicts none, so padding a
-  scanner's folder with files hides its `rm -rf` from the preventive check.
+  scanner's folder with files hides its `rm -rf` from the gate.
   (Padding it with BYTES no longer does: every file is still predicted, just
   unread.) A scanner declared this session stays owed in the registry, so Stop
   still refuses without a covering search; a committed scanner never declared

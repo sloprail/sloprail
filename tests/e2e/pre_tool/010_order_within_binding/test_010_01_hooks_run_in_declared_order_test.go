@@ -14,39 +14,30 @@ import (
 // which is invisible until a rule depends on the order and then fails
 // intermittently. The NEW dispatch must uphold it too.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+// # Vehicle: a PreFileWrite gate
 //
 // The old format expressed "hooks of one binding" as a list under one event kind.
-// The new format's analogue is a file-guard's `checks:` list, which
-// internal/dispatch's Runner walks IN ORDER, stopping at the first refusal
-// (dispatch.go Run — "the checks, in order. The first that refuses ends it"). So
-// the four ordered hooks become four ordered checks in one file-guard, and the
-// ordering invariant is re-proven against the new dispatch.
+// The new format's analogue is a gate's `checks:` list, which internal/dispatch's
+// Runner walks IN ORDER, stopping at the first refusal (dispatch.go Run — "the
+// checks, in order. The first that refuses ends it"). So the four ordered hooks
+// become four ordered checks in one gate, and the ordering invariant is re-proven
+// against the new dispatch.
 //
-// These are AFTER-checks (non-preventive), deliberately: an after-check runs the
-// whole `checks:` list ONCE at Stop on the settled file, so the recorded order is
-// exactly the declared order with no doubling. (A preventive guard would run the
-// list at pre-tool AND again at Stop, recording the sequence twice — which would
-// muddy a test whose whole subject is the sequence.) The order file is written
-// under the guard's own folder, whose name has no `.md` suffix, so the `**/*.md`
-// match never re-selects it.
+// A gate runs its whole `checks:` list ONCE per pre file event, before the write
+// lands, so the recorded order is exactly the declared order with no doubling. The
+// order file is written under the gate's own folder, not the project tree.
 
-// orderedChecks is a NEW-FORMAT preventive file-guard with four checks in one
-// binding, each appending its own name. Four rather than two: two checks in the
-// wrong order are still in one of two orders, and a shuffle has an even chance of
-// looking right. Four make an accidental pass unlikely and a stable-but-wrong
-// order obvious.
+// orderedChecks is a NEW-FORMAT gate with four checks in one binding, each
+// appending its own name. Four rather than two: two checks in the wrong order are
+// still in one of two orders, and a shuffle has an even chance of looking right.
+// Four make an accidental pass unlikely and a stable-but-wrong order obvious.
 //
-// PREVENTIVE, and the last check refuses (see step vs stepRefuse in each test), so
-// the write is DENIED at pre-tool and never lands. That is what keeps the recorded
-// sequence a single clean pass: a landed write would run the after-check at Stop
-// too, doubling the sequence, and a not-fine after-check that blocked the turn
-// would re-fire it on every retry — either way muddying a test whose whole subject
-// is the one pass. Denying before the write settles runs the `checks:` list
-// exactly once. The order file lives under the guard's own folder, whose name has
-// no `.md` suffix, so the `**/*.md` match never re-selects it.
-const orderedChecks = `match: "**/*.md"
-preventive: true
+// The last check refuses (see step vs stepRefuse in each test), so the write is
+// DENIED at pre-tool and never lands; a denied pre-write is retried by the mock,
+// so the ledger holds that one pass repeated, and every test reads the first.
+const orderedChecks = `on:
+  - event: PreFileWrite
+    match: event.path endsWith ".md"
 checks:
   - script: ./a.sh
   - script: ./b.sh
@@ -89,7 +80,7 @@ func TestT010_01_ChecksRunInDeclaredOrder(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "sequenced", orderedChecks, map[string]string{
+	e.Gate(proj, "sequenced", orderedChecks, map[string]string{
 		"a.sh": step("a"),
 		"b.sh": step("b"),
 		"c.sh": step("c"),
@@ -100,7 +91,7 @@ func TestT010_01_ChecksRunInDeclaredOrder(t *testing.T) {
 		Write("w1", "some/notes.md", "hello"),
 	))
 
-	got := firstPass(e.FileGuardLedgerLines(proj, "sequenced", "order"), "d")
+	got := firstPass(e.GateLedgerLines(proj, "sequenced", "order"), "d")
 	want := []string{"a", "b", "c", "d"}
 
 	// Every check must have run before the order means anything. A binding that ran
@@ -125,7 +116,7 @@ func TestT010_02_RefusalStopsLaterChecks(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 
-	e.FileGuard(proj, "sequenced", orderedChecks, map[string]string{
+	e.Gate(proj, "sequenced", orderedChecks, map[string]string{
 		"a.sh": step("a"),
 		// b records then refuses. c and d must not run.
 		"b.sh": stepRefuse("b"),
@@ -143,15 +134,15 @@ func TestT010_02_RefusalStopsLaterChecks(t *testing.T) {
 	}
 
 	// Within one pass the sequence is a,b — c and d, declared after b, never ran.
-	got := firstPass(e.FileGuardLedgerLines(proj, "sequenced", "order"), "b")
+	got := firstPass(e.GateLedgerLines(proj, "sequenced", "order"), "b")
 	if strings.Join(got, ",") != "a,b" {
 		t.Fatalf("a refusal did not stop the checks declared after it: ran %v (full ledger %v), want [a b]",
-			got, e.FileGuardLedgerLines(proj, "sequenced", "order"))
+			got, e.GateLedgerLines(proj, "sequenced", "order"))
 	}
 	// And the later checks never ran at all, in any pass.
-	for _, name := range e.FileGuardLedgerLines(proj, "sequenced", "order") {
+	for _, name := range e.GateLedgerLines(proj, "sequenced", "order") {
 		if name == "c" || name == "d" {
-			t.Fatalf("a check declared after the refusing one ran: %q appears in %v", name, e.FileGuardLedgerLines(proj, "sequenced", "order"))
+			t.Fatalf("a check declared after the refusing one ran: %q appears in %v", name, e.GateLedgerLines(proj, "sequenced", "order"))
 		}
 	}
 }

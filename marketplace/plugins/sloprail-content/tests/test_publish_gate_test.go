@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// unit-publish-approved is a PREVENTIVE file-guard over UNIT.md only.
+// unit-publish-approved is a PreFileWrite gate (refuses before the write lands) plus a plain file-guard (the Stop re-check), both over UNIT.md only.
 //
 //   - A write that moves a unit INTO status: published (from another status,
 //     or by creating it published) must carry a citation of the user's own
@@ -71,7 +71,7 @@ func TestPublish_UncitedCreateRefused(t *testing.T) {
 		t.Fatalf("creating a published unit with no citation was not refused:\n%s", res.Output)
 	}
 	if e.Exists(proj, unitPath) {
-		t.Errorf("the preventive guard let an unapproved publish land on disk")
+		t.Errorf("the gate let an unapproved publish land on disk")
 	}
 	if !res.Saw("must cite the user's own words (--cite:user)") || !res.Saw("sr-file write "+unitPath) || !res.Saw("--cite:user") {
 		t.Errorf("the refusal does not say how to publish with the user's cited approval:\n%s", res.Output)

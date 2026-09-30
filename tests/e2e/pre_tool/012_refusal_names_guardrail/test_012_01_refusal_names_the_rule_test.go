@@ -14,14 +14,13 @@ import (
 // the guardrail is what makes a refusal actionable rather than merely obstructive,
 // and the NEW pre-tool dispatch must carry that name as well.
 //
-// # RE-VEHICLED onto the NEW file-guard nature (was old GUARDRAIL.md hooks)
+// # RE-VEHICLED onto the NEW gate nature (was old GUARDRAIL.md hooks)
 //
 // It used to install OLD-format rules (`hooks: PreFileCreate: [matcher: path
 // startsWith "<dir>/"]`) and rely on the old dispatch attaching the guardrail's
-// name to the refusal. The new dispatch attributes a preventive file-guard's
-// refusal itself: runFileGuardsPreventive returns `"<reason> (file-guard
-// <attribution>)"`, where a project's own guard's Attribution is its bare quoted
-// name (internal/declaration's FileGuard.Attribution / Origin.Describe). So the
+// name to the refusal. The new dispatch attributes a gate's refusal itself:
+// it returns `"<reason> (gate <attribution>)"`, where a project's own gate's Attribution is its bare quoted
+// name (internal/declaration's Origin.Describe). So the
 // deny reason carries the guard's name, and these tests re-prove that against the
 // new dispatch — with more than one guard declared, so the claim has to
 // discriminate the firing rule from the ones that did not.
@@ -31,16 +30,17 @@ import (
 // directory so exactly one fires per write, makes "a name was mentioned" and "the
 // right name was mentioned" come apart — and only the second is the invariant.
 
-// binding is a NEW-FORMAT preventive file-guard that refuses writes under one
+// binding is a NEW-FORMAT gate on PreFileWrite that refuses writes under one
 // directory, with a reason that does NOT contain the guard's own name. The name
 // must come from the engine's attribution; a check that mentioned itself would let
 // a build that attributes nothing pass.
 func binding(dir string) string {
-	return fmt.Sprintf(`match: %q
-preventive: true
+	return fmt.Sprintf(`on:
+  - event: PreFileWrite
+    match: event.path startsWith %q
 checks:
   - script: ./refuse.sh
-`, dir+"/**")
+`, dir+"/")
 }
 
 const refuseScript = `#!/bin/sh
@@ -64,7 +64,7 @@ func project(t *testing.T, e *harness.Env) string {
 	proj := e.Project()
 	e.GitInit(proj)
 	for name, dir := range names {
-		e.FileGuard(proj, name, binding(dir), map[string]string{"refuse.sh": refuseScript})
+		e.Gate(proj, name, binding(dir), map[string]string{"refuse.sh": refuseScript})
 	}
 	return proj
 }
@@ -104,7 +104,7 @@ func TestT012_01_RefusalNamesTheRuleThatFired(t *testing.T) {
 // The weakness in asserting a name appears anywhere: the agent reads the refusal's
 // reason, and a name printed on a separate diagnostic line is not in what it is
 // shown. The two have to arrive together to be actionable. The new dispatch builds
-// one string, `"<reason> (file-guard \"no-secrets\")"`, so the name rides on the
+// one string, `"<reason> (gate \"no-secrets\")"`, so the name rides on the
 // same line the reason does.
 func TestT012_02_TheNameIsInTheReasonTheAgentReads(t *testing.T) {
 	e := New(t)
@@ -142,7 +142,7 @@ func TestT012_03_SilentRefusalStillNamesItsGuardrail(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "no-secrets", binding("secrets"), map[string]string{
+	e.Gate(proj, "no-secrets", binding("secrets"), map[string]string{
 		"refuse.sh": "#!/bin/sh\ncat >/dev/null\nexit 1\n",
 	})
 

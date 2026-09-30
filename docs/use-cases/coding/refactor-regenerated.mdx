@@ -21,7 +21,9 @@ import contextYaml    from '../../../examples/deterministic-refactoring-mode/.sl
 import enterSh        from '../../../examples/deterministic-refactoring-mode/.sloprail/context/refactoring/enter.sh?raw';
 import exitSh         from '../../../examples/deterministic-refactoring-mode/.sloprail/context/refactoring/exit.sh?raw';
 import fileGuardYaml  from '../../../examples/deterministic-refactoring-mode/.sloprail/file-guard/moved-content-reconciles/file-guard.yaml?raw';
+import reconcileGateYaml from '../../../examples/deterministic-refactoring-mode/.sloprail/gate/moved-content-reconciles/gate.yaml?raw';
 import reconcileSh    from '../../../examples/deterministic-refactoring-mode/.sloprail/file-guard/moved-content-reconciles/reconciles-against-origin.sh?raw';
+import reconcileGateSh from '../../../examples/deterministic-refactoring-mode/.sloprail/gate/moved-content-reconciles/reconciles-against-origin.sh?raw';
 import gateYaml       from '../../../examples/deterministic-refactoring-mode/.sloprail/gate/refactor-complete/gate.yaml?raw';
 import verifySh       from '../../../examples/deterministic-refactoring-mode/.sloprail/gate/refactor-complete/verify-declared-moves-landed.sh?raw';
 
@@ -43,11 +45,12 @@ to. Then two things are checked independently:
 
 <Steps>
 
-1. A move that regenerated instead of carrying the bytes — caught *preventively*
-   by the **file-guard**, before the write lands.
+1. A move that regenerated instead of carrying the bytes — refused by a **gate**
+   before the write lands, and re-checked by a **file-guard** on the settled file
+   at turn-end.
 
-2. A declared move that never happened — caught at turn-end by the **gate**,
-   which refuses the `Stop`.
+2. A declared move that never happened — caught at turn-end by the completeness
+   **gate**, which refuses the `Stop`.
 
 </Steps>
 
@@ -57,8 +60,9 @@ context can only track; only a gate blocks a turn.
 ## The actual configuration
 
 This is the real, working example shipped in the sloprail repo at
-`examples/deterministic-refactoring-mode/`. Three natures, each a directory
-under `.sloprail/` — a `*.yaml` declaration plus the scripts it names:
+`examples/deterministic-refactoring-mode/`. Three natures (a context, two gates and a
+file-guard), each a directory under `.sloprail/` — a `*.yaml` declaration plus the
+scripts it names:
 
 <FileTree>
 
@@ -76,6 +80,9 @@ under `.sloprail/` — a `*.yaml` declaration plus the scripts it names:
     - refactor-complete/
       - gate.yaml
       - verify-declared-moves-landed.sh
+    - moved-content-reconciles/
+      - gate.yaml
+      - reconciles-against-origin.sh
 - README.md
 
 </FileTree>
@@ -91,16 +98,27 @@ is complete — which is what carries a multi-turn refactor.
 <Code code={enterSh} lang="bash" title=".sloprail/context/refactoring/enter.sh" />
 <Code code={exitSh} lang="bash" title=".sloprail/context/refactoring/exit.sh" />
 
-### file-guard
+### gate: moved-content-reconciles
 
 Runs *before* a marked write lands, only while the context is active. It
-reconciles the moved bytes against their pinned origin; anything that doesn't
-reconcile is a rewrite, and a rewrite is refused.
+reconciles the pending bytes against their pinned origin; anything that doesn't
+reconcile is a rewrite, and a rewrite is refused before it reaches the file. A
+write whose result can't be computed (`sed -i` on a moved file) is refused too,
+since a gate does not fail closed on that by itself.
+
+<Code code={reconcileGateYaml} lang="yaml" title=".sloprail/gate/moved-content-reconciles/gate.yaml" />
+<Code code={reconcileGateSh} lang="bash" title=".sloprail/gate/moved-content-reconciles/reconciles-against-origin.sh" />
+
+### file-guard
+
+The after-check of the same name. A file-guard only acts on what settled, so at
+`Stop` it runs the same reconcile on the file on disk — the backstop for a write
+the gate could not see.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/moved-content-reconciles/file-guard.yaml" />
 <Code code={reconcileSh} lang="bash" title=".sloprail/file-guard/moved-content-reconciles/reconciles-against-origin.sh" />
 
-### gate
+### gate: refactor-complete
 
 The piece that *blocks*. It wakes at `Stop` when a refactor is active, reads the
 declared scope, and searches the tree for the `sr:moved-from` marker each move

@@ -115,7 +115,7 @@ type FileGuard struct {
 	// Deletions for the three values.
 	//
 	// One axis with three values, NOT a list of events — the same reasoning that
-	// makes Preventive a boolean rather than an array. A file-guard binds to a
+	// keeps a file-guard's other axes small. A file-guard binds to a
 	// file's STATE, not to events; the one place the state question genuinely
 	// forks is a file that no longer exists, which has no end state, no
 	// newContent and no newMarkers. Most guards validate content and have nothing

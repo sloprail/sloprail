@@ -2,11 +2,11 @@
 # it exists to test. sr-eval proves a guardrail changes a REAL agent's
 # behavior; a prompt that reveals the required skill, the gate, or the
 # .sloprail/ machinery hands the agent the answer instead of letting the
-# guardrail supply it, and a pass then proves nothing. preventive: refuse the
-# write before the hint lands, not after — a fixture author should learn this
-# while still writing the prompt.
+# guardrail supply it, and a pass then proves nothing. This file-guard judges the
+# settled prompt at Stop; the sibling gate of the same name refuses the write
+# before the hint lands — a fixture author should learn this while still writing
+# the prompt.
 match: path matches "^examples/.+/eval/.+/prompt\\.md$"
-preventive: true
 checks:
   # "Does this prompt reveal — literally or by paraphrase — the guardrail it
   # exists to test" is a question about MEANING, not a structural fact a

@@ -39,7 +39,7 @@ unprompted."
 GUARDRAIL="A file-guard (one-fact-one-home) matches any write under
 updates/ or branding/ and asks a judge whether the file restates a fact
 that already lives in another file (like a person's standing preference)
-instead of linking to it. It is after-only (not preventive) and judge-only
+instead of linking to it. It is after-only (no gate) and judge-only
 — there is no deterministic signature for 'this is a duplicate', so it can
 disagree, be uncertain, or take a cycle to resolve without that being an
 anomaly. What WOULD be unhealthy is the agent getting stuck in a retry
