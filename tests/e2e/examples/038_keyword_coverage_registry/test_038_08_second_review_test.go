@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // The second review of #84. Each test is a reviewer's probe, reproduced first on
@@ -260,7 +262,7 @@ func TestT038_42_NothingIsRecordedWithoutTheUsersWords(t *testing.T) {
 			cmd.Env = append(os.Environ(),
 				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"SR_GUARDRAIL_DIR="+filepath.Dir(script))
-			cmd.Stdin = strings.NewReader(`{"event":{"kind":"PostFileDelete","path":"scanners/mine/scanner.yaml","oldContent":"","citations":` + tc.citations + `}}`)
+			cmd.Stdin = strings.NewReader(`{"event":{"kind":"Changeset"},"changeset":{"files":[{"status":"D","path":"scanners/mine/scanner.yaml","oldContent":""}],"citations":` + tc.citations + `}}`)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("the check refused: %v\n%s", err, out)
 			}
@@ -283,7 +285,7 @@ func TestT038_43_ACitedDropNarrowsTheObligation(t *testing.T) {
 	res := e.Run(proj, sess, ask, Turns("done",
 		srWriteScanner("b1", narrowedScanner, ask),
 		Bash("b2", stubbed(`gh search repos guardrail llm`)),
-	).ThenCommit("write the files"))
+	).ThenCommit("drop the keyword", harness.CitesUser(ask)))
 	if got := readScanner(t, proj); strings.Contains(got, "agent") {
 		t.Fatalf("precondition: the cited drop should have landed:\n%s\n%s", got, res.Output)
 	}
