@@ -25,6 +25,8 @@ var (
 	Turns = harness.Turns
 	Bash  = harness.Bash
 	Write = harness.Write
+
+	CommitRequired = harness.CommitRequired
 )
 
 // TestMain removes the binary build dir when this package's tests finish.
