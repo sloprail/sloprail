@@ -13,7 +13,7 @@ import (
 // the tree, still is.
 func TestT002_06_ASubagentInTheRootsTreeIsNotGated(t *testing.T) {
 	e, proj := project(t)
-	sub := subScenario(t, Turns("sub done",
+	sub := harness.SubagentScript(t, Turns("sub done",
 		Bash("sb1", "echo 'made by the sub-agent' > docs/from-sub.md"),
 	))
 
@@ -39,7 +39,7 @@ func TestT002_06_ASubagentInTheRootsTreeIsNotGated(t *testing.T) {
 // it, in the tree it was bound to.
 func TestT002_07_AnIsolatedSubagentOwnsItsTreeAndIsGated(t *testing.T) {
 	e, proj := project(t)
-	sub := subScenario(t, Turns("sub done",
+	sub := harness.SubagentScript(t, Turns("sub done",
 		Bash("sb1", "echo 'made in isolation' > docs/isolated.md"),
 	))
 

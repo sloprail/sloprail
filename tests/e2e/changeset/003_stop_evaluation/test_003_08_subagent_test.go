@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/harness"
@@ -16,7 +15,7 @@ import (
 func TestT003_08_ASubagentInTheRootsTreeIsNotJudgedButOneInItsOwnTreeIs(t *testing.T) {
 	// Shared tree: the sub-agent commits a file the rule refuses.
 	e, proj, led := project(t, docsRule)
-	sub := subagentScenario(t, Turns("sub done",
+	sub := harness.SubagentScript(t, Turns("sub done",
 		harness.CommitFile("sb1", "docs/from-sub.md", "FORBIDDEN by the rule", "sub-agent adds a doc"),
 	))
 	res := e.Run(proj, "s-003-08a", "delegate here", Turns("root done",
@@ -36,7 +35,7 @@ func TestT003_08_ASubagentInTheRootsTreeIsNotJudgedButOneInItsOwnTreeIs(t *testi
 
 	// Own worktree: the sub-agent's commit is judged at ITS Stop.
 	e2, proj2, _ := project(t, docsRule)
-	sub2 := subagentScenario(t, Turns("sub done",
+	sub2 := harness.SubagentScript(t, Turns("sub done",
 		harness.CommitFile("sb1", "docs/isolated.md", "FORBIDDEN by the rule", "sub-agent adds a doc in isolation"),
 	))
 	res = e2.Run(proj2, "s-003-08b", "delegate into isolation", Turns("root done",
@@ -45,15 +44,6 @@ func TestT003_08_ASubagentInTheRootsTreeIsNotJudgedButOneInItsOwnTreeIs(t *testi
 	if !res.SubagentStopBlocked("FORBIDDEN text in the changeset") {
 		t.Fatalf("a sub-agent in its own worktree was not judged on its own commit:\n%s", res.Output)
 	}
-}
-
-func subagentScenario(t *testing.T, s harness.Scenario) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "sub.sh")
-	if err := s.Script(path); err != nil {
-		t.Fatalf("write sub-agent scenario: %v", err)
-	}
-	return path
 }
 
 // ledgerFilePaths is every file path the check was handed, across all its runs.

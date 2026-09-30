@@ -58,7 +58,7 @@ type Store interface {
 	// replayed, never re-judged until the input changes. An empty fingerprint
 	// (a script) never hits.
 	CachedCheck(subject, kind, fingerprint string) (CachedCheck, bool, error)
-	// ResolveStale marks as skip every failing check of rule (at this rule hash)
+	// ResolveStale marks as skip every failing check of rule (at this rule hash, in COMPLETE runs)
 	// outside run liveRunID whose (subject, kind, fingerprint) is not one liveRunID
 	// holds: a failure whose input has left the range. Returns how many.
 	ResolveStale(rule, ruleHash, liveRunID string) (int, error)

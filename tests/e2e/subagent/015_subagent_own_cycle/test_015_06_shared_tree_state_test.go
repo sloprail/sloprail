@@ -46,7 +46,7 @@ func TestT015_06_InOneTreeASubagentsStateIsStillItsOwn(t *testing.T) {
 	// The sub-agent writes into the SAME tree the root is working in. Bash
 	// rather than Write, because the mock applies Bash and it is the landed file
 	// that gives the sub-agent's cycle something to judge.
-	sub := subScenario(t, harness.Turns("sub done",
+	sub := harness.SubagentScript(t, harness.Turns("sub done",
 		Bash("sb1", "echo 'the sub-agents own work' > written-by-the-sub.md"),
 	))
 

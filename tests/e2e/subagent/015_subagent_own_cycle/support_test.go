@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // A sub-agent's OWN cycle, observed end to end through a user's own wiring.
@@ -170,22 +168,6 @@ func theWorktree(t *testing.T, proj string) string {
 			"own cycle cannot say whose cycle it read", len(trees), trees)
 	}
 	return trees[0]
-}
-
-// subScenario writes a scenario the mock runs as a sub-agent, OUTSIDE the
-// project tree, and returns its path.
-//
-// Outside deliberately. A script written into the project is an untracked file
-// in the tree the cycle diffs, so it turns up as a change the guardrails are
-// asked about — which is noise in every assertion about what a cycle judged, and
-// in an isolated dispatch it is not even in the sub-agent's tree.
-func subScenario(t *testing.T, s harness.Scenario) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "sub.sh")
-	if err := s.Script(path); err != nil {
-		t.Fatalf("write sub-agent scenario: %v", err)
-	}
-	return path
 }
 
 // recordsPathAndSession is a file-guard whose after-check judges files created in

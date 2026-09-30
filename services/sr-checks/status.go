@@ -26,6 +26,10 @@ message: a range that could not be read is never shown as an empty one.
 --json prints the rows as a JSON array (rule, subject, kind, status, base_ref,
 head_ref, run_at, fingerprint, error, metadata).
 
+A run still being recorded reads as interrupted: that can be transient — a Stop in
+flight — so look again before treating it as a failure. A run that died half-way
+stays interrupted, and is never counted as a pass.
+
 Nothing recorded yet is not an error: the listing is empty.`,
 		Args: cobra.NoArgs,
 		RunE: runStatus,

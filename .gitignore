@@ -11,6 +11,8 @@
 # A service built in place (`go build` inside services/<name>/) leaves its binary
 # beside the source; unanchored on purpose, so it is caught at any depth.
 services/*/sr-*
+!services/*/sr-*.go
+!services/*/sr-*/
 
 # Where `make build` puts the same binaries. The entries above cover a bare
 # `go build ./services/...`, which drops them at the root; the Makefile builds
