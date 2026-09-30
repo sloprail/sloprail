@@ -9,7 +9,12 @@ import (
 
 // Fingerprint says what a check's input IS, as one short string.
 //
-// It covers exactly what the check is given — the files (paths, statuses, both
+// It is the check's cache key, so it also covers what the verdict depends on
+// besides the input: the rule's hash (an edited rubric, script or template
+// invalidates every earlier verdict) and the model (a different judge is a
+// different verdict). a10n's key left both out and kept serving stale passes.
+//
+// The input part covers exactly what the check is given — the files (paths, statuses, both
 // contents, both marker sets, diffs), the others, the commits' subjects, bodies
 // and trailers, the citations, the subject, and the context — and NEVER a commit
 // SHA. A rebase or an amend changes every SHA and none of the content; keyed on
@@ -26,7 +31,7 @@ import (
 // extra is whatever else the check is handed that is not in the payload: what a
 // `prepare` step inlined, the rendered prompt. Each part is length-prefixed, so
 // two parts cannot be re-cut into another pair with the same concatenation.
-func Fingerprint(p Payload, extra ...string) (string, error) {
+func Fingerprint(p Payload, ruleHash, model string, extra ...string) (string, error) {
 	view := p
 	view.TranscriptPath = ""
 	view.Changeset.Base, view.Changeset.Head = "", ""
@@ -39,7 +44,7 @@ func Fingerprint(p Payload, extra ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	buf := frame(nil, body)
+	buf := frame(frame(frame(nil, []byte(ruleHash)), []byte(model)), body)
 	for _, e := range extra {
 		buf = frame(buf, []byte(e))
 	}

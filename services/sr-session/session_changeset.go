@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,11 +11,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sloprail/sloprail/internal/changeset"
+	"github.com/sloprail/sloprail/internal/checkstore"
 	"github.com/sloprail/sloprail/internal/declaration"
 	"github.com/sloprail/sloprail/internal/gitrepo"
 	"github.com/sloprail/sloprail/internal/guardrail"
 	"github.com/sloprail/sloprail/internal/module/modules"
 	"github.com/sloprail/sloprail/internal/natures"
+	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/sessionstate"
 	"github.com/sloprail/sloprail/internal/transcript"
 )
@@ -42,6 +45,10 @@ the first of these that exists and is still an ancestor of HEAD:
                  lives in this repository)
   session start  the HEAD recorded when this session began (a plugin's rule, or
                  one not committed yet)
+
+The watermark is not stored on its own: it is the newest run of the rule, at its
+current definition, that passed and whose head is still an ancestor of HEAD, read
+from the session's check results (` + "`sr-checks status`" + ` shows them).
 
 If none of them can be used — the session start was never recorded, or the tree
 left its history — the command fails rather than guess.
@@ -114,24 +121,34 @@ func runSessionChangeset(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("sloprail: file-guard %q match %q does not compile: %w", g.Name, g.Match, err)
 	}
 
-	recordPath, store, err := openChangesetSession(&p)
+	sess, err := openChangesetSession(&p)
 	if err != nil {
 		return err
 	}
-	if store != nil {
-		defer store.Close()
-	}
+	defer sess.close()
+	recordPath, store := sess.record, sess.state
 
 	hash, err := changeset.RuleHash(g.Dir)
 	if err != nil {
 		return err
 	}
 	rule := g.Qualified()
-	var watermark, sessionStart string
-	if store != nil {
-		if watermark, _, err = store.Watermark(rule, hash); err != nil {
+	var watermark, dropped, sessionStart string
+	if sess.checks != nil {
+		// The watermark is not stored; it is the newest run the rule passed at
+		// its current definition whose head is still reachable.
+		heads, err := sess.checks.PassedHeads(rule, hash)
+		if err != nil {
 			return err
 		}
+		watermark, dropped, err = changeset.PickWatermark(heads, func(sha string) (bool, error) {
+			return gitrepo.Contains(root, sha)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	if store != nil {
 		if sessionStart, _, err = store.Meta(sessionstate.MetaBaselineCommit); err != nil {
 			return err
 		}
@@ -139,6 +156,9 @@ func runSessionChangeset(cmd *cobra.Command, _ []string) error {
 	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Dir), watermark, sessionStart)
 	if err != nil {
 		return fmt.Errorf("sloprail: file-guard %q: range not computable: %w", g.Name, err)
+	}
+	if r.Origin != gitrepo.FromWatermark && r.DroppedWatermark == "" {
+		r.DroppedWatermark = dropped
 	}
 
 	ctx := contextMatchValue(contextsOf(cmd, store, loaded.Contexts))
@@ -216,38 +236,70 @@ func repoRelative(root, dir string) string {
 	return filepath.ToSlash(rel)
 }
 
+// changesetSession is what `changeset` reads of the current session: its
+// record, its state, and its check results. Every part may be absent — a
+// session that has recorded nothing yet has no state and no results.
+type changesetSession struct {
+	record string
+	state  sessionstate.Store
+	checks checkstore.Store
+}
+
+func (c changesetSession) close() {
+	if c.state != nil {
+		c.state.Close()
+	}
+	if c.checks != nil {
+		c.checks.Close()
+	}
+}
+
 // openChangesetSession finds the current session's record and its EXISTING
-// store. It never creates a store: showing a changeset records nothing, so a
-// session that has no state yet simply has no watermark and no session start.
-// A missing session is not an error — the folder floor needs neither.
-func openChangesetSession(p *HookPayload) (record string, store sessionstate.Store, err error) {
-	record, err = p.record()
+// stores. It never creates one: showing a changeset records nothing, so a
+// session with no state yet simply has no watermark and no session start. A
+// missing session is not an error — the folder floor needs neither.
+func openChangesetSession(p *HookPayload) (changesetSession, error) {
+	var sess changesetSession
+	record, err := p.record()
 	if err != nil {
-		return "", nil, err
+		return sess, err
 	}
 	if record == "" {
 		record = transcript.CurrentSessionPath(p.Cwd)
 	}
 	if record == "" {
-		return "", nil, nil
+		return sess, nil
 	}
+	sess.record = record
 	p.TranscriptPath = record
 	id, err := stableID(*p)
 	if err != nil {
-		return record, nil, err
+		return sess, err
 	}
-	path, err := sessionDBPath(p.Cwd, id)
+	statePath, err := sessionDBPath(p.Cwd, id)
 	if err != nil {
-		return record, nil, err
+		return sess, err
 	}
-	if _, statErr := os.Stat(path); statErr != nil {
-		if os.IsNotExist(statErr) {
-			return record, nil, nil
+	if _, statErr := os.Stat(statePath); statErr == nil {
+		if sess.state, err = sessionstate.Open(statePath); err != nil {
+			return sess, err
 		}
-		return record, nil, statErr
+	} else if !os.IsNotExist(statErr) {
+		return sess, statErr
 	}
-	store, err = sessionstate.Open(path)
-	return record, store, err
+	checksPath, err := sessionpath.ChecksDB(p.Cwd, id)
+	if err != nil {
+		sess.close()
+		return changesetSession{}, err
+	}
+	switch sess.checks, err = checkstore.OpenReadOnly(checksPath); {
+	case errors.Is(err, checkstore.ErrNoStore):
+		sess.checks = nil
+	case err != nil:
+		sess.close()
+		return changesetSession{}, err
+	}
+	return sess, nil
 }
 
 // contextsOf is the declared contexts' state: read from the store when there is

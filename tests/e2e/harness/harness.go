@@ -42,7 +42,7 @@ const (
 // other — Go names an installed binary after its directory, and a directory
 // called `session` would install as `session` while the proxy looked for
 // `sr-session`. Listed once here so a new service is added in one place.
-var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent"}
+var Services = []string{"sr", "sr-session", "sr-file", "sr-mark", "sr-agent", "sr-checks"}
 
 // Env is one isolated end-to-end environment.
 type Env struct {

@@ -22,7 +22,7 @@ func samplePayload() Payload {
 
 func fp(t *testing.T, p Payload, extra ...string) string {
 	t.Helper()
-	s, err := Fingerprint(p, extra...)
+	s, err := Fingerprint(p, "rule-hash", "size-md", extra...)
 	require.NoError(t, err)
 	return s
 }
@@ -113,4 +113,19 @@ func TestFingerprint_ARebuiltRangeWithTheSameContentHits(t *testing.T) {
 	a, b := build("2026-01-01T00:00:00Z"), build("2026-02-02T00:00:00Z")
 	require.NotEqual(t, a.Changeset.Head, b.Changeset.Head, "the two histories really do have different SHAs")
 	assert.Equal(t, fp(t, a), fp(t, b))
+}
+
+func TestFingerprint_TheRuleHashAndTheModelAreInTheKey(t *testing.T) {
+	p := samplePayload()
+	base, err := Fingerprint(p, "h1", "size-md")
+	require.NoError(t, err)
+	edited, err := Fingerprint(p, "h2", "size-md")
+	require.NoError(t, err)
+	other, err := Fingerprint(p, "h1", "size-lg")
+	require.NoError(t, err)
+	assert.NotEqual(t, base, edited, "editing anything in the rule's folder must miss")
+	assert.NotEqual(t, base, other, "a different model must miss")
+	swapped, err := Fingerprint(p, "size-md", "h1")
+	require.NoError(t, err)
+	assert.NotEqual(t, base, swapped, "rule hash and model are separate parts")
 }

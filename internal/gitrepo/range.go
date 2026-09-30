@@ -164,3 +164,23 @@ func folderFloor(dir, folder string) (string, error) {
 	}
 	return sha, nil
 }
+
+// RootCommit is the repository's root commit — the identity of the repository
+// itself, which survives worktrees, branches and clones. With several roots
+// (unrelated histories merged) the oldest by commit date, then by name, is the
+// answer, so every caller in the repository agrees on it.
+func RootCommit(dir string) (string, error) {
+	out, err := run(dir, "rev-list", "--max-parents=0", "--reverse", "--date-order", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if sha := strings.TrimSpace(line); sha != "" {
+			if !isObjectName(sha) {
+				return "", fmt.Errorf("gitrepo: root commit resolved to %q, not an object name", sha)
+			}
+			return sha, nil
+		}
+	}
+	return "", ErrNoCommits
+}

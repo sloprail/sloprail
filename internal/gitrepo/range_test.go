@@ -222,3 +222,22 @@ func TestResolveRange_AnUnreachableSessionStartFailsClosed(t *testing.T) {
 	_, err = ResolveRange(dir, ruleDir, "", "0123456789012345678901234567890123456789")
 	assert.ErrorIs(t, err, ErrSessionStartUnreachable, "a commit git has never heard of is unreachable too")
 }
+
+func TestRootCommit_IsTheFirstCommitWhateverTheBranch(t *testing.T) {
+	dir := initRepo(t)
+	root := commit(t, dir, "a.go", "x")
+	commit(t, dir, "b.go", "y")
+	git(t, dir, "checkout", "-qb", "feature")
+	commit(t, dir, "c.go", "z")
+
+	got, err := RootCommit(dir)
+	require.NoError(t, err)
+	assert.Equal(t, root, got)
+}
+
+func TestRootCommit_NoCommitsAndNotARepository(t *testing.T) {
+	_, err := RootCommit(initRepo(t))
+	assert.Error(t, err)
+	_, err = RootCommit(t.TempDir())
+	assert.Error(t, err)
+}

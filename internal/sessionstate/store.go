@@ -113,22 +113,6 @@ type Store interface {
 	// owner selects only the guardrail, never another session's database.
 	ListStateOwned(owner, prefix string) ([]Entry, error)
 
-	// ChangesetVerdict reads the verdict stored for one input of one rule. A key
-	// never recorded is a zero verdict and false.
-	ChangesetVerdict(k VerdictKey) (ChangesetVerdict, bool, error)
-	// RecordChangesetVerdict stores a verdict, live. A failure stays terminal: it
-	// is replayed until its input changes.
-	RecordChangesetVerdict(k VerdictKey, v ChangesetVerdict) error
-	// MarkChangesetStale marks every failure of the rule at this hash whose input
-	// is not among live as stale, and every one whose input is live as live.
-	MarkChangesetStale(rule, ruleHash string, live []string) error
-	// OutstandingChangesetFailures lists the rule's failures still standing.
-	OutstandingChangesetFailures(rule, ruleHash string) ([]StoredFailure, error)
-	// Watermark reads the last head a rule passed at this definition hash.
-	Watermark(rule, ruleHash string) (string, bool, error)
-	// SetWatermark records the head a rule has now passed.
-	SetWatermark(rule, ruleHash, head string) error
-
 	// Close releases the database.
 	Close() error
 }
