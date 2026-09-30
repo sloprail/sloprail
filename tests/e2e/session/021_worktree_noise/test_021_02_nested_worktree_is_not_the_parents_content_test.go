@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
 // A sub-agent's own worktree is not the parent's changed content.
@@ -64,43 +65,8 @@ echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
-type observed struct {
-	Kind string
-	Path string
-}
-
-// observedFiles decodes what a file-guard's check was handed — the FLAT event,
-// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
-// the old nested `event.fields` envelope.
-func observedFiles(t *testing.T, lines []string) []observed {
-	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
-		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
-	}
-	return got
-}
-
-func sawPath(got []observed, path string) bool {
-	for _, o := range got {
-		if o.Path == path {
-			return true
-		}
-	}
-	return false
-}
-
 // underWorktree reports the observed paths that lie inside a nested worktree.
-func underWorktree(got []observed) []string {
+func underWorktree(got []changesetkit.Observed) []string {
 	var out []string
 	for _, o := range got {
 		if strings.Contains(o.Path, ".claude/worktrees/") {
@@ -294,7 +260,7 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	// creates nothing. What matters is the dispatch itself, which binds a real
 	// `git worktree add` inside the parent's tree.
 	subScript := filepath.Join(t.TempDir(), "sub.sh")
-	if err := Turns("delegated done", Write("s1", "child.md", "written in the child tree\n")).
+	if err := Turns("delegated done", harness.CommitFile("s1", "child.md", "written in the child tree\n", "the child's work")).
 		Script(subScript); err != nil {
 		t.Fatalf("write sub-agent scenario: %v", err)
 	}
@@ -303,7 +269,7 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e.Run(proj, "s-021-03", "delegate into a worktree", Turns("done",
 		Write("w1", "root-own.md", "the root's own work\n"),
 		Dispatch("d1", "do the delegated thing", subScript, "worktree"),
-	))
+	).ThenCommit("the root's work"))
 
 	// The premise: a worktree really was bound inside the parent's tree, and git
 	// reports it as untracked content of the parent. Without both, the silence
@@ -313,15 +279,18 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 		t.Fatalf("no worktree was bound under .claude/worktrees (%v) — isolation=%q did not "+
 			"create a nested checkout, so this proves nothing", err, "worktree")
 	}
-	if others := git(t, proj, "ls-files", "-o", "--exclude-standard", "--full-name"); !strings.Contains(others, ".claude/worktrees/") {
-		t.Fatalf("git does not report the nested checkout as the parent's untracked content:\n%s\n"+
-			"the pollution this test is about is not present, so its conclusion would be vacuous", others)
+	// The agent's own `git add -A` commits the nested checkout as an embedded
+	// repository (a mode-160000 entry), so it is in the parent's committed range
+	// rather than merely untracked: the entry the rule must not be shown.
+	if staged := git(t, proj, "ls-files", "-s", "--full-name", "--", ".claude/worktrees"); !strings.Contains(staged, "160000") {
+		t.Fatalf("the parent's history does not hold the nested checkout as an embedded repository:\n%s\n"+
+			"the pollution this test is about is not present, so its conclusion would be vacuous", staged)
 	}
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 
 	// The control: the root's own work reached the rule.
-	if !sawPath(got, "root-own.md") {
+	if !changesetkit.Saw(got, "root-own.md") {
 		t.Fatalf("the root's own file never reached the rule: %v — this cycle dispatched nothing "+
 			"recognisable, so what it did or did not include proves nothing", got)
 	}
