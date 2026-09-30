@@ -1,8 +1,9 @@
 package e2e
 
 import (
-	"encoding/json"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
 // untouched_stays_silent: a file unchanged since the point the difference is
@@ -46,41 +47,6 @@ echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
-type observed struct {
-	Kind string
-	Path string
-}
-
-// observedFiles decodes what a file-guard's check was handed — the FLAT event,
-// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
-// the old nested `event.fields` envelope.
-func observedFiles(t *testing.T, lines []string) []observed {
-	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
-		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
-	}
-	return got
-}
-
-func sawPath(got []observed, path string) bool {
-	for _, o := range got {
-		if o.Path == path {
-			return true
-		}
-	}
-	return false
-}
-
 // seedUntouched writes the files that exist BEFORE the session starts and
 // commits them, so they are part of the baseline rather than part of the
 // cycle's work.
@@ -109,10 +75,10 @@ func TestT017_01_ATouchedFileIsReported(t *testing.T) {
 
 	e.Run(proj, "s-017-01", "touch one file", Turns("done",
 		Write("w1", "old-one.md", "changed by the agent\n"),
-	))
+	).ThenCommit("the work"))
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
-	if !sawPath(got, "old-one.md") {
+	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	if !changesetkit.Saw(got, "old-one.md") {
 		t.Fatalf("the file the cycle changed was not reported: got %v — "+
 			"this ledger cannot register a change, so no absence asserted in this directory means anything", got)
 	}
@@ -140,16 +106,16 @@ func TestT017_02_AnUntouchedFileProducesNothing(t *testing.T) {
 
 	e.Run(proj, "s-017-02", "touch one of two", Turns("done",
 		Write("w1", "touched.md", "changed by the agent\n"),
-	))
+	).ThenCommit("the work"))
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	// The positive half, in this same session. Without it the next assertion
 	// holds for an engine that dispatched nothing whatsoever.
-	if !sawPath(got, "touched.md") {
+	if !changesetkit.Saw(got, "touched.md") {
 		t.Fatalf("the changed file is missing from %v — nothing was observed, so the "+
 			"silence about the untouched file below proves nothing", got)
 	}
-	if sawPath(got, "untouched.md") {
+	if changesetkit.Saw(got, "untouched.md") {
 		t.Fatalf("a file unchanged since the session began was reported as this cycle's work: %v — "+
 			"on a real project this puts the whole repository in front of every guardrail", got)
 	}
@@ -180,14 +146,14 @@ func TestT017_03_AFileRestoredToItsOriginalIsNotReported(t *testing.T) {
 		Write("w2", "genuinely-changed.md", "left different\n"),
 		// Restored to the exact bytes the baseline holds.
 		Write("w3", "round-trip.md", "original\n"),
-	))
+	).ThenCommit("the work"))
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
-	if !sawPath(got, "genuinely-changed.md") {
+	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	if !changesetkit.Saw(got, "genuinely-changed.md") {
 		t.Fatalf("the file left different is missing from %v — nothing was observed, so the "+
 			"silence about the restored file proves nothing", got)
 	}
-	if sawPath(got, "round-trip.md") {
+	if changesetkit.Saw(got, "round-trip.md") {
 		t.Fatalf("a file restored to its baseline content was reported as changed: %v — "+
 			"the difference is against the tree at the baseline, not a log of what was written", got)
 	}

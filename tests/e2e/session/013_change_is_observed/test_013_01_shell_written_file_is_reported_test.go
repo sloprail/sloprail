@@ -1,7 +1,7 @@
 package e2e
 
 import (
-	"encoding/json"
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 	"testing"
 )
 
@@ -28,8 +28,7 @@ import (
 // A test of only the first would pass against an engine that reported the union
 // of everything announced AND everything on disk.
 
-// recordEverything is a NEW-FORMAT file-guard that records every after-the-fact
-// file event it is handed, and permits unconditionally — the question here is
+// recordEverything is a file-guard that records every changeset it is handed, and permits unconditionally — the question here is
 // which changes were observed, not what anyone decided about them.
 //
 // `match: "**/*.md"` selects every markdown file the cycle's difference produces,
@@ -45,7 +44,7 @@ import (
 // the new declaration store does not read GUARDRAIL.md, so this coverage of the
 // shared tree-difference machinery would vanish once the old dispatch is deleted.
 // It observes the SAME behavior through the NEW dispatch — the flat CheckPayload
-// (`.event.path`, `.event.kind`) via the file-guard's own ledger.)
+// (`.changeset.files[]`) via the file-guard's own ledger.)
 const recordEverything = `match: "**/*.md"
 checks:
   - script: ./record.sh
@@ -61,43 +60,6 @@ cat >> "$SR_GUARDRAIL_DIR/seen"
 echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
-
-// observed is one recorded after-the-fact event.
-type observed struct {
-	Kind string
-	Path string
-}
-
-// observedFiles decodes what a file-guard's check was handed. The event's own
-// fields spread directly under `event` (`.event.kind`, `.event.path`), NOT nested
-// under an `event.fields` envelope the way the old format wrote them.
-func observedFiles(t *testing.T, lines []string) []observed {
-	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
-		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
-		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
-	}
-	return got
-}
-
-// sawPath reports whether any observed event names the given path.
-func sawPath(got []observed, path string) bool {
-	for _, o := range got {
-		if o.Path == path {
-			return true
-		}
-	}
-	return false
-}
 
 // T013_01: a file written by a shell redirect is reported.
 //
@@ -115,13 +77,14 @@ func TestT013_01_AFileWrittenByAShellRedirectIsReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-013-01", "write through a script", Turns("done",
 		Bash("b1", "printf 'made by a script\n' > from-script.md"),
-	))
+	).ThenCommit("script output"))
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
-	if !sawPath(got, "from-script.md") {
+	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	if !changesetkit.Saw(got, "from-script.md") {
 		t.Fatalf("a file created by a shell redirect was not reported: got %v — "+
 			"no tool call and no parseable argument names it, so only looking at the tree finds it", got)
 	}
@@ -143,6 +106,7 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	e.CommitAll(proj, "the project before the session")
 
 	// One turn that genuinely writes, so the cycle is not empty and a build
 	// dispatching nothing at all cannot pass this by being inert. The assertion
@@ -150,16 +114,16 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 	e.Run(proj, "s-013-02", "name a file without writing it", Turns("done",
 		Bash("b1", "printf 'real\n' > really-written.md"),
 		Bash("b2", "echo would have written never-written.md"),
-	))
+	).ThenCommit("real output"))
 
-	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	// The control: the cycle DID report something, so the absence asserted next
 	// is a real absence rather than an engine that dispatched nothing.
-	if !sawPath(got, "really-written.md") {
+	if !changesetkit.Saw(got, "really-written.md") {
 		t.Fatalf("the file that was actually written is missing from %v — "+
 			"nothing was observed at all, so the assertion below would pass for the wrong reason", got)
 	}
-	if sawPath(got, "never-written.md") {
+	if changesetkit.Saw(got, "never-written.md") {
 		t.Fatalf("a path a command only mentioned was reported as a change: %v — "+
 			"the cycle's difference is what the tree shows, not what an action announced", got)
 	}
