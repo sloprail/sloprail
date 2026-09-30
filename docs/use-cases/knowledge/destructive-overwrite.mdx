@@ -52,18 +52,17 @@ and that quote has to resolve to something the user really said.
 
 This is a **gate with a file-guard of the same name**. The gate runs before the
 update lands, while the content that would be lost is still on disk, so the loss
-is prevented rather than mourned — and it carries the judge, since a judge that
-ran only at Stop would rule on a file already destroyed. The file-guard is the
-after-check: it judges the settled file at Stop, which catches a rewrite the gate
-could not see ahead, such as a script.
+is prevented rather than mourned; it is cheap, with no model in it. The file-guard is
+the after-check and carries the judge: it rules on the settled file at Stop, which
+catches a rewrite the gate could not see ahead, such as a script.
 
 ## The actual configuration
 
 This is the real example shipped at `examples/no-unasked-deletion/`. Two
 natures, one directory each under `.sloprail/`, both named
 `preserves-unasked-content` — a `gate.yaml` and a `file-guard.yaml` declaration,
-each with the checks it names (a rule's folder is self-contained, so the two
-carry their own copies of the scripts):
+each with the checks it names (the shared script logic lives in one library in the
+file-guard folder; each half is a thin entry that reads its own event kind):
 
 <FileTree>
 
@@ -89,10 +88,10 @@ carry their own copies of the scripts):
 Triggers before a memory file is written or deleted (`PreFileWrite` and
 `PreFileDelete`). A citation of the user's words is required `when` the change
 removes content: additions pass, ungrounded removals are refused
-deterministically, and a grounded removal is prepared and handed to the model to
-rule on cleanliness. A write whose result the engine cannot work out ahead
+deterministically, and a grounded removal passes to the file-guard's judge at Stop.
+A write whose result the engine cannot work out ahead
 (`sed -i`, `>`) is refused by `require-known-result.sh`: the gate fails closed
-rather than judge bytes nobody saw.
+rather than admit bytes nobody saw.
 
 <Code code={gateYaml} lang="yaml" title=".sloprail/gate/preserves-unasked-content/gate.yaml" />
 <Code code={knownSh} lang="bash" title=".sloprail/gate/preserves-unasked-content/require-known-result.sh" />
@@ -101,8 +100,8 @@ rather than judge bytes nobody saw.
 
 The after-check. It matches the same memory files, acts only at Stop on the
 settled file, and repeats the requirement and the judge. `removes-content.sh`
-and `skip-pure-addition.sh` here read the settled `Post*` events; the gate's
-copies read the `Pre*` ones.
+here reads the settled `Post*` events; the gate's entry reads the `Pre*` ones and
+both source the same `removes-content-lib.sh`.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/preserves-unasked-content/file-guard.yaml" />
 <Code code={removalSh} lang="bash" title=".sloprail/file-guard/preserves-unasked-content/removes-content.sh" />

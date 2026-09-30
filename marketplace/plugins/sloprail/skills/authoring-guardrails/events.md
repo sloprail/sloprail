@@ -107,14 +107,13 @@ empties the file. `resultKnown` is the boolean beside the value that tells the t
 apart. So **guard on `resultKnown` before reading `newContent`**:
 
 ```
-resultKnown and not (newContent contains "---")   refuse a strip, say nothing where the engine cannot see
-not resultKnown                                    catch the underivable cases deliberately
+event.resultKnown and not (event.newContent contains "---")   a gate trigger: refuse a strip, say nothing where the engine cannot see
+not event.resultKnown                                          a gate trigger: catch the underivable cases deliberately
 ```
 
 In a script, check `resultKnown` first; a **gate that prevents** a write refuses
 (exit 1) when the result is not known, because a write whose bytes nobody saw has
-not been checked — and in a judge-only gate, a first script check does that before
-the judge sees an empty file. A file-guard never meets this: it reads the settled
+not been checked — A file-guard never meets this: it reads the settled
 `Post*` kinds. `PreFileCreate` carries `resultKnown` too, so check it on both kinds.
 Details are in [file-guard.md](file-guard.md) ("The resultKnown discipline").
 
@@ -317,8 +316,7 @@ shapes are in `internal/declaration/payload.go`.
 The same three keys, but `event` is any **gate** kind — a gate wakes on command,
 tool and `Stop` events too, never a `Post` variant. A gate on a pre-write event
 (`PreFileWrite`, `PreFileDelete`) is where a write or a delete is prevented, and
-it is run **once per file** a call changes. A gate's judge template also reads
-`{{ change }}`, the unified diff of the pending write. `context` is carried at top
+it is run **once per file** a call changes. `context` is carried at top
 level, at parity with the gate's match scope, so a gate's checks can read what an
 upstream context left behind.
 

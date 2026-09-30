@@ -91,9 +91,11 @@ func TestT047_02_UncitedWriteRefused(t *testing.T) {
 	}
 }
 
-// T047_03: the citation resolves, but the judge finds the claim unsupported: the
-// write is refused and the judge's reasoning reaches the agent.
-func TestT047_03_CitedWriteJudgeFailRefused(t *testing.T) {
+// T047_03: the citation resolves, so the cheap gate admits and the write lands; but
+// the judge (in the file-guard, at Stop) finds the claim unsupported: the turn is
+// blocked and the judge's reasoning reaches the agent. Then, corrected to what the
+// source says, the same session passes.
+func TestT047_03_CitedWriteJudgeFailBlocksAtStop(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
 	gcSource(t, e, proj)
@@ -103,14 +105,18 @@ func TestT047_03_CitedWriteJudgeFailRefused(t *testing.T) {
 		readSource("r1", "CHANGELOG.md"),
 		srWrite("w1", "MIGRATION.md", "# Migration\n\nRetries now default to 5.\n", citeTool(sourceLine)),
 	))
-	if !res.Refused() || !res.Saw("SR047 the file says 5 retries") {
-		t.Fatalf("the judge's refusal did not reach the agent:\n%s", res.Output)
+	if res.Refused() {
+		t.Fatalf("the gate (citation only, no model) refused a cited write:\n%s", res.Output)
 	}
-	if !res.Saw(`gate \"citations-resolve\"`) {
-		t.Errorf("the refusal did not come from the pre-write gate:\n%s", res.Output)
+	if !e.Exists(proj, "MIGRATION.md") {
+		t.Errorf("the cited write did not land: a gate holds no judge")
 	}
-	if e.Exists(proj, "MIGRATION.md") {
-		t.Errorf("the refused write landed")
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-047-03", "Stop"), "\n")
+	if !strings.Contains(blocks, "SR047 the file says 5 retries") {
+		t.Fatalf("the judge's reasoning did not block the turn at Stop:\n%s", blocks)
+	}
+	if !strings.Contains(blocks, "citations-resolve") {
+		t.Errorf("the block does not name the file-guard:\n%s", blocks)
 	}
 }
 

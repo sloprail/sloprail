@@ -72,16 +72,8 @@ case "$kind" in
     fi
     content="$(printf '%s' "$payload" | jq -r '.event.newContent // ""' 2>/dev/null)"
     ;;
-  PreFileCreate|PreFileUpdate)
-    known="$(printf '%s' "$payload" | jq -r '.event.resultKnown // false' 2>/dev/null)"
-    if [ "$known" != "true" ]; then
-      content=""
-    else
-      content="$(printf '%s' "$payload" | jq -r '.event.newContent // ""' 2>/dev/null)"
-    fi
-    ;;
   *)
-    content=""
+    refuse "unit-satisfies-rules: unexpected event kind '$kind' for $path; this rule only judges settled unit writes"
     ;;
 esac
 

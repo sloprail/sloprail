@@ -67,7 +67,6 @@ require:
     when: ./removes-content.sh
 checks:
   - script: ./require-known-result.sh   # refuse a write whose result is unknown
-  - judge: ./change-is-clean-and-absolute.md.j2
 ```
 
 ```yaml
@@ -84,16 +83,17 @@ exactly as on a file-guard ([gate.md](gate.md), [grounding.md](grounding.md)). A
 `PreFileDelete` gate reads `oldContent`, `oldContentKnown` and `oldMarkers`, the
 bytes about to be lost. A call that changes several files (`rm a.go b.go`, two
 `sr-file` calls joined by `&&`) wakes the gate **once per file**, and the one
-refusal names every file it refused. A gate's judge is handed `{{ change }}`, the
-diff of the pending write, like a file-guard's.
+refusal names every file it refused.
 
-Keep what the gate decides small and cheap (a script, or a judge where the loss is
-what the rule is about); keep the full judgement of the result in the file-guard.
-Each folder is self-contained: a script both use is copied into both, and a
-script that read `.event.kind` keeps only its `Pre*` branch in the gate and its
-`Post*` branch in the file-guard.
+Keep what the gate decides small and cheap (a `require`, a script); keep the judge
+in the file-guard, which rules on the settled result at Stop.
+A script both halves need is written once, as a library that keeps no event-kind
+logic (in the file-guard folder, `<script>-lib.sh`); each half keeps a thin entry
+that reads its own kind — `Pre*` in the gate, `Post*` in the file-guard — and sources
+it (`. "$lib_dir/<script>-lib.sh"`; the gate's entry finds it at
+`../../file-guard/<rule>/`).
 
-**A gate does not fail closed on an unknown result by itself.** A command, `sed`
+**A gate does not fail closed on an unknown result by itself — the engine adds nothing.** A command, `sed`
 or `git` edit whose result the engine cannot derive reaches the gate with
 `resultKnown: false` and an empty `newContent`. A gate whose decision reads the
 content must refuse it (see [The resultKnown discipline](#the-resultknown-discipline)),
@@ -249,11 +249,10 @@ if [ "$(printf '%s' "$event" | jq -r '.event.resultKnown // false')" != "true" ]
 fi
 ```
 
-In a judge-only gate, put that script first in `checks:` so the judge is never
-asked to rule on an empty file. In a match, `resultKnown and not (newContent
-contains "---")` refuses a strip and says nothing where the engine cannot see —
-because the `resultKnown &&` short-circuits false — and `not resultKnown` catches
-the underivable cases deliberately. A create from an ordinary Write always carries
+In a gate's trigger `match` (which reads the event under `event`),
+`event.resultKnown and not (event.newContent contains "---")` selects a strip and
+says nothing where the engine cannot see — the `event.resultKnown and` short-circuits
+false — and `not event.resultKnown` selects the underivable cases deliberately. A create from an ordinary Write always carries
 `newContent`, but `PreFileCreate` carries `resultKnown` too (a notebook create can
 be false), so check it on both kinds.
 

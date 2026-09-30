@@ -85,19 +85,17 @@ Fires on `PreFileWrite` for the task ask file. A native `require: citation`
 prerequisite refuses any write to `ASK.md` that doesn't cite the user's own
 words — checked deterministically, no model involved — before any check runs.
 The first check refuses a write whose resulting bytes cannot be computed (a
-`sed -i`), since a gate does not fail closed on that by itself and the judge reads
-those bytes. Only then does the judge see the change: it reads the cited words
-straight off the event and rules that the ask is faithful to them and scoped to
-only them.
+`sed -i`), since a gate does not fail closed on that by itself. No model runs in the gate;
+the judge — which reads the cited words straight off the event and rules that the
+ask is faithful to them and scoped to only them — runs in the file-guard, at Stop.
 
 <Code code={gateYaml} lang="yaml" title=".sloprail/gate/ask-is-human-authored/gate.yaml" />
 <Code code={gateScript} lang="bash" title=".sloprail/gate/ask-is-human-authored/require-known-result.sh" />
-<Code code={judgeJ2} lang="jinja" title=".sloprail/gate/ask-is-human-authored/reference-is-true-and-only-this.md.j2" />
-
 ### file-guard
 
-The after-check: the same match, citation requirement and judge, applied at Stop
-to the settled `ASK.md`. It carries no prevention of its own — a file-guard only
-acts on what settled.
+The after-check: the same match and citation requirement plus the judge, applied at
+Stop to the settled `ASK.md`. It carries no prevention of its own — a file-guard
+only acts on what settled.
 
 <Code code={fileGuardYaml} lang="yaml" title=".sloprail/file-guard/ask-is-human-authored/file-guard.yaml" />
+<Code code={judgeJ2} lang="jinja" title=".sloprail/file-guard/ask-is-human-authored/reference-is-true-and-only-this.md.j2" />

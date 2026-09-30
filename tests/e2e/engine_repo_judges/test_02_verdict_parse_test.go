@@ -33,7 +33,7 @@ import (
 // would swallow both objects and mis-read pass.
 func TestVerdictParseRefusesAFlaggedRule(t *testing.T) {
 	e := New(t)
-	proj := project(t, e, "rule-quality")
+	proj := guardProject(t, e, "rule-quality")
 
 	// Two objects, the JUDGE'S OWN ANSWER FIRST (pass:false) and a trailing echo
 	// of the schema after it — the shape a model produces when it answers and then
@@ -44,12 +44,12 @@ func TestVerdictParseRefusesAFlaggedRule(t *testing.T) {
 		`{"pass": false, "reasoning": "RULE QUALITY: the rule closes with a recap, violating high-signal"}
 {"pass": true, "reasoning": ""}`)
 
-	got := e.Run(proj, "s-erj-parse-rule", "write a rule", Turns("done",
+	e.Run(proj, "s-erj-parse-rule", "write a rule", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nBody that the judge flags.\n"),
 	))
 
-	if !got.Saw("RULE QUALITY") {
-		t.Fatalf("a verdict flagging the rule did not refuse — the greedy parse would have permitted it:\n%s", got.Output)
+	if !sawRefusal(e.BlockingErrors(proj, "s-erj-parse-rule"), "RULE QUALITY") {
+		t.Fatalf("a verdict flagging the rule did not refuse — the greedy parse would have permitted it:")
 	}
 }
 
@@ -59,18 +59,18 @@ func TestVerdictParseRefusesAFlaggedRule(t *testing.T) {
 // would not show it.
 func TestVerdictParseRefusesAFlaggedSkill(t *testing.T) {
 	e := New(t)
-	proj := project(t, e, "skill-quality")
+	proj := guardProject(t, e, "skill-quality")
 
 	e.InstallJudgeClaude(
 		`{"pass": false, "reasoning": "SKILL QUALITY: the skill transcribes a flag table, violating help-is-not-skill"}
 {"pass": true, "reasoning": ""}`)
 
-	got := e.Run(proj, "s-erj-parse-skill", "write a skill", Turns("done",
+	e.Run(proj, "s-erj-parse-skill", "write a skill", Turns("done",
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\nBody that the judge flags.\n"),
 	))
 
-	if !got.Saw("SKILL QUALITY") {
-		t.Fatalf("a verdict flagging the skill did not refuse — the greedy parse would have permitted it:\n%s", got.Output)
+	if !sawRefusal(e.BlockingErrors(proj, "s-erj-parse-skill"), "SKILL QUALITY") {
+		t.Fatalf("a verdict flagging the skill did not refuse — the greedy parse would have permitted it:")
 	}
 }
 
@@ -82,15 +82,15 @@ func TestVerdictParseRefusesAFlaggedSkill(t *testing.T) {
 // would call it a pass.
 func TestVerdictParsePermitsACleanRule(t *testing.T) {
 	e := New(t)
-	proj := project(t, e, "rule-quality")
+	proj := guardProject(t, e, "rule-quality")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
-	got := e.Run(proj, "s-erj-clean-rule", "write a clean rule", Turns("done",
+	e.Run(proj, "s-erj-clean-rule", "write a clean rule", Turns("done",
 		harness.Write("w1", "guardrails/x/rules/y/RULE.md", "# A rule\n\nA clean body.\n"),
 	))
 
-	if got.Saw("RULE QUALITY") {
-		t.Fatalf("a clean verdict refused:\n%s", got.Output)
+	if sawRefusal(e.BlockingErrors(proj, "s-erj-clean-rule"), "RULE QUALITY") {
+		t.Fatalf("a clean verdict refused:")
 	}
 }
 
@@ -98,15 +98,15 @@ func TestVerdictParsePermitsACleanRule(t *testing.T) {
 // sibling.
 func TestVerdictParsePermitsACleanSkill(t *testing.T) {
 	e := New(t)
-	proj := project(t, e, "skill-quality")
+	proj := guardProject(t, e, "skill-quality")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
-	got := e.Run(proj, "s-erj-clean-skill", "write a clean skill", Turns("done",
+	e.Run(proj, "s-erj-clean-skill", "write a clean skill", Turns("done",
 		harness.Write("w1", "skills/x/SKILL.md", "# A skill\n\nA clean body.\n"),
 	))
 
-	if got.Saw("SKILL QUALITY") {
-		t.Fatalf("a clean verdict refused:\n%s", got.Output)
+	if sawRefusal(e.BlockingErrors(proj, "s-erj-clean-skill"), "SKILL QUALITY") {
+		t.Fatalf("a clean verdict refused:")
 	}
 }
 

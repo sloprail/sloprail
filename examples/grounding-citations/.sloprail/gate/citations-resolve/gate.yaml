@@ -1,32 +1,11 @@
-# In this project a markdown file restates what other files say — a summary, a
-# migration note — so every claim must be referenced, not regenerated: grounded in
-# the tool output the agent actually read. This is the PRE-WRITE half: an ungrounded
-# claim is refused before it lands, while the agent still has the source in view.
-# The file-guard of the same name is the other half, judging the settled file at
-# Stop.
+# PREVENTION half of citations-resolve: a write to a markdown file must cite a
+# tool's output from this session (`require: citation`, tool_result pool), so an
+# uncited write — Write tool, a shell redirect — is refused before it lands, naming
+# the sr-file form. Whether the file SAYS what the cited output says is the judge's
+# question, and the judge lives in the plain file-guard of the same name (Stop).
 #
-# The citation rides on the write, never in the file. The agent reads the source
-# (a Read, a `cat`), then writes the markdown with sr-file, quoting that output
-# exactly:
-#
-#   sr-file write MIGRATION.md --cite:tool_result '<exact words from the output>' <<'EOF' … EOF
-#
-# The engine resolves each quote against the session's record, in the tool_result
-# pool only — the user's words or the agent's own summary never resolve as source
-# output — so a citation on the event EXISTS. An in-file `[quote](/abs/path:a-b)`
-# link is gone: an absolute path resolves on no other machine.
-#
-# require: unconditional — every markdown write here restates a source, so there
-# is no write that needs no grounding. The engine refuses an uncited write (the
-# Write tool, a shell redirect) before the judge is paid for, naming the sr-file
-# form. The judge answers what existence cannot: does the file say what the cited
-# output says?
-#
-# Fail closed: the judge reads the pending bytes (`event.newContent`), so a write
-# whose result the engine cannot compute (`resultKnown: false`, `newContent` "")
-# is refused by require-known-result.sh before the judge would read an empty file.
-# PreFileWrite covers both a create and an update; a delete restates nothing, so
-# there is no PreFileDelete trigger.
+# require-known-result.sh refuses a write whose result the engine could not compute
+# (`resultKnown: false`): a gate does not fail closed on that by itself.
 on:
   - event: PreFileWrite
     match: 'event.path endsWith ".md"'
@@ -34,4 +13,3 @@ require:
   - citation: {source_types: [tool_result]}
 checks:
   - script: ./require-known-result.sh
-  - judge: ./claims-match-cited-output.md.j2

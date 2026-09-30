@@ -11,34 +11,11 @@
 # This is the gate's copy: a Pre kind compares the pending bytes (`.event.newContent`)
 # with `.event.oldContent` (the file on disk); the file-guard's Stop copy compares the
 # settled bytes with the session baseline.
-set -uo pipefail
-
-command -v jq >/dev/null 2>&1 || exit 0
-
-payload="$(cat)"
-field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
-
-lib="${SR_GUARDRAIL_DIR:-.}/lib-body.sh"
-[ -f "$lib" ] || exit 0
-# A helper stopped by a syntax error runs only up to it (whether the `.` then
-# fails depends on the bash version); only its last-line sentinel proves it
-# loaded whole. Not loaded whole is undecidable: apply (exit 0), never waive.
-unset lib_body_loaded
-# shellcheck source=lib-body.sh
-. "$lib"
-[ "${lib_body_loaded:-}" = 1 ] || exit 0
-
-# applies: the write sets the ask. The hint the refusal carries says what to
-# cite and that frontmatter changes need nothing.
-applies() {
-  jq -n --arg path "$(field '.event.path // ""')" '{hint: (
-    "A task'\''s body is the user'\''s ask: cite the words of their message it restates (--cite:user is repeatable, one per message), and write the body in their terms:\n" +
-    "  sr-file write " + $path + " --cite:user '\''<exact words the user wrote>'\'' <<'\''TASK'\'' ... TASK\n" +
-    "A change to the frontmatter alone (status, priority, depends_on) needs no citation.")}'
-  exit 0
-}
-
-kind="$(field '.event.kind // ""')"
+lib_dir="$(cd "$(dirname "$0")/../../file-guard/task-body-is-human-authored" && pwd)"
+unset body_changed_lib_loaded
+. "$lib_dir/body-changed-lib.sh" || exit 2
+[ "${body_changed_lib_loaded:-}" = 1 ] || exit 2
+lib_init
 case "$kind" in
   PreFileCreate)
     applies
@@ -52,6 +29,4 @@ case "$kind" in
     exit 1
     ;;
 esac
-
-[ "$(task_body "$content")" = "$(task_body "$(field '.event.oldContent // ""')")" ] && exit 1
-applies
+lib_check

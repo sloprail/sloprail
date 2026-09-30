@@ -1,4 +1,4 @@
-# GATE half of the old preventive file-guard of the same name: a write under
+# Prevention half of require-examples-skills: a write under
 # examples/ is refused until document-example and run-eval were both loaded this
 # session — a shipped guardrail sample has several pieces that must stay in sync
 # (config, README, e2e test, eval fixture; see

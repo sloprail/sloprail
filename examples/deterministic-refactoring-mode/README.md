@@ -70,8 +70,7 @@ file. So the reconcile is split:
   itself, and reconciling against bytes nobody saw is no check.
 - **`file-guard/moved-content-reconciles`** is the after-check, the same
   reconcile on the settled file at `Stop`. It is the backstop for a write the gate
-  could not see, and it runs the same script minus the pre-write branch. Each
-  rule folder is self-contained, so the script is copied into both.
+  could not see. One library per script, in the file-guard folder (`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry that reads its own event kind (the gate's `Pre*`, the file-guard's `Post*`) and sources it.
 
 ## The declared-scope ↔ landed-marker correspondence (the design choice)
 

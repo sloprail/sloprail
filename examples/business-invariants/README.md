@@ -92,8 +92,8 @@ re-pinned its code to the new wording, so code and pin agreed.
 
 `pinned-spec-holds` closes that. A write that changes what a marker pins must
 cite the user's own words (`require: citation`, `when: changes-pinned-lines.sh`),
-and a judge checks those words ask for the rule itself to change, not merely for
-a feature that conflicts with it. Whether a business rule changes is the user's
+and, at Stop, a judge checks those words ask for the rule itself to change, not
+merely for a feature that conflicts with it. Whether a business rule changes is the user's
 decision, made knowingly; an agent whose task conflicts with one keeps the rule,
 undoes any code that breaks it, and tells the user.
 
@@ -102,12 +102,14 @@ It ships as two halves with the same name, split by what each is for. The **gate
 the write lands (`PreFileCreate`, `PreFileUpdate` and `PreFileDelete`, one
 trigger each because the marker fields differ per kind), so the rule is refused
 before it changes, while the agent can still keep it and tell the user. The
-plain **file-guard** (`file-guard/pinned-spec-holds`) is the after-check: at Stop
-it judges the settled file against the session's baseline, and so sees what the
-gate cannot. Each carries its own copy of `changes-pinned-lines.sh` (the `when`
-predicate), the judge prompt and `only-when-pinned.sh`, since a rule's folder is
-self-contained; the gate's copy reads `Pre*` events and the file-guard's reads
-the settled `Post*` ones.
+plain **file-guard** (`file-guard/pinned-spec-holds`) is the after-check and holds
+the **judge**: at Stop it judges the settled file against the session's baseline,
+and so sees what the gate cannot. The gate is cheap — a citation requirement and
+a script, no model. Each carries its own copy of `changes-pinned-lines.sh` (the
+`when` predicate): the two really differ — the gate reads `Pre*` events and compares
+against HEAD, the file-guard reads the settled `Post*` ones and compares against the
+session baseline — so they are kept apart. The judge prompt and `only-when-pinned.sh`
+live in the file-guard only.
 
 ### Which files it watches
 

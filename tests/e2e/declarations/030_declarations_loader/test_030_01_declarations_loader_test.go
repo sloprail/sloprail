@@ -271,3 +271,19 @@ func TestT030_07_PreventiveFileGuardIsRefusedWithTheSplit(t *testing.T) {
 		})
 	}
 }
+
+// T030_08: the match forms the authoring docs teach for an unknown write result
+// load clean on a PreFileWrite gate: `event.resultKnown` and `event.newContent`
+// are declared on both kinds the alias expands to.
+func TestT030_08_ResultKnownMatchExamplesLoad(t *testing.T) {
+	e := New(t)
+	proj := t.TempDir()
+	writeTree(t, proj, map[string]string{
+		".sloprail/gate/strip/gate.yaml":   "on:\n  - event: PreFileWrite\n    match: 'event.resultKnown and not (event.newContent contains \"---\")'\nchecks:\n  - script: ./check.sh\n",
+		".sloprail/gate/unknown/gate.yaml": "on:\n  - event: PreFileWrite\n    match: 'event.path startsWith \"spec/\" and not event.resultKnown'\nchecks:\n  - script: ./cannot-verify.sh\n",
+	})
+	res := e.CLIDirect(proj, "sr-file", "declarations", proj)
+	if res.Code != 0 {
+		t.Fatalf("the documented resultKnown matches must load clean, got exit %d:\n%s", res.Code, res.Output)
+	}
+}

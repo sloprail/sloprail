@@ -1,22 +1,10 @@
-# A task's ASK.md is the human's ask, so every write to it must be grounded in
-# the user's own words — and the write must be refused BEFORE it lands. A
-# post-write refusal reports damage already done to the oracle, and the agent's
-# remedy would be to edit ASK.md again: another edit the user never asked for.
-# That is why the prevention is a gate, on PreFileWrite; the file-guard of the
-# same name judges what settled, at Stop.
+# PREVENTION half of ask-is-human-authored: a write to a task's ASK.md must cite the
+# user's words (`require: citation`), before it lands. Whether what the ask says is
+# true to the cited words and only that is the judge's question, and the judge lives
+# in the plain file-guard of the same name (Stop).
 #
-# The citation rides on the write itself — `sr-file write …/ASK.md --cite:user
-# '<their exact words>'` — never inside the file, which keeps only the ask as
-# derived text.
-#
-# require: unconditional — ASK.md holds nothing but the ask, so there is no write
-# to it that needs no grounding. The engine refuses an uncited write (Write, Edit,
-# a shell redirect) before any check runs, naming the sr-file form.
-#
-# checks: the judge reads the pending bytes, so a write whose result the engine
-# cannot compute (sed -i) is refused first (require-known-result.sh) — a gate does
-# not fail closed on that by itself. The judge then answers what existence
-# cannot: does ASK.md say what the cited words say, and nothing else?
+# require-known-result.sh refuses a write whose result the engine could not compute
+# (`resultKnown: false`): a gate does not fail closed on that by itself.
 on:
   - event: PreFileWrite
     match: 'event.path matches "(^|/)tasks/[^/]+/[^/]+/ASK\\.md$"'
@@ -24,4 +12,3 @@ require:
   - citation: {source_types: [user]}
 checks:
   - script: ./require-known-result.sh
-  - judge: ./reference-is-true-and-only-this.md.j2

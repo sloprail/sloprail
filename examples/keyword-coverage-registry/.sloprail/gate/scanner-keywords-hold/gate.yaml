@@ -1,46 +1,12 @@
-# A declared scanner's keywords hold: a write may add keywords, but dropping one
-# needs the user's own words asking for it. The keywords are what the search must
-# cover together (verify-scanner-coverage), so a scanner weakened to fit a search
-# already run defeats the whole registry — and a real Haiku run did exactly that:
-# refused by the coverage gate, it rewrote its keywords to match its search.
+# PREVENTION half of scanner-keywords-hold: a write or delete that drops a keyword a
+# scanner declared (drops-keywords.sh, `when` predicate) needs the user's words cited
+# (`require: citation`), before it lands — `rm -rf` of the scanner folder included
+# (PreFileDelete). Whether the cited words ask for THESE keywords is the judge's
+# question, and the judge lives in the plain file-guard of the same name (Stop).
 #
-# This is the PREVENTION half: a gate on the scanner's writes and deletes, so a
-# weakened declaration is refused before it lands, while the agent can still meet
-# it with a search instead. The file-guard of the same name (file-guard/
-# scanner-keywords-hold) holds the settled scanner to the same rule at Stop, and
-# records what the user asked for when the change reaches it there. A gate's match
-# reads the event nested (`event.path`).
-#
-# The requirement is declared, conditionally: `when` drops-keywords.sh says the
-# write drops a keyword (a new scanner, or one that only adds, needs nothing).
-# An uncited drop is refused before any check, with the script's hint. A cited
-# drop goes to the judge, which checks the cited words ask for THESE keywords to
-# go — citing some unrelated thing the user said does not.
-#
-# The PreFileDelete trigger — deleting a scanner drops ALL its keywords, the same
-# weakening taken to the limit. Measured on a real run: refused by the coverage
-# gate, a sub-agent ran `rm -rf scanners/<name>` rather than search, and the
-# gate went quiet. The delete is refused the same way an uncited drop is; `rm -r`
-# of the scanner's DIRECTORY reaches this gate as a PreFileDelete of the
-# scanner.yaml inside it, once per file. (Whatever still gets a scanner deleted —
-# a command the engine cannot parse — does not clear the obligation:
-# scanner-declared keeps the scanner in its registry and stays open until
-# coverage passes.)
-#
-# What "drops" means is measured against the file before the change AND what
-# scanner-declared's registry holds owed: a write the engine cannot parse can
-# empty the file behind every rule's back, and compared against the file alone
-# the delete that follows dropped nothing.
-#
-# checks: require-known-result.sh first — a write whose resulting keywords the
-# engine cannot compute is refused, because a gate does not fail closed on that
-# by itself and every later check reads the pending bytes. Then the judge (asked
-# only about a write that drops, see only-when-dropped.sh). The last check,
-# record-admitted.sh, records a change that IS admitted — its user citation
-# resolved, and judged to be what the user asked for: a delete retires the
-# scanner, a drop narrows what it owes. The registry itself never shrinks; these
-# records are the only way an obligation goes, and both need the user's citation
-# on the event.
+# require-known-result.sh refuses a write whose result the engine could not compute
+# (`resultKnown: false`). Recording what the user asked for (record-admitted.sh) waits
+# for the judge's verdict, so it lives in the file-guard.
 on:
   - event: PreFileWrite
     match: 'event.path matches "(^|/)scanners/[^/]+/scanner\\.yaml$"'
@@ -51,6 +17,3 @@ require:
     when: ./drops-keywords.sh
 checks:
   - script: ./require-known-result.sh
-  - prepare: ./only-when-dropped.sh
-    judge: ./cited-words-ask-for-it.md.j2
-  - script: ./record-admitted.sh

@@ -1,10 +1,6 @@
 package e2e
 
-import (
-	"testing"
-
-	"github.com/sloprail/sloprail/tests/e2e/harness"
-)
+import "testing"
 
 // INVARIANT: the STOP file-guard judges a create the engine could not derive, and
 // the GATE refuses to judge one it cannot see.
@@ -62,28 +58,5 @@ func TestPostBindingJudgesAnUnderivableSkillCreate(t *testing.T) {
 
 	if !sawRefusal(e.BlockingErrors(proj, "s-erj-post-skill"), "SKILL QUALITY") {
 		t.Fatalf("an underivable create was never judged — the file-guard did not cover what the gate could not see:\n%v", e.BlockingErrors(proj, "s-erj-post-skill"))
-	}
-}
-
-// TestGateRefusesAWriteItCannotDerive: the gate does not fail closed on an
-// underivable write by itself, so prepare.sh refuses it (resultKnown false)
-// rather than judging an empty newContent. A passing verdict is stubbed: were the
-// gate to judge the empty content it would ADMIT, so a refusal proves the
-// resultKnown check. sed -i on an existing, committed RULE.md is the underivable
-// update.
-func TestGateRefusesAWriteItCannotDerive(t *testing.T) {
-	e := New(t)
-	proj := project(t, e, "rule-quality")
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
-	e.WriteFile(proj, "RULE.md", "# A rule\n\nOld body.\n")
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "add a rule")
-
-	got := e.Run(proj, "s-erj-gate-underivable", "edit the rule in place", Turns("done",
-		harness.Bash("w1", "sed -i.bak 's/Old/New/' RULE.md"),
-	))
-
-	if !got.Saw("resultKnown false") {
-		t.Fatalf("the gate did not refuse a write whose result it could not derive:\n%s", got.Output)
 	}
 }

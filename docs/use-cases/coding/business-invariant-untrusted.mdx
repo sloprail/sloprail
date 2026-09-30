@@ -62,23 +62,23 @@ agree with the code, or re-pin the code to looser wording. A second rule,
 lands, with a file-guard of the same name as the after-check at Stop. A spec that code pins holds the user's business
 rules, so any change to it — a pinned line, a new rule, an exception on a line of
 its own — and any write that moves or removes a pin, must cite the user's own
-words, and a judge checks that those words ask for that change; for a pinned
+words, and — at Stop — a judge checks that those words ask for that change; for a pinned
 line, that they ask for the rule itself to change rather than for a feature that
 conflicts with it.
 
 `pinned-invariant` is a plain **file-guard**: it judges the settled file at Stop,
 and the markers decide which files carry an invariant and which spec lines are
 pinned. `pinned-spec-holds` is a **gate** plus a file-guard: the gate prevents
-the change to the rules, and the file-guard catches what the engine could not see
-ahead.
+the change to the rules (a citation requirement, no model), and the file-guard
+holds the judge and catches what the engine could not see ahead.
 
 ## The actual configuration
 
 This is the real example shipped at `examples/business-invariants/`. Two
 natures under `.sloprail/`: a file-guard for `pinned-invariant`, and a gate and
 a file-guard for `pinned-spec-holds`, each a declaration plus the checks it names
-(a rule's folder is self-contained, so the gate and the file-guard carry their
-own copies of the scripts):
+(`changes-pinned-lines.sh` exists twice because the two halves really differ: HEAD
+versus the session baseline):
 
 <FileTree>
 
@@ -135,7 +135,8 @@ the predicate has decided nothing pinned is at stake.
 requirement when the write changes a spec some marker pins (in the working tree
 or at HEAD) — any line of it — or moves a marker off the wording it pinned —
 marked code moved to another file keeps its pin — and waives it only when it has
-decided the write does neither. `only-when-pinned.sh` asks the judge about exactly those writes.
+decided the write does neither. The judge (with `only-when-pinned.sh`, which asks it
+about exactly those writes) lives in the file-guard and rules at Stop.
 
 <Code code={holdsGateYaml} lang="yaml" title=".sloprail/gate/pinned-spec-holds/gate.yaml" />
 <Code code={unknownSh} lang="bash" title=".sloprail/gate/pinned-spec-holds/refuse-unknown-result.sh" />
@@ -143,8 +144,8 @@ decided the write does neither. `only-when-pinned.sh` asks the judge about exact
 The **file-guard** of the same name is the after-check. It acts at Stop on the
 settled file, against the session's baseline, and catches what the gate cannot:
 a script rewriting a spec, or one command deleting every holder of a pin. Its
-copies of the scripts read the settled `Post*` events; the gate's read the `Pre*`
-ones.
+copy of `changes-pinned-lines.sh` reads the settled `Post*` events; the gate's reads
+the `Pre*` ones.
 
 <Code code={holdsYaml} lang="yaml" title=".sloprail/file-guard/pinned-spec-holds/file-guard.yaml" />
 <Code code={changesSh} lang="bash" title=".sloprail/file-guard/pinned-spec-holds/changes-pinned-lines.sh" />

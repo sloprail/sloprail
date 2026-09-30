@@ -253,12 +253,8 @@ shrink — and a weakened declaration must be refused before it lands, while the
 agent can still meet it with a search. Only a gate sees a write before it lands
 (a file-guard acts only at `Stop`, on the settled file), so the prevention is a
 `PreFileWrite` + `PreFileDelete` gate. The same-named file-guard is the
-after-check: the same requirement, judge and record on the settled scanner,
-the backstop for a change the gate could not see. Each rule folder is
-self-contained, so the scripts are copied into both, each keeping only its own
-moment's branch (the gate reads the pending bytes and `resultKnown`; the
-file-guard reads settled bytes and `newContentKnown`); both read the one shared
-parser in `scanner-declared`.
+after-check: the same requirement plus the judge and the record on the settled
+scanner, the backstop for a change the gate could not see. The gate runs no model. One library per script, in the file-guard folder (`<script>-lib.sh`), holds the shared logic; each half keeps a thin entry that reads its own event kind (the gate's `Pre*`, the file-guard's `Post*`) and sources it (the gate reads the pending bytes and `resultKnown`; the file-guard settled bytes and `newContentKnown`); both read the one shared parser in `scanner-declared`.
 
 A gate does not fail closed on a write whose result the engine cannot compute
 (`sed -i`, a `python3 -c` it cannot parse), and every later check reads the
@@ -267,8 +263,8 @@ one: write the whole `scanner.yaml` directly instead.
 
 The citation requirement is conditional: `drops-keywords.sh` (a `when`) applies it
 only when the write drops a declared keyword; an uncited drop is refused with
-its hint, a cited one goes to a judge that checks the cited words ask for
-THESE keywords to go. "Drops" is measured against the file before the change
+its hint, a cited one passes the gate and is judged at Stop — the file-guard's judge checks the
+cited words ask for THESE keywords to go. "Drops" is measured against the file before the change
 **and** what the registry holds owed: a scanner emptied behind every rule's
 back (a write the engine cannot parse) compared against the file alone dropped
 nothing on its later delete — no citation, no judge — and was retired. The judge's `prepare` skips the model only on
@@ -293,7 +289,7 @@ registry keeps it and the context stays open.
 
 A change the user asked for — its citation of their own words resolved on the
 event, and judged to be what they ask — is **recorded** by the last check of the
-gate (and of the file-guard), `record-admitted.sh`, which runs only once the checks before it admitted
+file-guard, `record-admitted.sh`, which runs only once the judge before it admitted
 the event:
 
 - a **delete retires** the scanner: `retired:<folder>`. Without that, a scanner

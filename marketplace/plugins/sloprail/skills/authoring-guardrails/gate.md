@@ -93,22 +93,32 @@ checks:
 - **What it sees.** A create carries `newContent`, `resultKnown`, `newMarkers`,
   `citations`; an update adds `oldContent` and `oldMarkers`; a delete carries
   `oldContent`, `oldContentKnown`, `oldMarkers`, `citations` — the bytes about to
-  be lost ([events.md](events.md)). A gate's judge reads `{{ change }}`, the diff
-  of the pending write.
+  be lost ([events.md](events.md)).
 - **Every file, once each.** One tool call can change several files (`rm a.go
   b.go`, two `sr-file` calls joined by `&&`) and runs whole or not at all. The gate
   is run once per matching file event, so a call whose *second* file fails is
   refused before it runs and none of them is changed; the one refusal names every
   refused file. A command, a tool call or `Stop` still wakes a gate once.
-- **An unknown result is yours to refuse.** When the engine cannot compute what a
-  write will leave (`sed -i`, `git apply`, a notebook create, an `sr-file` line it
-  could not resolve), the event carries `resultKnown: false` and an empty
-  `newContent` — the same observation as a write that empties the file. The gate
-  does **not** fail closed for you: a gate whose decision reads the content refuses
-  when `resultKnown` is not `true` (a first `script` check does it for a judge-only
-  gate), or the write lands unchecked. The file-guard beside it judges the settled
-  file at Stop as the backstop. See [file-guard.md](file-guard.md), "The
-  resultKnown discipline".
+- **An unknown result is yours to refuse.** The engine adds nothing for you here.
+  When it cannot compute what a write will leave (`sed -i`, `git apply`, a
+  notebook create, an `sr-file` line it could not resolve), the event carries
+  `resultKnown: false` and an empty `newContent` — the same observation as a write
+  that empties the file. A gate whose decision reads the content says what to do in
+  its `match` or in a check, or the write lands unchecked. To refuse them outright,
+  select them in the trigger and let a check refuse:
+
+  ```yaml
+  on:
+    - event: PreFileWrite
+      match: 'event.path startsWith "spec/" and not event.resultKnown'
+  checks:
+    - script: ./cannot-verify.sh   # prints {"reason": "…write the file directly"}, exit 1
+  ```
+
+  A gate that reads `newContent` in a check refuses on `resultKnown != true` first
+  (see [file-guard.md](file-guard.md), "The resultKnown discipline"). A gate holds
+  only cheap checks — a `require`, a script; the judge belongs to the file-guard of
+  the same name, which judges the settled file at Stop.
 - **Grounding.** `require: [{citation: …}]` works on a `PreFileWrite` or
   `PreFileDelete` gate exactly as on any gate ([grounding.md](grounding.md)); when
   an `sr-file` line could not be resolved, the refusal quotes what `sr-file` said.

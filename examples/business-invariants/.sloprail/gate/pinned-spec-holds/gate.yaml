@@ -1,46 +1,14 @@
-# A pinned spec line holds — the PRE-WRITE half. A line some sr:invariant marker pins
-# changes only when the user's own words ask for the rule to change. pinned-invariant
-# checks the code upholds the pinned text; this checks the text itself, which an agent
-# can otherwise rewrite to agree with its code — and a real Haiku run did, twice:
-# asked for goodwill refunds above the charge, it relaxed the spec's "a refund must
-# never exceed the original charge" and re-pinned its code to the new line.
+# PREVENTION half of pinned-spec-holds: refuses, before it lands, a write that
+# changes a spec line a pinned invariant rests on unless the user's words are cited
+# (`require: citation`, `when` the write touches a pinned line). Cheap and
+# deterministic only: whether the cited words actually ask for THIS change is the
+# judge's question, and the judge lives in the plain file-guard of the same name,
+# which judges what settled at Stop.
 #
-# A gate, because the rule must be refused BEFORE it changes, while the agent can
-# still keep it and tell the user. The file-guard of the same name is the other
-# half: it judges the settled file at Stop, and sees what the engine could not see
-# ahead (a script rewriting the file, `rm a.go b.go` of every holder of a pin).
-#
-# The requirement is declared, conditionally: `when` changes-pinned-lines.sh says
-# the write changes a spec some pin names (anywhere in it: a pinned spec holds the
-# user's business rules), or moves code's pin off the wording it pinned (the
-# marker removed, or re-pinned to different text). An uncited change is refused
-# before any check, with the script's hint. A cited one goes to the judge, which
-# checks the cited words ask for that change — for a pinned line, for the rule
-# itself to change, not merely for a feature that conflicts with it.
-#
-# Fail closed: a write whose result the engine cannot work out ahead (`sed -i`, `>`,
-# `cp`, `tee`) carries `resultKnown: false` and an empty `newContent`. The predicate
-# applies the citation to it, and refuse-unknown-result.sh refuses it when it is
-# not decided to change nothing pinned, before the judge would read empty bytes.
-#
-# Triggers only on the files a pin can involve, not every path, so a shell edit
-# of any other file is never asked about. Two kinds of file can be involved:
-#
-#   - A spec: `SPEC.md` at any depth, or a `.md` file under a `specs/` directory,
-#     case-insensitively (`spec.md` is the same file on a macOS disk).
-#     That is this example's convention, and pinned-invariant holds pins to it
-#     (pin.sh refuses a pin into any other file), so no accepted pin names a file
-#     this gate does not match. Change both together.
-#   - A file carrying an sr:invariant marker, before or after the write:
-#     `oldMarkers` is what sees a write that REMOVES the marker, which `newMarkers`
-#     alone reads as a file with none. A create has no `oldMarkers`, and a delete
-#     no `newMarkers`, so each kind is its own trigger.
-#
-# Which lines of a spec are pinned is still decided by the markers pointing at
-# them: the predicate answers that with a `git grep` of the working tree and HEAD.
-#
-# PreFileDelete is a trigger of its own: deleting the spec drops every rule in it
-# at once, and deleting marked code drops its pin.
+# A write whose result the engine could not compute (sed -i, a notebook create)
+# arrives with `resultKnown: false`; a gate does not fail closed on that by itself,
+# so refuse-unknown-result.sh refuses it unless the `when` predicate decided nothing
+# pinned is at stake.
 on:
   - event: PreFileCreate
     match: >-
@@ -59,5 +27,3 @@ require:
     when: ./changes-pinned-lines.sh
 checks:
   - script: ./refuse-unknown-result.sh
-  - prepare: ./only-when-pinned.sh
-    judge: ./cited-words-change-the-rule.md.j2

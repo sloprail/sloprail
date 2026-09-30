@@ -125,11 +125,12 @@ func TestRuleGrounded_CitedWritePasses(t *testing.T) {
 	}
 }
 
-// TestRuleGrounded_SlopBodyRefusedByJudge: the change is cited, but the body
+// TestRuleGrounded_SlopBodyBlockedByJudgeAtStop: the change is cited, but the body
 // ALSO carries agent-authored elaboration the user never asked for — the "and
-// nothing else" violation. require and the script pass; the judge (stub
-// pass:false) refuses, and its reasoning reaches the agent.
-func TestRuleGrounded_SlopBodyRefusedByJudge(t *testing.T) {
+// nothing else" violation. The gate (citation + script, no model) admits and the
+// rule lands; the judge (stub pass:false) lives in the file-guard and blocks the
+// turn at Stop, and its reasoning reaches the agent.
+func TestRuleGrounded_SlopBodyBlockedByJudgeAtStop(t *testing.T) {
 	e, proj := installRuleProject(t, "")
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "RULE BODY: the body adds a threshold and an exception the user never stated"}`)
 
@@ -137,14 +138,15 @@ func TestRuleGrounded_SlopBodyRefusedByJudge(t *testing.T) {
 	res := e.Run(proj, "s-rule-slop", rulePrompt, Turns("done",
 		Bash("b1", srFileWrite(rulePath, slop, ruleQuote)),
 	))
-	if !res.Refused() {
-		t.Fatalf("a slop rule body the judge rejected was not refused:\n%s", res.Output)
+	if res.Refused() {
+		t.Fatalf("the gate (no model) refused a cited, well-formed rule:\n%s", res.Output)
 	}
-	if e.Exists(proj, rulePath) {
-		t.Errorf("the gate let a judge-rejected rule land on disk")
+	if !e.Exists(proj, rulePath) {
+		t.Errorf("the cited rule did not land: a gate holds no judge")
 	}
-	if !res.Saw("threshold and an exception the user never stated") {
-		t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-rule-slop", "Stop"), "\n")
+	if !strings.Contains(blocks, "threshold and an exception the user never stated") {
+		t.Errorf("the judge's reasoning did not block the turn at Stop:\n%s", blocks)
 	}
 }
 

@@ -10,14 +10,11 @@
 # APPLIES the requirement. So every path this script cannot decide exits 0, the
 # fail-closed direction; only exit 1 waives the citation, and only on a decided
 # pure addition.
-set -uo pipefail
-
-# Undecidable without jq: apply the requirement (exit 0, fail-closed).
-command -v jq >/dev/null 2>&1 || exit 0
-
-input="$(cat)"
-kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
-[ -n "$kind" ] || { echo "preserves-unasked-content: could not read the event's kind, so it could not be checked" >&2; exit 2; }
+lib_dir="$(cd "$(dirname "$0")/../../file-guard/preserves-unasked-content" && pwd)"
+unset removes_content_lib_loaded
+. "$lib_dir/removes-content-lib.sh" || exit 2
+[ "${removes_content_lib_loaded:-}" = 1 ] || exit 2
+lib_init
 case "$kind" in
   PreFileCreate)
     # A create has nothing before it, so it removes nothing.
@@ -34,16 +31,4 @@ case "$kind" in
     exit 0
     ;;
 esac
-
-old="$(printf '%s' "$input" | jq -r '.event.oldContent // ""')"
-new="$(printf '%s' "$input" | jq -r '.event.newContent // ""')"
-
-# Any line present in old but absent in new. (Order/whitespace refinements are
-# elided in this sample.)
-removed="$(comm -23 <(printf '%s' "$old" | sort -u) <(printf '%s' "$new" | sort -u) | grep -c . || true)"
-[ "${removed:-0}" -eq 0 ] && exit 1
-
-# It applies. The hint the refusal carries: append instead, or cite the ask.
-jq -n --arg n "$removed" '{hint: (
-  "This change removes " + $n + " line(s). If nothing should go, append instead of rewriting; if the user asked for the removal, cite their words asking for it.")}'
-exit 0
+lib_check

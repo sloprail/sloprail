@@ -44,15 +44,15 @@ The two halves are split by what each is for, and each is a separate folder:
 - **`gate/citations-resolve`** is the prevention. It triggers on `PreFileWrite`
   of any `*.md` file (a create or an update), so an ungrounded claim is refused
   *before it lands*, while the agent still has the source in view and can fix the
-  write. It requires the citation and runs the judge.
-- **`file-guard/citations-resolve`** is the after-check. It acts only at Stop, on
-  the settled file, with the same `require` and the same judge. It sees what the
+  write. It requires the citation (no model runs in it).
+- **`file-guard/citations-resolve`** is the after-check and holds the judge. It acts
+  only at Stop, on the settled file, with the same `require`. It sees what the
   gate cannot: a markdown file changed by a script the engine did not see as a
   write.
 
 A file-guard alone would only report a bad claim after it was written; a gate
-alone would miss a write the engine cannot see ahead. Each carries its own copy
-of the judge prompt, since a rule's folder is self-contained.
+alone would miss a write the engine cannot see ahead. The judge prompt lives in the
+file-guard only.
 
 ## The mechanism
 
@@ -63,7 +63,7 @@ redirect) before the judge is paid for, and the refusal names the `sr-file`
 form. That is the cheap, deterministic half: does the write carry a citation that
 resolved.
 
-The judge (`claims-match-cited-output.md.j2`) answers what existence cannot: does
+The judge (`claims-match-cited-output.md.j2`, in the file-guard, at Stop) answers what existence cannot: does
 the file say what the cited output says? It is handed the change (a unified
 diff, so it judges only the lines the write adds or alters), the whole file for
 context, and each citation — the quote, the whole tool output it came from, and
@@ -72,12 +72,12 @@ overstates or sharpens the source, one resting on a source the write does not
 cite, and a citation whose call merely printed the words the file now claims (an
 `echo`, a heredoc).
 
-**Fails closed on an underivable write.** The judge reads the bytes the write is
-about to leave. When the engine cannot work them out ahead (a `>` redirect, a
+**Fails closed on an underivable write.** The gate decides from the bytes the write
+is about to leave. When the engine cannot work them out ahead (a `>` redirect, a
 `cp`, an `sr-file` line it could not resolve) `resultKnown` is false and
-`newContent` is empty, which reads like an emptied file and would be judged with
-no claims in it. The gate's `require-known-result.sh` runs first and refuses it,
-telling the agent to write the content directly with `sr-file write`.
+`newContent` is empty, which reads like an emptied file. A gate does not fail closed
+on that by itself, so its `require-known-result.sh` refuses it, telling the agent to
+write the content directly with `sr-file write`.
 
 A gate is asked about every file a command writes: one command writing two
 markdown files is refused if either is ungrounded, and the refusal names it.

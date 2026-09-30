@@ -14,31 +14,11 @@
 #
 # REFUSAL CONTRACT: exit 0 permits; non-zero refuses with `{"reason": "..."}` on
 # stdout. `set -uo pipefail`, never `set -e`.
-set -uo pipefail
-
-refuse() {
-  jq -n --arg reason "$1" '{reason: $reason}'
-  exit 1
-}
-
-event="$(cat)"
-
-path="$(printf '%s' "$event" | jq -r '.event.path // empty' 2>/dev/null)"
-if [ -z "$path" ]; then
-  refuse "content-rule-is-grounded: the event named no path, so there is nothing to check"
-fi
-
-root="${SR_WORKSPACE:-.}"
-
-# The schema is the PLUGIN's, read from its own tree — this guard's folder is two
-# levels under the plugin's .sloprail/ — never a consumer-side copy.
-schema="${SR_GUARDRAIL_DIR:-.}/../../schemas/rule.cue"
-if [ ! -f "$schema" ]; then
-  refuse "content-rule-is-grounded: schema not found at $schema — the plugin's own rule.cue is missing, so no rule can be checked."
-fi
-
-kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
-[ -n "$kind" ] || { echo "content-rule-is-grounded: could not read the event's kind, so it could not be checked" >&2; exit 2; }
+lib_dir="$(cd "$(dirname "$0")/../../file-guard/content-rule-is-grounded" && pwd)"
+unset check_rule_lib_loaded
+. "$lib_dir/check-rule-lib.sh" || exit 2
+[ "${check_rule_lib_loaded:-}" = 1 ] || exit 2
+lib_init
 case "$kind" in
   PreFileCreate|PreFileUpdate)
     # newContent is only meaningful alongside resultKnown: it is "" when the
@@ -55,27 +35,4 @@ case "$kind" in
     refuse "content-rule-is-grounded: unexpected event kind '$kind' for $path; this gate only judges pending rule creates and updates"
     ;;
 esac
-
-if ! doc="$(printf '%s' "$content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)"; then
-  detail="$(printf '%s' "$doc" | sed "s|^-:|$path:|g")"
-  refuse "RULE FRONTMATTER INVALID: $path does not satisfy .sloprail/schemas/rule.cue.
-
-$detail"
-fi
-
-# THE BODY IS THE PROSE AFTER THE FRONTMATTER — same extraction every guard
-# in this plugin uses.
-body="$(printf '%s\n' "$content" | awk '
-  BEGIN { seen = 0 }
-  NR == 1 && $0 == "---" { seen = 1; next }
-  seen == 1 && $0 == "---" { seen = 2; next }
-  seen == 1 { next }
-  { print }
-')"
-
-body_trimmed="$(printf '%s' "$body" | tr -d '[:space:]')"
-if [ -z "$body_trimmed" ]; then
-  refuse "RULE BODY IS EMPTY: $path has no body stating the rule. Write the rule itself after the frontmatter, in words derived from what the user said; the citation of their words goes on the sr-file command (--cite:user '<exact quote>'), not in the file."
-fi
-
-exit 0
+lib_check

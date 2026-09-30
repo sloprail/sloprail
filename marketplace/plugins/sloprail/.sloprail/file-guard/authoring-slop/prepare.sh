@@ -47,16 +47,11 @@ fi
 
 # A delete carries oldContent, never newContent, and has no resultKnown
 # field either (events.md: "a delete has none — nothing remains") —
-# judge.md.j2 interpolates event.newContent with no per-kind dispatch, so
-# an undetected delete rendered an EMPTY <judged-file> block, and the model
-# correctly reported it could verify nothing against primitive-usage rules
-# — read by the engine as a refusal of a file that, by the time anyone
-# could act on it, no longer exists to fix. There is nothing left to judge
-# for primitive usage once a file is gone, so this abstains (skip: true)
-# rather than asking the model to judge nothing.
+# A deleted file has nothing left to judge for primitive usage, and the template
+# interpolates event.newContent, which a delete does not carry: abstain (skip: true).
 kind="$(printf '%s' "$payload" | jq -r '.event.kind // empty' 2>/dev/null)"
 case "$kind" in
-  PreFileDelete|PostFileDelete)
+  PostFileDelete)
     echo '{"skip": true}'
     exit 0
     ;;
