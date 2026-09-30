@@ -90,6 +90,7 @@ func subProject(t *testing.T) (e *harness.Env, proj, sub, ledger string) {
 	sub = filepath.Join(proj, "sub", "deep")
 	ledger = filepath.Join(t.TempDir(), "seen")
 	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
+	e.DisableShippedFileGuards(sub)
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, sub, ledger
 }
@@ -159,6 +160,7 @@ func TestT025_02_AFileOutsideTheSubdirectoryIsNotReportedAsDeleted(t *testing.T)
 	sub := filepath.Join(proj, "sub", "deep")
 	ledger := filepath.Join(t.TempDir(), "seen")
 	e.FileGuard(sub, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
+	e.DisableShippedFileGuards(sub)
 	e.CommitAll(proj, "the project before the session")
 
 	// The session reports the subdirectory and edits the file ABOVE it, which is
@@ -347,8 +349,7 @@ checks:
 	// New-format refusal contract: exit non-zero refuses and a `{"reason":…}` on
 	// stdout is the reason the agent is told, replacing the old exit-2-with-stderr.
 	// The whole flat payload still carries `"path":"…bad…"`, so a `*bad*` match on it
-	// works unchanged. The ledger is $SR_GUARDRAIL_DIR/seen, the folder the engine
-	// sets for the check.
+	// works unchanged. The ledger is a file outside the project (LEDGER below).
 	const judgeTemplate = `#!/bin/sh
 payload="$(cat)"
 printf '%s\n' "$payload" >> "LEDGER"
@@ -360,6 +361,7 @@ exit 0
 	ledger := filepath.Join(t.TempDir(), "seen")
 	judgeScript := strings.Replace(judgeTemplate, "LEDGER", ledger, 1)
 	e.FileGuard(sub, "watcher", refuseNamed, map[string]string{"judge.sh": judgeScript})
+	e.DisableShippedFileGuards(sub)
 	e.CommitAll(proj, "the project before the session")
 
 	const sess = "s-025-05"

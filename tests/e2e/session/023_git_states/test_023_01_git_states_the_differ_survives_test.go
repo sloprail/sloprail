@@ -64,12 +64,14 @@ func project(t *testing.T, pre func(e *harness.Env, proj string)) (*harness.Env,
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
-	ledger := filepath.Join(t.TempDir(), "seen")
+	led := e.NewLedger("seen")
+	ledger := led.Path()
 	e.GitInit(proj)
 	if pre != nil {
 		pre(e, proj)
 	}
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
 }
@@ -86,20 +88,7 @@ func seed(msg string, files ...[2]string) func(e *harness.Env, proj string) {
 
 func ledgerFiles(t *testing.T, ledger string) []changesetkit.Observed {
 	t.Helper()
-	body, err := os.ReadFile(ledger)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lines []string
-	for _, l := range strings.Split(string(body), "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-	return changesetkit.Files(t, lines)
+	return changesetkit.Files(t, changesetkit.Ledger(t, ledger))
 }
 
 // runOne drives a single cycle and returns everything the rule was handed.
@@ -114,18 +103,20 @@ func hasStatus(got []changesetkit.Observed, path, status string) bool {
 	return len(k) > 0 && k[0] == status
 }
 
-// T023_01: a rename arrives as a delete of the old path and a create of the new.
+// T023_01: a rename arrives as ONE entry, status R, at the new path and naming
+// the path it came from.
 //
 // git reports a rename as ONE `R100 old new` entry naming both paths, and the
-// parser splits it back into the two events it really is. Reported as a single
-// "renamed" event instead, every rule bound to creation would miss a file
-// arriving and every rule bound to deletion would miss one leaving — a file
-// could be moved into a guarded directory without the rule that guards it ever
+// changeset keeps it as one entry: the destination is what a rule is asked about,
+// and oldPath is what lets a rule bound to the old path learn the file left.
+// Reported as a delete of the old path plus a create of the new instead, the
+// entry would no longer say the two are the same file; reported without oldPath,
+// a file could leave a guarded directory without the rule that guards it ever
 // being asked.
 //
 // The file is committed first so the rename is a change git can DETECT as one;
 // an uncommitted file moved is just an untracked path appearing.
-func TestT023_01_ARenameIsADeleteAndACreate(t *testing.T) {
+func TestT023_01_ARenameIsOneEntryNamingBothPaths(t *testing.T) {
 	e, proj, ledger := project(t, seed("the file that will be renamed", [2]string{"before.md", "content that will move\n"}))
 
 	got := runOne(t, e, proj, ledger, "s-023-01", Turns("done",
@@ -269,9 +260,14 @@ func TestT023_04_AFileReplacedByASymlinkIsAnUpdate(t *testing.T) {
 func TestT023_05_StagedThenDeletedIsReportedAsNoChange(t *testing.T) {
 	e, proj, ledger := project(t, nil)
 
+	// What the index held for ghost.md at the moment before it was deleted, written
+	// outside the project by the same command: the premise below reads it, so "staged"
+	// is something the test saw rather than something the scenario claims.
+	stagedAtDelete := filepath.Join(t.TempDir(), "staged-at-delete")
+
 	got := runOne(t, e, proj, ledger, "s-023-05", Turns("done",
 		Write("w1", "survivor.md", "still here\n"),
-		Bash("b1", "printf 'transient\\n' > ghost.md && git add ghost.md && rm ghost.md"),
+		Bash("b1", "printf 'transient\\n' > ghost.md && git add ghost.md && git ls-files --stage -- ghost.md > '"+stagedAtDelete+"' && rm ghost.md"),
 	).ThenCommit("the survivor"))
 
 	// The positive first: this cycle reported something.
@@ -279,8 +275,12 @@ func TestT023_05_StagedThenDeletedIsReportedAsNoChange(t *testing.T) {
 		t.Fatalf("the file the cycle left behind was not reported: %v — nothing was observed, "+
 			"so the silence about the staged-then-deleted file proves nothing", got)
 	}
-	// The premise: the path was staged and is off the disk, so the agent's commit
-	// (which stages everything) recorded its deletion, not its creation.
+	// The premise: the path WAS staged (the index listed it right before the delete) and
+	// is off the disk, so this is the staged-then-deleted case and not a file that
+	// never existed.
+	if staged, err := os.ReadFile(stagedAtDelete); err != nil || !strings.Contains(string(staged), "ghost.md") {
+		t.Fatalf("ghost.md was never in the index (%q, %v), so this is not the staged-then-deleted case", staged, err)
+	}
 	if e.Exists(proj, "ghost.md") {
 		t.Fatalf("ghost.md is still on disk, so this is not the staged-then-deleted case")
 	}
@@ -308,9 +308,9 @@ func TestT023_05_StagedThenDeletedIsReportedAsNoChange(t *testing.T) {
 func TestT023_06_ATrackedButIgnoredFileIsStillReported(t *testing.T) {
 	e, proj, ledger := project(t, func(e *harness.Env, proj string) {
 		e.WriteFile(proj, "build.log", "tracked before it was ignored\n")
+		e.CommitAll(proj, "a file, tracked before anything ignores it")
 		e.WriteFile(proj, ".gitignore", "*.log\n")
-		e.Git(proj, "add", "-A", "-f")
-		e.Git(proj, "commit", "-m", "a tracked file that gitignore also names")
+		e.CommitAll(proj, "an ignore pattern that also names the tracked file")
 	})
 
 	// The premise, both halves: git tracks it AND ignores it.
@@ -542,7 +542,7 @@ func TestT023_11_AMidCycleCommitStaysInTheChangeset(t *testing.T) {
 	const sess = "s-023-11"
 	e.Run(proj, sess, "commit one, leave one", Turns("done",
 		Write("w1", "committed.md", "this gets committed\n"),
-		Bash("b1", "git add committed.md && git commit -q -m 'the agent commits'"),
+		harness.CommitPaths("b1", "the agent commits", "committed.md"),
 		Write("w2", "outstanding.md", "this does not\n"),
 	))
 
@@ -588,7 +588,8 @@ func TestT023_12_ADetachedHeadReachingTheBaselineKeepsTheWork(t *testing.T) {
 
 	e.Run(proj, "s-023-12", "write then detach", Turns("done",
 		Write("w1", "early.md", "written before the detach\n"),
-		Bash("b1", "git add -A && git commit -q -m 'the agent commits' && git checkout -q --detach HEAD"),
+		harness.Commit("b1", "the agent commits"),
+		Bash("b2", "git checkout -q --detach HEAD"),
 	).ThenCommit("x"))
 
 	if ref := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); ref != "HEAD" {

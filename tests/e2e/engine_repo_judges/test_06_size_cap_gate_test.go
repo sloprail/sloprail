@@ -25,8 +25,7 @@ func sizeCapProject(t *testing.T, e *harness.Env, name string) string {
 	e.GitInit(proj)
 	installGuardrail(t, proj, gateNature, name)
 	installGuardrail(t, proj, fileGuardNature, name)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install "+name)
+	e.CommitAll(proj, "install "+name)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	return proj
 }

@@ -92,15 +92,10 @@ func TestT046_44_UnknownResultRemedyLeadsWithACheckableEdit(t *testing.T) {
 // guards, and pinned-invariant refuses it.
 func TestT046_45_PinIntoAnotherRepositoryIsRefused(t *testing.T) {
 	other := t.TempDir()
-	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"}} {
-		if out, err := exec.Command("git", append([]string{"-C", other}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v %s", args, err, out)
-		}
-	}
+	harness.InitRepo(t, other)
+	harness.CommitAllIn(t, other, "x")
 	writeExec(t, other, "SPEC.md", billingSpec)
-	if out, err := exec.Command("sh", "-c", "cd "+other+" && git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm spec").CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v %s", err, out)
-	}
+	harness.CommitAllIn(t, other, "spec")
 	otherSha, _ := exec.Command("git", "-C", other, "rev-parse", "HEAD").Output()
 
 	e := newEnv(t)

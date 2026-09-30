@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,6 +79,7 @@ func project(t *testing.T) (*harness.Env, string, string) {
 	ledger := filepath.Join(t.TempDir(), "seen")
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
 }
@@ -117,18 +117,6 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 	return out
 }
 
-// git runs a git command in dir, failing the test if it cannot run at all.
-func git(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-	return string(out)
-}
-
 // T026_01: a file whose only change is its MODE is reported as an update.
 //
 // git records the executable bit, so `chmod +x` on a tracked file is a real
@@ -154,12 +142,13 @@ func TestT026_01_AModeChangeIsReportedAsAnUpdate(t *testing.T) {
 	e.WriteFile(proj, "other.md", "original\n")
 	e.CommitAll(proj, "a file the session will chmod")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	// The premise: git is actually tracking the mode. On a filesystem or a
 	// configuration where core.fileMode is off, `chmod` is invisible to git and
 	// this test would be asserting about a change that does not exist.
-	if mode := strings.Fields(git(t, proj, "ls-files", "-s", "script.sh"))[0]; mode != "100644" {
+	if mode := strings.Fields(harness.Git(t, proj, "ls-files", "-s", "script.sh"))[0]; mode != "100644" {
 		t.Fatalf("the file does not start non-executable in the index (%s), so the chmod "+
 			"below is not the change this test is about", mode)
 	}
@@ -315,6 +304,7 @@ func TestT026_04_CreatedThenModifiedInOneCycleIsOneCreateOfTheFinalBytes(t *test
 		"case \"$payload\" in *drafted.md*) [ -f \"$root/drafted.md\" ] && printf 'drafted.md=%s\\n' \"$(cat \"$root/drafted.md\")\" >> '" + content + "' ;; esac\n" +
 		"exit 0\n"
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": readsContent})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule reads content")
 
 	got := runOne(t, e, proj, ledger, "s-026-04", Turns("done",
@@ -397,14 +387,11 @@ func TestT026_05_AnUnrelatedNestedCloneReachesNoRule(t *testing.T) {
 
 	// A repository of its own, unrelated to this one, sitting inside the tree.
 	other := t.TempDir()
-	git(t, other, "init", "--initial-branch=main", ".")
-	git(t, other, "config", "user.email", "e2e@example.invalid")
-	git(t, other, "config", "user.name", "E2E")
+	harness.InitRepo(t, other)
 	if err := os.WriteFile(filepath.Join(other, "theirs.md"), []byte("not ours\n"), 0o644); err != nil {
 		t.Fatalf("seed the other repository: %v", err)
 	}
-	git(t, other, "add", "-A")
-	git(t, other, "commit", "-m", "a repository that is not this one")
+	harness.CommitAllIn(t, other, "a repository that is not this one")
 
 	// The agent commits its own file only: the clone stays an untracked nested
 	// repository, which commit-required must not count as guarded work.

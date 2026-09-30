@@ -66,6 +66,7 @@ checks:
 func installBoth(e *harness.Env, proj, gate, guard string) {
 	e.Gate(proj, "grounded-memories", gate, map[string]string{"record.sh": citedGateRecordScript})
 	e.FileGuard(proj, "grounded-memories", guard, map[string]string{"record.sh": citedRecordScript})
+	e.DisableShippedFileGuards(proj)
 }
 
 // bothLedger is what both halves' checks were handed: the gate's, then the guard's.

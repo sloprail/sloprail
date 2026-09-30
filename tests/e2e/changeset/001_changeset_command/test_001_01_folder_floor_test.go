@@ -9,7 +9,7 @@ import (
 // T001_01: with no watermark, the range starts at the last commit that touched
 // the rule's folder, and the payload is the squashed net change to HEAD.
 func TestT001_01_FolderFloorAndSquashedPayload(t *testing.T) {
-	e, proj, floor := repoWithRule(t, docsRule(""))
+	e, proj, floor, led := repoWithRule(t, docsRule(""))
 
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
 	e.CommitAll(proj, "first edit")
@@ -73,7 +73,7 @@ func TestT001_01_FolderFloorAndSquashedPayload(t *testing.T) {
 	}
 
 	// Showing a changeset runs nothing.
-	if n := e.FileGuardLedger(proj, "size", "ledger"); n != 0 {
+	if n := led.Count(); n != 0 {
 		t.Fatalf("the check ran %d times; changeset must not run checks", n)
 	}
 }

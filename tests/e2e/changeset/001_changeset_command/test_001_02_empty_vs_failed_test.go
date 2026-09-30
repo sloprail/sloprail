@@ -47,7 +47,7 @@ func TestT001_02_EmptyRangeIsAnAnswerAndNoBaseIsAnError(t *testing.T) {
 
 // T001_03: a git error is an error, never an empty changeset.
 func TestT001_03_AGitErrorFailsClosed(t *testing.T) {
-	e, proj, _ := repoWithRule(t, docsRule(""))
+	e, proj, _, _ := repoWithRule(t, docsRule(""))
 	e.WriteFile(proj, ".git/HEAD", "garbage\n")
 
 	_, res := show(t, e, proj, harness.NoSessionEnv, "size")
@@ -58,7 +58,7 @@ func TestT001_03_AGitErrorFailsClosed(t *testing.T) {
 
 // T001_04: a --rule that names nothing loaded is an error that says what is loaded.
 func TestT001_04_UnknownRuleIsAnError(t *testing.T) {
-	e, proj, _ := repoWithRule(t, docsRule(""))
+	e, proj, _, _ := repoWithRule(t, docsRule(""))
 	_, res := show(t, e, proj, harness.NoSessionEnv, "no-such-rule")
 	if res.Code == 0 || !strings.Contains(res.Output, "file-guard/size") {
 		t.Fatalf("exit %d, want a refusal naming the loaded rules:\n%s", res.Code, res.Output)

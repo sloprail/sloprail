@@ -94,13 +94,17 @@ func show(t *testing.T, e *harness.Env, proj string, env []string, rule string) 
 	return s, res
 }
 
-// passingCheck is a check that permits everything and records that it ran. The
-// command must never run it.
+// passingCheck is a check that permits everything. The command must never run it.
 const passingCheck = `#!/bin/sh
 cat >/dev/null
-echo ran >> "$SR_GUARDRAIL_DIR/ledger"
 exit 0
 `
+
+// recordingCheck is passingCheck that also records that it ran, into led (a harness
+// ledger, outside the project), so a test can say the command ran nothing.
+func recordingCheck(led *harness.Ledger) string {
+	return "#!/bin/sh\ncat >/dev/null\necho ran >> " + led.Sh() + "\nexit 0\n"
+}
 
 // docsRule is a file-guard over docs/ (with optional extra yaml lines).
 func docsRule(extra string) string {
@@ -108,8 +112,8 @@ func docsRule(extra string) string {
 }
 
 // repoWithRule is a committed repository holding docs/a.md and a committed rule
-// "size", returning the environment, the project, and the commit BEFORE the rule's commit (its floor: the rule's own commit is judged too).
-func repoWithRule(t *testing.T, ruleYAML string) (*harness.Env, string, string) {
+// "size", returning the environment, the project, the commit BEFORE the rule's commit (its floor: the rule's own commit is judged too), and the ledger the rule's check records into.
+func repoWithRule(t *testing.T, ruleYAML string) (*harness.Env, string, string, *harness.Ledger) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
@@ -117,7 +121,8 @@ func repoWithRule(t *testing.T, ruleYAML string) (*harness.Env, string, string) 
 	e.WriteFile(proj, "docs/a.md", "one\n")
 	e.WriteFile(proj, "README.md", "readme\n")
 	floor := e.CommitAll(proj, "the project before the rule")
-	e.FileGuard(proj, "size", ruleYAML, map[string]string{"check.sh": passingCheck})
+	led := e.NewLedger("ledger")
+	e.FileGuard(proj, "size", ruleYAML, map[string]string{"check.sh": recordingCheck(led)})
 	e.CommitAll(proj, "add the size rule")
-	return e, proj, floor
+	return e, proj, floor, led
 }

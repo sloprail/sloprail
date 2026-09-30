@@ -17,11 +17,23 @@ import (
 // absent: an ambient CLAUDE_CODE_SESSION_ID would resolve the developer's own.
 var NoSessionEnv = []string{"CLAUDE_CODE_SESSION_ID=", "CLAUDECODE="}
 
+// hookEnv is the environment a hook, or a call made from inside a session, runs with:
+// the config dir the session's transcript is under, the harness named the way the mock
+// names it (so a judge's sr-agent finds its harness), and a PATH whose `claude` is the
+// harness's shim, never the operator's own. sessionID is the session's id, or blank
+// where the hook payload, not the environment, names it. One definition, for SessionEnv
+// and StopNow alike: they differ in the session id and nothing else.
+func (e *Env) hookEnv(sessionID string) []string {
+	return []string{
+		"CLAUDE_CODE_SESSION_ID=" + sessionID, "CLAUDE_CONFIG_DIR=" + e.ConfigDir(),
+		"CLAUDECODE=1", "CLAUDE_CODE_ENTRYPOINT=cli", "CLAUDE_CODE_EXECPATH=",
+		"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}
+}
+
 // SessionEnv is the environment for a call made from inside a session the mock
 // ran: the session's id and the config dir its transcript is under.
-func (e *Env) SessionEnv(sessionID string) []string {
-	return []string{"CLAUDE_CODE_SESSION_ID=" + sessionID, "CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE="}
-}
+func (e *Env) SessionEnv(sessionID string) []string { return e.hookEnv(sessionID) }
 
 // StopNow runs `sr-session stop` the way the harness does at the end of a turn.
 // active is the payload's stop_hook_active: true for the retry after a refusal.
@@ -31,15 +43,7 @@ func (e *Env) StopNow(projDir, sessionID string, active bool) Result {
 		"session_id": sessionID, "transcript_path": e.TranscriptPath(projDir, sessionID),
 		"cwd": projDir, "stop_hook_active": active, "hook_event_name": "Stop",
 	})
-	return e.CLIDirectStdinEnv(projDir, string(payload),
-		[]string{
-			"CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDE_CODE_SESSION_ID=",
-			// What a hook's environment names, so a judge's sr-agent finds its harness —
-			// and never the operator's own claude, whatever launched the tests.
-			"CLAUDECODE=1", "CLAUDE_CODE_ENTRYPOINT=cli", "CLAUDE_CODE_EXECPATH=",
-			// As in a hooked run: the judge's `claude` is the harness's shim, never the operator's.
-			"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		}, "sr-session", "stop")
+	return e.CLIDirectStdinEnv(projDir, string(payload), e.hookEnv(""), "sr-session", "stop")
 }
 
 // Blocked reports whether a Stop's output refuses the turn: the blocking form the

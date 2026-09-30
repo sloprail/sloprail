@@ -56,7 +56,7 @@ func TestT001_13_TrailerCitationsResolveAgainstTheTranscript(t *testing.T) {
 // T001_14: outside any session there is no transcript to ground a quote in, so
 // nothing is resolved — and the command says so rather than inventing citations.
 func TestT001_14_NoSessionNoCitations(t *testing.T) {
-	e, proj, _ := repoWithRule(t, docsRule(""))
+	e, proj, _, _ := repoWithRule(t, docsRule(""))
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
 	e.CommitAll(proj, "claims a quote", CitesUser("anything"))
 

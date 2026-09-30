@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
@@ -35,12 +36,6 @@ checks:
   - script: ./record.sh
 `
 
-const recordScript = `#!/bin/sh
-cat >> "$SR_GUARDRAIL_DIR/seen"
-echo >> "$SR_GUARDRAIL_DIR/seen"
-exit 0
-`
-
 // T014_01: switching to another line of history does not deliver that line's
 // files as this cycle's work.
 //
@@ -57,7 +52,9 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 
 	// The guardrail is committed to the ROOT, before either branch diverges, so
 	// it exists on both lines of history.
@@ -99,7 +96,7 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 		t.Fatalf("the agent did not actually switch branches (on %q), so this proves nothing", got)
 	}
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 	// The control. The session's own file must be reported, or the two absences
 	// below are just an engine that dispatched nothing.
 	if !changesetkit.Saw(got, "my-own-work.md") {
@@ -134,19 +131,22 @@ func TestT014_02_ANewBranchOffOwnWorkKeepsItInTheDifference(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	e.Run(proj, "s-014-02", "commit then branch", Turns("done",
 		Write("w1", "session-work.md", "written by this session\n"),
-		Bash("b1", "git add -A && git commit -m 'agent commit' && git checkout -b feature"),
+		harness.Commit("b1", "agent commit"),
+		Bash("b2", "git checkout -b feature"),
 	))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
 		t.Fatalf("the agent is on %q, not the new branch, so this proves nothing", got)
 	}
 
-	got := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	got := changesetkit.Files(t, led.Lines())
 	if !changesetkit.Saw(got, "session-work.md") {
 		t.Fatalf("the session's own committed work vanished from the difference after `checkout -b`: %v — "+
 			"a new branch moves no history, so re-measuring here drops the cycle's work through the branch door", got)

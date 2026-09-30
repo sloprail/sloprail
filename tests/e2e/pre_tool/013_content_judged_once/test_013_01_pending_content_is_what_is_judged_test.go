@@ -13,14 +13,11 @@
 // committed on top of it. These tests prove that through the real dispatch, reading
 // the Changeset payload.
 //
-// The ledger under the guard's own folder records every time the check is ASKED,
+// The ledger (outside the project) records every time the check is ASKED,
 // which is what separates "judged" from "not asked again".
 package e2e
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,7 +27,7 @@ import (
 
 // judgeGuard is a file-guard: a memories/ markdown file is not fine if its
 // committed content holds SECRET. It records every ask into its own
-// ledger (SR_GUARDRAIL_DIR/ran), so a test can say whether the content was judged
+// ledger (a harness ledger, outside the project), so a test can say whether the content was judged
 // or skipped.
 const judgeGuard = `match: "**/*.md"
 checks:
@@ -40,35 +37,30 @@ checks:
 // judgeScript records every ask, reads the committed content off the Changeset
 // payload, and refuses when it holds SECRET. A real judge works the same way.
 //
-// The ledger is OUTSIDE the project (LEDGER is replaced by its path): the rule's
+// The ledger is OUTSIDE the project (a harness.Ledger): the rule's
 // verdicts are keyed on a hash of its whole folder, so a check appending to a file
 // inside its own folder would be a different rule at every Stop and its recorded
 // pass would never be found again.
-const judgeScript = `#!/bin/sh
+func judgeScript(led *harness.Ledger) string {
+	return `#!/bin/sh
 payload="$(cat)"
-echo ran >> LEDGER
+echo ran >> ` + led.Sh() + `
 case "$payload" in
   *SECRET*) echo '{"reason":"that content carries a secret"}'; exit 1 ;;
 esac
 exit 0
 `
+}
 
 // judgeRail installs the rule and commits it. A rule's range starts at the last
 // commit that touched its own folder, so a rule committed together with the
 // session's work would judge an empty range.
-func judgeRail(t *testing.T, e *harness.Env, proj string) (ledger string) {
+func judgeRail(t *testing.T, e *harness.Env, proj string) *harness.Ledger {
 	t.Helper()
-	ledger = filepath.Join(t.TempDir(), "ran")
-	e.FileGuard(proj, "no-secrets", judgeGuard, map[string]string{"judge.sh": strings.ReplaceAll(judgeScript, "LEDGER", ledger)})
+	led := e.NewLedger("ran")
+	e.FileGuard(proj, "no-secrets", judgeGuard, map[string]string{"judge.sh": judgeScript(led)})
 	e.CommitAll(proj, "the project before the session")
-	return ledger
-}
-
-// asks is how many times the check was asked — the ledger's line count.
-func asks(t *testing.T, ledger string) int {
-	t.Helper()
-	body, _ := os.ReadFile(ledger)
-	return strings.Count(string(body), "ran\n")
+	return led
 }
 
 // T013_01: a benign file is judged once, and a later cycle offering the SAME
@@ -82,7 +74,7 @@ func TestT013_01_BenignContentIsJudgedThenNotAskedAgain(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	ledger := judgeRail(t, e, proj)
+	led := judgeRail(t, e, proj)
 
 	sess := "sess-013-01"
 
@@ -90,7 +82,7 @@ func TestT013_01_BenignContentIsJudgedThenNotAskedAgain(t *testing.T) {
 		Write("t1", "memories/note.md", "benign"),
 	).ThenCommit("add the memory"))
 	assert.False(t, res.Refused(), "nothing here is a secret")
-	first := asks(t, ledger)
+	first := led.Count()
 	assert.Greater(t, first, 0, "the benign file must be judged at least once")
 
 	// A later cycle re-offering the SAME benign content changes nothing, so there is
@@ -98,7 +90,7 @@ func TestT013_01_BenignContentIsJudgedThenNotAskedAgain(t *testing.T) {
 	e.Run(proj, sess, "offer the same benign content again", Turns("done",
 		Write("t2", "memories/note.md", "benign"),
 	))
-	after := asks(t, ledger)
+	after := led.Count()
 	assert.Equal(t, first, after,
 		"a fine file that already passed must not be judged again while nothing new is committed")
 }
@@ -116,7 +108,7 @@ func TestT013_02_AViolationIntroducedByALaterWriteIsStillCaught(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	ledger := judgeRail(t, e, proj)
+	led := judgeRail(t, e, proj)
 
 	sess := "sess-013-02"
 
@@ -125,7 +117,7 @@ func TestT013_02_AViolationIntroducedByALaterWriteIsStillCaught(t *testing.T) {
 		Write("t1", "memories/note.md", "benign"),
 	).ThenCommit("add the memory"))
 	assert.False(t, res.Refused(), "the benign content is fine")
-	afterBenign := asks(t, ledger)
+	afterBenign := led.Count()
 	assert.Greater(t, afterBenign, 0, "the benign content must be judged")
 
 	// Cycle 2: a secret at the SAME path. A new range with different content, so the
@@ -133,7 +125,7 @@ func TestT013_02_AViolationIntroducedByALaterWriteIsStillCaught(t *testing.T) {
 	e.Run(proj, sess, "put a secret at the same path", Turns("done",
 		Write("t2", "memories/note.md", "SECRET=hunter2"),
 	).ThenCommit("put a secret in the memory"))
-	afterSecret := asks(t, ledger)
+	afterSecret := led.Count()
 	assert.Greater(t, afterSecret, afterBenign,
 		"a pass recorded for earlier content is not a licence for a later one — the secret must be judged, not skipped")
 	// And the turn was blocked (the after-check refuses at Stop).
@@ -154,7 +146,7 @@ func TestT013_03_ARefusalKeepsRefusingWhileTheFileStaysBad(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	ledger := judgeRail(t, e, proj)
+	led := judgeRail(t, e, proj)
 
 	sess := "sess-013-03"
 
@@ -162,7 +154,7 @@ func TestT013_03_ARefusalKeepsRefusingWhileTheFileStaysBad(t *testing.T) {
 	e.Run(proj, sess, "leave a secret", Turns("done",
 		Write("t1", "memories/note.md", "SECRET=first"),
 	).ThenCommit("add the memory"))
-	afterFirst := asks(t, ledger)
+	afterFirst := led.Count()
 	assert.Greater(t, afterFirst, 0, "the secret must be judged in the first cycle")
 	assert.NotEmpty(t, e.BlockingErrorsFrom(proj, sess, "Stop"), "an unfixed secret must block the turn")
 
@@ -171,7 +163,7 @@ func TestT013_03_ARefusalKeepsRefusingWhileTheFileStaysBad(t *testing.T) {
 	e.Run(proj, sess, "do something unrelated", Turns("done",
 		Write("t2", "memories/other.md", "clean"),
 	).ThenCommit("add another memory"))
-	afterUnrelated := asks(t, ledger)
+	afterUnrelated := led.Count()
 	assert.Greater(t, afterUnrelated, afterFirst,
 		"an unfixed violation must be put back in front of the rule every cycle")
 }

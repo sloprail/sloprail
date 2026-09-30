@@ -163,8 +163,7 @@ func projectOf(t *testing.T, e *harness.Env, nature, guardrail string) string {
 	proj := e.Project()
 	e.GitInit(proj)
 	installGuardrail(t, proj, nature, guardrail)
-	e.Git(proj, "add", "-A")
-	e.Git(proj, "commit", "-m", "install "+nature+" "+guardrail)
+	e.CommitAll(proj, "install "+nature+" "+guardrail)
 	return proj
 }
 

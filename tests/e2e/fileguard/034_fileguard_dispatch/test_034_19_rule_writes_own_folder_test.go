@@ -1,8 +1,6 @@
 package e2e
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -26,11 +24,10 @@ exit 0
 
 // T034_19: a file-guard that writes into its own rule folder voids its watermark.
 //
-// Every other test in this tree keeps such a ledger out of commits (GitInit
-// excludes untracked non-code files at the top of a rule folder), which is what a
-// test wants and what hides this trap. Here the exclusion is removed, so the
-// agent's `git add -A` sweeps the ledger into its commit and the rule folder
-// changes: its hash changes, so the watermark the rule earned by passing is voided
+// Every other test in this tree keeps its ledger OUTSIDE the project (harness.Ledger),
+// which is what a test wants and what hides this trap. Here the ledger is written into
+// the rule's folder on purpose, so the agent's `git add -A` sweeps it into its commit and
+// the rule folder changes: its hash changes, so the watermark the rule earned by passing is voided
 // and the rule is judged again from the PARENT of the last commit that touched its
 // folder. That parent is the commit before the sweep, so the work committed together
 // with the ledger IS judged (the floor is the parent, not the commit itself), and so
@@ -41,11 +38,8 @@ func TestT034_19_ARuleThatWritesItsOwnFolderLosesItsWatermark(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	// No exclusion: the point of this test.
-	if err := os.WriteFile(filepath.Join(proj, ".git", "info", "exclude"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
 	e.FileGuard(proj, "own-ledger", writesOwnFolderGuard, map[string]string{"check.sh": writesOwnFolderCheck})
+	e.DisableShippedFileGuards(proj)
 	harness.CommitInstalled(t, proj)
 
 	const session = "s-034-19"

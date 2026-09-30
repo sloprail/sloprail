@@ -37,6 +37,7 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	// Bash, not Write. The mock executes Bash and applies it in whatever tree the
@@ -125,6 +126,7 @@ func TestT015_02_ASharedTreeSubagentsWorkIsJudgedAtTheRootsStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
@@ -168,11 +170,18 @@ func TestT015_02_ASharedTreeSubagentsWorkIsJudgedAtTheRootsStop(t *testing.T) {
 			"commits into the range the dispatching session's Stop judges; judging it at its own "+
 			"stop too is one verdict twice. Ledger: %v", len(judges), judges, lines)
 	}
-	// Whose: the dispatching session's own identity, the one that also judged its
-	// own work — here the scenario file the harness leaves in the tree.
-	if root, ok := lineAbout(lines, ".scenario.sh"); ok && sessionOf(root) != judges[0] {
-		t.Fatalf("the sub-agent's file was judged under %s, not the dispatching session's (%s)",
-			judges[0], sessionOf(root))
+	// Whose: the dispatching session's own identity, asked of the engine itself —
+	// never inferred from another ledger line, which the harness's scenario file (kept
+	// out of commits) would not supply. Unconditional: an empty identity fails rather
+	// than skips the comparison.
+	rootID := e.SessionIdentity(proj, "s-015-02")
+	if rootID == "" {
+		t.Fatalf("the engine resolved no identity for the dispatching session, so whose verdict " +
+			"this was cannot be told")
+	}
+	if judges[0] != rootID {
+		t.Fatalf("the sub-agent's file was judged under %q, not the dispatching session's (%q)",
+			judges[0], rootID)
 	}
 }
 
@@ -198,6 +207,7 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
@@ -284,6 +294,7 @@ func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	first := harness.SubagentScript(t, harness.Turns("one done", Bash("a1", "echo one > first-subs-file.md")).ThenCommit("the first sub-agent's work"))
@@ -358,6 +369,7 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",

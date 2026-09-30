@@ -12,7 +12,7 @@ import (
 func TestT001_08_MatchSeesStatusAndTrailers(t *testing.T) {
 	rule := "match: 'path startsWith \"docs/\" and status == \"A\" and \"move-only\" in (trailers[\"Sloprail-Refactor\"] ?? [])'\n" +
 		"checks:\n  - script: ./check.sh\n"
-	e, proj, _ := repoWithRule(t, rule)
+	e, proj, _, _ := repoWithRule(t, rule)
 
 	e.WriteFile(proj, "docs/a.md", "edited but not added\n")
 	e.WriteFile(proj, "docs/new.md", "added\n")
@@ -45,7 +45,7 @@ func TestT001_08_MatchSeesStatusAndTrailers(t *testing.T) {
 // T001_09: a rule reads commits, never the working tree: an uncommitted edit and
 // an untracked file are invisible to it.
 func TestT001_09_TheDirtyTreeIsInvisible(t *testing.T) {
-	e, proj, _ := repoWithRule(t, docsRule(""))
+	e, proj, _, _ := repoWithRule(t, docsRule(""))
 	e.WriteFile(proj, "docs/a.md", "one\ncommitted\n")
 	e.CommitAll(proj, "the committed edit")
 

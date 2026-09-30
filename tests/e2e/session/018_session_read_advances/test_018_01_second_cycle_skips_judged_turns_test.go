@@ -81,20 +81,22 @@ checks:
 // from it lands on no file. The variable is unset rather than empty when there
 // is no record, so `test -n` is the whole check.
 //
-// The ledger is $SR_GUARDRAIL_DIR/answers — the folder the engine sets for a
-// file-guard check. The guard below is what stops a silent regression: if the
-// answer is an error rather than entries, the test says so instead of reading it
+// The ledger is OUTSIDE the project (harness.Ledger): inside the rule's folder it would
+// change the rule's hash every run. The guard below is what stops a silent regression:
+// if the answer is an error rather than entries, the test says so instead of reading it
 // as an absence.
-const askScript = `#!/bin/sh
+func askScript(led *harness.Ledger) string {
+	return `#!/bin/sh
 cat > /dev/null
 if [ -z "${SR_TRANSCRIPT:-}" ]; then
-  echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> "$SR_GUARDRAIL_DIR/answers"
+  echo "SR_TRANSCRIPT is unset, so this hook cannot read the session's record" >> ` + led.Sh() + `
   exit 0
 fi
 printf '{"transcript_path":"%s","cwd":"%s"}' "$SR_TRANSCRIPT" "$SR_WORKSPACE" |
-  sr-session query >> "$SR_GUARDRAIL_DIR/answers" 2>&1
+  sr-session query >> ` + led.Sh() + ` 2>&1
 exit 0
 `
+}
 
 // answered fails the test when the engine reported an error instead of entries.
 //
@@ -140,7 +142,9 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 	// from. Without one there is no diff and no PostFile* event, and a rule
 	// bound to one would never run.
 	e.GitInit(proj)
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	led := e.NewLedger("answers")
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guards")
 
 	const sess = "s-018-01"
@@ -150,7 +154,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 	e.Run(proj, sess, firstMarker, Turns("done",
 		Write("w1", "one.md", "first cycle\n"),
 	).ThenCommit("the cycle's work"))
-	answers := e.FileGuardLedgerLines(proj, "asker", "answers")
+	answers := led.Lines()
 	if len(answers) == 0 {
 		t.Fatalf("the hook never asked the engine anything, so nothing here can be observed")
 	}
@@ -166,7 +170,7 @@ func TestT018_01_ALaterCycleIsNotGivenAlreadyJudgedTurns(t *testing.T) {
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "second cycle\n"),
 	).ThenCommit("the cycle's work"))
-	answers = e.FileGuardLedgerLines(proj, "asker", "answers")
+	answers = led.Lines()
 	if len(answers) <= firstCount {
 		t.Fatalf("the second cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), firstCount)
@@ -206,6 +210,7 @@ func TestT018_02_TurnsNothingJudgedAreStillGivenToTheNextCycle(t *testing.T) {
 	// from. Without one there is no diff and no PostFile* event, and a rule
 	// bound to one would never run.
 	e.GitInit(proj)
+	led := e.NewLedger("answers")
 
 	const sess = "s-018-02"
 	const firstMarker = "MARKERGAMMA"
@@ -217,13 +222,14 @@ func TestT018_02_TurnsNothingJudgedAreStillGivenToTheNextCycle(t *testing.T) {
 	).ThenCommit("the cycle's work"))
 
 	// Now a rule appears, and the next cycle asks what the session has done.
-	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript})
+	e.FileGuard(proj, "asker", askWhatHappened, map[string]string{"ask.sh": askScript(led)})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guards")
 	e.Run(proj, sess, secondMarker, Turns("done",
 		Write("w2", "two.md", "judged cycle\n"),
 	).ThenCommit("the cycle's work"))
 
-	answers := strings.Join(e.FileGuardLedgerLines(proj, "asker", "answers"), "\n")
+	answers := strings.Join(led.Lines(), "\n")
 	if answers == "" {
 		t.Fatalf("the hook never asked the engine anything, so nothing here can be observed")
 	}

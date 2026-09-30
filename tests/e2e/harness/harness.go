@@ -963,52 +963,36 @@ func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, arg
 // depend on whatever the machine has configured.
 func (e *Env) GitInit(dir string) {
 	e.t.Helper()
-	e.Git(dir, "init", "--initial-branch=main")
-	e.Git(dir, "config", "user.email", "e2e@example.invalid")
-	e.Git(dir, "config", "user.name", "E2E")
-	e.excludeLedgers(dir)
-	e.Git(dir, "add", "-A")
-	e.Git(dir, "commit", "--allow-empty", "-m", "initial")
+	InitRepo(e.t, dir)
+	e.excludeMockFiles(dir)
+	e.CommitAll(dir, "initial")
 }
 
-// excludeLedgers keeps a check's own recordings out of every commit the test
-// makes. A check writes its ledger (log, seen, ledger, answers…) into its own rule
-// folder, through $SR_GUARDRAIL_DIR; a `git add -A` would sweep it into a commit,
-// which changes the rule's hash and moves the floor of its range to that commit,
-// and neither has anything to do with what the test is about. The pattern excludes
-// only UNTRACKED files at the top of a rule folder that are not code or config
-// (scripts, YAML, templates, markdown, schemas) and not directories; anything a
-// commit already holds is tracked, and untouched by this.
-func (e *Env) excludeLedgers(dir string) {
+// excludeMockFiles keeps the mock's own scenario scripts out of every commit the test
+// makes: they are the harness's, not the project's work. (A check's ledger is not
+// excluded: it lives outside the project — see Env.NewLedger — so nothing of a
+// check's own recording can reach a commit and change a rule's hash.)
+func (e *Env) excludeMockFiles(dir string) {
 	e.t.Helper()
 	path := filepath.Join(e.Git(dir, "rev-parse", "--absolute-git-dir"), "info", "exclude")
-	patterns := ".sloprail/*/*/*\n!.sloprail/*/*/*/\n" +
-		"!.sloprail/*/*/*.sh\n!.sloprail/*/*/*.yaml\n!.sloprail/*/*/*.yml\n!.sloprail/*/*/*.j2\n!.sloprail/*/*/*.md\n!.sloprail/*/*/*.cue\n" +
-		// the mock's own scenario files are not the project's work either
-		"/.scenario.sh\n/.inner-scenario.sh\n"
+	patterns := "/.scenario.sh\n/.inner-scenario.sh\n"
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		e.t.Fatalf("harness: exclude ledgers: %v", err)
+		e.t.Fatalf("harness: exclude mock files: %v", err)
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		e.t.Fatalf("harness: exclude ledgers: %v", err)
+		e.t.Fatalf("harness: exclude mock files: %v", err)
 	}
 	defer f.Close()
 	if _, err := f.WriteString(patterns); err != nil {
-		e.t.Fatalf("harness: exclude ledgers: %v", err)
+		e.t.Fatalf("harness: exclude mock files: %v", err)
 	}
 }
 
 // Git runs a git command in dir and returns its trimmed output.
 func (e *Env) Git(dir string, args ...string) string {
 	e.t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		e.t.Fatalf("harness: git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
+	return Git(e.t, dir, args...)
 }
 
 // Meta reads one of the engine's own per-session facts — the baseline commit,
@@ -1899,7 +1883,7 @@ func (e *Env) SessionIdentity(projDir, sessionID string) string {
 // it — an assertion that cannot fail.
 func (e *Env) BlockingErrors(projDir, sessionID string) []string {
 	e.t.Helper()
-	return e.blockingErrors(projDir, sessionID, "")
+	return e.blockingErrors(projDir, sessionID, "", true)
 }
 
 // BlockingErrorsFrom returns the text of every blocking hook error recorded for
@@ -1918,15 +1902,25 @@ func (e *Env) BlockingErrors(projDir, sessionID string) []string {
 // see there for why the record rather than the stream.
 func (e *Env) BlockingErrorsFrom(projDir, sessionID, hookEvent string) []string {
 	e.t.Helper()
-	return e.blockingErrors(projDir, sessionID, hookEvent)
+	return e.blockingErrors(projDir, sessionID, hookEvent, true)
+}
+
+// AllBlockingErrorsFrom is BlockingErrorsFrom WITHOUT the de-duplication: one entry per
+// recorded refusal, in order, so the same text recorded again is counted again. The
+// de-duplicated form answers "which refusals arrived"; this one answers "how many times
+// was the turn refused", which is what a test that compares counts across cycles asks —
+// a refusal repeated with the same words would be invisible to the other.
+func (e *Env) AllBlockingErrorsFrom(projDir, sessionID, hookEvent string) []string {
+	e.t.Helper()
+	return e.blockingErrors(projDir, sessionID, hookEvent, false)
 }
 
 // blockingErrors reads refusals out of the record, optionally narrowed to one
 // lifecycle event. An empty hookEvent means every event.
-func (e *Env) blockingErrors(projDir, sessionID, hookEvent string) []string {
+func (e *Env) blockingErrors(projDir, sessionID, hookEvent string, dedupe bool) []string {
 	e.t.Helper()
 
-	return blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent)
+	return blockingErrorsIn(e.transcript(projDir, sessionID), hookEvent, dedupe)
 }
 
 // StopContinuations returns the reason of every time a Stop hook refused to let
@@ -2028,7 +2022,7 @@ func (e *Env) SubagentBlockingErrors(projDir, sessionID string) []string {
 					fed[strings.TrimPrefix(text, "Stop hook feedback:\n")] = true
 				}
 			}
-			for _, text := range blockingErrorsIn(line, "SubagentStop") {
+			for _, text := range blockingErrorsIn(line, "SubagentStop", true) {
 				if fed[text] && !seen[text] {
 					seen[text] = true
 					out = append(out, text)
@@ -2057,14 +2051,14 @@ func (e *Env) AnySubagentBlockingErrors(projDir, sessionID string) []string {
 		if err != nil {
 			e.t.Fatalf("harness: read sub-agent record %s: %v", sub, err)
 		}
-		out = append(out, blockingErrorsIn(string(b), "SubagentStop")...)
+		out = append(out, blockingErrorsIn(string(b), "SubagentStop", true)...)
 	}
 	return out
 }
 
 // blockingErrorsIn reads the refusals out of a record's lines, optionally
-// narrowed to one lifecycle event.
-func blockingErrorsIn(record, hookEvent string) []string {
+// narrowed to one lifecycle event, and optionally without repeats.
+func blockingErrorsIn(record, hookEvent string, dedupe bool) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, line := range strings.Split(record, "\n") {
@@ -2093,7 +2087,7 @@ func blockingErrorsIn(record, hookEvent string) []string {
 		// A blocked stop is retried, so the same refusal is recorded once per
 		// attempt. What a test asks is which refusals arrived, not how many
 		// times the agent was driven round.
-		if text != "" && !seen[text] {
+		if text != "" && !(dedupe && seen[text]) {
 			seen[text] = true
 			out = append(out, text)
 		}

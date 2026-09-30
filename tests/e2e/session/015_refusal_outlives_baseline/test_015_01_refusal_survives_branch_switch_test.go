@@ -1,10 +1,9 @@
 package e2e
 
 import (
-	"os"
-	"strings"
 	"testing"
 
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
@@ -78,13 +77,14 @@ checks:
 // suffix, so `**/*.md` never matches it and no self-observation can occur), but it
 // costs nothing and keeps the intent — this rule judges the agent's files, not the
 // engine's own bookkeeping — legible.
-const judgeScript = `#!/bin/sh
+func judgeScript(led *harness.Ledger) string {
+	return `#!/bin/sh
 payload="$(cat)"
 # The changeset's FILES are the matched ones; the rule's own files (added in the
 # commit that installed it, which the range covers) sit in .changeset.others.
 paths="$(printf '%s' "$payload" | jq -r '.changeset.files[].path')"
 [ -n "$paths" ] || exit 0
-printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
+printf '%s\n' "$payload" >> ` + led.Sh() + `
 for path in $paths; do
   case "$path" in
     bad*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
@@ -92,23 +92,11 @@ for path in $paths; do
 done
 exit 0
 `
+}
 
 // countPath is how many recorded entries name the path.
 func countPath(got []changesetkit.Observed, path string) int {
 	return len(changesetkit.Statuses(got, path))
-}
-
-// gitLedger reads a ledger a check kept under the project's .git directory.
-func gitLedger(t *testing.T, proj, name string) []string {
-	t.Helper()
-	b, err := os.ReadFile(proj + "/.git/" + name)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		t.Fatalf("read ledger %s: %v", name, err)
-	}
-	return strings.Split(strings.TrimSpace(string(b)), "\n")
 }
 
 // T015_01: a refused file is put in front of the rule again on the next cycle.
@@ -126,7 +114,9 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	const sess = "s-015-01"
@@ -134,7 +124,7 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 		Write("w1", "bad-file.md", "violates\n"),
 	).ThenCommit("the bad file"))
 
-	first := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	first := changesetkit.Files(t, led.Lines())
 	if countPath(first, "bad-file.md") == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
@@ -147,7 +137,7 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 		Write("w2", "unrelated.md", "fine\n"),
 	).ThenCommit("unrelated work"))
 
-	after := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	after := changesetkit.Files(t, led.Lines())
 	if countPath(after, "bad-file.md") <= countPath(first, "bad-file.md") {
 		t.Fatalf("an unfixed refusal was not re-reported on the next cycle: saw it %d times "+
 			"after the first cycle and %d times after the second (%v) — the file is still broken "+
@@ -171,7 +161,9 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.DisableShippedFileGuards(proj)
 
 	// The rule is committed first, so it exists on both lines of history.
 	// Without this the checkout below deletes .sloprail/ along with everything
@@ -201,7 +193,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 		Write("w1", "bad-file.md", "violates\n"),
 	).ThenCommit("the bad file"))
 
-	first := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	first := changesetkit.Files(t, led.Lines())
 	if countPath(first, "bad-file.md") == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
@@ -232,7 +224,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	// one unfixed violation writes many lines in a single cycle — a comparison
 	// of cumulative totals measures how many times the mock retried, not whether
 	// the refusal outlived the branch switch.
-	after := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	after := changesetkit.Files(t, led.Lines())
 	if len(after) <= len(first) {
 		t.Fatalf("the second cycle observed nothing at all (%d entries, was %d), so there is "+
 			"no evidence either way about the refusal surviving: %v", len(after), len(first), after)
@@ -280,19 +272,20 @@ checks:
 	// defensive rather than load-bearing (the seen/refused ledgers have no `.md`
 	// suffix and cannot match), but it keeps the rule about the agent's files, not
 	// the engine's own bookkeeping.
-	// The ledgers live in .git, outside the rule's folder: a rule's hash covers its
+	// The ledgers are harness ledgers, outside the rule's folder: a rule's hash covers its
 	// whole folder, so a ledger written there would change the hash on every run
 	// and void the watermark this test is about (a pass advancing the range).
-	const judgeContentScript = `#!/bin/sh
+	seen, refusedLed := e.NewLedger("seen"), e.NewLedger("refused")
+	judgeContentScript := `#!/bin/sh
 payload="$(cat)"
 paths="$(printf '%s' "$payload" | jq -r '.changeset.files[].path')"
 [ -n "$paths" ] || exit 0
 root="${SR_GUARDRAIL_DIR%/.sloprail/file-guard/*}"
-printf '%s\n' "$payload" >> "$root/.git/watcher-seen"
+printf '%s\n' "$payload" >> ` + seen.Sh() + `
 refused=0
 for path in $paths; do
   if [ -f "$root/$path" ] && grep -q FORBIDDEN "$root/$path"; then
-    echo "$path" >> "$root/.git/watcher-refused"
+    echo "$path" >> ` + refusedLed.Sh() + `
     refused=1
   fi
 done
@@ -302,13 +295,14 @@ fi
 exit 0
 `
 	e.FileGuard(proj, "watcher", refuseContentGuard, map[string]string{"judge.sh": judgeContentScript})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	const sess = "s-015-03"
 	e.Run(proj, sess, "write then fix", Turns("done",
 		Write("w1", "subject.md", "FORBIDDEN content\n"),
 	).ThenCommit("write subject"))
-	first := changesetkit.Files(t, gitLedger(t, proj, "watcher-seen"))
+	first := changesetkit.Files(t, seen.Lines())
 	if countPath(first, "subject.md") == 0 {
 		t.Fatalf("the file never reached the rule in the first cycle: %v", first)
 	}
@@ -324,7 +318,7 @@ exit 0
 	// is no pending call to deny — so it does not appear in the mock's stream at
 	// all, and asserting on the stream here would fail for every build including a
 	// correct one.
-	if len(gitLedger(t, proj, "watcher-refused")) == 0 {
+	if len(refusedLed.Lines()) == 0 {
 		t.Fatalf("the rule never refused the offending file, so nothing here was ever unfixed " +
 			"and the comparison below cannot fail")
 	}
@@ -333,12 +327,12 @@ exit 0
 	e.Run(proj, sess, "fix it", Turns("done",
 		Write("w2", "subject.md", "acceptable content\n"),
 	).ThenCommit("fix subject"))
-	fixed := changesetkit.Files(t, gitLedger(t, proj, "watcher-seen"))
+	fixed := changesetkit.Files(t, seen.Lines())
 
 	e.Run(proj, sess, "unrelated work", Turns("done",
 		Write("w3", "elsewhere.md", "fine\n"),
 	).ThenCommit("elsewhere"))
-	after := changesetkit.Files(t, gitLedger(t, proj, "watcher-seen"))
+	after := changesetkit.Files(t, seen.Lines())
 
 	if countPath(after, "subject.md") != countPath(fixed, "subject.md") {
 		t.Fatalf("a file that has been fixed and passed was reported again on a later cycle: "+
@@ -367,7 +361,9 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.GitInit(proj)
-	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.DisableShippedFileGuards(proj)
 	// The harness's own scenario script is kept out of every commit: a tracked
 	// copy rewritten by the next cycle would abort the branch switch below.
 	writeFile(t, proj, ".gitignore", ".scenario.sh\n")
@@ -378,8 +374,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	// the file on disk WITHOUT putting it in the difference.
 	e.Git(proj, "checkout", "-b", "feature", root)
 	writeFile(t, proj, "bad-file.md", "violates\n")
-	e.Git(proj, "add", "bad-file.md")
-	e.Git(proj, "commit", "-m", "the bad file, already on this line")
+	e.CommitAll(proj, "the bad file, already on this line")
 	e.Git(proj, "checkout", "main")
 	e.Git(proj, "commit", "--allow-empty", "-m", "on main, after the split")
 
@@ -387,7 +382,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	e.Run(proj, sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
 	).ThenCommit("the bad file"))
-	first := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	first := changesetkit.Files(t, led.Lines())
 	if countPath(first, "bad-file.md") == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
@@ -408,7 +403,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 			"and its absence from the report would be correct")
 	}
 
-	after := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	after := changesetkit.Files(t, led.Lines())
 	if len(after) <= len(first) {
 		t.Fatalf("the second cycle observed nothing at all (%d entries, was %d), so there is "+
 			"no evidence either way: %v", len(after), len(first), after)
