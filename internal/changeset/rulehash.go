@@ -9,8 +9,11 @@ import (
 	"path/filepath"
 )
 
-// RuleHash hashes a rule's WHOLE folder: its yaml, its scripts, its templates,
-// anything else in it.
+// RuleHash hashes a rule's whole `.sloprail` ROOT (the project's or its plugin's,
+// the caller passes it: FileGuard.Root): the rule's own yaml, scripts and
+// templates, and everything else under it — the other rules, schemas, shared
+// scripts. What a rule does depends on all of it, and a hash over the rule's
+// folder alone kept serving passes reached under a schema that had since changed.
 //
 // Editing any of them changes the hash, and a verdict or a watermark keyed on
 // the old one no longer applies. a10n's key left the rubric out, and kept

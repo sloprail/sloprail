@@ -41,12 +41,13 @@ A file-guard judges commits. Its range runs from a base to HEAD, and the base is
 the first of these that exists and is still an ancestor of HEAD:
 
   watermark      the last head the rule passed, at its current definition
-  folder floor   the PARENT of the last commit that touched the rule's folder (a
-                 rule that lives in this repository): the commit that adds or
-                 changes a rule is judged by it. A root commit's base is git's
-                 empty tree, so all of it is judged
-  session start  the HEAD recorded when this session began (a plugin's rule, or
-                 one not committed yet)
+  root floor     the PARENT of the last commit that touched the rule's whole
+                 .sloprail root (a rule that lives in this repository): the
+                 commit that adds or changes a rule, a schema or a shared lib is
+                 judged by it, and work approved before it is not judged again. A
+                 root commit's base is git's empty tree, so all of it is judged
+  session start  the HEAD recorded when this session began (a plugin's rule, whose
+                 root is outside this repository, or one not committed yet)
 
 The watermark is not stored on its own: it is the newest run of the rule, at its
 current definition, that passed and whose head is still an ancestor of HEAD, read
@@ -65,14 +66,16 @@ The output is JSON on stdout:
   base, head          the range, as SHAs
   droppedWatermark    a watermark that was offered and is no longer reachable
                       (an amend or a rebase), when there was one
-  ruleHash            the hash of the rule's whole folder
+  ruleHash            the hash of the rule's whole .sloprail root (its own folder,
+                      every other rule, schemas and shared scripts)
   unresolvedCitations Sloprail-Cites-* trailers whose quote did not resolve
   payload             what a check receives on stdin: event, changeset (commits,
-                      files, others, citations), subject
+                      files, others, citations — each with the commits that carried
+                      it and the files they changed), subject
 
 Nothing is run and nothing is recorded. Where the session cannot be found from
 the environment (no CLAUDE_CODE_SESSION_ID), there is no watermark and no
-session start, and quotes are not resolved; the folder floor still applies.`,
+session start, and quotes are not resolved; the root floor still applies.`,
 		Args: cobra.NoArgs,
 		RunE: runSessionChangeset,
 	}
@@ -130,7 +133,7 @@ func runSessionChangeset(cmd *cobra.Command, _ []string) error {
 	defer sess.close()
 	recordPath, store := sess.record, sess.state
 
-	hash, err := changeset.RuleHash(g.Dir)
+	hash, err := changeset.RuleHash(g.Root())
 	if err != nil {
 		return err
 	}
@@ -151,16 +154,8 @@ func runSessionChangeset(cmd *cobra.Command, _ []string) error {
 	}
 
 	unresolved := []string{}
-	if recordPath != "" {
-		project := projectDirOf(recordPath, p.Cwd)
-		resolve := func(req transcript.CitationRequest) (transcript.Citation, error) {
-			return transcript.ResolveCitationAcrossSessions(recordPath, project, req)
-		}
-		var missed []changeset.Unresolved
-		cs.Citations, missed = changeset.ResolveCitations(cs.Commits, resolve)
-		for _, u := range missed {
-			unresolved = append(unresolved, u.String())
-		}
+	for _, u := range resolveChangesetCitations(&cs, recordPath, p.Cwd) {
+		unresolved = append(unresolved, u.String())
 	}
 
 	out := changesetOutput{

@@ -41,9 +41,9 @@ type BaseOrigin string
 const (
 	// FromWatermark: the last head the rule passed, still reachable.
 	FromWatermark BaseOrigin = "watermark"
-	// FromFloor: the PARENT of the last commit that touched the rule's folder (the
-	// empty tree when that commit is a root), so the commit that adds or changes a
-	// rule is itself judged by it.
+	// FromFloor: the PARENT of the last commit that touched the rule's .sloprail
+	// root (the empty tree when that commit is a root), so the commit that adds or
+	// changes a rule is itself judged by it.
 	FromFloor BaseOrigin = "floor"
 	// FromSessionStart: the HEAD recorded when the session began. The floor of
 	// last resort, for a rule with no folder in this repository (a plugin's lives

@@ -91,3 +91,69 @@ func TestT041_47_TheEnginesOwnSRFileByPath(t *testing.T) {
 		t.Errorf("the gate refused a cited write by the engine's own sr-file path:\n%s", res.Output)
 	}
 }
+
+// T041_34: a cited change lands, then an uncited commit changes the file again: the
+// citation grounds the commit it is in, not the later one, so Stop refuses and names
+// the file. The controls: the cited change alone passes, and a cited commit ON TOP of
+// an uncited one grounds the file as it now stands.
+func TestT041_34_AnUncitedChangeAfterACitedOneIsRefused(t *testing.T) {
+	e, proj := guarded(t, afterCitationGuard)
+	e.Run(proj, "s-041-34", prompt, Turns("done",
+		Write("w1", "memories/a.md", "# log\n"),
+		harness.Commit("c1", "write the log", harness.CitesUser("adopt a decision log")),
+		Write("w2", "memories/a.md", "# log\nand a line nobody asked for\n"),
+		harness.Commit("c2", "tidy"),
+	))
+	blocks := stopRefusal(e, proj, "s-041-34")
+	if !strings.Contains(blocks, noCitation) || !strings.Contains(blocks, "memories/a.md") {
+		t.Fatalf("an uncited change on top of a cited one passed at Stop, or the refusal does not name the file:\n%s", blocks)
+	}
+
+	e2, proj2 := guarded(t, afterCitationGuard)
+	e2.Run(proj2, "s-041-34b", prompt, Turns("done", Write("w1", "memories/a.md", "# log\n")).
+		ThenCommit("write the log", harness.CitesUser("adopt a decision log")))
+	if blocks := stopRefusal(e2, proj2, "s-041-34b"); blocks != "" {
+		t.Errorf("a cited change was refused at Stop: %s", blocks)
+	}
+
+	e3, proj3 := guarded(t, afterCitationGuard)
+	e3.Run(proj3, "s-041-34c", prompt, Turns("done",
+		Write("w1", "memories/a.md", "# log\n"),
+		harness.Commit("c1", "write the log"),
+		Write("w2", "memories/a.md", "# log\nas asked\n"),
+		harness.Commit("c2", "as asked", harness.CitesUser("adopt a decision log")),
+	))
+	if blocks := stopRefusal(e3, proj3, "s-041-34c"); blocks != "" {
+		t.Errorf("a cited commit on top of an uncited one did not ground the file:\n%s", blocks)
+	}
+}
+
+// T041_53: citations are attributed PER FILE. Two files are changed in two commits and
+// only the first commit cites: the rule refuses, naming the second file and not the
+// first — one citation in the range does not ground a file it did not ride on. Citing
+// the second file in a commit that changes it passes.
+func TestT041_53_ACitationGroundsOnlyTheFilesItsCommitChanged(t *testing.T) {
+	e, proj := guarded(t, afterCitationGuard)
+	e.Run(proj, "s-041-53", prompt, Turns("done",
+		Write("w1", "memories/a.md", "# a\n"),
+		harness.Commit("c1", "write a", harness.CitesUser("adopt a decision log")),
+		Write("w2", "memories/b.md", "# b\n"),
+		harness.Commit("c2", "write b"),
+	))
+	blocks := stopRefusal(e, proj, "s-041-53")
+	if !strings.Contains(blocks, noCitation) || !strings.Contains(blocks, "memories/b.md") {
+		t.Fatalf("an uncited second file was not refused by name:\n%s", blocks)
+	}
+	if strings.Contains(blocks, "memories/a.md") {
+		t.Errorf("the refusal names the cited file:\n%s", blocks)
+	}
+	seen := len(e.BlockingErrorsFrom(proj, "s-041-53", "Stop"))
+
+	e.Run(proj, "s-041-53", "cite the second too", Turns("done",
+		Write("w3", "memories/b.md", "# b\nas asked\n"),
+		harness.Commit("c3", "b as asked", harness.CitesUser("adopt a decision log")),
+	))
+	if n := len(e.BlockingErrorsFrom(proj, "s-041-53", "Stop")); n != seen {
+		t.Errorf("citing the second file was still refused (%d refusals, had %d):\n%s", n, seen, stopRefusal(e, proj, "s-041-53"))
+	}
+}

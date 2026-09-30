@@ -21,7 +21,7 @@ facts directly:
 | variable | type | |
 |---|---|---|
 | `path` | string | the file's repository-relative path |
-| `status` | string | `A`, `M`, `D` or `R` — the file's net change across the range |
+| `status` | string | `A`, `M`, `D` or `R` — the file's net change across the range. A rename (`R`) is selected if `match` holds on its new path **or** on the path it came from, evaluated with `path` the old path and `markers` the ones it carried there |
 | `markers` | list | the `sr:` markers the file carries at `head`, elements `{kind, fqn, line}` (a deleted file's are the ones it carried) |
 | `oldMarkers` | list | the markers it carried at the range's base (empty on a create) |
 | `trailers` | map | each commit-message trailer key in the range to its list of values |

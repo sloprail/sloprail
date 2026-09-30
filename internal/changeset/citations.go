@@ -36,12 +36,13 @@ func (u Unresolved) String() string {
 // promoted to a citation.
 //
 // Citations accumulate across the range's commits, in commit order, and one
-// quote cited twice is one citation: a rule's base does not move until it
-// passes, so the range grows and its grounding grows with it.
-func ResolveCitations(commits []Commit, resolve Resolver) ([]transcript.Citation, []Unresolved) {
-	cites := []transcript.Citation{}
+// quote cited twice is one citation carried by both commits: a rule's base does
+// not move until it passes, so the range grows and its grounding grows with it.
+// Which files a citation grounds is AttributeFiles's to say, once the files are known.
+func ResolveCitations(commits []Commit, resolve Resolver) ([]Citation, []Unresolved) {
+	cites := []Citation{}
 	var unresolved []Unresolved
-	seen := map[string]bool{}
+	seen := map[string]int{} // quote → index in cites, or -1 when it did not resolve
 	for _, c := range commits {
 		for _, t := range []struct {
 			key   string
@@ -53,10 +54,15 @@ func ResolveCitations(commits []Commit, resolve Resolver) ([]transcript.Citation
 			for _, quote := range c.Trailers[t.key] {
 				req := transcript.CitationRequest{Quote: quote, SourceTypes: t.pools}
 				id := t.key + "\x00" + quote
-				if seen[id] {
+				if i, done := seen[id]; done {
+					// The same quote on another commit is the same citation, carried by
+					// both: either commit grounds the files it changed.
+					if i >= 0 {
+						cites[i].Commits = append(cites[i].Commits, c.SHA)
+					}
 					continue
 				}
-				seen[id] = true
+				seen[id] = -1
 				cite, err := resolve(req)
 				if err != nil {
 					unresolved = append(unresolved, Unresolved{Commit: c.SHA, Trailer: t.key, Quote: quote, Err: err})
@@ -69,7 +75,8 @@ func ResolveCitations(commits []Commit, resolve Resolver) ([]transcript.Citation
 					unresolved = append(unresolved, Unresolved{Commit: c.SHA, Trailer: t.key, Quote: quote, Err: fmt.Errorf("resolved in %v, not %v", cite.SourceTypes, t.pools)})
 					continue
 				}
-				cites = append(cites, cite)
+				seen[id] = len(cites)
+				cites = append(cites, Citation{Citation: cite, Commits: []string{c.SHA}, Files: []string{}})
 			}
 		}
 	}
@@ -81,4 +88,17 @@ func short(sha string) string {
 		return sha[:12]
 	}
 	return sha
+}
+
+// AttributeFiles fills each citation's Files: the selected files changed by the
+// commits that carry it.
+func AttributeFiles(cites []Citation, files []File) {
+	for i := range cites {
+		cites[i].Files = []string{}
+		for _, f := range files {
+			if slices.ContainsFunc(f.Commits, func(sha string) bool { return slices.Contains(cites[i].Commits, sha) }) {
+				cites[i].Files = append(cites[i].Files, f.Path)
+			}
+		}
+	}
 }

@@ -24,7 +24,7 @@ require:
 `
 
 // noCitation is the Stop refusal's own words for a range no citation grounds.
-const noCitation = "no commit in its range carries a citation that resolves"
+const noCitation = "in the commit that last changed it, and that commit carries none that resolves"
 
 // stopRefusal is what the root's Stop refused with, as one string.
 func stopRefusal(e *harness.Env, proj, sess string) string {

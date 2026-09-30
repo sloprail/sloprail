@@ -13,9 +13,9 @@ func samplePayload() Payload {
 	cs := Changeset{
 		Base: "b0", Head: "h0",
 		Commits:   []Commit{{SHA: "c1", Subject: "split", Body: "b", Trailers: map[string][]string{TrailerCitesUser: {"q"}}}},
-		Files:     []File{{Path: "a.go", Status: "M", OldContent: "1", NewContent: "2", OldMarkers: []Marker{}, NewMarkers: []Marker{{Kind: "k", FQN: "f", Line: 1}}, Diff: "@@"}},
+		Files:     []File{{Path: "a.go", Status: "M", Commits: []string{"c1"}, OldContent: "1", NewContent: "2", OldMarkers: []Marker{}, NewMarkers: []Marker{{Kind: "k", FQN: "f", Line: 1}}, Diff: "@@"}},
 		Others:    []Other{{Path: "README.md", Status: "M"}},
-		Citations: []transcript.Citation{{Quote: "q", SourceTypes: []transcript.SourceType{transcript.SourceUser}, Path: "/t", Line: 3, Message: "m"}},
+		Citations: []Citation{{Citation: transcript.Citation{Quote: "q", SourceTypes: []transcript.SourceType{transcript.SourceUser}, Path: "/t", Line: 3, Message: "m"}, Commits: []string{"c1"}, Files: []string{"a.go"}}},
 	}
 	return NewPayload(cs, Whole(cs), "/t.jsonl", nil)
 }
@@ -71,7 +71,7 @@ func TestFingerprint_EverythingTheCheckReceivesMattersToIt(t *testing.T) {
 		"commit body":     func(p *Payload) { p.Changeset.Commits[0].Body = "different" },
 		"commit trailer":  func(p *Payload) { p.Changeset.Commits[0].Trailers[TrailerCitesUser] = []string{"z"} },
 		"extra commit":    func(p *Payload) { p.Changeset.Commits = append(p.Changeset.Commits, Commit{Subject: "more"}) },
-		"citation":        func(p *Payload) { p.Changeset.Citations[0].Message = "other message" },
+		"citation":        func(p *Payload) { p.Changeset.Citations[0].Citation.Message = "other message" },
 		"no citation":     func(p *Payload) { p.Changeset.Citations = nil },
 		"subject id":      func(p *Payload) { p.Subject.ID = "pkg/a" },
 		"subject files":   func(p *Payload) { p.Subject.Files = []string{"a.go", "x.go"} },
