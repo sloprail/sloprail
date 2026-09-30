@@ -73,15 +73,18 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 //
 // base is the first reachable of, in order:
 //
-//  1. watermark — the last head the rule passed (when non-empty);
-//  2. the PARENT of the last commit touching folder — the rule's definition, for
+//  1. watermark — the last head the rule passed (when non-empty), at any
+//     definition of the rule: work up to it was approved;
+//  2. otherwise the EARLIER, in ancestry, of the two below (so nothing made in this
+//     session is skipped, and history from before both stays grandfathered):
+//     a. the PARENT of the last commit touching folder — the rule's definition, for
 //     a rule whose folder is in this repository (folder is "" for one that is not,
 //     such as a plugin's; a folder no commit has touched yet, an uncommitted rule,
 //     has no such commit and falls through). The parent, not the commit: everything
 //     else in the commit that adds or changes a rule is judged by the rule, so
 //     touching the rule's folder is not a way to get work past it. A root commit
 //     has no parent, and its base is the empty tree, so the whole of it is judged;
-//  3. sessionStart — the HEAD recorded when the session began. Rules apply going
+//     b. sessionStart — the HEAD recorded when the session began. Rules apply going
 //     forward, and for a rule with no committed definition "forward" starts where
 //     this session did.
 //
@@ -108,41 +111,85 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 		}
 		r.DroppedWatermark = watermark
 	}
+	// No watermark: the EARLIER of the folder floor and the session start, so nothing
+	// made in this session is skipped, while history from before both stays
+	// grandfathered.
+	var floor string
 	if strings.TrimSpace(folder) != "" {
-		floor, err := folderFloor(dir, folder)
+		last, err := folderFloor(dir, folder)
 		if err != nil {
 			return Range{}, err
 		}
-		if floor != "" {
+		if last != "" {
 			// `git log` on HEAD makes it reachable by construction; it is asked
 			// anyway, because "every run" is the rule and a cheap check is what
 			// keeps it true if that construction ever changes.
-			ok, err := Contains(dir, floor)
+			ok, err := Contains(dir, last)
 			if err != nil {
-				return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", floor, err)
+				return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", last, err)
 			}
 			if !ok {
-				return Range{}, fmt.Errorf("gitrepo: floor %s for %q is not an ancestor of HEAD", floor, folder)
+				return Range{}, fmt.Errorf("gitrepo: floor %s for %q is not an ancestor of HEAD", last, folder)
 			}
-			if r.Base, err = parentOrEmptyTree(dir, floor); err != nil {
+			if floor, err = parentOrEmptyTree(dir, last); err != nil {
 				return Range{}, err
 			}
-			r.Origin = FromFloor
-			return r, nil
 		}
 	}
-	if sessionStart == "" {
+	if floor == "" && sessionStart == "" {
 		return Range{}, ErrNoSessionStart
 	}
-	ok, err := Contains(dir, sessionStart)
-	if err != nil {
-		return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", sessionStart, err)
+	start := ""
+	if sessionStart != "" {
+		ok, err := Contains(dir, sessionStart)
+		if err != nil {
+			return Range{}, fmt.Errorf("gitrepo: is %s an ancestor of HEAD: %w", sessionStart, err)
+		}
+		switch {
+		case ok:
+			start = sessionStart
+		case floor == "":
+			return Range{}, fmt.Errorf("%w: %s", ErrSessionStartUnreachable, sessionStart)
+		}
+		// With a floor, a session start the tree has left is not needed: the floor
+		// is a usable base, and is at worst later than the session began.
 	}
-	if !ok {
-		return Range{}, fmt.Errorf("%w: %s", ErrSessionStartUnreachable, sessionStart)
+	switch {
+	case floor == "":
+		r.Base, r.Origin = start, FromSessionStart
+	case start == "":
+		r.Base, r.Origin = floor, FromFloor
+	default:
+		early, err := earlier(dir, floor, start)
+		if err != nil {
+			return Range{}, err
+		}
+		r.Base, r.Origin = early, FromFloor
+		if early == start {
+			r.Origin = FromSessionStart
+		}
 	}
-	r.Base, r.Origin = sessionStart, FromSessionStart
 	return r, nil
+}
+
+// earlier is whichever of two commits (or the empty tree) comes first in ancestry;
+// for two that are not one another's ancestors, their merge base.
+func earlier(dir, a, b string) (string, error) {
+	if a == b {
+		return a, nil
+	}
+	if a == EmptyTree || b == EmptyTree {
+		return EmptyTree, nil
+	}
+	out, err := run(dir, "merge-base", a, b)
+	if err != nil {
+		return "", fmt.Errorf("gitrepo: merge base of %s and %s: %w", short(a), short(b), err)
+	}
+	base := strings.TrimSpace(out)
+	if !isObjectName(base) {
+		return "", fmt.Errorf("gitrepo: merge base resolved to %q, not an object name", base)
+	}
+	return base, nil
 }
 
 // headSHA is HEAD's full object name, or ErrNoCommits on an unborn HEAD.

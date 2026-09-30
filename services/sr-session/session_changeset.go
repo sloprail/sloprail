@@ -37,24 +37,26 @@ func newSessionChangesetCmd() *cobra.Command {
 		Short: "What a file-guard would be judged on: its range and the Changeset payload, without running any check",
 		Long: `Show what a file-guard would be judged on, without judging it.
 
-A file-guard judges commits. Its range runs from a base to HEAD, and the base is
-the first of these that exists and is still an ancestor of HEAD:
+A file-guard judges commits. Its range runs from a base to HEAD, and the base is:
 
-  watermark      the last head the rule passed, at its current definition
-  root floor     the PARENT of the last commit that touched the rule's whole
-                 .sloprail root (a rule that lives in this repository): the
-                 commit that adds or changes a rule, a schema or a shared lib is
-                 judged by it, and work approved before it is not judged again. A
-                 root commit's base is git's empty tree, so all of it is judged
-  session start  the HEAD recorded when this session began (a plugin's rule, whose
-                 root is outside this repository, or one not committed yet)
+  watermark      the latest head the rule passed, at ANY definition of the rule,
+                 while it is still an ancestor of HEAD: work up to it was approved
+  otherwise the EARLIER, in ancestry, of
+    root floor     the PARENT of the last commit that touched the rule's whole
+                   .sloprail root (a rule that lives in this repository): the
+                   commit that adds or changes a rule, a schema or a shared lib is
+                   judged by it. A root commit's base is git's empty tree
+    session start  the HEAD recorded when this session began (and the only
+                   candidate for a plugin's rule, whose root is outside this
+                   repository, or one not committed yet)
+  so nothing made in this session is skipped, and older history stays grandfathered.
 
-The watermark is not stored on its own: it is the newest run of the rule, at its
-current definition, that passed and whose head is still an ancestor of HEAD, read
-from the session's check results (` + "`sr-checks status`" + ` shows them).
+The watermark is not stored on its own: it is the newest run of the rule that
+passed and whose head is still an ancestor of HEAD, read from the session's check
+results (` + "`sr-checks status`" + ` shows them).
 
-If none of them can be used — the session start was never recorded, or the tree
-left its history — the command fails rather than guess.
+If none can be used — no floor and the session start was never recorded, or the
+tree left its history — the command fails rather than guess.
 
 --rule names the file-guard: its folder name (` + "`size-limit`" + `), or its qualified
 name as a refusal cites it (` + "`file-guard/size-limit`" + `, ` + "`plugin/file-guard/size-limit`" + `).
@@ -138,7 +140,7 @@ func runSessionChangeset(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	rule := g.Qualified()
-	r, err := resolveRuleRange(root, g, hash, sess.checks, store)
+	r, err := resolveRuleRange(root, g, sess.checks, store)
 	if err != nil {
 		return fmt.Errorf("sloprail: file-guard %q: range not computable: %w", g.Name, err)
 	}

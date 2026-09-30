@@ -20,10 +20,14 @@ const billingSpec = "Billing invariants\n1. An order total must never be negativ
 func pinnedSpecProject(t *testing.T, e *env) string {
 	t.Helper()
 	proj := biProject(t, e)
-	sha := commitSpec(t, e, proj, "SPEC.md", billingSpec, "spec")
+	// The spec and the code that pins it are the baseline: both committed BEFORE the
+	// rules, so neither is in the rules' own range (where a marker-carrying file would
+	// itself have to cite, per file).
+	e.WriteFile(proj, "SPEC.md", billingSpec)
+	sha := e.CommitAllExcept(proj, "spec", ".sloprail")
 	e.WriteFile(proj, "src/charge.go", invariantCode(proj+"@"+sha+":SPEC.md#L3-3",
 		"func Refund(charged, amount int) bool { return amount <= charged }\n"))
-	e.CommitAll(proj, "pinned refund")
+	e.CommitSeedThenRules(proj, "pinned refund")
 	return proj
 }
 

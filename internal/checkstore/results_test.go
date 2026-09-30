@@ -164,7 +164,7 @@ func TestPassedHeads_NewestAllPassRunFirst(t *testing.T) {
 	record(t, s, run("h1"), script("pass"), judge("fail", "b"))
 	record(t, s, run("h2"), script("pass"), judge("pass", "c"))
 
-	heads, err := s.PassedHeads(rule, "h1")
+	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"h2", "h0"}, heads, "a run with a failing check passed nothing")
 }
@@ -173,7 +173,7 @@ func TestPassedHeads_ARunWithNoChecksPassed(t *testing.T) {
 	// `match` selected nothing: a pass, and the watermark advances.
 	s := openTestStore(t)
 	record(t, s, run("h0"))
-	heads, err := s.PassedHeads(rule, "h1")
+	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"h0"}, heads)
 }
@@ -184,7 +184,7 @@ func TestPassedHeads_AnEngineFailureIsNotAPass(t *testing.T) {
 	bad := run("h0")
 	bad.ExitCode, bad.Error = 1, "git: bad object"
 	record(t, s, bad)
-	heads, err := s.PassedHeads(rule, "h1")
+	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Empty(t, heads)
 }
@@ -193,7 +193,7 @@ func TestPassedHeads_ErrorAndInterruptedAreNotPasses(t *testing.T) {
 	s := openTestStore(t)
 	record(t, s, run("h0"), judge("error", "a"))
 	record(t, s, run("h1"), judge("interrupted", "b"))
-	heads, err := s.PassedHeads(rule, "h1")
+	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Empty(t, heads)
 }
@@ -201,12 +201,12 @@ func TestPassedHeads_ErrorAndInterruptedAreNotPasses(t *testing.T) {
 func TestPassedHeads_SkipDoesNotSpoilAPass(t *testing.T) {
 	s := openTestStore(t)
 	record(t, s, run("h0"), judge("skip", "a"), script("pass"))
-	heads, err := s.PassedHeads(rule, "h1")
+	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"h0"}, heads)
 }
 
-func TestPassedHeads_ScopedToTheRuleAndItsHash(t *testing.T) {
+func TestPassedHeads_ScopedToTheRuleNotItsHash(t *testing.T) {
 	s := openTestStore(t)
 	record(t, s, run("h0"))
 	edited := run("h9")
@@ -216,9 +216,9 @@ func TestPassedHeads_ScopedToTheRuleAndItsHash(t *testing.T) {
 	other.CheckID = "file-guard/other"
 	record(t, s, other)
 
-	heads, err := s.PassedHeads(rule, "h1")
+	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"h0"}, heads, "a changed rule definition has no watermark; another rule's runs are not this one's")
+	assert.Equal(t, []string{"h9", "h0"}, heads, "a pass under an older definition still approved its work; another rule's runs are not this one's")
 }
 
 func TestResolveStale_AFailWhoseInputLeftBecomesSkip(t *testing.T) {
@@ -375,7 +375,7 @@ func TestPassedHeads_ARunWhoseFailWentStaleStillDidNotPass(t *testing.T) {
 	require.Equal(t, 1, n)
 	_ = failedRun
 
-	heads, err := s.PassedHeads(rule, "h1")
+	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"h1"}, heads, "h0 failed; only h1 passed")
 }
@@ -388,7 +388,7 @@ func TestPassedHeads_AnUnfinishedRunIsNeverAWatermark(t *testing.T) {
 	dead, err := s.RecordRun(run("h0")) // recorded running, never finished
 	require.NoError(t, err)
 
-	heads, err := s.PassedHeads(rule, "h1")
+	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Empty(t, heads, "a run that never finished passed nothing")
 
@@ -399,7 +399,7 @@ func TestPassedHeads_AnUnfinishedRunIsNeverAWatermark(t *testing.T) {
 
 	_, err = s.RecordCheck(dead, script("pass"))
 	require.NoError(t, err)
-	heads, _ = s.PassedHeads(rule, "h1")
+	heads, _ = s.PassedHeads(rule)
 	assert.Empty(t, heads, "checks recorded but the run not finished: still not a pass")
 	rows, err = s.CheckStatus(true, "")
 	require.NoError(t, err)
@@ -407,7 +407,7 @@ func TestPassedHeads_AnUnfinishedRunIsNeverAWatermark(t *testing.T) {
 	assert.Equal(t, StatusInterrupted, rows[0].Status, "the run's state wins over its checks")
 
 	require.NoError(t, s.FinishRun(dead))
-	heads, err = s.PassedHeads(rule, "h1")
+	heads, err = s.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"h0"}, heads)
 }
@@ -422,7 +422,7 @@ func TestPassedHeads_ACompleteRunWithNothingToCheckIsAPass(t *testing.T) {
 	r.Complete = true
 	_, err := s.RecordRun(r)
 	require.NoError(t, err)
-	heads, err := s.PassedHeads(rule, "h1")
+	heads, err := s.PassedHeads(rule)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"h0"}, heads)
 }

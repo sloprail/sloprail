@@ -307,20 +307,20 @@ func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 // holds no failing check — including one whose failure was later resolved as
 // stale: it failed, and clearing the orphan must not turn it into a pass; a run with no checks at all (`match` selected nothing)
 // passed too, which is what lets an empty selection advance the watermark.
-func (s *store) PassedHeads(rule, ruleHash string) ([]string, error) {
+func (s *store) PassedHeads(rule string) ([]string, error) {
 	db, err := s.conn()
 	if err != nil {
 		return nil, err
 	}
 	rows, err := db.Query(`
 		SELECT cr.head_ref FROM check_runs cr
-		WHERE cr.check_id = ? AND json_extract(cr.metadata, '$.ruleHash') = ?
+		WHERE cr.check_id = ?
 		  AND cr.head_ref <> '' AND cr.exit_code = 0 AND cr.error IS NULL
 		  AND json_extract(cr.metadata, '$.state') = 'complete'
 		  AND NOT EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
 		                  AND (c.status IN ('fail', 'error', 'interrupted')
 		                       OR json_extract(c.metadata, '$.staleFrom') IS NOT NULL))
-		ORDER BY cr.run_at DESC, cr.rowid DESC`, rule, ruleHash)
+		ORDER BY cr.run_at DESC, cr.rowid DESC`, rule)
 	if err != nil {
 		return nil, fmt.Errorf("checkstore: passed heads for %q: %w", rule, err)
 	}

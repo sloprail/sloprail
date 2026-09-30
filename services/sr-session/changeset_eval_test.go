@@ -83,7 +83,7 @@ func (f *evalFixture) hash(t *testing.T) string {
 
 func (f *evalFixture) passedHeads(t *testing.T) []string {
 	t.Helper()
-	heads, err := f.results.PassedHeads(f.guard.Qualified(), f.hash(t))
+	heads, err := f.results.PassedHeads(f.guard.Qualified())
 	require.NoError(t, err)
 	return heads
 }

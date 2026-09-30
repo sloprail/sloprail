@@ -62,10 +62,10 @@ type Store interface {
 	// outside run liveRunID whose (subject, kind, fingerprint) is not one liveRunID
 	// holds: a failure whose input has left the range. Returns how many.
 	ResolveStale(rule, ruleHash, liveRunID string) (int, error)
-	// PassedHeads lists, newest first, the head_ref of each of the rule's runs at
-	// this rule hash that passed: no engine error and no failing check. The
+	// PassedHeads lists, newest first, the head_ref of each of the rule's runs, at any
+	// rule hash, that passed: no engine error and no failing check. The
 	// caller picks the first still reachable — that is the rule's watermark.
-	PassedHeads(rule, ruleHash string) ([]string, error)
+	PassedHeads(rule string) ([]string, error)
 	// CheckStatus lists each rule's latest run and its checks. failingOnly keeps
 	// only what is failing: a failed engine run, or a fail/error/interrupted check.
 	// A non-empty rule keeps only that rule.
