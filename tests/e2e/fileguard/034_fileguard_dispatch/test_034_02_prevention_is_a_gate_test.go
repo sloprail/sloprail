@@ -98,6 +98,7 @@ func TestT034_06_FileGuardDoesNotBlockPreWrite(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "no-plaintext-keys", resultGuard, map[string]string{"check.sh": checkNoPlaintextKey})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 
 	res := e.Run(proj, "s-034-06", "write a secret with a plaintext key", Turns("done",
@@ -128,6 +129,7 @@ func TestT034_07_GateAndFileGuardOfOneRuleWorkTogether(t *testing.T) {
 	e.GitInit(proj)
 	e.Gate(proj, "no-plaintext-keys", preventGate, map[string]string{"check.sh": checkNoPlaintextKey})
 	e.FileGuard(proj, "no-plaintext-keys", resultGuard, map[string]string{"check.sh": checkNoPlaintextKey})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 
 	bad := e.Run(proj, "s-034-07a", "write a secret with a plaintext key", Turns("done",

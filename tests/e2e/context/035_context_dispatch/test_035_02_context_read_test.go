@@ -166,6 +166,7 @@ func TestT035_05_FileGuardMatchReadsContext(t *testing.T) {
 		"exit.sh":  exitStayActive,
 	})
 	e.FileGuard(proj, "no-debug-in-refactor", contextGatedFileGuard, map[string]string{"check.sh": checkNoDebugPrint})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guards")
 
 	sess := "s-035-05"
@@ -205,6 +206,7 @@ func TestT035_06_FileGuardDoesNotFireOutsideContext(t *testing.T) {
 		"exit.sh":  exitStayActive,
 	})
 	e.FileGuard(proj, "no-debug-in-refactor", contextGatedFileGuard, map[string]string{"check.sh": checkNoDebugPrint})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guards")
 
 	sess := "s-035-06"

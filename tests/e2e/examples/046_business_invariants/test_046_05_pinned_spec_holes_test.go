@@ -180,7 +180,7 @@ func TestT046_18_RepinToNewWordingIsRefused(t *testing.T) {
 
 	withException := strings.Replace(billingSpec, "(end)\n", "3a. Goodwill refunds are exempt from rule 2.\n(end)\n", 1)
 	e.WriteFile(proj, "SPEC.md", withException)
-	e.Git(proj, "commit", "-am", "an exception on a line of its own")
+	e.CommitAll(proj, "an exception on a line of its own")
 	newSha := e.Git(proj, "rev-parse", "HEAD")
 
 	repinned := invariantCode(proj+"@"+newSha+":SPEC.md#L3-4",
@@ -205,7 +205,7 @@ func TestT046_19_RepinToSameWordingNeedsNothing(t *testing.T) {
 
 	shifted := strings.Replace(billingSpec, "Billing invariants\n", "Billing invariants\n(see also PAYMENTS.md)\n", 1)
 	e.WriteFile(proj, "SPEC.md", shifted)
-	e.Git(proj, "commit", "-am", "a line above the rules")
+	e.CommitAll(proj, "a line above the rules")
 	newSha := e.Git(proj, "rev-parse", "HEAD")
 
 	repinned := invariantCode(proj+"@"+newSha+":SPEC.md#L4-4", refundBody)

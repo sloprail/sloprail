@@ -345,6 +345,7 @@ func TestT038_06_AFileAddedAndDeletedInOneRangeIsNotJudged(t *testing.T) {
 	e.WriteFile(proj, "README", "a project\n")
 	observed := e.NewLedger("observer")
 	e.FileGuard(proj, "says-ok", guardYAML(""), map[string]string{"check.sh": contentCheck})
+	e.DisableShippedFileGuards(proj)
 	e.FileGuard(proj, "observer", guardYAML("only"), map[string]string{"check.sh": ledgerCheck(observed)})
 	e.CommitAll(proj, "the project before the session")
 

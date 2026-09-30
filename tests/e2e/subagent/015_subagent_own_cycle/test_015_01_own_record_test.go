@@ -37,6 +37,7 @@ func TestT015_01_AnIsolatedSubagentJudgesItsOwnWorkAsItself(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	// Bash, not Write. The mock executes Bash and applies it in whatever tree the
@@ -125,6 +126,7 @@ func TestT015_02_ASharedTreeSubagentsWorkIsJudgedAtTheRootsStop(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
@@ -205,6 +207,7 @@ func TestT015_03_ASubagentsStateDoesNotPoolWithItsParents(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
@@ -291,6 +294,7 @@ func TestT015_04_TwoSubagentsDoNotReadEachOthersState(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "memo", readsBackItsOwnState, map[string]string{"record.sh": readsBackScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	first := harness.SubagentScript(t, harness.Turns("one done", Bash("a1", "echo one > first-subs-file.md")).ThenCommit("the first sub-agent's work"))
@@ -365,6 +369,7 @@ func TestT015_05_ASubagentsCycleJudgesEverythingItChanged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",

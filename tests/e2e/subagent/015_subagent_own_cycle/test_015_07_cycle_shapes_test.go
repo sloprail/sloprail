@@ -168,6 +168,7 @@ func TestT015_08_AReFiredSubagentStopJudgesNothingAgainUnderACapOfOne(t *testing
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysScript})
+	e.DisableShippedFileGuards(proj)
 	writeBlockCap(t, proj, 1)
 	e.GitInit(proj)
 
@@ -219,6 +220,7 @@ func TestT015_08b_ByDefaultAReFiredSubagentStopIsJudged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "always", refusesEverything, map[string]string{"record.sh": refuseAlwaysScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
@@ -304,6 +306,7 @@ func TestT015_09_ASubagentThatChangesNothingJudgesNothing(t *testing.T) {
 			e := New(t)
 			proj := e.Project()
 			e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+			e.DisableShippedFileGuards(proj)
 			e.GitInit(proj)
 
 			sub := harness.SubagentScript(t, harness.Turns("sub done", tc.turns...))
@@ -381,6 +384,7 @@ func TestT015_10_ASubagentThatCommitsStillHasItsWorkJudged(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",

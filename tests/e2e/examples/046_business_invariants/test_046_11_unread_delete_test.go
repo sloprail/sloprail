@@ -10,8 +10,8 @@ package e2e
 
 import (
 	"encoding/json"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,21 +22,11 @@ import (
 func unreadDeleteRepo(t *testing.T) (repo, shaV1 string) {
 	t.Helper()
 	repo = t.TempDir()
-	git := func(args ...string) string {
-		out, err := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v %s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	git("init", "-q")
+	harness.InitRepo(t, repo)
 	writeExec(t, repo, "SPEC.md", billingSpec)
-	git("add", "-A")
-	git("commit", "-qm", "spec")
-	shaV1 = git("rev-parse", "HEAD")
+	shaV1 = harness.CommitAllIn(t, repo, "spec")
 	writeExec(t, repo, "charge.go", invariantCode(repo+"@"+shaV1+":SPEC.md#L3-3", refundBody))
-	git("add", "-A")
-	git("commit", "-qm", "pinned charge")
+	harness.CommitAllIn(t, repo, "pinned charge")
 	return repo, shaV1
 }
 

@@ -132,6 +132,7 @@ func project(t *testing.T) (*harness.Env, string, string) {
 	// earlier passes.
 	ledger := filepath.Join(t.TempDir(), "answers")
 	e.FileGuard(proj, "asker", askAndMaybeRefuse, map[string]string{"ask.sh": strings.ReplaceAll(askTemplate, "LEDGER", ledger)})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 	return e, proj, ledger
 }

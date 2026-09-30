@@ -64,10 +64,10 @@ func commitCmd(stage []string, subject string, trailers ...string) string {
 	return quote(stage) + " && " + quote(commitArgs(subject, trailers...))
 }
 
-// gitIn runs git in dir and returns its trimmed output, failing the test on an error.
+// Git runs git in dir and returns its trimmed output, failing the test on an error.
 // A package function so the installers that have no Env — they are handed a directory —
 // use the same runner as Env.Git.
-func gitIn(t testing.TB, dir string, args ...string) string {
+func Git(t testing.TB, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
@@ -81,9 +81,27 @@ func gitIn(t testing.TB, dir string, args ...string) string {
 // commitIn stages (see stageArgs), commits, and returns the new HEAD.
 func commitIn(t testing.TB, dir string, stage []string, msg string, trailers ...string) string {
 	t.Helper()
-	gitIn(t, dir, stage...)
-	gitIn(t, dir, commitArgs(msg, trailers...)...)
-	return gitIn(t, dir, "rev-parse", "HEAD")
+	Git(t, dir, stage...)
+	Git(t, dir, commitArgs(msg, trailers...)...)
+	return Git(t, dir, "rev-parse", "HEAD")
+}
+
+// InitRepo makes dir a repository on `main` with a local identity and signing off, and
+// no commit. For the repositories a test builds beside the sandbox (a second project, a
+// spec repository) that have no Env; Env.GitInit is this plus the first commit.
+func InitRepo(t testing.TB, dir string) {
+	t.Helper()
+	Git(t, dir, "init", "-q", "--initial-branch=main")
+	Git(t, dir, "config", "user.email", "e2e@example.invalid")
+	Git(t, dir, "config", "user.name", "E2E")
+	Git(t, dir, "config", "commit.gpgsign", "false")
+}
+
+// CommitAllIn is Env.CommitAll for a directory that has no Env: stage everything,
+// commit with msg and the trailers, return the new HEAD.
+func CommitAllIn(t testing.TB, dir, msg string, trailers ...string) string {
+	t.Helper()
+	return commitIn(t, dir, stageArgs(), msg, trailers...)
 }
 
 // CommitAll stages everything in dir and commits it with msg, carrying the given
@@ -92,7 +110,7 @@ func commitIn(t testing.TB, dir string, stage []string, msg string, trailers ...
 // the history too and a test that forgot one would be judging a different tree.
 func (e *Env) CommitAll(dir, msg string, trailers ...string) string {
 	e.t.Helper()
-	return commitIn(e.t, dir, stageArgs(), msg, trailers...)
+	return CommitAllIn(e.t, dir, msg, trailers...)
 }
 
 // CommitAllExcept is CommitAll but leaves the given paths (relative to dir) out:
@@ -127,7 +145,7 @@ func CommitInstalled(t testing.TB, dir string) {
 	if exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree").Run() != nil {
 		return
 	}
-	commitIn(t, dir, stageArgs(), "install the guardrail tree")
+	CommitAllIn(t, dir, "install the guardrail tree")
 }
 
 // CommitFile is a scenario turn in which the AGENT writes a file and commits it —

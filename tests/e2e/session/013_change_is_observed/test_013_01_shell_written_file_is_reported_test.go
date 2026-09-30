@@ -62,6 +62,7 @@ func TestT013_01_AFileWrittenByAShellRedirectIsReported(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-013-01", "write through a script", Turns("done",
@@ -92,6 +93,7 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	// One turn that genuinely writes, so the cycle is not empty and a build

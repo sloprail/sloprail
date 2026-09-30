@@ -35,6 +35,7 @@ func TestT034_11_JudgeModelAndTimeoutReachTheInvocation(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "substantive-memory", judgeGuardModelTimeout, map[string]string{"judge.md.j2": judgeGuardTemplate})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 
 	// A recording shim: writes the failing verdict AND records the claude argv, so
@@ -100,6 +101,7 @@ func TestT034_12_ScopedAllowedToolsReachTheHarnessIntact(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "substantive-memory", judgeGuardScopedTools, map[string]string{"judge.md.j2": judgeGuardTemplate})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 
 	argvFile := filepath.Join(proj, "claude-argv.txt")
@@ -161,6 +163,7 @@ func TestT034_13_DisallowedToolsReachTheHarnessIntact(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "substantive-memory", judgeGuardDisallowedTools, map[string]string{"judge.md.j2": judgeGuardTemplate})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule and its scripts")
 
 	argvFile := filepath.Join(proj, "claude-argv.txt")
@@ -214,6 +217,7 @@ func TestT034_14_BadDisallowedToolsIsRefusedAtLoad(t *testing.T) {
 	proj := e.Project()
 	e.FileGuard(proj, "unclosed", "match: \"memories/**\"\nchecks:\n  - judge: ./judge.md.j2\n    disallowed_tools: [\"Bash(curl * -o *\"]\n",
 		map[string]string{"judge.md.j2": judgeGuardTemplate})
+	e.DisableShippedFileGuards(proj)
 	e.FileGuard(proj, "onscript", "match: \"memories/**\"\nchecks:\n  - script: ./check.sh\n    disallowed_tools: [WebSearch]\n",
 		map[string]string{"check.sh": "#!/bin/sh\ncat >/dev/null\nexit 0\n"})
 

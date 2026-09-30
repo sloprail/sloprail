@@ -122,6 +122,7 @@ func TestT006_02_WorkInSeparateCommitsIsOneChangeset(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("events")
 	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 	base := e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-02", "write and commit", Turns("done",
@@ -264,6 +265,7 @@ func TestT006_04_APostRefusalBlocksTheTurnWithoutUndoingTheWork(t *testing.T) {
 		"record.sh": "#!/bin/sh\ncat >/dev/null\necho ran >> " + ranLog + "\n" +
 			"echo '{\"reason\":\"this file should not have been written\"}'\nexit 1\n",
 	})
+	e.DisableShippedFileGuards(proj)
 	// A SECOND rule, bound to the end of the cycle, which the first one's refusal
 	// must not silence. Without it this test cannot fail for the right reason. The
 	// file survives a refusal whatever the engine does — a Post event describes
@@ -343,6 +345,7 @@ func TestT006_05_UncommittedWorkIsRefusedUntilCommitted(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("events")
 	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-006-05", "write a scratch file", Turns("done",
@@ -387,6 +390,7 @@ func TestT006_06_EveryRefusalReachesTheAgentAtOnce(t *testing.T) {
 		e.FileGuard(proj, name, recordFileEvent, map[string]string{
 			"record.sh": "#!/bin/sh\ncat >/dev/null\necho '{\"reason\":\"objection from " + name + "\"}'\nexit 1\n",
 		})
+		e.DisableShippedFileGuards(proj)
 	}
 	e.CommitAll(proj, "the project before the session")
 

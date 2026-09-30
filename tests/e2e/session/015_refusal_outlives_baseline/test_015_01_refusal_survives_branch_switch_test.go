@@ -116,6 +116,7 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	const sess = "s-015-01"
@@ -162,6 +163,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.DisableShippedFileGuards(proj)
 
 	// The rule is committed first, so it exists on both lines of history.
 	// Without this the checkout below deletes .sloprail/ along with everything
@@ -293,6 +295,7 @@ fi
 exit 0
 `
 	e.FileGuard(proj, "watcher", refuseContentGuard, map[string]string{"judge.sh": judgeContentScript})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	const sess = "s-015-03"
@@ -360,6 +363,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.DisableShippedFileGuards(proj)
 	// The harness's own scenario script is kept out of every commit: a tracked
 	// copy rewritten by the next cycle would abort the branch switch below.
 	writeFile(t, proj, ".gitignore", ".scenario.sh\n")
@@ -370,8 +374,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	// the file on disk WITHOUT putting it in the difference.
 	e.Git(proj, "checkout", "-b", "feature", root)
 	writeFile(t, proj, "bad-file.md", "violates\n")
-	e.Git(proj, "add", "bad-file.md")
-	e.Git(proj, "commit", "-m", "the bad file, already on this line")
+	e.CommitAll(proj, "the bad file, already on this line")
 	e.Git(proj, "checkout", "main")
 	e.Git(proj, "commit", "--allow-empty", "-m", "on main, after the split")
 

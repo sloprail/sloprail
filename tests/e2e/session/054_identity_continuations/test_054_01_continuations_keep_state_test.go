@@ -26,6 +26,7 @@ func installProbe(t *testing.T, e *harness.Env, dir string) string {
 	t.Helper()
 	ledger := filepath.Join(t.TempDir(), "log")
 	e.FileGuard(dir, "control", harness.ControlGuard, map[string]string{"probe.sh": probeScript(ledger)})
+	e.DisableShippedFileGuards(dir)
 	return ledger
 }
 
@@ -160,7 +161,7 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 
 	e.Run(proj, "orig-03", "start", Turns("done",
 		Write("w1", "one.md", "first"),
-		Bash("b1", "git add -A && git -c user.email=a@b.invalid -c user.name=a commit -qm work --no-gpg-sign"),
+		harness.Commit("b1", "work"),
 		Compact("c1"),
 	))
 	moved := e.Git(proj, "rev-parse", "HEAD")

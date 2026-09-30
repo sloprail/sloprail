@@ -963,12 +963,9 @@ func (e *Env) runBinEnv(dir, stdin string, extraEnv []string, binary string, arg
 // depend on whatever the machine has configured.
 func (e *Env) GitInit(dir string) {
 	e.t.Helper()
-	e.Git(dir, "init", "--initial-branch=main")
-	e.Git(dir, "config", "user.email", "e2e@example.invalid")
-	e.Git(dir, "config", "user.name", "E2E")
+	InitRepo(e.t, dir)
 	e.excludeMockFiles(dir)
-	e.Git(dir, "add", "-A")
-	e.Git(dir, "commit", "--allow-empty", "-m", "initial")
+	e.CommitAll(dir, "initial")
 }
 
 // excludeMockFiles keeps the mock's own scenario scripts out of every commit the test
@@ -995,7 +992,7 @@ func (e *Env) excludeMockFiles(dir string) {
 // Git runs a git command in dir and returns its trimmed output.
 func (e *Env) Git(dir string, args ...string) string {
 	e.t.Helper()
-	return gitIn(e.t, dir, args...)
+	return Git(e.t, dir, args...)
 }
 
 // Meta reads one of the engine's own per-session facts — the baseline commit,

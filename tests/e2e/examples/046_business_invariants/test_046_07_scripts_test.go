@@ -9,6 +9,7 @@ package e2e
 import (
 	"bytes"
 	"errors"
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,19 +193,13 @@ func writeExec(t *testing.T, dir, name, body string) {
 // a jq call per field.
 func TestT046_35_AnUnpinnedFileIsAnsweredCheaply(t *testing.T) {
 	repo := t.TempDir()
-	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "t@t"}, {"config", "user.name", "t"}} {
-		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v %s", args, err, out)
-		}
-	}
+	harness.InitRepo(t, repo)
 	writeExec(t, repo, "SPEC.md", "rules\n1. a\n")
 	if err := os.MkdirAll(filepath.Join(repo, "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeExec(t, repo, "src/a.go", "// sr:invariant \""+repo+"@0000000:SPEC.md#L2-2\"\nfunc A() {}\n")
-	if out, err := exec.Command("sh", "-c", "cd "+repo+" && git add -A && git commit -qm x --no-gpg-sign").CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v %s", err, out)
-	}
+	harness.CommitAllIn(t, repo, "x")
 
 	// Shims that log each call, then run the real tool.
 	shims, log := t.TempDir(), filepath.Join(t.TempDir(), "calls")

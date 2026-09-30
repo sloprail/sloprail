@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
@@ -53,6 +54,7 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 
 	// The guardrail is committed to the ROOT, before either branch diverges, so
 	// it exists on both lines of history.
@@ -131,11 +133,13 @@ func TestT014_02_ANewBranchOffOwnWorkKeepsItInTheDifference(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	e.Run(proj, "s-014-02", "commit then branch", Turns("done",
 		Write("w1", "session-work.md", "written by this session\n"),
-		Bash("b1", "git add -A && git commit -m 'agent commit' && git checkout -b feature"),
+		harness.Commit("b1", "agent commit"),
+		Bash("b2", "git checkout -b feature"),
 	))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {

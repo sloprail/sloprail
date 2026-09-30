@@ -43,7 +43,7 @@ func TestT002_01_UncommittedGuardedWorkRefusesTheStopUntilItIsCommitted(t *testi
 	// Pass: the agent commits what it wrote.
 	seen := len(refused)
 	e.Run(proj, "s-002-01", "now commit it", Turns("committed",
-		Bash("c1", "git add -A && git commit -q -m 'add the doc'"),
+		harness.Commit("c1", "add the doc"),
 	))
 	if n := len(harness.CommitRequired(e.BlockingErrorsFrom(proj, "s-002-01", "Stop"))); n != seen {
 		t.Fatalf("after committing, the Stop was refused again (%d refusals, had %d)", n, seen)

@@ -27,6 +27,7 @@ func TestT015_11_ASubagentInASubdirectoryIsJudgedOnTreeRelativePaths(t *testing.
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	sub := harness.SubagentScript(t, harness.Turns("sub done",
@@ -105,6 +106,7 @@ func TestT015_12_ASubagentThatDelegatesFurtherStillHasItsOwnCycleJudged(t *testi
 	e := New(t)
 	proj := e.Project()
 	e.FileGuard(proj, "recorder", recordsPathAndSession, map[string]string{"record.sh": recordScript})
+	e.DisableShippedFileGuards(proj)
 	e.GitInit(proj)
 
 	// What the inner dispatch would run, if the harness executed it.

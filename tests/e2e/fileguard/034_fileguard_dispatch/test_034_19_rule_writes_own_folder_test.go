@@ -39,6 +39,7 @@ func TestT034_19_ARuleThatWritesItsOwnFolderLosesItsWatermark(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "own-ledger", writesOwnFolderGuard, map[string]string{"check.sh": writesOwnFolderCheck})
+	e.DisableShippedFileGuards(proj)
 	harness.CommitInstalled(t, proj)
 
 	const session = "s-034-19"

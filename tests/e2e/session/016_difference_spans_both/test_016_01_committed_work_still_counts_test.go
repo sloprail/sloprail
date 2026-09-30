@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"testing"
 
 	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
@@ -39,6 +40,7 @@ func TestT016_01_CommittedWorkIsStillReported(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	e.Run(proj, "s-016-01", "write and commit", Turns("done",
@@ -83,12 +85,13 @@ func TestT016_02_CommittedAndUncommittedWorkBothArrive(t *testing.T) {
 	e.GitInit(proj)
 	led := e.NewLedger("seen")
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(led.Path())})
+	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the guardrail before the session")
 
 	const sess = "s-016-02"
 	e.Run(proj, sess, "commit one, leave one", Turns("done",
 		Write("w1", "committed.md", "this one is committed\n"),
-		Bash("b1", "git add committed.md && git commit -q -m 'agent commit'"),
+		harness.CommitPaths("b1", "agent commit", "committed.md"),
 		Write("w2", "outstanding.md", "this one is not\n"),
 	))
 
