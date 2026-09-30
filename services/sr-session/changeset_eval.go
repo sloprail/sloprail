@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -21,7 +22,6 @@ import (
 	"github.com/sloprail/sloprail/internal/natures"
 	"github.com/sloprail/sloprail/internal/sessionpath"
 	"github.com/sloprail/sloprail/internal/sessionstate"
-	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // Evaluating file-guards at Stop: one changeset per rule.
@@ -150,7 +150,7 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 	rule := g.Qualified()
 	run := checkstore.CheckRun{CheckID: rule, Metadata: map[string]any{"eventKind": changeset.Kind}}
 
-	hash, err := changeset.RuleHash(g.Dir)
+	hash, err := changeset.RuleHash(g.Root())
 	if err != nil {
 		return ev.engineFailure(g, run, err)
 	}
@@ -192,7 +192,7 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 		return fileGuardResult{}, false
 	}
 
-	unresolved := ev.resolveCitations(&cs)
+	unresolved := resolveChangesetCitations(&cs, ev.scope.Transcript, ev.p.Cwd)
 
 	tree, err := gitrepo.AddSnapshot(ev.root, "", r.Head)
 	if err != nil {
@@ -207,7 +207,7 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 	payload := changeset.NewPayload(cs, changeset.Whole(cs), ev.scope.Transcript, ev.context)
 	req := dispatchcore.Request{
 		Nature:         dispatchcore.NatureFileGuard,
-		Event:          event.Event{Kind: changeset.Kind, Fields: map[string]any{grounding.FieldCitations: grounding.ToWire(cs.Citations)}},
+		Event:          event.Event{Kind: changeset.Kind, Fields: map[string]any{grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.Citations))}},
 		TranscriptPath: ev.scope.Transcript,
 		Context:        ev.contextMap,
 		Dir:            g.Dir,
@@ -243,21 +243,6 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 	return fileGuardResult{}, false
 }
 
-// resolveCitations grounds the range's Sloprail-Cites-* trailers in the
-// transcripts on disk, exactly as `sr-file --cite` would.
-func (ev *changesetEvaluation) resolveCitations(cs *changeset.Changeset) []changeset.Unresolved {
-	if ev.scope.Transcript == "" {
-		return nil
-	}
-	project := projectDirOf(ev.scope.Transcript, ev.p.Cwd)
-	resolve := func(req transcript.CitationRequest) (transcript.Citation, error) {
-		return transcript.ResolveCitationAcrossSessions(ev.scope.Transcript, project, req)
-	}
-	var missed []changeset.Unresolved
-	cs.Citations, missed = changeset.ResolveCitations(cs.Commits, resolve)
-	return missed
-}
-
 // runRule runs a rule's require and then its checks in order, recording each and
 // stopping at the first refusal. The error is an engine failure to run a check
 // (already recorded as such): the caller refuses on it.
@@ -274,7 +259,13 @@ func (ev *changesetEvaluation) runRule(g declaration.FileGuard, hash string, req
 
 		one := req
 		one.Require = []declaration.Prerequisite{p}
-		v, err := ev.runner.CheckRequire(one)
+		var v dispatchcore.Verdict
+		var err error
+		if p.Citation != nil {
+			v, err = ev.requireCitationPerFile(one, p, payload.Changeset)
+		} else {
+			v, err = ev.runner.CheckRequire(one)
+		}
 		rec := checkstore.CheckRecord{Subject: changeset.DefaultSubjectID, Kind: kind}
 		switch {
 		case err != nil:
@@ -311,6 +302,41 @@ func (ev *changesetEvaluation) runRule(g declaration.FileGuard, hash string, req
 		}
 	}
 	return dispatchcore.Verdict{}, nil
+}
+
+// requireCitationPerFile is `require: citation` on a changeset: each selected file
+// must be grounded by a citation quoted in the commit that last changed it, so a
+// commit that cites one file does not ground another, and an uncited change on top
+// of a cited one is refused. The prerequisite (its pools, its `when`) is asked once
+// per file, about that file's own citations; a `when` script still receives the
+// whole changeset. Every file that is not grounded is named.
+func (ev *changesetEvaluation) requireCitationPerFile(req dispatchcore.Request, p declaration.Prerequisite, cs changeset.Changeset) (dispatchcore.Verdict, error) {
+	var first dispatchcore.Verdict
+	var uncited []string
+	for _, f := range cs.Files {
+		one := req
+		one.Event = event.Event{Kind: changeset.Kind, Fields: map[string]any{
+			"path":                   f.Path,
+			grounding.FieldCitations: grounding.ToWire(changeset.Plain(cs.ForFile(f))),
+		}}
+		v, err := ev.runner.CheckRequire(one)
+		if err != nil {
+			return dispatchcore.Verdict{}, err
+		}
+		if !v.Refused {
+			continue
+		}
+		if len(uncited) == 0 {
+			first = v
+		}
+		uncited = append(uncited, f.Path)
+	}
+	if len(uncited) == 0 {
+		return dispatchcore.Verdict{}, nil
+	}
+	first.Reason = fmt.Sprintf("a citation grounds only the commit it is in. Not grounded by a citation in the commit that last changed it: %s.\n%s",
+		strings.Join(uncited, ", "), first.Reason)
+	return first, nil
 }
 
 // runCheck runs one check of a rule and records it. A judge is fingerprinted and

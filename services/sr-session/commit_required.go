@@ -34,6 +34,9 @@ import (
 // it refuses in the harness's real blocking form (`block`), because a bare string
 // returned instead let the agent end its turn anyway.
 //
+// A rename counts when its new path OR the path it left is selected
+// (changeset.Selects): moving a file out of a guarded path is a change to it.
+//
 // Only paths a rule actually SELECTS count: scratch files and unguarded paths
 // never trigger it, and under `deletions: skip` an uncommitted deletion is not
 // selected.
@@ -97,7 +100,7 @@ func commitRequired(cmd *cobra.Command, p HookPayload, guards []declaration.File
 				continue
 			}
 			scope := uncommittedScope(root, c)
-			ok, err := selects(scope)
+			ok, err := changeset.Selects(selects, scope)
 			if err != nil {
 				return fmt.Sprintf("the file-guard %q could not be evaluated on the uncommitted %s: %v; refusing because a rule that could not decide must not be read as approval", g.Name, c.Path, err)
 			}
@@ -155,7 +158,7 @@ func uncommittedScope(root string, c gitrepo.Uncommitted) changeset.Scope {
 	} else {
 		markers = oldMarkers
 	}
-	return changeset.Scope{Path: c.Path, Status: status, Markers: markers, OldMarkers: oldMarkers, Trailers: map[string][]string{}}
+	return changeset.Scope{Path: c.Path, OldPath: c.OldPath, Status: status, Markers: markers, OldMarkers: oldMarkers, Trailers: map[string][]string{}}
 }
 
 func commitRequiredMessage(owed []uncommittedGuarded) string {

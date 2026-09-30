@@ -104,3 +104,36 @@ func TestT002_04_NoFileGuardsNoCommitRequired(t *testing.T) {
 		t.Fatalf("refused with no file-guard declared: %q", errs)
 	}
 }
+
+// T002_09: an UNCOMMITTED rename out of a guarded path is owed a commit, under the
+// default `deletions: skip` too (a rename is not a deletion): moving docs/seed.md
+// away is a change to the guarded file, and leaving it uncommitted would leave the
+// rule nothing to judge. A rename between unguarded paths is not.
+func TestT002_09_AnUncommittedRenameOutOfAGuardedPathIsOwedACommit(t *testing.T) {
+	e, proj := project(t)
+	before := e.Git(proj, "rev-parse", "HEAD")
+	e.Run(proj, "s-002-09", "archive the doc", Turns("done",
+		Bash("b1", "mkdir -p archive && git mv docs/seed.md archive/seed.md"),
+	))
+	refused := harness.CommitRequired(e.BlockingErrorsFrom(proj, "s-002-09", "Stop"))
+	if len(refused) == 0 {
+		t.Fatalf("an uncommitted rename out of a guarded path was not refused; blocking errors: %q", e.BlockingErrors(proj, "s-002-09"))
+	}
+	for _, want := range []string{"archive/seed.md", "renamed", "file-guard/docs"} {
+		if !strings.Contains(refused[0], want) {
+			t.Fatalf("the refusal should name %q:\n%s", want, refused[0])
+		}
+	}
+	if e.Git(proj, "rev-parse", "HEAD") != before {
+		t.Fatal("the engine committed for the agent")
+	}
+
+	// Control: a rename between two unguarded paths owes nothing.
+	e2, proj2 := project(t)
+	e2.Run(proj2, "s-002-09b", "rename the note", Turns("done",
+		Bash("b1", "git mv notes/scratch.md notes/kept.md"),
+	))
+	if errs := harness.CommitRequired(e2.BlockingErrorsFrom(proj2, "s-002-09b", "Stop")); len(errs) != 0 {
+		t.Fatalf("an uncommitted rename between unguarded paths was refused: %q", errs)
+	}
+}

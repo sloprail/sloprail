@@ -50,7 +50,7 @@ func resolveRuleRange(root string, g declaration.FileGuard, ruleHash string, res
 			sessionStart = ""
 		}
 	}
-	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Dir), watermark, sessionStart)
+	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Root()), watermark, sessionStart)
 	if err != nil {
 		return gitrepo.Range{}, err
 	}

@@ -14,6 +14,7 @@
 package changeset
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/sloprail/sloprail/internal/transcript"
@@ -55,8 +56,21 @@ type Changeset struct {
 	// moved without paying for it.
 	Others []Other `json:"others"`
 	// Citations are the quotes the range's commits ground themselves in, resolved
-	// against the transcripts, in the shape an event's citations have.
-	Citations []transcript.Citation `json:"citations"`
+	// against the transcripts, in the shape an event's citations have, each with
+	// the commits that carried it and the selected files those commits changed.
+	// They accumulate over the whole range, for a judge; `require: citation`
+	// reads them per file (see ForFile).
+	Citations []Citation `json:"citations"`
+}
+
+// Citation is one resolved quote of the range, and where in the range it came
+// from. The quote's own fields are an event citation's, flattened.
+type Citation struct {
+	transcript.Citation
+	// Commits are the SHAs of the range's commits whose trailers quote it.
+	Commits []string `json:"commits"`
+	// Files are the selected files those commits changed.
+	Files []string `json:"files"`
 }
 
 // Commit is one commit of the range.
@@ -82,6 +96,9 @@ type File struct {
 	NewMarkers []Marker `json:"newMarkers"`
 	// Diff is this file's part of the squashed diff.
 	Diff string `json:"diff"`
+	// Commits are the SHAs of the range's commits that changed this file, oldest
+	// first, a rename followed back to the name the file had before it.
+	Commits []string `json:"commits"`
 }
 
 // Other is a file of the range the rule did not select.
@@ -156,4 +173,32 @@ func (cs Changeset) Change() string {
 		}
 	}
 	return b.String()
+}
+
+// ForFile is the citations that ground a file: those quoted by the commit that
+// last changed it. A citation grounds the change it rode on, so an uncited change
+// on top of a cited one leaves the file uncited, while a cited commit on top of an
+// uncited one grounds the file as it now stands — the same way `sr-file` cited the
+// whole file. A file no commit is known to have changed has no citations.
+func (cs Changeset) ForFile(f File) []Citation {
+	if len(f.Commits) == 0 {
+		return nil
+	}
+	tip := f.Commits[len(f.Commits)-1]
+	var out []Citation
+	for _, c := range cs.Citations {
+		if slices.Contains(c.Commits, tip) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Plain is the citations as an event carries them, without where they came from.
+func Plain(cites []Citation) []transcript.Citation {
+	out := make([]transcript.Citation, 0, len(cites))
+	for _, c := range cites {
+		out = append(out, c.Citation)
+	}
+	return out
 }
