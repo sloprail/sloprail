@@ -19,7 +19,8 @@ import (
 // recorded when the session began. results and state may be nil (nothing
 // recorded yet); any failure of either, or of git, is an error and no range.
 //
-// A watermark that had to be passed over — an amend or a rebase orphaned it — is
+// A watermark that had to be passed over — an amend or a rebase orphaned the
+// newest pass, whether the base then falls to an older pass or to a floor — is
 // reported on the returned range as DroppedWatermark, so a range that widened
 // says why. gitrepo.ErrNoCommits is returned as itself: nothing is committed, so
 // nothing can be judged.
@@ -46,7 +47,7 @@ func resolveRuleRange(root string, g declaration.FileGuard, ruleHash string, res
 	if err != nil {
 		return gitrepo.Range{}, err
 	}
-	if r.Origin != gitrepo.FromWatermark && r.DroppedWatermark == "" {
+	if r.DroppedWatermark == "" {
 		r.DroppedWatermark = dropped
 	}
 	return r, nil

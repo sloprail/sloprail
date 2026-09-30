@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 )
 
@@ -31,7 +32,14 @@ func (e *Env) StopNow(projDir, sessionID string, active bool) Result {
 		"cwd": projDir, "stop_hook_active": active, "hook_event_name": "Stop",
 	})
 	return e.CLIDirectStdinEnv(projDir, string(payload),
-		[]string{"CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE=", "CLAUDE_CODE_SESSION_ID="}, "sr-session", "stop")
+		[]string{
+			"CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDE_CODE_SESSION_ID=",
+			// What a hook's environment names, so a judge's sr-agent finds its harness —
+			// and never the operator's own claude, whatever launched the tests.
+			"CLAUDECODE=1", "CLAUDE_CODE_ENTRYPOINT=cli", "CLAUDE_CODE_EXECPATH=",
+			// As in a hooked run: the judge's `claude` is the harness's shim, never the operator's.
+			"PATH=" + e.shimDir + string(os.PathListSeparator) + e.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		}, "sr-session", "stop")
 }
 
 // Blocked reports whether a Stop's output refuses the turn: the blocking form the
