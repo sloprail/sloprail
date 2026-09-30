@@ -54,11 +54,11 @@ echo "{\"reason\":\"REFUSED-$kind\"}"
 exit 1
 `)
 	return declaration.FileGuard{
-		Name:       "g",
-		Match:      "docs/**",
-		Deletions:  mode,
-		Checks:     []declaration.Check{{Script: "./refuse.sh"}},
-		Dir:        dir,
+		Name:      "g",
+		Match:     "docs/**",
+		Deletions: mode,
+		Checks:    []declaration.Check{{Script: "./refuse.sh"}},
+		Dir:       dir,
 	}, ledger
 }
 
