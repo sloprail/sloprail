@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // before_refusable_only, the `after` half: refusing an after-the-fact (post)
@@ -49,16 +51,17 @@ checks:
   - script: ./refuse.sh
 `
 
-// The check records that it ran into the guard's own folder (SR_GUARDRAIL_DIR,
-// which has no .md suffix so the `**/*.md` match never re-selects it), then
-// refuses. Recording before refusing makes a run visible whether or not the
-// refusal is acted on.
-const recordThenRefuseAfter = `#!/bin/sh
+// The check records that it ran into a harness ledger (outside the project, so it cannot
+// change the rule's hash), then refuses. Recording before refusing makes a run visible
+// whether or not the refusal is acted on.
+func recordThenRefuseAfter(led *harness.Ledger) string {
+	return `#!/bin/sh
 cat >/dev/null
-echo ran >> "$SR_GUARDRAIL_DIR/ran"
+echo ran >> ` + led.Sh() + `
 echo '{"reason":"refused after it had already landed"}'
 exit 1
 `
+}
 
 // T006_02: a refusal AFTER the fact cannot prevent work that already landed — but
 // it does stop the turn.
@@ -73,8 +76,9 @@ func TestT006_02_AnAfterRefusalCannotPreventTheWork(t *testing.T) {
 	// that never dispatched.
 	e.GitInit(proj)
 
+	led := e.NewLedger("ran")
 	e.FileGuard(proj, "afterguard", refuseAfterTheWriteLanded, map[string]string{
-		"refuse.sh": recordThenRefuseAfter,
+		"refuse.sh": recordThenRefuseAfter(led),
 	})
 
 	// Committed before the session, so the guard's own files are part of the
@@ -89,7 +93,7 @@ func TestT006_02_AnAfterRefusalCannotPreventTheWork(t *testing.T) {
 	// whose absence made the original deletion correct: a guard bound to a kind
 	// nothing dispatches is silent, and a silent check is indistinguishable from
 	// one that ran and permitted.
-	if e.FileGuardLedger(proj, "afterguard", "ran") == 0 {
+	if led.Count() == 0 {
 		t.Fatalf("the after-check never ran, so nothing below is evidence about after-the-fact refusals:\n%s", got.Output)
 	}
 

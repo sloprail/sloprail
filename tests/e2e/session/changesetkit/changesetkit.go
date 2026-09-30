@@ -8,8 +8,6 @@ package changesetkit
 import (
 	"encoding/json"
 	"testing"
-
-	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
 // Observed is one file entry of one recorded changeset.
@@ -73,21 +71,6 @@ func RenamedFrom(got []Observed, path, old string) bool {
 		}
 	}
 	return false
-}
-
-// RecordScript is the check script of a recording file-guard: it appends each
-// payload to ledger as one line and passes. The ledger lives OUTSIDE the rule's
-// folder and the repository: a rule's hash covers its whole folder, so a ledger
-// growing inside it would change the hash between cycles and void the rule's
-// watermark (see the trap test in tests/e2e/fileguard/034).
-func RecordScript(ledger string) string {
-	return "#!/bin/sh\ncat >> '" + ledger + "'\necho >> '" + ledger + "'\nexit 0\n"
-}
-
-// Ledger is the recorded payloads, one per line; a ledger not yet written is empty.
-func Ledger(t testing.TB, path string) []string {
-	t.Helper()
-	return harness.ReadLedgerLines(t, path)
 }
 
 // Has reports whether some recorded changeset holds the path with the given

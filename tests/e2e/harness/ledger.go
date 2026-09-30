@@ -37,6 +37,17 @@ func (l *Ledger) Path() string { return l.path }
 // Sh is the path quoted for a shell script: `echo ran >> ` + l.Sh().
 func (l *Ledger) Sh() string { return shQuote(l.path) }
 
+// RecordScript is the check script of a recording rule: it appends each payload it is
+// handed to the ledger as one line and passes.
+func (l *Ledger) RecordScript() string { return RecordScript(l.path) }
+
+// RecordScript is a check script that appends each payload to the file at path, one line
+// per run, and passes. The path must lie outside the rule's folder and the project (see
+// Env.NewLedger, which is the usual way to get one).
+func RecordScript(path string) string {
+	return "#!/bin/sh\ncat >> " + shQuote(path) + "\necho >> " + shQuote(path) + "\nexit 0\n"
+}
+
 // Lines is what the check appended, one entry per non-blank line; a ledger never
 // written is empty, which is a real answer: the check never ran (or never recorded).
 func (l *Ledger) Lines() []string {

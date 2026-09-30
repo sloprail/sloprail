@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -168,11 +167,11 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 	e.Run(proj, sess, "cycle one", Turns("done",
 		Write("w1", "one.md", "cycle one\n"),
 	).ThenCommit("the agent's work"))
-	afterFirst := len(changesetkit.Ledger(t, ledger))
+	afterFirst := len(harness.ReadLedgerLines(t, ledger))
 	if afterFirst == 0 {
 		t.Fatalf("the first cycle never reached the hook, so nothing here can be observed")
 	}
-	answered(t, strings.Join(changesetkit.Ledger(t, ledger), "\n"))
+	answered(t, strings.Join(harness.ReadLedgerLines(t, ledger), "\n"))
 
 	// Where the mark stands after a cycle that COMPLETED. The refused cycle
 	// below must leave it exactly here.
@@ -195,7 +194,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 		t.Fatalf("the second cycle completed normally (blocking: %v), so there is no "+
 			"interrupted cycle here and the mark had every right to move", blocking)
 	}
-	afterSecond := len(changesetkit.Ledger(t, ledger))
+	afterSecond := len(harness.ReadLedgerLines(t, ledger))
 	if afterSecond <= afterFirst {
 		t.Fatalf("the second cycle never reached the hook (%d answers, was %d), so it read "+
 			"nothing and there is no span for the third cycle to be re-offered",
@@ -232,7 +231,7 @@ func TestT027_01_ARefusedCycleLeavesItsTurnsForTheNextOne(t *testing.T) {
 		Bash("b1", "rm bad-file.md"),
 		Write("w3", "three.md", "cycle three\n"),
 	).ThenCommit("the agent's work"))
-	answers := changesetkit.Ledger(t, ledger)
+	answers := harness.ReadLedgerLines(t, ledger)
 	if len(answers) <= afterSecond {
 		t.Fatalf("the third cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), afterSecond)
@@ -299,7 +298,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 		Bash("b1", "rm bad-file.md"),
 		Write("w2", "two.md", "recovered\n"),
 	).ThenCommit("the agent's work"))
-	afterRecovered := len(changesetkit.Ledger(t, ledger))
+	afterRecovered := len(harness.ReadLedgerLines(t, ledger))
 	if afterRecovered == 0 {
 		t.Fatalf("the recovering cycle never reached the hook, so nothing can be observed")
 	}
@@ -308,7 +307,7 @@ func TestT027_02_OnceTheRefusedSpanIsJudgedItStaysJudged(t *testing.T) {
 	e.Run(proj, sess, "a later cycle", Turns("done",
 		Write("w3", "three.md", "later\n"),
 	).ThenCommit("the agent's work"))
-	answers := changesetkit.Ledger(t, ledger)
+	answers := harness.ReadLedgerLines(t, ledger)
 	if len(answers) <= afterRecovered {
 		t.Fatalf("the later cycle never asked the engine anything (%d answers, was %d)",
 			len(answers), afterRecovered)

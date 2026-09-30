@@ -60,7 +60,7 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 	seen := 0
 	for i, s := range scenarios {
 		e.Run(proj, sess, "cycle", s)
-		lines := changesetkit.Ledger(t, ledger)
+		lines := harness.ReadLedgerLines(t, ledger)
 		if len(lines) < seen {
 			t.Fatalf("cycle %d: the ledger shrank (%d lines, was %d)", i+1, len(lines), seen)
 		}
@@ -90,7 +90,7 @@ func project(t *testing.T, seed ...[2]string) (*harness.Env, string, string) {
 	if len(seed) > 0 {
 		e.CommitAll(proj, "the project before the rule")
 	}
-	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
+	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": harness.RecordScript(ledger)})
 	e.DisableShippedFileGuards(proj)
 	e.CommitAll(proj, "the rule, before the session")
 	return e, proj, ledger
