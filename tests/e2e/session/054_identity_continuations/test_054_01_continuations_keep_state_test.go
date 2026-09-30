@@ -10,13 +10,16 @@ import (
 	"github.com/sloprail/sloprail/tests/e2e/harness"
 )
 
-// project is a git repository with the store probe installed.
+// project is a git repository with the store probe installed and committed: the
+// probe is a file-guard, so it runs once per Stop over the range of commits it has
+// not passed, and each cycle here writes a markdown file and commits it.
 func project(t *testing.T) (*harness.Env, string) {
 	t.Helper()
 	e := New(t)
 	proj := e.Project()
-	e.FileGuard(proj, "control", harness.ControlGuard, map[string]string{"probe.sh": harness.ControlScript})
 	e.GitInit(proj)
+	e.FileGuard(proj, "control", harness.ControlGuard, map[string]string{"probe.sh": harness.ControlScript})
+	e.CommitAll(proj, "the project and the store probe")
 	return e, proj
 }
 
@@ -78,12 +81,12 @@ func TestT054_01_ForksOfACompactedConversationKeepItsState(t *testing.T) {
 	e.Run(proj, "z-original", "start", Turns("done",
 		Write("w1", "one.md", "first"),
 		Compact("c1"),
-	))
+	).ThenCommit("the first cycle"))
 	e.RunForked(proj, "z-original", "a-fork-1", "resume once", Turns("done"))
 	readsBack(t, e, proj, "the second fork", func() {
 		e.RunForked(proj, "z-original", "a-fork-2", "resume again", Turns("done",
 			Write("w2", "two.md", "second"),
-		))
+		).ThenCommit("the second cycle"))
 	})
 	sameConversation(t, e, proj, "z-original", "a-fork-1", "a-fork-2")
 }
@@ -98,11 +101,11 @@ func TestT054_02_ABoundaryNamingAnUnwrittenParentKeepsState(t *testing.T) {
 	e.Run(proj, "orig-02", "start", Turns("done",
 		Write("w1", "one.md", "first"),
 		CompactNamingUnwrittenParent("c1"),
-	))
+	).ThenCommit("the first cycle"))
 	readsBack(t, e, proj, "the fork", func() {
 		e.RunForked(proj, "orig-02", "fork-02", "resume", Turns("done",
 			Write("w2", "two.md", "second"),
-		))
+		).ThenCommit("the second cycle"))
 	})
 	sameConversation(t, e, proj, "orig-02", "fork-02")
 }
@@ -145,9 +148,9 @@ func TestT054_03_AContinuationWhosePredecessorIsGoneKeepsItsOwnState(t *testing.
 		t.Fatalf("after the deletion the continuation resolves to %q, want its own root %q", got, want)
 	}
 
-	e.Run(proj, "fork-03", "carry on", Turns("done", Write("w2", "two.md", "second")))
+	e.Run(proj, "fork-03", "carry on", Turns("done", Write("w2", "two.md", "second")).ThenCommit("carry on"))
 	readsBack(t, e, proj, "the continuation's next cycle", func() {
-		e.Run(proj, "fork-03", "and more", Turns("done", Write("w3", "three.md", "third")))
+		e.Run(proj, "fork-03", "and more", Turns("done", Write("w3", "three.md", "third")).ThenCommit("and more"))
 	})
 
 	// The fallback store is new, so its baseline is where HEAD was at its
@@ -200,11 +203,11 @@ func TestT054_04_AResumeFromAnotherDirectoryKeepsState(t *testing.T) {
 	e.FileGuard(sub, "control", harness.ControlGuard, map[string]string{"probe.sh": harness.ControlScript})
 	e.CommitAll(proj, "sub")
 
-	e.Run(proj, "moved-04", "start", Turns("done", Write("w1", "one.md", "first")))
+	e.Run(proj, "moved-04", "start", Turns("done", Write("w1", "one.md", "first")).ThenCommit("start"))
 	readsBack(t, e, sub, "the cycle resumed from below", func() {
 		e.RunFrom(proj, "sub", "moved-04", "carry on from below", Turns("done",
 			Write("w2", "two.md", "second"),
-		))
+		).ThenCommit("carry on from below"))
 	})
 
 	if _, err := os.Stat(e.TranscriptPath(sub, "moved-04")); err == nil {

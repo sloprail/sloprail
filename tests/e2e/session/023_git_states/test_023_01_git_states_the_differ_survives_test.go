@@ -117,7 +117,7 @@ func project(t *testing.T) (*harness.Env, string) {
 // rename of it would squash to a plain add; touching the folder moves the range's
 // start past the seed.
 func settle(e *harness.Env, proj, msg string) {
-	e.WriteFile(proj, ".sloprail/file-guard/watcher/settled", msg+"\n")
+	e.WriteFile(proj, ".sloprail/file-guard/watcher/settled.md", msg+"\n")
 	e.CommitAll(proj, msg)
 }
 
@@ -466,27 +466,15 @@ func TestT023_09_QuotepathDoesNotChangeWhatTheRuleIsHanded(t *testing.T) {
 	}
 }
 
-// T023_10: a submodule's contents are never the parent's changes, and the
-// gitlink does not reach a file rule either.
+// T023_10: a submodule's contents are never the parent's changes; the gitlink
+// is one entry.
 //
-// TWO LAYERS, and measuring them separately is the point.
+// The parent's diff names the gitlink — the submodule's own path — as one entry,
+// and `.gitmodules` as an ordinary file.
 //
-// gitrepo.Changed reports the gitlink — the submodule's own path — because the
-// parent's diff names it; that is pinned by TestChanged_SubmoduleIsAGitlink
-// NotItsContents, whose comment says the path "is handed to file rules as
-// though it were one". Measured end to end, it is NOT: the gitlink is a
-// DIRECTORY on disk, so filemod's lookAt reports ErrPathIsNotAFile and no event
-// is emitted for it. What a rule is handed for `git submodule add` is
-// .gitmodules and nothing else.
-//
-// So the unit test's expectation and the observable behaviour differ, and this
-// records the observable one. It is the same shape as the nested-worktree
-// finding in 021: a non-file path enters the difference and is absorbed one
-// layer below the rules by a check that exists for an unrelated reason.
-//
-// What is asserted here, therefore: .gitmodules arrives (the parent really did
-// change), the submodule's own files never do (another repository's content is
-// not this one's work), and the gitlink produces no file event.
+// What is asserted: .gitmodules arrives (the parent really did change), the
+// submodule's own files never do (another repository's content is not this one's
+// work), and the gitlink is a single entry at the submodule's path.
 func TestT023_10_ASubmoduleIsAGitlinkNotItsContents(t *testing.T) {
 	e, proj := project(t)
 
@@ -532,14 +520,10 @@ func TestT023_10_ASubmoduleIsAGitlinkNotItsContents(t *testing.T) {
 			"the parent repository changed and nothing said so", k, got)
 	}
 
-	// The gitlink itself produces NO file event, because it is a directory on
-	// disk and filemod will not call one a file. Recorded rather than asserted
-	// as desirable: a rule bound to a path pattern matching the submodule's path
-	// will never fire, and the unit test's comment says the opposite.
-	if k := statusesFor(got, "vendored"); len(k) > 0 {
-		t.Fatalf("the submodule's gitlink reached a file rule as %v: %v\n"+
-			"it is a directory on disk, so this test's note about lookAt dropping it is now "+
-			"wrong and the layering described in this file's header has changed", k, got)
+	// The gitlink itself is ONE entry at the submodule's own path — a pointer, not
+	// a tree — and nothing beneath it (checked above).
+	if k := statusesFor(got, "vendored"); len(k) != 1 || k[0] != "A" {
+		t.Fatalf("the submodule's gitlink was reported as %v; want exactly one A entry: %v", k, got)
 	}
 }
 
@@ -572,14 +556,12 @@ func TestT023_11_AMidCycleCommitStaysInTheDifference(t *testing.T) {
 	}
 }
 
-// T023_12: a detached HEAD that still reaches the baseline does not move the
-// point.
+// T023_12: a detached HEAD does not lose the work committed before it.
 //
 // Checking out the session's own commit detaches HEAD without leaving the
-// history the point sits in, so the point must stay: the session's work is still
-// measured from where the session began. An engine that re-took the baseline on
-// any HEAD movement would push the cycle's own work out of the difference at
-// exactly the moment an agent inspects a commit.
+// history the rule's range is measured over, so the work is still in it. An
+// engine that lost the range on any HEAD movement would push the cycle's own work
+// out of the difference at exactly the moment an agent inspects a commit.
 //
 // The work written BEFORE the detach is the discriminator — it must still be
 // reported afterwards.
@@ -590,7 +572,7 @@ func TestT023_12_ADetachedHeadReachingTheBaselineKeepsThePoint(t *testing.T) {
 	e.Run(proj, sess, "write then detach", Turns("done",
 		Write("w1", "early.md", "written before the detach\n"),
 		Bash("b1", "git add early.md && git commit -m 'the agent commits' && git checkout --detach HEAD"),
-	))
+	).ThenCommit("on the detached head"))
 
 	// The premise: HEAD really is detached.
 	if ref := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); ref != "HEAD" {
@@ -626,7 +608,8 @@ func TestT023_14_AnUnclassifiablePathDoesNotCostTheCycle(t *testing.T) {
 		// An empty directory git will not report, and a submodule-shaped
 		// directory it will: a nested repository is untracked content that is
 		// not a file.
-		Bash("b1", "mkdir -p nested && git -c init.defaultBranch=main init -q nested && printf 'x\\n' > nested/inside.md"),
+		Bash("b1", "mkdir -p nested && git -c init.defaultBranch=main init -q nested && printf 'x\\n' > nested/inside.md && "+
+			"git -C nested add -A && git -C nested -c user.email=a@b.invalid -c user.name=a commit -qm inside"),
 		Write("w2", "after-it.md", "written after\n"),
 	))
 
