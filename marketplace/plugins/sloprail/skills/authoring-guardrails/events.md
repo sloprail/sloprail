@@ -113,8 +113,8 @@ not event.resultKnown                                          a gate trigger: c
 
 In a script, check `resultKnown` first; a **gate that prevents** a write refuses
 (exit 1) when the result is not known, because a write whose bytes nobody saw has
-not been checked — A file-guard never meets this: it reads the settled
-`Post*` kinds. `PreFileCreate` carries `resultKnown` too, so check it on both kinds.
+not been checked. A file-guard never meets this: it reads committed bytes from
+`changeset.files[]`. `PreFileCreate` carries `resultKnown` too, so check it on both kinds.
 Details are in [file-guard.md](file-guard.md) ("The resultKnown discipline").
 
 ### `PreCommandInvoke` — a shell command line about to run
@@ -260,7 +260,7 @@ A rule that judges only what happened **since the previous Stop** reads `seen`:
 bound to `PostFile*`). A **file-guard** does not receive Post file events: it
 judges commits. What replaces `seen` for it is the watermark — a passed range is
 never re-delivered — and the verdict cache — unchanged input is never re-judged; see
-[file-guard.md](file-guard.md#what-replaces-re-firing-and-seen).
+[file-guard.md](file-guard.md#passed-ranges-and-replayed-fails).
 
 "Earlier Stop" means the previous Stop that ran the rules, whatever it decided. A
 Stop let through un-judged at `stop_hook_block_cap`, or a turn interrupted before
@@ -298,7 +298,7 @@ at load** otherwise, rather than binding to something that silently never fires.
 |---|---|---|---|
 | **gate** | yes | yes | **no** |
 | **context** | yes | **no** (its `exit` is always checked on Stop anyway) | yes |
-| **file-guard** | binds to the file lifecycle by nature — names no kind at all (`deletions:` decides whether the delete kinds reach it) | | |
+| **file-guard** | binds to a range of commits by nature — names no kind at all (`deletions:` decides whether `D` entries reach it) | | |
 
 Alias availability follows from the table: `PreFileWrite` is admitted on both a
 gate and a context; `PostFileWrite` is **context-only** (a gate does not wake on
@@ -311,7 +311,7 @@ stdin (or a judge template renders against). The envelope differs by nature and 
 which script it feeds; all of them carry the event flat under `event`. The Go
 shapes are in `internal/declaration/payload.go`.
 
-### CheckPayload — a file-guard's script / prepare / (prepare-less) judge
+### CheckPayload — the base envelope (a file-guard's is a `Changeset`)
 
 ```json
 {"event":{"kind":"PreFileCreate","path":"memories/a.md","newContent":"…","newMarkers":[]},
@@ -319,14 +319,14 @@ shapes are in `internal/declaration/payload.go`.
  "context":{"some-context":{"active":true,"payload":{…}}}}
 ```
 
-- `event` — the file event, flat. Always a `Post*` kind: a file-guard judges the
-  settled file at Stop and is never handed a `Pre*` event. A `*FileDelete` only
-  when the guard's `deletions:` is `include` or `only`; with `only`, never a
-  create or update ([file-guard.md](file-guard.md)).
+- `event` — the event, flat. A file-guard's check does not get this envelope: it
+  gets a `Changeset` payload ([above](#changeset--what-a-file-guards-checks-receive)),
+  with deleted files as `status: "D"` entries when `deletions:` is `include` or
+  `only` ([file-guard.md](file-guard.md)).
 - `transcriptPath` — the session record, for reading what the event does not carry
   (which human message grounds this write). Also on `$SR_TRANSCRIPT`.
 - `context` — every declared context by name, `{active, payload}`, at parity with
-  the file-guard's match scope.
+  the match scope.
 
 ### GateCheckPayload — a gate's script / prepare / judge
 
@@ -386,7 +386,9 @@ own `prepare` returned one:
 </rules>
 ```
 
-A file-guard's judge also gets `{{ change }}`, the unified diff of the event's
+A file-guard's judge renders `{{ changeset }}`, `{{ subject }}` and `{{ change }}`
+(the combined diff of the files `match` selected) in place of a file event's
+fields; a gate's judge also gets `{{ change }}`, the diff of the event's
 `oldContent` to its `newContent` ([judge-checks.md](judge-checks.md)).
 
 `additionalContext` is additive — it never replaces the payload, and a `prepare`

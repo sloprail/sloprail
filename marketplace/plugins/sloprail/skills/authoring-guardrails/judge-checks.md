@@ -28,13 +28,14 @@ being an executable). Only `judge` is required; the others are optional.
 ## The template
 
 The template renders against the same facts a script's stdin carries — the payload
-spread flat at the template's top level — plus, on a file-guard, `change`: the
-unified diff of this change (the event's `oldContent` to its `newContent`; on a
-file-guard at Stop, everything since the session baseline). Wrap what the model judges in tags:
+spread flat at the template's top level — plus `change`: the unified diff of this
+change. On a file-guard it is the combined diff of the files `match` selected over
+the whole range; on a gate, the event's `oldContent` to its `newContent`. Wrap what
+the model judges in tags:
 
 ```markdown
 ## The change
-<change path="{{ event.path }}">
+<change>
 {{ change }}
 </change>
 
@@ -44,8 +45,11 @@ file-guard at Stop, everything since the session baseline). Wrap what the model 
 </rules>
 ```
 
-Available at the top level: `{{ change }}` (file-guards), `{{ event.newContent }}`,
-`{{ event.path }}`, `{{ event.kind }}` and the rest of the event's flat fields;
+Available at the top level: `{{ change }}`; `{{ changeset }}` and `{{ subject }}` on
+a file-guard (`changeset.files[]`, `.commits`, `.citations`, as in
+[file-guard.md](file-guard.md)); on a gate or context `{{ event.newContent }}`,
+`{{ event.path }}`, `{{ event.kind }}` and the rest of the event's flat fields
+(a file-guard's `event` is only `{kind: "Changeset"}`, so `event.path` is empty);
 `{{ transcriptPath }}`; `{{ context }}`; and `{{ additionalContext.* }}` when
 `prepare` ran. The full field set and the `FileJudgeInput` / `GateJudgeInput`
 envelope are in [events.md](events.md). `additionalContext` is **additive** —
