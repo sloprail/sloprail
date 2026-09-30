@@ -1,8 +1,11 @@
 package e2e
 
 import (
-	"encoding/json"
+	"os"
+	"strings"
 	"testing"
+
+	"github.com/sloprail/sloprail/tests/e2e/session/changesetkit"
 )
 
 // refusal_outlives_baseline: a file whose most recent check has passed=false is
@@ -26,24 +29,22 @@ import (
 // readdOutstanding, refusal survival across a branch switch — that the new format
 // still uses. It used to install that machinery's rule via an OLD-format guardrail
 // (`.sloprail/guardrails/watcher/GUARDRAIL.md`, `hooks: PostFileCreate: …`) and
-// observe it fire through the OLD dispatch. The new declaration store does not read
-// GUARDRAIL.md, so once the old dispatch is deleted the rule loads nothing and this
-// coverage vanishes. Re-vehicling it onto e.FileGuard makes it observe the SAME
-// behavior through the NEW dispatch — and refusal-survival IS file-guard re-fire
-// semantics, so the file-guard is the more faithful vehicle. The exact mechanical
+// observe it fire through the OLD dispatch. It now runs on e.FileGuard on the
+// commit-based model: a file-guard judges the committed changeset at Stop, and an
+// unfixed refusal survives because the next Stop's changeset still holds the file
+// (the range is unchanged until the agent commits a fix). The exact mechanical
 // transformation is in tests/e2e/REVEHICLE-PATTERN.md.
 //
 // The observation channel is a file-guard's own ledger under
 // `.sloprail/file-guard/watcher/seen` (written via $SR_GUARDRAIL_DIR), read with
-// e.FileGuardLedgerLines and parsed back into the FLAT CheckPayload (`.event.path`,
-// `.event.kind`) the new format hands a check — never the OLD nested
-// `.event.fields.path`.
+// e.FileGuardLedgerLines and parsed back into the FLAT CheckPayload (`.changeset.files[]`,
+// path and status A/M/D) the new format hands a check, decoded by changesetkit.
 
 // refuseNamedGuard is a NEW-FORMAT file-guard that refuses any file whose path
 // contains "bad", and records every file it was handed.
 //
-// After-check (a file-guard acts only at Stop): it observes at Stop and RE-FIRES
-// next cycle, which is exactly the point where refusal-survival is measured — a
+// After-check (a file-guard judges the committed changeset at Stop): the refusal
+// stands while the file stays in the changeset, which is exactly the point where refusal-survival is measured — a
 // pre-block would stop the write and there would be nothing on disk to re-report.
 //
 // `match: "**/*.md"` selects the same files the old path-based hook saw: `**/`
@@ -96,41 +97,22 @@ esac
 exit 0
 `
 
-type observed struct {
-	Kind string
-	Path string
+// countPath is how many recorded entries name the path.
+func countPath(got []changesetkit.Observed, path string) int {
+	return len(changesetkit.Statuses(got, path))
 }
 
-// observedFiles parses the FLAT CheckPayload lines the check recorded. The event's
-// own fields are spread directly under `event` (`.event.kind`, `.event.path`), NOT
-// nested under an `event.fields` envelope the way the old format wrote them — so
-// this reads Event.Kind and Event.Path directly.
-func observedFiles(t *testing.T, lines []string) []observed {
+// gitLedger reads a ledger a check kept under the project's .git directory.
+func gitLedger(t *testing.T, proj, name string) []string {
 	t.Helper()
-	var got []observed
-	for _, line := range lines {
-		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
+	b, err := os.ReadFile(proj + "/.git/" + name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
 		}
-		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
-		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
+		t.Fatalf("read ledger %s: %v", name, err)
 	}
-	return got
-}
-
-func countPath(got []observed, path string) int {
-	n := 0
-	for _, o := range got {
-		if o.Path == path {
-			n++
-		}
-	}
-	return n
+	return strings.Split(strings.TrimSpace(string(b)), "\n")
 }
 
 // T015_01: a refused file is put in front of the rule again on the next cycle.
@@ -149,13 +131,14 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
+	e.CommitAll(proj, "the guardrail before the session")
 
 	const sess = "s-015-01"
 	e.Run(proj, sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
-	))
+	).ThenCommit("the bad file"))
 
-	first := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	first := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(first, "bad-file.md") == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
@@ -166,9 +149,9 @@ func TestT015_01_ARefusedFileIsReportedAgainOnTheNextCycle(t *testing.T) {
 	// nothing to say about bad-file.md.
 	e.Run(proj, sess, "do something else", Turns("done",
 		Write("w2", "unrelated.md", "fine\n"),
-	))
+	).ThenCommit("unrelated work"))
 
-	after := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	after := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(after, "bad-file.md") <= countPath(first, "bad-file.md") {
 		t.Fatalf("an unfixed refusal was not re-reported on the next cycle: saw it %d times "+
 			"after the first cycle and %d times after the second (%v) — the file is still broken "+
@@ -199,6 +182,9 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	// else the other branch does not hold, the project then loads no rules, and
 	// the ledger stops growing for a reason that has nothing to do with
 	// refusals surviving — which is exactly the false pass this test is about.
+	// The harness's own scenario script is kept out of every commit: a tracked
+	// copy rewritten by the next cycle would abort the branch switch below.
+	writeFile(t, proj, ".gitignore", ".scenario.sh\n")
 	e.CommitAll(proj, "the guardrail, on every line of history")
 	root := e.Git(proj, "rev-parse", "HEAD")
 
@@ -217,19 +203,9 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	const sess = "s-015-02"
 	e.Run(proj, sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
-		// Committed, so the file is part of history rather than outstanding
-		// work — the switch below then carries it, and it is not in the second
-		// cycle's diff.
-		//
-		// This path only, not `git add -A`. The harness writes its own
-		// .scenario.sh into the project, and committing that makes the later
-		// `git checkout` abort with "your local changes would be overwritten"
-		// when the next cycle rewrites it — the branch switch then never
-		// happens and the test measures nothing.
-		Bash("b1", "git add bad-file.md && git commit -m 'the bad file'"),
-	))
+	).ThenCommit("the bad file"))
 
-	first := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	first := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(first, "bad-file.md") == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
@@ -245,7 +221,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 		// claim about a file that no longer exists.
 		Write("w2", "bad-file.md", "violates\n"),
 		Write("w3", "unrelated.md", "fine\n"),
-	))
+	).ThenCommit("recreate the bad file"))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
 		t.Fatalf("the agent did not actually switch branches (on %q), so the measuring point "+
@@ -260,7 +236,7 @@ func TestT015_02_ARefusalSurvivesTheMeasuringPointMoving(t *testing.T) {
 	// one unfixed violation writes many lines in a single cycle — a comparison
 	// of cumulative totals measures how many times the mock retried, not whether
 	// the refusal outlived the branch switch.
-	after := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	after := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if len(after) <= len(first) {
 		t.Fatalf("the second cycle observed nothing at all (%d entries, was %d), so there is "+
 			"no evidence either way about the refusal surviving: %v", len(after), len(first), after)
@@ -308,27 +284,31 @@ checks:
 	// defensive rather than load-bearing (the seen/refused ledgers have no `.md`
 	// suffix and cannot match), but it keeps the rule about the agent's files, not
 	// the engine's own bookkeeping.
+	// The ledgers live in .git, outside the rule's folder: a rule's hash covers its
+	// whole folder, so a ledger written there would change the hash on every run
+	// and void the watermark this test is about (a pass advancing the range).
 	const judgeContentScript = `#!/bin/sh
 payload="$(cat)"
 path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
 case "$path" in
   .sloprail/*) exit 0 ;;
 esac
-printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
 root="${SR_GUARDRAIL_DIR%/.sloprail/file-guard/*}"
+printf '%s\n' "$payload" >> "$root/.git/watcher-seen"
 if [ -n "$path" ] && [ -f "$root/$path" ] && grep -q FORBIDDEN "$root/$path"; then
-  echo "$path" >> "$SR_GUARDRAIL_DIR/refused"
+  echo "$path" >> "$root/.git/watcher-refused"
   echo '{"reason":"still contains the forbidden word"}'; exit 1
 fi
 exit 0
 `
 	e.FileGuard(proj, "watcher", refuseContentGuard, map[string]string{"judge.sh": judgeContentScript})
+	e.CommitAll(proj, "the guardrail before the session")
 
 	const sess = "s-015-03"
 	e.Run(proj, sess, "write then fix", Turns("done",
 		Write("w1", "subject.md", "FORBIDDEN content\n"),
-	))
-	first := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	).ThenCommit("write subject"))
+	first := changesetkit.Files(t, gitLedger(t, proj, "watcher-seen"))
 	if countPath(first, "subject.md") == 0 {
 		t.Fatalf("the file never reached the rule in the first cycle: %v", first)
 	}
@@ -344,7 +324,7 @@ exit 0
 	// is no pending call to deny — so it does not appear in the mock's stream at
 	// all, and asserting on the stream here would fail for every build including a
 	// correct one.
-	if len(e.FileGuardLedgerLines(proj, "watcher", "refused")) == 0 {
+	if len(gitLedger(t, proj, "watcher-refused")) == 0 {
 		t.Fatalf("the rule never refused the offending file, so nothing here was ever unfixed " +
 			"and the comparison below cannot fail")
 	}
@@ -352,13 +332,13 @@ exit 0
 	// Fixed, then a further cycle that touches something else entirely.
 	e.Run(proj, sess, "fix it", Turns("done",
 		Write("w2", "subject.md", "acceptable content\n"),
-	))
-	fixed := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	).ThenCommit("fix subject"))
+	fixed := changesetkit.Files(t, gitLedger(t, proj, "watcher-seen"))
 
 	e.Run(proj, sess, "unrelated work", Turns("done",
 		Write("w3", "elsewhere.md", "fine\n"),
-	))
-	after := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	).ThenCommit("elsewhere"))
+	after := changesetkit.Files(t, gitLedger(t, proj, "watcher-seen"))
 
 	if countPath(after, "subject.md") != countPath(fixed, "subject.md") {
 		t.Fatalf("a file that has been fixed and passed was reported again on a later cycle: "+
@@ -388,6 +368,9 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript})
+	// The harness's own scenario script is kept out of every commit: a tracked
+	// copy rewritten by the next cycle would abort the branch switch below.
+	writeFile(t, proj, ".gitignore", ".scenario.sh\n")
 	e.CommitAll(proj, "the guardrail, on every line of history")
 	root := e.Git(proj, "rev-parse", "HEAD")
 
@@ -403,9 +386,8 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	const sess = "s-015-04"
 	e.Run(proj, sess, "write a bad file", Turns("done",
 		Write("w1", "bad-file.md", "violates\n"),
-		Bash("b1", "git add bad-file.md && git commit -m 'the bad file'"),
-	))
-	first := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	).ThenCommit("the bad file"))
+	first := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if countPath(first, "bad-file.md") == 0 {
 		t.Fatalf("the offending file never reached the rule in the first cycle: %v — "+
 			"nothing was refused, so there is no surviving refusal to test", first)
@@ -414,7 +396,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	e.Run(proj, sess, "switch branches", Turns("done",
 		Bash("b2", "git checkout feature"),
 		Write("w3", "unrelated.md", "fine\n"),
-	))
+	).ThenCommit("unrelated work"))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
 		t.Fatalf("the agent did not actually switch branches (on %q), so the measuring point "+
@@ -426,7 +408,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 			"and its absence from the report would be correct")
 	}
 
-	after := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
+	after := changesetkit.Files(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if len(after) <= len(first) {
 		t.Fatalf("the second cycle observed nothing at all (%d entries, was %d), so there is "+
 			"no evidence either way: %v", len(after), len(first), after)
@@ -434,7 +416,7 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 	// The control: this cycle's ordinary difference did arrive, so the assertion
 	// below is about the refused file rather than about a dead ledger.
 	second := after[len(first):]
-	if !sawPathIn(second, "unrelated.md") {
+	if !changesetkit.Saw(second, "unrelated.md") {
 		t.Fatalf("the cycle's own work is missing from %v — nothing was dispatched, so the "+
 			"claim below would be vacuous", second)
 	}
@@ -443,27 +425,4 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 			"broken on disk and was not reported after the branch switch (%v) — the refusal was "+
 			"tied to the measuring point after all", second)
 	}
-
-	// And it arrives as an UPDATE, not a create.
-	//
-	// The re-added file is not this cycle's work: it was present at the point
-	// being measured from, which is exactly why the difference is silent about
-	// it. Reporting it as a creation would tell every rule bound to
-	// PostFileCreate about a file the cycle did not create — a rule that only
-	// fires on new files would object to one that has been there all along.
-	//
-	// Asserted because nothing else can catch it. The path is what the earlier
-	// assertion reads, and the kind is chosen by readdOutstanding alone — a
-	// re-add that claimed the file was absent at the baseline produces the same
-	// path in the same ledger, and every other test in this tree stays green.
-	for _, o := range second {
-		if o.Path == "bad-file.md" && o.Kind != "PostFileUpdate" {
-			t.Fatalf("a re-reported unfixed file arrived as %q, want PostFileUpdate — it was "+
-				"present at the point being measured from, so calling it a creation puts it in "+
-				"front of every rule bound to new files", o.Kind)
-		}
-	}
 }
-
-// sawPathIn reports whether a path appears at all, for the control assertions.
-func sawPathIn(got []observed, path string) bool { return countPath(got, path) > 0 }
