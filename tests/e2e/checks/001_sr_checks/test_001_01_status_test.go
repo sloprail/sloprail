@@ -4,11 +4,18 @@ import (
 	"testing"
 )
 
-// T001_01: nothing recorded yet is an empty listing, not a fault; a query has
-// no tables to run against and says so.
+// T001_01: nothing recorded for a rule is an empty listing, not a fault. And with
+// no check results at all (deleted here: the mock session's own Stop had
+// evaluated the plugin's file-guards and recorded them), status is empty and a
+// query has no tables to run against and says so.
 func TestT001_01_NothingRecordedYet(t *testing.T) {
 	e, proj := session(t)
 
+	if rows := statusRows(t, e, proj, "--rule", "never-evaluated"); len(rows) != 0 {
+		t.Fatalf("rows = %+v, want none", rows)
+	}
+
+	e.RemoveCheckResults(proj, sessionID)
 	if rows := statusRows(t, e, proj); len(rows) != 0 {
 		t.Fatalf("rows = %+v, want none", rows)
 	}

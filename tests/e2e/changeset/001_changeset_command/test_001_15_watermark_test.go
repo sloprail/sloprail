@@ -31,6 +31,7 @@ func watermarkRepo(t *testing.T) (e *Env, proj, rule, hash, c1 string) {
 	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
 	e.CommitAll(proj, "add the rule")
 	e.Run(proj, wmSession, "hello", Turns("done", Bash("b1", "true")))
+	e.RemoveCheckResults(proj, wmSession) // the mock's own Stop recorded a pass; start clean
 
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
 	c1 = e.CommitAll(proj, "first edit")

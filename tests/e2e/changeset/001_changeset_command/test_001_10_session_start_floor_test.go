@@ -21,6 +21,9 @@ func startedSession(t *testing.T, sessionID string) (e *Env, proj, start string)
 	if start == "" {
 		t.Fatal("the session recorded no start commit")
 	}
+	// The mock session's own Stop evaluated the rules and recorded runs; a test
+	// about the range a rule has not been judged over starts without them.
+	e.RemoveCheckResults(proj, sessionID)
 	return e, proj, start
 }
 
@@ -57,6 +60,7 @@ func TestT001_11_PluginRuleUsesTheSessionStart(t *testing.T) {
 
 	e.Run(proj, "s-001-11", "hello", Turns("done", Bash("b1", "true")))
 	start := e.Meta(proj, "s-001-11", "baseline_commit")
+	e.RemoveCheckResults(proj, "s-001-11")
 	e.WriteFile(proj, "docs/a.md", "one\nplugin era\n")
 	head := e.CommitAll(proj, "an edit during the session")
 

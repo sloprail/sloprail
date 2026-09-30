@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/sloprail/sloprail/internal/checkstore"
@@ -52,4 +53,18 @@ func (e *Env) RecordCheckRun(projDir, sessionID string, run checkstore.CheckRun,
 		}
 	}
 	return id
+}
+
+// RemoveCheckResults deletes the session's check results, as if nothing had been
+// evaluated yet. The mock session that starts a test ends with a Stop, and that
+// Stop evaluates the file-guards and records the runs — which a test about the
+// range a rule has NOT yet been judged over must not inherit.
+func (e *Env) RemoveCheckResults(projDir, sessionID string) {
+	e.t.Helper()
+	path := e.checksDBPath(projDir, sessionID)
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			e.t.Fatalf("harness: remove check results: %v", err)
+		}
+	}
 }
