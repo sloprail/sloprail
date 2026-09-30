@@ -62,7 +62,8 @@ if [ ! -f "$schema" ]; then
   refuse "task-gates-hold: schema not found at $schema — the rule cannot check anything without it."
 fi
 
-kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)" || refuse "task-gates-hold: could not read the event's kind, so the task could not be checked"
+[ -n "$kind" ] || refuse "task-gates-hold: the event named no kind, so the task could not be checked"
 case "$kind" in
   PostFileCreate|PostFileUpdate)
     # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
@@ -76,7 +77,7 @@ case "$kind" in
     if [ ! -f "$abs" ]; then
       exit 0
     fi
-    new_content="$(cat "$abs" 2>/dev/null)"
+    new_content="$(cat "$abs")" || FAIL "task-gates-hold: could not read $path"
     if [ ! -s "$abs" ]; then
       exit 0
     fi
@@ -86,8 +87,9 @@ case "$kind" in
     ;;
 esac
 
-new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)"
+new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)" || refuse "task-gates-hold: sr-file could not validate $path, so its status is unknown: $new_doc"
 new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty' 2>/dev/null)"
+[ -n "$new_status" ] || refuse "task-gates-hold: $path carries no readable status, so its gates could not be checked"
 
 case "$new_status" in
   to_do|in_progress) : ;;
@@ -102,7 +104,7 @@ case "$kind" in
 esac
 old_status=""
 if [ -n "$old_content" ]; then
-  old_doc="$(printf '%s' "$old_content" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)"
+  old_doc="$(printf '%s' "$old_content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)" || refuse "task-gates-hold: sr-file could not validate the previous $path: $old_doc"
   old_status="$(printf '%s' "$old_doc" | jq -r '.status // empty' 2>/dev/null)"
 fi
 

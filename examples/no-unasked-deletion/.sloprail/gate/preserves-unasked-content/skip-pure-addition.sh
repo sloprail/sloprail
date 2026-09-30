@@ -26,6 +26,7 @@ empty() {
 # on the Pre create/update kinds: a result the engine could not compute hands the
 # judge an empty context (require-known-result.sh has refused it before this).
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
+[ -n "$kind" ] || { echo "preserves-unasked-content: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 case "$kind" in
   PreFileCreate|PreFileUpdate)
     known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"

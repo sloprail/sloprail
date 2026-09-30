@@ -78,6 +78,7 @@ esac
 #
 # All fields read FLAT under `.event`, the CheckPayload shape.
 kind="$(printf '%s' "$event" | jq -r '.event.kind // empty' 2>/dev/null)"
+[ -n "$kind" ] || { echo "authoring-slop: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 if [ "$kind" = "PostFileCreate" ] || [ "$kind" = "PostFileUpdate" ]; then
   # The engine could not read the settled bytes (newContentKnown false): a
   # script this check cannot see is refused, not permitted unread.
@@ -90,7 +91,10 @@ body="$(printf '%s' "$event" | jq -r '.event.newContent // empty' 2>/dev/null)"
 if [ -z "$body" ]; then
   abs="${SR_WORKSPACE:-.}/$path"
   [ -f "$abs" ] || exit 0
-  body="$(cat "$abs" 2>/dev/null)" || exit 0
+  body="$(cat "$abs")" || {
+    echo "authoring-slop: could not read the settled $path, so it could not be checked." >&2
+    exit 1
+  }
 fi
 
 findings=""
@@ -151,8 +155,13 @@ fi
 # survives both spellings — rather than the old literal `fields.newContent`,
 # which a new-format script never contains and which would let exactly this slop
 # through untouched.
+# A Post-only script (a file-guard half) reads settled bytes, which carry
+# newContentKnown rather than resultKnown; rule 2b holds it to that. So this rule
+# stands down only for a script that names newContentKnown and no Pre kind.
 if printf '%s' "$body" | grep -q 'newContent' 2>/dev/null &&
-   ! printf '%s' "$body" | grep -q 'resultKnown' 2>/dev/null; then
+   ! printf '%s' "$body" | grep -q 'resultKnown' 2>/dev/null &&
+   ! { printf '%s' "$body" | grep -q 'newContentKnown' 2>/dev/null &&
+       ! printf '%s' "$body" | grep -v '^[[:space:]]*#' | grep -qE 'PreFile|Pre[*]' 2>/dev/null; }; then
   note "rules/content-may-be-unresolvable — reads .event.newContent without .resultKnown.
     On EITHER Pre kind (create as well as update) an absent newContent reads as
     \"\", which is indistinguishable from a write that empties the file — a
@@ -172,7 +181,7 @@ fi
 # nowhere. (A script that reads the settled file from DISK instead is the
 # judge's to reason about; this floor is about the field.)
 if printf '%s' "$body" | grep -q 'newContent' 2>/dev/null &&
-   printf '%s' "$body" | grep -qE 'PostFile(Create|Update|Write)|Post[*]' 2>/dev/null &&
+   printf '%s' "$body" | grep -v '^[[:space:]]*#' | grep -qE 'PostFile(Create|Update|Write)|Post[*]' 2>/dev/null &&
    ! printf '%s' "$body" | grep -q 'newContentKnown' 2>/dev/null; then
   note "rules/content-may-be-unresolvable — handles a Post kind and reads .event.newContent without .newContentKnown.
     On PostFileCreate/PostFileUpdate the settled bytes are in newContent only when

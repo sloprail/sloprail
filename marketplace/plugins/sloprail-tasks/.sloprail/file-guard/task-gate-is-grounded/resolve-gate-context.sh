@@ -32,6 +32,7 @@ root="${SR_WORKSPACE:-.}"
 # WHERE THE GATE'S OWN BYTES COME FROM. This is the file-guard's copy: the settled
 # file at Stop, off the disk.
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+[ -n "$kind" ] || { echo "task-gate-is-grounded: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 case "$kind" in
   PostFileCreate|PostFileUpdate)
     # The engine declares newContentKnown on PostFileCreate and PostFileUpdate
@@ -45,7 +46,7 @@ case "$kind" in
     fi
     abs="$root/$path"
     [ -f "$abs" ] || skip
-    gate_content="$(cat "$abs" 2>/dev/null || true)"
+    gate_content="$(cat "$abs")" || { echo "task-gate-is-grounded: could not read $path, so its gate could not be judged" >&2; exit 1; }
     ;;
   *)
     skip

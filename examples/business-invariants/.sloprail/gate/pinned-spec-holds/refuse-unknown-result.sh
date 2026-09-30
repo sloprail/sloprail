@@ -11,6 +11,7 @@ set -uo pipefail
 payload="$(cat)"
 # Only a create or an update has a result to work out; a delete leaves nothing.
 kind="$(printf '%s' "$payload" | jq -r '.event.kind // ""' 2>/dev/null)"
+[ -n "$kind" ] || { echo "pinned-spec-holds: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 case "$kind" in PreFileCreate | PreFileUpdate) ;; *) exit 0 ;; esac
 known="$(printf '%s' "$payload" | jq -r '.event.resultKnown // false' 2>/dev/null)"
 [ "$known" = "true" ] && exit 0

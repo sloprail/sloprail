@@ -38,6 +38,7 @@ if [ ! -f "$schema" ]; then
 fi
 
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+[ -n "$kind" ] || { echo "content-rule-is-grounded: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 case "$kind" in
   PreFileCreate|PreFileUpdate)
     # newContent is only meaningful alongside resultKnown: it is "" when the

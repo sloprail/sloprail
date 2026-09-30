@@ -34,6 +34,7 @@ root="${SR_WORKSPACE:-.}"
 # already refused an unknown result; this fails closed too rather than judging an
 # empty gate_content.
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+[ -n "$kind" ] || { echo "task-gate-is-grounded: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 case "$kind" in
   PreFileCreate|PreFileUpdate)
     known="$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)"

@@ -62,26 +62,15 @@ unknowable tier, and a rule's body should say which tier it relies on.
 
 ## How the check detects it
 
-Two floors. A script that handles a Post kind (names `PostFileCreate`,
-`PostFileUpdate`, `PostFileWrite` or `Post*`) and reads `newContent` without
-naming `newContentKnown` anywhere is flagged. And, for the Pre kinds:
+Two floors, both on the script's own text (comments are ignored):
 
-Reading `newContent` (in the new format, `.event.newContent`; the old envelope
-spelled it `.event.fields.newContent`) without mentioning `resultKnown` anywhere.
-On **either** Pre kind an absent `newContent` reads as `""`, which is
-indistinguishable from a write that empties the file — so the grep fires
-regardless of kind, and a create-only hook is **not** exempt. The old claim that
-"on `PreFileCreate` `newContent` is always present, so a create needs no
-`resultKnown`" was wrong: a `NotebookEdit` fresh-`.ipynb` create carries
-`resultKnown: false` and a non-derivable `newContent`, and a create-only hook
-reading `newContent` without consulting `resultKnown` is exactly the bug this
-catches.
+- A script that handles a Post kind (names `PostFileCreate`, `PostFileUpdate`,
+  `PostFileWrite` or `Post*`) and reads `newContent` without naming
+  `newContentKnown` is flagged.
+- A script that reads `newContent` without naming `resultKnown` is flagged,
+  whatever the kind — a create-only hook is not exempt. A script that names
+  `newContentKnown` and no Pre kind (a Post-only file-guard half) is exempt from
+  this one.
 
-The grep catches the *missing* `resultKnown` — the field named nowhere in the
-script. What it cannot catch is a script that *does* name `resultKnown` yet still
-reads `newContent` in a branch that assumes the create case is derivable (the
-grep sees the word `resultKnown` and stays silent). That subtler shape — the
-derivable-create assumption — is left to the **judge** check (its
-`rules/pre-kinds-consult-resultknown` reasons about *when* `newContent` may be
-read per kind, not merely *whether* `resultKnown` appears). The two are
-complementary: the grep is the cheap floor, the judge the reasoning above it.
+A script that names the flag but still reads `newContent` in a branch that ignores
+it is left to the judge (`judge-rules/pre-kinds-consult-resultknown`).

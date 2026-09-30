@@ -17,11 +17,13 @@ root="${SR_WORKSPACE:-.}"
 gdir="${SR_GUARDRAIL_DIR:-.}"
 schema="$gdir/../../schemas/task.cue"
 
+fail() { echo "$1" >&2; exit 1; }
 skip() { printf '{"skip": true}\n'; exit 0; }
 
 [ -f "$schema" ] || skip
 
-kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)" || fail "task-gates-hold: could not read the event's kind, so the task could not be checked"
+[ -n "$kind" ] || fail "task-gates-hold: the event named no kind, so the task could not be checked"
 case "$kind" in
   PreFileCreate|PreFileUpdate)
     # The PreFileWrite gate's copy: the pending bytes. gates-hold.sh (stage 1)
@@ -38,8 +40,9 @@ case "$kind" in
     ;;
 esac
 
-new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)"
+new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)" || fail "task-gates-hold: sr-file could not validate $path, so its status is unknown: $new_doc"
 new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty' 2>/dev/null)"
+[ -n "$new_status" ] || fail "task-gates-hold: $path carries no readable status, so its gates could not be checked"
 case "$new_status" in
   to_do|in_progress) : ;;
   *) skip ;;
@@ -53,7 +56,7 @@ case "$kind" in
 esac
 old_status=""
 if [ -n "$old_content" ]; then
-  old_doc="$(printf '%s' "$old_content" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)"
+  old_doc="$(printf '%s' "$old_content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)" || fail "task-gates-hold: sr-file could not validate the previous $path: $old_doc"
   old_status="$(printf '%s' "$old_doc" | jq -r '.status // empty' 2>/dev/null)"
 fi
 case "$old_status" in

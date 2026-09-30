@@ -13,6 +13,7 @@ set -uo pipefail
 
 input="$(cat)"
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
+[ -n "$kind" ] || { echo "scanner-keywords-hold: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 case "$kind" in
   PreFileCreate | PreFileUpdate)
     known="$(printf '%s' "$input" | jq -r '.event.resultKnown // false')"

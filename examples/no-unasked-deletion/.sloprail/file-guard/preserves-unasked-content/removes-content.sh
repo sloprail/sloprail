@@ -17,6 +17,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 input="$(cat)"
 kind="$(printf '%s' "$input" | jq -r '.event.kind // empty')"
+[ -n "$kind" ] || { echo "preserves-unasked-content: could not read the event's kind, so it could not be checked" >&2; exit 2; }
 case "$kind" in
   PostFileCreate)
     # A create has nothing before it, so it removes nothing.

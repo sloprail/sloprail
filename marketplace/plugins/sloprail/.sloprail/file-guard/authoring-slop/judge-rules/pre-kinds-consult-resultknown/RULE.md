@@ -32,16 +32,3 @@ write lands unchecked (`services/sr-session/nature_fileguard.go`
   the file-guard judge what actually landed at Stop. Only when `resultKnown` is
   true may the branch read `newContent`.
 - A delete, or a kind the guard is not about: nothing to read.
-
-**Why this is the judge's and not the grep's.** The grep in `check-rules.sh`
-fires when `resultKnown` is named *nowhere* in the script. It cannot catch a
-script that *does* name `resultKnown` — for the update case, say — yet still reads
-`newContent` on `PreFileCreate` in a branch that assumes the create is derivable.
-The word is present, so the grep stays silent; the reasoning about *which kinds*
-that branch actually runs on is what catches it.
-
-**Flag** when a `PreFileCreate` (or a Pre branch that includes create) reads
-`newContent` without a `resultKnown` guard governing that read, and when a Post
-branch reads `newContent` with no `newContentKnown` guard governing that read (or
-treats `newContentKnown` false as an empty or passing file). Do NOT flag a Post
-branch that consults `newContentKnown` before reading `newContent`.

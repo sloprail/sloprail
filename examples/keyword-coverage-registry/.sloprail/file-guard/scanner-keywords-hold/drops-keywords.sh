@@ -75,11 +75,8 @@ case "$kind" in
     # run: refused by the coverage gate, a sub-agent ran `rm -rf scanners/<name>`
     # instead of searching. Nothing remains, so the new side is empty.
     old="$(field '.event.oldContent // ""')"
-    # Bytes the engine did not read (a file past a removal's byte budget, or not
-    # a regular file) and nothing owed to fall back on: undecidable, apply.
-    if [ "$(field 'if .event | has("oldContentKnown") then .event.oldContentKnown else true end')" != "true" ] && [ -z "$owed" ]; then
-      exit 0
-    fi
+    # A PostFileDelete carries the baseline's bytes in oldContent (oldContentKnown
+    # exists only on PreFileDelete, which the gate's copy handles).
     dropped="$( { keywords_of "$old"; printf '%s\n' "$owed"; } | sed '/^$/d' | sort -u | paste -sd ',' -)"
     # A scanner that declares no keyword, and owes none, drops none.
     [ -n "$dropped" ] || exit 1

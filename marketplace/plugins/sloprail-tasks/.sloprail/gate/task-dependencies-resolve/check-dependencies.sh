@@ -75,6 +75,8 @@ fi
 self_id="$(printf '%s' "$path" | sed -E 's#^memories/tasks/([^/]+)/([^/]+)/TASK\.md$#\1/\2#')"
 
 kind="$(printf '%s' "$event" | jq -r '.event.kind // ""' 2>/dev/null)"
+[ -n "$kind" ] || { echo "task-dependencies-resolve: could not read the event's kind, so it could not be checked" >&2; exit 2; }
+[ -n "$kind" ] || refuse "task-dependencies-resolve: the event named no kind, so the task could not be checked"
 case "$kind" in
   PreFileCreate|PreFileUpdate)
     if [ "$(printf '%s' "$event" | jq -r '.event.resultKnown // false' 2>/dev/null)" != "true" ]; then
@@ -88,8 +90,10 @@ case "$kind" in
 esac
 
 # A malformed document is task-evidence-resolves's refusal to make.
-new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)"
+# sr-file failing is not "no status": the rule could not read the task at all.
+new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)" || refuse "task-dependencies-resolve: sr-file could not validate $path, so its dependencies could not be checked: $new_doc"
 new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty' 2>/dev/null)"
+[ -n "$new_status" ] || refuse "task-dependencies-resolve: $path carries no readable status, so its dependencies could not be checked"
 
 case "$new_status" in
   to_do|in_progress|in_review) : ;;
