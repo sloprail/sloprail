@@ -22,16 +22,16 @@ payload="$(cat)"
 field() { printf '%s' "$payload" | jq -r "$1" 2>/dev/null; }
 [ "$(field '.event.kind // ""')" = "Changeset" ] ||
   refuse "task-body-is-human-authored: expected a Changeset event, so the tasks could not be judged"
-n="$(field '.changeset.files | length')" || true
-case "$n" in '' | *[!0-9]*) refuse "task-body-is-human-authored: the changeset's files could not be read, so nothing could be judged" ;; esac
+file_n="$(field '.changeset.files | length')" || true
+case "$file_n" in '' | *[!0-9]*) refuse "task-body-is-human-authored: the changeset's files could not be read, so nothing could be judged" ;; esac
 
-i=0
-while [ "$i" -lt "$n" ]; do
-  path="$(printf '%s' "$payload" | jq -r --argjson i "$i" '.changeset.files[$i].path')" \
-    || refuse "task-body-is-human-authored: could not read file $i of the changeset"
-  content="$(printf '%s' "$payload" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" \
+file_i=0
+while [ "$file_i" -lt "$file_n" ]; do
+  path="$(printf '%s' "$payload" | jq -r --argjson i "$file_i" '.changeset.files[$i].path')" \
+    || refuse "task-body-is-human-authored: could not read file $file_i of the changeset"
+  content="$(printf '%s' "$payload" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent')" \
     || refuse "task-body-is-human-authored: could not read $path from the changeset"
-  i=$((i + 1))
+  file_i=$((file_i + 1))
   lib_check
 done
 exit 0

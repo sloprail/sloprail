@@ -2,9 +2,8 @@ package e2e
 
 import "testing"
 
-// unit-satisfies-rules is a file-guard with no gate (a Stop after-check —
-// the same binding unit-satisfies-constraints used, and for the same reason:
-// a writing-rule judgement is inherently after-the-fact). ONE check: collect
+// unit-satisfies-rules is a file-guard with no gate (judged at Stop over the
+// committed changeset — a writing-rule judgement is inherently after-the-fact). ONE check: collect
 // every rule the unit's tags select (rules-lib.sh) and put them all to one
 // judge call, granted allowed_tools: [Read, Bash] so a rule that asks for a
 // deterministic measurement (a character count, a grep for a banned phrase)
@@ -71,7 +70,7 @@ func TestRules_GlobalJudgeRuleAppliesToUnitWithNoTags(t *testing.T) {
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", unitPath, body),
-	))
+	).ThenCommit("Write the unit"))
 	if res.Refused() {
 		t.Fatalf("the unit write itself was refused at Pre (setup broken, guard has no gate):\n%s", res.Output)
 	}
@@ -109,7 +108,7 @@ func TestRules_TaggedRuleAppliesOnlyWhenTagMatches(t *testing.T) {
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", unitPath, body),
-	))
+	).ThenCommit("Write the unit"))
 	if res.Refused() {
 		t.Fatalf("the unit write was refused at Pre (setup broken):\n%s", res.Output)
 	}
@@ -143,7 +142,7 @@ func TestRules_TaggedRuleDoesNotApplyToOtherTag(t *testing.T) {
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", unitPath, body),
-	))
+	).ThenCommit("Write the unit"))
 	if res.Refused() {
 		t.Fatalf("the unit write was refused at Pre (setup broken):\n%s", res.Output)
 	}
@@ -187,7 +186,7 @@ func TestRules_DeterministicRuleRefusesViaJudgeStub(t *testing.T) {
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", draftPath, body),
-	))
+	).ThenCommit("Write the unit"))
 	if res.Refused() {
 		t.Fatalf("the draft write was refused at Pre (setup broken, guard has no gate):\n%s", res.Output)
 	}
@@ -230,7 +229,7 @@ func TestRules_DeterministicRulePassesViaJudgeStub(t *testing.T) {
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", draftPath, body),
-	))
+	).ThenCommit("Write the unit"))
 	if res.Refused() {
 		t.Fatalf("the draft write was refused at Pre (setup broken):\n%s", res.Output)
 	}
@@ -259,7 +258,7 @@ func TestRules_NoApplicableRulesPasses(t *testing.T) {
 
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Write("w1", unitPath, body),
-	))
+	).ThenCommit("Write the unit"))
 	if res.Refused() {
 		t.Fatalf("the unit write was refused at Pre (setup broken):\n%s", res.Output)
 	}
@@ -282,11 +281,12 @@ func TestRules_UnitWriteJudgesTheDraft(t *testing.T) {
 	installPluginStructure(t, e, proj)
 	e.WriteFile(proj, "memories/topics/20260101_launch/units/01_announce/02_draft.md",
 		"ZZ_DRAFT Ever wonder why builds keep failing?\n")
+	e.CommitAll(proj, "seed the draft")
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
 	res := e.Run(proj, "s-unit-draft", authPrompt, Turns("done",
 		Write("w1", unitPath, unitFrontmatter("created: 2026-09-25\ntype: post\nstatus: drafting\ntags: [x]\n", "")),
-	))
+	).ThenCommit("Tag the unit"))
 	if res.Refused() {
 		t.Fatalf("the unit write was refused at Pre (setup broken):\n%s", res.Output)
 	}
@@ -294,7 +294,7 @@ func TestRules_UnitWriteJudgesTheDraft(t *testing.T) {
 	if !containsStr(prompt, "--- 02_draft.md ---") || !containsStr(prompt, "ZZ_DRAFT Ever wonder why builds keep failing?") {
 		t.Fatalf("the rules judge was not handed the unit's draft on a UNIT.md write:\n%s", prompt)
 	}
-	if !containsStr(prompt, "01_announce/02_draft.md`") {
+	if !containsStr(prompt, "01_announce/02_draft.md</measure-at>") {
 		t.Errorf("a measurement is not pointed at the draft:\n%s", prompt)
 	}
 }

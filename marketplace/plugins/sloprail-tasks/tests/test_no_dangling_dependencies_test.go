@@ -44,7 +44,7 @@ func TestDangling_DeleteWithoutStrippingRefusesAtStop(t *testing.T) {
 	// leaving the dependent's depends_on pointing at nothing.
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Bash("b1", "rm -rf memories/tasks/infra/setup-ci"),
-	))
+	).ThenCommit("Delete the dependency"))
 	if res.Refused() {
 		t.Fatalf("the delete itself was refused at Pre (setup broken):\n%s", res.Output)
 	}
@@ -92,7 +92,7 @@ func TestDangling_DeleteWithStripPermits(t *testing.T) {
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		Bash("b1", "rm -rf memories/tasks/infra/setup-ci"),
 		Write("w1", taskPath, strippedDoc),
-	))
+	).ThenCommit("Delete the dependency and strip it"))
 	if res.Refused() {
 		t.Fatalf("the delete-and-strip turn was refused at Pre:\n%s", res.Output)
 	}

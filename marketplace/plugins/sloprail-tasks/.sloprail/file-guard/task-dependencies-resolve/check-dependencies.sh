@@ -55,17 +55,17 @@ event="$(cat)"
 root="${SR_TREE:-}"
 [ -n "$root" ] || refuse "task-dependencies-resolve: SR_TREE is not set, so the committed tasks could not be read"
 
-n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" ||
+file_n="$(printf '%s' "$event" | jq -r '.changeset.files | length')" ||
   refuse "task-dependencies-resolve: the changeset's files could not be read, so the tasks could not be checked"
-case "$n" in '' | *[!0-9]*) refuse "task-dependencies-resolve: the changeset's files could not be read, so the tasks could not be checked" ;; esac
+case "$file_n" in '' | *[!0-9]*) refuse "task-dependencies-resolve: the changeset's files could not be read, so the tasks could not be checked" ;; esac
 
-i=0
-while [ "$i" -lt "$n" ]; do
-  path="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].path')" ||
-    refuse "task-dependencies-resolve: could not read file $i of the changeset"
-  new_content="$(printf '%s' "$event" | jq -r --argjson i "$i" '.changeset.files[$i].newContent')" ||
+file_i=0
+while [ "$file_i" -lt "$file_n" ]; do
+  path="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].path')" ||
+    refuse "task-dependencies-resolve: could not read file $file_i of the changeset"
+  new_content="$(printf '%s' "$event" | jq -r --argjson i "$file_i" '.changeset.files[$i].newContent')" ||
     refuse "task-dependencies-resolve: could not read $path from the changeset"
-  i=$((i + 1))
+  file_i=$((file_i + 1))
   # An emptied task has no dependencies to resolve.
   [ -n "$new_content" ] || continue
   lib_check

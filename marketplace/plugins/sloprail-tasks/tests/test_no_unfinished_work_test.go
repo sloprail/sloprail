@@ -33,7 +33,7 @@ func TestUnfinished_OpenTaskBlocksAtStop(t *testing.T) {
 	sess := "s-unfinished-open"
 	res := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b1", taskPath, task("to_do", "P1", askBody), citeUser(askQuote)),
-	))
+	).ThenCommit("File the task", CitesUser(askQuote)))
 
 	if res.Refused() {
 		t.Fatalf("the to_do task write itself was refused at Pre (setup broken):\n%s", res.Output)
@@ -78,7 +78,7 @@ func TestUnfinished_AllRestingPermits(t *testing.T) {
 	doc := taskWithArtifacts("in_review", "P1", askBody, []string{deliveredLines})
 	res := e.Run(proj, sess, authPrompt, Turns("done", then(deliveryTurns(deliveredArtifact),
 		srWrite("b1", taskPath, doc, citeUser(askQuote), citeTool(proofMarker)),
-	)...))
+	)...).ThenCommit("Deliver the task", CitesUser(askQuote), CitesTool(proofMarker)))
 
 	if res.Refused() {
 		t.Fatalf("the in_review task write was refused at Pre (setup broken):\n%s", res.Output)

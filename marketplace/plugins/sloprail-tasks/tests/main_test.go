@@ -43,6 +43,9 @@ var (
 	Bash           = harness.Bash
 	ToolResult     = harness.ToolResult
 	AnswerQuestion = harness.AnswerQuestion
+	CitesUser      = harness.CitesUser
+	CitesTool      = harness.CitesTool
+	Commit         = harness.Commit
 )
 
 func TestMain(m *testing.M) {
@@ -243,6 +246,12 @@ func readFile(t *testing.T, proj, rel string) string {
 		t.Fatalf("read %s: %v", rel, err)
 	}
 	return string(b)
+}
+
+// stopBlocks is every Stop refusal of the session, joined — what the agent was told
+// when it tried to end its turn.
+func stopBlocks(e *Env, proj, sess string) string {
+	return strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
 }
 
 func containsStr(haystack, needle string) bool { return strings.Contains(haystack, needle) }

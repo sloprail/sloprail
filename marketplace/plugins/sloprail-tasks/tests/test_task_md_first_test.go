@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// task-md-first is a PreFileWrite gate (plus a backstop file-guard), script only, path-based: any file
+// task-md-first is a PreFileWrite gate (plus a file-guard over the committed tree), script only, path-based: any file
 // inside a task folder (memories/tasks/<group>/<task>/, a gates/ file
 // included) other than TASK.md may only be written once that task's own
 // TASK.md exists on disk. Without it, a folder's TASK.md-less files are
@@ -84,7 +84,7 @@ func TestTaskMdFirst_TaskMdItselfAdmitted(t *testing.T) {
 
 	res := e.Run(proj, "s-taskmd-itself", authPrompt, Turns("done",
 		srWrite("b1", taskPath, task("backlog", "P1", askBody), citeUser(askQuote)),
-	))
+	).ThenCommit("Add the task", CitesUser(askQuote)))
 	if res.Refused() {
 		t.Fatalf("writing TASK.md itself was refused:\n%s", res.Output)
 	}
@@ -103,7 +103,7 @@ func TestTaskMdFirst_NonEntryFileAfterTaskMdAdmitted(t *testing.T) {
 	res := e.Run(proj, "s-taskmd-after", authPrompt, Turns("done",
 		srWrite("b1", taskPath, task("backlog", "P1", askBody), citeUser(askQuote)),
 		Write("w2", notes, "# migration notes\n"),
-	))
+	).ThenCommit("Add the task and its notes", CitesUser(askQuote)))
 	if res.Refused() {
 		t.Fatalf("a supporting file written after TASK.md existed was refused:\n%s", res.Output)
 	}
@@ -129,7 +129,7 @@ func TestTaskMdFirst_DeletionNotRefused(t *testing.T) {
 
 	res := e.Run(proj, "s-taskmd-delete", authPrompt, Turns("done",
 		Bash("b1", "rm -r "+taskDir),
-	))
+	).ThenCommit("Approve and delete the task"))
 	if res.Refused() {
 		t.Fatalf("deleting a whole task folder was refused:\n%s", res.Output)
 	}
