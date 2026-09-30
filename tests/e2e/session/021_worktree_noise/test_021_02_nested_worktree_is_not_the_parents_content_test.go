@@ -64,28 +64,32 @@ echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
+// observed is one file a recorded changeset selected.
 type observed struct {
-	Kind string
-	Path string
+	Status string
+	Path   string
 }
 
-// observedFiles decodes what a file-guard's check was handed — the FLAT event,
-// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
-// the old nested `event.fields` envelope.
+// observedFiles decodes what a file-guard's check was handed: the Changeset
+// payload, whose `files` are what the range's commits changed.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
+			Changeset struct {
+				Files []struct {
+					Path   string `json:"path"`
+					Status string `json:"status"`
+				} `json:"files"`
+			} `json:"changeset"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
 		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
+		for _, f := range p.Changeset.Files {
+			got = append(got, observed{Status: f.Status, Path: f.Path})
+		}
 	}
 	return got
 }
@@ -290,11 +294,12 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
 	e.CommitAll(proj, "the project before the session")
 
-	// The mock does not APPLY a sub-agent's tool calls, so this script's Write
-	// creates nothing. What matters is the dispatch itself, which binds a real
-	// `git worktree add` inside the parent's tree.
+	// The sub-agent writes in its own worktree and commits there (a file-guard
+	// judges commits, and its Stop is refused for uncommitted work otherwise).
+	// What matters is the dispatch itself, which binds a real `git worktree add`
+	// inside the parent's tree.
 	subScript := filepath.Join(t.TempDir(), "sub.sh")
-	if err := Turns("delegated done", Write("s1", "child.md", "written in the child tree\n")).
+	if err := Turns("delegated done", Write("s1", "child.md", "written in the child tree\n")).ThenCommit("the child's work").
 		Script(subScript); err != nil {
 		t.Fatalf("write sub-agent scenario: %v", err)
 	}
@@ -303,7 +308,7 @@ func TestT021_03_TheNoiseDoesNotReachAFileRule(t *testing.T) {
 	e.Run(proj, "s-021-03", "delegate into a worktree", Turns("done",
 		Write("w1", "root-own.md", "the root's own work\n"),
 		Dispatch("d1", "do the delegated thing", subScript, "worktree"),
-	))
+	).ThenCommit("the root's own work"))
 
 	// The premise: a worktree really was bound inside the parent's tree, and git
 	// reports it as untracked content of the parent. Without both, the silence

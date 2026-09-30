@@ -62,29 +62,32 @@ echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
-// observed is one recorded after-the-fact event.
+// observed is one file a recorded changeset selected.
 type observed struct {
-	Kind string
-	Path string
+	Status string
+	Path   string
 }
 
-// observedFiles decodes what a file-guard's check was handed. The event's own
-// fields spread directly under `event` (`.event.kind`, `.event.path`), NOT nested
-// under an `event.fields` envelope the way the old format wrote them.
+// observedFiles decodes what a file-guard's check was handed: the Changeset
+// payload, whose `files` are what the range's commits changed.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
+			Changeset struct {
+				Files []struct {
+					Path   string `json:"path"`
+					Status string `json:"status"`
+				} `json:"files"`
+			} `json:"changeset"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
 		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
+		for _, f := range p.Changeset.Files {
+			got = append(got, observed{Status: f.Status, Path: f.Path})
+		}
 	}
 	return got
 }
@@ -115,10 +118,14 @@ func TestT013_01_AFileWrittenByAShellRedirectIsReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	// The rule is committed before the session: a rule's range starts at the last
+	// commit touching its own folder, so a rule committed together with the work
+	// would judge an empty range.
+	e.CommitAll(proj, "the project before the session")
 
 	e.Run(proj, "s-013-01", "write through a script", Turns("done",
 		Bash("b1", "printf 'made by a script\n' > from-script.md"),
-	))
+	).ThenCommit("write through a script"))
 
 	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	if !sawPath(got, "from-script.md") {
@@ -143,6 +150,10 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	// The rule is committed before the session: a rule's range starts at the last
+	// commit touching its own folder, so a rule committed together with the work
+	// would judge an empty range.
+	e.CommitAll(proj, "the project before the session")
 
 	// One turn that genuinely writes, so the cycle is not empty and a build
 	// dispatching nothing at all cannot pass this by being inert. The assertion
@@ -150,7 +161,7 @@ func TestT013_02_AFileOnlyNamedByACommandIsNotReported(t *testing.T) {
 	e.Run(proj, "s-013-02", "name a file without writing it", Turns("done",
 		Bash("b1", "printf 'real\n' > really-written.md"),
 		Bash("b2", "echo would have written never-written.md"),
-	))
+	).ThenCommit("name a file without writing it"))
 
 	got := observedFiles(t, e.FileGuardLedgerLines(proj, "watcher", "seen"))
 	// The control: the cycle DID report something, so the absence asserted next

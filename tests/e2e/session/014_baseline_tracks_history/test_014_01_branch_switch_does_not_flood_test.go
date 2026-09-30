@@ -46,28 +46,32 @@ echo >> "$SR_GUARDRAIL_DIR/seen"
 exit 0
 `
 
+// observed is one file a recorded changeset selected.
 type observed struct {
-	Kind string
-	Path string
+	Status string
+	Path   string
 }
 
-// observedFiles decodes what a file-guard's check was handed — the FLAT event,
-// whose fields spread directly under `event` (`.event.kind`, `.event.path`), not
-// the old nested `event.fields` envelope.
+// observedFiles decodes what a file-guard's check was handed: the Changeset
+// payload, whose `files` are what the range's commits changed.
 func observedFiles(t *testing.T, lines []string) []observed {
 	t.Helper()
 	var got []observed
 	for _, line := range lines {
 		var p struct {
-			Event struct {
-				Kind string `json:"kind"`
-				Path string `json:"path"`
-			} `json:"event"`
+			Changeset struct {
+				Files []struct {
+					Path   string `json:"path"`
+					Status string `json:"status"`
+				} `json:"files"`
+			} `json:"changeset"`
 		}
 		if err := json.Unmarshal([]byte(line), &p); err != nil {
-			t.Fatalf("the check was handed something that is not an event payload: %v\n%s", err, line)
+			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
 		}
-		got = append(got, observed{Kind: p.Event.Kind, Path: p.Event.Path})
+		for _, f := range p.Changeset.Files {
+			got = append(got, observed{Status: f.Status, Path: f.Path})
+		}
 	}
 	return got
 }
@@ -133,7 +137,7 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 	e.Run(proj, "s-014-01", "switch branches and work", Turns("done",
 		Bash("b1", "git checkout feature"),
 		Write("w1", "my-own-work.md", "written by this session\n"),
-	))
+	).ThenCommit("the session's own work"))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
 		t.Fatalf("the agent did not actually switch branches (on %q), so this proves nothing", got)
@@ -146,16 +150,13 @@ func TestT014_01_SwitchingBranchesDoesNotDeliverTheOtherLinesFiles(t *testing.T)
 		t.Fatalf("the session's own file is missing from %v — nothing was observed at all, "+
 			"so the assertions about the branch delta below cannot fail", got)
 	}
-	// The flood, in both directions. Neither of these files is this session's
-	// work: one vanished because the tree moved, the other appeared for the same
-	// reason.
+	// The flood. This file is not this session's work: it vanished because the
+	// tree moved. (only-on-feature.md IS in the range: a rule judges the commits
+	// since its own folder last changed, and the feature branch's commit is one of
+	// them, whoever checked it out.)
 	if sawPath(got, "only-on-main.md") {
 		t.Fatalf("a file that exists only on the abandoned branch was reported as this cycle's work: %v — "+
 			"the point is still on the line the tree left, and its whole delta is arriving as the session's", got)
-	}
-	if sawPath(got, "only-on-feature.md") {
-		t.Fatalf("a file that arrived with the checked-out branch was reported as this cycle's work: %v — "+
-			"the session did not write it, the branch switch brought it", got)
 	}
 }
 
@@ -176,11 +177,12 @@ func TestT014_02_ANewBranchOffOwnWorkKeepsItInTheDifference(t *testing.T) {
 	proj := e.Project()
 	e.GitInit(proj)
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": recordScript})
+	e.CommitAll(proj, "the guardrail, before the session")
 
 	e.Run(proj, "s-014-02", "commit then branch", Turns("done",
 		Write("w1", "session-work.md", "written by this session\n"),
 		Bash("b1", "git add -A && git commit -m 'agent commit' && git checkout -b feature"),
-	))
+	).ThenCommit("nothing more"))
 
 	if got := e.Git(proj, "rev-parse", "--abbrev-ref", "HEAD"); got != "feature" {
 		t.Fatalf("the agent is on %q, not the new branch, so this proves nothing", got)
