@@ -62,13 +62,19 @@ func completeCycle(cmd *cobra.Command, p HookPayload) error {
 	// it did, the recorded point describes a history it no longer has and the
 	// next difference would be the whole delta between the two branches.
 	//
-	// Any refusal recorded during this session survives this: a failing verdict
-	// lives in file_checks in its own right, keyed by path, guardrail and the
-	// content it was reached on, and is reported again on every cycle until a
-	// hook passes it — whatever point the difference is measured from. What
-	// reads it back is OutstandingRefusals, via readdOutstanding.
+	// A sub-agent's baseline is normally taken as its tool calls begin. When it
+	// arrives at its OWN Stop with none, the point taken now is the HEAD its
+	// commits already produced — fine for a context's next difference, but not a
+	// place to measure a file-guard's range from: every range that needs it (a
+	// rule with no folder floor, a plugin's) would be empty and pass unjudged. It
+	// is marked as taken at Stop, and resolveRuleRange will not use it.
+	_, hadBaseline, _ := store.Meta(sessionstate.MetaBaselineCommit)
 	if outcome, err := ensureBaseline(store, p.Cwd); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "sloprail: baseline not re-taken:", err)
+	} else if outcome == baselineRecorded && p.IsSubagent() && !hadBaseline {
+		if err := store.SetMeta(sessionstate.MetaBaselineAtStop, "1"); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), "sloprail:", err)
+		}
 	} else if outcome == baselineMoved {
 		// The cited-change history before this cycle describes the line the
 		// tree left; see pruneHistory.
