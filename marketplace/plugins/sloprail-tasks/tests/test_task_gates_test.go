@@ -1,8 +1,11 @@
 package e2e
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// task-gates-hold is a PREVENTIVE file-guard over
+// task-gates-hold is a file-guard over
 // memories/tasks/<cat>/<name>/TASK.md with TWO checks in order:
 //
 //  1. SCRIPT (gates-hold.sh): every gates/*.sh under the task's own gates/
@@ -132,14 +135,14 @@ func TestGates_JudgmentGateInvoked(t *testing.T) {
 		e.InstallJudgeClaude(`{"pass": false, "reasoning": "GATES: the launch video does not exist."}`)
 
 		toDoDoc := task("to_do", "P1", body)
-		res := e.Run(proj, sess, authPrompt, Turns("done",
+		e.Run(proj, sess, authPrompt, Turns("done",
 			Write("w2", gatesTaskPath, toDoDoc),
 		))
-		if !res.Refused() {
-			t.Fatalf("a judgment gate the judge FAILS did not refuse the transition:\n%s", res.Output)
-		}
-		if !res.Saw("does not exist") {
-			t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)
+		// The judge lives in the file-guard: the transition lands and the turn
+		// is blocked at Stop with the judge's reasoning.
+		blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
+		if !strings.Contains(blocks, "does not exist") {
+			t.Fatalf("a judgment gate the judge FAILS did not block the turn at Stop:\n%s", blocks)
 		}
 	})
 

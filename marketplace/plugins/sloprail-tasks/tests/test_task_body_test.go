@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// task-body-is-human-authored is a PREVENTIVE file-guard over
+// task-body-is-human-authored is a file-guard over
 // memories/tasks/<cat>/<name>/TASK.md with TWO checks in order:
 //
 //   0. REQUIRE: a write that CREATES the task or CHANGES its body (the guard's
@@ -79,9 +79,9 @@ func TestBody_CitedCreatePasses(t *testing.T) {
 
 // TestBody_SlopBodyRefusedByJudge: a body whose write cites the user's words but
 // which ALSO carries agent-authored elaboration the human never asked for — the
-// "and nothing else" violation — passes stage 1 (a user citation is on the write)
-// and is then REFUSED by the judge (stub pass:false), with the judge's reasoning
-// reaching the agent. The gate keeps it off disk.
+// "and nothing else" violation — passes the gate (a user citation is on the write)
+// and lands; the file-guard's judge (stub pass:false) then blocks the turn at Stop,
+// with the judge's reasoning reaching the agent.
 func TestBody_SlopBodyRefusedByJudge(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
@@ -94,14 +94,12 @@ func TestBody_SlopBodyRefusedByJudge(t *testing.T) {
 		srWrite("b1", taskPath, task("backlog", "P1", body), citeUser(askQuote)),
 	))
 
-	if !res.Refused() {
-		t.Fatalf("a slop body the judge rejected was not refused:\n%s", res.Output)
+	if res.Refused() {
+		t.Fatalf("the gate (citation only, no model) refused a cited body:\n%s", res.Output)
 	}
-	if e.Exists(proj, taskPath) {
-		t.Errorf("the gate let a judge-rejected body land on disk")
-	}
-	if !res.Saw("acceptance criteria and a suggested approach the user never stated") {
-		t.Errorf("the judge's reasoning did not reach the agent:\n%s", res.Output)
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-body-slop", "Stop"), "\n")
+	if !strings.Contains(blocks, "acceptance criteria and a suggested approach the user never stated") {
+		t.Errorf("a slop body the judge rejected was not blocked at Stop with its reasoning:\n%s", blocks)
 	}
 }
 
@@ -235,9 +233,9 @@ func TestBody_CitedCreateSurvivesUncitedStatusEdit(t *testing.T) {
 	if prompt := e.JudgePrompt(proj, "judge-prompt.txt"); !containsStr(prompt, askQuote) {
 		t.Errorf("the Stop judge was not handed the citation recorded for this body:\n%s", prompt)
 	}
-	// The body is judged once when it is set (the Pre create) and once as it
-	// settled (Stop) — never for the status edit, and never twice at Stop.
-	if n := e.JudgeCalls(proj, "judge-prompt.txt", "BODY of a task file"); n != 2 {
-		t.Errorf("the body judge was asked %d times, want 2 (the create, then Stop)", n)
+	// The judge lives in the file-guard: the body is judged once, as it settled
+	// (Stop) — never at the create, never for the status edit.
+	if n := e.JudgeCalls(proj, "judge-prompt.txt", "BODY of a task file"); n != 1 {
+		t.Errorf("the body judge was asked %d times, want 1 (Stop)", n)
 	}
 }

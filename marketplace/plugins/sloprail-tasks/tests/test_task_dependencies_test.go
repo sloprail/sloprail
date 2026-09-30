@@ -2,7 +2,7 @@ package e2e
 
 import "testing"
 
-// task-dependencies-resolve is a PREVENTIVE file-guard over
+// task-dependencies-resolve is a file-guard over
 // memories/tasks/<cat>/<name>/TASK.md with one deterministic SCRIPT check: every
 // id in depends_on must resolve to a task folder that no longer exists (done
 // means deleted, per the plugin's lifecycle), and the depends_on graph must have
