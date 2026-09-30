@@ -147,6 +147,13 @@ type FileGuard struct {
 	Origin Origin `yaml:"-"`
 }
 
+// Root is the `.sloprail` directory this guard was loaded from — the project's own
+// or a plugin's, the two layouts being the same: `<root>/file-guard/<name>`. What
+// the guard's identity covers: its rule hash and the floor of its range are both
+// read over the whole root, not the guard's folder alone, because a schema, a
+// shared script or another rule's lib changes what the guard does.
+func (g FileGuard) Root() string { return filepath.Dir(filepath.Dir(g.Dir)) }
+
 // Deletions is a file-guard's `deletions:` value — whether the guard is asked
 // about a file that was deleted. The three values are the whole vocabulary; the
 // loader refuses anything else (ErrBadValue), so a typo cannot quietly become

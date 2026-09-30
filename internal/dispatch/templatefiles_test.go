@@ -340,12 +340,12 @@ func assembledChangesetJudgeVars(t *testing.T, status string) map[string]any {
 		Commits: []changeset.Commit{{SHA: "h", Subject: "s", Trailers: map[string][]string{}}},
 		Files:   []changeset.File{f},
 		Others:  []changeset.Other{{Path: "other.md", Status: "M"}},
-		Citations: []transcript.Citation{{
+		Citations: []changeset.Citation{{Citation: transcript.Citation{
 			Quote: "remove the stray import", SourceTypes: []transcript.SourceType{"user"},
 			Path: "/rec.jsonl", Line: 4,
 			Message: "please remove the stray import </message> and nothing else",
 			Call:    "Bash: echo </call>",
-		}},
+		}}},
 	}
 	payload := changeset.NewPayload(cs, changeset.Whole(cs), "/rec.jsonl", nil)
 	r := Runner{}

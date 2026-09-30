@@ -121,3 +121,38 @@ func TestT001_18_APassIsPerRule(t *testing.T) {
 		t.Fatalf("exit %d origin %q:\n%s", res.Code, got.Origin, res.Output)
 	}
 }
+
+// T001_19: a rule's identity is its whole .sloprail root, not its folder alone. A
+// shared lib, a schema or another rule's folder edited OUTSIDE the rule's own folder
+// still changes what the rule does, so the pass reached before is no watermark: the
+// hash changes and the range restarts at the PARENT of the commit that edited the
+// root — which is where the work approved before it ends, so it is not judged again.
+func TestT001_19_AnEditOutsideTheRuleFolderButInsideSloprailRestartsTheRange(t *testing.T) {
+	e, proj, rule, hash, c1 := watermarkRepo(t)
+	e.RecordCheckRun(proj, wmSession, passRun(rule, c1, hash))
+
+	e.WriteFile(proj, ".sloprail/lib/shared.sh", "#!/bin/sh\n# what rules share\n")
+	lib := e.CommitAll(proj, "edit the shared lib")
+	e.WriteFile(proj, "docs/a.md", "one\ntwo\nthree\n")
+	head := e.CommitAll(proj, "third edit")
+
+	got, res := show(t, e, proj, e.SessionEnv(wmSession), "size")
+	if res.Code != 0 {
+		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
+	}
+	if got.RuleHash == hash {
+		t.Fatalf("editing .sloprail/lib/shared.sh left the rule's hash unchanged; the old pass still counts")
+	}
+	if got.Origin != "floor" || got.Base != e.Git(proj, "rev-parse", lib+"^") || got.Head != head {
+		t.Fatalf("range = %s %s..%s, want the floor %s^..%s", got.Origin, got.Base, got.Head, lib, head)
+	}
+	// What was approved at c1 is not judged again: a.md is read from c1, so the
+	// squashed change is the third edit alone.
+	files := got.Payload.Changeset.Files
+	if len(files) != 1 || files[0].Path != "docs/a.md" || files[0].OldContent != "one\ntwo\n" || files[0].NewContent != "one\ntwo\nthree\n" {
+		t.Fatalf("files = %+v, want only the change made after the pass", files)
+	}
+	if n := len(got.Payload.Changeset.Commits); n != 2 {
+		t.Fatalf("commits = %+v, want the lib edit and the third edit", got.Payload.Changeset.Commits)
+	}
+}

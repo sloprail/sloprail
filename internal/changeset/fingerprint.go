@@ -40,6 +40,18 @@ func Fingerprint(p Payload, ruleHash, model string, extra ...string) (string, er
 		c.SHA = ""
 		view.Changeset.Commits[i] = c
 	}
+	// The SHAs that say which commit changed a file and which carried a citation
+	// are blanked in a copy, as the commits' own are; the paths a citation grounds stay.
+	view.Changeset.Files = make([]File, len(p.Changeset.Files))
+	for i, f := range p.Changeset.Files {
+		f.Commits = blankSHAs(f.Commits)
+		view.Changeset.Files[i] = f
+	}
+	view.Changeset.Citations = make([]Citation, len(p.Changeset.Citations))
+	for i, c := range p.Changeset.Citations {
+		c.Commits = blankSHAs(c.Commits)
+		view.Changeset.Citations[i] = c
+	}
 	body, err := json.Marshal(view)
 	if err != nil {
 		return "", err
@@ -54,4 +66,12 @@ func Fingerprint(p Payload, ruleHash, model string, extra ...string) (string, er
 func frame(buf, part []byte) []byte {
 	buf = binary.BigEndian.AppendUint64(buf, uint64(len(part)))
 	return append(buf, part...)
+}
+
+// blankSHAs keeps how many commits there were and drops which.
+func blankSHAs(shas []string) []string {
+	if shas == nil {
+		return nil
+	}
+	return make([]string, len(shas))
 }

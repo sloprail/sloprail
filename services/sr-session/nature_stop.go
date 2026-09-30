@@ -46,11 +46,10 @@ import (
 // dispatchNatureStop runs the new-format end-of-cycle dispatch and reports the
 // text to block the turn with (or "" to let it end).
 //
-// It computes the cycle's Post events itself (the same postEvents the old Post
-// dispatch uses, which also re-adds outstanding files so a file-guard's prior
-// refusal re-fires) and reuses the caller's already-open store for revalidation,
-// so a file-guard's verdict lands in the same file_checks table the old format's
-// re-fire reads.
+// It computes the cycle's Post events itself (postEvents), which the contexts'
+// enters read; a file-guard does not — it judges the commits of its own range, and
+// its verdicts are recorded in the session's check results (changeset_eval.go),
+// where a refusal stays until a run passes.
 func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry, scope hookScope, store sessionstate.Store) string {
 	loaded := newNatureDeclarations(cmd, p.Cwd, reg)
 	if len(loaded.Gates) == 0 && len(loaded.Contexts) == 0 && len(loaded.FileGuards) == 0 {
@@ -62,10 +61,8 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	gatesMap := loadGatesMap(cmd, store)
 
 	// The cycle's Post file events, and the repository root their paths resolve
-	// against. postEvents also re-adds every outstanding (still-refused) path to the
-	// difference, so a file-guard that refused a file last cycle sees it again this
-	// cycle even if the tree no longer shows it changed — the re-fire mechanism,
-	// reused whole. bound names only the file kinds so extraction does the minimum.
+	// against: what the contexts' enters read. bound names only the file kinds so
+	// extraction does the minimum.
 	bound := natureStopBoundKinds(loaded)
 	postFileEvents, root := postEvents(cmd, store, p, reg, bound)
 	if root == "" {

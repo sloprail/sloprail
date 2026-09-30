@@ -417,3 +417,49 @@ func TestT015_04_ARefusedFileOutsideTheDifferenceIsStillReported(t *testing.T) {
 			"tied to the measuring point after all", second)
 	}
 }
+
+// T015_06: a refusal is one session's state. Two sessions in one tree hold their
+// own: session one's unfixed refusal is not session two's — session two's first Stop
+// evaluates the rule itself, over a range that starts at the floor rather than
+// where session one is (it is handed the file session one was refused for as an
+// addition), and is refused by its own evaluation — while session one's record of
+// refusals is untouched by anything session two did.
+func TestT015_06_TwoSessionsInOneTreeHoldTheirRefusalsApart(t *testing.T) {
+	e := New(t)
+	proj := e.Project()
+	e.GitInit(proj)
+	led := e.NewLedger("seen")
+	e.FileGuard(proj, "watcher", refuseNamedGuard, map[string]string{"judge.sh": judgeScript(led)})
+	e.CommitAll(proj, "the guardrail before the sessions")
+
+	e.Run(proj, "s-015-06-one", "write a bad file", Turns("done",
+		Write("w1", "bad-file.md", "violates\n"),
+	).ThenCommit("the bad file"))
+	oneBefore := len(e.StopContinuations(proj, "s-015-06-one"))
+	if oneBefore == 0 {
+		t.Fatalf("premise: session one's bad file was not refused")
+	}
+	first := changesetkit.Files(t, led.Lines())
+
+	e.Run(proj, "s-015-06-two", "write something else", Turns("done",
+		Write("w2", "unrelated.md", "fine\n"),
+	).ThenCommit("unrelated work"))
+
+	after := changesetkit.Files(t, led.Lines())
+	second := after[len(first):]
+	if len(second) == 0 {
+		t.Fatalf("session two's Stop never evaluated the rule: session one's state stood in for it")
+	}
+	if !changesetkit.Saw(second, "unrelated.md") {
+		t.Fatalf("session two was not handed its own work: %v", second)
+	}
+	if got := changesetkit.Statuses(second, "bad-file.md"); len(got) == 0 || got[0] != "A" {
+		t.Fatalf("session two was not judged from the floor (the file session one was refused for should arrive as an addition): %v", second)
+	}
+	if len(e.StopContinuations(proj, "s-015-06-two")) == 0 {
+		t.Fatalf("session two, whose range holds the bad file, was not refused by its own evaluation")
+	}
+	if n := len(e.StopContinuations(proj, "s-015-06-one")); n != oneBefore {
+		t.Fatalf("session one's refusals changed from %d to %d because of session two", oneBefore, n)
+	}
+}

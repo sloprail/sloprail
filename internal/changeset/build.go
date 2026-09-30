@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/sloprail/sloprail/internal/gitrepo"
-	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // DeletionMode is a file-guard's `deletions:`, read as a filter on a file's
@@ -27,7 +26,10 @@ type Scanner func(text string) []Marker
 // the markers it carries and carried, and the trailers of the whole range.
 // `context` is the caller's to add; it is not a fact about the range.
 type Scope struct {
-	Path       string
+	Path string
+	// OldPath is where a renamed file came from; empty otherwise. Not part of
+	// what `match` reads: it is what Selects falls back on for a rename.
+	OldPath    string
 	Status     string
 	Markers    []Marker
 	OldMarkers []Marker
@@ -73,7 +75,7 @@ func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 	commits := commitsOf(gitCommits)
 	trailers := TrailerScope(commits)
 
-	cs := Changeset{Base: r.Base, Head: r.Head, Commits: commits, Files: []File{}, Others: []Other{}, Citations: []transcript.Citation{}}
+	cs := Changeset{Base: r.Base, Head: r.Head, Commits: commits, Files: []File{}, Others: []Other{}, Citations: []Citation{}}
 	for _, d := range deltas {
 		status := string(d.Status)
 		if !Admits(o.Deletions, d.Status) {
@@ -90,7 +92,7 @@ func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 		if d.Status == 'D' {
 			markers = f.OldMarkers
 		}
-		selected, err := o.Select(Scope{Path: f.Path, Status: status, Markers: markers, OldMarkers: f.OldMarkers, Trailers: trailers})
+		selected, err := Selects(o.Select, Scope{Path: f.Path, OldPath: f.OldPath, Status: status, Markers: markers, OldMarkers: f.OldMarkers, Trailers: trailers})
 		if err != nil {
 			return Changeset{}, fmt.Errorf("changeset: match on %q: %w", f.Path, err)
 		}
@@ -103,7 +105,54 @@ func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 		}
 		cs.Files = append(cs.Files, f)
 	}
+	if err := attachCommits(dir, r, &cs); err != nil {
+		return Changeset{}, err
+	}
 	return cs, nil
+}
+
+// attachCommits says, for each selected file, which commits of the range changed
+// it. A file the squashed diff shows and no commit is found to have changed is a
+// fault in reading history, and an error: what grounds a file is what its commits
+// carry, so a file with none must not quietly be grounded by nothing or by all.
+func attachCommits(dir string, r gitrepo.Range, cs *Changeset) error {
+	if len(cs.Files) == 0 {
+		return nil
+	}
+	refs := make([]gitrepo.FileRef, len(cs.Files))
+	for i, f := range cs.Files {
+		refs[i] = gitrepo.FileRef{Path: f.Path, OldPath: f.OldPath}
+	}
+	byPath, err := gitrepo.FileCommits(dir, r.Base, r.Head, refs)
+	if err != nil {
+		return err
+	}
+	for i := range cs.Files {
+		commits := byPath[cs.Files[i].Path]
+		if len(commits) == 0 {
+			return fmt.Errorf("changeset: no commit of the range is found to have changed %q", cs.Files[i].Path)
+		}
+		cs.Files[i].Commits = commits
+	}
+	return nil
+}
+
+// Selects asks a rule's `match` about one file.
+//
+// A rename is selected if `match` holds on its new path OR on the path it came
+// from — with the markers it carried there. Otherwise moving a file out of a
+// guarded path (`git mv memories/x.md archive/x.md`) would be the one way to
+// change a guarded file that no rule is asked about. The second question is the
+// old path, the old markers as `markers`, and the same status: the file the rule
+// guards, as it was.
+func Selects(sel func(Scope) (bool, error), s Scope) (bool, error) {
+	ok, err := sel(s)
+	if err != nil || ok || s.Status != "R" || s.OldPath == "" {
+		return ok, err
+	}
+	old := s
+	old.Path, old.Markers = s.OldPath, s.OldMarkers
+	return sel(old)
 }
 
 // Admits says whether a status may enter `files` at all under a deletions mode.

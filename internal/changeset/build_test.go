@@ -265,3 +265,59 @@ func TestBuild_GitlinkChangesAreListedWithoutContent(t *testing.T) {
 	assert.Empty(t, f.NewContent)
 	assert.Contains(t, f.Diff, "Subproject commit")
 }
+
+func TestBuild_ARenameIsSelectedWhenTheOldPathIsGuarded(t *testing.T) {
+	dir := initRepo(t)
+	base := put(t, dir, "seed", map[string]string{"memories/x.md": "a long enough body to be seen as a rename\nsecond line\n"})
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "archive"), 0o755))
+	git(t, dir, "mv", "memories/x.md", "archive/x.md")
+	git(t, dir, "commit", "-m", "archive it")
+	head := git(t, dir, "rev-parse", "HEAD")
+
+	guardMemories := func(s Scope) (bool, error) { return len(s.Path) >= 9 && s.Path[:9] == "memories/", nil }
+	cs, err := Build(dir, rng(base, head), Options{Scan: scan, Select: guardMemories})
+	require.NoError(t, err)
+	require.Equal(t, []string{"archive/x.md"}, paths(cs.Files), "moving a file out of a guarded path is a change to it")
+	assert.Equal(t, "memories/x.md", cs.Files[0].OldPath)
+	assert.Equal(t, "R", cs.Files[0].Status)
+
+	// The new path alone is not guarded, and a plain addition there is not selected.
+	other, err := Build(dir, rng(base, head), Options{Scan: scan, Select: func(s Scope) (bool, error) { return s.Path == "docs/x.md", nil }})
+	require.NoError(t, err)
+	assert.Empty(t, other.Files)
+}
+
+func TestBuild_ARenamesOldMarkersAreWhatTheOldPathIsMatchedOn(t *testing.T) {
+	dir := initRepo(t)
+	base := put(t, dir, "seed", map[string]string{"a/x.md": "sr:invariant Order.total\nbody line one\nbody line two\n"})
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "b"), 0o755))
+	git(t, dir, "mv", "a/x.md", "b/x.md")
+	git(t, dir, "commit", "-m", "move")
+	head := git(t, dir, "rev-parse", "HEAD")
+
+	var seen []Scope
+	_, err := Build(dir, rng(base, head), Options{Scan: scan, Select: func(s Scope) (bool, error) {
+		seen = append(seen, s)
+		return false, nil
+	}})
+	require.NoError(t, err)
+	require.Len(t, seen, 2, "asked on the new path, then on the old one")
+	assert.Equal(t, "b/x.md", seen[0].Path)
+	assert.Equal(t, "a/x.md", seen[1].Path)
+	assert.Equal(t, "R", seen[1].Status)
+	require.Len(t, seen[1].Markers, 1)
+	assert.Equal(t, "Order.total", seen[1].Markers[0].FQN, "the old path is matched on the markers it carried")
+}
+
+func TestBuild_EachFileKnowsTheCommitsThatChangedIt(t *testing.T) {
+	dir := initRepo(t)
+	base := put(t, dir, "seed", map[string]string{"a.md": "a\n", "b.md": "b\n"})
+	c1 := put(t, dir, "touch a", map[string]string{"a.md": "a1\n"})
+	c2 := put(t, dir, "touch b", map[string]string{"b.md": "b1\n"})
+	c3 := put(t, dir, "touch a again", map[string]string{"a.md": "a2\n"})
+
+	cs, err := Build(dir, rng(base, c3), Options{Scan: scan, Select: selectAll})
+	require.NoError(t, err)
+	assert.Equal(t, []string{c1, c3}, fileNamed(t, cs, "a.md").Commits)
+	assert.Equal(t, []string{c2}, fileNamed(t, cs, "b.md").Commits)
+}

@@ -80,6 +80,9 @@ func TestT038_28_ACitedDeleteRetiresTheObligation(t *testing.T) {
 	).ThenCommit("declare the scanner"))
 	// The declaring Stop was owed a search, rightly; what counts is what comes after.
 	before := coverageRefusals(t, e.TranscriptPath(proj, sess))
+	if before == 0 {
+		t.Fatalf("precondition: the declared scanner should be owed a search")
+	}
 	res := e.Run(proj, sess, "go ahead", Turns("done",
 		Bash("b1", "sr-session trajectory cite '"+ask+"' --source-types user && rm -rf scanners/mine"),
 	).ThenCommit("remove the scanner", harness.CitesUser(ask)))

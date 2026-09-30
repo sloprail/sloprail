@@ -42,13 +42,14 @@ A file-guard is evaluated **once per rule at Stop**, over its range of commits:
 from its base to `HEAD`, as one squashed net diff (`git diff -M base head`). The
 base is the first of these that exists and is still an ancestor of `HEAD`:
 **the rule's watermark** (the last head it passed, at its current definition),
-**the parent of the last commit that touched the rule's folder** (a rule in this
-repository: the commit that adds or changes a rule is judged by the rule, so
-touching its folder is not a way to get work past it; files already on `main`
-before it are not judged until a change touches them; a root commit has no parent,
-so its base is git's empty tree and all of it is judged), **the HEAD recorded when the
-session began** (a plugin's rule, whose folder is in the plugin cache, or a repo
-rule not committed yet). Every base is a SHA, checked with
+**the parent of the last commit that touched the rule's whole `.sloprail` root**
+(a rule in this repository: the commit that adds or changes a rule, a schema or a
+shared script under `.sloprail/` is judged by the rule, so touching it is not a way
+to get work past it; work approved before that commit is not judged again; files
+already on `main` before it are not judged until a change touches them; a root
+commit has no parent, so its base is git's empty tree and all of it is judged),
+**the HEAD recorded when the session began** (a plugin's rule, whose `.sloprail`
+root is in the plugin cache, or a repo rule not committed yet). Every base is a SHA, checked with
 `git merge-base --is-ancestor` on every run, so an amend, rebase or branch switch
 drops a base that no longer exists instead of silently shrinking the diff. If none
 is usable (the session start was never recorded, or the tree left its history) the
@@ -56,10 +57,19 @@ evaluation **fails** and Stop refuses, rather than guess; a range where `match`
 selects nothing is a pass with no `files`, never the same as a range that could
 not be computed.
 
-A file-guard must not write into its own rule folder (ledgers, caches): the rule
-hash covers the whole folder, so a write there (once committed) changes it and
-voids the watermark: the rule is judged again from the parent of that commit.
-Keep such state in `sr-session state` or under `.git/`.
+A rule's identity is its whole `.sloprail` root — its own folder, every other rule,
+schemas and shared scripts, whichever of the project's or its plugin's it lives in.
+The rule hash covers all of it, so editing any file there changes the hash and
+voids the watermark, and the range restarts at the parent of the commit that made
+the edit. A file-guard must therefore not write into `.sloprail` (ledgers, caches):
+a write there (once committed) does exactly that. Keep such state in
+`sr-session state` or under `.git/`.
+
+A rename is selected if `match` holds on its new path **or** on the path it came
+from (with the markers it carried there): moving a file out of a guarded path,
+`git mv memories/x.md archive/x.md`, is a change to it. The same goes for an
+uncommitted rename under commit required. `deletions:` does not change this — a
+rename is not a deletion.
 
 **Commit required.** Work that is not committed cannot be judged, so at Stop an
 uncommitted change to a path some file-guard's `match` selects refuses the Stop:
@@ -98,7 +108,7 @@ folder name (`size-limit`) or the qualified name a refusal cites
 (`file-guard/size-limit`, `<plugin>/file-guard/size-limit`). Its keys: `rule`;
 `origin` (which base was used: `watermark`, `floor` or `session-start`); `base`,
 `head`; `droppedWatermark` (a watermark no longer reachable after an amend or
-rebase, when there was one); `ruleHash` (a hash of the rule's whole folder — edit
+rebase, when there was one); `ruleHash` (a hash of the rule's whole `.sloprail` root — edit
 anything in it and old verdicts stop applying); `unresolvedCitations` (the
 `Sloprail-Cites-*` trailers whose quote did not resolve); and `payload`, exactly
 what a check receives on stdin.
@@ -257,10 +267,10 @@ rules follow from it:
   watermark moves to that head; the next Stop judges only commits made after it. A
   Stop with no new commits runs no check.
 - **Unchanged input is never re-judged.** A judge's verdict is stored under a
-  fingerprint of the rule's whole folder, the model and everything the judge was
+  fingerprint of the rule's whole `.sloprail` root, the model and everything the judge was
   given (never commit SHAs, so a rebase that changes SHAs but not content is a hit),
   and replayed — a **fail included** — until the input changes. A script is cheap
-  and deterministic and always re-runs. Editing anything in the rule's folder, or
+  and deterministic and always re-runs. Editing anything under `.sloprail`, or
   changing its `model`, starts the verdicts over.
 - **Changed input re-judges the whole squashed range, on purpose.** A range that
   was refused does not advance, so a fix commit is judged together with the

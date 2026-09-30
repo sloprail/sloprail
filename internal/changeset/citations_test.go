@@ -39,7 +39,8 @@ func TestResolveCitations_UserAndToolTrailersLandInTheEventCitationShape(t *test
 
 	assert.Empty(t, unresolved)
 	require.Len(t, cites, 2)
-	assert.Equal(t, transcript.Citation{Quote: "split the runners", SourceTypes: []transcript.SourceType{transcript.SourceUser}, Path: "/t.jsonl", Line: 7, Message: "msg split the runners"}, cites[0])
+	assert.Equal(t, transcript.Citation{Quote: "split the runners", SourceTypes: []transcript.SourceType{transcript.SourceUser}, Path: "/t.jsonl", Line: 7, Message: "msg split the runners"}, cites[0].Citation)
+	assert.Equal(t, []string{"c1"}, cites[0].Commits, "a citation says which commit carried it")
 	assert.Equal(t, []transcript.SourceType{transcript.SourceToolResult}, cites[1].SourceTypes)
 	assert.Equal(t, []transcript.SourceType{transcript.SourceUser}, (*asked)[0].SourceTypes, "Cites-User asks the user pool only")
 	assert.Equal(t, []transcript.SourceType{transcript.SourceToolResult}, (*asked)[1].SourceTypes, "Cites-Tool asks the tool pool only")
@@ -109,4 +110,40 @@ func TestResolveCitations_AnEmptyQuoteIsNotACitation(t *testing.T) {
 	cites, unresolved := ResolveCitations([]Commit{commitWith("c1", map[string][]string{TrailerCitesUser: {""}})}, resolve)
 	assert.Empty(t, cites)
 	assert.Len(t, unresolved, 1)
+}
+
+func TestResolveCitations_AQuoteOnTwoCommitsIsOneCitationCarriedByBoth(t *testing.T) {
+	resolve, _ := fakeResolver(map[string]transcript.SourceType{"a": transcript.SourceUser})
+	cites, _ := ResolveCitations([]Commit{
+		commitWith("c1", map[string][]string{TrailerCitesUser: {"a"}}),
+		commitWith("c2", map[string][]string{TrailerCitesUser: {"a"}}),
+	}, resolve)
+	require.Len(t, cites, 1)
+	assert.Equal(t, []string{"c1", "c2"}, cites[0].Commits)
+}
+
+func TestAttributeFiles_AFileIsGroundedByTheCommitsThatChangedIt(t *testing.T) {
+	cites := []Citation{
+		{Citation: transcript.Citation{Quote: "a"}, Commits: []string{"c1"}},
+		{Citation: transcript.Citation{Quote: "b"}, Commits: []string{"c3"}},
+	}
+	files := []File{
+		{Path: "one.md", Commits: []string{"c1", "c2"}},
+		{Path: "two.md", Commits: []string{"c3"}},
+		{Path: "three.md", Commits: []string{"c2"}},
+	}
+	AttributeFiles(cites, files)
+	assert.Equal(t, []string{"one.md"}, cites[0].Files)
+	assert.Equal(t, []string{"two.md"}, cites[1].Files)
+}
+
+func TestForFile_OnlyTheCommitThatLastChangedTheFileGroundsIt(t *testing.T) {
+	cs := Changeset{Citations: []Citation{
+		{Citation: transcript.Citation{Quote: "a"}, Commits: []string{"c1"}},
+		{Citation: transcript.Citation{Quote: "b"}, Commits: []string{"c3"}},
+	}}
+	cited := File{Path: "x.md", Commits: []string{"c1", "c2"}}
+	assert.Empty(t, cs.ForFile(cited), "an uncited change on top of a cited one is not grounded")
+	assert.Len(t, cs.ForFile(File{Path: "y.md", Commits: []string{"c2", "c3"}}), 1, "a cited commit on top of an uncited one grounds the file as it stands")
+	assert.Empty(t, cs.ForFile(File{Path: "z.md"}), "a file with no known commit is grounded by nothing")
 }

@@ -770,8 +770,16 @@ func citationRemedy(kind string, fields map[string]any, pools []transcript.Sourc
 		if hint != "" {
 			how += "\n" + hint
 		}
-		return fmt.Sprintf("this change must cite %s, and no commit in its range carries a citation that resolves.\n%s\n"+
-			"The quote must match exactly one entry of this session — check one with `sr-session trajectory cite '<quote>'`.", what, how)
+		subject := "this change must cite " + what + ", and no commit in its range carries a citation that resolves."
+		if path != "" {
+			subject = path + " must cite " + what + " in the commit that last changed it, and that commit carries none that resolves."
+			how = fmt.Sprintf("Amend that commit, or add a commit that changes %s, with a trailer quoting %s exactly:\n  %s: <exact quote>", path, what, trailer)
+			if hint != "" {
+				how += "\n" + hint
+			}
+		}
+		return fmt.Sprintf("%s\n%s\n"+
+			"The quote must match exactly one entry of this session — check one with `sr-session trajectory cite '<quote>'`.", subject, how)
 	case declaration.KindPreCommandInvoke:
 		how := fmt.Sprintf("Chain a cite in front of it, quoting the exact words:\n"+
 			"  sr-session trajectory cite --source-types %s '<exact quote>' && <the command>", strings.Join(names, ","))

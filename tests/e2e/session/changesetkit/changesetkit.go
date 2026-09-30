@@ -15,6 +15,9 @@ type Observed struct {
 	Status  string // A, M or D
 	Path    string
 	OldPath string // the path a rename came from; empty otherwise
+
+	OldContent string // what the file held at the range's base; empty for an addition
+	NewContent string // what it holds at the range's head; empty for a deletion
 }
 
 // Files decodes every recorded payload line into its file entries, in order.
@@ -27,9 +30,11 @@ func Files(t testing.TB, lines []string) []Observed {
 		var p struct {
 			Changeset struct {
 				Files []struct {
-					Path    string `json:"path"`
-					Status  string `json:"status"`
-					OldPath string `json:"oldPath"`
+					Path       string `json:"path"`
+					Status     string `json:"status"`
+					OldPath    string `json:"oldPath"`
+					OldContent string `json:"oldContent"`
+					NewContent string `json:"newContent"`
 				} `json:"files"`
 			} `json:"changeset"`
 		}
@@ -37,7 +42,7 @@ func Files(t testing.TB, lines []string) []Observed {
 			t.Fatalf("the check was handed something that is not a changeset payload: %v\n%s", err, line)
 		}
 		for _, f := range p.Changeset.Files {
-			got = append(got, Observed{Status: f.Status, Path: f.Path, OldPath: f.OldPath})
+			got = append(got, Observed{Status: f.Status, Path: f.Path, OldPath: f.OldPath, OldContent: f.OldContent, NewContent: f.NewContent})
 		}
 	}
 	return got

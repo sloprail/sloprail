@@ -69,6 +69,11 @@ func TestBody_CitedCreatePasses(t *testing.T) {
 	if !containsStr(prompt, "<citations>") || !containsStr(prompt, "<quote>"+askQuote) || !containsStr(prompt, "<message>") {
 		t.Errorf("the judge was not handed the cited words and their location:\n%s", prompt)
 	}
+	// The engine recorded the citation for the path — the record
+	// TestBody_CitedCreateSurvivesUncitedStatusEdit relies on seeing CLEARED.
+	if rec := e.Meta(proj, sess, "citations"); !containsStr(rec, askQuote) {
+		t.Errorf("the engine did not record the write's citation for the path:\n%s", rec)
+	}
 }
 
 // TestBody_SlopBodyRefusedByJudge: a body whose write cites the user's words but
@@ -85,10 +90,16 @@ func TestBody_SlopBodyRefusedByJudge(t *testing.T) {
 
 	body := askBody + " Acceptance criteria: 100% test coverage, a rollback plan, and a metrics dashboard. Suggested approach: strangler-fig migration over three sprints."
 	sess := "s-body-slop"
-	e.Run(proj, sess, authPrompt, Turns("done",
+	res := e.Run(proj, sess, authPrompt, Turns("done",
 		srWrite("b1", taskPath, task("backlog", "P1", body), citeUser(askQuote)),
 	).ThenCommit("Add the task", CitesUser(askQuote)))
 
+	if res.Refused() {
+		t.Fatalf("the gate refused a cited write; the judge belongs to the file-guard at Stop:\n%s", res.Output)
+	}
+	if !e.Exists(proj, taskPath) {
+		t.Fatalf("a cited write did not land, so the Stop has nothing committed to judge:\n%s", res.Output)
+	}
 	blocks := strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n")
 	if !containsStr(blocks, "acceptance criteria and a suggested approach the user never stated") {
 		t.Fatalf("a slop body the judge rejected was not refused at Stop, or its reasoning did not reach the agent:\n%s", blocks)
@@ -210,6 +221,10 @@ func TestBody_CitedCreateSurvivesUncitedStatusEdit(t *testing.T) {
 	}
 	if got := readFile(t, proj, taskPath); !strings.Contains(got, "status: blocked") {
 		t.Fatalf("the status edit did not land:\n%s", got)
+	}
+	// The engine's own record of the path's citations survived the uncited edit.
+	if rec := e.Meta(proj, sess, "citations"); !containsStr(rec, askQuote) {
+		t.Fatalf("the engine dropped the path's citation on an uncited edit:\n%s", rec)
 	}
 	for _, b := range e.BlockingErrorsFrom(proj, sess, "Stop") {
 		if containsStr(b, "TASK BODY") {

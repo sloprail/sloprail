@@ -5,6 +5,7 @@ import (
 	"github.com/sloprail/sloprail/internal/event"
 	"github.com/sloprail/sloprail/internal/filemod"
 	"github.com/sloprail/sloprail/internal/guardrail"
+	"github.com/sloprail/sloprail/internal/transcript"
 )
 
 // What a file-guard's `match` is asked about one file of a changeset, and how
@@ -62,4 +63,23 @@ func trailersWire(t map[string][]string) map[string]any {
 		out[k] = list
 	}
 	return out
+}
+
+// resolveChangesetCitations grounds a changeset's Sloprail-Cites-* trailers in the
+// transcripts on disk, exactly as `sr-file --cite` would, and says which of the
+// selected files each citation's commits changed. It returns the trailers that did
+// not resolve. With no record there is nothing to resolve against, and no
+// citations: a `require: citation` then refuses, as it must.
+func resolveChangesetCitations(cs *changeset.Changeset, record, cwd string) []changeset.Unresolved {
+	if record == "" {
+		return nil
+	}
+	project := projectDirOf(record, cwd)
+	resolve := func(req transcript.CitationRequest) (transcript.Citation, error) {
+		return transcript.ResolveCitationAcrossSessions(record, project, req)
+	}
+	cites, missed := changeset.ResolveCitations(cs.Commits, resolve)
+	changeset.AttributeFiles(cites, cs.Files)
+	cs.Citations = cites
+	return missed
 }
