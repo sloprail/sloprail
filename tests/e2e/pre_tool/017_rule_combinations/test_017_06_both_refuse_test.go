@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,13 +31,10 @@ import (
 //
 // # Vehicle: PreFileWrite gates
 //
-// Unlike T017_01..05, these three turn on the "first refusal ENDS the matter"
-// short-circuit of the pre-tool point: a file already refused by a gate is not
-// asked of the gates after it, so the pending action is refused once, before it
-// lands. The vehicle is a set of gates triggering on the same PreFileWrite event.
-// A gate runs once per matching pre file event, so a permit-and-record check
-// records exactly one line per question — there is no settled-file re-check to
-// filter out.
+// These three turn on how the pre-tool point answers a pending action: once, with
+// one rule's reason. The vehicle is a set of gates triggering on the same
+// PreFileWrite event. A gate runs once per matching pre file event, so a
+// permit-and-record check records exactly one line per question.
 
 // gateEveryCreate is a gate that fires on every created or updated markdown file
 // (the writes here are all .md).
@@ -97,21 +95,15 @@ func TestT017_06_TwoRefusalsPreventTheWorkAndNameARule(t *testing.T) {
 		res.Output)
 }
 
-// T017_07: a pending action is refused once, and the second rule is not asked.
+// T017_07: a pending action is refused once, with one rule's reason.
 //
-// The pre-tool point's own rule — "the first that refuses the work ends the
-// matter" — observed across two GUARDRAILS.
-//
-// This is the asymmetry with the Post point worth pinning. There, objections are
-// collected and every rule is dispatched, because an agent fixing one violation
-// per turn is the slow version of the same bug. Here there is nothing to
-// collect: the action is refused and does not happen, so asking the remaining
-// rules about work that is already prevented buys nothing and costs a check run
-// each — which for a model-backed judge is not free.
-//
-// Observed on the ledgers, since "the second rule was not asked" leaves no trace
-// on the stream. Exactly one of the two rules ran: which one is not asserted.
-func TestT017_07_TheFirstRefusalEndsTheMatterForAPendingAction(t *testing.T) {
+// The pre-tool point answers once per call: the action is refused and does not
+// happen, so the agent hears ONE refusal — the first rule's — rather than two
+// reasons spliced together. (Every matching gate is still asked, as a gate always
+// was: a gate's own ledger and verdict stand, and T016_06 pins that a rule that did
+// not refuse is still asked after another one did. What is deduplicated is what the
+// agent is told.)
+func TestT017_07_ARefusedPendingActionIsAnsweredWithOneRulesReason(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 	e.Gate(proj, "first-rule", gateEveryCreate,
@@ -124,10 +116,13 @@ func TestT017_07_TheFirstRefusalEndsTheMatterForAPendingAction(t *testing.T) {
 	))
 	require.True(t, res.Refused(), "the write must be refused for this to be about what follows one")
 
-	ran := len(e.GateLedgerLines(proj, "first-rule", "log")) + len(e.GateLedgerLines(proj, "second-rule", "log"))
-	assert.Equal(t, 1, ran,
-		"a pending action refused by one rule must not be put in front of the others — the "+
-			"action is already prevented, and each further check is a run that buys nothing")
+	heard := 0
+	for _, reason := range []string{"the first rule objects", "the second rule objects"} {
+		if strings.Contains(strings.Join(res.Refusals(), "\n"), reason) {
+			heard++
+		}
+	}
+	assert.Equal(t, 1, heard, "the agent must hear exactly one rule's reason for one refused action:\n%s", res.Output)
 }
 
 // T017_08: both rules are asked when the first one PERMITS.

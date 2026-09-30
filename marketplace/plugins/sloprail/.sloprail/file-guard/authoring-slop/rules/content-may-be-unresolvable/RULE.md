@@ -24,9 +24,7 @@ unknowable.
 An absent declared field reads as its zero value, so `newContent == ""` is
 indistinguishable on the value alone from a real empty file: a `NotebookEdit`
 creating a fresh `.ipynb` emits a `PreFileCreate` with `newContent` `""` and
-`resultKnown` false. A Post kind carries settled bytes with no `resultKnown` (the
-write has landed), but the engine must still READ them; a file it could not read is
-reported with `newContent` `""` and `newContentKnown` false.
+`resultKnown` false.
 
 **Instead:** decide, and write the decision in the body.
 
