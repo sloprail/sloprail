@@ -118,7 +118,7 @@ func project(t *testing.T, e *harness.Env) string {
 }
 
 // runGrepDirect runs the installed check-rules.sh (the GREP) against a script
-// body handed as newContent on a PreFileCreate, exactly as the engine would, and
+// body handed as the newContent of one added file in a Changeset, as the engine would, and
 // returns its exit code. This is how a test observes what the grep ALONE decides —
 // the floor beneath the judge — so "the grep permits the buggy create" is a fact
 // the test checks rather than assumes.
@@ -126,10 +126,13 @@ func runGrepDirect(t *testing.T, projDir, scriptBody string) int {
 	t.Helper()
 	guardDir := filepath.Join(projDir, ".sloprail", "file-guard", "authoring-slop")
 	payload, err := json.Marshal(map[string]any{
-		"event": map[string]any{
-			"path":       ".sloprail/file-guard/mine/check.sh",
-			"newContent": scriptBody,
-			"kind":       "PreFileCreate",
+		"event": map[string]any{"kind": "Changeset"},
+		"changeset": map[string]any{
+			"files": []map[string]any{{
+				"path":       ".sloprail/file-guard/mine/check.sh",
+				"status":     "A",
+				"newContent": scriptBody,
+			}},
 		},
 	})
 	if err != nil {
