@@ -27,8 +27,10 @@ cat >/dev/null
 } >> ` + out + `
 exit 0
 `
+	e.CommitAll(proj, "the project")
+	e.DisableShippedFileGuards(proj)
 	e.FileGuard(proj, "docs", docsRule, map[string]string{"check.sh": script})
-	e.CommitAll(proj, "the project and its rule")
+	e.CommitAll(proj, "the rule")
 	e.Run(proj, "s-003-07", "hello", Turns("done", Bash("b1", "true")))
 
 	e.WriteFile(proj, "docs/a.md", "committed content\n")

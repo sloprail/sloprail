@@ -113,7 +113,9 @@ func project(t *testing.T, ruleYAML string) (*Env, string, string) {
 	e.WriteFile(proj, "docs/seed.md", "seed\n")
 	e.WriteFile(proj, "notes/scratch.md", "scratch\n")
 	led := filepath.Join(t.TempDir(), "ledger.jsonl")
+	e.CommitAll(proj, "the project")
+	e.DisableShippedFileGuards(proj)
 	e.FileGuard(proj, "docs", ruleYAML, map[string]string{"check.sh": recorder(led)})
-	e.CommitAll(proj, "the project and its rule")
+	e.CommitAll(proj, "the rule")
 	return e, proj, led
 }

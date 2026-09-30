@@ -42,9 +42,11 @@ refusal cites it (`file-guard/size-limit`, `<plugin>/file-guard/size-limit`).
 The base is the first of these that exists and is still an ancestor of `HEAD`:
 
 1. **the rule's watermark** — the last head it passed, at its current definition;
-2. **the last commit that touched the rule's folder** — for a rule that lives in
-   this repository. A rule applies going forward from the commit that added or
-   changed it, so files already on `main` are not judged until a change touches them;
+2. **the parent of the last commit that touched the rule's folder** — for a rule
+   that lives in this repository. The commit that adds or changes a rule is judged
+   by the rule (touching its folder is not a way to get work past it); files
+   already on `main` before it are not judged until a change touches them. A root
+   commit has no parent, so its base is git's empty tree and all of it is judged;
 3. **the HEAD recorded when the session began** — for a plugin's rule (its folder
    is in the plugin cache, not the repo) and for a repo rule not committed yet.
 

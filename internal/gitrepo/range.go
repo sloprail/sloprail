@@ -31,13 +31,19 @@ var ErrNoSessionStart = errors.New("gitrepo: no watermark, no commit touching th
 // same reason: the last resort cannot be used, and nothing else is left.
 var ErrSessionStartUnreachable = errors.New("gitrepo: the session-start commit is not an ancestor of HEAD")
 
+// EmptyTree is git's empty tree, the base of a range that starts before the first
+// commit. It is the same object in every repository, so it needs no lookup.
+const EmptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 // BaseOrigin says which candidate a Range's base came from.
 type BaseOrigin string
 
 const (
 	// FromWatermark: the last head the rule passed, still reachable.
 	FromWatermark BaseOrigin = "watermark"
-	// FromFloor: the last commit that touched the rule's folder.
+	// FromFloor: the PARENT of the last commit that touched the rule's folder (the
+	// empty tree when that commit is a root), so the commit that adds or changes a
+	// rule is itself judged by it.
 	FromFloor BaseOrigin = "floor"
 	// FromSessionStart: the HEAD recorded when the session began. The floor of
 	// last resort, for a rule with no folder in this repository (a plugin's lives
@@ -68,10 +74,13 @@ func (r Range) Empty() bool { return r.Base == r.Head }
 // base is the first reachable of, in order:
 //
 //  1. watermark — the last head the rule passed (when non-empty);
-//  2. the last commit touching folder — the rule's definition, for a rule whose
-//     folder is in this repository (folder is "" for one that is not, such as a
-//     plugin's; a folder no commit has touched yet, an uncommitted rule, has no
-//     such commit and falls through);
+//  2. the PARENT of the last commit touching folder — the rule's definition, for
+//     a rule whose folder is in this repository (folder is "" for one that is not,
+//     such as a plugin's; a folder no commit has touched yet, an uncommitted rule,
+//     has no such commit and falls through). The parent, not the commit: everything
+//     else in the commit that adds or changes a rule is judged by the rule, so
+//     touching the rule's folder is not a way to get work past it. A root commit
+//     has no parent, and its base is the empty tree, so the whole of it is judged;
 //  3. sessionStart — the HEAD recorded when the session began. Rules apply going
 //     forward, and for a rule with no committed definition "forward" starts where
 //     this session did.
@@ -115,7 +124,10 @@ func ResolveRange(dir, folder, watermark, sessionStart string) (Range, error) {
 			if !ok {
 				return Range{}, fmt.Errorf("gitrepo: floor %s for %q is not an ancestor of HEAD", floor, folder)
 			}
-			r.Base, r.Origin = floor, FromFloor
+			if r.Base, err = parentOrEmptyTree(dir, floor); err != nil {
+				return Range{}, err
+			}
+			r.Origin = FromFloor
 			return r, nil
 		}
 	}
@@ -183,4 +195,21 @@ func RootCommit(dir string) (string, error) {
 		}
 	}
 	return "", ErrNoCommits
+}
+
+// parentOrEmptyTree is the first parent of commit, or the empty tree for a root.
+func parentOrEmptyTree(dir, commit string) (string, error) {
+	// `--verify -q` exits 1, silently, when the commit has no parent.
+	out, err := run(dir, "rev-parse", "--verify", "-q", commit+"^")
+	if err != nil {
+		if exitCode(err) == 1 {
+			return EmptyTree, nil
+		}
+		return "", err
+	}
+	sha := strings.TrimSpace(out)
+	if !isObjectName(sha) {
+		return "", fmt.Errorf("gitrepo: parent of %s resolved to %q, not an object name", short(commit), sha)
+	}
+	return sha, nil
 }

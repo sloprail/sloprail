@@ -108,7 +108,7 @@ func docsRule(extra string) string {
 }
 
 // repoWithRule is a committed repository holding docs/a.md and a committed rule
-// "size", returning the environment, the project, and the rule's commit (its floor).
+// "size", returning the environment, the project, and the commit BEFORE the rule's commit (its floor: the rule's own commit is judged too).
 func repoWithRule(t *testing.T, ruleYAML string) (*harness.Env, string, string) {
 	t.Helper()
 	e := New(t)
@@ -116,8 +116,8 @@ func repoWithRule(t *testing.T, ruleYAML string) (*harness.Env, string, string) 
 	e.GitInit(proj)
 	e.WriteFile(proj, "docs/a.md", "one\n")
 	e.WriteFile(proj, "README.md", "readme\n")
-	e.CommitAll(proj, "the project before the rule")
+	floor := e.CommitAll(proj, "the project before the rule")
 	e.FileGuard(proj, "size", ruleYAML, map[string]string{"check.sh": passingCheck})
-	floor := e.CommitAll(proj, "add the size rule")
+	e.CommitAll(proj, "add the size rule")
 	return e, proj, floor
 }

@@ -67,7 +67,7 @@ func TestT001_14_NoSessionNoCitations(t *testing.T) {
 	if len(got.Payload.Changeset.Citations) != 0 {
 		t.Fatalf("citations = %+v with no session to ground them", got.Payload.Changeset.Citations)
 	}
-	if v := got.Payload.Changeset.Commits[0].Trailers["Sloprail-Cites-User"]; len(v) != 1 {
-		t.Fatalf("the trailer itself is still carried on the commit: %+v", got.Payload.Changeset.Commits[0])
+	if v := got.Payload.Changeset.Commits[len(got.Payload.Changeset.Commits)-1].Trailers["Sloprail-Cites-User"]; len(v) != 1 {
+		t.Fatalf("the trailer itself is still carried on the commit: %+v", got.Payload.Changeset.Commits)
 	}
 }

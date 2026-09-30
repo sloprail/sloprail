@@ -41,8 +41,10 @@ A file-guard judges commits. Its range runs from a base to HEAD, and the base is
 the first of these that exists and is still an ancestor of HEAD:
 
   watermark      the last head the rule passed, at its current definition
-  folder floor   the last commit that touched the rule's folder (a rule that
-                 lives in this repository)
+  folder floor   the PARENT of the last commit that touched the rule's folder (a
+                 rule that lives in this repository): the commit that adds or
+                 changes a rule is judged by it. A root commit's base is git's
+                 empty tree, so all of it is judged
   session start  the HEAD recorded when this session began (a plugin's rule, or
                  one not committed yet)
 
