@@ -45,6 +45,20 @@ func (e *Env) CommitAllExcept(dir, msg string, exclude ...string) string {
 	return e.Git(dir, "rev-parse", "HEAD")
 }
 
+// CommitSeedThenRules commits the project's own files first and its .sloprail rules in a
+// second commit when any are uncommitted. A rule's range starts at the parent of the
+// commit that added it, so seed files committed together with the rule would sit inside
+// the first range as additions instead of being the baseline. Returns the seed commit.
+func (e *Env) CommitSeedThenRules(dir, msg string) string {
+	e.t.Helper()
+	sha := e.CommitAllExcept(dir, msg, ".sloprail")
+	if e.Git(dir, "status", "--porcelain", "--", ".sloprail") != "" {
+		e.Git(dir, "add", "-A", "--", ".sloprail")
+		e.Git(dir, "commit", "-m", "install the rules")
+	}
+	return sha
+}
+
 // commitCmd is the shell line of an agent's commit: everything staged, the subject,
 // and the trailers as their own paragraph of the message. An empty commit is allowed,
 // so a commit turn after a write a gate refused (which left nothing) is harmless.

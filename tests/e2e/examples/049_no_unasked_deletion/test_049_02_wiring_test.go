@@ -31,7 +31,7 @@ import (
 func seedCommittedMemory(t *testing.T, e *env, proj, rel, body string) {
 	t.Helper()
 	e.WriteFile(proj, rel, body)
-	e.CommitAll(proj, "seed "+rel)
+	e.CommitSeedThenRules(proj, "seed "+rel)
 }
 
 // T049_11: the cited quote AND the unified diff reach the judge's prompt. A

@@ -48,7 +48,7 @@ func biProject(t *testing.T, e *env) string {
 func commitSpec(t *testing.T, e *env, proj, path, body, msg string) string {
 	t.Helper()
 	e.WriteFile(proj, path, body)
-	return e.CommitAll(proj, msg)
+	return e.CommitSeedThenRules(proj, msg)
 }
 
 // settleBaseline is the session's first turn, doing nothing: its Stop passes what

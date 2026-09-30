@@ -42,7 +42,7 @@ func TestT049_19_AnUnreadDeleteIsJudged(t *testing.T) {
 			proj := nudProject(t, e)
 			e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR049 the cited words do not ask to delete the memories"}`)
 			tc.lay(t, e, proj)
-			e.CommitAll(proj, "seed memories")
+			e.CommitSeedThenRules(proj, "seed memories")
 
 			const prompt = "tidy up the build folder"
 			res := e.Run(proj, "s-049-19", prompt, Turns("done",
