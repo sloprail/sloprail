@@ -78,11 +78,8 @@ func TestT046_12_UnpinnedLineOfAPinnedSpecNeedsTheUsersWords(t *testing.T) {
 	proj := pinnedSpecProject(t, e)
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": "the user asked to reword rule 1"}`)
 
-	const ask = "reword rule 1 of the spec to say below zero instead of negative"
-	const sess = "s-046-12"
 	edited := strings.Replace(billingSpec, "never be negative", "never be below zero", 1)
-	settleBaseline(t, e, proj, sess, ask)
-	res := e.Run(proj, sess, "go on", Turns("done",
+	res := e.Run(proj, "s-046-12a", "reword rule 1", Turns("done",
 		Write("w1", "SPEC.md", edited),
 	).ThenCommit("write the files"))
 	if !res.Refused() || !res.Saw("every rule in a pinned spec is the user's") {
@@ -92,7 +89,8 @@ func TestT046_12_UnpinnedLineOfAPinnedSpecNeedsTheUsersWords(t *testing.T) {
 		t.Fatalf("the uncited change reached SPEC.md:\n%s", got)
 	}
 
-	res = e.Run(proj, sess, "go on", Turns("done",
+	const ask = "reword rule 1 of the spec to say below zero instead of negative"
+	res = e.Run(proj, "s-046-12b", ask, Turns("done",
 		Bash("b1", "sr-file edit SPEC.md --old-string 'never be negative' --new-string 'never be below zero' --cite:user '"+ask+"'"),
 	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {
@@ -134,12 +132,10 @@ func TestT046_13_CitedRuleChangeAdmits(t *testing.T) {
 func TestT046_14_CitingAConflictingFeatureBlockedAtStop(t *testing.T) {
 	e := newEnv(t)
 	proj := pinnedSpecProject(t, e)
+	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR046 the cited words ask for a feature, not for rule 2 to change"}`)
 
 	const ask = "let Refund allow the charge plus a courtesy credit"
-	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
-	settleBaseline(t, e, proj, "s-046-14", ask)
-	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR046 the cited words ask for a feature, not for rule 2 to change"}`)
-	res := e.Run(proj, "s-046-14", "go on", Turns("done",
+	res := e.Run(proj, "s-046-14", ask, Turns("done",
 		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
 	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {
@@ -162,8 +158,7 @@ func TestT046_26_ChangeAndCitationsReachTheRuleChangeJudge(t *testing.T) {
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": "the user asked to relax rule 2"}`)
 
 	const ask = "change rule 2 of the spec so goodwill refunds may exceed the charge"
-	settleBaseline(t, e, proj, "s-046-26", ask)
-	res := e.Run(proj, "s-046-26", "go on", Turns("done",
+	res := e.Run(proj, "s-046-26", ask, Turns("done",
 		Bash("b1", "sr-file write SPEC.md --content '"+relaxedSpec+"' --cite:user '"+ask+"'"),
 	).ThenCommit("write the files", harness.CitesUser(ask)))
 	if res.Refused() {
