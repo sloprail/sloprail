@@ -104,8 +104,7 @@ func TestT026_04_ADisabledPluginRuleIsInert(t *testing.T) {
 	e := New(t)
 	proj := e.Project()
 
-	e.DisablePluginGuardrail(proj, "sloprail/gate/authoring-slop")
-	e.DisablePluginGuardrail(proj, "sloprail/file-guard/authoring-slop")
+	e.DisablePluginGuardrail(proj, "sloprail/gate/authoring-slop", "sloprail/file-guard/authoring-slop")
 
 	// Reads the skill first — disabling authoring-slop is a DIFFERENT (nature,
 	// name) from the shipped read-script-checks-doc guard, so this write must

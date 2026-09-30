@@ -345,11 +345,11 @@ type gateResult struct {
 // run once per matching PRE FILE event, not only for the first: a gate that
 // passed the first file and was never asked about the second would admit the
 // second's not-fine change. Each refused file is its own result carrying its
-// Path, so the one deny can name every file to fix. Once a file is refused by
-// any gate, no further gate is asked about that same file — the write is already
-// prevented, and each further check on it buys nothing (for a judge, a model
-// call). Every other event kind — a command, a tool, Stop — is one-shot: the
-// first matching event wakes the gate once.
+// Path, so the one deny can name every file to fix. Every gate is asked about every
+// file it selects, whether or not another gate refused it (a gate's ledger and
+// verdict are its own); gateRefusal names the first refusal per file. Every other
+// event kind — a command, a tool, Stop — is one-shot: the first matching event
+// wakes the gate once.
 //
 // notes is what a pure sr-file line's dry run said about a change it could not
 // compute (nil at Stop): it is quoted with a refusal of that uncomputed change so
@@ -381,7 +381,6 @@ func runGatesForEvents(
 	// and passes the populated map. gatesMap is read and written back per verdict.
 	runner := dispatchcore.Runner{}
 	var results []gateResult
-	refusedFiles := map[string]bool{}
 
 	for _, g := range gates {
 		fired, err := matchingEvents(cmd, reg, g, events, contextMap)
@@ -424,10 +423,6 @@ func runGatesForEvents(
 			path := ""
 			if isPreFileEvent(e.Kind) {
 				path = displayPath(eventPath(e), scope.Workspace)
-				if path != "" && refusedFiles[path] {
-					// Already prevented by an earlier gate: no further gate is asked.
-					continue
-				}
 			}
 
 			verdict, err := runner.Run(dispatchcore.Request{
@@ -463,9 +458,6 @@ func runGatesForEvents(
 					Path:        path,
 				})
 				status = natures.GateStatusFail
-				if path != "" {
-					refusedFiles[path] = true
-				}
 				continue
 			}
 			if !verdict.Refused {
@@ -481,9 +473,6 @@ func runGatesForEvents(
 				}
 			}
 			results = append(results, gateResult{Name: g.Name, Attribution: g.Attribution(), Refused: true, Reason: reason, Path: path})
-			if path != "" {
-				refusedFiles[path] = true
-			}
 		}
 		recordGateVerdict(cmd, store, gatesMap, g.Name, status)
 	}

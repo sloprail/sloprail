@@ -104,10 +104,13 @@ case "$kind" in
 esac
 
 # A malformed document is task-evidence-resolves's refusal to make.
-# sr-file failing is not "no status": the rule could not read the task at all.
-new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>&1)" || refuse "task-dependencies-resolve: sr-file could not validate $path, so its dependencies could not be checked: $new_doc"
+# A document sr-file cannot validate (malformed frontmatter, an artifact that
+# fails the schema) is task-evidence-resolves's refusal to make, with its own
+# reason — a DELIBERATE hand-off, not a fail-open: this rule has no dependencies to
+# resolve in a document nobody can read, and refusing here would mask the schema
+# reason the agent needs.
+new_doc="$(printf '%s' "$new_content" | sr-file validate - --as .md --schema "$schema" --emit 2>/dev/null)" || exit 0
 new_status="$(printf '%s' "$new_doc" | jq -r '.status // empty' 2>/dev/null)"
-[ -n "$new_status" ] || refuse "task-dependencies-resolve: $path carries no readable status, so its dependencies could not be checked"
 
 case "$new_status" in
   to_do|in_progress|in_review) : ;;

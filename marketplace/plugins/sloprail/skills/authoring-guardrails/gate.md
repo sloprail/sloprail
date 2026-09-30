@@ -99,8 +99,7 @@ checks:
   b.go`, two `sr-file` calls joined by `&&`) and runs whole or not at all. The gate
   is run once per matching file event, so a call whose *second* file fails is
   refused before it runs and none of them is changed; the one refusal names every
-  refused file. Once a file is refused by one gate, no other gate is asked about
-  it. A command, a tool call or `Stop` still wakes a gate once.
+  refused file. A command, a tool call or `Stop` still wakes a gate once.
 - **An unknown result is yours to refuse.** When the engine cannot compute what a
   write will leave (`sed -i`, `git apply`, a notebook create, an `sr-file` line it
   could not resolve), the event carries `resultKnown: false` and an empty

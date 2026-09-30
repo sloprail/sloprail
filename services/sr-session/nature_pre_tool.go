@@ -158,7 +158,11 @@ func gateRefusal(results []gateResult, events []event.Event, workspace string) s
 		}
 		reason := fmt.Sprintf("%s (gate %s)", r.Reason, r.Attribution)
 		if r.Path != "" {
-			refusals.add(r.Path, reason)
+			// The first refusal of a file is the one the agent hears: a second gate
+			// refusing the same file adds nothing to fix.
+			if !refusals.refused(r.Path) {
+				refusals.add(r.Path, reason)
+			}
 			continue
 		}
 		if !sawWhole {

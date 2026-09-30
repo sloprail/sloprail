@@ -78,9 +78,10 @@ exit 0
 	assert.Equal(t, "src/ok.go\nsrc/bad1.go\nsrc/bad2.go\n", string(b), "the check is handed every file, in order")
 }
 
-// Once a file is refused by one gate, a second gate that also selects it is not
-// asked about it, but is asked about the call's other files.
-func TestRunGatesForEvents_SecondGateNotAskedAboutAnAlreadyRefusedFile(t *testing.T) {
+// Every gate is asked about every file it selects, even one another gate already
+// refused (each gate's own ledger and verdict stand), but the deny names only the
+// first refusal of a file.
+func TestRunGatesForEvents_SecondGateIsAskedButOnlyTheFirstRefusalIsHeard(t *testing.T) {
 	dir := t.TempDir()
 	ledgerB := filepath.Join(dir, "ledgerB")
 	writeExecutable(t, dir, "refuse.sh", `#!/bin/sh
@@ -89,24 +90,25 @@ path="$(printf '%s' "$p" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
 case "$path" in *bad*) echo '{"reason":"REFUSED BY A"}'; exit 1 ;; esac
 exit 0
 `)
-	writeExecutable(t, dir, "log.sh", `#!/bin/sh
+	writeExecutable(t, dir, "refuse-b.sh", `#!/bin/sh
 p="$(cat)"
 path="$(printf '%s' "$p" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
 echo "$path" >> "`+ledgerB+`"
-exit 0
+echo '{"reason":"REFUSED BY B"}'; exit 1
 `)
 	a := writeGate("a", dir, "./refuse.sh", `event.path startsWith "src/"`, declaration.AliasPreFileWrite)
-	b := writeGate("b", dir, "./log.sh", `event.path startsWith "src/"`, declaration.AliasPreFileWrite)
+	b := writeGate("b", dir, "./refuse-b.sh", `event.path startsWith "src/"`, declaration.AliasPreFileWrite)
 	events := []event.Event{preWrite(declaration.KindPreFileCreate, "src/bad.go"), preWrite(declaration.KindPreFileCreate, "src/other.go")}
 
 	reason := gateRefusal(runPre(t, []declaration.Gate{a, b}, events, resolveNotes{}), events, "")
-	assert.Contains(t, reason, "src/bad.go")
 	assert.Contains(t, reason, "REFUSED BY A")
+	assert.Equal(t, 1, strings.Count(reason, "REFUSED BY A"), "a file refused twice is heard once")
+	assert.Equal(t, 1, strings.Count(reason, "REFUSED BY B"), "b's refusal of src/bad.go is dropped; only its refusal of src/other.go is heard")
+	assert.Contains(t, reason, "src/other.go")
 
 	got, err := os.ReadFile(ledgerB)
 	require.NoError(t, err)
-	assert.Equal(t, "src/other.go\n", string(got),
-		"gate b is asked about src/other.go, never about src/bad.go, which gate a already refused")
+	assert.Equal(t, "src/bad.go\nsrc/other.go\n", string(got), "gate b is asked about both files")
 }
 
 // A gate on PreFileDelete is handed the bytes about to be lost, and refuses the

@@ -67,7 +67,7 @@ exit 0
 `
 
 // T027_01: THE HEADLINE. The buggy derivable-create hook is PERMITTED by the grep
-// (proven by running check-rules.sh directly) but REFUSED by the judge (a failing
+// (proven by running check-rules.sh directly) but blocked at Stop by the judge (a failing
 // verdict is stubbed). This is the whole reason the judge exists: a subtlety the
 // signature cannot decide.
 func TestT027_01_JudgeRefusesTheDerivableCreateBugTheGrepMisses(t *testing.T) {
@@ -88,23 +88,27 @@ func TestT027_01_JudgeRefusesTheDerivableCreateBugTheGrepMisses(t *testing.T) {
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "GUARDRAIL AUTHORING: the PreFileCreate branch reads .event.newContent without consulting .event.resultKnown, assuming a create is always derivable — breaks pre-kinds-consult-resultknown"}`)
 
 	got := e.Run(proj, "s-027-01", "write a guardrail hook", Turns("done",
-		Write("w1", fixtureHookPath, buggyDerivableCreateHook),
+		append(readShippedDocs(t), Write("w1", fixtureHookPath, buggyDerivableCreateHook))...,
 	))
 
-	if !got.Refused() {
-		t.Fatalf("the judge did not refuse the buggy derivable-create hook — the grep permitted it "+
-			"(proven above), so nothing caught the exact 3x bug:\n%s", got.Output)
+	// The pre-write GATE is the cheap grep only, so it lets this hook land; the
+	// judge belongs to the plain file-guard, which judges what SETTLED at Stop and
+	// blocks the turn with the judge's reasoning.
+	if got.Refused() {
+		t.Fatalf("the pre-write gate (grep only) refused a hook the grep permits:\n%s", got.Output)
 	}
-	// The refusal carries the judge's reasoning (so the agent learns what to fix)
+	blocks := strings.Join(e.BlockingErrorsFrom(proj, "s-027-01", "Stop"), "\n")
+	if blocks == "" {
+		t.Fatalf("the judge did not block the turn at Stop for the buggy derivable-create hook — "+
+			"the grep permitted it (proven above), so nothing caught the exact 3x bug:\n%s", got.Output)
+	}
+	// The block carries the judge's reasoning (so the agent learns what to fix)
 	// and names the guard as the plugin's own.
-	if !got.Saw("resultKnown") {
-		t.Errorf("the judge's reasoning did not reach the agent:\n%s", got.Output)
+	if !strings.Contains(blocks, "resultKnown") {
+		t.Errorf("the judge's reasoning did not reach the agent:\n%s", blocks)
 	}
-	if !got.Saw("authoring-slop") {
-		t.Errorf("the refusal does not name the guard:\n%s", got.Output)
-	}
-	if e.Exists(proj, fixtureHookPath) {
-		t.Errorf("the buggy hook was written despite the refusal — the work was not prevented")
+	if !strings.Contains(blocks, "authoring-slop") {
+		t.Errorf("the block does not name the guard:\n%s", blocks)
 	}
 }
 
@@ -125,7 +129,7 @@ func TestT027_02_TheRuleAndTheOffendingCodeBothReachTheJudgePrompt(t *testing.T)
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
 	e.Run(proj, "s-027-02", "write a guardrail hook", Turns("done",
-		Write("w1", fixtureHookPath, buggyDerivableCreateHook),
+		append(readShippedDocs(t), Write("w1", fixtureHookPath, buggyDerivableCreateHook))...,
 	))
 
 	prompt := e.JudgePrompt(proj, "judge-prompt.txt")
@@ -186,5 +190,16 @@ func TestT027_03_CorrectDispatchHookPassesBothGrepAndJudge(t *testing.T) {
 	}
 	if !e.Exists(proj, fixtureHookPath) {
 		t.Errorf("the permitted correct hook did not land")
+	}
+}
+
+// readShippedDocs is the turns the shipped read-script-checks-doc gate requires
+// before any .sh under file-guard/ is written: the skill and its two pages.
+func readShippedDocs(t *testing.T) []harness.Turn {
+	t.Helper()
+	return []harness.Turn{
+		Skill("s1", "authoring-guardrails"),
+		ToolUse("r1", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "script-checks.md")}),
+		ToolUse("r1b", "Read", map[string]string{"file_path": harness.ShippedSkillFile(t, "check-template.sh")}),
 	}
 }
