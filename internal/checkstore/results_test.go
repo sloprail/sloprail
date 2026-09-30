@@ -26,6 +26,7 @@ func record(t *testing.T, s *store, r CheckRun, checks ...CheckRecord) string {
 		_, err := s.RecordCheck(id, c)
 		require.NoError(t, err)
 	}
+	require.NoError(t, s.FinishRun(id))
 	return id
 }
 
@@ -377,4 +378,47 @@ func TestPassedHeads_ARunWhoseFailWentStaleStillDidNotPass(t *testing.T) {
 	heads, err := s.PassedHeads(rule, "h1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"h1"}, heads, "h0 failed; only h1 passed")
+}
+
+// a10n #7: a run that died mid-judge must not read as a pass. Its row is written
+// before its checks, and a run with no checks looks exactly like one with
+// nothing to check.
+func TestPassedHeads_AnUnfinishedRunIsNeverAWatermark(t *testing.T) {
+	s := openTestStore(t)
+	dead, err := s.RecordRun(run("h0")) // recorded running, never finished
+	require.NoError(t, err)
+
+	heads, err := s.PassedHeads(rule, "h1")
+	require.NoError(t, err)
+	assert.Empty(t, heads, "a run that never finished passed nothing")
+
+	rows, err := s.CheckStatus(true, "")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, StatusInterrupted, rows[0].Status, "and it shows as interrupted, not as a pass")
+
+	_, err = s.RecordCheck(dead, script("pass"))
+	require.NoError(t, err)
+	heads, _ = s.PassedHeads(rule, "h1")
+	assert.Empty(t, heads, "checks recorded but the run not finished: still not a pass")
+
+	require.NoError(t, s.FinishRun(dead))
+	heads, err = s.PassedHeads(rule, "h1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"h0"}, heads)
+}
+
+func TestFinishRun_UnknownRunIsAnError(t *testing.T) {
+	assert.Error(t, openTestStore(t).FinishRun("run_nope"))
+}
+
+func TestPassedHeads_ACompleteRunWithNothingToCheckIsAPass(t *testing.T) {
+	s := openTestStore(t)
+	r := run("h0")
+	r.Complete = true
+	_, err := s.RecordRun(r)
+	require.NoError(t, err)
+	heads, err := s.PassedHeads(rule, "h1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"h0"}, heads)
 }

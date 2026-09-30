@@ -47,6 +47,9 @@ type Store interface {
 	// RecordRun stores one rule's evaluation of one commit range and returns the
 	// run's id. See CheckRun.
 	RecordRun(r CheckRun) (string, error)
+	// FinishRun marks a run recorded RUNNING (CheckRun.Complete false) complete.
+	// Only a complete run can be a watermark.
+	FinishRun(runID string) error
 	// RecordCheck stores one check of a run — replacing the same (subject, kind)
 	// of that run — with its findings, and returns the check's id.
 	RecordCheck(runID string, c CheckRecord) (string, error)

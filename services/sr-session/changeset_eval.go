@@ -114,34 +114,35 @@ func refusal(g declaration.FileGuard, reason string) fileGuardResult {
 // nothing — and returns the refusal that holds the turn.
 func (ev *changesetEvaluation) engineFailure(g declaration.FileGuard, run checkstore.CheckRun, err error) (fileGuardResult, bool) {
 	fmt.Fprintf(ev.cmd.ErrOrStderr(), "sloprail: file-guard %s: %v\n", g.Attribution(), err)
-	run.ExitCode, run.Error = 1, err.Error()
-	ev.record(run)
+	run.ExitCode, run.Error, run.Complete = 1, err.Error(), true
+	if _, recErr := ev.record(run); recErr != nil {
+		fmt.Fprintln(ev.cmd.ErrOrStderr(), "sloprail:", recErr) // already refusing
+	}
 	return refusal(g, fmt.Sprintf(
 		"the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval",
 		g.Name, err)), true
 }
 
-// record stores a run, returning its id ("" when there is no store or it failed).
-func (ev *changesetEvaluation) record(run checkstore.CheckRun) string {
+// record stores a run, returning its id ("" when there is no store to record in).
+func (ev *changesetEvaluation) record(run checkstore.CheckRun) (string, error) {
 	if ev.results == nil {
-		return ""
+		return "", nil
 	}
 	run.RunIdentity, run.BatchID = ev.identity, ev.batch
-	id, err := ev.results.RecordRun(run)
-	if err != nil {
-		fmt.Fprintln(ev.cmd.ErrOrStderr(), "sloprail:", err)
-		return ""
-	}
-	return id
+	return ev.results.RecordRun(run)
 }
 
-func (ev *changesetEvaluation) recordCheck(runID string, c checkstore.CheckRecord) {
+// recordCheck stores one check of a run. A check that could not be stored is an
+// ENGINE failure, not something to print and carry on past: the run would then
+// hold fewer checks than it ran, and read as more passed than it was.
+func (ev *changesetEvaluation) recordCheck(runID string, c checkstore.CheckRecord) error {
 	if ev.results == nil || runID == "" {
-		return
+		return nil
 	}
 	if _, err := ev.results.RecordCheck(runID, c); err != nil {
-		fmt.Fprintln(ev.cmd.ErrOrStderr(), "sloprail:", err)
+		return fmt.Errorf("could not record the %s check: %w", c.Kind, err)
 	}
+	return nil
 }
 
 // evaluate runs one rule over its range. The bool is whether it refused.
@@ -160,25 +161,7 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 		return ev.engineFailure(g, run, fmt.Errorf("its match %q could not be compiled: %w", g.Match, err))
 	}
 
-	// The range: the derived watermark, else the folder floor, else session start.
-	var watermark, dropped, sessionStart string
-	if ev.results != nil {
-		heads, err := ev.results.PassedHeads(rule, hash)
-		if err != nil {
-			return ev.engineFailure(g, run, err)
-		}
-		if watermark, dropped, err = changeset.PickWatermark(heads, func(sha string) (bool, error) {
-			return gitrepo.Contains(ev.root, sha)
-		}); err != nil {
-			return ev.engineFailure(g, run, err)
-		}
-	}
-	if ev.state != nil {
-		if sessionStart, _, err = ev.state.Meta(sessionstate.MetaBaselineCommit); err != nil {
-			return ev.engineFailure(g, run, err)
-		}
-	}
-	r, err := gitrepo.ResolveRange(ev.root, repoRelative(ev.root, g.Dir), watermark, sessionStart)
+	r, err := resolveRuleRange(ev.root, g, hash, ev.results, ev.state)
 	if errors.Is(err, gitrepo.ErrNoCommits) {
 		return fileGuardResult{}, false // nothing has been committed, so nothing can be judged
 	}
@@ -187,8 +170,8 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 	}
 	run.BaseRef, run.HeadRef = r.Base, r.Head
 	run.Metadata["baseOrigin"] = string(r.Origin)
-	if r.Origin != gitrepo.FromWatermark && dropped != "" {
-		run.Metadata["droppedWatermark"] = dropped
+	if r.DroppedWatermark != "" {
+		run.Metadata["droppedWatermark"] = r.DroppedWatermark
 	}
 
 	cs, err := changeset.Build(ev.root, r, changeset.Options{
@@ -202,7 +185,10 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 	if len(cs.Files) == 0 {
 		// `match` selected nothing in a range that WAS computed: a pass, and the
 		// watermark advances to this head.
-		ev.record(run)
+		run.Complete = true
+		if _, err := ev.record(run); err != nil {
+			return ev.engineFailure(g, run, err)
+		}
 		return fileGuardResult{}, false
 	}
 
@@ -233,15 +219,23 @@ func (ev *changesetEvaluation) evaluate(g declaration.FileGuard) (fileGuardResul
 		Env:            changeset.Env(tree.Path, r.Base, r.Head),
 	}
 
-	runID := ev.record(run)
+	// Recorded RUNNING, finished only once every check is stored: a run that dies
+	// half-way must not be a watermark.
+	runID, err := ev.record(run)
+	if err != nil {
+		return ev.engineFailure(g, run, err)
+	}
 	verdict, failed := ev.runRule(g, hash, req, payload, runID, unresolved)
+	if failed != nil {
+		return refusal(g, failed.Error()), true
+	}
 	if ev.results != nil && runID != "" {
+		if err := ev.results.FinishRun(runID); err != nil {
+			return refusal(g, fmt.Sprintf("the file-guard %q could not finish recording its run (%v); refusing because a run that was not recorded cannot be trusted", g.Name, err)), true
+		}
 		if _, err := ev.results.ResolveStale(rule, hash, runID); err != nil {
 			fmt.Fprintln(ev.cmd.ErrOrStderr(), "sloprail:", err)
 		}
-	}
-	if failed != nil {
-		return refusal(g, failed.Error()), true
 	}
 	if verdict.Refused {
 		return refusal(g, verdict.Reason), true
@@ -285,7 +279,7 @@ func (ev *changesetEvaluation) runRule(g declaration.FileGuard, hash string, req
 		switch {
 		case err != nil:
 			rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": err.Error()}
-			ev.recordCheck(runID, rec)
+			_ = ev.recordCheck(runID, rec) // already failing
 			return dispatchcore.Verdict{}, fmt.Errorf("the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval", g.Name, err)
 		case v.Refused:
 			rec.Status, rec.Metadata = checkstore.StatusFail, map[string]any{"reasoning": v.Reason}
@@ -299,7 +293,9 @@ func (ev *changesetEvaluation) runRule(g declaration.FileGuard, hash string, req
 				rec.Metadata["reasoning"] = v.Reason
 			}
 		}
-		ev.recordCheck(runID, rec)
+		if err := ev.recordCheck(runID, rec); err != nil {
+			return dispatchcore.Verdict{}, engineError(g, err)
+		}
 		if v.Refused {
 			return v, nil
 		}
@@ -326,10 +322,10 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 	rec := checkstore.CheckRecord{Subject: changeset.DefaultSubjectID, Kind: checkKind(i, c)}
 	fail := func(err error) (dispatchcore.Verdict, error) {
 		rec.Status, rec.Metadata = checkstore.StatusError, map[string]any{"reasoning": err.Error()}
-		ev.recordCheck(runID, rec)
-		return dispatchcore.Verdict{}, fmt.Errorf("the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval", g.Name, err)
+		_ = ev.recordCheck(runID, rec) // already failing
+		return dispatchcore.Verdict{}, engineError(g, err)
 	}
-	settle := func(v dispatchcore.Verdict, meta map[string]any) dispatchcore.Verdict {
+	settle := func(v dispatchcore.Verdict, meta map[string]any) (dispatchcore.Verdict, error) {
 		rec.Status = checkstore.StatusPass
 		if meta == nil {
 			meta = map[string]any{}
@@ -339,8 +335,10 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 			meta["reasoning"] = v.Reason
 		}
 		rec.Metadata = meta
-		ev.recordCheck(runID, rec)
-		return v
+		if err := ev.recordCheck(runID, rec); err != nil {
+			return dispatchcore.Verdict{}, engineError(g, err)
+		}
+		return v, nil
 	}
 
 	if c.Script != "" {
@@ -348,7 +346,7 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 		if err != nil {
 			return fail(err)
 		}
-		return settle(v, nil), nil
+		return settle(v, nil)
 	}
 
 	// A judge: prepare first, then — unless it asked to skip — fingerprint exactly
@@ -358,11 +356,13 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 		return fail(err)
 	}
 	if v.Refused {
-		return settle(v, map[string]any{"model": c.Model}), nil
+		return settle(v, map[string]any{"model": c.Model})
 	}
 	if prep.Skip {
 		rec.Status, rec.Metadata = checkstore.StatusSkip, map[string]any{"reasoning": "prepare asked to skip the judge", "model": c.Model}
-		ev.recordCheck(runID, rec)
+		if err := ev.recordCheck(runID, rec); err != nil {
+			return dispatchcore.Verdict{}, engineError(g, err)
+		}
 		return dispatchcore.Verdict{}, nil
 	}
 	extra, err := json.Marshal(prep.Context)
@@ -386,14 +386,20 @@ func (ev *changesetEvaluation) runCheck(g declaration.FileGuard, hash string, re
 			// included, which is terminal until the input changes.
 			reasoning, _ := cached.Metadata["reasoning"].(string)
 			meta["replayed"] = true
-			return settle(dispatchcore.Verdict{Refused: cached.Status == checkstore.StatusFail, Reason: reasoning}, meta), nil
+			return settle(dispatchcore.Verdict{Refused: cached.Status == checkstore.StatusFail, Reason: reasoning}, meta)
 		}
 	}
 	v, err = ev.runner.Judge(req, c, prep)
 	if err != nil {
 		return fail(err)
 	}
-	return settle(v, meta), nil
+	return settle(v, meta)
+}
+
+// engineError is the refusal for something that went wrong in the engine while a
+// rule was being evaluated: a guard that could not decide must not read as approval.
+func engineError(g declaration.FileGuard, err error) error {
+	return fmt.Errorf("the file-guard %q could not be evaluated (%v); refusing because a guard that could not decide must not be read as approval", g.Name, err)
 }
 
 func requireKind(p declaration.Prerequisite) string {

@@ -133,32 +133,9 @@ func runSessionChangeset(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	rule := g.Qualified()
-	var watermark, dropped, sessionStart string
-	if sess.checks != nil {
-		// The watermark is not stored; it is the newest run the rule passed at
-		// its current definition whose head is still reachable.
-		heads, err := sess.checks.PassedHeads(rule, hash)
-		if err != nil {
-			return err
-		}
-		watermark, dropped, err = changeset.PickWatermark(heads, func(sha string) (bool, error) {
-			return gitrepo.Contains(root, sha)
-		})
-		if err != nil {
-			return err
-		}
-	}
-	if store != nil {
-		if sessionStart, _, err = store.Meta(sessionstate.MetaBaselineCommit); err != nil {
-			return err
-		}
-	}
-	r, err := gitrepo.ResolveRange(root, repoRelative(root, g.Dir), watermark, sessionStart)
+	r, err := resolveRuleRange(root, g, hash, sess.checks, store)
 	if err != nil {
 		return fmt.Errorf("sloprail: file-guard %q: range not computable: %w", g.Name, err)
-	}
-	if r.Origin != gitrepo.FromWatermark && r.DroppedWatermark == "" {
-		r.DroppedWatermark = dropped
 	}
 
 	ctx := contextMatchValue(contextsOf(cmd, store, loaded.Contexts))

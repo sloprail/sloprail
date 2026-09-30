@@ -41,18 +41,11 @@ import (
 // and belongs inside the difference. Unreachable means the point describes a
 // history this tree no longer has, and it is taken again.
 //
-// Moving it is safe only because an unfixed refusal does not depend on it. A
-// failing verdict is kept in file_checks in its own right, keyed by path,
-// guardrail and the content it was reached on, and is reported again on every
-// cycle until a hook passes it — whatever point the difference is measured
-// from. Both halves have to hold together, or a branch switch quietly drops a
-// violation.
-//
-// KEEPING the verdict is only half of that, and the quieter half is reading it
-// back: a refusal nothing asks for enforces nothing. Once the point moves, the
-// refused file is no longer a difference and the tree says nothing about it, so
-// the re-reporting comes from the record instead — OutstandingRefusals, read by
-// readdOutstanding at the end of every cycle. See T015_04.
+// Moving it is safe because nothing that must outlive it depends on it. What a
+// file-guard concluded lives in the check results, keyed by the rule and the
+// commit range it judged — not against this point — so a branch switch cannot
+// drop an unfixed violation. This point only decides which files a CONTEXT's Post
+// events are computed over.
 
 // baselineOutcome says what a call to the baseline did, so a caller can report
 // it and a test can assert on it without reading the store back.

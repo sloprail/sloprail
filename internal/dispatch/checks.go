@@ -148,12 +148,6 @@ func (r Runner) PrepareJudge(req Request, c declaration.Check) (Prepared, Verdic
 	return Prepared{Skip: prepared.Skip, Context: prepared.Context}, pass(), nil
 }
 
-// JudgeInput is exactly what the judge is given, as JSON: the payload, the change,
-// and prepare's context. A caller that caches verdicts fingerprints this.
-func (r Runner) JudgeInput(req Request, p Prepared) ([]byte, error) {
-	return r.judgeInputJSON(req, p.Context)
-}
-
 // Judge asks the model about one judge check, after prepare.
 func (r Runner) Judge(req Request, c declaration.Check, p Prepared) (Verdict, error) {
 	r = r.withDefaults()

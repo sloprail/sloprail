@@ -112,8 +112,11 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 	// 1. file-guards: each rule is evaluated once, over the changeset of commits it
 	//    has not yet passed, and every run is recorded (changeset_eval.go). Not while
 	//    work is owed a commit: judging HEAD would judge an incomplete set, and the
-	//    agent has a commit to make first.
-	if !commitOwed {
+	//    agent has a commit to make first. And only for an agent that owns the
+	//    tree: a sub-agent working in the session's own tree leaves its commits
+	//    where the root's Stop judges them, and refusing the sub-agent for the
+	//    root's work is a10n's "blocked 17 times in a row".
+	if !commitOwed && ownsTree(p) {
 		for _, r := range evaluateStopChangesets(cmd, p, scope, loaded.FileGuards, contextMap, store) {
 			refusals = append(refusals, r.Reason+" (file-guard "+r.Attribution+")")
 		}

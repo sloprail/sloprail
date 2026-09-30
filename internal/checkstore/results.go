@@ -47,6 +47,15 @@ type CheckRun struct {
 	// Metadata is {ruleHash, eventKind, baseOrigin, droppedWatermark}. ruleHash is
 	// how a run is tied to the rule definition it ran under.
 	Metadata map[string]any
+	// Complete says the run is already finished when it is recorded: an engine
+	// failure, or a range where `match` selected nothing. Any other run is
+	// recorded RUNNING and finished with FinishRun once every check is stored.
+	//
+	// The distinction is what keeps a run that died half-way (a crash, a kill, a
+	// judge that never came back) from reading as a pass: a run with no checks
+	// yet is indistinguishable from one with nothing to check, and only a
+	// finished run is ever a watermark.
+	Complete bool
 }
 
 // CheckRecord is one check of a run.
@@ -121,7 +130,14 @@ func (s *store) RecordRun(r CheckRun) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	meta, err := encode(r.Metadata)
+	state := map[string]any{"state": runRunning}
+	if r.Complete {
+		state["state"] = runComplete
+	}
+	for k, v := range r.Metadata {
+		state[k] = v
+	}
+	meta, err := encode(state)
 	if err != nil {
 		return "", fmt.Errorf("checkstore: encode run metadata: %w", err)
 	}
@@ -140,6 +156,28 @@ func (s *store) RecordRun(r CheckRun) (string, error) {
 		return "", fmt.Errorf("checkstore: record run of %q: %w", r.CheckID, err)
 	}
 	return id, nil
+}
+
+// Run states, in a run's metadata.
+const (
+	runRunning  = "running"
+	runComplete = "complete"
+)
+
+// FinishRun marks a run complete: every check it was going to run is stored.
+func (s *store) FinishRun(runID string) error {
+	db, err := s.conn()
+	if err != nil {
+		return err
+	}
+	res, err := db.Exec(`UPDATE check_runs SET metadata = json_set(metadata, '$.state', ?) WHERE id = ?`, runComplete, runID)
+	if err != nil {
+		return fmt.Errorf("checkstore: finish run: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return fmt.Errorf("checkstore: finish run: no run %q", runID)
+	}
+	return nil
 }
 
 func (s *store) RecordCheck(runID string, c CheckRecord) (string, error) {
@@ -276,6 +314,7 @@ func (s *store) PassedHeads(rule, ruleHash string) ([]string, error) {
 		SELECT cr.head_ref FROM check_runs cr
 		WHERE cr.check_id = ? AND json_extract(cr.metadata, '$.ruleHash') = ?
 		  AND cr.head_ref <> '' AND cr.exit_code = 0 AND cr.error IS NULL
+		  AND json_extract(cr.metadata, '$.state') = 'complete'
 		  AND NOT EXISTS (SELECT 1 FROM checks c WHERE c.run_id = cr.id
 		                  AND (c.status IN ('fail', 'error', 'interrupted')
 		                       OR json_extract(c.metadata, '$.staleFrom') IS NOT NULL))
@@ -302,7 +341,9 @@ func (s *store) CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, er
 	}
 	rows, err := db.Query(`
 		SELECT cr.check_id, COALESCE(c.subject, ''), COALESCE(c.kind, ''),
-		       CASE WHEN c.id IS NULL THEN CASE WHEN cr.exit_code <> 0 OR cr.error IS NOT NULL THEN 'error' ELSE 'pass' END
+		       CASE WHEN c.id IS NULL THEN CASE WHEN cr.exit_code <> 0 OR cr.error IS NOT NULL THEN 'error'
+		                                       WHEN json_extract(cr.metadata, '$.state') <> 'complete' THEN 'interrupted'
+		                                       ELSE 'pass' END
 		            ELSE c.status END,
 		       cr.base_ref, cr.head_ref, cr.run_at, COALESCE(c.fingerprint, ''), COALESCE(cr.error, ''),
 		       COALESCE(c.metadata, cr.metadata)

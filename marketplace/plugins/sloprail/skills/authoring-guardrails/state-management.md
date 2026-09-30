@@ -150,17 +150,19 @@ Stamping has no such path. A stale entry is inert, because it names a turn that 
 no longer current — nothing has to run for the evidence to expire, which means
 nothing can fail to run.
 
-## Revalidation is why the stamp is not redundant
+## The tree difference is why the stamp is not redundant
 
 It would be easy to measure the ordinary cases, find the events already
 turn-scoped, and drop the stamp. They mostly are: a quiet cycle reports no event
 for a file an earlier cycle wrote, and an unrelated write does not re-report it
 either.
 
-The case that decides it is **revalidation**, which is keyed on **content**. If a
-later cycle rewrites a file with bytes identical to what an earlier one left there,
-**no event fires at all**. Without the stamp, the earlier cycle's evidence is
-still sitting in state and satisfies the later cycle's claim.
+The case that decides it is a rewrite with **identical bytes**. The Post events a
+context or a Stop gate reads come from the difference between the tree and the
+session's baseline, which is keyed on **content**. If a later cycle rewrites a
+file with bytes identical to what an earlier one left there, **no event fires at
+all**. Without the stamp, the earlier cycle's evidence is still sitting in state
+and satisfies the later cycle's claim.
 
 Refusing there is the strict answer and the right one: a rewrite that changes
 nothing has recorded nothing, and a claim asserts something was recorded.

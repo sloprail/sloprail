@@ -52,6 +52,9 @@ func (e *Env) RecordCheckRun(projDir, sessionID string, run checkstore.CheckRun,
 			e.t.Fatalf("harness: record check: %v", err)
 		}
 	}
+	if err := store.FinishRun(id); err != nil {
+		e.t.Fatalf("harness: finish run: %v", err)
+	}
 	return id
 }
 
