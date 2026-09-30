@@ -20,7 +20,8 @@ type Uncommitted struct {
 // or untracked — the same four kinds of work Changed reports, but with the status
 // a rule's `deletions:` needs and without measuring against any earlier commit.
 //
-// Ignored files are not listed (they are not the repository's to commit), and a
+// Ignored files are not listed (they are not the repository's to commit), an
+// untracked nested repository is not either, and a
 // submodule is one path that counts only when its pointer moved. A path added and
 // then deleted again before ever being committed differs from HEAD in nothing and
 // is not listed.
@@ -53,6 +54,13 @@ func UncommittedChanges(dir string) ([]Uncommitted, error) {
 			c.OldPath = fields[i]
 		}
 		switch {
+		case x == '?' && y == '?' && strings.HasSuffix(path, "/"):
+			// An untracked NESTED REPOSITORY (a clone the agent made to look at):
+			// git lists it as its directory, and it is not this repository's to
+			// commit — its contents never reach a rule. Left out, as Changed leaves
+			// it out. One that is TRACKED (a submodule) is a gitlink entry and still
+			// counts when its pointer moves.
+			continue
 		case x == '?' && y == '?':
 			c.Status = 'A'
 		case x == 'A' && y == 'D':
