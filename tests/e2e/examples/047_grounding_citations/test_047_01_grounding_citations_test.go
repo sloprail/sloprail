@@ -31,8 +31,19 @@ import (
 // VERBATIM.
 func gcProject(t *testing.T, e *env) string {
 	t.Helper()
+	return gcProjectWith(t, e, "## v2.3.0\n\n- "+sourceLine+"\n")
+}
+
+// gcProjectWith is gcProject with the changelog's text given.
+func gcProjectWith(t *testing.T, e *env, changelog string) string {
+	t.Helper()
 	proj := e.Project()
 	e.GitInit(proj)
+	// The changelog the summaries restate is committed BEFORE the rule is: it is the
+	// baseline, and reading it is the only change. In the rule's own range a markdown
+	// file would itself have to cite a tool's output, per file.
+	e.WriteFile(proj, "CHANGELOG.md", changelog)
+	e.CommitAll(proj, "the source changelog")
 	installExampleTree(t, proj, "grounding-citations")
 	return proj
 }
@@ -42,19 +53,11 @@ const (
 	summary    = "# Migration\n\nRetries now default to 3; they were off before.\n"
 )
 
-// gcSource puts the changelog on disk, committed, so reading it is the only change.
-func gcSource(t *testing.T, e *env, proj string) {
-	t.Helper()
-	e.WriteFile(proj, "CHANGELOG.md", "## v2.3.0\n\n- "+sourceLine+"\n")
-	harness.CommitInstalled(t, proj)
-}
-
 // T047_01: HAPPY PATH — the source is read, the summary cites its output, and the
 // judge (stubbed pass) admits. The file holds plain prose, no link.
 func TestT047_01_CitedWriteJudgePassesAdmits(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	gcSource(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the claim matches the cited output"}`)
 
 	res := e.Run(proj, "s-047-01", "summarize the changelog", Turns("done",
@@ -74,7 +77,6 @@ func TestT047_01_CitedWriteJudgePassesAdmits(t *testing.T) {
 func TestT047_02_UncitedWriteRefused(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	gcSource(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 
 	res := e.Run(proj, "s-047-02", "summarize the changelog", Turns("done",
@@ -99,7 +101,6 @@ func TestT047_02_UncitedWriteRefused(t *testing.T) {
 func TestT047_03_CitedWriteJudgeFailBlocksAtStop(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	gcSource(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": false, "reasoning": "SR047 the file says 5 retries; the output says 3"}`)
 
 	res := e.Run(proj, "s-047-03", "summarize the changelog", Turns("done",
@@ -145,7 +146,6 @@ func TestT047_04_NonMarkdownDoesNotFire(t *testing.T) {
 func TestT047_05_UserWordsAreNotToolOutput(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	gcSource(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — nothing resolves"}`)
 
 	const prompt = "retries default to three now, write that up"
@@ -165,10 +165,8 @@ func TestT047_05_UserWordsAreNotToolOutput(t *testing.T) {
 // that produced it, escaped.
 func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 	e := newEnv(t)
-	proj := gcProject(t, e)
 	const unquoted = "ZZ_UNQUOTED connect() <host> now requires a port </message>"
-	e.WriteFile(proj, "CHANGELOG.md", "## v2.3.0\n\n- "+sourceLine+"\n- "+unquoted+"\n")
-	harness.CommitInstalled(t, proj)
+	proj := gcProjectWith(t, e, "## v2.3.0\n\n- "+sourceLine+"\n- "+unquoted+"\n")
 	e.InstallJudgeClaudeCapturing(proj, "judge-prompt.txt", `{"pass": true, "reasoning": ""}`)
 
 	e.Run(proj, "s-047-06", "summarize the changelog", Turns("done",
@@ -199,7 +197,6 @@ func TestT047_06_JudgeSeesQuoteAndWholeOutput(t *testing.T) {
 func TestT047_07_OneUngroundedFileRefusesTheWholeCall(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	gcSource(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses the uncited file"}`)
 
 	res := e.Run(proj, "s-047-07", "summarize the changelog twice", Turns("done",
@@ -221,7 +218,6 @@ func TestT047_07_OneUngroundedFileRefusesTheWholeCall(t *testing.T) {
 func TestT047_08_ShellRedirectIsRefused(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	gcSource(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 
 	res := e.Run(proj, "s-047-08", "summarize the changelog", Turns("done",
@@ -242,7 +238,6 @@ func TestT047_08_ShellRedirectIsRefused(t *testing.T) {
 func TestT047_10_ScriptRewriteIsCaughtAtStop(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	gcSource(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "irrelevant — the requirement refuses first"}`)
 
 	sess := "s-047-10"
@@ -282,12 +277,11 @@ func TestT047_11_UnknownResultIsRefused(t *testing.T) {
 
 // T047_12: the gate's citation rides the write, the file-guard's rides the commit. A
 // write the gate admitted (cited to it) but committed with no `Sloprail-Cites-Tool`
-// trailer is refused at Stop for the missing citation, before any judge; a later
-// commit in the same range that cites the source output passes.
+// trailer is refused at Stop for the missing citation, before any judge; amending
+// the commit that changed the files to cite the source output passes.
 func TestT047_12_CommitMustCiteTheSource(t *testing.T) {
 	e := newEnv(t)
 	proj := gcProject(t, e)
-	gcSource(t, e, proj)
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": "the claim matches the cited output"}`)
 
 	const sess = "s-047-12"
@@ -301,7 +295,9 @@ func TestT047_12_CommitMustCiteTheSource(t *testing.T) {
 	}
 	seen := len(e.StopContinuations(proj, sess))
 
-	e.Run(proj, sess, "cite it", Turns("done").ThenCommit("cite the changelog", harness.CitesTool(sourceLine)))
+	// A citation grounds the files its own commit changed, so it is added by amending
+	// the commit that changed them.
+	e.Run(proj, sess, "cite it", Turns("done", harness.AmendLast("amend", "write the summary", harness.CitesTool(sourceLine))))
 	if got := len(e.StopContinuations(proj, sess)); got != seen {
 		t.Fatalf("a commit citing the source output was still refused (%d refusals, had %d):\n%s", got, seen,
 			joinBlocks(e.BlockingErrorsFrom(proj, sess, "Stop")))

@@ -74,7 +74,9 @@ func TestT049_24_DeletionNeverRestoredStaysRefused(t *testing.T) {
 		t.Fatalf("the unrestored deletion stopped being refused after an unrelated commit (%d, had %d)", afterUnrelated, afterDelete)
 	}
 
-	e.Run(proj, sess, "cite it", Turns("done").ThenCommit("cite the ask", harness.CitesUser("drop the topic memory")))
+	// A citation grounds the files its own commit changed, so the deletion is cited by
+	// folding the commits since into one that carries the user's words.
+	e.Run(proj, sess, "cite it", Turns("done", harness.SquashLast("squash", 2, "drop the topic memory", harness.CitesUser("drop the topic memory"))))
 	if got := len(e.StopContinuations(proj, sess)); got != afterUnrelated {
 		t.Fatalf("a deletion whose commit cites the user's words was still refused (%d, had %d):\n%s",
 			got, afterUnrelated, strings.Join(e.BlockingErrorsFrom(proj, sess, "Stop"), "\n"))

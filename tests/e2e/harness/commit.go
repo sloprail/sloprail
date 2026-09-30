@@ -2,6 +2,7 @@ package harness
 
 import (
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -146,6 +147,24 @@ func CommitInstalled(t testing.TB, dir string) {
 		return
 	}
 	CommitAllIn(t, dir, "install the guardrail tree")
+}
+
+// AmendLast is the turn where the agent rewrites its LAST commit's message to carry
+// the given trailers — the remedy a refusal for a missing citation gives ("amend that
+// commit"): a citation grounds the files its own commit changed, so the trailer has to
+// ride the commit that changed them.
+func AmendLast(id, subject string, trailers ...string) Turn {
+	cmd := "git commit -q --amend --allow-empty -m " + shQuote(subject)
+	if len(trailers) > 0 {
+		cmd += " -m " + shQuote(strings.Join(trailers, "\n"))
+	}
+	return Bash(id, cmd)
+}
+
+// SquashLast is the turn where the agent folds its last n commits into one carrying
+// the given trailers, for a refusal whose uncited files were changed by several commits.
+func SquashLast(id string, n int, subject string, trailers ...string) Turn {
+	return Bash(id, "git reset -q --soft HEAD~"+strconv.Itoa(n)+" && "+commitCmd(stageArgs(), subject, trailers...))
 }
 
 // CommitFile is a scenario turn in which the AGENT writes a file and commits it —
