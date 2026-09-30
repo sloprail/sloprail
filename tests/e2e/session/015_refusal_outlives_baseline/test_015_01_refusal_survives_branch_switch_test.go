@@ -80,14 +80,16 @@ checks:
 // engine's own bookkeeping — legible.
 const judgeScript = `#!/bin/sh
 payload="$(cat)"
-path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
-case "$path" in
-  .sloprail/*) exit 0 ;;
-esac
+# The changeset's FILES are the matched ones; the rule's own files (added in the
+# commit that installed it, which the range covers) sit in .changeset.others.
+paths="$(printf '%s' "$payload" | jq -r '.changeset.files[].path')"
+[ -n "$paths" ] || exit 0
 printf '%s\n' "$payload" >> "$SR_GUARDRAIL_DIR/seen"
-case "$path" in
-  bad*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
-esac
+for path in $paths; do
+  case "$path" in
+    bad*) echo '{"reason":"this file is not acceptable"}'; exit 1 ;;
+  esac
+done
 exit 0
 `
 
@@ -283,14 +285,18 @@ checks:
 	// and void the watermark this test is about (a pass advancing the range).
 	const judgeContentScript = `#!/bin/sh
 payload="$(cat)"
-path="$(printf '%s' "$payload" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
-case "$path" in
-  .sloprail/*) exit 0 ;;
-esac
+paths="$(printf '%s' "$payload" | jq -r '.changeset.files[].path')"
+[ -n "$paths" ] || exit 0
 root="${SR_GUARDRAIL_DIR%/.sloprail/file-guard/*}"
 printf '%s\n' "$payload" >> "$root/.git/watcher-seen"
-if [ -n "$path" ] && [ -f "$root/$path" ] && grep -q FORBIDDEN "$root/$path"; then
-  echo "$path" >> "$root/.git/watcher-refused"
+refused=0
+for path in $paths; do
+  if [ -f "$root/$path" ] && grep -q FORBIDDEN "$root/$path"; then
+    echo "$path" >> "$root/.git/watcher-refused"
+    refused=1
+  fi
+done
+if [ "$refused" = 1 ]; then
   echo '{"reason":"still contains the forbidden word"}'; exit 1
 fi
 exit 0

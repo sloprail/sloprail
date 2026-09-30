@@ -94,8 +94,12 @@ func TestT006_01_ACycleReportsWhatItChanged(t *testing.T) {
 	e.WriteFile(proj, "existing.md", "before")
 	e.WriteFile(proj, "doomed.md", "before")
 	e.WriteFile(proj, "untouched.md", "before")
+	e.CommitAll(proj, "the project before the rule")
+	// The rule goes in its own commit: its range starts at that commit's parent, so
+	// the files above are the base, not part of the first range.
 	e.FileGuard(proj, "records", recordFileEvent, map[string]string{"record.sh": recordFileScript})
-	e.CommitAll(proj, "the project before the session")
+	e.DisableShippedFileGuards(proj)
+	e.CommitAll(proj, "the rule, before the session")
 
 	e.Run(proj, "s-006-01", "change some files", Turns("done",
 		Write("w1", "created.md", "new file"),

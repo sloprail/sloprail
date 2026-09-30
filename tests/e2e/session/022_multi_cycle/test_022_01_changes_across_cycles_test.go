@@ -74,9 +74,10 @@ func cycles(t *testing.T, e *harness.Env, proj, ledger, sess string, scenarios .
 // rule's own folder is part of the history rather than an uncommitted guarded
 // change of every cycle. It returns the path of the ledger the check records to.
 //
-// seed is content that exists before the rule does, committed with it: a rule's
-// range floors at the last commit touching its own folder, so a file committed
-// AFTER the rule was installed would be part of the first range, not of its base.
+// seed is content that exists before the rule does, committed in its own commit
+// BEFORE the rule's: a rule's range floors at the parent of the last commit
+// touching its own folder, so the seed must sit at or below that parent to be
+// part of the base rather than of the first range.
 func project(t *testing.T, seed ...[2]string) (*harness.Env, string, string) {
 	t.Helper()
 	e := New(t)
@@ -86,8 +87,12 @@ func project(t *testing.T, seed ...[2]string) (*harness.Env, string, string) {
 	for _, f := range seed {
 		e.WriteFile(proj, f[0], f[1])
 	}
+	if len(seed) > 0 {
+		e.CommitAll(proj, "the project before the rule")
+	}
 	e.FileGuard(proj, "watcher", recordEverything, map[string]string{"record.sh": changesetkit.RecordScript(ledger)})
-	e.CommitAll(proj, "the project before the session")
+	e.DisableShippedFileGuards(proj)
+	e.CommitAll(proj, "the rule, before the session")
 	return e, proj, ledger
 }
 
