@@ -1,0 +1,73 @@
+package e2e
+
+import (
+	"strings"
+	"testing"
+)
+
+// T001_01: with no watermark, the range starts at the last commit that touched
+// the rule's folder, and the payload is the squashed net change to HEAD.
+func TestT001_01_FolderFloorAndSquashedPayload(t *testing.T) {
+	e, proj, floor := repoWithRule(t, docsRule(""))
+
+	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
+	e.CommitAll(proj, "first edit")
+	e.WriteFile(proj, "docs/a.md", "one\ntwo\nthree\n")
+	e.WriteFile(proj, "docs/b.md", "brand new\n")
+	e.WriteFile(proj, "README.md", "readme v2\n")
+	head := e.CommitAll(proj, "second edit", "Sloprail-Refactor: move-only")
+
+	got, res := show(t, e, proj, noSession, "size")
+	if res.Code != 0 {
+		t.Fatalf("changeset exited %d:\n%s", res.Code, res.Output)
+	}
+	if got.Origin != "floor" || got.Base != floor || got.Head != head {
+		t.Fatalf("range = %s %s..%s, want floor %s..%s", got.Origin, got.Base, got.Head, floor, head)
+	}
+	if got.Payload.Changeset.Base != floor || got.Payload.Changeset.Head != head {
+		t.Fatalf("payload range does not match: %+v", got.Payload.Changeset)
+	}
+	if got.Payload.Event.Kind != "Changeset" {
+		t.Fatalf("event kind = %q, want Changeset", got.Payload.Event.Kind)
+	}
+
+	// Both commits, oldest first, the trailer on the one that carried it.
+	commits := got.Payload.Changeset.Commits
+	if len(commits) != 2 || commits[0].Subject != "first edit" || commits[1].Subject != "second edit" {
+		t.Fatalf("commits = %+v", commits)
+	}
+	if v := commits[1].Trailers["Sloprail-Refactor"]; len(v) != 1 || v[0] != "move-only" {
+		t.Fatalf("trailers = %+v", commits[1].Trailers)
+	}
+
+	// One squashed diff for a.md: both edits in it, old content from the floor.
+	files := map[string]int{}
+	for i, f := range got.Payload.Changeset.Files {
+		files[f.Path] = i
+	}
+	if len(files) != 2 {
+		t.Fatalf("files = %+v, want docs/a.md and docs/b.md", got.Payload.Changeset.Files)
+	}
+	a := got.Payload.Changeset.Files[files["docs/a.md"]]
+	if a.Status != "M" || a.OldContent != "one\n" || a.NewContent != "one\ntwo\nthree\n" ||
+		!strings.Contains(a.Diff, "+two") || !strings.Contains(a.Diff, "+three") {
+		t.Fatalf("docs/a.md = %+v", a)
+	}
+	if b := got.Payload.Changeset.Files[files["docs/b.md"]]; b.Status != "A" || b.OldContent != "" {
+		t.Fatalf("docs/b.md = %+v", b)
+	}
+
+	// What the rule did not select is named, not carried.
+	others := got.Payload.Changeset.Others
+	if len(others) != 1 || others[0].Path != "README.md" || others[0].Status != "M" {
+		t.Fatalf("others = %+v", others)
+	}
+	if s := got.Payload.Subject; s.ID != "changeset" || len(s.Files) != 2 {
+		t.Fatalf("subject = %+v", s)
+	}
+
+	// Showing a changeset runs nothing.
+	if n := e.FileGuardLedger(proj, "size", "ledger"); n != 0 {
+		t.Fatalf("the check ran %d times; changeset must not run checks", n)
+	}
+}

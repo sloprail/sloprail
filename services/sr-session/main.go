@@ -55,6 +55,7 @@ about to happen.
 
   sr-session id | query | state   what a hook asks about the session so far
   sr-session trajectory ...        read a trajectory — describe it, cite into it
+  sr-session changeset --rule X    what a file-guard would be judged on, without running it
 
 There is no setup command. The guardrails directory is created by whatever
 writes the first declaration, and a project with none is an ordinary project —
@@ -73,7 +74,7 @@ does produce. To write a guardrail, use the authoring-guardrails skill.`,
 		newSessionStartCmd(), newSessionPreToolCmd(), newSessionStopCmd(),
 		newSessionSubagentStopCmd(),
 		newSessionStateCmd(), newSessionIDCmd(), newSessionQueryCmd(),
-		newSessionTrajectoryCmd(),
+		newSessionTrajectoryCmd(), newSessionChangesetCmd(),
 	)
 	return root
 }

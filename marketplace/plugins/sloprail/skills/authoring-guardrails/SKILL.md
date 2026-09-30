@@ -274,3 +274,6 @@ file. Naming it here is the way out that does not mean uninstalling the plugin.
 - [state-management.md](state-management.md) — `sr-session state` across cycles,
   the `--owner` cross-guardrail read a gate uses to read a context's registry,
   and the turn-scoping trap.
+- [changeset.md](changeset.md) — `sr-session changeset --rule <name>`: what a
+  file-guard would be judged on (its range, where the base came from, the
+  Changeset payload), printed without running any check.

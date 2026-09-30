@@ -119,6 +119,17 @@ func CompileContextMatch(src string, kind module.KindDecl) (*Matcher, error) {
 //	markers    []Marker                the sr: markers the file carries
 //	oldMarkers []Marker                the sr: markers it carried before this change
 //	context    map[string]ContextState every declared context, by name
+//	status     string                  the file's status in the changeset: A, M, D or R
+//	trailers   map[string][]string     each commit-message trailer key (canonical case,
+//	                                   e.g. Sloprail-Refactor) to its values across the
+//	                                   changeset's commits
+//
+// `status` and `trailers` are what a changeset adds to a file's own facts: the
+// file-guard judges the net change between two commits, so it can ask how the
+// file changed and what the commits that made the change said. `trailers` is open
+// (types.Any) like `context`, for the same reason: its keys are whatever the
+// commits carry. A key no commit carries reads as null, so a rule tests
+// `"move-only" in (trailers["Sloprail-Refactor"] ?? [])`.
 //
 // `oldMarkers` is the one piece of the change a file scope exposes, and for one
 // reason: a rule about a marker must be able to see the marker LEAVE. With
@@ -163,6 +174,8 @@ func fileMatchScope() types.Map {
 		"path":          types.String,
 		"markers":       types.Array(markerElem()),
 		"oldMarkers":    types.Array(markerElem()),
+		"status":        types.String,
+		"trailers":      types.Any,
 		scopeContextKey: contextMapType(),
 	}
 }

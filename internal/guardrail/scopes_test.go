@@ -632,11 +632,13 @@ func TestCompileContextMatch_EmptyAdmitsEverything(t *testing.T) {
 func TestFileMatchScope_ExposesExactlyItsVariables(t *testing.T) {
 	env := fileMatchScope()
 
-	assert.Len(t, env, 4, "path, markers, oldMarkers, context and nothing else")
+	assert.Len(t, env, 6, "path, markers, oldMarkers, context, status, trailers and nothing else")
 	assert.Equal(t, types.String, env["path"])
 	assert.Equal(t, types.Array(types.Map{"kind": types.String, "fqn": types.String, "line": types.Int}), env["markers"])
 	assert.Equal(t, types.Array(types.Map{"kind": types.String, "fqn": types.String, "line": types.Int}), env["oldMarkers"])
 	assert.Contains(t, env, "context")
+	assert.Equal(t, types.String, env["status"])
+	assert.Contains(t, env, "trailers")
 
 	// No event, no gates: those belong to other scopes.
 	assert.NotContains(t, env, "event")
@@ -663,4 +665,43 @@ func TestScopes_ContextMapIsOpen(t *testing.T) {
 	assert.Equal(t, types.Any, contextMapType())
 	assert.Equal(t, types.Any, fileMatchScope()["context"])
 	assert.Equal(t, types.Any, eventMatchScope(preFileCreateKind)["context"])
+}
+
+func TestCompileFileMatch_StatusAndTrailersAreInScope(t *testing.T) {
+	m, err := CompileFileMatch(`status == "D" and "move-only" in (trailers["Sloprail-Refactor"] ?? [])`)
+	require.NoError(t, err)
+
+	e := event.Event{Kind: "Changeset", Fields: map[string]any{
+		"path":     "a.go",
+		"status":   "D",
+		"trailers": map[string]any{"Sloprail-Refactor": []any{"move-only"}},
+	}}
+	ok, err := m.Match(e)
+	require.NoError(t, err)
+	assert.True(t, ok)
+
+	e.Fields["status"] = "M"
+	ok, err = m.Match(e)
+	require.NoError(t, err)
+	assert.False(t, ok)
+
+	// A trailer no commit carries reads as absent, not as an error.
+	e.Fields["status"] = "D"
+	e.Fields["trailers"] = map[string]any{}
+	ok, err = m.Match(e)
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestCompileFileMatch_TrailersValuesAreTestable(t *testing.T) {
+	m, err := CompileFileMatch(`len(trailers["Sloprail-Cites-User"] ?? []) > 0`)
+	require.NoError(t, err)
+	ok, err := m.Match(event.Event{Fields: map[string]any{"path": "a", "trailers": map[string]any{"Sloprail-Cites-User": []any{"q"}}}})
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestCompileFileMatch_StillRefusesAnUnknownScopeName(t *testing.T) {
+	_, err := CompileFileMatch(`statuss == "D"`)
+	assert.Error(t, err)
 }
