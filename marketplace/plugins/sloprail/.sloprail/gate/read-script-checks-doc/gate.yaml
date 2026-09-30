@@ -1,38 +1,8 @@
-# A check SCRIPT (.sh, under file-guard/gate/context) must be authored against
-# script-checks.md's contract — the resultKnown discipline, the flat
-# CheckPayload shape, the exit-code refusal contract — or it is wrong in one of
-# a small set of predictable ways. Loading the authoring-guardrails skill only
-# guarantees SKILL.md was read; script-checks.md is a page SKILL.md merely
-# links to, and nothing made opening it mandatory.
-#
-# Measured against a real onboarding eval run: every agent loaded the skill,
-# none of them opened script-checks.md or file-guard.md (the per-event-kind
-# skeleton lives there), and every check script was written from memory —
-# refused 3-8 times by authoring-slop's judge before it was right, minutes of
-# model time re-deriving what one page already states.
-#
-# check-template.sh is required alongside the prose for the same reason:
-# SKILL.md tells an author to start a script check from that file's copy-paste
-# skeleton, not to write one from scratch — a run of the onboarding eval
-# (fresh-plugin-rules-first) shows an agent going straight from
-# script-checks.md's prose to code, skipping the template, and getting the
-# fail-open PostFile branch wrong on its first attempt (authoring-slop then
-# caught it). Requiring both pages before the first write means the agent's
-# first draft starts from the already-correct skeleton instead of needing a
-# refusal to arrive at it.
-#
-# require: [{skill, files}] (declaration.Prerequisite.Files) checks this
-# NATIVELY: not "did the agent load the skill" but "was THIS page read" — a
-# Read tool_use or a file-reading Bash command (cat, head, …) on it, the same
-# record-grounded evidence a bare {skill} already accepts for a skill's own
-# SKILL.md, extended to a named subpage. `require` is evaluated BEFORE any
-# check (checkRequire runs first in internal/dispatch), so this refuses ahead
-# of authoring-slop's own judge: cheaper (a trajectory lookup, no model call)
-# and earlier (before a turn is spent writing something wrong).
-#
-# This is the PREVENTION half of the rule: a PreFileWrite gate refuses the write
-# before it lands. The plain file-guard of the same name, beside it under
-# file-guard/, is the settled-result backstop at Stop.
+# Refuses a write to a check script (.sh under file-guard/gate/context) until
+# script-checks.md and check-template.sh were read. The WHY (measured onboarding
+# eval, what `require: files` checks natively, why it runs before any judge) is
+# written once, in ../../file-guard/read-script-checks-doc/file-guard.yaml; this is
+# the prevention half (refuses before the write lands), that one the Stop backstop.
 on:
   - event: PreFileWrite
     match: '(event.path contains ".sloprail/file-guard/" or event.path contains ".sloprail/gate/" or event.path contains ".sloprail/context/") and event.path endsWith ".sh"'

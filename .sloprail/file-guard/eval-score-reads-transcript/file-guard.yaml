@@ -4,9 +4,9 @@
 # the other half — a scorer whose EXIT CODE does not genuinely depend on the
 # transcript's content is indistinguishable from a fixed `exit 0`/`exit 1`,
 # and would report every run the same way regardless of what the guardrail
-# under test actually did. This file-guard judges the settled scorer at Stop; the
-# sibling gate of the same name catches it while the fixture is being written, not
-# after a run silently "passes" against nothing.
+# under test actually did. This file-guard judges the settled scorer at Stop, so
+# it is caught before a run silently "passes" against nothing. There is no gate for
+# it: a data-flow question is a judge's, and a judge runs only in a file-guard.
 match: path matches "^examples/.+/eval/.+/score\\.sh$"
 checks:
   # "Does the transcript's value ever reach a decision" is a data-flow

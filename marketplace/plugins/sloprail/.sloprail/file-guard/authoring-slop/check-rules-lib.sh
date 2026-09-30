@@ -143,11 +143,24 @@ fi
 #     resultKnown; rule 2b holds it to that;
 #   - a file-guard script reads a Changeset (`.changeset.files[].newContent`):
 #     committed blobs, always known, with no resultKnown or newContentKnown to consult.
+# The exemption is gated by LOCATION first: a script under .sloprail/gate/ reads the
+# PENDING write whatever its text names, so it is never exempt — a gate script that
+# mentions newContentKnown or `.changeset` in a string must still name resultKnown.
+# (A lib a gate sources from the file-guard folder reads no event; the gate's own entry
+# script, under gate/, is what is held to this rule.)
+exempt=0
+case "$path" in
+  *.sloprail/gate/*) ;;
+  *)
+    if { printf '%s' "$body" | grep -q 'newContentKnown' 2>/dev/null ||
+         printf '%s' "$body" | grep -q '[.]changeset' 2>/dev/null; } &&
+       ! printf '%s' "$body" | grep -v '^[[:space:]]*#' | grep -qE 'PreFile|Pre[*]' 2>/dev/null; then
+      exempt=1
+    fi ;;
+esac
 if printf '%s' "$body" | grep -q 'newContent' 2>/dev/null &&
    ! printf '%s' "$body" | grep -q 'resultKnown' 2>/dev/null &&
-   ! { { printf '%s' "$body" | grep -q 'newContentKnown' 2>/dev/null ||
-         printf '%s' "$body" | grep -q '[.]changeset' 2>/dev/null; } &&
-       ! printf '%s' "$body" | grep -v '^[[:space:]]*#' | grep -qE 'PreFile|Pre[*]' 2>/dev/null; }; then
+   [ "$exempt" = 0 ]; then
   note "rules/content-may-be-unresolvable — reads .event.newContent without .resultKnown.
     On EITHER Pre kind (create as well as update) an absent newContent reads as
     \"\", which is indistinguishable from a write that empties the file — a

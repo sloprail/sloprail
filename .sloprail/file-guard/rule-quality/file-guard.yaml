@@ -35,7 +35,9 @@ match: path endsWith "RULE.md"
 
 # A file-guard judges committed changesets: every RULE.md the range touched goes to
 # one judge, which loops over `changeset.files`. The refusal BEFORE the write lands
-# is the sibling gate of the same name (.sloprail/gate/rule-quality/).
+# is the size-cap gate of the same name (.sloprail/gate/rule-quality/): only the
+# deterministic size cap, which this folder's size-cap-lib.sh shares with it; the
+# quality judgement runs only here.
 
 checks:
   # prepare loads the meta-rules; the judge renders them against the file and asks

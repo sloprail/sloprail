@@ -39,8 +39,7 @@ the Stop after-check) matches **/tasks/*/*/ASK.md. It requires every write to AS
 cite the user's own words (sr-file write … --cite:user '<exact words>'): an
 uncited write (the Write tool, a shell redirect) is refused before it lands,
 naming the sr-file form, and a quote that is not word for word in one user
-message is refused with sr-file's reason. A cited write then goes to a judge
-that checks ASK.md says what the cited message says, and nothing else. A
+message is refused with sr-file's reason. A cited write is then judged at Stop, by the file-guard, which checks ASK.md says what the cited message says, and nothing else. A
 first write refused and then made the grounded way within a cycle or two is
 the system working as intended, not an anomaly. Flag this unhealthy only if
 the same refused ASK.md write is retried 4+ times with no change in
