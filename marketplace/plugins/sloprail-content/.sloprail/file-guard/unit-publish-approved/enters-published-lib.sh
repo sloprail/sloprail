@@ -4,7 +4,10 @@
 # on it.
 
 lib_init() {
-set -uo pipefail
+# No `-u`: this is a `when` predicate, where exit 1 waives the citation. An unset
+# variable under `set -u` kills the shell with exit 1, which would waive it; unset
+# reads as empty instead, and an empty claim applies the requirement.
+set -o pipefail
 
 # Undecidable without jq or the shared reader: apply the requirement (exit 0).
 command -v jq >/dev/null 2>&1 || exit 0
@@ -21,12 +24,13 @@ event="$(cat)"
 field() { printf '%s' "$event" | jq -r "$1" 2>/dev/null; }
 
 kind="$(field '.event.kind // ""')"
+path="$(field '.event.path // ""')"
 }
 
 lib_check() {
 
 # Only a decided "not published" waives; yes and undecidable both apply.
-publish_claim "$new_content"   # set by the entry, once the bytes are known to be read
+publish_claim "${new_content:-}"   # set by the entry, once the bytes are known to be read
 [ "$claim" = "no" ] && exit 1
 # The sr-file on PATH cannot read a status at all: apply, and the refusal's
 # hint is the upgrade (check-publish.sh refuses with the same words).
@@ -49,7 +53,6 @@ esac
 
 # It applies. The hint the refusal carries: only the user publishes, and how —
 # an edit of the status, or for a unit created published, a write.
-path="$(field '.event.path // ""')"
 case "$kind" in
   *Create) how="  sr-file write $path --cite:user '<their exact words approving it>' <<'EOF' ... EOF   (status: published, published_urls: [\"<url>\"])" ;;
   *) how="  sr-file edit $path --old-string 'status: ${from:-drafting}' --new-string 'status: published
