@@ -83,9 +83,16 @@ own call.
   under `unresolvedCitations`). The current session's transcript is searched
   first, then the project's other sessions newest to oldest; the first session
   containing the quote must match it exactly once. Outside a session (no
-  `CLAUDE_CODE_SESSION_ID`) `citations` is empty. The rest of this list describes
-  a gate's events. A `require: citation` on a file-guard is satisfied by a
-  citation in the range, and its `when` reads the same `Changeset` payload.
+  `CLAUDE_CODE_SESSION_ID`) `citations` is empty. Each entry also says which
+  commits carried it (`commits`, SHAs) and which selected files those commits
+  changed (`files`); the list as a whole stays the range's, for a judge. The rest
+  of this list describes a gate's events. A `require: citation` on a file-guard is
+  satisfied **per selected file**: a file is grounded only by a citation whose
+  trailer is in the commit that last changed THAT file, so one commit citing one
+  file grounds nothing else in the range, an uncited change on top of a cited one
+  leaves the file uncited, and a cited commit on top of an uncited one grounds the
+  file as it now stands. A refusal names every file that is not grounded. Its
+  `when` reads the whole `Changeset` payload.
 - A cited call that failed, was denied, or
   never ran grounds nothing. A citation grounds only the change it rode on, and
   only for a requirement whose pools it resolved in (a `--cite:tool_result`

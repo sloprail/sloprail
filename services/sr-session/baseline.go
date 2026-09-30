@@ -146,11 +146,13 @@ func ensureBaseline(store sessionstate.Store, dir string) (baselineOutcome, erro
 	// describes a history this tree no longer has, so the difference against it
 	// would be the whole delta between the two.
 	//
-	// The unfixed refusals recorded so far are untouched by this: they sit in
-	// file_checks keyed by path, guardrail and content, not against the point,
-	// and keep surfacing until a hook passes them — readdOutstanding puts them
-	// back into the difference on every cycle, which is what makes that true
-	// once the point has moved past them.
+	// A file-guard's unfixed refusals are untouched by this: a refusal is a recorded
+	// run that did not pass, so the rule's watermark does not move past it, and the
+	// range it refused stays the rule's range (changeset_range.go) until a run
+	// passes. They never depended on this point. What does is the floor of last
+	// resort — the HEAD the session began at, for a rule with no committed
+	// definition — which is why the point still moves when the tree leaves its
+	// history.
 	//
 	// One exception, and it is the reason Position.Branch still exists. A rebase
 	// walks a detached HEAD through commits that reach nothing recorded, at

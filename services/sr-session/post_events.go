@@ -15,13 +15,12 @@ import (
 // Post events are gathered from the tree difference and from the agent's own
 // messages. They were written for the old GUARDRAIL.md Post dispatch and outlive
 // it — the new nature Stop dispatch (nature_stop.go) computes its Post events the
-// same way, so a file-guard's after-checks and a context's Post enters see the
-// same difference, re-fire and all, that the old format saw.
+// same way, for the contexts' Post enters. A file-guard does not read them: it
+// judges the commits of its own range (changeset_eval.go).
 
 // postEvents gathers the Post file events for a completed cycle: the tree
-// difference against this session's baseline, with every still-unfixed file
-// re-added so a prior refusal re-fires. It returns the events and the repository
-// root their paths resolve against.
+// difference against this session's baseline. It returns the events and the
+// repository root their paths resolve against.
 func postEvents(cmd *cobra.Command, store sessionstate.Store, p HookPayload, reg *module.Registry, bound []string) ([]event.Event, string) {
 	commit, ok, err := store.Meta(sessionstate.MetaBaselineCommit)
 	if err != nil {
