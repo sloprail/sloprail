@@ -5,8 +5,8 @@
 # before the loss, and refuses there — a check after the commit is too late to keep
 # the bytes. This file-guard judges the committed changeset: every file the range
 # touched, its content at the range's base against head, as one squashed diff — so a
-# removal the gate could not see (a script rewriting the file) is refused too, and a
-# removal that a later commit put back still shows.
+# removal the gate could not see (a script rewriting the file) is refused too. It is
+# the NET diff that is judged: a removal a later commit put back is not a removal.
 #
 # "Asked" is deterministic: a removal must CITE the user's own words. The agent
 # commits the change with `Sloprail-Cites-User: <quote>` trailers; the engine

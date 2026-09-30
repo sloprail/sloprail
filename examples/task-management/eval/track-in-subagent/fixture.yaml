@@ -1,7 +1,8 @@
 description: >
   track-as-task, with the work handed to a sub-agent. ASK.md must cite the
-  user's own words (ask-is-human-authored), but a sub-agent never sees the
-  user's messages, only the parent's dispatch prompt, and --cite:user resolves
+  user's own words (ask-is-human-authored: --cite:user on the write, a
+  Sloprail-Cites-User trailer on the commit), but a sub-agent never sees the
+  user's messages, only the parent's dispatch prompt, and both resolve
   only against the main conversation. So the sub-agent can cite the user only
   if the parent passed their words verbatim; citing its dispatch prompt is
   refused with a message saying that quote was written by the parent agent.
