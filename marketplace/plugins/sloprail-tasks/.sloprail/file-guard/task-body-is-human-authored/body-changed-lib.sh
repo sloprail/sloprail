@@ -10,9 +10,11 @@
 lib_setup() {
   set -uo pipefail
 
+  # DELIBERATE, and fail-closed: in a `when` predicate exit 0 APPLIES the requirement (only exit 1 waives it), so a missing tool or helper applies it rather than permitting.
   command -v jq >/dev/null 2>&1 || exit 0
 
   lib="$lib_dir/lib-body.sh"
+  # DELIBERATE, and fail-closed: in a `when` predicate exit 0 APPLIES the requirement (only exit 1 waives it), so a missing tool or helper applies it rather than permitting.
   [ -f "$lib" ] || exit 0
   # A helper stopped by a syntax error runs only up to it (whether the `.` then
   # fails depends on the bash version); only its last-line sentinel proves it

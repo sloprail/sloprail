@@ -11,6 +11,7 @@ lib_setup() {
 set -uo pipefail
 
 # Undecidable without jq: apply the requirement (exit 0, fail-closed).
+# DELIBERATE, and fail-closed: in a `when` predicate exit 0 APPLIES the requirement (only exit 1 waives it), so a missing tool or helper applies it rather than permitting.
 command -v jq >/dev/null 2>&1 || exit 0
 
 # The keywords are read by the SAME parser scanner-declared logs them with
@@ -18,6 +19,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 # apply the requirement.
 [ -n "${SR_GUARDRAIL_DIR:-}" ] || exit 0
 lib="$SR_GUARDRAIL_DIR/../../context/scanner-declared/scanner-lib.sh"
+# DELIBERATE, and fail-closed: in a `when` predicate exit 0 APPLIES the requirement (only exit 1 waives it), so a missing tool or helper applies it rather than permitting.
 [ -f "$lib" ] || exit 0
 # A helper stopped early runs only partly (whether the `.` then fails depends
 # on the bash version); only its last-line sentinel proves it loaded whole.

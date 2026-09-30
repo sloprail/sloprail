@@ -12,6 +12,7 @@ lib_setup() {
   set -uo pipefail
 
   # Undecidable without jq or the shared reader: apply the requirement (exit 0).
+  # DELIBERATE, and fail-closed: in a `when` predicate exit 0 APPLIES the requirement (only exit 1 waives it), so a missing tool or helper applies it rather than permitting.
   command -v jq >/dev/null 2>&1 || exit 0
   # A helper stopped by a syntax error runs only up to it (whether the `.` then
   # fails depends on the bash version): a partial reader may answer "no" with a
@@ -19,6 +20,7 @@ lib_setup() {
   # whole. Not loaded whole: apply, never read on and waive.
   unset publish_claim_loaded
   # shellcheck source=publish-claim.sh
+  # DELIBERATE, and fail-closed: in a `when` predicate exit 0 APPLIES the requirement (only exit 1 waives it), so a missing tool or helper applies it rather than permitting.
   . "$lib_dir/publish-claim.sh" 2>/dev/null || exit 0
   [ "${publish_claim_loaded:-}" = 1 ] || exit 0
 }

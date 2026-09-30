@@ -49,6 +49,7 @@ export GIT_NO_REPLACE_OBJECTS=1
 waived=""
 trap 'rc=$?; if [ "$rc" = 1 ] && [ "$waived" != 1 ]; then exit 0; fi' EXIT
 
+# DELIBERATE, and fail-closed: in a `when` predicate exit 0 APPLIES the requirement (only exit 1 waives it), so a missing tool or helper applies it rather than permitting.
 command -v jq >/dev/null 2>&1 || exit 0
 }
 
