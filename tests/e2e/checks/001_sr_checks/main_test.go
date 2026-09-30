@@ -42,13 +42,9 @@ func session(t *testing.T) (*Env, string) {
 	return e, proj
 }
 
-func inSession(e *Env) []string {
-	return []string{"CLAUDE_CODE_SESSION_ID=" + sessionID, "CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE="}
-}
-
 // checks runs `sr-checks <args>` in the session.
 func checks(e *Env, proj string, args ...string) harness.Result {
-	return e.CLIDirectEnv(proj, inSession(e), "sr-checks", args...)
+	return e.CLIDirectEnv(proj, e.SessionEnv(sessionID), "sr-checks", args...)
 }
 
 // Row is one `sr-checks status --json` row.

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
 )
@@ -22,14 +23,14 @@ func TestT002_05_LoopBreakerReleasesAfterTheCapForTheSameSet(t *testing.T) {
 
 	// The first two Stops are refused: the loop the cap bounds.
 	for i := 1; i <= 2; i++ {
-		r := stop(e, proj, "s-002-05", false)
-		if !blocked(r) || !strings.Contains(r.Output, "Commit your work") {
+		r := e.StopNow(proj, "s-002-05", false)
+		if !harness.Blocked(r) || !strings.Contains(r.Output, "Commit your work") {
 			t.Fatalf("Stop %d for the same set was not refused:\n%s", i, r.Output)
 		}
 	}
 	// The third is released — out loud.
-	r := stop(e, proj, "s-002-05", false)
-	if blocked(r) {
+	r := e.StopNow(proj, "s-002-05", false)
+	if harness.Blocked(r) {
 		t.Fatalf("the loop breaker did not release the third refusal:\n%s", r.Output)
 	}
 	if !strings.Contains(r.Output, "stop_hook_block_cap") || !strings.Contains(r.Output, "uncommitted") {
@@ -38,17 +39,17 @@ func TestT002_05_LoopBreakerReleasesAfterTheCapForTheSameSet(t *testing.T) {
 
 	// A different set is a different question: refused again, from a fresh count.
 	e.WriteFile(proj, "docs/b.md", "b\n")
-	if r := stop(e, proj, "s-002-05", false); !blocked(r) {
+	if r := e.StopNow(proj, "s-002-05", false); !harness.Blocked(r) {
 		t.Fatalf("a changed uncommitted set was released by the old count:\n%s", r.Output)
 	}
 
 	// Committing ends it: nothing is owed, and the count is gone.
 	e.CommitAll(proj, "commit what was owed")
-	if r := stop(e, proj, "s-002-05", false); blocked(r) {
+	if r := e.StopNow(proj, "s-002-05", false); harness.Blocked(r) {
 		t.Fatalf("a clean tree was refused:\n%s", r.Output)
 	}
 	e.WriteFile(proj, "docs/c.md", "c\n")
-	if r := stop(e, proj, "s-002-05", false); !blocked(r) {
+	if r := e.StopNow(proj, "s-002-05", false); !harness.Blocked(r) {
 		t.Fatalf("a new uncommitted set after a clean Stop was not refused:\n%s", r.Output)
 	}
 }

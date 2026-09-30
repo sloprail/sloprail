@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
 
 	// Refusal: a commit the rule objects to.
 	e.Run(proj, "s-003-01", "write the doc", Turns("done",
-		commit("c1", "docs/a.md", "FORBIDDEN words", "add a"),
+		harness.CommitFile("c1", "docs/a.md", "FORBIDDEN words", "add a"),
 	))
 	errs := e.BlockingErrorsFrom(proj, "s-003-01", "Stop")
 	if len(errs) == 0 || !strings.Contains(strings.Join(errs, "\n"), "FORBIDDEN text in the changeset") {
@@ -39,7 +40,7 @@ func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
 	// The refused range does not advance: the fix is judged with the original
 	// commit still in it — one squashed range, not the fix alone.
 	e.Run(proj, "s-003-01", "fix it", Turns("fixed",
-		commit("c2", "docs/a.md", "clean words", "fix a"),
+		harness.CommitFile("c2", "docs/a.md", "clean words", "fix a"),
 	))
 	runs = ledger(t, led)
 	last := runs[len(runs)-1]
@@ -61,7 +62,7 @@ func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
 	}
 
 	// A later commit is judged alone, from the watermark.
-	e.Run(proj, "s-003-01", "one more", Turns("more", commit("c3", "docs/b.md", "more clean words", "add b")))
+	e.Run(proj, "s-003-01", "one more", Turns("more", harness.CommitFile("c3", "docs/b.md", "more clean words", "add b")))
 	runs = ledger(t, led)
 	next := runs[len(runs)-1]
 	if next.Base != passedHead || len(next.Commits) != 1 || next.Commits[0] != "add b" {
@@ -77,7 +78,7 @@ func TestT003_01_RefuseThenFixThenWatermark(t *testing.T) {
 func TestT003_02_NothingSelectedIsAPass(t *testing.T) {
 	e, proj, led := project(t, docsRule)
 	e.Run(proj, "s-003-02", "take notes", Turns("done",
-		commit("c1", "notes/more.md", "FORBIDDEN but unguarded", "add a note"),
+		harness.CommitFile("c1", "notes/more.md", "FORBIDDEN but unguarded", "add a note"),
 	))
 	if runs := ledger(t, led); len(runs) != 0 {
 		t.Fatalf("the check ran on a range where match selected nothing: %+v", runs)

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestT001_01_FolderFloorAndSquashedPayload(t *testing.T) {
 	e.WriteFile(proj, "README.md", "readme v2\n")
 	head := e.CommitAll(proj, "second edit", "Sloprail-Refactor: move-only")
 
-	got, res := show(t, e, proj, noSession, "size")
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code != 0 {
 		t.Fatalf("changeset exited %d:\n%s", res.Code, res.Output)
 	}

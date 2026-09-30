@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"testing"
 )
 
@@ -25,7 +26,7 @@ func statusesRepo(t *testing.T, ruleExtra string) Shown {
 	e.WriteFile(proj, "docs/added.md", "added\n")
 	e.CommitAll(proj, "delete, rename, edit, add")
 
-	got, res := show(t, e, proj, noSession, "size")
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code != 0 {
 		t.Fatalf("changeset exited %d:\n%s", res.Code, res.Output)
 	}

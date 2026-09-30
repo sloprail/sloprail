@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestT001_13_TrailerCitationsResolveAgainstTheTranscript(t *testing.T) {
 	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
 	e.CommitAll(proj, "add the rule")
 	e.Run(proj, "s-001-13", prompt, Turns("done", Bash("b1", "true")))
-	env := inSession(e, "s-001-13")
+	env := e.SessionEnv("s-001-13")
 
 	// Refusal first: words nobody said, and the user's words claimed as tool
 	// output, ground nothing.
@@ -59,7 +60,7 @@ func TestT001_14_NoSessionNoCitations(t *testing.T) {
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
 	e.CommitAll(proj, "claims a quote", CitesUser("anything"))
 
-	got, res := show(t, e, proj, noSession, "size")
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}

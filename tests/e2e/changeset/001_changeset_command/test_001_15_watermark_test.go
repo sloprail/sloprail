@@ -35,7 +35,7 @@ func watermarkRepo(t *testing.T) (e *Env, proj, rule, hash, c1 string) {
 
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
 	c1 = e.CommitAll(proj, "first edit")
-	first, res := show(t, e, proj, inSession(e, wmSession), "size")
+	first, res := show(t, e, proj, e.SessionEnv(wmSession), "size")
 	if res.Code != 0 || first.Origin != "floor" {
 		t.Fatalf("before any run: exit %d origin %q\n%s", res.Code, first.Origin, res.Output)
 	}
@@ -57,14 +57,14 @@ func TestT001_15_TheWatermarkIsTheNewestPassedRun(t *testing.T) {
 	broken.ExitCode, broken.Error = 1, "git: bad object"
 	e.RecordCheckRun(proj, wmSession, broken)
 
-	got, res := show(t, e, proj, inSession(e, wmSession), "size")
+	got, res := show(t, e, proj, e.SessionEnv(wmSession), "size")
 	if res.Code != 0 || got.Origin != "floor" {
 		t.Fatalf("a failed run moved the base: exit %d origin %q\n%s", res.Code, got.Origin, res.Output)
 	}
 
 	// Then a pass at c1: the range now starts there and holds only c2.
 	e.RecordCheckRun(proj, wmSession, passRun(rule, c1, hash))
-	got, res = show(t, e, proj, inSession(e, wmSession), "size")
+	got, res = show(t, e, proj, e.SessionEnv(wmSession), "size")
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
@@ -83,7 +83,7 @@ func TestT001_16_AnAmendedAwayWatermarkIsDropped(t *testing.T) {
 	e.RecordCheckRun(proj, wmSession, passRun(rule, c1, hash))
 	e.Git(proj, "commit", "--amend", "-m", "first edit, reworded")
 
-	got, res := show(t, e, proj, inSession(e, wmSession), "size")
+	got, res := show(t, e, proj, e.SessionEnv(wmSession), "size")
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
@@ -102,7 +102,7 @@ func TestT001_17_AnEditedRuleHasNoWatermark(t *testing.T) {
 	e.RecordCheckRun(proj, wmSession, passRun(rule, c1, hash))
 	e.WriteFile(proj, ".sloprail/file-guard/size/check.sh", passingCheck+"# edited\n")
 
-	got, res := show(t, e, proj, inSession(e, wmSession), "size")
+	got, res := show(t, e, proj, e.SessionEnv(wmSession), "size")
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
@@ -116,7 +116,7 @@ func TestT001_18_APassIsPerRule(t *testing.T) {
 	e, proj, _, hash, c1 := watermarkRepo(t)
 	e.RecordCheckRun(proj, wmSession, passRun("file-guard/other", c1, hash))
 
-	got, res := show(t, e, proj, inSession(e, wmSession), "size")
+	got, res := show(t, e, proj, e.SessionEnv(wmSession), "size")
 	if res.Code != 0 || got.Origin != "floor" {
 		t.Fatalf("exit %d origin %q:\n%s", res.Code, got.Origin, res.Output)
 	}

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
 )
@@ -45,8 +46,8 @@ func TestT003_05_TheJudgeRendersTheChangeset(t *testing.T) {
 	e, proj := judgeProject(t, verdictFail)
 
 	e.Run(proj, "s-003-05", "write the docs", Turns("done",
-		commit("c1", "docs/a.md", "the release is Friday", "add a"),
-		commit("c2", "docs/b.md", "the release is Monday", "add b"),
+		harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a"),
+		harness.CommitFile("c2", "docs/b.md", "the release is Monday", "add b"),
 	))
 
 	joined := strings.Join(e.BlockingErrorsFrom(proj, "s-003-05", "Stop"), "\n")
@@ -76,30 +77,30 @@ func TestT003_05_TheJudgeRendersTheChangeset(t *testing.T) {
 func TestT003_06_AFailIsReplayedUntilTheInputChanges(t *testing.T) {
 	e, proj := judgeProject(t, verdictFail)
 
-	res := e.Run(proj, "s-003-06", "write the doc", Turns("done", commit("c1", "docs/a.md", "the release is Friday", "add a")))
-	if n := strings.Count(res.Output, `"type":"result"`); n < 2 {
-		t.Fatalf("premise: the refusal should have driven the agent through several Stops, saw %d result frame(s)", n)
+	e.Run(proj, "s-003-06", "write the doc", Turns("done", harness.CommitFile("c1", "docs/a.md", "the release is Friday", "add a")))
+	if n := len(e.StopContinuations(proj, "s-003-06")); n < 1 {
+		t.Fatal("premise: the refusal should have driven the agent on through further Stops")
 	}
 	if n := e.JudgeCalls(proj, promptFile, ""); n != 1 {
 		t.Fatalf("the judge was asked %d times across the refused Stops; a fail is terminal and must be replayed, not re-judged", n)
 	}
 
 	// Another Stop on exactly the same input: still refused, still one call.
-	r := stopNow(e, proj, "s-003-06")
-	if !blocked(r) || !strings.Contains(r.Output, "JUDGE-SAYS-NO") {
+	r := e.StopNow(proj, "s-003-06", false)
+	if !harness.Blocked(r) || !strings.Contains(r.Output, "JUDGE-SAYS-NO") {
 		t.Fatalf("the replayed failure was not refused with the judge's reasoning:\n%s", r.Output)
 	}
 	if n := e.JudgeCalls(proj, promptFile, ""); n != 1 {
 		t.Fatalf("a Stop over unchanged input asked the judge again (%d calls)", n)
 	}
-	if out := checksStatus(e, proj, "s-003-06", "--failing"); !strings.Contains(out, "fail") || !strings.Contains(out, "JUDGE-SAYS-NO") {
+	if out := e.ChecksStatus(proj, "s-003-06", "--failing"); !strings.Contains(out, "fail") || !strings.Contains(out, "JUDGE-SAYS-NO") {
 		t.Fatalf("the failure is not outstanding in the check results:\n%s", out)
 	}
 
 	// A fix changes the input: judged again — over the whole squashed range — and
 	// passes.
 	e.InstallJudgeClaudeCapturing(proj, promptFile, verdictPass)
-	e.Run(proj, "s-003-06", "fix it", Turns("fixed", commit("c2", "docs/a.md", "the release is Monday", "fix a")))
+	e.Run(proj, "s-003-06", "fix it", Turns("fixed", harness.CommitFile("c2", "docs/a.md", "the release is Monday", "fix a")))
 	if n := e.JudgeCalls(proj, promptFile, ""); n != 2 {
 		t.Fatalf("the fix was not judged (%d calls)", n)
 	}
@@ -109,7 +110,7 @@ func TestT003_06_AFailIsReplayedUntilTheInputChanges(t *testing.T) {
 	}
 
 	// The old failure is cleared as stale, not left standing forever.
-	if out := checksStatus(e, proj, "s-003-06", "--failing"); strings.TrimSpace(out) != "" {
+	if out := e.ChecksStatus(proj, "s-003-06", "--failing"); strings.TrimSpace(out) != "" {
 		t.Fatalf("a stale failure is still outstanding:\n%s", out)
 	}
 	sql := e.CLIDirectEnv(proj, []string{"CLAUDE_CODE_SESSION_ID=s-003-06", "CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE="},

@@ -1,6 +1,9 @@
 package e2e
 
-import "testing"
+import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
+	"testing"
+)
 
 // T001_08: a rule's match sees `status` and `trailers` beside `path` and
 // `markers`. Selected only when the commits carry the trailer AND the file was
@@ -15,7 +18,7 @@ func TestT001_08_MatchSeesStatusAndTrailers(t *testing.T) {
 	e.WriteFile(proj, "docs/new.md", "added\n")
 	e.CommitAll(proj, "no trailer yet")
 
-	got, res := show(t, e, proj, noSession, "size")
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
@@ -25,7 +28,7 @@ func TestT001_08_MatchSeesStatusAndTrailers(t *testing.T) {
 
 	e.WriteFile(proj, "docs/more.md", "more\n")
 	e.CommitAll(proj, "now it says so", "Sloprail-Refactor: move-only")
-	got, res = show(t, e, proj, noSession, "size")
+	got, res = show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
@@ -49,7 +52,7 @@ func TestT001_09_TheDirtyTreeIsInvisible(t *testing.T) {
 	e.WriteFile(proj, "docs/a.md", "one\ncommitted\nHALF-FINISHED\n")
 	e.WriteFile(proj, "docs/scratch.md", "untracked\n")
 
-	got, res := show(t, e, proj, noSession, "size")
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}

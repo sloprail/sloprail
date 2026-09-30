@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"strings"
 	"testing"
 )
@@ -20,7 +21,7 @@ func TestT001_02_EmptyRangeIsAnAnswerAndNoBaseIsAnError(t *testing.T) {
 	e.CommitAll(proj, "before")
 	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
 
-	_, res := show(t, e, proj, noSession, "size")
+	_, res := show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code == 0 {
 		t.Fatalf("an uncommitted rule with no session was given a range:\n%s", res.Output)
 	}
@@ -29,7 +30,7 @@ func TestT001_02_EmptyRangeIsAnAnswerAndNoBaseIsAnError(t *testing.T) {
 	}
 
 	head := e.CommitAll(proj, "add the rule")
-	got, res := show(t, e, proj, noSession, "size")
+	got, res := show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code != 0 {
 		t.Fatalf("after committing the rule: exit %d:\n%s", res.Code, res.Output)
 	}
@@ -46,7 +47,7 @@ func TestT001_03_AGitErrorFailsClosed(t *testing.T) {
 	e, proj, _ := repoWithRule(t, docsRule(""))
 	e.WriteFile(proj, ".git/HEAD", "garbage\n")
 
-	_, res := show(t, e, proj, noSession, "size")
+	_, res := show(t, e, proj, harness.NoSessionEnv, "size")
 	if res.Code == 0 {
 		t.Fatalf("a repository git cannot read produced a changeset:\n%s", res.Output)
 	}
@@ -55,11 +56,11 @@ func TestT001_03_AGitErrorFailsClosed(t *testing.T) {
 // T001_04: a --rule that names nothing loaded is an error that says what is loaded.
 func TestT001_04_UnknownRuleIsAnError(t *testing.T) {
 	e, proj, _ := repoWithRule(t, docsRule(""))
-	_, res := show(t, e, proj, noSession, "no-such-rule")
+	_, res := show(t, e, proj, harness.NoSessionEnv, "no-such-rule")
 	if res.Code == 0 || !strings.Contains(res.Output, "file-guard/size") {
 		t.Fatalf("exit %d, want a refusal naming the loaded rules:\n%s", res.Code, res.Output)
 	}
-	if _, res := show(t, e, proj, noSession, "file-guard/size"); res.Code != 0 {
+	if _, res := show(t, e, proj, harness.NoSessionEnv, "file-guard/size"); res.Code != 0 {
 		t.Fatalf("the qualified name should select the rule: exit %d\n%s", res.Code, res.Output)
 	}
 }

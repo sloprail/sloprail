@@ -117,34 +117,3 @@ func project(t *testing.T, ruleYAML string) (*Env, string, string) {
 	e.CommitAll(proj, "the project and its rule")
 	return e, proj, led
 }
-
-// commit is the agent's Bash step: write a file and commit it, with optional
-// trailer lines as their own -m paragraph.
-func commit(id, path, content, subject string, trailers ...string) harness.Turn {
-	cmd := "mkdir -p $(dirname " + path + ") && printf '%s' '" + content + "' > " + path +
-		" && git add -A && git commit -q -m '" + subject + "'"
-	if len(trailers) > 0 {
-		cmd += " -m '" + strings.Join(trailers, "\n") + "'"
-	}
-	return Bash(id, cmd)
-}
-
-// stopNow runs `sr-session stop` the way the harness does, for a Stop whose
-// timing a test wants exactly.
-func stopNow(e *Env, proj, sessionID string) harness.Result {
-	payload, _ := json.Marshal(map[string]any{
-		"session_id": sessionID, "transcript_path": e.TranscriptPath(proj, sessionID),
-		"cwd": proj, "stop_hook_active": false, "hook_event_name": "Stop",
-	})
-	return e.CLIDirectStdinEnv(proj, string(payload),
-		[]string{"CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE=", "CLAUDE_CODE_SESSION_ID="}, "sr-session", "stop")
-}
-
-func blocked(r harness.Result) bool { return strings.Contains(r.Output, `"decision":"block"`) }
-
-// checksStatus is `sr-checks status` for the session.
-func checksStatus(e *Env, proj, sessionID string, args ...string) string {
-	res := e.CLIDirectEnv(proj, []string{"CLAUDE_CODE_SESSION_ID=" + sessionID, "CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE="},
-		"sr-checks", append([]string{"status"}, args...)...)
-	return res.Output
-}

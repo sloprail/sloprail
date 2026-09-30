@@ -27,11 +27,10 @@ func TestT002_01_UncommittedGuardedWorkRefusesTheStopUntilItIsCommitted(t *testi
 			t.Fatalf("the refusal should name %q:\n%s", want, refused[0])
 		}
 	}
-	// The block HOLDS: the harness answered the refusal by driving the agent on,
-	// turn after turn (one result frame each), instead of letting it end. The
-	// agent here never commits, so it runs to the harness's own stop-hook cap.
-	if n := strings.Count(res.Output, `"type":"result"`); n < 2 {
-		t.Fatalf("the refusal did not hold the turn: %d result frame(s); a Stop that does not block is a suggestion\n%s", n, res.Output)
+	// The block HOLDS: the agent was driven on past its Stop, as the record shows
+	// it, instead of being let end.
+	if n := len(e.StopContinuations(proj, "s-002-01")); n < 1 {
+		t.Fatalf("the refusal did not hold the turn; a Stop that does not block is a suggestion\n%s", res.Output)
 	}
 	if after := e.Git(proj, "rev-parse", "HEAD"); after != before {
 		t.Fatal("the engine committed for the agent")

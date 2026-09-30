@@ -115,7 +115,7 @@ func TestT001_05_ProxyEqualsDirect(t *testing.T) {
 	e.RecordCheckRun(proj, sessionID, run("file-guard/size", "head0000"), judge("fail", "fp0", "too long"))
 
 	direct := checks(e, proj, "status")
-	proxied := e.CLIDirectEnv(proj, inSession(e), "sr", "checks", "status")
+	proxied := e.CLIDirectEnv(proj, e.SessionEnv(sessionID), "sr", "checks", "status")
 	if direct.Code != proxied.Code || direct.Output != proxied.Output {
 		t.Fatalf("proxy differs:\ndirect  (%d) %q\nproxied (%d) %q", direct.Code, direct.Output, proxied.Code, proxied.Output)
 	}

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,8 +41,8 @@ exit 0
 	e.Git(proj, "stash", "push", "-q", "-u")
 	e.WriteFile(proj, "scratch.txt", "untracked\n")
 
-	r := stopNow(e, proj, "s-003-07")
-	if blocked(r) {
+	r := e.StopNow(proj, "s-003-07", false)
+	if harness.Blocked(r) {
 		t.Fatalf("the Stop was refused:\n%s", r.Output)
 	}
 	body, err := os.ReadFile(out)

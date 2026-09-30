@@ -35,7 +35,7 @@ func TestT001_10_UncommittedRuleUsesTheSessionStart(t *testing.T) {
 	e.WriteFile(proj, "docs/a.md", "one\ntwo\n")
 	head := e.CommitAllExcept(proj, "an edit during the session", ".sloprail")
 
-	got, res := show(t, e, proj, inSession(e, "s-001-10"), "size")
+	got, res := show(t, e, proj, e.SessionEnv("s-001-10"), "size")
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
@@ -64,7 +64,7 @@ func TestT001_11_PluginRuleUsesTheSessionStart(t *testing.T) {
 	e.WriteFile(proj, "docs/a.md", "one\nplugin era\n")
 	head := e.CommitAll(proj, "an edit during the session")
 
-	got, res := show(t, e, proj, inSession(e, "s-001-11"), "size")
+	got, res := show(t, e, proj, e.SessionEnv("s-001-11"), "size")
 	if res.Code != 0 {
 		t.Fatalf("exit %d:\n%s", res.Code, res.Output)
 	}
@@ -85,7 +85,7 @@ func TestT001_12_AnUnreachableSessionStartFailsClosed(t *testing.T) {
 	e.FileGuard(proj, "size", docsRule(""), map[string]string{"check.sh": passingCheck})
 	e.Git(proj, "commit", "--amend", "--allow-empty", "-m", "the start commit, rewritten")
 
-	_, res := show(t, e, proj, inSession(e, "s-001-12"), "size")
+	_, res := show(t, e, proj, e.SessionEnv("s-001-12"), "size")
 	if res.Code == 0 {
 		t.Fatalf("an unreachable session start produced a range:\n%s", res.Output)
 	}
@@ -94,7 +94,7 @@ func TestT001_12_AnUnreachableSessionStartFailsClosed(t *testing.T) {
 	}
 
 	e.CommitAll(proj, "add the rule")
-	got, res := show(t, e, proj, inSession(e, "s-001-12"), "size")
+	got, res := show(t, e, proj, e.SessionEnv("s-001-12"), "size")
 	if res.Code != 0 || got.Origin != "floor" {
 		t.Fatalf("with the rule committed: exit %d origin %q:\n%s", res.Code, got.Origin, res.Output)
 	}

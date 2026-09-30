@@ -16,12 +16,13 @@ func TestT002_06_ASubagentInTheRootsTreeIsNotGated(t *testing.T) {
 		Bash("sb1", "echo 'made by the sub-agent' > docs/from-sub.md"),
 	))
 
-	e.Run(proj, "s-002-06", "delegate here", Turns("root done",
+	res := e.Run(proj, "s-002-06", "delegate here", Turns("root done",
 		Dispatch("d1", "write the doc", sub, ""),
 	))
 
-	if errs := commitRequired(e.BlockingErrorsFrom(proj, "s-002-06", "SubagentStop")); len(errs) != 0 {
-		t.Fatalf("a sub-agent sharing the root's tree was refused for uncommitted work: %q", errs)
+	// The sub-agent's own Stop ran (its work is in the tree) and was NOT refused.
+	if res.AnySubagentStopBlocked() {
+		t.Fatalf("a sub-agent sharing the root's tree was refused for uncommitted work:\n%s", res.Output)
 	}
 	// Premise: the file really is uncommitted in the shared tree, and the root —
 	// who owns it — is refused for it.
@@ -41,12 +42,13 @@ func TestT002_07_AnIsolatedSubagentOwnsItsTreeAndIsGated(t *testing.T) {
 		Bash("sb1", "echo 'made in isolation' > docs/isolated.md"),
 	))
 
-	e.Run(proj, "s-002-07", "delegate into isolation", Turns("root done",
+	res := e.Run(proj, "s-002-07", "delegate into isolation", Turns("root done",
 		Dispatch("d1", "write the doc", sub, "worktree"),
 	))
 
-	errs := commitRequired(e.BlockingErrorsFrom(proj, "s-002-07", "SubagentStop"))
-	if len(errs) == 0 || !strings.Contains(errs[0], "docs/isolated.md") {
-		t.Fatalf("an isolated sub-agent was not refused for its own uncommitted work: %q", errs)
+	// The refusal reaches the sub-agent (the mock prints it as it re-runs it), and
+	// names the file in the tree it was bound to.
+	if !res.SubagentStopBlocked("Commit your work before ending this turn") || !strings.Contains(res.Output, "docs/isolated.md") {
+		t.Fatalf("an isolated sub-agent was not refused for its own uncommitted work:\n%s", res.Output)
 	}
 }

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/sloprail/sloprail/tests/e2e/harness"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,7 @@ func TestT003_03_CitationTrailersGroundTheRange(t *testing.T) {
 	e, proj, led := project(t, citingRule)
 
 	// Refusal: no citation at all.
-	e.Run(proj, "s-003-03", prompt, Turns("done", commit("c1", "docs/release.md", "steps", "document the release")))
+	e.Run(proj, "s-003-03", prompt, Turns("done", harness.CommitFile("c1", "docs/release.md", "steps", "document the release")))
 	joined := strings.Join(e.BlockingErrorsFrom(proj, "s-003-03", "Stop"), "\n")
 	for _, want := range []string{"Sloprail-Cites-User", "must cite"} {
 		if !strings.Contains(joined, want) {
@@ -30,14 +31,14 @@ func TestT003_03_CitationTrailersGroundTheRange(t *testing.T) {
 	}
 
 	// Words nobody said: still not a citation, and the refusal says which trailer failed.
-	e.Run(proj, "s-003-03", "amend it", Turns("done", commit("c2", "docs/release.md", "steps v2", "document it", "Sloprail-Cites-User: delete the release notes")))
+	e.Run(proj, "s-003-03", "amend it", Turns("done", harness.CommitFile("c2", "docs/release.md", "steps v2", "document it", "Sloprail-Cites-User: delete the release notes")))
 	joined = strings.Join(e.BlockingErrorsFrom(proj, "s-003-03", "Stop"), "\n")
 	if !strings.Contains(joined, "delete the release notes") || !strings.Contains(joined, "did not resolve") {
 		t.Fatalf("an unresolvable trailer should be named:\n%s", joined)
 	}
 
 	// Pass: the user's own words, in a trailer of a later commit in the range.
-	e.Run(proj, "s-003-03", "cite it", Turns("done", commit("c3", "docs/release.md", "steps v3", "cite the ask", "Sloprail-Cites-User: document the release process")))
+	e.Run(proj, "s-003-03", "cite it", Turns("done", harness.CommitFile("c3", "docs/release.md", "steps v3", "cite the ask", "Sloprail-Cites-User: document the release process")))
 	runs := ledger(t, led)
 	if len(runs) == 0 {
 		t.Fatal("with the citation in place the checks never ran")
@@ -65,14 +66,14 @@ func TestT003_04_AGitErrorFailsClosed(t *testing.T) {
 		t.Fatalf("premise: the blob is not a loose object: %v", err)
 	}
 
-	r := stopNow(e, proj, "s-003-04")
-	if !blocked(r) || !strings.Contains(r.Output, "could not be evaluated") {
+	r := e.StopNow(proj, "s-003-04", false)
+	if !harness.Blocked(r) || !strings.Contains(r.Output, "could not be evaluated") {
 		t.Fatalf("an unreadable range did not fail closed:\n%s", r.Output)
 	}
 	if n := len(ledger(t, led)); n != 0 {
 		t.Fatalf("the check ran %d times against a range that could not be read", n)
 	}
-	status := checksStatus(e, proj, "s-003-04", "--failing")
+	status := e.ChecksStatus(proj, "s-003-04", "--failing")
 	if !strings.Contains(status, "error") || !strings.Contains(status, "file-guard/docs") {
 		t.Fatalf("the engine failure was not recorded as an error:\n%s", status)
 	}
@@ -80,7 +81,7 @@ func TestT003_04_AGitErrorFailsClosed(t *testing.T) {
 	// The object comes back; the failed run moved nothing, so the range is the
 	// same one and is now judged.
 	e.Git(proj, "hash-object", "-w", "docs/a.md")
-	if r := stopNow(e, proj, "s-003-04"); blocked(r) {
+	if r := e.StopNow(proj, "s-003-04", false); harness.Blocked(r) {
 		t.Fatalf("a readable range was still refused:\n%s", r.Output)
 	}
 	runs := ledger(t, led)

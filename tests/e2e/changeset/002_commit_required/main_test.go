@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,23 +72,3 @@ func commitRequired(errs []string) []string {
 	}
 	return out
 }
-
-// stopPayload is the hook payload a harness sends at Stop.
-func stopPayload(e *Env, proj, sessionID string, active bool) string {
-	b, _ := json.Marshal(map[string]any{
-		"session_id":       sessionID,
-		"transcript_path":  e.TranscriptPath(proj, sessionID),
-		"cwd":              proj,
-		"stop_hook_active": active,
-		"hook_event_name":  "Stop",
-	})
-	return string(b)
-}
-
-// stop runs `sr-session stop` the way the harness does and returns its result.
-func stop(e *Env, proj, sessionID string, active bool) harness.Result {
-	return e.CLIDirectStdinEnv(proj, stopPayload(e, proj, sessionID, active),
-		[]string{"CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE=", "CLAUDE_CODE_SESSION_ID="}, "sr-session", "stop")
-}
-
-func blocked(r harness.Result) bool { return strings.Contains(r.Output, `"decision":"block"`) }

@@ -35,14 +35,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// noSession is the environment for a call made outside any session.
-var noSession = []string{"CLAUDE_CODE_SESSION_ID=", "CLAUDECODE="}
-
-// inSession is the environment for a call made from inside a session the mock ran.
-func inSession(e *harness.Env, sessionID string) []string {
-	return []string{"CLAUDE_CODE_SESSION_ID=" + sessionID, "CLAUDE_CONFIG_DIR=" + e.ConfigDir(), "CLAUDECODE="}
-}
-
 // Shown is what `sr-session changeset` prints.
 type Shown struct {
 	Rule                string   `json:"rule"`
