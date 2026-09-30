@@ -272,7 +272,8 @@ func (s *store) CachedCheck(subject, kind, fingerprint string) (CachedCheck, boo
 	return c, true, nil
 }
 
-// ResolveStale is a10n's ResolveStale for a rule: a failing check whose input is
+// ResolveStale is a10n's ResolveStale for a rule (only COMPLETE runs: another Stop's
+// run still in flight is not this evaluation's to clear): a failing check whose input is
 // no longer one the live run holds is an orphan — the files it judged have left
 // the range — and stays a failure forever unless it is cleared. It becomes skip,
 // with the reason, and is no longer outstanding.
@@ -288,7 +289,8 @@ func (s *store) ResolveStale(rule, ruleHash, liveRunID string) (int, error) {
 		    checked_at = ?
 		WHERE status = 'fail'
 		  AND run_id IN (SELECT id FROM check_runs
-		                 WHERE check_id = ? AND json_extract(metadata, '$.ruleHash') = ? AND id <> ?)
+		                 WHERE check_id = ? AND json_extract(metadata, '$.ruleHash') = ? AND id <> ?
+		                   AND json_extract(metadata, '$.state') = 'complete')
 		  AND NOT EXISTS (SELECT 1 FROM checks live
 		                  WHERE live.run_id = ? AND live.subject = checks.subject
 		                    AND live.kind = checks.kind AND live.fingerprint = checks.fingerprint)`,
@@ -341,9 +343,9 @@ func (s *store) CheckStatus(failingOnly bool, rule string) ([]CheckStatusRow, er
 	}
 	rows, err := db.Query(`
 		SELECT cr.check_id, COALESCE(c.subject, ''), COALESCE(c.kind, ''),
-		       CASE WHEN c.id IS NULL THEN CASE WHEN cr.exit_code <> 0 OR cr.error IS NOT NULL THEN 'error'
-		                                       WHEN json_extract(cr.metadata, '$.state') <> 'complete' THEN 'interrupted'
-		                                       ELSE 'pass' END
+		       CASE WHEN cr.exit_code <> 0 OR cr.error IS NOT NULL THEN COALESCE(c.status, 'error')
+		            WHEN json_extract(cr.metadata, '$.state') <> 'complete' THEN 'interrupted'
+		            WHEN c.id IS NULL THEN 'pass'
 		            ELSE c.status END,
 		       cr.base_ref, cr.head_ref, cr.run_at, COALESCE(c.fingerprint, ''), COALESCE(cr.error, ''),
 		       COALESCE(c.metadata, cr.metadata)

@@ -401,6 +401,10 @@ func TestPassedHeads_AnUnfinishedRunIsNeverAWatermark(t *testing.T) {
 	require.NoError(t, err)
 	heads, _ = s.PassedHeads(rule, "h1")
 	assert.Empty(t, heads, "checks recorded but the run not finished: still not a pass")
+	rows, err = s.CheckStatus(true, "")
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "a running run with a passing check is still listed as failing-or-unfinished")
+	assert.Equal(t, StatusInterrupted, rows[0].Status, "the run's state wins over its checks")
 
 	require.NoError(t, s.FinishRun(dead))
 	heads, err = s.PassedHeads(rule, "h1")
@@ -421,4 +425,18 @@ func TestPassedHeads_ACompleteRunWithNothingToCheckIsAPass(t *testing.T) {
 	heads, err := s.PassedHeads(rule, "h1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"h0"}, heads)
+}
+
+func TestResolveStale_LeavesAnotherRunsInFlightFailsAlone(t *testing.T) {
+	s := openTestStore(t)
+	// A concurrent Stop's run for the same rule and hash, still running.
+	inflight, err := s.RecordRun(run("h0"))
+	require.NoError(t, err)
+	_, err = s.RecordCheck(inflight, judge("fail", "theirs"))
+	require.NoError(t, err)
+	live := record(t, s, run("h1"), judge("pass", "mine"))
+
+	n, err := s.ResolveStale(rule, "h1", live)
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "an unfinished run's failures are not stale: it has not finished judging")
 }
