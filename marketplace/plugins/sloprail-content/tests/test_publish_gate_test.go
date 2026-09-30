@@ -41,9 +41,14 @@ func installPublishProject(t *testing.T, seed string) (*Env, string) {
 	e.GitInit(proj)
 	if seed != "" {
 		e.WriteFile(proj, unitPath, seed)
+		// The seed is history before the rules exist: a rule's range starts at the
+		// parent of the commit that installs it, so a seed committed together with
+		// the rules would be judged as this cycle's work.
+		e.CommitAll(proj, "the seeded unit")
 	}
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
+	e.CommitAll(proj, "install the rules")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 	return e, proj
 }

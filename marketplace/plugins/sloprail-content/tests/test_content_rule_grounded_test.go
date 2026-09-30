@@ -43,9 +43,12 @@ func installRuleProject(t *testing.T, seed string) (*Env, string) {
 	e.GitInit(proj)
 	if seed != "" {
 		e.WriteFile(proj, rulePath, seed)
+		// History before the rules exist (see installPublishProject).
+		e.CommitAll(proj, "the seeded rule")
 	}
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
+	e.CommitAll(proj, "install the rules")
 	return e, proj
 }
 

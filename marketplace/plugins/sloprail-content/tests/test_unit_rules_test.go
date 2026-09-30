@@ -218,8 +218,10 @@ func TestRules_DeterministicRulePassesViaJudgeStub(t *testing.T) {
 	e.WriteFile(proj, unitPath, unitFrontmatter(
 		"transcript_path: /abs/s.jsonl\ncreated: 2026-09-25\ntype: post\nstatus: drafting\ntags: [x]\n",
 		"Announcing the launch."))
+	e.CommitAll(proj, "the seeded unit and its topic rule")
 	installPluginTree(t, proj)
 	installPluginStructure(t, e, proj)
+	e.CommitAll(proj, "install the rules")
 	e.InstallJudgeClaude(`{"pass": true, "reasoning": ""}`)
 
 	sess := "s-det-pass"
