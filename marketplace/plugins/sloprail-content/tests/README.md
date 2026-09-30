@@ -89,6 +89,14 @@ prove.
 
 ## Per-file coverage
 
+**test_unit_md_first_test.go — unit-md-first** (file-guard, preventive,
+script)
+- a non-entry file (the draft) written into a unit folder before UNIT.md
+  exists is refused, naming the missing UNIT.md and how to write it first
+- UNIT.md itself, written into a folder that has none yet, is admitted
+- a non-entry file written after UNIT.md exists (same run) is admitted
+- deleting a non-entry file inside an existing unit folder is not refused
+
 **test_unit_rules_test.go — unit-satisfies-rules** (file-guard, Stop
 after-check, one judge check with `allowed_tools: [Read, Bash]`)
 - a global rule (no `applies_to`) applies to a unit with no tags

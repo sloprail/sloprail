@@ -1,0 +1,25 @@
+# A file inside a task folder (memories/tasks/<group>/<task>/) may only be
+# written once that task's TASK.md exists. Without it the folder names no
+# ask, no status, no priority — task-body-is-human-authored, task-evidence-
+# resolves and task-review all key off TASK.md, so anything else in the
+# folder is orphaned. The same failure unit-md-first guards for a content
+# unit, relocated to the task shape: an agent wrote a gate or a supporting
+# file into a task folder that had no TASK.md yet.
+#
+# match covers BOTH shapes structure.yaml allows inside a task folder — a
+# file directly under it, and one nested one level further under gates/ — by
+# matching anything past the two-segment <group>/<task> prefix and excluding
+# only the TASK.md leaf itself, wherever it sits relative to that prefix.
+#
+# preventive: refuse the write before it lands; the after-check re-judges the
+# settled file (catches a shell write whose pre-write result could not be
+# derived). deletions is left at its default (skip): the reviewer deletes an
+# APPROVED task's whole folder (TASK.md included) as its own next step
+# (task-review's README, "the accepted task is deleted by the agent in a
+# commit of its own") — that delete must not be this guard's business, and a
+# default file-guard's PreFileDelete/PostFileDelete are never dispatched to
+# it at all.
+match: path matches "^memories/tasks/[^/]+/[^/]+/.+$" and not (path endsWith "/TASK.md")
+preventive: true
+checks:
+  - script: ./check.sh

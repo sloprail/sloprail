@@ -102,6 +102,17 @@ stubbed verdict is the one under test. This is noted in each such test.
 
 ## Per-test coverage — and what is deliberately NOT covered
 
+**task-md-first** (file-guard, preventive; script) — test_task_md_first_test.go
+- ✓ a supporting file written directly under a task folder before TASK.md
+  exists is refused, naming the missing TASK.md and how to write it
+- ✓ the same refusal for a file one level deeper, under gates/ — proving the
+  task folder is resolved as the first two path segments, not the file's own
+  parent directory
+- ✓ TASK.md itself, written into a folder that has none yet, is admitted
+- ✓ a supporting file written after TASK.md exists (same run) is admitted
+- ✓ deleting a whole task folder (TASK.md and a supporting file, the
+  reviewer's approve-path move) is not refused
+
 **task-body-is-human-authored** (file-guard, preventive; script + judge)
 - ✓ task created with a user citation (judge PASS) admits and lands; the judge is
   handed the cited words and their `path:line`

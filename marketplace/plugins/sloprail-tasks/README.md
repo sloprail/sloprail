@@ -6,13 +6,14 @@ the first use-case plugin that carries its own end-to-end suite (`tests/`).
 A **task** is a `memories/tasks/<category>/<name>/TASK.md`: a frontmatter (`status`,
 `priority`, optionally `depends_on`) plus a body that states the human's ask, and
 optionally a sibling `gates/` directory of start-condition files. The lifecycle has
-no `done` — a task the reviewer approves is deleted, folder and all. These eight
-guardrails keep that lifecycle honest: a task cannot start before what it depends
-on is finished, cannot start before its own start conditions hold, and none of the
-mechanisms that enforce either can be quietly defeated by editing the frontmatter
-or the gate files themselves.
+no `done` — a task the reviewer approves is deleted, folder and all. These nine
+guardrails keep that lifecycle honest: a task folder holds nothing until its own
+`TASK.md` exists, a task cannot start before what it depends on is finished,
+cannot start before its own start conditions hold, and none of the mechanisms
+that enforce either can be quietly defeated by editing the frontmatter or the
+gate files themselves.
 
-All eight are in the **nature format**: file-guards and gates under `.sloprail/`,
+All nine are in the **nature format**: file-guards and gates under `.sloprail/`,
 with `match:` / `checks:` / `on:`, flat `.event` fields on the check payload, and
 refusals delivered as a non-zero exit carrying `{"reason": …}` on stdout (a judge's
 verdict is the engine's `{"pass", "reasoning"}`).
@@ -163,7 +164,27 @@ task — TRACEABLE to it, not CONTRADICTING it, not INVENTING a condition it
 does not support, and (for a `.sh` gate specifically) not TRIVIAL — a check
 that can never actually fail. See that guard's own section below.
 
-## The eight guardrails
+## The nine guardrails
+
+### task-md-first — file-guard, **preventive**
+
+Over any file inside a task folder (`memories/tasks/<group>/<task>/`, gate
+files under its `gates/` included) other than `TASK.md` itself. A task folder
+with no `TASK.md` names no ask, no status, no priority — every other guard in
+this plugin keys off `TASK.md`, so a file written before it exists is
+orphaned. The check is purely path-based: it computes the task folder as the
+first two segments after `memories/tasks/` (not simply the file's own parent,
+since a `gates/*.sh`/`gates/*.md` file sits one level deeper than `TASK.md`)
+and refuses the write unless `<task folder>/TASK.md` already exists on disk.
+
+Deletions are not this guard's business (`deletions` is left at its default,
+`skip`): the reviewer deletes an **approved** task's whole folder — `TASK.md`
+included — as its own commit once `task-review` passes (see that guard's
+"approve path" below), and a default file-guard is never even dispatched a
+`PreFileDelete`/`PostFileDelete` for its match to consider.
+
+The same failure `unit-md-first` guards for a content unit in
+`sloprail-content`, relocated to the task shape.
 
 ### task-body-is-human-authored — file-guard, preventive
 
