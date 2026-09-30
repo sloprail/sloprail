@@ -39,6 +39,14 @@ const (
 	// a new sequence begins.
 	MetaStopRefusals = "stop_refusals"
 
+	// MetaCommitRequired is the commit-required gate's loop breaker: how many
+	// times in a row it refused the same set of uncommitted paths, as
+	// "<hash of the set>:<count>". Its own counter rather than MetaStopRefusals,
+	// because that one counts every refusal of a Stop while this one counts one
+	// reason for refusing, and it is keyed on the set so committing some of the
+	// work starts the count again.
+	MetaCommitRequired = "commit_required"
+
 	// MetaStopSeenRecord is how far the previous judged Stop read the record for
 	// tags, as "<entry count>:<uuid of the last entry>". Text up to there was
 	// already shown to a Stop; while the cycle is still open it is delivered

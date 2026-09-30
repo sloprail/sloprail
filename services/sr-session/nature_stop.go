@@ -102,6 +102,13 @@ func dispatchNatureStop(cmd *cobra.Command, p HookPayload, reg *module.Registry,
 
 	var refusals []string
 
+	// 0. commit required: a file-guard judges commits, so uncommitted work on a
+	//    path some rule selects is refused before anything is judged. See
+	//    commit_required.go.
+	if reason := commitRequired(cmd, p, loaded.FileGuards, store, contextMatchValue(contextMap)); reason != "" {
+		refusals = append(refusals, reason+" (commit required)")
+	}
+
 	// 1. file-guard after-checks on the Post FILE events. Records verdicts
 	//    (re-fire), collects refusals.
 	for _, r := range runFileGuardsPost(cmd, loaded.FileGuards, postFileEvents, rev, scope, root, contextMap, histories) {

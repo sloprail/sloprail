@@ -76,7 +76,7 @@ func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 	cs := Changeset{Base: r.Base, Head: r.Head, Commits: commits, Files: []File{}, Others: []Other{}, Citations: []transcript.Citation{}}
 	for _, d := range deltas {
 		status := string(d.Status)
-		if !admits(o.Deletions, d.Status) {
+		if !Admits(o.Deletions, d.Status) {
 			cs.Others = append(cs.Others, Other{Path: d.Path, Status: status})
 			continue
 		}
@@ -106,9 +106,9 @@ func Build(dir string, r gitrepo.Range, o Options) (Changeset, error) {
 	return cs, nil
 }
 
-// admits says whether a status may enter `files` at all under a deletions mode.
+// Admits says whether a status may enter `files` at all under a deletions mode.
 // A rename is not a deletion.
-func admits(mode DeletionMode, status byte) bool {
+func Admits(mode DeletionMode, status byte) bool {
 	switch mode {
 	case IncludeDeletions:
 		return true
